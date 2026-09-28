@@ -610,7 +610,7 @@ async fn approval_takes_priority_over_editing_and_keeps_long_browser_urls_reacha
         auth: Some(prompt("999999", browser_url)),
         ..Snapshot::default()
     });
-    assert_eq!(ui.auth_scroll, 0);
+    assert_eq!(ui.auth_scroll.offset, 0);
 }
 
 #[test]

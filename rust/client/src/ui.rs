@@ -68,6 +68,34 @@ enum Popup {
     Details,
 }
 
+/// A panel's scroll position, clamped at each draw to the lines the panel hides.
+#[derive(Clone, Copy, Debug, Default)]
+struct Scroll {
+    offset: u16,
+    /// What the last draw left out, which the footer offers with PgDn.
+    hidden: u16,
+}
+
+impl Scroll {
+    /// Go's line and page keys; other keys leave the position.
+    fn key(&mut self, code: KeyCode, page: u16) {
+        self.offset = match code {
+            KeyCode::Up | KeyCode::Char('k') => self.offset.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => self.offset.saturating_add(1),
+            KeyCode::PageUp => self.offset.saturating_sub(page),
+            KeyCode::PageDown => self.offset.saturating_add(page),
+            _ => self.offset,
+        };
+    }
+
+    /// Clamps the position to what `lines` hide in `visible` rows, as a paragraph scrolls.
+    fn clamp(&mut self, lines: usize, visible: usize) -> (u16, u16) {
+        self.hidden = u16::try_from(lines.saturating_sub(visible)).unwrap_or(u16::MAX);
+        self.offset = self.offset.min(self.hidden);
+        (self.offset, 0)
+    }
+}
+
 /// Return paths, cancellation and partial initialization all restore the terminal.
 /// Ratatui additionally installs its panic hook before entering raw mode.
 struct Restore;
@@ -191,11 +219,10 @@ struct Ui {
     open_chooser: bool,
     servers_before: Vec<String>,
     popup: Popup,
-    details_scroll: u16,
-    auth_scroll: u16,
+    details_scroll: Scroll,
+    auth_scroll: Scroll,
     /// Go scrolls the body; here the panel whose lines can overflow scrolls.
-    body_scroll: u16,
-    body_hidden: u16,
+    body_scroll: Scroll,
     help: bool,
     edit: Option<Edit>,
     reset_prompt: bool,
@@ -231,10 +258,9 @@ impl Ui {
             open_chooser: false,
             servers_before: Vec::new(),
             popup: Popup::None,
-            details_scroll: 0,
-            auth_scroll: 0,
-            body_scroll: 0,
-            body_hidden: 0,
+            details_scroll: Scroll::default(),
+            auth_scroll: Scroll::default(),
+            body_scroll: Scroll::default(),
             help: false,
             edit: None,
             reset_prompt: false,
@@ -253,7 +279,7 @@ impl Ui {
     fn update(&mut self, mut snapshot: Snapshot) {
         let was_live = self.live;
         if snapshot.auth != self.snapshot.auth {
-            self.auth_scroll = 0;
+            self.auth_scroll.offset = 0;
         }
         if snapshot.error != self.snapshot.error {
             self.notice.clear();
@@ -319,14 +345,14 @@ impl Ui {
             }
         }
         if self.live != was_live {
-            self.body_scroll = 0;
+            self.body_scroll.offset = 0;
         }
         if snapshot.auth.is_some() || self.popup == Popup::Details && !self.live {
             if self.popup == Popup::Servers {
                 self.config.servers = std::mem::take(&mut self.servers_before);
             }
             self.popup = Popup::None;
-            self.details_scroll = 0;
+            self.details_scroll.offset = 0;
         }
         self.snapshot = snapshot;
         if self.open_chooser && !self.live && !self.checking() && !self.snapshot.servers.is_empty() {
@@ -465,15 +491,7 @@ impl Ui {
                         self.notice = "Sign-in canceled. Press v to request a new code.".into();
                     }
                 }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    self.auth_scroll = self.auth_scroll.saturating_sub(1);
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    self.auth_scroll = self.auth_scroll.saturating_add(1);
-                }
-                KeyCode::PageUp => self.auth_scroll = self.auth_scroll.saturating_sub(4),
-                KeyCode::PageDown => self.auth_scroll = self.auth_scroll.saturating_add(4),
-                _ => {}
+                code => self.auth_scroll.key(code, 4),
             }
             return false;
         }
@@ -539,19 +557,7 @@ impl Ui {
         if self.popup == Popup::Details {
             match key.code {
                 KeyCode::Esc | KeyCode::Char('d') => self.popup = Popup::None,
-                KeyCode::Up | KeyCode::Char('k') => {
-                    self.details_scroll = self.details_scroll.saturating_sub(1);
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    self.details_scroll = self.details_scroll.saturating_add(1);
-                }
-                KeyCode::PageUp => {
-                    self.details_scroll = self.details_scroll.saturating_sub(10);
-                }
-                KeyCode::PageDown => {
-                    self.details_scroll = self.details_scroll.saturating_add(10);
-                }
-                _ => {}
+                code => self.details_scroll.key(code, 10),
             }
             return false;
         }
@@ -568,7 +574,7 @@ impl Ui {
         match key.code {
             KeyCode::Char('d') if self.live && self.snapshot.auth.is_none() => {
                 self.popup = Popup::Details;
-                self.details_scroll = 0;
+                self.details_scroll.offset = 0;
             }
             KeyCode::Char('l') if self.snapshot.participants.len() > 1 => {
                 let ids = &self.snapshot.participants;
@@ -586,7 +592,7 @@ impl Ui {
                         if self.send(Command::Run(self.config.clone()), commands) {
                             self.previous = (self.live && self.snapshot.started()).then(|| self.snapshot.clone());
                             (self.live, self.starting, self.open_chooser) = (true, true, false);
-                            self.body_scroll = 0;
+                            self.body_scroll.offset = 0;
                             self.popup = Popup::None;
                             self.notice = "Checking paths before the test. Press esc to stop.".into();
                         }
@@ -610,18 +616,18 @@ impl Ui {
                     // The run consumed the checked paths.
                     self.recheck_soon();
                     self.notice.clear();
-                    self.body_scroll = 0;
+                    self.body_scroll.offset = 0;
                 }
                 self.live = false;
                 self.rows.select(Some(0));
             }
             // Go's scrolling keys: pages anywhere, lines too in the run view.
-            KeyCode::PageUp => self.body_scroll = self.body_scroll.saturating_sub(10),
-            KeyCode::PageDown => self.body_scroll = self.body_scroll.saturating_add(10),
-            KeyCode::Home => self.body_scroll = 0,
-            KeyCode::End => self.body_scroll = u16::MAX,
-            KeyCode::Up | KeyCode::Char('k') if self.live => self.body_scroll = self.body_scroll.saturating_sub(1),
-            KeyCode::Down | KeyCode::Char('j') if self.live => self.body_scroll = self.body_scroll.saturating_add(1),
+            KeyCode::PageUp | KeyCode::PageDown => self.body_scroll.key(key.code, 10),
+            KeyCode::Home => self.body_scroll.offset = 0,
+            KeyCode::End => self.body_scroll.offset = u16::MAX,
+            KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') if self.live => {
+                self.body_scroll.key(key.code, 10);
+            }
             KeyCode::Tab if !self.live => move_selection(&mut self.rows, field_count, 1),
             KeyCode::BackTab if !self.live => move_selection(&mut self.rows, field_count, -1),
             KeyCode::Char('s') if !self.live => self.open_servers(),

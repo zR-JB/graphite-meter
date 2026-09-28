@@ -140,7 +140,7 @@ impl Ui {
             ]),
             regions[0],
         );
-        self.body_hidden = 0;
+        self.body_scroll.hidden = 0;
         if self.live {
             self.draw_live(frame, regions[1]);
         } else {
@@ -178,7 +178,7 @@ impl Ui {
             [field.hints(), &["r Start test", "? keys", "q quit"][..]].concat()
         };
         let covered = self.popup != Popup::None || self.edit.is_some() || self.snapshot.auth.is_some();
-        if self.body_hidden > 0 && !covered && self.cancel != CancelState::Confirming {
+        if self.body_scroll.hidden > 0 && !covered && self.cancel != CancelState::Confirming {
             hints.insert(1, "PgDn more");
         }
         let width = usize::from(regions[2].width);
@@ -302,13 +302,10 @@ impl Ui {
             .style(Style::new().fg(self.theme.muted)),
             regions[3],
         );
-        let visible = usize::from(regions[4].height);
-        self.auth_scroll = self
-            .auth_scroll
-            .min(lines.len().saturating_sub(visible).min(u16::MAX as usize) as u16);
+        let offset = self.auth_scroll.clamp(lines.len(), usize::from(regions[4].height));
         frame.render_widget(
             Paragraph::new(lines)
-                .scroll((self.auth_scroll, 0))
+                .scroll(offset)
                 .style(Style::new().fg(self.theme.text)),
             regions[4],
         );
@@ -316,14 +313,6 @@ impl Ui {
             Paragraph::new(self.hints(&["Enter/Space/o open", "Esc cancel", "q quit"], width)),
             regions[5],
         );
-    }
-
-    /// Clamps the body scroll to the lines this panel hides.
-    fn body_offset(&mut self, lines: usize, area: Rect) -> (u16, u16) {
-        let hidden = lines.saturating_sub(usize::from(area.height.saturating_sub(2)));
-        self.body_hidden = u16::try_from(hidden).unwrap_or(u16::MAX);
-        self.body_scroll = self.body_scroll.min(self.body_hidden);
-        (self.body_scroll, 0)
     }
 
     fn hints(&self, hints: &[&str], width: usize) -> Line<'static> {
@@ -480,7 +469,9 @@ impl Ui {
                 .map(|line| safe_text_width(line, width))
                 .collect::<Vec<_>>()
                 .join("\n");
-            let offset = self.body_offset(lines.len(), plan_area);
+            let offset = self
+                .body_scroll
+                .clamp(lines.len(), usize::from(plan_area.height.saturating_sub(2)));
             frame.render_widget(
                 Paragraph::new(text).scroll(offset).block(panel("Servers", self.theme)),
                 plan_area,
@@ -713,7 +704,9 @@ impl Ui {
                 title.push_str(" · latency to ");
                 title.push_str(&safe_text(self.server_name(id), 120));
             }
-            let offset = self.body_offset(lines.len(), results_area);
+            let offset = self
+                .body_scroll
+                .clamp(lines.len(), usize::from(results_area.height.saturating_sub(2)));
             frame.render_widget(
                 Paragraph::new(lines).scroll(offset).block(panel(&title, self.theme)),
                 results_area,
@@ -996,14 +989,13 @@ impl Ui {
                 usize::from(area.width.saturating_sub(2)),
             ));
         }
-        let visible = usize::from(area.height.saturating_sub(2));
-        self.details_scroll = self
+        let offset = self
             .details_scroll
-            .min(lines.len().saturating_sub(visible).min(u16::MAX as usize) as u16);
+            .clamp(lines.len(), usize::from(area.height.saturating_sub(2)));
         frame.render_widget(Clear, area);
         frame.render_widget(
             Paragraph::new(lines)
-                .scroll((self.details_scroll, 0))
+                .scroll(offset)
                 .block(panel("Details · ↑/↓ scroll · d/Esc close", self.theme)),
             area,
         );
