@@ -1144,3 +1144,63 @@ async fn a_stop_during_readiness_sends_the_upload_delete() -> Result<(), Error> 
     assert_eq!(mode.load(Ordering::SeqCst), 13);
     Ok(())
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_stop_records_the_evidence_its_stage_lacked() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let heartbeat = heartbeat();
+    for (stage, scope) in [
+        (Stage::Download, FailureScope::Throughput),
+        (Stage::Latency, FailureScope::Latency),
+    ] {
+        let (origin, _, peer) = download_peer().await?;
+        let http = Http::new(true)?;
+        let mut server = prepared_download("peer", &origin, &http).await?;
+        server.latency = Some(graphite_meter_core::discovery::LatencyTarget {
+            base_url: origin.clone(),
+            transport: LatencyTransport::WebSocket,
+        });
+        let config = Config {
+            warmup: Duration::ZERO,
+            latency_duration: Duration::from_secs(2),
+            download_duration: Duration::from_secs(2),
+            ping_interval: Duration::from_millis(100),
+            streams: 1,
+            loaded_latency: false,
+            insecure: true,
+            ..Config::default()
+        };
+        let (snapshots, mut observed) = watch::channel(Snapshot::default());
+        let (stop, cancelled) = watch::channel(false);
+        let stop_early = async {
+            observed
+                .wait_for(|snapshot| snapshot.phase == Phase::Measuring)
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            stop.send_replace(true);
+        };
+        let (result, ()) = tokio::join!(
+            measure(stage, &config, std::slice::from_ref(&server), &snapshots, cancelled),
+            stop_early
+        );
+        peer.abort();
+        assert!(result?.is_empty());
+        let snapshot = observed.borrow();
+        assert!(snapshot.results[0].stopped);
+        let [failure] = &snapshot.failures[..] else {
+            panic!("{stage:?}: {:?}", snapshot.failures);
+        };
+        assert_eq!(
+            (failure.server_id.as_str(), failure.stage, failure.scope, failure.reason),
+            (
+                "peer",
+                stage,
+                scope,
+                graphite_meter_core::failure::FailureReason::InsufficientEvidence
+            )
+        );
+    }
+    heartbeat.abort();
+    Ok(())
+}

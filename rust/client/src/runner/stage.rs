@@ -785,7 +785,8 @@ impl<'a> StageRun<'a> {
                     }
                 })
                 .collect();
-            if measuring && !stopped {
+            // As Go's close(), a stopped stage also names the evidence it lacked.
+            if measuring {
                 let insufficient: Error = Box::new(MeasurementFailure(FailureReason::InsufficientEvidence));
                 let throughput_failed = snapshot
                     .failures
