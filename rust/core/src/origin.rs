@@ -87,9 +87,6 @@ pub fn target_origin(raw: &str) -> Result<Option<Origin>, OriginError> {
         }
         (host, port)
     };
-    if host.is_empty() {
-        return Err(OriginError);
-    }
     let port = port.filter(|port| !port.is_empty());
     if let Some(port) = port
         && (!port.bytes().all(|c| c.is_ascii_digit()) || port.parse::<u16>().is_err())
@@ -105,7 +102,7 @@ pub fn target_origin(raw: &str) -> Result<Option<Origin>, OriginError> {
 
 pub fn canonical_origin(raw: &str) -> Result<String, OriginError> {
     let origin = target_origin(raw)?.ok_or(OriginError)?;
-    if origin.port_number() == 0 || origin.host.contains(['*', ';']) {
+    if origin.port_number() == 0 {
         return Err(OriginError);
     }
     Ok(origin.key())
