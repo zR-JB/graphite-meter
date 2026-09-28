@@ -19,9 +19,12 @@ mise run pipeline-test     # ty type check, control-plane and legal tests
 
 `mise run check` is the deterministic developer gate; `mise run ci` runs every
 CI job's task locally, and the policy fails if one of its steps has no CI job.
-`Gate` is the only required status. Path filters (`.github/ci-paths.yml`)
+`Gate` is the only required status and needs every job. Path filters (`.github/ci-paths.yml`)
 narrow PR runs only; every push to main runs every job. `advisories.yml`
-rechecks Rust dependencies against the live RustSec database daily.
+rechecks Rust dependencies against the live RustSec database daily. The Rust
+release job exports what a release request's Docker builds export, except the
+arm64 server, then stages and verifies it with `release.py stage-rust` and
+`check-rust`, the code a release request and the release run.
 
 ## Releases
 

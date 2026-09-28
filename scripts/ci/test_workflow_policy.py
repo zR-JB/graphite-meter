@@ -145,6 +145,9 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      'run: find "$RUST_EXPORT" -type f -exec cp {} "$RUST_ASSETS/" \\;\n', "release stage-rust"),
     (REQUEST, "python3 -m scripts.ci.release checksums\n", "shasum -a 256 ./* >checksums.txt\n",
      "release checksums"),
+    (W + "ci.yml", "          python3 -m scripts.ci.release check-rust\n", "", "release check-rust"),
+    (W + "ci.yml", "--target server-artifacts", "--target server", "target server-artifacts"),
+    (W + "ci.yml", "rust-release,\n            ", "", r"Gate must need every job: \['rust-release'\]"),
 )
 
 

@@ -43,6 +43,30 @@ rust:
   - 'legal/**'
   - 'container/Dockerfile.rust'
 
+# Inputs of the Rust release exports, their staging and their verification.
+rust-release:
+  - '.github/workflows/ci.yml'
+  - '.github/workflows/release-request.yml'
+  - '.github/actions/**'
+  - '.github/ci-paths.yml'
+  - '.dockerignore'
+  - 'LICENSE'
+  - 'COPYRIGHT'
+  - 'mise.toml'
+  - 'mise.lock'
+  - 'container/Dockerfile.rust'
+  - 'scripts/**'
+  - 'legal/**'
+  - 'client/package.json'
+  - 'client/bun.lock'
+  - 'client/bunfig.toml'
+  - 'rust/Cargo.lock'
+  - 'rust/Cargo.toml'
+  - 'rust/*/Cargo.toml'
+  - 'rust/*/build.rs'
+  - 'rust/legal_build.rs'
+  - 'rust/rust-toolchain.toml'
+
 # Inputs that can change what a macOS TUI links or imports, or how its notices are checked.
 darwin:
   - '.github/workflows/ci.yml'

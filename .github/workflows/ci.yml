@@ -30,6 +30,7 @@ jobs:
       go: ${{ github.event_name == 'push' || steps.filter.outputs.go == 'true' }}
       deps: ${{ github.event_name == 'push' || steps.filter.outputs.deps == 'true' }}
       rust: ${{ github.event_name == 'push' || steps.filter.outputs.rust == 'true' }}
+      rust-release: ${{ github.event_name == 'push' || steps.filter.outputs.rust-release == 'true' }}
       darwin: ${{ github.event_name == 'push' || steps.filter.outputs.darwin == 'true' }}
     steps:
       - name: Checkout exact CI source
@@ -310,6 +311,46 @@ jobs:
             client/test-results/servers
           if-no-files-found: ignore
 
+  rust-release:
+    name: Experimental Rust release artifacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    needs: plan
+    if: needs.plan.outputs.rust-release == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up pinned mise and Python
+        uses: ./.github/actions/setup-project
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          version: v0.37.1
+          driver-opts: image=docker.io/moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+          cache-binary: 'false'
+          buildkitd-flags: --log-level=info
+      # A release request's exports with its provenance; only the arm64 server is left out.
+      - name: Export the Linux and Windows TUIs as a release request does
+        run: >-
+          docker buildx build --platform linux/amd64 --file container/Dockerfile.rust --target tui-artifacts
+          --build-arg VERSION=0.0.0-ci --provenance mode=max --output "type=local,dest=$RUNNER_TEMP/rust-export/tui" .
+      - name: Export the amd64 server source as a release request does
+        run: >-
+          docker buildx build --platform linux/amd64 --file container/Dockerfile.rust --target server-artifacts
+          --build-arg VERSION=0.0.0-ci --build-arg GM_CLIENT_VALIDATE=0 --provenance mode=max
+          --output "type=local,dest=$RUNNER_TEMP/rust-export/server" .
+      - name: Stage them as a release request does and verify them as the release does
+        env:
+          RUST: both
+          RUST_SERVER: linux/amd64
+          VERSION: 0.0.0-ci
+          RUST_EXPORT: ${{ runner.temp }}/rust-export
+          RUST_ASSETS: ${{ runner.temp }}/rust-assets
+        run: |
+          python3 -m scripts.ci.release stage-rust
+          python3 -m scripts.ci.release check-rust
+
   rust-darwin:
     name: Experimental Rust macOS TUIs
     runs-on: macos-15
@@ -344,7 +385,8 @@ jobs:
     name: Gate
     runs-on: ubuntu-24.04
     if: always()
-    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-e2e, rust-darwin]
+    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-e2e, rust-release,
+            rust-darwin]
     steps:
       - name: Require every selected job
         env:

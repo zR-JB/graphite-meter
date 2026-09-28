@@ -48,6 +48,11 @@ ORDERED = {
         # Only the expected Rust artifacts leave the exports, with a listing that cannot list itself.
         "run: python3 -m scripts.ci.release stage-rust\n", "python3 -m scripts.ci.release checksums\n",
     ),
+    # CI builds, stages and verifies the Rust exports as a release request and the release do.
+    "workflows/ci.yml": (
+        "--target tui-artifacts", "--target server-artifacts",
+        "python3 -m scripts.ci.release stage-rust\n", "python3 -m scripts.ci.release check-rust\n",
+    ),
     "workflows/release.yml": (
         "github.event.workflow_run.conclusion == 'success'\n",
         "&& github.event.workflow_run.event == 'workflow_dispatch'\n",
@@ -239,6 +244,10 @@ def check_ci(root: Path) -> None:
     for task in steps("ci"):
         if not re.search(rf"mise run {re.escape(task)}(?![\w-])", ci):
             fail(f"CI must run the local gate step {task}")
+    jobs = set(re.findall(r"(?m)^  ([a-z-]+):$", ci.split("\njobs:\n", 1)[1])) - {"gate"}
+    gate = re.search(r"(?ms)^  gate:\n.*?^    needs: \[([^]]*)\]", ci)
+    if missing := sorted(jobs - {name.strip() for name in (gate.group(1) if gate else "").split(",")}):
+        fail(f"CI Gate must need every job: {missing}")
 
 
 def check_certificates(root: Path) -> None:
