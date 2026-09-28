@@ -178,7 +178,8 @@ impl HttpServer {
         let mut block = vec![0; DOWNLOAD_BLOCK_BYTES];
         getrandom::fill(&mut block).map_err(|_| "download payload randomness unavailable")?;
         let download_meter = crate::meter::Meter::new(config.verbose);
-        let uploads = UploadStore::with_meter(crate::meter::Meter::new(config.verbose))?;
+        let uploads =
+            UploadStore::with_meter(crate::meter::Meter::new(config.verbose)).ok_or("upload session mint failed")?;
         Ok(Self {
             config,
             discovery,
@@ -708,7 +709,7 @@ impl HttpServer {
                     for operation in operations.lock().expect("operations poisoned").iter() {
                         operation.lock().expect("operation poisoned").body_complete = true;
                     }
-                    upload_http::lane_refusal(graphite_meter_core::failure::UploadRefusal::Revoked)
+                    upload_http::refusal(graphite_meter_core::failure::UploadRefusal::Revoked)
                 } else {
                     return Err(io::ErrorKind::PermissionDenied.into());
                 }

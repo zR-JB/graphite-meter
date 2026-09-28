@@ -6,7 +6,6 @@ use serde::Serialize;
 use sha2::Sha256;
 use std::{
     collections::HashMap,
-    fmt,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -56,44 +55,6 @@ impl Owner {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UploadError {
-    Invalid,
-    GlobalFull,
-    ClientFull,
-    OwnerMismatch,
-    RandomUnavailable,
-}
-impl UploadError {
-    fn refusal(self) -> Option<UploadRefusal> {
-        match self {
-            Self::Invalid => Some(UploadRefusal::Invalid),
-            Self::GlobalFull => Some(UploadRefusal::GlobalFull),
-            Self::ClientFull => Some(UploadRefusal::ClientFull),
-            Self::OwnerMismatch => Some(UploadRefusal::OwnerMismatch),
-            Self::RandomUnavailable => None,
-        }
-    }
-    pub fn code(self) -> &'static str {
-        self.refusal().map_or("unavailable", UploadRefusal::name)
-    }
-    pub fn status(self) -> http::StatusCode {
-        http::StatusCode::from_u16(self.refusal().map_or(503, UploadRefusal::status)).expect("known upload status")
-    }
-    pub fn retry(self) -> bool {
-        matches!(self, Self::GlobalFull | Self::ClientFull)
-    }
-}
-impl fmt::Display for UploadError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(
-            self.refusal()
-                .map_or("upload session mint failed", UploadRefusal::message),
-        )
-    }
-}
-impl std::error::Error for UploadError {}
-
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 pub struct UploadCheckpoint {
     pub bytes: u64,
@@ -130,9 +91,9 @@ struct Aggregate {
     changed: Arc<tokio::sync::Notify>,
 }
 impl Aggregate {
-    fn authorize(&self, owner: &Owner) -> Result<(), UploadError> {
+    fn authorize(&self, owner: &Owner) -> Result<(), UploadRefusal> {
         if &self.owner != owner {
-            Err(UploadError::OwnerMismatch)
+            Err(UploadRefusal::OwnerMismatch)
         } else {
             Ok(())
         }
@@ -145,14 +106,14 @@ impl Aggregate {
     }
 }
 impl UploadStore {
-    pub fn new() -> Result<Self, UploadError> {
+    pub fn new() -> Option<Self> {
         Self::with_meter(crate::meter::Meter::default())
     }
 
-    pub(crate) fn with_meter(meter: crate::meter::Meter) -> Result<Self, UploadError> {
+    pub(crate) fn with_meter(meter: crate::meter::Meter) -> Option<Self> {
         let mut key = [0; 32];
-        random(&mut key)?;
-        Ok(Self {
+        getrandom::fill(&mut key).ok()?;
+        Some(Self {
             inner: Arc::new(Store {
                 key,
                 origin: Instant::now() - Duration::from_nanos(1),
@@ -166,15 +127,15 @@ impl UploadStore {
         self.inner.meter.log("upload", window);
     }
     /// Tokens authenticate themselves; minting consumes no retained aggregate capacity.
-    pub fn mint(&self) -> Result<String, UploadError> {
+    pub fn mint(&self) -> Option<String> {
         let mut raw = [0; 56];
         raw[..8].copy_from_slice(&nanos(self.inner.origin.elapsed()).max(1).to_be_bytes());
-        random(&mut raw[8..24])?;
+        getrandom::fill(&mut raw[8..24]).ok()?;
         let mut mac = token_mac(&self.inner.key);
         mac.update(&raw[..24]);
         let tag = mac.finalize().into_bytes();
         raw[24..].copy_from_slice(&tag);
-        Ok(format!("gmu_{}", URL_SAFE_NO_PAD.encode(raw)))
+        Some(format!("gmu_{}", URL_SAFE_NO_PAD.encode(raw)))
     }
     fn valid(&self, id: &str) -> bool {
         let Some(encoded) = id.strip_prefix("gmu_") else {
@@ -198,23 +159,29 @@ impl UploadStore {
         let now = nanos(self.inner.origin.elapsed());
         issued > 0 && issued <= now && now - issued <= nanos(TOKEN_TTL)
     }
-    fn access(&self, id: &str, owner: &Owner, create: bool, lane: bool) -> Result<Arc<Mutex<Aggregate>>, UploadError> {
+    fn access(
+        &self,
+        id: &str,
+        owner: &Owner,
+        create: bool,
+        lane: bool,
+    ) -> Result<Arc<Mutex<Aggregate>>, UploadRefusal> {
         self.sweep_if_due();
         let mut entries = self.inner.entries.lock().expect("upload store lock");
         let aggregate = if let Some(aggregate) = entries.by_id.get(id) {
             aggregate.clone()
         } else {
             if !create || entries.tombstones.contains_key(id) || !self.valid(id) {
-                return Err(UploadError::Invalid);
+                return Err(UploadRefusal::Invalid);
             }
             if crate::client_address::share_full(owner.client_keys(), MAX_UPLOADS_PER_CLIENT, |key| {
                 entries.by_client.get(key).copied().unwrap_or_default()
             }) {
-                return Err(UploadError::ClientFull);
+                return Err(UploadRefusal::ClientFull);
             }
             if entries.by_id.len() >= MAX_LIVE_UPLOADS {
                 if entries.tombstones.len() >= MAX_LIVE_UPLOADS {
-                    return Err(UploadError::GlobalFull);
+                    return Err(UploadRefusal::GlobalFull);
                 }
                 let victim = entries
                     .by_id
@@ -225,7 +192,7 @@ impl UploadStore {
                     })
                     .min_by_key(|(_, touched)| *touched);
                 let Some((victim, _)) = victim else {
-                    return Err(UploadError::GlobalFull);
+                    return Err(UploadRefusal::GlobalFull);
                 };
                 let aggregate = entries.by_id.remove(&victim).expect("selected receiver exists");
                 let mut state = aggregate.lock().expect("upload aggregate lock");
@@ -265,7 +232,7 @@ impl UploadStore {
                 // Completion is terminal: a late stream must not change a
                 // total that a progress subscriber may already have emitted.
                 if state.finished {
-                    return Err(UploadError::Invalid);
+                    return Err(UploadRefusal::Invalid);
                 }
                 state.lanes += 1;
                 state.touched = Instant::now();
@@ -273,7 +240,7 @@ impl UploadStore {
         }
         Ok(aggregate)
     }
-    pub fn begin(&self, id: &str, owner: &Owner) -> Result<UploadLane, UploadError> {
+    pub fn begin(&self, id: &str, owner: &Owner) -> Result<UploadLane, UploadRefusal> {
         Ok(UploadLane {
             aggregate: self.access(id, owner, true, true)?,
             bytes: 0,
@@ -281,21 +248,21 @@ impl UploadStore {
         })
     }
     /// Read-only observation never extends retention and never creates an aggregate.
-    pub fn checkpoint(&self, id: &str, owner: &Owner) -> Result<UploadCheckpoint, UploadError> {
+    pub fn checkpoint(&self, id: &str, owner: &Owner) -> Result<UploadCheckpoint, UploadRefusal> {
         Ok(self
             .access(id, owner, false, false)?
             .lock()
             .expect("upload aggregate lock")
             .checkpoint())
     }
-    pub fn finish(&self, id: &str, owner: &Owner) -> Result<(), UploadError> {
+    pub fn finish(&self, id: &str, owner: &Owner) -> Result<(), UploadRefusal> {
         let aggregate = self.access(id, owner, false, false)?;
         let mut state = aggregate.lock().expect("upload aggregate lock");
         state.finished = true;
         state.changed.notify_waiters();
         Ok(())
     }
-    pub fn subscribe(&self, id: &str, owner: &Owner) -> Result<UploadSubscription, UploadError> {
+    pub fn subscribe(&self, id: &str, owner: &Owner) -> Result<UploadSubscription, UploadRefusal> {
         let aggregate = self.access(id, owner, true, false)?;
         let claim = Arc::new(());
         let changed = {
@@ -492,9 +459,6 @@ impl Drop for UploadSubscription {
 fn nanos(duration: Duration) -> u64 {
     duration.as_nanos().min(u64::MAX as u128) as u64
 }
-fn random(bytes: &mut [u8]) -> Result<(), UploadError> {
-    getrandom::fill(bytes).map_err(|_| UploadError::RandomUnavailable)
-}
 fn token_mac(key: &[u8; 32]) -> Hmac<Sha256> {
     Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts a 32-byte key")
 }
@@ -519,13 +483,13 @@ mod tests {
             store
                 .begin(&signed(nanos(Duration::from_secs(1))), &Owner::principal("a"))
                 .err(),
-            Some(UploadError::Invalid)
+            Some(UploadRefusal::Invalid)
         );
         assert_eq!(
             store
                 .begin(&signed(nanos(Duration::from_secs(600))), &Owner::principal("a"))
                 .err(),
-            Some(UploadError::Invalid)
+            Some(UploadRefusal::Invalid)
         );
         let id = store.mint().unwrap();
         let mut lane = store.begin(&id, &Owner::principal("a")).unwrap();
@@ -565,10 +529,10 @@ mod tests {
 
         store.sweep_at(touched + TOKEN_TTL);
         assert_eq!(store.retained(), 1);
-        assert_eq!(store.begin(&id, &owner).err(), Some(UploadError::Invalid));
+        assert_eq!(store.begin(&id, &owner).err(), Some(UploadRefusal::Invalid));
         assert_eq!(
             store.begin(&id, &Owner::principal("other")).err(),
-            Some(UploadError::OwnerMismatch)
+            Some(UploadRefusal::OwnerMismatch)
         );
     }
 
@@ -594,7 +558,7 @@ mod tests {
         drop(store.begin(&store.mint().unwrap(), &owner).unwrap());
         assert_eq!(
             store.begin(&store.mint().unwrap(), &owner).err(),
-            Some(UploadError::ClientFull)
+            Some(UploadRefusal::ClientFull)
         );
         drop(store.begin(&store.mint().unwrap(), &other).unwrap());
     }
