@@ -80,7 +80,7 @@ test("failed and hanging unselected peers do not hold a selected pair", async (p
   expect(saved.result.multiServer.participants).toEqual(["self", "server-1"]);
 
   const settings = await openSettings(page);
-  const choices = settings.getByRole("group", { name: "Servers to test" });
+  const choices = settings.getByRole("group", { name: "Test servers" });
   await expect(choices.getByRole("checkbox")).toHaveCount(5);
   await expect(choices).toHaveAttribute("aria-busy", "true");
   await expect(choices).toHaveAttribute("aria-busy", "false", {

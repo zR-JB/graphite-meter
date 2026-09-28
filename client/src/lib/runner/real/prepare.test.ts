@@ -269,6 +269,34 @@ test("cross-origin IPv6 discovery and path preparation fail with DNS guidance be
   expect(requests).toBe(0);
 });
 
+test("a forced choice the server does not offer fails by name, before any request", async () => {
+  let requests = 0;
+  stub(async () => {
+    requests++;
+    throw new Error("unexpected fetch");
+  });
+  const { prepareConnections, PathNotOfferedError } = await import("./prepare");
+  const known = classifyTransportDiscovery(
+    [fetchAd("https://meter.test", "http1")],
+    [],
+    "https://meter.test",
+    true,
+  );
+  const config = structuredClone(DEFAULT_CONFIG);
+  config.transports.throughputTarget = "protocol:http2";
+  const prepared = await prepareConnections(
+    config,
+    emptyConnectionValidation(),
+    ["throughput"],
+    new AbortController().signal,
+    testSelfCredentials(),
+    known,
+  );
+  expect(prepared.failure).toBeInstanceOf(PathNotOfferedError);
+  expect(prepared.validation.throughput.message).toBe("HTTP/2 not offered");
+  expect(requests).toBe(0);
+});
+
 test("secure interfaces reject clear non-loopback discovery before any request", async () => {
   let requests = 0;
   stub(

@@ -942,8 +942,10 @@
   .choices small {
     display: block;
     margin-top: 1px;
+    overflow: hidden;
     color: var(--text-soft);
     font: var(--w-normal) var(--type-sm) / 1.35 var(--font-sans);
+    text-overflow: ellipsis;
   }
   /* An ordinary plate row whose wash and focus ring are an inset layer, like a choice's. */
   .link-row {

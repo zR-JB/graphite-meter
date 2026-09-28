@@ -41,6 +41,7 @@ import {
   latencyPathNeeded,
   protocolFromNextHop,
   ROUTES,
+  selectionName,
   selectTarget,
   type AnyTarget,
   type ConnectionValidation,
@@ -59,6 +60,8 @@ import { resourceProtocol } from "./resourceTiming";
 export class PreflightUnavailableError extends Error {}
 /** A browser policy restriction whose message gives a known configuration remedy. */
 export class BrowserOriginBlockedError extends Error {}
+/** A forced choice the server does not advertise; its message names the choice. */
+export class PathNotOfferedError extends Error {}
 
 let probes = 0;
 
@@ -179,7 +182,8 @@ export async function prepareConnections(
         signal.throwIfAborted();
         result.failure ??= cause;
         const message =
-          cause instanceof BrowserOriginBlockedError
+          cause instanceof BrowserOriginBlockedError ||
+          cause instanceof PathNotOfferedError
             ? cause.message
             : "Connection check failed";
         result.validation[role] = {
@@ -215,11 +219,13 @@ async function prepareRole<
     const restriction = blockedSelectionReason(discovery, role, selection);
     if (restriction) throw new BrowserOriginBlockedError(restriction);
     const unsupported = selectTarget(discovery, role, selection, true);
-    throw new Error(
-      unsupported
-        ? `${unsupported.transport} is not supported by this client`
-        : `${selection} ${role} target unavailable`,
-    );
+    if (unsupported)
+      throw new Error(
+        `${unsupported.transport} is not supported by this client`,
+      );
+    throw selection === "auto"
+      ? new Error(`${selection} ${role} target unavailable`)
+      : new PathNotOfferedError(`${selectionName(selection)} not offered`);
   }
   let failure: unknown;
   for (const target of selection === "auto"

@@ -80,7 +80,7 @@ own origin and the native client accept literals.
 
 ## Browser controls
 
-**Settings → Connection paths → Test servers** is a checklist shown when the catalogue has more than one server.
+**Settings → Connection → Test servers** is a checklist shown when the catalogue has more than one server.
 Select one to four; the last one cannot be cleared. Each entry shows its status (Checking, Ready, Recheck needed,
 Failed, Sign in) and its **preflight request time**: the HTTP discovery request including connection setup, not a
 latency measurement. Hover or focus shows name, location and host. Inline **Retry** and **Sign in** resolve

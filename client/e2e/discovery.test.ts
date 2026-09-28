@@ -106,7 +106,7 @@ test("settings discovery is bounded, reused and cancelled on close", async (page
     },
   });
   const settings = await openSettings(page);
-  const choices = settings.getByRole("group", { name: "Servers to test" });
+  const choices = settings.getByRole("group", { name: "Test servers" });
   const ready = settings.locator('[data-readiness="verified"]');
   await expect(ready).toBeVisible({ timeout: 15_000 });
   await expect(choices.locator(".server-preflight")).toHaveCount(4);
@@ -154,7 +154,7 @@ test("metadata timeouts back off without starving later servers", async (page) =
   const activity = await observe(page, [frankfurt.url, fleet[2].url]);
   await open(page);
   const settings = await openSettings(page);
-  const choices = settings.getByRole("group", { name: "Servers to test" });
+  const choices = settings.getByRole("group", { name: "Test servers" });
   const status = (name: string) =>
     choices.locator("label", { hasText: name }).locator(".server-status");
   await expect(choices).toHaveAttribute("aria-busy", "true");
@@ -182,7 +182,7 @@ test("an origin-only catalog discovers peer identity without traversal", async (
   const activity = await observe(page);
   await open(page, helsinki.url);
   const settings = await openSettings(page);
-  const choices = settings.getByRole("group", { name: "Servers to test" });
+  const choices = settings.getByRole("group", { name: "Test servers" });
   const peer = choices.getByRole("checkbox", { name: /^Frankfurt/ });
   await expect(peer).toBeVisible({ timeout: 15_000 });
   expect(await peer.evaluate((input) => input.checked)).toBe(false);

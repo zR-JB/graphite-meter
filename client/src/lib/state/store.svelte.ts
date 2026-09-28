@@ -152,6 +152,8 @@ class AppStore {
   catalogLoading = $state(true);
   selectionValidation = $derived.by(
     (): "verified" | "checking" | "failed" | "stale" => {
+      // Loading the server list is part of the check, not a stale one.
+      if (this.catalogLoading) return "checking";
       const states = this.selectedServers.map(
         (id) => this.servers.get(id)?.readiness ?? "unchecked",
       );

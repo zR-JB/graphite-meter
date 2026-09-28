@@ -187,8 +187,9 @@ hue, never by a boxed icon.
   the card says so). The run button is the one ink button, sentence case, with the estimate as a quiet suffix; Stop
   steps back to an outline.
 - **Sheet** (`SidePanel`, `.sheet`): the title, quiet head actions, grouped plates. **Choice list** (`.choices`): rows
-  with a name and a second line saying what the choice does (`PATH_NOTE`) or why it is unavailable; the ring or check
-  alone marks the choice. Unavailable choices fold into one row.
+  with a name and a second line saying what the choice does (`PATH_NOTE`) or why it is unavailable, cut with an
+  ellipsis; the ring or check alone marks the choice. Unavailable choices fold into one row. While a run locks a list,
+  every row but the chosen one dims.
 - **Duration** (`DurationStrip`): presets over a bar of the enabled stages, each segment as wide as its time but never
   narrower than its words, with the time and name under it; Custom adds a − time + stepper (`TimeStepper`) per stage
   and for warmup. Steps grow with the time (0.5 s, 1 s, 10 s, 1 min, 5 min) and land on their grid; a click edits the
