@@ -452,7 +452,7 @@ impl Ui {
     /// Go's testFields: the run's servers and paths, then its stream and timing settings.
     fn test_fields(&self, width: usize) -> Vec<Line<'static>> {
         let label = |name: &str| Span::styled(format!("{name:<11}"), Style::new().fg(self.theme.text));
-        let missing = || crate::vocabulary::MISSING.to_owned();
+        let missing = || MISSING.to_owned();
         if !self.snapshot.started() {
             let value = if self.active() {
                 "Checking paths…".into()
@@ -650,7 +650,7 @@ impl Ui {
                 }
             } else if !self.active() {
                 let skipped = crate::model::StageStatus::Skipped.label();
-                line.push(Span::styled(format!("{} {skipped}", crate::vocabulary::MISSING), muted));
+                line.push(Span::styled(format!("{MISSING} {skipped}"), muted));
             } else {
                 let planned = self.requested.duration(*stage).as_secs();
                 line.push(Span::styled(format!("○ {planned} s"), muted));

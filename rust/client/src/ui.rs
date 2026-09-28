@@ -6,7 +6,9 @@ use crate::{
     Error,
     config::Config,
     model::{Phase, Snapshot},
+    report::terminal_char,
     theme::Theme,
+    vocabulary::MISSING,
 };
 use crossterm::{
     event::{
@@ -779,40 +781,37 @@ fn popup(area: Rect, width: u16, height: u16) -> Rect {
     )
 }
 pub fn safe_text(value: &str, limit: usize) -> String {
-    value
-        .chars()
-        .take(limit.min(MAX_TEXT))
-        .map(|c| if safe_character(c) { c } else { '�' })
-        .collect()
+    value.chars().take(limit.min(MAX_TEXT)).map(terminal_char).collect()
 }
 fn cell_width(character: char) -> usize {
     UnicodeWidthChar::width(character).unwrap_or(0)
 }
+/// The safe text that fits in `columns` cells.
 fn safe_text_width(value: &str, columns: usize) -> String {
     if columns == 0 {
         return String::new();
     }
-    let mut text = String::new();
     let mut width = 0;
-    for character in value.chars().take(MAX_TEXT) {
-        let character = if safe_character(character) { character } else { '�' };
-        let next = width + cell_width(character);
-        if next > columns {
-            break;
-        }
-        text.push(character);
-        width = next;
-    }
-    text
+    let fits = |character: &char| {
+        width += cell_width(*character);
+        width <= columns
+    };
+    value
+        .chars()
+        .take(MAX_TEXT)
+        .map(terminal_char)
+        .take_while(fits)
+        .collect()
 }
 fn rate(value: Option<f64>) -> String {
-    value
-        .filter(|value| value.is_finite() && *value >= 0.0)
-        .map_or_else(|| "—".into(), |value| graphite_meter_core::format::rate(value / 8.0))
+    value.filter(|value| value.is_finite() && *value >= 0.0).map_or_else(
+        || MISSING.into(),
+        |value| graphite_meter_core::format::rate(value / 8.0),
+    )
 }
 fn milliseconds(value: Option<f64>) -> String {
     value.filter(|value| value.is_finite() && *value >= 0.0).map_or_else(
-        || "—".into(),
+        || MISSING.into(),
         |value| format!("{} ms", graphite_meter_core::format::latency_ms(value)),
     )
 }

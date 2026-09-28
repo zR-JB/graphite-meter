@@ -5,7 +5,7 @@ use crate::{
     theme::Theme,
     vocabulary::MISSING,
 };
-use graphite_meter_core::{failure::FailureReason, format, measurement::MeasurementResult};
+use graphite_meter_core::{failure::FailureReason, format, measurement::MeasurementResult, text::terminal_character};
 use ratatui::style::Color;
 use std::time::Duration;
 
@@ -866,16 +866,7 @@ fn width(text: &str) -> usize {
 }
 
 fn unpainted(text: &str) -> String {
-    let mut plain = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(character) = rest.chars().next() {
-        let length = sgr_length(rest).unwrap_or_else(|| {
-            plain.push(character);
-            character.len_utf8()
-        });
-        rest = &rest[length..];
-    }
-    plain
+    map_text(text, false, |character| character)
 }
 
 /// The length of the SGR sequence `text` starts with, as `paint` writes them.
@@ -887,23 +878,33 @@ fn sgr_length(text: &str) -> Option<usize> {
 
 /// The TUI's safe text for a report line, keeping only the SGR sequences `paint` adds.
 fn safe(line: &str) -> String {
-    let mut safe = String::with_capacity(line.len());
-    let mut rest = line;
+    map_text(line, true, terminal_char)
+}
+
+/// The text with each character mapped, keeping or dropping the SGR sequences `paint` adds.
+fn map_text(text: &str, keep_sgr: bool, map: fn(char) -> char) -> String {
+    let mut mapped = String::with_capacity(text.len());
+    let mut rest = text;
     while let Some(character) = rest.chars().next() {
         let length = match sgr_length(rest) {
-            Some(length) => {
-                safe.push_str(&rest[..length]);
+            Some(length) if keep_sgr => {
+                mapped.push_str(&rest[..length]);
                 length
             }
+            Some(length) => length,
             None => {
-                let terminal = graphite_meter_core::text::terminal_character(character);
-                safe.push(if terminal { character } else { '�' });
+                mapped.push(map(character));
                 character.len_utf8()
             }
         };
         rest = &rest[length..];
     }
-    safe
+    mapped
+}
+
+/// A character the terminal shows as itself, or the replacement for one that could control it.
+pub(crate) fn terminal_char(c: char) -> char {
+    if terminal_character(c) { c } else { '�' }
 }
 
 /// A foreground colour's SGR parameters, as Go's colour profiles write each depth.
