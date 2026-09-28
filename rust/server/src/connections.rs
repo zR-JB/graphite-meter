@@ -1,7 +1,7 @@
 //! Connection capacity is acquired before protocol setup and owned until teardown.
+use crate::client_address::Shares;
 use ipnet::IpNet;
 use std::{
-    collections::HashMap,
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
@@ -23,8 +23,8 @@ pub enum Refusal {
 #[derive(Default)]
 struct Counts {
     stats: Stats,
-    clients: HashMap<String, usize>,
-    buffered: HashMap<String, usize>,
+    clients: Shares,
+    buffered: Shares,
 }
 struct Inner {
     global_max: usize,
@@ -61,9 +61,7 @@ impl Connections {
             crate::client_address::client_keys(addr)
         };
         let mut counts = crate::admission::recover(&self.0.counts, "connection");
-        if crate::client_address::share_full(&keys, self.0.client_max, |key| {
-            counts.clients.get(key).copied().unwrap_or_default()
-        }) {
+        if counts.clients.full(&keys, self.0.client_max) {
             counts.stats.rejected_client = counts.stats.rejected_client.saturating_add(1);
             return Err(Refusal::ClientFull);
         }
@@ -72,20 +70,14 @@ impl Connections {
             return Err(Refusal::GlobalFull);
         }
         // Checked last and left out of the counters, like Go's QUIC share.
-        if buffered
-            && crate::client_address::share_full(&keys, self.0.client_max.min(8), |key| {
-                counts.buffered.get(key).copied().unwrap_or_default()
-            })
-        {
+        if buffered && counts.buffered.full(&keys, self.0.client_max.min(8)) {
             return Err(Refusal::ClientFull);
         }
         counts.stats.active += 1;
         counts.stats.peak = counts.stats.peak.max(counts.stats.active);
-        for key in &keys {
-            *counts.clients.entry(key.clone()).or_default() += 1;
-            if buffered {
-                *counts.buffered.entry(key.clone()).or_default() += 1;
-            }
+        counts.clients.hold(&keys);
+        if buffered {
+            counts.buffered.hold(&keys);
         }
         Ok(Permit {
             owner: self.clone(),
@@ -103,19 +95,9 @@ impl Drop for Permit {
     fn drop(&mut self) {
         let mut counts = crate::admission::recover(&self.owner.0.counts, "connection");
         counts.stats.active -= 1;
-        for key in &self.keys {
-            let count = counts.clients.get_mut(key).expect("permit owns client capacity");
-            *count -= 1;
-            if *count == 0 {
-                counts.clients.remove(key);
-            }
-            if self.buffered {
-                let count = counts.buffered.get_mut(key).expect("permit owns buffer share");
-                *count -= 1;
-                if *count == 0 {
-                    counts.buffered.remove(key);
-                }
-            }
+        counts.clients.release(&self.keys);
+        if self.buffered {
+            counts.buffered.release(&self.keys);
         }
     }
 }
