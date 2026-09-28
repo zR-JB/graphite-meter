@@ -328,8 +328,13 @@
     padding-top: var(--space-2);
     border-top: var(--hairline) solid var(--border-subtle);
   }
+  /* Empty, the row keeps one line of facts (label and value), so the first facts never push the instrument up. */
   .facts:empty {
     visibility: hidden;
+    min-height: calc(
+      var(--space-2) + var(--hairline) + 1.3 *
+        (var(--type-sm) + var(--type-md)) + 1px
+    );
   }
   .facts > div {
     display: grid;
