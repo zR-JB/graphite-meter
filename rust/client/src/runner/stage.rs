@@ -906,9 +906,12 @@ async fn start_transfer(
     } else {
         transport.clone()
     };
-    let mut lanes = Lanes::default();
-    if stage.downloads() {
-        lanes.down = Some(if target.transport == ThroughputTransport::FetchStream {
+    // Both directions start together, as Go's roles do.
+    let download = async {
+        if !stage.downloads() {
+            return Ok(None);
+        }
+        let started = if target.transport == ThroughputTransport::FetchStream {
             Download::start(
                 transport.clone(),
                 down,
@@ -916,7 +919,7 @@ async fn start_transfer(
                 lane_stagger(config.warmup, server.idle_rtt, down),
                 stopped.clone(),
             )
-            .await?
+            .await
         } else {
             Download::start_webtransport(
                 &server.client,
@@ -926,26 +929,30 @@ async fn start_transfer(
                 config.insecure,
                 stopped.clone(),
             )
-            .await?
-        });
-    }
-    if stage.uploads() {
-        let upload = if target.transport == ThroughputTransport::FetchStream {
-            let stagger = lane_stagger(config.warmup, server.idle_rtt, up);
-            Upload::start(upload_transport, up, stagger, stopped).await
-        } else {
-            Upload::start_webtransport(upload_transport, up, stopped).await
+            .await
         };
-        match upload {
-            Ok(upload) => lanes.up = Some(upload),
-            Err(error) => {
-                // A bidirectional member may have a live download when its upload cannot start.
-                let _ = lanes.close(false).await;
-                return Err(error);
-            }
+        started.map(Some)
+    };
+    let upload = async {
+        if !stage.uploads() {
+            return Ok(None);
         }
-    }
-    Ok(lanes)
+        let started = if target.transport == ThroughputTransport::FetchStream {
+            let stagger = lane_stagger(config.warmup, server.idle_rtt, up);
+            Upload::start(upload_transport, up, stagger, stopped.clone()).await
+        } else {
+            Upload::start_webtransport(upload_transport, up, stopped.clone()).await
+        };
+        started.map(Some)
+    };
+    let (down, up, error) = match tokio::join!(download, upload) {
+        (Ok(down), Ok(up)) => return Ok(Lanes { down, up }),
+        (Err(error), up) => (None, up.ok().flatten(), error),
+        (down, Err(error)) => (down.ok().flatten(), None, error),
+    };
+    // A bidirectional member may have one live direction when the other cannot start.
+    let _ = Lanes { down, up }.close(false).await;
+    Err(error)
 }
 
 fn observe(

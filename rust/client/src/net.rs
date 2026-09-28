@@ -28,6 +28,7 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
+use tokio::sync::watch;
 use tokio_rustls::TlsConnector;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -54,15 +55,21 @@ pub fn streaming(body: impl Stream<Item = Result<Bytes>> + Send + 'static) -> Bo
 struct Connections {
     proxy: Proxy,
     tls: [TlsConnector; 3],
-    pools: Mutex<HashMap<Key, Arc<tokio::sync::Mutex<Pool>>>>,
+    pools: Mutex<HashMap<Key, Arc<Mutex<Pool>>>>,
     maintenance: OnceLock<tokio::task::JoinHandle<()>>,
 }
 type Key = (String, Protocol);
 
+/// Held only to pick or return a connection, never across a dial or a request.
 struct Pool {
     used: tokio::time::Instant,
     h1: Vec<Http1>,
     h2: Option<http2::SendRequest<Body>>,
+    /// A dial that may yield HTTP/2: requests wait for it rather than open their own. Its sender
+    /// drops when the dial ends, however it ends.
+    dialing: Option<watch::Receiver<()>>,
+    /// A negotiated dial found HTTP/1.1, so each request dials its own connection at once.
+    http1_only: bool,
 }
 impl Default for Pool {
     fn default() -> Self {
@@ -70,7 +77,43 @@ impl Default for Pool {
             used: tokio::time::Instant::now(),
             h1: Vec::new(),
             h2: None,
+            dialing: None,
+            http1_only: false,
         }
+    }
+}
+
+enum Next {
+    Ready(Sender),
+    Wait(watch::Receiver<()>),
+    /// Dial outside the lock; the sender, if any, is the reservation later requests wait for.
+    Dial(Option<watch::Sender<()>>),
+}
+
+impl Pool {
+    fn next(&mut self, multiplexed: bool) -> Next {
+        self.used = tokio::time::Instant::now();
+        if let Some(sender) = &self.h2 {
+            if !sender.is_closed() {
+                return Next::Ready(Sender::H2(sender.clone()));
+            }
+            self.h2 = None;
+        }
+        self.h1.retain(|connection| !connection.sender.is_closed());
+        if let Some(index) = self.h1.iter().position(|connection| connection.sender.is_ready()) {
+            return Next::Ready(Sender::H1(self.h1.swap_remove(index)));
+        }
+        if !multiplexed || self.http1_only {
+            return Next::Dial(None);
+        }
+        if let Some(dialing) = &self.dialing
+            && dialing.has_changed().is_ok()
+        {
+            return Next::Wait(dialing.clone());
+        }
+        let (reservation, dialing) = watch::channel(());
+        self.dialing = Some(dialing);
+        Next::Dial(Some(reservation))
     }
 }
 
@@ -105,17 +148,32 @@ impl Connections {
         })
     }
 
-    async fn sender(&self, origin: &str, protocol: Protocol, pool: &mut Pool) -> Result<Sender> {
-        pool.used = tokio::time::Instant::now();
-        if let Some(sender) = &pool.h2
-            && !sender.is_closed()
-        {
-            return Ok(Sender::H2(sender.clone()));
+    /// A pooled connection, or a new one dialled outside the pool's lock, so no request waits
+    /// behind another's dial unless that dial may bring the HTTP/2 connection it would share.
+    async fn sender(&self, origin: &str, protocol: Protocol, pool: &Mutex<Pool>) -> Result<Sender> {
+        let multiplexed =
+            protocol == Protocol::Http2 || protocol == Protocol::Negotiated && origin.starts_with("https:");
+        loop {
+            let next = pool.lock().expect("connection pool poisoned").next(multiplexed);
+            match next {
+                Next::Ready(sender) => return Ok(sender),
+                Next::Wait(mut dialing) => {
+                    let _ = dialing.changed().await;
+                }
+                Next::Dial(reservation) => {
+                    let sender = self.dial(origin, protocol).await?;
+                    let mut pool = pool.lock().expect("connection pool poisoned");
+                    match &sender {
+                        Sender::H2(shared) => pool.h2 = Some(shared.clone()),
+                        Sender::H1(_) => pool.http1_only |= reservation.is_some(),
+                    }
+                    return Ok(sender);
+                }
+            }
         }
-        pool.h1.retain(|connection| !connection.sender.is_closed());
-        if let Some(index) = pool.h1.iter().position(|connection| connection.sender.is_ready()) {
-            return Ok(Sender::H1(pool.h1.swap_remove(index)));
-        }
+    }
+
+    async fn dial(&self, origin: &str, protocol: Protocol) -> Result<Sender> {
         let target = target_origin(origin)?.ok_or("missing origin")?;
         let tls = (target.scheme == "https").then(|| match protocol {
             Protocol::Http1 => &self.tls[0],
@@ -139,7 +197,6 @@ impl Connections {
                 .handshake(io)
                 .await?;
             tokio::spawn(driver);
-            pool.h2 = Some(sender.clone());
             Ok(Sender::H2(sender))
         } else {
             let (sender, driver) = http1::handshake(io).await?;
@@ -166,9 +223,7 @@ impl Connections {
                     };
                     owner.pools.lock().expect("connections poisoned").retain(|_, pool| {
                         Arc::strong_count(pool) > 1
-                            || pool
-                                .try_lock()
-                                .is_ok_and(|pool| pool.used.elapsed() < POOL_IDLE_TIMEOUT)
+                            || pool.lock().is_ok_and(|pool| pool.used.elapsed() < POOL_IDLE_TIMEOUT)
                     });
                 }
             })
@@ -182,11 +237,7 @@ impl Connections {
             .entry((origin.clone(), protocol))
             .or_default()
             .clone();
-        let sender = tokio::time::timeout(CONTROL_TIMEOUT, async {
-            let mut pool = pool.lock().await;
-            self.sender(&origin, protocol, &mut pool).await
-        })
-        .await??;
+        let sender = tokio::time::timeout(CONTROL_TIMEOUT, self.sender(&origin, protocol, &pool)).await??;
         match sender {
             Sender::H2(mut sender) => {
                 sender.ready().await?;
@@ -213,7 +264,7 @@ impl Connections {
                 }
                 *request.version_mut() = Version::HTTP_11;
                 let response = connection.sender.send_request(request).await?;
-                let mut pool = pool.lock().await;
+                let mut pool = pool.lock().expect("connection pool poisoned");
                 if pool.h1.len() < IDLE_PER_ORIGIN {
                     pool.used = tokio::time::Instant::now();
                     pool.h1.push(connection);
@@ -667,6 +718,64 @@ mod tests {
             })
             .await??;
         }
+        Ok(())
+    }
+
+    /// A dial that stalls in its proxy handshake holds up neither another request's own dial nor
+    /// the return of its response.
+    #[tokio::test]
+    async fn a_stalled_http1_dial_leaves_other_requests_to_dial_their_own() -> Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        /// A SOCKS5 proxy that is also the origin.
+        async fn origin(mut stream: tokio::net::TcpStream) -> Result<()> {
+            stream.read_exact(&mut [0; 3]).await?;
+            stream.write_all(&[5, 0]).await?;
+            let mut request = [0; 5];
+            stream.read_exact(&mut request).await?;
+            stream.read_exact(&mut vec![0; usize::from(request[4]) + 2]).await?;
+            stream.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await?;
+            loop {
+                let mut head = Vec::new();
+                while !head.ends_with(b"\r\n\r\n") {
+                    head.push(stream.read_u8().await?);
+                }
+                stream
+                    .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok")
+                    .await?;
+            }
+        }
+        /// The first dial stops after its SOCKS greeting; later ones reach the origin.
+        async fn proxy(listener: tokio::net::TcpListener, stalling: tokio::sync::oneshot::Sender<()>) -> Result<()> {
+            let (_first, _) = listener.accept().await?;
+            let _ = stalling.send(());
+            loop {
+                tokio::spawn(origin(listener.accept().await?.0));
+            }
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let (stalling, stalled) = tokio::sync::oneshot::channel();
+        let proxy = tokio::spawn(proxy(listener, stalling));
+        let mut http = http(false);
+        http.set_proxy(Proxy::new(&format!("socks5://{address}"), "", ""));
+        let target = "http://meter.test/probe";
+        let first = tokio::spawn({
+            let http = http.clone();
+            async move { http.request(Method::GET, target, Protocol::Http1).await.map(drop) }
+        });
+        stalled.await?;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            for _ in 0..2 {
+                let response = http.request(Method::GET, target, Protocol::Http1).await?;
+                assert_eq!(bounded_body(response).await?, b"ok");
+            }
+            Ok::<_, Error>(())
+        })
+        .await
+        .map_err(|_| "a request waited behind another request's dial")??;
+        assert!(!first.is_finished());
+        first.abort();
+        proxy.abort();
         Ok(())
     }
 
