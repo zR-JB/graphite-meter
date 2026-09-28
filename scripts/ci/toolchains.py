@@ -41,6 +41,12 @@ def rust_channel(root: Path = ROOT) -> str:
     return tomllib.loads((root / "rust/rust-toolchain.toml").read_text(encoding="utf-8"))["toolchain"]["channel"]
 
 
+def host_platform() -> str:
+    """This machine as GOOS/GOARCH, the platform whose TUI builds it can run."""
+    machine = platform.machine().lower()
+    return f"{platform.system().lower()}/{ {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(machine, machine)}"
+
+
 def tui_targets(path: Path) -> dict[str, str]:
     """Each shipped GOOS/GOARCH platform and its Rust target, as scripts/tui-targets.txt lists them."""
     platforms: dict[str, str] = {}

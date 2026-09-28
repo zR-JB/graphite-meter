@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import platform
 import re
 import shutil
 import stat
@@ -19,7 +18,7 @@ from .github_api import (
     TLS_NAME, ControlPlaneError, decode_json, expect_array, expect_object, fail, file_sha256,
     int_field, local_path, object_field, str_field,
 )
-from .toolchains import tui_targets
+from .toolchains import host_platform, tui_targets
 from .verify_oci import BLOB_LIMIT, source_commit
 
 CHECKSUM_LINE = re.compile(r"([0-9a-fA-F]{64})[ \t]+[* ]?(.+)")
@@ -182,9 +181,7 @@ def verify_client_archives(dist: Path, version: str, targets: Path) -> None:
 
 def verify_tui_version(version: str, dist: Path) -> None:
     """Run the archived TUI built for this host; the trusted consumer never executes candidates."""
-    machine = platform.machine().lower()
-    goarch = {"x86_64": "amd64", "aarch64": "arm64"}.get(machine, machine)
-    host = f"graphite-meter-client_{version}_{platform.system().lower()}_{goarch}"
+    host = f"graphite-meter-client_{version}_{host_platform().replace('/', '_')}"
     archives = [(name, binary) for name, (base, binary) in tui_archives(version, TARGETS).items()
                 if base == host]
     if not archives:

@@ -5,8 +5,9 @@ import re
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from .toolchains import ROOT, check, literal_updates, load_pins, runtime_pins
+from .toolchains import ROOT, check, host_platform, literal_updates, load_pins, runtime_pins
 
 
 class ToolchainBoundaryTests(unittest.TestCase):
@@ -79,6 +80,13 @@ class ToolchainBoundaryTests(unittest.TestCase):
         path.write_text(re.sub(r'(?s)image_skopeo = """.*?"""', unpinned, path.read_text()))
         with self.assertRaisesRegex(ValueError, "exact version or image digest"):
             load_pins(root)
+
+    def test_the_host_is_named_as_the_tui_platforms_are(self) -> None:
+        for system, machine, expected in (("Linux", "x86_64", "linux/amd64"), ("Linux", "aarch64", "linux/arm64"),
+                                          ("Darwin", "arm64", "darwin/arm64"), ("Windows", "AMD64", "windows/amd64")):
+            with self.subTest(expected=expected), patch("platform.system", return_value=system), \
+                    patch("platform.machine", return_value=machine):
+                self.assertEqual(host_platform(), expected)
 
     def test_tool_pins_reject_nonversions_and_unknown_entries(self) -> None:
         root = self.copy_pins()

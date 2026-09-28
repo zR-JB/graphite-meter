@@ -16,7 +16,7 @@ import zipfile
 from pathlib import Path
 
 from .ci.github_api import ControlPlaneError, confined_path, local_path
-from .ci.toolchains import rust_channel, tui_targets
+from .ci.toolchains import host_platform, tui_targets
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -30,7 +30,6 @@ def build(version: str, platform: str, output: Path, supplement: Path) -> None:
     # The archives go to the checkout or a temporary directory, and never leave it.
     output = local_path(output, REPO)
     output.mkdir(parents=True, exist_ok=True)
-    channel = rust_channel(REPO)
     base = f"graphite-meter-client_{version}_{goos}_{goarch}_rust"
     name = "graphite-meter-client.exe" if goos == "windows" else "graphite-meter-client"
     environment = dict(os.environ, GM_ENGINE_VERSION=f"{version}-rust")
@@ -51,11 +50,11 @@ def build(version: str, platform: str, output: Path, supplement: Path) -> None:
         package = confined_path(stage / base, stage)
         package.mkdir()
         shutil.copy2(binary, package / name)
-        host = re.search(r"(?m)^host: (\S+)$", subprocess.check_output(["rustc", f"+{channel}", "-vV"], text=True))
-        if host and host[1] == target:
+        # A build for this machine's system and architecture runs here, whatever its C library.
+        if platform == host_platform():
             actual = subprocess.check_output([str(binary), "--version"], text=True).strip()
             if actual != f"graphite-meter-client {version}-rust":
-                raise ValueError(f"Rust executable version mismatch: {actual!r}")
+                raise ValueError(f"the {platform} TUI reports {actual!r}, not version {version}-rust")
         for filename in ("LICENSE", "COPYRIGHT"):
             shutil.copyfile(REPO / filename, package / filename)
         shutil.copyfile(legal / "LEGAL.txt", package / "THIRD_PARTY_NOTICES.txt")

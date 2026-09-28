@@ -5,10 +5,12 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 from copy import deepcopy
 
@@ -69,6 +71,47 @@ class RustPackageTests(unittest.TestCase):
                 build('1.2.3', 'linux/amd64', Path('/'), supplement)
             with self.assertRaisesRegex(ValueError, 'invalid release version'):
                 build('1.2.3;id', 'linux/amd64', Path(scratch), supplement)
+
+    @unittest.skipUnless(os.name == 'posix', 'the fake executable is a shell script')
+    def test_a_build_for_this_system_and_architecture_reports_its_version(self) -> None:
+        import scripts.package_rust as package
+        from scripts.ci.toolchains import host_platform, tui_targets
+
+        platforms = tui_targets(ROOT / 'scripts/tui-targets.txt')
+        if host_platform() not in platforms:
+            self.skipTest(f'no TUI ships for {host_platform()}')
+        # The builder links musl or MinGW, whose executables run wherever their system and machine match.
+        other = next(platform for platform in platforms if platform.split('/')[0] != host_platform().split('/')[0])
+        run = subprocess.run
+        with tempfile.TemporaryDirectory() as scratch:
+            repo = Path(scratch).resolve()
+            for name in ('LICENSE', 'COPYRIGHT', 'scripts/tui-targets.txt'):
+                (repo / name).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / name, repo / name)
+            ran, reported = repo / 'ran', {'version': '1.2.3-rust'}
+
+            def legal_build(command: list[str], **options: Any) -> object:
+                if command[0] != sys.executable:
+                    return run(command, **options)
+                out, target = (Path(command[command.index(flag) + 1]) for flag in ('--out', '--target'))
+                out.mkdir(parents=True)
+                (out / 'LEGAL.txt').write_text('notices\n')
+                (out / 'THIRD_PARTY_SOURCE.tar.gz').write_bytes(b'source')
+                binary = repo / 'rust/target' / target.name / 'release' / (
+                    'graphite-meter-client.exe' if '-windows-' in target.name else 'graphite-meter-client')
+                binary.parent.mkdir(parents=True, exist_ok=True)
+                binary.write_text(f"#!/bin/sh\ntouch '{ran}'\necho graphite-meter-client {reported['version']}\n")
+                binary.chmod(0o755)
+                return None
+
+            with patch.object(package, 'REPO', repo), patch('subprocess.run', side_effect=legal_build):
+                package.build('1.2.3', other, repo / 'dist', ROOT / 'legal/rust-platform-macos.json')
+                self.assertFalse(ran.exists())
+                package.build('1.2.3', host_platform(), repo / 'dist', ROOT / 'legal/rust-platform-macos.json')
+                self.assertTrue(ran.exists())
+                reported['version'] = '1.2.2-rust'
+                with self.assertRaisesRegex(ValueError, "reports 'graphite-meter-client 1.2.2-rust'"):
+                    package.build('1.2.3', host_platform(), repo / 'dist', ROOT / 'legal/rust-platform-macos.json')
 
 
 class RustLegalReportTests(unittest.TestCase):
