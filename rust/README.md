@@ -47,7 +47,10 @@ Go's `X.Y.Z` and may skip it or move a Rust pin to Go; follow `latest-rust`, or
 match tags on `-rust$` and compare the version before that suffix. Every
 binary has a matching source offer. Go remains the release default; Rust
 prerelease integration remains gated.
-The experimental container uses `container/Dockerfile.rust`. The port remains
+The experimental container uses `container/Dockerfile.rust`, which
+`mise run rust-container-build` builds as `graphite-meter:latest-rust`. That
+task and `rust-client-package` need an amd64 build host: the reviewed platform
+notices record its toolchain, which also cross-compiles arm64. The port remains
 blocked from merging until a human decides its design.
 
 `mise run rust-server-run` builds the browser UI and runs the experimental server

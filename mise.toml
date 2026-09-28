@@ -495,3 +495,17 @@ engine=${CONTAINER_ENGINE:-$(command -v docker || command -v podman || echo dock
 "$engine" build -f container/Dockerfile.rust --target tui-artifacts --build-arg VERSION="$usage_version" \
   --output "type=local,dest=${RELEASE_DIST:-go/dist}" .
 '''
+
+[tasks.rust-container-build]
+description = "Build the experimental Rust server image with Docker or Podman on an amd64 host"
+usage = 'arg "[tag]" default="graphite-meter:latest-rust"'
+run = '''
+#!/usr/bin/env sh
+set -eu
+engine=${CONTAINER_ENGINE:-$(command -v docker || command -v podman || echo docker)}
+revision=${GM_CLIENT_REVISION:-$(git rev-parse --short HEAD 2>/dev/null || echo source)}
+# One VERSION stamps the server, browser and SOURCE.txt; default to the Dockerfile's, not a revision.
+"$engine" build -f container/Dockerfile.rust --target server -t "$usage_tag" --build-arg VERSION="${VERSION:-0.0.0-dev}" \
+  --build-arg GM_CLIENT_REVISION="$revision" --build-arg GM_CLIENT_VALIDATE="${GM_CLIENT_VALIDATE:-1}" \
+  --label org.opencontainers.image.licenses=AGPL-3.0-or-later .
+'''

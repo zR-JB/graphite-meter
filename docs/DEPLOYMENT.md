@@ -106,6 +106,16 @@ with the same read-only root and dropped capabilities. It differs in:
 - **Settings and behaviour:** `GM_MAX_BUFFER_BYTES` (default 8 GiB) caps the connection buffers its HTTP/2 and QUIC
   listeners share. The [Rust README](../rust/README.md) covers it, the image tags and the known differences.
 
+The Compose build overlay and the Quadlet `.build` unit build the Go image. On an amd64 host,
+`mise run rust-container-build` builds this one from a checkout as `graphite-meter:latest-rust`; without mise, run:
+
+```sh
+docker build -f container/Dockerfile.rust --target server -t graphite-meter:latest-rust .
+```
+
+The image's third-party notices are reviewed for that builder's toolchain, which also cross-compiles the arm64 image,
+so the build stops with a legal error on any other host. On arm64 hosts, such as a Raspberry Pi, run a published tag.
+
 ## Native listeners
 
 Each listener has its own address and advertised origin, so a client can select a protocol deterministically. The
