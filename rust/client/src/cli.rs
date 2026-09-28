@@ -132,6 +132,8 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, Error> 
 /// Sets a value flag; an error is the reason Go's `invalid value` message gives.
 fn set(config: &mut Config, name: &str, value: &str) -> Result<(), String> {
     match name {
+        // Go reads an empty origin as its default.
+        "url" if value.is_empty() => config.url = Config::default().url,
         "url" => config.url = value.into(),
         "server" => {
             if value.is_empty()
@@ -142,8 +144,8 @@ fn set(config: &mut Config, name: &str, value: &str) -> Result<(), String> {
             }
             config.servers.push(value.into());
         }
-        "throughput-origin" => config.throughput_origin = automatic(value.into()),
-        "latency-origin" => config.latency_origin = automatic(value.into()),
+        "throughput-origin" => config.throughput_origin = automatic(value),
+        "latency-origin" => config.latency_origin = automatic(value),
         "stages" => config.stages = stages(value)?,
         // Go refuses a negative duration in validation; the nearest invalid value keeps that message.
         "warmup" => config.warmup = duration(value)?.unwrap_or(Duration::MAX),
@@ -160,17 +162,17 @@ fn set(config: &mut Config, name: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Go refuses an unknown path choice with the settings, after every flag has parsed.
+/// Go reads an empty path choice as auto and refuses an unknown one with the settings, after every flag has parsed.
 fn paths(config: &mut Config, protocol: &str, throughput: &str, latency: &str) -> Result<(), Error> {
     config.throughput_protocol = match protocol {
-        "auto" => None,
+        "" | "auto" => None,
         "http1" => Some(Protocol::Http1),
         "http2" => Some(Protocol::Http2),
         "http3" => Some(Protocol::Http3),
         _ => return Err(format!("invalid throughput protocol {protocol:?}: use auto, http1, http2, or http3").into()),
     };
     config.throughput_transport = match throughput {
-        "auto" => None,
+        "" | "auto" => None,
         "fetch-stream" => Some(ThroughputTransport::FetchStream),
         "webtransport" => Some(ThroughputTransport::WebTransport),
         _ => {
@@ -181,7 +183,7 @@ fn paths(config: &mut Config, protocol: &str, throughput: &str, latency: &str) -
         }
     };
     config.latency_transport = match latency {
-        "auto" => None,
+        "" | "auto" => None,
         "websocket" => Some(LatencyTransport::WebSocket),
         "webtransport" => Some(LatencyTransport::WebTransport),
         _ => return Err(format!("invalid latency transport {latency:?}: use auto, websocket, or webtransport").into()),
@@ -189,8 +191,8 @@ fn paths(config: &mut Config, protocol: &str, throughput: &str, latency: &str) -
     Ok(())
 }
 
-fn automatic(value: String) -> Option<String> {
-    if value == "auto" { None } else { Some(value) }
+fn automatic(value: &str) -> Option<String> {
+    (!matches!(value, "" | "auto")).then(|| value.into())
 }
 
 fn boolean(value: &str) -> Option<bool> {
@@ -278,3 +280,27 @@ pub const HELP: &str = "Graphite Meter experimental Rust client
 
 Both single-dash and double-dash flags are accepted.
 ";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A script's unset variable keeps Go's default, as its normalized configuration does.
+    #[test]
+    fn empty_origins_and_path_choices_read_as_defaults() -> Result<(), Error> {
+        let empty = [
+            "-url",
+            "",
+            "-throughput-origin=",
+            "-latency-origin=",
+            "-throughput-protocol=",
+            "-throughput-transport=",
+            "-latency-transport=",
+        ];
+        let Action::Run { config, .. } = parse(empty.map(OsString::from))? else {
+            return Err("empty values did not start a run".into());
+        };
+        assert_eq!(*config, Config::default());
+        Ok(())
+    }
+}
