@@ -214,7 +214,8 @@ and [h2](https://github.com/zR-JB/h2) forks.
 [Fork provenance](../legal/rust-forks.json) records upstream bases, reviewed
 revisions and each commit's purpose. `rust-check` validates locked sources offline and
 rejects Rust legal reviews of crates no shipped binary compiles
-(`python3 -m scripts.legal.check_rust_reviews --prune` drops them);
+(`python3 -m scripts.legal.check_rust_reviews --prune` drops them) or in another layout
+than the legal tools write (`--format` rewrites them);
 `scripts/legal/check_git_sources.py --verify` checks fork branches, upstream tags
 and diffs. [Fork upkeep](../legal/README.md#pinned-fork-upkeep) covers updates.
 The workspace's `http3` crate, shared by the server and the client, keeps a

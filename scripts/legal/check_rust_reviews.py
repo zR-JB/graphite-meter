@@ -1,10 +1,11 @@
 """Keep legal/rust-reviewed-components.json to the crates the shipped Rust binaries compile.
 
-    python3 -m scripts.legal.check_rust_reviews [--prune]
+    python3 -m scripts.legal.check_rust_reviews [--prune] [--format]
 
 Each shipped package and target is resolved as its release build is (cargo tree over normal and
 build edges, with that target's features), and every review must name one of those crates by
-exact name, version and source. --prune drops the reviews that name none.
+exact name, version and source. --prune drops the reviews that name none. The file keeps the
+layout the legal tools write, so hand edits cannot drift; --format rewrites it in that layout.
 
 Every shipped target also needs an approved platform record in the --supplement file its builder
 reads, so a release request cannot reach a target nobody reviewed.
@@ -84,7 +85,13 @@ def unused(reviews: list[dict], used: set[Crate]) -> list[dict]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--prune', action='store_true', help='remove the reviews no shipped binary compiles')
+    parser.add_argument('--format', action='store_true', help='rewrite the reviews in the layout the legal tools write')
     args = parser.parse_args()
+    reviews = json.loads(REVIEWS.read_text())
+    if args.format:
+        REVIEWS.write_bytes(marshal(reviews))
+    elif REVIEWS.read_bytes() != marshal(reviews):
+        sys.exit('legal/rust-reviewed-components.json is not in the layout the legal tools write (run with --format)')
     sources: dict[tuple[str, str], set[str]] = {}
     for package in tomllib.loads((REPO / 'rust/Cargo.lock').read_text())['package']:
         if 'source' in package:
@@ -95,7 +102,6 @@ def main() -> None:
     used: set[Crate] = set()
     for package, target in shipped(targets):
         used |= compiled(package, target, sources)
-    reviews = json.loads(REVIEWS.read_text())
     stale = unused(reviews, used)
     if stale and args.prune:
         REVIEWS.write_bytes(marshal([review for review in reviews if review not in stale]))

@@ -68,8 +68,29 @@ def sha256(data: bytes) -> str:
 
 def marshal(value: object) -> bytes:
     # Callers provide ordered records. Unlike generic map serialization, record
-    # field order is part of the existing generated-file contract.
-    return (json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode()
+    # field order is part of the existing generated-file contract. The layout is
+    # json.dumps(indent=2), except that each legalFiles entry of a review takes one line.
+    return (layout(value, "") + "\n").encode()
+
+
+def layout(value: object, indent: str) -> str:
+    inner = indent + "  "
+    if isinstance(value, dict) and value:
+        fields = []
+        for key, item in value.items():
+            if key == "legalFiles" and isinstance(item, list) and item:
+                entries = [f"{inner}  {compact(entry)}" for entry in item]
+                fields.append(f"{inner}{compact(key)}: [\n" + ",\n".join(entries) + f"\n{inner}]")
+            else:
+                fields.append(f"{inner}{compact(key)}: {layout(item, inner)}")
+        return "{\n" + ",\n".join(fields) + f"\n{indent}}}"
+    if isinstance(value, (list, tuple)) and value:
+        return "[\n" + ",\n".join(inner + layout(item, inner) for item in value) + f"\n{indent}]"
+    return compact(value)
+
+
+def compact(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, allow_nan=False)
 
 
 @dataclass

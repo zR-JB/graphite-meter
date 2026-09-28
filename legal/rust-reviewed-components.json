@@ -7,21 +7,9 @@
     "declaredLicenseExpression": "0BSD OR MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-0BSD",
-        "sha256": "861399f8c21c042b110517e76dc6b63a2b334276c8cf17412fc3c8908ca8dc17",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "8ada45cd9f843acf64e4722ae262c622a2b3b3007c7310ef36ac1061a30f6adb",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      }
+      {"name": "LICENSE-0BSD", "sha256": "861399f8c21c042b110517e76dc6b63a2b334276c8cf17412fc3c8908ca8dc17", "kind": "license"},
+      {"name": "LICENSE-APACHE", "sha256": "8ada45cd9f843acf64e4722ae262c622a2b3b3007c7310ef36ac1061a30f6adb", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -35,16 +23,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "20fe7b00e904ed690e3b9fd6073784d3fc428141dbd10b81c01fd143d0797f58",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "36516aefdc84c5d5a1e7485425913a22dbda69eb1930c5e84d6ae4972b5194b9",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "20fe7b00e904ed690e3b9fd6073784d3fc428141dbd10b81c01fd143d0797f58", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "36516aefdc84c5d5a1e7485425913a22dbda69eb1930c5e84d6ae4972b5194b9", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -58,16 +38,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "57a4d75c1d095bb94754a478f3cd15e60ac66a5c5627d844be01a918eea5fe88",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "57a4d75c1d095bb94754a478f3cd15e60ac66a5c5627d844be01a918eea5fe88", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -81,21 +53,9 @@
     "declaredLicenseExpression": "Apache-2.0 OR MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-THIRD-PARTY",
-        "sha256": "6226d0632e2e1a80c23597e964da9812ae193c535fe058154afb034e94167aa5",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3", "kind": "license"},
+      {"name": "LICENSE-THIRD-PARTY", "sha256": "6226d0632e2e1a80c23597e964da9812ae193c535fe058154afb034e94167aa5", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -109,16 +69,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "ab499c75a0f0da8e0fe83bf9ba3a27e5c39705310f07107c6c66b69958d2401c",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "ab499c75a0f0da8e0fe83bf9ba3a27e5c39705310f07107c6c66b69958d2401c", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -132,16 +84,8 @@
     "declaredLicenseExpression": "Apache-2.0 OR MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "2d1c57bff28344b9e698f51063bc8509799cc4c99a4e0cf2aa3f7e7c3e1f9a9d",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "2d1c57bff28344b9e698f51063bc8509799cc4c99a4e0cf2aa3f7e7c3e1f9a9d", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -155,16 +99,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -178,16 +114,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "3721e5764ca384059a3521d84c0fb40373894a099d8246fe76bf0d7418041846",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "3721e5764ca384059a3521d84c0fb40373894a099d8246fe76bf0d7418041846", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -201,16 +129,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "98181e7249d0c01737645ec982499ce99a0f07eb8f7d625b8840d799d10dbc01",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "98181e7249d0c01737645ec982499ce99a0f07eb8f7d625b8840d799d10dbc01", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -224,11 +144,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "45f522cacecb1023856e46df79ca625dfc550c94910078bd8aec6e02880b3d42",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "45f522cacecb1023856e46df79ca625dfc550c94910078bd8aec6e02880b3d42", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -242,11 +158,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "f98e09091d5ae02b2f2ec1ead4f7f28c4c44d1cb98b078739ba67091637e170c",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "f98e09091d5ae02b2f2ec1ead4f7f28c4c44d1cb98b078739ba67091637e170c", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -260,16 +172,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -283,16 +187,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -306,11 +202,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "31b94860253d8ec7b4529f51901044d3b459d6292d996504a36b1bae3a36a812",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "31b94860253d8ec7b4529f51901044d3b459d6292d996504a36b1bae3a36a812", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -324,16 +216,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "b8c6939380a400f53e11923d50fcc4dd2fa1ba8339fd9d04cda38a0251b6c9b0",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "b8c6939380a400f53e11923d50fcc4dd2fa1ba8339fd9d04cda38a0251b6c9b0", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -347,16 +231,8 @@
     "declaredLicenseExpression": "Apache-2.0 OR MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "70c9d40f1f9545c3f133b8a67206e89da850f6468eed072281bb3701514114a9",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "70c9d40f1f9545c3f133b8a67206e89da850f6468eed072281bb3701514114a9", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -370,11 +246,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "0d52feec79589df30138dad3800323fe5686b764b73347330a2dfef8ac83efe8",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "0d52feec79589df30138dad3800323fe5686b764b73347330a2dfef8ac83efe8", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -388,16 +260,8 @@
     "declaredLicenseExpression": "Apache-2.0 OR MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "73b9dc2e79c7308998dd30296e073aefaefb944a68fb89aa412c23c0edcabcaa",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "73b9dc2e79c7308998dd30296e073aefaefb944a68fb89aa412c23c0edcabcaa", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -411,11 +275,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "aed7b1758e35afa0cd0fde059d61950747ca11cd0e5e169cb21c11608daed772",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "aed7b1758e35afa0cd0fde059d61950747ca11cd0e5e169cb21c11608daed772", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -429,16 +289,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "62065228e42caebca7e7d7db1204cbb867033de5982ca4009928915e4095f3a3",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "62065228e42caebca7e7d7db1204cbb867033de5982ca4009928915e4095f3a3", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -452,16 +304,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "62065228e42caebca7e7d7db1204cbb867033de5982ca4009928915e4095f3a3",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "62065228e42caebca7e7d7db1204cbb867033de5982ca4009928915e4095f3a3", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -475,16 +319,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "73b9dc2e79c7308998dd30296e073aefaefb944a68fb89aa412c23c0edcabcaa",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "73b9dc2e79c7308998dd30296e073aefaefb944a68fb89aa412c23c0edcabcaa", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -498,11 +334,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "aca4760f2a5eba9ce9d4448fe7cd3fcf98245a8315ede59ebd0c6085dd542e61",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "aca4760f2a5eba9ce9d4448fe7cd3fcf98245a8315ede59ebd0c6085dd542e61", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -516,11 +348,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "aca4760f2a5eba9ce9d4448fe7cd3fcf98245a8315ede59ebd0c6085dd542e61",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "aca4760f2a5eba9ce9d4448fe7cd3fcf98245a8315ede59ebd0c6085dd542e61", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -534,16 +362,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "d2e7ec5355c96eeade56b09187ceb48a6a30299da3ce7531a66d3d11405ab963",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "d2e7ec5355c96eeade56b09187ceb48a6a30299da3ce7531a66d3d11405ab963", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -557,16 +377,8 @@
     "declaredLicenseExpression": "Apache-2.0 OR MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "91585c36e4fb9ab4ca0d3dfac5d66d3c0c62cc51f640a0e1196542daf2267eae",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "91585c36e4fb9ab4ca0d3dfac5d66d3c0c62cc51f640a0e1196542daf2267eae", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -580,11 +392,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "8ea93490d74a5a1b1af3ff71d786271b3f1e5f0bea79ac16e02ec533cef040d6",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "8ea93490d74a5a1b1af3ff71d786271b3f1e5f0bea79ac16e02ec533cef040d6", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -598,11 +406,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "8ea93490d74a5a1b1af3ff71d786271b3f1e5f0bea79ac16e02ec533cef040d6",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "8ea93490d74a5a1b1af3ff71d786271b3f1e5f0bea79ac16e02ec533cef040d6", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -616,11 +420,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "8ea93490d74a5a1b1af3ff71d786271b3f1e5f0bea79ac16e02ec533cef040d6",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "8ea93490d74a5a1b1af3ff71d786271b3f1e5f0bea79ac16e02ec533cef040d6", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -634,11 +434,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "b68ad1a3367b825447089e1f8d6829b97f47a89eb78d2f4ebaef4672f5606186",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "b68ad1a3367b825447089e1f8d6829b97f47a89eb78d2f4ebaef4672f5606186", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -652,11 +448,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "8a35369f3ca263b3c62fbb5032947e53b6bfebc6c8a4d1bb982de1c069f6fba5",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "8a35369f3ca263b3c62fbb5032947e53b6bfebc6c8a4d1bb982de1c069f6fba5", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -670,11 +462,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "8a35369f3ca263b3c62fbb5032947e53b6bfebc6c8a4d1bb982de1c069f6fba5",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "8a35369f3ca263b3c62fbb5032947e53b6bfebc6c8a4d1bb982de1c069f6fba5", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -688,16 +476,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "af59cea35d7f5e2777a713b8d155d65efa2c339eb43f3c14e868c6ac8506edad",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "af59cea35d7f5e2777a713b8d155d65efa2c339eb43f3c14e868c6ac8506edad", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -711,16 +491,8 @@
     "declaredLicenseExpression": "MIT/Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -734,16 +506,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "aa893340d14b9844625be6a50ac644169a01b52f0211cbf81b09e1874c8cd81d",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "aa893340d14b9844625be6a50ac644169a01b52f0211cbf81b09e1874c8cd81d", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -757,16 +521,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "7576269ea71f767b99297934c0b2367532690f8c4badc695edf8e04ab6a1e545",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "7576269ea71f767b99297934c0b2367532690f8c4badc695edf8e04ab6a1e545", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -780,16 +536,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "Apache-2.0",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
-        "kind": "license"
-      },
-      {
-        "name": "Cargo.toml.upstream",
-        "sha256": "ac76a8e989ded142df50e3b796c8926e90c7e0f42d2428ff9ef62a359d38f582",
-        "kind": "notice"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30", "kind": "license"},
+      {"name": "Cargo.toml.upstream", "sha256": "ac76a8e989ded142df50e3b796c8926e90c7e0f42d2428ff9ef62a359d38f582", "kind": "notice"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -803,16 +551,8 @@
     "declaredLicenseExpression": "Apache-2.0 OR MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "7365cc8878a1d7ce155a58c4ca09c3d7a6be413efa5334a80ea842912b669349",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "7365cc8878a1d7ce155a58c4ca09c3d7a6be413efa5334a80ea842912b669349", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -826,16 +566,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "8764a597675778ddfd4e25f81b08a05dbcf089ac05662df7613fe67f150e3aa2",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "8764a597675778ddfd4e25f81b08a05dbcf089ac05662df7613fe67f150e3aa2", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -849,16 +581,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -872,16 +596,8 @@
     "declaredLicenseExpression": "Apache-2.0 / MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "65fdb6c76cd61612070c066eec9ecdb30ee74fb27859d0d9af58b9f499fd0c3e",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "65fdb6c76cd61612070c066eec9ecdb30ee74fb27859d0d9af58b9f499fd0c3e", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -895,11 +611,7 @@
     "declaredLicenseExpression": "Zlib",
     "selectedLicenseExpression": "Zlib",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "b1181a40b2a7b25cf66fd01481713bc1005df082c53ef73e851e55071b102744",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "b1181a40b2a7b25cf66fd01481713bc1005df082c53ef73e851e55071b102744", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -913,16 +625,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "20c7855c364d57ea4c97889a5e8d98470a9952dade37bd9248b9a54431670e5e",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "20c7855c364d57ea4c97889a5e8d98470a9952dade37bd9248b9a54431670e5e", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -936,16 +640,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "275c491d6d1160553c32fd6127061d7f9606c3ea25abfad6ca3f6ed088785427",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "275c491d6d1160553c32fd6127061d7f9606c3ea25abfad6ca3f6ed088785427", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -959,16 +655,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "275c491d6d1160553c32fd6127061d7f9606c3ea25abfad6ca3f6ed088785427",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "275c491d6d1160553c32fd6127061d7f9606c3ea25abfad6ca3f6ed088785427", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -982,16 +670,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "275c491d6d1160553c32fd6127061d7f9606c3ea25abfad6ca3f6ed088785427",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "275c491d6d1160553c32fd6127061d7f9606c3ea25abfad6ca3f6ed088785427", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1005,16 +685,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "275c491d6d1160553c32fd6127061d7f9606c3ea25abfad6ca3f6ed088785427",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "275c491d6d1160553c32fd6127061d7f9606c3ea25abfad6ca3f6ed088785427", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1028,16 +700,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "275c491d6d1160553c32fd6127061d7f9606c3ea25abfad6ca3f6ed088785427",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "275c491d6d1160553c32fd6127061d7f9606c3ea25abfad6ca3f6ed088785427", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1051,16 +715,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "aaff376532ea30a0cd5330b9502ad4a4c8bf769c539c87ffe78819d188a18ebf",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "42fa16951ce7f24b5a467a40e5b449a1d41e662f97ca779864f053f39e097737",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "aaff376532ea30a0cd5330b9502ad4a4c8bf769c539c87ffe78819d188a18ebf", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "42fa16951ce7f24b5a467a40e5b449a1d41e662f97ca779864f053f39e097737", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1074,16 +730,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "aaff376532ea30a0cd5330b9502ad4a4c8bf769c539c87ffe78819d188a18ebf",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "523a42c25d245dde9c015f882cec7f4555aad883382a6cf19b4b7d9b2cd5419b",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "aaff376532ea30a0cd5330b9502ad4a4c8bf769c539c87ffe78819d188a18ebf", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "523a42c25d245dde9c015f882cec7f4555aad883382a6cf19b4b7d9b2cd5419b", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1097,11 +745,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "b21623012e6c453d944b0342c515b631cfcbf30704c2621b291526b69c10724d",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "b21623012e6c453d944b0342c515b631cfcbf30704c2621b291526b69c10724d", "kind": "license"}
     ],
     "modified": true,
     "reviewDecision": "approved",
@@ -1115,16 +759,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "ff8f68cb076caf8cefe7a6430d4ac086ce6af2ca8ce2c4e5a2004d4552ef52a2",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "ff8f68cb076caf8cefe7a6430d4ac086ce6af2ca8ce2c4e5a2004d4552ef52a2", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1138,16 +774,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "ff8f68cb076caf8cefe7a6430d4ac086ce6af2ca8ce2c4e5a2004d4552ef52a2",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "ff8f68cb076caf8cefe7a6430d4ac086ce6af2ca8ce2c4e5a2004d4552ef52a2", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1161,16 +789,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1184,16 +804,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "9e0dfd2dd4173a530e238cb6adb37aa78c34c6bc7444e0e10c1ab5d8881f63ba",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "9e0dfd2dd4173a530e238cb6adb37aa78c34c6bc7444e0e10c1ab5d8881f63ba", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1207,16 +819,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "8bb1b50b0e5c9399ae33bd35fab2769010fa6c14e8860c729a52295d84896b7a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "dc91f8200e4b2a1f9261035d4c18c33c246911a6c0f7b543d75347e61b249cff",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "8bb1b50b0e5c9399ae33bd35fab2769010fa6c14e8860c729a52295d84896b7a", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "dc91f8200e4b2a1f9261035d4c18c33c246911a6c0f7b543d75347e61b249cff", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1230,11 +834,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "248378d0a3383c173fb925f17141b88e71580b3ba17ddc6ac3d2a344683232ab",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "248378d0a3383c173fb925f17141b88e71580b3ba17ddc6ac3d2a344683232ab", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1248,11 +848,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "248378d0a3383c173fb925f17141b88e71580b3ba17ddc6ac3d2a344683232ab",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "248378d0a3383c173fb925f17141b88e71580b3ba17ddc6ac3d2a344683232ab", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1266,16 +862,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "391a5396cec6230bfabd4ef4eb2350eb895bc5efce377a2218f5702ed020d3e3",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "391a5396cec6230bfabd4ef4eb2350eb895bc5efce377a2218f5702ed020d3e3", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1289,16 +877,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "4d10fe5f3aa176b05b229a248866bad70b834c173f1252a814ff4748d8a13837",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "934887691e05d69d7c86ad3f2c360980fa30c15b035e351f3c9865e99da4debc",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "4d10fe5f3aa176b05b229a248866bad70b834c173f1252a814ff4748d8a13837", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "934887691e05d69d7c86ad3f2c360980fa30c15b035e351f3c9865e99da4debc", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1312,16 +892,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "70c9d40f1f9545c3f133b8a67206e89da850f6468eed072281bb3701514114a9",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "70c9d40f1f9545c3f133b8a67206e89da850f6468eed072281bb3701514114a9", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1335,11 +907,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "2d01890414494742ba4a509fcec8efa40f6d8be22cbd72be7cff08d6fda4ec89",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "2d01890414494742ba4a509fcec8efa40f6d8be22cbd72be7cff08d6fda4ec89", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1353,11 +921,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "9e0a97848ea543aef745c98e84fde696a9a3e0735538f6daefdd3cb1942effc1",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "9e0a97848ea543aef745c98e84fde696a9a3e0735538f6daefdd3cb1942effc1", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1371,11 +935,7 @@
     "declaredLicenseExpression": "MIT/Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1389,16 +949,8 @@
     "declaredLicenseExpression": "Apache-2.0 OR MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "3cfd22c93127a13f0fc1f9f60014026a8e90f1deb9d1abafde096f2b6180324a",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "3cfd22c93127a13f0fc1f9f60014026a8e90f1deb9d1abafde096f2b6180324a", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1412,16 +964,8 @@
     "declaredLicenseExpression": "Apache-2.0 OR MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "ecc269ef87fd38a1d98e30bfac9ba964a9dbd9315c3770fed98d4d7cb5882055",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "ecc269ef87fd38a1d98e30bfac9ba964a9dbd9315c3770fed98d4d7cb5882055", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1435,16 +979,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1458,11 +994,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE.md",
-        "sha256": "0352320d9929e862c1f07b59caacc3cd1bbacfec0ad4136bf4c89d4ca8939781",
-        "kind": "license"
-      }
+      {"name": "LICENSE.md", "sha256": "0352320d9929e862c1f07b59caacc3cd1bbacfec0ad4136bf4c89d4ca8939781", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1476,16 +1008,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "87d9feb9238c6bd8e0024fc4733b06cff036f89f36d93b7df1c8a0549bbb7a5b",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "47dc9ff29128ddfb4d6a0435383c9f89120bc374dbcc1dd00b933a0b28aa7865",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "87d9feb9238c6bd8e0024fc4733b06cff036f89f36d93b7df1c8a0549bbb7a5b", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "47dc9ff29128ddfb4d6a0435383c9f89120bc374dbcc1dd00b933a0b28aa7865", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1499,16 +1023,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "7576269ea71f767b99297934c0b2367532690f8c4badc695edf8e04ab6a1e545",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "7576269ea71f767b99297934c0b2367532690f8c4badc695edf8e04ab6a1e545", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1522,16 +1038,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1545,16 +1053,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "000b4962e6b27176a0ff89cce4be555b16472cafb5671eb2804a8fdac6854793",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "74a7056189235b49336669da4e67ad1b315de4ed17e93df751f48c3fab403812",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "000b4962e6b27176a0ff89cce4be555b16472cafb5671eb2804a8fdac6854793", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "74a7056189235b49336669da4e67ad1b315de4ed17e93df751f48c3fab403812", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1568,16 +1068,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "123a331b5dbf04c30097fa43b8f858bc85df671fe776de498d01f3d6b7c1f69e",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "123a331b5dbf04c30097fa43b8f858bc85df671fe776de498d01f3d6b7c1f69e", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1591,16 +1083,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "86f2767527a034d6b9cb8bd98676925e58ed75bf805d234dc2a71a54150cbad1",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "520a93f9b172b4c8d2a7ab6f0da1f5f987eba7270ab64a02972095cd87df7fc4",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "86f2767527a034d6b9cb8bd98676925e58ed75bf805d234dc2a71a54150cbad1", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "520a93f9b172b4c8d2a7ab6f0da1f5f987eba7270ab64a02972095cd87df7fc4", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1614,26 +1098,10 @@
     "declaredLicenseExpression": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-Apache-2.0_WITH_LLVM-exception",
-        "sha256": "268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      },
-      {
-        "name": "COPYRIGHT",
-        "sha256": "3290ae0fbc9ddb77d2239121d710f0bb9d31b3b4744e6d97fe01e652b4c1870b",
-        "kind": "notice"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-Apache-2.0_WITH_LLVM-exception", "sha256": "268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3", "kind": "license"},
+      {"name": "COPYRIGHT", "sha256": "3290ae0fbc9ddb77d2239121d710f0bb9d31b3b4744e6d97fe01e652b4c1870b", "kind": "notice"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1647,16 +1115,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "7dc1552e88f49132cb358b1b962fc5e79fa42d70bcbb88c526d33e45b8e98036",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "7dc1552e88f49132cb358b1b962fc5e79fa42d70bcbb88c526d33e45b8e98036", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1670,16 +1130,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "c9a75f18b9ab2927829a208fc6aa2cf4e63b8420887ba29cdb265d6619ae82d5",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "c9a75f18b9ab2927829a208fc6aa2cf4e63b8420887ba29cdb265d6619ae82d5", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1693,16 +1145,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1716,11 +1160,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "061dc50af2cd9340703daf61978af3200cf681b12ea67a323c33ba109a23a45e",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "061dc50af2cd9340703daf61978af3200cf681b12ea67a323c33ba109a23a45e", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1734,21 +1174,9 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0 OR Zlib",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "1466d9b4f3a59bb8997fc8d5fa977ce3f6a24bb2358793c09bfdf007039f6486",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-ZLIB",
-        "sha256": "09785877275ffada6c371b652a30e95c26b435126fc0fc62f1bc2d72171f80a4",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "1466d9b4f3a59bb8997fc8d5fa977ce3f6a24bb2358793c09bfdf007039f6486", "kind": "license"},
+      {"name": "LICENSE-ZLIB", "sha256": "09785877275ffada6c371b652a30e95c26b435126fc0fc62f1bc2d72171f80a4", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1762,16 +1190,8 @@
     "declaredLicenseExpression": "Unlicense OR MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "COPYING",
-        "sha256": "01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f",
-        "kind": "license"
-      }
+      {"name": "COPYING", "sha256": "01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1785,26 +1205,10 @@
     "declaredLicenseExpression": "MIT OR Zlib OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "4108245a1f2df9d4e94df8abed5b4ba0759bb2f9b40a6b939f1be141077ae50b",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-APACHE.md",
-        "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT.md",
-        "sha256": "799e9ca9d179295ef372f25d3769cdda7d25bb2668add6a6a1e22d1e4c678b8d",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-ZLIB.md",
-        "sha256": "0a54e647fe54104658b5e563c04c6f9edf251710e47bce692e0bd990a4ddaa39",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "4108245a1f2df9d4e94df8abed5b4ba0759bb2f9b40a6b939f1be141077ae50b", "kind": "license"},
+      {"name": "LICENSE-APACHE.md", "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594", "kind": "license"},
+      {"name": "LICENSE-MIT.md", "sha256": "799e9ca9d179295ef372f25d3769cdda7d25bb2668add6a6a1e22d1e4c678b8d", "kind": "license"},
+      {"name": "LICENSE-ZLIB.md", "sha256": "0a54e647fe54104658b5e563c04c6f9edf251710e47bce692e0bd990a4ddaa39", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1818,11 +1222,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "07919255c7e04793d8ea760d6c2ce32d19f9ff02bdbdde3ce90b1e1880929a9b",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "07919255c7e04793d8ea760d6c2ce32d19f9ff02bdbdde3ce90b1e1880929a9b", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1836,16 +1236,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a237a9d796dd30eebc8def7ee282c691be4c884454444510d702644f20669c15",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "9e654cd17a17880f43a84c9c024f9ca7a320ed906d521072c15aa2e8daff8df0",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a237a9d796dd30eebc8def7ee282c691be4c884454444510d702644f20669c15", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "9e654cd17a17880f43a84c9c024f9ca7a320ed906d521072c15aa2e8daff8df0", "kind": "license"}
     ],
     "modified": true,
     "reviewDecision": "approved",
@@ -1859,16 +1251,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a237a9d796dd30eebc8def7ee282c691be4c884454444510d702644f20669c15",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "9e654cd17a17880f43a84c9c024f9ca7a320ed906d521072c15aa2e8daff8df0",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a237a9d796dd30eebc8def7ee282c691be4c884454444510d702644f20669c15", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "9e654cd17a17880f43a84c9c024f9ca7a320ed906d521072c15aa2e8daff8df0", "kind": "license"}
     ],
     "modified": true,
     "reviewDecision": "approved",
@@ -1882,16 +1266,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a237a9d796dd30eebc8def7ee282c691be4c884454444510d702644f20669c15",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "9e654cd17a17880f43a84c9c024f9ca7a320ed906d521072c15aa2e8daff8df0",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a237a9d796dd30eebc8def7ee282c691be4c884454444510d702644f20669c15", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "9e654cd17a17880f43a84c9c024f9ca7a320ed906d521072c15aa2e8daff8df0", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1905,16 +1281,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1928,16 +1296,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1951,16 +1311,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "c9a75f18b9ab2927829a208fc6aa2cf4e63b8420887ba29cdb265d6619ae82d5",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "c9a75f18b9ab2927829a208fc6aa2cf4e63b8420887ba29cdb265d6619ae82d5", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1974,16 +1326,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "c9a75f18b9ab2927829a208fc6aa2cf4e63b8420887ba29cdb265d6619ae82d5",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "c9a75f18b9ab2927829a208fc6aa2cf4e63b8420887ba29cdb265d6619ae82d5", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -1997,16 +1341,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "b38f11f6096706e6de553dabe2a7ed142d59b6fa8c97e290c67496154745cdd5",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "b38f11f6096706e6de553dabe2a7ed142d59b6fa8c97e290c67496154745cdd5", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2020,16 +1356,8 @@
     "declaredLicenseExpression": "Apache-2.0 OR MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2043,16 +1371,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2066,16 +1386,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2089,21 +1401,9 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "35242e7a83f69875e6edeff02291e688c97caafe2f8902e4e19b49d3e78b4cab",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "209fbbe0ad52d9235e37badf9cadfe4dbdc87203179c0899e738b39ade42177b",
-        "kind": "license"
-      },
-      {
-        "name": "COPYRIGHT",
-        "sha256": "90eb64f0279b0d9432accfa6023ff803bc4965212383697eee27a0f426d5f8d5",
-        "kind": "notice"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "35242e7a83f69875e6edeff02291e688c97caafe2f8902e4e19b49d3e78b4cab", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "209fbbe0ad52d9235e37badf9cadfe4dbdc87203179c0899e738b39ade42177b", "kind": "license"},
+      {"name": "COPYRIGHT", "sha256": "90eb64f0279b0d9432accfa6023ff803bc4965212383697eee27a0f426d5f8d5", "kind": "notice"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2117,21 +1417,9 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "6df43f6f4b5d4587f3d8d71e45532c688fd168afa5fe89d571cb32fa09c4ef51",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "8b6e9feec03e7c9a5facb26855cecd31662bf989b636bcfe79521bdf8ac863f0",
-        "kind": "license"
-      },
-      {
-        "name": "COPYRIGHT",
-        "sha256": "92b81db30f7ab6d693e0af5661a40d273ca1947e891123ed823924192c10cbc7",
-        "kind": "notice"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "6df43f6f4b5d4587f3d8d71e45532c688fd168afa5fe89d571cb32fa09c4ef51", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "8b6e9feec03e7c9a5facb26855cecd31662bf989b636bcfe79521bdf8ac863f0", "kind": "license"},
+      {"name": "COPYRIGHT", "sha256": "92b81db30f7ab6d693e0af5661a40d273ca1947e891123ed823924192c10cbc7", "kind": "notice"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2145,21 +1433,9 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "6df43f6f4b5d4587f3d8d71e45532c688fd168afa5fe89d571cb32fa09c4ef51",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "2234e3cefee876aeb686ad89e978bdb07bf118a1186ab1cf161bcdf69d4b4f57",
-        "kind": "license"
-      },
-      {
-        "name": "COPYRIGHT",
-        "sha256": "90eb64f0279b0d9432accfa6023ff803bc4965212383697eee27a0f426d5f8d5",
-        "kind": "notice"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "6df43f6f4b5d4587f3d8d71e45532c688fd168afa5fe89d571cb32fa09c4ef51", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "2234e3cefee876aeb686ad89e978bdb07bf118a1186ab1cf161bcdf69d4b4f57", "kind": "license"},
+      {"name": "COPYRIGHT", "sha256": "90eb64f0279b0d9432accfa6023ff803bc4965212383697eee27a0f426d5f8d5", "kind": "notice"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2173,11 +1449,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "50eb43e8d742c9c61a9391e42b2184fce54dbd1893a1bb1c85b8c9ee217ab1f5",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "50eb43e8d742c9c61a9391e42b2184fce54dbd1893a1bb1c85b8c9ee217ab1f5", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2191,11 +1463,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "50eb43e8d742c9c61a9391e42b2184fce54dbd1893a1bb1c85b8c9ee217ab1f5",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "50eb43e8d742c9c61a9391e42b2184fce54dbd1893a1bb1c85b8c9ee217ab1f5", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2209,11 +1477,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "50eb43e8d742c9c61a9391e42b2184fce54dbd1893a1bb1c85b8c9ee217ab1f5",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "50eb43e8d742c9c61a9391e42b2184fce54dbd1893a1bb1c85b8c9ee217ab1f5", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2227,11 +1491,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "50eb43e8d742c9c61a9391e42b2184fce54dbd1893a1bb1c85b8c9ee217ab1f5",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "50eb43e8d742c9c61a9391e42b2184fce54dbd1893a1bb1c85b8c9ee217ab1f5", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2245,36 +1505,12 @@
     "declaredLicenseExpression": "Apache-2.0 AND ISC",
     "selectedLicenseExpression": "Apache-2.0 AND ISC",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "b3d734001a94efff3579978d953391aa7115f877657d25eb54037a43875d078a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-BoringSSL",
-        "sha256": "005fc765ddc5115da796cca915baa9557abae13ff35e0a47c47affc56f6c414d",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-other-bits",
-        "sha256": "f025ccfb7dfb6bdfedc75ca0f67acc69e6fb4998143d834f7c2f38a29989680f",
-        "kind": "license"
-      },
-      {
-        "name": "src/polyfill/once_cell/LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "src/polyfill/once_cell/LICENSE-MIT",
-        "sha256": "6ee2ed6c77710de911761acd5fc1ad1da00f476beb1a7ef27e78c2d1858deafc",
-        "kind": "license"
-      },
-      {
-        "name": "third_party/fiat/LICENSE",
-        "sha256": "9eacbcb81be660840c714a560a9d65ba07913db98dd4baf969f78dd499fdd60f",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "b3d734001a94efff3579978d953391aa7115f877657d25eb54037a43875d078a", "kind": "license"},
+      {"name": "LICENSE-BoringSSL", "sha256": "005fc765ddc5115da796cca915baa9557abae13ff35e0a47c47affc56f6c414d", "kind": "license"},
+      {"name": "LICENSE-other-bits", "sha256": "f025ccfb7dfb6bdfedc75ca0f67acc69e6fb4998143d834f7c2f38a29989680f", "kind": "license"},
+      {"name": "src/polyfill/once_cell/LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "src/polyfill/once_cell/LICENSE-MIT", "sha256": "6ee2ed6c77710de911761acd5fc1ad1da00f476beb1a7ef27e78c2d1858deafc", "kind": "license"},
+      {"name": "third_party/fiat/LICENSE", "sha256": "9eacbcb81be660840c714a560a9d65ba07913db98dd4baf969f78dd499fdd60f", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2288,16 +1524,8 @@
     "declaredLicenseExpression": "Apache-2.0 OR MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "95bd3988beee069fa2848f648dab43cc6e0b2add2ad6bcb17360caf749802bcc",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "30fefc3a7d6a0041541858293bcbea2dde4caa4c0a5802f996a7f7e8c0085652",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "95bd3988beee069fa2848f648dab43cc6e0b2add2ad6bcb17360caf749802bcc", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "30fefc3a7d6a0041541858293bcbea2dde4caa4c0a5802f996a7f7e8c0085652", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2311,16 +1539,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "c9a75f18b9ab2927829a208fc6aa2cf4e63b8420887ba29cdb265d6619ae82d5",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "c9a75f18b9ab2927829a208fc6aa2cf4e63b8420887ba29cdb265d6619ae82d5", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2334,26 +1554,10 @@
     "declaredLicenseExpression": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-Apache-2.0_WITH_LLVM-exception",
-        "sha256": "268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      },
-      {
-        "name": "COPYRIGHT",
-        "sha256": "377c2e7c53250cc5905c0b0532d35973392af16ffb9596a41d99d202cf3617c9",
-        "kind": "notice"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-Apache-2.0_WITH_LLVM-exception", "sha256": "268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3", "kind": "license"},
+      {"name": "COPYRIGHT", "sha256": "377c2e7c53250cc5905c0b0532d35973392af16ffb9596a41d99d202cf3617c9", "kind": "notice"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2367,21 +1571,9 @@
     "declaredLicenseExpression": "Apache-2.0 OR ISC OR MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-ISC",
-        "sha256": "7cfafc877eccc46c0e346ccbaa5c51bb6b894d2b818e617d970211e232785ad4",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "709e3175b4212f7b13aa93971c9f62ff8c69ec45ad8c6532a7e0c41d7a7d6f8c",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-ISC", "sha256": "7cfafc877eccc46c0e346ccbaa5c51bb6b894d2b818e617d970211e232785ad4", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "709e3175b4212f7b13aa93971c9f62ff8c69ec45ad8c6532a7e0c41d7a7d6f8c", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2395,26 +1587,10 @@
     "declaredLicenseExpression": "Apache-2.0 OR ISC OR MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "d75967ce788187f83c3bd3328210974acfc443d4dc44909f1d7e34f21623a0c6",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-ISC",
-        "sha256": "7cfafc877eccc46c0e346ccbaa5c51bb6b894d2b818e617d970211e232785ad4",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "709e3175b4212f7b13aa93971c9f62ff8c69ec45ad8c6532a7e0c41d7a7d6f8c",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "d75967ce788187f83c3bd3328210974acfc443d4dc44909f1d7e34f21623a0c6", "kind": "license"},
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-ISC", "sha256": "7cfafc877eccc46c0e346ccbaa5c51bb6b894d2b818e617d970211e232785ad4", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "709e3175b4212f7b13aa93971c9f62ff8c69ec45ad8c6532a7e0c41d7a7d6f8c", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2428,16 +1604,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "45fd05c4865e7c350b98ad7ac50e1b15462d49af4a91e9b0c9dd933dc9a69742",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "9117d922e667125508dde62b02c1f57ed22f5ad21eb536aa2e2d99e1c796e639",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "45fd05c4865e7c350b98ad7ac50e1b15462d49af4a91e9b0c9dd933dc9a69742", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "9117d922e667125508dde62b02c1f57ed22f5ad21eb536aa2e2d99e1c796e639", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2451,16 +1619,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "1c7cf76689c837a68ed8d704994e52a0f2940c087958f860d17f3186afbdcc0c",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "1c7cf76689c837a68ed8d704994e52a0f2940c087958f860d17f3186afbdcc0c", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2474,11 +1634,7 @@
     "declaredLicenseExpression": "ISC",
     "selectedLicenseExpression": "ISC",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "5b698ca13897be3afdb7174256fa1574f8c6892b8bea1a66dd6469d3fe27885a",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "5b698ca13897be3afdb7174256fa1574f8c6892b8bea1a66dd6469d3fe27885a", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2492,16 +1648,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2515,16 +1663,8 @@
     "declaredLicenseExpression": "Apache-2.0 OR BSL-1.0",
     "selectedLicenseExpression": "Apache-2.0",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-BOOST",
-        "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a", "kind": "license"},
+      {"name": "LICENSE-BOOST", "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2538,16 +1678,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "fb77f0a9c53e473abe5103c8632ef9f0f2874d4fb3f17cb2d8c661aab9cee9d7",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "fb77f0a9c53e473abe5103c8632ef9f0f2874d4fb3f17cb2d8c661aab9cee9d7", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2561,21 +1693,9 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "91e934255ba3b2f21103d68c5581c23ef34aa95c4628e4405b8c901935e11c69",
-        "kind": "license"
-      },
-      {
-        "name": "THIRD_PARTY",
-        "sha256": "522fccc56dcbadbe90ab5524a17b8127cde3f951c30c17002641caf44959c22a",
-        "kind": "notice"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "91e934255ba3b2f21103d68c5581c23ef34aa95c4628e4405b8c901935e11c69", "kind": "license"},
+      {"name": "THIRD_PARTY", "sha256": "522fccc56dcbadbe90ab5524a17b8127cde3f951c30c17002641caf44959c22a", "kind": "notice"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2589,16 +1709,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "91e934255ba3b2f21103d68c5581c23ef34aa95c4628e4405b8c901935e11c69",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "91e934255ba3b2f21103d68c5581c23ef34aa95c4628e4405b8c901935e11c69", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2612,16 +1724,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2635,16 +1739,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2658,16 +1754,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2681,16 +1769,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2704,16 +1784,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2727,16 +1799,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "831e0f43ad0bf014c1c4fec5767aae470434c1d66d6e671be2d823e729063e25",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "831e0f43ad0bf014c1c4fec5767aae470434c1d66d6e671be2d823e729063e25", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2750,16 +1814,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "831e0f43ad0bf014c1c4fec5767aae470434c1d66d6e671be2d823e729063e25",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "831e0f43ad0bf014c1c4fec5767aae470434c1d66d6e671be2d823e729063e25", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2773,16 +1829,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "553fffcd9b1cb158bc3e9edc35da85ca5c3b3d7d2e61c883ebcfa8a65814b583",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "4455bf75a91154108304cb283e0fea9948c14f13e20d60887cf2552449dea3b1",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "553fffcd9b1cb158bc3e9edc35da85ca5c3b3d7d2e61c883ebcfa8a65814b583", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "4455bf75a91154108304cb283e0fea9948c14f13e20d60887cf2552449dea3b1", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2796,16 +1844,8 @@
     "declaredLicenseExpression": "Apache-2.0/MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "503558bfefe66ca15e4e3f7955b3cb0ec87fd52f29bf24b336af7bd00e946d5c",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "503558bfefe66ca15e4e3f7955b3cb0ec87fd52f29bf24b336af7bd00e946d5c", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2819,16 +1859,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "503558bfefe66ca15e4e3f7955b3cb0ec87fd52f29bf24b336af7bd00e946d5c",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "503558bfefe66ca15e4e3f7955b3cb0ec87fd52f29bf24b336af7bd00e946d5c", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2842,16 +1874,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "503558bfefe66ca15e4e3f7955b3cb0ec87fd52f29bf24b336af7bd00e946d5c",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "503558bfefe66ca15e4e3f7955b3cb0ec87fd52f29bf24b336af7bd00e946d5c", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2865,11 +1889,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "8ce0830173fdac609dfb4ea603fdc002c2f4af0dc9b1a005653f5da9cf534b18",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "8ce0830173fdac609dfb4ea603fdc002c2f4af0dc9b1a005653f5da9cf534b18", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2883,16 +1903,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "0b28172679e0009b655da42797c03fd163a3379d5cfa67ba1f1655e974a2a1a9",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "0b28172679e0009b655da42797c03fd163a3379d5cfa67ba1f1655e974a2a1a9", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2906,16 +1918,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2929,16 +1933,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "903131e2786f073a942fbf8fae122d9e576e4dad758c6da7f9f2ba58fd8611ab",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "f169adb8124d3b005416d8485d00777c9a7bdd9099982c52a4493f9732e6d050",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "903131e2786f073a942fbf8fae122d9e576e4dad758c6da7f9f2ba58fd8611ab", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "f169adb8124d3b005416d8485d00777c9a7bdd9099982c52a4493f9732e6d050", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2952,16 +1948,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "ea084a2373ebc1f0902c09266e7bf25a05ab3814c1805bb017ffa7308f90c061",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "ea084a2373ebc1f0902c09266e7bf25a05ab3814c1805bb017ffa7308f90c061", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2975,11 +1963,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "1e697ce8d21401fbf1bddd9b5c3fd4c4c79ae1e3bdf51f81761c85e11d5a89cd",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "1e697ce8d21401fbf1bddd9b5c3fd4c4c79ae1e3bdf51f81761c85e11d5a89cd", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -2993,11 +1977,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "8bce3b45e49ecd1461f223b46de133d8f62cd39f745cfdaf81bee554b908bd42",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "8bce3b45e49ecd1461f223b46de133d8f62cd39f745cfdaf81bee554b908bd42", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3011,11 +1991,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "8bce3b45e49ecd1461f223b46de133d8f62cd39f745cfdaf81bee554b908bd42",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "8bce3b45e49ecd1461f223b46de133d8f62cd39f745cfdaf81bee554b908bd42", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3029,11 +2005,7 @@
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "d1fc1bc0d155df60b2e7705b6b2ae02a05c96f948e1cec6e2fb86360b09f346b",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "d1fc1bc0d155df60b2e7705b6b2ae02a05c96f948e1cec6e2fb86360b09f346b", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3047,16 +2019,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3070,16 +2034,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3093,16 +2049,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3116,16 +2064,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3139,21 +2079,9 @@
     "declaredLicenseExpression": "Zlib OR Apache-2.0 OR MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE.md",
-        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT.md",
-        "sha256": "fd80a26fbb3f644af1fa994134446702932968519797227e07a1368dea80f0bc",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-ZLIB.md",
-        "sha256": "84b34dd7608f7fb9b17bd588a6bf392bf7de504e2716f024a77d89f1b145a151",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE.md", "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30", "kind": "license"},
+      {"name": "LICENSE-MIT.md", "sha256": "fd80a26fbb3f644af1fa994134446702932968519797227e07a1368dea80f0bc", "kind": "license"},
+      {"name": "LICENSE-ZLIB.md", "sha256": "84b34dd7608f7fb9b17bd588a6bf392bf7de504e2716f024a77d89f1b145a151", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3167,11 +2095,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "253cd04c6714889df2d32f3f64d669179a1c95c76ac43c40882c52eb06bc3552",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "253cd04c6714889df2d32f3f64d669179a1c95c76ac43c40882c52eb06bc3552", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3185,11 +2109,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "0b83dc40cba89b9922bb84b0a9c7d2768ce37c1d7e138b7424fd4549915778c9",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "0b83dc40cba89b9922bb84b0a9c7d2768ce37c1d7e138b7424fd4549915778c9", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3203,16 +2123,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "cc117d90b498b32b11a886f279b359da16a73c3b01efbb2f5cc004b20262334e",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "e20fa2b8e0a2565f24a792b94b4bf4b6c2b9d36f781d8a9516e218a036e6677a",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "cc117d90b498b32b11a886f279b359da16a73c3b01efbb2f5cc004b20262334e", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "e20fa2b8e0a2565f24a792b94b4bf4b6c2b9d36f781d8a9516e218a036e6677a", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3226,11 +2138,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "253cd04c6714889df2d32f3f64d669179a1c95c76ac43c40882c52eb06bc3552",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "253cd04c6714889df2d32f3f64d669179a1c95c76ac43c40882c52eb06bc3552", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3244,11 +2152,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "fdd55e2b2da854b0fbdc1e607df7c2ba1e1ebf91ecb77c515511ebeef972bc8f",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "fdd55e2b2da854b0fbdc1e607df7c2ba1e1ebf91ecb77c515511ebeef972bc8f", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3262,11 +2166,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "253cd04c6714889df2d32f3f64d669179a1c95c76ac43c40882c52eb06bc3552",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "253cd04c6714889df2d32f3f64d669179a1c95c76ac43c40882c52eb06bc3552", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3280,11 +2180,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "898b1ae9821e98daf8964c8d6c7f61641f5f5aa78ad500020771c0939ee0dea1",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "898b1ae9821e98daf8964c8d6c7f61641f5f5aa78ad500020771c0939ee0dea1", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3298,16 +2194,8 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "898b1ae9821e98daf8964c8d6c7f61641f5f5aa78ad500020771c0939ee0dea1",
-        "kind": "license"
-      },
-      {
-        "name": "src/spin/LICENSE",
-        "sha256": "58545fed1565e42d687aecec6897d35c6d37ccb71479a137c0deb2203e125c79",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "898b1ae9821e98daf8964c8d6c7f61641f5f5aa78ad500020771c0939ee0dea1", "kind": "license"},
+      {"name": "src/spin/LICENSE", "sha256": "58545fed1565e42d687aecec6897d35c6d37ccb71479a137c0deb2203e125c79", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3321,11 +2209,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "c816a0749cdc6bf062a5111c159723de51b2bfac66a1dac2655abd9e6b1583eb",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "c816a0749cdc6bf062a5111c159723de51b2bfac66a1dac2655abd9e6b1583eb", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3339,16 +2223,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "7fea0ee51a4ca5d5cea7464135fd55e8b09caf3a61da3d451ac8a22af95c033f",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "7fea0ee51a4ca5d5cea7464135fd55e8b09caf3a61da3d451ac8a22af95c033f", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3362,21 +2238,9 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "db11fec9946737df39ca3898d9cd8c10ec6f6c3a884a6802b0ad0b81b4e8f23a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "516b24e051bf5630880ebbd55c40a25ce9552ebaf8970a53e8976eb70e522406",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "a825bd853ab71619a4923d7b4311221427848070ff44d990da39b0b274c1683f",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "db11fec9946737df39ca3898d9cd8c10ec6f6c3a884a6802b0ad0b81b4e8f23a", "kind": "license"},
+      {"name": "LICENSE-APACHE", "sha256": "516b24e051bf5630880ebbd55c40a25ce9552ebaf8970a53e8976eb70e522406", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "a825bd853ab71619a4923d7b4311221427848070ff44d990da39b0b274c1683f", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3390,21 +2254,9 @@
     "declaredLicenseExpression": "(MIT OR Apache-2.0) AND Unicode-3.0",
     "selectedLicenseExpression": "MIT AND Unicode-3.0",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-UNICODE",
-        "sha256": "f7db81051789b729fea528a63ec4c938fdcb93d9d61d97dc8cc2e9df6d47f2a1",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3", "kind": "license"},
+      {"name": "LICENSE-UNICODE", "sha256": "f7db81051789b729fea528a63ec4c938fdcb93d9d61d97dc8cc2e9df6d47f2a1", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3418,21 +2270,9 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0",
-        "kind": "license"
-      },
-      {
-        "name": "COPYRIGHT",
-        "sha256": "23860c2a7b5d96b21569afedf033469bab9fe14a1b24a35068b8641c578ce24d",
-        "kind": "notice"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0", "kind": "license"},
+      {"name": "COPYRIGHT", "sha256": "23860c2a7b5d96b21569afedf033469bab9fe14a1b24a35068b8641c578ce24d", "kind": "notice"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3446,21 +2286,9 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "fa226a5c235dafc28fc9303b03f6bf5f7483c31d8355a031ebd6963ffeb65b95",
-        "kind": "license"
-      },
-      {
-        "name": "COPYRIGHT",
-        "sha256": "23860c2a7b5d96b21569afedf033469bab9fe14a1b24a35068b8641c578ce24d",
-        "kind": "notice"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "fa226a5c235dafc28fc9303b03f6bf5f7483c31d8355a031ebd6963ffeb65b95", "kind": "license"},
+      {"name": "COPYRIGHT", "sha256": "23860c2a7b5d96b21569afedf033469bab9fe14a1b24a35068b8641c578ce24d", "kind": "notice"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3474,21 +2302,9 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0",
-        "kind": "license"
-      },
-      {
-        "name": "COPYRIGHT",
-        "sha256": "23860c2a7b5d96b21569afedf033469bab9fe14a1b24a35068b8641c578ce24d",
-        "kind": "notice"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0", "kind": "license"},
+      {"name": "COPYRIGHT", "sha256": "23860c2a7b5d96b21569afedf033469bab9fe14a1b24a35068b8641c578ce24d", "kind": "notice"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3502,21 +2318,9 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0",
-        "kind": "license"
-      },
-      {
-        "name": "COPYRIGHT",
-        "sha256": "23860c2a7b5d96b21569afedf033469bab9fe14a1b24a35068b8641c578ce24d",
-        "kind": "notice"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0", "kind": "license"},
+      {"name": "COPYRIGHT", "sha256": "23860c2a7b5d96b21569afedf033469bab9fe14a1b24a35068b8641c578ce24d", "kind": "notice"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3530,11 +2334,7 @@
     "declaredLicenseExpression": "ISC",
     "selectedLicenseExpression": "ISC",
     "legalFiles": [
-      {
-        "name": "LICENSE.txt",
-        "sha256": "7abd9b6960dcf7d4d0a48606a5b71bfe37d472db68d70637f3a58a56785f1621",
-        "kind": "license"
-      }
+      {"name": "LICENSE.txt", "sha256": "7abd9b6960dcf7d4d0a48606a5b71bfe37d472db68d70637f3a58a56785f1621", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3548,11 +2348,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "a65f5d0a945d267751344c95665945b90c030ea107faf5c85d518929886187da",
-        "kind": "license"
-      }
+      {"name": "LICENSE", "sha256": "a65f5d0a945d267751344c95665945b90c030ea107faf5c85d518929886187da", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3566,16 +2362,8 @@
     "declaredLicenseExpression": "MIT/Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "ce7bc3499fee93d5022ef430d5e4201e79a6d9154f3974e42f41349f0569e09b",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "ce7bc3499fee93d5022ef430d5e4201e79a6d9154f3974e42f41349f0569e09b", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3589,21 +2377,9 @@
     "declaredLicenseExpression": "MIT/Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "ce7bc3499fee93d5022ef430d5e4201e79a6d9154f3974e42f41349f0569e09b",
-        "kind": "license"
-      },
-      {
-        "name": "Cargo.toml.upstream",
-        "sha256": "d158846cdb1259d606bfbeb050e386484cb18f14db41478568114eddb76ec43e",
-        "kind": "notice"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "ce7bc3499fee93d5022ef430d5e4201e79a6d9154f3974e42f41349f0569e09b", "kind": "license"},
+      {"name": "Cargo.toml.upstream", "sha256": "d158846cdb1259d606bfbeb050e386484cb18f14db41478568114eddb76ec43e", "kind": "notice"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3617,16 +2393,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "license-apache-2.0",
-        "sha256": "c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b",
-        "kind": "license"
-      },
-      {
-        "name": "license-mit",
-        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
-        "kind": "license"
-      }
+      {"name": "license-apache-2.0", "sha256": "c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b", "kind": "license"},
+      {"name": "license-mit", "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3640,16 +2408,8 @@
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "license-apache-2.0",
-        "sha256": "c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b",
-        "kind": "license"
-      },
-      {
-        "name": "license-mit",
-        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
-        "kind": "license"
-      }
+      {"name": "license-apache-2.0", "sha256": "c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b", "kind": "license"},
+      {"name": "license-mit", "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3663,16 +2423,8 @@
     "declaredLicenseExpression": "Apache-2.0 OR MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "8c7516d4b27b1e495be5e38b612298b63de48d05f49cdac94f70f3cd70f8864b",
-        "kind": "license"
-      }
+      {"name": "LICENSE-APACHE", "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30", "kind": "license"},
+      {"name": "LICENSE-MIT", "sha256": "8c7516d4b27b1e495be5e38b612298b63de48d05f49cdac94f70f3cd70f8864b", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
@@ -3686,11 +2438,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      }
+      {"name": "LICENSE-MIT", "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3", "kind": "license"}
     ],
     "modified": false,
     "reviewDecision": "approved",
