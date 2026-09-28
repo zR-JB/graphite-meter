@@ -867,6 +867,50 @@ async fn closing_sends_close_then_fin_and_waits_for_the_peer() -> Result<(), Tes
 }
 
 #[tokio::test]
+async fn a_peer_withholding_stream_credit_cannot_hold_a_session() -> Result<(), TestError> {
+    // No stream credit: the 200 head never leaves, yet the close ends within its drain.
+    let peers = peers_with(usize::MAX, Some(0), true).await?;
+    let (accepted, closed) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+    let (serving, _) = serve_sessions(&peers, {
+        let (accepted, closed) = (accepted.clone(), closed.clone());
+        move |session| {
+            let (accepted, closed) = (accepted.clone(), closed.clone());
+            async move {
+                accepted.notify_one();
+                session.close(2, "lifetime").await;
+                closed.notify_one();
+            }
+        }
+    });
+    let _control = uni(&peers.client, &settings(&DRAFT02), false).await?;
+    let (_connect, response) = raw_connect(&peers.client, "/wt").await?;
+    accepted.notified().await;
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    jump(Duration::from_millis(1100)).await;
+    tokio::time::timeout(Duration::from_secs(5), closed.notified()).await?;
+    assert_eq!(response.await?, (Vec::new(), Err(Code::WT_SESSION_GONE)));
+    drop(serving);
+
+    // Nor can it hold the refusal of a CONNECT that never showed WebTransport SETTINGS.
+    let peers = peers_with(usize::MAX, Some(0), true).await?;
+    let (serving, _) = serve_sessions(&peers, |_| async { panic!("accepted without SETTINGS") });
+    let (_connect, response) = raw_connect(&peers.client, "/wt").await?;
+    while peers.budget.used.load(Ordering::Relaxed) == 0 {
+        tokio::task::yield_now().await;
+    }
+    jump(Duration::from_millis(5100)).await;
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    jump(Duration::from_millis(10_100)).await;
+    assert_eq!(response.await?, (Vec::new(), Err(Code::H3_REQUEST_CANCELLED)));
+    drop(serving);
+    Ok(())
+}
+
+#[tokio::test]
 async fn shutdown_closes_every_session_before_the_connection() -> Result<(), TestError> {
     let peers = peers(usize::MAX).await?;
     let (serving, stop) = serve_sessions(&peers, |session| async move {

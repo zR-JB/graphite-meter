@@ -347,9 +347,14 @@ impl Connect {
     /// Ends the session once the peer does or this side asks: CLOSE unless the peer ended it, FIN,
     /// the peer's FIN within 1 s, and only then STOP_SENDING. `true` once the stream is done with.
     pub(crate) fn poll(&mut self, cx: &mut Context<'_>, now: Instant, shared: &Shared) -> bool {
+        // A peer that withholds credit for the head still gets the close, bounded by the drain.
+        let mut flushed = true;
         let failed = match self.poll_read(cx) {
             Ok(()) if self.deadline.is_none() => match self.send.poll_ready(cx) {
-                Poll::Pending => return false,
+                Poll::Pending => {
+                    flushed = false;
+                    None
+                }
                 Poll::Ready(written) => written.err(),
             },
             read => read.err(),
@@ -364,7 +369,10 @@ impl Connect {
                         let Some((code, reason)) = shared.state().sessions.requested_close(self.id) else {
                             return false;
                         };
-                        self.send.queue(frame::DATA, capsule::close(code, &reason).into());
+                        // Queueing replaces a frame not yet written, so an unsent head keeps its place.
+                        if flushed {
+                            self.send.queue(frame::DATA, capsule::close(code, &reason).into());
+                        }
                         self.end(Ok((code, reason)));
                         self.closed_here = true;
                     }
@@ -508,8 +516,15 @@ impl Session {
         *response.headers_mut() = headers;
         let Some(dialect) = dialect(&shared).await else {
             *response.status_mut() = http::StatusCode::BAD_REQUEST;
-            stream.send.send_response(response).await?;
-            stream.send.finish().await?;
+            // A peer that withholds credit cannot hold the refusal.
+            let answer = async {
+                stream.send.send_response(response).await?;
+                stream.send.finish().await
+            };
+            match tokio::time::timeout(RESET_DEADLINE, answer).await {
+                Ok(answered) => answered?,
+                Err(_) => stream.send.reset(Code::H3_REQUEST_CANCELLED),
+            }
             return Err(Error::Refused);
         };
         if dialect == Dialect::Draft02 {
