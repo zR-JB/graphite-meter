@@ -52,7 +52,8 @@ func TestConfigValidate(t *testing.T) {
 		{"no stage", func(c *Config) { c.Stages = StageSet{} }, false},
 		{"warmup", func(c *Config) { c.Warmup = -time.Second }, false},
 		{"short stage", func(c *Config) { c.DownloadDuration = 999 * time.Millisecond }, false},
-		{"long stage", func(c *Config) { c.BidirectionalDuration = time.Hour }, false},
+		{"hour-long stage", func(c *Config) { c.BidirectionalDuration = time.Hour }, true},
+		{"stage beyond a day", func(c *Config) { c.BidirectionalDuration = 25 * time.Hour }, false},
 		{"fast ping", func(c *Config) { c.LoadedPingInterval = 79 * time.Millisecond }, false},
 		{"streams", func(c *Config) { c.TransferStreams.Forced = MaxStreams + 1 }, false},
 	} {

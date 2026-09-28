@@ -26,9 +26,26 @@ type ServerInfo struct {
 }
 
 type Capabilities struct {
-	UploadCheckpoint  bool               `json:"uploadCheckpoint,omitzero"`
+	UploadCheckpoint bool `json:"uploadCheckpoint,omitzero"`
+	// MaxStageMs is the longest stage clients may plan against this server; absent means DefaultStageLimit.
+	MaxStageMs        int64              `json:"maxStageMs,omitzero"`
 	ThroughputTargets []ThroughputTarget `json:"throughput"`
 	LatencyTargets    []LatencyTarget    `json:"latency"`
+}
+
+// Stage limits: every server allows at least a second; one that advertises nothing allows DefaultStageLimit.
+const (
+	MinStageLimit     = time.Second
+	DefaultStageLimit = 5 * time.Minute
+	MaxStageLimit     = 24 * time.Hour
+)
+
+// StageLimit is the longest stage this server admits, DefaultStageLimit when it predates the field.
+func (c Capabilities) StageLimit() time.Duration {
+	if c.MaxStageMs == 0 {
+		return DefaultStageLimit
+	}
+	return time.Duration(c.MaxStageMs) * time.Millisecond
 }
 
 const (
@@ -165,6 +182,10 @@ func (p Preflight) Validate() error {
 	throughput, latency := p.Capabilities.ThroughputTargets, p.Capabilities.LatencyTargets
 	if throughput == nil || latency == nil || len(throughput) > 32 || len(latency) > 32 {
 		return fmt.Errorf("invalid discovery target lists")
+	}
+	if limit := p.Capabilities.MaxStageMs; limit != 0 &&
+		(limit < MinStageLimit.Milliseconds() || limit > MaxStageLimit.Milliseconds()) {
+		return fmt.Errorf("invalid stage limit")
 	}
 	return nil
 }

@@ -1,3 +1,4 @@
+import { MAX_STAGE_LIMIT_MS } from "../api/decode";
 import type { RunnerConfig } from "../runner/contract";
 
 export const DEFAULT_CONFIG: RunnerConfig = {
@@ -22,13 +23,14 @@ export const DEFAULT_CONFIG: RunnerConfig = {
   visualization: { throughputMaxBytesPerSec: "auto" },
 };
 
-/** Bounds in ms, as in the native client; a stage leaves room for the 800 ms evidence floor. */
+/** Bounds in ms, as in the native client; a stage leaves room for the 800 ms evidence floor.
+ * The ceiling is the longest any server may allow; the selected servers' own limit applies at start. */
 export const DURATION_LIMITS: Record<DurationKey, readonly [number, number]> = {
   warmupMs: [0, 4_000],
-  latencyMs: [1_000, 300_000],
-  downloadMs: [1_000, 300_000],
-  uploadMs: [1_000, 300_000],
-  bidirectionalMs: [1_000, 300_000],
+  latencyMs: [1_000, MAX_STAGE_LIMIT_MS],
+  downloadMs: [1_000, MAX_STAGE_LIMIT_MS],
+  uploadMs: [1_000, MAX_STAGE_LIMIT_MS],
+  bidirectionalMs: [1_000, MAX_STAGE_LIMIT_MS],
 };
 type DurationKey = keyof RunnerConfig["duration"];
 

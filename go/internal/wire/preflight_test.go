@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/apipin"
 )
@@ -132,6 +133,21 @@ func TestDiscoveryMetadataAndProbeEvidenceBounds(t *testing.T) {
 				LatencyTargets: []LatencyTarget{}}}} {
 		if err := invalid.Validate(); err == nil {
 			t.Fatal("accepted invalid discovery")
+		}
+	}
+	// A server that predates the stage limit allows the old five minutes; an advertised one stays within a day.
+	if limit := valid.Capabilities.StageLimit(); limit != DefaultStageLimit {
+		t.Fatalf("absent stage limit = %v, want %v", limit, DefaultStageLimit)
+	}
+	for limit, ok := range map[int64]bool{999: false, 1000: true, 7_200_000: true, 86_400_000: true,
+		86_400_001: false, -1: false} {
+		limited := valid
+		limited.Capabilities.MaxStageMs = limit
+		if err := limited.Validate(); (err == nil) != ok {
+			t.Fatalf("stage limit %d ms: Validate() = %v", limit, err)
+		}
+		if ok && limited.Capabilities.StageLimit() != time.Duration(limit)*time.Millisecond {
+			t.Fatalf("stage limit %d ms reads %v", limit, limited.Capabilities.StageLimit())
 		}
 	}
 	probe := Probe{ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "h2"}

@@ -315,6 +315,8 @@ export type DiscoveredLatency = DiscoveredTarget<LatencyTarget>;
 /* Server-advertised transports classified against the page that uses them. */
 export interface TransportDiscovery {
   uploadCheckpoint?: boolean;
+  /** The longest stage this server admits; absent from servers that predate the limit. */
+  maxStageMs?: number;
   generation: string;
   engineVersion: string;
   server: { name: string; location?: string };

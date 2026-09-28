@@ -71,9 +71,12 @@ contributions share the client's connection and are not independent capacity tes
 
 ### Stage timing
 
-Stages last 1 s to 5 min. Warmup runs before every stage, including latency: the configured 0–4 s, stretched to
+Stages last from 1 s up to the smallest stage limit among the selected servers: 5 min unless an operator raises
+`GM_MAX_STAGE_DURATION`, at most 24 h; a server that predates the limit counts as 5 min. A longer plan blocks the
+start and names the server. Warmup runs before every stage, including latency: the configured 0–4 s, stretched to
 ten idle RTTs but at most 4 s. Stage readiness is bounded per client. Hidden browser pages keep measuring: workers
-time bytes and probes while page timers may be throttled, and the schedule never skips past the current segment.
+time bytes and probes, the browser's run clock ticks from a worker so a page hidden for hours keeps its pace, and the
+schedule never skips past the current segment.
 
 ## Latency probing
 

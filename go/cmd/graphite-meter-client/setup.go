@@ -51,7 +51,8 @@ func (s *setting) row(m model) setupRow {
 func stageSetting(label, what string, flag func(*goclient.Config) *bool,
 	span func(*goclient.Config) *time.Duration) *setting {
 	bound := goclient.StageBound
-	return &setting{label: label, flag: flag, span: span, help: fmt.Sprintf("%s. ←/→ ±1 s (%s–%s), space on/off.",
+	return &setting{label: label, flag: flag, span: span, help: fmt.Sprintf(
+		"%s. ←/→ step it (%s–%s; a server may allow less), space on/off.",
 		what, fmtSetting(bound.Min), fmtSetting(bound.Max))}
 }
 
@@ -262,6 +263,10 @@ func (m model) adjust(s *setting, step int) (tea.Model, tea.Cmd) {
 	case s.span != nil:
 		bound, unit := s.bound()
 		d := s.span(&m.cfg)
+		if s != warmupRow {
+			// Steps grow with the stage, so the arrows reach an hour as readily as a second.
+			unit = stageStep(*d - time.Duration(max(0, -step)))
+		}
 		*d = min(max(*d+time.Duration(step)*unit, bound.Min), bound.Max)
 		m.notice = s.label + " " + fmtSetting(*d) + "."
 	case s.flag != nil:
@@ -372,6 +377,18 @@ func (m *model) commitEdit() error {
 	*s.span(&m.cfg) = d
 	m.notice = s.label + " " + fmtSetting(d) + "."
 	return nil
+}
+
+func stageStep(d time.Duration) time.Duration {
+	switch {
+	case d < time.Minute:
+		return time.Second
+	case d < 10*time.Minute:
+		return 10 * time.Second
+	case d < time.Hour:
+		return time.Minute
+	}
+	return 5 * time.Minute
 }
 
 func (s *setting) bound() (goclient.DurationBound, time.Duration) {

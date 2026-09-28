@@ -18,7 +18,12 @@ import type {
   LatencyTarget,
   WebTransportThroughputTarget,
 } from "../api/endpoints";
-import type { LatencyEndpoint, ThroughputEndpoint } from "../api/decode";
+import {
+  DEFAULT_STAGE_LIMIT_MS,
+  MAX_STAGE_LIMIT_MS,
+  type LatencyEndpoint,
+  type ThroughputEndpoint,
+} from "../api/decode";
 import { planned, plannedActivities } from "./schedule";
 import {
   browserOriginRestriction,
@@ -519,6 +524,23 @@ export function planServerStreams(
 }
 
 /** Rejects a plan with no stage, or whose streams cannot fit, before any connection opens. */
+/** The longest stage every selected server admits, and the server that sets it; an undiscovered one does not limit it. */
+export function stageLimit(
+  views: readonly {
+    server: { name: string };
+    discovery: TransportDiscovery | null;
+  }[],
+): { ms: number; server: string | null } {
+  let limit = { ms: MAX_STAGE_LIMIT_MS, server: null as string | null };
+  for (const { server, discovery } of views) {
+    const ms = discovery
+      ? (discovery.maxStageMs ?? DEFAULT_STAGE_LIMIT_MS)
+      : limit.ms;
+    if (ms < limit.ms) limit = { ms, server: server.name };
+  }
+  return limit;
+}
+
 export function validatePlan(
   config: RunnerConfig,
   servers: readonly PlanServer[],

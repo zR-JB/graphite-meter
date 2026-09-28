@@ -4,6 +4,7 @@
   "generation": "test-generation",
   "capabilities": {
     "uploadCheckpoint": true,
+    "maxStageMs": 300000,
     "throughput": [
       {
         "baseUrl": "http://speed.example:7246",

@@ -367,7 +367,8 @@ func TestCommitEdit(t *testing.T) {
 		{download, false, "12", func(c goclient.Config) bool { return c.DownloadDuration == 12*time.Second }, false},
 		{download, false, "1.5m", func(c goclient.Config) bool { return c.DownloadDuration == 90*time.Second }, false},
 		{upload, false, "0", nil, true},
-		{upload, false, "6m", nil, true},
+		{upload, false, "2h", func(c goclient.Config) bool { return c.UploadDuration == 2*time.Hour }, false},
+		{upload, false, "25h", nil, true},
 		{warmupRow, false, "5s", nil, true},
 		{upload, false, "soon", nil, true},
 		{streamsRow, false, "8", func(c goclient.Config) bool {
