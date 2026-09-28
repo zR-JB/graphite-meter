@@ -1,6 +1,8 @@
 use super::session::{Session, SessionError, SessionLease, SessionStore, State, random_token, token_hash};
+use crate::cors::Access;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use graphite_meter_core::origin::canonical_origin;
+use http::HeaderValue;
 use std::sync::Arc;
 use tokio::{sync::watch, time::Instant};
 
@@ -46,6 +48,13 @@ impl AuthLease {
     }
     pub fn is_bearer(&self) -> bool {
         self.bearer
+    }
+    pub fn access<'a>(&self, origin: &'a HeaderValue) -> Access<'a> {
+        if self.bearer {
+            Access::Bearer(origin)
+        } else {
+            Access::Cookie(origin)
+        }
     }
     pub fn browser_origin(&self) -> Option<&str> {
         self.grant.as_ref().and_then(|grant| grant.origin.as_deref())
