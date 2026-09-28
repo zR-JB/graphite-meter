@@ -2,6 +2,7 @@ import { compensationTooltip, type WireModel } from "../compensation";
 import {
   fmtAddedMs,
   fmtBytes,
+  fmtDuration,
   fmtMs,
   formatLatency,
   formatRate,
@@ -34,6 +35,7 @@ export interface SummaryRow {
   value: string;
   stage?: TransportRole;
   short?: string;
+  tip?: string;
 }
 interface WireRate {
   value: string;
@@ -115,6 +117,12 @@ export const laneShort = (
 const stability = (pct: number | null): SummaryRow[] =>
   pct === null ? [] : [{ label: "Stability", value: `${Math.round(pct)}%` }];
 
+/** Time without data shows from half a second. */
+const noData = (ms = 0): SummaryRow[] =>
+  ms < 500
+    ? []
+    : [{ label: "No data", value: fmtDuration(ms), tip: JARGON.noData }];
+
 /** From half a percent of overhead the wire estimate sits under the headline. */
 function wire(
   model: WireModel | null | undefined,
@@ -189,6 +197,7 @@ function bidirectionalCard(
           ? Math.min(lanes.down.stabilityPct, lanes.up.stabilityPct)
           : null,
       ),
+      ...noData(Math.max(lanes?.down?.quietMs ?? 0, lanes?.up?.quietMs ?? 0)),
     ],
   };
 }
@@ -234,6 +243,7 @@ export function summaryCards(
             ? []
             : [{ label: "Peak", value: formatRate(peak, units) }]),
           ...stability(complete ? result.stabilityPct : null),
+          ...noData(result.quietMs),
         ],
       },
     ];

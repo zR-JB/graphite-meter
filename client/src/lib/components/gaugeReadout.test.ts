@@ -10,6 +10,7 @@ const input = (overrides: Partial<GaugeReadoutInput>): GaugeReadoutInput => ({
   error: null,
   latencyTimeout: false,
   latencyMs: 12,
+  quietMs: null,
   hasLatencyResult: false,
   unusable: false,
   headline: null,
@@ -18,7 +19,7 @@ const input = (overrides: Partial<GaugeReadoutInput>): GaugeReadoutInput => ({
   ...overrides,
 });
 
-test("the display follows phase, evidence and missing data", () => {
+test("the display follows phase, evidence and missing data; a warmup shows none", () => {
   const upload = {
     phase: "bidirectional" as const,
     direction: "upload" as const,
@@ -29,6 +30,7 @@ test("the display follows phase, evidence and missing data", () => {
   for (const [overrides, value, unit] of [
     [{ unusable: true }, "—", ""],
     [{ phase: "idle" }, "—", ""],
+    [{ phase: "warmup" }, "—", ""],
     [{ phase: "latency" }, "12.0", "ms"],
     [{ phase: "latency", latencyTimeout: true }, "—", "probe timeout"],
     [{ phase: "complete", hasLatencyResult: true }, "12.0", "ms"],
@@ -40,8 +42,17 @@ test("the display follows phase, evidence and missing data", () => {
     ],
   ] as const)
     expect(gaugeReadout(input(overrides)).display).toEqual({ value, unit });
-  for (const phase of ["warmup", "download"] as const)
-    expect(gaugeReadout(input({ phase })).display).toBeNull();
+  expect(gaugeReadout(input({ phase: "download" })).display).toBeNull();
+});
+
+test("a stalled run states how long no data has arrived, in whole seconds", () => {
+  expect(gaugeReadout(input({})).noData).toBe("");
+  for (const [quietMs, note] of [
+    [500, "No data for 1 s"],
+    [4_200, "No data for 4 s"],
+    [65_000, "No data for 1 min 5 s"],
+  ] as const)
+    expect(gaugeReadout(input({ quietMs })).noData).toBe(note);
 });
 
 test("terminal readouts carry the measured direction and status", () => {

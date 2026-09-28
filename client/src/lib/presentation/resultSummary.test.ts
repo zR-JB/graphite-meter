@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { summaryCards, summaryEvidence } from "./resultSummary";
+import { JARGON } from "./vocabulary";
 
 test("run evidence keeps only stages with a result", () => {
   const evidence = summaryEvidence(
@@ -111,4 +112,34 @@ test("the latency card groups signed added latency, even of a failed stage; tran
   const stability = (card: (typeof cards)[number]) =>
     card.rows.find((row) => row.label === "Stability")?.value;
   expect(cards.slice(1).map(stability)).toEqual(["95%", "80%", undefined]);
+});
+
+test("time without data is an explained fact from half a second, the longer lane's on bidirectional", () => {
+  const noData = (
+    download: number | undefined,
+    lanes: [number, number] = [0, 0],
+  ) =>
+    summaryCards(
+      {
+        status: { download: "complete", bidirectional: "complete" },
+        download: { ...lane(100), quietMs: download },
+        upload: null,
+        bidirectional: {
+          down: { ...lane(40), quietMs: lanes[0] },
+          up: { ...lane(20), quietMs: lanes[1] },
+        },
+        latency: null,
+        added: null,
+      },
+      units,
+      true,
+    ).map((card) => card.rows.find((row) => row.label === "No data"));
+  expect(noData(undefined)).toEqual([undefined, undefined]);
+  expect(noData(499, [0, 499])).toEqual([undefined, undefined]);
+  const fact = (value: string) => ({
+    label: "No data",
+    value,
+    tip: JARGON.noData,
+  });
+  expect(noData(8_000, [600, 2_500])).toEqual([fact("8.0 s"), fact("2.5 s")]);
 });

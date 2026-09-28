@@ -152,13 +152,15 @@ hue, never by a boxed icon.
 
 - **Instrument** (`GaugePanel`): the dial and the latency card share the top and take the height left over; the run
   bar and three stage cards keep theirs. Narrow, it stacks: dial, run bar, stage cards, latency. A tight screen
-  scrolls rather than overlapping rows.
+  scrolls rather than overlapping rows. The footer under the dial holds the phase's note or a failure, and while no
+  data arrives, for how long.
 - **Server lens** (`ServerLens`, `ServerScope quiet`): with several servers, one quiet field over the instrument
   (All servers or one) drives the stage cards and which server's latency is shown once the run finishes. History's
   detail has its own.
 - **Stage card** (`ResultSummary`): a rule and wash in the stage hue; the name and a status word when not complete;
   the value (bidirectional: ↓ and ↑ in their own hues); the wire rate or a failure's reason; the graph; then facts:
-  Peak, Stability, Down + up, Transferred, wrapping to the card's width. A saved result has no graph row.
+  Peak, Stability, No data (from 0.5 s), Down + up, Transferred, wrapping to the card's width. A saved result has no
+  graph row.
 - **Stage graph** (`StageGraph`): the rate from zero to the shared ceiling (`store.scales.chartBytesPerSec`), a dashed
   second lane for bidirectional upload, and a 20 px latency track below: one dot per reply bucket, height being time
   over the idle median (dashed baseline). A mouse, a tap, a sideways drag or arrow keys show a readout at once: time

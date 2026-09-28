@@ -20,6 +20,7 @@
   import { primaryResultGaugeArc, resultGaugeArcs } from "./resultGauge";
   import { gaugeReadout } from "./gaugeReadout";
   import {
+    JARGON,
     MISSING,
     OUTCOME,
     PHASE_HINT,
@@ -133,6 +134,7 @@
       error: store.error,
       latencyTimeout: store.liveLatencyLost,
       latencyMs: liveReadout.rtt.current,
+      quietMs: store.live?.quietMs ?? null,
       hasLatencyResult: !!store.result?.latency,
       unusable: unusableStage,
       headline: headlineArc,
@@ -184,7 +186,7 @@
   });
   const footer = handoff(
     () => {
-      const { hint, status, failure } = readout;
+      const { hint, status, failure, noData } = readout;
       if (store.preparing)
         return { status: readout.preparationLabel, tone: "preparation" };
       if (failure)
@@ -199,11 +201,13 @@
           tone: status.error ? "error" : "",
           hint: status.action,
         };
+      if (noData) return { hint: noData, tip: JARGON.noData };
       const known = PHASE_HINT[phase];
       return hint ? { hint: known?.text ?? hint, tip: known?.tip } : {};
     },
+    // A note that counts keys on its explainer, so it updates in place.
     (notes: { status?: string; tone?: string; hint?: string; tip?: string }) =>
-      `${notes.status}|${notes.hint}`,
+      `${notes.status}|${notes.tip ?? notes.hint}`,
   );
 </script>
 
