@@ -230,27 +230,21 @@ impl Ui {
             horizontal: 1,
             vertical: 1,
         });
-        let regions = Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Min(1),
-            Constraint::Length(1),
-        ])
-        .split(inner);
+        let line = Constraint::Length(1);
+        let [origin, code, label, waited, url_area, footer] =
+            Layout::vertical([line, line, line, line, Constraint::Min(1), line]).areas(inner);
         let width = usize::from(inner.width);
         frame.render_widget(
             Paragraph::new(safe_text_width(&format!("Origin: {}", auth.origin), width)).style(self.theme.muted),
-            regions[0],
+            origin,
         );
         frame.render_widget(
             Paragraph::new(safe_text_width(&format!("Match this code: {}", auth.code), width)).style(self.value()),
-            regions[1],
+            code,
         );
         frame.render_widget(
             Paragraph::new("Browser URL · ↑/↓ scroll").style(self.theme.muted),
-            regions[2],
+            label,
         );
         let url = safe_text(&auth.browser_url, MAX_TEXT);
         let lines = wrap_columns(&url, width.max(1));
@@ -264,11 +258,11 @@ impl Ui {
                 remaining.as_secs_f64()
             ))
             .style(self.theme.muted),
-            regions[3],
+            waited,
         );
-        let offset = self.auth_scroll.clamp(lines.len(), usize::from(regions[4].height));
-        frame.render_widget(Paragraph::new(lines).scroll(offset).style(self.theme.text), regions[4]);
-        frame.render_widget(Paragraph::new(self.hints(&keys::hints(&SIGN_IN), width)), regions[5]);
+        let offset = self.auth_scroll.clamp(lines.len(), usize::from(url_area.height));
+        frame.render_widget(Paragraph::new(lines).scroll(offset).style(self.theme.text), url_area);
+        frame.render_widget(Paragraph::new(self.hints(&keys::hints(&SIGN_IN), width)), footer);
     }
 
     fn hints(&self, hints: &[&str], width: usize) -> Line<'static> {

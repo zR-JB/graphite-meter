@@ -66,7 +66,8 @@ async fn run(action: Action) -> Result<i32, Error> {
         Action::Run { config, report } => (*config, report),
     };
     let _ = graphite_meter_client::crypto::provider().install_default();
-    let headless = report_only || !std::io::stdout().is_terminal();
+    let terminal = std::io::stdout().is_terminal();
+    let headless = report_only || !terminal;
     let caught = Arc::new(AtomicU8::new(0));
     let interrupts = interrupts(headless, caught.clone())?;
     let (finished, exit) = if headless {
@@ -79,10 +80,10 @@ async fn run(action: Action) -> Result<i32, Error> {
     };
     let width = crossterm::terminal::size()
         .ok()
-        .filter(|_| std::io::stdout().is_terminal())
+        .filter(|_| terminal)
         .map_or(report::WIDTH, |(columns, _)| usize::from(columns).max(40));
     if let Some(snapshot) = finished.as_ref().filter(|_| !exit.running) {
-        match report::render(snapshot, width, std::io::stdout().is_terminal()) {
+        match report::render(snapshot, width, terminal) {
             Some(report) => println!("{report}"),
             None if headless => eprintln!(
                 "graphite-meter-client: {}",

@@ -13,17 +13,12 @@ pub const WIDTH: usize = 100;
 const ADDED_NOTE: &str = "Added: loaded median minus idle median, same server.";
 const RESET: &str = "\x1b[0m";
 
-/// The final report, terminal-safe; a terminal gets Go's colours.
+/// The final report, terminal-safe. Go prints it through lipgloss's colour profile: a terminal gets
+/// the TUI palette unless TERM is dumb, and NO_COLOR keeps only bold, as the monochrome theme does.
 pub fn render(snapshot: &Snapshot, width: usize, terminal: bool) -> Option<String> {
-    compose(snapshot, width, palette(terminal))
-}
-
-/// Go prints the report through lipgloss's colour profile: a terminal gets the TUI palette unless
-/// TERM is dumb, and NO_COLOR keeps only bold, as the monochrome theme does.
-fn palette(terminal: bool) -> Option<Theme> {
     let term = std::env::var("TERM").unwrap_or_default();
     let dumb = term == "dumb" || term.is_empty() && !cfg!(windows);
-    (terminal && !dumb).then(Theme::terminal)
+    compose(snapshot, width, (terminal && !dumb).then(Theme::terminal))
 }
 
 fn compose(snapshot: &Snapshot, width: usize, theme: Option<Theme>) -> Option<String> {
