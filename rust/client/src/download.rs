@@ -11,6 +11,7 @@ use graphite_meter_core::{
     failure::FailureReason,
     origin::canonical_origin,
     route::Route,
+    wire::{MAX_TRANSFER_BYTES, MAX_WEBTRANSPORT_STREAMS},
 };
 use http::Method;
 use std::{
@@ -137,8 +138,8 @@ impl Download {
         let (ready, mut received) = mpsc::channel(lanes);
         let lane_cancel = cancel.clone();
         let start = async {
-            for first in (0..lanes).step_by(WT_LANES_PER_SESSION) {
-                let group = (lanes - first).min(WT_LANES_PER_SESSION);
+            for first in (0..lanes).step_by(MAX_WEBTRANSPORT_STREAMS) {
+                let group = (lanes - first).min(MAX_WEBTRANSPORT_STREAMS);
                 let target = format!("{origin}/wt/download?bytes={WT_STREAM_BYTES}&streams={group}");
                 let slot = Arc::new(SessionSlot::dial(http, target, insecure).await?);
                 for lane in first..first + group {
@@ -198,8 +199,6 @@ impl Download {
     }
 }
 
-const HTTP_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024 * 1024;
-
 async fn receive_http_lane(
     transport: &Transport,
     lane: usize,
@@ -209,7 +208,7 @@ async fn receive_http_lane(
     mut retry: TransferRetry,
 ) -> Result<(), Error> {
     let lane = lane.to_string();
-    let requested_bytes = HTTP_DOWNLOAD_BYTES.to_string();
+    let requested_bytes = MAX_TRANSFER_BYTES.to_string();
     let mut announced = false;
     loop {
         let started = Instant::now();
@@ -220,7 +219,7 @@ async fn receive_http_lane(
                     Method::GET,
                     Route::Download,
                     &[("bytes", &requested_bytes), ("lane", &lane)],
-                    HTTP_DOWNLOAD_BYTES,
+                    MAX_TRANSFER_BYTES,
                     duration,
                 )
                 .await?;
@@ -234,7 +233,7 @@ async fn receive_http_lane(
                 received += chunk.len() as u64;
                 moved |= !chunk.is_empty();
             }
-            if received != HTTP_DOWNLOAD_BYTES {
+            if received != MAX_TRANSFER_BYTES {
                 return Err("download ended before its declared byte count".into());
             }
             Ok::<(), Error>(())
@@ -249,7 +248,6 @@ async fn receive_http_lane(
     }
 }
 
-const WT_LANES_PER_SESSION: usize = 16;
 const WT_STREAM_BYTES: u64 = 64 * 1024 * 1024;
 
 async fn receive_webtransport(
