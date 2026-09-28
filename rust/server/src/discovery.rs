@@ -2,6 +2,7 @@
 use crate::{
     admission::Admission,
     config::{AuthMode, Config, ConfigError, NativeKind},
+    http::response::{json_response, text_body},
     preflight::{Preflight, connect_origins, discovery_host},
 };
 use bytes::Bytes;
@@ -84,14 +85,10 @@ impl Discovery {
                 request.version(),
                 request.headers(),
             )?,
-            "/preflight" => json_response(self.for_host(&request_host(request))?.preflight.clone())?,
+            "/preflight" => json_response(self.for_host(&request_host(request))?.preflight.clone()),
             "/servers" => match &self.for_host(&request_host(request))?.catalog {
-                Some(catalog) => json_response(catalog.clone())?,
-                None => Response::builder()
-                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
-                    .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
-                    .body(Bytes::from_static(b"server catalogue unavailable\n"))?,
+                Some(catalog) => json_response(catalog.clone()),
+                None => text_body(StatusCode::INTERNAL_SERVER_ERROR, "server catalogue unavailable"),
             },
             _ => return Ok(None),
         };
@@ -170,11 +167,4 @@ pub(crate) fn request_host<B>(request: &Request<B>) -> String {
             || "localhost".into(),
             |authority| authority.host().trim_start_matches('[').trim_end_matches(']').into(),
         )
-}
-
-fn json_response(data: Bytes) -> Result<Response<Bytes>, ConfigError> {
-    Ok(Response::builder()
-        .header(header::CONTENT_TYPE, "application/json")
-        .header(header::CACHE_CONTROL, "no-store")
-        .body(data)?)
 }

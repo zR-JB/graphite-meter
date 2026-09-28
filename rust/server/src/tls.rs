@@ -1,6 +1,9 @@
 //! Validate a complete identity before publishing it to concurrent handshakes.
 
-use crate::config::{Config, ConfigError, NativeKind};
+use crate::{
+    config::{Config, ConfigError, NativeKind},
+    log::rfc3339,
+};
 use graphite_meter_core::origin::target_origin;
 use rustls::{
     ServerConfig,
@@ -161,11 +164,6 @@ fn log_certificate(identity: &CertifiedKey, now: SystemTime) {
             crate::config::go_duration(hours)
         );
     }
-}
-
-fn rfc3339(time: SystemTime) -> String {
-    let [year, month, day, hour, minute, second] = crate::log::utc(time);
-    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
 }
 
 fn read_identity(

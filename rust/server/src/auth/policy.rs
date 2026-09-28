@@ -5,7 +5,7 @@ use crate::{
     client_address::unique_header,
     config::{AuthMode, ConfigError},
     cors::{self, Access},
-    http_server::query,
+    http::response::query,
 };
 use graphite_meter_core::{
     origin::{canonical_origin, target_origin},

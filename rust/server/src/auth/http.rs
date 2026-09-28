@@ -15,6 +15,8 @@ use super::{
 use crate::{
     config::{AuthConfig, AuthMode, ConfigError},
     cors::Access,
+    http::response::{json_response, query_pairs, text_response},
+    log::rfc3339,
 };
 use bytes::Bytes;
 use http::{HeaderValue, Method, Request, Response, StatusCode, header};
@@ -185,7 +187,7 @@ impl Service {
         let Ok(nonce) = random_token::<32>() else {
             return response(StatusCode::SERVICE_UNAVAILABLE);
         };
-        let query = query(request);
+        let query = query_pairs(request);
         let challenge = value(&query, "challenge");
         let challenge = if valid_challenge(challenge) { challenge } else { "" };
         let notice = match value(&query, "error") {
@@ -341,7 +343,7 @@ impl Service {
         authorized: &AuthorizedRequest<Bytes>,
     ) -> Result<Response<Bytes>, (Reason, String)> {
         let request = authorized.request();
-        let fields = query(request);
+        let fields = query_pairs(request);
         let unique = |key: &str| {
             let mut values = fields.iter().filter(|(name, _)| name == key);
             let value = values.next().map(|(_, value)| value.as_str());
@@ -414,7 +416,7 @@ impl Service {
             return response(StatusCode::FORBIDDEN);
         };
         let session = lease.session();
-        json_response(
+        json(
             StatusCode::OK,
             json!({"name":session.name(), "provider":lease.provider(), "expires":rfc3339(session.expires()), "csrf":session.csrf(), "remainingMs":remaining_ms(session.expires()), "maximumLifetimeMs":SESSION_LIFETIME.as_millis() as u64}),
         )
@@ -450,7 +452,7 @@ impl Service {
 
     fn approval_page(&self, authorized: &AuthorizedRequest<Bytes>, browser: bool) -> Response<Bytes> {
         let request = authorized.request();
-        let query = query(request);
+        let query = query_pairs(request);
         let challenge = value(&query, "challenge");
         if !valid_challenge(challenge) {
             return response(StatusCode::FORBIDDEN);
@@ -569,16 +571,16 @@ impl Service {
             None => Ok(Exchange::Pending),
         };
         let mut result = match exchange {
-            Ok(Exchange::Pending) => json_response(StatusCode::ACCEPTED, json!({"status":"pending"})),
+            Ok(Exchange::Pending) => json(StatusCode::ACCEPTED, json!({"status":"pending"})),
             Ok(Exchange::Issued { token, lease }) => {
                 let expires = lease.session().expires();
                 if browser {
-                    json_response(
+                    json(
                         StatusCode::OK,
                         json!({"token":token, "expires":unix_ms(expires), "remainingMs":remaining_ms(expires), "maximumLifetimeMs":SESSION_LIFETIME.as_millis() as u64}),
                     )
                 } else {
-                    json_response(StatusCode::OK, json!({"token":token, "expires":rfc3339(expires)}))
+                    json(StatusCode::OK, json!({"token":token, "expires":rfc3339(expires)}))
                 }
             }
             Err(ExchangeError::GrantCapacity) => response(StatusCode::TOO_MANY_REQUESTS),
@@ -597,7 +599,7 @@ impl Service {
         let Some(lease) = principal(authorized) else {
             return error_response(StatusCode::FORBIDDEN);
         };
-        let query = query(request);
+        let query = query_pairs(request);
         let kind = if request.uri().path() == "/ws/session" {
             SocketKind::WebSocket
         } else {
@@ -610,7 +612,7 @@ impl Service {
             text(request, "origin"),
             kind,
         ) {
-            Ok(ticket) => json_response(
+            Ok(ticket) => json(
                 StatusCode::OK,
                 json!({"token":ticket.token, "expires":unix_ms(ticket.expires)}),
             ),
@@ -648,10 +650,17 @@ fn principal(authorized: &AuthorizedRequest<Bytes>) -> Option<&AuthLease> {
     }
 }
 fn response(status: StatusCode) -> Response<Bytes> {
-    let mut response = Response::new(Bytes::new());
+    secured(status, Response::new(Bytes::new()))
+}
+/// Go's auth page headers come first; `response`'s own follow, replacing any of the same name.
+fn secured(status: StatusCode, mut response: Response<Bytes>) -> Response<Bytes> {
+    let mut headers = pages::security_headers(None).expect("static auth CSP");
+    pages::harden(&mut headers, true);
+    for (name, value) in response.headers() {
+        headers.insert(name, value.clone());
+    }
+    *response.headers_mut() = headers;
     *response.status_mut() = status;
-    *response.headers_mut() = pages::security_headers(None).expect("static auth CSP");
-    pages::harden(response.headers_mut(), true);
     response
 }
 fn html(status: StatusCode, body: String) -> Response<Bytes> {
@@ -663,22 +672,11 @@ fn html(status: StatusCode, body: String) -> Response<Bytes> {
     *response.body_mut() = body.into();
     response
 }
-fn json_response(status: StatusCode, value: serde_json::Value) -> Response<Bytes> {
-    let mut response = response(status);
-    response
-        .headers_mut()
-        .insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    *response.body_mut() = value.to_string().into();
-    response
+fn json(status: StatusCode, value: serde_json::Value) -> Response<Bytes> {
+    secured(status, json_response(value.to_string()))
 }
 fn error_response(status: StatusCode) -> Response<Bytes> {
-    let mut response = response(status);
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("text/plain; charset=utf-8"),
-    );
-    *response.body_mut() = format!("{}\n", crate::http_server::error_text(status)).into();
-    response
+    secured(status, text_response(status))
 }
 fn redirect(destination: &str) -> Response<Bytes> {
     let mut response = response(StatusCode::SEE_OTHER);
@@ -698,11 +696,6 @@ fn query_url(path: &str, values: &[(&str, &str)]) -> String {
             .extend_pairs(values.iter().copied())
             .finish()
     )
-}
-fn query(request: &Request<Bytes>) -> Vec<(String, String)> {
-    form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
-        .into_owned()
-        .collect()
 }
 fn value<'a>(values: &'a [(String, String)], key: &str) -> &'a str {
     values
@@ -788,17 +781,6 @@ fn clear_cookie(response: &mut Response<Bytes>, name: &str) {
         header::SET_COOKIE,
         HeaderValue::from_str(&value).expect("generated cookie"),
     );
-}
-fn rfc3339(time: SystemTime) -> String {
-    let [year, month, day, hour, minute, second] = crate::log::utc(time);
-    let mut text = format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}");
-    let nanos = time.duration_since(UNIX_EPOCH).unwrap_or_default().subsec_nanos();
-    if nanos != 0 {
-        text.push('.');
-        text.push_str(format!("{nanos:09}").trim_end_matches('0'));
-    }
-    text.push('Z');
-    text
 }
 fn unix_ms(time: SystemTime) -> u64 {
     time.duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64

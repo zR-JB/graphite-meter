@@ -34,7 +34,7 @@ deny = [
   { crate = "p384", reason = "ring verifies ECDSA" },
   { crate = "ed25519-dalek", reason = "ring verifies Ed25519" },
   { crate = "aes-gcm", reason = "D4: ring only (noq Retry tag moved to ring::aead in the fork)" },
-  { crate = "time", reason = "one RFC 3339 formatter in auth/http.rs" },
+  { crate = "time", reason = "one RFC 3339 formatter in server/src/log.rs" },
   { crate = "chrono", reason = "no calendar dependency" },
   { crate = "x509-cert", reason = "tls.rs reads leaf validity; webpki parses the rest" },
   { crate = "aws-lc-rs", reason = "D4: rustls + ring only" },

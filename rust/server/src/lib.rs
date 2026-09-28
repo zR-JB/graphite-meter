@@ -17,6 +17,7 @@ pub mod config;
 pub mod connections;
 pub mod cors;
 pub mod discovery;
+mod http;
 pub mod http_server;
 pub mod log;
 mod meter;

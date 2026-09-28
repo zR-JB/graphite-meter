@@ -1,4 +1,5 @@
 //! Exact-path browser assets embedded at build time; no runtime filesystem access.
+use crate::http::response::text_body;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use bytes::Bytes;
 use http::{HeaderMap, HeaderValue, Method, Response, StatusCode, header};
@@ -85,7 +86,7 @@ impl Assets {
     /// normalization, directory listing or arbitrary SPA fallback is performed.
     pub fn serve(&self, method: &Method, path: &str, headers: &HeaderMap) -> Response<Bytes> {
         if method != Method::GET && method != Method::HEAD {
-            let mut response = text(StatusCode::METHOD_NOT_ALLOWED, "method not allowed\n");
+            let mut response = text(StatusCode::METHOD_NOT_ALLOWED, "method not allowed");
             response
                 .headers_mut()
                 .insert(header::ALLOW, HeaderValue::from_static("GET, HEAD"));
@@ -117,7 +118,7 @@ impl Assets {
                 }
                 response
             }
-            None => text(StatusCode::NOT_FOUND, "404 page not found\n"),
+            None => text(StatusCode::NOT_FOUND, "404 page not found"),
         };
         if method == Method::HEAD {
             *response.body_mut() = Bytes::new();
@@ -134,14 +135,12 @@ impl Assets {
     }
 }
 
-fn text(status: StatusCode, body: &'static str) -> Response<Bytes> {
-    Response::builder()
-        .status(status)
-        .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
-        .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
-        .header(header::CONTENT_LENGTH, body.len())
-        .body(Bytes::from_static(body.as_bytes()))
-        .expect("static response headers are valid")
+/// An error whose length a HEAD answer keeps.
+fn text(status: StatusCode, text: &str) -> Response<Bytes> {
+    let mut response: Response<Bytes> = text_body(status, text);
+    let length = response.body().len();
+    response.headers_mut().insert(header::CONTENT_LENGTH, length.into());
+    response
 }
 
 /// Go's `http.ServeContent` without ETag or modification time, so `If-Range` never matches.
@@ -175,14 +174,14 @@ fn content(headers: &HeaderMap, content_type: &str, body: Bytes) -> Response<Byt
         Some(Ok(_)) => Vec::new(),
         Some(Err(true)) if size == 0 => Vec::new(),
         Some(Err(true)) => {
-            let mut response = text(StatusCode::RANGE_NOT_SATISFIABLE, "invalid range: failed to overlap\n");
+            let mut response = text(StatusCode::RANGE_NOT_SATISFIABLE, "invalid range: failed to overlap");
             response.headers_mut().insert(
                 header::CONTENT_RANGE,
                 HeaderValue::from_str(&format!("bytes */{size}")).expect("numeric range"),
             );
             return response;
         }
-        Some(Err(false)) | None => return text(StatusCode::RANGE_NOT_SATISFIABLE, "invalid range\n"),
+        Some(Err(false)) | None => return text(StatusCode::RANGE_NOT_SATISFIABLE, "invalid range"),
     };
     let content_range =
         |start: u64, length: u64| format!("bytes {start}-{}/{size}", start as i128 + length as i128 - 1);

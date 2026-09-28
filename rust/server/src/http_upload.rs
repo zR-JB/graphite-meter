@@ -9,7 +9,6 @@ use graphite_meter_core::{
     wire::{UploadProgress, encode_upload_progress},
 };
 use http::HeaderValue;
-use serde::Serialize;
 use tokio::time::Instant;
 
 impl HttpServer {
@@ -27,7 +26,7 @@ impl HttpServer {
         let id = query(request, "id").unwrap_or_default();
         match request.uri().path() {
             "/upload/session" => match self.uploads.mint() {
-                Some(id) => json_response(&serde_json::json!({"uploadId": id})),
+                Some(id) => json_response(serde_json::json!({"uploadId": id}).to_string()),
                 None => {
                     let mut response = text_body(StatusCode::SERVICE_UNAVAILABLE, "upload session mint failed");
                     response
@@ -37,7 +36,7 @@ impl HttpServer {
                 }
             },
             "/upload/checkpoint" => match self.uploads.checkpoint(&id, owner) {
-                Ok(checkpoint) => json_response(&checkpoint),
+                Ok(checkpoint) => json_response(serde_json::to_vec(&checkpoint).expect("serializable checkpoint")),
                 Err(error) => refusal(error),
             },
             "/upload/progress" => {
@@ -139,7 +138,7 @@ impl HttpServer {
         }
         let bytes = lane.bytes();
         drop(lane);
-        let mut response = json_response(&serde_json::json!({"bytes": bytes}));
+        let mut response = json_response(serde_json::json!({"bytes": bytes}).to_string());
         attach_operation(&mut response, operation);
         Ok(response)
     }
@@ -148,23 +147,6 @@ impl HttpServer {
 fn attach_operation(response: &mut Response<ResponseBody>, operation: Arc<Mutex<Operation>>) {
     operation.lock().expect("operation poisoned").body_complete = response.body().is_end_stream();
     response.body_mut().operation = Some(operation);
-}
-
-fn empty_response(status: StatusCode) -> Response<ResponseBody> {
-    Response::builder()
-        .status(status)
-        .body(ResponseBody::empty())
-        .expect("static response")
-}
-
-fn json_response(value: &impl Serialize) -> Response<ResponseBody> {
-    Response::builder()
-        .header(header::CONTENT_TYPE, "application/json")
-        .header(header::CACHE_CONTROL, "no-store")
-        .body(ResponseBody::bytes(
-            serde_json::to_vec(value).expect("serializable upload document").into(),
-        ))
-        .expect("static JSON response")
 }
 
 type NextProgress = Pin<Box<dyn Future<Output = (UploadSubscription, Option<UploadProgress>)> + Send>>;

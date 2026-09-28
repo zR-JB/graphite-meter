@@ -1,8 +1,13 @@
 //! Connection evidence uses the accepted transport, never proxy protocol claims.
-use crate::{admission::Admission, client_address, config::ConfigError};
+use crate::{
+    admission::Admission,
+    client_address,
+    config::ConfigError,
+    http::response::{json_response, text_body},
+};
 use bytes::Bytes;
 use graphite_meter_core::discovery::{Probe, ProbeLoad, ProtocolNegotiated};
-use http::{HeaderMap, Response, Version, header};
+use http::{HeaderMap, Response, StatusCode, Version};
 use ipnet::IpNet;
 use std::net::SocketAddr;
 
@@ -15,11 +20,7 @@ pub(crate) fn respond(
 ) -> Result<Response<Bytes>, ConfigError> {
     let client = client_address::resolve(peer, headers, trusted);
     if !client.usable {
-        return Ok(Response::builder()
-            .status(400)
-            .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
-            .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
-            .body(Bytes::from_static(b"ambiguous client address\n"))?);
+        return Ok(text_body(StatusCode::BAD_REQUEST, "ambiguous client address"));
     }
     let (active, max) = admission.load();
     let document = Probe {
@@ -33,8 +34,5 @@ pub(crate) fn respond(
         },
         load: Some(ProbeLoad { active, max }),
     };
-    Ok(Response::builder()
-        .header(header::CONTENT_TYPE, "application/json")
-        .header(header::CACHE_CONTROL, "no-store")
-        .body(Bytes::from(serde_json::to_vec(&document)?))?)
+    Ok(json_response(serde_json::to_vec(&document)?))
 }

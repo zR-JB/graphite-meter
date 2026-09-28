@@ -43,7 +43,20 @@ impl PeerLog {
     }
 }
 
-pub(crate) fn utc(time: SystemTime) -> [u64; 6] {
+/// RFC 3339 in UTC, with Go's trimmed fractional seconds when there are any.
+pub(crate) fn rfc3339(time: SystemTime) -> String {
+    let [year, month, day, hour, minute, second] = utc(time);
+    let mut text = format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}");
+    let nanos = time.duration_since(UNIX_EPOCH).unwrap_or_default().subsec_nanos();
+    if nanos != 0 {
+        text.push('.');
+        text.push_str(format!("{nanos:09}").trim_end_matches('0'));
+    }
+    text.push('Z');
+    text
+}
+
+fn utc(time: SystemTime) -> [u64; 6] {
     let seconds = time.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
     let (days, seconds) = (seconds / 86_400, seconds % 86_400);
     let era_day = days + 719_468;

@@ -29,6 +29,7 @@ use crate::{
     connections::Connections,
     cors::Access,
     discovery::Discovery,
+    http::response::{empty_response, json_response, method_not_allowed, query, text_body, text_response},
     timeouts::{CONTROL, IDLE_BOUND, SHUTDOWN_GRACE},
     upload::Owner,
     upload::UploadStore,
@@ -423,16 +424,9 @@ impl HttpServer {
     fn respond_authorized(&self, request: Request<()>, peer: SocketAddr, owner: &Owner) -> Response<ResponseBody> {
         let path = request.uri().path();
         let mut response = if request.method() == Method::OPTIONS {
-            Response::builder()
-                .status(StatusCode::NO_CONTENT)
-                .body(ResponseBody::empty())
-                .expect("static response")
+            empty_response(StatusCode::NO_CONTENT)
         } else if self.auth.is_none() && matches!(path, "/wt/session" | "/ws/session") {
-            Response::builder()
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::CACHE_CONTROL, "no-store")
-                .body(ResponseBody::bytes(Bytes::from_static(br#"{"token":"","expires":0}"#)))
-                .expect("static public socket session")
+            json_response(Bytes::from_static(br#"{"token":"","expires":0}"#))
         } else if path == "/download" {
             self.download(&request, owner)
         } else if path.starts_with("/upload") {
@@ -890,45 +884,11 @@ impl Operation {
     }
 }
 
-pub(crate) fn query<B>(request: &Request<B>, name: &str) -> Option<String> {
-    form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
-        .find(|(key, _)| key == name)
-        .map(|(_, value)| value.into_owned())
-}
-
 fn download_bytes<B>(request: &Request<B>) -> u64 {
     query(request, "bytes")
         .and_then(|value| value.parse::<i64>().ok())
         .filter(|value| *value >= 0)
         .map_or(DEFAULT_DOWNLOAD_BYTES, |value| (value as u64).min(MAX_TRANSFER_BYTES))
-}
-
-fn text_response(status: StatusCode) -> Response<ResponseBody> {
-    text_body(status, error_text(status))
-}
-
-pub(crate) fn error_text(status: StatusCode) -> &'static str {
-    match status {
-        StatusCode::NOT_FOUND => "404 page not found",
-        _ => status.canonical_reason().unwrap_or("error"),
-    }
-}
-
-fn text_body(status: StatusCode, text: &str) -> Response<ResponseBody> {
-    Response::builder()
-        .status(status)
-        .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
-        .header("x-content-type-options", "nosniff")
-        .body(ResponseBody::bytes(format!("{text}\n").into()))
-        .expect("static error response")
-}
-
-fn method_not_allowed(allow: &str) -> Response<ResponseBody> {
-    let mut response = text_response(StatusCode::METHOD_NOT_ALLOWED);
-    response
-        .headers_mut()
-        .insert(header::ALLOW, allow.parse().expect("method names"));
-    response
 }
 
 /// Go's mux dispatches these: GET also serves HEAD, and plain HTTP routes answer OPTIONS.
@@ -950,6 +910,12 @@ pub struct ResponseBody {
     progress: Option<ProgressBody>,
     transfer: Option<crate::meter::Transfer>,
     operation: Option<Arc<Mutex<Operation>>>,
+}
+
+impl From<Bytes> for ResponseBody {
+    fn from(block: Bytes) -> Self {
+        Self::bytes(block)
+    }
 }
 
 impl ResponseBody {
