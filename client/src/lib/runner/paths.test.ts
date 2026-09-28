@@ -89,54 +89,60 @@ test("stream diagnostics describe the policy each stage resolves", () => {
   const bidirectional = [activity("bidirectional")];
   const download = [activity("download")];
   const forced = { mode: "forced", count: 128 } as const;
-  for (const [policy, stages, protocol, transport, expected] of [
+  for (const [policy, stages, protocol, transport, value, aside] of [
     [
       auto,
       bidirectional,
       "http2",
       undefined,
-      "Automatic · 1 download / 4 upload",
+      "Automatic",
+      "1 download / 4 upload",
     ],
     [
       { mode: "forced", count: 9 },
       bidirectional,
       "http3",
       undefined,
-      "Forced · 9 per direction",
+      "Forced",
+      "9 per direction",
     ],
     [
       { mode: "auto", count: 3 },
       download,
       "http1",
       undefined,
-      "Automatic · up to 3 per direction",
+      "Automatic",
+      "up to 3 per direction",
     ],
     [
       { mode: "auto", count: 4 },
       bidirectional,
       "negotiated",
       undefined,
-      "Automatic · up to 2 per direction",
+      "Automatic",
+      "up to 2 per direction",
     ],
     [
       forced,
       download,
       "http3",
       "webtransport",
-      `Forced · ${WT_MAX_LANES} per direction (capped from 128 by the session)`,
+      "Forced",
+      `${WT_MAX_LANES} per direction (capped from 128 by the session)`,
     ],
-    [forced, download, "http3", "fetch-stream", "Forced · 128 per direction"],
+    [forced, download, "http3", "fetch-stream", "Forced", "128 per direction"],
     [
       forced,
       download,
       "http3",
       "webtransport-datagram",
-      "Datagram flood · no lanes",
+      "Datagram flood",
+      "no streams",
     ],
   ] as const)
-    expect(describeTransferStreams(policy, stages, protocol, transport)).toBe(
-      expected,
-    );
+    expect(
+      describeTransferStreams(policy, stages, protocol, transport),
+    ).toEqual({ value, aside });
 });
 
 const verified = (paths: PreparedPaths): ConnectionValidation => ({

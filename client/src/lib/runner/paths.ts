@@ -560,25 +560,34 @@ export function validatePlan(
     if (activity.transfer.length) planServerStreams(config, servers, activity);
 }
 
-/** The lane policy in words; `activities` are the stages the run will execute. */
+/** The lane policy in words, a value and its qualifier; `activities` are the stages the run will execute. */
 export function describeTransferStreams(
   policy: TransferStreamPolicy,
   activities: readonly PhaseActivity[],
   protocol?: ProtocolTarget,
   transport?: TransportKind,
-): string {
-  if (transport === "webtransport-datagram") return "Datagram flood · no lanes";
+): { value: string; aside: string } {
+  if (transport === "webtransport-datagram")
+    return { value: "Datagram flood", aside: "no streams" };
   const forced = normalizeStreamCount(policy.count);
   if (policy.mode === "forced") {
     const session = transport === "webtransport";
-    return session && forced > WT_MAX_LANES
-      ? `Forced · ${WT_MAX_LANES} per direction (capped from ${forced} by the session)`
-      : `Forced · ${forced} per direction`;
+    return {
+      value: "Forced",
+      aside:
+        session && forced > WT_MAX_LANES
+          ? `${WT_MAX_LANES} per direction (capped from ${forced} by the session)`
+          : `${forced} per direction`,
+    };
   }
   if (transport === "webtransport")
-    return "Automatic · 1 continuous stream per direction";
+    return { value: "Automatic", aside: "1 continuous stream per direction" };
   const lanes = protocol && MULTIPLEXED[protocol];
-  if (lanes) return `Automatic · ${lanes.down} download / ${lanes.up} upload`;
+  if (lanes)
+    return {
+      value: "Automatic",
+      aside: `${lanes.down} download / ${lanes.up} upload`,
+    };
   const most = Math.max(
     0,
     ...activities.flatMap((activity) =>
@@ -593,7 +602,7 @@ export function describeTransferStreams(
       ),
     ),
   );
-  return `Automatic · up to ${most || forced} per direction`;
+  return { value: "Automatic", aside: `up to ${most || forced} per direction` };
 }
 
 export type ConnectionValidationState =
