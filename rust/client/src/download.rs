@@ -349,6 +349,51 @@ mod tests {
         Ok(())
     }
 
+    /// An HTTP/3 body cut short of its length ends the attempt, as quic-go's EOF ends Go's
+    /// (download.go:74): here every answer declares 64 GiB and ends after 8 bytes.
+    #[tokio::test]
+    async fn http3_lane_asks_again_after_a_body_cut_short() -> Result<(), Error> {
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
+        let _ = crate::crypto::provider().install_default();
+        let (certificate, key) = crate::test_identity::generate_identity("localhost")?;
+        let mut tls = rustls::ServerConfig::builder().with_no_client_auth().with_single_cert(
+            vec![CertificateDer::from_pem_slice(certificate.as_bytes())?],
+            PrivateKeyDer::from_pem_slice(key.as_bytes())?,
+        )?;
+        tls.alpn_protocols = vec![b"h3".to_vec()];
+        let tls = quinn::crypto::rustls::QuicServerConfig::try_from(tls)?;
+        let endpoint =
+            quinn::Endpoint::server(quinn::ServerConfig::with_crypto(Arc::new(tls)), "127.0.0.1:0".parse()?)?;
+        let origin = format!("https://{}", endpoint.local_addr()?);
+        let server = tokio::spawn(async move {
+            let quic = endpoint.accept().await.ok_or("endpoint closed")?.await?;
+            let mut connection = graphite_meter_http3::server::Connection::new(quic, None);
+            while let Some(request) = connection.next().await? {
+                let (_, stream) = request.resolve().await?;
+                let (mut send, _recv) = stream.split();
+                let head = http::Response::builder().header(http::header::CONTENT_LENGTH, MAX_TRANSFER_BYTES);
+                send.send_response(head.body(())?).await?;
+                send.send_data(bytes::Bytes::from_static(b"progress")).await?;
+                send.finish().await?;
+            }
+            Ok::<_, Error>(())
+        });
+        let transport = Arc::new(Transport::connect(Http::new(true)?, &origin, Protocol::Http3, true).await?);
+        let (_stop, cancelled) = watch::channel(false);
+        let mut download = Download::start(transport, 1, Duration::from_secs(5), Duration::ZERO, cancelled).await?;
+        let asked_again = timeout(Duration::from_secs(5), async {
+            while download.bytes() < 24 {
+                download.health()?;
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            Ok::<_, Error>(())
+        })
+        .await;
+        download.stop().await;
+        server.abort();
+        asked_again?
+    }
+
     /// Go's TestLanePersistence (transfer_test.go:87-151): only a refusal ends a lane at once; a
     /// refused connection and an empty answer are retried for 2 s, 500 ms apart.
     #[tokio::test]

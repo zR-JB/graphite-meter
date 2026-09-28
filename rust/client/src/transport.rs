@@ -11,6 +11,7 @@ use futures_util::{Stream, StreamExt};
 use graphite_meter_core::{
     discovery::Protocol, failure::FailureReason, origin::canonical_origin, route::Route, wire::decode_json,
 };
+use graphite_meter_http3::{self as http3, Code};
 use http::{Method, Request};
 use serde::de::DeserializeOwned;
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
@@ -372,7 +373,14 @@ impl Body {
                         }
                     }
                 },
-                BodyInner::H3(stream) => stream.recv_data().await,
+                // quic-go reads a body cut short of its length as EOF (http3/body.go), which ends a
+                // download attempt in Go (download.go:74) rather than the lane.
+                BodyInner::H3(stream) => match stream.recv_data().await {
+                    Err(error) if error.downcast_ref() == Some(&http3::Error::Protocol(Code::H3_MESSAGE_ERROR)) => {
+                        Ok(None)
+                    }
+                    data => data,
+                },
             }
         })
         .await??;
