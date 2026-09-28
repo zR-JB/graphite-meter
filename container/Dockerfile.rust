@@ -16,11 +16,12 @@ COPY rust/ rust/
 COPY api/ api/
 COPY go/internal/auth/assets/ go/internal/auth/assets/
 
+# The static musl link takes only Rust's self-contained startup objects and libc.a, but ring
+# compiles its C with aarch64-linux-gnu-gcc, which needs the arm64 libc headers.
 FROM rust-amd64 AS rust-arm64
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc-aarch64-linux-gnu=4:12.2.0-3 libc6-dev-arm64-cross=2.36-8cross1 \
-    && rm -rf /var/lib/apt/lists/* && cd rust && rustup target add aarch64-unknown-linux-gnu
-ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+    && rm -rf /var/lib/apt/lists/*
 
 # Apple's SDK is licensed for Apple hardware only; the release workflow builds macOS natively.
 FROM rust-arm64 AS tui-build
