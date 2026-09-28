@@ -455,7 +455,14 @@ async fn measure(
             () = due(next_send), if sending && next_send < end => {
                 let sent = Instant::now();
                 let timeout = Duration::from_nanos(estimator.deadline_nanos());
-                next_send = sent + if interval.is_zero() { timeout } else { interval };
+                next_send = if interval.is_zero() {
+                    sent + timeout
+                } else {
+                    // Go's ticker keeps its schedule: the next probe is its first tick after this one.
+                    let missed = sent.saturating_duration_since(next_send).as_nanos() / interval.as_nanos();
+                    let ticks = u32::try_from(missed + 1).unwrap_or(u32::MAX);
+                    next_send.checked_add(interval.saturating_mul(ticks)).unwrap_or(end)
+                };
                 if pending.len() >= window || observations.capacity() <= pending.len() { continue; }
                 let id = next_id;
                 let Some(next) = next_id.checked_add(1) else { break Err("latency probe identifier exhausted".into()); };
@@ -472,9 +479,10 @@ async fn measure(
                 match message {
                     Some(Ok(Message::Text(text))) => {
                         let Ok(pong) = wire::decode_pong(&text) else { continue };
+                        // As Go's reader, every pong sends the next reply-driven probe, late or not.
+                        if interval.is_zero() { next_send = received; }
                         if let Some(sent) = late.remove(&pong.id) {
                             estimator.observe(received.saturating_duration_since(sent).as_nanos() as u64);
-                            if interval.is_zero() { next_send = received; }
                             continue;
                         }
                         let Some((sent, deadline)) = pending.remove(&pong.id) else { continue };
@@ -483,7 +491,6 @@ async fn measure(
                         let observation = if received >= deadline {
                             Observation::Lost { sent, outcome: ProbeOutcome::Timeout }
                         } else {
-                            if interval.is_zero() { next_send = received; }
                             Observation::Sample { sent, received, rtt, server_handling: Duration::from_nanos(pong.handling_nanos) }
                         };
                         if let Err(error) = emit(observations, observation) { break Err(error); }
@@ -710,6 +717,97 @@ mod tests {
             samples += 1;
         }
         assert_eq!(samples, 64);
+        peer.abort();
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_fixed_cadence_keeps_its_schedule_like_gos_ticker() -> Result<(), Error> {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let (client, server) = tokio::io::duplex(4096);
+        let socket = Socket::from_raw_socket(Box::new(client), Role::Client, None).await;
+        let peer = tokio::spawn(async move {
+            echo(
+                tokio_tungstenite::WebSocketStream::from_raw_socket(server, Role::Server, None).await,
+                Duration::ZERO,
+            )
+            .await;
+        });
+        let (observations, mut receiver) = mpsc::channel(256);
+        let (_stop, mut cancel) = watch::channel(Stop::Running);
+        // Off a millisecond boundary, where tokio's timer rounds each wait up.
+        tokio::time::advance(Duration::from_micros(500)).await;
+        let started = Instant::now();
+        measure(
+            Bus::WebSocket(Box::new(socket)),
+            Duration::from_millis(80),
+            16,
+            started + Duration::from_secs(10),
+            &mut DeadlineEstimator::default(),
+            &observations,
+            &mut cancel,
+        )
+        .await?;
+        let mut sent = Vec::new();
+        while let Ok(Observation::Sample { sent: at, .. }) = receiver.try_recv() {
+            sent.push(at - started);
+        }
+        // A probe every 80 ms from the first: 125 in ten seconds.
+        assert_eq!(sent.len(), 125, "last probe at {:?}", sent.last());
+        peer.abort();
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn every_pong_sends_the_next_reply_driven_probe() -> Result<(), Error> {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let (client, server) = tokio::io::duplex(4096);
+        let socket = Socket::from_raw_socket(Box::new(client), Role::Client, None).await;
+        // Probe 0 is answered after 10 ms. Probe 1 is answered after 260 ms: 10 ms past its deadline,
+        // before the expiry sweep at 300 ms. Later probes get no answer.
+        let peer = tokio::spawn(async move {
+            let mut socket = tokio_tungstenite::WebSocketStream::from_raw_socket(server, Role::Server, None).await;
+            let mut due = None;
+            loop {
+                tokio::select! {
+                    message = socket.next() => {
+                        let Some(Ok(Message::Text(text))) = message else { break };
+                        let id = wire::decode_ping(&text).unwrap();
+                        if let Some(delay) = [10, 260].get(id as usize) {
+                            due = Some((id, Instant::now() + Duration::from_millis(*delay)));
+                        }
+                    }
+                    () = tokio::time::sleep_until(due.map_or_else(Instant::now, |(_, at)| at)), if due.is_some() => {
+                        let (id, _) = due.take().unwrap();
+                        if socket.send(Message::Text(wire::encode_pong(id, 0).into())).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        let (observations, mut receiver) = mpsc::channel(64);
+        let (_stop, mut cancel) = watch::channel(Stop::Running);
+        let started = Instant::now();
+        measure(
+            Bus::WebSocket(Box::new(socket)),
+            Duration::ZERO,
+            4,
+            started + Duration::from_millis(400),
+            &mut DeadlineEstimator::default(),
+            &observations,
+            &mut cancel,
+        )
+        .await?;
+        let mut sent = Vec::new();
+        while let Ok(observation) = receiver.try_recv() {
+            if let Observation::Sample { sent: at, .. } | Observation::Lost { sent: at, .. } = observation {
+                sent.push((at - started).as_millis());
+            }
+        }
+        sent.sort_unstable();
+        // Probe 2 is the backup at probe 1's deadline; probe 3 answers probe 1's late pong.
+        assert_eq!(sent, [0, 10, 260, 270]);
         peer.abort();
         Ok(())
     }
