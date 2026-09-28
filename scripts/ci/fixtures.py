@@ -16,7 +16,7 @@ from typing import cast
 from unittest.mock import patch
 
 from .github_api import ControlPlaneError, JsonObject, JsonValue
-from .verify_release_assets import TARGETS, TUI_FILES, tui_archives
+from .verify_release_assets import TARGETS, TUI_FILES, tui_archives, write_checksums
 
 AMD, ARM = "sha256:" + "a" * 64, "sha256:" + "b" * 64
 INDEX_TYPE = "application/vnd.oci.image.index.v1+json"
@@ -99,6 +99,19 @@ ATTESTED = (descriptor("unknown", "unknown", "sha256:" + "c" * 64, AMD),
             descriptor("unknown", "unknown", "sha256:" + "d" * 64, ARM))
 
 
+def statement(repository: str, revision: str, *, remote: bool, subjects: Mapping[str, str] | None = None) -> JsonObject:
+    """BuildKit's SLSA statement of a build of `revision`, fetched remotely or from a local checkout."""
+    source: JsonObject = {"path": "Dockerfile"}
+    if remote:
+        source = {"uri": f"https://github.com/{repository}.git#{revision}",
+                  "digest": {"sha1": revision}, "path": "container/Dockerfile"}
+    vcs: JsonObject = {"source": f"https://github.com/{repository}", "revision": revision}
+    return {"_type": "https://in-toto.io/Statement/v0.1", "predicateType": SLSA,
+            "subject": [{"name": name, "digest": {"sha256": digest}} for name, digest in (subjects or {}).items()],
+            "predicate": {"buildDefinition": {"externalParameters": {"configSource": source}},
+                          "runDetails": {"metadata": {"buildkit_metadata": {} if remote else {"vcs": vcs}}}}}
+
+
 def write_oci(path: Path, repository: str, revision: str, *, remote: bool,
               tamper: bool = False, predicate: str = SLSA) -> JsonObject:
     """Write BuildKit-shaped provenance for both images into an OCI archive; return its index."""
@@ -110,15 +123,7 @@ def write_oci(path: Path, repository: str, revision: str, *, remote: bool,
         blobs[digest] = data + (b" " if tamper else b"")
         return digest
 
-    source: JsonObject = {"path": "Dockerfile"}
-    if remote:
-        source = {"uri": f"https://github.com/{repository}.git#{revision}",
-                  "digest": {"sha1": revision}, "path": "container/Dockerfile"}
-    vcs = {"source": f"https://github.com/{repository}", "revision": revision}
-    statement = add({"predicateType": SLSA, "subject": [], "predicate": {
-        "buildDefinition": {"externalParameters": {"configSource": source}},
-        "runDetails": {"metadata": {"buildkit_metadata": {} if remote else {"vcs": vcs}}}}})
-    layer = {"mediaType": "application/vnd.in-toto+json", "digest": statement,
+    layer = {"mediaType": "application/vnd.in-toto+json", "digest": add(statement(repository, revision, remote=remote)),
              "annotations": {"in-toto.io/predicate-type": predicate}}
     attested = [descriptor("unknown", "unknown", add({"layers": [layer]}), image)
                 for image in (AMD, ARM)]
@@ -170,12 +175,6 @@ def source_members(version: str) -> dict[str, bytes]:
         f"{root}/third_party/go/quic-go/internal/testdata/priv.key": b"upstream fixture",
         f"{root}/third_party/manual/sample/source.txt": b"manual source",
     }
-
-
-def write_checksums(dist: Path) -> None:
-    lines = [f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
-             for path in sorted(dist.iterdir()) if path.name != "checksums.txt"]
-    (dist / "checksums.txt").write_text("".join(lines))
 
 
 def write_release_assets(dist: Path, version: str, reported: str = "") -> None:

@@ -21,7 +21,6 @@ from .fixtures import (
     index,
     outcome,
     source_members,
-    write_checksums,
     write_release_assets,
     SLSA,
     write_oci,
@@ -43,6 +42,7 @@ from .verify_release_assets import (
     verify_release_file_set,
     verify_third_party_source_archive,
     verify as verify_release,
+    write_checksums,
 )
 
 SOURCE = "graphite-meter_1.2.3_third-party-source"
@@ -79,6 +79,14 @@ class ReleaseAssetTests(unittest.TestCase):
             (self.dist / "checksums.txt").write_text(line + "\n" if line else "")
             with self.subTest(line=line), self.assertRaisesRegex(ControlPlaneError, error):
                 verify_checksums(self.dist)
+
+    def test_a_written_listing_never_lists_itself(self) -> None:
+        # A shell glob could expand after the redirect created checksums.txt and list it empty.
+        (self.dist / "artifact.bin").write_bytes(b"graphite-meter")
+        (self.dist / "checksums.txt").write_text("")
+        write_checksums(self.dist)
+        self.assertEqual(verify_checksums(self.dist), {"artifact.bin"})
+        verify_release_file_set(self.dist, {"artifact.bin"})
 
     def test_archives_reject_traversal_links_and_special_files(self) -> None:
         link = tarfile.TarInfo("bundle/link")

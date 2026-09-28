@@ -73,6 +73,12 @@ commit of this repository, and copies every blob inside a network-less Skopeo
 container whose only mount is the read-only archive. The untrusted build writes
 that provenance, so it shows which source was built but does not authenticate
 it. Build arguments carry no secrets because max provenance records them.
+The Rust archives' Docker exports keep BuildKit's statement of each export and
+release it as `graphite-meter-server_VERSION_linux_ARCH_rust.provenance.json` or
+`graphite-meter-client_VERSION_rust.provenance.json`; `release.py stage-rust`
+stages only those and the expected archives. Verification requires each
+statement to attest exactly its export's files as released and to name the
+release commit, as for the images. The natively built macOS archives have none.
 
 ### Owner setup
 

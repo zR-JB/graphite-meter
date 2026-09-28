@@ -238,16 +238,15 @@ jobs:
             VERSION=${{ steps.request.outputs.version }}
             GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}
 
+      # Only the expected artifacts and each export's provenance statement leave the export.
       - name: Stage experimental Rust artifacts
         if: steps.request.outputs.rust != 'none'
         env:
-          EXPORT: ${{ runner.temp }}/rust-export
-          DIST: ${{ runner.temp }}/rust-assets
-        run: |
-          mkdir -p "$DIST"
-          find "$EXPORT" -type f -exec cp {} "$DIST/" \;
-          cd "$DIST"
-          sha256sum ./* | sed 's@  ./@  @' >checksums.txt
+          RUST: ${{ steps.request.outputs.rust }}
+          VERSION: ${{ steps.request.outputs.version }}
+          RUST_EXPORT: ${{ runner.temp }}/rust-export
+          RUST_ASSETS: ${{ runner.temp }}/rust-assets
+        run: python3 -m scripts.ci.release stage-rust
 
       - name: Upload untrusted experimental Rust artifacts
         if: steps.request.outputs.rust != 'none'
@@ -318,8 +317,7 @@ jobs:
           (cd rust && rustup toolchain install && rustup target add $(awk '$1 ~ /^darwin/ { print $2 }' ../scripts/tui-targets.txt))
           python3 scripts/package-rust.py "$VERSION" --output "$DIST" --supplement legal/rust-platform-macos.json \
             --platform $(awk '$1 ~ /^darwin/ { print $1 }' scripts/tui-targets.txt)
-          cd "$DIST"
-          shasum -a 256 ./* | sed 's@  ./@  @' >checksums.txt
+          python3 -m scripts.ci.release checksums
 
       - name: Upload untrusted macOS TUIs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

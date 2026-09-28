@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -84,17 +85,6 @@ def assets_sha256(directory: Path) -> str:
     exact_files(directory, {entry.name for entry in entries})
     listing = "".join(f"{entry.name}\t{gh.file_sha256(entry)}\n" for entry in entries)
     return hashlib.sha256(listing.encode()).hexdigest()
-
-
-def merge(source: Path, destination: Path) -> set[str]:
-    names = verify_release_assets.verify_checksums(source)
-    verify_release_assets.verify_release_file_set(source, names)
-    destination.mkdir(parents=True, exist_ok=True)
-    for name in names:
-        if (destination / name).exists():
-            gh.fail(f"{name} arrives in more than one artifact")
-        shutil.copyfile(source / name, destination / name)
-    return names
 
 
 def parse_release(tag: str, sha: str, pr: int, rust: str = "none") -> Release:
@@ -276,13 +266,8 @@ def command_verify() -> None:
         rust_manifest = verify_oci.verify(release.version + "-rust", release.sha, rust_archive)
     if release.stable:
         verify_release_assets.verify_artifacts(release.version, request_dir / f"release-assets-{run_id}")
-        merge(request_dir / f"release-assets-{run_id}", assets)
+        verify_release_assets.merge(request_dir / f"release-assets-{run_id}", assets)
     if release.rust != "none":
-        rust = merge(request_dir / f"release-rust-assets-{run_id}", assets)
-        if release.rust_tui:
-            rust |= merge(request_dir / f"release-rust-darwin-{run_id}", assets)
-        verify_release_assets.require_same(
-            "Rust artifacts", verify_release_assets.expected_rust_artifacts(release.version, release.rust), rust)
         lock_sha256 = None
         if not release.stable:
             lock_path = f"repos/{env('REPOSITORY')}/contents/rust/Cargo.lock?ref={release.sha}"
@@ -294,10 +279,11 @@ def command_verify() -> None:
                 lock_sha256 = hashlib.sha256(base64.b64decode(content.replace("\n", ""), validate=True)).hexdigest()
             except binascii.Error as exc:
                 raise gh.ControlPlaneError("source Cargo lock is invalid base64") from exc
-        verify_release_assets.verify_rust_artifacts(assets, release.version, release.rust, lock_sha256)
+        parts = [request_dir / f"release-rust-{part}-{run_id}" for part in ("assets", "darwin")[:1 + release.rust_tui]]
+        verify_release_assets.verify_rust(parts, assets, release.version, *verify_release_assets.rust_builds(release.rust),
+                                          release.sha, env("REPOSITORY"), lock_sha256)
     if assets.exists():
-        listing = "".join(f"{gh.file_sha256(path)}  {path.name}\n" for path in sorted(assets.iterdir()))
-        (assets / "checksums.txt").write_text(listing)
+        verify_release_assets.write_checksums(assets)
     main, ci_run_id, codeql_id = require_publishable(env("REPOSITORY"), release)
     if main != env("PUBLISHER_SHA"):
         gh.fail("main moved during verification; start a fresh request")
@@ -481,9 +467,42 @@ def command_publish() -> None:
     print(f"::notice::published {tag} with verified SHA-256 assets and source notice")
 
 
+def rust_request_builds() -> tuple[list[str], list[str]]:
+    """The builds of the RUST selection; CI narrows its server platforms with RUST_SERVER."""
+    server, tui = verify_release_assets.rust_builds(env("RUST"))
+    if narrowed := os.environ.get("RUST_SERVER", "").split():
+        if not set(narrowed) <= set(server):
+            gh.fail(f"RUST_SERVER must name server platforms that {env('RUST')} builds")
+        server = narrowed
+    return server, tui
+
+
+def command_stage_rust() -> None:
+    """Stage a request's Docker-built Rust artifacts for upload; the macOS job stages its own."""
+    verify_release_assets.stage_rust(gh.runner_path("RUST_EXPORT"), gh.runner_path("RUST_ASSETS"), env("VERSION"),
+                                     *rust_request_builds())
+
+
+def command_check_rust() -> None:
+    """Verify staged Rust artifacts of this CI checkout as the release verifies a request's (no macOS part)."""
+    server, tui = rust_request_builds()
+    staged = gh.runner_path("RUST_ASSETS")
+    with tempfile.TemporaryDirectory(dir=staged.parent) as merged:
+        verify_release_assets.verify_rust(
+            [staged], Path(merged) / "assets", env("VERSION"), server,
+            [platform for platform in tui if not platform.startswith("darwin/")], env_sha("GITHUB_SHA"),
+            env("GITHUB_REPOSITORY"))
+    print(f"Rust release artifacts verified: {sorted(path.name for path in staged.iterdir())}")
+
+
+def command_checksums() -> None:
+    verify_release_assets.write_checksums(gh.local_path(env("DIST"), os.getcwd()))
+
+
 COMMANDS = {
     "prepare": command_prepare, "verify": command_verify, "recheck": command_recheck,
-    "publish": command_publish,
+    "publish": command_publish, "stage-rust": command_stage_rust, "check-rust": command_check_rust,
+    "checksums": command_checksums,
 }
 
 

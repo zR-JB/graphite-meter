@@ -141,6 +141,10 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (REQUEST, "            GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}\n", "",
      "GM_CLIENT_REVISION"),
     (REQUEST, "/rust-export/tui\n          no-cache: true\n", "/rust-export/tui\n", "every image build must declare no-cache"),
+    (REQUEST, "run: python3 -m scripts.ci.release stage-rust\n",
+     'run: find "$RUST_EXPORT" -type f -exec cp {} "$RUST_ASSETS/" \\;\n', "release stage-rust"),
+    (REQUEST, "python3 -m scripts.ci.release checksums\n", "shasum -a 256 ./* >checksums.txt\n",
+     "release checksums"),
 )
 
 

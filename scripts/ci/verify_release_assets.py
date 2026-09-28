@@ -7,6 +7,7 @@ import argparse
 import os
 import platform
 import re
+import shutil
 import stat
 import subprocess
 import tarfile
@@ -18,7 +19,7 @@ from .github_api import (
     TLS_NAME, ControlPlaneError, decode_json, expect_array, expect_object, fail, file_sha256,
     int_field, local_path, object_field, str_field,
 )
-from .verify_oci import PLATFORMS
+from .verify_oci import BLOB_LIMIT, source_commit
 
 CHECKSUM_LINE = re.compile(r"([0-9a-fA-F]{64})[ \t]+[* ]?(.+)")
 SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
@@ -60,6 +61,25 @@ def verify_release_file_set(dist: Path, checksummed: set[str]) -> None:
     if irregular := sorted(e.name for e in entries if e.is_symlink() or not e.is_file()):
         fail(f"release directory contains non-regular entries: {irregular}")
     require_same("release files", {*checksummed, "checksums.txt"}, names)
+
+
+def write_checksums(dist: Path) -> None:
+    """List every other file of `dist` in checksums.txt; the listing never includes itself."""
+    listing = "".join(f"{file_sha256(path)}  {path.name}\n" for path in sorted(dist.iterdir())
+                      if path.name != "checksums.txt")
+    (dist / "checksums.txt").write_text(listing, encoding="utf-8")
+
+
+def merge(source: Path, destination: Path) -> set[str]:
+    """Copy the checksummed files of one untrusted artifact, each name arriving only once."""
+    names = verify_checksums(source)
+    verify_release_file_set(source, names)
+    destination.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        if (destination / name).exists():
+            fail(f"{name} arrives in more than one artifact")
+        shutil.copyfile(source / name, destination / name)
+    return names
 
 
 def tui_targets(targets: Path) -> dict[str, str]:
@@ -211,18 +231,68 @@ def native_executable(data: bytes, target: str) -> bool:
             and field(20, 4) == 1 and field(52, 2) == 64)
 
 
-def expected_rust_artifacts(version: str, selection: str) -> set[str]:
+def rust_builds(selection: str) -> tuple[list[str], list[str]]:
+    """The platforms a Rust selection builds the server for, and those it builds the TUI for."""
     if selection not in ("none", "server", "tui", "both"):
         fail("invalid Rust artifact selection")
-    names: set[str] = set()
-    if selection in ("server", "both"):
-        names |= {f"graphite-meter-server_{version}_linux_{arch}_rust_third-party-source.tar.gz"
-                  for arch in PLATFORMS}
-    if selection in ("tui", "both"):
-        for platform in tui_targets(TARGETS):
-            name, base, _ = tui_archive(version, platform, "_rust")
-            names |= {name, f"{base}_third-party-source.tar.gz"}
-    return names
+    platforms = list(tui_targets(TARGETS))
+    server = [platform for platform in platforms if platform.startswith("linux/")]
+    return (server if selection in ("server", "both") else []), (platforms if selection in ("tui", "both") else [])
+
+
+def rust_files(version: str, package: str, platform: str) -> set[str]:
+    """The archive and matching source offer of one Rust build; the server image ships only its source."""
+    base = f"graphite-meter-server_{version}_{platform.replace('/', '_')}_rust"
+    if package == "graphite-meter-server":
+        return {f"{base}_third-party-source.tar.gz"}
+    name, base, _ = tui_archive(version, platform, "_rust")
+    return {name, f"{base}_third-party-source.tar.gz"}
+
+
+def rust_statements(version: str, server: list[str], tui: list[str]) -> dict[str, set[str]]:
+    """BuildKit's provenance statement of each Docker export, named as released, and the files it attests.
+
+    Each server platform is its own export; one export holds every TUI but the natively built macOS ones.
+    """
+    statements = {f"graphite-meter-server_{version}_{platform.replace('/', '_')}_rust.provenance.json":
+                  rust_files(version, "graphite-meter-server", platform) for platform in server}
+    if docker := [platform for platform in tui if not platform.startswith("darwin/")]:
+        statements[f"graphite-meter-client_{version}_rust.provenance.json"] = set().union(
+            *(rust_files(version, "graphite-meter-client", platform) for platform in docker))
+    return statements
+
+
+def expected_rust_artifacts(version: str, server: list[str], tui: list[str]) -> set[str]:
+    statements = rust_statements(version, server, tui)
+    return set(statements).union(*statements.values(), *(
+        rust_files(version, "graphite-meter-client", platform) for platform in tui))
+
+
+def stage_rust(export: Path, dist: Path, version: str, server: list[str], tui: list[str]) -> None:
+    """Copy exactly the Docker-built artifacts and their provenance statements out of `export`, then checksum them.
+
+    BuildKit writes a statement as provenance.json beside the files it attests, in one directory per platform
+    when an export has several; everything else in the export stays behind.
+    """
+    statements = rust_statements(version, server, tui)
+    wanted = set().union(*statements.values())
+    dist.mkdir(parents=True, exist_ok=True)
+    for path in sorted(export.rglob("*")):
+        if path.is_symlink() or not path.is_file():
+            continue
+        name = path.name if path.name in wanted else None
+        if path.name == "provenance.json":
+            beside = {entry.name for entry in path.parent.iterdir()}
+            if len(names := [name for name, files in statements.items() if files <= beside]) != 1:
+                fail(f"{path} attests no single expected Rust export")
+            name = names[0]
+        if name is not None:
+            if (dist / name).exists():
+                fail(f"the Rust export holds {name} twice")
+            shutil.copyfile(path, dist / name)
+    if missing := sorted((set(statements) | wanted) - {entry.name for entry in dist.iterdir()}):
+        fail(f"the Rust export lacks {missing}")
+    write_checksums(dist)
 
 
 def read_archive(path: Path, name: str, limit: int = 4 * 1024 * 1024) -> bytes:
@@ -346,15 +416,40 @@ def verify_rust_client_archive(dist: Path, version: str, platform: str, target: 
         fail("Rust TUI notices differ from source offer")
 
 
-def verify_rust_artifacts(dist: Path, version: str, selection: str, lock_sha256: str | None = None) -> None:
+def verify_rust_provenance(dist: Path, name: str, files: set[str], commit: str, repository: str) -> None:
+    """Require a BuildKit statement to attest exactly `files` as they are, built from `commit` of `repository`."""
+    if (dist / name).stat().st_size > BLOB_LIMIT:
+        fail(f"{name} exceeds {BLOB_LIMIT} bytes")
+    statement = expect_object(decode_json((dist / name).read_bytes().decode(errors="replace"), name), name)
+    if statement.get("_type") not in ("https://in-toto.io/Statement/v0.1", "https://in-toto.io/Statement/v1"):
+        fail(f"{name} is not an in-toto statement")
+    subjects = [expect_object(item, name) for item in expect_array(statement.get("subject"), f"{name} subject")]
+    attested = {str_field(subject, "name", name): str_field(object_field(subject, "digest", name), "sha256", name)
+                for subject in subjects}
+    if len(attested) != len(subjects) or attested != {file: file_sha256(dist / file) for file in files}:
+        fail(f"{name} does not attest exactly {sorted(files)} as released")
+    if (source := source_commit(statement, repository)) != commit:
+        fail(f"{name} records source {source}, not {commit}")
+
+
+def verify_rust_artifacts(dist: Path, version: str, server: list[str], tui: list[str],
+                          lock_sha256: str | None = None) -> None:
     targets = tui_targets(TARGETS)
-    if selection in ("server", "both"):
-        for arch in sorted(PLATFORMS):
-            verify_rust_source(dist / f"graphite-meter-server_{version}_linux_{arch}_rust_third-party-source.tar.gz",
-                               "graphite-meter-server", targets[f"linux/{arch}"], lock_sha256)
-    if selection in ("tui", "both"):
-        for platform, target in targets.items():
-            verify_rust_client_archive(dist, version, platform, target, lock_sha256)
+    for platform in server:
+        source, = rust_files(version, "graphite-meter-server", platform)
+        verify_rust_source(dist / source, "graphite-meter-server", targets[platform], lock_sha256)
+    for platform in tui:
+        verify_rust_client_archive(dist, version, platform, targets[platform], lock_sha256)
+
+
+def verify_rust(parts: list[Path], assets: Path, version: str, server: list[str], tui: list[str],
+                commit: str, repository: str, lock_sha256: str | None = None) -> None:
+    """Merge the untrusted Rust artifacts into `assets` and verify them as a release requires."""
+    names = set().union(*(merge(part, assets) for part in parts))
+    require_same("Rust artifacts", expected_rust_artifacts(version, server, tui), names)
+    for name, files in rust_statements(version, server, tui).items():
+        verify_rust_provenance(assets, name, files, commit, repository)
+    verify_rust_artifacts(assets, version, server, tui, lock_sha256)
 
 
 def verify_artifacts(version: str, dist: Path) -> None:

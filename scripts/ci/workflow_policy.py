@@ -45,6 +45,8 @@ ORDERED = {
         "SOURCE_SHA: ${{ steps.request.outputs.remote_sha }}\n",
         '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', "uses: docker/build-push-action@",
         'python3 -m scripts.ci.verify_release_assets "$VERSION"',
+        # Only the expected Rust artifacts leave the exports, with a listing that cannot list itself.
+        "run: python3 -m scripts.ci.release stage-rust\n", "python3 -m scripts.ci.release checksums\n",
     ),
     "workflows/release.yml": (
         "github.event.workflow_run.conclusion == 'success'\n",
