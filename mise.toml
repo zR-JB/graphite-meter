@@ -451,6 +451,7 @@ dir = "rust"
 run = [
   "cargo fmt --all --check",
   "python3 ../scripts/legal/check_git_sources.py",
+  "cd .. && python3 -m scripts.legal.check_rust_reviews",
   "python3 ../scripts/ci/rust_crate_budget.py",
   "cargo deny --locked check",
   "cargo deny --manifest-path http3/fuzz/Cargo.toml --locked check",

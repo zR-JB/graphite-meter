@@ -198,7 +198,9 @@ not evidence of Safari browser parity.
 The workspace uses exact revisions of the [Noq](https://github.com/zR-JB/noq)
 and [h2](https://github.com/zR-JB/h2) forks.
 [Fork provenance](../legal/rust-forks.json) records upstream bases, reviewed
-revisions and each commit's purpose. `rust-check` validates locked sources offline;
+revisions and each commit's purpose. `rust-check` validates locked sources offline and
+rejects Rust legal reviews of crates no shipped binary compiles
+(`python3 -m scripts.legal.check_rust_reviews --prune` drops them);
 `scripts/legal/check_git_sources.py --verify` checks fork branches, upstream tags
 and diffs. [Fork upkeep](../legal/README.md#pinned-fork-upkeep) covers updates.
 The workspace's `http3` crate, shared by the server and the client, keeps a
