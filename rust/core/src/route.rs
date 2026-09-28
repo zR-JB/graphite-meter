@@ -17,6 +17,14 @@ impl Kind {
     }
 }
 
+/// The operation budget that admits a route; WebTransport ping uses the request budget, not the session budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Admission {
+    Unmetered,
+    Request,
+    Session,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Route {
     Preflight,
@@ -53,22 +61,23 @@ pub const ALL: [Route; 14] = [
 ];
 
 impl Route {
-    const fn row(self) -> (&'static str, &'static str, Kind) {
+    const fn row(self) -> (&'static str, &'static str, Kind, Admission, &'static [&'static str]) {
+        use {Admission::*, Kind::*};
         match self {
-            Self::Preflight => ("preflight", "/preflight", Kind::Http),
-            Self::Probe => ("probe", "/probe", Kind::Http),
-            Self::Download => ("download", "/download", Kind::Http),
-            Self::Upload => ("upload", "/upload", Kind::Http),
-            Self::UploadSession => ("uploadSession", "/upload/session", Kind::Http),
-            Self::UploadProgress => ("uploadProgress", "/upload/progress", Kind::Http),
-            Self::WtSession => ("wtSession", "/wt/session", Kind::Http),
-            Self::WsSession => ("wsSession", "/ws/session", Kind::Http),
-            Self::Ping => ("ping", "/ws/ping", Kind::WebSocket),
-            Self::WtDownload => ("wtDownload", "/wt/download", Kind::WebTransport),
-            Self::WtUpload => ("wtUpload", "/wt/upload", Kind::WebTransport),
-            Self::WtPing => ("wtPing", "/wt/ping", Kind::WebTransport),
-            Self::Servers => ("servers", "/servers", Kind::Http),
-            Self::UploadCheckpoint => ("uploadCheckpoint", "/upload/checkpoint", Kind::Http),
+            Self::Preflight => ("preflight", "/preflight", Http, Unmetered, &["GET"]),
+            Self::Probe => ("probe", "/probe", Http, Unmetered, &["GET"]),
+            Self::Download => ("download", "/download", Http, Request, &["GET"]),
+            Self::Upload => ("upload", "/upload", Http, Request, &["POST"]),
+            Self::UploadSession => ("uploadSession", "/upload/session", Http, Unmetered, &["POST"]),
+            Self::UploadProgress => ("uploadProgress", "/upload/progress", Http, Request, &["GET", "DELETE"]),
+            Self::WtSession => ("wtSession", "/wt/session", Http, Unmetered, &["POST"]),
+            Self::WsSession => ("wsSession", "/ws/session", Http, Unmetered, &["POST"]),
+            Self::Ping => ("ping", "/ws/ping", WebSocket, Request, &["GET"]),
+            Self::WtDownload => ("wtDownload", "/wt/download", WebTransport, Session, &["CONNECT"]),
+            Self::WtUpload => ("wtUpload", "/wt/upload", WebTransport, Session, &["CONNECT"]),
+            Self::WtPing => ("wtPing", "/wt/ping", WebTransport, Request, &["CONNECT"]),
+            Self::Servers => ("servers", "/servers", Http, Unmetered, &["GET"]),
+            Self::UploadCheckpoint => ("uploadCheckpoint", "/upload/checkpoint", Http, Unmetered, &["POST"]),
         }
     }
 
@@ -82,6 +91,15 @@ impl Route {
 
     pub const fn kind(self) -> Kind {
         self.row().2
+    }
+
+    pub const fn admission(self) -> Admission {
+        self.row().3
+    }
+
+    /// The dispatched methods; HEAD and OPTIONS are the mux's, never a CORS grant.
+    pub const fn methods(self) -> &'static [&'static str] {
+        self.row().4
     }
 }
 

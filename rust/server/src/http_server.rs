@@ -16,7 +16,7 @@ mod upload_http;
 use upload_http::ProgressBody;
 
 use crate::{
-    admission::{Admission, Class, Permit},
+    admission::{Admission, Permit},
     auth::{
         AuthLease,
         policy::{Authorization, Connection, Listener},
@@ -30,6 +30,7 @@ use crate::{
     upload::UploadStore,
 };
 use bytes::Bytes;
+use graphite_meter_core::route::{self, Kind, Route};
 use http::{Method, Request, Response, StatusCode, header};
 use hyper::{
     body::{Body, Frame, SizeHint},
@@ -474,7 +475,7 @@ impl HttpServer {
         if self.auth.is_some() {
             return text_response(StatusCode::FORBIDDEN);
         }
-        let route = graphite_meter_core::route::lookup(request.uri().path());
+        let route = route::lookup(request.uri().path());
         if let Some(response) = self.refuse_route(&request, route, None, peer) {
             return response;
         }
@@ -543,7 +544,7 @@ impl HttpServer {
     fn refuse_route<B>(
         &self,
         request: &Request<B>,
-        route: Option<graphite_meter_core::route::Route>,
+        route: Option<Route>,
         lease: Option<&AuthLease>,
         peer: SocketAddr,
     ) -> Option<Response<ResponseBody>> {
@@ -551,11 +552,13 @@ impl HttpServer {
         if path.contains('\\') || path.split('/').any(|part| matches!(part, "." | "..")) {
             return Some(text_response(StatusCode::NOT_FOUND));
         }
-        let spec = route.map(crate::route::spec)?;
-        if !spec.serves(request.method()) {
-            return Some(method_not_allowed(spec.allow));
+        let route = route?;
+        if !allowed(route).any(|method| request.method() == method) {
+            let mut allow: Vec<_> = allowed(route).collect();
+            allow.sort_unstable();
+            return Some(method_not_allowed(&allow.join(", ")));
         }
-        if spec.admission.is_some()
+        if route.admission() != route::Admission::Unmetered
             && lease.is_none()
             && !client_address::resolve(peer, request.headers(), &self.config.trusted_proxies).usable
         {
@@ -582,7 +585,7 @@ impl HttpServer {
         if let Some(response) = self.validate_request(&request, request.body().is_end_stream()) {
             return Ok(response);
         }
-        let published = graphite_meter_core::route::lookup(request.uri().path());
+        let published = route::lookup(request.uri().path());
         let route = published.filter(|&route| mounts(connection.listener, route));
         if !connection.listener.ui && route != published {
             return Ok(text_response(StatusCode::NOT_FOUND));
@@ -666,7 +669,7 @@ impl HttpServer {
             .as_ref()
             .map_or_else(|| self.upload_owner(&request, connection.peer), AuthLease::owner);
         let measurement = route.is_some();
-        let upload = route == Some(graphite_meter_core::route::Route::Upload) && request.method() == Method::POST;
+        let upload = route == Some(Route::Upload) && request.method() == Method::POST;
         let guard = lease.clone();
         let dispatch = async {
             if route.is_none() {
@@ -684,13 +687,13 @@ impl HttpServer {
                 }
                 return Ok(response);
             }
-            if route == Some(graphite_meter_core::route::Route::Ping) && request.method() != Method::OPTIONS {
+            if route == Some(Route::Ping) && request.method() != Method::OPTIONS {
                 return Ok(match upgrade {
                     Some(pending) => self.upgrade_websocket(request, &owner, lease.clone(), pending),
                     None => text_response(StatusCode::NOT_IMPLEMENTED),
                 });
             }
-            if route == Some(graphite_meter_core::route::Route::Upload) && request.method() != Method::OPTIONS {
+            if route == Some(Route::Upload) && request.method() != Method::OPTIONS {
                 self.receive_upload(request, &owner, operations).await
             } else {
                 Ok(self.respond_authorized(request.map(|_| ()), connection.peer, &owner))
@@ -845,7 +848,7 @@ impl HttpServer {
             if let Some(origin) = request.headers().get(header::ORIGIN) {
                 if origin == public {
                     Access::Cookie(origin).apply_response(response.headers_mut());
-                } else if graphite_meter_core::route::lookup(request.uri().path()).is_some()
+                } else if route::lookup(request.uri().path()).is_some()
                     && origin.to_str().is_ok_and(crate::auth::secure_browser_origin)
                 {
                     Access::Bearer(origin).apply_response(response.headers_mut());
@@ -856,7 +859,7 @@ impl HttpServer {
     }
 
     fn download(&self, request: &Request<()>, owner: &Owner) -> Response<ResponseBody> {
-        let permit = match self.admission.acquire(Class::Request, owner.client_keys()) {
+        let permit = match self.admission.acquire(false, owner.client_keys()) {
             Ok(permit) => permit,
             Err(refusal) => {
                 let mut response = text_response(StatusCode::from_u16(refusal.status()).expect("known status"));
@@ -894,8 +897,7 @@ impl HttpServer {
     }
 }
 
-fn mounts(listener: Listener, route: graphite_meter_core::route::Route) -> bool {
-    use graphite_meter_core::route::{Kind, Route};
+fn mounts(listener: Listener, route: Route) -> bool {
     match route.kind() {
         Kind::WebTransport => listener.webtransport,
         _ => {
@@ -983,12 +985,22 @@ fn text_body(status: StatusCode, text: &str) -> Response<ResponseBody> {
         .expect("static error response")
 }
 
-fn method_not_allowed(allow: &'static str) -> Response<ResponseBody> {
+fn method_not_allowed(allow: &str) -> Response<ResponseBody> {
     let mut response = text_response(StatusCode::METHOD_NOT_ALLOWED);
     response
         .headers_mut()
-        .insert(header::ALLOW, http::HeaderValue::from_static(allow));
+        .insert(header::ALLOW, allow.parse().expect("method names"));
     response
+}
+
+/// Go's mux dispatches these: GET also serves HEAD, and plain HTTP routes answer OPTIONS.
+fn allowed(route: Route) -> impl Iterator<Item = &'static str> {
+    let methods = route.methods();
+    methods
+        .iter()
+        .copied()
+        .chain(methods.contains(&"GET").then_some("HEAD"))
+        .chain((route.kind() == Kind::Http).then_some("OPTIONS"))
 }
 
 /// Direct callers own capacity through this body. A listener additionally holds

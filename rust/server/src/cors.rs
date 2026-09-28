@@ -1,6 +1,6 @@
 //! Browser response visibility, separate from request authentication.
 
-use crate::{auth::secure_browser_origin, client_address::unique_header, route};
+use crate::{auth::secure_browser_origin, client_address::unique_header};
 use graphite_meter_core::route::Route;
 use http::{HeaderMap, HeaderValue, header};
 
@@ -93,7 +93,7 @@ pub fn authenticated_preflight<'a>(
     let method = unique_header(request, header::ACCESS_CONTROL_REQUEST_METHOD)?
         .to_str()
         .ok()?;
-    if !route::spec(route).allows_cors_method(method) {
+    if !route.methods().contains(&method) {
         return None;
     }
     let origin = unique_header(request, header::ORIGIN)?;
