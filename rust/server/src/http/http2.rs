@@ -18,7 +18,7 @@ const FRAME_BYTES: usize = 16 * 1024;
 type StreamFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
 impl HttpServer {
-    pub(super) async fn serve_http2_connection<T>(self: Arc<Self>, stream: T, facts: Connection)
+    pub(super) async fn serve_http2_connection<T>(self: Arc<Self>, stream: T, accepted: Accepted)
     where
         T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
@@ -84,7 +84,7 @@ impl HttpServer {
                         let server = self.clone();
                         let window = window.clone();
                         streams.push(Box::pin(async move {
-                            server.serve_http2_stream(request, reply, facts, window).await;
+                            server.serve_http2_stream(request, reply, accepted, window).await;
                         }));
                     }
                     cx.waker().wake_by_ref();
@@ -124,7 +124,7 @@ impl HttpServer {
         &self,
         request: Request<RecvStream>,
         mut reply: SendResponse<Bytes>,
-        facts: Connection,
+        accepted: Accepted,
         window: Arc<UploadWindow>,
     ) {
         let head = request.method() == Method::HEAD;
@@ -137,7 +137,7 @@ impl HttpServer {
                 window,
                 funded: false,
             });
-            let response = self.respond_incoming(request, facts, &operations, None).await?;
+            let response = self.respond_incoming(request, accepted, &operations, None).await?;
             send_response(&mut reply, response, head).await
         };
         if self.guard(&operations, &work, exchange).await.is_err() {
@@ -480,13 +480,13 @@ mod exchange_tests {
     #[tokio::test(start_paused = true)]
     async fn stalled_replies_end_at_the_control_and_idle_bounds() {
         let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-        let facts = Connection {
+        let accepted = Accepted {
             peer: "127.0.0.1:31000".parse().unwrap(),
             tls: true,
-            listener: Listener::default(),
+            topology: topology::tcp(NativeKind::H2, false).topology,
         };
         let (client, served) = tokio::io::duplex(1 << 20);
-        let serving = tokio::spawn(server.clone().serve_http2_connection(served, facts));
+        let serving = tokio::spawn(server.clone().serve_http2_connection(served, accepted));
         // No stream window: each reply's head goes out, and nothing after it.
         let (client, connection) = h2::client::Builder::new()
             .initial_window_size(0)

@@ -3,7 +3,7 @@
 use crate::{
     ServerError,
     config::{AuthMode, NativeKind, ValidatedConfig},
-    http::{HttpServer, QuicEndpoint},
+    http::{HttpServer, QuicEndpoint, topology},
     quic_shard,
     tls::Certificates,
 };
@@ -69,19 +69,11 @@ pub async fn run(config: ValidatedConfig, shutdown: impl Future<Output = ()>) ->
     let (stop, stopped) = watch::channel(false);
     let mut services = FuturesUnordered::<Service>::new();
     for (kind, listener, identity) in listeners {
-        let role = match kind {
-            NativeKind::H1 if config.auth.mode != AuthMode::Off => {
-                "HTTP/1.1 clear: trusted proxy upstream only; direct requests are refused, GET / redirects to HTTPS"
-            }
-            NativeKind::H1 => "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets",
-            NativeKind::H1Tls => "HTTPS/WSS HTTP/1.1: UI, discovery, probe, transfers, WebSockets",
-            NativeKind::H2 => "HTTPS HTTP/2: measurement probe, transfers, progress only",
-            NativeKind::H3 => "HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe, upload and ticket control",
-        };
         crate::log!(
-            "graphite-meter {} listening on {}/tcp ({role})",
+            "graphite-meter {} listening on {}/tcp ({})",
             crate::config::ENGINE_VERSION,
             listener.local_addr()?,
+            topology::tcp(kind, config.auth.mode != AuthMode::Off).role,
         );
         let serving = server
             .clone()
@@ -90,9 +82,10 @@ pub async fn run(config: ValidatedConfig, shutdown: impl Future<Output = ()>) ->
     }
     if let Some(quic) = quic {
         crate::log!(
-            "graphite-meter {} listening on {}/udp (HTTP/3: probe, transfers, progress, WebTransport)",
+            "graphite-meter {} listening on {}/udp ({})",
             crate::config::ENGINE_VERSION,
             quic.local_addr()?,
+            topology::QUIC.role,
         );
         services.extend(quic.serve(&server, &stopped));
     }

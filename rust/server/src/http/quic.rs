@@ -184,7 +184,7 @@ impl HttpServer {
     /// One of `shards` endpoints admits its part of the server-wide incoming limits, rounded up.
     fn quic_config(&self, tls: Arc<rustls::ServerConfig>, shards: usize) -> Result<quinn::ServerConfig, ServerError> {
         let mut tls = (*tls).clone();
-        tls.alpn_protocols = vec![b"h3".to_vec()];
+        tls.alpn_protocols = vec![topology::QUIC.alpn.to_vec()];
         let crypto = quinn::crypto::rustls::QuicServerConfig::try_from(tls)?;
         let mut config = quinn::ServerConfig::with_crypto(Arc::new(crypto));
         config

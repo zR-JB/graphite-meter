@@ -30,16 +30,13 @@ impl HttpServer {
                 operations: operations.clone(),
                 funded: false,
             };
-            let connection = Connection {
+            let accepted = Accepted {
                 peer,
                 tls: true,
-                listener: Listener {
-                    ui: false,
-                    webtransport: true,
-                },
+                topology: topology::QUIC.topology,
             };
             let response = self
-                .respond_incoming(request.map(|()| body), connection, &operations, None)
+                .respond_incoming(request.map(|()| body), accepted, &operations, None)
                 .await?;
             respond(&mut send, response, head, active_responses).await
         };

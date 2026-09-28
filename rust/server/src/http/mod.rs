@@ -4,18 +4,21 @@ mod http2;
 mod http3;
 mod quic;
 pub(crate) mod response;
+pub(crate) mod topology;
 mod upload;
 mod websocket;
 mod webtransport;
 pub use quic::QuicEndpoint;
+use topology::Accepted;
 use upload::ProgressBody;
 
 use crate::{
     ServerError,
     admission::{Admission, Permit},
     auth::{
-        AuthLease,
-        policy::{Authorization, Connection, Listener},
+        AuthLease, AuthRoute,
+        policy::{Authorization, Connection},
+        route as auth_route,
     },
     budget::{self, DOWNLOAD_BLOCK_BYTES, H2_FLOOR_BYTES, QUIC_CREDIT_BYTES},
     client_address,
@@ -206,13 +209,11 @@ impl HttpServer {
         tls: Option<Arc<rustls::ServerConfig>>,
         shutdown: impl Future<Output = ()>,
     ) -> Result<(), ServerError> {
-        let (h2, ui) = (
-            kind == NativeKind::H2,
-            matches!(kind, NativeKind::H1 | NativeKind::H1Tls),
-        );
+        let h2 = kind == NativeKind::H2;
+        let spec = topology::tcp(kind, self.auth.is_some());
         // The HTTP/3 companion's probe advertises the QUIC port under the HTTP/3 public origin.
         let bootstrap = match self.config.listener(NativeKind::H3).public_origin.as_str() {
-            _ if kind != NativeKind::H3 => None,
+            _ if !spec.topology.bootstrap => None,
             "" => Some(listener.local_addr()?.port()),
             public => Some(
                 graphite_meter_core::origin::target_origin(public)?
@@ -222,7 +223,7 @@ impl HttpServer {
         };
         let tls = tls.map(|tls| {
             let mut tls = (*tls).clone();
-            tls.alpn_protocols = vec![if h2 { b"h2".to_vec() } else { b"http/1.1".to_vec() }];
+            tls.alpn_protocols = vec![spec.alpn.to_vec()];
             tokio_rustls::TlsAcceptor::from(Arc::new(tls))
         });
         tokio::pin!(shutdown);
@@ -266,9 +267,9 @@ impl HttpServer {
                     tasks.spawn(async move {
                         let _permit = permit;
                         let _memory = memory;
-                        let connection = Connection { peer, tls: tls.is_some(), listener: Listener { ui, webtransport: false } };
+                        let accepted = Accepted { peer, tls: tls.is_some(), topology: spec.topology };
                         let Some(tls) = tls else {
-                            return server.serve_http1_connection(socket, connection, None).await;
+                            return server.serve_http1_connection(socket, accepted, None).await;
                         };
                         let stream = tokio::select! {
                             biased;
@@ -289,9 +290,9 @@ impl HttpServer {
                             }
                         };
                         if !h2 {
-                            server.serve_http1_connection(stream, connection, bootstrap).await;
+                            server.serve_http1_connection(stream, accepted, bootstrap).await;
                         } else if stream.get_ref().1.alpn_protocol() == Some(b"h2") {
-                            server.serve_http2_connection(stream, connection).await;
+                            server.serve_http2_connection(stream, accepted).await;
                         }
                     });
                 }
@@ -303,7 +304,7 @@ impl HttpServer {
         result
     }
 
-    async fn serve_http1_connection<T>(self: Arc<Self>, stream: T, connection: Connection, bootstrap_port: Option<u16>)
+    async fn serve_http1_connection<T>(self: Arc<Self>, stream: T, accepted: Accepted, bootstrap_port: Option<u16>)
     where
         T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
@@ -326,24 +327,22 @@ impl HttpServer {
             let operations = operations.clone();
             let pending_upgrade = pending_upgrade.clone();
             let head = request.method() == Method::HEAD;
-            let probe = request.uri().path() == "/probe" && request.method() != Method::OPTIONS;
+            let route = route::lookup(request.uri().path());
+            let probe = route == Some(Route::Probe) && request.method() != Method::OPTIONS;
             let lifecycle = lifecycle.clone();
             *lifecycle.lock().expect("HTTP/1 lifecycle poisoned") = Http1Lifecycle::Active {
                 complete: false,
                 control: Some(Box::pin(tokio::time::sleep(CONTROL))),
             };
             async move {
-                let mut response = if bootstrap_port.is_some()
-                    && !matches!(
-                        request.uri().path(),
-                        "/probe" | "/upload/session" | "/upload/checkpoint" | "/upload/progress" | "/wt/session"
-                    ) {
-                    text_response(StatusCode::NOT_FOUND)
-                } else {
-                    server
-                        .respond_incoming(request, connection, &operations, Some(&pending_upgrade))
-                        .await?
-                };
+                let mut response =
+                    if bootstrap_port.is_some() && !route.is_some_and(|route| accepted.topology.mounts(route)) {
+                        text_response(StatusCode::NOT_FOUND)
+                    } else {
+                        server
+                            .respond_incoming(request, accepted, &operations, Some(&pending_upgrade))
+                            .await?
+                    };
                 if let Some(port) = bootstrap_port
                     && probe
                     && response.status().is_success()
@@ -410,26 +409,34 @@ impl HttpServer {
         if let Some(response) = self.refuse_route(&request, route, None, peer) {
             return response;
         }
+        let Some(route) = route else {
+            return text_response(StatusCode::NOT_FOUND);
+        };
         let owner = self.upload_owner(&request, peer);
-        self.respond_authorized(request, peer, &owner)
+        self.respond_authorized(route, request, peer, &owner)
     }
 
-    fn respond_authorized(&self, request: Request<()>, peer: SocketAddr, owner: &Owner) -> Response<ResponseBody> {
-        let path = request.uri().path();
-        let mut response = if request.method() == Method::OPTIONS {
-            empty_response(StatusCode::NO_CONTENT)
-        } else if self.auth.is_none() && matches!(path, "/wt/session" | "/ws/session") {
-            json_response(Bytes::from_static(br#"{"token":"","expires":0}"#))
-        } else if path == "/download" {
-            self.download(&request, owner)
-        } else if path.starts_with("/upload") {
-            self.upload_control(&request, owner)
-        } else {
-            match self.discovery.respond(&request, peer) {
+    fn respond_authorized(
+        &self,
+        route: Route,
+        request: Request<()>,
+        peer: SocketAddr,
+        owner: &Owner,
+    ) -> Response<ResponseBody> {
+        let mut response = match route {
+            _ if request.method() == Method::OPTIONS => empty_response(StatusCode::NO_CONTENT),
+            Route::WtSession | Route::WsSession if self.auth.is_none() => {
+                json_response(Bytes::from_static(br#"{"token":"","expires":0}"#))
+            }
+            Route::Download => self.download(&request, owner),
+            Route::UploadSession | Route::UploadCheckpoint | Route::UploadProgress => {
+                self.upload_control(route, &request, owner)
+            }
+            _ => match self.discovery.respond(route, &request, peer) {
                 Ok(Some(response)) => response.map(ResponseBody::bytes),
                 Ok(None) => text_response(StatusCode::NOT_FOUND),
                 Err(_) => text_response(StatusCode::INTERNAL_SERVER_ERROR),
-            }
+            },
         };
         if self.auth.is_none() {
             Access::Public.apply_measurement(response.headers_mut());
@@ -498,7 +505,7 @@ impl HttpServer {
     async fn respond_incoming<B>(
         &self,
         request: Request<B>,
-        connection: Connection,
+        accepted: Accepted,
         operations: &Operations,
         upgrade: Option<&Mutex<Option<websocket::Upgrade>>>,
     ) -> io::Result<Response<ResponseBody>>
@@ -510,14 +517,14 @@ impl HttpServer {
             return Ok(response);
         }
         // A route this listener does not mount is authorized first, as in Go, then answered 404.
-        let route = route::lookup(request.uri().path()).filter(|&route| mounts(connection.listener, route));
+        let route = route::lookup(request.uri().path()).filter(|&route| accepted.topology.mounts(route));
         let mut lease = None;
         let mut origin = None;
         let request = if let Some(auth) = &self.auth {
-            let authorized = match auth.policy().authorize(request, connection) {
+            let authorized = match auth.policy().authorize(request, accepted.connection()) {
                 Ok(authorized) => authorized,
                 Err(rejected) => {
-                    return Ok(self.auth_refusal(rejected.request(), rejected.reason(), connection));
+                    return Ok(self.auth_refusal(rejected.request(), rejected.reason(), accepted.connection()));
                 }
             };
             if let Authorization::Preflight(headers) = authorized.authorization() {
@@ -530,21 +537,18 @@ impl HttpServer {
                 lease = Some(guard.clone());
             }
             origin = authorized.request().headers().get(header::ORIGIN).cloned();
-            if let Some(response) = self.refuse_route(authorized.request(), route, lease.as_ref(), connection.peer) {
+            if let Some(response) = self.refuse_route(authorized.request(), route, lease.as_ref(), accepted.peer) {
                 return Ok(self.harden(response));
             }
             let path = authorized.request().uri().path();
             // As in Go, a ticket route reaches the controller only where it is mounted, past the method check.
             let ticket = matches!(route, Some(Route::WsSession | Route::WtSession));
-            if path == "/login" || path.starts_with("/auth/") || ticket {
-                let logout = path == "/auth/logout" && authorized.request().method() == Method::POST;
+            if auth_route::claims(path) || ticket {
+                let logout = AuthRoute::lookup(authorized.request().method(), path) == Some(AuthRoute::Logout);
                 // Even public auth endpoints collect only their form's bytes, within the control bound.
                 let execute = async {
                     let authorized = authorized.try_map_body(collect_auth_body).await?;
-                    let mut response = match auth.handle(&authorized).await {
-                        Some(response) => response.map(ResponseBody::bytes),
-                        None => text_response(StatusCode::NOT_FOUND),
-                    };
+                    let mut response = auth.handle(&authorized).await.map(ResponseBody::bytes);
                     let request = authorized.request();
                     // The rest of an oversized body would read as the next request.
                     if request.body().len() > crate::auth::http::FORM_BYTES
@@ -577,21 +581,20 @@ impl HttpServer {
                 return Ok(response);
             }
             authorized.into_parts().0
-        } else if let Some(response) = self.refuse_route(&request, route, None, connection.peer) {
+        } else if let Some(response) = self.refuse_route(&request, route, None, accepted.peer) {
             return Ok(response);
         } else {
             request
         };
         let owner = lease
             .as_ref()
-            .map_or_else(|| self.upload_owner(&request, connection.peer), AuthLease::owner);
+            .map_or_else(|| self.upload_owner(&request, accepted.peer), AuthLease::owner);
         let measurement = route.is_some();
         let upload = route == Some(Route::Upload) && request.method() == Method::POST;
         let guard = lease.clone();
         let dispatch = async {
-            if route.is_none() {
-                let path = request.uri().path();
-                if !connection.listener.ui || path == "/login" || path.starts_with("/auth/") {
+            let Some(route) = route else {
+                if !accepted.topology.spa || auth_route::claims(request.uri().path()) {
                     return Ok(text_response(StatusCode::NOT_FOUND));
                 }
                 let mut response = self
@@ -609,17 +612,17 @@ impl HttpServer {
                 headers.insert("x-frame-options", http::HeaderValue::from_static("DENY"));
                 crate::auth::pages::harden(headers, self.auth.is_some());
                 return Ok(response);
-            }
-            if route == Some(Route::Ping) && request.method() != Method::OPTIONS {
+            };
+            if route == Route::Ping && request.method() != Method::OPTIONS {
                 return Ok(match upgrade {
                     Some(pending) => self.upgrade_websocket(request, &owner, lease.clone(), pending),
                     None => text_response(StatusCode::NOT_IMPLEMENTED),
                 });
             }
-            if route == Some(Route::Upload) && request.method() != Method::OPTIONS {
+            if route == Route::Upload && request.method() != Method::OPTIONS {
                 self.receive_upload(request, &owner, operations).await
             } else {
-                Ok(self.respond_authorized(request.map(|_| ()), connection.peer, &owner))
+                Ok(self.respond_authorized(route, request.map(|_| ()), accepted.peer, &owner))
             }
         };
         let mut response = tokio::select! {
@@ -740,26 +743,28 @@ impl HttpServer {
             response
                 .headers_mut()
                 .insert("graphite-meter-browser-auth", http::HeaderValue::from_static("1"));
-            response.headers_mut().insert(
-                "graphite-meter-auth-url",
-                format!("{public}/login").parse().expect("validated public origin"),
-            );
+            let login: http::HeaderValue = format!("{public}{}", AuthRoute::Login.path())
+                .parse()
+                .expect("validated public origin");
+            response.headers_mut().insert("graphite-meter-auth-url", login.clone());
             if connection.listener.ui && request.method() == Method::GET && request.uri().path() == "/" {
                 self.auth
                     .as_ref()
                     .expect("auth enabled")
                     .debug(format_args!("unauthenticated UI root redirected to login"));
                 *response.status_mut() = StatusCode::TEMPORARY_REDIRECT;
-                response.headers_mut().insert(
-                    header::LOCATION,
-                    format!("{public}/login").parse().expect("validated public origin"),
-                );
+                response.headers_mut().insert(header::LOCATION, login);
                 response.headers_mut().insert(
                     header::CONTENT_TYPE,
                     http::HeaderValue::from_static("text/html; charset=utf-8"),
                 );
-                *response.body_mut() =
-                    ResponseBody::bytes(format!("<a href=\"{public}/login\">Temporary Redirect</a>.\n\n").into());
+                *response.body_mut() = ResponseBody::bytes(
+                    format!(
+                        "<a href=\"{public}{}\">Temporary Redirect</a>.\n\n",
+                        AuthRoute::Login.path()
+                    )
+                    .into(),
+                );
             }
             if let Some(origin) = request.headers().get(header::ORIGIN) {
                 if origin == public {
@@ -819,19 +824,6 @@ impl HttpServer {
             .header(header::CONTENT_LENGTH, count)
             .body(body)
             .expect("valid download headers")
-    }
-}
-
-fn mounts(listener: Listener, route: Route) -> bool {
-    match route.kind() {
-        Kind::WebTransport => listener.webtransport,
-        _ => {
-            listener.ui
-                || !matches!(
-                    route,
-                    Route::Preflight | Route::Servers | Route::WsSession | Route::Ping
-                )
-        }
     }
 }
 
@@ -1281,16 +1273,13 @@ mod tests {
             .uri(format!("/upload?id={id}"))
             .body(UnreadBody)
             .unwrap();
-        let connection = Connection {
+        let accepted = Accepted {
             peer,
             tls: false,
-            listener: Listener {
-                ui: true,
-                webtransport: false,
-            },
+            topology: topology::tcp(NativeKind::H1, false).topology,
         };
         let response = server
-            .respond_incoming(request, connection, &Arc::new(Mutex::new(Vec::new())), None)
+            .respond_incoming(request, accepted, &Arc::new(Mutex::new(Vec::new())), None)
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
@@ -1365,18 +1354,15 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn http1_control_exchanges_end_fifteen_seconds_after_they_start() {
         let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-        let connection = Connection {
+        let accepted = Accepted {
             peer: "127.0.0.1:31000".parse().unwrap(),
             tls: false,
-            listener: Listener {
-                ui: true,
-                webtransport: false,
-            },
+            topology: topology::tcp(NativeKind::H1, false).topology,
         };
         // A small pipe the peer drains a little at a time: the reply always moves, well within the write-stall bound.
         let (client, served) = tokio::io::duplex(16);
         let started = tokio::time::Instant::now();
-        let serving = tokio::spawn(server.serve_http1_connection(served, connection, None));
+        let serving = tokio::spawn(server.serve_http1_connection(served, accepted, None));
         let (mut reader, mut writer) = tokio::io::split(client);
         writer
             .write_all(b"GET /servers HTTP/1.1\r\nHost: localhost\r\n\r\n")

@@ -1,6 +1,9 @@
 //! Request authorization decisions, separate from response bodies and transport IO.
 
-use super::{AuthLease, SessionStore};
+use super::{
+    AuthLease, SessionStore,
+    route::{self as auth_route, AuthRoute},
+};
 use crate::{
     client_address::unique_header,
     config::{AuthMode, ConfigError},
@@ -203,7 +206,7 @@ impl Policy {
         let path = request.uri().path();
         let route = route::lookup(path);
         if request.method() == Method::OPTIONS {
-            if trust.secure && trust.canonical && path == "/auth/browser/token" {
+            if trust.secure && trust.canonical && path == AuthRoute::BrowserToken.path() {
                 return self.browser_preflight(request.headers()).map(Authorization::Preflight);
             }
             if route.is_some() {
@@ -231,10 +234,10 @@ impl Policy {
             }
             return Ok(Authorization::Authenticated(lease));
         }
-        if (path == "/login" || path.starts_with("/auth/")) && (!listener.ui || !trust.canonical) {
+        if auth_route::claims(path) && (!listener.ui || !trust.canonical) {
             return Err(Refusal::Forbidden);
         }
-        if listener.ui && self.public_auth_route(request.method(), path) {
+        if listener.ui && AuthRoute::lookup(request.method(), path).is_some_and(|route| route.public(self.mode)) {
             return if trust.secure && trust.canonical {
                 Ok(Authorization::PublicAuth)
             } else {
@@ -341,15 +344,6 @@ impl Policy {
         );
         response.insert(header::ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("7200"));
         Ok(response)
-    }
-
-    fn public_auth_route(&self, method: &Method, path: &str) -> bool {
-        method == Method::GET && matches!(path, "/login" | "/auth/cli" | "/auth/browser")
-            || method == Method::POST && matches!(path, "/auth/cli/token" | "/auth/browser/token")
-            || self.mode.password() && method == Method::POST && path == "/auth/password"
-            || self.mode.oidc()
-                && (method == Method::POST && path == "/auth/oidc/start"
-                    || method == Method::GET && path == "/auth/oidc/callback")
     }
 
     fn trusted_peer(&self, address: IpAddr) -> bool {

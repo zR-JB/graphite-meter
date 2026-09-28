@@ -1,7 +1,7 @@
 //! HTTP authentication controller. Requests arrive only after policy authorization.
 use super::{
-    ApprovalError, ApprovalKind, AuthLease, Exchange, ExchangeError, SESSION_LIFETIME, SessionStore, SocketKind,
-    TicketError,
+    ApprovalError, ApprovalKind, AuthLease, AuthRoute, Exchange, ExchangeError, SESSION_LIFETIME, SessionStore,
+    SocketKind, TicketError,
     logging::{Counter, SecurityLog},
     oidc::Oidc,
     pages::{self, LoginPage},
@@ -19,6 +19,7 @@ use crate::{
     log::rfc3339,
 };
 use bytes::Bytes;
+use graphite_meter_core::route::{self, Route};
 use http::{HeaderValue, Method, Request, Response, StatusCode, header};
 use ipnet::IpNet;
 use serde::Deserialize;
@@ -125,39 +126,38 @@ impl Service {
         &self.sessions
     }
 
-    /// Only bounded auth/ticket bodies belong here; measurement streaming remains
-    /// in the transport dispatcher with its original authorization lease.
-    pub async fn handle(&self, authorized: &AuthorizedRequest<Bytes>) -> Option<Response<Bytes>> {
+    /// Answers the controller's own paths and the socket ticket routes, whose bounded bodies the caller collected;
+    /// measurement streaming stays with the dispatcher and its lease. A controller path no route claims is not found.
+    pub async fn handle(&self, authorized: &AuthorizedRequest<Bytes>) -> Response<Bytes> {
         let request = authorized.request();
-        let path = request.uri().path();
-        if path != "/login" && !path.starts_with("/auth/") && !matches!(path, "/wt/session" | "/ws/session") {
-            return None;
-        }
-        if let Authorization::Preflight(headers) = authorized.authorization() {
-            let mut response = response(StatusCode::NO_CONTENT);
-            response.headers_mut().extend(headers.clone());
-            return Some(response);
-        }
         if let Authorization::Authenticated(lease) = authorized.authorization()
             && !lease.is_active()
         {
-            return Some(response(StatusCode::FORBIDDEN));
+            return response(StatusCode::FORBIDDEN);
         }
-        let mut result = match (request.method(), path) {
-            (&Method::GET, "/login") => self.login_page(request).await,
-            (&Method::POST, "/auth/oidc/start") => self.oidc_start(authorized).await,
-            (&Method::GET, "/auth/oidc/callback") => self.oidc_callback(authorized).await,
-            (&Method::POST, "/auth/password") => self.password_login(authorized).await,
-            (&Method::GET, "/auth/session") => self.session_info(authorized),
-            (&Method::POST, "/auth/logout") => self.logout(authorized),
-            (&Method::GET, "/auth/cli") => self.approval_page(authorized, false),
-            (&Method::GET, "/auth/browser") => self.approval_page(authorized, true),
-            (&Method::POST, "/auth/cli/approve") => self.approve(authorized, false),
-            (&Method::POST, "/auth/browser/approve") => self.approve(authorized, true),
-            (&Method::POST, "/auth/cli/token") => self.exchange(request, false),
-            (&Method::POST, "/auth/browser/token") => self.exchange(request, true),
-            (&Method::POST, "/wt/session" | "/ws/session") => self.ticket(authorized),
-            _ => error_response(StatusCode::NOT_FOUND),
+        let path = request.uri().path();
+        let mut result = match AuthRoute::lookup(request.method(), path) {
+            Some(AuthRoute::Login) => self.login_page(request).await,
+            Some(AuthRoute::OidcStart) => self.oidc_start(authorized).await,
+            Some(AuthRoute::OidcCallback) => self.oidc_callback(authorized).await,
+            Some(AuthRoute::Password) => self.password_login(authorized).await,
+            Some(AuthRoute::Session) => self.session_info(authorized),
+            Some(AuthRoute::Logout) => self.logout(authorized),
+            Some(AuthRoute::CliPage) => self.approval_page(authorized, false),
+            Some(AuthRoute::BrowserPage) => self.approval_page(authorized, true),
+            Some(AuthRoute::CliApprove) => self.approve(authorized, false),
+            Some(AuthRoute::BrowserApprove) => self.approve(authorized, true),
+            Some(AuthRoute::CliToken) => self.exchange(request, false),
+            Some(AuthRoute::BrowserToken) => self.exchange(request, true),
+            None => match route::lookup(path) {
+                Some(Route::WtSession) if request.method() == Method::POST => {
+                    self.ticket(authorized, SocketKind::WebTransport)
+                }
+                Some(Route::WsSession) if request.method() == Method::POST => {
+                    self.ticket(authorized, SocketKind::WebSocket)
+                }
+                _ => error_response(StatusCode::NOT_FOUND),
+            },
         };
         // As Go's http.Redirect, a GET's redirect also links its destination.
         if result.status() == StatusCode::SEE_OTHER && request.method() == Method::GET {
@@ -179,7 +179,7 @@ impl Service {
                 HeaderValue::from_static("text/html; charset=utf-8"),
             );
         }
-        Some(result)
+        result
     }
 
     async fn login_page(&self, request: &Request<Bytes>) -> Response<Bytes> {
@@ -252,7 +252,7 @@ impl Service {
             Ok((token, session)) => {
                 self.log.count(Counter::Local);
                 let destination = if valid_challenge(challenge) {
-                    query_url("/auth/cli", &[("challenge", challenge)])
+                    query_url(AuthRoute::CliPage.path(), &[("challenge", challenge)])
                 } else {
                     "/".into()
                 };
@@ -408,7 +408,7 @@ impl Service {
             fields.push(("challenge", challenge));
         }
         fields.push(("error", reason.notice()));
-        redirect(&query_url("/login", &fields))
+        redirect(&query_url(AuthRoute::Login.path(), &fields))
     }
 
     fn session_info(&self, authorized: &AuthorizedRequest<Bytes>) -> Response<Bytes> {
@@ -443,7 +443,7 @@ impl Service {
             }
         }
         self.log.count(Counter::Logout);
-        let mut result = redirect("/login?reason=signed_out");
+        let mut result = redirect(&query_url(AuthRoute::Login.path(), &[("reason", "signed_out")]));
         for name in ["__Host-gm_session", "__Host-gm_login", "__Host-gm_csrf"] {
             clear_cookie(&mut result, name);
         }
@@ -489,7 +489,7 @@ impl Service {
                 .begin_browser_approval(challenge, origin, session.as_ref(), client)
         } else {
             let Some(session) = &session else {
-                return redirect(&query_url("/login", &[("challenge", challenge)]));
+                return redirect(&query_url(AuthRoute::Login.path(), &[("challenge", challenge)]));
             };
             let Some(client) = client else {
                 return response(StatusCode::FORBIDDEN);
@@ -506,7 +506,7 @@ impl Service {
                     {
                         return html(StatusCode::OK, pages::continue_page(challenge, true));
                     }
-                    return redirect(&query_url("/login", &[("challenge", challenge)]));
+                    return redirect(&query_url(AuthRoute::Login.path(), &[("challenge", challenge)]));
                 };
                 let origin = view.browser_origin.as_deref().unwrap_or_default();
                 html(
@@ -594,17 +594,12 @@ impl Service {
         result
     }
 
-    fn ticket(&self, authorized: &AuthorizedRequest<Bytes>) -> Response<Bytes> {
+    fn ticket(&self, authorized: &AuthorizedRequest<Bytes>, kind: SocketKind) -> Response<Bytes> {
         let request = authorized.request();
         let Some(lease) = principal(authorized) else {
             return error_response(StatusCode::FORBIDDEN);
         };
         let query = query_pairs(request);
-        let kind = if request.uri().path() == "/ws/session" {
-            SocketKind::WebSocket
-        } else {
-            SocketKind::WebTransport
-        };
         match self.sessions.mint_ticket(
             lease,
             self.policy.public_origin(),
@@ -847,7 +842,7 @@ mod tests {
             .policy()
             .authorize(request.body(Bytes::from(body)).unwrap(), connection())
             .unwrap_or_else(|_| panic!("unexpected auth refusal for {path}"));
-        service.handle(&request).await.expect("controller endpoint")
+        service.handle(&request).await
     }
     fn set_cookie_value(response: &Response<Bytes>, name: &str) -> String {
         response

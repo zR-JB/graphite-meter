@@ -12,8 +12,9 @@ fn request(path: &str, method: &str) -> Request<()> {
 }
 
 fn respond(discovery: &Discovery, request: Request<()>) -> http::Response<bytes::Bytes> {
+    let route = graphite_meter_core::route::lookup(request.uri().path()).expect("a discovery route");
     discovery
-        .respond(&request, "192.0.2.8:54321".parse().unwrap())
+        .respond(route, &request, "192.0.2.8:54321".parse().unwrap())
         .unwrap()
         .unwrap()
 }

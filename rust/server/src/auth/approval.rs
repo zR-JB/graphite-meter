@@ -234,7 +234,7 @@ impl SessionStore {
             .append_pair("challenge", challenge)
             .append_pair("client_origin", origin)
             .finish();
-        Some(format!("/auth/browser?{query}"))
+        Some(format!("{}?{query}", super::AuthRoute::BrowserPage.path()))
     }
 
     pub fn exchange_cli(&self, verifier: &str) -> Result<Exchange, ExchangeError> {

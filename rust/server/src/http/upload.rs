@@ -22,10 +22,10 @@ impl HttpServer {
         }
     }
 
-    pub(super) fn upload_control(&self, request: &Request<()>, owner: &Owner) -> Response<ResponseBody> {
+    pub(super) fn upload_control(&self, route: Route, request: &Request<()>, owner: &Owner) -> Response<ResponseBody> {
         let id = query(request, "id").unwrap_or_default();
-        match request.uri().path() {
-            "/upload/session" => match self.uploads.mint() {
+        match route {
+            Route::UploadSession => match self.uploads.mint() {
                 Some(id) => json_response(serde_json::json!({"uploadId": id}).to_string()),
                 None => {
                     let mut response = text_body(StatusCode::SERVICE_UNAVAILABLE, "upload session mint failed");
@@ -35,11 +35,11 @@ impl HttpServer {
                     response
                 }
             },
-            "/upload/checkpoint" => match self.uploads.checkpoint(&id, owner) {
+            Route::UploadCheckpoint => match self.uploads.checkpoint(&id, owner) {
                 Ok(checkpoint) => json_response(serde_json::to_vec(&checkpoint).expect("serializable checkpoint")),
                 Err(error) => refusal(error),
             },
-            "/upload/progress" => {
+            Route::UploadProgress => {
                 if !matches!(*request.method(), Method::GET | Method::DELETE) {
                     return method_not_allowed("GET, DELETE");
                 }

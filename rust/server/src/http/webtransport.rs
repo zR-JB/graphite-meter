@@ -43,15 +43,12 @@ impl HttpServer {
         if let Some(response) = self.validate_request(&request, true) {
             return answer(stream, response).await;
         }
-        let listener = Listener {
-            ui: false,
-            webtransport: true,
-        };
-        let connection = Connection {
+        let accepted = Accepted {
             peer,
             tls: true,
-            listener,
+            topology: topology::QUIC.topology,
         };
+        let connection = accepted.connection();
         let (request, lease) = if let Some(auth) = &self.auth {
             match auth.policy().authorize(request, connection) {
                 Ok(guard) => {
@@ -70,7 +67,7 @@ impl HttpServer {
         } else {
             (request, None)
         };
-        let route = route::lookup(request.uri().path()).filter(|&route| mounts(listener, route));
+        let route = route::lookup(request.uri().path()).filter(|&route| accepted.topology.mounts(route));
         let refusal = self
             .refuse_route(&request, route, lease.as_ref(), peer)
             .or_else(|| route.is_none().then(|| text_response(StatusCode::NOT_FOUND)));

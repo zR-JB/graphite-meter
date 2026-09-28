@@ -6,7 +6,10 @@ use crate::{
     preflight::{Preflight, connect_origins, discovery_host},
 };
 use bytes::Bytes;
-use graphite_meter_core::origin::{browser_connect_source_supported, canonical_origin, target_origin};
+use graphite_meter_core::{
+    origin::{browser_connect_source_supported, canonical_origin, target_origin},
+    route::Route,
+};
 use http::{Request, Response, StatusCode, header, uri::Authority};
 use std::{
     collections::HashMap,
@@ -76,17 +79,23 @@ impl Discovery {
         })
     }
 
-    pub fn respond(&self, request: &Request<()>, peer: SocketAddr) -> Result<Option<Response<Bytes>>, ConfigError> {
-        let response = match request.uri().path() {
-            "/probe" => crate::probe::respond(
+    /// The discovery routes' answers; `None` for any other route.
+    pub fn respond(
+        &self,
+        route: Route,
+        request: &Request<()>,
+        peer: SocketAddr,
+    ) -> Result<Option<Response<Bytes>>, ConfigError> {
+        let response = match route {
+            Route::Probe => crate::probe::respond(
                 &self.admission,
                 &self.config.trusted_proxies,
                 peer,
                 request.version(),
                 request.headers(),
             )?,
-            "/preflight" => json_response(self.for_host(&request_host(request))?.preflight.clone()),
-            "/servers" => match &self.for_host(&request_host(request))?.catalog {
+            Route::Preflight => json_response(self.for_host(&request_host(request))?.preflight.clone()),
+            Route::Servers => match &self.for_host(&request_host(request))?.catalog {
                 Some(catalog) => json_response(catalog.clone()),
                 None => text_body(StatusCode::INTERNAL_SERVER_ERROR, "server catalogue unavailable"),
             },
