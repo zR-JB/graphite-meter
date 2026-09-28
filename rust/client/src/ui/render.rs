@@ -153,18 +153,16 @@ impl Ui {
         let hints: Vec<&str> = if self.cancel == CancelState::Confirming {
             vec!["Esc confirm stop", "any key continue", "q quit"]
         } else if self.live {
-            if self.active() {
-                vec!["Esc stop", "d Details", "l Latency server", "? keys", "q quit"]
+            let mut hints = if self.active() {
+                vec!["Esc stop", "d Details"]
             } else {
-                vec![
-                    "Enter Run again",
-                    "Esc setup",
-                    "d Details",
-                    "l Latency server",
-                    "? keys",
-                    "q quit",
-                ]
+                vec!["Enter Run again", "Esc setup", "d Details"]
+            };
+            if self.snapshot.participants.len() > 1 {
+                hints.push("l Latency server");
             }
+            hints.extend(["? keys", "q quit"]);
+            hints
         } else if self.rows.selected() == Some(0) {
             vec![
                 "Enter Start test",
@@ -800,11 +798,16 @@ impl Ui {
             let focus = self.focused_latency();
             frame.render_widget(
                 Paragraph::new(format!(
-                    "Download {} · Upload {} · Latency {}\nLatency to {} · l switches server",
+                    "Download {} · Upload {} · Latency {}\nLatency to {}{}",
                     rate(self.shown_down),
                     rate(self.shown_up),
                     milliseconds(focus.and_then(|host| host.latest_ms)),
-                    self.latency_name(focus)
+                    self.latency_name(focus),
+                    if self.snapshot.participants.len() > 1 {
+                        " · l switches server"
+                    } else {
+                        ""
+                    }
                 )),
                 regions[0],
             );
@@ -952,7 +955,11 @@ impl Ui {
     fn draw_details(&mut self, frame: &mut Frame) {
         let area = popup(frame.area(), 84, frame.area().height.saturating_sub(2));
         let width = usize::from(area.width.saturating_sub(2));
-        let details = crate::report::details(&self.snapshot, self.latency_server(), width);
+        let details = if started(&self.snapshot) {
+            crate::report::details(&self.snapshot, self.latency_server(), width)
+        } else {
+            "Waiting for the first server report…".into()
+        };
         let mut lines: Vec<_> = details
             .lines()
             .map(|line| Line::from(safe_text(line, MAX_TEXT)))

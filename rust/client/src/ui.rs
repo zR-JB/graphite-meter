@@ -277,13 +277,6 @@ impl Ui {
             }
             self.cancel = CancelState::Idle;
         }
-        if snapshot.auth.is_some() || self.popup == Popup::Details && snapshot.results.is_empty() {
-            if self.popup == Popup::Servers {
-                self.config.servers = std::mem::take(&mut self.servers_before);
-            }
-            self.popup = Popup::None;
-            self.details_scroll = 0;
-        }
         if snapshot.stage != self.snapshot.stage {
             self.shown_down = None;
             self.shown_up = None;
@@ -318,6 +311,13 @@ impl Ui {
                 }
                 None => self.live = false,
             }
+        }
+        if snapshot.auth.is_some() || self.popup == Popup::Details && !self.live {
+            if self.popup == Popup::Servers {
+                self.config.servers = std::mem::take(&mut self.servers_before);
+            }
+            self.popup = Popup::None;
+            self.details_scroll = 0;
         }
         self.snapshot = snapshot;
         if self.open_chooser && !self.live && !self.checking() && !self.snapshot.servers.is_empty() {
@@ -557,7 +557,7 @@ impl Ui {
         let before = self.config.clone();
         let field_count = self.fields().len();
         match key.code {
-            KeyCode::Char('d') if self.live && self.snapshot.auth.is_none() && !self.snapshot.results.is_empty() => {
+            KeyCode::Char('d') if self.live && self.snapshot.auth.is_none() => {
                 self.popup = Popup::Details;
                 self.details_scroll = 0;
             }

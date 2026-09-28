@@ -374,6 +374,45 @@ fn a_run_that_never_starts_keeps_the_last_results() {
 }
 
 #[test]
+fn details_open_for_the_whole_run_and_l_is_offered_for_several_servers() {
+    use ratatui::{Terminal, backend::TestBackend};
+    let (commands, _received) = mpsc::channel(4);
+    let mut ui = Ui::new(
+        Config::default(),
+        Snapshot {
+            phase: Phase::Preparing,
+            ..Snapshot::default()
+        },
+    );
+    ui.live = true;
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    let mut rendered = |ui: &mut Ui| {
+        terminal.draw(|frame| ui.draw(frame)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+    };
+    ui.key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE), &commands);
+    assert_eq!(ui.popup, Popup::Details);
+    assert!(rendered(&mut ui).contains("Waiting for the first server report"));
+    ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
+    for (participants, several) in [(vec!["a".into()], false), (vec!["a".into(), "b".into()], true)] {
+        ui.update(Snapshot {
+            phase: Phase::Measuring,
+            participants,
+            ..Snapshot::default()
+        });
+        let screen = rendered(&mut ui);
+        assert_eq!(screen.contains("l Latency server"), several);
+        assert_eq!(screen.contains("l switches server"), several);
+    }
+}
+
+#[test]
 fn reset_asks_first_and_keeps_the_catalogue_and_servers() {
     let (commands, _received) = mpsc::channel(4);
     let config = Config {
