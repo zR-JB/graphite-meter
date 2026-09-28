@@ -72,7 +72,7 @@ COPY --from=browser /tmp/browser-modules.json /tmp/browser-modules.json
 # The server is a static musl executable, like the Linux TUIs and Go's server.
 RUN target=$(awk -v platform="linux/$TARGETARCH" '$1 == platform { print $2 }' scripts/tui-targets.txt) \
     && (cd rust && rustup target add "$target") \
-    && python3 -m scripts.legal.rust --package graphite-meter-server --target "$target" --profile "$PROFILE" \
+    && python3 -m scripts.legal.rust --package graphite-meter-server --target "$target" --profile "$PROFILE" --version "$VERSION" \
         --out /src/rust/target/server-notices --reviews legal/rust-reviewed-components.json \
         --supplement legal/rust-platform-debian-bookworm.json --browser-scan /tmp/browser-modules.json \
     && cp "rust/target/$target/$PROFILE/graphite-meter-server" /graphite-meter \

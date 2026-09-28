@@ -18,7 +18,9 @@ exposed fixed QUIC receive-window limits in the Rust server and TUI; larger
 bounded windows improved those runs. These short local and delayed-path samples
 do not establish real-WAN, packet-loss, many-user, or sustained-memory superiority.
 The release server embeds one reviewed third-party notice payload for both
-`--legal` and the browser About endpoint.
+`--legal` and the browser About endpoint. As Go's TUI report does, `--legal`
+opens with the project's copyright, its source (the release tag's tree for a
+release version) and the LICENSE, and the browser's About links that source.
 The packaged TUI keeps its reviewed notice compressed inside the executable and
 expands it only for `--legal`; the archive also carries it as `THIRD_PARTY_NOTICES.txt`.
 

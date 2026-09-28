@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -12,9 +13,12 @@ from unittest.mock import patch
 from copy import deepcopy
 
 from scripts.ci.github_api import ControlPlaneError
-from scripts.legal.model import Component, LegalError, marshal, sha256
-from scripts.legal.rust import add_cargo_sources, artifacts, cargo
+from scripts.legal.artifacts import render
+from scripts.legal.model import Component, LegalError, Project, marshal, sha256
+from scripts.legal.rust import about, add_cargo_sources, artifacts, cargo, legal_report
 from scripts.legal.rust_platform import SYSROOT, candidate, link_map, linked, linker_version, notice
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class RustArtifactTests(unittest.TestCase):
@@ -51,6 +55,23 @@ class RustArtifactTests(unittest.TestCase):
             messages[0]['target']['kind'] = [kind]
             with self.subTest(kind=kind), self.assertRaises(LegalError):
                 artifacts(messages, 'application', 'application')
+
+
+class RustLegalReportTests(unittest.TestCase):
+    def test_the_report_opens_as_go_tui_report_of_the_same_version_and_keeps_its_notices(self) -> None:
+        project = Project.read(ROOT)
+        sections = 'THIRD-PARTY SOFTWARE NOTICES\n\nnotices shared with the browser\n'
+        for version, tag in (('1.2.3', '/tree/v1.2.3'), ('v1.2.3-rc.1', '/tree/v1.2.3-rc.1'), ('development', '')):
+            with self.subTest(version=version):
+                go = render(ROOT, project, version, {'server/browser': [], 'tui': [], 'container': []})
+                tui = go['go/internal/legal/assets/TUI_LEGAL.txt']
+                header = tui[:tui.index(b'THIRD-PARTY SOFTWARE NOTICES')]
+                self.assertIn(f'\nSource code: {project.repository}{tag}\n'.encode(), header)
+                report = legal_report(ROOT, version, sections)
+                self.assertTrue(report.startswith(header))
+                self.assertTrue(report.endswith(b'(including build-time dependencies)\n\n' + sections.encode()))
+                self.assertEqual(about(project, version, 'engine', [])['sourceURL'], project.repository + tag)
+                self.assertEqual(json.loads(go['client/public/legal/about.json'])['sourceURL'], project.repository + tag)
 
 
 class RustPlatformTests(unittest.TestCase):

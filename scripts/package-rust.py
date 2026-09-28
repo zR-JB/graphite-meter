@@ -60,7 +60,7 @@ def build(version: str, platform: str, output: Path, supplement: Path) -> None:
         legal = Path(notices) / "legal"
         subprocess.run([
             sys.executable, "-m", "scripts.legal.rust", "--package", "graphite-meter-client",
-            "--target", target, "--profile", "release", "--out", str(legal),
+            "--target", target, "--profile", "release", "--out", str(legal), "--version", version,
             "--reviews", "legal/rust-reviewed-components.json", "--supplement", str(supplement.resolve()),
         ], cwd=REPO, env=environment, check=True)
         binary = cargo / target / "release" / name

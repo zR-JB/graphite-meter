@@ -25,16 +25,30 @@ def notices(components: list[Component]) -> str:
     return "".join(output)
 
 
-def render(repo: Path, project: Project, version: str, scopes: dict[str, list[Component]]) -> dict[str, bytes]:
-    source_url = project.repository
+def release_source(project: Project, version: str) -> tuple[str, str]:
+    """The version a build names and its source: a release version's tag, otherwise the repository."""
     if RELEASE_VERSION.fullmatch(version):
         version = version.removeprefix("v")
-        source_url += "/tree/v" + version
+        return version, f"{project.repository}/tree/v{version}"
+    return version, project.repository
+
+
+def copyright_notice(project: Project) -> str:
+    return (f'{project.name}\nCopyright © {project.copyrightYears} {project.copyrightHolder}\n\n'
+            f'{project.name} is free software licensed under {project.licenseExpression}.\n'
+            "See LICENSE for the complete GNU Affero General Public License version 3 text.\n")
+
+
+def legal_header(project: Project, source_url: str, license_text: bytes) -> bytes:
+    """How a native binary's legal report starts, Go's and Rust's alike: copyright, source and LICENSE."""
+    header = copyright_notice(project).encode() + f"\nSource code: {source_url}\n\nLICENSE\n\n".encode() + license_text
+    return header if license_text.endswith(b"\n") else header + b"\n"
+
+
+def render(repo: Path, project: Project, version: str, scopes: dict[str, list[Component]]) -> dict[str, bytes]:
+    version, source_url = release_source(project, version)
     license_text = (repo / "LICENSE").read_bytes()
-    copyright_text = (f'{project.name}\nCopyright © {project.copyrightYears} {project.copyrightHolder}\n\n'
-                      f'{project.name} is free software licensed under {project.licenseExpression}.\n'
-                      "See LICENSE for the complete GNU Affero General Public License version 3 text.\n")
-    files = {"COPYRIGHT": copyright_text.encode()}
+    files = {"COPYRIGHT": copyright_notice(project).encode()}
     for scope, components in scopes.items():
         name = "server" if scope == "server/browser" else scope
         base = f"legal/generated/{name}"
@@ -54,10 +68,8 @@ def render(repo: Path, project: Project, version: str, scopes: dict[str, list[Co
     })
     files["client/public/legal/LICENSE.txt"] = license_text
     files["client/public/legal/THIRD_PARTY_NOTICES.txt"] = notices(scopes["server/browser"]).encode()
-    report = copyright_text.encode() + f'\nSource code: {source_url}\n\nLICENSE\n\n'.encode() + license_text
-    if not license_text.endswith(b"\n"):
-        report += b"\n"
-    files["go/internal/legal/assets/TUI_LEGAL.txt"] = report + b"\n" + notices(scopes["tui"]).encode()
+    files["go/internal/legal/assets/TUI_LEGAL.txt"] = (legal_header(project, source_url, license_text) + b"\n"
+                                                       + notices(scopes["tui"]).encode())
     return files
 
 

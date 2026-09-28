@@ -21,7 +21,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from ..ci.github_api import ControlPlaneError, local_path
-from .artifacts import add_bytes, add_tree, notices
+from .artifacts import add_bytes, add_tree, legal_header, notices, release_source
 from .discovery import discover_browser
 from .model import Component, LegalError, Project, Provenance, Review, array, marshal, obj, read_json, sha256, strings, text
 from .review import add_provenance, component_legal_files, validate_review
@@ -173,6 +173,22 @@ def discover(repo: Path, metadata: dict, messages: list[dict], package: str,
     return components, inventory, failures
 
 
+def legal_report(repo: Path, version: str, sections: str) -> bytes:
+    """The --legal output: the copyright, source and LICENSE that open Go's TUI report, then the notices."""
+    project = Project.read(repo)
+    return (legal_header(project, release_source(project, version)[1], (repo / 'LICENSE').read_bytes()) + b'\n'
+            + f'Cargo compilation-input notices (including build-time dependencies)\n\n{sections}'.encode())
+
+
+def about(project: Project, version: str, engine_version: str, components: list[Component]) -> dict[str, object]:
+    """The browser's about.json, whose source is a release version's tag as in Go's."""
+    return {'schemaVersion': 2, 'project': project.json(), 'sourceVersion': engine_version,
+            'sourceURL': release_source(project, version)[1], 'licenseURL': 'legal/LICENSE.txt',
+            'noticesURL': 'legal/THIRD_PARTY_NOTICES.txt',
+            'components': [{key: value for key, value in component.json().items() if key not in ('legalTexts', 'notices')}
+                           for component in components]}
+
+
 def review_candidates(components: list[Component]) -> list[dict]:
     return [Review(ecosystem='cargo', name=item.name, reviewedVersion=item.version,
                    upstream=item.source, declaredLicenseExpression=item.declaredLicenseExpression,
@@ -192,6 +208,8 @@ def main() -> None:
     parser.add_argument('--supplement', type=Path,
                         help='reviewed sysroot/system-library notice record bound to toolchain and target')
     parser.add_argument('--browser-scan', type=Path, help='Vite module scan from the matching production browser asset build')
+    parser.add_argument('--version', default=os.environ.get('VERSION') or 'development',
+                        help='the release version, whose tag the notices name as the source')
     parser.add_argument('--review-template', action='store_true')
     args = parser.parse_args()
     repo = args.repo.resolve()
@@ -271,24 +289,16 @@ def main() -> None:
         shutil.copytree(source_assets, staged_assets, symlinks=True)
         if any(path.is_symlink() for path in staged_assets.rglob('*')):
             raise LegalError('browser legal staging does not accept symbolic links')
-        project = Project.read(repo)
         legal_assets = staged_assets / 'legal'
         legal_assets.mkdir(exist_ok=True)
         (legal_assets / 'LICENSE.txt').write_bytes((repo / 'LICENSE').read_bytes())
         shared_notices = notices(components + browser_components) + '\n' + extra
-        (legal_assets / 'THIRD_PARTY_NOTICES.txt').write_text(shared_notices)
-        (legal_assets / 'about.json').write_bytes(marshal({
-            'schemaVersion': 2, 'project': project.json(), 'sourceVersion': os.environ.get('GM_ENGINE_VERSION', 'rust-experimental'),
-            'sourceURL': project.repository, 'licenseURL': 'legal/LICENSE.txt',
-            'noticesURL': 'legal/THIRD_PARTY_NOTICES.txt',
-            'components': [{key: value for key, value in component.json().items()
-                            if key not in ('legalTexts', 'notices')} for component in components + browser_components],
-        }))
-    report = ('Graphite Meter experimental Rust binary\n\n' + (repo / 'LICENSE').read_text()
-              + '\n\nCargo compilation-input notices (including build-time dependencies)\n\n'
-              + (shared_notices if shared_notices is not None
-                 else notices(components + browser_components) + '\n\nRust sysroot and platform notices\n\n' + extra))
-    (output / 'LEGAL.txt').write_text(report)
+        (legal_assets / 'THIRD_PARTY_NOTICES.txt').write_bytes(shared_notices.encode())
+        (legal_assets / 'about.json').write_bytes(marshal(about(
+            Project.read(repo), args.version, os.environ.get('GM_ENGINE_VERSION', 'rust-experimental'),
+            components + browser_components)))
+    (output / 'LEGAL.txt').write_bytes(legal_report(repo, args.version, shared_notices if shared_notices is not None
+                                                    else notices(components) + '\n\nRust sysroot and platform notices\n\n' + extra))
     # Snapshot dependency-selection inputs; build.rs rejects stale supplied reports.
     inputs = ['rust/legal_build.rs', 'rust/client/build.rs', 'rust/server/build.rs', 'rust/Cargo.lock', 'rust/Cargo.toml',
               'rust/rust-toolchain.toml', 'legal/rust-forks.json']
