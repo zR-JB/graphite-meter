@@ -445,6 +445,25 @@ async fn a_stopped_control_stream_closes_the_connection() -> Result<(), TestErro
     Ok(())
 }
 
+#[tokio::test]
+async fn a_push_promise_names_a_push_the_client_never_allowed() -> Result<(), TestError> {
+    let peers = peers(usize::MAX).await?;
+    let (driver, requests) = client(&peers);
+    let (_send, mut recv) = requests.send_request(get("/")).await?.split();
+    // Push ID 0 and an empty field section; our client sends no MAX_PUSH_ID.
+    let (mut response, _request) = peers.server.accept_bi().await?;
+    response.write_all(&frame(0x05, &[0x00, 0x00, 0x00])).await?;
+    let id_error = Error::Connection {
+        local: true,
+        code: Code::H3_ID_ERROR,
+        reason: Bytes::new(),
+    };
+    assert_eq!(recv.response().await.err(), Some(id_error.clone()));
+    assert_eq!(closed_with(&peers.server).await, Code::H3_ID_ERROR);
+    assert_eq!(driver.await?, Err(id_error));
+    Ok(())
+}
+
 /// Reads a raw response stream: its bytes up to FIN, or the reset code.
 async fn response_bytes(recv: &mut noq::RecvStream) -> Result<Vec<u8>, Code> {
     match recv.read_to_end(64 * 1024).await {

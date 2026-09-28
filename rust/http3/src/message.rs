@@ -27,10 +27,12 @@ pub(crate) struct Message {
     section: Vec<u8>,
     limit: u64,
     owed: Option<u64>,
+    /// A response, where a server may interleave PUSH_PROMISE.
+    response: bool,
 }
 
 impl Message {
-    pub(crate) fn new(limit: u64) -> Self {
+    pub(crate) fn new(limit: u64, response: bool) -> Self {
         Self {
             frames: frame::Reader::default(),
             phase: Phase::Head,
@@ -38,6 +40,7 @@ impl Message {
             section: Vec::new(),
             limit,
             owed: None,
+            response,
         }
     }
 
@@ -62,6 +65,8 @@ impl Message {
                         (frame::HEADERS, Phase::Head | Phase::Body) | (frame::DATA, Phase::Body) => {}
                         // No route takes a peer's WebTransport stream: refuse it like a cancelled lane.
                         (frame::WEBTRANSPORT_BIDI, Phase::Head) => return Err(WtCode(0).to_http()),
+                        // We send no MAX_PUSH_ID, so every push ID is over our limit (RFC 9114 §7.2.5).
+                        (frame::PUSH_PROMISE, _) if self.response => return Err(Code::H3_ID_ERROR),
                         (
                             frame::DATA
                             | frame::HEADERS

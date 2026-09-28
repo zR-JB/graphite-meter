@@ -151,7 +151,7 @@ pub fn request_stream(data: &[u8]) {
     let limit = u64::from(*limit) * 4;
     let length = (*length != 0xff).then_some(u64::from(*length));
     let read = |chunk: &dyn Fn(usize) -> usize| {
-        let mut message = Message::new(limit);
+        let mut message = Message::new(limit, false);
         let mut events = Vec::new();
         let mut result = Ok(());
         'chunks: for mut input in chunks(data, chunk) {

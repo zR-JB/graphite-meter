@@ -44,7 +44,7 @@ impl RequestStream {
             send: SendHalf::new(shared.clone(), send, send_charge),
             recv: RecvHalf {
                 stream: recv,
-                message: Message::new(limit),
+                message: Message::new(limit, shared.role == Role::Client),
                 input: Bytes::new(),
                 shared: shared.clone(),
                 charge: recv_charge,
@@ -130,7 +130,7 @@ impl RecvHalf {
             let section = poll_fn(|cx| self.poll_head(cx)).await?;
             match fields::decode_response(&section, self.shared.role.field_limit()) {
                 Ok(response) if response.message.status().is_informational() => {
-                    self.message = Message::new(self.shared.role.field_limit());
+                    self.message = Message::new(self.shared.role.field_limit(), true);
                 }
                 Ok(response) => {
                     self.message
@@ -182,11 +182,11 @@ impl RecvHalf {
         }
     }
 
-    /// Frame and QPACK violations close the connection; the rest end only this stream.
+    /// Frame, ID and QPACK violations close the connection; the rest end only this stream.
     fn abort(&mut self, code: Code) -> Error {
         if matches!(
             code,
-            Code::H3_FRAME_UNEXPECTED | Code::H3_FRAME_ERROR | Code::QPACK_DECOMPRESSION_FAILED
+            Code::H3_FRAME_UNEXPECTED | Code::H3_FRAME_ERROR | Code::H3_ID_ERROR | Code::QPACK_DECOMPRESSION_FAILED
         ) {
             return self.shared.close(code);
         }
