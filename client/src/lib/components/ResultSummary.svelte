@@ -145,6 +145,12 @@
               <dt>{row.label}</dt>
               <dd>{row.value}</dd>
             </div>
+          {:else}
+            <!-- Holds a line, so the first fact never moves the run bar above. -->
+            <div class="reserved">
+              <dt>&nbsp;</dt>
+              <dd>&nbsp;</dd>
+            </div>
           {/each}
         </dl>
         {#if card.accessible}<span class="sr-only">{card.accessible}</span>{/if}
@@ -300,7 +306,7 @@
     padding-top: var(--space-2);
     border-top: var(--hairline) solid var(--border-subtle);
   }
-  .facts:empty {
+  .facts:has(> .reserved) {
     visibility: hidden;
   }
   .facts > div {
