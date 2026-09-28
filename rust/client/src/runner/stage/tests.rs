@@ -774,6 +774,48 @@ async fn a_lane_refused_just_before_the_stage_end_takes_its_server_out() -> Resu
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_receiver_without_a_first_checkpoint_fails_its_preparation() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let heartbeat = heartbeat();
+    let (near, _, near_task) = download_peer().await?;
+    let (far, far_mode, far_task) = download_peer().await?;
+    // The receiver answers its session, progress and lanes, but refuses every checkpoint as busy.
+    far_mode.store(14, Ordering::SeqCst);
+    let http = Http::new(true)?;
+    let servers = vec![
+        prepared_download("near", &near, &http).await?,
+        prepared_download("far", &far, &http).await?,
+    ];
+    let config = Config {
+        warmup: Duration::ZERO,
+        upload_duration: Duration::from_secs(1),
+        streams: 1,
+        loaded_latency: false,
+        ..Config::default()
+    };
+    let (snapshots, observed) = watch::channel(Snapshot::default());
+    let (_stop, cancelled) = watch::channel(false);
+    let result = measure(Stage::Upload, &config, &servers, &snapshots, cancelled).await;
+    near_task.abort();
+    far_task.abort();
+    heartbeat.abort();
+    assert_eq!(result?, ["far"]);
+    let snapshot = observed.borrow();
+    let [failure] = &snapshot.failures[..] else {
+        panic!("{:?}", snapshot.failures);
+    };
+    assert_eq!(
+        (failure.server_id.as_str(), failure.scope, failure.reason),
+        (
+            "far",
+            FailureScope::Throughput,
+            graphite_meter_core::failure::FailureReason::PreparationFailed
+        )
+    );
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_removal_at_the_final_boundary_collects_a_fresh_one_for_the_rest() -> Result<(), Error> {
     let _ = crate::crypto::provider().install_default();
     let heartbeat = heartbeat();

@@ -395,7 +395,12 @@ impl<'a> StageRun<'a> {
         let initial = match self.transfer {
             Some(_) => {
                 let (initial, misses) = self.collect(CHECKPOINT_BUDGET, None).await.expect("no stage end");
-                self.depart(misses.into_iter().collect(), true)?;
+                // Go records any miss here as the preparation failing, whatever the checkpoint's cause.
+                let unprepared = misses
+                    .into_keys()
+                    .map(|id| (id, "receiver checkpoint unavailable before measurement".into()))
+                    .collect();
+                self.depart(unprepared, true)?;
                 self.check_health()?;
                 Some(initial)
             }
