@@ -353,7 +353,7 @@ def session():
     fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
 env = {k: v for k, v in os.environ.items() if k not in ('NO_COLOR', 'GM_TUI_THEME', 'COLORFGBG')}
 env.update(TERM='xterm-256color', COLORTERM='truecolor')
-p = subprocess.Popen([sys.argv[1], '-url', sys.argv[2]], stdin=slave, stdout=slave, stderr=slave, preexec_fn=session, env=env)
+p = subprocess.Popen([sys.argv[1], '-url', sys.argv[2]], stdin=subprocess.DEVNULL if sys.argv[4] == 'redirected' else slave, stdout=slave, stderr=slave, preexec_fn=session, env=env)
 os.close(slave)
 answer = sys.argv[3].encode()
 output, drawn, alive, started = b'', None, None, time.monotonic()
@@ -382,13 +382,20 @@ finally:
 "#;
     let silent = TcpListener::bind("127.0.0.1:0").await?;
     let silent_origin = format!("http://{}", silent.local_addr()?);
-    // The q in the unknown OSC would quit the TUI if the answers reached its keys.
-    for (answer, ink) in [
+    // The q in the unknown OSC would quit the TUI if the answers reached its keys. With stdin
+    // redirected, the answer arrives on the terminal device, where the keys are read.
+    for (answer, ink, stdin) in [
         (
             "\x1b]99;q\x07\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?62;22c",
             "48;2;32;36;42m",
+            "terminal",
         ),
-        ("", "48;2;230;232;234m"),
+        ("", "48;2;230;232;234m", "terminal"),
+        (
+            "\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?62;22c",
+            "48;2;32;36;42m",
+            "redirected",
+        ),
     ] {
         let output = Command::new("python3")
             .args([
@@ -397,6 +404,7 @@ finally:
                 env!("CARGO_BIN_EXE_graphite-meter-client"),
                 &silent_origin,
                 answer,
+                stdin,
             ])
             .output()
             .await?;
@@ -404,7 +412,7 @@ finally:
         let result: serde_json::Value = serde_json::from_slice(&output.stdout)?;
         let text = result["text"].as_str().unwrap();
         assert!(text.contains("\x1b]11;?\x1b\\\x1b[c"), "{text:?}");
-        assert!(text.contains(ink), "{answer:?}: {text:?}");
+        assert!(text.contains(ink), "{answer:?} with {stdin} stdin: {text:?}");
         assert_eq!(result["code"], 0);
         assert_eq!(result["alive"], true);
         assert!(result["drawn"].as_f64().is_some_and(|drawn| drawn < 3.0), "{result}");
