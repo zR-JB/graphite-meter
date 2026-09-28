@@ -20,6 +20,9 @@ pub fn write(message: fmt::Arguments<'_>) {
     let _ = std::io::stderr().lock().write_all(line.as_bytes());
 }
 
+/// Go's peerLog writes one line a minute and counts the rest.
+const PEER_LOG_INTERVAL: Duration = Duration::from_secs(60);
+
 #[derive(Default)]
 pub(crate) struct PeerLog(Mutex<(Option<Instant>, usize)>);
 
@@ -32,7 +35,7 @@ impl PeerLog {
             *suppressed += 1;
             return;
         }
-        *next = Some(now + Duration::from_secs(60));
+        *next = Some(now + PEER_LOG_INTERVAL);
         match std::mem::take(suppressed) {
             0 => write(message),
             more => write(format_args!("{message} ({more} more peer connection failures since)")),

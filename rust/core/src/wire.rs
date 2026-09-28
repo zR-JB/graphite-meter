@@ -3,11 +3,13 @@
 use serde::de::{self, Error as _, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Number, Value};
-use std::fmt;
+use std::{fmt, time::Duration};
 
 pub const MAX_UPLOAD_COUNTER: u64 = (1 << 53) - 1;
 pub const MAX_TRANSFER_BYTES: u64 = 64 << 30;
 pub const MAX_WEBTRANSPORT_STREAMS: usize = 16;
+/// The published inactivity bound of every lane, per api/wire.md#lane-endings, as Go's `wire.IdleBound`.
+pub const IDLE_BOUND: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WireError {

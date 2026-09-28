@@ -26,6 +26,9 @@ impl Counter {
     pub const COUNT: usize = Self::Capacity as usize + 1;
 }
 
+/// Go's ceilingLogInterval: a global ceiling's engagement is logged at most this often.
+const CEILING_LOG_INTERVAL: Duration = Duration::from_secs(60);
+
 const COUNTERS: [&str; Counter::COUNT] = [
     "local",
     "oidc",
@@ -103,7 +106,7 @@ impl SecurityLog {
         let mut ceilings = self.ceilings.lock().expect("auth log mutex poisoned");
         let now = Instant::now();
         let last = &mut ceilings[ceiling as usize];
-        if last.is_some_and(|last| now.duration_since(last) < Duration::from_secs(60)) {
+        if last.is_some_and(|last| now.duration_since(last) < CEILING_LOG_INTERVAL) {
             return false;
         }
         *last = Some(now);

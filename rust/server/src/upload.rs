@@ -17,6 +17,10 @@ pub const MAX_UPLOADS_PER_CLIENT: usize = 32;
 const TOKEN_TTL: Duration = Duration::from_secs(120);
 // Retain completion and ownership until a signed ID can no longer create state.
 pub const UPLOAD_RETENTION: Duration = TOKEN_TTL;
+/// Go's uploadSweepInterval: expired aggregates are dropped at most this often.
+const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
+/// A subscription reports progress at most this often.
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Access identity and shared client admission budget are separate values.
 /// A browser grant narrows access without creating another subject budget.
@@ -125,7 +129,7 @@ impl UploadStore {
             inner: Arc::new(Store {
                 key,
                 origin: Instant::now() - Duration::from_nanos(1),
-                next_sweep: Mutex::new(Instant::now() + Duration::from_secs(5)),
+                next_sweep: Mutex::new(Instant::now() + SWEEP_INTERVAL),
                 entries: Mutex::new(UploadEntries::default()),
                 meter,
             }),
@@ -278,7 +282,7 @@ impl UploadStore {
             aggregate,
             claim,
             changed,
-            next_tick: Instant::now() + Duration::from_millis(100),
+            next_tick: Instant::now() + PROGRESS_INTERVAL,
             ready: false,
             ended: false,
         })
@@ -288,7 +292,7 @@ impl UploadStore {
         let mut next = self.inner.next_sweep.lock().expect("upload sweep lock");
         if now >= *next {
             self.sweep_at(now);
-            *next = now + Duration::from_secs(5);
+            *next = now + SWEEP_INTERVAL;
         }
     }
     /// Also permits a caller-owned maintenance loop; no background task is spawned.
@@ -433,7 +437,7 @@ impl UploadSubscription {
             tokio::select! {
                 () = &mut notified => { ticked = false; }
                 () = tokio::time::sleep_until(self.next_tick) => {
-                    self.next_tick = Instant::now() + Duration::from_millis(100);
+                    self.next_tick = Instant::now() + PROGRESS_INTERVAL;
                     ticked = true;
                 }
             }

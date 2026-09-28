@@ -17,7 +17,7 @@ impl Config {
             .limits
             .operations_per_client
             .checked_add(self.limits.sessions_per_client)
-            .and_then(|streams| streams.checked_add(4))
+            .and_then(|streams| streams.checked_add(crate::http_server::QUIC_CONTROL_STREAMS))
             .is_none_or(|streams| u32::try_from(streams).is_err())
         {
             return Err("per-client stream budgets exceed the QUIC stream limit".into());

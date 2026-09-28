@@ -2,6 +2,7 @@
 //! The connection advertises no WT_INITIAL_* settings, so session flow control
 //! is not negotiated. QUIC flow control and the local lane limit remain active.
 use super::{http_quic::ReceiveCredit, *};
+use crate::timeouts::{PROGRESS_HEARTBEAT, WT_ANSWER, WT_REFUSAL_LINGER, WT_VERIFY_LINGER};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_core::{
     failure::{LaneEnding, UploadRefusal},
@@ -17,8 +18,12 @@ use tokio::time::Instant;
 // A ready datagram send need not yield. Bound each burst so sibling sessions
 // still get executor time without paying a scheduler round-trip per packet.
 const DATAGRAM_YIELD_BATCH: usize = 16;
-const IDLE: Duration = Duration::from_secs(30);
-const REFUSAL_LINGER: Duration = Duration::from_secs(2);
+/// How often a session looks for idleness and retries funding a refused upload window.
+const SESSION_TICK: Duration = Duration::from_millis(100);
+/// Go's wtDatagramPayload: each download datagram carries this much.
+const DATAGRAM_BYTES: u64 = 1000;
+/// A download stream lane writes at most this much at a time.
+const LANE_WRITE_BYTES: u64 = 16 * 1024;
 type Failure = Box<dyn std::error::Error + Send + Sync>;
 type Lane<'a> = Pin<Box<dyn Future<Output = Result<(), Failure>> + Send + 'a>>;
 type Activity = Arc<Mutex<Instant>>;
@@ -117,7 +122,7 @@ impl HttpServer {
                     loop {
                         let mut remaining = count;
                         while remaining > 0 {
-                            let size = remaining.min(1000).min(block.len() as u64) as usize;
+                            let size = remaining.min(DATAGRAM_BYTES).min(block.len() as u64) as usize;
                             session.send_datagram_wait(&block[..size]).await?;
                             if let Some(transfer) = &transfer {
                                 transfer.record(size);
@@ -161,8 +166,8 @@ impl HttpServer {
             None => Box::pin(std::future::pending()),
         };
         tokio::pin!(datagram_finished);
-        let mut tick = tokio::time::interval(Duration::from_millis(100));
-        let mut settle = verify.then(|| Instant::now() + Duration::from_secs(5));
+        let mut tick = tokio::time::interval(SESSION_TICK);
+        let mut settle = verify.then(|| Instant::now() + WT_VERIFY_LINGER);
         let mut ending = LaneEnding::Finished;
         loop {
             tokio::select! {
@@ -175,7 +180,7 @@ impl HttpServer {
                         awaiting_credit = !credit.fund(owner.client_keys());
                     }
                     let last = *activity.lock().expect("WT activity poisoned");
-                    if Instant::now().duration_since(last) >= IDLE {
+                    if Instant::now().duration_since(last) >= IDLE_BOUND {
                         ending = LaneEnding::Idle;
                         break;
                     }
@@ -192,7 +197,7 @@ impl HttpServer {
                 }
                 Some(_) = controls.next(), if !controls.is_empty() => {
                     if refused && settle.is_none() {
-                        settle = Some(Instant::now() + REFUSAL_LINGER);
+                        settle = Some(Instant::now() + WT_REFUSAL_LINGER);
                     }
                 }
                 payload = session.read_datagram() => {
@@ -237,7 +242,7 @@ impl HttpServer {
 async fn answer(stream: RequestStream, response: Response<ResponseBody>) -> Result<(), http3::Error> {
     let (mut send, _receive) = stream.split();
     let (parts, mut body) = response.into_parts();
-    tokio::time::timeout(Duration::from_secs(10), async {
+    tokio::time::timeout(WT_ANSWER, async {
         send.send_response(Response::from_parts(parts, ())).await?;
         while let Some(Ok(frame)) = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
             if let Ok(data) = frame.into_data() {
@@ -270,7 +275,7 @@ async fn download_lane(
         let transfer = meter.open();
         let mut remaining = count;
         while remaining > 0 {
-            let size = remaining.min(16 * 1024).min(block.len() as u64) as usize;
+            let size = remaining.min(LANE_WRITE_BYTES).min(block.len() as u64) as usize;
             match stream.write_chunk(block.slice(..size)).await {
                 Ok(()) => {}
                 Err(error) if remaining == count => return Err(error.into()),
@@ -294,7 +299,7 @@ async fn upload_lane(
     mut lane: crate::upload::UploadLane,
     activity: Activity,
 ) -> Result<(), Failure> {
-    while let Ok(Ok(Some(chunk))) = tokio::time::timeout(Duration::from_secs(30), stream.read_chunk()).await {
+    while let Ok(Ok(Some(chunk))) = tokio::time::timeout(IDLE_BOUND, stream.read_chunk()).await {
         lane.record(chunk.len());
         touch(&activity);
     }
@@ -322,7 +327,7 @@ async fn progress(
     loop {
         let message = tokio::select! {
             event = subscription.next() => { let Some(event) = event else { break; }; format!("{}\n", wire::encode_upload_progress(&event)?) },
-            _ = tokio::time::sleep(Duration::from_secs(1)) => "\n".to_owned(),
+            _ = tokio::time::sleep(PROGRESS_HEARTBEAT) => "\n".to_owned(),
         };
         stream.write_all(message.as_bytes()).await?;
     }

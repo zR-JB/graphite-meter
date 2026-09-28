@@ -1,6 +1,9 @@
 //! HTTP upload adapters; aggregate timing and ownership remain in UploadStore.
 use super::*;
-use crate::upload::{Owner, UploadSubscription};
+use crate::{
+    timeouts::PROGRESS_HEARTBEAT,
+    upload::{Owner, UploadSubscription},
+};
 use graphite_meter_core::{
     failure::UploadRefusal,
     wire::{UploadProgress, encode_upload_progress},
@@ -110,7 +113,7 @@ impl HttpServer {
         };
         let mut body = request.into_body();
         let deadline = operation.lock().expect("operation poisoned").deadline.deadline();
-        let mut idle = Instant::now() + Duration::from_secs(30);
+        let mut idle = Instant::now() + IDLE_BOUND;
         loop {
             let frame = tokio::time::timeout_at(
                 deadline.min(idle),
@@ -130,7 +133,7 @@ impl HttpServer {
             if let Ok(data) = frame.into_data() {
                 lane.record(data.len());
                 if !data.is_empty() {
-                    idle = Instant::now() + Duration::from_secs(30);
+                    idle = Instant::now() + IDLE_BOUND;
                 }
             }
         }
@@ -176,7 +179,7 @@ impl ProgressBody {
     fn new(subscription: UploadSubscription) -> Self {
         Self {
             next: Some(next_progress(subscription)),
-            heartbeat: Box::pin(tokio::time::sleep(Duration::from_secs(1))),
+            heartbeat: Box::pin(tokio::time::sleep(PROGRESS_HEARTBEAT)),
             done: false,
         }
     }
@@ -205,7 +208,7 @@ impl ProgressBody {
         if self.heartbeat.as_mut().poll(cx).is_ready() {
             self.heartbeat
                 .as_mut()
-                .reset(tokio::time::Instant::now() + Duration::from_secs(1));
+                .reset(tokio::time::Instant::now() + PROGRESS_HEARTBEAT);
             return Poll::Ready(Some(Ok(Frame::data(Bytes::from_static(b"\n")))));
         }
         Poll::Pending

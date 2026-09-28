@@ -16,6 +16,11 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+/// Renewed certificate files are read this often.
+const RENEWAL_CHECK: Duration = Duration::from_secs(60);
+/// A certificate this close to expiry is logged with a warning.
+const EXPIRY_WARNING: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+
 /// With chain bytes C in N certificates: five server flights of C + 5N + 609 plus a C + 48N clone.
 pub fn handshake_bytes(chain: &[CertificateDer<'_>]) -> usize {
     let (bytes, count) = (
@@ -50,8 +55,7 @@ impl Certificates {
         shutdown: impl Future<Output = ()>,
         mut report: impl FnMut(Result<bool, ConfigError>),
     ) -> Result<(), ConfigError> {
-        let period = Duration::from_secs(60);
-        let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+        let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + RENEWAL_CHECK, RENEWAL_CHECK);
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         tokio::pin!(shutdown);
         loop {
@@ -150,7 +154,7 @@ fn log_certificate(identity: &CertifiedKey, now: SystemTime) {
     let (_, expires) = validity(&identity.cert[0]).expect("validated certificate");
     crate::log!("[gm:tls] certificate loaded; expires at {}", rfc3339(expires));
     let remaining = expires.duration_since(now).expect("validated certificate validity");
-    if remaining < Duration::from_secs(30 * 24 * 60 * 60) {
+    if remaining < EXPIRY_WARNING {
         let hours = Duration::from_secs(remaining.as_secs().saturating_add(1800) / 3600 * 3600);
         crate::log!(
             "[gm:tls] warning: certificate expires in {}",

@@ -1,5 +1,6 @@
 //! Multiplexed HTTP/2 transport with owned, independently cancellable streams.
 use super::*;
+use crate::timeouts::H2_HANDSHAKE;
 use futures_util::{Stream, stream::FuturesUnordered};
 use h2::{Reason, RecvStream, SendStream, server::SendResponse};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -9,10 +10,12 @@ const TRANSPORT_BYTES: usize = 512 * 1024;
 const STATE_BYTES: usize = 1024 * 1024;
 pub(super) const BUFFER_BYTES: u32 = (TRANSPORT_BYTES + STATE_BYTES) as u32;
 const DEFAULT_WINDOW_BYTES: u32 = 65_535;
+/// Go's h2ReceiveWindowPerConnection, granted to a connection's first funded upload.
 const WINDOW_BYTES: u32 = 16 * 1024 * 1024;
+/// Go's h2ReceiveWindowPerStream.
+const STREAM_WINDOW_BYTES: u32 = 8 * 1024 * 1024;
 const MAX_STREAMS: u32 = 250;
 const FRAME_BYTES: usize = 16 * 1024;
-const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 type StreamFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
 impl HttpServer {
@@ -23,16 +26,15 @@ impl HttpServer {
         // Until an upload is admitted, the default connection window bounds streams.
         let mut builder = h2::server::Builder::new();
         builder
-            .initial_window_size(8 * 1024 * 1024)
+            .initial_window_size(STREAM_WINDOW_BYTES)
             .max_frame_size(FRAME_BYTES as u32)
             .max_header_list_size(MAX_HEADER_BYTES as u32)
             .max_concurrent_streams(MAX_STREAMS)
             .max_send_buffer_size(FRAME_BYTES)
             .data_frame_budget(STATE_BYTES)
             .shared_budget(self.memory.clone(), STATE_BYTES);
-        let stream = WriteProgressIo::new(stream, Duration::from_secs(30));
-        let Ok(Ok(mut connection)) =
-            tokio::time::timeout(Duration::from_secs(10), builder.handshake::<_, Bytes>(stream)).await
+        let stream = WriteProgressIo::new(stream, IDLE_BOUND);
+        let Ok(Ok(mut connection)) = tokio::time::timeout(H2_HANDSHAKE, builder.handshake::<_, Bytes>(stream)).await
         else {
             return;
         };
@@ -49,7 +51,7 @@ impl HttpServer {
         });
         let mut last_idle = None;
         let mut stale: Option<Pin<Box<Sleep>>> = None;
-        let mut idle = Some(Box::pin(tokio::time::sleep(IDLE_TIMEOUT)));
+        let mut idle = Some(Box::pin(tokio::time::sleep(CONTROL)));
         let mut closing: Option<Pin<Box<Sleep>>> = None;
         let mut stopping = Box::pin(stopped(self.stopping.clone()));
         let mut shutting_down = false;
@@ -61,7 +63,7 @@ impl HttpServer {
                 let granted = window.granted.load(Ordering::Relaxed);
                 stale = idle_since
                     .filter(|_| granted)
-                    .map(|since| Box::pin(tokio::time::sleep_until(since + IDLE_TIMEOUT)));
+                    .map(|since| Box::pin(tokio::time::sleep_until(since + CONTROL)));
                 if let (Some(since), Some(deadline)) = (idle_since, closing.as_mut())
                     && !shutting_down
                 {
@@ -106,7 +108,7 @@ impl HttpServer {
                         idle = None;
                         return Poll::Pending;
                     }
-                    let deadline = idle.get_or_insert_with(|| Box::pin(tokio::time::sleep(IDLE_TIMEOUT)));
+                    let deadline = idle.get_or_insert_with(|| Box::pin(tokio::time::sleep(CONTROL)));
                     if deadline.as_mut().poll(cx).is_ready() {
                         connection.graceful_shutdown();
                         closing = Some(Box::pin(tokio::time::sleep(SHUTDOWN_GRACE)));
@@ -189,14 +191,14 @@ async fn send_response(
     }
 }
 
-/// As Go's idle writer, a write the peer's flow control holds for thirty seconds ends the reply; each write gets a
+/// As Go's idle writer, a write the peer's flow control holds for the idle bound ends the reply; each write gets a
 /// fresh bound, and the operation's lifetime still caps them all.
 async fn reserve(stream: &mut SendStream<Bytes>, bytes: usize) -> io::Result<usize> {
     stream.reserve_capacity(bytes);
     if stream.capacity() > 0 {
         return Ok(stream.capacity());
     }
-    tokio::time::timeout(WRITE_IDLE, std::future::poll_fn(|cx| stream.poll_capacity(cx)))
+    tokio::time::timeout(IDLE_BOUND, std::future::poll_fn(|cx| stream.poll_capacity(cx)))
         .await
         .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?
         .ok_or_else(|| io::Error::from(io::ErrorKind::BrokenPipe))?

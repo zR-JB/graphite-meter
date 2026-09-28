@@ -27,6 +27,10 @@ use std::{
 };
 
 pub const FORM_BYTES: usize = 4096;
+/// Security counters are logged, as Go's, once a minute when they changed.
+const SECURITY_LOG_INTERVAL: Duration = Duration::from_secs(60);
+/// The login form's nonce cookie lives ten minutes, as Go's.
+const LOGIN_NONCE_LIFETIME: Duration = Duration::from_secs(10 * 60);
 
 pub struct Service {
     policy: Policy,
@@ -81,7 +85,7 @@ impl Service {
     pub(crate) async fn security_log(&self) {
         let aggregate = async {
             let mut last = [0; Counter::COUNT];
-            let mut ticker = tokio::time::interval(Duration::from_secs(60));
+            let mut ticker = tokio::time::interval(SECURITY_LOG_INTERVAL);
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             ticker.tick().await;
             loop {
@@ -214,7 +218,7 @@ impl Service {
             &mut result,
             "__Host-gm_login",
             &nonce,
-            SystemTime::now() + Duration::from_secs(600),
+            SystemTime::now() + LOGIN_NONCE_LIFETIME,
             true,
         );
         result
@@ -307,8 +311,9 @@ impl Service {
                 result.headers_mut().append(
                     header::SET_COOKIE,
                     HeaderValue::from_str(&format!(
-                        "__Host-gm_oidc={}; Path=/; Max-Age=600; Secure; HttpOnly; SameSite=Lax",
-                        started.browser
+                        "__Host-gm_oidc={}; Path=/; Max-Age={}; Secure; HttpOnly; SameSite=Lax",
+                        started.browser,
+                        super::oidc::TRANSACTION_LIFETIME.as_secs()
                     ))
                     .expect("transaction cookie"),
                 );

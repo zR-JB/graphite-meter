@@ -8,6 +8,7 @@ mod http_h2;
 mod http_h3;
 #[path = "http_quic.rs"]
 mod http_quic;
+pub(crate) use http_quic::CONTROL_STREAMS as QUIC_CONTROL_STREAMS;
 #[path = "http_wt.rs"]
 mod http_wt;
 pub use http_quic::QuicEndpoint;
@@ -28,6 +29,7 @@ use crate::{
     connections::Connections,
     cors::Access,
     discovery::Discovery,
+    timeouts::{CONTROL, IDLE_BOUND, SHUTDOWN_GRACE},
     upload::Owner,
     upload::UploadStore,
 };
@@ -63,12 +65,13 @@ use tokio::{
 
 const MAX_HEADER_BYTES: usize = 32 * 1024;
 const DOWNLOAD_BLOCK_BYTES: usize = 256 * 1024;
-const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
-/// Go's controlTimeout: all of an exchange until admission hands it an operation's own deadlines.
-const CONTROL_TIMEOUT: Duration = Duration::from_secs(15);
-/// Go's idle writer bound: each write of a multiplexed reply must move within it.
-const WRITE_IDLE: Duration = Duration::from_secs(30);
 const DEFAULT_DOWNLOAD_BYTES: u64 = 25 * 1024 * 1024;
+/// As Go's `http.Server`, a failed accept retries after a delay that doubles from the first bound to the last.
+const ACCEPT_RETRY_FIRST: Duration = Duration::from_millis(5);
+const ACCEPT_RETRY_LAST: Duration = Duration::from_secs(1);
+/// Go's TCP_NOTSENT_LOWAT for HTTP/2, which keeps unsent downloads in the scheduler where control replies interleave.
+#[cfg(target_os = "linux")]
+const H2_NOTSENT_LOWAT_BYTES: u32 = 64 * 1024;
 
 pub struct HttpServer {
     config: Arc<Config>,
@@ -245,8 +248,7 @@ impl HttpServer {
                     let (socket, peer) = match accepted {
                         Ok(accepted) => accepted,
                         Err(_) => {
-                            accept_delay = (accept_delay * 2)
-                                .clamp(Duration::from_millis(5), Duration::from_secs(1));
+                            accept_delay = (accept_delay * 2).clamp(ACCEPT_RETRY_FIRST, ACCEPT_RETRY_LAST);
                             accept_at = tokio::time::Instant::now() + accept_delay;
                             continue;
                         }
@@ -259,7 +261,7 @@ impl HttpServer {
                     let _ = socket.set_nodelay(true);
                     #[cfg(target_os = "linux")]
                     if h2 {
-                        let _ = socket2::SockRef::from(&socket).set_tcp_notsent_lowat(64 * 1024);
+                        let _ = socket2::SockRef::from(&socket).set_tcp_notsent_lowat(H2_NOTSENT_LOWAT_BYTES);
                     }
                     let memory = if h2 {
                         let Some(lease) = self.memory.lease(http_h2::BUFFER_BYTES as usize) else { continue; };
@@ -277,7 +279,7 @@ impl HttpServer {
                         let stream = tokio::select! {
                             biased;
                             _ = stopped(server.stopping.clone()) => return,
-                            result = tokio::time::timeout(Duration::from_secs(15), tls.accept(socket).into_fallible()) => {
+                            result = tokio::time::timeout(CONTROL, tls.accept(socket).into_fallible()) => {
                                 let peer = SocketAddr::new(peer.ip().to_canonical(), peer.port());
                                 match result {
                                     Ok(Ok(stream)) => stream,
@@ -316,12 +318,12 @@ impl HttpServer {
         let upgrade = Arc::new(Mutex::new(None));
         let pending_upgrade = upgrade.clone();
         let lifecycle = Arc::new(Mutex::new(Http1Lifecycle::Headers(Box::pin(tokio::time::sleep(
-            Duration::from_secs(15),
+            CONTROL,
         )))));
         // Wrap the TLS stream, not its raw socket: a successful flush must also
         // drain encrypted records before releasing the response's capacity.
         let io = DeadlineIo {
-            inner: http_h2::WriteProgressIo::new(stream, Duration::from_secs(30)),
+            inner: http_h2::WriteProgressIo::new(stream, IDLE_BOUND),
             operations: operations.clone(),
             lifecycle: Some(lifecycle.clone()),
         };
@@ -334,7 +336,7 @@ impl HttpServer {
             let lifecycle = lifecycle.clone();
             *lifecycle.lock().expect("HTTP/1 lifecycle poisoned") = Http1Lifecycle::Active {
                 complete: false,
-                control: Some(Box::pin(tokio::time::sleep(CONTROL_TIMEOUT))),
+                control: Some(Box::pin(tokio::time::sleep(CONTROL))),
             };
             async move {
                 let mut response = if bootstrap_port.is_some()
@@ -549,7 +551,7 @@ impl HttpServer {
             let ticket = matches!(route, Some(Route::WsSession | Route::WtSession));
             if path == "/login" || path.starts_with("/auth/") || ticket {
                 let logout = path == "/auth/logout" && authorized.request().method() == Method::POST;
-                // Even public auth endpoints collect only 4096 bytes within 15s.
+                // Even public auth endpoints collect only their form's bytes, within the control bound.
                 let execute = async {
                     let authorized = authorized.try_map_body(collect_auth_body).await?;
                     let mut response = match auth.handle(&authorized).await {
@@ -570,7 +572,7 @@ impl HttpServer {
                 let mut response = tokio::select! {
                     biased;
                     _ = lease_ended(lease.clone()) => return Err(io::ErrorKind::PermissionDenied.into()),
-                    result = tokio::time::timeout(Duration::from_secs(15), execute) => {
+                    result = tokio::time::timeout(CONTROL, execute) => {
                         result.map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??
                     },
                 };
@@ -695,7 +697,7 @@ impl HttpServer {
     }
 
     /// Bounds a multiplexed request by its operations and counts it as admitted work once it holds a permit.
-    /// Until then, as Go's boundedRequest, the whole exchange has fifteen seconds, even if the peer withholds
+    /// Until then, as Go's boundedRequest, the whole exchange has the control bound, even if the peer withholds
     /// flow control.
     async fn guard(
         &self,
@@ -704,7 +706,7 @@ impl HttpServer {
         exchange: impl Future<Output = io::Result<()>>,
     ) -> io::Result<()> {
         let mut exchange = std::pin::pin!(exchange);
-        let mut control = std::pin::pin!(tokio::time::sleep(CONTROL_TIMEOUT));
+        let mut control = std::pin::pin!(tokio::time::sleep(CONTROL));
         let mut admitted = None;
         let guarded = std::future::poll_fn(|cx| {
             check_operations(operations, cx)?;
@@ -1104,7 +1106,7 @@ impl<T> DeadlineIo<T> {
         if let Some(lifecycle) = &self.lifecycle {
             let mut lifecycle = lifecycle.lock().expect("HTTP/1 lifecycle poisoned");
             if matches!(*lifecycle, Http1Lifecycle::Active { complete: true, .. }) {
-                *lifecycle = Http1Lifecycle::Idle(Box::pin(tokio::time::sleep(Duration::from_secs(15))));
+                *lifecycle = Http1Lifecycle::Idle(Box::pin(tokio::time::sleep(CONTROL)));
             } else if matches!(*lifecycle, Http1Lifecycle::UpgradePending(_)) {
                 *lifecycle = Http1Lifecycle::Upgraded;
             }
@@ -1137,7 +1139,7 @@ impl<T: AsyncRead + Unpin> AsyncRead for DeadlineIo<T> {
         {
             let mut lifecycle = lifecycle.lock().expect("HTTP/1 lifecycle poisoned");
             if matches!(*lifecycle, Http1Lifecycle::Idle(_)) {
-                *lifecycle = Http1Lifecycle::Headers(Box::pin(tokio::time::sleep(Duration::from_secs(15))));
+                *lifecycle = Http1Lifecycle::Headers(Box::pin(tokio::time::sleep(CONTROL)));
             }
         }
         result
@@ -1190,7 +1192,7 @@ fn check_operations(operations: &Operations, cx: &mut Context<'_>) -> io::Result
     Ok(())
 }
 
-/// Admitted operations on one connection; leftover receive credit is reclaimed 15 seconds after the last.
+/// Admitted operations on one connection; leftover receive credit is reclaimed the control bound after the last.
 #[derive(Clone)]
 struct AdmittedWork(Arc<Mutex<WorkState>>);
 

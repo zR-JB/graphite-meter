@@ -1,8 +1,9 @@
 //! Bounded WebSocket ping sessions. The listener owns upgrades and admission.
 
+use crate::timeouts::{IDLE_BOUND, WS_CLOSE};
 use futures_util::{SinkExt, StreamExt};
 use http::{Request, Response, StatusCode, header};
-use std::{future::Future, time::Duration};
+use std::future::Future;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::{
     WebSocketStream,
@@ -15,6 +16,9 @@ use tokio_tungstenite::{
 };
 
 pub use graphite_meter_core::failure::LaneEnding as CloseReason;
+
+/// Go's wsPingReadLimit: a valid PING is at most 15 bytes.
+const PING_MESSAGE_BYTES: usize = 2048;
 
 /// Authorization must run before this protocol handshake. In public mode the
 /// caller supplies no origin restriction; authenticated browser sessions carry
@@ -98,8 +102,8 @@ where
         .read_buffer_size(4096)
         .write_buffer_size(0)
         .max_write_buffer_size(8192)
-        .max_message_size(Some(2048))
-        .max_frame_size(Some(2048));
+        .max_message_size(Some(PING_MESSAGE_BYTES))
+        .max_frame_size(Some(PING_MESSAGE_BYTES));
     let mut socket = WebSocketStream::from_raw_socket(stream, Role::Server, Some(config)).await;
     let close = tokio::select! {
         biased;
@@ -115,7 +119,7 @@ where
     };
     // Close frames must not let an unresponsive peer retain capacity forever.
     let _ = tokio::time::timeout(
-        Duration::from_secs(5),
+        WS_CLOSE,
         socket.close(Some(CloseFrame {
             code: close.0,
             reason: close.1.into(),
@@ -128,7 +132,7 @@ async fn exchange<S>(socket: &mut WebSocketStream<S>, deadline: tokio::time::Ins
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let mut idle = tokio::time::Instant::now() + Duration::from_secs(30);
+    let mut idle = tokio::time::Instant::now() + IDLE_BOUND;
     loop {
         let message = match tokio::time::timeout_at(idle.min(deadline), socket.next()).await {
             Ok(Some(message)) => message,
@@ -143,7 +147,7 @@ where
         };
         match message? {
             message @ (Message::Text(_) | Message::Binary(_)) => {
-                idle = tokio::time::Instant::now() + Duration::from_secs(30);
+                idle = tokio::time::Instant::now() + IDLE_BOUND;
                 if let Some(reply) = crate::ping::reply(&message.into_data()) {
                     match tokio::time::timeout_at(idle.min(deadline), socket.send(Message::Text(reply.into()))).await {
                         Ok(result) => result?,

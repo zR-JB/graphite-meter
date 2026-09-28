@@ -4,6 +4,8 @@ use graphite_meter_http3::{self as http3, RecvHalf, RequestStream, SendHalf};
 
 const DATA_BYTES: usize = 16 * 1024;
 const FAIRNESS_LANES: usize = 16;
+/// Replies larger than this count toward a crowded connection's fairness lanes.
+const LARGE_RESPONSE_BYTES: u64 = 1024 * 1024;
 
 impl HttpServer {
     /// `peer` must be the actual accepted QUIC peer. QUIC supplies TLS; this
@@ -104,22 +106,22 @@ async fn respond(
     active_responses: Arc<AtomicUsize>,
 ) -> io::Result<()> {
     let (parts, mut body) = response.into_parts();
-    let active = (!head && body.size_hint().upper().is_some_and(|size| size > 1024 * 1024))
+    let active = (!head && body.size_hint().upper().is_some_and(|size| size > LARGE_RESPONSE_BYTES))
         .then(|| ActiveResponse::new(active_responses));
-    // Go's idle writer, from the head on: a write the peer's stream credit holds for thirty seconds ends the reply.
+    // Go's idle writer, from the head on: a write the peer's stream credit holds for the idle bound ends the reply.
     // Each write gets a fresh bound, and the operation's lifetime still caps them all.
     let written = |result: Result<Result<(), http3::Error>, tokio::time::error::Elapsed>| {
         result
             .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?
             .map_err(io::Error::other)
     };
-    written(tokio::time::timeout(WRITE_IDLE, send.send_response(Response::from_parts(parts, ()))).await)?;
+    written(tokio::time::timeout(IDLE_BOUND, send.send_response(Response::from_parts(parts, ()))).await)?;
     if !head {
         while let Some(frame) = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
             if let Ok(mut data) = frame?.into_data() {
                 while !data.is_empty() {
                     let chunk = data.split_to(data.len().min(DATA_BYTES));
-                    written(tokio::time::timeout(WRITE_IDLE, send.send_data(chunk)).await)?;
+                    written(tokio::time::timeout(IDLE_BOUND, send.send_data(chunk)).await)?;
                     if active.as_ref().is_some_and(ActiveResponse::contended) {
                         // Only a crowded connection needs a scheduler
                         // handoff; per-chunk yields halve ordinary H3

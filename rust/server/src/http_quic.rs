@@ -4,21 +4,26 @@ use super::{
     budget::{ClientCredit, CreditClaim, Lease, MemoryBudget},
     *,
 };
-use crate::quic_shard;
+use crate::{quic_shard, timeouts::QUIC_HANDSHAKE};
 use futures_util::{StreamExt, stream::FuturesUnordered};
-use graphite_meter_core::failure::LaneEnding;
+use graphite_meter_core::{failure::LaneEnding, wire::MAX_WEBTRANSPORT_STREAMS};
 use graphite_meter_http3::{self as http3, Code};
 use quinn::SharedBudget;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 const MIN_SEND_WINDOW: u64 = 2 * 1024 * 1024;
 const MAX_SEND_WINDOW: u64 = 16 * 1024 * 1024;
 const SEND_WINDOW_STEP: u64 = 256 * 1024;
 const SEND_WINDOW_SHRINK_DELAY: Duration = Duration::from_secs(1);
+/// How often a connection's send window follows its demand.
+const SEND_WINDOW_TUNING: Duration = Duration::from_millis(250);
 const INCOMING_BYTES: u64 = 64 * 1024;
 const INCOMING_TOTAL_BYTES: u64 = 4 * 1024 * 1024;
-const UNI_STREAMS: u32 = 23;
+/// Go's h3ControlStreams: request streams past a client's admission shares, for its control requests.
+pub(crate) const CONTROL_STREAMS: usize = 4;
+/// Go's browserH3UniStreams, the lane cap and wtLaneCreditHeadroom: credit past the cap resets an excess lane.
+const UNI_STREAMS: u32 = (3 + MAX_WEBTRANSPORT_STREAMS + 4) as u32;
+const DATAGRAM_BUFFER_BYTES: usize = 64 * 1024;
 // Go's autotuning ceilings, and one maximal 64 KiB HTTP/3 frame of credit until an upload is admitted.
 const STREAM_RECEIVE_WINDOW: u32 = 32 * 1024 * 1024;
 const RECEIVE_WINDOW: u32 = 48 * 1024 * 1024;
@@ -240,7 +245,7 @@ impl HttpServer {
                         let quic = tokio::select! {
                             biased;
                             _ = stopped(server.stopping.clone()) => return,
-                            result = tokio::time::timeout(Duration::from_secs(5), connecting) => match result {
+                            result = tokio::time::timeout(QUIC_HANDSHAKE, connecting) => match result {
                                 Ok(Ok(quic)) => quic,
                                 Ok(Err(error)) => {
                                     // A peer's close reason is its own text: quoted, as Go quotes connection errors.
@@ -297,7 +302,7 @@ impl HttpServer {
         let mut leftover = None;
         let stale = tokio::time::sleep(Duration::ZERO);
         tokio::pin!(stale);
-        let mut tuning = tokio::time::interval(Duration::from_millis(250));
+        let mut tuning = tokio::time::interval(SEND_WINDOW_TUNING);
         tuning.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             let idle_since = credit.work().idle_since();
@@ -305,7 +310,7 @@ impl HttpServer {
             if since != leftover {
                 leftover = since;
                 if let Some(since) = since {
-                    stale.as_mut().reset(since + IDLE_TIMEOUT);
+                    stale.as_mut().reset(since + CONTROL);
                 }
             }
             tokio::select! {
@@ -448,7 +453,7 @@ impl quinn::UdpSender for BudgetedSender {
 }
 
 pub(super) fn max_requests(limits: &crate::admission::Limits) -> usize {
-    limits.operations_per_client + limits.sessions_per_client + 4
+    limits.operations_per_client + limits.sessions_per_client + CONTROL_STREAMS
 }
 
 fn transport(limits: &crate::admission::Limits) -> Result<quinn::TransportConfig, ConfigError> {
@@ -458,9 +463,9 @@ fn transport(limits: &crate::admission::Limits) -> Result<quinn::TransportConfig
     transport.stream_receive_window(STREAM_RECEIVE_WINDOW.into());
     transport.receive_window(RECEIVE_WINDOW_FLOOR.into());
     transport.send_window(MIN_SEND_WINDOW);
-    transport.datagram_receive_buffer_size(Some(64 * 1024));
-    transport.datagram_send_buffer_size(64 * 1024);
-    transport.max_idle_timeout(Some(Duration::from_secs(30).try_into()?));
+    transport.datagram_receive_buffer_size(Some(DATAGRAM_BUFFER_BYTES));
+    transport.datagram_send_buffer_size(DATAGRAM_BUFFER_BYTES);
+    transport.max_idle_timeout(Some(IDLE_BOUND.try_into()?));
     Ok(transport)
 }
 
@@ -1181,7 +1186,7 @@ mod tests {
         .unwrap();
         // Stop short of the close, so Noq drains in real time and the client sees it.
         tokio::time::pause();
-        tokio::time::sleep(IDLE_TIMEOUT + SHUTDOWN_GRACE - Duration::from_secs(1)).await;
+        tokio::time::sleep(CONTROL + SHUTDOWN_GRACE - Duration::from_secs(1)).await;
         tokio::time::resume();
         match tokio::time::timeout(Duration::from_secs(2), quic.closed()).await {
             Ok(quinn::ConnectionError::ApplicationClosed(close)) => {

@@ -7,10 +7,20 @@ use crate::{
     tls::Certificates,
 };
 use futures_util::{StreamExt, stream::FuturesUnordered};
-use std::{future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::SystemTime};
+use std::{
+    future::Future,
+    net::SocketAddr,
+    pin::Pin,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 use tokio::{net::TcpListener, sync::watch};
 
 type Service = Pin<Box<dyn Future<Output = Result<(), ConfigError>> + Send>>;
+
+/// Verbose logs report transfer rates each second and admission, as Go's, each thirty.
+const TRANSFER_LOG_INTERVAL: Duration = Duration::from_secs(1);
+const ADMISSION_LOG_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Bind every configured socket before serving any request. A bind failure
 /// drops all previously opened sockets. Every running service is owned here;
@@ -112,8 +122,8 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
         let server = server.clone();
         let stopped = stopped.clone();
         services.push(Box::pin(async move {
-            let mut transfer_tick = tokio::time::interval(std::time::Duration::from_secs(1));
-            let mut admission_tick = tokio::time::interval(std::time::Duration::from_secs(30));
+            let mut transfer_tick = tokio::time::interval(TRANSFER_LOG_INTERVAL);
+            let mut admission_tick = tokio::time::interval(ADMISSION_LOG_INTERVAL);
             transfer_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             admission_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             transfer_tick.tick().await;

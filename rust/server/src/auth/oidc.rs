@@ -29,8 +29,14 @@ use tokio_rustls::TlsConnector;
 use zeroize::{Zeroize, Zeroizing};
 
 const MAX_TRANSACTIONS: usize = 16384;
+/// Go's oidcTransactionLifetime, which the transaction cookie's Max-Age also carries.
+pub(super) const TRANSACTION_LIFETIME: Duration = Duration::from_secs(10 * 60);
 /// Go bounds a callback's provider calls at 15 s.
 const CALLBACK_DEADLINE: Duration = Duration::from_secs(15);
+/// Go's provider client timeout, for each call.
+const PROVIDER_TIMEOUT: Duration = Duration::from_secs(10);
+/// Discovery retries back off from one second, doubling to this.
+const RETRY_MAX: Duration = Duration::from_secs(60);
 /// Concurrent token exchanges; a callback past them waits within its deadline.
 const MAX_EXCHANGES: usize = 8;
 
@@ -180,7 +186,7 @@ impl Oidc {
                 crate::log!("[gm:auth] OIDC provider retrying");
             }
             self.log.debug(format_args!("OIDC discovery failed: {error}"));
-            tokio::time::sleep(Duration::from_secs(1 << failures.min(6)).min(Duration::from_secs(60))).await;
+            tokio::time::sleep(Duration::from_secs(1 << failures.min(6)).min(RETRY_MAX)).await;
             failures = failures.saturating_add(1);
         }
     }
@@ -246,7 +252,7 @@ impl Oidc {
                 browser: token_hash(&browser),
                 nonce,
                 verifier,
-                deadline: now + Duration::from_secs(600),
+                deadline: now + TRANSACTION_LIFETIME,
                 client_keys,
                 challenge,
                 prior,
@@ -506,7 +512,7 @@ impl ProviderHttp {
         Jwks::parse(ok(&response)?).map_err(|_| "OIDC key set is malformed".into())
     }
     async fn call(&self, mut request: Request<String>) -> Result<Response<Vec<u8>>, ConfigError> {
-        tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::time::timeout(PROVIDER_TIMEOUT, async {
             let uri = request.uri().to_string();
             valid_url(&uri)?;
             let (origin, path) = split_url(&uri)?;
