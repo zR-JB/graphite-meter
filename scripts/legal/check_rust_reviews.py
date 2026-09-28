@@ -5,11 +5,15 @@
 Each shipped package and target is resolved as its release build is (cargo tree over normal and
 build edges, with that target's features), and every review must name one of those crates by
 exact name, version and source. --prune drops the reviews that name none.
+
+Every shipped target also needs an approved platform record in the --supplement file its builder
+reads, so a release request cannot reach a target nobody reviewed.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import tomllib
@@ -44,6 +48,34 @@ def compiled(package: str, target: str, sources: dict[tuple[str, str], set[str]]
     return {(name, version, source) for name, version in crates for source in sources.get((name, version), ())}
 
 
+# Release requests build the macOS TUIs natively; the builder image builds every other target.
+BUILDERS = {
+    '.github/workflows/release-request.yml': lambda platform: platform.startswith('darwin/'),
+    'container/Dockerfile.rust': lambda platform: not platform.startswith('darwin/'),
+}
+
+
+def unreviewed_platforms(repo: Path, targets: str) -> list[str]:
+    """Shipped targets whose builder's --supplement file holds no approved record for this toolchain."""
+    channel = tomllib.loads((repo / 'rust/rust-toolchain.toml').read_text())['toolchain']['channel']
+    problems = []
+    for builder, builds in BUILDERS.items():
+        supplements = set(re.findall(r'--supplement (legal/\S+\.json)', (repo / builder).read_text()))
+        if len(supplements) != 1:
+            problems.append(f'{builder} must read exactly one --supplement file')
+            continue
+        name = supplements.pop()
+        records = json.loads((repo / name).read_text()) if (repo / name).exists() else []
+        approved = {record['target'] for record in records
+                    if record.get('reviewDecision') == 'approved' and record.get('reviewNotes')
+                    and f'\nrelease: {channel}\n' in record.get('rustc', '')}
+        for line in targets.splitlines():
+            platform, target = line.split()
+            if builds(platform) and target not in approved:
+                problems.append(f'{name} has no approved record for {target} on Rust {channel}, which {builder} builds')
+    return problems
+
+
 def unused(reviews: list[dict], used: set[Crate]) -> list[dict]:
     return [review for review in reviews
             if (review['name'], review['reviewedVersion'], review['upstream']) not in used]
@@ -57,8 +89,11 @@ def main() -> None:
     for package in tomllib.loads((REPO / 'rust/Cargo.lock').read_text())['package']:
         if 'source' in package:
             sources.setdefault((package['name'], package['version']), set()).add(package['source'])
+    targets = (REPO / 'scripts/tui-targets.txt').read_text()
+    if problems := unreviewed_platforms(REPO, targets):
+        sys.exit('Rust platform records are missing:\n' + '\n'.join(f'  {problem}' for problem in problems))
     used: set[Crate] = set()
-    for package, target in shipped((REPO / 'scripts/tui-targets.txt').read_text()):
+    for package, target in shipped(targets):
         used |= compiled(package, target, sources)
     reviews = json.loads(REVIEWS.read_text())
     stale = unused(reviews, used)
