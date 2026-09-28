@@ -1,7 +1,7 @@
 use graphite_meter_core::discovery::{LatencyTransport, Protocol, ThroughputTransport};
 use graphite_meter_server::{
     config::{AuthMode, Config, NativeKind},
-    preflight::Preflight,
+    preflight::{Preflight, connect_origins},
 };
 use std::{collections::BTreeSet, sync::Arc};
 
@@ -80,7 +80,7 @@ fn public_roles_merge_default_ports_and_csp_includes_socket_schemes() {
             .all(|target| target.protocol == Protocol::Negotiated)
     );
     assert_eq!(
-        preflight.connect_origins("meter.example").unwrap(),
+        connect_origins(&document),
         ["https://meter.example", "wss://meter.example"]
     );
 }

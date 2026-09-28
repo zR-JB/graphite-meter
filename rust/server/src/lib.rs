@@ -9,7 +9,6 @@ mod test_identity;
 mod test_link;
 
 pub mod admission;
-pub mod app_security;
 pub mod assets;
 pub mod auth;
 pub mod catalog;

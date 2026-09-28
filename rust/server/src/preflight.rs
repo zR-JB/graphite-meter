@@ -89,28 +89,27 @@ impl Preflight {
         document.validate()?;
         Ok(document)
     }
+}
 
-    pub fn connect_origins(&self, host: &str) -> Result<Vec<String>, ConfigError> {
-        let document = self.build(host)?;
-        let mut origins = Vec::new();
-        let mut add = |origin: String| {
-            if !origin.is_empty() && origin != "." && !origins.contains(&origin) {
-                origins.push(origin);
-            }
-        };
-        for target in document.capabilities.throughput {
-            add(target.base_url);
+pub fn connect_origins(document: &Document) -> Vec<String> {
+    let mut origins = Vec::new();
+    let mut add = |origin: String| {
+        if !origin.is_empty() && origin != "." && !origins.contains(&origin) {
+            origins.push(origin);
         }
-        for target in document.capabilities.latency {
-            add(target.base_url.clone());
-            if let Some(host) = target.base_url.strip_prefix("https://") {
-                add(format!("wss://{host}"));
-            } else if let Some(host) = target.base_url.strip_prefix("http://") {
-                add(format!("ws://{host}"));
-            }
-        }
-        Ok(origins)
+    };
+    for target in &document.capabilities.throughput {
+        add(target.base_url.clone());
     }
+    for target in &document.capabilities.latency {
+        add(target.base_url.clone());
+        if let Some(host) = target.base_url.strip_prefix("https://") {
+            add(format!("wss://{host}"));
+        } else if let Some(host) = target.base_url.strip_prefix("http://") {
+            add(format!("ws://{host}"));
+        }
+    }
+    origins
 }
 
 fn add_throughput(capabilities: &mut Capabilities, base: &str, protocol: Protocol) {
