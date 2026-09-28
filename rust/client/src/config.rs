@@ -1,5 +1,8 @@
 use crate::{Error, model::Stage};
-use graphite_meter_core::discovery::{LatencyTransport, Protocol, ThroughputTarget, ThroughputTransport};
+use graphite_meter_core::{
+    catalog::MAX_SELECTED_SERVERS,
+    discovery::{LatencyTransport, Protocol, ThroughputTarget, ThroughputTransport},
+};
 use std::time::Duration;
 
 pub const MAX_STREAMS: usize = 14;
@@ -100,7 +103,7 @@ impl Config {
         for origin in [&self.throughput_origin, &self.latency_origin].into_iter().flatten() {
             graphite_meter_core::origin::canonical_origin(origin)?;
         }
-        if self.servers.len() > 4
+        if self.servers.len() > MAX_SELECTED_SERVERS
             || self
                 .servers
                 .iter()

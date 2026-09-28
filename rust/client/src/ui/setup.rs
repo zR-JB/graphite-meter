@@ -343,18 +343,6 @@ impl Ui {
                 self.config.servers.clear();
                 self.snapshot.servers.clear();
             }
-            Field::Servers => {
-                let ids: Vec<String> = value
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|id| !id.is_empty())
-                    .map(str::to_owned)
-                    .collect();
-                if ids.len() > 4 || ids.iter().enumerate().any(|(index, id)| ids[..index].contains(id)) {
-                    return Err("select at most four distinct server IDs".into());
-                }
-                self.config.servers = ids;
-            }
             Field::ThroughputOrigin | Field::LatencyOrigin => {
                 let origin = if value.is_empty() {
                     None

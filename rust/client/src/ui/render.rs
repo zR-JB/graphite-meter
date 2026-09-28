@@ -350,7 +350,7 @@ impl Ui {
                     .servers
                     .iter()
                     .filter(|server| server.has_check_result())
-                    .take(4)
+                    .take(MAX_SELECTED_SERVERS)
                     .collect::<Vec<_>>();
                 if checked.is_empty() {
                     lines.push(
