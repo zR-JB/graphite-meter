@@ -15,7 +15,7 @@
       class="segment"
       role="listitem"
       data-tone={stage.tone}
-      style:flex-grow={stage.ms}
+      style:--ms={stage.ms}
     >
       <span class="bar" aria-hidden="true"></span>
       <span class="time"
@@ -29,21 +29,29 @@
 <style>
   .strip {
     display: flex;
-    gap: 3px;
-    padding-block: var(--space-3) 10px;
+    gap: 2px;
+    padding-block: var(--space-4) var(--space-3);
   }
   /* Widths follow the times, but never below a segment's own label. */
   .segment {
     display: grid;
-    flex-basis: 0;
+    flex: var(--ms) 1 0;
     gap: 2px;
-    transition: flex-grow 420ms var(--ease-out);
+    transition: flex-grow var(--dur-graph) var(--ease-out);
   }
+  /* A stage that joins grows from its label's width instead of popping in at its share. */
+  @starting-style {
+    .segment {
+      flex-grow: 0;
+    }
+  }
+  /* The hues are data, so forced colours keep them. */
   .bar {
     height: 4px;
     margin-bottom: 6px;
     border-radius: var(--r-full);
     background: var(--tone);
+    forced-color-adjust: none;
   }
   /* A segment's words keep a space before the next segment's. */
   .time,
@@ -52,10 +60,10 @@
     white-space: nowrap;
   }
   .time {
-    font: var(--w-normal) var(--type-md) / 1.2 var(--font-sans);
+    font: var(--w-normal) var(--type-md) / 16px var(--font-sans);
   }
   .name {
     color: var(--text-soft);
-    font: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
+    font: var(--w-normal) var(--type-sm) / 16px var(--font-sans);
   }
 </style>

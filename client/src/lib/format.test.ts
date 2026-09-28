@@ -51,6 +51,24 @@ test("stage times read as the steppers show them, and every shown time reads bac
   expect(shown.map(parseDuration)).toEqual(times);
 });
 
+test("a typed stage time snaps to the time the stepper shows, in every range", () => {
+  const snap = (ms: number) => parseDuration(fmtStageTime(ms))!;
+  const typed = [
+    0, 450, 2_250, 12_340, 59_940, 59_960, 61_500, 599_990, 3_599_400,
+    3_599_700, 5_429_000, 5_431_000, 86_399_000,
+  ];
+  expect(typed.map(snap)).toEqual([
+    0, 500, 2_300, 12_300, 59_900, 60_000, 62_000, 600_000, 3_599_000,
+    3_600_000, 5_400_000, 5_460_000, 86_400_000,
+  ]);
+  // Snapped once, a time shows as it did and stays put.
+  for (let ms = 0; ms <= 7_200_000; ms += ms < 120_000 ? 10 : 1_000) {
+    const snapped = snap(ms);
+    if (fmtStageTime(snapped) !== fmtStageTime(ms) || snap(snapped) !== snapped)
+      throw new Error(`${ms} ms snaps to ${snapped} ms`);
+  }
+});
+
 test("typed stage times are seconds unless they name a unit or read as a clock", () => {
   const typed = {
     "90": 90_000,

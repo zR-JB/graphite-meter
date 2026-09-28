@@ -30,6 +30,7 @@
   } from "../../presentation/vocabulary";
   import {
     fmtDuration,
+    fmtStageTime,
     rateUnit,
     rateValueAt,
     rawRateFrom,
@@ -121,7 +122,7 @@
   ] as const;
   type DurationKey = (typeof DURATION_FIELDS)[number][0];
   const WARMUP_LABEL = DURATION_FIELDS[0][1];
-  const STAGE_FIELDS = DURATION_FIELDS.slice(1);
+  const [, ...STAGE_FIELDS] = DURATION_FIELDS;
   function sameDuration(
     a: RunnerConfig["duration"],
     b: RunnerConfig["duration"],
@@ -157,6 +158,14 @@
     input.value = String(accepted ? value : current);
     rejected = accepted ? null : field;
     if (!accepted) announce(rejection);
+  }
+  // Escape drops a typed number; the sheet closes on the next one. Bound as a
+  // capture listener on the field, so it runs before the sheet's own.
+  function keepOnEscape(event: KeyboardEvent, current: number) {
+    const input = event.currentTarget as HTMLInputElement;
+    if (event.key !== "Escape" || input.value === String(current)) return;
+    input.value = String(current);
+    event.preventDefault();
   }
   const rejection = $derived(
     store.startError || "This change cannot apply to the current run.",
@@ -196,14 +205,16 @@
       ? DURATION_FIELDS
       : DURATION_FIELDS.filter(([key]) => key !== "bidirectionalMs"),
   );
+  const presetName = (preset: Preset) =>
+    preset[0].toUpperCase() + preset.slice(1);
   function presetTip(preset: Preset) {
-    const name = preset[0].toUpperCase() + preset.slice(1);
+    const name = presetName(preset);
     if (preset === "custom") return `${name}\nSet each stage's time`;
     const times = DURATION_PRESETS[preset];
     return [
       name,
       ...activeDurationFields.map(
-        ([key, label]) => `${label} ${fmtDuration(times[key])}`,
+        ([key, label]) => `${label} ${fmtStageTime(times[key])}`,
       ),
     ].join("\n");
   }
@@ -362,7 +373,7 @@
               aria-pressed={durationMode === preset}
               disabled={store.preparing}
               {@attach tooltip(() => presetTip(preset))}
-              onclick={() => setPreset(preset)}>{preset}</button
+              onclick={() => setPreset(preset)}>{presetName(preset)}</button
             >
           {/each}
         </div>
@@ -381,23 +392,30 @@
         />
       </div>
       {#if durationMode === "custom"}
-        {#each STAGE_FIELDS as [key, label, tone] (key)}
+        {#each STAGE_FIELDS as [key, , tone] (key)}
           {#if key !== "bidirectionalMs" || store.config.stages.bidirectional}
             <div class="stage-row" transition:reveal|global>
-              <span class="stage-name" data-tone={tone}>{label}</span>
-              {@render stepper(key, label)}
+              <span class="stage-name" data-tone={tone}
+                >{STAGE[tone].label}</span
+              >
+              {@render stepper(key, `${STAGE[tone].label} stage`)}
             </div>
           {/if}
         {/each}
       {/if}
       <div class="stage-row">
-        <span {@attach term(() => JARGON.warmup)}>{WARMUP_LABEL}</span>
+        <span
+          class="stage-name"
+          data-tone="warmup"
+          {@attach term(() => JARGON.warmup)}>{WARMUP_LABEL}</span
+        >
         {#if durationMode === "custom"}
-          {@render stepper("warmupMs", WARMUP_LABEL)}
+          {@render stepper("warmupMs", "warmup")}
         {:else}
-          <span class="value"
-            >{fmtDuration(store.config.duration.warmupMs)}</span
-          >
+          <Roll
+            text={fmtStageTime(store.config.duration.warmupMs)}
+            rank={store.config.duration.warmupMs}
+          />
         {/if}
       </div>
       {@render toggle(
@@ -420,7 +438,7 @@
       </p>{/if}
     {@render rejectedHint("duration")}
     {#if running}
-      <p class="hint">Changes apply to the current and unstarted stages.</p>
+      <p class="hint">Changes apply to the current and upcoming stages.</p>
     {/if}
   </section>
 
@@ -481,6 +499,7 @@
               min="1"
               value={vizDisplay}
               onchange={setVizMax}
+              onkeydowncapture={(event) => keepOnEscape(event, vizDisplay)}
             />
             <span class="unit">{vizUnit}</span>
           </span>
@@ -494,7 +513,7 @@
     <h3>History</h3>
     <div class="kv">
       {@render toggle(
-        "Save completed results on this device",
+        "Save results in this browser",
         JARGON.saveResults,
         store.savingResults,
         (enabled) =>
@@ -534,7 +553,7 @@
         </label>
       {/each}
       {@render toggle(
-        "Skip loaded latency when latency is off",
+        "Skip loaded latency if the Latency stage is off",
         JARGON.skipLoadedLatency,
         store.config.skipLoadedLatencyWhenStageOff,
         (skipLoadedLatencyWhenStageOff) =>
@@ -561,7 +580,7 @@
           )}
           >{forced
             ? "Streams per server and direction"
-            : "Maximum H1 streams per direction"}</span
+            : "HTTP/1.1 stream limit per direction"}</span
         >
         <input
           type="number"
@@ -570,6 +589,8 @@
           step="1"
           disabled={running || store.preparing}
           value={store.config.transferStreams.count}
+          onkeydowncapture={(event) =>
+            keepOnEscape(event, store.config.transferStreams.count)}
           onchange={(event) =>
             commitNumber(
               event,
@@ -648,31 +669,17 @@
   }
   .presets button {
     flex: 1 1 0;
-    text-transform: capitalize;
   }
   .kv > .presets + .strip-row {
     border-top: 0;
   }
+  /* The strip keeps its own spacing. */
   .strip-row {
     display: block;
-  }
-  .stage-name {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .stage-name::before {
-    content: "";
-    width: 7px;
-    height: 7px;
-    border-radius: var(--r-full);
-    background: var(--tone);
+    padding-block: 0;
   }
   .stage-row {
     align-items: center;
-  }
-  .stage-row .value {
-    font-variant-numeric: tabular-nums;
   }
   .unit {
     margin-inline: 2px 4px;
@@ -703,9 +710,6 @@
   .field-unit:has(input:focus-visible) {
     border-color: var(--brand-line);
     box-shadow: var(--ring-halo);
-  }
-  .field-unit:has(input:disabled) {
-    opacity: 0.5;
   }
   .kv .field-unit input {
     flex: 1;

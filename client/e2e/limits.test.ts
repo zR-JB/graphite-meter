@@ -12,7 +12,7 @@ test("a stage longer than a selected server admits blocks the start and names th
       "true",
     );
     await expect(page.locator(".gauge-footer")).toContainText(
-      "Oslo allows stages up to 2 s; shorten the download stage.",
+      "Oslo allows stages up to 2 s; shorten the Download stage.",
     );
   } finally {
     oslo.kill();

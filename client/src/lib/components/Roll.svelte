@@ -25,7 +25,7 @@
   {#key text}
     <span class="value" in:roll={{ side: 1 }} out:roll={{ side: -1 }}
       >{#each parts as part, index (index)}{#if /\d/.test(part)}{part}{:else}<span
-            class="unit">{part.trim()}</span
+            class="unit">{part}</span
           >{/if}{/each}</span
     >
   {/key}
@@ -43,12 +43,10 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
+  /* A unit keeps its spaces, so it reads and copies as "1 min 30 s", and sits within its figures' line. */
   .unit {
-    margin-inline: 2px 4px;
     color: var(--text-soft);
     font-size: var(--type-sm);
-  }
-  .unit:last-child {
-    margin-inline-end: 0;
+    line-height: 1;
   }
 </style>

@@ -232,14 +232,14 @@ export const JARGON = {
     "Warmup\nRuns before each stage to open its connections and ramp up\n" +
     "At least 10 round trips, at most 4 s; never counted",
   stageTime:
-    "Stage time\nPlanned length; early finish can end a stage sooner\n" +
+    "Duration\nEach stage's planned length; early finish can end one sooner\n" +
     "From 1 s up to the servers' stage limit, 5 min unless their operator raises it",
   bidirectionalStage:
     "Bidirectional stage\nDownload and upload at the same time, after the other stages\n" +
-    "The stage track can skip it; turn it back on here",
+    "Its chip beside Start test can skip it; turn it back on here",
   earlyFinish:
-    "Early finish\nEnds a steady stage after 52% of its time\n" +
-    "Steady: score ≥ 0.86 over 4 s, held for 1.1 s\n" +
+    "Early finish\nEnds a stable stage after 52% of its time\n" +
+    "Stable: score ≥ 0.86 over 4 s, held for 1.1 s\n" +
     "Needs 12 rate or 8 latency samples\nRate score: 1 − 2.2 × spread − 1.4 × drift\n" +
     "A stage with a stall, gap or lost server runs its full time",
   saveResults:
@@ -267,7 +267,7 @@ export const JARGON = {
     "Streams\nParallel connections per server and direction\n" +
     "Automatic: chosen per protocol\nForced: the exact count, even past the browser's connection limit",
   autoStreamCount:
-    "Maximum H1 streams\nCaps parallel HTTP/1.1 requests per direction\n" +
+    "HTTP/1.1 stream limit\nCaps parallel HTTP/1.1 requests per direction\n" +
     "HTTP/2 and HTTP/3 choose their own count",
   forcedStreamCount:
     "Streams per server and direction\nOpens exactly this many requests\n" +
