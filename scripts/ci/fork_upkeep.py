@@ -165,7 +165,7 @@ def pin_proposal(fork: dict, current: str, directory: Path, repository: str) -> 
                  "locked-build and provenance gates intentionally block this proposal. Review the "
                  "upstream base, patch origins, diff, modified package/file scope and license inventory; "
                  "then update the reviewed provenance and lockfile and run legal-check, "
-                 "scripts/legal/check_git_sources.py --verify and the Rust/fork gates before approval.")
+                 "python3 -m scripts.legal.check_git_sources --verify and the Rust/fork gates before approval.")
 
 
 def main() -> None:

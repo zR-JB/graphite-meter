@@ -11,13 +11,13 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import patch
 
-from github_api import (
+from .github_api import (
     ControlPlaneError, JsonObject, confined_path, file_sha256, local_path, runner_path,
 )
-from fixtures import (
+from .fixtures import (
     AMD, Answers, engine, git_head, github, outcome, pages, write_oci, write_release_assets,
 )
-from release import (
+from .release import (
     OCI,
     Release,
     assets_sha256,
@@ -30,7 +30,7 @@ from release import (
     require_publishable,
     verify_request,
 )
-from trust import (
+from .trust import (
     exact_files,
     require_check_run,
     require_ci_gate,
@@ -516,7 +516,7 @@ class CommandTests(unittest.TestCase):
                     "GITHUB_STEP_SUMMARY": str(root / "summary"), "RUNNER_TEMP": str(self.root),
                 } | engine(root, REPO, release.version, release.sha, oci) | git_head(root, MAIN) | env
                 limit = int(env.get("LIMIT", 1 << 30))
-                with (patch.dict(os.environ, variables), patch("release.OCI_LIMIT", limit),
+                with (patch.dict(os.environ, variables), patch("scripts.ci.release.OCI_LIMIT", limit),
                       github(trusted(stable, mode) | responses)):
                     outcome(self, error, command_verify)
                 if error is not None:

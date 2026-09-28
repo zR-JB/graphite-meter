@@ -149,7 +149,7 @@ and reviewer edits are never overwritten. Lockfiles and reviewed provenance stay
 so existing gates block the drafts. Review origins, diffs, package/file scope, licenses and
 budgets; update `rust-forks.json` (each commit's subject, purpose and origin), Cargo.lock
 and generated legal outputs; then run
-`scripts/legal/check_git_sources.py --verify` and the Rust/fork gates before approval.
+`python3 -m scripts.legal.check_git_sources --verify` and the Rust/fork gates before approval.
 Upkeep never reviews sources, merges PRs or changes protections.
 
-`python3 scripts/ci/fork_upkeep.py` previews remote changes without publishing.
+`python3 -m scripts.ci.fork_upkeep` previews remote changes without publishing.

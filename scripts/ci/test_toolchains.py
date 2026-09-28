@@ -6,7 +6,7 @@ import shutil
 import tempfile
 import unittest
 
-from toolchains import ROOT, check, literal_updates, load_pins, runtime_pins
+from .toolchains import ROOT, check, literal_updates, load_pins, runtime_pins
 
 
 class ToolchainBoundaryTests(unittest.TestCase):

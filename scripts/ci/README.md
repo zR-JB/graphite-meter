@@ -7,7 +7,8 @@ verification. `publish.sh` holds the Skopeo registry writes and `release.py
 publish` the GitHub Release; `test_release_transaction.py` runs both against a
 stateful fake GitHub, Docker and Skopeo. `fixtures.py` fakes the GitHub API by exact path and
 pagination, the checked-out commit and the container engine, so trust tests run the real
-commands.
+commands. The modules form the `scripts.ci` package, like `scripts.legal`, and run from the
+repository root as `python3 -m scripts.ci.<module>`, so each is loaded once.
 
 ## Working on the pipeline
 

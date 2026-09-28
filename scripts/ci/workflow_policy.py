@@ -8,8 +8,8 @@ import subprocess
 import tomllib
 from pathlib import Path
 
-from github_api import PEM, TLS_NAME, ControlPlaneError, fail
-from toolchains import check as check_toolchain_literals, pin
+from .github_api import PEM, TLS_NAME, ControlPlaneError, fail
+from .toolchains import check as check_toolchain_literals, pin
 
 ROOT = Path(__file__).resolve().parents[2]
 USES = re.compile(r"(?m)^\s*(?:-\s*)?uses:\s*(\S+)")
@@ -40,38 +40,38 @@ ALLOWED_USES = {
 ORDERED = {
     "workflows/release-request.yml": (
         "if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}",
-        "run: python3 scripts/ci/release.py prepare",
+        "run: python3 -m scripts.ci.release prepare",
         "VERSION= mise run legal-check\n",
         "SOURCE_SHA: ${{ steps.request.outputs.remote_sha }}\n",
         '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', "uses: docker/build-push-action@",
-        'python3 scripts/ci/verify_release_assets.py "$VERSION"',
+        'python3 -m scripts.ci.verify_release_assets "$VERSION"',
     ),
     "workflows/release.yml": (
         "github.event.workflow_run.conclusion == 'success'\n",
         "&& github.event.workflow_run.event == 'workflow_dispatch'\n",
         "&& github.event.workflow_run.head_branch == 'main'\n",
         "&& github.event.workflow_run.path == '.github/workflows/release-request.yml'\n",
-        "run: python3 scripts/ci/release.py verify",
+        "run: python3 -m scripts.ci.release verify",
         "group: release-publish-${{ github.repository }}\n", "cancel-in-progress: false\n",
-        "run: python3 scripts/ci/release.py recheck", "run: scripts/ci/publish.sh image",
-        "run: python3 scripts/ci/release.py publish", "run: scripts/ci/publish.sh aliases",
+        "run: python3 -m scripts.ci.release recheck", "run: scripts/ci/publish.sh image",
+        "run: python3 -m scripts.ci.release publish", "run: scripts/ci/publish.sh aliases",
     ),
 }
 # Identity that release.py trusts comes from the run context, never from dispatch inputs.
 CONTEXT = {
-    "run: python3 scripts/ci/release.py prepare": {
+    "run: python3 -m scripts.ci.release prepare": {
         "REPOSITORY": "github.repository", "REPOSITORY_OWNER": "github.repository_owner",
         "ACTOR": "github.actor", "TRIGGERING_ACTOR": "github.triggering_actor",
         "EVENT_NAME": "github.event_name", "EVENT_SHA": "github.sha", "REF": "github.ref",
         "WORKFLOW_REF": "github.workflow_ref", "REQUEST_RUN_ID": "github.run_id",
         "REQUEST_RUN_ATTEMPT": "github.run_attempt",
     },
-    "run: python3 scripts/ci/release.py verify": {
+    "run: python3 -m scripts.ci.release verify": {
         "REPOSITORY": "github.repository", "REPOSITORY_OWNER": "github.repository_owner",
         "PUBLISHER_SHA": "github.sha", "WORKFLOW_REF": "github.workflow_ref",
         "REQUEST_RUN_ID": "github.event.workflow_run.id",
     },
-    "run: python3 scripts/ci/release.py recheck": {
+    "run: python3 -m scripts.ci.release recheck": {
         "REPOSITORY": "github.repository", "TAG": "needs.verify.outputs.tag",
         "SOURCE_SHA": "needs.verify.outputs.sha", "MAIN_SHA": "needs.verify.outputs.main_sha",
         "PR": "needs.verify.outputs.pr", "RUST": "needs.verify.outputs.rust",
@@ -79,7 +79,7 @@ CONTEXT = {
         "RUST_OCI_SHA256": "needs.verify.outputs.rust_oci_sha256",
         "ASSETS_SHA256": "needs.verify.outputs.assets_sha256",
     },
-    "run: python3 scripts/ci/release.py publish": {
+    "run: python3 -m scripts.ci.release publish": {
         "REPOSITORY": "github.repository", "TARGET_SHA": "github.sha",
         "TAG": "needs.verify.outputs.tag",
         "SOURCE_SHA": "needs.verify.outputs.sha", "PR": "needs.verify.outputs.pr",
@@ -215,7 +215,7 @@ def check_workflows(root: Path) -> None:
     if re.findall(r"(?m)^ *cache-mode:.*", request) != ["cache-mode: none"]:
         fail("release-request.yml: the untrusted build must get no cache token")
     for step in STEP.split(request.split("\njobs:", 1)[1]):
-        if "${{ inputs." in step and "run: python3 scripts/ci/release.py prepare" not in step:
+        if "${{ inputs." in step and "run: python3 -m scripts.ci.release prepare" not in step:
             fail("release-request.yml: dispatch inputs may reach only the request validator")
         if "setup-project" in step and "cache: 'false'" not in step:
             fail("release-request.yml: the untrusted build must disable every cache")

@@ -17,8 +17,8 @@ from collections.abc import Callable
 from typing import Any
 from unittest.mock import patch
 
-from github_api import ControlPlaneError
-from release import command_publish
+from .github_api import ControlPlaneError
+from .release import command_publish
 
 SCRIPT = pathlib.Path(__file__).resolve().parent / "publish.sh"
 VERIFIED = "sha256:" + "a" * 64
@@ -257,7 +257,7 @@ class ReleasePublicationTests(unittest.TestCase):
                 "ASSETS_DIR": str(root / "assets"), "RUNNER_TEMP": directory,
             } | identity
             output, error = io.StringIO(), None
-            with (patch.dict(os.environ, env), patch("release.time.sleep"),
+            with (patch.dict(os.environ, env), patch("scripts.ci.release.time.sleep"),
                   contextlib.redirect_stdout(output), contextlib.redirect_stderr(output)):
                 try:
                     command_publish()

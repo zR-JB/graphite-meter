@@ -90,9 +90,9 @@ runs:
       shell: bash
       run: |
         printf 'MISE_AUTO_INSTALL=0\n' >> "$GITHUB_ENV"
-        chrome=$(python3 scripts/ci/toolchains.py get browser.chrome)
-        go=$(python3 scripts/ci/toolchains.py get runtime.go)
-        bun=$(python3 scripts/ci/toolchains.py get runtime.bun)
+        chrome=$(python3 -m scripts.ci.toolchains get browser.chrome)
+        go=$(python3 -m scripts.ci.toolchains get runtime.go)
+        bun=$(python3 -m scripts.ci.toolchains get runtime.bun)
         printf 'chrome=%s\ngo=%s\nbun=%s\n' "$chrome" "$go" "$bun" >> "$GITHUB_OUTPUT"
 
     - id: go-cache
@@ -160,4 +160,4 @@ runs:
     - name: Drop cached builds of changed Cargo packages
       if: inputs.rust == 'true' && inputs.cache == 'true'
       shell: bash
-      run: python3 scripts/ci/cargo_prune.py
+      run: python3 -m scripts.ci.cargo_prune

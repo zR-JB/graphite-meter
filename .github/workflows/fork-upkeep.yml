@@ -33,7 +33,7 @@ jobs:
           install_args: --locked python
           cache: false
       - id: inventory
-        run: echo "repositories=$(python3 scripts/ci/fork_upkeep.py --repositories)" >> "$GITHUB_OUTPUT"
+        run: echo "repositories=$(python3 -m scripts.ci.fork_upkeep --repositories)" >> "$GITHUB_OUTPUT"
       - id: pin-token
         if: steps.inventory.outputs.repositories != ''
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
@@ -50,7 +50,7 @@ jobs:
           APP_SLUG: ${{ steps.pin-token.outputs.app-slug }}
         run: |
           gh auth setup-git
-          python3 scripts/ci/fork_upkeep.py --publish pins
+          python3 -m scripts.ci.fork_upkeep --publish pins
       - id: fork-token
         if: steps.inventory.outputs.repositories != ''
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
@@ -69,4 +69,4 @@ jobs:
           APP_SLUG: ${{ steps.fork-token.outputs.app-slug }}
         run: |
           gh auth setup-git
-          python3 scripts/ci/fork_upkeep.py --publish forks
+          python3 -m scripts.ci.fork_upkeep --publish forks

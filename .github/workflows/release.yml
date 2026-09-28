@@ -80,7 +80,7 @@ jobs:
           REQUEST_RUN_ID: ${{ github.event.workflow_run.id }}
           REQUEST_DIR: ${{ runner.temp }}/request
           HANDOFF_DIR: ${{ runner.temp }}/handoff
-        run: python3 scripts/ci/release.py verify
+        run: python3 -m scripts.ci.release verify
 
       - name: Upload verified image handoff
         if: steps.verify.outputs.publish == 'true'
@@ -180,7 +180,7 @@ jobs:
           RUST: ${{ needs.verify.outputs.rust }}
           RUST_OCI_SHA256: ${{ needs.verify.outputs.rust_oci_sha256 }}
           HANDOFF_DIR: ${{ runner.temp }}/handoff
-        run: python3 scripts/ci/release.py recheck
+        run: python3 -m scripts.ci.release recheck
 
       - name: Publish the exact version tag
         env:
@@ -224,7 +224,7 @@ jobs:
           PR: ${{ needs.verify.outputs.pr }}
           RUST: ${{ needs.verify.outputs.rust }}
           ASSETS_DIR: ${{ runner.temp }}/handoff/assets
-        run: python3 scripts/ci/release.py publish
+        run: python3 -m scripts.ci.release publish
 
       - name: Promote stable aliases without rollback
         if: needs.verify.outputs.stable == 'true'

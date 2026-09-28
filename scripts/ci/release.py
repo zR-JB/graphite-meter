@@ -19,10 +19,8 @@ from pathlib import Path
 from typing import TypeVar
 from urllib.parse import quote
 
-import github_api as gh
-import verify_oci
-import verify_release_assets
-from trust import (
+from . import github_api as gh, verify_oci, verify_release_assets
+from .trust import (
     SEMVER_NUMBER,
     SHA_RE,
     env,

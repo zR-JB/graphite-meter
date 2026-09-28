@@ -11,7 +11,7 @@ if [ "$(git symbolic-ref --short -q HEAD)" = main ]; then
 fi
 git diff --cached --check
 mise exec -- gitleaks git --staged --redact --no-banner --verbose
-checks=$(mise exec -- python3 scripts/ci/precommit.py)
+checks=$(mise exec -- python3 -m scripts.ci.precommit)
 if [ -z "$checks" ]; then
     exit 0
 fi

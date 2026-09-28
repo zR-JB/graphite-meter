@@ -11,9 +11,9 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from fixtures import write_checksums
-from github_api import ControlPlaneError as VerificationError, JsonObject, file_sha256 as sha256_file
-from verify_release_assets import (
+from .fixtures import write_checksums
+from .github_api import ControlPlaneError as VerificationError, JsonObject, file_sha256 as sha256_file
+from .verify_release_assets import (
     expected_rust_artifacts, read_archive, require_same, verify_rust_client_archive, verify_rust_source,
 )
 
@@ -107,7 +107,7 @@ class RustArchiveBoundaryTests(unittest.TestCase):
                 read_archive(path, "base/SOURCE.txt", limit=16)
 
     def test_artifacts_arrive_once_in_exactly_the_selection(self) -> None:
-        from release import merge
+        from .release import merge
 
         names = expected_rust_artifacts("1.2.3", "both")
         darwin = {name for name in names if "_darwin_" in name}
@@ -178,9 +178,9 @@ class RustServerReleaseTests(unittest.TestCase):
 
 class RustRequestBoundaryTests(unittest.TestCase):
     def test_dispatch_selection_cannot_be_forged_in_the_artifact(self) -> None:
-        from fixtures import git_head, github
-        from release import OCI, Release, request_title, verify_request
-        from test_trust import (MAIN, HEAD, REPO, REQUEST_RUN, ARTIFACTS,
+        from .fixtures import git_head, github
+        from .release import OCI, Release, request_title, verify_request
+        from .test_trust import (MAIN, HEAD, REPO, REQUEST_RUN, ARTIFACTS,
                                 artifacts, dispatch_run, trusted)
 
         for stable in (True, False):

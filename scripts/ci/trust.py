@@ -8,7 +8,7 @@ import re
 import subprocess
 from pathlib import Path
 
-import github_api as gh
+from . import github_api as gh
 
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 SEMVER_NUMBER = r"(?:0|[1-9][0-9]*)"

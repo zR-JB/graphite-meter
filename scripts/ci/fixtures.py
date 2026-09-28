@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import patch
 
-from github_api import ControlPlaneError, JsonObject, JsonValue
-from verify_release_assets import TARGETS, TUI_FILES, tui_archives
+from .github_api import ControlPlaneError, JsonObject, JsonValue
+from .verify_release_assets import TARGETS, TUI_FILES, tui_archives
 
 AMD, ARM = "sha256:" + "a" * 64, "sha256:" + "b" * 64
 INDEX_TYPE = "application/vnd.oci.image.index.v1+json"
@@ -60,7 +60,7 @@ def github(responses: Mapping[str, object]) -> AbstractContextManager[object]:
         served[path] = served.get(path, -1) + 1
         return cast(JsonValue, items[min(served[path], len(items) - 1)])
 
-    return patch("github_api.api", api)
+    return patch("scripts.ci.github_api.api", api)
 
 
 def outcome[T](test: unittest.TestCase, error: str | None, call: Callable[[], T]) -> T | None:

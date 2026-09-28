@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import fork_upkeep as upkeep
+from . import fork_upkeep as upkeep
 
 
 class ForkUpkeepBoundary(unittest.TestCase):

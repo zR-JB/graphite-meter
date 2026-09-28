@@ -14,11 +14,11 @@ import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
-from github_api import (
+from .github_api import (
     TLS_NAME, ControlPlaneError, decode_json, expect_array, expect_object, fail, file_sha256,
     int_field, local_path, object_field, str_field,
 )
-from verify_oci import PLATFORMS
+from .verify_oci import PLATFORMS
 
 CHECKSUM_LINE = re.compile(r"([0-9a-fA-F]{64})[ \t]+[* ]?(.+)")
 SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")

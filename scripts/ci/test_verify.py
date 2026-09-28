@@ -11,7 +11,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from fixtures import (
+from .fixtures import (
     AMD,
     ARM,
     ATTESTED,
@@ -27,14 +27,14 @@ from fixtures import (
     write_oci,
     write_tar,
 )
-from verify_oci import (
+from .verify_oci import (
     BLOB_LIMIT,
     select_engine,
     validate_index_descriptors,
     verify as verify_oci,
 )
-from github_api import ControlPlaneError
-from verify_release_assets import (
+from .github_api import ControlPlaneError
+from .verify_release_assets import (
     archive_names,
     tui_archives,
     verify_artifacts,
@@ -254,7 +254,7 @@ class OCITests(unittest.TestCase):
                 oci = write_oci(archive, repository, commit, remote=remote, tamper=tamper,
                                 predicate=predicate)
                 env = engine(Path(directory), "example/repo", "1.2.3", "f" * 40, oci)
-                with patch.dict(os.environ, env), patch("verify_oci.BLOB_LIMIT", limit):
+                with patch.dict(os.environ, env), patch("scripts.ci.verify_oci.BLOB_LIMIT", limit):
                     outcome(self, error, lambda: verify_oci("1.2.3", "f" * 40, archive))
 
     def test_engine_is_a_known_name_resolved_on_path(self) -> None:

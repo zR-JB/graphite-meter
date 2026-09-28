@@ -85,7 +85,7 @@ jobs:
           MODE: ${{ inputs.mode }}
           RUST: ${{ inputs.rust }}
           OUT_DIR: ${{ runner.temp }}/release-request
-        run: python3 scripts/ci/release.py prepare
+        run: python3 -m scripts.ci.release prepare
 
       - name: Set up the stable build toolchain without caches
         if: steps.request.outputs.stable == 'true'
@@ -176,7 +176,7 @@ jobs:
           RELEASE_DIST: ${{ runner.temp }}/release-assets
         run: |
           mise run release-artifacts "$VERSION"
-          python3 scripts/ci/verify_release_assets.py "$VERSION"
+          python3 -m scripts.ci.verify_release_assets "$VERSION"
 
       - name: Build experimental Rust linux/amd64 + linux/arm64 OCI archive
         if: steps.request.outputs.rust_server == 'true'

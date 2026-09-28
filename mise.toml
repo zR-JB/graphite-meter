@@ -48,34 +48,31 @@ run = [
 
 [tasks.doctor]
 description = "Check local, CI, and Docker toolchain drift"
-run = "python3 scripts/ci/toolchains.py doctor"
+run = "python3 -m scripts.ci.toolchains doctor"
 
 [tasks.toolchain-sync]
 description = "Update required toolchain literals from mise.toml"
-run = "python3 scripts/ci/toolchains.py sync"
+run = "python3 -m scripts.ci.toolchains sync"
 
 [tasks.workflow-check]
 description = "Lint workflows and validate trust boundaries"
 run = [
   "actionlint -shellcheck= -pyflakes=",
   "zizmor --offline --no-progress --config .github/zizmor.yml .github",
-  "python3 scripts/ci/workflow_policy.py",
+  "python3 -m scripts.ci.workflow_policy",
 ]
 
 [tasks.python-check]
 shell = "bash -e -o pipefail -c"
 description = "Type-check Python tools and tests"
-run = '''
-ty check scripts --python-version "$(python3 scripts/ci/toolchains.py python-target)" \
-  --extra-search-path scripts/ci --error-on-warning
-'''
+run = 'ty check scripts --python-version "$(python3 -m scripts.ci.toolchains python-target)" --error-on-warning'
 
 [tasks.pipeline-test]
 shell = "bash -e -o pipefail -c"
 description = "Test release and prerelease control-plane behavior"
 run = [
   { task = "python-check" },
-  "python3 -m unittest discover -s scripts/ci -p 'test_*.py'",
+  "python3 -m unittest discover -s scripts/ci -t .",
   "python3 -m unittest discover -s scripts/legal -t .",
 ]
 
@@ -334,7 +331,7 @@ mise run legal-check
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 RELEASE_DIST="$tmp/dist" mise run release-artifacts "$VERSION"
-RELEASE_DIST="$tmp/dist" python3 scripts/ci/verify_release_assets.py "$VERSION"
+RELEASE_DIST="$tmp/dist" python3 -m scripts.ci.verify_release_assets "$VERSION"
 '''
 
 [tasks.release-artifacts]
@@ -453,9 +450,9 @@ description = "Check experimental Rust formatting, dependencies, lints, and test
 dir = "rust"
 run = [
   "cargo fmt --all --check",
-  "python3 ../scripts/legal/check_git_sources.py",
+  "cd .. && python3 -m scripts.legal.check_git_sources",
   "cd .. && python3 -m scripts.legal.check_rust_reviews",
-  "python3 ../scripts/ci/rust_crate_budget.py",
+  "cd .. && python3 -m scripts.ci.rust_crate_budget",
   "cargo deny --locked check",
   "cargo deny --manifest-path http3/fuzz/Cargo.toml --locked check",
   "cargo clippy --workspace --all-targets --locked -- -D warnings",

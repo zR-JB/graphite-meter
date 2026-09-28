@@ -11,7 +11,7 @@ import subprocess
 import tarfile
 from pathlib import Path
 
-from github_api import (
+from .github_api import (
     ControlPlaneError,
     JsonObject,
     decode_json,
@@ -21,7 +21,7 @@ from github_api import (
     object_field,
     str_field,
 )
-from trust import env
+from .trust import env
 
 DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 PLATFORMS = {"amd64", "arm64"}

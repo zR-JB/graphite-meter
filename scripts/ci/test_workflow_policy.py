@@ -6,15 +6,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from github_api import ControlPlaneError
-from workflow_policy import check_repository
+from .github_api import ControlPlaneError
+from .workflow_policy import check_repository
 
 ROOT = Path(__file__).resolve().parents[2]
 W = ".github/workflows/"
 SETUP = ".github/actions/setup-project/action.yml"
 PINNED_STEP = "\n      - uses: {}@" + "a" * 40 + "\n        with: {{persist-credentials: false}}\n"
 REQUEST = W + "release-request.yml"
-PREPARE = "        run: python3 scripts/ci/release.py prepare\n"
+PREPARE = "        run: python3 -m scripts.ci.release prepare\n"
 RELEASE = W + "release.yml"
 PUBLISH = "  extra:\n    if: needs.verify.outputs.publish == 'true'\n    environment: other\n"
 MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
@@ -27,7 +27,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "repositories: all", "fork inventory"),
     (SETUP, None, "# ${{ secrets.TOKEN }}\n", r"secrets\."),
     (W + "ci.yml", "runs-on: ubuntu-24.04", "runs-on: ubuntu-latest", "ubuntu-latest"),
-    (W + "release.yml", "run: python3 scripts/ci/release.py recheck",
+    (W + "release.yml", "run: python3 -m scripts.ci.release recheck",
      'run: echo "${{ github.head_ref }}"', "through env"),
     (REQUEST, "          if [[ -z", "          echo ${{ github.ref }}\n          if [[ -z",
      "through env"),
@@ -72,8 +72,8 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (W + "release.yml", "secrets.GHCR_TOKEN", "secrets.OTHER_TOKEN", "release secrets"),
     (W + "release.yml", None, "  extra:\n    environment: ghcr-release\n", "release secrets"),
     (W + "ci.yml", None, "# ${{ secrets.GHCR_TOKEN }}\n", r"secrets\."),
-    (W + "release.yml", "        run: python3 scripts/ci/release.py recheck\n", "",
-     "misorders invariant: run: python3 scripts/ci/release.py recheck"),
+    (W + "release.yml", "        run: python3 -m scripts.ci.release recheck\n", "",
+     "misorders invariant: run: python3 -m scripts.ci.release recheck"),
     (W + "release.yml", "run: scripts/ci/publish.sh image", "run: scripts/ci/publish.sh aliases",
      "misorders invariant"),
     (W + "ci.yml", "permissions: {contents: read}", "permissions: {contents: write}",
@@ -86,8 +86,8 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (REQUEST, "  contents: read", "  contents: write", "write permission"),
     (W + "release.yml", "    steps:\n", "    steps:" + PINNED_STEP.format("actions/cache"),
      "repository code"),
-    (W + "release.yml", "        run: python3 scripts/ci/release.py verify\n",
-     "        run: python3 scripts/ci/release.py verify\n      - run: mise run release-check\n",
+    (W + "release.yml", "        run: python3 -m scripts.ci.release verify\n",
+     "        run: python3 -m scripts.ci.release verify\n      - run: mise run release-check\n",
      "mise run"),
     (REQUEST, "    steps:\n", "    steps:" + PINNED_STEP.format("actions/cache"),
      "repository code"),
@@ -106,8 +106,8 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (REQUEST, "  contents: read\n", "  contents: read\n  actions: read\n", "only read contents"),
     (REQUEST, "    runs-on:", "    permissions: read-all\n    runs-on:", "only read contents"),
     (REQUEST, "EVENT_SHA: ${{ github.sha }}", "EVENT_SHA: ${{ inputs.sha }}", "EVENT_SHA"),
-    (REQUEST, PREPARE, "        run: python3 -c pass\n", "release.py prepare"),
-    (REQUEST, 'python3 scripts/ci/verify_release_assets.py "$VERSION"', "true",
+    (REQUEST, PREPARE, "        run: python3 -c pass\n", "release prepare"),
+    (REQUEST, 'python3 -m scripts.ci.verify_release_assets "$VERSION"', "true",
      "verify_release_assets"),
     (REQUEST, "uses: docker/build-push-action@", "uses: docker/bake-action@", "misorders invariant"),
     (RELEASE, "github.event.workflow_run.conclusion == 'success'\n      && ", "",
@@ -115,14 +115,14 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (RELEASE, "workflow_run.event == 'workflow_dispatch'", "workflow_run.event != 'push'",
      "workflow_dispatch"),
     (RELEASE, "workflow_run.path == '.github", "workflow_run.path != '.github", "path =="),
-    (RELEASE, "run: python3 scripts/ci/release.py verify", "run: echo verified",
-     "release.py verify"),
+    (RELEASE, "run: python3 -m scripts.ci.release verify", "run: echo verified",
+     "release verify"),
     (RELEASE, "        if: steps.verify.outputs.publish == 'true'\n", "", "hand off"),
     (RELEASE, "group: release-publish-${{ github.repository }}",
      "group: release-publish-${{ github.run_id }}", "group: release-publish"),
     (RELEASE, "cancel-in-progress: false", "cancel-in-progress: true", "cancel-in-progress"),
-    (RELEASE, "run: python3 scripts/ci/release.py publish", "run: echo released",
-     "release.py publish"),
+    (RELEASE, "run: python3 -m scripts.ci.release publish", "run: echo released",
+     "release publish"),
     (RELEASE, "run: scripts/ci/publish.sh aliases", "run: echo promoted", "publish.sh aliases"),
     (RELEASE, "SOURCE_SHA: ${{ needs.verify.outputs.sha }}",
      "SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}", "head_sha|SOURCE_SHA"),
@@ -176,8 +176,8 @@ class WorkflowPolicyTests(unittest.TestCase):
                     check_repository(root)
 
     def test_release_identity_comes_only_from_the_run_context(self) -> None:
-        for name, marker in ((REQUEST, "release.py prepare"), (RELEASE, "release.py verify"),
-                             (RELEASE, "release.py publish"), (RELEASE, "release.py recheck")):
+        for name, marker in ((REQUEST, "release prepare"), (RELEASE, "release verify"),
+                             (RELEASE, "release publish"), (RELEASE, "release recheck")):
             text = (ROOT / name).read_text()
             step = next(step for step in re.split(r"(?m)^(?=      - )", text) if marker in step)
             for variable in re.findall(r"(?m)^ +(?!GH_TOKEN)([A-Z][A-Z0-9_]*): \$\{\{ (?:github|needs)\.", step):
