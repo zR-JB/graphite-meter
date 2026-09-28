@@ -18,7 +18,8 @@ SYSROOT = '$RUST_SYSROOT/'
 IMPORTS = {
     'elf': (['readelf', '--dynamic'], r'\(NEEDED\).*\[([^]]+)\]'),
     'pe': (['objdump', '-p'], r'DLL Name: (\S+)'),
-    'macho': (['otool', '-L'], r'(?m)^\s+(/\S+) \(compatibility version'),
+    # Every install name, absolute or relative to @rpath, @executable_path or @loader_path.
+    'macho': (['otool', '-L'], r'(?m)^\s+(\S.*?) \(compatibility version'),
 }
 
 

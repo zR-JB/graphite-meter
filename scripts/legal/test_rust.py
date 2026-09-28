@@ -18,7 +18,7 @@ from scripts.ci.github_api import ControlPlaneError
 from scripts.legal.artifacts import render
 from scripts.legal.model import Component, LegalError, Project, marshal, sha256
 from scripts.legal.rust import about, add_cargo_sources, artifacts, cargo, legal_report
-from scripts.legal.rust_platform import SYSROOT, candidate, link_map, linked, linker_version, notice
+from scripts.legal.rust_platform import SYSROOT, candidate, imports, link_map, linked, linker_version, notice
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -164,6 +164,18 @@ class RustPlatformTests(unittest.TestCase):
                              output / 'x86_64-unknown-linux-gnu-ci.map')
             with self.assertRaises(ControlPlaneError):
                 link_map(output, '../escape', 'ci')
+
+    def test_every_macos_install_name_is_an_import_that_needs_review(self) -> None:
+        listing = ('/build/graphite-meter-client:\n'
+                   '\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n'
+                   '\t@rpath/libdep.dylib (compatibility version 1.0.0, current version 1.0.0)\n'
+                   '\t@executable_path/../Frameworks/Dep Kit.framework/Dep Kit (compatibility version 1.0.0, current version 1.0.0)\n'
+                   '\t@loader_path/libweak.dylib (compatibility version 0.0.0, current version 0.0.0, weak)\n')
+        relative = {'@rpath/libdep.dylib', '@executable_path/../Frameworks/Dep Kit.framework/Dep Kit',
+                    '@loader_path/libweak.dylib'}
+        with patch('subprocess.check_output', return_value=listing):
+            self.assertEqual(imports(Path('/build/graphite-meter-client'), 'aarch64-apple-darwin'),
+                             {'/usr/lib/libSystem.B.dylib'} | relative)
 
     def test_only_a_reviewed_linker_runs(self) -> None:
         with patch.dict(os.environ, {'CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER': './linker'}):
