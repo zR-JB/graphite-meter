@@ -13,7 +13,6 @@ pub mod quic;
 pub mod report;
 pub mod runner;
 pub mod selection;
-pub mod stream_plan;
 pub mod transport;
 pub mod upload;
 pub mod vocabulary;

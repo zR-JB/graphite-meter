@@ -1,5 +1,5 @@
 //! One stage owns its members' transfers and latency sessions, their accounting and their cleanup.
-use super::{PreparedServer, lane_plan};
+use super::PreparedServer;
 use crate::{
     Error,
     config::Config,
@@ -10,7 +10,6 @@ use crate::{
         Ending, FailureScope, Phase, Point, ServerContribution, ServerLatency, ServerLatencyResult, Snapshot, Stage,
         StageResult,
     },
-    stream_plan::StageLanePlan,
     transport::{TRANSFER_PROGRESS_TIMEOUT, Transport},
     upload::Upload,
 };
@@ -186,8 +185,7 @@ pub(super) async fn measure(
     snapshots: &watch::Sender<Snapshot>,
     mut cancel: watch::Receiver<bool>,
 ) -> Result<Vec<String>, Error> {
-    let plan = lane_plan(config, stage, servers)?;
-    let mut run = StageRun::open(stage, config, servers, &plan, snapshots)?;
+    let mut run = StageRun::open(stage, config, servers, snapshots)?;
     let result = tokio::select! {
         result = run.run(servers) => result,
         _ = cancel.wait_for(|value| *value) => Ok(()),
@@ -201,7 +199,6 @@ impl<'a> StageRun<'a> {
         stage: Stage,
         config: &'a Config,
         servers: &'a [PreparedServer],
-        plan: &'a StageLanePlan,
         snapshots: &'a watch::Sender<Snapshot>,
     ) -> Result<Self, Error> {
         let planned_warmup = servers.iter().fold(config.warmup, |warmup, server| {
@@ -273,7 +270,7 @@ impl<'a> StageRun<'a> {
                 .transpose()?;
             if run.transfer.is_some() {
                 let id = server.entry.id.clone();
-                let start = start_transfer(stage, server, plan, config, operation_limit, stopped);
+                let start = start_transfer(stage, server, config, operation_limit, stopped);
                 run.starts.push(start.map(move |started| (id, started)).boxed());
             }
             run.members.push(Member {
@@ -874,14 +871,13 @@ impl<'a> StageRun<'a> {
 async fn start_transfer(
     stage: Stage,
     server: &PreparedServer,
-    plan: &StageLanePlan,
     config: &Config,
     operation_limit: Duration,
     mut stopped: watch::Receiver<bool>,
 ) -> Result<Lanes, Error> {
     let target = server.throughput.as_ref().ok_or("missing throughput target")?;
     let transport = server.http.as_ref().ok_or("missing throughput connection")?;
-    let counts = plan.lanes(&server.entry.id).ok_or("missing stream allocation")?;
+    let (down, up) = config.lanes(target);
     let upload_transport = if stage == Stage::Bidirectional
         && target.transport == ThroughputTransport::FetchStream
         && target.protocol == Protocol::Http3
@@ -907,9 +903,9 @@ async fn start_transfer(
         lanes.down = Some(if target.transport == ThroughputTransport::FetchStream {
             Download::start(
                 transport.clone(),
-                counts.download,
+                down,
                 operation_limit,
-                lane_stagger(config.warmup, server.idle_rtt, counts.download),
+                lane_stagger(config.warmup, server.idle_rtt, down),
                 stopped.clone(),
             )
             .await?
@@ -917,7 +913,7 @@ async fn start_transfer(
             Download::start_webtransport(
                 &server.client,
                 target,
-                counts.download,
+                down,
                 operation_limit,
                 config.insecure,
                 stopped.clone(),
@@ -926,14 +922,14 @@ async fn start_transfer(
         });
     }
     if stage.uploads() {
-        let up = if target.transport == ThroughputTransport::FetchStream {
-            let stagger = lane_stagger(config.warmup, server.idle_rtt, counts.upload);
-            Upload::start(upload_transport, counts.upload, stagger, stopped).await
+        let upload = if target.transport == ThroughputTransport::FetchStream {
+            let stagger = lane_stagger(config.warmup, server.idle_rtt, up);
+            Upload::start(upload_transport, up, stagger, stopped).await
         } else {
-            Upload::start_webtransport(upload_transport, counts.upload, stopped).await
+            Upload::start_webtransport(upload_transport, up, stopped).await
         };
-        match up {
-            Ok(up) => lanes.up = Some(up),
+        match upload {
+            Ok(upload) => lanes.up = Some(upload),
             Err(error) => {
                 // A bidirectional member may have a live download when its upload cannot start.
                 let _ = lanes.close(false).await;

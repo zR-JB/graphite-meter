@@ -369,7 +369,7 @@ impl Ui {
             }
             Field::Streams | Field::AutoStreams => {
                 let number: usize = value.parse()?;
-                if number > crate::stream_plan::MAX_STREAMS || matches!(field, Field::AutoStreams) && number == 0 {
+                if number > crate::config::MAX_STREAMS || matches!(field, Field::AutoStreams) && number == 0 {
                     return Err("stream count must be 1..14; fixed streams also permits 0 for automatic".into());
                 }
                 if matches!(field, Field::Streams) {

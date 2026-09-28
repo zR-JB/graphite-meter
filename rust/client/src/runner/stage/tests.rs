@@ -302,16 +302,8 @@ async fn a_stopped_bidirectional_start_drains_its_started_download() -> Result<(
         loaded_latency: false,
         ..Config::default()
     };
-    let plan = lane_plan(&config, Stage::Bidirectional, std::slice::from_ref(&server))?;
     let (stop, stopped) = watch::channel(false);
-    let start = start_transfer(
-        Stage::Bidirectional,
-        &server,
-        &plan,
-        &config,
-        Duration::from_secs(60),
-        stopped,
-    );
+    let start = start_transfer(Stage::Bidirectional, &server, &config, Duration::from_secs(60), stopped);
     let stop_while_uploading = async {
         uploading.notified().await;
         stop.send_replace(true);

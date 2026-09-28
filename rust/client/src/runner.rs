@@ -5,7 +5,6 @@ use crate::{
     model::{Phase, Point, ServerSummary, Snapshot, Stage},
     net::Http,
     selection,
-    stream_plan::{Participant, StageLanePlan},
     transport::Transport,
 };
 use futures_util::{StreamExt, stream::FuturesUnordered};
@@ -180,9 +179,6 @@ async fn prepare(
     if prepared.is_empty() {
         return Err(preferred(failures));
     }
-    for stage in &config.stages {
-        lane_plan(config, *stage, &prepared)?;
-    }
     Ok(Preparation {
         servers: prepared,
         failures,
@@ -314,18 +310,6 @@ async fn verify_throughput_webtransport(http: &Http, target: &ThroughputTarget, 
             return Err(error);
         }
     }
-}
-
-fn lane_plan(config: &Config, stage: Stage, servers: &[PreparedServer]) -> Result<StageLanePlan, Error> {
-    let participants: Vec<_> = servers
-        .iter()
-        .map(|server| Participant {
-            id: &server.entry.id,
-            throughput: server.throughput.as_ref(),
-            latency: server.latency.as_ref(),
-        })
-        .collect();
-    StageLanePlan::new(config, stage, &participants)
 }
 
 pub async fn run(
