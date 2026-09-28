@@ -466,6 +466,10 @@ impl Connection {
                 Kind::Unknown { header, .. } => {
                     if let Some((kind, session)) = header.read(&mut uni.input) {
                         if let Some(session) = session {
+                            // Only a client-initiated bidirectional stream can carry a session.
+                            if !session.is_multiple_of(4) {
+                                return Err(Code::H3_ID_ERROR);
+                            }
                             uni.kind = Kind::Session(session);
                             return Ok(false);
                         }

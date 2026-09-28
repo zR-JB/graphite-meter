@@ -395,6 +395,11 @@ async fn protocol_violations_close_the_connection_with_their_code() -> Result<()
             Code::QPACK_DECODER_STREAM_ERROR,
         ),
         (streams(vec![(vec![0x01, 0x00], false)]), Code::H3_STREAM_CREATION_ERROR),
+        // A session ID must be a client-initiated bidirectional stream's.
+        (
+            streams(vec![([varint(0x54), varint(2)].concat(), false)]),
+            Code::H3_ID_ERROR,
+        ),
         (request(frame(0x00, b"body")), Code::H3_FRAME_UNEXPECTED),
         (
             request([request_head(&[]), frame(0x04, &[])].concat()),
