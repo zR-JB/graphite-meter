@@ -193,6 +193,9 @@ struct Ui {
     popup: Popup,
     details_scroll: u16,
     auth_scroll: u16,
+    /// Go scrolls the body; here the panel whose lines can overflow scrolls.
+    body_scroll: u16,
+    body_hidden: u16,
     help: bool,
     edit: Option<Edit>,
     reset_prompt: bool,
@@ -230,6 +233,8 @@ impl Ui {
             popup: Popup::None,
             details_scroll: 0,
             auth_scroll: 0,
+            body_scroll: 0,
+            body_hidden: 0,
             help: false,
             edit: None,
             reset_prompt: false,
@@ -246,6 +251,7 @@ impl Ui {
         }
     }
     fn update(&mut self, mut snapshot: Snapshot) {
+        let was_live = self.live;
         if snapshot.auth != self.snapshot.auth {
             self.auth_scroll = 0;
         }
@@ -311,6 +317,9 @@ impl Ui {
                 }
                 None => self.live = false,
             }
+        }
+        if self.live != was_live {
+            self.body_scroll = 0;
         }
         if snapshot.auth.is_some() || self.popup == Popup::Details && !self.live {
             if self.popup == Popup::Servers {
@@ -577,6 +586,7 @@ impl Ui {
                         if self.send(Command::Run(self.config.clone()), commands) {
                             self.previous = (self.live && started(&self.snapshot)).then(|| self.snapshot.clone());
                             (self.live, self.starting, self.open_chooser) = (true, true, false);
+                            self.body_scroll = 0;
                             self.popup = Popup::None;
                             self.notice = "Checking paths before the test. Press esc to stop.".into();
                         }
@@ -600,10 +610,18 @@ impl Ui {
                     // The run consumed the checked paths.
                     self.recheck_soon();
                     self.notice.clear();
+                    self.body_scroll = 0;
                 }
                 self.live = false;
                 self.rows.select(Some(0));
             }
+            // Go's scrolling keys: pages anywhere, lines too in the run view.
+            KeyCode::PageUp => self.body_scroll = self.body_scroll.saturating_sub(10),
+            KeyCode::PageDown => self.body_scroll = self.body_scroll.saturating_add(10),
+            KeyCode::Home => self.body_scroll = 0,
+            KeyCode::End => self.body_scroll = u16::MAX,
+            KeyCode::Up | KeyCode::Char('k') if self.live => self.body_scroll = self.body_scroll.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') if self.live => self.body_scroll = self.body_scroll.saturating_add(1),
             KeyCode::Tab if !self.live => move_selection(&mut self.rows, field_count, 1),
             KeyCode::BackTab if !self.live => move_selection(&mut self.rows, field_count, -1),
             KeyCode::Char('s') if !self.live => self.open_servers(),

@@ -140,6 +140,7 @@ impl Ui {
             ]),
             regions[0],
         );
+        self.body_hidden = 0;
         if self.live {
             self.draw_live(frame, regions[1]);
         } else {
@@ -150,7 +151,7 @@ impl Ui {
             notice = self.fields()[self.rows.selected().unwrap_or(0)].explanation(&self.config);
         }
         let notice_color = if is_error { self.theme.err } else { self.theme.muted };
-        let hints: Vec<&str> = if self.cancel == CancelState::Confirming {
+        let mut hints: Vec<&str> = if self.cancel == CancelState::Confirming {
             vec!["Esc confirm stop", "any key continue", "q quit"]
         } else if self.live {
             let mut hints = if self.active() {
@@ -176,6 +177,10 @@ impl Ui {
             let field = self.fields()[self.rows.selected().unwrap_or(0)];
             [field.hints(), &["r Start test", "? keys", "q quit"][..]].concat()
         };
+        let covered = self.popup != Popup::None || self.edit.is_some() || self.snapshot.auth.is_some();
+        if self.body_hidden > 0 && !covered && self.cancel != CancelState::Confirming {
+            hints.insert(1, "PgDn more");
+        }
         let width = usize::from(regions[2].width);
         let mut lines = if self.help {
             Vec::new()
@@ -311,6 +316,14 @@ impl Ui {
             Paragraph::new(self.hints(&["Enter/Space/o open", "Esc cancel", "q quit"], width)),
             regions[5],
         );
+    }
+
+    /// Clamps the body scroll to the lines this panel hides.
+    fn body_offset(&mut self, lines: usize, area: Rect) -> (u16, u16) {
+        let hidden = lines.saturating_sub(usize::from(area.height.saturating_sub(2)));
+        self.body_hidden = u16::try_from(hidden).unwrap_or(u16::MAX);
+        self.body_scroll = self.body_scroll.min(self.body_hidden);
+        (self.body_scroll, 0)
     }
 
     fn hints(&self, hints: &[&str], width: usize) -> Line<'static> {
@@ -467,7 +480,11 @@ impl Ui {
                 .map(|line| safe_text_width(line, width))
                 .collect::<Vec<_>>()
                 .join("\n");
-            frame.render_widget(Paragraph::new(text).block(panel("Servers", self.theme)), plan_area);
+            let offset = self.body_offset(lines.len(), plan_area);
+            frame.render_widget(
+                Paragraph::new(text).scroll(offset).block(panel("Servers", self.theme)),
+                plan_area,
+            );
         }
     }
     fn focused_latency(&self) -> Option<&crate::model::ServerLatency> {
@@ -564,7 +581,7 @@ impl Ui {
         lines
     }
 
-    fn draw_live(&self, frame: &mut Frame, area: Rect) {
+    fn draw_live(&mut self, frame: &mut Frame, area: Rect) {
         if area.height < 14 {
             self.draw_live_compact(frame, area);
             return;
@@ -696,7 +713,11 @@ impl Ui {
                 title.push_str(" · latency to ");
                 title.push_str(&safe_text(self.server_name(id), 120));
             }
-            frame.render_widget(Paragraph::new(lines).block(panel(&title, self.theme)), results_area);
+            let offset = self.body_offset(lines.len(), results_area);
+            frame.render_widget(
+                Paragraph::new(lines).scroll(offset).block(panel(&title, self.theme)),
+                results_area,
+            );
         }
     }
 

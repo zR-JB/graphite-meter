@@ -413,6 +413,97 @@ fn details_open_for_the_whole_run_and_l_is_offered_for_several_servers() {
 }
 
 #[test]
+fn page_keys_scroll_the_panels_that_overflow() {
+    use crate::model::{ServerSummary, StageResult};
+    use graphite_meter_core::discovery::{LatencyTarget, LatencyTransport};
+    use ratatui::{Terminal, backend::TestBackend};
+    let (commands, _received) = mpsc::channel(4);
+    let servers = (0..4)
+        .map(|index| ServerSummary {
+            id: format!("s{index}"),
+            name: format!("Server {index}"),
+            latency: Some(LatencyTarget {
+                base_url: "http://127.0.0.1:1".into(),
+                transport: LatencyTransport::WebSocket,
+            }),
+            ..ServerSummary::default()
+        })
+        .collect();
+    let mut ui = Ui::new(
+        Config::default(),
+        Snapshot {
+            servers,
+            ..Snapshot::default()
+        },
+    );
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    let mut rendered = |ui: &mut Ui| {
+        terminal.draw(|frame| ui.draw(frame)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+    };
+    let press = |ui: &mut Ui, code| ui.key(KeyEvent::new(code, KeyModifiers::NONE), &commands);
+    let screen = rendered(&mut ui);
+    assert!(screen.contains("PgDn more") && !screen.contains("TLS verification"));
+    press(&mut ui, KeyCode::End);
+    let screen = rendered(&mut ui);
+    assert!(screen.contains("TLS verification") && !screen.contains("Catalogue default selection"));
+    press(&mut ui, KeyCode::Home);
+    assert!(rendered(&mut ui).contains("Catalogue default selection"));
+
+    let mut probes = graphite_meter_core::latency::LatencyAccumulator::default();
+    probes.record(graphite_meter_core::latency::ProbeOutcome::Reply {
+        rtt_nanos: 500_000,
+        handling_nanos: 0,
+    });
+    let result = |stage: Stage| StageResult {
+        stage,
+        elapsed: Duration::from_secs(1),
+        down: stage.downloads().then(download_measurement),
+        up: stage.uploads().then(download_measurement),
+        server_latencies: vec![crate::model::ServerLatencyResult {
+            elapsed: Some(Duration::from_secs(1)),
+            id: "s0".into(),
+            summary: probes.snapshot(),
+            ending: None,
+        }],
+        ..Default::default()
+    };
+    let stages = [Stage::Latency, Stage::Download, Stage::Upload, Stage::Bidirectional];
+    ui.update(Snapshot {
+        phase: Phase::Complete,
+        participants: vec!["s0".into()],
+        latency_focus: Some("s0".into()),
+        results: stages.map(result).into(),
+        plan: stages.into(),
+        ..Snapshot::default()
+    });
+    ui.live = true;
+    let mut terminal = Terminal::new(TestBackend::new(40, 20)).unwrap();
+    let mut rendered = |ui: &mut Ui| {
+        terminal.draw(|frame| ui.draw(frame)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+    };
+    let top = rendered(&mut ui);
+    assert!(top.contains("PgDn more"), "{top}");
+    press(&mut ui, KeyCode::Down);
+    assert_ne!(rendered(&mut ui), top, "the results scroll in the run view");
+    press(&mut ui, KeyCode::Home);
+    assert_eq!(rendered(&mut ui), top);
+}
+
+#[test]
 fn reset_asks_first_and_keeps_the_catalogue_and_servers() {
     let (commands, _received) = mpsc::channel(4);
     let config = Config {
