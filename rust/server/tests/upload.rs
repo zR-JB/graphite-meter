@@ -1,7 +1,8 @@
-use graphite_meter_core::wire::{UploadProgress, decode_upload_progress, encode_upload_progress};
-use graphite_meter_server::upload::{
-    MAX_LIVE_UPLOADS, MAX_UPLOADS_PER_CLIENT, Owner, UPLOAD_RETENTION, UploadError, UploadStore,
+use graphite_meter_core::{
+    failure::UploadRefusal,
+    wire::{UploadProgress, decode_upload_progress, encode_upload_progress},
 };
+use graphite_meter_server::upload::{MAX_LIVE_UPLOADS, MAX_UPLOADS_PER_CLIENT, Owner, UPLOAD_RETENTION, UploadStore};
 use std::time::Duration;
 use tokio::time::Instant;
 
@@ -18,7 +19,7 @@ fn tokens_are_stateless_authenticated_and_store_local() {
     let id = store.mint().unwrap();
     assert_eq!(
         other.begin(&id, &Owner::principal("a")).err(),
-        Some(UploadError::Invalid)
+        Some(UploadRefusal::Invalid)
     );
     let mut forged = id.clone().into_bytes();
     forged[10] = if forged[10] == b'A' { b'B' } else { b'A' };
@@ -26,9 +27,12 @@ fn tokens_are_stateless_authenticated_and_store_local() {
         store
             .begin(std::str::from_utf8(&forged).unwrap(), &Owner::principal("a"))
             .err(),
-        Some(UploadError::Invalid)
+        Some(UploadRefusal::Invalid)
     );
-    assert_eq!(store.checkpoint(&id, &Owner::principal("a")), Err(UploadError::Invalid));
+    assert_eq!(
+        store.checkpoint(&id, &Owner::principal("a")),
+        Err(UploadRefusal::Invalid)
+    );
     drop(store.begin(&id, &Owner::principal("a")).unwrap());
     assert_eq!(store.retained(), 1);
 }
@@ -40,19 +44,19 @@ fn delegated_owners_share_capacity_but_not_access() {
     drop(store.begin(&id, &Owner::delegated("a", "browser:1")).unwrap());
     assert_eq!(
         store.begin(&id, &Owner::delegated("a", "browser:2")).err(),
-        Some(UploadError::OwnerMismatch)
+        Some(UploadRefusal::OwnerMismatch)
     );
     assert_eq!(
         store.checkpoint(&id, &Owner::delegated("a", "browser:2")),
-        Err(UploadError::OwnerMismatch)
+        Err(UploadRefusal::OwnerMismatch)
     );
     assert_eq!(
         store.finish(&id, &Owner::delegated("a", "browser:2")),
-        Err(UploadError::OwnerMismatch)
+        Err(UploadRefusal::OwnerMismatch)
     );
     assert_eq!(
         store.subscribe(&id, &Owner::delegated("a", "browser:2")).err(),
-        Some(UploadError::OwnerMismatch)
+        Some(UploadRefusal::OwnerMismatch)
     );
     for _ in 1..MAX_UPLOADS_PER_CLIENT {
         drop(
@@ -72,11 +76,11 @@ fn delegated_owners_share_capacity_but_not_access() {
         store
             .begin(&store.mint().unwrap(), &Owner::delegated("a", "browser:4"))
             .err(),
-        Some(UploadError::ClientFull)
+        Some(UploadRefusal::ClientFull)
     );
     assert_eq!(
         store.begin(&store.mint().unwrap(), &Owner::principal("a")).err(),
-        Some(UploadError::ClientFull)
+        Some(UploadRefusal::ClientFull)
     );
     drop(store.begin(&store.mint().unwrap(), &Owner::principal("b")).unwrap());
     store.sweep_at(Instant::now() + UPLOAD_RETENTION + Duration::from_secs(1));
@@ -102,7 +106,7 @@ fn global_capacity_is_bounded() {
         store
             .begin(&store.mint().unwrap(), &Owner::principal("new-client"))
             .err(),
-        Some(UploadError::GlobalFull)
+        Some(UploadRefusal::GlobalFull)
     );
     store.sweep_at(Instant::now() + UPLOAD_RETENTION + Duration::from_secs(1));
     drop(
@@ -156,7 +160,7 @@ async fn completion_waits_for_lane_drop_and_replays_receiver_totals() {
     store.finish(&id, &Owner::principal("a")).unwrap();
     assert_eq!(
         store.begin(&id, &Owner::principal("a")).err(),
-        Some(UploadError::Invalid),
+        Some(UploadRefusal::Invalid),
         "a late lane cannot change a terminal receiver total"
     );
     drop(first);
@@ -176,7 +180,7 @@ async fn completion_waits_for_lane_drop_and_replays_receiver_totals() {
     assert_eq!(subscription.next().await, None);
     assert_eq!(
         store.begin(&id, &Owner::principal("a")).err(),
-        Some(UploadError::Invalid)
+        Some(UploadRefusal::Invalid)
     );
     assert_eq!(store.checkpoint(&id, &Owner::principal("a")).unwrap().bytes, 330);
     let mut replay = store.subscribe(&id, &Owner::principal("a")).unwrap();
@@ -225,7 +229,10 @@ async fn retention_preserves_active_lanes_and_expires_observers() {
     assert_eq!(store.retained(), 0);
     assert!(matches!(observer.next().await, Some(UploadProgress::Error { code, .. }) if code == "invalid"));
     assert_eq!(observer.next().await, None);
-    assert_eq!(store.checkpoint(&id, &Owner::principal("a")), Err(UploadError::Invalid));
+    assert_eq!(
+        store.checkpoint(&id, &Owner::principal("a")),
+        Err(UploadRefusal::Invalid)
+    );
 }
 
 #[tokio::test]
@@ -330,12 +337,12 @@ fn owner_fields_cannot_collide_through_delimiters() {
     assert_ne!(first, second);
     let id = store.mint().unwrap();
     drop(store.begin(&id, &first).unwrap());
-    assert_eq!(store.checkpoint(&id, &second), Err(UploadError::OwnerMismatch));
+    assert_eq!(store.checkpoint(&id, &second), Err(UploadRefusal::OwnerMismatch));
     let principal = Owner::principal("a");
     assert_eq!(principal.client_keys()[0], delegated.client_keys()[1]);
     let id = store.mint().unwrap();
     drop(store.begin(&id, &principal).unwrap());
-    assert_eq!(store.checkpoint(&id, &delegated), Err(UploadError::OwnerMismatch));
+    assert_eq!(store.checkpoint(&id, &delegated), Err(UploadRefusal::OwnerMismatch));
     assert_ne!(Owner::delegated("a", ""), principal);
 }
 
@@ -374,5 +381,5 @@ async fn empty_receiver_eviction_refuses_reopening_and_ends_its_feed() {
             .unwrap(),
     );
     assert!(matches!(feed.next().await, Some(UploadProgress::Error { code, .. }) if code == "invalid"));
-    assert_eq!(store.begin(&victim, &owner).err(), Some(UploadError::Invalid));
+    assert_eq!(store.begin(&victim, &owner).err(), Some(UploadRefusal::Invalid));
 }

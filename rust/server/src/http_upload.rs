@@ -1,6 +1,6 @@
 //! HTTP upload adapters; aggregate timing and ownership remain in UploadStore.
 use super::*;
-use crate::upload::{Owner, UploadError, UploadSubscription};
+use crate::upload::{Owner, UploadSubscription};
 use graphite_meter_core::{
     failure::UploadRefusal,
     wire::{UploadProgress, encode_upload_progress},
@@ -18,8 +18,14 @@ impl HttpServer {
         let id = query(request, "id").unwrap_or_default();
         match request.uri().path() {
             "/upload/session" => match self.uploads.mint() {
-                Ok(id) => json_response(&serde_json::json!({"uploadId": id})),
-                Err(error) => refusal(error),
+                Some(id) => json_response(&serde_json::json!({"uploadId": id})),
+                None => {
+                    let mut response = text_body(StatusCode::SERVICE_UNAVAILABLE, "upload session mint failed");
+                    response
+                        .headers_mut()
+                        .insert("x-graphite-upload-refusal", HeaderValue::from_static("unavailable"));
+                    response
+                }
             },
             "/upload/checkpoint" => match self.uploads.checkpoint(&id, owner) {
                 Ok(checkpoint) => json_response(&checkpoint),
@@ -121,7 +127,7 @@ impl HttpServer {
                 Ok(Some(frame)) => frame.map_err(io::Error::other)?,
                 Ok(None) => break,
                 Err(_) if idle < deadline => {
-                    let mut response = lane_refusal(UploadRefusal::Idle);
+                    let mut response = refusal(UploadRefusal::Idle);
                     attach_operation(&mut response, operation);
                     return Ok(response);
                 }
@@ -169,20 +175,6 @@ fn admission_refusal(error: crate::admission::Refusal) -> Response<ResponseBody>
     response
         .headers_mut()
         .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
-    response
-}
-
-fn refusal(error: UploadError) -> Response<ResponseBody> {
-    let mut response = text_response(error.status());
-    *response.body_mut() = ResponseBody::bytes(Bytes::from(format!("{error}\n")));
-    response
-        .headers_mut()
-        .insert("x-graphite-upload-refusal", HeaderValue::from_static(error.code()));
-    if error.retry() {
-        response
-            .headers_mut()
-            .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
-    }
     response
 }
 
@@ -241,16 +233,16 @@ fn next_progress(mut subscription: UploadSubscription) -> NextProgress {
     })
 }
 
-pub(super) fn lane_refusal(refusal: UploadRefusal) -> Response<ResponseBody> {
-    let mut response = text_response(StatusCode::from_u16(refusal.status()).expect("known refusal status"));
-    *response.body_mut() = ResponseBody::bytes(Bytes::from(format!("{}\n", refusal.message())));
-    response
-        .headers_mut()
-        .insert("x-graphite-upload-refusal", HeaderValue::from_static(refusal.name()));
+pub(super) fn refusal(refusal: UploadRefusal) -> Response<ResponseBody> {
+    let status = StatusCode::from_u16(refusal.status()).expect("known refusal status");
+    let mut response = text_body(status, refusal.message());
+    let headers = response.headers_mut();
+    headers.insert("x-graphite-upload-refusal", HeaderValue::from_static(refusal.name()));
+    if matches!(refusal, UploadRefusal::GlobalFull | UploadRefusal::ClientFull) {
+        headers.insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
+    }
     if refusal == UploadRefusal::Revoked {
-        response
-            .headers_mut()
-            .insert("graphite-meter-auth", HeaderValue::from_static("required"));
+        headers.insert("graphite-meter-auth", HeaderValue::from_static("required"));
     }
     response
 }

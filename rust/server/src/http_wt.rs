@@ -4,7 +4,7 @@
 use super::{http_quic::ReceiveCredit, *};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_core::{
-    failure::LaneEnding,
+    failure::{LaneEnding, UploadRefusal},
     route::{self, Route},
     wire::{self, UploadProgress},
 };
@@ -317,15 +317,15 @@ async fn upload_lane(
 
 async fn progress(
     session: &Session,
-    subscription: Result<crate::upload::UploadSubscription, crate::upload::UploadError>,
+    subscription: Result<crate::upload::UploadSubscription, UploadRefusal>,
 ) -> Result<(), Failure> {
     let mut stream = session.open_uni().await?;
     let mut subscription = match subscription {
         Ok(subscription) => subscription,
-        Err(error) => {
+        Err(refusal) => {
             let event = UploadProgress::Error {
-                message: error.to_string(),
-                code: error.code().to_owned(),
+                message: refusal.message().into(),
+                code: refusal.name().into(),
             };
             stream
                 .write_all(format!("{}\n", wire::encode_upload_progress(&event)?).as_bytes())
