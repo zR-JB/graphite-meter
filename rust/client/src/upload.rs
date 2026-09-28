@@ -154,7 +154,7 @@ impl Upload {
         }
         let mut cancel = plan.cancel.clone();
         let (stagger, limit) = plan.http.unwrap_or_default();
-        // Go's mint is tried again for 2 s (upload.go:116-119).
+        // Go's mint is tried again for 2 s (upload.go:33-39).
         let mint = || plan.control.json(Method::POST, Route::UploadSession, &[]);
         let minted: Minted = tokio::select! {
             biased;
@@ -456,7 +456,7 @@ async fn send_lane(
         retry.ended(result, started, moved.load(Ordering::Relaxed)).await?;
     }
 }
-/// Go's followUploadFeed and attach (upload.go:309-340, 365-378): a feed that fails is reopened
+/// Go's followUploadFeed and attach (upload.go:284-297, 228-259): a feed that fails is reopened
 /// within 2 s, after 500 ms if it failed at once.
 async fn progress_loop(transport: &Transport, id: &str, state: &watch::Sender<State>) -> Result<(), Error> {
     let mut deadline = Instant::now() + REDIAL_WINDOW;
@@ -482,7 +482,7 @@ struct Feed {
 }
 
 impl Feed {
-    /// Go's openUploadFeed (upload.go:380-400): open once the receiver answers `ready`.
+    /// Go's openUploadFeed (upload.go:299-318): open once the receiver answers `ready`.
     async fn open(transport: &Transport, id: &str, state: &watch::Sender<State>) -> Result<Self, Error> {
         let body = transport
             .receive(
@@ -507,7 +507,7 @@ impl Feed {
         }
     }
 
-    /// Go's read (upload.go:342-356): records until `complete`.
+    /// Go's read (upload.go:261-275): records until `complete`.
     async fn follow(&mut self, state: &watch::Sender<State>) -> Result<(), Error> {
         while !state.borrow().complete && !apply_event(self.next().await?, state)? {}
         Ok(())
@@ -946,7 +946,7 @@ mod tests {
         Ok(())
     }
 
-    /// The mint is tried again as Go's restore tries it (upload.go:116-119), here once a busy
+    /// The mint is tried again as Go's restore tries it (upload.go:33-39), here once a busy
     /// answer's Retry-After has passed.
     #[tokio::test]
     async fn a_busy_mint_is_tried_again() -> Result<(), Error> {
@@ -966,7 +966,7 @@ mod tests {
     }
 
     /// An upload request lasts the stage's operation limit, as Go's lanes last their stage
-    /// (upload.go:177-211), where a 120 s cap ended every lane at once.
+    /// (upload.go:96-130), where a 120 s cap ended every lane at once.
     #[tokio::test(start_paused = true)]
     async fn an_upload_request_lasts_the_stage() -> Result<(), Error> {
         let _ = crate::crypto::provider().install_default();
@@ -1122,7 +1122,7 @@ mod tests {
         Ok(())
     }
 
-    /// A feed that cannot open is tried again for 2 s at Go's pace (upload.go:365-378,
+    /// A feed that cannot open is tried again for 2 s at Go's pace (upload.go:284-297,
     /// transfer.go:95-104): 500 ms after each refusal, where 100 ms made some twenty requests.
     #[tokio::test]
     async fn a_failing_progress_feed_reopens_at_gos_pace() -> Result<(), Error> {

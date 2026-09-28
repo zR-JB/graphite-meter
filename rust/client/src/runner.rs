@@ -275,7 +275,7 @@ async fn prepare_server(
     })
 }
 
-/// One dial within 3 s, as Go's verifyThroughputWebTransport (webtransport.go:139-148).
+/// One dial within 3 s, as Go's verifyThroughputWebTransport (webtransport.go:74-83).
 async fn verify_throughput_webtransport(http: &Http, target: &ThroughputTarget, insecure: bool) -> Result<(), Error> {
     let origin = graphite_meter_core::origin::canonical_origin(&target.base_url)?;
     let url = format!("{origin}{}?bytes=0", Route::WtDownload.path());

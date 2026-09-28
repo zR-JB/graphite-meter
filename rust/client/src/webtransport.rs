@@ -138,7 +138,7 @@ impl SessionSlot {
         })
     }
 
-    /// Go's stage session dial and redial (webtransport.go:169-219), tried again for 2 s.
+    /// Go's stage session dial and redial (webtransport.go:104-154), tried again for 2 s.
     async fn open(http: &Http, target: &str, insecure: bool) -> Result<Session, Error> {
         let deadline = Instant::now() + REDIAL_WINDOW;
         restore("WebTransport session", deadline, || {

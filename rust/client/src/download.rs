@@ -383,7 +383,7 @@ pub(crate) mod tests {
         asked_again?
     }
 
-    /// A WebTransport session is dialled again as Go's restore dials it (webtransport.go:169-183),
+    /// A WebTransport session is dialled again as Go's restore dials it (webtransport.go:104-118),
     /// here once a busy answer's Retry-After has passed.
     #[tokio::test]
     async fn a_busy_webtransport_session_is_dialled_again() -> Result<(), Error> {
