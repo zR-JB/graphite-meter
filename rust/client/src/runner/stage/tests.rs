@@ -249,7 +249,14 @@ async fn selected_peers_start_stage_together_and_keep_catalogue_order() -> Resul
     let (_stop, cancelled) = watch::channel(false);
     let result = tokio::time::timeout(
         Duration::from_secs(3),
-        measure(Stage::Download, &config, &servers, &snapshots, cancelled),
+        measure(
+            Stage::Download,
+            &config,
+            &servers,
+            &snapshots,
+            cancelled,
+            &mut RunLedger::new(),
+        ),
     )
     .await??;
     assert!(result.is_empty());
@@ -399,7 +406,16 @@ async fn first_stage_setup_failure_keeps_survivors_and_its_sign_in_cause() -> Re
     });
     let (_stop, cancelled) = watch::channel(false);
     near_failed.store(3, Ordering::SeqCst);
-    let first = measure(Stage::Download, &config, &servers, &snapshots, cancelled.clone()).await?;
+    let mut ledger = RunLedger::new();
+    let first = measure(
+        Stage::Download,
+        &config,
+        &servers,
+        &snapshots,
+        cancelled.clone(),
+        &mut ledger,
+    )
+    .await?;
     assert_eq!(first, vec!["near"]);
     assert_eq!(
         observed.borrow().failures[0].reason,
@@ -412,7 +428,15 @@ async fn first_stage_setup_failure_keeps_survivors_and_its_sign_in_cause() -> Re
 
     // A stalled first peer must not consume the next peer's startup budget.
     near_failed.store(2, Ordering::SeqCst);
-    let second = measure(Stage::Download, &config, &servers, &snapshots, cancelled.clone()).await?;
+    let second = measure(
+        Stage::Download,
+        &config,
+        &servers,
+        &snapshots,
+        cancelled.clone(),
+        &mut ledger,
+    )
+    .await?;
     assert_eq!(second, vec!["near"]);
     let snapshot = observed.borrow();
     assert_eq!(snapshot.results.len(), 2);
@@ -430,7 +454,15 @@ async fn first_stage_setup_failure_keeps_survivors_and_its_sign_in_cause() -> Re
     drop(snapshot);
 
     far_failed.store(1, Ordering::SeqCst);
-    let third = measure(Stage::Download, &config, &servers[1..], &snapshots, cancelled).await;
+    let third = measure(
+        Stage::Download,
+        &config,
+        &servers[1..],
+        &snapshots,
+        cancelled,
+        &mut ledger,
+    )
+    .await;
     assert!(third.is_err());
     let snapshot = observed.borrow();
     assert_eq!(snapshot.results.len(), 3);
@@ -573,7 +605,8 @@ async fn loaded_latency_failure_keeps_every_http_participant() -> Result<(), Err
         };
         let (snapshots, mut observed) = watch::channel(Snapshot::default());
         let (_stop, cancelled) = watch::channel(false);
-        let run = measure(Stage::Download, &config, &servers, &snapshots, cancelled);
+        let mut ledger = RunLedger::new();
+        let run = measure(Stage::Download, &config, &servers, &snapshots, cancelled, &mut ledger);
         let fail = async {
             while observed.borrow().phase != failure_phase {
                 observed.changed().await.unwrap();
@@ -587,7 +620,12 @@ async fn loaded_latency_failure_keeps_every_http_participant() -> Result<(), Err
         assert_eq!(stage.server_results.len(), 3);
         assert!(stage.server_results.iter().all(|host| host.down_bytes() > 0));
         assert!(snapshot.failures.iter().any(|failure| failure.server_id == "near"));
-        assert!(stage.intervals.iter().all(|interval| interval.participants.len() == 3));
+        assert!(
+            snapshot
+                .intervals
+                .iter()
+                .all(|interval| interval.participants.len() == 3)
+        );
         let [near, far, quiet] =
             ["near", "far", "quiet"].map(|id| stage.server_latencies.iter().find(|host| host.id == id).unwrap());
         assert!(near.ending.is_some());
@@ -624,8 +662,9 @@ async fn mid_stage_auth_failure_keeps_reapproval_cause() -> Result<(), Error> {
             .unwrap();
         mode.store(3, Ordering::SeqCst);
     };
+    let mut ledger = RunLedger::new();
     let (result, ()) = tokio::join!(
-        measure(Stage::Download, &config, &servers, &snapshots, cancelled,),
+        measure(Stage::Download, &config, &servers, &snapshots, cancelled, &mut ledger),
         revoke
     );
     peer.abort();
@@ -670,8 +709,16 @@ async fn silent_direction_removes_its_server_but_a_silent_lane_does_not() -> Res
             .unwrap();
         far_mode.store(7, Ordering::SeqCst);
     };
+    let mut ledger = RunLedger::new();
     let (result, ()) = tokio::join!(
-        measure(Stage::Bidirectional, &config, &servers, &snapshots, cancelled),
+        measure(
+            Stage::Bidirectional,
+            &config,
+            &servers,
+            &snapshots,
+            cancelled,
+            &mut ledger
+        ),
         stall_upload
     );
     near_task.abort();
@@ -715,8 +762,9 @@ async fn a_lane_still_retrying_at_the_final_boundary_removes_its_quiet_server() 
             .unwrap();
         near_mode.store(14, Ordering::SeqCst);
     };
+    let mut ledger = RunLedger::new();
     let (result, ()) = tokio::join!(
-        measure(Stage::Download, &config, &servers, &snapshots, cancelled),
+        measure(Stage::Download, &config, &servers, &snapshots, cancelled, &mut ledger),
         refuse_near
     );
     near_task.abort();
@@ -728,10 +776,10 @@ async fn a_lane_still_retrying_at_the_final_boundary_removes_its_quiet_server() 
         (failure.server_id.as_str(), failure.reason),
         ("near", graphite_meter_core::failure::FailureReason::ServerBusy)
     );
-    let stage = &snapshot.results[0];
-    assert!(stage.down_bps().is_some());
-    let (first, last) = (&stage.intervals[0], stage.intervals.back().unwrap());
-    assert!(last.end_nanos - first.end_nanos >= 500_000_000, "{:?}", stage.intervals);
+    assert!(snapshot.results[0].down_bps().is_some());
+    let intervals = &snapshot.intervals;
+    let (first, last) = (&intervals[0], intervals.back().unwrap());
+    assert!(last.end_nanos - first.end_nanos >= 500_000_000, "{intervals:?}");
     assert_eq!(last.participants, ["far"]);
     Ok(())
 }
@@ -765,8 +813,9 @@ async fn a_lane_refused_just_before_the_stage_end_takes_its_server_out() -> Resu
         tokio::time::sleep(config.upload_duration - Duration::from_millis(100)).await;
         near_mode.store(15, Ordering::SeqCst);
     };
+    let mut ledger = RunLedger::new();
     let (result, ()) = tokio::join!(
-        measure(Stage::Upload, &config, &servers, &snapshots, cancelled),
+        measure(Stage::Upload, &config, &servers, &snapshots, cancelled, &mut ledger),
         refuse_near
     );
     near_task.abort();
@@ -811,7 +860,15 @@ async fn a_receiver_without_a_first_checkpoint_fails_its_preparation() -> Result
     };
     let (snapshots, observed) = watch::channel(Snapshot::default());
     let (_stop, cancelled) = watch::channel(false);
-    let result = measure(Stage::Upload, &config, &servers, &snapshots, cancelled).await;
+    let result = measure(
+        Stage::Upload,
+        &config,
+        &servers,
+        &snapshots,
+        cancelled,
+        &mut RunLedger::new(),
+    )
+    .await;
     near_task.abort();
     far_task.abort();
     heartbeat.abort();
@@ -848,7 +905,15 @@ async fn an_upload_counts_what_its_receiver_took_during_the_first_checkpoint() -
     };
     let (snapshots, observed) = watch::channel(Snapshot::default());
     let (_stop, cancelled) = watch::channel(false);
-    let result = measure(Stage::Upload, &config, &servers, &snapshots, cancelled).await;
+    let result = measure(
+        Stage::Upload,
+        &config,
+        &servers,
+        &snapshots,
+        cancelled,
+        &mut RunLedger::new(),
+    )
+    .await;
     peer.abort();
     heartbeat.abort();
     assert!(result?.is_empty());
@@ -887,8 +952,9 @@ async fn a_removal_at_the_final_boundary_collects_a_fresh_one_for_the_rest() -> 
         tokio::time::sleep(config.upload_duration - Duration::from_millis(100)).await;
         near_mode.store(3, Ordering::SeqCst);
     };
+    let mut ledger = RunLedger::new();
     let (result, ()) = tokio::join!(
-        measure(Stage::Upload, &config, &servers, &snapshots, cancelled),
+        measure(Stage::Upload, &config, &servers, &snapshots, cancelled, &mut ledger),
         revoke_near
     );
     near_task.abort();
@@ -903,15 +969,14 @@ async fn a_removal_at_the_final_boundary_collects_a_fresh_one_for_the_rest() -> 
         (failure.server_id.as_str(), failure.reason),
         ("near", graphite_meter_core::failure::FailureReason::SignInRequired)
     );
-    let stage = &snapshot.results[0];
-    let (first, last) = (&stage.intervals[0], stage.intervals.back().unwrap());
+    let intervals = &snapshot.intervals;
+    let (first, last) = (&intervals[0], intervals.back().unwrap());
     assert_eq!(last.participants, ["far"]);
     // The fresh boundary starts once far's first final checkpoint has answered, 100 ms after the stage end.
     let fresh = config.upload_duration + Duration::from_millis(50);
     assert!(
         last.end_nanos - first.start_nanos >= fresh.as_nanos() as u64,
-        "{:?}",
-        stage.intervals
+        "{intervals:?}"
     );
     Ok(())
 }
@@ -1020,6 +1085,83 @@ async fn a_sole_server_rejoins_its_next_stage_on_the_transport_it_prepared() -> 
         (Stage::Upload, graphite_meter_core::failure::FailureReason::ServerBusy)
     );
     assert!(failure.at >= snapshot.results[0].elapsed);
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn intervals_and_failures_share_the_run_clock() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let heartbeat = heartbeat();
+    let (near, _, near_task) = download_peer().await?;
+    let (far, far_mode, far_task) = download_peer().await?;
+    let http = Http::new(true)?;
+    let servers = vec![
+        prepared_download("near", &near, &http).await?,
+        prepared_download("far", &far, &http).await?,
+    ];
+    let config = Config {
+        url: near,
+        servers: vec!["near".into(), "far".into()],
+        stages: vec![Stage::Download, Stage::Upload],
+        warmup: Duration::from_millis(500),
+        download_duration: Duration::from_secs(1),
+        upload_duration: Duration::from_secs(1),
+        streams: 1,
+        loaded_latency: false,
+        insecure: true,
+        ..Config::default()
+    };
+    let prepared = super::super::PreparedRun {
+        servers,
+        key: config.preparation_key(),
+        verified_at: Instant::now(),
+    };
+    let (snapshots, mut observed) = watch::channel(Snapshot::default());
+    // Far refuses the upload's checkpoints, so it fails as the upload window opens.
+    let drive_fault = tokio::spawn(async move {
+        while observed.borrow().stage != Some(Stage::Upload) {
+            if observed.changed().await.is_err() {
+                return;
+            }
+        }
+        far_mode.store(14, Ordering::SeqCst);
+    });
+    let (_stop, cancelled) = watch::channel(false);
+    super::super::run(config, http, snapshots.clone(), cancelled, Some(prepared)).await?;
+    drive_fault.await?;
+    near_task.abort();
+    far_task.abort();
+    heartbeat.abort();
+    let snapshot = snapshots.borrow();
+    let [failure] = &snapshot.failures[..] else {
+        panic!("{:?}", snapshot.failures);
+    };
+    assert_eq!((failure.server_id.as_str(), failure.stage), ("far", Stage::Upload));
+    // Go times both from the run's start: two warmups, the download window and the checkpoint budget.
+    assert!(failure.at >= Duration::from_secs(3), "{:?}", failure.at);
+    let details = crate::report::details(&snapshot, None, crate::report::WIDTH);
+    let intervals: Vec<_> = details
+        .lines()
+        .skip_while(|line| *line != "Aggregation intervals")
+        .skip(1)
+        .collect();
+    let [download, upload] = intervals[..] else {
+        panic!("{details}");
+    };
+    assert!(
+        download.starts_with("Download ") && download.contains(" · near, far · "),
+        "{details}"
+    );
+    let upload = upload
+        .strip_prefix("Upload ")
+        .and_then(|line| line.split_once('–'))
+        .and_then(|(start, _)| start.parse::<f64>().ok())
+        .ok_or(details.clone())?;
+    assert!(
+        (upload - failure.at.as_secs_f64()).abs() <= 0.1,
+        "the upload window opened at {upload} s, its failure at {:?}: {details}",
+        failure.at
+    );
     Ok(())
 }
 
@@ -1216,9 +1358,10 @@ async fn a_stop_during_readiness_sends_the_upload_delete() -> Result<(), Error> 
         }
         stop.send_replace(true);
     };
+    let mut ledger = RunLedger::new();
     let (result, ()) = tokio::time::timeout(Duration::from_secs(3), async {
         tokio::join!(
-            measure(Stage::Upload, &config, &servers, &snapshots, cancelled),
+            measure(Stage::Upload, &config, &servers, &snapshots, cancelled, &mut ledger),
             request_stop
         )
     })
@@ -1264,8 +1407,10 @@ async fn a_stop_records_the_evidence_its_stage_lacked() -> Result<(), Error> {
             tokio::time::sleep(Duration::from_millis(150)).await;
             stop.send_replace(true);
         };
+        let servers = std::slice::from_ref(&server);
+        let mut ledger = RunLedger::new();
         let (result, ()) = tokio::join!(
-            measure(stage, &config, std::slice::from_ref(&server), &snapshots, cancelled),
+            measure(stage, &config, servers, &snapshots, cancelled, &mut ledger),
             stop_early
         );
         peer.abort();

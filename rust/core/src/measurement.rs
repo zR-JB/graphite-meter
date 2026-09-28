@@ -163,7 +163,7 @@ pub struct MeasurementResult {
 }
 
 impl MeasurementResult {
-    fn unavailable(direction: Direction, total_bytes: u64) -> Self {
+    pub fn unavailable(direction: Direction, total_bytes: u64) -> Self {
         Self {
             direction,
             total_bytes,

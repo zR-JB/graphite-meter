@@ -544,27 +544,24 @@ impl<'a> Report<'a> {
                 ));
             }
         }
-        let intervals: Vec<_> = self
-            .snapshot
-            .results
-            .iter()
-            .flat_map(|result| result.intervals.iter().map(move |interval| (result.stage, interval)))
-            .collect();
+        // Go's run details: one list for the run, timed from its start.
+        let intervals = &self.snapshot.intervals;
         if full && !live && !intervals.is_empty() {
             lines.extend([String::new(), "Aggregation intervals".to_owned()]);
-            for (stage, interval) in intervals {
+            for interval in intervals {
                 let names: Vec<_> = interval.participants.iter().map(|id| self.name(id)).collect();
                 let state = if interval.complete && interval.window.is_some() {
                     "measured window"
                 } else {
                     "incomplete evidence"
                 };
+                let seconds = |nanos| Duration::from_nanos(nanos).as_secs_f64();
                 let parts = [
                     format!(
                         "{} {:.1}–{:.1} s",
-                        compact_stage(stage),
-                        interval.start_nanos as f64 / 1e9,
-                        interval.end_nanos as f64 / 1e9
+                        compact_stage(interval.stage.into()),
+                        seconds(interval.start_nanos),
+                        seconds(interval.end_nanos)
                     ),
                     names.join(", "),
                     state.to_owned(),
@@ -577,12 +574,7 @@ impl<'a> Report<'a> {
                         .join(" · "),
                 );
             }
-            let omitted: usize = self
-                .snapshot
-                .results
-                .iter()
-                .map(|result| result.omitted_intervals)
-                .sum();
+            let omitted = self.snapshot.omitted_intervals;
             if omitted > 0 {
                 lines.push(format!(
                     "{omitted} older intervals omitted; byte totals retain the full run"

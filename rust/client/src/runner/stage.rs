@@ -24,7 +24,7 @@ use graphite_meter_core::{
     latency::LatencyAccumulator,
     measurement::{
         AggregateMeasurements, AggregateWindow, Boundary, CHECKPOINT_BUDGET, CLIENT_STALL, Direction,
-        FINAL_CHECKPOINT_BUDGET, SAMPLE_INTERVAL, Stage as TransferStage,
+        FINAL_CHECKPOINT_BUDGET, MeasurementResult, SAMPLE_INTERVAL, Stage as TransferStage,
     },
 };
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
@@ -123,12 +123,32 @@ struct HostLatency {
 
 type Start<'a> = BoxFuture<'a, (String, Result<Lanes, Error>)>;
 
+/// What Go's coordinator keeps across a run's stages: the start every boundary and failure is timed
+/// from, and one aggregate account, so the interval history is capped per run.
+pub(super) struct RunLedger {
+    started: Instant,
+    accounting: AggregateMeasurements,
+}
+
+impl RunLedger {
+    pub(super) fn new() -> Self {
+        Self {
+            started: Instant::now(),
+            accounting: AggregateMeasurements::default(),
+        }
+    }
+
+    fn since_start(&self, at: Instant) -> Duration {
+        at.saturating_duration_since(self.started)
+    }
+}
+
 struct StageRun<'a> {
     stage: Stage,
     transfer: Option<TransferStage>,
     config: &'a Config,
     snapshots: &'a watch::Sender<Snapshot>,
-    epoch: Instant,
+    ledger: &'a mut RunLedger,
     participants: Vec<String>,
     members: Vec<Member>,
     starts: FuturesUnordered<Start<'a>>,
@@ -138,7 +158,6 @@ struct StageRun<'a> {
     retired: JoinSet<()>,
     removed: Vec<String>,
     lost: Option<ServerError>,
-    accounting: AggregateMeasurements,
     window: Option<(Instant, Instant)>,
 }
 
@@ -148,8 +167,9 @@ pub(super) async fn measure(
     servers: &[PreparedServer],
     snapshots: &watch::Sender<Snapshot>,
     mut cancel: watch::Receiver<bool>,
+    ledger: &mut RunLedger,
 ) -> Result<Vec<String>, Error> {
-    let mut run = StageRun::open(stage, config, servers, snapshots)?;
+    let mut run = StageRun::open(stage, config, servers, snapshots, ledger)?;
     let result = tokio::select! {
         result = run.run(servers) => result,
         _ = cancel.wait_for(|value| *value) => Ok(()),
@@ -164,6 +184,7 @@ impl<'a> StageRun<'a> {
         config: &'a Config,
         servers: &'a [PreparedServer],
         snapshots: &'a watch::Sender<Snapshot>,
+        ledger: &'a mut RunLedger,
     ) -> Result<Self, Error> {
         let planned_warmup = servers.iter().fold(config.warmup, |warmup, server| {
             warmup.max(adaptive_warmup(config.warmup, server.idle_rtt))
@@ -202,7 +223,7 @@ impl<'a> StageRun<'a> {
                 })
                 .collect();
         });
-        let epoch = Instant::now();
+        let opened = Instant::now();
         let mut run = Self {
             stage,
             transfer: match stage {
@@ -213,7 +234,7 @@ impl<'a> StageRun<'a> {
             },
             config,
             snapshots,
-            epoch,
+            ledger,
             participants: servers.iter().map(|server| server.entry.id.clone()).collect(),
             members: Vec::new(),
             starts: FuturesUnordered::new(),
@@ -223,7 +244,6 @@ impl<'a> StageRun<'a> {
             retired: JoinSet::new(),
             removed: Vec::new(),
             lost: None,
-            accounting: AggregateMeasurements::default(),
             window: None,
         };
         for server in servers {
@@ -245,7 +265,7 @@ impl<'a> StageRun<'a> {
                 latency_failed: false,
                 lanes: Lanes::default(),
                 checkpoint_misses: 0,
-                moved: [epoch; 2],
+                moved: [opened; 2],
             });
         }
         Ok(run)
@@ -337,7 +357,7 @@ impl<'a> StageRun<'a> {
                         )
                         .into();
                         let scope = if starting { FailureScope::Throughput } else { FailureScope::Latency };
-                        removed |= self.fail(&id, scope, error, true);
+                        removed |= self.fail(&id, scope, error, true, ready_by);
                     }
                     self.settle(removed)?;
                 },
@@ -360,7 +380,7 @@ impl<'a> StageRun<'a> {
                 Ok(())
             }
             Err(error) => {
-                let removed = self.fail(id, FailureScope::Throughput, error, true);
+                let removed = self.fail(id, FailureScope::Throughput, error, true, Instant::now());
                 self.settle(removed)
             }
         }
@@ -415,8 +435,9 @@ impl<'a> StageRun<'a> {
             initial.at_nanos = local.at_nanos;
             initial.down = local.down;
             let participants = self.members.iter().map(|member| member.id.clone()).collect();
-            self.accounting.begin_stage(stage, participants, initial.at_nanos);
-            self.accounting.observe(initial);
+            let accounting = &mut self.ledger.accounting;
+            accounting.begin_stage(stage, participants, initial.at_nanos);
+            accounting.observe(initial);
         }
         for member in &mut self.members {
             member.moved = [started; 2];
@@ -512,17 +533,20 @@ impl<'a> StageRun<'a> {
 
     fn depart(&mut self, failures: Vec<(String, Error)>, preparing: bool) -> Result<(), Error> {
         let mut removed = false;
+        let at = Instant::now();
         for (id, error) in failures {
-            removed |= self.fail(&id, FailureScope::Throughput, error, preparing);
+            removed |= self.fail(&id, FailureScope::Throughput, error, preparing, at);
         }
         self.settle(removed)
     }
 
-    /// Records a failure once; a throughput failure, or a latency-stage loss beside another server, removes it.
-    fn fail(&mut self, id: &str, scope: FailureScope, error: Error, preparing: bool) -> bool {
+    /// Records a failure once, at its time on the run's clock; a throughput failure, or a latency-stage
+    /// loss beside another server, removes it.
+    fn fail(&mut self, id: &str, scope: FailureScope, error: Error, preparing: bool, at: Instant) -> bool {
         let Some(index) = self.members.iter().position(|member| member.id == id) else {
             return false;
         };
+        let at = self.ledger.since_start(at);
         let reason = crate::failure::reason(error.as_ref(), preparing);
         let remaining = self.members.len();
         let member = &mut self.members[index];
@@ -541,7 +565,7 @@ impl<'a> StageRun<'a> {
             host.ending.get_or_insert(Ending::Failed(reason));
         }
         self.snapshots.send_modify(|snapshot| {
-            snapshot.failure(id, scope, &error);
+            snapshot.failure(id, scope, &error, at);
             if let Some(latency) = snapshot.server_latencies.iter_mut().find(|latency| latency.id == id) {
                 latency.latest_ms = None;
             }
@@ -565,10 +589,13 @@ impl<'a> StageRun<'a> {
     }
 
     /// Survivors restart their interval together after removals; with none left the stage ends.
+    /// As in Go, only a transfer's open window touches the run's account, whose last interval is
+    /// otherwise an earlier stage's.
     fn settle(&mut self, removed: bool) -> Result<(), Error> {
-        if removed {
+        if removed && self.transfer.is_some() && self.window.is_some() {
             let survivors: Vec<_> = self.members.iter().map(|member| member.id.clone()).collect();
-            self.accounting.dropout(&survivors, nanos(self.epoch.elapsed()));
+            let at = nanos(self.ledger.started.elapsed());
+            self.ledger.accounting.dropout(&survivors, at);
         }
         if !self.members.is_empty() {
             return Ok(());
@@ -589,7 +616,8 @@ impl<'a> StageRun<'a> {
             Ok(()) => "latency session ended before stage boundary".into(),
             Err(error) => error,
         };
-        let removed = self.fail(&completion.id, FailureScope::Latency, error, self.window.is_none());
+        let preparing = self.window.is_none();
+        let removed = self.fail(&completion.id, FailureScope::Latency, error, preparing, completion.at);
         self.settle(removed)
     }
 
@@ -604,7 +632,7 @@ impl<'a> StageRun<'a> {
 
     fn local_boundary(&self) -> Boundary {
         let mut boundary = Boundary {
-            at_nanos: nanos(self.epoch.elapsed()),
+            at_nanos: nanos(self.ledger.started.elapsed()),
             ..Boundary::default()
         };
         for member in &self.members {
@@ -660,23 +688,24 @@ impl<'a> StageRun<'a> {
         mut misses: BTreeMap<String, Error>,
     ) -> Result<Option<AggregateWindow>, Error> {
         let final_boundary = boundary.final_boundary;
-        let collected = self.epoch + Duration::from_nanos(boundary.at_nanos);
+        let collected = self.ledger.started + Duration::from_nanos(boundary.at_nanos);
         let directions: &[Direction] = match self.transfer {
             Some(TransferStage::Download) => &[Direction::Down],
             Some(TransferStage::Upload) => &[Direction::Up],
             _ => &[Direction::Down, Direction::Up],
         };
+        let accounting = &mut self.ledger.accounting;
         let before: Vec<Vec<u64>> = self
             .members
             .iter()
             .map(|member| {
                 directions
                     .iter()
-                    .map(|direction| self.accounting.bytes(&member.id, *direction))
+                    .map(|direction| accounting.bytes(&member.id, *direction))
                     .collect()
             })
             .collect();
-        let window = self.accounting.observe(boundary);
+        let window = accounting.observe(boundary);
         let mut departures = Vec::new();
         for (member, before) in self.members.iter_mut().zip(before) {
             if let Some(error) = member.missed(misses.remove(&member.id), final_boundary) {
@@ -685,7 +714,7 @@ impl<'a> StageRun<'a> {
             }
             for (direction, before) in directions.iter().zip(before) {
                 let moved = &mut member.moved[*direction as usize];
-                if self.accounting.bytes(&member.id, *direction) > before {
+                if accounting.bytes(&member.id, *direction) > before {
                     *moved = collected;
                 } else if collected.saturating_duration_since(*moved) >= TRANSFER_PROGRESS_TIMEOUT {
                     let stalled: Error = Box::new(MeasurementFailure(FailureReason::Timeout));
@@ -753,22 +782,32 @@ impl<'a> StageRun<'a> {
 
     fn record(&mut self, stopped: bool) {
         let measuring = self.window.is_some();
-        let (started, end) = self.window.unwrap_or((self.epoch, self.epoch));
-        let ended = end.min(Instant::now());
+        let now = Instant::now();
+        let (started, end) = self.window.unwrap_or((now, now));
+        let ended = end.min(now);
         let elapsed = ended.saturating_duration_since(started);
+        let accounting = &self.ledger.accounting;
         let down = self
             .transfer
             .filter(|stage| measuring && stage.needs_down())
-            .map(|_| self.accounting.result(Direction::Down));
+            .map(|_| accounting.result(Direction::Down));
         let up = self
             .transfer
             .filter(|stage| measuring && stage.needs_up())
-            .map(|_| self.accounting.result(Direction::Up));
+            .map(|_| accounting.result(Direction::Up));
         let missing = (self.stage.downloads()
             && down.as_ref().is_none_or(|result| result.mean_bytes_per_sec.is_none()))
             || (self.stage.uploads() && up.as_ref().is_none_or(|result| result.mean_bytes_per_sec.is_none()));
+        // The run's account holds earlier stages; a stage that never opened its window has no results there.
+        let own = |id: &str, direction| {
+            if measuring {
+                accounting.server_result(id, direction)
+            } else {
+                MeasurementResult::unavailable(direction, 0)
+            }
+        };
+        let at = self.ledger.since_start(now);
         let hosts = &mut self.hosts;
-        let accounting = &self.accounting;
         let (stage, transfer, members, participants) = (self.stage, self.transfer, &self.members, &self.participants);
         self.snapshots.send_modify(|snapshot| {
             if measuring {
@@ -799,13 +838,13 @@ impl<'a> StageRun<'a> {
                     .any(|failure| failure.stage == stage && failure.scope == FailureScope::Throughput);
                 for member in members {
                     if missing && !throughput_failed {
-                        snapshot.failure(&member.id, FailureScope::Throughput, &insufficient);
+                        snapshot.failure(&member.id, FailureScope::Throughput, &insufficient, at);
                     }
                     let unmeasured = server_latencies
                         .iter()
                         .any(|host| host.id == member.id && host.median().is_none());
                     if stage == Stage::Latency && unmeasured {
-                        snapshot.failure(&member.id, FailureScope::Latency, &insufficient);
+                        snapshot.failure(&member.id, FailureScope::Latency, &insufficient, at);
                     }
                 }
             }
@@ -815,10 +854,8 @@ impl<'a> StageRun<'a> {
                         .iter()
                         .map(|id| ServerContribution {
                             id: id.clone(),
-                            down: transfer
-                                .needs_down()
-                                .then(|| accounting.server_result(id, Direction::Down)),
-                            up: transfer.needs_up().then(|| accounting.server_result(id, Direction::Up)),
+                            down: transfer.needs_down().then(|| own(id, Direction::Down)),
+                            up: transfer.needs_up().then(|| own(id, Direction::Up)),
                         })
                         .collect()
                 })
@@ -828,12 +865,12 @@ impl<'a> StageRun<'a> {
                 elapsed,
                 down,
                 up,
-                intervals: accounting.intervals().clone(),
-                omitted_intervals: accounting.omitted_intervals(),
                 stopped,
                 server_latencies,
                 server_results,
             });
+            snapshot.intervals.clone_from(accounting.intervals());
+            snapshot.omitted_intervals = accounting.omitted_intervals();
             snapshot.refocus();
         });
     }

@@ -11,6 +11,16 @@ pub enum Stage {
     Bidirectional,
 }
 
+impl From<graphite_meter_core::measurement::Stage> for Stage {
+    fn from(stage: graphite_meter_core::measurement::Stage) -> Self {
+        match stage {
+            graphite_meter_core::measurement::Stage::Download => Self::Download,
+            graphite_meter_core::measurement::Stage::Upload => Self::Upload,
+            graphite_meter_core::measurement::Stage::Bidirectional => Self::Bidirectional,
+        }
+    }
+}
+
 impl Stage {
     pub fn name(self) -> &'static str {
         match self {
@@ -67,8 +77,6 @@ pub struct StageResult {
     pub elapsed: Duration,
     pub down: Option<graphite_meter_core::measurement::MeasurementResult>,
     pub up: Option<graphite_meter_core::measurement::MeasurementResult>,
-    pub intervals: VecDeque<graphite_meter_core::measurement::AggregationInterval>,
-    pub omitted_intervals: usize,
     pub stopped: bool,
     pub server_latencies: Vec<ServerLatencyResult>,
     pub server_results: Vec<ServerContribution>,
@@ -250,6 +258,10 @@ pub struct Snapshot {
     pub auth: Option<AuthPrompt>,
     pub server_latencies: Vec<ServerLatency>,
     pub failures: Vec<ServerFailure>,
+    /// The run's aggregation intervals as Go's run details hold them: timed from the run's start,
+    /// the latest 128 of the run, and how many older ones were dropped.
+    pub intervals: VecDeque<graphite_meter_core::measurement::AggregationInterval>,
+    pub omitted_intervals: usize,
     pub participants: Vec<String>,
     pub latency_focus: Option<String>,
     pub plan: Vec<Stage>,
@@ -319,11 +331,13 @@ impl Snapshot {
         }
     }
 
+    /// Records a server's first failure in a stage and scope; `at` is the time since the run started.
     pub fn failure(
         &mut self,
         id: &str,
         scope: FailureScope,
         error: &crate::Error,
+        at: Duration,
     ) -> Option<graphite_meter_core::failure::FailureReason> {
         let stage = self.stage?;
         if self
@@ -339,7 +353,7 @@ impl Snapshot {
             stage,
             scope,
             reason,
-            at: self.results.iter().map(|result| result.elapsed).sum::<Duration>() + self.latest.elapsed,
+            at,
         });
         Some(reason)
     }

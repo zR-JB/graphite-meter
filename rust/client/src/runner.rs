@@ -309,6 +309,8 @@ pub async fn run(
         snapshot.plan.clone_from(&config.stages);
         snapshot.results.clear();
         snapshot.failures.clear();
+        snapshot.intervals.clear();
+        snapshot.omitted_intervals = 0;
         snapshot.server_latencies.clear();
         snapshot.participants.clear();
         snapshot.latency_focus = None;
@@ -325,14 +327,18 @@ pub async fn run(
             };
             snapshots.send_modify(|snapshot| {
                 snapshot.stage = config.stages.first().copied();
+                // Go records these as its run starts, at zero.
                 for failure in &preparation.failures {
-                    snapshot.failure(&failure.id, crate::model::FailureScope::Throughput, &failure.source);
+                    let scope = crate::model::FailureScope::Throughput;
+                    snapshot.failure(&failure.id, scope, &failure.source, Duration::ZERO);
                 }
             });
             let selected = preparation.servers.len() + preparation.failures.len();
             (preparation.servers, Some(selected))
         }
     };
+    // Go's coordinator starts its clock once the servers are prepared.
+    let mut ledger = RunLedger::new();
     snapshots.send_modify(|snapshot| {
         snapshot.participants = prepared.iter().map(|server| server.entry.id.clone()).collect();
         snapshot.latency_focus = prepared.first().map(|server| server.entry.id.clone());
@@ -352,7 +358,7 @@ pub async fn run(
                 rejoins
             });
         }
-        let measured = measure(*stage, &config, &prepared, &snapshots, cancel.clone()).await;
+        let measured = measure(*stage, &config, &prepared, &snapshots, cancel.clone(), &mut ledger).await;
         let failed = match measured {
             Ok(failed) => failed,
             Err(error)
@@ -398,4 +404,4 @@ pub async fn run(
 }
 
 mod stage;
-use stage::measure;
+use stage::{RunLedger, measure};
