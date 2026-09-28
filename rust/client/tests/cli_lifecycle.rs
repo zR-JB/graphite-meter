@@ -373,6 +373,55 @@ async fn flags(args: &[&str]) -> Result<std::process::Output, Error> {
 }
 
 #[tokio::test]
+async fn invalid_settings_are_refused_in_go_order_and_words() -> Result<(), Error> {
+    for (args, message) in [
+        (
+            &["-stages", "", "-warmup", "5s"][..],
+            "select at least one stage: latency, download, upload or bidirectional",
+        ),
+        (
+            &["-warmup", "5s", "-latency-duration", "0"],
+            "warmup must be from 0 s to 4 s",
+        ),
+        (
+            &["-latency-duration", "0", "-ping", "40ms"],
+            "latency duration must be from 1 s to 300 s",
+        ),
+        // Go checks the duration of a stage that is off.
+        (
+            &["-bidirectional-duration", "301s"],
+            "bidirectional duration must be from 1 s to 300 s",
+        ),
+        (
+            &["-loaded-ping", "40ms", "-streams", "15"],
+            "latency cadence must be reply-driven or at least 80ms",
+        ),
+        (
+            &["-streams", "15", "-auto-streams", "0"],
+            "forced streams must be from 1 to 14 per server and direction, or 0 for automatic",
+        ),
+        (
+            &["-auto-streams", "0", "-ping", "16s"],
+            "the automatic stream maximum must be from 1 to 14 per direction",
+        ),
+        (
+            &["-ping", "16s"],
+            "latency interval must be at most 15s, half the server's 30s lane idle bound",
+        ),
+    ] {
+        let output = flags(args).await?;
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        assert_eq!(
+            String::from_utf8(output.stderr)?,
+            format!("graphite-meter-client: {message}\n"),
+            "{args:?}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn version_names_the_client_like_go() -> Result<(), Error> {
     for flag in ["-version", "--version"] {
         let output = flags(&[flag]).await?;

@@ -98,21 +98,50 @@ impl Config {
         }
     }
 
+    /// Go's `Config.Validate` in its order and words; the origin and server ID checks follow.
     pub fn validate(&self) -> Result<(), Error> {
-        self.validate_settings()?;
         if self.stages.is_empty() {
-            return Err("select at least one measurement stage".into());
+            return Err("select at least one stage: latency, download, upload or bidirectional".into());
         }
-        for stage in &self.stages {
-            if !(Duration::from_secs(1)..=Duration::from_secs(300)).contains(&self.duration(*stage)) {
-                return Err("stage duration must be from one second to five minutes".into());
-            }
-        }
-        Ok(())
+        self.validate_settings()
     }
 
     /// Setup edits check these alone, so an unfinished stage plan never blocks them.
     pub fn validate_settings(&self) -> Result<(), Error> {
+        if self.warmup > Duration::from_secs(4) {
+            return Err("warmup must be from 0 s to 4 s".into());
+        }
+        // Go checks every stage's duration, including stages that are off.
+        let durations = [
+            ("latency", self.latency_duration),
+            ("download", self.download_duration),
+            ("upload", self.upload_duration),
+            ("bidirectional", self.bidirectional_duration),
+        ];
+        for (stage, duration) in durations {
+            if !(Duration::from_secs(1)..=Duration::from_secs(300)).contains(&duration) {
+                return Err(format!("{stage} duration must be from 1 s to 300 s").into());
+            }
+        }
+        let cadences = [self.ping_interval, self.loaded_ping_interval];
+        if cadences
+            .iter()
+            .any(|interval| !interval.is_zero() && *interval < Duration::from_millis(80))
+        {
+            return Err("latency cadence must be reply-driven or at least 80ms".into());
+        }
+        if self.streams > MAX_STREAMS {
+            return Err(format!(
+                "forced streams must be from 1 to {MAX_STREAMS} per server and direction, or 0 for automatic"
+            )
+            .into());
+        }
+        if self.auto_streams == 0 || self.auto_streams > MAX_STREAMS {
+            return Err(format!("the automatic stream maximum must be from 1 to {MAX_STREAMS} per direction").into());
+        }
+        if cadences.iter().any(|interval| *interval > Duration::from_secs(15)) {
+            return Err("latency interval must be at most 15s, half the server's 30s lane idle bound".into());
+        }
         graphite_meter_core::origin::canonical_origin(&self.url)?;
         for origin in [&self.throughput_origin, &self.latency_origin].into_iter().flatten() {
             graphite_meter_core::origin::canonical_origin(origin)?;
@@ -125,17 +154,6 @@ impl Config {
                 .any(|(i, id)| id.is_empty() || self.servers[..i].contains(id))
         {
             return Err("select up to four different server IDs".into());
-        }
-        if self.auto_streams == 0 || self.auto_streams > MAX_STREAMS || self.streams > MAX_STREAMS {
-            return Err("stream counts must be within 1..=14 (0 means automatic for --streams)".into());
-        }
-        if [self.ping_interval, self.loaded_ping_interval].iter().any(|interval| {
-            !interval.is_zero() && *interval < Duration::from_millis(80) || *interval > Duration::from_secs(15)
-        }) {
-            return Err("latency cadence must be reply-driven or from 80 milliseconds to 15 seconds".into());
-        }
-        if self.warmup > Duration::from_secs(4) {
-            return Err("warmup must be from zero to four seconds".into());
         }
         Ok(())
     }
