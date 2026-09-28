@@ -12,8 +12,12 @@ use http::HeaderValue;
 use tokio::time::Instant;
 
 impl HttpServer {
-    /// A trusted proxy's socket address is never the owner: without usable evidence, as in Go, nothing is.
-    pub(super) fn upload_owner<B>(&self, request: &Request<B>, peer: SocketAddr) -> Owner {
+    /// A request's login or grant owns its uploads and admission; otherwise its client does. A trusted proxy's socket
+    /// address is never the owner: without usable evidence, as in Go, nothing is.
+    pub(super) fn owner<B>(&self, request: &Request<B>, lease: Option<&AuthLease>, peer: SocketAddr) -> Owner {
+        if let Some(lease) = lease {
+            return lease.owner();
+        }
         let client = client_address::resolve(peer, request.headers(), &self.config.trusted_proxies);
         if client.usable {
             Owner::anonymous(client.addr)

@@ -40,45 +40,25 @@ impl HttpServer {
         credit: ReceiveCredit,
         peer: SocketAddr,
     ) -> Result<(), http3::Error> {
-        if let Some(response) = self.validate_request(&request, true) {
-            return answer(stream, response).await;
-        }
         let accepted = Accepted {
             peer,
             tls: true,
             topology: topology::QUIC.topology,
         };
-        let connection = accepted.connection();
-        let (request, lease) = if let Some(auth) = &self.auth {
-            match auth.policy().authorize(request, connection) {
-                Ok(guard) => {
-                    let (request, authorization) = guard.into_parts();
-                    let Authorization::Authenticated(lease) = authorization else {
-                        return answer(stream, self.harden(text_response(StatusCode::FORBIDDEN))).await;
-                    };
-                    (request, Some(lease))
-                }
-                Err(rejected) => {
-                    let mut response = self.auth_refusal(rejected.request(), rejected.reason(), connection);
-                    response.headers_mut().remove(header::CONNECTION);
-                    return answer(stream, response).await;
-                }
-            }
-        } else {
-            (request, None)
+        // A CONNECT has no body to end.
+        let (request, Passed { route, lease, .. }) = match self.gate(request, accepted, true) {
+            Ok(passed) => passed,
+            Err(response) => return answer(stream, *response).await,
         };
-        let route = route::lookup(request.uri().path()).filter(|&route| accepted.topology.mounts(route));
-        let refusal = self
-            .refuse_route(&request, route, lease.as_ref(), peer)
-            .or_else(|| route.is_none().then(|| text_response(StatusCode::NOT_FOUND)));
-        if let Some(response) = refusal {
-            return answer(stream, self.harden(response)).await;
+        // Under authentication a session lives only as long as its lease.
+        if self.auth.is_some() && lease.is_none() {
+            return answer(stream, self.harden(text_response(StatusCode::FORBIDDEN))).await;
         }
-        let route = route.expect("a mounted WebTransport route");
-        let owner = lease
-            .as_ref()
-            .map(AuthLease::owner)
-            .unwrap_or_else(|| self.upload_owner(&request, peer));
+        let Some(route) = route else {
+            return answer(stream, self.harden(text_response(StatusCode::NOT_FOUND))).await;
+        };
+        let request = request.into_request();
+        let owner = self.owner(&request, lease.as_ref(), peer);
         let _permit = match self.admit(route, &owner) {
             Ok(permit) => permit,
             Err(refusal) => return answer(stream, self.harden(*refusal)).await,

@@ -17,7 +17,7 @@ use crate::{
     admission::{Admission, Permit},
     auth::{
         AuthLease, AuthRoute,
-        policy::{Authorization, Connection},
+        policy::{Authorization, AuthorizedRequest, Connection},
         route as auth_route,
     },
     budget::{self, DOWNLOAD_BLOCK_BYTES, H2_FLOOR_BYTES, QUIC_CREDIT_BYTES},
@@ -398,24 +398,6 @@ impl HttpServer {
         }
     }
 
-    pub fn respond(&self, request: Request<()>, peer: SocketAddr) -> Response<ResponseBody> {
-        if let Some(response) = self.validate_request(&request, true) {
-            return response;
-        }
-        if self.auth.is_some() {
-            return text_response(StatusCode::FORBIDDEN);
-        }
-        let route = route::lookup(request.uri().path());
-        if let Some(response) = self.refuse_route(&request, route, None, peer) {
-            return response;
-        }
-        let Some(route) = route else {
-            return text_response(StatusCode::NOT_FOUND);
-        };
-        let owner = self.upload_owner(&request, peer);
-        self.respond_authorized(route, request, peer, &owner)
-    }
-
     fn respond_authorized(
         &self,
         route: Route,
@@ -502,6 +484,53 @@ impl HttpServer {
         None
     }
 
+    /// Go's `Enforce` and its mux's refusals, in their order, for every listener and WebTransport: the header and
+    /// body limits, the policy and its preflights, then the route's methods and client evidence. `Err` is the gate's
+    /// own answer; a request that passes keeps its authorization, lease and Origin.
+    fn gate<B>(
+        &self,
+        request: Request<B>,
+        accepted: Accepted,
+        body_ended: bool,
+    ) -> Result<(Checked<B>, Passed), Box<Response<ResponseBody>>> {
+        if let Some(response) = self.validate_request(&request, body_ended) {
+            return Err(Box::new(response));
+        }
+        // A route this listener does not mount is authorized first, as in Go, then answered 404.
+        let route = route::lookup(request.uri().path()).filter(|&route| accepted.topology.mounts(route));
+        let Some(auth) = &self.auth else {
+            if let Some(response) = self.refuse_route(&request, route, None, accepted.peer) {
+                return Err(Box::new(response));
+            }
+            let passed = Passed {
+                route,
+                lease: None,
+                origin: None,
+            };
+            return Ok((Checked::Public(request), passed));
+        };
+        let authorized = auth
+            .policy()
+            .authorize(request, accepted.connection())
+            .map_err(|rejected| {
+                Box::new(self.auth_refusal(rejected.request(), rejected.reason(), accepted.connection()))
+            })?;
+        let lease = match authorized.authorization() {
+            Authorization::Preflight(headers) => {
+                let mut response = empty_response(StatusCode::NO_CONTENT);
+                *response.headers_mut() = headers.clone();
+                return Err(Box::new(self.harden(response)));
+            }
+            Authorization::Authenticated(lease) => Some(lease.clone()),
+            Authorization::PublicAuth => None,
+        };
+        if let Some(response) = self.refuse_route(authorized.request(), route, lease.as_ref(), accepted.peer) {
+            return Err(Box::new(self.harden(response)));
+        }
+        let origin = authorized.request().headers().get(header::ORIGIN).cloned();
+        Ok((Checked::Authorized(authorized), Passed { route, lease, origin }))
+    }
+
     async fn respond_incoming<B>(
         &self,
         request: Request<B>,
@@ -513,105 +542,26 @@ impl HttpServer {
         B: Body<Data = Bytes> + Unpin,
         B::Error: std::error::Error + Send + Sync + 'static,
     {
-        if let Some(response) = self.validate_request(&request, request.body().is_end_stream()) {
-            return Ok(response);
-        }
-        // A route this listener does not mount is authorized first, as in Go, then answered 404.
-        let route = route::lookup(request.uri().path()).filter(|&route| accepted.topology.mounts(route));
-        let mut lease = None;
-        let mut origin = None;
-        let request = if let Some(auth) = &self.auth {
-            let authorized = match auth.policy().authorize(request, accepted.connection()) {
-                Ok(authorized) => authorized,
-                Err(rejected) => {
-                    return Ok(self.auth_refusal(rejected.request(), rejected.reason(), accepted.connection()));
-                }
-            };
-            if let Authorization::Preflight(headers) = authorized.authorization() {
-                let mut response = Response::new(ResponseBody::empty());
-                *response.status_mut() = StatusCode::NO_CONTENT;
-                *response.headers_mut() = headers.clone();
-                return Ok(self.harden(response));
-            }
-            if let Authorization::Authenticated(guard) = authorized.authorization() {
-                lease = Some(guard.clone());
-            }
-            origin = authorized.request().headers().get(header::ORIGIN).cloned();
-            if let Some(response) = self.refuse_route(authorized.request(), route, lease.as_ref(), accepted.peer) {
-                return Ok(self.harden(response));
-            }
-            let path = authorized.request().uri().path();
-            // As in Go, a ticket route reaches the controller only where it is mounted, past the method check.
-            let ticket = matches!(route, Some(Route::WsSession | Route::WtSession));
-            if auth_route::claims(path) || ticket {
-                let logout = AuthRoute::lookup(authorized.request().method(), path) == Some(AuthRoute::Logout);
-                // Even public auth endpoints collect only their form's bytes, within the control bound.
-                let execute = async {
-                    let authorized = authorized.try_map_body(collect_auth_body).await?;
-                    let mut response = auth.handle(&authorized).await.map(ResponseBody::bytes);
-                    let request = authorized.request();
-                    // The rest of an oversized body would read as the next request.
-                    if request.body().len() > crate::auth::http::FORM_BYTES
-                        && request.version() <= http::Version::HTTP_11
-                    {
-                        response
-                            .headers_mut()
-                            .insert(header::CONNECTION, http::HeaderValue::from_static("close"));
-                    }
-                    Ok::<_, io::Error>(response)
-                };
-                let mut response = tokio::select! {
-                    biased;
-                    _ = lease_ended(lease.clone()) => return Err(io::ErrorKind::PermissionDenied.into()),
-                    result = tokio::time::timeout(CONTROL, execute) => {
-                        result.map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??
-                    },
-                };
-                // Socket tickets are measurement endpoints. Their authenticated
-                // responses must be readable from the browser's approved origin,
-                // including when the native listener uses a different port.
-                if ticket && let (Some(lease), Some(origin)) = (&lease, &origin) {
-                    lease.access(origin).apply_measurement(response.headers_mut());
-                }
-                // A successful logout deliberately revokes the current lease;
-                // its cookie-clearing response must still reach the browser.
-                if !(logout && response.status().is_redirection()) {
-                    self.retain_operation(&mut response, lease, operations);
-                }
-                return Ok(response);
-            }
-            authorized.into_parts().0
-        } else if let Some(response) = self.refuse_route(&request, route, None, accepted.peer) {
-            return Ok(response);
-        } else {
-            request
+        let body_ended = request.body().is_end_stream();
+        let (request, passed) = match self.gate(request, accepted, body_ended) {
+            Ok(passed) => passed,
+            Err(response) => return Ok(*response),
         };
-        let owner = lease
-            .as_ref()
-            .map_or_else(|| self.upload_owner(&request, accepted.peer), AuthLease::owner);
+        let request = match request {
+            Checked::Authorized(authorized) if passed.controlled(authorized.request()) => {
+                return self.control(authorized, passed, operations).await;
+            }
+            Checked::Authorized(authorized) => authorized.into_parts().0,
+            Checked::Public(request) => request,
+        };
+        let Passed { route, lease, origin } = passed;
+        let owner = self.owner(&request, lease.as_ref(), accepted.peer);
         let measurement = route.is_some();
         let upload = route == Some(Route::Upload) && request.method() == Method::POST;
         let guard = lease.clone();
         let dispatch = async {
             let Some(route) = route else {
-                if !accepted.topology.spa || auth_route::claims(request.uri().path()) {
-                    return Ok(text_response(StatusCode::NOT_FOUND));
-                }
-                let mut response = self
-                    .assets
-                    .serve(request.method(), request.uri().path(), request.headers())
-                    .map(ResponseBody::bytes);
-                let Ok(sources) = self.discovery.page_sources(&crate::discovery::request_host(&request)) else {
-                    return Ok(text_response(StatusCode::BAD_REQUEST));
-                };
-                let Ok(policy) = self.assets.page_policy(&sources).parse() else {
-                    return Ok(text_response(StatusCode::BAD_REQUEST));
-                };
-                let headers = response.headers_mut();
-                headers.insert("content-security-policy", policy);
-                headers.insert("x-frame-options", http::HeaderValue::from_static("DENY"));
-                crate::auth::pages::harden(headers, self.auth.is_some());
-                return Ok(response);
+                return Ok(self.app(&request, accepted.topology));
             };
             if route == Route::Ping && request.method() != Method::OPTIONS {
                 return Ok(match upgrade {
@@ -652,6 +602,79 @@ impl HttpServer {
             self.retain_operation(&mut response, lease, operations);
         }
         Ok(self.harden(response))
+    }
+
+    /// The authentication controller's pages and the socket tickets. Each collects its bounded body within the
+    /// control bound, and ends with the lease that authorized it.
+    async fn control<B>(
+        &self,
+        authorized: AuthorizedRequest<B>,
+        passed: Passed,
+        operations: &Operations,
+    ) -> io::Result<Response<ResponseBody>>
+    where
+        B: Body<Data = Bytes> + Unpin,
+        B::Error: std::error::Error + Send + Sync + 'static,
+    {
+        let auth = self.auth.as_ref().expect("an authorized request has a controller");
+        let Passed { route, lease, origin } = passed;
+        let logout = AuthRoute::lookup(authorized.request().method(), authorized.request().uri().path())
+            == Some(AuthRoute::Logout);
+        let execute = async {
+            let authorized = authorized.try_map_body(collect_auth_body).await?;
+            let mut response = auth.handle(&authorized).await.map(ResponseBody::bytes);
+            let request = authorized.request();
+            // The rest of an oversized body would read as the next request.
+            if request.body().len() > crate::auth::http::FORM_BYTES && request.version() <= http::Version::HTTP_11 {
+                response
+                    .headers_mut()
+                    .insert(header::CONNECTION, http::HeaderValue::from_static("close"));
+            }
+            Ok::<_, io::Error>(response)
+        };
+        let mut response = tokio::select! {
+            biased;
+            _ = lease_ended(lease.clone()) => return Err(io::ErrorKind::PermissionDenied.into()),
+            result = tokio::time::timeout(CONTROL, execute) => {
+                result.map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??
+            },
+        };
+        // Socket tickets are measurement endpoints. Their authenticated
+        // responses must be readable from the browser's approved origin,
+        // including when the native listener uses a different port.
+        if ticket(route)
+            && let (Some(lease), Some(origin)) = (&lease, &origin)
+        {
+            lease.access(origin).apply_measurement(response.headers_mut());
+        }
+        // A successful logout deliberately revokes the current lease;
+        // its cookie-clearing response must still reach the browser.
+        if !(logout && response.status().is_redirection()) {
+            self.retain_operation(&mut response, lease, operations);
+        }
+        Ok(response)
+    }
+
+    /// The browser app, for a path no route claims on a listener that serves it.
+    fn app<B>(&self, request: &Request<B>, topology: topology::Topology) -> Response<ResponseBody> {
+        if !topology.spa || auth_route::claims(request.uri().path()) {
+            return text_response(StatusCode::NOT_FOUND);
+        }
+        let mut response = self
+            .assets
+            .serve(request.method(), request.uri().path(), request.headers())
+            .map(ResponseBody::bytes);
+        let Ok(sources) = self.discovery.page_sources(&crate::discovery::request_host(request)) else {
+            return text_response(StatusCode::BAD_REQUEST);
+        };
+        let Ok(policy) = self.assets.page_policy(&sources).parse() else {
+            return text_response(StatusCode::BAD_REQUEST);
+        };
+        let headers = response.headers_mut();
+        headers.insert("content-security-policy", policy);
+        headers.insert("x-frame-options", http::HeaderValue::from_static("DENY"));
+        crate::auth::pages::harden(headers, self.auth.is_some());
+        response
     }
 
     /// Go's Enforce sets these on every response once a request under authentication is known secure.
@@ -825,6 +848,42 @@ impl HttpServer {
             .body(body)
             .expect("valid download headers")
     }
+}
+
+/// A request as the gate checked it; under authentication it keeps its authorization for the controller.
+enum Checked<B> {
+    Public(Request<B>),
+    Authorized(AuthorizedRequest<B>),
+}
+
+impl<B> Checked<B> {
+    fn into_request(self) -> Request<B> {
+        match self {
+            Self::Public(request) => request,
+            Self::Authorized(authorized) => authorized.into_parts().0,
+        }
+    }
+}
+
+/// What the gate learned of a request it let through.
+struct Passed {
+    /// The route, when the listener mounts it.
+    route: Option<Route>,
+    /// Under authentication, the lease that ends the request's work when it ends.
+    lease: Option<AuthLease>,
+    /// The Origin a measurement answer's CORS names.
+    origin: Option<http::HeaderValue>,
+}
+
+impl Passed {
+    /// The controller answers its own paths and, as in Go, a ticket route where it is mounted, past the method check.
+    fn controlled<B>(&self, request: &Request<B>) -> bool {
+        auth_route::claims(request.uri().path()) || ticket(self.route)
+    }
+}
+
+fn ticket(route: Option<Route>) -> bool {
+    matches!(route, Some(Route::WsSession | Route::WtSession))
 }
 
 async fn lease_ended(lease: Option<AuthLease>) {
@@ -1205,6 +1264,42 @@ mod tests {
     use crate::config::Config;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    /// A request through the whole pipeline, on a clear HTTP/1.1 connection of its own from `peer`.
+    async fn respond_from(server: &HttpServer, peer: &str, method: Method, path: &str) -> Response<ResponseBody> {
+        let request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::HOST, "localhost:7246")
+            .body(String::new())
+            .unwrap();
+        let accepted = Accepted {
+            peer: peer.parse().unwrap(),
+            ..h1()
+        };
+        let operations = Arc::new(Mutex::new(Vec::new()));
+        server
+            .respond_incoming(request, accepted, &operations, None)
+            .await
+            .unwrap()
+    }
+
+    async fn respond(server: &HttpServer, method: Method, path: &str) -> Response<ResponseBody> {
+        respond_from(server, "127.0.0.1:31000", method, path).await
+    }
+
+    async fn next_data(body: &mut ResponseBody) -> Option<Bytes> {
+        let frame = std::future::poll_fn(|cx| Pin::new(&mut *body).poll_frame(cx)).await?;
+        Some(frame.unwrap().into_data().unwrap())
+    }
+
+    fn h1() -> Accepted {
+        Accepted {
+            peer: "127.0.0.1:31000".parse().unwrap(),
+            tls: false,
+            topology: topology::tcp(NativeKind::H1, false).topology,
+        }
+    }
+
     struct UnreadBody;
 
     impl Body for UnreadBody {
@@ -1226,32 +1321,18 @@ mod tests {
         config.limits.sessions_per_client = 1;
         config.limits.operations_per_client = 1;
         let server = HttpServer::new(config.validated().unwrap()).unwrap();
-        let peer = "127.0.0.1:31000".parse().unwrap();
         let id = server.uploads.mint().unwrap();
 
-        let download = server.respond(
-            Request::builder()
-                .method(Method::POST)
-                .uri("/download?bytes=1048576")
-                .body(())
-                .unwrap(),
-            peer,
-        );
+        let download = respond(&server, Method::POST, "/download?bytes=1048576").await;
         assert_eq!(download.status(), StatusCode::METHOD_NOT_ALLOWED);
         assert_eq!(download.headers()[header::ALLOW], "GET, HEAD, OPTIONS");
-        let head = server.respond(
-            Request::builder()
-                .method(Method::HEAD)
-                .uri("/download?bytes=1048576")
-                .body(())
-                .unwrap(),
-            peer,
-        );
+        let head = respond(&server, Method::HEAD, "/download?bytes=1048576").await;
         assert_eq!(head.status(), StatusCode::OK);
         assert_eq!(head.headers()[header::CONTENT_LENGTH], "1048576");
         assert!(head.body().is_end_stream());
         drop(head);
-        let _admitted = server.respond(Request::get("/download?bytes=1").body(()).unwrap(), peer);
+        let admitted = respond(&server, Method::GET, "/download?bytes=1").await;
+        assert_eq!(admitted.status(), StatusCode::OK);
         for (method, path, allow) in [
             (Method::POST, "/download?bytes=1", "GET, HEAD, OPTIONS"),
             (Method::POST, "/probe", "GET, HEAD, OPTIONS"),
@@ -1262,8 +1343,7 @@ mod tests {
             (Method::POST, "/upload/progress", "DELETE, GET, HEAD, OPTIONS"),
             (Method::HEAD, "/upload/progress", "GET, DELETE"),
         ] {
-            let request = Request::builder().method(method).uri(path).body(()).unwrap();
-            let response = server.respond(request, peer);
+            let response = respond(&server, method, path).await;
             assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED, "{path}");
             assert_eq!(response.headers()[header::ALLOW], allow, "{path}");
         }
@@ -1273,18 +1353,97 @@ mod tests {
             .uri(format!("/upload?id={id}"))
             .body(UnreadBody)
             .unwrap();
-        let accepted = Accepted {
-            peer,
-            tls: false,
-            topology: topology::tcp(NativeKind::H1, false).topology,
-        };
         let response = server
-            .respond_incoming(request, accepted, &Arc::new(Mutex::new(Vec::new())), None)
+            .respond_incoming(request, h1(), &Arc::new(Mutex::new(Vec::new())), None)
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
         assert_eq!(response.headers()[header::ALLOW], "OPTIONS, POST");
         assert_eq!(server.uploads.retained(), 0);
+        drop(admitted);
+    }
+
+    #[tokio::test]
+    async fn download_body_owns_capacity_and_options_does_not_consume_it() {
+        let mut config = Config::default();
+        config.limits.operations_per_client = 1;
+        config.limits.sessions_per_client = 1;
+        let server = HttpServer::new(config.validated().unwrap()).unwrap();
+        let held = respond(&server, Method::GET, "/download?bytes=100").await;
+        assert_eq!(held.status(), StatusCode::OK);
+        assert_eq!(held.headers()[header::CONTENT_LENGTH], "100");
+
+        let refused = respond(&server, Method::GET, "/download").await;
+        assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(refused.headers()[header::RETRY_AFTER], "1");
+        assert_eq!(refused.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+
+        let options = respond(&server, Method::OPTIONS, "/download").await;
+        assert_eq!(options.status(), StatusCode::NO_CONTENT);
+        drop(held);
+        let download = respond(&server, Method::GET, "/download?bytes=0").await;
+        assert_eq!(download.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn download_length_preserves_go_parsing_and_head_headers() {
+        let server = HttpServer::new(Config::default().validated().unwrap()).unwrap();
+        for (query, expected) in [
+            ("", 25 * 1024 * 1024),
+            ("bytes=0", 0),
+            ("bytes=-1", 25 * 1024 * 1024),
+            ("bytes=9223372036854775808", 25 * 1024 * 1024),
+            ("bytes=9223372036854775807", 64_u64 * 1024 * 1024 * 1024),
+            ("bytes=%2B123", 123),
+            ("bytes=5&bytes=10", 5),
+        ] {
+            let response = respond(&server, Method::HEAD, &format!("/download?{query}")).await;
+            assert_eq!(
+                response.headers()[header::CONTENT_LENGTH],
+                expected.to_string(),
+                "{query}"
+            );
+            assert!(response.body().is_end_stream());
+        }
+    }
+
+    #[tokio::test]
+    async fn progress_claim_cancellation_owns_capacity_and_options_stays_unmetered() {
+        let mut config = Config::default();
+        config.limits.operations_per_client = 2;
+        config.limits.sessions_per_client = 1;
+        let server = HttpServer::new(config.validated().unwrap()).unwrap();
+        let peer = "[2001:db8:1::1]:31000";
+        let neighbor = "[2001:db8:1::2]:31000";
+        let foreign = "[2001:db8:2::1]:31000";
+        let mut minted = respond_from(&server, peer, Method::POST, "/upload/session").await;
+        let data = next_data(minted.body_mut()).await.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&data).unwrap();
+        let id = value["uploadId"].as_str().unwrap();
+        let path = format!("/upload/progress?id={id}");
+        let mut first = respond_from(&server, peer, Method::GET, &path).await;
+        let ready = next_data(first.body_mut()).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&ready).unwrap()["type"],
+            "ready"
+        );
+        let second = respond_from(&server, neighbor, Method::GET, &path).await;
+        assert_eq!(second.status(), StatusCode::OK, "same IPv6 /64 shares upload ownership");
+        let download = respond_from(&server, peer, Method::GET, "/download?bytes=1").await;
+        assert_eq!(download.status(), StatusCode::TOO_MANY_REQUESTS);
+        for path in ["/upload", "/upload/session", "/upload/checkpoint", "/upload/progress"] {
+            let options = respond_from(&server, peer, Method::OPTIONS, path).await;
+            assert_eq!(options.status(), StatusCode::NO_CONTENT);
+        }
+        let checkpoint = format!("/upload/checkpoint?id={id}");
+        let refused = respond_from(&server, foreign, Method::POST, &checkpoint).await;
+        assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+        assert_eq!(refused.headers()["x-graphite-upload-refusal"], "ownerMismatch");
+        assert!(next_data(first.body_mut()).await.is_none());
+        drop(first);
+        let download = respond_from(&server, peer, Method::GET, "/download?bytes=1").await;
+        assert_eq!(download.status(), StatusCode::OK);
+        drop(second);
     }
 
     #[tokio::test]
@@ -1293,10 +1452,10 @@ mod tests {
         config.limits.operations_per_client = 1;
         config.limits.sessions_per_client = 1;
         let server = HttpServer::new(config.validated().unwrap()).unwrap();
-        let peer = "127.0.0.1:31000".parse().unwrap();
-        let request = || Request::builder().uri("/download?bytes=1").body(()).unwrap();
-        let mut response = server.respond(request(), peer);
-        let operations = Arc::new(Mutex::new(vec![response.body().operation.clone().unwrap()]));
+        let request = Request::get("/download?bytes=1").body(String::new()).unwrap();
+        let operations = Arc::new(Mutex::new(Vec::new()));
+        let mut response = server.respond_incoming(request, h1(), &operations, None).await.unwrap();
+        // The connection holds the reply's operation, as it did the moment the reply was answered.
         let mut io = DeadlineIo {
             inner: tokio::io::sink(),
             operations,
@@ -1308,11 +1467,12 @@ mod tests {
             .unwrap();
         let data = frame.into_data().unwrap();
         drop(response);
-        assert_eq!(server.respond(request(), peer).status(), StatusCode::TOO_MANY_REQUESTS);
+        let download = async || respond(&server, Method::GET, "/download?bytes=1").await.status();
+        assert_eq!(download().await, StatusCode::TOO_MANY_REQUESTS);
         io.write_all(&data).await.unwrap();
-        assert_eq!(server.respond(request(), peer).status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(download().await, StatusCode::TOO_MANY_REQUESTS);
         io.flush().await.unwrap();
-        assert_eq!(server.respond(request(), peer).status(), StatusCode::OK);
+        assert_eq!(download().await, StatusCode::OK);
     }
 
     #[tokio::test]
@@ -1326,10 +1486,9 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let peer = "127.0.0.1:31000".parse().unwrap();
-        let request = Request::builder().uri("/download?bytes=2").body(()).unwrap();
-        let mut response = server.respond(request, peer);
-        let operations = Arc::new(Mutex::new(vec![response.body().operation.clone().unwrap()]));
+        let request = Request::get("/download?bytes=2").body(String::new()).unwrap();
+        let operations = Arc::new(Mutex::new(Vec::new()));
+        let mut response = server.respond_incoming(request, h1(), &operations, None).await.unwrap();
         let (writer, _non_reading_peer) = tokio::io::duplex(1);
         let mut io = DeadlineIo {
             inner: writer,
@@ -1354,11 +1513,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn http1_control_exchanges_end_fifteen_seconds_after_they_start() {
         let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-        let accepted = Accepted {
-            peer: "127.0.0.1:31000".parse().unwrap(),
-            tls: false,
-            topology: topology::tcp(NativeKind::H1, false).topology,
-        };
+        let accepted = h1();
         // A small pipe the peer drains a little at a time: the reply always moves, well within the write-stall bound.
         let (client, served) = tokio::io::duplex(16);
         let started = tokio::time::Instant::now();

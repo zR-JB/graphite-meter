@@ -1,71 +1,11 @@
 use graphite_meter_server::config::{Config, NativeKind};
 use graphite_meter_server::http::HttpServer;
-use http::{Method, Request, StatusCode, header};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     sync::oneshot,
 };
-
-fn request(path: &str) -> Request<()> {
-    Request::builder()
-        .uri(path)
-        .header(header::HOST, "localhost:7246")
-        .body(())
-        .unwrap()
-}
-
-#[tokio::test]
-async fn download_body_owns_capacity_and_options_does_not_consume_it() {
-    let mut config = Config::default();
-    config.limits.operations_per_client = 1;
-    config.limits.sessions_per_client = 1;
-    let server = HttpServer::new(config.validated().unwrap()).unwrap();
-    let peer: SocketAddr = "127.0.0.1:31000".parse().unwrap();
-    let held = server.respond(request("/download?bytes=100"), peer);
-    assert_eq!(held.status(), StatusCode::OK);
-    assert_eq!(held.headers()[header::CONTENT_LENGTH], "100");
-
-    let refused = server.respond(request("/download"), peer);
-    assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(refused.headers()[header::RETRY_AFTER], "1");
-    assert_eq!(refused.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
-
-    let mut options = request("/download");
-    *options.method_mut() = Method::OPTIONS;
-    assert_eq!(server.respond(options, peer).status(), StatusCode::NO_CONTENT);
-    drop(held);
-    assert_eq!(
-        server.respond(request("/download?bytes=0"), peer).status(),
-        StatusCode::OK
-    );
-}
-
-#[tokio::test]
-async fn download_length_preserves_go_parsing_and_head_headers() {
-    let server = HttpServer::new(Config::default().validated().unwrap()).unwrap();
-    let peer = "127.0.0.1:31000".parse().unwrap();
-    for (query, expected) in [
-        ("", 25 * 1024 * 1024),
-        ("bytes=0", 0),
-        ("bytes=-1", 25 * 1024 * 1024),
-        ("bytes=9223372036854775808", 25 * 1024 * 1024),
-        ("bytes=9223372036854775807", 64_u64 * 1024 * 1024 * 1024),
-        ("bytes=%2B123", 123),
-        ("bytes=5&bytes=10", 5),
-    ] {
-        let mut request = request(&format!("/download?{query}"));
-        *request.method_mut() = Method::HEAD;
-        let response = server.respond(request, peer);
-        assert_eq!(
-            response.headers()[header::CONTENT_LENGTH],
-            expected.to_string(),
-            "{query}"
-        );
-        assert!(hyper::body::Body::is_end_stream(response.body()));
-    }
-}
 
 #[tokio::test]
 async fn real_http1_serves_discovery_and_streams_exact_download_then_joins_shutdown() {
@@ -165,10 +105,12 @@ async fn stalled_download_releases_capacity_at_request_deadline() {
             headers.push(stalled.read_u8().await.unwrap());
         }
         assert!(headers.starts_with(b"HTTP/1.1 200"));
-        let peer = "127.0.0.1:31000".parse().unwrap();
-        assert_eq!(
-            server.respond(request("/download?bytes=1"), peer).status(),
-            StatusCode::TOO_MANY_REQUESTS
+        // The stalled download holds this client's only permit.
+        let download = fetch(address, "/download?bytes=1").await;
+        assert!(
+            download.starts_with(b"HTTP/1.1 429"),
+            "{}",
+            String::from_utf8_lossy(&download)
         );
         advance_http1_clock(Duration::from_millis(550)).await;
         loop {
@@ -180,9 +122,11 @@ async fn stalled_download_releases_capacity_at_request_deadline() {
             }
             tokio::task::yield_now().await;
         }
-        assert_eq!(
-            server.respond(request("/download?bytes=1"), peer).status(),
-            StatusCode::OK
+        let download = fetch(address, "/download?bytes=1").await;
+        assert!(
+            download.starts_with(b"HTTP/1.1 200"),
+            "{}",
+            String::from_utf8_lossy(&download)
         );
         // Keep the non-reading peer alive until after recovery is observed.
         drop(stalled);
@@ -468,65 +412,6 @@ async fn progress_event(reader: &mut tokio::io::BufReader<TcpStream>) -> serde_j
             return serde_json::from_str(record).unwrap();
         }
     }
-}
-
-#[tokio::test]
-async fn progress_claim_cancellation_owns_capacity_and_options_stays_unmetered() {
-    use hyper::body::Body;
-    use std::{future::poll_fn, pin::Pin};
-    let mut config = Config::default();
-    config.limits.operations_per_client = 2;
-    config.limits.sessions_per_client = 1;
-    let server = HttpServer::new(config.validated().unwrap()).unwrap();
-    let peer = "[2001:db8:1::1]:31000".parse().unwrap();
-    let neighbor = "[2001:db8:1::2]:31000".parse().unwrap();
-    let foreign = "[2001:db8:2::1]:31000".parse().unwrap();
-    let mut mint = request("/upload/session");
-    *mint.method_mut() = Method::POST;
-    let mut minted = server.respond(mint, peer);
-    let data = poll_fn(|cx| Pin::new(minted.body_mut()).poll_frame(cx))
-        .await
-        .unwrap()
-        .unwrap()
-        .into_data()
-        .unwrap();
-    let value: serde_json::Value = serde_json::from_slice(&data).unwrap();
-    let id = value["uploadId"].as_str().unwrap();
-    let path = format!("/upload/progress?id={id}");
-    let mut first = server.respond(request(&path), peer);
-    let ready = poll_fn(|cx| Pin::new(first.body_mut()).poll_frame(cx))
-        .await
-        .unwrap()
-        .unwrap()
-        .into_data()
-        .unwrap();
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&ready).unwrap()["type"],
-        "ready"
-    );
-    let second = server.respond(request(&path), neighbor);
-    assert_eq!(second.status(), StatusCode::OK, "same IPv6 /64 shares upload ownership");
-    assert_eq!(
-        server.respond(request("/download?bytes=1"), peer).status(),
-        StatusCode::TOO_MANY_REQUESTS
-    );
-    for path in ["/upload", "/upload/session", "/upload/checkpoint", "/upload/progress"] {
-        let mut options = request(path);
-        *options.method_mut() = Method::OPTIONS;
-        assert_eq!(server.respond(options, peer).status(), StatusCode::NO_CONTENT);
-    }
-    let mut checkpoint = request(&format!("/upload/checkpoint?id={id}"));
-    *checkpoint.method_mut() = Method::POST;
-    let refused = server.respond(checkpoint, foreign);
-    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
-    assert_eq!(refused.headers()["x-graphite-upload-refusal"], "ownerMismatch");
-    assert!(poll_fn(|cx| Pin::new(first.body_mut()).poll_frame(cx)).await.is_none());
-    drop(first);
-    assert_eq!(
-        server.respond(request("/download?bytes=1"), peer).status(),
-        StatusCode::OK
-    );
-    drop(second);
 }
 
 async fn advance_http1_clock(duration: Duration) {

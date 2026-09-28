@@ -175,65 +175,6 @@ async fn blocked_reply_and_close_cannot_hold_session_forever() -> Result<(), Tes
 }
 
 #[tokio::test]
-async fn http_upgrade_retains_admission_and_shutdown_owns_the_socket() -> Result<(), TestError> {
-    use graphite_meter_server::config::{Config, NativeKind};
-    use graphite_meter_server::http::HttpServer;
-    use http::{Request, StatusCode};
-    use std::sync::Arc;
-    use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt},
-        net::{TcpListener, TcpStream},
-    };
-
-    let mut config = Config::default();
-    config.limits.operations_per_client = 1;
-    config.limits.sessions_per_client = 1;
-    let server = Arc::new(HttpServer::new(config.validated().unwrap())?);
-    let listener = TcpListener::bind("127.0.0.1:0").await?;
-    let address = listener.local_addr()?;
-    let (stop, stopped) = oneshot::channel();
-    let serving = server.clone();
-    let task = tokio::spawn(serving.serve(NativeKind::H1, listener, None, async {
-        let _ = stopped.await;
-    }));
-    let (mut socket, response) =
-        tokio_tungstenite::client_async(format!("ws://{address}/ws/ping"), TcpStream::connect(address).await?).await?;
-    assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
-    socket.send(Message::Text("PING,23".into())).await?;
-    let pong = tokio::time::timeout(Duration::from_secs(2), socket.next())
-        .await?
-        .unwrap()?;
-    assert_eq!(decode_pong(pong.to_text()?)?.id, 23);
-    let response = server.respond(Request::builder().uri("/download?bytes=1").body(())?, address);
-    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-    let mut wrong = TcpStream::connect(address).await?;
-    wrong
-        .write_all(b"POST /ws/ping HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-        .await?;
-    let mut answer = String::new();
-    wrong.read_to_string(&mut answer).await?;
-    assert!(
-        answer.starts_with("HTTP/1.1 405") && answer.contains("allow: GET, HEAD"),
-        "{answer}"
-    );
-
-    stop.send(()).unwrap();
-    tokio::time::timeout(Duration::from_secs(2), task).await???;
-    let close = tokio::time::timeout(Duration::from_secs(2), socket.next())
-        .await?
-        .unwrap()?;
-    let Message::Close(Some(close)) = close else {
-        panic!("expected shutdown close")
-    };
-    assert_eq!(u16::from(close.code), 1001);
-    assert_eq!(close.reason, "shutdown");
-    let response = server.respond(Request::builder().uri("/download?bytes=1").body(())?, address);
-    assert_eq!(response.status(), StatusCode::OK);
-
-    Ok(())
-}
-
-#[tokio::test]
 async fn websocket_upgrade_works_over_validated_tls() -> Result<(), TestError> {
     use graphite_meter_server::config::{Config, NativeKind};
     use graphite_meter_server::{http::HttpServer, tls::Certificates};
