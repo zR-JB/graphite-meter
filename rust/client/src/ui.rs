@@ -586,17 +586,10 @@ impl Ui {
             _ => {}
         }
     }
-    /// Go's handleRunKey and handleSetupKey; a changed path setting is checked again once edits settle.
+    /// The run and setup views; a changed path setting is checked again once edits settle.
     fn main_key(&mut self, code: KeyCode, commands: &mpsc::Sender<Command>) {
         let before = self.config.clone();
-        let view: &[Key] = match (self.live, self.active()) {
-            (true, true) => &[STOP, DETAILS],
-            (true, false) => &[RUN_AGAIN, SETUP, DETAILS],
-            (false, _) => &[
-                START, ACTIVATE, RECHECK, STOP, ROWS, SERVERS, AVAILABLE, AUTOMATIC, CHANGE, TOGGLE,
-            ],
-        };
-        match pressed(code, &[&[LATENCY, MORE], view].concat()) {
+        match pressed(code, &[LATENCY, MORE]) {
             Some(LATENCY) if self.snapshot.participants.len() > 1 => {
                 let ids = &self.snapshot.participants;
                 let shown = ids.iter().position(|id| Some(id.as_str()) == self.latency_server());
@@ -607,16 +600,28 @@ impl Ui {
             Some(MORE) if code == KeyCode::Home => self.body_scroll.offset = 0,
             Some(MORE) if code == KeyCode::End => self.body_scroll.offset = u16::MAX,
             Some(MORE) => self.body_scroll.key(code, 10),
+            _ if self.live => self.run_key(code, commands),
+            _ => self.setup_key(code, commands),
+        }
+        // The chooser's selection is a draft until Enter.
+        if self.popup != Popup::Servers {
+            self.recheck_if_changed(&before);
+        }
+    }
+    /// Go's handleRunKey.
+    fn run_key(&mut self, code: KeyCode, commands: &mpsc::Sender<Command>) {
+        let keys: &[Key] = if self.active() {
+            &[STOP, DETAILS]
+        } else {
+            &[RUN_AGAIN, SETUP, DETAILS]
+        };
+        match pressed(code, keys) {
             Some(DETAILS) => {
                 self.popup = Popup::Details;
                 self.details_scroll.offset = 0;
             }
-            Some(STOP) if self.live && self.cancel != CancelState::Requested => self.cancel = CancelState::Confirming,
-            Some(STOP) if self.live => {}
-            Some(STOP) if self.active() => {
-                self.send(Command::Cancel, commands);
-            }
-            Some(STOP) => self.rows.select(Some(0)),
+            Some(STOP) if self.cancel != CancelState::Requested => self.cancel = CancelState::Confirming,
+            Some(RUN_AGAIN) => self.start(commands),
             Some(SETUP) => {
                 // The run consumed the checked paths.
                 self.recheck_soon();
@@ -625,13 +630,27 @@ impl Ui {
                 self.live = false;
                 self.rows.select(Some(0));
             }
+            Some(_) => {}
+            None => self.body_scroll.key(code, 10),
+        }
+    }
+    /// Go's handleSetupKey.
+    fn setup_key(&mut self, code: KeyCode, commands: &mpsc::Sender<Command>) {
+        let keys = [
+            START, ACTIVATE, RECHECK, STOP, ROWS, SERVERS, AVAILABLE, AUTOMATIC, CHANGE, TOGGLE,
+        ];
+        match pressed(code, &keys) {
             // A path check never holds back a run; the run replaces it.
-            Some(RUN_AGAIN | START) => self.start(commands),
+            Some(START) => self.start(commands),
             Some(ACTIVATE) if self.rows.selected() == Some(0) => self.start(commands),
             Some(ACTIVATE) => self.activate(),
             Some(RECHECK) => {
                 self.send(Command::Verify(self.config.clone()), commands);
             }
+            Some(STOP) if self.active() => {
+                self.send(Command::Cancel, commands);
+            }
+            Some(STOP) => self.rows.select(Some(0)),
             Some(ROWS) => move_selection(self.fields().len(), &mut self.rows, back(code)),
             Some(SERVERS) => self.open_servers(),
             Some(AVAILABLE) if !self.checking() => self.use_available(),
@@ -645,12 +664,7 @@ impl Ui {
             }
             Some(CHANGE) => self.change_field(!back(code)),
             Some(TOGGLE) => self.toggle(),
-            _ if self.live => self.body_scroll.key(code, 10),
             _ => {}
-        }
-        // The chooser's selection is a draft until Enter.
-        if self.popup != Popup::Servers {
-            self.recheck_if_changed(&before);
         }
     }
     /// A valid setup starts a run; the results it replaces stay until it starts.

@@ -1,7 +1,9 @@
 //! Terminal rendering, separate from editing and command dispatch.
-use super::setup::{on_off, seconds};
+use super::setup::{Field, on_off, seconds};
 use super::*;
-use crate::model::Stage;
+use crate::model::{Point, ServerLatency, Stage};
+use ratatui::style::Color;
+use std::collections::VecDeque;
 
 /// Go's terminal progress bar (OSC 9;4): indeterminate while paths are checked, then the share of stage time done.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,26 +87,47 @@ impl Ui {
             );
             return;
         }
-        let area = area.inner(Margin {
-            horizontal: 1,
-            vertical: 1,
-        });
         let help: Vec<_> = if self.help {
             keys::full_help().collect()
         } else {
             Vec::new()
         };
-        let regions = Layout::vertical([
+        let [header, body, footer] = Layout::vertical([
             Constraint::Length(2),
             Constraint::Min(if self.help { 1 } else { 4 }),
             Constraint::Length(if self.help { 1 + help.len() as u16 } else { 2 }),
         ])
-        .split(area);
-        let (status, status_background) = self.status();
-        let status = safe_text_width(status, usize::from(regions[0].width / 2).saturating_sub(4));
+        .areas(area.inner(Margin {
+            horizontal: 1,
+            vertical: 1,
+        }));
+        frame.render_widget(self.header(usize::from(header.width)), header);
+        self.body_scroll.hidden = 0;
+        if self.live {
+            self.draw_live(frame, body);
+        } else {
+            self.draw_setup(frame, body);
+        }
+        frame.render_widget(self.footer(usize::from(footer.width), &help), footer);
+        match self.popup {
+            Popup::Details => self.draw_details(frame),
+            Popup::Servers => self.draw_servers(frame),
+            Popup::None => {}
+        }
+        if let Some(edit) = &self.edit {
+            self.draw_edit(frame, edit);
+        }
+        if self.snapshot.auth.is_some() {
+            self.draw_auth(frame);
+        }
+    }
+
+    /// The badge and status pill, then the version beside the catalogue or the run's servers.
+    fn header(&self, width: usize) -> Paragraph<'static> {
+        let (status, background) = self.status();
+        let status = format!(" {} ", safe_text_width(status, (width / 2).saturating_sub(4)));
         let title = " Graphite Meter ";
-        let status_pill = format!(" {status} ");
-        let spacer = usize::from(regions[0].width).saturating_sub(title.width() + status_pill.width());
+        let spacer = width.saturating_sub(title.width() + status.width());
         let badge = Style::new().fg(self.theme.inverse).add_modifier(Modifier::BOLD);
         let version = format!("native client {}  ", crate::VERSION);
         let context = if self.live && self.snapshot.started() {
@@ -116,79 +139,57 @@ impl Ui {
         } else {
             self.config.url.clone()
         };
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::from(vec![
-                    Span::styled(title, badge.bg(self.theme.ink)),
-                    Span::raw(" ".repeat(spacer)),
-                    Span::styled(status_pill, badge.bg(status_background)),
-                ]),
-                Line::from(vec![
-                    Span::styled(version.clone(), Style::new().fg(self.theme.muted)),
-                    Span::styled(
-                        safe_text_width(&context, usize::from(regions[0].width).saturating_sub(version.width())),
-                        Style::new().fg(self.theme.ink),
-                    ),
-                ]),
+        let context = safe_text_width(&context, width.saturating_sub(version.width()));
+        Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled(title, badge.bg(self.theme.ink)),
+                Span::raw(" ".repeat(spacer)),
+                Span::styled(status, badge.bg(background)),
             ]),
-            regions[0],
-        );
-        self.body_scroll.hidden = 0;
-        if self.live {
-            self.draw_live(frame, regions[1]);
-        } else {
-            self.draw_setup(frame, regions[1]);
-        }
+            Line::from(vec![
+                Span::styled(version, Style::new().fg(self.theme.muted)),
+                Span::styled(context, Style::new().fg(self.theme.ink)),
+            ]),
+        ])
+    }
+
+    /// The notice, or the help grid under the hints; setup explains the focused row.
+    fn footer(&self, width: usize, help: &[Vec<&'static str>]) -> Paragraph<'static> {
         let (mut notice, is_error) = self.notice();
         if !self.live && !is_error && self.notice.is_empty() && self.snapshot.phase == Phase::Setup {
             notice = self.field().explanation(&self.config);
         }
-        let notice_color = if is_error { self.theme.err } else { self.theme.muted };
         let mut hints = self.short_help();
-        let covered = self.popup != Popup::None || self.edit.is_some() || self.snapshot.auth.is_some();
-        if self.body_scroll.hidden > 0 && !covered && self.cancel != CancelState::Confirming {
+        if self.body_scroll.hidden > 0 && matches!(self.mode(), InputMode::Main | InputMode::Reset) {
             hints.insert(1, MORE.1);
         }
-        let width = usize::from(regions[2].width);
-        let mut lines = if self.help {
-            Vec::new()
-        } else {
-            vec![Line::styled(
-                safe_text_width(notice, width),
-                Style::new().fg(notice_color),
-            )]
-        };
+        let color = if is_error { self.theme.err } else { self.theme.muted };
+        let mut lines = Vec::new();
+        if !self.help {
+            lines.push(Line::styled(safe_text_width(notice, width), Style::new().fg(color)));
+        }
         lines.push(self.hints(&hints, width));
         lines.extend(help.iter().map(|row| self.hints(row, width)));
-        frame.render_widget(Paragraph::new(lines), regions[2]);
-        if self.popup == Popup::Details {
-            self.draw_details(frame);
-        }
-        if self.popup == Popup::Servers {
-            self.draw_servers(frame);
-        }
-        if let Some(edit) = &self.edit {
-            let area = popup(frame.area(), 80, 7);
-            frame.render_widget(Clear, area);
-            let width = usize::from(area.width.saturating_sub(6)).max(1);
-            let (before, cursor, after) = edit.viewport(width);
-            frame.render_widget(
-                Paragraph::new(vec![
-                    Line::from(vec![
-                        Span::raw(before),
-                        Span::styled(cursor.to_string(), Style::new().add_modifier(Modifier::REVERSED)),
-                        Span::raw(after),
-                    ]),
-                    Line::from(keys::hints(&EDIT).join(" · ")),
-                    Line::styled(safe_text(&self.notice, 200), Style::new().fg(self.theme.warn)),
-                ])
-                .block(panel(edit.field.term.label, self.theme)),
-                area,
-            );
-        }
-        if self.snapshot.auth.is_some() {
-            self.draw_auth(frame);
-        }
+        Paragraph::new(lines)
+    }
+
+    fn draw_edit(&self, frame: &mut Frame, edit: &Edit) {
+        let area = popup(frame.area(), 80, 7);
+        frame.render_widget(Clear, area);
+        let (before, cursor, after) = edit.viewport(usize::from(area.width.saturating_sub(6)).max(1));
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(vec![
+                    Span::raw(before),
+                    Span::styled(cursor.to_string(), Style::new().add_modifier(Modifier::REVERSED)),
+                    Span::raw(after),
+                ]),
+                Line::from(keys::hints(&EDIT).join(" · ")),
+                Line::styled(safe_text(&self.notice, 200), Style::new().fg(self.theme.warn)),
+            ])
+            .block(panel(edit.field.term.label, self.theme)),
+            area,
+        );
     }
 
     /// Go's statusLabel and pill colour: setup states outside the run view, then the run's own.
@@ -297,131 +298,26 @@ impl Ui {
     }
 
     fn draw_setup(&mut self, frame: &mut Frame, area: Rect) {
-        let content = area;
         let (fields_area, plan_area) = if frame.area().width >= 100 {
-            let regions = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(content);
-            (regions[0], regions[1])
-        } else if content.height >= 12 {
-            let regions = Layout::vertical([Constraint::Length(5), Constraint::Min(1)]).split(content);
-            (regions[0], regions[1])
+            let [left, right] = Layout::horizontal([Constraint::Percentage(50); 2]).areas(area);
+            (left, right)
+        } else if area.height >= 12 {
+            let [top, bottom] = Layout::vertical([Constraint::Length(5), Constraint::Min(1)]).areas(area);
+            (top, bottom)
         } else {
-            (content, Rect::default())
+            (area, Rect::default())
         };
-        let items = self
-            .fields()
-            .iter()
-            .map(|field| {
-                use super::setup::Kind;
-                if let Kind::Start = field.kind {
-                    return ListItem::new(Line::from(Span::styled(
-                        " Start test ",
-                        Style::new()
-                            .fg(self.theme.inverse)
-                            .bg(self.theme.ink)
-                            .add_modifier(Modifier::BOLD),
-                    )));
-                }
-                if let Kind::Advanced = field.kind {
-                    return ListItem::new(Line::from(format!(
-                        "{} Advanced",
-                        if self.advanced { "⌄" } else { "›" }
-                    )));
-                }
-                if let Kind::Reset = field.kind {
-                    return ListItem::new(Line::from(field.term.label));
-                }
-                let value = field.value(&self.config);
-                let heading = Style::new().fg(self.theme.ink).add_modifier(Modifier::BOLD);
-                let mut lines = Vec::new();
-                if !field.heading.is_empty() {
-                    lines.push(Line::styled(field.heading, heading));
-                }
-                lines.push(Line::from(vec![
-                    Span::raw(format!("{:<22} ", field.term.label)),
-                    Span::styled(
-                        if value.is_empty() {
-                            "Automatic".into()
-                        } else {
-                            safe_text(&value, 200)
-                        },
-                        Style::new().fg(self.theme.text).add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-                ListItem::new(lines)
-            })
-            .collect::<Vec<_>>();
+        let items: Vec<_> = self.fields().iter().map(|field| self.setup_row(field)).collect();
         frame.render_stateful_widget(
             List::new(items)
                 .block(panel("Test setup", self.theme))
-                .highlight_style(
-                    Style::new()
-                        .fg(self.theme.text)
-                        .bg(self.theme.surface)
-                        .add_modifier(Modifier::BOLD),
-                )
+                .highlight_style(self.value().bg(self.theme.surface))
                 .highlight_symbol("› "),
             fields_area,
             &mut self.rows,
         );
         if plan_area.width > 0 {
-            let selected = if self.config.servers.is_empty() {
-                "Catalogue default selection".into()
-            } else {
-                safe_text(&self.config.servers.join(", "), 300)
-            };
-            let mut lines = vec![selected, String::new(), "Connection paths".into()];
-            if self.awaiting || self.recheck.is_some() {
-                lines.push("Checking selected servers".into());
-            } else if self.config.preparation_key() != self.requested.preparation_key() {
-                lines.push("Settings changed · verify again".into());
-            } else {
-                let checked = self
-                    .snapshot
-                    .servers
-                    .iter()
-                    .filter(|server| server.has_check_result())
-                    .take(MAX_SELECTED_SERVERS)
-                    .collect::<Vec<_>>();
-                if checked.is_empty() || self.snapshot.phase == Phase::Checking {
-                    lines.push(
-                        if self.snapshot.phase == Phase::Checking {
-                            "Checking selected servers"
-                        } else {
-                            "Not checked"
-                        }
-                        .into(),
-                    );
-                }
-                for server in checked {
-                    let state = if server.error.is_some() { "Failed" } else { "Ready" };
-                    lines.push(format!("{} · {state}", safe_text(&server.name, 120)));
-                    if let Some(label) = server.throughput_label() {
-                        lines.push(format!("  Download {label}"));
-                    }
-                    if let Some(label) = server.latency_label() {
-                        lines.push(format!("  Latency {label}"));
-                    }
-                    if let Some(error) = &server.error {
-                        lines.push(format!("  Unavailable: {}", safe_text(error, 120)));
-                    }
-                }
-            }
-            lines.extend([String::new(), "Run order".into()]);
-            lines.extend(
-                self.config
-                    .stages
-                    .iter()
-                    .map(|stage| format!("  {}  {} s", stage.name(), seconds(self.config.duration(*stage)))),
-            );
-            lines.extend([
-                String::new(),
-                format!("Warmup: {} s", seconds(self.config.warmup)),
-                format!("Loaded latency: {}", on_off(self.config.loaded_latency)),
-                format!(
-                    "TLS verification: {}",
-                    if self.config.insecure { "DISABLED" } else { "enabled" }
-                ),
-            ]);
+            let lines = self.plan();
             let width = usize::from(plan_area.width.saturating_sub(2));
             let text = lines
                 .iter()
@@ -436,6 +332,96 @@ impl Ui {
                 plan_area,
             );
         }
+    }
+
+    /// A setup row: its group heading, if it opens one, then its label and value.
+    fn setup_row(&self, field: &Field) -> ListItem<'static> {
+        let value = match field.kind {
+            Kind::Start => {
+                let button = bold(self.theme.inverse).bg(self.theme.ink);
+                return ListItem::new(Line::from(Span::styled(" Start test ", button)));
+            }
+            Kind::Advanced => return ListItem::new(format!("{} Advanced", if self.advanced { "⌄" } else { "›" })),
+            Kind::Reset => return ListItem::new(field.term.label),
+            _ => field.value(&self.config),
+        };
+        let value = if value.is_empty() {
+            "Automatic".into()
+        } else {
+            safe_text(&value, 200)
+        };
+        let mut lines = Vec::new();
+        if !field.heading.is_empty() {
+            lines.push(Line::styled(field.heading, bold(self.theme.ink)));
+        }
+        lines.push(Line::from(vec![
+            Span::raw(format!("{:<22} ", field.term.label)),
+            Span::styled(value, bold(self.theme.text)),
+        ]));
+        ListItem::new(lines)
+    }
+
+    /// The Servers panel: the selection, its paths as checked, then the run's plan.
+    fn plan(&self) -> Vec<String> {
+        let selected = if self.config.servers.is_empty() {
+            "Catalogue default selection".into()
+        } else {
+            safe_text(&self.config.servers.join(", "), 300)
+        };
+        let mut lines = vec![selected, String::new(), "Connection paths".into()];
+        if self.awaiting || self.recheck.is_some() {
+            lines.push("Checking selected servers".into());
+        } else if self.config.preparation_key() != self.requested.preparation_key() {
+            lines.push("Settings changed · verify again".into());
+        } else {
+            let checked = self
+                .snapshot
+                .servers
+                .iter()
+                .filter(|server| server.has_check_result())
+                .take(MAX_SELECTED_SERVERS)
+                .collect::<Vec<_>>();
+            if checked.is_empty() || self.snapshot.phase == Phase::Checking {
+                lines.push(
+                    if self.snapshot.phase == Phase::Checking {
+                        "Checking selected servers"
+                    } else {
+                        "Not checked"
+                    }
+                    .into(),
+                );
+            }
+            for server in checked {
+                let state = if server.error.is_some() { "Failed" } else { "Ready" };
+                lines.push(format!("{} · {state}", safe_text(&server.name, 120)));
+                if let Some(label) = server.throughput_label() {
+                    lines.push(format!("  Download {label}"));
+                }
+                if let Some(label) = server.latency_label() {
+                    lines.push(format!("  Latency {label}"));
+                }
+                if let Some(error) = &server.error {
+                    lines.push(format!("  Unavailable: {}", safe_text(error, 120)));
+                }
+            }
+        }
+        lines.extend([String::new(), "Run order".into()]);
+        lines.extend(
+            self.config
+                .stages
+                .iter()
+                .map(|stage| format!("  {}  {} s", stage.name(), seconds(self.config.duration(*stage)))),
+        );
+        lines.extend([
+            String::new(),
+            format!("Warmup: {} s", seconds(self.config.warmup)),
+            format!("Loaded latency: {}", on_off(self.config.loaded_latency)),
+            format!(
+                "TLS verification: {}",
+                if self.config.insecure { "DISABLED" } else { "enabled" }
+            ),
+        ]);
+        lines
     }
     fn focused_latency(&self) -> Option<&crate::model::ServerLatency> {
         self.snapshot
@@ -533,15 +519,10 @@ impl Ui {
 
     fn draw_live(&mut self, frame: &mut Frame, area: Rect) {
         if area.height < 14 {
-            self.draw_live_compact(frame, area);
-            return;
+            return self.draw_live_compact(frame, area);
         }
-        let (results, failures) = crate::report::results(
-            &self.snapshot,
-            self.latency_server(),
-            usize::from(area.width.saturating_sub(2)),
-        );
-        let results_height = match results.iter().map(Vec::len).sum::<usize>() + failures.len() {
+        let (results, title) = self.results(usize::from(area.width.saturating_sub(2)));
+        let results_height = match results.len() {
             0 => 0,
             lines => (lines + 2).min(usize::from(u16::MAX)) as u16,
         };
@@ -553,22 +534,97 @@ impl Ui {
             4
         };
         let chart_height = area.height.saturating_sub(results_height + track_height);
-        let show_chart = chart_height >= 9;
         let wide = frame.area().width >= 100;
-        let (track_area, timeline_area, results_area) = if wide {
-            let regions = Layout::vertical([Constraint::Min(9), Constraint::Length(results_height)]).split(area);
-            let columns =
-                Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)]).split(regions[0]);
-            (columns[0], columns[1], regions[1])
+        let [track_area, timeline_area, results_area] = if wide {
+            let [top, bottom] = Layout::vertical([Constraint::Min(9), Constraint::Length(results_height)]).areas(area);
+            let [track, timeline] =
+                Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)]).areas(top);
+            [track, timeline, bottom]
         } else {
-            let regions = Layout::vertical([
+            Layout::vertical([
                 Constraint::Length(track_height),
-                Constraint::Length(if show_chart { chart_height } else { 0 }),
+                Constraint::Length(if chart_height >= 9 { chart_height } else { 0 }),
                 Constraint::Min(1),
             ])
-            .split(area);
-            (regions[0], regions[1], regions[2])
+            .areas(area)
         };
+        self.draw_track(frame, track_area, wide);
+        if timeline_area.height >= 9 {
+            self.draw_timeline(frame, timeline_area);
+        }
+        if results_height > 0 {
+            let offset = self
+                .body_scroll
+                .clamp(results.len(), usize::from(results_area.height.saturating_sub(2)));
+            frame.render_widget(
+                Paragraph::new(results).scroll(offset).block(panel(&title, self.theme)),
+                results_area,
+            );
+        }
+    }
+
+    /// The results panel's lines, each grid's stage labels in their stage's colour, and its title.
+    fn results(&self, width: usize) -> (Vec<Line<'static>>, String) {
+        let (grids, failures) = crate::report::results(&self.snapshot, self.latency_server(), width);
+        let muted = Style::new().fg(self.theme.muted);
+        let mut lines = Vec::new();
+        for grid in &grids {
+            for (index, line) in grid.iter().enumerate() {
+                let line = safe_text(line, MAX_TEXT);
+                let (label, cells) = line.split_at(line.find("  ").unwrap_or(line.len()));
+                lines.push(if index == 0 || label.is_empty() {
+                    Line::styled(line, muted)
+                } else if let Some(stage) = crate::report::label_stage(label) {
+                    Line::from(vec![
+                        Span::styled(label.to_owned(), Style::new().fg(self.theme.stage(stage))),
+                        Span::raw(cells.to_owned()),
+                    ])
+                } else {
+                    Line::from(line)
+                });
+            }
+        }
+        let err = Style::new().fg(self.theme.err);
+        lines.extend(
+            failures
+                .iter()
+                .map(|failure| Line::styled(safe_text(failure, MAX_TEXT), err)),
+        );
+        let mut title = "Results".to_owned();
+        if let Some(id) = self.latency_server().filter(|_| self.run_servers().len() > 1) {
+            title.push_str(" · latency to ");
+            title.push_str(&safe_text(self.server_name(id), 120));
+        }
+        (lines, title)
+    }
+
+    /// The stage track, two of its lines when the body is short. Go's wide Test panel puts the
+    /// run's fields above it; a panel too short for both keeps the track.
+    fn draw_track(&self, frame: &mut Frame, area: Rect, wide: bool) {
+        let track = self.stage_track();
+        if area.height == 2 {
+            let index = self
+                .snapshot
+                .stage
+                .and_then(|stage| self.requested.stages.iter().position(|planned| *planned == stage))
+                .unwrap_or(0);
+            let shown: Vec<_> = track.into_iter().skip(index).take(2).collect();
+            return frame.render_widget(Paragraph::new(shown), area);
+        }
+        let mut lines = Vec::new();
+        if wide {
+            lines = self.test_fields(usize::from(area.width.saturating_sub(2)));
+            lines.push(Line::default());
+            if lines.len() + track.len() > usize::from(area.height.saturating_sub(2)) {
+                lines.clear();
+            }
+        }
+        lines.extend(track);
+        frame.render_widget(Paragraph::new(lines).block(panel("Test", self.theme)), area);
+    }
+
+    /// Each planned stage's outcome, progress, or wait.
+    fn stage_track(&self) -> Vec<Line<'static>> {
         let muted = Style::new().fg(self.theme.muted);
         let mut track = Vec::new();
         for stage in &self.requested.stages {
@@ -593,84 +649,15 @@ impl Ui {
                     }
                 }
             } else if !self.active() {
-                line.push(Span::styled(
-                    format!(
-                        "{} {}",
-                        crate::vocabulary::MISSING,
-                        crate::model::StageStatus::Skipped.label()
-                    ),
-                    muted,
-                ));
+                let skipped = crate::model::StageStatus::Skipped.label();
+                line.push(Span::styled(format!("{} {skipped}", crate::vocabulary::MISSING), muted));
             } else {
-                line.push(Span::styled(
-                    format!("○ {} s", self.requested.duration(*stage).as_secs()),
-                    muted,
-                ));
+                let planned = self.requested.duration(*stage).as_secs();
+                line.push(Span::styled(format!("○ {planned} s"), muted));
             }
             track.push(Line::from(line));
         }
-        if track_area.height == 2 {
-            let index = self
-                .snapshot
-                .stage
-                .and_then(|stage| self.requested.stages.iter().position(|planned| *planned == stage))
-                .unwrap_or(0);
-            frame.render_widget(
-                Paragraph::new(track.into_iter().skip(index).take(2).collect::<Vec<_>>()),
-                track_area,
-            );
-        } else {
-            // Go's wide Test panel puts the run's fields above the stage track; a short panel keeps the track.
-            let mut lines = Vec::new();
-            if wide {
-                lines = self.test_fields(usize::from(track_area.width.saturating_sub(2)));
-                lines.push(Line::default());
-                if lines.len() + track.len() > usize::from(track_area.height.saturating_sub(2)) {
-                    lines.clear();
-                }
-            }
-            lines.extend(track);
-            frame.render_widget(Paragraph::new(lines).block(panel("Test", self.theme)), track_area);
-        }
-        if timeline_area.height >= 9 {
-            self.draw_timeline(frame, timeline_area);
-        }
-        if results_height > 0 {
-            let mut lines = Vec::new();
-            for grid in &results {
-                for (index, line) in grid.iter().enumerate() {
-                    let line = safe_text(line, MAX_TEXT);
-                    let (label, cells) = line.split_at(line.find("  ").unwrap_or(line.len()));
-                    lines.push(if index == 0 || label.is_empty() {
-                        Line::styled(line, muted)
-                    } else if let Some(stage) = crate::report::label_stage(label) {
-                        Line::from(vec![
-                            Span::styled(label.to_owned(), Style::new().fg(self.theme.stage(stage))),
-                            Span::raw(cells.to_owned()),
-                        ])
-                    } else {
-                        Line::from(line)
-                    });
-                }
-            }
-            lines.extend(
-                failures
-                    .iter()
-                    .map(|failure| Line::styled(safe_text(failure, MAX_TEXT), Style::new().fg(self.theme.err))),
-            );
-            let mut title = "Results".to_owned();
-            if let Some(id) = self.latency_server().filter(|_| self.run_servers().len() > 1) {
-                title.push_str(" · latency to ");
-                title.push_str(&safe_text(self.server_name(id), 120));
-            }
-            let offset = self
-                .body_scroll
-                .clamp(lines.len(), usize::from(results_area.height.saturating_sub(2)));
-            frame.render_widget(
-                Paragraph::new(lines).scroll(offset).block(panel(&title, self.theme)),
-                results_area,
-            );
-        }
+        track
     }
 
     fn draw_live_compact(&self, frame: &mut Frame, area: Rect) {
@@ -706,7 +693,7 @@ impl Ui {
     }
 
     fn value(&self) -> Style {
-        Style::new().fg(self.theme.text).add_modifier(Modifier::BOLD)
+        bold(self.theme.text)
     }
 
     fn outcome(&self, result: &crate::model::StageResult) -> Vec<Span<'static>> {
@@ -756,7 +743,7 @@ impl Ui {
     }
 
     fn draw_timeline(&self, frame: &mut Frame, area: Rect) {
-        let regions = Layout::vertical([
+        let [readout, marks, throughput_area, latency_area] = Layout::vertical([
             Constraint::Length(if self.active() {
                 if area.height < 12 { 1 } else { 2 }
             } else {
@@ -766,7 +753,7 @@ impl Ui {
             Constraint::Percentage(50),
             Constraint::Min(1),
         ])
-        .split(area);
+        .areas(area);
         if self.active() {
             let focus = self.focused_latency();
             frame.render_widget(
@@ -782,7 +769,7 @@ impl Ui {
                         ""
                     }
                 )),
-                regions[0],
+                readout,
             );
         }
         let total = self
@@ -792,9 +779,73 @@ impl Ui {
             .map(|stage| self.requested.duration(*stage).as_secs_f64())
             .sum::<f64>()
             .max(1.0);
+        frame.render_widget(Paragraph::new(self.stage_marks(total, area.width)), marks);
+        let series = timeline_series(&self.snapshot, self.focused_latency(), self.theme);
+        for ((series, area), latency) in series
+            .into_iter()
+            .zip([throughput_area, latency_area])
+            .zip([false, true])
+        {
+            self.draw_chart(frame, area, series, latency, total);
+        }
+    }
+
+    /// A chart over the planned stage time, its values scaled to readable units.
+    fn draw_chart(&self, frame: &mut Frame, area: Rect, mut series: Vec<Series>, latency: bool, total: f64) {
+        let max = series
+            .iter()
+            .flat_map(|(points, _)| points)
+            .map(|(_, value)| *value)
+            .fold(0.0_f64, f64::max);
+        let (scale, units) = if latency {
+            (1.0, "ms")
+        } else {
+            [(1.2e9, 1e9, "Gbit/s"), (1.2e6, 1e6, "Mbit/s"), (1.2e3, 1e3, "kbit/s")]
+                .into_iter()
+                .find(|(from, ..)| max >= *from)
+                .map_or((1.0, "bit/s"), |(_, scale, units)| (scale, units))
+        };
+        let ceiling = axis_ceiling(max / scale);
+        for (points, _) in &mut series {
+            for (_, value) in points {
+                *value /= scale;
+            }
+        }
+        let datasets = series
+            .iter()
+            .map(|(points, color)| {
+                Dataset::default()
+                    .marker(Marker::Braille)
+                    .graph_type(GraphType::Line)
+                    .style(Style::new().fg(*color))
+                    .data(points)
+            })
+            .collect::<Vec<_>>();
+        let axis = Style::new().fg(self.theme.border);
+        let muted = Style::new().fg(self.theme.muted);
+        let top = format!("{} {units}", graphite_meter_core::format::speed(ceiling));
+        frame.render_widget(
+            Chart::new(datasets)
+                .block(panel(if latency { "Latency · ms" } else { "Throughput" }, self.theme))
+                .x_axis(
+                    Axis::default()
+                        .style(axis)
+                        .bounds([0.0, total])
+                        .labels([Span::styled("0 s", muted), Span::styled(format!("{total:.0} s"), muted)]),
+                )
+                .y_axis(Axis::default().style(axis).bounds([0.0, ceiling]).labels([
+                    Span::styled(format!("{:>12}", "0"), muted),
+                    Span::styled(format!("{top:>12}"), muted),
+                ])),
+            area,
+        );
+    }
+
+    /// Each planned stage's name where it starts on the time axis, while there is room.
+    fn stage_marks(&self, total: f64, width: u16) -> Line<'static> {
         let mut marks = vec![Span::raw(" ".repeat(14))];
         let mut marked = 0;
-        let plot_width = usize::from(area.width.saturating_sub(16));
+        let plot_width = usize::from(width.saturating_sub(16));
         let mut at = 0.0;
         for stage in &self.requested.stages {
             let column = (at / total * plot_width as f64) as usize;
@@ -806,123 +857,7 @@ impl Ui {
             }
             at += self.requested.duration(*stage).as_secs_f64();
         }
-        frame.render_widget(Paragraph::new(Line::from(marks)), regions[1]);
-        let mut starts = Vec::new();
-        let mut offset = Duration::ZERO;
-        for result in &self.snapshot.results {
-            starts.push((offset, result.stage));
-            offset += result.elapsed;
-        }
-        starts.extend(self.snapshot.stage.map(|stage| (offset, stage)));
-        let hue = |elapsed: Duration| {
-            starts
-                .iter()
-                .rfind(|(start, _)| *start <= elapsed)
-                .map_or(self.theme.text, |(_, stage)| self.theme.stage(*stage))
-        };
-        for (latency, region) in [(false, regions[2]), (true, regions[3])] {
-            let mut series = Vec::<(Vec<(f64, f64)>, ratatui::style::Color)>::new();
-            for upload in [false, true] {
-                if latency && upload {
-                    continue;
-                }
-                let mut segment = Vec::new();
-                let mut color = self.theme.text;
-                for point in if latency {
-                    self.focused_latency()
-                        .map(|host| &host.history.points)
-                        .unwrap_or(&self.snapshot.history.points)
-                } else {
-                    &self.snapshot.history.points
-                } {
-                    let value = if latency {
-                        point.latency_ms
-                    } else if upload {
-                        point.up_bps
-                    } else {
-                        point.down_bps
-                    };
-                    let value = value.filter(|value| value.is_finite() && *value >= 0.0);
-                    let point_hue = hue(point.elapsed);
-                    if !segment.is_empty() && (value.is_none() || point_hue != color) {
-                        series.push((std::mem::take(&mut segment), color));
-                    }
-                    if let Some(value) = value {
-                        color = point_hue;
-                        segment.push((point.elapsed.as_secs_f64(), value));
-                    }
-                }
-                if !segment.is_empty() {
-                    series.push((segment, color));
-                }
-            }
-            let max = series
-                .iter()
-                .flat_map(|(points, _)| points)
-                .map(|(_, value)| *value)
-                .fold(0.0_f64, f64::max);
-            let scale = if latency {
-                1.0
-            } else if max >= 1.2e9 {
-                1e9
-            } else if max >= 1.2e6 {
-                1e6
-            } else if max >= 1.2e3 {
-                1e3
-            } else {
-                1.0
-            };
-            let units = if latency {
-                "ms"
-            } else if scale == 1e9 {
-                "Gbit/s"
-            } else if scale == 1e6 {
-                "Mbit/s"
-            } else if scale == 1e3 {
-                "kbit/s"
-            } else {
-                "bit/s"
-            };
-            let ceiling = axis_ceiling(max / scale);
-            for (points, _) in &mut series {
-                for (_, value) in points {
-                    *value /= scale;
-                }
-            }
-            let datasets = series
-                .iter()
-                .map(|(points, color)| {
-                    Dataset::default()
-                        .marker(Marker::Braille)
-                        .graph_type(GraphType::Line)
-                        .style(Style::new().fg(*color))
-                        .data(points)
-                })
-                .collect::<Vec<_>>();
-            let axis = Style::new().fg(self.theme.border);
-            let muted = Style::new().fg(self.theme.muted);
-            frame.render_widget(
-                Chart::new(datasets)
-                    .block(panel(if latency { "Latency · ms" } else { "Throughput" }, self.theme))
-                    .x_axis(
-                        Axis::default()
-                            .style(axis)
-                            .bounds([0.0, total])
-                            .labels([Span::styled("0 s", muted), Span::styled(format!("{total:.0} s"), muted)]),
-                    )
-                    .y_axis(Axis::default().style(axis).bounds([0.0, ceiling]).labels([
-                        Span::styled(format!("{:>12}", "0"), muted),
-                        Span::styled(
-                            format!(
-                                "{:>12}",
-                                format!("{} {units}", graphite_meter_core::format::speed(ceiling))
-                            ),
-                            muted,
-                        ),
-                    ])),
-                region,
-            );
-        }
+        Line::from(marks)
     }
 
     fn draw_details(&mut self, frame: &mut Frame) {
@@ -1010,12 +945,7 @@ impl Ui {
             frame.render_stateful_widget(
                 List::new(items)
                     .block(panel("Servers · Space toggle · Enter apply · maximum four", self.theme))
-                    .highlight_style(
-                        Style::new()
-                            .fg(self.theme.text)
-                            .bg(self.theme.surface)
-                            .add_modifier(Modifier::BOLD),
-                    ),
+                    .highlight_style(self.value().bg(self.theme.surface)),
                 area,
                 &mut self.servers,
             );
@@ -1068,6 +998,59 @@ fn setting(duration: Duration) -> String {
     } else {
         format!("{} s", seconds(duration))
     }
+}
+
+fn bold(color: Color) -> Style {
+    Style::new().fg(color).add_modifier(Modifier::BOLD)
+}
+
+/// A chart line: its points and their colour.
+type Series = (Vec<(f64, f64)>, Color);
+
+/// The run view's chart lines: the throughput chart's download and upload lines, then the shown
+/// server's latency line. A line breaks where its value goes missing or its stage colour changes.
+fn timeline_series(snapshot: &Snapshot, focus: Option<&ServerLatency>, theme: Theme) -> [Vec<Series>; 2] {
+    let mut starts = Vec::new();
+    let mut offset = Duration::ZERO;
+    for result in &snapshot.results {
+        starts.push((offset, result.stage));
+        offset += result.elapsed;
+    }
+    starts.extend(snapshot.stage.map(|stage| (offset, stage)));
+    let hue = |elapsed: Duration| {
+        starts
+            .iter()
+            .rfind(|(start, _)| *start <= elapsed)
+            .map_or(theme.text, |(_, stage)| theme.stage(*stage))
+    };
+    let lines = |points: &VecDeque<Point>, value: fn(&Point) -> Option<f64>| {
+        let (mut series, mut segment, mut color) = (Vec::new(), Vec::new(), theme.text);
+        for point in points {
+            let value = value(point).filter(|value| value.is_finite() && *value >= 0.0);
+            let point_hue = hue(point.elapsed);
+            if !segment.is_empty() && (value.is_none() || point_hue != color) {
+                series.push((std::mem::take(&mut segment), color));
+            }
+            if let Some(value) = value {
+                color = point_hue;
+                segment.push((point.elapsed.as_secs_f64(), value));
+            }
+        }
+        if !segment.is_empty() {
+            series.push((segment, color));
+        }
+        series
+    };
+    let history = &snapshot.history.points;
+    let latency = focus.map_or(history, |host| &host.history.points);
+    [
+        [
+            lines(history, |point| point.down_bps),
+            lines(history, |point| point.up_bps),
+        ]
+        .concat(),
+        lines(latency, |point| point.latency_ms),
+    ]
 }
 
 fn axis_ceiling(value: f64) -> f64 {
