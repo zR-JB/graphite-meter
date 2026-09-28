@@ -48,11 +48,17 @@ struct Peers {
 }
 
 async fn peers(limit: usize) -> Result<Peers, TestError> {
-    peers_with(limit, None, true).await
+    peers_with(limit, None, true, true).await
 }
 
-/// `window` caps the client's per-stream receive window; `reliable_reset` is its reset_stream_at offer.
-async fn peers_with(limit: usize, window: Option<u32>, reliable_reset: bool) -> Result<Peers, TestError> {
+/// `window` caps the client's per-stream receive window; `reliable_reset` is its reset_stream_at offer,
+/// and `datagrams` its max_datagram_frame_size transport parameter.
+async fn peers_with(
+    limit: usize,
+    window: Option<u32>,
+    reliable_reset: bool,
+    datagrams: bool,
+) -> Result<Peers, TestError> {
     let (certificate, key) = test_identity::generate_identity("localhost")?;
     let certificate = CertificateDer::from_pem_slice(certificate.as_bytes())?;
     let provider = Arc::new(rustls::crypto::ring::default_provider());
@@ -81,6 +87,9 @@ async fn peers_with(limit: usize, window: Option<u32>, reliable_reset: bool) -> 
     client_transport.max_idle_timeout(Some(Duration::from_secs(120).try_into()?));
     if let Some(window) = window {
         client_transport.stream_receive_window(window.into());
+    }
+    if !datagrams {
+        client_transport.datagram_receive_buffer_size(None);
     }
     client.transport_config(Arc::new(client_transport));
     let server = noq::Endpoint::server(server, "127.0.0.1:0".parse()?)?;
@@ -759,7 +768,7 @@ async fn raw_stream(recv: &mut noq::RecvStream) -> (Vec<u8>, Result<(), Code>) {
 async fn cancelled_lanes_keep_their_association_header() -> Result<(), TestError> {
     // One-byte stream credit makes the header trickle, so the first lane is cancelled mid-header.
     for (reliable_reset, window) in [(true, Some(1)), (true, None), (false, Some(1)), (false, None)] {
-        let peers = peers_with(usize::MAX, window, reliable_reset).await?;
+        let peers = peers_with(usize::MAX, window, reliable_reset, true).await?;
         let cancel = Arc::new(Notify::new());
         let cancelled = cancel.clone();
         let (serving, _) = serve_sessions(&peers, move |session| {
@@ -966,7 +975,7 @@ async fn data_after_the_peers_close_is_a_message_error() -> Result<(), TestError
 #[tokio::test]
 async fn a_peer_withholding_stream_credit_cannot_hold_a_session() -> Result<(), TestError> {
     // No stream credit: the 200 head never leaves, yet the close ends within its drain.
-    let peers = peers_with(usize::MAX, Some(0), true).await?;
+    let peers = peers_with(usize::MAX, Some(0), true, true).await?;
     let (accepted, closed) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
     let (serving, _) = serve_sessions(&peers, {
         let (accepted, closed) = (accepted.clone(), closed.clone());
@@ -991,7 +1000,7 @@ async fn a_peer_withholding_stream_credit_cannot_hold_a_session() -> Result<(), 
     drop(serving);
 
     // Nor can it hold the refusal of a CONNECT that never showed WebTransport SETTINGS.
-    let peers = peers_with(usize::MAX, Some(0), true).await?;
+    let peers = peers_with(usize::MAX, Some(0), true, true).await?;
     let (serving, _) = serve_sessions(&peers, |_| async { panic!("accepted without SETTINGS") });
     let (_connect, response) = raw_connect(&peers.client, "/wt").await?;
     while peers.budget.used.load(Ordering::Relaxed) == 0 {
@@ -1192,5 +1201,22 @@ async fn webtransport_needs_the_peer_signal_and_datagrams() -> Result<(), TestEr
     jump(Duration::from_secs(6)).await;
     assert_eq!(first_frame(&mut recv).await?, bad_request);
     drop((send, serving));
+    Ok(())
+}
+
+#[tokio::test]
+async fn http_datagrams_need_the_quic_datagram_parameter() -> Result<(), TestError> {
+    let peers = peers_with(usize::MAX, None, true, false).await?;
+    let (serving, _) = serve(&peers, |_, _| async {});
+    let _control = uni(&peers.client, &settings(&[(0x33, 1)]), false).await?;
+    assert_eq!(closed_with(&peers.client).await, Code::H3_SETTINGS_ERROR);
+    assert_eq!(
+        serving.await?,
+        Err(Error::Connection {
+            local: true,
+            code: Code::H3_SETTINGS_ERROR,
+            reason: Bytes::new()
+        })
+    );
     Ok(())
 }

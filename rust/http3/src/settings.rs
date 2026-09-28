@@ -60,12 +60,23 @@ pub(crate) enum Dialect {
 pub(crate) struct Peer {
     pub(crate) max_field_section_size: Option<u64>,
     pub(crate) connect_protocol: bool,
+    /// RFC 9297's H3_DATAGRAM, as opposed to draft 04's.
+    h3_datagram: bool,
     datagrams: bool,
     draft02: bool,
     current: bool,
 }
 
 impl Peer {
+    /// RFC 9297 §2.1.1: H3_DATAGRAM without the datagram transport parameter is H3_SETTINGS_ERROR,
+    /// as Go has it; draft 04's setting alone only leaves WebTransport off.
+    pub(crate) fn check(&self, datagram_frames: bool) -> Result<(), Code> {
+        if self.h3_datagram && !datagram_frames {
+            return Err(Code::H3_SETTINGS_ERROR);
+        }
+        Ok(())
+    }
+
     /// WebTransport needs a WebTransport signal, HTTP datagrams and the datagram transport parameter.
     /// Peers on drafts 07 to 14 get the current dialect without flow control, as with Go.
     pub(crate) fn webtransport(&self, datagram_frames: bool) -> Option<Dialect> {
@@ -131,7 +142,11 @@ impl Reader {
             MAX_FIELD_SECTION_SIZE => peer.max_field_section_size = Some(value),
             ENABLE_CONNECT_PROTOCOL | H3_DATAGRAM if value > 1 => return Err(Code::H3_SETTINGS_ERROR),
             ENABLE_CONNECT_PROTOCOL => peer.connect_protocol = value == 1,
-            H3_DATAGRAM | H3_DATAGRAM_DRAFT04 => peer.datagrams |= value == 1,
+            H3_DATAGRAM => {
+                peer.h3_datagram = value == 1;
+                peer.datagrams |= peer.h3_datagram;
+            }
+            H3_DATAGRAM_DRAFT04 => peer.datagrams |= value == 1,
             WT_ENABLE_DRAFT02 => peer.draft02 = value == 1,
             WT_ENABLED | WT_MAX_SESSIONS_DRAFT13 | WT_MAX_SESSIONS_DRAFT07 => peer.current |= value > 0,
             _ => {}
@@ -218,6 +233,18 @@ mod tests {
             (&[], None),
         ] {
             assert_eq!(parse(settings).unwrap().webtransport(true), dialect, "{settings:x?}");
+        }
+        for (settings, datagram_frames, checked) in [
+            (&[(0x33, 1)][..], false, Err(Code::H3_SETTINGS_ERROR)),
+            (&[(0x33, 1)], true, Ok(())),
+            (&[(0x33, 0)], false, Ok(())),
+            (&[(0xffd277, 1)], false, Ok(())),
+        ] {
+            assert_eq!(
+                parse(settings).unwrap().check(datagram_frames),
+                checked,
+                "{settings:x?}"
+            );
         }
         for invalid in [
             &[(0x08, 2)][..],

@@ -594,9 +594,7 @@ impl PeerControl {
                     self.started = true;
                     let mut settings = settings::Reader::new(length)?;
                     match settings.read(&mut Bytes::new())? {
-                        Some(peer) => {
-                            shared.peer.send_replace(Some(peer));
-                        }
+                        Some(peer) => settled(shared, peer)?,
                         None => self.settings = Some(settings),
                     }
                 }
@@ -619,7 +617,7 @@ impl PeerControl {
                     if let Some(settings) = &mut self.settings {
                         if let Some(peer) = settings.read(&mut payload)? {
                             self.settings = None;
-                            shared.peer.send_replace(Some(peer));
+                            settled(shared, peer)?;
                         }
                     } else if matches!(self.kind, frame::GOAWAY | frame::MAX_PUSH_ID | frame::CANCEL_PUSH) {
                         self.value[self.used..self.used + payload.len()].copy_from_slice(&payload);
@@ -644,4 +642,11 @@ impl PeerControl {
         }
         Ok(())
     }
+}
+
+/// Publishes the peer's SETTINGS once they agree with its transport parameters.
+fn settled(shared: &Shared, peer: Peer) -> Result<(), Code> {
+    peer.check(shared.quic.max_datagram_size().is_some())?;
+    shared.peer.send_replace(Some(peer));
+    Ok(())
 }
