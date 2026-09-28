@@ -36,6 +36,7 @@
   } from "../latencyProfile";
   import ResultSummary from "../ResultSummary.svelte";
   import ServerScope from "../ServerScope.svelte";
+  import { allServersLabel } from "../../presentation/serverAppearance";
   import LatencyProfileView from "../LatencyProfileView.svelte";
 
   interface Props {
@@ -236,24 +237,24 @@
     </dl>
     <div class="head-actions">
       {#if details}
-        <span class="lens">
-          <ServerScope
-            quiet
-            servers={details.selection}
-            value={shown}
-            onchange={(id) => (shown = id)}
-            disabledIds={details.selection
-              .filter(
-                ({ id }) =>
-                  !details.servers.some(({ server }) => server.id === id),
-              )
-              .map(({ id }) => id)}
-            aggregate={details.participants.length < details.selection.length
-              ? `${details.participants.length} of ${details.selection.length} servers`
-              : `All ${details.selection.length} servers`}
-            label="Servers shown in this result"
-          />
-        </span>
+        <ServerScope
+          quiet
+          servers={details.selection}
+          value={shown}
+          onchange={(id) => (shown = id)}
+          disabledIds={details.selection
+            .filter(
+              ({ id }) =>
+                !details.servers.some(({ server }) => server.id === id),
+            )
+            .map(({ id }) => id)}
+          aggregate={allServersLabel(
+            details.selection.length,
+            details.participants.length,
+            details.servers.length,
+          )}
+          label="Servers shown in this result"
+        />
       {/if}
       <button
         class="btn btn-icon btn-quiet"
@@ -404,11 +405,6 @@
 </article>
 
 <style>
-  .lens {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
   .result-detail {
     display: flex;
     flex-direction: column;

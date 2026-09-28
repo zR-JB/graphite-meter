@@ -158,8 +158,8 @@ hue, never by a boxed icon.
   its graph share the first screen with it. The footer under the dial holds the phase's note or a failure, and while
   no data arrives, for how long.
 - **Server lens** (`ServerLens`, `ServerScope quiet`): with several servers, one quiet field over the instrument
-  (All servers or one) drives the stage cards and which server's latency is shown once the run finishes. History's
-  detail has its own.
+  (All servers or one), as wide as the choice it shows, drives the stage cards and which server's latency is shown
+  once the run finishes. History's detail has its own.
 - **Stage card** (`ResultSummary`): a rule and wash in the stage hue; the name and a status word when not complete;
   the value (bidirectional: ↓ and ↑ in their own hues); the wire rate or a failure's reason; the graph; then facts:
   Peak, Stability, No data (from 0.5 s), Down + up, Transferred, in columns of at least 84 px, so a phone's card

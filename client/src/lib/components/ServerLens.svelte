@@ -1,6 +1,7 @@
 <script lang="ts">
   import ServerScope from "./ServerScope.svelte";
   import type { ServerIdentity } from "../servers/catalog";
+  import { allServersLabel } from "../presentation/serverAppearance";
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
 
@@ -23,25 +24,17 @@
   );
 </script>
 
-<span class="lens">
-  <ServerScope
-    quiet
-    {servers}
-    value={store.resultScope}
-    onchange={controller.showServer}
-    label="Servers shown in the results"
-    aggregate={participants.length < servers.length
-      ? `${participants.length} of ${servers.length} servers`
-      : `All ${servers.length} servers`}
-    disabledIds={unmeasured}
-    disabled={store.isRunning}
-  />
-</span>
-
-<style>
-  .lens {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
-</style>
+<ServerScope
+  quiet
+  {servers}
+  value={store.resultScope}
+  onchange={controller.showServer}
+  label="Servers shown in the results"
+  aggregate={allServersLabel(
+    servers.length,
+    participants.length,
+    servers.length - unmeasured.length,
+  )}
+  disabledIds={unmeasured}
+  disabled={store.isRunning}
+/>
