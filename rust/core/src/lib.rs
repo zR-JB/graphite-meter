@@ -2,7 +2,6 @@
 #![forbid(unsafe_code)]
 
 pub mod approval;
-pub mod capsule;
 pub mod catalog;
 pub mod discovery;
 pub mod duration;
