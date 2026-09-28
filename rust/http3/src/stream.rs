@@ -133,8 +133,14 @@ impl RecvHalf {
                     self.message = Message::new(self.shared.role.field_limit(), true);
                 }
                 Ok(response) => {
+                    // These never have content, whatever content-length says (RFC 9114 §4.1.2).
+                    let bodiless = self.head
+                        || matches!(
+                            response.message.status(),
+                            http::StatusCode::NO_CONTENT | http::StatusCode::NOT_MODIFIED
+                        );
                     self.message
-                        .content_length(if self.head { Some(0) } else { response.content_length });
+                        .content_length(if bodiless { Some(0) } else { response.content_length });
                     return Ok(response.message);
                 }
                 Err(invalid) => return Err(self.abort(invalid_code(invalid))),

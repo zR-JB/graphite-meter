@@ -216,6 +216,28 @@ async fn requests_carry_heads_and_bodies_both_ways() -> Result<(), TestError> {
 }
 
 #[tokio::test]
+async fn responses_without_content_may_declare_a_length() -> Result<(), TestError> {
+    let peers = peers(usize::MAX).await?;
+    let (serving, _) = serve(&peers, |request, stream| async move {
+        let status: u16 = request.uri().path()[1..].parse().unwrap();
+        let mut send = stream.split().0;
+        let response = http::Response::builder().status(status).header("content-length", 11);
+        send.send_response(response.body(()).unwrap()).await.unwrap();
+        send.finish().await.unwrap();
+    });
+    let (driver, requests) = client(&peers);
+    for status in [204, 304] {
+        let (mut send, mut recv) = requests.send_request(get(&format!("/{status}"))).await?.split();
+        send.finish().await?;
+        assert_eq!(recv.response().await?.status(), status);
+        assert_eq!(body(&mut recv).await, Ok(Vec::new()), "{status}");
+    }
+    settled(&peers.budget).await;
+    drop((driver, serving));
+    Ok(())
+}
+
+#[tokio::test]
 async fn abandoned_streams_carry_the_codes_table() -> Result<(), TestError> {
     let peers = peers(usize::MAX).await?;
     let (serving, _) = serve(&peers, |request, stream| async move {
