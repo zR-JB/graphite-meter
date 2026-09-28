@@ -312,6 +312,7 @@ mod tests {
             (vec![GET[0], GET[1], GET[3]], Invalid::Malformed),
             (vec![GET[0], GET[2], GET[3]], Invalid::Malformed),
             (vec![GET[0], GET[1], GET[2], (":path", "relative")], Invalid::Malformed),
+            (vec![GET[0], GET[1], GET[2], (":path", "")], Invalid::Malformed),
             (
                 vec![GET[0], GET[1], (":authority", "user@meter.example"), GET[3]],
                 Invalid::Malformed,
@@ -323,6 +324,10 @@ mod tests {
             ),
             (
                 connect(&[(":protocol", "webtransport"), GET[1], GET[2]]),
+                Invalid::Malformed,
+            ),
+            (
+                connect(&[(":protocol", "webtransport"), GET[1], GET[2], (":path", "")]),
                 Invalid::Malformed,
             ),
             (connect(&[GET[1], GET[2], GET[3]]), Invalid::Malformed),
