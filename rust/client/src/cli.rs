@@ -26,25 +26,74 @@ impl std::fmt::Display for FlagError {
 }
 impl std::error::Error for FlagError {}
 
-const VALUE_FLAGS: [&str; 17] = [
-    "url",
-    "server",
-    "throughput-origin",
-    "throughput-protocol",
-    "throughput-transport",
-    "latency-origin",
-    "latency-transport",
-    "stages",
-    "warmup",
-    "latency-duration",
-    "download-duration",
-    "upload-duration",
-    "bidirectional-duration",
-    "auto-streams",
-    "streams",
-    "ping",
-    "loaded-ping",
-];
+/// What the flags set: the run, and the flags that act once every flag has parsed.
+#[derive(Default)]
+struct Parsed {
+    config: Config,
+    report: bool,
+    version: bool,
+    legal: bool,
+    /// Go checks the path choices after parsing, so the last one given counts.
+    paths: [String; 3],
+}
+
+/// A boolean flag, which takes a value only inline, or a flag with a value, whose error is the
+/// reason Go's `invalid value` message gives.
+enum Flag {
+    Toggle(fn(&mut Parsed) -> &mut bool),
+    Value(fn(&mut Parsed, &str) -> Result<(), String>),
+}
+
+/// Go's flag set: what each flag sets in the parse `p` from its value `v`, or None for a flag it
+/// does not define.
+fn defined(name: &str) -> Option<Flag> {
+    use Flag::{Toggle, Value};
+    Some(match name {
+        "report" => Toggle(|p| &mut p.report),
+        "insecure" => Toggle(|p| &mut p.config.insecure),
+        "loaded-latency" => Toggle(|p| &mut p.config.loaded_latency),
+        "version" => Toggle(|p| &mut p.version),
+        // Go defines -legal but prints notices only for an exact --legal; every spelling prints them here.
+        "legal" => Toggle(|p| &mut p.legal),
+        // Go reads an empty origin as its default.
+        "url" => Value(|p, v| match v {
+            "" => put(&mut p.config.url, Config::default().url),
+            _ => put(&mut p.config.url, v.into()),
+        }),
+        "server" => Value(|p, id| {
+            let servers = &mut p.config.servers;
+            if id.is_empty() || servers.len() >= MAX_SELECTED_SERVERS || servers.iter().any(|existing| existing == id) {
+                return Err(format!("select one to {MAX_SELECTED_SERVERS} different server IDs"));
+            }
+            servers.push(id.into());
+            Ok(())
+        }),
+        "throughput-origin" => Value(|p, v| put(&mut p.config.throughput_origin, automatic(v))),
+        "throughput-protocol" => Value(|p, v| put(&mut p.paths[0], v.into())),
+        "throughput-transport" => Value(|p, v| put(&mut p.paths[1], v.into())),
+        "latency-origin" => Value(|p, v| put(&mut p.config.latency_origin, automatic(v))),
+        "latency-transport" => Value(|p, v| put(&mut p.paths[2], v.into())),
+        "stages" => Value(|p, v| put(&mut p.config.stages, stages(v)?)),
+        // Go refuses a negative duration in validation; the nearest invalid value keeps that message.
+        "warmup" => Value(|p, v| put(&mut p.config.warmup, duration(v, Duration::MAX)?)),
+        "latency-duration" => Value(|p, v| put(&mut p.config.latency_duration, duration(v, Duration::ZERO)?)),
+        "download-duration" => Value(|p, v| put(&mut p.config.download_duration, duration(v, Duration::ZERO)?)),
+        "upload-duration" => Value(|p, v| put(&mut p.config.upload_duration, duration(v, Duration::ZERO)?)),
+        "bidirectional-duration" => {
+            Value(|p, v| put(&mut p.config.bidirectional_duration, duration(v, Duration::ZERO)?))
+        }
+        "auto-streams" => Value(|p, v| put(&mut p.config.auto_streams, count(v)?)),
+        "streams" => Value(|p, v| put(&mut p.config.streams, count(v)?)),
+        "ping" => Value(|p, v| put(&mut p.config.ping_interval, cadence(v)?)),
+        "loaded-ping" => Value(|p, v| put(&mut p.config.loaded_ping_interval, cadence(v)?)),
+        _ => return None,
+    })
+}
+
+fn put<T>(target: &mut T, value: T) -> Result<(), String> {
+    *target = value;
+    Ok(())
+}
 
 pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, Error> {
     let args = args.into_iter().collect::<Vec<_>>();
@@ -52,10 +101,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, Error> 
         return Ok(Action::Legal);
     }
     let mut args = args.into_iter();
-    let mut config = Config::default();
-    let (mut report, mut version, mut legal) = (false, false, false);
-    // Go checks the path choices after parsing, so the last one given counts.
-    let [mut protocol, mut throughput_transport, mut latency_transport] = ["auto"; 3].map(String::from);
+    let mut parsed = Parsed::default();
     let mut argument = None;
     while let Some(arg) = args.next() {
         let arg = arg.into_string().map_err(|_| "flags must be valid UTF-8")?;
@@ -75,91 +121,48 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, Error> 
             return Err(FlagError(format!("bad flag syntax: {arg}")).into());
         }
         let (name, inline) = flag.split_once('=').map_or((flag, None), |(k, v)| (k, Some(v)));
-        let toggle = match name {
-            "report" => Some(&mut report),
-            "insecure" => Some(&mut config.insecure),
-            "loaded-latency" => Some(&mut config.loaded_latency),
-            "version" => Some(&mut version),
-            // Go defines -legal but prints notices only for an exact --legal; every spelling prints them here.
-            "legal" => Some(&mut legal),
-            "help" | "h" => return Ok(Action::Help),
-            // The name is checked before a value is read.
-            _ if !VALUE_FLAGS.contains(&name) => {
-                return Err(FlagError(format!("flag provided but not defined: -{name}")).into());
-            }
-            _ => None,
-        };
-        if let Some(toggle) = toggle {
-            let value = inline.unwrap_or("true");
-            *toggle = boolean(value)
-                .ok_or_else(|| FlagError(format!("invalid boolean value {value:?} for -{name}: parse error")))?;
-            continue;
+        if matches!(name, "help" | "h") {
+            return Ok(Action::Help);
         }
-        let value = match inline {
-            Some(value) => value.to_owned(),
-            None => args
-                .next()
-                .ok_or_else(|| FlagError(format!("flag needs an argument: -{name}")))?
-                .into_string()
-                .map_err(|_| "flag values must be valid UTF-8")?,
-        };
-        match name {
-            "throughput-protocol" => protocol = value,
-            "throughput-transport" => throughput_transport = value,
-            "latency-transport" => latency_transport = value,
-            _ => set(&mut config, name, &value)
-                .map_err(|reason| FlagError(format!("invalid value {value:?} for flag -{name}: {reason}")))?,
+        // The name is checked before a value is read.
+        match defined(name).ok_or_else(|| FlagError(format!("flag provided but not defined: -{name}")))? {
+            Flag::Toggle(toggle) => {
+                let value = inline.unwrap_or("true");
+                *toggle(&mut parsed) = boolean(value)
+                    .ok_or_else(|| FlagError(format!("invalid boolean value {value:?} for -{name}: parse error")))?;
+            }
+            Flag::Value(apply) => {
+                let value = match inline {
+                    Some(value) => value.to_owned(),
+                    None => args
+                        .next()
+                        .ok_or_else(|| FlagError(format!("flag needs an argument: -{name}")))?
+                        .into_string()
+                        .map_err(|_| "flag values must be valid UTF-8")?,
+                };
+                apply(&mut parsed, &value)
+                    .map_err(|reason| FlagError(format!("invalid value {value:?} for flag -{name}: {reason}")))?;
+            }
         }
     }
     // Like Go's -version, these act once every flag has parsed, before arguments and settings are checked.
-    if version {
+    if parsed.version {
         return Ok(Action::Version);
     }
-    if legal {
+    if parsed.legal {
         return Ok(Action::Legal);
     }
     if let Some(argument) = argument {
         return Err(format!("unexpected argument {argument:?}").into());
     }
+    let mut config = parsed.config;
     config.validate()?;
-    paths(&mut config, &protocol, &throughput_transport, &latency_transport)?;
+    let [protocol, throughput, latency] = &parsed.paths;
+    paths(&mut config, protocol, throughput, latency)?;
     Ok(Action::Run {
         config: Box::new(config),
-        report,
+        report: parsed.report,
     })
-}
-
-/// Sets a value flag; an error is the reason Go's `invalid value` message gives.
-fn set(config: &mut Config, name: &str, value: &str) -> Result<(), String> {
-    match name {
-        // Go reads an empty origin as its default.
-        "url" if value.is_empty() => config.url = Config::default().url,
-        "url" => config.url = value.into(),
-        "server" => {
-            if value.is_empty()
-                || config.servers.len() >= MAX_SELECTED_SERVERS
-                || config.servers.iter().any(|id| id == value)
-            {
-                return Err(format!("select one to {MAX_SELECTED_SERVERS} different server IDs"));
-            }
-            config.servers.push(value.into());
-        }
-        "throughput-origin" => config.throughput_origin = automatic(value),
-        "latency-origin" => config.latency_origin = automatic(value),
-        "stages" => config.stages = stages(value)?,
-        // Go refuses a negative duration in validation; the nearest invalid value keeps that message.
-        "warmup" => config.warmup = duration(value)?.unwrap_or(Duration::MAX),
-        "latency-duration" => config.latency_duration = duration(value)?.unwrap_or_default(),
-        "download-duration" => config.download_duration = duration(value)?.unwrap_or_default(),
-        "upload-duration" => config.upload_duration = duration(value)?.unwrap_or_default(),
-        "bidirectional-duration" => config.bidirectional_duration = duration(value)?.unwrap_or_default(),
-        "auto-streams" => config.auto_streams = count(value)?,
-        "streams" => config.streams = count(value)?,
-        "ping" => config.ping_interval = cadence(value)?,
-        "loaded-ping" => config.loaded_ping_interval = cadence(value)?,
-        _ => unreachable!("-{name} is not a value flag"),
-    }
-    Ok(())
 }
 
 /// Go reads an empty path choice as auto and refuses an unknown one with the settings, after every flag has parsed.
@@ -209,10 +212,9 @@ fn cadence(value: &str) -> Result<Duration, &'static str> {
         Some((.., interval)) => Ok(*interval),
         // Zero means reply-driven here but is a fixed cadence in Go, so a zero or negative duration reads as
         // 1 ns, which validation refuses as Go does.
-        None => Ok(duration(name)
+        None => Ok(duration(name, Duration::ZERO)
             .map_err(|_| "use reply-driven, fast, medium, slow, or a duration such as 400ms")?
-            .filter(|interval| !interval.is_zero())
-            .unwrap_or(Duration::from_nanos(1))),
+            .max(Duration::from_nanos(1))),
     }
 }
 
@@ -227,10 +229,10 @@ fn count(value: &str) -> Result<usize, &'static str> {
     }
 }
 
-/// Go's `flag.DurationVar`; a negative duration reads as None.
-fn duration(value: &str) -> Result<Option<Duration>, &'static str> {
+/// Go's `flag.DurationVar`; a negative duration reads as `negative`.
+fn duration(value: &str, negative: Duration) -> Result<Duration, &'static str> {
     let nanos = parse_go_duration(value).map_err(|_| "parse error")?;
-    Ok(u64::try_from(nanos).ok().map(Duration::from_nanos))
+    Ok(u64::try_from(nanos).map_or(negative, Duration::from_nanos))
 }
 
 fn stages(value: &str) -> Result<Vec<Stage>, String> {
