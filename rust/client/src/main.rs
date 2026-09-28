@@ -27,6 +27,11 @@ static ALLOCATOR: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
 async fn main() {
     let code = match cli::parse(std::env::args_os().skip(1)) {
         Ok(action) => run(action).await.unwrap_or_else(|error| fail(&error, 1)),
+        // Go's flag package prints its refusal without the program name, then the usage.
+        Err(error) if error.is::<cli::FlagError>() => {
+            eprint!("{}\n{}", safe(&error.to_string()), cli::HELP);
+            2
+        }
         Err(error) => fail(&error, 2),
     };
     if code != 0 {
@@ -40,7 +45,7 @@ fn fail(error: &Error, code: i32) -> i32 {
 async fn run(action: Action) -> Result<i32, Error> {
     let (config, report_only) = match action {
         Action::Help => {
-            print!("{}", cli::HELP);
+            eprint!("{}", cli::HELP);
             return Ok(0);
         }
         Action::Version => {

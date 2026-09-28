@@ -437,3 +437,129 @@ async fn version_names_the_client_like_go() -> Result<(), Error> {
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn help_goes_to_stderr_like_go() -> Result<(), Error> {
+    for flag in ["-h", "-help", "--help", "--h", "-h=1"] {
+        let output = flags(&[flag]).await?;
+        assert_eq!(output.status.code(), Some(0), "{flag}");
+        assert!(output.stdout.is_empty(), "{flag}");
+        assert_eq!(
+            String::from_utf8(output.stderr)?,
+            graphite_meter_client::cli::HELP,
+            "{flag}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn flag_errors_print_go_messages_then_the_usage() -> Result<(), Error> {
+    for (args, message) in [
+        (&["-x", "-url"][..], "flag provided but not defined: -x"),
+        (&["-version", "--x=1"], "flag provided but not defined: -x"),
+        (&["-url"], "flag needs an argument: -url"),
+        (&["---x"], "bad flag syntax: ---x"),
+        (
+            &["-report=maybe"],
+            r#"invalid boolean value "maybe" for -report: parse error"#,
+        ),
+        (
+            &["-legal=maybe"],
+            r#"invalid boolean value "maybe" for -legal: parse error"#,
+        ),
+        (&["-warmup", "x"], r#"invalid value "x" for flag -warmup: parse error"#),
+        (
+            &["-streams", "99999999999999999999"],
+            r#"invalid value "99999999999999999999" for flag -streams: value out of range"#,
+        ),
+        (
+            &["-stages", "typo"],
+            r#"invalid value "typo" for flag -stages: unknown stage "typo": use latency, download, upload, or bidirectional"#,
+        ),
+        (
+            &["-ping", "x"],
+            r#"invalid value "x" for flag -ping: use reply-driven, fast, medium, slow, or a duration such as 400ms"#,
+        ),
+        (
+            &["-server", "a", "-server", "a"],
+            r#"invalid value "a" for flag -server: select one to 4 different server IDs"#,
+        ),
+    ] {
+        let output = flags(args).await?;
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        assert_eq!(
+            String::from_utf8(output.stderr)?,
+            format!("{message}\n{}", graphite_meter_client::cli::HELP),
+            "{args:?}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn arguments_and_checks_after_parsing_fail_like_go() -> Result<(), Error> {
+    for (args, message) in [
+        (&["foo", "-x"][..], r#"unexpected argument "foo""#),
+        (&["--", "-x"], r#"unexpected argument "-x""#),
+        (&["-"], r#"unexpected argument "-""#),
+        (&["-report", "maybe"], r#"unexpected argument "maybe""#),
+        (
+            &["-throughput-protocol", "spdy", "-throughput-protocol", "http4"],
+            r#"invalid throughput protocol "http4": use auto, http1, http2, or http3"#,
+        ),
+        (
+            &["-throughput-transport", "webtransport-datagram"],
+            r#"invalid throughput transport "webtransport-datagram": use auto, fetch-stream, or webtransport"#,
+        ),
+        (
+            &["-latency-transport", "x"],
+            r#"invalid latency transport "x": use auto, websocket, or webtransport"#,
+        ),
+        (&["-warmup", "-1s"], "warmup must be from 0 s to 4 s"),
+        (
+            &["-upload-duration", "-1s"],
+            "upload duration must be from 1 s to 300 s",
+        ),
+        (
+            &["-streams", "-1"],
+            "forced streams must be from 1 to 14 per server and direction, or 0 for automatic",
+        ),
+        (
+            &["-ping", "-1s"],
+            "latency cadence must be reply-driven or at least 80ms",
+        ),
+    ] {
+        let output = flags(args).await?;
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        assert_eq!(
+            String::from_utf8(output.stderr)?,
+            format!("graphite-meter-client: {message}\n"),
+            "{args:?}"
+        );
+    }
+    Ok(())
+}
+
+/// -version and -legal act once every flag parses, before arguments and settings are checked.
+#[tokio::test]
+async fn version_and_legal_act_after_parsing() -> Result<(), Error> {
+    let version = flags(&["-version", "foo"]).await?;
+    assert_eq!(version.status.code(), Some(0));
+    assert!(version.stdout.starts_with(b"graphite-meter-client "));
+    let legal = flags(&["--legal"]).await?;
+    for args in [&["-legal"][..], &["--legal=true", "foo"], &["-url", "--legal"]] {
+        let output = flags(args).await?;
+        assert_eq!(output.status.code(), legal.status.code(), "{args:?}");
+        assert_eq!(
+            (&output.stdout, &output.stderr),
+            (&legal.stdout, &legal.stderr),
+            "{args:?}"
+        );
+    }
+    let output = flags(&["-legal=false", "-version"]).await?;
+    assert_eq!(output.stdout, version.stdout);
+    Ok(())
+}
