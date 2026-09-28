@@ -19,6 +19,12 @@ pub mod vocabulary;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
+/// The release this build reports, as `-version` prints it.
+pub const VERSION: &str = match option_env!("GM_ENGINE_VERSION") {
+    Some(version) => version,
+    None => concat!(env!("CARGO_PKG_VERSION"), "-rust-dev"),
+};
+
 mod theme;
 mod tls;
 pub mod webtransport;

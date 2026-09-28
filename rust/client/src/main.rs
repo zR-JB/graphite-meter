@@ -49,10 +49,7 @@ async fn run(action: Action) -> Result<i32, Error> {
             return Ok(0);
         }
         Action::Version => {
-            println!(
-                "graphite-meter-client {}",
-                option_env!("GM_ENGINE_VERSION").unwrap_or(concat!(env!("CARGO_PKG_VERSION"), "-rust-dev"))
-            );
+            println!("graphite-meter-client {}", graphite_meter_client::VERSION);
             return Ok(0);
         }
         Action::Legal => {

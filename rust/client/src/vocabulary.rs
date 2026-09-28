@@ -247,7 +247,7 @@ mod tests {
             plan: vec![Stage::Latency],
             ..Snapshot::default()
         };
-        let report = crate::report::render(&snapshot, crate::report::WIDTH).unwrap_or_default();
+        let report = crate::report::render(&snapshot, crate::report::WIDTH, false).unwrap_or_default();
         let header = report
             .lines()
             .find(|line| line.starts_with("Latency "))

@@ -3,12 +3,6 @@ use super::setup::{on_off, seconds};
 use super::*;
 use crate::model::Stage;
 
-/// The release this build reports, as `-version` prints it.
-const VERSION: &str = match option_env!("GM_ENGINE_VERSION") {
-    Some(version) => version,
-    None => concat!(env!("CARGO_PKG_VERSION"), "-rust-dev"),
-};
-
 /// Go's terminal progress bar (OSC 9;4): indeterminate while paths are checked, then the share of stage time done.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Progress {
@@ -119,7 +113,7 @@ impl Ui {
         let status_pill = format!(" {status} ");
         let spacer = usize::from(regions[0].width).saturating_sub(title.width() + status_pill.width());
         let badge = Style::new().fg(self.theme.inverse).add_modifier(Modifier::BOLD);
-        let version = format!("native client {VERSION}  ");
+        let version = format!("native client {}  ", crate::VERSION);
         let context = if self.live && self.snapshot.started() {
             self.run_servers()
                 .iter()
@@ -1441,7 +1435,7 @@ mod tests {
     #[test]
     fn header_shows_the_version_beside_the_catalogue_or_the_run_servers() {
         let mut ui = Ui::new(Config::default(), measuring());
-        let version = format!(" native client {VERSION}  ");
+        let version = format!(" native client {}  ", crate::VERSION);
         assert!(rows(&mut ui, 100, 30)[2].starts_with(&format!("{version}http://127.0.0.1:7246 ")));
         ui.live = true;
         assert!(rows(&mut ui, 100, 30)[2].starts_with(&format!("{version}Alpha, Beta ")));
