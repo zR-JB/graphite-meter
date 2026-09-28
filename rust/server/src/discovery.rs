@@ -1,11 +1,11 @@
-//! Concrete discovery responses shared by HTTP listener adapters.
+//! Discovery responses and the page's connect sources, built once per request hostname as Go's hostDiscovery.
 use crate::{
     admission::Admission,
-    config::{Config, ConfigError, NativeKind},
-    preflight::{Preflight, discovery_host},
+    config::{AuthMode, Config, ConfigError, NativeKind},
+    preflight::{Preflight, connect_origins, discovery_host},
 };
 use bytes::Bytes;
-use graphite_meter_core::origin::target_origin;
+use graphite_meter_core::origin::{browser_connect_source_supported, canonical_origin, target_origin};
 use http::{Request, Response, StatusCode, header, uri::Authority};
 use std::{
     collections::HashMap,
@@ -19,6 +19,8 @@ pub struct Discovery {
     config: Arc<Config>,
     preflight: Preflight,
     admission: Admission,
+    /// Under authentication every page names the public host, as Go's authenticated page policy does.
+    page_host: Option<String>,
     configured: HashMap<String, Arc<HostResponses>>,
     hosts: Mutex<HashMap<String, Arc<HostResponses>>>,
 }
@@ -26,11 +28,21 @@ pub struct Discovery {
 struct HostResponses {
     preflight: Bytes,
     catalog: Option<Bytes>,
+    page_sources: Arc<[String]>,
 }
 
 impl Discovery {
     pub fn new(config: Arc<Config>, admission: Admission) -> Result<Self, ConfigError> {
         let preflight = Preflight::new(config.clone())?;
+        let page_host = if config.auth.mode == AuthMode::Off {
+            None
+        } else {
+            Some(
+                target_origin(&config.auth.public_url)?
+                    .ok_or("missing authentication origin")?
+                    .host,
+            )
+        };
         let public = &config.public;
         let origins = ["http://localhost", config.auth.public_url.as_str()]
             .into_iter()
@@ -56,6 +68,7 @@ impl Discovery {
         Ok(Self {
             preflight,
             admission,
+            page_host,
             config,
             configured,
             hosts: Mutex::default(),
@@ -85,6 +98,13 @@ impl Discovery {
         Ok(Some(response))
     }
 
+    pub(crate) fn page_sources(&self, host: &str) -> Result<Arc<[String]>, ConfigError> {
+        Ok(self
+            .for_host(self.page_host.as_deref().unwrap_or(host))?
+            .page_sources
+            .clone())
+    }
+
     fn for_host(&self, host: &str) -> Result<Arc<HostResponses>, ConfigError> {
         let host = discovery_host(host);
         if let Some(responses) = self.configured.get(host) {
@@ -107,12 +127,14 @@ impl Discovery {
 
 /// An invalid catalogue is logged once per build and answered 500 until the host is built again.
 fn build(config: &Config, preflight: &Preflight, host: &str) -> Result<HostResponses, ConfigError> {
+    let document = preflight.build(host)?;
+    let connect = connect_origins(&document);
     let mut catalog = config.published_catalog();
     catalog.servers[0].additional_origins.extend(
-        preflight
-            .connect_origins(host)?
-            .into_iter()
-            .filter(|origin| origin.starts_with("http://") || origin.starts_with("https://")),
+        connect
+            .iter()
+            .filter(|origin| origin.starts_with("http://") || origin.starts_with("https://"))
+            .cloned(),
     );
     let data = serde_json::to_vec(&catalog)?;
     let refused = match catalog.validate() {
@@ -123,9 +145,17 @@ fn build(config: &Config, preflight: &Preflight, host: &str) -> Result<HostRespo
     if let Some(error) = &refused {
         crate::log!("[gm:discovery] server catalogue for host {host:?}: {error:?}");
     }
+    let mut page_sources = config.server_catalog.connect_sources();
+    page_sources.extend(connect.into_iter().filter(|source| {
+        let http = source.replacen("wss://", "https://", 1).replacen("ws://", "http://", 1);
+        canonical_origin(&http).is_ok() && browser_connect_source_supported(source)
+    }));
+    page_sources.sort_unstable();
+    page_sources.dedup();
     Ok(HostResponses {
-        preflight: serde_json::to_vec(&preflight.build(host)?)?.into(),
+        preflight: serde_json::to_vec(&document)?.into(),
         catalog: refused.is_none().then(|| data.into()),
+        page_sources: page_sources.into(),
     })
 }
 

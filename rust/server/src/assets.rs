@@ -31,8 +31,7 @@ pub fn legal_report() -> Option<&'static [u8]> {
 pub struct Assets {
     entries: &'static [EmbeddedAsset],
     index: Option<Bytes>,
-    inline_script_hash: Option<String>,
-    inline_style_hash: Option<String>,
+    inline_policy: String,
 }
 
 impl Assets {
@@ -44,8 +43,14 @@ impl Assets {
 
     fn from_entries(entries: &'static [EmbeddedAsset], auth_enabled: bool, history_default: bool) -> Self {
         let index = entries.iter().find(|entry| entry.path == "index.html");
-        let inline_script_hash = index.and_then(|entry| inline_hash(entry.bytes, "script"));
-        let inline_style_hash = index.and_then(|entry| inline_hash(entry.bytes, "style"));
+        let inline_policy = [("script", "script-src"), ("style", "style-src")]
+            .map(
+                |(tag, directive)| match index.and_then(|entry| inline_hash(entry.bytes, tag)) {
+                    Some(hash) => format!("; {directive} 'self' 'sha256-{hash}'"),
+                    None => format!("; {directive} 'self'"),
+                },
+            )
+            .concat();
         let index = index.map(|entry| {
             let mut marker = String::new();
             if auth_enabled {
@@ -60,18 +65,20 @@ impl Assets {
         Self {
             entries,
             index,
-            inline_script_hash,
-            inline_style_hash,
+            inline_policy,
         }
     }
 
-    /// Base64 SHA-256 digest, without CSP quotes or the sha256- prefix.
-    pub fn inline_script_hash(&self) -> Option<&str> {
-        self.inline_script_hash.as_deref()
-    }
-
-    pub fn inline_style_hash(&self) -> Option<&str> {
-        self.inline_style_hash.as_deref()
+    /// The shell's content security policy, connecting to `sources` beyond 'self'.
+    pub fn page_policy(&self, sources: &[String]) -> String {
+        let mut policy = String::from(
+            "default-src 'self'; img-src 'self' data:; font-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'self'; connect-src 'self'",
+        );
+        for source in sources {
+            policy.push(' ');
+            policy.push_str(source);
+        }
+        policy + &self.inline_policy
     }
 
     /// `path` is the request URI path, excluding its query. No decoding,
@@ -303,14 +310,7 @@ mod tests {
         let head = assets.serve(&Method::HEAD, "/", &HeaderMap::new());
         assert!(head.body().is_empty());
         assert_eq!(head.headers()["content-length"], get.body().len().to_string());
-        let security = crate::app_security::AppSecurity::new(
-            std::sync::Arc::new(crate::config::Config::default()),
-            assets.inline_script_hash(),
-            assets.inline_style_hash(),
-        )
-        .unwrap();
-        let headers = security.headers("localhost").unwrap();
-        let policy = headers["content-security-policy"].to_str().unwrap();
+        let policy = assets.page_policy(&[]);
         for tag in ["script", "style"] {
             let content = body
                 .split_once(&format!("<{tag}>"))

@@ -80,7 +80,6 @@ pub struct HttpServer {
     uploads: UploadStore,
     auth: Option<crate::auth::http::Service>,
     assets: crate::assets::Assets,
-    app_security: crate::app_security::AppSecurity,
 }
 
 impl HttpServer {
@@ -152,11 +151,6 @@ impl HttpServer {
             )?)
         };
         let assets = crate::assets::Assets::new(auth.is_some(), config.result_history_default);
-        let app_security = crate::app_security::AppSecurity::new(
-            config.clone(),
-            assets.inline_script_hash(),
-            assets.inline_style_hash(),
-        )?;
         let admission = Admission::new(config.limits);
         let discovery = Discovery::new(config.clone(), admission.clone())?;
         let connections = Connections::new(
@@ -189,7 +183,6 @@ impl HttpServer {
             uploads,
             auth,
             assets,
-            app_security,
         })
     }
 
@@ -593,10 +586,16 @@ impl HttpServer {
                     .assets
                     .serve(request.method(), request.uri().path(), request.headers())
                     .map(ResponseBody::bytes);
-                match self.app_security.headers(&crate::discovery::request_host(&request)) {
-                    Ok(headers) => response.headers_mut().extend(headers),
-                    Err(_) => return Ok(text_response(StatusCode::BAD_REQUEST)),
-                }
+                let Ok(sources) = self.discovery.page_sources(&crate::discovery::request_host(&request)) else {
+                    return Ok(text_response(StatusCode::BAD_REQUEST));
+                };
+                let Ok(policy) = self.assets.page_policy(&sources).parse() else {
+                    return Ok(text_response(StatusCode::BAD_REQUEST));
+                };
+                let headers = response.headers_mut();
+                headers.insert("content-security-policy", policy);
+                headers.insert("x-frame-options", http::HeaderValue::from_static("DENY"));
+                crate::auth::pages::harden(headers, self.auth.is_some());
                 return Ok(response);
             }
             if route == Some(Route::Ping) && request.method() != Method::OPTIONS {
