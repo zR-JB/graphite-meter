@@ -262,6 +262,8 @@ impl Oidc {
         if tx.deadline <= Instant::now() || tx.browser != token_hash(browser) {
             return Err((Reason::TransactionReplay, tx.challenge));
         }
+        // As in Go, an empty iss is absent: refused only when the provider advertises it.
+        let issuer = issuer.filter(|issuer| !issuer.is_empty());
         if issuer.is_some_and(|issuer| issuer != self.config.oidc_issuer)
             || (tx.provider.issuer_parameter && issuer.is_none())
         {
@@ -536,6 +538,10 @@ pub(super) mod tests {
     use crate::config::AuthMode;
 
     pub(in crate::auth) fn ready() -> Oidc {
+        ready_with(true)
+    }
+
+    fn ready_with(issuer_parameter: bool) -> Oidc {
         let oidc = Oidc::new(
             &AuthConfig {
                 mode: AuthMode::Oidc,
@@ -556,7 +562,7 @@ pub(super) mod tests {
             "userinfo_endpoint": "https://identity.example/userinfo",
             "jwks_uri": "https://identity.example/jwks",
             "id_token_signing_alg_values_supported": ["RS256"],
-            "authorization_response_iss_parameter_supported": true
+            "authorization_response_iss_parameter_supported": issuer_parameter
         }))
         .unwrap();
         let provider = Provider::new(metadata, "https://identity.example").unwrap();
@@ -623,6 +629,30 @@ pub(super) mod tests {
         let refused = oidc.take(&state, &started.browser, Some("https://other.example")).err();
         assert_eq!(refused, Some((Reason::ResponseIssuer, "challenge".into())));
         assert!(oidc.transactions.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_empty_response_issuer_is_absent_like_go() {
+        for advertised in [false, true] {
+            let oidc = ready_with(advertised);
+            let started = oidc
+                .start("192.0.2.3".parse().unwrap(), "challenge".into(), None)
+                .await
+                .unwrap();
+            let state = query_fields(&started.url)["state"].clone();
+            let taken = oidc
+                .take(&state, &started.browser, Some(""))
+                .map(|_| ())
+                .map_err(|(reason, _)| reason);
+            assert_eq!(
+                taken,
+                if advertised {
+                    Err(Reason::ResponseIssuer)
+                } else {
+                    Ok(())
+                }
+            );
+        }
     }
 
     #[test]
