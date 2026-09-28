@@ -1334,29 +1334,6 @@
   },
   {
     "ecosystem": "cargo",
-    "name": "fastrand",
-    "reviewedVersion": "2.5.0",
-    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
-    "declaredLicenseExpression": "Apache-2.0 OR MIT",
-    "selectedLicenseExpression": "MIT",
-    "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      }
-    ],
-    "modified": false,
-    "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/smol-rs/fastrand; revision 7a1cc2c69ebde6cb3442809213db3fe19a2cb0ba. Cargo archive SHA-256 da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
-  },
-  {
-    "ecosystem": "cargo",
     "name": "ff",
     "reviewedVersion": "0.13.1",
     "upstream": "registry+https://github.com/rust-lang/crates.io-index",
@@ -1485,29 +1462,6 @@
   },
   {
     "ecosystem": "cargo",
-    "name": "futures",
-    "reviewedVersion": "0.3.34",
-    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
-    "declaredLicenseExpression": "MIT OR Apache-2.0",
-    "selectedLicenseExpression": "MIT",
-    "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "275c491d6d1160553c32fd6127061d7f9606c3ea25abfad6ca3f6ed088785427",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd",
-        "kind": "license"
-      }
-    ],
-    "modified": false,
-    "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/rust-lang/futures-rs; revision 705e6b5c0f06535b1aac1cb1989a172b3d45be8c. Cargo archive SHA-256 9a31d2a3fbaaeb2af2368bbdd904aa8e812d3c04a1ee10d3171f52d556e5d0a3. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
-  },
-  {
-    "ecosystem": "cargo",
     "name": "futures-channel",
     "reviewedVersion": "0.3.34",
     "upstream": "registry+https://github.com/rust-lang/crates.io-index",
@@ -1551,75 +1505,6 @@
     "modified": false,
     "reviewDecision": "approved",
     "reviewNotes": "Source: https://github.com/rust-lang/futures-rs; revision 705e6b5c0f06535b1aac1cb1989a172b3d45be8c. Cargo archive SHA-256 92d699e522242e69e3003b94ecc1f960f3a5e015aa7c5d7486e65ad01dd94f5e. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
-  },
-  {
-    "ecosystem": "cargo",
-    "name": "futures-executor",
-    "reviewedVersion": "0.3.34",
-    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
-    "declaredLicenseExpression": "MIT OR Apache-2.0",
-    "selectedLicenseExpression": "MIT",
-    "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "275c491d6d1160553c32fd6127061d7f9606c3ea25abfad6ca3f6ed088785427",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd",
-        "kind": "license"
-      }
-    ],
-    "modified": false,
-    "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/rust-lang/futures-rs; revision 705e6b5c0f06535b1aac1cb1989a172b3d45be8c. Cargo archive SHA-256 031b47cf1a3c6cc8bc2fc76cd437f521619387907d469316e7c0bc278f1f5432. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
-  },
-  {
-    "ecosystem": "cargo",
-    "name": "futures-io",
-    "reviewedVersion": "0.3.34",
-    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
-    "declaredLicenseExpression": "MIT OR Apache-2.0",
-    "selectedLicenseExpression": "MIT",
-    "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "275c491d6d1160553c32fd6127061d7f9606c3ea25abfad6ca3f6ed088785427",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd",
-        "kind": "license"
-      }
-    ],
-    "modified": false,
-    "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/rust-lang/futures-rs; revision 705e6b5c0f06535b1aac1cb1989a172b3d45be8c. Cargo archive SHA-256 53c0fa8157de1303bfffdaa1cc2a673bfffb60102f76b0ef4441659124373fed. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
-  },
-  {
-    "ecosystem": "cargo",
-    "name": "futures-macro",
-    "reviewedVersion": "0.3.34",
-    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
-    "declaredLicenseExpression": "MIT OR Apache-2.0",
-    "selectedLicenseExpression": "MIT",
-    "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "275c491d6d1160553c32fd6127061d7f9606c3ea25abfad6ca3f6ed088785427",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd",
-        "kind": "license"
-      }
-    ],
-    "modified": false,
-    "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/rust-lang/futures-rs; revision 705e6b5c0f06535b1aac1cb1989a172b3d45be8c. Cargo archive SHA-256 9fb9654ba8355388abeb8dcb4fc62f511300867002afc858860463bdd9fe0c44. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
   },
   {
     "ecosystem": "cargo",
@@ -1799,42 +1684,6 @@
     "modified": true,
     "reviewDecision": "approved",
     "reviewNotes": "Source: https://github.com/zR-JB/h2; revision ece53421ec31270ff843a783bcdf244bd6c5eef7. Based on hyperium/h2 v0.4.19 (d57d1b852fec9dda6d42d3454502006d52104da8). Reviewed MIT copyright/permission/disclaimer text; LICENSE is unchanged from the reviewed upstream archive. Allocation ownership and regression changes are recorded in legal/rust-forks.json; preserve the upstream attribution and include the modified source in the source offer."
-  },
-  {
-    "ecosystem": "cargo",
-    "name": "h3",
-    "reviewedVersion": "0.0.8",
-    "upstream": "git+https://github.com/zR-JB/h3?rev=03874beb50d065f4ac8f946ddb7814d2432b7527#03874beb50d065f4ac8f946ddb7814d2432b7527",
-    "declaredLicenseExpression": "MIT",
-    "selectedLicenseExpression": "MIT",
-    "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "a0d039cdafe68f363893abddb5e4d50dbe6f8b56611e2650aaab4237103285f1",
-        "kind": "license"
-      }
-    ],
-    "modified": true,
-    "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/hyperium/h3 tag h3-quinn-v0.0.10 (h3 tree identical to h3-v0.0.8). Reviewed h3 authors MIT notice in the modified fork package. Fork commits, upstream base and reviewed change-set hash are recorded in legal/rust-forks.json."
-  },
-  {
-    "ecosystem": "cargo",
-    "name": "h3-noq",
-    "reviewedVersion": "0.0.10",
-    "upstream": "git+https://github.com/zR-JB/h3?rev=03874beb50d065f4ac8f946ddb7814d2432b7527#03874beb50d065f4ac8f946ddb7814d2432b7527",
-    "declaredLicenseExpression": "MIT",
-    "selectedLicenseExpression": "MIT",
-    "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "a0d039cdafe68f363893abddb5e4d50dbe6f8b56611e2650aaab4237103285f1",
-        "kind": "license"
-      }
-    ],
-    "modified": true,
-    "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/hyperium/h3 h3-quinn 0.0.10, copied to h3-noq and adapted to Noq in the fork. Reviewed h3 authors MIT notice. Fork commits, upstream base and reviewed change-set hash are recorded in legal/rust-forks.json."
   },
   {
     "ecosystem": "cargo",

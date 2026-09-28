@@ -118,9 +118,7 @@ year or year range. The generator never derives it from the wall clock.
 
 Forks carry Graphite Meter patches only on the latest stable upstream release: a tag with the
 `baseTag` prefix and a plain `MAJOR.MINOR.PATCH` version, never a branch head or pre-release
-tag. Each protected patch branch is `graphite-meter/<crate>-v<version>`. Exception: hyperium/h3
-publishes every release, including h3 0.0.8 and h3-quinn 0.0.10, as a GitHub pre-release and has
-no stable line; the h3 fork records this as `prereleaseException` in `rust-forks.json`.
+tag. Each protected patch branch is `graphite-meter/<crate>-v<version>`.
 
 After Rust lands on the default branch, enable graphite-meter's daily/manual `Fork upkeep`.
 It reads `rust-forks.json` and keeps fork default branches as pure upstream mirrors. Ordinary
@@ -132,7 +130,7 @@ and update the inventory mapping.
 
 Upkeep uses two GitHub Apps so the credential that writes forks cannot write this repository:
 
-- Fork upkeep App, installed only on the three forks: Contents, Issues and Workflows write
+- Fork upkeep App, installed only on the forks: Contents, Issues and Workflows write
   (Workflows because mirrors and proposals carry upstream workflow changes). Set repository
   variable `FORK_UPKEEP_APP_CLIENT_ID` and secret `FORK_UPKEEP_APP_PRIVATE_KEY`.
 - Fork pin App, installed only on graphite-meter: Contents and Pull requests write, no Workflows.

@@ -102,7 +102,7 @@ def discover(repo: Path, metadata: dict, messages: list[dict], package: str,
     packages = {item['id']: item for item in metadata['packages']}
     own = {item['id'] for item in packages.values()
            if Path(item['manifest_path']).resolve().parent in
-           {repo / 'rust' / name for name in ('client', 'server', 'core', 'net', 'webtransport', 'http3')}}
+           {repo / 'rust' / name for name in ('client', 'server', 'core', 'net', 'http3')}}
     forks = {(text(fork, 'fork'), text(fork, 'rev')): strings(fork, 'modifiedPackages')
              for fork in map(obj, array(read_json(repo / 'legal/rust-forks.json')))}
     root = next((item['id'] for item in packages.values() if item['name'] == package and item['id'] in own), None)

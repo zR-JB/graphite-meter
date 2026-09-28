@@ -195,13 +195,13 @@ lost the final prefix byte when a read returned that byte with a reset error.
 The current-only Go probe exercises the draft-09+ transport parameter; it is
 not evidence of Safari browser parity.
 
-The workspace uses exact revisions of the [Noq](https://github.com/zR-JB/noq),
-[HTTP/3](https://github.com/zR-JB/h3) and [h2](https://github.com/zR-JB/h2) forks.
+The workspace uses exact revisions of the [Noq](https://github.com/zR-JB/noq)
+and [h2](https://github.com/zR-JB/h2) forks.
 [Fork provenance](../legal/rust-forks.json) records upstream bases, reviewed
 revisions and each commit's purpose. `rust-check` validates locked sources offline;
 `scripts/legal/check_git_sources.py --verify` checks fork branches, upstream tags
 and diffs. [Fork upkeep](../legal/README.md#pinned-fork-upkeep) covers updates.
-The server's own `http3` crate, and the client's `webtransport` crate, keep a
+The workspace's `http3` crate, shared by the server and the client, keeps a
 cancelled stream's association header, with plain RESET fallback when peers do
-not support reliable reset. The forks remain
-experimental; current-codepoint tests do not establish Safari compatibility.
+not support reliable reset. The forks remain experimental; current-codepoint
+tests do not establish Safari compatibility.

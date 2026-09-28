@@ -1,5 +1,5 @@
 [workspace]
-members = ["core", "server", "client", "net", "webtransport", "http3"]
+members = ["core", "server", "client", "net", "http3"]
 resolver = "3"
 
 [workspace.package]
@@ -9,7 +9,6 @@ rust-version = "1.98.1"
 license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
-h3-noq = { git = "https://github.com/zR-JB/h3", rev = "03874beb50d065f4ac8f946ddb7814d2432b7527" }
 base64 = { version = "0.23.1", default-features = false, features = ["std"] }
 miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
 
@@ -30,5 +29,4 @@ codegen-units = 16
 
 [patch.crates-io]
 h2 = { git = "https://github.com/zR-JB/h2", rev = "ece53421ec31270ff843a783bcdf244bd6c5eef7" }
-h3 = { git = "https://github.com/zR-JB/h3", rev = "03874beb50d065f4ac8f946ddb7814d2432b7527" }
 noq = { git = "https://github.com/zR-JB/noq", rev = "9efdcbf291c837bf5078cfaa6d75d9fb84a5f6f1" }
