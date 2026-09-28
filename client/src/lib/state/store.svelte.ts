@@ -393,10 +393,11 @@ class AppStore {
     Object.assign(this, patch);
   }
 
-  pulseLatency = $derived.by<LatencyBucket[]>(() => {
+  // A getter, not $derived: the series grow in place, so a derived would return the same array and never notify.
+  get pulseLatency(): LatencyBucket[] {
     if (this.isRunning) return this.latency;
     return this.idleLatency.length ? this.idleLatency : this.latency;
-  });
+  }
 
   liveRtt = $derived(
     this.pulseLatency.at(-1)?.medianRttMs ??

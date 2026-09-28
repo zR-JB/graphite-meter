@@ -176,3 +176,27 @@ test("focusing another server leaves the headline latency result alone", async (
     restore();
   }
 });
+
+test("the connection pulse follows latency buckets that grow in place", async () => {
+  const restore = stubGlobals(TEST_BUILD_TOKENS);
+  const { store } = await import("./store.svelte");
+  const idle = (t: number, rttMs: number, timedOut = false) =>
+    store.ingest({
+      type: "serverLatency",
+      serverId: "self",
+      sample: singleLatencyBucket(t, rttMs, timedOut),
+    });
+  try {
+    store.reset();
+    idle(0, 5);
+    expect(store.liveRtt).toBe(5);
+    idle(250, 9);
+    expect(store.pulseLatency).toHaveLength(2);
+    expect(store.liveRtt).toBe(9);
+    idle(500, 0, true);
+    expect(store.liveLatencyLost).toBe(true);
+  } finally {
+    store.reset();
+    restore();
+  }
+});
