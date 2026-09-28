@@ -142,15 +142,5 @@ fn interrupts(headless: bool, caught: Arc<AtomicU8>) -> Result<mpsc::Receiver<()
 }
 
 fn safe(value: &str) -> String {
-    value
-        .chars()
-        .take(4096)
-        .map(|character| {
-            if !graphite_meter_core::text::terminal_character(character) {
-                '�'
-            } else {
-                character
-            }
-        })
-        .collect()
+    ui::safe_text(value, usize::MAX)
 }
