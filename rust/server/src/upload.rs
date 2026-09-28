@@ -32,6 +32,13 @@ impl Owner {
         }
     }
 
+    /// Ambiguous proxy evidence names no client; like Go's empty owner, it can create or reach no upload.
+    pub fn unresolved() -> Self {
+        Self {
+            client_keys: Vec::new(),
+        }
+    }
+
     pub fn login(subject: &str, session: &str) -> Self {
         Self {
             client_keys: vec![format!("login:{session}"), format!("principal:{subject}")],
@@ -167,6 +174,10 @@ impl UploadStore {
         create: bool,
         lane: bool,
     ) -> Result<Arc<Mutex<Aggregate>>, UploadRefusal> {
+        // As in Go, before anything else when joining; a stored owner is never unresolved, so reads mismatch too.
+        if create && owner.client_keys().is_empty() {
+            return Err(UploadRefusal::OwnerMismatch);
+        }
         self.sweep_if_due();
         let mut entries = self.inner.entries.lock().expect("upload store lock");
         let aggregate = if let Some(aggregate) = entries.by_id.get(id) {
@@ -518,6 +529,27 @@ mod tests {
         assert_eq!(
             store.begin(&id, &Owner::principal("other")).err(),
             Some(UploadRefusal::OwnerMismatch)
+        );
+    }
+
+    #[test]
+    fn an_unresolved_owner_creates_and_reaches_nothing() {
+        let store = UploadStore::new().unwrap();
+        let id = store.mint().unwrap();
+        let nobody = Owner::unresolved();
+        // As Go's accessFor, joining refuses the owner before looking at the ID.
+        assert_eq!(
+            store.begin("invalid", &nobody).err(),
+            Some(UploadRefusal::OwnerMismatch)
+        );
+        assert_eq!(store.subscribe(&id, &nobody).err(), Some(UploadRefusal::OwnerMismatch));
+        assert_eq!(store.retained(), 0);
+        drop(store.begin(&id, &Owner::principal("a")).unwrap());
+        assert_eq!(store.checkpoint(&id, &nobody).err(), Some(UploadRefusal::OwnerMismatch));
+        assert_eq!(store.finish(&id, &nobody).err(), Some(UploadRefusal::OwnerMismatch));
+        assert_eq!(
+            store.checkpoint(&store.mint().unwrap(), &nobody).err(),
+            Some(UploadRefusal::Invalid)
         );
     }
 

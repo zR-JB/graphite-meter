@@ -10,8 +10,14 @@ use serde::Serialize;
 use tokio::time::Instant;
 
 impl HttpServer {
+    /// A trusted proxy's socket address is never the owner: without usable evidence, as in Go, nothing is.
     pub(super) fn upload_owner<B>(&self, request: &Request<B>, peer: SocketAddr) -> Owner {
-        Owner::anonymous(client_address::resolve(peer, request.headers(), &self.config.trusted_proxies).addr)
+        let client = client_address::resolve(peer, request.headers(), &self.config.trusted_proxies);
+        if client.usable {
+            Owner::anonymous(client.addr)
+        } else {
+            Owner::unresolved()
+        }
     }
 
     pub(super) fn upload_control(&self, request: &Request<()>, owner: &Owner) -> Response<ResponseBody> {

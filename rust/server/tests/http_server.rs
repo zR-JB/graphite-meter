@@ -326,6 +326,44 @@ async fn real_upload_lifecycle_uses_receiver_totals_and_owner_refusals() {
 }
 
 #[tokio::test]
+async fn ambiguous_proxy_evidence_owns_no_upload() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let config = Config {
+            trusted_proxies: vec!["127.0.0.0/8".parse().unwrap()],
+            ..Config::default()
+        };
+        let server = Arc::new(HttpServer::new(Arc::new(config)).unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (stop, stopped) = oneshot::channel();
+        let serving = tokio::spawn(server.serve(NativeKind::H1, listener, None, async {
+            let _ = stopped.await;
+        }));
+        // The proxy forwards a client on its own address, such as a local health check.
+        let (_, session) = upload_request(address, "POST", "/upload/session", "127.0.0.1", b"").await;
+        let session: serde_json::Value = serde_json::from_slice(&session).unwrap();
+        let id = session["uploadId"].as_str().unwrap();
+        let (headers, _) = upload_request(address, "POST", &format!("/upload?id={id}"), "127.0.0.1", b"proxied").await;
+        assert!(headers.starts_with("HTTP/1.1 200"), "{headers}");
+        // Without X-Real-IP the proxy names no client: as in Go, that owns nothing, not the proxy's own address.
+        let checkpoint = format!("/upload/checkpoint?id={id}");
+        let (headers, body) = upload_request(address, "POST", &checkpoint, "", b"").await;
+        assert!(headers.starts_with("HTTP/1.1 403"), "{headers}");
+        assert!(
+            headers.contains("x-graphite-upload-refusal: ownerMismatch"),
+            "{headers}"
+        );
+        assert_eq!(body, b"upload id belongs to another client\n");
+        let (headers, _) = upload_request(address, "POST", &checkpoint, "127.0.0.1", b"").await;
+        assert!(headers.starts_with("HTTP/1.1 200"), "{headers}");
+        stop.send(()).unwrap();
+        serving.await.unwrap().unwrap();
+    })
+    .await
+    .expect("upload ownership check stalled");
+}
+
+#[tokio::test]
 async fn stalled_upload_read_releases_capacity_and_keeps_received_bytes() {
     tokio::time::timeout(Duration::from_secs(5), async {
         let config = Config {
