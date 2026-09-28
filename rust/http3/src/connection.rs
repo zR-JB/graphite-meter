@@ -6,7 +6,7 @@ use crate::{
     code::Code,
     control,
     error::Error,
-    frame,
+    frame, qpack,
     settings::{self, Peer},
     stream::{self, RequestStream},
     varint,
@@ -213,9 +213,7 @@ enum Kind {
     },
     Control(Box<control::Reader>),
     Encoder,
-    Decoder {
-        continuing: bool,
-    },
+    Decoder(qpack::DecoderStream),
     /// Classified; the driver hands it to the session registry.
     Session(u64),
 }
@@ -494,7 +492,7 @@ impl Connection {
                         let (slot, next) = match kind {
                             frame::CONTROL_STREAM => (0, Kind::Control(Box::default())),
                             frame::ENCODER_STREAM => (1, Kind::Encoder),
-                            frame::DECODER_STREAM => (2, Kind::Decoder { continuing: false }),
+                            frame::DECODER_STREAM => (2, Kind::Decoder(qpack::DecoderStream::default())),
                             frame::PUSH_STREAM if shared.role == Role::Client => return Err(Code::H3_ID_ERROR),
                             frame::PUSH_STREAM => return Err(Code::H3_STREAM_CREATION_ERROR),
                             _ => {
@@ -519,23 +517,11 @@ impl Connection {
                     })?
                 }
                 Kind::Encoder => {
-                    // Only Set Dynamic Table Capacity 0 fits the capacity our SETTINGS allow.
-                    if uni.input.iter().any(|&byte| byte != 0x20) {
-                        return Err(Code::QPACK_ENCODER_STREAM_ERROR);
-                    }
+                    qpack::encoder_stream(&uni.input)?;
                     uni.input.clear();
                 }
-                Kind::Decoder { continuing } => {
-                    // Only Stream Cancellation fits an encoder that never inserts.
-                    for &byte in uni.input.iter() {
-                        if *continuing {
-                            *continuing = byte & 0x80 != 0;
-                        } else if byte & 0xc0 == 0x40 {
-                            *continuing = byte & 0x3f == 0x3f;
-                        } else {
-                            return Err(Code::QPACK_DECODER_STREAM_ERROR);
-                        }
-                    }
+                Kind::Decoder(decoder) => {
+                    decoder.read(&uni.input)?;
                     uni.input.clear();
                 }
                 Kind::Session(_) => return Ok(false),

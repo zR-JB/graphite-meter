@@ -2,6 +2,8 @@
 pub(crate) mod huffman;
 mod table;
 
+use crate::code::Code;
+
 /// Why a field section was refused; the stream answers each differently.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Invalid {
@@ -63,6 +65,38 @@ pub(crate) fn encode<'a>(fields: impl IntoIterator<Item = (&'a [u8], &'a [u8])>,
                 put_string(value, 7, 0x00, output);
             }
         }
+    }
+}
+
+/// The peer's encoder stream (RFC 9204 §4.3): only Set Dynamic Table Capacity 0 fits the capacity
+/// our SETTINGS allow.
+pub(crate) fn encoder_stream(input: &[u8]) -> Result<(), Code> {
+    match input.iter().all(|&byte| byte == 0x20) {
+        true => Ok(()),
+        false => Err(Code::QPACK_ENCODER_STREAM_ERROR),
+    }
+}
+
+/// The peer's decoder stream (RFC 9204 §4.4), read in chunks: only Stream Cancellation fits an
+/// encoder that never inserts.
+#[derive(Default)]
+pub(crate) struct DecoderStream {
+    /// Within a Stream Cancellation's stream ID.
+    continuing: bool,
+}
+
+impl DecoderStream {
+    pub(crate) fn read(&mut self, input: &[u8]) -> Result<(), Code> {
+        for &byte in input {
+            if self.continuing {
+                self.continuing = byte & 0x80 != 0;
+            } else if byte & 0xc0 == 0x40 {
+                self.continuing = byte & 0x3f == 0x3f;
+            } else {
+                return Err(Code::QPACK_DECODER_STREAM_ERROR);
+            }
+        }
+        Ok(())
     }
 }
 

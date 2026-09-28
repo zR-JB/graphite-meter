@@ -139,6 +139,61 @@ fn control_model(mut data: &[u8], client: bool) -> (Vec<control::Event>, Result<
     }
 }
 
+/// A peer's QPACK encoder and decoder streams read in arbitrary chunks agree with a whole-input model
+/// for a peer that may use no dynamic table, as our SETTINGS allow none.
+pub fn qpack_streams(data: &[u8]) {
+    let Some((&seed, data)) = data.split_first() else {
+        return;
+    };
+    let (encoder, decoder) = instructions(data);
+    let chunked = |index: usize| (index * usize::from(seed)) % 7 + 1;
+    assert_eq!(qpack::encoder_stream(data), encoder);
+    assert_eq!(
+        chunks(data, &chunked).try_for_each(|chunk| qpack::encoder_stream(&chunk)),
+        encoder
+    );
+    assert_eq!(qpack::DecoderStream::default().read(data), decoder);
+    let mut split = qpack::DecoderStream::default();
+    assert_eq!(chunks(data, &chunked).try_for_each(|chunk| split.read(&chunk)), decoder);
+}
+
+/// RFC 9204 §4.3 and §4.4 over whole streams: of the encoder's instructions only Set Dynamic Table
+/// Capacity 0 fits, and of the decoder's only Stream Cancellation, as the others name inserts.
+fn instructions(data: &[u8]) -> (Result<(), Code>, Result<(), Code>) {
+    // Where the prefixed integer (RFC 7541 §5.1) that `data` starts with ends, unless past `data`.
+    let end = |data: &[u8], bits: u32| {
+        let max = (1 << bits) - 1;
+        if data[0] & max != max {
+            return Some(1);
+        }
+        data[1..].iter().position(|&byte| byte & 0x80 == 0).map(|last| last + 2)
+    };
+    let mut rest = data;
+    let encoder = loop {
+        match rest.first() {
+            None => break Ok(()),
+            // Set Dynamic Table Capacity, 001 and a 5-bit prefix, to 0.
+            Some(&first) if first & 0xe0 == 0x20 && first & 0x1f == 0 => {
+                rest = &rest[end(rest, 5).expect("a capacity within its prefix")..];
+            }
+            Some(_) => break Err(Code::QPACK_ENCODER_STREAM_ERROR),
+        }
+    };
+    let mut rest = data;
+    let decoder = loop {
+        match rest.first() {
+            None => break Ok(()),
+            // Stream Cancellation, 01 and a 6-bit prefix; its stream ID may run past the input.
+            Some(&first) if first & 0xc0 == 0x40 => match end(rest, 6) {
+                Some(used) => rest = &rest[used..],
+                None => break Ok(()),
+            },
+            Some(_) => break Err(Code::QPACK_DECODER_STREAM_ERROR),
+        }
+    };
+    (encoder, decoder)
+}
+
 /// QPACK decoding stays within the field limit, and re-encoding decoded lines decodes to the same lines.
 pub fn qpack(data: &[u8]) {
     let lines = |section: &[u8]| {

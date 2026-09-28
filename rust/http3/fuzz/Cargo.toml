@@ -66,4 +66,11 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "qpack_streams"
+path = "fuzz_targets/qpack_streams.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
