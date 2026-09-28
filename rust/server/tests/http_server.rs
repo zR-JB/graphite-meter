@@ -1,4 +1,5 @@
-use graphite_meter_server::{config::Config, http_server::HttpServer};
+use graphite_meter_server::config::{Config, NativeKind};
+use graphite_meter_server::http_server::HttpServer;
 use http::{Method, Request, StatusCode, header};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
@@ -74,7 +75,7 @@ async fn real_http1_serves_discovery_and_streams_exact_download_then_joins_shutd
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();
-        let serving = tokio::spawn(server.serve_http1(listener, async {
+        let serving = tokio::spawn(server.serve(NativeKind::H1, listener, None, async {
             let _ = stopped.await;
         }));
 
@@ -150,7 +151,7 @@ async fn stalled_download_releases_capacity_at_request_deadline() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();
-        let serving = tokio::spawn(server.clone().serve_http1(listener, async {
+        let serving = tokio::spawn(server.clone().serve(NativeKind::H1, listener, None, async {
             let _ = stopped.await;
         }));
         let mut stalled = TcpStream::connect(address).await.unwrap();
@@ -199,7 +200,7 @@ async fn oversized_http1_headers_are_rejected() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();
-        let serving = tokio::spawn(server.serve_http1(listener, async {
+        let serving = tokio::spawn(server.serve(NativeKind::H1, listener, None, async {
             let _ = stopped.await;
         }));
         let mut socket = TcpStream::connect(address).await.unwrap();
@@ -245,7 +246,7 @@ async fn real_upload_lifecycle_uses_receiver_totals_and_owner_refusals() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();
-        let serving = tokio::spawn(server.serve_http1(listener, async {
+        let serving = tokio::spawn(server.serve(NativeKind::H1, listener, None, async {
             let _ = stopped.await;
         }));
         let (headers, session) = upload_request(address, "POST", "/upload/session", "192.0.2.1", b"").await;
@@ -335,7 +336,7 @@ async fn stalled_upload_read_releases_capacity_and_keeps_received_bytes() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();
-        let serving = tokio::spawn(server.serve_http1(listener, async {
+        let serving = tokio::spawn(server.serve(NativeKind::H1, listener, None, async {
             let _ = stopped.await;
         }));
         let (_, session) = upload_request(address, "POST", "/upload/session", "", b"").await;
@@ -510,7 +511,7 @@ async fn keepalive_idle_uses_fifteen_seconds_and_releases_connection_capacity() 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (stop, stopped) = oneshot::channel();
-    let serving = tokio::spawn(server.serve_http1(listener, async {
+    let serving = tokio::spawn(server.serve(NativeKind::H1, listener, None, async {
         let _ = stopped.await;
     }));
     let mut socket = TcpStream::connect(address).await.unwrap();
@@ -555,7 +556,7 @@ async fn active_http1_progress_survives_an_idle_interval() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (stop, stopped) = oneshot::channel();
-    let serving = tokio::spawn(server.serve_http1(listener, async {
+    let serving = tokio::spawn(server.serve(NativeKind::H1, listener, None, async {
         let _ = stopped.await;
     }));
     let (_, session) = upload_request(address, "POST", "/upload/session", "", b"").await;
@@ -584,7 +585,7 @@ async fn prefetched_partial_pipeline_still_has_a_finite_idle_bound() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (stop, stopped) = oneshot::channel();
-    let serving = tokio::spawn(server.serve_http1(listener, async {
+    let serving = tokio::spawn(server.serve(NativeKind::H1, listener, None, async {
         let _ = stopped.await;
     }));
     let mut socket = TcpStream::connect(address).await.unwrap();
@@ -615,7 +616,7 @@ async fn upload_idle_returns_refusal_and_preserves_receiver_bytes() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (stop, stopped) = oneshot::channel();
-    let serving = tokio::spawn(server.serve_http1(listener, async {
+    let serving = tokio::spawn(server.serve(NativeKind::H1, listener, None, async {
         let _ = stopped.await;
     }));
     let (_, session) = upload_request(address, "POST", "/upload/session", "", b"").await;

@@ -68,7 +68,7 @@ async fn renewal_is_atomic_and_failed_reloads_keep_the_previous_identity() -> Re
             .then_some(())
             .ok_or_else(|| format!("{bytes} handshake bytes exceed the budget").into())
     })?;
-    let tls = manager.config(vec![b"http/1.1".to_vec()])?;
+    let tls = manager.config()?;
     assert_eq!(handshake(tls.clone(), &roots).await?, original);
     assert!(!manager.reload(SystemTime::now())?);
 
@@ -125,7 +125,7 @@ async fn watcher_retries_invalid_replacement_and_stops_on_shutdown() -> Result<(
     let replacement = CertificateDer::from_pem_file(second.directory().join("identity.pem"))?;
     let roots = [original.clone(), replacement.clone()];
     let manager = Certificates::load(&config, SystemTime::now(), |_| Ok(()))?;
-    let tls = manager.config(vec![b"http/1.1".to_vec()])?;
+    let tls = manager.config()?;
     let (stop, stopped) = tokio::sync::oneshot::channel();
     let (reports, mut reported) = tokio::sync::mpsc::channel(4);
     let watch = tokio::spawn(manager.watch(

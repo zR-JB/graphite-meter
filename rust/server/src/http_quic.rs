@@ -90,9 +90,8 @@ impl HttpServer {
     }
 
     fn quic_config(&self, tls: Arc<rustls::ServerConfig>) -> Result<quinn::ServerConfig, ConfigError> {
-        if tls.alpn_protocols != [b"h3".to_vec()] {
-            return Err("HTTP/3 listener requires h3-only TLS ALPN".into());
-        }
+        let mut tls = (*tls).clone();
+        tls.alpn_protocols = vec![b"h3".to_vec()];
         let crypto = quinn::crypto::rustls::QuicServerConfig::try_from(tls)?;
         let mut config = quinn::ServerConfig::with_crypto(Arc::new(crypto));
         config
@@ -1337,9 +1336,12 @@ mod tests {
             link.inject(crate::test_link::Fault::None);
             let address = link.address;
             let (stop_h2, stopped_h2) = tokio::sync::oneshot::channel();
-            let h2_server = tokio::spawn(server.clone().serve_http2(listener, Arc::new(tls.clone()), async {
-                let _ = stopped_h2.await;
-            }));
+            let serving = server
+                .clone()
+                .serve(NativeKind::H2, listener, Some(Arc::new(tls.clone())), async {
+                    let _ = stopped_h2.await;
+                });
+            let h2_server = tokio::spawn(serving);
             let available = server.memory.available();
             link.inject(crate::test_link::Fault::Stall);
             let pending = TcpStream::connect(address).await.unwrap();

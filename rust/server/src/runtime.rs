@@ -40,22 +40,13 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
         let listener = bind(address)
             .await
             .map_err(|error| format!("{} listener {address}: {error}", kind.name()))?;
-        let identity = match kind {
-            NativeKind::H1 => None,
-            NativeKind::H1Tls | NativeKind::H2 | NativeKind::H3 => {
-                Some(tls.as_ref().expect("TLS identity loaded").config(vec![match kind {
-                    NativeKind::H1Tls | NativeKind::H3 => b"http/1.1".to_vec(),
-                    _ => b"h2".to_vec(),
-                }])?)
-            }
-        };
+        let identity = (kind != NativeKind::H1)
+            .then(|| tls.as_ref().expect("TLS identity loaded").config())
+            .transpose()?;
         if kind == NativeKind::H3 {
             // The bootstrap companion and QUIC endpoint share the actual port,
             // including when the caller asks the OS to allocate one with :0.
-            let identity = tls
-                .as_ref()
-                .expect("TLS identity loaded")
-                .config(vec![b"h3".to_vec()])?;
+            let identity = identity.clone().expect("TLS identity");
             quic = Some(server.quic_endpoint(identity, listener.local_addr()?)?);
         }
         listeners.push((kind, listener, identity));
@@ -81,28 +72,10 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
             crate::config::ENGINE_VERSION,
             listener.local_addr()?,
         );
-        let server = server.clone();
-        let stopped = stopped.clone();
-        services.push(Box::pin(async move {
-            match kind {
-                NativeKind::H1 => server.serve_http1(listener, cancelled(stopped)).await,
-                NativeKind::H1Tls => {
-                    server
-                        .serve_https1(listener, identity.expect("TLS identity"), cancelled(stopped))
-                        .await
-                }
-                NativeKind::H2 => {
-                    server
-                        .serve_http2(listener, identity.expect("TLS identity"), cancelled(stopped))
-                        .await
-                }
-                NativeKind::H3 => {
-                    server
-                        .serve_https_bootstrap(listener, identity.expect("TLS identity"), cancelled(stopped))
-                        .await
-                }
-            }
-        }));
+        let serving = server
+            .clone()
+            .serve(kind, listener, identity, cancelled(stopped.clone()));
+        services.push(Box::pin(serving));
     }
     if let Some(quic) = quic {
         crate::log!(

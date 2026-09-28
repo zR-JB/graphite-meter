@@ -3,7 +3,7 @@ mod support;
 use bytes::Bytes;
 use futures_util::StreamExt;
 use graphite_meter_server::{
-    config::{AuthConfig, AuthMode, Config},
+    config::{AuthConfig, AuthMode, Config, NativeKind},
     http_server::HttpServer,
 };
 use http::Request;
@@ -38,13 +38,12 @@ impl Harness {
         let cert = CertificateDer::from_pem_file(identity.directory().join("identity.pem")).unwrap();
         let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key")).unwrap();
         let provider = Arc::new(rustls::crypto::ring::default_provider());
-        let mut tls = ServerConfig::builder_with_provider(provider.clone())
+        let tls = ServerConfig::builder_with_provider(provider.clone())
             .with_protocol_versions(&[&rustls::version::TLS13])
             .unwrap()
             .with_no_client_auth()
             .with_single_cert(vec![cert.clone()], key)
             .unwrap();
-        tls.alpn_protocols = vec![b"http/1.1".to_vec()];
         let mut roots = RootCertStore::empty();
         roots.add(cert).unwrap();
         let mut client = ClientConfig::builder_with_provider(provider)
@@ -78,11 +77,13 @@ impl Harness {
         let h2 = l2.local_addr().unwrap();
         let (s1, r1) = oneshot::channel();
         let (s2, r2) = oneshot::channel();
-        let t1 = tokio::spawn(server.clone().serve_https1(l1, Arc::new(tls.clone()), async {
-            let _ = r1.await;
-        }));
-        tls.alpn_protocols = vec![b"h2".to_vec()];
-        let t2 = tokio::spawn(server.serve_http2(l2, Arc::new(tls), async {
+        let serving = server
+            .clone()
+            .serve(NativeKind::H1Tls, l1, Some(Arc::new(tls.clone())), async {
+                let _ = r1.await;
+            });
+        let t1 = tokio::spawn(serving);
+        let t2 = tokio::spawn(server.serve(NativeKind::H2, l2, Some(Arc::new(tls)), async {
             let _ = r2.await;
         }));
         Self {
