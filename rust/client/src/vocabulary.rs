@@ -15,6 +15,14 @@ pub const CADENCES: [(&str, &str, Duration); 4] = [
     ("slow", "Slow (600 ms)", Duration::from_millis(600)),
 ];
 
+/// A preset cadence's name.
+pub fn cadence(interval: Duration) -> Option<&'static str> {
+    CADENCES
+        .iter()
+        .find(|(.., preset)| *preset == interval)
+        .map(|(_, label, _)| *label)
+}
+
 pub const START: Term = Term {
     label: "Start test",
     explanation: "Measure the selected stages on the checked server paths.",
@@ -94,6 +102,10 @@ pub const LOADED_LATENCY: Term = Term {
 pub const INSECURE: Term = Term {
     label: "Skip TLS verification",
     explanation: "Skip certificate checks; authenticated connections still require verified TLS.",
+};
+pub const RESET: Term = Term {
+    label: "Reset settings",
+    explanation: "Restore the defaults; keep the catalogue URL and servers.",
 };
 pub const MEDIAN: Term = Term {
     label: "Median",

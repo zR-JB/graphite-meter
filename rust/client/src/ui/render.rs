@@ -148,7 +148,7 @@ impl Ui {
         }
         let (mut notice, is_error) = self.notice();
         if !self.live && !is_error && self.notice.is_empty() && self.snapshot.phase == Phase::Setup {
-            notice = self.fields()[self.rows.selected().unwrap_or(0)].explanation(&self.config);
+            notice = self.field().explanation(&self.config);
         }
         let notice_color = if is_error { self.theme.err } else { self.theme.muted };
         let mut hints: Vec<&str> = if self.cancel == CancelState::Confirming {
@@ -174,8 +174,7 @@ impl Ui {
                 "q quit",
             ]
         } else {
-            let field = self.fields()[self.rows.selected().unwrap_or(0)];
-            [field.hints(), &["r Start test", "? keys", "q quit"][..]].concat()
+            [self.field().hints(), &["r Start test", "? keys", "q quit"][..]].concat()
         };
         let covered = self.popup != Popup::None || self.edit.is_some() || self.snapshot.auth.is_some();
         if self.body_scroll.hidden > 0 && !covered && self.cancel != CancelState::Confirming {
@@ -217,7 +216,7 @@ impl Ui {
                     Line::from("Enter apply · Esc discard · ←/→ Home/End move"),
                     Line::styled(safe_text(&self.notice, 200), Style::new().fg(self.theme.warn)),
                 ])
-                .block(panel(edit.field.label(), self.theme)),
+                .block(panel(edit.field.term.label, self.theme)),
                 area,
             );
         }
@@ -349,8 +348,8 @@ impl Ui {
             .fields()
             .iter()
             .map(|field| {
-                use super::setup::Field;
-                if *field == Field::Start {
+                use super::setup::Kind;
+                if let Kind::Start = field.kind {
                     return ListItem::new(Line::from(Span::styled(
                         " Start test ",
                         Style::new()
@@ -359,26 +358,23 @@ impl Ui {
                             .add_modifier(Modifier::BOLD),
                     )));
                 }
-                if *field == Field::Advanced {
+                if let Kind::Advanced = field.kind {
                     return ListItem::new(Line::from(format!(
                         "{} Advanced",
                         if self.advanced { "⌄" } else { "›" }
                     )));
                 }
-                if *field == Field::Reset {
-                    return ListItem::new(Line::from(field.label()));
+                if let Kind::Reset = field.kind {
+                    return ListItem::new(Line::from(field.term.label));
                 }
                 let value = field.value(&self.config);
                 let heading = Style::new().fg(self.theme.ink).add_modifier(Modifier::BOLD);
                 let mut lines = Vec::new();
-                if *field == Field::Url {
-                    lines.push(Line::styled("Connections", heading));
-                }
-                if *field == Field::LatencyStage {
-                    lines.push(Line::styled("Stages", heading));
+                if !field.heading.is_empty() {
+                    lines.push(Line::styled(field.heading, heading));
                 }
                 lines.push(Line::from(vec![
-                    Span::raw(format!("{:<22} ", field.label())),
+                    Span::raw(format!("{:<22} ", field.term.label)),
                     Span::styled(
                         if value.is_empty() {
                             "Automatic".into()
@@ -1099,13 +1095,7 @@ fn streams_label(config: &Config, target: Option<&graphite_meter_core::discovery
 
 /// Go's cadenceLabel.
 fn cadence_label(interval: Duration) -> String {
-    match crate::vocabulary::CADENCES
-        .iter()
-        .find(|(.., preset)| *preset == interval)
-    {
-        Some((_, label, _)) => (*label).into(),
-        None => format!("Custom ({})", setting(interval)),
-    }
+    crate::vocabulary::cadence(interval).map_or_else(|| format!("Custom ({})", setting(interval)), Into::into)
 }
 
 /// Go's fmtSetting.

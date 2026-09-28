@@ -1,4 +1,3 @@
-use super::setup::Field;
 use super::*;
 use crate::model::{AuthPrompt, ServerLatencyResult, ServerSummary, Stage, StageResult};
 use graphite_meter_core::{
@@ -30,8 +29,9 @@ fn press(ui: &mut Ui, commands: &mpsc::Sender<Command>, codes: &[KeyCode]) {
     }
 }
 
-fn select(ui: &mut Ui, field: Field) {
-    let row = ui.fields().iter().position(|shown| *shown == field);
+/// Moves the cursor to the setup row with this label.
+fn select(ui: &mut Ui, label: &str) {
+    let row = ui.fields().iter().position(|shown| shown.term.label == label);
     ui.rows.select(row);
 }
 
@@ -164,7 +164,7 @@ fn active_run_requires_second_escape_but_setup_verification_cancels_immediately(
 fn reenabled_stage_runs_in_canonical_order() {
     let (commands, mut received) = mpsc::channel(4);
     let mut ui = Ui::new(Config::default(), Snapshot::default());
-    select(&mut ui, Field::LatencyStage);
+    select(&mut ui, "Latency");
     press(
         &mut ui,
         &commands,
@@ -201,7 +201,7 @@ fn setup_keys_work_during_the_path_check() {
     press(&mut ui, &commands, &[KeyCode::Esc]);
 
     ui.update(checking());
-    select(&mut ui, Field::BidiStage);
+    select(&mut ui, "Bidirectional");
     press(&mut ui, &commands, &[KeyCode::Char(' ')]);
     assert!(ui.config.stages.contains(&Stage::Bidirectional));
     press(&mut ui, &commands, &[KeyCode::Char('v')]);
@@ -229,28 +229,28 @@ fn enter_edits_stage_and_warmup_durations_like_go() {
     let (commands, _received) = mpsc::channel(4);
     let mut ui = Ui::new(Config::default(), Snapshot::default());
     ui.advanced = true;
-    for (field, typed, expected) in [
-        (Field::DownloadStage, "12", Ok(Duration::from_secs(12))),
-        (Field::DownloadStage, "1.5m", Ok(Duration::from_secs(90))),
-        (Field::DownloadStage, "0", Err("Download must be from 1 s to 300 s")),
-        (Field::DownloadStage, "6m", Err("Download must be from 1 s to 300 s")),
-        (Field::DownloadStage, "soon", Err("use a duration like 800ms")),
-        (Field::Warmup, "0", Ok(Duration::ZERO)),
-        (Field::Warmup, "800ms", Ok(Duration::from_millis(800))),
-        (Field::Warmup, "5s", Err("Warmup must be from 0 s to 4 s")),
+    for (label, typed, expected) in [
+        ("Download", "12", Ok(Duration::from_secs(12))),
+        ("Download", "1.5m", Ok(Duration::from_secs(90))),
+        ("Download", "0", Err("Download must be from 1 s to 300 s")),
+        ("Download", "6m", Err("Download must be from 1 s to 300 s")),
+        ("Download", "soon", Err("use a duration like 800ms")),
+        ("Warmup (seconds)", "0", Ok(Duration::ZERO)),
+        ("Warmup (seconds)", "800ms", Ok(Duration::from_millis(800))),
+        ("Warmup (seconds)", "5s", Err("Warmup must be from 0 s to 4 s")),
     ] {
-        select(&mut ui, field);
+        select(&mut ui, label);
         press(&mut ui, &commands, &[KeyCode::Enter]);
         let opened = ui.edit.as_ref().map(|edit| edit.text());
         assert!(
             opened.as_ref().is_some_and(|text| text.ends_with('s')),
             "{typed}: {opened:?}"
         );
-        ui.edit = Some(Edit::new(field, typed.into()));
+        ui.edit = Some(Edit::new(ui.field(), typed.into()));
         press(&mut ui, &commands, &[KeyCode::Enter]);
-        let duration = match field {
-            Field::Warmup => ui.config.warmup,
-            _ => ui.config.download_duration,
+        let duration = match label {
+            "Download" => ui.config.download_duration,
+            _ => ui.config.warmup,
         };
         match expected {
             Ok(expected) => assert!(ui.edit.is_none() && duration == expected, "{typed}: {duration:?}"),
@@ -264,7 +264,7 @@ fn enter_edits_stage_and_warmup_durations_like_go() {
             }
         }
     }
-    select(&mut ui, Field::DownloadStage);
+    select(&mut ui, "Download");
     press(&mut ui, &commands, &[KeyCode::Char(' ')]);
     assert!(
         !ui.config.stages.contains(&Stage::Download),
@@ -274,27 +274,31 @@ fn enter_edits_stage_and_warmup_durations_like_go() {
 
 #[test]
 fn setup_rows_are_grouped_like_the_go_client() {
-    use Field::*;
     let mut ui = Ui::new(Config::default(), Snapshot::default());
-    assert!(
-        ui.fields()
-            == [
-                Start,
-                Url,
-                Servers,
-                ThroughputTransport,
-                Protocol,
-                LatencyTransport,
-                LatencyStage,
-                DownloadStage,
-                UploadStage,
-                BidiStage,
-                LoadedLatency,
-                Advanced,
-            ]
+    let labels = |ui: &Ui| ui.fields().iter().map(|field| field.term.label).collect::<Vec<_>>();
+    assert_eq!(
+        labels(&ui),
+        [
+            "Start test",
+            "Catalogue URL",
+            "Test servers",
+            "Throughput transport",
+            "HTTP protocol",
+            "Latency transport",
+            "Latency",
+            "Download",
+            "Upload",
+            "Bidirectional",
+            "Loaded latency",
+            "Advanced",
+        ]
     );
     ui.advanced = true;
-    assert!(ui.fields()[12..].starts_with(&[Warmup]) && ui.fields().ends_with(&[Insecure, Reset]));
+    let advanced = labels(&ui);
+    assert!(
+        advanced[12..].starts_with(&["Warmup (seconds)"])
+            && advanced.ends_with(&["Skip TLS verification", "Reset settings"])
+    );
 }
 
 #[test]
@@ -516,7 +520,7 @@ fn reset_asks_first_and_keeps_the_catalogue_and_servers() {
     };
     let mut ui = Ui::new(config.clone(), Snapshot::default());
     ui.advanced = true;
-    select(&mut ui, Field::Reset);
+    select(&mut ui, "Reset settings");
     press(&mut ui, &commands, &[KeyCode::Enter]);
     assert_eq!(ui.config, config, "reset asks first");
     press(&mut ui, &commands, &[KeyCode::Char('r')]);
@@ -539,12 +543,12 @@ async fn path_settings_are_checked_again_once_changes_settle() {
     let (commands, mut received) = mpsc::channel(4);
     let mut ui = Ui::new(Config::default(), Snapshot::default());
 
-    select(&mut ui, Field::DownloadStage);
+    select(&mut ui, "Download");
     press(&mut ui, &commands, &[KeyCode::Right]);
     tokio::time::advance(RECHECK_DELAY).await;
     assert!(!ui.recheck(&commands), "a duration does not change the paths");
 
-    select(&mut ui, Field::ThroughputTransport);
+    select(&mut ui, "Throughput transport");
     for _ in 0..2 {
         press(&mut ui, &commands, &[KeyCode::Right]);
         tokio::time::advance(RECHECK_DELAY / 2).await;
@@ -581,7 +585,7 @@ async fn approval_takes_priority_over_editing_and_keeps_long_browser_urls_reacha
             ..Snapshot::default()
         },
     );
-    ui.edit = Some(Edit::new(Field::Url, "original".into()));
+    ui.edit = Some(Edit::new(&setup::FIELDS[1], "original".into()));
     ui.help = true;
     ui.popup = Popup::Servers;
     assert!(screen(&mut ui, 40, 12).contains("Match this code: 782411"));

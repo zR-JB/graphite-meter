@@ -1,9 +1,18 @@
-//! Setup pages and editing; Config owns validation.
+//! Setup rows and editing; Config owns validation.
 use super::{MAX_TEXT, Ui, cell_width, safe_character};
-use crate::{Error, config::Config, model::Stage, vocabulary::CADENCES};
+use crate::{
+    Error,
+    config::Config,
+    model::Stage,
+    vocabulary::{self as words, CADENCES, Term},
+};
 use crossterm::event::KeyCode;
 use graphite_meter_core::{
-    discovery::{LatencyTransport, Protocol, ThroughputTransport},
+    discovery::{
+        LatencyTransport as Latency,
+        Protocol::{self, Http1, Http2, Http3, Negotiated},
+        ThroughputTransport as Throughput,
+    },
     duration::parse_go_duration,
     origin::canonical_origin,
 };
@@ -12,100 +21,157 @@ use std::{ops::RangeInclusive, time::Duration};
 const STAGE: RangeInclusive<Duration> = Duration::from_secs(1)..=Duration::from_secs(300);
 const WARMUP: RangeInclusive<Duration> = Duration::ZERO..=Duration::from_secs(4);
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Field {
+/// A setup row: the group heading it opens, its words, and what its keys change.
+pub(super) struct Field {
+    pub(super) heading: &'static str,
+    pub(super) term: Term,
+    pub(super) kind: Kind,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum Kind {
     Start,
     Advanced,
-    Url,
     Servers,
-    ThroughputOrigin,
-    Protocol,
-    ThroughputTransport,
-    LatencyOrigin,
-    LatencyTransport,
-    LatencyStage,
-    DownloadStage,
-    UploadStage,
-    BidiStage,
-    Warmup,
-    Streams,
-    AutoStreams,
-    PingInterval,
-    LoadedPingInterval,
-    LoadedLatency,
-    Insecure,
     Reset,
+    Url,
+    /// A whole number the editor changes.
+    Count(fn(&Config) -> usize, fn(&mut Config) -> &mut usize),
+    /// An origin the editor changes; empty is automatic.
+    Origin(fn(&Config) -> &Option<String>, fn(&mut Config) -> &mut Option<String>),
+    /// A stage's switch and duration.
+    Stage(Stage),
+    Warmup,
+    /// A path choice, named and explained by its term, and a step forward or back.
+    Path(fn(&Config) -> Term, fn(&mut Config, bool)),
+    Cadence(fn(&Config) -> Duration, fn(&mut Config, bool)),
+    Flag(fn(&Config) -> bool, fn(&mut Config)),
 }
-/// Go's groups: start, connection, stages, then the advanced rows.
-const FIELDS: [Field; 21] = [
-    Field::Start,
-    Field::Url,
-    Field::Servers,
-    Field::ThroughputTransport,
-    Field::Protocol,
-    Field::LatencyTransport,
-    Field::LatencyStage,
-    Field::DownloadStage,
-    Field::UploadStage,
-    Field::BidiStage,
-    Field::LoadedLatency,
-    Field::Advanced,
-    Field::Warmup,
-    Field::PingInterval,
-    Field::LoadedPingInterval,
-    Field::Streams,
-    Field::AutoStreams,
-    Field::ThroughputOrigin,
-    Field::LatencyOrigin,
-    Field::Insecure,
-    Field::Reset,
+
+const fn field(term: Term, kind: Kind) -> Field {
+    under("", term, kind)
+}
+const fn under(heading: &'static str, term: Term, kind: Kind) -> Field {
+    Field { heading, term, kind }
+}
+
+/// Go's groups: start, connection, stages, then the rows Advanced shows.
+pub(super) const FIELDS: [Field; 21] = [
+    field(words::START, Kind::Start),
+    under("Connections", words::URL, Kind::Url),
+    field(words::SERVERS, Kind::Servers),
+    field(
+        words::THROUGHPUT_TRANSPORT,
+        Kind::Path(
+            |c| words::throughput_transport(c.throughput_transport),
+            |c, forward| c.throughput_transport = cycle(&THROUGHPUT_TRANSPORTS, c.throughput_transport, forward),
+        ),
+    ),
+    field(
+        words::PROTOCOL,
+        Kind::Path(
+            |c| words::protocol(c.throughput_protocol),
+            |c, forward| c.throughput_protocol = cycle(&PROTOCOLS, c.throughput_protocol, forward),
+        ),
+    ),
+    field(
+        words::LATENCY_TRANSPORT,
+        Kind::Path(
+            |c| words::latency_transport(c.latency_transport),
+            |c, forward| c.latency_transport = cycle(&LATENCY_TRANSPORTS, c.latency_transport, forward),
+        ),
+    ),
+    under("Stages", words::LATENCY, Kind::Stage(Stage::Latency)),
+    field(words::DOWNLOAD, Kind::Stage(Stage::Download)),
+    field(words::UPLOAD, Kind::Stage(Stage::Upload)),
+    field(words::BIDIRECTIONAL, Kind::Stage(Stage::Bidirectional)),
+    field(
+        words::LOADED_LATENCY,
+        Kind::Flag(|c| c.loaded_latency, |c| c.loaded_latency = !c.loaded_latency),
+    ),
+    field(words::ADVANCED, Kind::Advanced),
+    field(words::WARMUP, Kind::Warmup),
+    field(
+        words::PING_INTERVAL,
+        Kind::Cadence(
+            |c| c.ping_interval,
+            |c, forward| c.ping_interval = next_cadence(c.ping_interval, forward),
+        ),
+    ),
+    field(
+        words::LOADED_PING_INTERVAL,
+        Kind::Cadence(
+            |c| c.loaded_ping_interval,
+            |c, forward| c.loaded_ping_interval = next_cadence(c.loaded_ping_interval, forward),
+        ),
+    ),
+    field(words::STREAMS, Kind::Count(|c| c.streams, |c| &mut c.streams)),
+    field(
+        words::AUTO_STREAMS,
+        Kind::Count(|c| c.auto_streams, |c| &mut c.auto_streams),
+    ),
+    field(
+        words::THROUGHPUT_ORIGIN,
+        Kind::Origin(|c| &c.throughput_origin, |c| &mut c.throughput_origin),
+    ),
+    field(
+        words::LATENCY_ORIGIN,
+        Kind::Origin(|c| &c.latency_origin, |c| &mut c.latency_origin),
+    ),
+    field(
+        words::INSECURE,
+        Kind::Flag(|c| c.insecure, |c| c.insecure = !c.insecure),
+    ),
+    field(words::RESET, Kind::Reset),
 ];
-const RESET: crate::vocabulary::Term = crate::vocabulary::Term {
-    label: "Reset settings",
-    explanation: "Restore the defaults; keep the catalogue URL and servers.",
-};
+
+const THROUGHPUT_TRANSPORTS: [Option<Throughput>; 3] =
+    [None, Some(Throughput::FetchStream), Some(Throughput::WebTransport)];
+const PROTOCOLS: [Option<Protocol>; 5] = [None, Some(Http1), Some(Http2), Some(Http3), Some(Negotiated)];
+const LATENCY_TRANSPORTS: [Option<Latency>; 3] = [None, Some(Latency::WebSocket), Some(Latency::WebTransport)];
+
+/// The choice after `current`, or before it: backwards goes round the others, so a value
+/// the list lacks moves as that many steps forward would move it.
+fn cycle<T: Copy + PartialEq>(choices: &[T], mut current: T, forward: bool) -> T {
+    for _ in 0..if forward { 1 } else { choices.len() - 1 } {
+        let at = choices.iter().position(|choice| *choice == current);
+        current = choices[at.map_or(0, |index| (index + 1) % choices.len())];
+    }
+    current
+}
+
+fn next_cadence(interval: Duration, forward: bool) -> Duration {
+    cycle(&CADENCES.map(|(.., preset)| preset), interval, forward)
+}
 
 impl Ui {
     pub(super) fn fields(&self) -> &'static [Field] {
-        &FIELDS[..if self.advanced { FIELDS.len() } else { 12 }]
+        let advanced = FIELDS.iter().position(|field| matches!(field.kind, Kind::Advanced));
+        &FIELDS[..advanced.filter(|_| !self.advanced).map_or(FIELDS.len(), |row| row + 1)]
     }
+    /// The row the cursor is on.
+    pub(super) fn field(&self) -> &'static Field {
+        &self.fields()[self.rows.selected().unwrap_or(0)]
+    }
+    /// Left and Right: a duration moves by its unit, a choice steps, and other rows act as Enter.
     pub(super) fn change_field(&mut self, direction: isize) {
-        let field = self.fields()[self.rows.selected().unwrap_or(0)];
-        if let Some(stage) = field.stage() {
-            let duration = stage_duration(&mut self.config, stage);
-            *duration = if direction > 0 {
-                duration.saturating_add(Duration::from_secs(1))
-            } else {
-                duration.saturating_sub(Duration::from_secs(1))
-            }
-            .clamp(*STAGE.start(), *STAGE.end());
-        } else if field == Field::Warmup {
-            self.config.warmup = if direction > 0 {
-                self.config.warmup.saturating_add(Duration::from_millis(100))
-            } else {
-                self.config.warmup.saturating_sub(Duration::from_millis(100))
-            }
-            .min(*WARMUP.end());
+        let forward = direction > 0;
+        let (duration, unit, bounds) = match self.field().kind {
+            Kind::Stage(stage) => (stage_duration(&mut self.config, stage), Duration::from_secs(1), STAGE),
+            Kind::Warmup => (&mut self.config.warmup, Duration::from_millis(100), WARMUP),
+            Kind::Path(_, step) | Kind::Cadence(_, step) => return step(&mut self.config, forward),
+            _ => return self.activate(),
+        };
+        let moved = if forward {
+            duration.saturating_add(unit)
         } else {
-            let cycles = if direction > 0 {
-                1
-            } else {
-                match field {
-                    Field::Protocol => 4,
-                    Field::ThroughputTransport | Field::LatencyTransport => 2,
-                    Field::PingInterval | Field::LoadedPingInterval => CADENCES.len() - 1,
-                    _ => 1,
-                }
-            };
-            for _ in 0..cycles {
-                self.activate();
-            }
-        }
+            duration.saturating_sub(unit)
+        };
+        *duration = moved.clamp(*bounds.start(), *bounds.end());
     }
     /// Space turns a stage on or off and otherwise acts like Enter, as in Go.
     pub(super) fn toggle(&mut self) {
-        let field = self.rows.selected().and_then(|index| self.fields().get(index));
-        let Some(stage) = field.and_then(|field| field.stage()) else {
+        let Kind::Stage(stage) = self.field().kind else {
             return self.activate();
         };
         if self.config.stages.contains(&stage) {
@@ -144,107 +210,46 @@ fn duration(value: &str, label: &str, bounds: RangeInclusive<Duration>) -> Resul
 }
 
 impl Field {
-    pub(super) fn term(self) -> crate::vocabulary::Term {
-        match self {
-            Self::Start => crate::vocabulary::START,
-            Self::Advanced => crate::vocabulary::ADVANCED,
-            Self::Url => crate::vocabulary::URL,
-            Self::Servers => crate::vocabulary::SERVERS,
-            Self::ThroughputOrigin => crate::vocabulary::THROUGHPUT_ORIGIN,
-            Self::Protocol => crate::vocabulary::PROTOCOL,
-            Self::ThroughputTransport => crate::vocabulary::THROUGHPUT_TRANSPORT,
-            Self::LatencyOrigin => crate::vocabulary::LATENCY_ORIGIN,
-            Self::LatencyTransport => crate::vocabulary::LATENCY_TRANSPORT,
-            Self::LatencyStage => crate::vocabulary::LATENCY,
-            Self::DownloadStage => crate::vocabulary::DOWNLOAD,
-            Self::UploadStage => crate::vocabulary::UPLOAD,
-            Self::BidiStage => crate::vocabulary::BIDIRECTIONAL,
-            Self::Warmup => crate::vocabulary::WARMUP,
-            Self::Streams => crate::vocabulary::STREAMS,
-            Self::AutoStreams => crate::vocabulary::AUTO_STREAMS,
-            Self::PingInterval => crate::vocabulary::PING_INTERVAL,
-            Self::LoadedPingInterval => crate::vocabulary::LOADED_PING_INTERVAL,
-            Self::LoadedLatency => crate::vocabulary::LOADED_LATENCY,
-            Self::Insecure => crate::vocabulary::INSECURE,
-            Self::Reset => RESET,
-        }
-    }
-    pub(super) fn label(self) -> &'static str {
-        self.term().label
-    }
-    pub(super) fn explanation(self, config: &Config) -> &'static str {
-        match self {
-            Self::Protocol => crate::vocabulary::protocol(config.throughput_protocol).explanation,
-            Self::ThroughputTransport => {
-                crate::vocabulary::throughput_transport(config.throughput_transport).explanation
-            }
-            Self::LatencyTransport => crate::vocabulary::latency_transport(config.latency_transport).explanation,
-            _ => self.term().explanation,
+    pub(super) fn explanation(&self, config: &Config) -> &'static str {
+        match self.kind {
+            Kind::Path(term, _) => term(config).explanation,
+            _ => self.term.explanation,
         }
     }
     /// Footer keys for this row, before those every row shares.
-    pub(super) fn hints(self) -> &'static [&'static str] {
-        match self {
-            Self::LatencyStage | Self::DownloadStage | Self::UploadStage | Self::BidiStage => {
-                &["Space toggle", "←/→ 1 s", "Enter edit"]
-            }
-            Self::LoadedLatency | Self::Insecure => &["Space toggle", "Tab focus"],
-            Self::Servers => &["Enter choose servers", "Tab focus"],
-            Self::Advanced => &["Enter show/hide", "Tab focus"],
-            Self::Url | Self::ThroughputOrigin | Self::LatencyOrigin | Self::Streams | Self::AutoStreams => {
-                &["Enter edit", "Tab focus"]
-            }
-            Self::Warmup => &["←/→ 0.1 s", "Enter edit"],
-            Self::Reset => &["Enter reset", "Tab focus"],
+    pub(super) fn hints(&self) -> &'static [&'static str] {
+        match self.kind {
+            Kind::Stage(_) => &["Space toggle", "←/→ 1 s", "Enter edit"],
+            Kind::Flag(..) => &["Space toggle", "Tab focus"],
+            Kind::Servers => &["Enter choose servers", "Tab focus"],
+            Kind::Advanced => &["Enter show/hide", "Tab focus"],
+            Kind::Url | Kind::Count(..) | Kind::Origin(..) => &["Enter edit", "Tab focus"],
+            Kind::Warmup => &["←/→ 0.1 s", "Enter edit"],
+            Kind::Reset => &["Enter reset", "Tab focus"],
             _ => &["←/→ choose", "Tab focus"],
         }
     }
-    pub(super) fn stage(self) -> Option<Stage> {
-        match self {
-            Self::LatencyStage => Some(Stage::Latency),
-            Self::DownloadStage => Some(Stage::Download),
-            Self::UploadStage => Some(Stage::Upload),
-            Self::BidiStage => Some(Stage::Bidirectional),
-            _ => None,
-        }
-    }
-    pub(super) fn value(self, config: &Config) -> String {
-        if let Some(stage) = self.stage() {
-            return format!(
+    pub(super) fn value(&self, config: &Config) -> String {
+        match self.kind {
+            Kind::Start | Kind::Advanced | Kind::Reset => String::new(),
+            Kind::Url => config.url.clone(),
+            Kind::Servers => config.servers.join(","),
+            Kind::Count(count, _) => count(config).to_string(),
+            Kind::Origin(origin, _) => origin(config).clone().unwrap_or_default(),
+            Kind::Stage(stage) => format!(
                 "{} · {} s",
                 on_off(config.stages.contains(&stage)),
                 seconds(config.duration(stage))
-            );
-        }
-        match self {
-            Self::Start | Self::Advanced | Self::Reset => String::new(),
-            Self::Url => config.url.clone(),
-            Self::Servers => config.servers.join(","),
-            Self::ThroughputOrigin => config.throughput_origin.clone().unwrap_or_default(),
-            Self::LatencyOrigin => config.latency_origin.clone().unwrap_or_default(),
-            Self::Protocol => crate::vocabulary::protocol(config.throughput_protocol).label.into(),
-            Self::ThroughputTransport => crate::vocabulary::throughput_transport(config.throughput_transport)
-                .label
-                .into(),
-            Self::LatencyTransport => crate::vocabulary::latency_transport(config.latency_transport)
-                .label
-                .into(),
-            Self::Warmup => seconds(config.warmup),
-            Self::Streams => config.streams.to_string(),
-            Self::AutoStreams => config.auto_streams.to_string(),
-            Self::PingInterval => cadence(config.ping_interval),
-            Self::LoadedPingInterval => cadence(config.loaded_ping_interval),
-            Self::LoadedLatency => on_off(config.loaded_latency).into(),
-            Self::Insecure => on_off(config.insecure).into(),
-            _ => unreachable!("stage field handled above"),
+            ),
+            Kind::Warmup => seconds(config.warmup),
+            Kind::Path(term, _) => term(config).label.into(),
+            Kind::Cadence(interval, _) => cadence(interval(config)),
+            Kind::Flag(on, _) => on_off(on(config)).into(),
         }
     }
 }
 fn cadence(interval: Duration) -> String {
-    match CADENCES.iter().find(|(.., preset)| *preset == interval) {
-        Some((_, label, _)) => (*label).into(),
-        None => format!("Custom ({} ms)", interval.as_millis()),
-    }
+    words::cadence(interval).map_or_else(|| format!("Custom ({} ms)", interval.as_millis()), Into::into)
 }
 pub(super) fn on_off(value: bool) -> &'static str {
     if value { "on" } else { "off" }
@@ -254,12 +259,12 @@ pub(super) fn seconds(value: Duration) -> String {
 }
 
 pub(super) struct Edit {
-    pub(super) field: Field,
+    pub(super) field: &'static Field,
     pub(super) chars: Vec<char>,
     cursor: usize,
 }
 impl Edit {
-    pub(super) fn new(field: Field, value: String) -> Self {
+    pub(super) fn new(field: &'static Field, value: String) -> Self {
         let chars: Vec<_> = value.chars().filter(|c| safe_character(*c)).take(MAX_TEXT).collect();
         let cursor = chars.len();
         Self { field, chars, cursor }
@@ -340,57 +345,16 @@ impl Edit {
 
 impl Ui {
     pub(super) fn activate(&mut self) {
-        let Some(&field) = self.rows.selected().and_then(|index| self.fields().get(index)) else {
-            return;
-        };
-        if let Some(stage) = field.stage() {
-            self.edit = Some(Edit::new(field, format!("{}s", seconds(self.config.duration(stage)))));
-            return;
-        }
-        match field {
-            Field::PingInterval | Field::LoadedPingInterval => {
-                let cadence = if field == Field::PingInterval {
-                    &mut self.config.ping_interval
-                } else {
-                    &mut self.config.loaded_ping_interval
-                };
-                let index = CADENCES.iter().position(|(.., preset)| preset == cadence);
-                *cadence = CADENCES[index.map_or(0, |index| (index + 1) % CADENCES.len())].2;
-            }
-            Field::Start => {}
-            Field::Advanced => self.advanced = !self.advanced,
-            Field::Servers => self.open_servers(),
-            Field::Protocol => {
-                self.config.throughput_protocol = match self.config.throughput_protocol {
-                    None => Some(Protocol::Http1),
-                    Some(Protocol::Http1) => Some(Protocol::Http2),
-                    Some(Protocol::Http2) => Some(Protocol::Http3),
-                    Some(Protocol::Http3) => Some(Protocol::Negotiated),
-                    Some(Protocol::Negotiated) => None,
-                }
-            }
-            Field::ThroughputTransport => {
-                self.config.throughput_transport = match self.config.throughput_transport {
-                    None => Some(ThroughputTransport::FetchStream),
-                    Some(ThroughputTransport::FetchStream) => Some(ThroughputTransport::WebTransport),
-                    Some(_) => None,
-                }
-            }
-            Field::LatencyTransport => {
-                self.config.latency_transport = match self.config.latency_transport {
-                    None => Some(LatencyTransport::WebSocket),
-                    Some(LatencyTransport::WebSocket) => Some(LatencyTransport::WebTransport),
-                    Some(LatencyTransport::WebTransport) => None,
-                }
-            }
-            Field::LoadedLatency => self.config.loaded_latency = !self.config.loaded_latency,
-            Field::Insecure => self.config.insecure = !self.config.insecure,
-            Field::Warmup => self.edit = Some(Edit::new(field, format!("{}s", seconds(self.config.warmup)))),
-            Field::Reset if !self.reset_prompt => {
+        let field = self.field();
+        match field.kind {
+            Kind::Start => {}
+            Kind::Advanced => self.advanced = !self.advanced,
+            Kind::Servers => self.open_servers(),
+            Kind::Reset if !self.reset_prompt => {
                 self.reset_prompt = true;
                 self.notice = "Press Enter again to reset every setting; any other key keeps them.".into();
             }
-            Field::Reset => {
+            Kind::Reset => {
                 self.reset_prompt = false;
                 self.config = Config {
                     url: std::mem::take(&mut self.config.url),
@@ -399,27 +363,33 @@ impl Ui {
                 };
                 self.notice = "Settings reset to defaults.".into();
             }
-            _ => self.edit = Some(Edit::new(field, field.value(&self.config))),
+            Kind::Stage(stage) => {
+                self.edit = Some(Edit::new(field, format!("{}s", seconds(self.config.duration(stage)))));
+            }
+            Kind::Warmup => self.edit = Some(Edit::new(field, format!("{}s", seconds(self.config.warmup)))),
+            Kind::Url | Kind::Count(..) | Kind::Origin(..) => {
+                self.edit = Some(Edit::new(field, field.value(&self.config)));
+            }
+            Kind::Path(_, step) | Kind::Cadence(_, step) => step(&mut self.config, true),
+            Kind::Flag(_, flip) => flip(&mut self.config),
         }
     }
-    pub(super) fn apply(&mut self, field: Field, value: String) -> Result<(), Error> {
+    pub(super) fn apply(&mut self, field: &Field, value: String) -> Result<(), Error> {
         let value = value.trim();
-        let origin = || (!value.is_empty()).then(|| canonical_origin(value)).transpose();
         let mut config = self.config.clone();
-        match field {
-            Field::Url => config.url = value.into(),
-            Field::ThroughputOrigin => config.throughput_origin = origin()?,
-            Field::LatencyOrigin => config.latency_origin = origin()?,
-            Field::Streams => config.streams = value.parse()?,
-            Field::AutoStreams => config.auto_streams = value.parse()?,
-            Field::Warmup => config.warmup = duration(value, "Warmup", WARMUP)?,
-            _ => match field.stage() {
-                Some(stage) => *stage_duration(&mut config, stage) = duration(value, stage.name(), STAGE)?,
-                None => return Err("this field is not editable text".into()),
-            },
+        match field.kind {
+            Kind::Url => config.url = value.into(),
+            Kind::Count(_, count) => *count(&mut config) = value.parse()?,
+            // Go reads an empty origin as automatic.
+            Kind::Origin(_, origin) => {
+                *origin(&mut config) = (!value.is_empty()).then(|| canonical_origin(value)).transpose()?;
+            }
+            Kind::Warmup => config.warmup = duration(value, "Warmup", WARMUP)?,
+            Kind::Stage(stage) => *stage_duration(&mut config, stage) = duration(value, stage.name(), STAGE)?,
+            _ => return Err("this field is not editable text".into()),
         }
         config.validate_settings()?;
-        if field == Field::Url {
+        if let Kind::Url = field.kind {
             config.servers.clear();
             self.snapshot.servers.clear();
         }

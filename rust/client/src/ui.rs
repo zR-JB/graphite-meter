@@ -25,7 +25,7 @@ use ratatui::{
         Axis, Block, BorderType, Borders, Chart, Clear, Dataset, GraphType, List, ListItem, ListState, Paragraph, Wrap,
     },
 };
-use setup::{Edit, Field};
+use setup::{Edit, Kind};
 use std::{
     io::{self, IsTerminal},
     time::Duration,
@@ -561,13 +561,12 @@ impl Ui {
             }
             return false;
         }
-        if self.reset_prompt {
-            let row = self.rows.selected().and_then(|index| self.fields().get(index));
-            if !matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) || row != Some(&Field::Reset) {
-                self.reset_prompt = false;
-                self.notice = "Settings kept.".into();
-                return false;
-            }
+        if self.reset_prompt
+            && !(matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) && matches!(self.field().kind, Kind::Reset))
+        {
+            self.reset_prompt = false;
+            self.notice = "Settings kept.".into();
+            return false;
         }
         let before = self.config.clone();
         let field_count = self.fields().len();
