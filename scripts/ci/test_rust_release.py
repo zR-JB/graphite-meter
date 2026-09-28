@@ -14,8 +14,12 @@ from unittest.mock import patch
 from .fixtures import write_checksums
 from .github_api import ControlPlaneError as VerificationError, JsonObject, file_sha256 as sha256_file
 from .verify_release_assets import (
-    expected_rust_artifacts, read_archive, require_same, verify_rust_client_archive, verify_rust_source,
+    TARGETS, expected_rust_artifacts, read_archive, require_same, tui_archive, tui_targets, verify_rust_artifacts,
+    verify_rust_client_archive, verify_rust_source,
 )
+
+# Each shipped platform's Rust target, as the builders read it.
+RUST_TARGETS = tui_targets(TARGETS)
 
 
 def executable(target: str) -> bytes:
@@ -72,15 +76,11 @@ def inventory(package: str, target: str) -> JsonObject:
 
 class RustArchiveBoundaryTests(unittest.TestCase):
     def test_executable_member_is_never_executed(self) -> None:
-        for platform, target, suffix, binary in (
-            ("linux/amd64", "x86_64-unknown-linux-gnu", "tar.gz", "graphite-meter-client"),
-            ("windows/amd64", "x86_64-pc-windows-gnu", "zip", "graphite-meter-client.exe"),
-            ("darwin/arm64", "aarch64-apple-darwin", "tar.gz", "graphite-meter-client"),
-        ):
+        for platform, target in RUST_TARGETS.items():
+            archive, base, binary = tui_archive("1.2.3", platform, "_rust")
             with self.subTest(platform=platform), tempfile.TemporaryDirectory() as temporary:
                 dist = Path(temporary)
                 marker = dist / "executed"
-                base = f"graphite-meter-client_1.2.3_{platform.replace('/', '_')}_rust"
                 files = {
                     f"{base}/{binary}": executable(target) + f"touch '{marker}'\n".encode(),
                     f"{base}/THIRD_PARTY_NOTICES.txt": b"fixture notices\n",
@@ -88,13 +88,13 @@ class RustArchiveBoundaryTests(unittest.TestCase):
                     f"{base}/COPYRIGHT": Path("COPYRIGHT").read_bytes(),
                     f"{base}/SOURCE.txt": f"{base}_third-party-source.tar.gz".encode(),
                 }
-                write_archive(dist / f"{base}.{suffix}", base, files)
+                write_archive(dist / archive, base, files)
                 write_source(dist / f"{base}_third-party-source.tar.gz", inventory("graphite-meter-client", target))
                 arch, rest = target.split("-", 1)
                 other = {"x86_64": "aarch64", "aarch64": "x86_64"}[arch] + "-" + rest
                 with patch("subprocess.Popen", side_effect=AssertionError("artifact execution")):
                     verify_rust_client_archive(dist, "1.2.3", platform, target)
-                    write_archive(dist / f"{base}.{suffix}", base, files | {f"{base}/{binary}": executable(other)})
+                    write_archive(dist / archive, base, files | {f"{base}/{binary}": executable(other)})
                     with self.assertRaisesRegex(VerificationError, f"does not hold a {target} executable"):
                         verify_rust_client_archive(dist, "1.2.3", platform, target)
                 self.assertFalse(marker.exists())
@@ -127,8 +127,24 @@ class RustArchiveBoundaryTests(unittest.TestCase):
 
 
 class RustServerReleaseTests(unittest.TestCase):
+    def test_each_server_source_names_the_listed_linux_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            dist = Path(temporary)
+
+            def source(arch: str, target: str) -> None:
+                write_source(dist / f"graphite-meter-server_1.2.3_linux_{arch}_rust_third-party-source.tar.gz",
+                             inventory("graphite-meter-server", target))
+
+            for arch in ("amd64", "arm64"):
+                source(arch, RUST_TARGETS[f"linux/{arch}"])
+            verify_rust_artifacts(dist, "1.2.3", "server")
+            # The image ships the static musl server; a glibc build for the same machine is another binary.
+            source("arm64", RUST_TARGETS["linux/arm64"].replace("-musl", "-gnu"))
+            with self.assertRaisesRegex(VerificationError, "invalid Rust build identity"):
+                verify_rust_artifacts(dist, "1.2.3", "server")
+
     def test_server_source_identity_and_component_presence(self) -> None:
-        target = "aarch64-unknown-linux-gnu"
+        target = RUST_TARGETS["linux/arm64"]
         for mutation in (
             "valid",
             "cargo_fixture",
@@ -148,7 +164,7 @@ class RustServerReleaseTests(unittest.TestCase):
                 if mutation == "package":
                     metadata["package"] = "graphite-meter-client"
                 if mutation == "target":
-                    metadata["target"] = "x86_64-unknown-linux-gnu"
+                    metadata["target"] = RUST_TARGETS["linux/amd64"]
                 if mutation == "lock":
                     metadata["cargoLockSha256"] = "0" * 64
                 if mutation == "schema_boolean":
