@@ -370,12 +370,16 @@ async fn approval_pages_require_client_evidence_behind_a_trusted_proxy() {
 
     let h = Harness::start_with_proxies(vec!["127.0.0.0/8".parse().unwrap()]).await;
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(b"approval verifier"));
-    for path in [
-        format!("/auth/cli?challenge={challenge}"),
-        format!("/auth/browser?challenge={challenge}&client_origin=https://client.example"),
+    // As in Go, the CLI page sends a signed-out caller to sign in before it reads the address.
+    for (path, without_evidence) in [
+        (format!("/auth/cli?challenge={challenge}"), "HTTP/1.1 303"),
+        (
+            format!("/auth/browser?challenge={challenge}&client_origin=https://client.example"),
+            "HTTP/1.1 403",
+        ),
     ] {
-        let (denied, _) = h.request("GET", &path, "", "").await;
-        assert!(denied.starts_with("HTTP/1.1 403"), "{denied}");
+        let (unresolved, _) = h.request("GET", &path, "", "").await;
+        assert!(unresolved.starts_with(without_evidence), "{unresolved}");
         let (allowed, _) = h.request("GET", &path, "X-Real-IP: 192.0.2.1\r\n", "").await;
         assert!(allowed.starts_with("HTTP/1.1 303"), "{allowed}");
     }
