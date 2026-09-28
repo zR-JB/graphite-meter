@@ -104,7 +104,7 @@ pub const ADDED: Term = Term {
     explanation: "Loaded median minus the same server’s idle median; negative values are preserved.",
 };
 pub const P95: Term = Term {
-    label: "p95",
+    label: "P95",
     explanation: "Ninety-five percent of replied probes took no longer than this time.",
 };
 pub const JITTER: Term = Term {
@@ -206,5 +206,63 @@ pub fn latency_transport(value: Option<graphite_meter_core::discovery::LatencyTr
             label: "WebTransport datagrams",
             explanation: "Send latency probes as QUIC datagrams that can arrive out of order or be lost.",
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::model::{Phase, ServerLatencyResult, Snapshot, Stage, StageResult};
+    use graphite_meter_core::latency::{Distribution, LatencySummary};
+    use std::time::Duration;
+
+    /// Details explains every latency column under the name the report and Go print.
+    #[test]
+    fn values_name_the_report_latency_columns() {
+        let rtt = 1_500_000;
+        let snapshot = Snapshot {
+            phase: Phase::Complete,
+            results: vec![StageResult {
+                stage: Stage::Latency,
+                elapsed: Duration::from_secs(1),
+                server_latencies: vec![ServerLatencyResult {
+                    elapsed: Some(Duration::from_secs(1)),
+                    id: "self".into(),
+                    summary: LatencySummary {
+                        distribution: Some(Distribution {
+                            min: rtt,
+                            max: rtt,
+                            mean: rtt,
+                            p50: rtt,
+                            p95: rtt,
+                        }),
+                        count: 4,
+                        ..LatencySummary::default()
+                    },
+                    ending: None,
+                }],
+                ..Default::default()
+            }],
+            participants: vec!["self".into()],
+            latency_focus: Some("self".into()),
+            plan: vec![Stage::Latency],
+            ..Snapshot::default()
+        };
+        let report = crate::report::render(&snapshot, crate::report::WIDTH).unwrap_or_default();
+        let header = report
+            .lines()
+            .find(|line| line.starts_with("Latency "))
+            .unwrap_or_default();
+        let columns: Vec<_> = header
+            .split("  ")
+            .map(str::trim)
+            .filter(|column| !column.is_empty())
+            .collect();
+        assert!(columns.contains(&"P95"), "{report}");
+        for column in columns {
+            assert!(
+                super::VALUES.iter().any(|term| term.label == column),
+                "{column} is not explained"
+            );
+        }
     }
 }
