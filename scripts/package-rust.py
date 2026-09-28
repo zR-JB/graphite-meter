@@ -70,7 +70,7 @@ def build(version: str, platform: str, output: Path, supplement: Path) -> None:
         host = re.search(r"(?m)^host: (\S+)$", subprocess.check_output(["rustc", f"+{channel}", "-vV"], text=True))
         if host and host[1] == target:
             actual = subprocess.check_output([str(binary), "--version"], text=True).strip()
-            if actual != f"{version}-rust":
+            if actual != f"graphite-meter-client {version}-rust":
                 raise ValueError(f"Rust executable version mismatch: {actual!r}")
         for filename in ("LICENSE", "COPYRIGHT"):
             shutil.copyfile(REPO / filename, package / filename)

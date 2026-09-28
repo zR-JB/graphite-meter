@@ -359,3 +359,32 @@ async fn invalid_measurement_inputs_fail_before_connecting() -> Result<(), Error
     }
     Ok(())
 }
+
+async fn flags(args: &[&str]) -> Result<std::process::Output, Error> {
+    Ok(tokio::time::timeout(
+        Duration::from_secs(5),
+        Command::new(env!("CARGO_BIN_EXE_graphite-meter-client"))
+            .args(args)
+            .stdin(Stdio::null())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await??)
+}
+
+#[tokio::test]
+async fn version_names_the_client_like_go() -> Result<(), Error> {
+    for flag in ["-version", "--version"] {
+        let output = flags(&[flag]).await?;
+        assert_eq!(output.status.code(), Some(0));
+        assert!(output.stderr.is_empty());
+        let version = String::from_utf8(output.stdout)?;
+        assert!(
+            version
+                .strip_prefix("graphite-meter-client ")
+                .is_some_and(|number| number.contains("-rust") && !number.trim_end().contains(' ')),
+            "{version:?}"
+        );
+    }
+    Ok(())
+}

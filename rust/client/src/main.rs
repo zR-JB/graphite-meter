@@ -45,7 +45,7 @@ async fn run(action: Action) -> Result<i32, Error> {
         }
         Action::Version => {
             println!(
-                "{}",
+                "graphite-meter-client {}",
                 option_env!("GM_ENGINE_VERSION").unwrap_or(concat!(env!("CARGO_PKG_VERSION"), "-rust-dev"))
             );
             return Ok(0);
