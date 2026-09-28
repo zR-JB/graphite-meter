@@ -421,6 +421,30 @@ async fn protocol_violations_close_the_connection_with_their_code() -> Result<()
     Ok(())
 }
 
+#[tokio::test]
+async fn a_stopped_control_stream_closes_the_connection() -> Result<(), TestError> {
+    let critical = Err(Error::Connection {
+        local: true,
+        code: Code::H3_CLOSED_CRITICAL_STREAM,
+        reason: Bytes::new(),
+    });
+    // The server's control stream is the first stream its peer accepts.
+    let peers = peers(usize::MAX).await?;
+    let (serving, _) = serve(&peers, |_, _| async {});
+    peers.client.accept_uni().await?.stop(0_u32.into())?;
+    let code = tokio::time::timeout(Duration::from_secs(5), closed_with(&peers.client)).await?;
+    assert_eq!(code, Code::H3_CLOSED_CRITICAL_STREAM);
+    assert_eq!(serving.await?, critical);
+
+    let peers = self::peers(usize::MAX).await?;
+    let (driver, _requests) = client(&peers);
+    peers.server.accept_uni().await?.stop(0_u32.into())?;
+    let code = tokio::time::timeout(Duration::from_secs(5), closed_with(&peers.server)).await?;
+    assert_eq!(code, Code::H3_CLOSED_CRITICAL_STREAM);
+    assert_eq!(driver.await?, critical);
+    Ok(())
+}
+
 /// Reads a raw response stream: its bytes up to FIN, or the reset code.
 async fn response_bytes(recv: &mut noq::RecvStream) -> Result<Vec<u8>, Code> {
     match recv.read_to_end(64 * 1024).await {

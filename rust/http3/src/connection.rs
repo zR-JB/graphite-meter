@@ -179,7 +179,8 @@ pub(crate) struct Connection {
 /// Our control stream: SETTINGS first, GOAWAY on shutdown.
 struct Control {
     opening: Option<Pending<noq::SendStream>>,
-    stream: Option<noq::SendStream>,
+    /// The stream, and its STOP_SENDING, which the peer must never send (RFC 9114 §6.2.1).
+    stream: Option<(noq::SendStream, Pin<Box<noq::Stopped>>)>,
     pending: Vec<u8>,
     written: usize,
 }
@@ -353,21 +354,31 @@ impl Connection {
         self.poll_timers(cx, now)
     }
 
+    /// The peer stopping it ends the connection with H3_CLOSED_CRITICAL_STREAM, noticed without a write.
     fn poll_control(&mut self, cx: &mut Context<'_>) -> Result<(), Error> {
         let control = &mut self.control;
         if let Some(opening) = &mut control.opening {
             let Poll::Ready(stream) = opening.as_mut().poll(cx) else {
                 return Ok(());
             };
-            control.stream = Some(stream?);
+            let stream = stream?;
+            let stopped = Box::pin(stream.stopped());
+            control.stream = Some((stream, stopped));
             control.opening = None;
         }
-        let stream = control.stream.as_mut().expect("opened control stream");
+        let (stream, stopped) = control.stream.as_mut().expect("opened control stream");
+        if let Poll::Ready(Ok(Some(_))) = stopped.as_mut().poll(cx) {
+            return Err(self.shared.close(Code::H3_CLOSED_CRITICAL_STREAM));
+        }
         while control.written < control.pending.len() {
             let Poll::Ready(written) = pin!(stream.write(&control.pending[control.written..])).poll(cx) else {
                 return Ok(());
             };
-            control.written += written?;
+            control.written += match written {
+                Ok(written) => written,
+                Err(noq::WriteError::Stopped(_)) => return Err(self.shared.close(Code::H3_CLOSED_CRITICAL_STREAM)),
+                Err(error) => return Err(error.into()),
+            };
         }
         control.pending.clear();
         control.written = 0;
