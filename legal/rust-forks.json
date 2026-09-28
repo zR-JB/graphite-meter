@@ -91,11 +91,11 @@
   {
     "fork": "https://github.com/zR-JB/noq",
     "branch": "graphite-meter/noq-v1.3.0",
-    "rev": "5d05e0b508930a45258edd32dfc9f0bb180bda28",
+    "rev": "9efdcbf291c837bf5078cfaa6d75d9fb84a5f6f1",
     "upstream": "https://github.com/n0-computer/noq",
     "baseTag": "noq-v1.3.0",
     "base": "c1f411562e6078852749b8bcf1190523096a107f",
-    "diffSha256": "c3bf50bdc32dfbf879688fc681315d15aa5f71c9aa3cb6fa12266dfe32dbdd03",
+    "diffSha256": "35e3206eeb6c4158dbccd34ffd9db8fb9910b9583582e94d2d75104ce98111cf",
     "modifiedPackages": [
       "noq",
       "noq-proto"
@@ -319,6 +319,31 @@
       {
         "subject": "Precharge the state of every stream the peer may open",
         "purpose": "Precharges stream state for every stream the peer may open, exposed as TransportConfig::connection_floor_bytes().",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Benchmark send buffer lookups behind 16 KiB segments",
+        "purpose": "Bench-only: measures segment lookup and streaming transfer at 1 MiB and 48 MiB in flight.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Look up send buffer segments by binary search",
+        "purpose": "Replaces the per-frame linear scan of unacknowledged segments with an offset index (upstreamable; quinn has the same scan).",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Find ranges overlapping a query by binary search",
+        "purpose": "Makes ArrayRangeSet overlap queries O(log n + k).",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Track acknowledged send data as ranges instead of a bitmap",
+        "purpose": "Replaces the per-byte ACK bitmap with charged ranges; a refused gap ACK degrades to retransmission and never closes the connection.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Resend a lost FIN that carried no data",
+        "purpose": "Keeps a lost FIN-only STREAM frame queued for retransmission (fixes a stall introduced with noq#805).",
         "origin": "graphite-meter"
       }
     ],
