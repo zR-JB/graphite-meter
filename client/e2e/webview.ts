@@ -275,7 +275,8 @@ export class Locator {
         const hit = document.elementFromPoint(x, y);
         const covered = !hit || !(el.contains(hit) || hit.contains(el));
         const moved = box.x !== before.x || box.y !== before.y;
-        if (box.width === 0 || moved || el.disabled || covered)
+        const disabled = el.disabled || el.ariaDisabled === "true";
+        if (box.width === 0 || moved || disabled || covered)
           throw new Error(`not actionable: ${hit?.outerHTML.slice(0, 120)}`);
         return { x, y };
       }),
@@ -482,6 +483,31 @@ export class Page {
     await this.cdp("Network.enable");
     await this.cdp("Network.setBlockedURLs", { urls });
   }
+  /** The run's visible state, for a failure message: phase, run control, blocker and notices. */
+  async summary() {
+    const state = await this.evaluate(() => {
+      const text = (el: Element | null) =>
+        el?.textContent?.replace(/\s+/g, " ").trim();
+      const run = document.querySelector(".run-button");
+      return {
+        phase: document.querySelector("#console")?.getAttribute("data-phase"),
+        run: run && {
+          text: text(run),
+          disabled: run.getAttribute("aria-disabled"),
+          busy: run.getAttribute("aria-busy"),
+        },
+        blocker: text(document.querySelector("#run-duration")),
+        notices: [
+          ...document.querySelectorAll('[role="alert"], [role="status"]'),
+        ]
+          .map(text)
+          .filter(Boolean)
+          .slice(0, 8),
+      };
+    });
+    const recent = [...this.errors, ...this.console].slice(-8);
+    return `page state: ${JSON.stringify(state)}\nrecent console:\n${recent.join("\n")}`;
+  }
   async artifact(name: string) {
     await mkdir(artifacts, { recursive: true });
     const stem = resolve(artifacts, name.replace(/[^a-z0-9_-]+/gi, "-"));
@@ -578,6 +604,14 @@ export function test(name: string, fn: (page: Page) => Promise<unknown>) {
       await page.evaluate("window.__gmCheckDisplay?.()").catch(() => undefined);
       if (page.errors.length) throw new Error(page.errors.join("\n"));
     } catch (error) {
+      // CI keeps the artifact out of the log, and parallel runs drop console output,
+      // so the failure message itself names what the page showed.
+      const summary = await within(
+        "summarising the page",
+        page.summary(),
+        5_000,
+      ).catch(String);
+      if (error instanceof Error) error.message += `\n${summary}`;
       await page.artifact(name).catch(() => {});
       throw error;
     } finally {
