@@ -193,6 +193,42 @@ async fn approval_takes_priority_over_editing_and_keeps_long_browser_urls_reacha
 }
 
 #[test]
+fn escaping_sign_in_returns_to_setup_with_the_cancel_notice() {
+    use crate::model::AuthPrompt;
+    let prompt = AuthPrompt {
+        deadline: tokio::time::Instant::now() + Duration::from_secs(120),
+        origin: "https://meter.example".into(),
+        code: "782411".into(),
+        browser_url: "https://meter.example/auth/cli?challenge=x".into(),
+    };
+    for (live, phase, ended) in [
+        (false, Phase::Checking, Phase::Setup),
+        (true, Phase::Preparing, Phase::Cancelled),
+    ] {
+        let (commands, mut received) = mpsc::channel(4);
+        let mut ui = Ui::new(
+            Config::default(),
+            Snapshot {
+                phase,
+                auth: Some(prompt.clone()),
+                ..Snapshot::default()
+            },
+        );
+        ui.live = live;
+        ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
+        assert!(matches!(received.try_recv(), Ok(Command::Cancel)));
+        for phase in [phase, ended] {
+            ui.update(Snapshot {
+                phase,
+                ..Snapshot::default()
+            });
+            assert_eq!(ui.notice().0, "Sign-in canceled. Press v to request a new code.");
+        }
+        assert!(!ui.live);
+    }
+}
+
+#[test]
 fn terminal_text_cannot_emit_controls_or_direction_overrides() {
     let text = safe_text("server\x1b]52;c;secret\x07\r\n\u{202e}name", 100);
     assert!(text.chars().all(safe_character));

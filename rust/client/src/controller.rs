@@ -3,7 +3,7 @@ use crate::{
     Error,
     config::Config,
     model::{AuthPrompt, Phase, Snapshot},
-    net::{Http, authentication_required},
+    net::{ApprovalExpired, Http, authentication_required},
     runner,
     ui::{self, Command},
 };
@@ -17,6 +17,7 @@ use tokio::{
 
 const CANCEL_GRACE: Duration = Duration::from_secs(5);
 const SIGN_IN: &str = "Sign-in required; run graphite-meter-client in a terminal to sign in.";
+const SIGN_IN_EXPIRED: &str = "Sign-in expired. Press v to request a new code.";
 #[derive(Clone)]
 enum Work {
     Run(Config),
@@ -251,6 +252,7 @@ impl Controller {
                 Ok(prepared) => self.prepared = prepared,
                 Err(error) => {
                     let signed_out = authentication_required(error.as_ref()).is_some();
+                    let expired = error.is::<ApprovalExpired>();
                     self.snapshots.send_modify(|snapshot| {
                         snapshot.phase = if snapshot.measured() {
                             Phase::Incomplete
@@ -259,7 +261,9 @@ impl Controller {
                         };
                         let text = crate::failure::text(error.as_ref());
                         let started = !snapshot.participants.is_empty() || !snapshot.results.is_empty();
-                        snapshot.error = Some(if !running || started {
+                        snapshot.error = Some(if expired {
+                            SIGN_IN_EXPIRED.into()
+                        } else if !running || started {
                             text
                         } else if signed_out {
                             SIGN_IN.into()
@@ -477,6 +481,22 @@ mod tests {
         );
         assert_eq!(controller.snapshots.borrow().phase, Phase::Checking);
         controller.stop().await;
+    }
+
+    #[tokio::test]
+    async fn an_expired_approval_asks_for_a_new_code_like_go() {
+        let _ = crate::crypto::provider().install_default();
+        for running in [false, true] {
+            let (snapshots, _) = watch::channel(Snapshot::default());
+            let mut controller = Controller::new(&Config::default(), snapshots, true).unwrap();
+            controller.running = running;
+            controller
+                .operations
+                .spawn(async { Err(Box::new(ApprovalExpired) as Error) });
+            let result = controller.operations.join_next().await.unwrap();
+            controller.finished(result).unwrap();
+            assert_eq!(controller.snapshots.borrow().error.as_deref(), Some(SIGN_IN_EXPIRED));
+        }
     }
 
     #[tokio::test]

@@ -266,6 +266,36 @@ pub(crate) fn authentication_required<'a>(
     }
 }
 
+/// Go's ErrApprovalExpired: the approval window closed while the server kept answering.
+#[derive(Debug)]
+pub struct ApprovalExpired;
+impl fmt::Display for ApprovalExpired {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("browser approval timed out")
+    }
+}
+impl std::error::Error for ApprovalExpired {}
+
+/// The approval window closed after the last poll failed to reach the server.
+#[derive(Debug)]
+struct ApprovalUnreachable(Error);
+impl fmt::Display for ApprovalUnreachable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "server unreachable while waiting for browser approval: {}", self.0)
+    }
+}
+impl std::error::Error for ApprovalUnreachable {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.0.as_ref())
+    }
+}
+
+enum Approval {
+    Pending,
+    Granted,
+    Unreachable(Error),
+}
+
 pub const AUTHORIZATION_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// The verifier is deliberately private and has no Debug implementation.
@@ -473,42 +503,69 @@ impl Http {
             token_url: format!("{origin}/auth/cli/token"),
         })
     }
-    /// The caller displays browser_url/code and owns cancellation of this future.
+    /// The caller displays browser_url/code and owns cancellation of this future. As in Go, polls
+    /// outlast network errors; the deadline reports the last poll's error or ApprovalExpired.
     pub async fn poll_authorization(&self, pending: PendingAuthorization) -> Result<()> {
-        tokio::time::timeout_at(pending.deadline, async {
-            loop {
-                let body = serde_json::to_vec(&serde_json::json!({"verifier": pending.verifier.as_str()}))?;
-                let request = Request::post(&pending.token_url)
-                    .header(CONTENT_TYPE, "application/json")
-                    .body(full(body))?;
-                let response =
-                    tokio::time::timeout(CONTROL_TIMEOUT, self.connections.send(request, Protocol::Negotiated))
-                        .await??;
-                let status = response.status();
-                let data = tokio::time::timeout(CONTROL_TIMEOUT, bounded_body(response)).await??;
-                if status == StatusCode::OK {
-                    #[derive(serde::Deserialize)]
-                    struct Issued {
-                        token: String,
-                    }
-                    let issued: Issued = decode_json(&data)?;
-                    if issued.token.is_empty() || issued.token.len() > 8192 {
-                        return Err("invalid client approval token".into());
-                    }
-                    let token = zeroize::Zeroizing::new(issued.token);
-                    let mut header = HeaderValue::from_str(&format!("Bearer {}", token.as_str()))?;
-                    header.set_sensitive(true);
-                    let mut grants = self.grants.lock().expect("client grants poisoned");
-                    grants.insert(pending.source.clone(), Grant { header });
-                    return Ok(());
-                }
-                if status != StatusCode::ACCEPTED {
-                    return Err(format!("client approval returned HTTP {}", status.as_u16()).into());
-                }
-                tokio::time::sleep(Duration::from_secs(1)).await;
+        let second = Duration::from_secs(1);
+        let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + second, second);
+        ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut unreachable = None;
+        loop {
+            // A poll the deadline cuts short keeps the previous poll's outcome, as Go's does.
+            match tokio::time::timeout_at(pending.deadline, self.approval(&pending)).await {
+                Ok(Ok(Approval::Granted)) => return Ok(()),
+                Ok(Ok(Approval::Pending)) => unreachable = None,
+                Ok(Ok(Approval::Unreachable(error))) => unreachable = Some(error),
+                Ok(Err(error)) => return Err(error),
+                Err(_) => {}
             }
-        })
-        .await?
+            tokio::select! {
+                biased;
+                () = tokio::time::sleep_until(pending.deadline) => {
+                    return Err(match unreachable {
+                        Some(error) => Box::new(ApprovalUnreachable(error)),
+                        None => Box::new(ApprovalExpired),
+                    });
+                }
+                _ = ticks.tick() => {}
+            }
+        }
+    }
+    async fn approval(&self, pending: &PendingAuthorization) -> Result<Approval> {
+        let body = serde_json::to_vec(&serde_json::json!({"verifier": pending.verifier.as_str()}))?;
+        let request = Request::post(&pending.token_url)
+            .header(CONTENT_TYPE, "application/json")
+            .body(full(body))?;
+        let response =
+            match tokio::time::timeout(CONTROL_TIMEOUT, self.connections.send(request, Protocol::Negotiated)).await {
+                Ok(Ok(response)) => response,
+                Ok(Err(error)) => return Ok(Approval::Unreachable(error)),
+                Err(elapsed) => return Ok(Approval::Unreachable(elapsed.into())),
+            };
+        let status = response.status();
+        let data = bounded_body(response).await;
+        if status == StatusCode::ACCEPTED {
+            return Ok(Approval::Pending);
+        }
+        if status != StatusCode::OK {
+            return Err(format!("client approval returned HTTP {}", status.as_u16()).into());
+        }
+        #[derive(serde::Deserialize)]
+        struct Issued {
+            token: String,
+        }
+        let issued: Issued = data
+            .and_then(|data| Ok(decode_json(&data)?))
+            .map_err(|error| format!("invalid client approval response: {error}"))?;
+        if issued.token.is_empty() || issued.token.len() > 8192 {
+            return Err("invalid client approval token".into());
+        }
+        let token = zeroize::Zeroizing::new(issued.token);
+        let mut header = HeaderValue::from_str(&format!("Bearer {}", token.as_str()))?;
+        header.set_sensitive(true);
+        let mut grants = self.grants.lock().expect("client grants poisoned");
+        grants.insert(pending.source.clone(), Grant { header });
+        Ok(Approval::Granted)
     }
 }
 
@@ -610,6 +667,104 @@ mod tests {
             })
             .await??;
         }
+        Ok(())
+    }
+
+    const ACCEPTED: &str = "HTTP/1.1 202 Accepted\r\ncontent-length: 0\r\n\r\n";
+    const ISSUED: &str =
+        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 19\r\n\r\n{\"token\":\"fixture\"}";
+
+    /// Answers polls in turn, repeating the last answer; "drop" closes the connection unanswered.
+    async fn token_endpoint(answers: &'static [&'static str]) -> Result<String> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let url = format!("http://{}/auth/cli/token", listener.local_addr()?);
+        let polls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let polls = polls.clone();
+                tokio::spawn(async move {
+                    loop {
+                        let mut head = Vec::new();
+                        while !head.ends_with(b"\r\n\r\n") {
+                            let Ok(byte) = stream.read_u8().await else { return };
+                            head.push(byte);
+                        }
+                        let head = String::from_utf8_lossy(&head).to_ascii_lowercase();
+                        let length = head
+                            .lines()
+                            .find_map(|line| line.strip_prefix("content-length:"))
+                            .map_or(0, |length| length.trim().parse().unwrap());
+                        let mut body = vec![0; length];
+                        let poll = polls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        let answer = answers[poll.min(answers.len() - 1)];
+                        if stream.read_exact(&mut body).await.is_err()
+                            || answer == "drop"
+                            || stream.write_all(answer.as_bytes()).await.is_err()
+                        {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        Ok(url)
+    }
+
+    fn pending(token_url: String, window: Duration) -> PendingAuthorization {
+        PendingAuthorization {
+            browser_url: String::new(),
+            code: String::new(),
+            deadline: tokio::time::Instant::now() + window,
+            source: "https://meter.test".into(),
+            verifier: zeroize::Zeroizing::new("verifier".into()),
+            token_url,
+        }
+    }
+
+    #[tokio::test]
+    async fn approval_polls_through_network_errors_until_the_token_arrives() -> Result<()> {
+        let url = token_endpoint(&["drop", ACCEPTED, ISSUED]).await?;
+        let http = http(false);
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            http.poll_authorization(pending(url, AUTHORIZATION_TIMEOUT)),
+        )
+        .await??;
+        assert_eq!(
+            http.authorization("https://meter.test/download").unwrap(),
+            "Bearer fixture"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn approval_deadline_reports_expiry_unless_the_last_poll_was_unreachable() -> Result<()> {
+        let http = http(false);
+        let answered = token_endpoint(&["drop", ACCEPTED]).await?;
+        let expired = http
+            .poll_authorization(pending(answered, Duration::from_millis(1500)))
+            .await
+            .unwrap_err();
+        assert!(expired.is::<ApprovalExpired>(), "{expired}");
+        let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await?.local_addr()?;
+        let unreachable = http
+            .poll_authorization(pending(
+                format!("http://{closed}/auth/cli/token"),
+                Duration::from_millis(1500),
+            ))
+            .await
+            .unwrap_err();
+        assert!(
+            unreachable
+                .to_string()
+                .starts_with("server unreachable while waiting for browser approval: "),
+            "{unreachable}"
+        );
+        assert_eq!(
+            crate::failure::text(unreachable.as_ref()),
+            "Server could not be reached"
+        );
         Ok(())
     }
 

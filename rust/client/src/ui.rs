@@ -228,7 +228,7 @@ impl Ui {
         snapshot.servers.truncate(MAX_SERVERS);
         snapshot.server_latencies.truncate(MAX_SELECTED_SERVERS);
         snapshot.results.truncate(16);
-        if self.snapshot.phase.live() && !snapshot.phase.live() && !self.quitting {
+        if self.live && self.snapshot.phase.live() && !snapshot.phase.live() && !self.quitting {
             self.notice.clear();
         }
         if self.live && !self.quitting && self.snapshot.participants.is_empty() && !snapshot.participants.is_empty() {
@@ -371,7 +371,10 @@ impl Ui {
                     self.send(Command::OpenBrowser, commands);
                 }
                 KeyCode::Esc => {
-                    self.send(Command::Cancel, commands);
+                    if self.send(Command::Cancel, commands) {
+                        self.live = false;
+                        self.notice = "Sign-in canceled. Press v to request a new code.".into();
+                    }
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
                     self.auth_scroll = self.auth_scroll.saturating_sub(1);
