@@ -380,6 +380,13 @@ jobs:
         env:
           RELEASE_DIST: ${{ runner.temp }}/rust-darwin
         run: mise run rust-darwin-package 0.0.0-dev
+      - name: Test the TUI's crates on macOS
+        working-directory: rust
+        env:
+          CARGO_INCREMENTAL: '0'
+          CARGO_PROFILE_DEV_DEBUG: line-tables-only
+          CARGO_PROFILE_TEST_DEBUG: line-tables-only
+        run: cargo test --locked -p graphite-meter-client -p graphite-meter-core -p graphite-meter-net
 
   gate:
     name: Gate
