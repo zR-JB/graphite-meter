@@ -1,6 +1,7 @@
 mod support;
 
-use graphite_meter_server::{config::Config, http_server::HttpServer};
+use graphite_meter_server::config::{Config, NativeKind};
+use graphite_meter_server::http_server::HttpServer;
 use rustls::{
     ClientConfig, RootCertStore, ServerConfig, SupportedProtocolVersion,
     pki_types::{CertificateDer, PrivateKeyDer, ServerName, pem::PemObject},
@@ -18,13 +19,12 @@ fn configs(identity: &support::Identity) -> (Arc<ServerConfig>, RootCertStore) {
     let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key")).unwrap();
     let mut roots = RootCertStore::empty();
     roots.add(certificate.clone()).unwrap();
-    let mut server = ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+    let server = ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
         .with_protocol_versions(&[&rustls::version::TLS13])
         .unwrap()
         .with_no_client_auth()
         .with_single_cert(vec![certificate], key)
         .unwrap();
-    server.alpn_protocols = vec![b"http/1.1".to_vec()];
     (Arc::new(server), roots)
 }
 
@@ -93,7 +93,7 @@ async fn validated_tls13_serves_discovery_download_and_upload_after_rejected_tls
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();
-        let serving = tokio::spawn(server.serve_https1(listener, tls, async {
+        let serving = tokio::spawn(server.serve(NativeKind::H1Tls, listener, Some(tls), async {
             let _ = stopped.await;
         }));
         assert!(
@@ -163,7 +163,7 @@ async fn tls_stalled_download_keeps_deadline_through_encrypted_writes() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();
-        let serving = tokio::spawn(server.serve_https1(listener, tls, async {
+        let serving = tokio::spawn(server.serve(NativeKind::H1Tls, listener, Some(tls), async {
             let _ = stopped.await;
         }));
         let mut stalled = connect(address, &connector).await;
@@ -210,7 +210,7 @@ async fn shutdown_joins_incomplete_tls_handshake_and_releases_connection() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();
-        let serving = tokio::spawn(server.serve_https1(listener, tls, async {
+        let serving = tokio::spawn(server.serve(NativeKind::H1Tls, listener, Some(tls), async {
             let _ = stopped.await;
         }));
         let mut pending = TcpStream::connect(address).await.unwrap();
@@ -243,12 +243,12 @@ async fn h3_tcp_companion_serves_probe_and_control_routes_and_advertises_the_eff
             ("https://localhost", Some(443)),
         ] {
             let mut config = Config::default();
-            config.native[graphite_meter_server::config::NativeKind::H3 as usize].public_origin = origin.into();
+            config.native[NativeKind::H3 as usize].public_origin = origin.into();
             let server = Arc::new(HttpServer::new(Arc::new(config)).unwrap());
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = listener.local_addr().unwrap();
             let (stop, stopped) = oneshot::channel();
-            let serving = tokio::spawn(server.serve_https_bootstrap(listener, tls.clone(), async {
+            let serving = tokio::spawn(server.serve(NativeKind::H3, listener, Some(tls.clone()), async {
                 let _ = stopped.await;
             }));
             let (headers, body) = request(address, &connector, "GET", "/probe", b"").await;

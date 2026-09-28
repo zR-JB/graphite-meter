@@ -174,7 +174,8 @@ async fn blocked_reply_and_close_cannot_hold_session_forever() -> Result<(), Tes
 
 #[tokio::test]
 async fn http_upgrade_retains_admission_and_shutdown_owns_the_socket() -> Result<(), TestError> {
-    use graphite_meter_server::{config::Config, http_server::HttpServer};
+    use graphite_meter_server::config::{Config, NativeKind};
+    use graphite_meter_server::http_server::HttpServer;
     use http::{Request, StatusCode};
     use std::sync::Arc;
     use tokio::{
@@ -190,7 +191,7 @@ async fn http_upgrade_retains_admission_and_shutdown_owns_the_socket() -> Result
     let address = listener.local_addr()?;
     let (stop, stopped) = oneshot::channel();
     let serving = server.clone();
-    let task = tokio::spawn(serving.serve_http1(listener, async {
+    let task = tokio::spawn(serving.serve(NativeKind::H1, listener, None, async {
         let _ = stopped.await;
     }));
     let (mut socket, response) =
@@ -232,7 +233,8 @@ async fn http_upgrade_retains_admission_and_shutdown_owns_the_socket() -> Result
 
 #[tokio::test]
 async fn websocket_upgrade_works_over_validated_tls() -> Result<(), TestError> {
-    use graphite_meter_server::{config::Config, http_server::HttpServer, tls::Certificates};
+    use graphite_meter_server::config::{Config, NativeKind};
+    use graphite_meter_server::{http_server::HttpServer, tls::Certificates};
     use rustls::{
         ClientConfig, RootCertStore,
         pki_types::{CertificateDer, ServerName, pem::PemObject},
@@ -247,7 +249,7 @@ async fn websocket_upgrade_works_over_validated_tls() -> Result<(), TestError> {
         tls_key: identity.directory().join("identity.key").to_str().unwrap().into(),
         ..Config::default()
     };
-    let tls = Certificates::load(&config, SystemTime::now(), |_| Ok(()))?.config(vec![b"http/1.1".to_vec()])?;
+    let tls = Certificates::load(&config, SystemTime::now(), |_| Ok(()))?.config()?;
     let mut roots = RootCertStore::empty();
     roots.add(CertificateDer::from_pem_file(&config.tls_cert)?)?;
     let mut client_tls = ClientConfig::builder()
@@ -258,7 +260,7 @@ async fn websocket_upgrade_works_over_validated_tls() -> Result<(), TestError> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
     let (stop, stopped) = oneshot::channel();
-    let task = tokio::spawn(server.serve_https1(listener, tls, async {
+    let task = tokio::spawn(server.serve(NativeKind::H1Tls, listener, Some(tls), async {
         let _ = stopped.await;
     }));
     let stream = TlsConnector::from(Arc::new(client_tls))
@@ -279,7 +281,8 @@ async fn websocket_upgrade_works_over_validated_tls() -> Result<(), TestError> {
 
 #[tokio::test]
 async fn quiet_upgraded_websocket_ends_with_idle_code() -> Result<(), TestError> {
-    use graphite_meter_server::{config::Config, http_server::HttpServer};
+    use graphite_meter_server::config::{Config, NativeKind};
+    use graphite_meter_server::http_server::HttpServer;
     use std::sync::Arc;
     use tokio::net::{TcpListener, TcpStream};
     let server = Arc::new(HttpServer::new(Arc::new(Config {
@@ -289,7 +292,7 @@ async fn quiet_upgraded_websocket_ends_with_idle_code() -> Result<(), TestError>
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
     let (stop, stopped) = oneshot::channel();
-    let task = tokio::spawn(server.serve_http1(listener, async {
+    let task = tokio::spawn(server.serve(NativeKind::H1, listener, None, async {
         let _ = stopped.await;
     }));
     let (mut socket, _) =

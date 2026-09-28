@@ -475,13 +475,12 @@ mod budget_tests {
             let certificate = CertificateDer::from_pem_slice(certificate.as_bytes()).unwrap();
             let key = PrivateKeyDer::from_pem_slice(key.as_bytes()).unwrap();
             let provider = Arc::new(rustls::crypto::ring::default_provider());
-            let mut tls = rustls::ServerConfig::builder_with_provider(provider.clone())
+            let tls = rustls::ServerConfig::builder_with_provider(provider.clone())
                 .with_protocol_versions(&[&rustls::version::TLS13])
                 .unwrap()
                 .with_no_client_auth()
                 .with_single_cert(vec![certificate.clone()], key)
                 .unwrap();
-            tls.alpn_protocols = vec![b"h2".to_vec()];
             let mut roots = rustls::RootCertStore::empty();
             roots.add(certificate).unwrap();
             let mut client = rustls::ClientConfig::builder_with_provider(provider)
@@ -494,9 +493,12 @@ mod budget_tests {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = listener.local_addr().unwrap();
             let (stop, stopped) = tokio::sync::oneshot::channel();
-            let task = tokio::spawn(server.clone().serve_http2(listener, Arc::new(tls), async {
-                let _ = stopped.await;
-            }));
+            let serving = server
+                .clone()
+                .serve(NativeKind::H2, listener, Some(Arc::new(tls)), async {
+                    let _ = stopped.await;
+                });
+            let task = tokio::spawn(serving);
             Self {
                 server,
                 address,

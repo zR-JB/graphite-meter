@@ -79,11 +79,10 @@ async fn serve_quic(config: Config, client: quinn::TransportConfig) -> Result<Se
     let certificate = CertificateDer::from_pem_file(identity.directory().join("identity.pem"))?;
     let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key"))?;
     let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let mut tls = rustls::ServerConfig::builder_with_provider(provider.clone())
+    let tls = rustls::ServerConfig::builder_with_provider(provider.clone())
         .with_protocol_versions(&[&rustls::version::TLS13])?
         .with_no_client_auth()
         .with_single_cert(vec![certificate.clone()], key)?;
-    tls.alpn_protocols = vec![b"h3".to_vec()];
     let server = Arc::new(HttpServer::new(Arc::new(config))?);
     let endpoint = server.quic_endpoint(Arc::new(tls), "127.0.0.1:0".parse()?)?;
     let address = endpoint.local_addr()?;

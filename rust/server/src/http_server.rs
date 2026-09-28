@@ -22,7 +22,7 @@ use crate::{
         policy::{Authorization, Connection, Listener},
     },
     client_address,
-    config::{AuthMode, Config, ConfigError},
+    config::{AuthMode, Config, ConfigError, NativeKind},
     connections::Connections,
     cors::Access,
     discovery::Discovery,
@@ -58,13 +58,6 @@ use tokio::{
     task::JoinSet,
     time::Sleep,
 };
-
-#[derive(Clone, Copy)]
-enum HttpProtocol {
-    Http1,
-    Http2,
-    Bootstrap(u16),
-}
 
 const MAX_HEADER_BYTES: usize = 32 * 1024;
 const DOWNLOAD_BLOCK_BYTES: usize = 256 * 1024;
@@ -200,91 +193,34 @@ impl HttpServer {
         })
     }
 
-    /// The caller owns listener binding and shutdown. No connection task escapes
-    /// this scope, including on accept errors or server cancellation.
-    pub async fn serve_http1(
+    /// The caller owns listener binding and shutdown. No connection task escapes this scope, including on accept
+    /// errors or server cancellation; connection capacity covers the bounded TLS handshake and the whole connection.
+    pub async fn serve(
         self: Arc<Self>,
+        kind: NativeKind,
         listener: TcpListener,
+        tls: Option<Arc<rustls::ServerConfig>>,
         shutdown: impl Future<Output = ()>,
     ) -> Result<(), ConfigError> {
-        self.serve_tcp(listener, None, HttpProtocol::Http1, shutdown).await
-    }
-
-    /// TLS setup is supplied by the caller; connection capacity covers both the
-    /// bounded handshake and the complete HTTP connection lifetime.
-    pub async fn serve_https1(
-        self: Arc<Self>,
-        listener: TcpListener,
-        tls: Arc<rustls::ServerConfig>,
-        shutdown: impl Future<Output = ()>,
-    ) -> Result<(), ConfigError> {
-        if tls.alpn_protocols != [b"http/1.1".to_vec()] {
-            return Err("HTTP/1 TLS listener requires an http/1.1-only ALPN configuration".into());
-        }
-        self.serve_tcp(
-            listener,
-            Some(tokio_rustls::TlsAcceptor::from(tls)),
-            HttpProtocol::Http1,
-            shutdown,
-        )
-        .await
-    }
-
-    /// HTTP/2 uses stream-local cancellation; one slow stream never sets a
-    /// deadline on the shared socket. This listener requires negotiated h2.
-    pub async fn serve_http2(
-        self: Arc<Self>,
-        listener: TcpListener,
-        tls: Arc<rustls::ServerConfig>,
-        shutdown: impl Future<Output = ()>,
-    ) -> Result<(), ConfigError> {
-        if tls.alpn_protocols != [b"h2".to_vec()] {
-            return Err("HTTP/2 listener requires an h2-only TLS ALPN configuration".into());
-        }
-        self.serve_tcp(
-            listener,
-            Some(tokio_rustls::TlsAcceptor::from(tls)),
-            HttpProtocol::Http2,
-            shutdown,
-        )
-        .await
-    }
-
-    /// TCP companion on the HTTP/3 UDP port: the probe that advertises HTTP/3, and the upload and
-    /// ticket control a browser may fetch there before it uses QUIC. It never gains UI or transfers.
-    pub async fn serve_https_bootstrap(
-        self: Arc<Self>,
-        listener: TcpListener,
-        tls: Arc<rustls::ServerConfig>,
-        shutdown: impl Future<Output = ()>,
-    ) -> Result<(), ConfigError> {
-        if tls.alpn_protocols != [b"http/1.1".to_vec()] {
-            return Err("HTTP/3 bootstrap requires an http/1.1-only TLS ALPN configuration".into());
-        }
-        let public = &self.config.listener(crate::config::NativeKind::H3).public_origin;
-        let port = if public.is_empty() {
-            listener.local_addr()?.port()
-        } else {
-            graphite_meter_core::origin::target_origin(public)?
-                .ok_or("HTTP/3 public origin is missing")?
-                .port_number()
+        let (h2, ui) = (
+            kind == NativeKind::H2,
+            matches!(kind, NativeKind::H1 | NativeKind::H1Tls),
+        );
+        // The HTTP/3 companion's probe advertises the QUIC port under the HTTP/3 public origin.
+        let bootstrap = match self.config.listener(NativeKind::H3).public_origin.as_str() {
+            _ if kind != NativeKind::H3 => None,
+            "" => Some(listener.local_addr()?.port()),
+            public => Some(
+                graphite_meter_core::origin::target_origin(public)?
+                    .ok_or("HTTP/3 public origin is missing")?
+                    .port_number(),
+            ),
         };
-        self.serve_tcp(
-            listener,
-            Some(tokio_rustls::TlsAcceptor::from(tls)),
-            HttpProtocol::Bootstrap(port),
-            shutdown,
-        )
-        .await
-    }
-
-    async fn serve_tcp(
-        self: Arc<Self>,
-        listener: TcpListener,
-        tls: Option<tokio_rustls::TlsAcceptor>,
-        protocol: HttpProtocol,
-        shutdown: impl Future<Output = ()>,
-    ) -> Result<(), ConfigError> {
+        let tls = tls.map(|tls| {
+            let mut tls = (*tls).clone();
+            tls.alpn_protocols = vec![if h2 { b"h2".to_vec() } else { b"http/1.1".to_vec() }];
+            tokio_rustls::TlsAcceptor::from(Arc::new(tls))
+        });
         tokio::pin!(shutdown);
         let mut tasks = JoinSet::new();
         let mut accept_delay = Duration::ZERO;
@@ -309,16 +245,16 @@ impl HttpServer {
                         }
                     };
                     accept_delay = Duration::ZERO;
-                    let Ok(permit) = self.connections.acquire(peer, matches!(protocol, HttpProtocol::Http2)) else {
+                    let Ok(permit) = self.connections.acquire(peer, h2) else {
                         continue;
                     };
                     // Small control replies must not wait for Nagle buffering.
                     let _ = socket.set_nodelay(true);
                     #[cfg(target_os = "linux")]
-                    if matches!(protocol, HttpProtocol::Http2) {
+                    if h2 {
                         let _ = socket2::SockRef::from(&socket).set_tcp_notsent_lowat(64 * 1024);
                     }
-                    let memory = if matches!(protocol, HttpProtocol::Http2) {
+                    let memory = if h2 {
                         let Some(lease) = self.memory.lease(http_h2::BUFFER_BYTES as usize) else { continue; };
                         Some(lease)
                     } else { None };
@@ -327,54 +263,32 @@ impl HttpServer {
                     tasks.spawn(async move {
                         let _permit = permit;
                         let _memory = memory;
-                        if let Some(tls) = tls {
-                            let stream = tokio::select! {
-                                biased;
-                                _ = stopped(server.stopping.clone()) => return,
-                                result = tokio::time::timeout(Duration::from_secs(15), tls.accept(socket).into_fallible()) => {
-                                    let peer = SocketAddr::new(peer.ip().to_canonical(), peer.port());
-                                    match result {
-                                        Ok(Ok(stream)) => stream,
-                                        Ok(Err((error, _socket))) => {
-                                            server.peers.write(format_args!("[gm:http] http: TLS handshake error from {peer}: {error}"));
-                                            return;
-                                        }
-                                        Err(_) => {
-                                            server.peers.write(format_args!("[gm:http] http: TLS handshake error from {peer}: timed out"));
-                                            return;
-                                        }
+                        let connection = Connection { peer, tls: tls.is_some(), listener: Listener { ui, webtransport: false } };
+                        let Some(tls) = tls else {
+                            return server.serve_http1_connection(socket, connection, None).await;
+                        };
+                        let stream = tokio::select! {
+                            biased;
+                            _ = stopped(server.stopping.clone()) => return,
+                            result = tokio::time::timeout(Duration::from_secs(15), tls.accept(socket).into_fallible()) => {
+                                let peer = SocketAddr::new(peer.ip().to_canonical(), peer.port());
+                                match result {
+                                    Ok(Ok(stream)) => stream,
+                                    Ok(Err((error, _socket))) => {
+                                        server.peers.write(format_args!("[gm:http] http: TLS handshake error from {peer}: {error}"));
+                                        return;
                                     }
-                                }
-                            };
-                            {
-                                let connection = Connection {
-                                    peer,
-                                    tls: true,
-                                    listener: Listener {
-                                        ui: matches!(protocol, HttpProtocol::Http1),
-                                        webtransport: false,
-                                    },
-                                };
-                                match protocol {
-                                    HttpProtocol::Http1 => {
-                                        server.serve_http1_connection(stream, connection, None).await;
+                                    Err(_) => {
+                                        server.peers.write(format_args!("[gm:http] http: TLS handshake error from {peer}: timed out"));
+                                        return;
                                     }
-                                    HttpProtocol::Bootstrap(port) => {
-                                        server.serve_http1_connection(stream, connection, Some(port)).await;
-                                    }
-                                    HttpProtocol::Http2 if stream.get_ref().1.alpn_protocol() == Some(b"h2") => {
-                                        server.serve_http2_connection(stream, connection).await;
-                                    }
-                                    HttpProtocol::Http2 => {}
                                 }
                             }
-                        } else {
-                            let connection = Connection {
-                                peer,
-                                tls: false,
-                                listener: Listener { ui: true, webtransport: false },
-                            };
-                            server.serve_http1_connection(socket, connection, None).await;
+                        };
+                        if !h2 {
+                            server.serve_http1_connection(stream, connection, bootstrap).await;
+                        } else if stream.get_ref().1.alpn_protocol() == Some(b"h2") {
+                            server.serve_http2_connection(stream, connection).await;
                         }
                     });
                 }
@@ -1279,7 +1193,7 @@ fn holds_permit(operations: &Operations) -> bool {
 }
 
 pub(crate) fn check_configured_budget(config: &Config) -> Result<(), ConfigError> {
-    let endpoint = if config.listener(crate::config::NativeKind::H3).address.is_empty() {
+    let endpoint = if config.listener(NativeKind::H3).address.is_empty() {
         None
     } else {
         Some(
@@ -1300,7 +1214,7 @@ fn check_buffer_budget(
         Some(_) => http_quic::connection_floor(handshake_bytes).saturating_add(http_quic::noq_floor(&config.limits)?),
         None => 0,
     };
-    let h2 = if config.listener(crate::config::NativeKind::H2).address.is_empty() {
+    let h2 = if config.listener(NativeKind::H2).address.is_empty() {
         0
     } else {
         http_h2::BUFFER_BYTES as usize

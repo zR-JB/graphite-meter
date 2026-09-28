@@ -2,7 +2,8 @@ mod support;
 
 use bytes::Bytes;
 use graphite_meter_http3::{self as http3, Code, WtCode, client, webtransport::Session};
-use graphite_meter_server::{config::Config, http_server::HttpServer};
+use graphite_meter_server::config::{Config, NativeKind};
+use graphite_meter_server::http_server::HttpServer;
 use http::{Request, Version};
 use rustls::{
     ClientConfig, RootCertStore, ServerConfig,
@@ -49,13 +50,11 @@ impl Tls {
 
     fn server(&self, resolver: Arc<dyn ResolvesServerCert>) -> ServerConfig {
         let provider = Arc::new(rustls::crypto::ring::default_provider());
-        let mut tls = ServerConfig::builder_with_provider(provider)
+        ServerConfig::builder_with_provider(provider)
             .with_protocol_versions(&[&rustls::version::TLS13])
             .unwrap()
             .with_no_client_auth()
-            .with_cert_resolver(resolver);
-        tls.alpn_protocols = vec![b"h2".to_vec()];
-        tls
+            .with_cert_resolver(resolver)
     }
 
     fn client(&self) -> TlsConnector {
@@ -114,7 +113,7 @@ async fn serve_h2(
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (stop, stopped) = oneshot::channel();
-    let task = tokio::spawn(server.serve_http2(listener, Arc::new(tls), async {
+    let task = tokio::spawn(server.serve(NativeKind::H2, listener, Some(Arc::new(tls)), async {
         let _ = stopped.await;
     }));
     (address, task, stop)
@@ -281,11 +280,10 @@ async fn quic_server(
     config: Config,
 ) -> Result<(SocketAddr, tokio::task::JoinHandle<()>, oneshot::Sender<()>), TestError> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let mut server_tls = ServerConfig::builder_with_provider(provider)
+    let server_tls = ServerConfig::builder_with_provider(provider)
         .with_protocol_versions(&[&rustls::version::TLS13])?
         .with_no_client_auth()
         .with_cert_resolver(Arc::new(Fixed(tls.key.clone())));
-    server_tls.alpn_protocols = vec![b"h3".to_vec()];
     let server = Arc::new(HttpServer::new(Arc::new(config))?);
     let endpoint = server.quic_endpoint(Arc::new(server_tls), "127.0.0.1:0".parse()?)?;
     let address = endpoint.local_addr()?;
