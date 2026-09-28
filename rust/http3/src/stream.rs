@@ -1,4 +1,4 @@
-//! Request streams over noq: payload passes through as the chunks noq charged, framed without a copy.
+//! Request streams over noq: payloads pass uncopied, charged by length, so a sent one must not pin a larger buffer.
 use crate::{
     charge::{Budget, Charge},
     code::Code,
@@ -259,7 +259,7 @@ impl SendHalf {
             let length = self.payload.len();
             let mut chunks = std::slice::from_mut(&mut self.payload);
             // noq keeps an unwritten suffix in place, so a pending write loses nothing.
-            if ready!(pin!(self.stream.write_many_chunks(&mut chunks)).poll(cx))? == length {
+            if ready!(pin!(self.stream.write_leased_chunks(&mut chunks)).poll(cx))? == length {
                 self.payload = Bytes::new();
             }
         }

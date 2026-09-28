@@ -1,0 +1,209 @@
+diff --git a/noq-proto/src/connection/send_buffer.rs b/noq-proto/src/connection/send_buffer.rs
+index 2e9628e1..0d2af9a2 100644
+--- a/noq-proto/src/connection/send_buffer.rs
++++ b/noq-proto/src/connection/send_buffer.rs
+@@ -35,6 +35,34 @@ pub(super) struct SendBuffer {
+     retransmits: ChargedRanges,
+ }
+ 
++/// Application bytes to keep without a copy
++pub(super) struct Leased(pub(super) Bytes);
++
++impl AsRef<[u8]> for Leased {
++    fn as_ref(&self) -> &[u8] {
++        &self.0
++    }
++}
++
++impl BytesOrSlice<'_> for Leased {
++    fn leased(self) -> Result<Bytes, Self> {
++        Ok(self.0)
++    }
++}
++
++/// A leased chunk, charged like a copied block until its segment is dropped
++#[derive(Debug)]
++struct LeasedBacking {
++    bytes: Bytes,
++    _allocation: Allocation,
++}
++
++impl AsRef<[u8]> for LeasedBacking {
++    fn as_ref(&self) -> &[u8] {
++        &self.bytes
++    }
++}
++
+ /// Maximum number of bytes to combine into a single segment
+ ///
+ /// Larger segments use independently owned backing.
+@@ -163,7 +191,7 @@ impl SendBufferData {
+         Ok((length, allocation))
+     }
+ 
+-    fn append<'a>(&'a mut self, data: impl BytesOrSlice<'a>, allocation: Allocation) {
++    fn append<'a>(&'a mut self, data: impl BytesOrSlice<'a>, mut allocation: Allocation) {
+         if data.is_empty() {
+             return;
+         }
+@@ -172,6 +200,21 @@ impl SendBufferData {
+             last.bytes.extend_from_slice(data.as_ref());
+             return;
+         }
++        let data = match data.leased() {
++            Ok(bytes) => {
++                allocation
++                    .resize(bytes.len() + OwnedBacking::OVERHEAD_BYTES)
++                    .expect("leased chunk was reserved");
++                let backing = LeasedBacking {
++                    bytes,
++                    _allocation: allocation,
++                };
++                self.segments
++                    .push_back((self.range().end, Bytes::from_owner(backing)));
++                return;
++            }
++            Err(data) => data,
++        };
+         let capacity = if data.len() <= MAX_COMBINE {
+             MAX_COMBINE.min(allocation.bytes - OwnedBacking::OVERHEAD_BYTES)
+         } else {
+@@ -713,6 +756,21 @@ mod tests {
+         assert_eq!(budget.used(), 0);
+     }
+ 
++    #[test]
++    fn leased_chunk_stays_uncopied_and_charged_until_acknowledged() {
++        let budget = BufferBudget::new(u64::MAX, None);
++        let mut buf = SendBuffer::new(budget.clone());
++        let block = Bytes::from(vec![0x5a; 64 * 1024]);
++        let (length, allocation) = buf.prepare_write(block.len()).unwrap();
++        buf.write_reserved(Leased(block.slice(..length)), allocation);
++        assert_eq!(buf.get(0..length as u64).as_ptr(), block.as_ptr());
++        assert!(budget.used() >= length + OwnedBacking::OVERHEAD_BYTES);
++        buf.poll_transmit(length + 16);
++        buf.ack(0..length as u64).unwrap();
++        assert_eq!(budget.used(), 0);
++        assert!(block.is_unique());
++    }
++
+     #[test]
+     fn multiple_large_segments() {
+         // this must be bigger than MAX_COMBINE so we don't get writes coalesced.
+diff --git a/noq-proto/src/connection/streams/mod.rs b/noq-proto/src/connection/streams/mod.rs
+index 3825678e..0d6a582a 100644
+--- a/noq-proto/src/connection/streams/mod.rs
++++ b/noq-proto/src/connection/streams/mod.rs
+@@ -21,7 +21,7 @@ use recv::{Recv, ResetAtOutcome};
+ 
+ mod send;
+ pub(crate) use send::{ByteSlice, BytesArray, Written};
+-use send::{BytesSource, Send, SendState};
++use send::{BytesSource, LeasedArray, Send, SendState};
+ pub use send::{FinishError, WriteError};
+ 
+ mod state;
+@@ -266,6 +266,16 @@ impl<'a> SendStream<'a> {
+         Ok(written.bytes)
+     }
+ 
++    /// Send data on the given stream without copying it
++    ///
++    /// Like [`Self::write_chunks`], but the send buffer keeps each chunk until it is acknowledged
++    /// and charges its length, so the caller must already account for the chunk's backing.
++    pub fn write_leased_chunks(&mut self, data: &mut &mut [Bytes]) -> Result<usize, WriteError> {
++        let written = self.write_source(&mut LeasedArray(BytesArray::from_chunks(data)))?;
++        *data = &mut std::mem::take(data)[written.chunks..];
++        Ok(written.bytes)
++    }
++
+     fn write_source<'b, B: BytesSource<'b>>(
+         &mut self,
+         source: &'b mut B,
+@@ -731,6 +741,13 @@ pub(super) trait BytesOrSlice<'a>: AsRef<[u8]> + 'a {
+     fn is_empty(&self) -> bool {
+         self.as_ref().is_empty()
+     }
++    /// The chunk itself, if it is to be kept without a copy
++    fn leased(self) -> Result<Bytes, Self>
++    where
++        Self: Sized,
++    {
++        Err(self)
++    }
+ }
+ 
+ impl BytesOrSlice<'_> for Bytes {}
+diff --git a/noq-proto/src/connection/streams/send.rs b/noq-proto/src/connection/streams/send.rs
+index 1080e49a..fafe92e7 100644
+--- a/noq-proto/src/connection/streams/send.rs
++++ b/noq-proto/src/connection/streams/send.rs
+@@ -5,7 +5,10 @@ use thiserror::Error;
+ 
+ use crate::{
+     VarInt,
+-    connection::{send_buffer::SendBuffer, streams::BytesOrSlice},
++    connection::{
++        send_buffer::{Leased, SendBuffer},
++        streams::BytesOrSlice,
++    },
+     frame,
+ };
+ 
+@@ -290,6 +293,12 @@ impl<'a> BytesSource<'a> for BytesArray<'a> {
+     where
+         'a: 'b,
+     {
++        self.pop_bytes(limit)
++    }
++}
++
++impl BytesArray<'_> {
++    fn pop_bytes(&mut self, limit: usize) -> (Bytes, usize) {
+         // The loop exists to skip empty chunks while still marking them as
+         // consumed
+         let mut chunks_consumed = 0;
+@@ -317,6 +326,19 @@ impl<'a> BytesSource<'a> for BytesArray<'a> {
+     }
+ }
+ 
++/// A [`BytesArray`] whose chunks the send buffer keeps without copying
++pub(super) struct LeasedArray<'a>(pub(super) BytesArray<'a>);
++
++impl<'a> BytesSource<'a> for LeasedArray<'a> {
++    fn pop_chunk<'b>(&'b mut self, limit: usize) -> (impl BytesOrSlice<'b>, usize)
++    where
++        'a: 'b,
++    {
++        let (chunk, chunks_consumed) = self.0.pop_bytes(limit);
++        (Leased(chunk), chunks_consumed)
++    }
++}
++
+ /// A [`BytesSource`] implementation for `&[u8]`
+ ///
+ /// The type allows to dequeue a single [`Bytes`] chunk, which will be lazily
+diff --git a/noq/src/send_stream.rs b/noq/src/send_stream.rs
+index 665375ae..43b9c61c 100644
+--- a/noq/src/send_stream.rs
++++ b/noq/src/send_stream.rs
+@@ -104,6 +104,19 @@ impl SendStream {
+         poll_fn(|cx| self.execute_poll(cx, |s| s.write_chunks(bufs))).await
+     }
+ 
++    /// Like [`write_many_chunks`](Self::write_many_chunks), but keeps the chunks uncopied until
++    /// acknowledged, charged by length: the caller accounts for their backing allocations.
++    ///
++    /// # Cancel safety
++    ///
++    /// This method is cancellation safe. If this does not resolve, no bytes were written.
++    pub async fn write_leased_chunks(
++        &mut self,
++        bufs: &mut &mut [Bytes],
++    ) -> Result<usize, WriteError> {
++        poll_fn(|cx| self.execute_poll(cx, |s| s.write_leased_chunks(bufs))).await
++    }
++
+     /// Writes a single [`Bytes`] into this stream in its entirety.
+     ///
+     /// Bytes to write are provided to this method as a single cheaply cloneable chunk. This
