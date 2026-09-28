@@ -220,6 +220,7 @@ pub async fn run(
     }
 }
 
+#[derive(Default)]
 struct Ui {
     config: Config,
     requested: Config,
@@ -250,47 +251,22 @@ struct Ui {
     quitting: bool,
     interrupted: bool,
     latency_pick: Option<String>,
-    received_at: tokio::time::Instant,
+    received_at: Option<tokio::time::Instant>,
     shown_down: Option<f64>,
     shown_up: Option<f64>,
 }
 impl Ui {
     fn new(config: Config, snapshot: Snapshot) -> Self {
-        let mut rows = ListState::default();
-        rows.select(Some(0));
-        let mut servers = ListState::default();
-        servers.select(Some(0));
-        let (shown_down, shown_up) = (snapshot.latest.down_bps, snapshot.latest.up_bps);
         Self {
             requested: config.clone(),
             config,
+            rows: ListState::default().with_selected(Some(0)),
+            servers: ListState::default().with_selected(Some(0)),
+            received_at: Some(tokio::time::Instant::now()),
+            shown_down: snapshot.latest.down_bps,
+            shown_up: snapshot.latest.up_bps,
             snapshot,
-            previous: None,
-            theme: Theme::terminal(),
-            advanced: false,
-            rows,
-            servers,
-            live: false,
-            starting: false,
-            open_chooser: false,
-            servers_before: Vec::new(),
-            popup: Popup::None,
-            details_scroll: Scroll::default(),
-            auth_scroll: Scroll::default(),
-            body_scroll: Scroll::default(),
-            help: false,
-            edit: None,
-            reset_prompt: false,
-            notice: String::new(),
-            recheck: None,
-            awaiting: false,
-            cancel: CancelState::Idle,
-            quitting: false,
-            interrupted: false,
-            latency_pick: None,
-            received_at: tokio::time::Instant::now(),
-            shown_down,
-            shown_up,
+            ..Self::default()
         }
     }
     fn update(&mut self, mut snapshot: Snapshot) {
@@ -327,21 +303,17 @@ impl Ui {
             self.cancel = CancelState::Idle;
         }
         if snapshot.stage != self.snapshot.stage {
-            self.shown_down = None;
-            self.shown_up = None;
+            (self.shown_down, self.shown_up) = (None, None);
         }
         if snapshot.phase == Phase::Checking && !self.starting {
             self.live = false;
         }
         self.starting &= snapshot.phase == Phase::Checking;
-        if self
+        self.latency_pick = self
             .latency_pick
-            .as_ref()
-            .is_some_and(|pick| !snapshot.participants.contains(pick))
-        {
-            self.latency_pick = None;
-        }
-        self.received_at = tokio::time::Instant::now();
+            .take()
+            .filter(|pick| snapshot.participants.contains(pick));
+        self.received_at = Some(tokio::time::Instant::now());
         // As in Go, a run that never starts leaves the last results, or setup, in place.
         if self.live
             && !self.quitting
@@ -386,12 +358,8 @@ impl Ui {
         }
     }
     fn elapsed(&self) -> Duration {
-        self.snapshot.latest.elapsed
-            + if self.active() {
-                self.received_at.elapsed()
-            } else {
-                Duration::ZERO
-            }
+        let since = self.received_at.filter(|_| self.active()).map(|at| at.elapsed());
+        self.snapshot.latest.elapsed + since.unwrap_or_default()
     }
     fn notice(&self) -> (&str, bool) {
         if self.cancel == CancelState::Confirming {

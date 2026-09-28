@@ -36,6 +36,13 @@ const ANSWER_LIMIT: std::time::Duration = std::time::Duration::from_secs(1);
 /// The terminal's answer to the TUI's query, so the report printed after it uses the same palette, as in Go.
 static ANSWER: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
+/// The terminal's theme.
+impl Default for Theme {
+    fn default() -> Self {
+        Self::terminal()
+    }
+}
+
 impl Theme {
     pub fn terminal() -> Self {
         Self::background(ANSWER.get().copied())
