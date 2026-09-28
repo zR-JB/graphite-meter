@@ -205,7 +205,7 @@ def main() -> None:
     (output / 'LEGAL.txt').unlink(missing_ok=True)
     provenance_path = repo / 'legal/rust-provenance.json'
     provenance = [Provenance.parse(item) for item in array(read_json(provenance_path))] if provenance_path.exists() else []
-    link_map = output / f'{args.target}-{args.profile}.map'
+    link_map = platform.link_map(output, args.target, args.profile)
     metadata, messages = capture(repo, args.package, args.target, args.profile, link_map)
     components, inventory, failures = discover(repo, metadata, messages, args.package, reviews, provenance)
     # rustup selects exactly the pinned workspace toolchain.

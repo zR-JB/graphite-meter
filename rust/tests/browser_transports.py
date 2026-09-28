@@ -319,9 +319,13 @@ def main() -> None:
     runners = {"chromium": lambda: chromium(directory, pages, leaf),
                "firefox": lambda: firefox(directory, pages, ca),
                "webkit": lambda: webkit(directory, pages)}
+    requested = args.browsers.split(",")
+    if unknown := sorted(set(requested) - runners.keys()):
+        raise SystemExit(f"unknown browsers: {', '.join(unknown)}")
     failed = []
     try:
-        for browser in args.browsers.split(","):
+        # Evidence file names come from the runner table, never from the argument.
+        for browser in [name for name in runners if name in requested]:
             log = directory / f"server-{browser}.log"
             pages.measured = server = start(command, log, environment)
             try:

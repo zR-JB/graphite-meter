@@ -6,6 +6,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from ..ci.github_api import confined_path
 from .model import Json, LegalError, array, obj, read_json, sha256, strings, text
 
 SYSROOT = '$RUST_SYSROOT/'
@@ -14,6 +15,11 @@ IMPORTS = {
     'pe': (['objdump', '-p'], r'DLL Name: (\S+)'),
     'macho': (['otool', '-L'], r'(?m)^\s+(/\S+) \(compatibility version'),
 }
+
+
+def link_map(output: Path, target: str, profile: str) -> Path:
+    """The linker map of `target`, which stays inside `output` whatever the target names."""
+    return confined_path(output / f'{target}-{profile}.map', output)
 
 
 def link_map_argument(target: str, path: Path) -> str:
@@ -40,6 +46,9 @@ def imports(executable: Path, target: str) -> set[str]:
 
 def linker_version(target: str) -> str:
     linker = os.environ.get(f'CARGO_TARGET_{target.upper().replace("-", "_")}_LINKER', 'cc')
+    # Only the linkers the reviewed builders configure; any other is an unreviewed toolchain.
+    if linker not in ('cc', 'aarch64-linux-gnu-gcc', 'x86_64-linux-gnu-gcc', 'x86_64-w64-mingw32-gcc'):
+        raise LegalError(f'unreviewed linker for {target}: {linker}')
     return subprocess.check_output([linker, '--version'], text=True).split('\n', 1)[0]
 
 

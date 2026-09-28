@@ -11,9 +11,10 @@ from pathlib import Path
 from unittest.mock import patch
 from copy import deepcopy
 
+from scripts.ci.github_api import ControlPlaneError
 from scripts.legal.model import Component, LegalError
 from scripts.legal.rust import add_cargo_sources, artifacts, cargo
-from scripts.legal.rust_platform import linked
+from scripts.legal.rust_platform import link_map, linked, linker_version
 
 
 class RustArtifactTests(unittest.TestCase):
@@ -77,6 +78,19 @@ class RustPlatformTests(unittest.TestCase):
                 with self.subTest(linker=linker):
                     self.assertEqual(linked(path, Path('/rust'), {Path('/build'), Path('/registry/crate')}),
                                      {'/usr/lib/crt1.o', '/usr/lib/libgcc.a', '$RUST_SYSROOT/lib/rustlib/t/lib/libstd.rlib'})
+
+    def test_the_link_map_stays_in_the_notice_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            output = Path(scratch).resolve()
+            self.assertEqual(link_map(output, 'x86_64-unknown-linux-gnu', 'ci'),
+                             output / 'x86_64-unknown-linux-gnu-ci.map')
+            with self.assertRaises(ControlPlaneError):
+                link_map(output, '../escape', 'ci')
+
+    def test_only_a_reviewed_linker_runs(self) -> None:
+        with patch.dict(os.environ, {'CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER': './linker'}):
+            with self.assertRaisesRegex(LegalError, 'unreviewed linker'):
+                linker_version('x86_64-unknown-linux-gnu')
 
 
 class RustSourceTests(unittest.TestCase):

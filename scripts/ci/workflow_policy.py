@@ -211,6 +211,9 @@ def check_workflows(root: Path) -> None:
     scopes = re.findall(r"(?m)^ *permissions:.*(?:\n +\S.*)*", request)
     if scopes != ["permissions:\n  contents: read"]:
         fail("release-request.yml: the untrusted build may only read contents")
+    # Dispatch runs in the default branch's cache scope, where built PR code could plant caches.
+    if re.findall(r"(?m)^ *cache-mode:.*", request) != ["cache-mode: none"]:
+        fail("release-request.yml: the untrusted build must get no cache token")
     for step in STEP.split(request.split("\njobs:", 1)[1]):
         if "${{ inputs." in step and "run: python3 scripts/ci/release.py prepare" not in step:
             fail("release-request.yml: dispatch inputs may reach only the request validator")
