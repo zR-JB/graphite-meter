@@ -349,9 +349,10 @@
     min-width: 0;
     min-height: 0;
   }
-  /* Never shorter than its content: a tight screen scrolls rather than overlapping the run bar. */
+  /* As tall as its content and centred beside the dial; a tight screen scrolls rather than overlapping the run bar. */
   .latency-slot {
     grid-area: latency;
+    align-self: center;
     display: grid;
     min-width: 0;
   }
