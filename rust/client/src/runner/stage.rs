@@ -409,11 +409,11 @@ impl<'a> StageRun<'a> {
         let started = Instant::now();
         self.window = Some((started, started + self.config.duration(self.stage)));
         if let (Some(stage), Some(mut initial)) = (self.transfer, initial) {
-            // Local counters restart at the actual measurement start.
+            // Download counters restart at the actual measurement start; as in Go, the observed upload
+            // stays as read before the checkpoints, so what the receiver took meanwhile counts.
             let local = self.local_boundary();
             initial.at_nanos = local.at_nanos;
             initial.down = local.down;
-            initial.observed_up = local.observed_up;
             let participants = self.members.iter().map(|member| member.id.clone()).collect();
             self.accounting.begin_stage(stage, participants, initial.at_nanos);
             self.accounting.observe(initial);

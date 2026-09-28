@@ -38,6 +38,8 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
     let flag = failed.clone();
     let first_request = Arc::new(AtomicBool::new(false));
     let checkpoints = Arc::new(AtomicU64::new(0));
+    // The receiver's count as its progress feed reports it.
+    let progress = Arc::new(AtomicU64::new(1));
     let finalized = Arc::new(AtomicBool::new(false));
     // Tokio's clock, so a receiver on paused time counts the stage's time.
     let receiver_clock = Instant::now();
@@ -53,6 +55,7 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                     let gate = gate.clone();
                     let first_request = first_request.clone();
                     let checkpoints = checkpoints.clone();
+                    let progress = progress.clone();
                     let finalized = finalized.clone();
                     let login_url = login_url.clone();
                     clients.spawn(async move {
@@ -122,10 +125,11 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                                     tokio::time::sleep(Duration::from_millis(5)).await;
                                 }
                             }
-                            while (matches!(flag.load(Ordering::SeqCst), 9 | 10) || !finalized.load(Ordering::SeqCst)) && stream.write_all(b"{\"type\":\"progress\",\"bytes\":1,\"nanos\":1}\n").await.is_ok() {
+                            let record = |kind: &str| format!("{{\"type\":\"{kind}\",\"bytes\":{},\"nanos\":1}}\n", progress.load(Ordering::SeqCst));
+                            while (matches!(flag.load(Ordering::SeqCst), 9 | 10) || !finalized.load(Ordering::SeqCst)) && stream.write_all(record("progress").as_bytes()).await.is_ok() {
                                 tokio::time::sleep(Duration::from_millis(5)).await;
                             }
-                            let _ = stream.write_all(b"{\"type\":\"complete\",\"bytes\":1,\"nanos\":1}\n").await;
+                            let _ = stream.write_all(record("complete").as_bytes()).await;
                             return;
                         }
                         if request.starts_with(b"DELETE /upload/progress") {
@@ -148,11 +152,23 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                             return;
                         }
                         let mode = flag.load(Ordering::SeqCst);
-                        if request.starts_with(b"POST /upload/checkpoint") && matches!(mode, 0 | 5 | 7 | 15 | 17) {
+                        if request.starts_with(b"POST /upload/checkpoint") && matches!(mode, 0 | 5 | 7 | 15 | 17 | 19) {
                             if mode == 17 {
                                 tokio::time::sleep(Duration::from_millis(100)).await;
                             }
-                            let bytes = if mode == 7 { checkpoints.load(Ordering::SeqCst) } else { checkpoints.fetch_add(1 << 16, Ordering::SeqCst) };
+                            let bytes = match mode {
+                                7 => checkpoints.load(Ordering::SeqCst),
+                                // The receiver counts 64 KiB more, and reports them, while its first checkpoint is in flight.
+                                19 => {
+                                    let bytes = progress.load(Ordering::SeqCst);
+                                    if bytes == 1 {
+                                        progress.store(1 + (1 << 16), Ordering::SeqCst);
+                                        tokio::time::sleep(Duration::from_millis(100)).await;
+                                    }
+                                    bytes
+                                }
+                                _ => checkpoints.fetch_add(1 << 16, Ordering::SeqCst),
+                            };
                             let body = format!(r#"{{"bytes":{bytes},"nanos":{}}}"#, receiver_clock.elapsed().as_nanos() + 1);
                             let header = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
                             let _ = stream.write_all(header.as_bytes()).await;
@@ -812,6 +828,32 @@ async fn a_receiver_without_a_first_checkpoint_fails_its_preparation() -> Result
             graphite_meter_core::failure::FailureReason::PreparationFailed
         )
     );
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_upload_counts_what_its_receiver_took_during_the_first_checkpoint() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let heartbeat = heartbeat();
+    let (origin, mode, peer) = download_peer().await?;
+    mode.store(19, Ordering::SeqCst);
+    let http = Http::new(true)?;
+    let servers = vec![prepared_download("peer", &origin, &http).await?];
+    let config = Config {
+        warmup: Duration::ZERO,
+        upload_duration: Duration::from_millis(1500),
+        streams: 1,
+        loaded_latency: false,
+        ..Config::default()
+    };
+    let (snapshots, observed) = watch::channel(Snapshot::default());
+    let (_stop, cancelled) = watch::channel(false);
+    let result = measure(Stage::Upload, &config, &servers, &snapshots, cancelled).await;
+    peer.abort();
+    heartbeat.abort();
+    assert!(result?.is_empty());
+    // Go's baseline is the upload observed before that checkpoint, not the progress reported after it.
+    assert_eq!(observed.borrow().results[0].up_bytes(), 1 << 16);
     Ok(())
 }
 
