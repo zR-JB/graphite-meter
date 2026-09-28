@@ -40,7 +40,11 @@ TUI archives in the pinned builder image, with reviewed dependency notices and
 matching source; Linux TUIs are static musl executables like Go's. Release requests can
 opt into Rust TUI archives for every platform the Go TUI ships, named like Go's
 with a `_rust` marker, and into a linux/amd64 + linux/arm64 server image tagged
-`VERSION-rust`; stable releases move `X.Y-rust` and `latest-rust` with it. Every
+`VERSION-rust`; stable releases move `X.Y-rust` and `latest-rust` with it. These
+tags share `ghcr.io/zr-jb/graphite-meter` with Go's, so semver-range updaters
+such as Flux, Argo CD Image Updater or WUD read `X.Y.Z-rust` as a prerelease of
+Go's `X.Y.Z` and may skip it or move a Rust pin to Go; follow `latest-rust`, or
+match tags on `-rust$` and compare the version before that suffix. Every
 binary has a matching source offer. Go remains the release default; Rust
 prerelease integration remains gated.
 The experimental container uses `container/Dockerfile.rust`. The port remains
