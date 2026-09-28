@@ -563,7 +563,7 @@ impl Session {
     }
 
     /// Client: opens a session, speaking the server's dialect, with the response that accepted it.
-    /// A refusal returns its response.
+    /// A refusal returns its response; after the server's GOAWAY none is sent (RFC 9114 §5.2).
     pub async fn connect(
         requests: &SendRequest,
         request: http::Request<()>,
@@ -572,6 +572,9 @@ impl Session {
         let dialect = dialect(shared)
             .await
             .filter(|_| shared.peer.borrow().is_some_and(|peer| peer.connect_protocol));
+        if shared.going_away() {
+            return Err(Error::Refused);
+        }
         let (mut parts, ()) = request.into_parts();
         parts.method = http::Method::CONNECT;
         let protocol = match dialect.ok_or(Error::Refused)? {

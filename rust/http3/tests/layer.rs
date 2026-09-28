@@ -656,6 +656,9 @@ async fn goaway_refuses_new_requests_and_closes_after_the_last() -> Result<(), T
     started.notified().await;
     stop.notify_one();
     until_goaway(&requests).await?;
+    // No session starts after it either.
+    let connected = Session::connect(&requests, connect_request()).await;
+    assert_eq!(connected.err(), Some(Error::Refused));
     // A request that ignores the GOAWAY gets H3_REQUEST_REJECTED.
     let mut ignoring = peers.client.open_bi().await?;
     ignoring.0.write_all(&request_head(&[])).await?;
