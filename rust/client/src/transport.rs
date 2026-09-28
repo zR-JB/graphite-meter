@@ -36,7 +36,7 @@ impl RetryBackoff {
     pub(crate) fn delay(&mut self, mut error: &(dyn std::error::Error + 'static), started: Instant) -> Duration {
         loop {
             if let Some(http) = error.downcast_ref::<crate::failure::HttpFailure>()
-                && matches!(http.status, 429 | 503)
+                && http.busy()
             {
                 self.busy = (self.busy * 2).clamp(BUSY_BACKOFF, BUSY_BACKOFF_CAP);
                 return self.busy.max(http.retry_after).min(BUSY_BACKOFF_CAP);

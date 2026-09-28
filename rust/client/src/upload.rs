@@ -1,12 +1,13 @@
 //! Stage-owned upload lanes and authoritative receiver evidence.
 use crate::{
     Error,
-    failure::SharedFailure,
+    failure::{HttpFailure, SharedFailure},
     transport::{REDIAL_WINDOW, Retrying, TRANSFER_RETRY_BACKOFF, TransferRetry, Transport, restore},
     webtransport::SessionSlot,
 };
 use bytes::Bytes;
 use graphite_meter_core::{
+    failure::UploadRefusal,
     measurement::{ObservedUpload, ReceiverSnapshot},
     route::Route,
     wire::{self, MAX_TRANSFER_BYTES, MAX_UPLOAD_COUNTER, MAX_WEBTRANSPORT_STREAMS, UploadProgress},
@@ -392,6 +393,13 @@ async fn send_lane(
                 REQUEST_LIFETIME,
             )
             .await;
+        // A lane the receiver ended as idle ends its attempt normally (upload.go:124-130).
+        let idle = |error: &Error| {
+            error
+                .downcast_ref::<HttpFailure>()
+                .is_some_and(|http| http.status == 408 && http.refusal == Some(UploadRefusal::Idle))
+        };
+        let result = result.or_else(|error| if idle(&error) { Ok(()) } else { Err(error) });
         retry.ended(result, started, moved.load(Ordering::Relaxed)).await?;
     }
 }
@@ -650,6 +658,41 @@ mod tests {
         assert!(!lane.is_finished());
         lane.abort();
         let _ = lane.await;
+        Ok(())
+    }
+
+    /// A lane the receiver ends as idle, 408 with its refusal code, ends that attempt as Go's does
+    /// (upload.go:124-130): the next request goes out at once, not after a failure's pause.
+    #[tokio::test]
+    async fn an_idle_ending_starts_the_next_request_at_once() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let origin = format!("http://{}", listener.local_addr()?);
+        let protocol = graphite_meter_core::discovery::Protocol::Http1;
+        let transport = Transport::connect(crate::net::Http::new(false)?, &origin, protocol, false).await?;
+        let block = Bytes::from(vec![42; 64 * 1024]);
+        let active = Arc::new(AtomicBool::new(false));
+        let retry = TransferRetry::new(Retrying::default(), 0);
+        let lane = tokio::spawn(async move { send_lane(&transport, "upload-session", 0, block, active, retry).await });
+        let requests = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut requests = Vec::new();
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().await?;
+                requests.push(Instant::now());
+                let mut received = 0;
+                while received < 128 * 1024 {
+                    received += stream.read(&mut [0_u8; 64 * 1024]).await?;
+                }
+                let idle =
+                    "HTTP/1.1 408 Request Timeout\r\nX-Graphite-Upload-Refusal: idle\r\nContent-Length: 0\r\n\r\n";
+                stream.write_all(idle.as_bytes()).await?;
+            }
+            Ok::<_, Error>(requests)
+        })
+        .await;
+        lane.abort();
+        let requests = requests??;
+        assert!(requests[1] - requests[0] < TRANSFER_RETRY_BACKOFF, "{requests:?}");
         Ok(())
     }
 

@@ -9,13 +9,14 @@ pub struct HttpFailure {
 }
 
 impl HttpFailure {
-    pub fn retryable(&self) -> bool {
-        matches!(self.status, 429 | 503) || self.status == 408 && self.refusal == Some(UploadRefusal::Idle)
+    /// Go's statusError.busy (failure.go:44-46).
+    pub fn busy(&self) -> bool {
+        matches!(self.status, 429 | 503)
     }
     pub fn reason(&self) -> FailureReason {
         match self.refusal {
             Some(refusal) => refusal.failure_reason(),
-            None if matches!(self.status, 429 | 503) => FailureReason::ServerBusy,
+            None if self.busy() => FailureReason::ServerBusy,
             None => FailureReason::ProtocolError,
         }
     }
@@ -69,7 +70,7 @@ pub(crate) fn permanent(error: &(dyn std::error::Error + 'static)) -> bool {
 /// or QUIC violation this side found in what the peer sent.
 pub(crate) fn retryable(error: &Error) -> bool {
     !permanent(error.as_ref())
-        && error.downcast_ref::<HttpFailure>().is_none_or(HttpFailure::retryable)
+        && error.downcast_ref::<HttpFailure>().is_none_or(HttpFailure::busy)
         && !crate::quic::violation(error.as_ref())
 }
 
