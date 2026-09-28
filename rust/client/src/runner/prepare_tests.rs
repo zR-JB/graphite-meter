@@ -281,6 +281,56 @@ async fn a_slow_server_fails_alone_at_the_shared_deadline() -> Result<(), Error>
     Ok(())
 }
 
+/// Setup and the server chooser show Go's reason, not the OS error text.
+#[tokio::test]
+async fn an_unreachable_server_shows_a_reason() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let reachable = TcpListener::bind("127.0.0.1:0").await?;
+    let reachable_origin = format!("http://{}", reachable.local_addr()?);
+    // A released port refuses connections, as a stopped server does.
+    let gone = TcpListener::bind("127.0.0.1:0").await?.local_addr()?;
+    let catalog = serde_json::json!({
+        "defaultSelection": ["self", "gone"],
+        "servers": [
+            {"id": "self", "url": reachable_origin, "name": "reachable"},
+            {"id": "gone", "url": format!("http://{gone}"), "name": "gone"}
+        ]
+    })
+    .to_string();
+    let origin = reachable_origin.clone();
+    let server = tokio::spawn(async move {
+        while let Ok((stream, _)) = reachable.accept().await {
+            let (origin, catalog) = (origin.clone(), catalog.clone());
+            tokio::spawn(serve_selected(
+                stream,
+                origin,
+                catalog,
+                Arc::new(Barrier::new(1)),
+                false,
+            ));
+        }
+    });
+    let config = Config {
+        url: reachable_origin,
+        stages: vec![Stage::Download],
+        loaded_latency: false,
+        ..Config::default()
+    };
+    let (snapshots, _) = watch::channel(Snapshot::default());
+    let deadline = Instant::now() + PREPARATION_TIMEOUT;
+    let Preparation { failures, .. } = prepare(&config, &Http::new(false)?, &snapshots, deadline).await?;
+    server.abort();
+    assert_eq!(failures[0].id, "gone");
+    let snapshot = snapshots.borrow();
+    let error = snapshot
+        .servers
+        .iter()
+        .find(|server| server.id == "gone")
+        .and_then(|server| server.error.as_deref());
+    assert_eq!(error, Some("Server could not be reached"));
+    Ok(())
+}
+
 #[tokio::test]
 async fn automatic_latency_uses_websocket_when_advertised_quic_cannot_reply() -> Result<(), Error> {
     let _ = crate::crypto::provider().install_default();

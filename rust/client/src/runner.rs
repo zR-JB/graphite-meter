@@ -149,7 +149,7 @@ async fn prepare(
                         summary.throughput.clone_from(&server.throughput);
                         summary.latency.clone_from(&server.latency);
                     }
-                    Err(error) => summary.error = Some(error.to_string()),
+                    Err(error) => summary.error = Some(crate::failure::text(error.as_ref())),
                 }
             }
         });
