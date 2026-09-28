@@ -2,11 +2,11 @@
   {
     "fork": "https://github.com/zR-JB/noq",
     "branch": "graphite-meter/noq-v1.3.0",
-    "rev": "9efdcbf291c837bf5078cfaa6d75d9fb84a5f6f1",
+    "rev": "07c756620fc0eafce00f0f0a47fb19f48a17c99d",
     "upstream": "https://github.com/n0-computer/noq",
     "baseTag": "noq-v1.3.0",
     "base": "c1f411562e6078852749b8bcf1190523096a107f",
-    "diffSha256": "35e3206eeb6c4158dbccd34ffd9db8fb9910b9583582e94d2d75104ce98111cf",
+    "diffSha256": "d04597dd7375e6cc96ea670e4094be398439d6955ccd5495a2b555ac849695e3",
     "modifiedPackages": [
       "noq",
       "noq-proto"
@@ -255,6 +255,11 @@
       {
         "subject": "Resend a lost FIN that carried no data",
         "purpose": "Keeps a lost FIN-only STREAM frame queued for retransmission (fixes a stall introduced with noq#805).",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Keep leased send chunks uncopied until acknowledged",
+        "purpose": "Adds write_leased_chunks: a stream keeps the Bytes it is handed instead of copying them into 16 KiB blocks, charged by length like a copied block until the segment is released.",
         "origin": "graphite-meter"
       }
     ],

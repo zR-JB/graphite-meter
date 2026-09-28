@@ -239,9 +239,14 @@ impl SendStream {
         Ok(self.stream().write_all(bytes).await?)
     }
 
-    /// Passes owned bytes to noq without a copy here.
+    /// Noq keeps `chunk` uncopied, charged by length, so it must not pin a larger buffer.
     pub async fn write_chunk(&mut self, chunk: Bytes) -> Result<(), Error> {
-        Ok(self.stream().write_chunk(chunk).await?)
+        let mut chunks = [chunk];
+        let mut unwritten = &mut chunks[..];
+        while !unwritten.is_empty() {
+            self.stream().write_leased_chunks(&mut unwritten).await?;
+        }
+        Ok(())
     }
 
     pub fn finish(mut self) -> Result<(), Error> {
