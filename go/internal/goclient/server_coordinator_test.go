@@ -440,6 +440,9 @@ func TestTheLatencyResultFollowsTheFocusServer(t *testing.T) {
 			cfg := fixtureConfig(a)
 			cfg.Stages = StageSet{Latency: true}
 			prepared := prepareFixtureRun(t, cfg, a, b)
+			if prepared.LatencyFocus != "self" {
+				t.Fatalf("focus = %q, want the first selected server", prepared.LatencyFocus)
+			}
 			prepared.LatencyFocus = "b"
 			silent, id, want := a, "self", OutcomePartial
 			if silentFocus {

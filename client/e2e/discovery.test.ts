@@ -104,7 +104,6 @@ test("settings discovery is bounded, reused and cancelled on close", async (page
     config: {
       transports: { throughputTarget: "protocol:http1", latencyTarget: "auto" },
     },
-    latency: { mode: "all", serverId: "self" },
   });
   const settings = await openSettings(page);
   const choices = settings.getByRole("group", { name: "Servers to test" });

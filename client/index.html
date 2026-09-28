@@ -10,14 +10,14 @@
     <meta name="color-scheme" content="dark light" />
     <link
       rel="preload"
-      href="/fonts/instrument-sans-latin.woff2"
+      href="/fonts/ibm-plex-sans-var-latin1.woff2"
       as="font"
       type="font/woff2"
       crossorigin
     />
     <link
       rel="preload"
-      href="/fonts/spline-sans-mono-latin.woff2"
+      href="/fonts/ibm-plex-mono-500-latin1.woff2"
       as="font"
       type="font/woff2"
       crossorigin
@@ -30,10 +30,15 @@
     <style>
       :root {
         color-scheme: light dark;
-        background: light-dark(#f0f2f3, #131518); /* --canvas */
-        color: light-dark(#26272a, #d9dce0); /* --text */
-        font-family:
-          "Instrument Sans", "Inter", "Segoe UI", system-ui, sans-serif;
+        background: light-dark(
+          oklch(0.962 0.004 258),
+          oklch(0.17 0.008 258)
+        ); /* --canvas */
+        color: light-dark(
+          oklch(0.22 0.012 258),
+          oklch(0.955 0.004 258)
+        ); /* --text */
+        font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
         -webkit-font-smoothing: antialiased;
         text-rendering: optimizeLegibility;
       }
@@ -58,18 +63,18 @@
         box-sizing: border-box;
         width: min(100%, 520px);
         border: 1px solid
-          light-dark(rgb(43 44 40 / 0.13), rgb(211 219 227 / 0.14));
+          light-dark(oklch(0.3 0.02 255 / 0.14), oklch(0.92 0.02 255 / 0.11));
         border-radius: 8px;
-        background: light-dark(#ffffff, #1c1f23);
+        background: light-dark(oklch(0.995 0.002 255), oklch(0.232 0.011 255));
         box-shadow: 0 10px 28px
-          light-dark(rgb(43 44 40 / 0.08), rgb(5 7 9 / 0.4));
+          light-dark(oklch(0.25 0.02 255 / 0.08), oklch(0.05 0.01 255 / 0.4));
         padding: 24px;
       }
       .noscript-kicker {
         margin: 0 0 10px;
-        color: light-dark(#2f717a, #6db0b8);
+        color: light-dark(oklch(0.52 0.078 205), oklch(0.8 0.092 205));
         font:
-          600 12px/1.2 "Spline Sans Mono",
+          600 12px/1.2 "IBM Plex Mono",
           "SFMono-Regular",
           Consolas,
           monospace;
@@ -79,14 +84,13 @@
       .noscript-panel h1 {
         margin: 0 0 12px;
         font:
-          600 28px/1.05 "Instrument Sans",
-          "Inter",
+          600 28px/1.05 "IBM Plex Sans",
           system-ui,
           sans-serif;
       }
       .noscript-panel p {
         margin: 0;
-        color: light-dark(#454a4d, #9ba2aa);
+        color: light-dark(oklch(0.4 0.014 255), oklch(0.79 0.012 255));
         font-size: 15px;
         line-height: 1.55;
       }
@@ -112,12 +116,12 @@
     <meta
       name="theme-color"
       media="(prefers-color-scheme: dark)"
-      content="#131518"
+      content="#111418"
     />
     <meta
       name="theme-color"
       media="(prefers-color-scheme: light)"
-      content="#f0f2f3"
+      content="#f0f3f6"
     />
     <title>The Graphite Meter</title>
   </head>

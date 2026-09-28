@@ -5,7 +5,7 @@
   import { summarizeRoleValidation } from "../../runner/paths";
   import type { ConnectionRole } from "../../runner/contract";
   import type { PathOption } from "../../presentation/paths";
-  import { JARGON, READINESS } from "../../presentation/vocabulary";
+  import { JARGON, PATH_NOTE, READINESS } from "../../presentation/vocabulary";
   import { tooltip } from "../../actions/tooltip";
 
   interface Props {
@@ -14,6 +14,7 @@
     locked?: boolean;
   }
   let { role, options, locked = false }: Props = $props();
+  const labelId = $props.id();
 
   const selected = $derived(
     role === "throughput"
@@ -21,15 +22,10 @@
       : store.config.transports.latencyTarget,
   );
   const connection = $derived(store.connections[role]);
-  const serverIds = $derived(
-    role === "latency" && store.latencySelection.mode === "primary"
-      ? [store.primaryLatencyServer]
-      : store.selectedServers,
-  );
-  const simultaneous = $derived(serverIds.length > 1);
+  const simultaneous = $derived(store.selectedServers.length > 1);
   // The server list states a server's own failure once; the paths speak for the rest.
   const unlisted = $derived(
-    serverIds.filter((id) => {
+    store.selectedServers.filter((id) => {
       const readiness = store.servers.get(id)?.readiness;
       return !(
         readiness === "sign-in" ||
@@ -59,23 +55,33 @@
       (validation === "failed" ||
         !!options.find((option) => option.value === selected)?.disabled),
   );
+  // Unavailable choices fold into one line; the selected one always shows.
+  let unfolded = $state(false);
+  const folded = $derived(
+    options.filter((option) => option.disabled && option.value !== selected),
+  );
+  const shown = $derived(
+    unfolded ? options : options.filter((option) => !folded.includes(option)),
+  );
   function select(value: string) {
     controller.selectConnection(role, value);
   }
 </script>
 
-<fieldset>
-  <legend {@attach tooltip(() => JARGON[`${role}Path`])}>
-    {title}
-  </legend>
-  <div class="options">
-    {#each options as option (option.value)}
+<div class="picker" role="group" aria-labelledby={labelId}>
+  <span
+    class="list-label"
+    id={labelId}
+    {@attach tooltip(() => JARGON[`${role}Path`])}>{title}</span
+  >
+  <div class="kv choices">
+    {#each shown as option (option.value)}
       <label
-        class="choice"
-        class:selected={selected === option.value}
         class:unavailable={option.disabled || locked}
+        {@attach tooltip(() => `${option.label}\n${option.detail}`)}
       >
         <input
+          class="check"
           type="radio"
           name={`${role}-target`}
           value={option.value}
@@ -83,27 +89,50 @@
           disabled={option.disabled || locked}
           onchange={() => select(option.value)}
         />
-        <span class="radio-dot" aria-hidden="true"></span>
-        <span class="copy">
-          <strong>{option.label}</strong>
-          <small>{option.detail}</small>
-        </span>
+        <span class="choice-label"
+          >{option.label}
+          {#if option.disabled || PATH_NOTE[role][option.group ?? option.value]}<small
+              >{option.disabled
+                ? option.detail
+                : PATH_NOTE[role][option.group ?? option.value]}</small
+            >{/if}</span
+        >
       </label>
     {/each}
+    {#if folded.length}
+      <button
+        class="fold"
+        type="button"
+        aria-expanded={unfolded}
+        {@attach tooltip(() =>
+          [
+            "Unavailable paths",
+            ...folded.map((option) => `${option.label}: ${option.detail}`),
+          ].join("\n"),
+        )}
+        onclick={() => (unfolded = !unfolded)}
+        >{unfolded
+          ? "Hide unavailable"
+          : `${folded.length} more unavailable`}</button
+      >
+    {/if}
   </div>
-  {#if offerAutomatic}
-    <button class="btn" type="button" onclick={() => select("auto")}
-      >Use Automatic</button
-    >
-  {/if}
-  {#if unlisted.length}<div class="validation">
-      <span class="dot" data-tone={READINESS[validation].tone}></span>
-      <span class="validation-copy">
-        <strong>{locked ? "In use" : READINESS[validation].label}</strong>
-        <small>{summary}</small>
-      </span>
-      {#if !locked && (validation === "failed" || validation === "stale")}
-        <!-- Both pickers mount at once and a <legend> does not name a descendant
+  {#if unlisted.length || offerAutomatic}<div class="validation">
+      {#if unlisted.length}
+        <p>
+          <span class="status-dot inline" data-tone={READINESS[validation].tone}
+          ></span>
+          <strong>{locked ? "In use" : READINESS[validation].label}</strong>
+          {summary}
+        </p>
+      {/if}
+      {#if offerAutomatic}
+        <button class="btn" type="button" onclick={() => select("auto")}
+          >Use Automatic</button
+        >
+      {/if}
+      {#if unlisted.length && !locked && (validation === "failed" || validation === "stale")}
+        <!-- Both pickers mount at once and a group's name does not name a descendant
            button, so without this the rotor reads "Retry, Retry". -->
         <button
           class="btn"
@@ -113,117 +142,56 @@
         >
       {/if}
     </div>{/if}
-</fieldset>
+</div>
 
 <style>
-  fieldset {
+  .picker {
     display: grid;
     gap: 6px;
     min-width: 0;
+    margin-top: var(--space-3);
   }
-  legend {
-    margin-bottom: 6px;
-    color: var(--text-soft);
-    font-size: var(--type-body);
-  }
-  .options {
-    display: grid;
-    gap: 6px;
-  }
-  @container settings (min-width: 372px) {
-    .options {
-      grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
-    }
-  }
-  .choice {
-    position: relative;
-    display: grid;
-    grid-template-columns: 14px minmax(0, 1fr);
-    align-items: center;
-    gap: var(--space-2);
-    min-height: 52px;
+  .choice-label {
     min-width: 0;
-    padding: var(--space-2);
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-1);
-    transition: var(--transition-control);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  @media (hover: hover) {
-    .choice:hover:not(.unavailable) {
-      border-color: var(--brand-line);
-    }
-  }
-  .choice.selected {
-    border-color: var(--brand-line);
-    background: var(--brand-soft);
-  }
-  .choice.unavailable {
-    opacity: 0.56;
+  .unavailable {
     cursor: not-allowed;
   }
-  .choice input {
-    position: absolute;
-    opacity: 0;
-    pointer-events: none;
+  .unavailable > * {
+    opacity: 0.5;
   }
-  .radio-dot {
-    width: 14px;
-    height: 14px;
-    border: 1px solid var(--text-soft);
-    border-radius: var(--r-full);
+  .fold {
+    justify-content: start;
+    padding-inline-start: calc(var(--row-inset) + var(--check) + 8px);
+    color: var(--text-soft);
+    font: var(--role-caption);
   }
-  .choice.selected .radio-dot {
-    border: 4px solid var(--brand-strong);
-    background: var(--surface-1);
-  }
-  .copy {
-    display: grid;
-    gap: 2px;
-    min-width: 0;
-  }
-  .copy strong {
-    font-size: var(--type-sm);
-    font-weight: var(--w-strong);
-    overflow-wrap: anywhere;
-  }
-  .copy small {
-    color: var(--text-muted);
-    font-size: var(--type-xs);
-    line-height: 1.4;
-  }
-  .btn {
-    justify-self: start;
+  @media (hover: hover) {
+    .fold:hover {
+      color: var(--text);
+    }
   }
   .validation {
-    display: grid;
-    grid-template-columns: 7px minmax(0, 1fr) auto;
+    display: flex;
     align-items: center;
     gap: var(--space-2);
-    min-height: 28px;
-    padding-inline: 3px;
-    font-size: var(--type-xs);
+    min-height: 24px;
+    padding-inline: var(--row-inset);
+    font: var(--role-caption);
   }
-  .validation-copy {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 0 6px;
-    min-width: 0;
-  }
-  .validation-copy strong {
-    flex: none;
-    font-weight: var(--w-heavy);
-  }
-  .validation-copy small {
+  .validation p {
+    flex: 1;
     min-width: 0;
     color: var(--text-soft);
-    font-size: inherit;
   }
-  .dot {
-    width: 7px;
-    height: 7px;
-    border-radius: var(--r-full);
-    background: var(--tone);
+  .validation strong {
+    color: var(--text);
+    font-weight: var(--w-strong);
+  }
+  .validation .status-dot {
+    margin-inline-end: 4px;
   }
 </style>

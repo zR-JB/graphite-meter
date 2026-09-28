@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { summaryCards, summaryEvidence } from "./resultSummary";
 
-test("run evidence keeps only stages with a result and names no single source", () => {
+test("run evidence keeps only stages with a result", () => {
   const evidence = summaryEvidence(
     {
       latency: "not-run",
@@ -18,10 +18,8 @@ test("run evidence keeps only stages with a result and names no single source", 
     },
     null,
     "",
-    "self",
   );
   expect(evidence.status).toEqual({ download: "complete", upload: "failed" });
-  expect(evidence.latencySource).toBeUndefined();
 });
 
 const lane = (reportedBytesPerSec: number) => ({
@@ -86,7 +84,7 @@ test("a one-lane bidirectional result has no combined value, only its surviving 
   ]);
 });
 
-test("the latency card groups signed added latency, even of a failed stage; every card shows stability as a value", () => {
+test("the latency card groups signed added latency, even of a failed stage; transfer cards show stability as a value", () => {
   const cards = summaryCards(
     {
       status: {
@@ -104,7 +102,7 @@ test("the latency card groups signed added latency, even of a failed stage; ever
     units,
     true,
   );
-  const added = cards.at(-1)!.rows.filter((row) => row.label === "Added");
+  const added = cards[0].rows.filter((row) => row.label === "Added");
   expect(added.map((row) => [row.stage, row.value])).toEqual([
     ["download", "+8.3 ms"],
     ["upload", "+0.0 ms"],
@@ -112,5 +110,5 @@ test("the latency card groups signed added latency, even of a failed stage; ever
   ]);
   const stability = (card: (typeof cards)[number]) =>
     card.rows.find((row) => row.label === "Stability")?.value;
-  expect(cards.map(stability)).toEqual(["95%", "80%", undefined, "92%"]);
+  expect(cards.slice(1).map(stability)).toEqual(["95%", "80%", undefined]);
 });

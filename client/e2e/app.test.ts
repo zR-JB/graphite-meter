@@ -56,24 +56,21 @@ test("an HTTP/1.1 and WebSocket run is saved and listed after reload", async (pa
   const readouts = (root: string) =>
     page.evaluate(
       (root) =>
-        [
-          ...document.querySelectorAll(
-            `${root} .result-card .readout:not(.details)`,
-          ),
-        ].map((card) => card.textContent!.replace(/\s+/g, " ").trim()),
+        [...document.querySelectorAll(`${root} .card .headline`)].map((card) =>
+          card.textContent!.replace(/\s+/g, " ").trim(),
+        ),
       root,
     );
-  const live = await readouts(".results-slot");
+  const live = await readouts(".results");
+  expect(live.length).toBeGreaterThan(0);
   const transferred = await page
     .locator("footer.status .transferred .readout")
     .textContent();
   await page.goto(`${home.http}/#/history/${saved.id}`);
-  await expect(page.locator(".detail-pane .result-card")).toHaveCount(
-    live.length,
-  );
+  await expect(page.locator(".detail-pane .card")).toHaveCount(live.length);
   expect(await readouts(".detail-pane")).toEqual(live);
-  await expect(page.locator(".detail-pane")).toContainText(
-    `${transferred} transferred`,
+  await expect(page.locator(".detail-pane .head-facts")).toContainText(
+    new RegExp(`Transferred\\s*${transferred}`),
   );
   await page.goto(`${home.http}/#/`);
 
@@ -120,10 +117,14 @@ test("reduced motion still updates every readout and completes", async (page) =>
     .poll(async () => (await elapsed.textContent()) !== first)
     .toBe(true);
   await expect(page.locator(".gauge-value")).toHaveText(/\d/);
-  await expect(page.locator(".chart .axis-unit").nth(0)).toHaveText(/bit\/s/);
+  await expect(
+    page.locator('.results .card[data-tone="download"] .graph'),
+  ).toBeVisible();
   const saved = await savedResult(page);
   expect(saved.result.outcome).toBe("complete");
-  await expect(page.locator(".chart .stat-label")).toBeVisible();
+  await expect(
+    page.locator('.results .card[data-tone="download"] .facts'),
+  ).toContainText("Peak");
 });
 
 test("a run in a hidden tab completes and saves", async (page) => {
@@ -171,7 +172,7 @@ test("a completed run fits every layout and theme without serious violations", a
             ...document.querySelectorAll(".panel-body, .stage"),
           ].filter((el) => el.scrollWidth > el.clientWidth + 1);
           const stage = document
-            .querySelector(".gauge-panel .stage")!
+            .querySelector(".gauge-panel .dial")!
             .getBoundingClientRect();
           const gauge = document
             .querySelector(".gauge-face")!

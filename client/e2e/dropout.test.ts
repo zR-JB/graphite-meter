@@ -55,9 +55,9 @@ test("a peer dropout keeps healthy transfers and persists its failure", async (p
 
     await page.evaluate((id) => (location.hash = `/history/${id}`), saved.id);
     await page.reload();
-    await expect(page.locator(".result-detail .summary-scope")).toContainText(
-      "2 of 3 servers",
-    );
+    await expect(
+      page.getByRole("combobox", { name: "Servers shown in this result" }),
+    ).toContainText("2 of 3 servers");
     expect((await savedResult(page)).result.multiServer).toEqual(
       saved.result.multiServer,
     );

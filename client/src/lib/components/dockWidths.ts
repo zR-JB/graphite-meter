@@ -1,7 +1,8 @@
-export const MIN_DOCK_WIDTH = 320;
+export const MIN_DOCK_WIDTH = 360;
 export const MAX_DOCK_WIDTH = 720;
 // Includes stage padding, keeping the gauge and latency instruments legible.
 export const MIN_STAGE_WIDTH = 800;
+export const TWO_DOCKS_WIDTH = 2 * MIN_DOCK_WIDTH + MIN_STAGE_WIDTH;
 
 export function resolveDockWidths(width: number, left: number, right: number) {
   const clamp = (value: number) =>

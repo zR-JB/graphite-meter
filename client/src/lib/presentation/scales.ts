@@ -115,16 +115,6 @@ export function latencyScale(medians: readonly (number | null)[]): number {
   return latencyCeiling(nearestRank(valid, 0.95) * LATENCY_HEADROOM);
 }
 
-/** True when any drawn part of a bucket exceeds the domain. */
-export function latencyBucketExceedsScale(
-  bucket: LatencyBucket,
-  scaleMs: number,
-): boolean {
-  return [bucket.medianRttMs, bucket.p95RttMs, bucket.maxRttMs].some(
-    (value) => value != null && value > scaleMs,
-  );
-}
-
 /** The latency axis: the last 8 s while live, the whole series once finished. */
 export function latencyAxisMs(
   history: readonly LatencyBucket[],

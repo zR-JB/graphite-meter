@@ -165,9 +165,6 @@
   h3 + .menu {
     padding: 0;
   }
-  .menu > button {
-    min-height: 32px;
-  }
   .segmented {
     margin-top: var(--space-1);
   }

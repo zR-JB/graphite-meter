@@ -8,6 +8,7 @@
   } from "../runner/paths";
   import { presentConnections } from "../presentation/paths";
   import { store } from "../state/store.svelte";
+  import { getApplicationController } from "../runner/controllerContext";
   import { formatLatency } from "../format";
   import { BUILD } from "../buildenv";
   import { buildSegments } from "../runner/schedule";
@@ -24,19 +25,21 @@
     reasonLabel,
     transportLabel,
   } from "../presentation/vocabulary";
-  import { tipGroup, tooltip } from "../actions/tooltip";
+  import { term, tipGroup, tooltip } from "../actions/tooltip";
   import ServerScope from "./ServerScope.svelte";
+  import Icon from "./Icon.svelte";
 
   type PathRole = "throughput" | "latency";
   const PATH_ROLES = ["throughput", "latency"] as const;
   let { onOpenLegal }: { onOpenLegal: () => void } = $props();
-  let inspectedServer = $state("");
+  const controller = getApplicationController();
   const availableServers = $derived(
     store.run?.servers.map((entry) => entry.server) ??
       catalogSelection(store.serverCatalog, store.selectedServers),
   );
+  // Details follows the lens: its server, else the one whose latency is shown.
   const selectedServer = $derived(
-    availableServers.find((server) => server.id === inspectedServer) ??
+    availableServers.find((server) => server.id === store.resultScope) ??
       availableServers.find((server) => server.id === store.latencyFocus) ??
       availableServers[0],
   );
@@ -64,9 +67,7 @@
   const latencyRequested = $derived(
     activePaths
       ? activePaths.latency !== null
-      : latencyPathNeeded(store.config) &&
-          (store.latencySelection.mode === "all" ||
-            selectedServer?.id === store.primaryLatencyServer),
+      : latencyPathNeeded(store.config),
   );
   const failures = $derived(
     store.serverDetails?.failures.filter(
@@ -79,29 +80,32 @@
     store.isRunning ? "running" : activePaths ? "result" : "live",
   );
 
-  function clientEvidence(role: PathRole) {
-    const connection = connections[role];
-    if (!connection.clientIp) return "Pending";
-    const source =
-      connection.clientIpSource === "forwarded"
-        ? "trusted proxy"
-        : "socket peer";
-    return `${connection.clientIp} · IPv${connection.clientIpVersion} · ${source}`;
-  }
+  const client = $derived.by(() => {
+    const { clientIp, clientIpVersion, clientIpSource } =
+      connections.throughput;
+    if (!clientIp) return { value: "Pending" };
+    return {
+      value: clientIp,
+      aside: `IPv${clientIpVersion}, ${clientIpSource === "forwarded" ? "trusted proxy" : "socket peer"}`,
+    };
+  });
 
-  function capabilities(role: PathRole) {
+  function capabilities(role: PathRole): string[] | string {
     const advertised = advertisedServerCapabilities(discovery, role);
     if (!advertised) return "Checking server";
     const values = advertised.transports.map((value) =>
       transportLabel(value, role),
     );
     if (!values.length) return "None advertised";
-    return `${values.join(" · ")}${
-      advertised.browserBlocked
-        ? " · some clear origins blocked by this page"
-        : ""
-    }`;
+    return advertised.browserBlocked
+      ? [...values, "Some clear origins blocked by this page"]
+      : values;
   }
+  const unreachable = $derived(
+    !failures.length && selectedServer
+      ? store.servers.get(selectedServer.id)?.readiness === "failed"
+      : false,
+  );
 
   // The feed rides the session carrying the bytes, or its own fetch.
   const uploadProgressPath = $derived.by(() => {
@@ -139,6 +143,11 @@
       throughputTransport,
     ),
   );
+
+  const streams = $derived.by(() => {
+    const [value, aside] = transferStreams.split(" · ");
+    return { value, aside };
+  });
 
   function diagnosticReport() {
     return JSON.stringify(
@@ -180,36 +189,66 @@
   }
 </script>
 
-{#snippet row(label: string, value: string, tip?: string)}
+{#snippet row(
+  label: string,
+  fact: string | { value: string; aside?: string },
+  tip?: string,
+  marked = false,
+)}
+  {@const { value, aside } = typeof fact === "string" ? { value: fact } : fact}
   <div>
-    <dt {@attach tip ? tooltip(() => tip) : null}>{label}</dt>
-    <dd>{value}</dd>
+    <dt {@attach tip ? (marked ? term : tooltip)(() => tip) : null}>{label}</dt>
+    <dd>
+      {value}{#if aside}<span class="aside">{aside}</span>{/if}
+    </dd>
+  </div>
+{/snippet}
+
+{#snippet list(label: string, items: string[] | string)}
+  <div>
+    <dt>{label}</dt>
+    <dd class="list">
+      {#each typeof items === "string" ? [items] : items as item (item)}<span
+          >{item}</span
+        >{/each}
+    </dd>
   </div>
 {/snippet}
 
 <section class="infra">
   <div class="group server-card">
-    <div class="group-head">
-      <h3>
-        {pathMode === "live" ? "Selected server" : "Tested server"}
-      </h3>
-      {#if availableServers.length > 1}
-        <ServerScope
-          servers={availableServers}
-          value={selectedServer?.id ?? ""}
-          label="Inspect server"
-          onchange={(id) => (inspectedServer = id)}
-        />
-      {/if}
-    </div>
+    <h3>{pathMode === "live" ? "Selected server" : "Tested server"}</h3>
     {#each failures as failure}
       <p class="notice" data-tone="err">{reasonLabel(failure.reason)}</p>
+    {:else}
+      {#if unreachable}<p class="notice" data-tone="err">
+          {validation.throughput.message ?? "Server could not be reached"}
+        </p>{/if}
     {/each}
     <dl class="kv" data-tip-group {@attach tipGroup}>
+      {#if availableServers.length > 1}
+        <div>
+          <dt>Server</dt>
+          <dd>
+            <ServerScope
+              servers={availableServers}
+              value={selectedServer?.id ?? ""}
+              label="Inspect server"
+              onchange={controller.showServer}
+              disabled={store.isRunning}
+            />
+          </dd>
+        </div>
+      {/if}
       {@render row("Name", server?.name ?? "Checking server")}
       {#if selectedServer}{@render row("Address", selectedServer.url)}{/if}
       {#if server?.location}{@render row("Location", server.location)}{/if}
-      {#if serverLoad}{@render row("Load", serverLoad, JARGON.serverLoad)}{/if}
+      {#if serverLoad}{@render row(
+          "Load",
+          serverLoad,
+          JARGON.serverLoad,
+          true,
+        )}{/if}
     </dl>
   </div>
 
@@ -225,11 +264,6 @@
             {role === "throughput" ? "Throughput path" : "Latency path"}
           </dt>
           <dd>
-            {#if inTest && status.tone !== "neutral"}<span
-                class="status-dot"
-                data-tone={status.tone}
-                aria-hidden="true"
-              ></span>{/if}
             <span
               >{inTest
                 ? connection.summary
@@ -237,9 +271,13 @@
                   ? "Not selected"
                   : "Not measured"}</span
             >
-            {#if inTest && connection.validation !== "verified"}<span
-                class="status">{status.label}</span
-              >{:else if inTest}<span class="sr-only">{status.label}</span>{/if}
+            {#if inTest}<span class="path-status"
+                >{#if status.tone !== "neutral"}<span
+                    class="status-dot inline"
+                    data-tone={status.tone}
+                    aria-hidden="true"
+                  ></span>{/if}{status.label}</span
+              >{/if}
           </dd>
         </div>
       {/each}
@@ -251,8 +289,9 @@
           connections.throughput.serverProtocol,
         ),
         JARGON.pathEvidence,
+        true,
       )}
-      {@render row("Streams", transferStreams, JARGON.forcedStreams)}
+      {@render row("Streams", streams, JARGON.forcedStreams)}
       {@render row("Upload feed", uploadProgressPath, JARGON.uploadFeed)}
       {#if latencyRequested}
         {@render row(
@@ -263,37 +302,35 @@
           JARGON.pretestLatency,
         )}
       {/if}
-      {@render row(
-        "Your address",
-        clientEvidence("throughput"),
-        JARGON.clientAddress,
-      )}
+      {@render row("Your address", client, JARGON.clientAddress)}
     </dl>
   </div>
 
   <div class="group">
     <h3>Server supports</h3>
     <dl class="kv" data-tip-group {@attach tipGroup}>
-      {@render row(
+      {@render list(
         "HTTP",
         httpPaths === null
           ? "Checking server"
-          : httpPaths.join(", ") || "None advertised",
+          : httpPaths.length
+            ? httpPaths
+            : "None advertised",
       )}
-      {@render row("Throughput", capabilities("throughput"))}
-      {@render row("Latency", capabilities("latency"))}
+      {@render list("Throughput", capabilities("throughput"))}
+      {@render list("Latency", capabilities("latency"))}
     </dl>
   </div>
 
   <div class="group">
     <h3>Build</h3>
     <dl class="kv" data-tip-group {@attach tipGroup}>
-      {@render row(
-        "Client",
-        [BUILD.profile, BUILD.version && `v${BUILD.version}`, BUILD.revision]
+      {@render row("Client", {
+        value: BUILD.version ? `v${BUILD.version}` : BUILD.revision,
+        aside: [BUILD.profile, BUILD.version && BUILD.revision]
           .filter(Boolean)
-          .join(" · "),
-      )}
+          .join(", "),
+      })}
       {@render row(
         "Server",
         discovery?.engineVersion ?? MISSING,
@@ -304,52 +341,50 @@
     </dl>
   </div>
 
-  <p class="actions">
-    <button class="btn copy" type="button" onclick={copyReport}>
+  <div class="kv">
+    <button class="link-row copy" type="button" onclick={copyReport}>
       <span class:hidden={copied}>Copy diagnostic report</span>
       <span class:hidden={!copied} aria-hidden={!copied}>Copied</span>
+      <Icon name={copied ? "check" : "copy"} />
     </button>
-    <button class="btn btn-quiet" type="button" onclick={onOpenLegal}
-      >About &amp; legal</button
+    <button class="link-row" type="button" onclick={onOpenLegal}
+      >About &amp; legal<Icon name="chevron" /></button
     >
-  </p>
+  </div>
 </section>
 
 <style>
-  /* Both labels share one cell, so the button keeps its width. */
+  .infra {
+    display: grid;
+    gap: var(--space-5);
+  }
+  .path dd {
+    display: grid;
+    gap: 2px;
+  }
+  .path-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-soft);
+    font: var(--role-caption);
+  }
+  .list {
+    display: grid;
+  }
+  .kv button.link-row {
+    min-height: var(--row-h);
+    text-align: start;
+  }
+  /* Both labels share one cell, so the row never reflows. */
   .copy {
-    display: inline-grid;
+    display: grid;
+    grid-template-columns: 1fr auto;
   }
   .copy > span {
     grid-area: 1 / 1;
   }
   .copy > .hidden {
     visibility: hidden;
-  }
-  .infra {
-    display: grid;
-    gap: var(--space-4);
-  }
-  .group-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-  }
-  .path dd {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-2);
-  }
-  .path .status-dot {
-    translate: 0 -1px;
-  }
-  .status {
-    color: var(--tone, var(--text-soft));
-  }
-  .actions {
-    display: flex;
-    justify-content: space-between;
-    gap: var(--space-2);
   }
 </style>

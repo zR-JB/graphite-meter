@@ -1,61 +1,127 @@
-/* The auth pages are server-rendered with no bundler, so this sheet carries its
-   own copy of the tokens it needs. client/src/app.css is the source of truth:
-   names and values below must match it exactly.
-
-   theme.js stamps data-theme from the app's stored preference; without it
-   (blocked storage, scripting off) the OS preference applies. */
+/* The auth pages are server-rendered with no bundler, so this sheet copies the
+   tokens it needs: every :root token must match client/src/app.css exactly
+   (service_test.go pins them). theme.js stamps data-theme from the app's stored
+   preference, else the OS preference applies. The CSP admits no font source, so
+   type falls back past IBM Plex to the system face. */
 :root {
   color-scheme: light dark;
 
-  --font-display: "Instrument Sans", "Inter Tight", system-ui, sans-serif;
-  --font-sans: "Instrument Sans", "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-display: var(--font-sans);
   --font-mono:
-    "Spline Sans Mono", "JetBrains Mono", "SFMono-Regular", Consolas,
-    "Liberation Mono", monospace;
-
-  --r-well: 6px;
-  --r-chrome: 8px;
-  --r-pill: 12px;
-  --r-full: 999px;
-
-  --type-md: 14px;
-  --type-sm: 12px;
-  --track-tight: -0.02em;
-  --track-wide: 0.1em;
+    "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --dur-hover: 120ms;
-  --dur-slide: 180ms;
+  --transition-control:
+    background-color var(--dur-hover) var(--ease-out),
+    border-color var(--dur-hover) var(--ease-out),
+    color var(--dur-hover) var(--ease-out),
+    box-shadow var(--dur-hover) var(--ease-out),
+    opacity var(--dur-hover) var(--ease-out);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+
+  --r-well: 4px;
+  --r-chrome: 8px;
+  --r-surface: 12px;
+  --r-full: 999px;
+  --hairline: 1px;
+
+  --type-sm: 12px;
+  --type-body: 13px;
+  --type-md: 14px;
+  --type-lg: clamp(16px, 15px + 0.2vw, 18px);
+  --w-normal: 450;
+  --w-strong: 600;
+  --role-row: var(--w-normal) var(--type-md) / 1.35 var(--font-sans);
+  --role-control: var(--w-strong) var(--type-sm) / 1.2 var(--font-sans);
+  --role-panel-title: var(--w-strong) var(--type-lg) / 1.25 var(--font-display);
+  --role-label: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
+  --track-tight: -0.02em;
+  --track-wide: 0.1em;
+
+  --control-h: 32px;
+  --row-h: 42px;
+  --panel-pad: var(--space-4);
+  --row-inset: var(--space-3);
+  --hit: 44px;
+
+  --canvas: light-dark(oklch(0.962 0.004 258), oklch(0.17 0.008 258));
+  --canvas-deep: light-dark(oklch(0.93 0.006 258), oklch(0.125 0.008 258));
+  --surface-1: light-dark(oklch(0.995 0.002 258), oklch(0.215 0.009 258));
+  --surface-2: light-dark(oklch(0.975 0.003 258), oklch(0.25 0.01 258));
+  --sheet: light-dark(
+    oklch(0.985 0.003 258 / 0.88),
+    oklch(0.195 0.009 258 / 0.88)
+  );
+
+  --border-subtle: light-dark(
+    oklch(0.3 0.02 255 / 0.08),
+    oklch(0.92 0.02 255 / 0.07)
+  );
+  --border: light-dark(oklch(0.3 0.02 255 / 0.14), oklch(0.92 0.02 255 / 0.11));
+  --border-strong: light-dark(
+    oklch(0.3 0.02 255 / 0.24),
+    oklch(0.92 0.02 255 / 0.2)
+  );
+
+  --text: light-dark(oklch(0.22 0.012 258), oklch(0.955 0.004 258));
+  --text-muted: light-dark(oklch(0.38 0.012 258), oklch(0.8 0.008 258));
+  --text-soft: light-dark(oklch(0.5 0.012 258), oklch(0.66 0.011 258));
+  --text-inverse: light-dark(oklch(0.995 0 0), oklch(0.17 0.008 258));
+
+  --brand: light-dark(oklch(0.26 0.012 258), oklch(0.93 0.005 258));
+  --brand-strong: light-dark(oklch(0.2 0.012 258), oklch(0.97 0.004 258));
+  --brand-soft: color-mix(in oklab, var(--brand) 12%, transparent);
+
+  --ok: light-dark(oklch(0.5 0.095 155), oklch(0.8 0.1 155));
+  --warn: light-dark(oklch(0.53 0.095 85), oklch(0.86 0.1 92));
+  --err: light-dark(oklch(0.52 0.14 25), oklch(0.74 0.12 22));
+
+  --brand-line: color-mix(in oklab, var(--brand) 50%, var(--border));
+  --field-edge: light-dark(
+    oklch(0.48 0.014 255 / 0.7),
+    oklch(0.7 0.014 255 / 0.62)
+  );
+  --hover-wash: color-mix(in oklab, var(--text) 6%, transparent);
+
+  --edge-light: light-dark(oklch(1 0 0 / 0.8), oklch(1 0 0 / 0.075));
+  --edge-highlight: rgb(255 255 255 / 0.22);
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 0 0 0 0 .035'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+
+  --elev-tile: inset 0 var(--hairline) 0 var(--edge-light);
+  --elev-float:
+    var(--elev-tile),
+    0 2px 6px
+      light-dark(oklch(0.25 0.02 255 / 0.06), oklch(0.08 0.01 255 / 0.3)),
+    0 28px 64px -16px
+      light-dark(oklch(0.25 0.02 255 / 0.24), oklch(0.08 0.01 255 / 0.55));
 
   --focus-ring: 2px solid var(--brand);
-
-  --canvas: light-dark(#f0f2f3, #131518);
-  --surface-1: light-dark(#ffffff, #1c1f23);
-  --surface-inset: light-dark(#f3f5f6, #16191d);
-  --border: light-dark(rgb(43 44 40 / 0.13), rgb(211 219 227 / 0.11));
-
-  --text: light-dark(#26272a, #d9dce0);
-  --text-muted: light-dark(#454a4d, #9ba2aa);
-  --text-inverse: light-dark(#ffffff, #111315);
-
-  --brand: light-dark(#2f717a, #6db0b8);
-  --brand-strong: light-dark(#235257, #93cdd4);
-  --edge-highlight: rgb(255 255 255 / 0.22);
-
-  --signal: light-dark(#4b6076, #8ba3ba);
-  --signal-soft: light-dark(rgb(75 96 118 / 0.12), rgb(139 163 186 / 0.14));
-
-  --err: light-dark(#a04a4a, #d89393);
-  --err-soft: light-dark(rgb(160 74 74 / 0.13), rgb(216 147 147 / 0.15));
-
-  --ok: light-dark(#285443, #79ad91);
-  --ok-soft: light-dark(rgb(50 99 80 / 0.13), rgb(121 173 145 / 0.14));
-  --warn: light-dark(#6f5426, #c4a568);
-  --warn-soft: light-dark(rgb(111 84 38 / 0.13), rgb(196 165 104 / 0.14));
-
-  --shadow-card:
-    0 1px 1px light-dark(rgb(43 44 40 / 0.06), rgb(0 0 0 / 0.3)),
-    0 10px 28px light-dark(rgb(43 44 40 / 0.08), rgb(5 7 9 / 0.4));
+  --ring-halo: 0 0 0 3px var(--brand-soft);
+}
+@media (color-gamut: p3) {
+  :root {
+    --ok: light-dark(oklch(0.5 0.103 155), oklch(0.8 0.108 155));
+    --warn: light-dark(oklch(0.53 0.103 85), oklch(0.86 0.108 92));
+    --err: light-dark(oklch(0.52 0.151 25), oklch(0.74 0.13 22));
+  }
+}
+@media (min-resolution: 2dppx) {
+  :root {
+    --hairline: 0.5px;
+  }
+}
+@media (prefers-contrast: more) {
+  :root {
+    --border-subtle: var(--border-strong);
+    --text-soft: var(--text-muted);
+  }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
@@ -64,113 +130,269 @@
   color-scheme: light;
 }
 
-* {
+*,
+::before,
+::after {
   box-sizing: border-box;
 }
 body {
-  margin: 0;
-  min-height: 100vh;
   display: grid;
   place-items: center;
-  padding: 24px;
-  background: var(--canvas);
+  min-height: 100dvh;
+  margin: 0;
+  padding: var(--space-4);
+  background:
+    var(--grain),
+    radial-gradient(140% 90% at 50% 125%, var(--canvas-deep), transparent 70%),
+    var(--canvas);
   color: var(--text);
-  font-family: var(--font-sans);
-  line-height: 1.5;
+  font: var(--role-row);
+  font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 .card {
-  width: min(100%, 440px);
-  padding: clamp(24px, 6vw, 32px);
-  border: 1px solid var(--border);
-  border-radius: var(--r-pill);
-  background: var(--surface-1);
-  box-shadow: var(--shadow-card);
-  animation: card-in var(--dur-slide) var(--ease-out) both;
+  width: min(100%, 420px);
+  padding: var(--space-5) var(--panel-pad) var(--panel-pad);
+  border: var(--hairline) solid var(--border-subtle);
+  border-radius: var(--r-surface);
+  background: var(--sheet);
+  -webkit-backdrop-filter: blur(28px) saturate(1.4);
+  backdrop-filter: blur(28px) saturate(1.4);
+  box-shadow: var(--elev-float);
 }
-@keyframes card-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
+.card > * {
+  margin: var(--space-3) 0 0;
 }
-/* The lattice-needle mark, coloured as the app's topbar glyph draws it:
-   hexagon in the brand accent, needle and hub in the text tone. */
-.mark {
-  width: 36px;
+/* One text edge: plates sit on the sheet's padding, free lines a row inset in. */
+.card > :is(.brand, h1, p) {
+  margin-inline: var(--row-inset);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 0;
   color: var(--text);
+  font: var(--w-strong) var(--type-md) / 1.4 var(--font-sans);
+  letter-spacing: -0.01em;
+}
+.mark {
+  flex: none;
+  width: 18px;
+  height: 18px;
 }
 .mark .hex {
   stroke: var(--brand);
+  stroke-linejoin: round;
+}
+.card > .brand + * {
+  margin-top: var(--space-5);
 }
 h1 {
-  margin: 18px 0 6px;
-  font-family: var(--font-display);
-  font-size: 1.6rem;
-  font-weight: 600;
-  line-height: 1.2;
+  font: var(--role-panel-title);
   letter-spacing: var(--track-tight);
+  text-wrap: balance;
 }
 p {
   color: var(--text-muted);
-  margin: 0 0 22px;
+  text-wrap: pretty;
+}
+.card > :is(h1, .eyebrow) + :is(p, h1) {
+  margin-top: var(--space-1);
 }
 a {
-  color: var(--brand);
+  color: var(--brand-strong);
   text-underline-offset: 3px;
 }
-label {
-  display: block;
-  margin-bottom: 7px;
-  font-weight: 600;
+/* The interstitial moves on by itself; its link is only a fallback. */
+.completion a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-h);
+  padding: 0 var(--space-3);
+  margin-inline: calc(-1 * var(--space-3));
+  border-radius: var(--r-chrome);
+  color: var(--label);
+  font: var(--role-control);
+  text-decoration: none;
+  transition: var(--transition-control);
 }
-input,
-button {
-  width: 100%;
-  min-height: 44px;
-  font: inherit;
-}
-input {
-  padding: 9px 11px;
-  margin-bottom: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-well);
-  background: var(--surface-inset);
+
+.message,
+.warn,
+.notice,
+.ok,
+.eyebrow {
+  --tone: var(--text-soft);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
   color: var(--text);
+  font: var(--w-normal) var(--type-body) / 1.4 var(--font-sans);
 }
+.message::before,
+.warn::before,
+.notice::before,
+.ok::before,
+.eyebrow::before {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-top: calc((1lh - 7px) / 2);
+  border-radius: var(--r-full);
+  background: var(--tone);
+}
+:is(.message, .warn, .notice, .ok) + :is(.message, .warn, .notice, .ok) {
+  margin-top: var(--space-2);
+}
+.message {
+  --tone: var(--err);
+}
+.warn {
+  --tone: var(--warn);
+}
+.ok,
+.eyebrow {
+  --tone: var(--ok);
+}
+
+.code,
+.card > p:has(> strong:only-child),
+form:has(#password)::before {
+  border: var(--hairline) solid var(--border-subtle);
+  border-radius: var(--r-chrome);
+  background: var(--surface-1);
+  box-shadow: var(--elev-tile);
+}
+.code,
+.card > p:has(> strong:only-child) {
+  display: flex;
+  align-items: center;
+  min-height: var(--row-h);
+  margin-inline: 0;
+  padding: 7px var(--row-inset);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.card > p:has(> strong:only-child) strong {
+  font-weight: var(--w-normal);
+}
+/* The same face, weight and tracking as the code the app shows beside it. */
+.code {
+  font: var(--w-strong) var(--type-lg) / 1.4 var(--font-mono);
+  letter-spacing: var(--track-wide);
+}
+/* The field has no wrapper, so the form draws the plate behind its first row. */
+form:has(#password) {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: minmax(var(--row-h), auto);
+  align-items: center;
+  gap: var(--space-3);
+}
+form:has(#password)::before {
+  content: "";
+  grid-area: 1 / 1 / 2 / -1;
+  align-self: stretch;
+}
+form:has(#password) button {
+  grid-column: 1 / -1;
+}
+label[for="password"] {
+  grid-area: 1 / 1;
+  padding-inline-start: var(--row-inset);
+  white-space: nowrap;
+}
+input[type="password"] {
+  grid-area: 1 / 2;
+  width: auto;
+  min-width: 0;
+  height: var(--control-h);
+  margin: 2px var(--row-inset) 2px 0;
+  padding: 0 10px;
+  border: 1px solid var(--field-edge);
+  border-radius: var(--r-chrome);
+  background: var(--surface-1);
+  color: var(--text);
+  font: var(--role-row);
+  transition: var(--transition-control);
+}
+input[type="password"]:focus-visible {
+  outline: none;
+  border-color: var(--brand-line);
+  box-shadow: var(--ring-halo);
+}
+@media (pointer: coarse) {
+  input[type="password"] {
+    height: var(--hit);
+  }
+}
+
 button {
-  padding: 9px 14px;
-  border: 1px solid color-mix(in srgb, var(--brand) 42%, var(--border));
-  border-radius: var(--r-pill);
-  background: linear-gradient(180deg, var(--brand-strong), var(--brand));
-  box-shadow:
-    inset 0 1px 0 var(--edge-highlight),
-    0 8px 24px color-mix(in srgb, var(--brand) 24%, transparent);
-  color: var(--text-inverse);
-  font-family: var(--font-display);
-  font-weight: 600;
+  --label: var(--text-inverse);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 40px;
+  padding: var(--space-2) 20px;
+  border: 0;
+  border-radius: var(--r-chrome);
+  background: var(--brand);
+  box-shadow: inset 0 1px 0 var(--edge-highlight);
+  color: var(--label);
+  font: var(--w-strong) var(--type-md) / 1.2 var(--font-display);
   cursor: pointer;
   transition:
     transform var(--dur-hover) var(--ease-out),
     filter var(--dur-hover) var(--ease-out);
 }
-button:hover {
-  transform: translateY(-1px);
-  filter: brightness(1.04);
+@media (hover: hover) {
+  button:hover:enabled {
+    filter: brightness(1.08);
+  }
+}
+/* Outlined: fallbacks, unavailable actions, and the password beside a working provider. */
+.completion a,
+form:not([data-busy]) button:disabled,
+form:is([data-busy], :has(button:enabled)) ~ .separator ~ form button {
+  --label: var(--text-muted);
+  --line: var(--border);
+  background: var(--surface-2);
+  box-shadow:
+    inset 0 0 0 var(--hairline) var(--line),
+    var(--elev-tile);
+  filter: none;
+}
+@media (hover: hover) {
+  .completion a:hover,
+  form:is([data-busy], :has(button:enabled))
+    ~ .separator
+    ~ form
+    button:hover:enabled {
+    --label: var(--text);
+    --line: var(--border-strong);
+  }
+}
+button:active:enabled {
+  transform: scale(0.985);
 }
 button:disabled {
-  transform: none;
-  filter: none;
-  box-shadow: none;
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: not-allowed;
+}
+@media (forced-colors: active) {
+  button {
+    border: 1px solid;
+  }
 }
 /* A submitted form: sign-in is a full page navigation and password verification
    is deliberately slow, so the button holds its size and trades its label for a
    spinner instead of going quiet. */
 form[data-busy] button[type="submit"] {
-  position: relative;
   color: transparent;
   opacity: 1;
   cursor: progress;
@@ -182,8 +404,8 @@ form[data-busy] button[type="submit"]::after {
   width: 18px;
   height: 18px;
   margin: -9px 0 0 -9px;
-  border: 2px solid color-mix(in srgb, var(--text-inverse) 35%, transparent);
-  border-top-color: var(--text-inverse);
+  border: 2px solid color-mix(in oklab, var(--label) 35%, transparent);
+  border-top-color: var(--label);
   border-radius: var(--r-full);
   animation: spin 620ms linear infinite;
 }
@@ -207,85 +429,17 @@ form[data-busy] button[type="submit"]::after {
 .separator {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin: 22px 0;
-  color: var(--text-muted);
-  font-size: var(--type-md);
+  gap: var(--space-3);
+  margin-block: var(--space-4);
+  color: var(--text-soft);
+  font: var(--role-label);
 }
 .separator::before,
 .separator::after {
   content: "";
-  height: 1px;
   flex: 1;
+  height: var(--hairline);
   background: var(--border);
-}
-.message,
-.notice,
-.ok,
-.warn {
-  margin: 0 0 18px;
-  padding: 10px 12px;
-  border: 1px solid;
-  border-radius: var(--r-chrome);
-  font-size: var(--type-md);
-}
-form + .message,
-form + .notice,
-form + .ok,
-form + .warn {
-  margin-top: 18px;
-}
-/* .message is a real failure (red); .warn a recoverable limit (orange);
-   .notice an expected, neutral state (blue); .ok a successful outcome
-   (green). */
-.message {
-  border-color: color-mix(in srgb, var(--err) 38%, transparent);
-  background: var(--err-soft);
-  color: var(--err);
-}
-.warn {
-  border-color: color-mix(in srgb, var(--warn) 38%, transparent);
-  background: var(--warn-soft);
-  color: var(--warn);
-}
-.notice {
-  border-color: color-mix(in srgb, var(--signal) 38%, transparent);
-  background: var(--signal-soft);
-  color: var(--signal);
-}
-.ok {
-  border-color: color-mix(in srgb, var(--ok) 38%, transparent);
-  background: var(--ok-soft);
-  color: var(--ok);
-}
-.code {
-  display: block;
-  margin: 20px 0;
-  padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-well);
-  background: var(--surface-inset);
-  color: var(--brand);
-  font-family: var(--font-mono);
-  font-size: clamp(1.5rem, 8vw, 2rem);
-  letter-spacing: 0.14em;
-  text-align: center;
-  overflow-wrap: anywhere;
-}
-.completion .eyebrow {
-  margin: 18px 0 5px;
-  color: var(--brand);
-  font-family: var(--font-mono);
-  font-size: var(--type-sm);
-  font-weight: 600;
-  letter-spacing: var(--track-wide);
-  text-transform: uppercase;
-}
-.completion h1 {
-  margin-top: 0;
-}
-.completion p:last-child {
-  margin-bottom: 0;
 }
 .offscreen {
   position: absolute;

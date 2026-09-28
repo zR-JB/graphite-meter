@@ -1,30 +1,14 @@
 <script lang="ts">
   import { catalogSelection } from "../presentation/serverAppearance";
   import { store } from "../state/store.svelte";
-  import { getApplicationController } from "../runner/controllerContext";
-  import ServerScope from "./ServerScope.svelte";
   import { reasonLabel, STAGE, STATUS } from "../presentation/vocabulary";
   import { LATENCY_LANES, type LatencyProfileViewLane } from "./latencyProfile";
   import LatencyProfileView from "./LatencyProfileView.svelte";
   import { handoff } from "../presentation/motion.svelte";
 
-  const controller = getApplicationController();
   const servers = $derived(
     store.serverDetails?.selection ??
       catalogSelection(store.serverCatalog, store.selectedServers),
-  );
-  const unmeasured = $derived(
-    servers
-      .filter((server) =>
-        store.serverDetails
-          ? !store.serverDetails.servers.some(
-              (result) =>
-                result.server.id === server.id && result.latencyTarget,
-            )
-          : store.latencySelection.mode === "primary" &&
-            server.id !== store.primaryLatencyServer,
-      )
-      .map((server) => server.id),
   );
   const lanes = $derived<LatencyProfileViewLane[]>(
     LATENCY_LANES.filter(
@@ -43,46 +27,38 @@
     () => ({ run: store.runSeq, lanes }),
     (profile) => profile.run,
   );
+  const saved = $derived(store.result && store.latencyServer);
 </script>
 
-<section class="live-profile" aria-label="Latency distribution">
-  {#if servers.length > 1}
-    <div class="latency-focus">
-      <ServerScope
-        {servers}
-        value={store.latencyFocus}
-        label="Latency server shown in gauge, profile and chart"
-        disabled={servers.length - unmeasured.length < 2}
-        disabledIds={unmeasured}
-        onchange={controller.focusServer}
-      />
-    </div>
-  {/if}
+<div class="live-profile" style:opacity={profile.opacity}>
+  <LatencyProfileView
+    lanes={profile.shown.lanes}
+    variant="bare"
+    added={saved?.addedLatency}
+    stability={saved?.latency?.stabilityPct ?? null}
+    source={servers.length > 1
+      ? servers.find((server) => server.id === store.latencyFocus)?.name
+      : undefined}
+  />
   {#if store.stagePresentation.latency.status === "failed"}
+    {@const failure = store.stagePresentation.latency.failure}
     <p class="notice" data-tone="err" role="alert">
-      {STAGE.latency.label} · {STATUS.failed}{store.stagePresentation.latency
-        .failure
-        ? ` · ${reasonLabel(store.stagePresentation.latency.failure)}`
-        : ""}
+      <strong>{STAGE.latency.label} {STATUS.failed.toLowerCase()}</strong>
+      {failure ? reasonLabel(failure) : ""}
     </p>
   {/if}
-
-  <div style:opacity={profile.opacity}>
-    <LatencyProfileView lanes={profile.shown.lanes} variant="bare" />
-  </div>
-</section>
+</div>
 
 <style>
   .live-profile {
-    --profile-track-height: clamp(24px, 3.5svh, 42px);
-    --profile-lane-gap: 8px;
+    position: relative;
+    display: grid;
+    min-width: 0;
+    --profile-track-height: clamp(22px, 3.4svh, 34px);
+    --profile-row: clamp(32px, 6.5svh, 64px);
   }
   .notice {
-    margin-bottom: var(--space-2);
-  }
-  .latency-focus {
-    display: flex;
-    justify-content: flex-end;
-    margin-bottom: var(--space-2);
+    position: absolute;
+    inset: auto var(--space-4) var(--space-3);
   }
 </style>

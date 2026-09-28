@@ -463,7 +463,7 @@ func TestLoginCarriesOnlyAValidChallenge(t *testing.T) {
 	}
 }
 
-func TestLoginPaletteMatchesApplicationTokens(t *testing.T) {
+func TestAuthTokensMatchApplication(t *testing.T) {
 	css, err := os.ReadFile("../../../client/src/app.css")
 	if err != nil {
 		t.Fatal(err)
@@ -476,11 +476,19 @@ func TestLoginPaletteMatchesApplicationTokens(t *testing.T) {
 		}
 		return out
 	}
-	for _, name := range []string{"canvas", "surface-1", "surface-inset", "border", "text", "text-muted",
-		"text-inverse",
-		"brand", "brand-strong", "signal", "signal-soft", "err", "err-soft", "focus-ring", "edge-highlight"} {
-		authValues := slices.Compact(values(authCSS, name))
-		if appValues := values(string(css), name); !reflect.DeepEqual(authValues, appValues) {
+	var names []string
+	for _, rule := range regexp.MustCompile(`:root\s*\{([^}]*)\}`).FindAllStringSubmatch(authCSS, -1) {
+		for _, token := range regexp.MustCompile(`--([\w-]+):`).FindAllStringSubmatch(rule[1], -1) {
+			names = append(names, token[1])
+		}
+	}
+	if !slices.Contains(names, "canvas") {
+		t.Fatalf("found no :root tokens in auth.css, only %v", names)
+	}
+	slices.Sort(names)
+	for _, name := range slices.Compact(names) {
+		authValues, appValues := values(authCSS, name), values(string(css), name)
+		if !reflect.DeepEqual(authValues, appValues) {
 			t.Errorf("token %s values %v do not match application values %v", name, authValues, appValues)
 		}
 	}

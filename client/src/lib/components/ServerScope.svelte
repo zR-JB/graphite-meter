@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
   import type { ServerIdentity } from "../servers/catalog";
   import { serverLabel } from "../presentation/serverAppearance";
 
@@ -8,26 +9,27 @@
     onchange,
     label,
     aggregate,
-    hint,
     disabled = false,
     disabledIds = [],
+    quiet = false,
   }: {
     servers: readonly ServerIdentity[];
     value: string;
     onchange: (id: string) => void;
     label: string;
     aggregate?: string;
-    hint?: string;
     disabled?: boolean;
     disabledIds?: readonly string[];
+    /** A lens over results: a server mark and a borderless field. */
+    quiet?: boolean;
   } = $props();
-  const hintId = $props.id();
 </script>
 
+{#if quiet}<span class="lens-mark"><Icon name="server" /></span>{/if}
 <select
   class="server-scope"
+  class:quiet
   aria-label={label}
-  aria-describedby={hint && value === "" ? hintId : undefined}
   {value}
   {disabled}
   onchange={(event) => onchange(event.currentTarget.value)}
@@ -39,43 +41,31 @@
     >
   {/each}
 </select>
-{#if hint}<span id={hintId} hidden>{hint}</span>{/if}
 
 <style>
   .server-scope {
-    width: var(--scope-width, auto);
     max-width: 100%;
-    min-height: var(--control-h);
-    padding-block: 5px;
-    font: var(--w-strong) var(--type-xs) / 1.3 var(--font-sans);
     text-overflow: ellipsis;
   }
-  @supports (appearance: base-select) {
-    .server-scope,
-    .server-scope::picker(select) {
-      appearance: base-select;
-    }
-    .server-scope::picker(select) {
-      margin-block: 4px;
-      padding: var(--space-1);
-      border: 1px solid var(--border-strong);
-      border-radius: var(--r-chrome);
-      background: var(--surface-1);
-      box-shadow: var(--elev-float);
-    }
-    option {
-      padding: 6px var(--space-2);
-      border-radius: var(--r-well);
-      font: var(--w-strong) var(--type-xs) / 1.3 var(--font-sans);
-    }
-    option:checked {
-      background: var(--brand-soft);
-      color: var(--brand-strong);
-    }
+  .lens-mark {
+    display: inline-grid;
+    color: var(--text-soft);
   }
-  @media (pointer: coarse) {
-    .server-scope {
-      min-height: var(--hit);
+  .lens-mark :global(svg) {
+    width: 14px;
+    height: 14px;
+  }
+  .quiet {
+    min-height: 28px;
+    padding-block: 0;
+    border-color: transparent;
+    background-color: transparent;
+    color: var(--text-muted);
+    font: var(--w-normal) var(--type-body) / 1 var(--font-sans);
+  }
+  @media (hover: hover) {
+    .quiet:hover:not(:disabled) {
+      background-color: var(--hover-wash);
     }
   }
 </style>

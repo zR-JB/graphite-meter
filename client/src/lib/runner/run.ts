@@ -1001,8 +1001,9 @@ export class Run {
     message: string,
   ): void {
     const failure = this.#record(server.server.id, scope, reason, message);
-    if (failure)
-      this.#emit({ type: "serverFailure", failure, participants: this.#ids() });
+    if (!failure) return;
+    this.#emit({ type: "serverFailure", failure });
+    this.#emit({ type: "serverDetails", details: this.details() });
   }
 
   #record(

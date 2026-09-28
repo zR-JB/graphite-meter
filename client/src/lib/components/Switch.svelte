@@ -48,9 +48,13 @@
   /* Contains the hidden checkbox so focusing it cannot scroll the panel. */
   .switch {
     position: relative;
-    display: inline-flex;
+    display: flex;
+    flex-direction: row-reverse;
+    flex-wrap: nowrap;
     align-items: center;
-    gap: 10px;
+    justify-content: space-between;
+    gap: var(--space-3);
+    min-height: var(--control-h);
     border-radius: var(--r-well);
     user-select: none;
   }
@@ -63,35 +67,37 @@
     cursor: not-allowed;
     opacity: 0.5;
   }
+  /* On fills the track with ink, like a checked box; off is an empty track. */
   .track {
     position: relative;
     flex: none;
-    width: 36px;
-    height: 20px;
-    border: 1px solid var(--field-edge);
+    width: 38px;
+    height: 22px;
     border-radius: var(--r-full);
-    background: var(--surface-inset);
+    background: var(--track);
+    box-shadow: inset 0 0 0 1px var(--border-subtle);
     transition: var(--transition-control);
   }
   .knob {
     position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 14px;
-    height: 14px;
+    top: 3px;
+    left: 3px;
+    width: 16px;
+    height: 16px;
     border-radius: var(--r-full);
-    background: var(--text-soft);
+    background: var(--surface-1);
+    box-shadow: 0 1px 3px color-mix(in oklab, var(--shade) 40%, transparent);
     transition:
-      translate var(--dur-hover) var(--ease-snap),
+      translate var(--dur-graph) var(--ease-out),
       background-color var(--dur-hover) var(--ease-out);
   }
   input:checked + .track {
-    border-color: var(--brand-line);
-    background: var(--brand-soft);
+    background: var(--brand);
+    box-shadow: none;
   }
   input:checked + .track .knob {
     translate: 16px 0;
-    background: var(--brand);
+    background: var(--text-inverse);
   }
   .label {
     flex: 0 1 auto;

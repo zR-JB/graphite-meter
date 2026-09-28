@@ -3,12 +3,14 @@ package main
 import (
 	"cmp"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 )
 
 func fit(s string, w int) string {
@@ -58,9 +60,9 @@ func (s styles) grid(headers []string, rows [][]string, w int) string {
 			}
 			cells := make([]string, len(row))
 			for i, cell := range row {
-				cells[i] = pad(cell, widths[i])
+				cells[i] = pad(style.Render(cell), widths[i])
 			}
-			lines = append(lines, style.Render(strings.TrimRight(strings.Join(cells, "  "), " ")))
+			lines = append(lines, strings.TrimRight(strings.Join(cells, "  "), " "))
 		}
 		return strings.Join(lines, "\n")
 	}
@@ -135,7 +137,16 @@ type series struct {
 
 type mark struct {
 	t     float64
-	label string
+	stage goclient.Stage
+}
+
+func (s styles) stageSeries(points []point, marks []mark) []series {
+	out := make([]series, len(marks))
+	for i := len(marks) - 1; i >= 0; i-- {
+		at, _ := slices.BinarySearchFunc(points, marks[i].t, func(p point, t float64) int { return cmp.Compare(p.t, t) })
+		out[i], points = series{s.stage[marks[i].stage], points[at:]}, points[:at]
+	}
+	return out
 }
 
 type axis struct {
@@ -264,9 +275,10 @@ func (s styles) chart(lines []series, marks []mark, ax axis, span float64, w, h 
 		b.WriteString("\n")
 	}
 	ruler := []rune(strings.Repeat("─", cols))
-	labels := []rune(strings.Repeat(" ", cols))
-	end := []rune(fmtClock(time.Duration(t1 * float64(time.Second))))
-	endAt := max(cols-len(end), 0)
+	var labels strings.Builder
+	at := 0
+	end := ansi.Truncate(fmtClock(time.Duration(t1*float64(time.Second))), cols, "")
+	endAt := cols - lipgloss.Width(end)
 	column := func(t float64) int { return min(int((t-t0)/(t1-t0)*float64(cols)), cols-1) }
 	for i, m := range marks {
 		x, limit := column(m.t), endAt-1
@@ -278,12 +290,13 @@ func (s styles) chart(lines []series, marks []mark, ax axis, span float64, w, h 
 		}
 		ruler[x] = '┬'
 		if room := limit - x; room >= 3 {
-			copy(labels[x:], []rune(ansi.Truncate(m.label, room, "…")))
+			label := ansi.Truncate(compactStage(m.stage), room, "…")
+			labels.WriteString(strings.Repeat(" ", x-at) + s.stage[m.stage].Render(label))
+			at = x + lipgloss.Width(label)
 		}
 	}
-	copy(labels[endAt:], end)
 	b.WriteString(strings.Repeat(" ", chartAxis-1) + s.border.Render("└"+string(ruler)) + "\n")
-	b.WriteString(strings.Repeat(" ", chartAxis) + s.muted.Render(string(labels)))
+	b.WriteString(strings.Repeat(" ", chartAxis) + labels.String() + strings.Repeat(" ", endAt-at) + s.muted.Render(end))
 	return b.String()
 }
 

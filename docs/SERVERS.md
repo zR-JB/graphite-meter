@@ -1,8 +1,8 @@
 # Selecting and testing servers
 
 A test runs against one to four selected servers on one stage schedule; the default is the server serving the
-interface. Combined throughput is what those paths achieve while sharing the client's connection, not independent
-server capacity or the physical link's maximum.
+interface. All-servers throughput is what those paths achieve together while sharing the client's connection, not
+independent server capacity or the physical link's maximum.
 
 ## Operator catalogue
 
@@ -27,21 +27,29 @@ The object form adds named IDs, a default selection and extra measurement hosts:
 {
   "defaultSelection": ["self"],
   "servers": [
-    {"id": "frankfurt", "url": "https://fra.example.net", "name": "Frankfurt"},
-    {"id": "amsterdam", "url": "https://ams.example.net", "name": "Amsterdam",
-     "additionalOrigins": ["https://transfer.ams.example.net:8443"]}
+    {
+      "id": "frankfurt",
+      "url": "https://fra.example.net",
+      "name": "Frankfurt"
+    },
+    {
+      "id": "amsterdam",
+      "url": "https://ams.example.net",
+      "name": "Amsterdam",
+      "additionalOrigins": ["https://transfer.ams.example.net:8443"]
+    }
   ]
 }
 ```
 
-| Field | Rule |
-| --- | --- |
-| `servers` | Up to 31 entries besides the synthesized `self` (omit it). Unique IDs and origins. |
-| `id` | 1–64 ASCII letters, digits, `.`, `_` or `-`. |
-| `url` | HTTP(S) origin, ≤ 2048 bytes, no credentials, path, query or fragment. |
-| `name`, `location` | Fallbacks, ≤ 256 UTF-8 bytes, no control characters; discovery supplies current values. |
-| `additionalOrigins` | Up to 32 exact origins on other hosts; ports on the entry's own hostname need none. |
-| `defaultSelection` | One to four existing IDs; omitted means `self`, empty is invalid. |
+| Field               | Rule                                                                                    |
+| ------------------- | --------------------------------------------------------------------------------------- |
+| `servers`           | Up to 31 entries besides the synthesized `self` (omit it). Unique IDs and origins.      |
+| `id`                | 1–64 ASCII letters, digits, `.`, `_` or `-`.                                            |
+| `url`               | HTTP(S) origin, ≤ 2048 bytes, no credentials, path, query or fragment.                  |
+| `name`, `location`  | Fallbacks, ≤ 256 UTF-8 bytes, no control characters; discovery supplies current values. |
+| `additionalOrigins` | Up to 32 exact origins on other hosts; ports on the entry's own hostname need none.     |
+| `defaultSelection`  | One to four existing IDs; omitted means `self`, empty is invalid.                       |
 
 The raw configuration is limited to 64 KiB and the normalized catalogue, which adds this server's own entry, to
 48 KiB. The interface derives its browser
@@ -78,10 +86,10 @@ Failed, Sign in) and its **preflight request time**: the HTTP discovery request 
 latency measurement. Hover or focus shows name, location and host. Inline **Retry** and **Sign in** resolve
 individual entries; **Use available servers** repairs a stale saved selection.
 
-With several servers, **Latency server** picks the one probed for latency (default: the first selected) or
-**Combined** for every server; the choice is saved and fixed during the run
-([latency definitions](MEASUREMENTS.md#latency-probing)). Results and History share one **Combined** / per-server
-selector.
+With several servers, every one is probed for latency and the run's latency is the first selected server's
+([latency definitions](MEASUREMENTS.md#latency-probing)). The results and Details share one server selector (all
+servers, or one) that waits for the run to finish, and a saved result in History has its own; both change only what
+is shown.
 
 Opening Settings discovers unselected entries (bounded concurrency, 5 s each) and closing it cancels that; failures
 back off (5 s doubling to 1 min, reset when the page or network returns), sign-in failures wait for Sign in or

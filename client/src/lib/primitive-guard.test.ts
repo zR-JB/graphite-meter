@@ -19,9 +19,11 @@ test("hints change no cursor", async () => {
   expect(await offenders(/cursor:\s*help/)).toEqual([]);
 });
 
-test("hints draw no dotted underline", async () => {
+test("only the shared term mark draws a dotted underline", async () => {
   expect(
-    await offenders(/underline\s+dotted|text-decoration-style:\s*dotted/),
+    await offenders(/underline\s+dotted|text-decoration-style:\s*dotted/, [
+      "app.css",
+    ]),
   ).toEqual([]);
 });
 

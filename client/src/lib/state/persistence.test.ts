@@ -153,12 +153,11 @@ test("unknown/extra stored keys: dropped, known keys still merge", () => {
   const result = loaded({
     theme: "dark",
     somethingMadeUp: 123,
+    latencySelection: { mode: "primary", serverId: "peer" },
     config: { bogus: true },
   });
   expect(result.theme).toBe("dark");
-  expect(
-    (result as unknown as Record<string, unknown>).somethingMadeUp,
-  ).toBeUndefined();
+  expect(Object.keys(result)).toEqual(Object.keys(defaultPersisted()));
   expect(
     (result.config as unknown as Record<string, unknown>).bogus,
   ).toBeUndefined();
@@ -174,23 +173,4 @@ test("current target identifiers round-trip without historical alias rewriting",
   snapshot.config.transferStreams = { mode: "forced", count: 3 };
   savePersisted(snapshot);
   expect(loadPersisted()).toEqual(snapshot);
-});
-
-test("latency policy defaults to one server and validates saved preferences", () => {
-  expect(loadPersisted().latencySelection).toEqual({
-    mode: "primary",
-    serverId: "",
-  });
-  const snapshot = defaultPersisted();
-  snapshot.latencySelection = { mode: "all", serverId: "peer" };
-  savePersisted(snapshot);
-  expect(loadPersisted().latencySelection).toEqual(snapshot.latencySelection);
-  expect(
-    loaded({ latencySelection: { mode: "corrupt", serverId: 5 } })
-      .latencySelection,
-  ).toEqual({ mode: "primary", serverId: "" });
-  expect(
-    loaded({ latencySelection: { mode: "primary", serverId: "x".repeat(129) } })
-      .latencySelection.serverId,
-  ).toBe("");
 });

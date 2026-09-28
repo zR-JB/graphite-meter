@@ -167,17 +167,10 @@ class AppStore {
     message?: string;
     renewUrl?: string;
   } | null>(null);
-  latencySelection = $state<import("./persistence").LatencySelection>({
-    mode: "primary",
-    serverId: "",
-  });
-  primaryLatencyServer = $derived(
-    this.selectedServers.includes(this.latencySelection.serverId)
-      ? this.latencySelection.serverId
-      : (this.selectedServers[0] ?? "self"),
-  );
   /** Display focus only; the saved latency headline is fixed by the runner. */
   latencyFocus = $state("self");
+  /** The lens over a multi-server result: "" shows all servers combined, else one server. */
+  resultScope = $state("");
   serverDetails = $state.raw<MultiServerResult | null>(null);
   /** Per-server presentation evidence; the focused server's is the latency view. */
   readonly latencyByServer = new Map<string, LatencyBucket[]>();
@@ -188,7 +181,7 @@ class AppStore {
     void this.#latencyTail;
     return this.latencyByServer.get(this.latencyFocus) ?? NO_LATENCY;
   }
-  #focused = $derived(
+  latencyServer = $derived(
     this.serverDetails?.servers.find(
       ({ server }) => server.id === this.latencyFocus,
     ),
@@ -196,7 +189,7 @@ class AppStore {
   /** Saved summaries once complete, streamed ones while running. */
   latencySummaries = $derived.by((): LatencySummaries => {
     void this.#summaryTail;
-    const saved = this.#focused?.latencyByStage;
+    const saved = this.latencyServer?.latencyByStage;
     return (
       (this.phase === "complete" && saved) ||
       this.summariesByServer.get(this.latencyFocus) ||
@@ -204,11 +197,8 @@ class AppStore {
       {}
     );
   });
-  latencyRevision = $state(0);
-
   focusLatencyServer(id: string) {
     this.latencyFocus = id;
-    this.latencyRevision++;
   }
 
   startError = $state("");
@@ -279,8 +269,6 @@ class AppStore {
     this.#throughput = value;
     this.#throughputTail++;
   }
-  /** Changes when existing points move, so incremental chart indexes rebuild. */
-  throughputRevision = $state(0);
   /** The current transfer stage's latest sample; null between stages. */
   live = $state.raw<LiveSample | null>(null);
   #idleLatency = $state.raw<LatencyBucket[]>([]);
@@ -306,20 +294,12 @@ class AppStore {
 
   /** The idle monitor's verdict; it stands only while its evidence does. */
   connectivity = $state<ConnectivityState>("connected");
-  /** The selected server single-path views describe: the latency primary, else this server. */
-  representativeServerId = $derived.by(() => {
-    if (!this.serverCatalog || !this.selectedServers.length) return null;
-    const selected = selectedInCatalogOrder(
-      this.serverCatalog,
-      this.selectedServers,
-    );
-    const preferred =
-      this.latencySelection.mode === "primary"
-        ? this.primaryLatencyServer
-        : "self";
-    return (selected.find((server) => server.id === preferred) ?? selected[0])
-      .id;
-  });
+  /** The first selected server, where a run's latency starts; single-path views describe it. */
+  representativeServerId = $derived(
+    this.serverCatalog && this.selectedServers.length
+      ? selectedInCatalogOrder(this.serverCatalog, this.selectedServers)[0].id
+      : null,
+  );
   #representative = $derived(
     this.representativeServerId
       ? this.servers.get(this.representativeServerId)
@@ -548,8 +528,7 @@ class AppStore {
         phase,
         continuityId,
       };
-      if (appendThroughputSample(this.#throughput, sample, this.totalEtaMs))
-        this.throughputRevision++;
+      appendThroughputSample(this.#throughput, sample, this.totalEtaMs);
     }
     this.#throughputTail++;
   }
@@ -598,9 +577,8 @@ class AppStore {
         }
         const history = this.latencyByServer.get(event.serverId) ?? [];
         this.latencyByServer.set(event.serverId, history);
-        const moved = upsertLatencyBucket(history, event.sample);
+        upsertLatencyBucket(history, event.sample);
         if (event.serverId !== this.latencyFocus) break;
-        if (moved) this.latencyRevision++;
         this.#latencyTail++;
         break;
       }
@@ -613,14 +591,6 @@ class AppStore {
         break;
       case "serverDetails":
         this.serverDetails = event.details;
-        break;
-      case "serverFailure":
-        if (this.serverDetails)
-          this.serverDetails = {
-            ...this.serverDetails,
-            participants: event.participants,
-            failures: [...this.serverDetails.failures, event.failure],
-          };
         break;
       case "phase": {
         const { to, stage, t } = event.transition;
@@ -702,7 +672,6 @@ class AppStore {
       startError: "",
       preparationStatus: "idle",
       throughput: [],
-      throughputRevision: 0,
       live: null,
       idleLatency: [],
       serverDetails: null,
@@ -721,6 +690,7 @@ class AppStore {
       run: null,
       historyCandidate: null,
       liveStageBytes: 0,
+      resultScope: "",
     });
     this.#stageBase = { phase: "", bytes: 0, last: 0 };
     this.runSeq++;
@@ -728,7 +698,6 @@ class AppStore {
 
   restoreTestDisplayDefaults() {
     const defaults = defaultPersisted();
-    this.latencySelection = { ...defaults.latencySelection };
     this.config = structuredClone(defaults.config);
     this.unitBase = defaults.unitBase;
     this.unitKind = defaults.unitKind;
@@ -788,7 +757,6 @@ export function mountStoreEffects(store: AppStore): () => void {
     let timer: ReturnType<typeof setTimeout> | undefined;
     $effect(() => {
       const snapshot = {
-        latencySelection: $state.snapshot(store.latencySelection),
         config: $state.snapshot(store.config),
         unitBase: store.unitBase,
         unitKind: store.unitKind,

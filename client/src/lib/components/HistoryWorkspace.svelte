@@ -17,7 +17,14 @@
     onHistoryChanged,
   } from "../history/repository";
   import { formatRecentCompletion } from "../history/format";
-  import { formatLatency, formatRate, throughputUnitIndex } from "../format";
+  import {
+    fmtAddedMs,
+    fmtMs,
+    fmtSpeed,
+    rateUnit,
+    rateValueAt,
+    throughputUnitIndex,
+  } from "../format";
   import { stageStatusLabel } from "../presentation/vocabulary";
   import {
     historyMetrics,
@@ -32,8 +39,8 @@
   import { store } from "../state/store.svelte";
   import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
   import {
-    counted,
     JARGON,
+    MISSING,
     LATENCY_POPULATION,
     OUTCOME,
     STAGE,
@@ -92,10 +99,11 @@
   const span = $derived.by(() => {
     if (!records.length) return "";
     const times = records.map((record) => record.completedAt);
-    const [first, last] = [Math.min(...times), Math.max(...times)].map(
-      dateLabel,
-    );
-    return first === last ? first : `${first} – ${last}`;
+    const [first, last] = [Math.min(...times), Math.max(...times)];
+    if (dateLabel(first) === dateLabel(last)) return dateLabel(first);
+    const sameYear =
+      new Date(first).getFullYear() === new Date(last).getFullYear();
+    return `${sameYear ? new Date(first).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : dateLabel(first)} – ${dateLabel(last)}`;
   });
 
   const COLUMN: Record<
@@ -220,44 +228,84 @@
   }
 
   const units = $derived({ base: store.unitBase, kind: store.unitKind });
-  // One prefix per rate column, from its median, so a column reads in one unit.
-  const tiers = $derived.by(() => {
-    const tier = (column: "download" | "upload" | "bidirectional") => {
-      const values = prepared
-        .flatMap((entry) => entry.keys[column] ?? [])
-        .sort((a, b) => a - b);
-      return values.length
-        ? throughputUnitIndex(
-            values[values.length >> 1],
-            units.base,
-            units.kind,
-          )
-        : undefined;
-    };
-    return {
-      download: tier("download"),
-      upload: tier("upload"),
-      bidirectional: tier("bidirectional"),
-    };
-  });
+  const latencyColumn = (column: HistoryColumn) =>
+    column === "idle" || column === "loaded";
+  // One unit per column, in its head: rates take the prefix of their median; bars share a zero-based scale.
+  const scales = $derived(
+    Object.fromEntries(
+      columns.map((column) => {
+        const values = prepared
+          .flatMap((entry) => entry.keys[column] ?? [])
+          .sort((a, b) => a - b);
+        const tier =
+          values.length && !latencyColumn(column)
+            ? throughputUnitIndex(
+                values[values.length >> 1],
+                units.base,
+                units.kind,
+              )
+            : undefined;
+        return [
+          column,
+          {
+            tier,
+            peak: values.at(-1) ?? 0,
+            unit: latencyColumn(column)
+              ? "ms"
+              : tier === undefined
+                ? ""
+                : rateUnit(units.base, units.kind, tier),
+          },
+        ];
+      }),
+    ) as Record<HistoryColumn, { tier?: number; peak: number; unit: string }>,
+  );
 
-  function metric(record: HistoryRecord, column: HistoryColumn): string {
+  // Under each rate, the latency its load added; under idle, its jitter; under loaded, whose load it was.
+  function note(record: HistoryRecord, column: HistoryColumn): string {
+    const { addedLatency, latency, latencyByStage } = record.result;
+    if (column === "idle")
+      return latency?.jitterMs == null
+        ? ""
+        : `jitter ${fmtMs(latency.jitterMs)}`;
+    if (column === "loaded") {
+      const worst = (["download", "upload", "bidirectional"] as const)
+        .filter((stage) => latencyByStage[stage]?.p50Ms != null)
+        .toSorted(
+          (a, b) => latencyByStage[b]!.p50Ms! - latencyByStage[a]!.p50Ms!,
+        )[0];
+      return worst ? STAGE[worst].short.toLowerCase() : "";
+    }
+    const added = addedLatency?.[column];
+    return added == null ? "" : `${fmtAddedMs(added)} ms`;
+  }
+  function metric(record: HistoryRecord, column: HistoryColumn) {
     const { stages, bidirectional } = record.result;
     const value = historyMetrics(record)[column];
-    if (column === "loaded") return formatLatency(value);
-    if (column === "idle")
-      return value == null
-        ? stageStatusLabel(stages.latency)
-        : formatLatency(value);
-    if (value != null) return formatRate(value, units, tiers[column]);
-    if (column !== "bidirectional") return stageStatusLabel(stages[column]);
+    const { tier, peak } = scales[column];
+    if (value != null)
+      return {
+        text:
+          tier === undefined
+            ? fmtMs(value)
+            : fmtSpeed(rateValueAt(value, units.base, units.kind, tier)),
+        share: peak > 0 ? value / peak : 0,
+        note: note(record, column),
+      };
+    const missing = (text: string) => ({ text, share: null, note: "" });
+    if (column === "loaded") return missing(MISSING);
+    if (column === "idle") return missing(stageStatusLabel(stages.latency));
+    if (column !== "bidirectional")
+      return missing(stageStatusLabel(stages[column]));
     const { survivingDirection } = bidirectionalResultPresentation(
       bidirectional?.down?.reportedBytesPerSec,
       bidirectional?.up?.reportedBytesPerSec,
     );
-    return survivingDirection
-      ? `${survivingDirection === "down" ? "Down" : "Up"} only`
-      : stageStatusLabel(stages.bidirectional);
+    return missing(
+      survivingDirection
+        ? `${survivingDirection === "down" ? "Down" : "Up"} only`
+        : stageStatusLabel(stages.bidirectional),
+    );
   }
 
   function historyRow(record: HistoryRecord) {
@@ -266,8 +314,13 @@
       dateStyle: "medium",
       timeStyle: "short",
     });
-    const { outcome } = record.result;
+    const { outcome, multiServer } = record.result;
     const metrics = columns.map((column) => metric(record, column));
+    const servers = multiServer.selection;
+    const where =
+      servers.length > 1
+        ? `${servers.length} servers`
+        : (servers[0]?.name ?? "");
     const time = new Date(record.completedAt).toLocaleTimeString(undefined, {
       hour: "2-digit",
       minute: "2-digit",
@@ -276,7 +329,6 @@
       groupHeading(record.completedAt),
     );
     const day = new Date(record.completedAt).toLocaleDateString(undefined, {
-      weekday: "short",
       month: "short",
       day: "numeric",
     });
@@ -288,14 +340,19 @@
         : recentDay
           ? time
           : `${day}, ${time}`,
-      secondary: recent,
+      secondary: [where, recent].filter(Boolean).join(", "),
       outcome,
       metrics,
       label: [
-        `${exact}, ${OUTCOME[outcome].toLowerCase()} result`,
-        ...columns.map(
-          (column, index) => `${HISTORY_SORT_LABEL[column]} ${metrics[index]}`,
-        ),
+        [exact, where, `${OUTCOME[outcome].toLowerCase()} result`]
+          .filter(Boolean)
+          .join(", "),
+        ...columns.map((column, index) => {
+          const { text, share, note } = metrics[index];
+          const value = `${HISTORY_SORT_LABEL[column]} ${text}${share === null ? "" : ` ${scales[column].unit}`}`;
+          if (!note) return value;
+          return `${value}, ${column === "idle" ? `${note} ms` : column === "loaded" ? `under ${note}` : `${note} added`}`;
+        }),
       ].join(". "),
     };
   }
@@ -314,6 +371,15 @@
   }
 
   const byDay = $derived(sort === "date");
+  const groups = $derived.by(() => {
+    const runs: { heading: string; records: HistoryRecord[] }[] = [];
+    for (const record of visible) {
+      const heading = byDay ? groupHeading(record.completedAt) : "";
+      if (runs.at(-1)?.heading === heading) runs.at(-1)!.records.push(record);
+      else runs.push({ heading, records: [record] });
+    }
+    return runs;
+  });
   // Recent days, then months, so sparse history never gets a heading per result.
   function groupHeading(value: number): string {
     const day = (time: number) => new Date(time).toDateString();
@@ -380,10 +446,19 @@
   aria-labelledby="history-title"
   tabindex="-1"
 >
-  <header class="surface-head history-head">
+  <header class="sheet-head history-head">
     <h1 id="history-title">History</h1>
     {#if records.length}
-      <p>{counted(records.length, "result")} · {span}</p>
+      <dl class="head-facts">
+        <div>
+          <dt>Results</dt>
+          <dd>{records.length}</dd>
+        </div>
+        <div>
+          <dt>Span</dt>
+          <dd>{span}</dd>
+        </div>
+      </dl>
     {/if}
     <div class="head-actions">
       {#if records.length}
@@ -412,7 +487,7 @@
         </MoreMenu>
       {/if}
       <button
-        class="btn btn-icon close-history"
+        class="btn btn-icon btn-quiet close-history"
         type="button"
         aria-label="Close History"
         onclick={onClose}
@@ -498,7 +573,6 @@
             {#each ["date" as const, ...columns] as column (column)}
               <button
                 type="button"
-                class="caps"
                 aria-pressed={sort === column}
                 data-order={sort !== column
                   ? undefined
@@ -521,76 +595,99 @@
                     : tooltip(() => COLUMN[column].help)}
                   >{column === "date" ? "Date" : COLUMN[column].short}</span
                 >
+                {#if column !== "date" && scales[column].unit}<span class="unit"
+                    >{scales[column].unit}</span
+                  >{/if}
                 {#if sort === column}<span class="sr-only"
                     >, {descending ? "descending" : "ascending"}</span
                   >{/if}
                 <i aria-hidden="true"></i>
               </button>
+              {#if column === "date"}<span class="outcome-head"></span>{/if}
             {/each}
           </div>
-          <ol aria-label="Saved results">
-            {#each visible as record, index (record.id)}
-              {@const day = byDay ? groupHeading(record.completedAt) : ""}
-              {#if day && (index === 0 || day !== groupHeading(visible[index - 1].completedAt))}
-                <li class="day" aria-hidden="true">{day}</li>
-              {/if}
-              <li>
-                <svelte:boundary>
-                  {@const row = historyRow(record)}
-                  <a
-                    class="result-row"
-                    data-history-id={record.id}
-                    href={`#/history/${record.id}`}
-                    aria-current={selectedId === record.id ? "true" : undefined}
-                    aria-label={row.label}
-                    onclick={(event) => select(event, record.id)}
-                  >
-                    <span class="date-cell">
-                      <time
-                        datetime={new Date(record.completedAt).toISOString()}
-                        title={row.exact}
+          {#each groups as group, index (group.records[0].id)}
+            <section class="group day">
+              {#if group.heading}<h3 id={`history-day-${index}`}>
+                  {group.heading}
+                </h3>{/if}
+              <ol
+                class="kv"
+                aria-label={group.heading ? undefined : "Saved results"}
+                aria-labelledby={group.heading
+                  ? `history-day-${index}`
+                  : undefined}
+              >
+                {#each group.records as record (record.id)}
+                  <li>
+                    <svelte:boundary>
+                      {@const row = historyRow(record)}
+                      <a
+                        class="result-row tile"
+                        data-history-id={record.id}
+                        href={`#/history/${record.id}`}
+                        aria-current={selectedId === record.id
+                          ? "true"
+                          : undefined}
+                        aria-label={row.label}
+                        onclick={(event) => select(event, record.id)}
                       >
-                        <strong>{row.primary}</strong>
-                        {#if row.secondary}<small>{row.secondary}</small>{/if}
-                      </time>
-                      {#if row.outcome !== "complete"}<span
-                          class="badge"
-                          data-tone={STATUS_TONE[row.outcome]}
-                          >{OUTCOME[row.outcome]}</span
-                        >{/if}
-                    </span>
-                    {#each columns as column, index (column)}
-                      <span class="metric-cell" data-tone={column}>
-                        <small class="caps"
-                          ><span class="head-icon"
-                            ><Icon name={COLUMN[column].icon} /></span
-                          >{COLUMN[column].short}</small
-                        >
-                        <strong>{row.metrics[index]}</strong>
-                      </span>
-                    {/each}
-                  </a>
-                  {#snippet failed()}
-                    <a
-                      class="result-row"
-                      data-history-id={record.id}
-                      href={`#/history/${record.id}`}
-                      onclick={(event) => select(event, record.id)}
-                    >
-                      <span class="date-cell">
                         <time
                           datetime={new Date(record.completedAt).toISOString()}
-                          ><strong>{dateLabel(record.completedAt)}</strong
-                          ></time
+                          title={row.exact}
                         >
-                        <span class="badge" data-tone="warn">Unreadable</span>
-                      </span>
-                    </a>
-                  {/snippet}
-                </svelte:boundary>
-              </li>
-            {/each}
-          </ol>
+                          {row.primary}
+                          {#if row.secondary}<small>{row.secondary}</small>{/if}
+                        </time>
+                        <span class="outcome">
+                          {#if row.outcome !== "complete"}<span
+                              class="status-dot inline"
+                              data-tone={STATUS_TONE[row.outcome]}
+                            ></span>{OUTCOME[row.outcome]}{/if}
+                        </span>
+                        {#each columns as column, index (column)}
+                          {@const cell = row.metrics[index]}
+                          <span
+                            class="metric"
+                            class:missing={cell.share === null}
+                            data-tone={column}
+                          >
+                            {#if cell.share !== null}<span
+                                class="bar"
+                                style:--share={cell.share}
+                              ></span>{/if}
+                            <span class="value">{cell.text}</span>
+                            {#if cell.note}<small class="note"
+                                >{cell.note}</small
+                              >{/if}
+                          </span>
+                        {/each}
+                      </a>
+                      {#snippet failed()}
+                        <a
+                          class="result-row tile"
+                          data-history-id={record.id}
+                          href={`#/history/${record.id}`}
+                          onclick={(event) => select(event, record.id)}
+                        >
+                          <time
+                            datetime={new Date(
+                              record.completedAt,
+                            ).toISOString()}
+                            >{dateLabel(record.completedAt)}</time
+                          >
+                          <span class="outcome"
+                            ><span class="status-dot inline" data-tone="warn"
+                            ></span>Unreadable</span
+                          >
+                        </a>
+                      {/snippet}
+                    </svelte:boundary>
+                  </li>
+                {/each}
+              </ol>
+            </section>
+          {/each}
         </div>
         {#if visibleCount < ordered.length}
           <div class="load-more" {@attach loadMoreWhenVisible}>
@@ -672,38 +769,25 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-1);
-    box-shadow: var(--elev-raised);
     container: history / inline-size;
   }
+  /* Both panes scroll beneath the head, so its rule always shows. */
   .history-head {
-    display: flex;
-    flex-wrap: wrap;
+    border-bottom-color: var(--border);
+    animation: none;
+  }
+  .history-workspace :global(.outcome) {
+    display: inline-flex;
     align-items: center;
-    gap: var(--space-1) var(--space-3);
-    padding: 10px var(--space-4);
-  }
-  h1 {
-    font: var(--w-heavy) var(--type-lg) / 1.2 var(--font-display);
-    letter-spacing: var(--track-tight);
-  }
-  .history-head p {
-    min-width: 0;
+    gap: var(--space-2);
     color: var(--text-muted);
-    font-size: var(--type-xs);
-  }
-  .head-actions {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-left: auto;
+    font-size: var(--type-sm);
+    white-space: nowrap;
   }
   .notices {
     display: grid;
     gap: var(--space-1);
-    padding: var(--space-2) var(--space-4);
+    padding: var(--space-3) var(--panel-pad) 0;
   }
   .notice {
     align-items: center;
@@ -722,23 +806,26 @@
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior-y: contain;
+    scrollbar-gutter: stable;
   }
-  .detail-pane {
-    background: var(--surface-1);
+  @supports (animation-timeline: scroll()) {
+    .detail-pane {
+      scroll-timeline: --sheet block;
+    }
   }
   .has-detail .history-list {
     visibility: hidden;
   }
   @container history (min-width: 821px) {
     .has-detail {
-      grid-template-columns: minmax(320px, 2fr) minmax(460px, 3fr);
+      grid-template-columns: minmax(360px, 2fr) minmax(460px, 3fr);
     }
     .has-detail .history-list {
       visibility: visible;
     }
     .detail-pane {
       grid-area: 1 / 2;
-      border-left: 1px solid var(--border-subtle);
+      border-left: var(--hairline) solid var(--border);
     }
   }
   .history-list {
@@ -747,12 +834,13 @@
   .history-table {
     display: grid;
     grid-template-columns:
-      minmax(150px, 16rem)
-      repeat(var(--metric-columns), minmax(72px, 10rem))
-      minmax(0, 1fr);
-    padding-inline: var(--space-2);
+      minmax(8.5rem, 1.2fr) auto
+      repeat(var(--metric-columns), minmax(6rem, 1fr));
+    row-gap: var(--space-5);
+    padding: 0 var(--panel-pad) var(--space-6);
   }
   .column-head,
+  .day,
   ol,
   li,
   .result-row {
@@ -765,51 +853,59 @@
     position: sticky;
     top: 0;
     z-index: 1;
-    margin-inline: calc(-1 * var(--space-2));
-    padding-inline: var(--space-2);
-    border-bottom: 1px solid var(--border-subtle);
-    background: var(--surface-1);
+    margin: 0 calc(-1 * var(--panel-pad)) calc(-1 * var(--space-3));
+    padding: var(--space-3) var(--panel-pad) 0;
+    background: var(--bg);
+    background-attachment: fixed;
   }
   .column-head button {
     position: relative;
     display: flex;
-    align-items: center;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    align-items: baseline;
     justify-content: flex-end;
-    gap: 6px;
-    width: 100%;
-    min-height: 34px;
-    padding: 0 10px;
+    gap: 0 5px;
+    min-width: 0;
+    min-height: var(--control-h);
+    padding: 6px var(--space-3);
+    border-radius: var(--r-well);
     color: var(--text-muted);
+    font: var(--w-strong) var(--type-sm) / 1.3 var(--font-sans);
+    white-space: nowrap;
     transition: var(--transition-control);
   }
   .column-head > button:first-child {
     justify-content: flex-start;
   }
-  .column-head > button:first-child i {
-    position: static;
-  }
   @media (hover: hover) {
     .column-head button:hover {
-      background: var(--brand-soft);
+      background: var(--hover-wash);
       color: var(--text);
     }
   }
   .column-head [aria-pressed="true"] {
-    color: var(--brand-strong);
+    color: var(--text);
   }
   /* The sort mark sits in the padding, so labels share their values' edge. */
   .column-head i {
     position: absolute;
-    right: 2px;
-    width: 6px;
-    height: 6px;
-    border: solid currentColor;
+    right: 3px;
+    top: 12px;
+    width: 5px;
+    height: 5px;
+    border: solid var(--brand-strong);
     border-width: 0 1.5px 1.5px 0;
     opacity: 0;
     rotate: 45deg;
     transition:
       opacity var(--dur-hover) var(--ease-out),
       rotate var(--dur-hover) var(--ease-out);
+  }
+  .column-head > button:first-child i {
+    position: static;
+    align-self: center;
+    margin-left: 2px;
   }
   .column-head [data-order] i {
     opacity: 1;
@@ -819,130 +915,154 @@
   }
   .head-icon {
     display: grid;
-    color: var(--tone, var(--text-soft));
+    flex: none;
+    align-self: center;
+    color: var(--tone);
   }
   .head-icon :global(svg) {
     width: var(--icon-sm);
     height: var(--icon-sm);
   }
-  li.day {
-    display: block;
-    padding: var(--space-4) 10px var(--space-1);
-    color: var(--text-muted);
-    font: var(--w-strong) var(--type-sm) / 1.3 var(--font-sans);
+  .unit {
+    flex-basis: 100%;
+    color: var(--text-soft);
+    font: var(--w-normal) var(--type-2xs) / 1.4 var(--font-mono);
+    text-align: end;
+  }
+  .day > h3 {
+    grid-column: 1 / -1;
+  }
+  ol {
+    overflow: hidden;
+    padding-inline: 0;
+  }
+  li {
+    gap: 0;
+    padding-block: 0;
   }
   .result-row {
-    min-height: 40px;
-    border-radius: var(--r-well);
-    transition: var(--transition-control);
-  }
-  @media (hover: hover) {
-    .result-row:hover {
-      background: var(--surface-2);
-    }
-  }
-  .result-row[aria-current="true"] {
-    background: var(--brand-soft);
-    box-shadow: inset 2px 0 0 var(--brand);
-  }
-  .date-cell,
-  .metric-cell {
-    min-width: 0;
-    padding: 9px 10px;
-  }
-  /* The badge wraps below a date that needs the whole cell. */
-  .date-cell {
-    display: flex;
-    flex-wrap: wrap;
     align-items: center;
-    gap: 2px var(--space-2);
+    min-height: var(--row-h);
+  }
+  .result-row:focus-visible {
+    outline-offset: -2px;
+  }
+  .result-row > * {
+    min-width: 0;
+    padding: 7px var(--space-3);
   }
   time {
     display: flex;
-    flex: 1 1 auto;
     flex-wrap: wrap;
     align-items: baseline;
     gap: 0 var(--space-2);
-    min-width: 0;
-  }
-  time strong,
-  .metric-cell strong {
-    font: var(--w-normal) var(--type-sm) / 1.35 var(--font-sans);
-    font-variant-numeric: tabular-nums;
+    font-weight: var(--w-normal);
   }
   time small {
-    color: var(--text-muted);
+    color: var(--text-soft);
     font-size: var(--type-xs);
   }
-  .metric-cell {
+  .outcome:empty {
+    padding: 0;
+  }
+  /* A value, then what it cost or how it varied, in the column's own ink. */
+  .metric {
     display: grid;
-    align-content: center;
-    text-align: end;
+    grid-template: "bar value" auto ". note" auto / minmax(0, 4.5rem) auto;
+    align-items: center;
+    justify-content: end;
+    column-gap: var(--space-2);
   }
-  .metric-cell small {
-    display: none;
+  .note {
+    grid-area: note;
+    justify-self: end;
+    color: var(--tone-ink);
+    font: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
-  .metric-cell strong {
-    overflow-wrap: break-word;
+  .metric[data-tone="idle"] .note {
+    color: var(--text-soft);
+  }
+  /* A magnitude, never a verdict: the column's largest value fills the bar. */
+  .bar {
+    grid-area: bar;
+    width: 100%;
+    height: 3px;
+    border-radius: var(--r-full);
+    background: linear-gradient(
+        270deg,
+        color-mix(in oklab, var(--tone) 60%, transparent)
+          calc(var(--share) * 100%),
+        transparent 0
+      )
+      no-repeat;
+  }
+  .value {
+    grid-area: value;
+    justify-self: end;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .missing .value {
+    color: var(--text-soft);
+    font-weight: var(--w-normal);
   }
   .load-more {
     display: flex;
     align-items: center;
     justify-content: center;
     gap: var(--space-3);
-    padding: var(--space-4);
-    color: var(--text-muted);
-    font-size: var(--type-xs);
+    padding: 0 var(--panel-pad) var(--space-5);
+    color: var(--text-soft);
+    font-size: var(--type-sm);
   }
-  @container history-list (max-width: 560px) {
-    .column-head {
+  @container history-list (max-width: 900px) {
+    .bar {
       display: none;
     }
+  }
+  @container history-list (max-width: 560px) {
     .history-table {
       grid-template-columns: repeat(var(--metric-columns), minmax(0, 1fr));
-      gap: 6px;
-      padding: var(--space-2);
+      row-gap: var(--space-4);
     }
-    ol {
-      gap: 6px;
+    .column-head > button:first-child,
+    .outcome-head {
+      display: none;
     }
-    li:not(.day) {
-      border: 1px solid var(--border);
-      border-radius: var(--r-chrome);
-      background: var(--sheen), var(--surface-1);
-      box-shadow: var(--elev-tile);
+    .head-icon {
+      display: none;
     }
-    li.day {
-      padding: var(--space-3) var(--space-1) 0;
-    }
-    .date-cell {
-      grid-column: 1 / -1;
-      padding-block: 6px 5px;
-    }
-    .metric-cell {
-      align-content: start;
-      gap: 3px;
-      padding: 6px 7px 7px;
-      text-align: start;
-    }
-    .metric-cell small {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      color: var(--text-muted);
-    }
-    .metric-cell strong {
+    .column-head button {
+      padding-inline: var(--space-2);
       font-size: var(--type-xs);
+    }
+    .result-row {
+      position: relative;
+      padding-block: 2px 4px;
+    }
+    .result-row > * {
+      padding: 4px var(--space-2);
+    }
+    time {
+      grid-column: 1 / -1;
+      padding-inline: var(--space-3) 7rem;
+    }
+    .outcome {
+      position: absolute;
+      top: 4px;
+      right: var(--space-1);
     }
   }
   @container history (max-width: 560px) {
-    .history-head,
-    .notices {
-      padding-inline: var(--space-3);
-    }
-    .history-head p {
+    .history-workspace :global(.head-facts) {
       order: 3;
       flex-basis: 100%;
+    }
+    .history-workspace:has(.has-detail) .history-head .head-facts {
+      display: none;
     }
   }
 </style>
