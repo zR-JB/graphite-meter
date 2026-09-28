@@ -11,7 +11,7 @@ use graphite_meter_core::{
     origin::{canonical_origin, target_origin},
     route::{self, Kind, Route},
 };
-use http::{HeaderMap, HeaderValue, Method, Request, header};
+use http::{HeaderMap, HeaderName, HeaderValue, Method, Request, header};
 use ipnet::IpNet;
 use std::net::{IpAddr, SocketAddr};
 use subtle::ConstantTimeEq;
@@ -182,6 +182,20 @@ impl Policy {
         tls: bool,
         listener: Listener,
     ) -> Result<Authorization, Refusal> {
+        // Go's Enforce refuses a repeated security-relevant field before anything else.
+        if [
+            header::AUTHORIZATION,
+            header::ORIGIN,
+            HeaderName::from_static("sec-fetch-site"),
+            HeaderName::from_static("x-csrf-token"),
+            header::ACCESS_CONTROL_REQUEST_METHOD,
+            header::ACCESS_CONTROL_REQUEST_HEADERS,
+        ]
+        .iter()
+        .any(|name| request.headers().get_all(name).iter().nth(1).is_some())
+        {
+            return Err(Refusal::Forbidden);
+        }
         let trust = self.trust(request, peer, tls);
         if tls && !trust.secure {
             return Err(Refusal::AuthenticationRequired);

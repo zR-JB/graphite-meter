@@ -153,13 +153,16 @@ fn explicit_credentials_never_fall_back_to_ambient_cookies() {
     req.headers_mut().insert(header::ORIGIN, PUBLIC.parse().unwrap());
     bearer(&mut req, "invalid");
     refused(&policy, &req, Refusal::AuthenticationRequired);
+    // As in Go, a repeated Authorization is forbidden before any credential is read.
     req.headers_mut().insert(header::AUTHORIZATION, "".parse().unwrap());
     req.headers_mut()
         .append(header::AUTHORIZATION, "Bearer invalid".parse().unwrap());
-    refused(&policy, &req, Refusal::AuthenticationRequired);
+    refused(&policy, &req, Refusal::Forbidden);
     bearer(&mut req, &cli);
     req.headers_mut()
         .append(header::AUTHORIZATION, "Bearer invalid".parse().unwrap());
+    refused(&policy, &req, Refusal::Forbidden);
+    req.headers_mut().insert(header::AUTHORIZATION, "".parse().unwrap());
     refused(&policy, &req, Refusal::AuthenticationRequired);
     bearer(&mut req, &cli);
     assert_eq!(allowed(&policy, &req).provider(), "cli");
@@ -353,4 +356,23 @@ fn evaluate(
         .authorize(request.clone(), Connection { peer, tls, listener })
         .map(|authorized| authorized.authorization().clone())
         .map_err(|rejected| rejected.reason())
+}
+
+#[test]
+fn repeated_security_headers_are_forbidden_before_anything_else() {
+    let store = SessionStore::new();
+    let policy = policy(&store);
+    for name in [
+        "authorization",
+        "origin",
+        "sec-fetch-site",
+        "x-csrf-token",
+        "access-control-request-method",
+        "access-control-request-headers",
+    ] {
+        let mut req = request("POST", "/auth/password");
+        req.headers_mut().append(name, "a".parse().unwrap());
+        req.headers_mut().append(name, "b".parse().unwrap());
+        refused(&policy, &req, Refusal::Forbidden);
+    }
 }
