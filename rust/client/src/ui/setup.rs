@@ -34,8 +34,9 @@ pub(super) enum Field {
     LoadedPingInterval,
     LoadedLatency,
     Insecure,
+    Reset,
 }
-const FIELDS: [Field; 20] = [
+const FIELDS: [Field; 21] = [
     Field::Start,
     Field::Servers,
     Field::Protocol,
@@ -56,7 +57,12 @@ const FIELDS: [Field; 20] = [
     Field::LoadedPingInterval,
     Field::LoadedLatency,
     Field::Insecure,
+    Field::Reset,
 ];
+const RESET: crate::vocabulary::Term = crate::vocabulary::Term {
+    label: "Reset settings",
+    explanation: "Restore the defaults; keep the catalogue URL and servers.",
+};
 
 impl Ui {
     pub(super) fn fields(&self) -> &'static [Field] {
@@ -159,6 +165,7 @@ impl Field {
             Self::LoadedPingInterval => crate::vocabulary::LOADED_PING_INTERVAL,
             Self::LoadedLatency => crate::vocabulary::LOADED_LATENCY,
             Self::Insecure => crate::vocabulary::INSECURE,
+            Self::Reset => RESET,
         }
     }
     pub(super) fn label(self) -> &'static str {
@@ -187,6 +194,7 @@ impl Field {
                 &["Enter edit", "Tab focus"]
             }
             Self::Warmup => &["←/→ 0.1 s", "Enter edit"],
+            Self::Reset => &["Enter reset", "Tab focus"],
             _ => &["←/→ choose", "Tab focus"],
         }
     }
@@ -208,7 +216,7 @@ impl Field {
             );
         }
         match self {
-            Self::Start | Self::Advanced => String::new(),
+            Self::Start | Self::Advanced | Self::Reset => String::new(),
             Self::Url => config.url.clone(),
             Self::Servers => config.servers.join(","),
             Self::ThroughputOrigin => config.throughput_origin.clone().unwrap_or_default(),
@@ -377,6 +385,19 @@ impl Ui {
             Field::LoadedLatency => self.config.loaded_latency = !self.config.loaded_latency,
             Field::Insecure => self.config.insecure = !self.config.insecure,
             Field::Warmup => self.edit = Some(Edit::new(field, format!("{}s", seconds(self.config.warmup)))),
+            Field::Reset if !self.reset_prompt => {
+                self.reset_prompt = true;
+                self.notice = "Press Enter again to reset every setting; any other key keeps them.".into();
+            }
+            Field::Reset => {
+                self.reset_prompt = false;
+                self.config = Config {
+                    url: std::mem::take(&mut self.config.url),
+                    servers: std::mem::take(&mut self.config.servers),
+                    ..Config::default()
+                };
+                self.notice = "Settings reset to defaults.".into();
+            }
             _ => self.edit = Some(Edit::new(field, field.value(&self.config))),
         }
     }

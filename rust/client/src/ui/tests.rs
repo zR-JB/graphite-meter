@@ -223,6 +223,38 @@ fn enter_edits_stage_and_warmup_durations_like_go() {
     );
 }
 
+#[test]
+fn reset_asks_first_and_keeps_the_catalogue_and_servers() {
+    let (commands, _received) = mpsc::channel(4);
+    let config = Config {
+        url: "https://meter.example".into(),
+        servers: vec!["near".into()],
+        warmup: Duration::from_secs(1),
+        insecure: true,
+        ..Config::default()
+    };
+    let mut ui = Ui::new(config.clone(), Snapshot::default());
+    let press = |ui: &mut Ui, code| ui.key(KeyEvent::new(code, KeyModifiers::NONE), &commands);
+    ui.advanced = true;
+    let reset = ui.fields().iter().position(|field| *field == Field::Reset);
+    ui.rows.select(reset);
+    press(&mut ui, KeyCode::Enter);
+    assert_eq!(ui.config, config, "reset asks first");
+    press(&mut ui, KeyCode::Char('r'));
+    assert_eq!(ui.config, config, "another key keeps the settings");
+    assert_eq!(ui.notice, "Settings kept.");
+    press(&mut ui, KeyCode::Enter);
+    press(&mut ui, KeyCode::Enter);
+    assert_eq!(
+        ui.config,
+        Config {
+            url: config.url,
+            servers: config.servers,
+            ..Config::default()
+        }
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn path_settings_are_checked_again_once_changes_settle() {
     use graphite_meter_core::discovery::ThroughputTransport;

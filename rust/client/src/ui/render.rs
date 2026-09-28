@@ -365,6 +365,9 @@ impl Ui {
                         if self.advanced { "⌄" } else { "›" }
                     )));
                 }
+                if *field == Field::Reset {
+                    return ListItem::new(Line::from(field.label()));
+                }
                 let value = field.value(&self.config);
                 let heading = Style::new().fg(self.theme.ink).add_modifier(Modifier::BOLD);
                 let mut lines = Vec::new();

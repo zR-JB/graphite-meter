@@ -25,7 +25,7 @@ use ratatui::{
         Axis, Block, BorderType, Borders, Chart, Clear, Dataset, GraphType, List, ListItem, ListState, Paragraph, Wrap,
     },
 };
-use setup::Edit;
+use setup::{Edit, Field};
 use std::{
     io::{self, IsTerminal},
     time::Duration,
@@ -192,6 +192,7 @@ struct Ui {
     auth_scroll: u16,
     help: bool,
     edit: Option<Edit>,
+    reset_prompt: bool,
     notice: String,
     recheck: Option<tokio::time::Instant>,
     awaiting: bool,
@@ -226,6 +227,7 @@ impl Ui {
             auth_scroll: 0,
             help: false,
             edit: None,
+            reset_prompt: false,
             notice: String::new(),
             recheck: None,
             awaiting: false,
@@ -507,6 +509,14 @@ impl Ui {
                 _ => {}
             }
             return false;
+        }
+        if self.reset_prompt {
+            let row = self.rows.selected().and_then(|index| self.fields().get(index));
+            if !matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) || row != Some(&Field::Reset) {
+                self.reset_prompt = false;
+                self.notice = "Settings kept.".into();
+                return false;
+            }
         }
         let before = self.config.clone();
         let field_count = self.fields().len();
