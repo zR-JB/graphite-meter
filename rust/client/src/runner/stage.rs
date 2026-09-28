@@ -1,5 +1,5 @@
 //! One stage owns its members' transfers and latency sessions, their accounting and their cleanup.
-use super::PreparedServer;
+use super::{PreparedServer, ServerError};
 use crate::{
     Error,
     config::Config,
@@ -36,13 +36,6 @@ use tokio::{
 
 const STAGE_READY_TIMEOUT: Duration = Duration::from_secs(10);
 const STALL_QUIET: Duration = Duration::from_millis(500);
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum BoundaryKind {
-    Initial,
-    Sample,
-    Final,
-}
 
 #[derive(Default)]
 struct Lanes {
@@ -113,35 +106,6 @@ impl Member {
     }
 }
 
-#[derive(Debug)]
-struct ParticipantFailure {
-    id: String,
-    source: Error,
-}
-impl std::fmt::Display for ParticipantFailure {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{}: {}", self.id, self.source)
-    }
-}
-impl std::error::Error for ParticipantFailure {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.source.as_ref())
-    }
-}
-
-#[derive(Debug)]
-struct AllParticipantsFailed(ParticipantFailure);
-impl std::fmt::Display for AllParticipantsFailed {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "all selected servers failed: {}", self.0)
-    }
-}
-impl std::error::Error for AllParticipantsFailed {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.0)
-    }
-}
-
 struct LatencyCompletion {
     id: String,
     at: Instant,
@@ -173,7 +137,7 @@ struct StageRun<'a> {
     hosts: BTreeMap<String, HostLatency>,
     retired: JoinSet<()>,
     removed: Vec<String>,
-    lost: Option<ParticipantFailure>,
+    lost: Option<ServerError>,
     accounting: AggregateMeasurements,
     window: Option<(Instant, Instant)>,
 }
@@ -430,7 +394,7 @@ impl<'a> StageRun<'a> {
     async fn open_window(&mut self) -> Result<(), Error> {
         let initial = match self.transfer {
             Some(_) => {
-                let (initial, misses) = self.collect(BoundaryKind::Initial, None).await.expect("no stage end");
+                let (initial, misses) = self.collect(CHECKPOINT_BUDGET, None).await.expect("no stage end");
                 self.depart(misses.into_iter().collect(), true)?;
                 self.check_health()?;
                 Some(initial)
@@ -472,7 +436,7 @@ impl<'a> StageRun<'a> {
                     let stalled = scheduled.elapsed() > CLIENT_STALL;
                     let window = match self.transfer {
                         Some(_) => {
-                            let Some((mut boundary, misses)) = self.collect(BoundaryKind::Sample, Some(end)).await else {
+                            let Some((mut boundary, misses)) = self.collect(CHECKPOINT_BUDGET, Some(end)).await else {
                                 return Ok(());
                             };
                             boundary.stalled = stalled;
@@ -494,7 +458,7 @@ impl<'a> StageRun<'a> {
         if self.transfer.is_none() {
             return Ok(());
         }
-        let (mut boundary, misses) = self.collect(BoundaryKind::Final, None).await.expect("no stage end");
+        let (mut boundary, misses) = self.collect(FINAL_CHECKPOINT_BUDGET, None).await.expect("no stage end");
         boundary.final_boundary = true;
         self.observe_boundary(boundary, misses)?;
         let retrying = self
@@ -573,8 +537,9 @@ impl<'a> StageRun<'a> {
             member.stop_latency(Stop::Now);
             self.retire(member.lanes);
             self.removed.push(id.to_owned());
-            self.lost = Some(ParticipantFailure {
+            self.lost = Some(ServerError {
                 id: id.to_owned(),
+                label: format!("all selected servers failed: {id}"),
                 source: error,
             });
         }
@@ -590,10 +555,10 @@ impl<'a> StageRun<'a> {
         if !self.members.is_empty() {
             return Ok(());
         }
-        Err(self.lost.take().map_or_else(
-            || "no selected server remained".into(),
-            |lost| AllParticipantsFailed(lost).into(),
-        ))
+        Err(self
+            .lost
+            .take()
+            .map_or_else(|| "no selected server remained".into(), Into::into))
     }
 
     fn latency_ended(&mut self, joined: Result<LatencyCompletion, tokio::task::JoinError>) -> Result<(), Error> {
@@ -639,15 +604,10 @@ impl<'a> StageRun<'a> {
     /// RTT from shifting its peers. With `until`, the stage end abandons the checkpoints.
     async fn collect(
         &mut self,
-        kind: BoundaryKind,
+        budget: Duration,
         until: Option<Instant>,
     ) -> Option<(Boundary, BTreeMap<String, Error>)> {
         let mut boundary = self.local_boundary();
-        let budget = if kind == BoundaryKind::Final {
-            FINAL_CHECKPOINT_BUDGET
-        } else {
-            CHECKPOINT_BUDGET
-        };
         let checkpoints = futures_util::future::join_all(self.members.iter().filter_map(|member| {
             let up = member.lanes.up.as_ref()?;
             Some(async move { (member.id.clone(), up.checkpoint(budget).await) })

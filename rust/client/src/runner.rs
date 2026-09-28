@@ -63,19 +63,19 @@ pub async fn prepare_run(
 }
 
 #[derive(Debug)]
-struct PreparationFailure {
+struct ServerError {
     id: String,
-    name: String,
+    label: String,
     source: Error,
 }
 
 struct Preparation {
     servers: Vec<PreparedServer>,
-    failures: Vec<PreparationFailure>,
+    failures: Vec<ServerError>,
 }
 
 /// The controller approves one origin per retry, so prefer a sign-in challenge.
-fn preferred(mut failures: Vec<PreparationFailure>) -> Error {
+fn preferred(mut failures: Vec<ServerError>) -> Error {
     let index = failures
         .iter()
         .position(|failure| crate::net::authentication_required(failure.source.as_ref()).is_some())
@@ -83,13 +83,13 @@ fn preferred(mut failures: Vec<PreparationFailure>) -> Error {
     failures.swap_remove(index).into()
 }
 
-impl std::fmt::Display for PreparationFailure {
+impl std::fmt::Display for ServerError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{}: {}", self.name, self.source)
+        write!(formatter, "{}: {}", self.label, self.source)
     }
 }
 
-impl std::error::Error for PreparationFailure {
+impl std::error::Error for ServerError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(self.source.as_ref())
     }
@@ -160,9 +160,9 @@ async fn prepare(
     for (entry, result) in selected.iter().zip(results) {
         match result.expect("every selected verification completed") {
             Ok(server) => prepared.push(server),
-            Err(source) => failures.push(PreparationFailure {
+            Err(source) => failures.push(ServerError {
                 id: entry.id.clone(),
-                name: entry.name.clone(),
+                label: entry.name.clone(),
                 source,
             }),
         }
