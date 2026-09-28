@@ -16,11 +16,6 @@ fn finished_latency_result_remains_visible_after_live_probes_end() {
             results: vec![StageResult {
                 stage: Stage::Latency,
                 elapsed: Duration::from_secs(1),
-                down: None,
-                up: None,
-                intervals: Default::default(),
-                omitted_intervals: 0,
-                stopped: false,
                 server_latencies: vec![ServerLatencyResult {
                     elapsed: Some(Duration::from_secs(1)),
                     id: "self".into(),
@@ -37,7 +32,7 @@ fn finished_latency_result_remains_visible_after_live_probes_end() {
                     },
                     ending: None,
                 }],
-                server_results: Vec::new(),
+                ..Default::default()
             }],
             participants: vec!["self".into()],
             latency_focus: Some("self".into()),
@@ -226,12 +221,7 @@ fn minimum_supported_terminal_keeps_live_measurement_visible() {
             stage: Stage::Download,
             elapsed: Duration::from_secs(1),
             down: Some(download_measurement()),
-            up: None,
-            intervals: Default::default(),
-            omitted_intervals: 0,
-            stopped: false,
-            server_latencies: Vec::new(),
-            server_results: Vec::new(),
+            ..Default::default()
         }],
         latency_focus: Some("near".into()),
         ..Snapshot::default()
@@ -317,11 +307,6 @@ fn stacked_run_keeps_charts_and_signed_loaded_latency_visible() {
             StageResult {
                 stage: Stage::Latency,
                 elapsed: Duration::from_secs(60),
-                down: None,
-                up: None,
-                intervals: Default::default(),
-                omitted_intervals: 0,
-                stopped: false,
                 server_latencies: vec![
                     ServerLatencyResult {
                         elapsed: Some(Duration::from_secs(1)),
@@ -336,23 +321,19 @@ fn stacked_run_keeps_charts_and_signed_loaded_latency_visible() {
                         ending: None,
                     },
                 ],
-                server_results: Vec::new(),
+                ..Default::default()
             },
             StageResult {
                 stage: Stage::Download,
                 elapsed: Duration::from_secs(1),
                 down: Some(download_measurement()),
-                up: None,
-                intervals: Default::default(),
-                omitted_intervals: 0,
-                stopped: false,
                 server_latencies: vec![ServerLatencyResult {
                     elapsed: Some(Duration::from_secs(1)),
                     id: "self".into(),
                     summary: loaded.snapshot(),
                     ending: None,
                 }],
-                server_results: Vec::new(),
+                ..Default::default()
             },
         ],
         ..Snapshot::default()

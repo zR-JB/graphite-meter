@@ -225,8 +225,7 @@ impl Ui {
         snapshot.servers.truncate(MAX_SERVERS);
         snapshot.server_latencies.truncate(MAX_SELECTED_SERVERS);
         snapshot.results.truncate(16);
-        let live = |snapshot: &Snapshot| matches!(snapshot.phase, Phase::Preparing | Phase::Warmup | Phase::Measuring);
-        if live(&self.snapshot) && !live(&snapshot) && !self.quitting {
+        if self.snapshot.phase.live() && !snapshot.phase.live() && !self.quitting {
             self.notice.clear();
         }
         if self.live && !self.quitting && self.snapshot.participants.is_empty() && !snapshot.participants.is_empty() {
@@ -242,7 +241,7 @@ impl Ui {
             self.notice = format!("{name}: {}", failure.reason.label());
         }
         self.awaiting = false;
-        if snapshot.auth.is_some() || !matches!(snapshot.phase, Phase::Preparing | Phase::Warmup | Phase::Measuring) {
+        if snapshot.auth.is_some() || !snapshot.phase.live() {
             if self.cancel != CancelState::Idle {
                 self.notice.clear();
             }
@@ -302,16 +301,10 @@ impl Ui {
         self.latency_pick.as_deref().or(self.snapshot.latency_focus.as_deref())
     }
     fn active(&self) -> bool {
-        self.awaiting
-            || matches!(
-                self.snapshot.phase,
-                Phase::Checking | Phase::Preparing | Phase::Warmup | Phase::Measuring
-            )
+        self.awaiting || self.snapshot.phase.busy()
     }
     fn running(&self) -> bool {
-        self.snapshot.auth.is_none()
-            && (self.awaiting && self.live
-                || matches!(self.snapshot.phase, Phase::Preparing | Phase::Warmup | Phase::Measuring))
+        self.snapshot.auth.is_none() && (self.awaiting && self.live || self.snapshot.phase.live())
     }
     fn exit(&self) -> Exit {
         Exit {

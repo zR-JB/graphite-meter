@@ -2,8 +2,9 @@ use graphite_meter_core::discovery::{LatencyTarget, LatencyTransport, Protocol, 
 use graphite_meter_core::origin::target_origin;
 use std::{collections::VecDeque, time::Duration};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Stage {
+    #[default]
     Latency,
     Download,
     Upload,
@@ -42,6 +43,15 @@ pub enum Phase {
     Failed,
 }
 
+impl Phase {
+    pub fn live(self) -> bool {
+        matches!(self, Self::Preparing | Self::Warmup | Self::Measuring)
+    }
+    pub fn busy(self) -> bool {
+        self == Self::Checking || self.live()
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Point {
     pub elapsed: Duration,
@@ -51,7 +61,7 @@ pub struct Point {
     pub sample_count: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct StageResult {
     pub stage: Stage,
     pub elapsed: Duration,
@@ -121,7 +131,7 @@ pub struct ServerFailure {
     pub at: Duration,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ServerContribution {
     pub id: String,
     pub down: Option<graphite_meter_core::measurement::MeasurementResult>,
@@ -140,7 +150,7 @@ impl ServerContribution {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ServerLatencyResult {
     pub elapsed: Option<Duration>,
     pub id: String,
@@ -270,6 +280,10 @@ impl Snapshot {
         } else {
             StageStatus::Complete
         }
+    }
+
+    pub fn measured(&self) -> bool {
+        self.results.iter().any(|result| result.elapsed > Duration::ZERO)
     }
 
     pub fn focus_latency<'a>(&self, result: &'a StageResult) -> Option<&'a ServerLatencyResult> {
