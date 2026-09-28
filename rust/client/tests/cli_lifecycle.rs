@@ -335,6 +335,78 @@ finally:
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn tui_asks_the_terminal_for_its_background_like_the_go_client() -> Result<(), Error> {
+    let script = r#"
+import fcntl, json, os, pty, select, struct, subprocess, sys, termios, time
+master, slave = pty.openpty()
+fcntl.fcntl(master, fcntl.F_SETFL, os.O_NONBLOCK)
+fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 100, 0, 0))
+def session():
+    os.setsid()
+    fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+env = {k: v for k, v in os.environ.items() if k not in ('NO_COLOR', 'GM_TUI_THEME', 'COLORFGBG')}
+env.update(TERM='xterm-256color', COLORTERM='truecolor')
+p = subprocess.Popen([sys.argv[1], '-url', sys.argv[2]], stdin=slave, stdout=slave, stderr=slave, preexec_fn=session, env=env)
+os.close(slave)
+answer = sys.argv[3].encode()
+output, drawn, alive, started = b'', None, None, time.monotonic()
+try:
+    while time.monotonic() < started + 8 and p.poll() is None:
+        if select.select([master], [], [], 0.1)[0]:
+            try:
+                output += os.read(master, 65536)
+            except OSError:
+                break
+            if answer and b'\x1b[c' in output:
+                os.write(master, answer)
+                answer = b''
+            if drawn is None and b'Graphite Meter' in output:
+                drawn = time.monotonic() - started
+                time.sleep(0.3)
+                alive = p.poll() is None
+                os.write(master, b'q')
+    code = p.wait(timeout=5)
+    print(json.dumps({'code':code, 'drawn':drawn, 'alive':alive, 'text':output.decode('utf-8', 'replace')}))
+finally:
+    if p.poll() is None:
+        p.kill()
+        p.wait()
+    os.close(master)
+"#;
+    let silent = TcpListener::bind("127.0.0.1:0").await?;
+    let silent_origin = format!("http://{}", silent.local_addr()?);
+    // The q in the unknown OSC would quit the TUI if the answers reached its keys.
+    for (answer, ink) in [
+        (
+            "\x1b]99;q\x07\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?62;22c",
+            "48;2;32;36;42m",
+        ),
+        ("", "48;2;230;232;234m"),
+    ] {
+        let output = Command::new("python3")
+            .args([
+                "-c",
+                script,
+                env!("CARGO_BIN_EXE_graphite-meter-client"),
+                &silent_origin,
+                answer,
+            ])
+            .output()
+            .await?;
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        let text = result["text"].as_str().unwrap();
+        assert!(text.contains("\x1b]11;?\x1b\\\x1b[c"), "{text:?}");
+        assert!(text.contains(ink), "{answer:?}: {text:?}");
+        assert_eq!(result["code"], 0);
+        assert_eq!(result["alive"], true);
+        assert!(result["drawn"].as_f64().is_some_and(|drawn| drawn < 3.0), "{result}");
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn invalid_measurement_inputs_fail_before_connecting() -> Result<(), Error> {
     for args in [

@@ -78,10 +78,11 @@ impl Drop for Restore {
 
 struct TerminalSession {
     terminal: DefaultTerminal,
+    theme: Theme,
     _restore: Restore,
 }
 impl TerminalSession {
-    fn enter() -> Result<Self, Error> {
+    async fn enter() -> Result<Self, Error> {
         // Like Bubble Tea, crossterm reads keys from the terminal when stdin is redirected.
         if !io::stdout().is_terminal() {
             return Err("interactive mode requires a terminal on stdout".into());
@@ -89,8 +90,16 @@ impl TerminalSession {
         let restore = Restore;
         let terminal = ratatui::try_init()?;
         execute!(io::stdout(), EnableBracketedPaste)?;
+        // Raw mode keeps the answer off the screen, and it is read before crossterm reads keys;
+        // the clear wipes whatever a terminal that ignores the query printed.
+        let theme = Theme::ask().await;
+        execute!(
+            io::stdout(),
+            crossterm::terminal::Clear(crossterm::terminal::ClearType::All)
+        )?;
         Ok(Self {
             terminal,
+            theme,
             _restore: restore,
         })
     }
@@ -102,9 +111,10 @@ pub async fn run(
     commands: mpsc::Sender<Command>,
     mut interrupts: mpsc::Receiver<()>,
 ) -> Result<Exit, Error> {
-    let mut session = TerminalSession::enter()?;
+    let mut session = TerminalSession::enter().await?;
     let mut chrome = render::Chrome::default();
     let mut ui = Ui::new(config, snapshots.borrow_and_update().clone());
+    ui.theme = session.theme;
     let mut events = EventStream::new();
     let mut refresh = tokio::time::interval(Duration::from_millis(33));
     refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
