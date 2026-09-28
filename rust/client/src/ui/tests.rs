@@ -121,6 +121,57 @@ fn reenabled_stage_runs_in_canonical_order() {
     assert_eq!(config.stages, Config::default().stages);
 }
 
+#[test]
+fn setup_keys_work_during_the_path_check() {
+    use crate::model::ServerSummary;
+    use graphite_meter_core::discovery::ThroughputTransport;
+    let (commands, mut received) = mpsc::channel(8);
+    let checking = || Snapshot {
+        phase: Phase::Checking,
+        ..Snapshot::default()
+    };
+    let mut ui = Ui::new(Config::default(), checking());
+    let press = |ui: &mut Ui, code| ui.key(KeyEvent::new(code, KeyModifiers::NONE), &commands);
+
+    press(&mut ui, KeyCode::Char('s'));
+    assert_eq!(ui.popup, Popup::None, "the chooser waits for the check");
+    let server = |id: &str| ServerSummary {
+        id: id.into(),
+        name: id.into(),
+        ..ServerSummary::default()
+    };
+    ui.update(Snapshot {
+        servers: vec![server("a"), server("b")],
+        ..Snapshot::default()
+    });
+    assert_eq!(ui.popup, Popup::Servers);
+    press(&mut ui, KeyCode::Esc);
+
+    ui.update(checking());
+    let bidirectional = ui.fields().iter().position(|field| *field == Field::BidiStage);
+    ui.rows.select(bidirectional);
+    press(&mut ui, KeyCode::Char(' '));
+    assert!(ui.config.stages.contains(&Stage::Bidirectional));
+    press(&mut ui, KeyCode::Char('v'));
+    assert!(matches!(received.try_recv(), Ok(Command::Verify(_))));
+    ui.config.throughput_transport = Some(ThroughputTransport::FetchStream);
+    press(&mut ui, KeyCode::Char('a'));
+    assert_eq!(ui.config.throughput_transport, None);
+
+    ui.update(checking());
+    ui.rows.select(Some(0));
+    press(&mut ui, KeyCode::Enter);
+    assert!(matches!(received.try_recv(), Ok(Command::Run(_))));
+    ui.update(checking());
+    assert!(ui.live && ui.running(), "the check the run replaces is not setup");
+    ui.update(Snapshot {
+        phase: Phase::Preparing,
+        ..Snapshot::default()
+    });
+    ui.update(checking());
+    assert!(!ui.live, "a check after the run started returns to setup");
+}
+
 #[tokio::test(start_paused = true)]
 async fn path_settings_are_checked_again_once_changes_settle() {
     use graphite_meter_core::discovery::ThroughputTransport;

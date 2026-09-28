@@ -210,6 +210,16 @@ impl Controller {
         if self.operations.is_empty() {
             self.launch(work)
         } else {
+            if matches!(work, Work::Run(_)) && !self.running {
+                // As in Go, the run starts at once: stopping the replaced check is its
+                // preparation, and stopping the run before launch reads as stopped.
+                self.running = true;
+                self.started = Instant::now();
+                self.snapshots.send_replace(Snapshot {
+                    phase: Phase::Preparing,
+                    ..Snapshot::default()
+                });
+            }
             self.pending = Some(work);
             self.request_cancel();
             Ok(())
@@ -449,6 +459,31 @@ mod tests {
             assert_eq!(controller.snapshots.borrow().phase, expected);
             assert_eq!(controller.snapshots.borrow().latest.up_bps, Some(42.0));
         }
+    }
+
+    #[tokio::test]
+    async fn a_run_replacing_a_path_check_starts_at_once() {
+        let _ = crate::crypto::provider().install_default();
+        let (snapshots, _) = watch::channel(Snapshot {
+            phase: Phase::Checking,
+            ..Snapshot::default()
+        });
+        let mut controller = Controller::new(&Config::default(), snapshots, true).unwrap();
+        let (cancel, mut cancelled) = watch::channel(false);
+        controller.cancel = Some(cancel);
+        controller.operations.spawn(async move {
+            let _ = cancelled.wait_for(|cancelled| *cancelled).await;
+            Ok(None)
+        });
+        controller.replace(Work::Run(Config::default())).unwrap();
+        assert_eq!(controller.snapshots.borrow().phase, Phase::Preparing);
+        controller.cancel();
+        controller.wait().await.unwrap();
+        assert_eq!(controller.snapshots.borrow().phase, Phase::Cancelled);
+        assert_eq!(
+            controller.finished.as_ref().map(|run| run.phase),
+            Some(Phase::Cancelled)
+        );
     }
 
     #[tokio::test]

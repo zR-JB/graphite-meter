@@ -301,7 +301,7 @@ impl Ui {
             }
             Field::Start => {}
             Field::Advanced => self.advanced = !self.advanced,
-            Field::Servers => self.popup = super::Popup::Servers,
+            Field::Servers => self.open_servers(),
             Field::Protocol => {
                 self.config.throughput_protocol = match self.config.throughput_protocol {
                     None => Some(Protocol::Http1),

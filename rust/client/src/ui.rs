@@ -184,6 +184,9 @@ struct Ui {
     rows: ListState,
     servers: ListState,
     live: bool,
+    /// A requested run that has not started: the check it replaces is not a return to setup.
+    starting: bool,
+    open_chooser: bool,
     popup: Popup,
     details_scroll: u16,
     auth_scroll: u16,
@@ -216,6 +219,8 @@ impl Ui {
             rows,
             servers,
             live: false,
+            starting: false,
+            open_chooser: false,
             popup: Popup::None,
             details_scroll: 0,
             auth_scroll: 0,
@@ -265,7 +270,7 @@ impl Ui {
             }
             self.cancel = CancelState::Idle;
         }
-        if snapshot.results.is_empty() || snapshot.auth.is_some() {
+        if snapshot.auth.is_some() || self.popup == Popup::Details && snapshot.results.is_empty() {
             self.popup = Popup::None;
             self.details_scroll = 0;
         }
@@ -273,9 +278,10 @@ impl Ui {
             self.shown_down = None;
             self.shown_up = None;
         }
-        if snapshot.phase == Phase::Checking {
+        if snapshot.phase == Phase::Checking && !self.starting {
             self.live = false;
         }
+        self.starting &= snapshot.phase == Phase::Checking;
         if self
             .latency_pick
             .as_ref()
@@ -285,6 +291,10 @@ impl Ui {
         }
         self.received_at = tokio::time::Instant::now();
         self.snapshot = snapshot;
+        if self.open_chooser && !self.live && !self.checking() && !self.snapshot.servers.is_empty() {
+            self.open_chooser = false;
+            self.open_servers();
+        }
     }
     fn frame(&mut self) {
         for (shown, target) in [
@@ -321,8 +331,12 @@ impl Ui {
     fn active(&self) -> bool {
         self.awaiting || self.snapshot.phase.busy()
     }
+    /// Setup paths are being checked, or will be once edits settle.
+    fn checking(&self) -> bool {
+        self.awaiting || self.recheck.is_some() || self.snapshot.phase == Phase::Checking
+    }
     fn running(&self) -> bool {
-        self.snapshot.auth.is_none() && (self.awaiting && self.live || self.snapshot.phase.live())
+        self.snapshot.auth.is_none() && (self.awaiting && self.live || self.starting || self.snapshot.phase.live())
     }
     fn exit(&self) -> Exit {
         Exit {
@@ -507,14 +521,15 @@ impl Ui {
                 let next = &ids[shown.map_or(0, |index| index + 1) % ids.len()];
                 self.latency_pick = (Some(next) != self.snapshot.latency_focus.as_ref()).then(|| next.clone());
             }
+            // A path check never holds back a run; the run replaces it.
             KeyCode::Char('r') | KeyCode::Enter
-                if !self.active()
+                if (!self.live || !self.active())
                     && (key.code == KeyCode::Char('r') || self.live || self.rows.selected() == Some(0)) =>
             {
                 match self.config.validate() {
                     Ok(()) => {
                         if self.send(Command::Run(self.config.clone()), commands) {
-                            self.live = true;
+                            (self.live, self.starting, self.open_chooser) = (true, true, false);
                             self.popup = Popup::None;
                             self.notice = "Checking paths before the test. Press esc to stop.".into();
                         }
@@ -522,7 +537,7 @@ impl Ui {
                     Err(error) => self.notice = error.to_string(),
                 }
             }
-            KeyCode::Char('v') if !self.active() => {
+            KeyCode::Char('v') if !self.live => {
                 self.send(Command::Verify(self.config.clone()), commands);
             }
             KeyCode::Esc if self.active() && self.live => {
@@ -544,22 +559,22 @@ impl Ui {
             }
             KeyCode::Tab if !self.live => move_selection(&mut self.rows, field_count, 1),
             KeyCode::BackTab if !self.live => move_selection(&mut self.rows, field_count, -1),
-            KeyCode::Char('s') if !self.active() => {
-                self.popup = Popup::Servers;
-                self.notice = "Space selects up to four servers; Enter applies.".into();
-            }
-            KeyCode::Char('u') if !self.active() => {
-                self.config.servers = self
-                    .snapshot
-                    .servers
-                    .iter()
+            KeyCode::Char('s') if !self.live => self.open_servers(),
+            KeyCode::Char('u') if !self.live && !self.checking() => {
+                let checked = self.snapshot.servers.iter().filter(|server| server.has_check_result());
+                let available: Vec<_> = checked
+                    .clone()
                     .filter(|server| server.checked() && server.error.is_none())
                     .take(MAX_SELECTED_SERVERS)
                     .map(|server| server.id.clone())
                     .collect();
-                self.notice = "Using the available servers.".into();
+                // As in Go, only when some but not all checked servers are ready.
+                if !available.is_empty() && available.len() < checked.count() {
+                    self.config.servers = available;
+                    self.notice = "Using the available servers.".into();
+                }
             }
-            KeyCode::Char('a') if !self.active() => {
+            KeyCode::Char('a') if !self.live => {
                 self.config.throughput_origin = None;
                 self.config.throughput_protocol = None;
                 self.config.throughput_transport = None;
@@ -571,11 +586,27 @@ impl Ui {
             KeyCode::Right if !self.live => self.change_field(1),
             KeyCode::Up | KeyCode::Char('k') if !self.live => move_selection(&mut self.rows, field_count, -1),
             KeyCode::Down | KeyCode::Char('j') if !self.live => move_selection(&mut self.rows, field_count, 1),
-            KeyCode::Enter | KeyCode::Char(' ') if !self.live && !self.active() => self.activate(),
+            KeyCode::Enter | KeyCode::Char(' ') if !self.live => self.activate(),
             _ => {}
         }
         self.recheck_if_changed(&before);
         false
+    }
+    /// Like the Go client, the chooser opens on a checked catalogue of several servers.
+    fn open_servers(&mut self) {
+        if self.checking() {
+            self.open_chooser = true;
+            self.notice = "Test servers open when the path check finishes.".into();
+        } else if self.snapshot.servers.is_empty() {
+            self.open_chooser = true;
+            self.notice = "Loading servers…".into();
+            self.recheck_soon();
+        } else if self.snapshot.servers.len() == 1 {
+            self.notice = "This catalogue offers one server.".into();
+        } else {
+            self.popup = Popup::Servers;
+            self.notice = "Space selects up to four servers; Enter applies.".into();
+        }
     }
     fn toggle_server(&mut self) {
         let Some(server) = self
