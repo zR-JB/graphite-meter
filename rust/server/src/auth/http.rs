@@ -454,12 +454,10 @@ impl Service {
         if !valid_challenge(challenge) {
             return response(StatusCode::FORBIDDEN);
         }
-        let Some(client) = self
+        // As in Go, the CLI page redirects before it reads the client's address.
+        let client = self
             .policy
-            .client_address(request.headers(), authorized.connection().peer)
-        else {
-            return response(StatusCode::FORBIDDEN);
-        };
+            .client_address(request.headers(), authorized.connection().peer);
         if !browser && let Some(destination) = self.sessions.browser_approval_redirect(challenge) {
             return redirect(&destination);
         }
@@ -476,9 +474,9 @@ impl Service {
         };
         let origin = value(&query, "client_origin");
         let approval = if browser {
-            if !super::secure_browser_origin(origin) {
+            let Some(client) = client.filter(|_| super::secure_browser_origin(origin)) else {
                 return response(StatusCode::FORBIDDEN);
-            }
+            };
             if self.sessions.browser_approval_redirect(challenge).is_none()
                 && !self.attempts.allow(Budget::BrowserApproval, client)
             {
@@ -489,6 +487,9 @@ impl Service {
         } else {
             let Some(session) = &session else {
                 return redirect(&query_url("/login", &[("challenge", challenge)]));
+            };
+            let Some(client) = client else {
+                return response(StatusCode::FORBIDDEN);
             };
             self.sessions.begin_cli_approval(session, challenge, client)
         };
@@ -1328,5 +1329,33 @@ mod tests {
             assert!(!current.is_active() && other.is_active());
             assert_eq!(sibling.is_active(), scope.is_empty(), "scope {scope:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn the_cli_page_sends_a_signed_out_caller_to_sign_in_before_reading_its_address() {
+        let config = AuthConfig {
+            mode: AuthMode::Password,
+            public_url: "https://meter.example".into(),
+            password_hash:
+                "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0"
+                    .into(),
+            ..AuthConfig::default()
+        };
+        // The peer is a trusted proxy whose forwarding names no usable client, as in Go's cliPage.
+        let service = Service::new(&config, vec!["192.0.2.1/32".parse().unwrap()], None).unwrap();
+        let challenge = "A".repeat(43);
+        let page = query_url("/auth/cli", &[("challenge", &challenge)]);
+        let forwarded = [("x-forwarded-for", "unknown")];
+        let response = call(&service, Method::GET, &page, &forwarded, String::new()).await;
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(
+            response.headers()[header::LOCATION],
+            format!("/login?challenge={challenge}")
+        );
+        let (token, _) = service.sessions().create("subject", "name", "local", None).unwrap();
+        let cookie = format!("__Host-gm_session={token}");
+        let signed_in = [forwarded[0], ("cookie", cookie.as_str())];
+        let response = call(&service, Method::GET, &page, &signed_in, String::new()).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }
