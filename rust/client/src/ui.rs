@@ -304,10 +304,7 @@ impl Ui {
             self.notice = "Test started. Press esc to stop.".into();
             (self.body, self.previous) = (0, None);
         }
-        let failed = snapshot
-            .failures
-            .get(self.snapshot.failures.len()..)
-            .and_then(<[_]>::last);
+        let failed = snapshot.failures.iter().skip(self.snapshot.failures.len()).last();
         if let Some(failure) = failed.filter(|_| !self.quitting) {
             let name = crate::report::server_name(&snapshot, &failure.server_id);
             self.notice = format!("{name}: {}", failure.reason.label());
@@ -324,16 +321,10 @@ impl Ui {
             self.live = false;
         }
         self.starting &= snapshot.phase == Phase::Checking;
-        self.latency_pick = self
-            .latency_pick
-            .take()
-            .filter(|pick| snapshot.participants.contains(pick));
+        self.latency_pick = self.latency_pick.take().filter(|id| snapshot.participants.contains(id));
         // As Go's startFailed, a run that never starts leaves the last results, or setup, in place.
-        if self.live
-            && !self.quitting
-            && matches!(snapshot.phase, Phase::Failed | Phase::Cancelled)
-            && !snapshot.started()
-        {
+        let unstarted = matches!(snapshot.phase, Phase::Failed | Phase::Cancelled) && !snapshot.started();
+        if self.live && !self.quitting && unstarted {
             if snapshot.phase == Phase::Cancelled {
                 self.notice = "Test stopped before it started.".into();
             } else {
@@ -377,11 +368,8 @@ impl Ui {
         self.prepared.clone_from(&self.snapshot.servers);
         self.checked_at = Some(self.check_started.take().unwrap_or_else(Instant::now));
         self.checked_key = Some(self.requested.preparation_key());
-        let error = self
-            .snapshot
-            .error
-            .clone()
-            .filter(|_| self.snapshot.phase == Phase::Failed);
+        let failed = self.snapshot.phase == Phase::Failed;
+        let error = self.snapshot.error.clone().filter(|_| failed);
         if error.as_deref() == Some(SIGN_IN_EXPIRED) {
             self.signed_out = true;
             self.notice = SIGN_IN_EXPIRED.into();
@@ -510,24 +498,18 @@ impl Ui {
             Command::Run(config) | Command::Verify(config) => Some(config.clone()),
             _ => None,
         };
-        match commands.try_send(command) {
+        let sent = commands.try_send(command);
+        match &sent {
             Ok(()) => {
                 if let Some(requested) = requested {
-                    self.requested = requested;
-                    self.recheck = None;
+                    (self.requested, self.recheck) = (requested, None);
                 }
                 self.awaiting = true;
-                true
             }
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                self.notice = "Controller is busy; try again.".into();
-                false
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                self.notice = "Controller is unavailable.".into();
-                false
-            }
+            Err(mpsc::error::TrySendError::Full(_)) => self.notice = "Controller is busy; try again.".into(),
+            Err(mpsc::error::TrySendError::Closed(_)) => self.notice = "Controller is unavailable.".into(),
         }
+        sent.is_ok()
     }
 
     /// Go's reprepare: the paths are checked again once settings stop changing.
@@ -636,12 +618,8 @@ impl Ui {
                 }
             }
         } else {
-            let typed = match key.code {
-                KeyCode::Char(character) if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {
-                    Some(character)
-                }
-                _ => None,
-            };
+            let plain = !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+            let typed = key.code.as_char().filter(|_| plain);
             edit.error.clear();
             edit.key(name, typed);
         }
@@ -715,12 +693,9 @@ impl Ui {
             self.recheck_soon();
         } else if AUTOMATIC.matches(name) {
             let config = &mut self.config;
-            (
-                config.throughput_origin,
-                config.throughput_protocol,
-                config.throughput_transport,
-            ) = (None, None, None);
+            (config.throughput_origin, config.throughput_protocol) = (None, None);
             (config.latency_origin, config.latency_transport) = (None, None);
+            config.throughput_transport = None;
             self.notice = "Automatic paths applied to every selected server.".into();
             self.recheck_soon();
         }
@@ -730,11 +705,8 @@ impl Ui {
     fn start(&mut self, commands: &mpsc::Sender<Command>) {
         if let Err(error) = self.config.validate() {
             self.notice = format!("{BLOCKED}: {error}.");
-            self.row = self
-                .rows()
-                .iter()
-                .position(|row| *row == Setting::Stage(Stage::Latency))
-                .unwrap_or(0);
+            let latency = Setting::Stage(Stage::Latency);
+            self.row = self.rows().iter().position(|row| *row == latency).unwrap_or(0);
             return;
         }
         if self.send(Command::Run(self.config.clone()), commands) {
