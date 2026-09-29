@@ -245,6 +245,7 @@
 <section
   class="gauge-panel"
   data-phase={store.phase}
+  data-stage={store.isRunning ? store.phaseStage : null}
   bind:clientWidth={panelWidth}
 >
   <div class="instrument">
@@ -392,11 +393,15 @@
       }
     }
   }
-  /* A phone keeps the dial compact, so the running stage's card shares the first screen with it. */
+  /* A phone keeps the dial compact, so the running stage's card shares the first screen with it; while the
+     latency stage runs, its card is the one under the run button. */
   @container viz (max-width: 520px) {
     .instrument {
       grid-template-rows: clamp(232px, 32svh, 300px) repeat(3, auto);
       row-gap: var(--space-3);
+    }
+    .gauge-panel[data-stage="latency"] .instrument {
+      grid-template-areas: "dial" "run" "latency" "results";
     }
   }
   .dial {

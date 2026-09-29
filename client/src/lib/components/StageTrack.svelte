@@ -284,20 +284,26 @@
       translate: 240%;
     }
   }
-  /* A phone gives the chips one row of equal columns. */
+  /* A phone gives the chips one row of equal columns; a chip's name never widens its column. */
   @container viz (max-width: 520px) {
     .stage-track {
       display: grid;
-      grid-auto-columns: 1fr;
+      grid-auto-columns: minmax(0, 1fr);
       grid-auto-flow: column;
     }
     .chip {
-      gap: 6px;
-      padding: 0 var(--space-1);
+      gap: var(--space-1);
+      padding: 0;
       font-size: var(--type-sm);
     }
     .chip-bar {
       inset-inline: var(--space-2);
+    }
+  }
+  /* A 320 px phone's 66 px columns hold the names at 11 px. */
+  @container viz (max-width: 300px) {
+    .chip {
+      font-size: var(--type-xs);
     }
   }
 </style>
