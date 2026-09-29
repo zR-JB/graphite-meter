@@ -241,18 +241,18 @@ hue, never by a boxed icon.
   tap elsewhere closes a pointer's tip; a tap on the tip closes it without reaching what lies beneath. A tip the
   viewport would cut flips below its word, then aligns to the word's edge.
 
-| Primitive                | Height         | Radius             | Type            | States                                               |
-| ------------------------ | -------------- | ------------------ | --------------- | ---------------------------------------------------- |
-| `.kv` row                | 42             | plate 8            | row             | separators `--border-subtle`                         |
-| Choice row               | 42 (two lines) | 5, concentric      | row + `small`   | hover `--hover-wash`; chosen by its mark             |
-| `.btn`                   | 32             | 8                  | control         | quiet: hover, press and open washes; disabled 0.5    |
-| Run button               | 40 (44 phone)  | 8                  | 14 px 600       | ink fill, `--text-inverse`; running: outline         |
-| Stage chip               | 36             | 8                  | 13 px, name 600 | on: plate, bead; off: ring; running: wash; done: ✓   |
-| `.segmented`             | 32             | 8 track, 6 segment | control         | selected `--selected-wash`                           |
-| Switch                   | 22 × 38        | full               | row label       | off: check edge; on: ink track                       |
-| Check, radio             | 18             | 4, full            | —               | ink fill or ring                                     |
-| `.inspect-card`, tooltip | content        | 8                  | 12 px / 1.4     | glass, `--elev-tooltip`                              |
-| Sheet, dialog            | content        | 12                 | panel title     | `--sheet`, frosted, `--elev-float`                   |
+| Primitive                | Height         | Radius             | Type            | States                                             |
+| ------------------------ | -------------- | ------------------ | --------------- | -------------------------------------------------- |
+| `.kv` row                | 42             | plate 8            | row             | separators `--border-subtle`                       |
+| Choice row               | 42 (two lines) | 5, concentric      | row + `small`   | hover `--hover-wash`; chosen by its mark           |
+| `.btn`                   | 32             | 8                  | control         | quiet: hover, press and open washes; disabled 0.5  |
+| Run button               | 40 (44 phone)  | 8                  | 14 px 600       | ink fill, `--text-inverse`; running: outline       |
+| Stage chip               | 36             | 8                  | 13 px, name 600 | on: plate, bead; off: ring; running: wash; done: ✓ |
+| `.segmented`             | 32             | 8 track, 6 segment | control         | selected `--selected-wash`                         |
+| Switch                   | 22 × 38        | full               | row label       | off: check edge; on: ink track                     |
+| Check, radio             | 18             | 4, full            | —               | ink fill or ring                                   |
+| `.inspect-card`, tooltip | content        | 8                  | 12 px / 1.4     | glass, `--elev-tooltip`                            |
+| Sheet, dialog            | content        | 12                 | panel title     | `--sheet`, frosted, `--elev-float`                 |
 
 ## Do and don't
 
