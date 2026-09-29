@@ -19,7 +19,8 @@ from scripts.legal.artifacts import render
 from scripts.legal.model import (Component, LegalError, Project, Provenance, Review, array, manual_files,
                                  manual_sources, marshal, read_json, sha256)
 from scripts.legal.review import add_provenance, validate_review
-from scripts.legal.rust import about, add_cargo_sources, artifacts, cargo, image_additions, legal_report
+from scripts.legal.rust import (DEVELOPMENT_NOTICE, about, add_cargo_sources, artifacts, capture, cargo,
+                                image_additions, legal_report)
 from scripts.legal.rust_platform import SYSROOT, candidate, imports, link_map, linked, linker_version, notice
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -131,6 +132,38 @@ class RustLegalReportTests(unittest.TestCase):
                 self.assertTrue(report.endswith(b'(including build-time dependencies)\n\n' + sections.encode()))
                 self.assertEqual(about(project, version, 'engine', [])['sourceURL'], project.repository + tag)
                 self.assertEqual(json.loads(go['client/public/legal/about.json'])['sourceURL'], project.repository + tag)
+
+    def test_a_development_report_opens_by_saying_that_no_review_covers_it(self) -> None:
+        sections = 'THIRD-PARTY SOFTWARE NOTICES\n'
+        report = legal_report(ROOT, 'development', sections, development=True)
+        self.assertTrue(report.startswith(b'UNREVIEWED DEVELOPMENT BUILD\n\n'))
+        self.assertEqual(report, DEVELOPMENT_NOTICE.encode() + legal_report(ROOT, 'development', sections))
+
+
+class RustDevelopmentTests(unittest.TestCase):
+    def test_only_a_development_build_goes_without_a_target_and_a_platform_record(self) -> None:
+        for args, error in ((['--out', 'x'], '--target is required'),
+                            (['--development', '--supplement', 'legal/rust-platform-macos.json', '--out', 'x'],
+                             '--development reviews no platform'),
+                            (['--development', '--review-template', '--out', 'x'], '--development reviews no platform')):
+            with self.subTest(args=args):
+                result = subprocess.run([sys.executable, '-m', 'scripts.legal.rust', '--package', 'graphite-meter-client',
+                                         *args], cwd=ROOT, capture_output=True, text=True, check=False)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(error, result.stderr)
+
+    def test_a_development_capture_is_cargo_plain_host_build_without_a_link_map(self) -> None:
+        link_map = Path('/notices/x86_64-unknown-linux-musl-release.map')
+        commands = []
+        for target, mapped in ((None, None), ('x86_64-unknown-linux-musl', link_map)):
+            with patch('subprocess.run', return_value=subprocess.CompletedProcess([], 0, '')) as run, \
+                    patch('subprocess.check_output', return_value='{}'):
+                capture(ROOT, 'graphite-meter-client', target, 'release', mapped)
+            commands.append(run.call_args.args[0][2:])
+        head = ['rustc', '--locked', '--package', 'graphite-meter-client', '--bin', 'graphite-meter-client']
+        tail = ['--profile', 'release', '--message-format=json']
+        self.assertEqual(commands, [head + tail, head + ['--target', 'x86_64-unknown-linux-musl'] + tail
+                                    + ['--', f'-Clink-arg=-Wl,-Map={link_map}']])
 
 
 class RustImageTests(unittest.TestCase):

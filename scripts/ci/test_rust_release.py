@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ..legal.model import manual_files, manual_sources
+from ..legal.rust import DEVELOPMENT_NOTICE
 from .fixtures import statement, write_archive
 from .github_api import ControlPlaneError as VerificationError, JsonObject, file_sha256 as sha256_file, write_checksums
 from .toolchains import tui_targets
@@ -177,6 +178,7 @@ class RustServerReleaseTests(unittest.TestCase):
             "image_component",
             "image_notice_missing",
             "image_unreviewed",
+            "development_notices",
         ):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
                 metadata = inventory("graphite-meter-server", target)
@@ -205,6 +207,7 @@ class RustServerReleaseTests(unittest.TestCase):
                     "undeclared_tree": {"third_party/cargo/other-2.0/tests/key.pem": b"not in inventory"},
                     "image_component": {path: b"reviewed" for path in manual_files(CA)},
                     "image_unreviewed": {path: b"reviewed" for path in manual_files(CA)},
+                    "development_notices": {"LEGAL.txt": DEVELOPMENT_NOTICE.encode() + b"fixture notices\n"},
                 }.get(mutation)
                 path = Path(temporary) / "source.tar.gz"
                 write_source(path, metadata, extra)

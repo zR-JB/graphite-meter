@@ -19,6 +19,7 @@ from .github_api import (
     int_field, local_path, object_field, str_field, write_checksums,
 )
 from ..legal.model import manual_files, manual_sources
+from ..legal.rust import DEVELOPMENT
 from .toolchains import host_platform, tui_targets
 from .verify_oci import BLOB_LIMIT, source_commit
 
@@ -358,8 +359,11 @@ def verify_rust_source(path: Path, package: str, target: str, lock_sha256: str |
             fail(f"{path.name} contains undeclared source {name}")
         if TLS_NAME.search(name) and not upstream:
             fail(f"{path.name} contains certificate/key material outside dependency source")
-    if not read_archive_text(path, "LEGAL.txt").strip():
+    notices = read_archive_text(path, "LEGAL.txt")
+    if not notices.strip():
         fail("Rust source offer has empty notices")
+    if DEVELOPMENT in notices:
+        fail(f"{path.name} carries the notices of an unreviewed development build")
 
 
 def verify_rust_client_archive(dist: Path, version: str, platform: str, target: str,
