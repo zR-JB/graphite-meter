@@ -363,6 +363,15 @@ async fn uni(quic: &noq::Connection, bytes: &[u8], finish: bool) -> Result<noq::
     Ok(stream)
 }
 
+/// The error this side reports for a connection it closed with `code`.
+fn closed(code: Code) -> Error {
+    Error::Connection {
+        local: true,
+        code,
+        reason: Bytes::new(),
+    }
+}
+
 async fn closed_with(quic: &noq::Connection) -> Code {
     match quic.closed().await {
         noq::ConnectionError::ApplicationClosed(close) => Code(close.error_code.into_inner()),
@@ -439,14 +448,7 @@ async fn protocol_violations_close_the_connection_with_their_code() -> Result<()
             }
         };
         assert_eq!(closed_with(&peers.client).await, code, "case {index}");
-        assert_eq!(
-            serving.await?,
-            Err(Error::Connection {
-                local: true,
-                code,
-                reason: Bytes::new()
-            })
-        );
+        assert_eq!(serving.await?, Err(closed(code)));
     }
     // A datagram's quarter stream ID must fit a stream ID.
     let peers = peers(usize::MAX).await?;
@@ -459,11 +461,7 @@ async fn protocol_violations_close_the_connection_with_their_code() -> Result<()
 
 #[tokio::test]
 async fn a_stopped_control_stream_closes_the_connection() -> Result<(), TestError> {
-    let critical = Err(Error::Connection {
-        local: true,
-        code: Code::H3_CLOSED_CRITICAL_STREAM,
-        reason: Bytes::new(),
-    });
+    let critical = Err(closed(Code::H3_CLOSED_CRITICAL_STREAM));
     // The server's control stream is the first stream its peer accepts.
     let peers = peers(usize::MAX).await?;
     let (serving, _) = serve(&peers, |_, _| async {});
@@ -486,11 +484,6 @@ async fn a_stopped_control_stream_closes_the_connection() -> Result<(), TestErro
 #[tokio::test]
 async fn responses_the_client_refuses() -> Result<(), TestError> {
     let head = |status: &str| frame(0x01, &section(&[(":status", status)]));
-    let closed = |code| Error::Connection {
-        local: true,
-        code,
-        reason: Bytes::new(),
-    };
     for (bytes, expected) in [
         // Push ID 0 and an empty field section; our client sends no MAX_PUSH_ID.
         (frame(0x05, &[0x00, 0x00, 0x00]), Err(closed(Code::H3_ID_ERROR))),
@@ -890,8 +883,6 @@ async fn sessions_carry_streams_and_datagrams_both_ways() -> Result<(), TestErro
     });
     let (driver, requests) = client(&peers);
     let (session, _) = Session::connect(&requests, connect_request()).await?.expect("accepted");
-    assert_eq!(session.id(), 0);
-    assert!(session.max_datagram_size().is_some_and(|size| size > 1000));
     session.send_datagram_wait(b"PING,1").await?;
     assert_eq!(session.read_datagram().await.as_deref(), Some(&b"echo PING,1"[..]));
     let mut upload = session.open_uni().await?;
@@ -960,12 +951,10 @@ async fn sessions_end_with_their_connection() -> Result<(), TestError> {
     let (session, _) = Session::connect(&requests, connect_request()).await?.expect("accepted");
     driver.abort();
     assert!(driver.await.is_err_and(|error| error.is_cancelled()));
-    let dropped = Error::Connection {
-        local: true,
-        code: Code::H3_NO_ERROR,
-        reason: Bytes::new(),
-    };
-    assert_eq!(session_end(&session).await, (true, true, Err(dropped)));
+    assert_eq!(
+        session_end(&session).await,
+        (true, true, Err(closed(Code::H3_NO_ERROR)))
+    );
     drop(serving);
     Ok(())
 }
@@ -1262,13 +1251,14 @@ async fn one_session_per_connection_and_streams_wait_for_theirs() -> Result<(), 
         move |session| {
             let (release, sessions_tx) = (release.clone(), sessions_tx.clone());
             async move {
-                let _ = sessions_tx.send(session.id());
-                let mut streams = Vec::new();
+                // A session reports 0 when it starts, then 1000 and the streams it took.
+                let _ = sessions_tx.send(0);
+                let mut streams = 0;
                 tokio::select! {
                     () = release.notified() => {}
-                    () = async { while let Some(stream) = session.accept_uni().await { streams.push(stream.id()) } } => {}
+                    () = async { while session.accept_uni().await.is_some() { streams += 1 } } => {}
                 }
-                let _ = sessions_tx.send(streams.len() as u64 + 1000);
+                let _ = sessions_tx.send(streams + 1000);
             }
         }
     });
@@ -1286,7 +1276,7 @@ async fn one_session_per_connection_and_streams_wait_for_theirs() -> Result<(), 
     )
     .await?;
     let (_first, _first_response) = raw_connect(&peers.client, "/wt").await?;
-    assert_eq!(sessions.recv().await, Some(4));
+    assert_eq!(sessions.recv().await, Some(0));
     let (second, mut second_response) = peers.client.open_bi().await?;
     let mut second = second;
     second.write_all(&connect_head("/wt")).await?;
@@ -1301,7 +1291,7 @@ async fn one_session_per_connection_and_streams_wait_for_theirs() -> Result<(), 
     let gone = uni(&peers.client, &[varint(0x54), varint(4)].concat(), false).await?;
     assert_eq!(stopped(&gone).await, Some(Code::WT_SESSION_GONE));
     let (_third, _third_response) = raw_connect(&peers.client, "/wt").await?;
-    assert_eq!(sessions.recv().await, Some(12));
+    assert_eq!(sessions.recv().await, Some(0));
     drop(early);
     // A stream for a session that never comes is refused after 5 s.
     let before = peers.budget.used.load(Ordering::Relaxed);
@@ -1389,14 +1379,9 @@ async fn webtransport_needs_the_peer_signal_and_datagrams() -> Result<(), TestEr
 /// then names why no session starts: SETTINGS without WebTransport, or the connection they closed.
 #[tokio::test]
 async fn a_client_awaits_settings_to_name_why_no_session_starts() -> Result<(), TestError> {
-    let closed = Error::Connection {
-        local: true,
-        code: Code::H3_SETTINGS_ERROR,
-        reason: Bytes::new(),
-    };
     for (pairs, expected) in [
         (&[(0x33, 1)][..], Error::NoWebTransport),
-        (&[(0x21, 0), (0x21, 1)], closed),
+        (&[(0x21, 0), (0x21, 1)], closed(Code::H3_SETTINGS_ERROR)),
     ] {
         let peers = peers(usize::MAX).await?;
         let (_driver, requests) = client(&peers);
@@ -1417,13 +1402,6 @@ async fn http_datagrams_need_the_quic_datagram_parameter() -> Result<(), TestErr
     let (serving, _) = serve(&peers, |_, _| async {});
     let _control = uni(&peers.client, &settings(&[(0x33, 1)]), false).await?;
     assert_eq!(closed_with(&peers.client).await, Code::H3_SETTINGS_ERROR);
-    assert_eq!(
-        serving.await?,
-        Err(Error::Connection {
-            local: true,
-            code: Code::H3_SETTINGS_ERROR,
-            reason: Bytes::new()
-        })
-    );
+    assert_eq!(serving.await?, Err(closed(Code::H3_SETTINGS_ERROR)));
     Ok(())
 }

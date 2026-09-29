@@ -140,10 +140,6 @@ impl RecvHalf {
         }
     }
 
-    pub fn id(&self) -> u64 {
-        self.stream.id().into()
-    }
-
     pub(crate) fn content_length(&mut self, length: Option<u64>) {
         self.message.content_length(length);
     }
@@ -313,10 +309,6 @@ impl SendHalf {
         if !std::mem::replace(&mut self.finished, true) {
             let _ = self.stream.reset(code.into());
         }
-    }
-
-    pub fn id(&self) -> u64 {
-        self.stream.id().into()
     }
 }
 

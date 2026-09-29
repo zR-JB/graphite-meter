@@ -183,7 +183,7 @@ impl RecvStream {
         }
     }
 
-    pub fn poll_chunk(&mut self, cx: &mut Context<'_>) -> Poll<Result<Option<Bytes>, Error>> {
+    fn poll_chunk(&mut self, cx: &mut Context<'_>) -> Poll<Result<Option<Bytes>, Error>> {
         if self.session.as_ref().is_some_and(|session| session.borrow().is_some()) {
             self.stop(Code::WT_SESSION_GONE);
             return Poll::Ready(Err(Error::Refused));
@@ -207,10 +207,6 @@ impl RecvStream {
             let code = if gone { Code::WT_SESSION_GONE } else { code };
             let _ = self.stream.stop(code.into());
         }
-    }
-
-    pub fn id(&self) -> u64 {
-        self.stream.id().into()
     }
 }
 
@@ -288,10 +284,6 @@ impl SendStream {
 
     pub fn reset(mut self, code: WtCode) {
         self.code = code.to_http();
-    }
-
-    pub fn id(&self) -> u64 {
-        self.stream.as_ref().expect("open stream").id().into()
     }
 }
 
@@ -626,11 +618,6 @@ impl Session {
         Self::register(stream, Code::H3_REQUEST_CANCELLED).map(|session| Ok((session, response)))
     }
 
-    /// The CONNECT stream's ID.
-    pub fn id(&self) -> u64 {
-        self.id
-    }
-
     /// The next stream the peer opened in this session; `None` once the session ended, also with
     /// its connection, and [`Self::closed`] says how.
     pub async fn accept_uni(&self) -> Option<RecvStream> {
@@ -650,14 +637,6 @@ impl Session {
             return Err(Error::Refused);
         }
         SendStream::open(&self.shared, self.id, self.ended.clone()).await
-    }
-
-    /// The largest payload a datagram in this session can carry now.
-    pub fn max_datagram_size(&self) -> Option<usize> {
-        self.shared
-            .quic
-            .max_datagram_size()?
-            .checked_sub(self.datagram_prefix.1)
     }
 
     /// A datagram's bytes, refused once the session ended: the drafts send none after it.

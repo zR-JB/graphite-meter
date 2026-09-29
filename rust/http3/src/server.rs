@@ -55,10 +55,6 @@ pub struct Request(RequestStream);
 struct HeadCharge(#[allow(dead_code)] Arc<Charge>);
 
 impl Request {
-    pub fn id(&self) -> u64 {
-        self.0.id()
-    }
-
     /// Refuses a request over the application's limits with H3_REQUEST_REJECTED.
     pub fn reject(self) {
         self.0.abort(Code::H3_REQUEST_REJECTED);
