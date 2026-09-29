@@ -255,7 +255,7 @@ jobs:
           name: release-rust-assets-${{ github.run_id }}
           path: ${{ runner.temp }}/rust-assets/
           if-no-files-found: error
-          retention-days: 35
+          retention-days: 1
 
       - name: Record the OCI checksum
         working-directory: ${{ runner.temp }}/release-request
@@ -322,4 +322,4 @@ jobs:
           name: release-rust-darwin-${{ github.run_id }}
           path: ${{ runner.temp }}/rust-darwin/
           if-no-files-found: error
-          retention-days: 35
+          retention-days: 1

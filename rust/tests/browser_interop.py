@@ -18,8 +18,6 @@ def main() -> None:
     }
     environment.update({
         "GM_CLIENT_BUILD_PROFILE": "prod",
-        "GM_CLIENT_ALLOW_DUMMY": "0",
-        "GM_RUST_ASSET_DIR": str(ROOT / "client/dist"),
         "GM_E2E_SERVER_BIN": str(args.server.resolve()),
     })
 
