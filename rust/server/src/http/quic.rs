@@ -72,27 +72,10 @@ impl HttpServer {
             self.handshake_bytes.load(Ordering::Relaxed),
             Some(bytes),
         )?;
-        let lease = Arc::new(
-            self.memory
-                .lease(bytes)
-                .ok_or("server memory budget cannot cover QUIC endpoint buffers")?,
-        );
-        self.memory.reserved.store(bytes, Ordering::Relaxed);
         let config = self.quic_config(tls, 1)?;
-        let endpoint = noq::Endpoint::new_with_abstract_socket(
-            endpoint_config,
-            Some(config.clone()),
-            Box::new(BudgetedSocket {
-                socket: udp.socket,
-                lease,
-            }),
-            udp.runtime,
-        )?;
-        Ok(QuicEndpoint {
-            endpoint,
-            config,
-            clients: self.client_credit.clone(),
-        })
+        let quic = self.endpoint(endpoint_config, &config, udp.socket, udp.runtime, bytes)?;
+        self.memory.reserved.store(bytes, Ordering::Relaxed);
+        Ok(quic)
     }
 
     /// Endpoints on `address` for as many of these runtimes as the buffer budget covers, all bound with
@@ -156,32 +139,39 @@ impl HttpServer {
             quic_shard::Router::new(shards, budget::packet_bytes(&endpoint_config).ok_or(OVERFLOW)?);
         let mut endpoints = Vec::with_capacity(shards);
         for (shard, ((udp, bytes), inbox)) in sockets.into_iter().zip(bytes).zip(inboxes).enumerate() {
-            let lease = Arc::new(
-                self.memory
-                    .lease(bytes)
-                    .ok_or("server memory budget cannot cover QUIC endpoint buffers")?,
-            );
-            let socket = quic_shard::ShardSocket::new(udp.socket, shard, router.clone(), inbox);
+            let socket = Box::new(quic_shard::ShardSocket::new(udp.socket, shard, router.clone(), inbox));
             let mut shard_config = endpoint_config.clone();
             shard_config.cid_generator(quic_shard::cid_generator(u8::try_from(shard)?));
             let _entered = runtimes[shard].enter();
-            let endpoint = noq::Endpoint::new_with_abstract_socket(
-                shard_config,
-                Some(config.clone()),
-                Box::new(BudgetedSocket {
-                    socket: Box::new(socket),
-                    lease,
-                }),
-                udp.runtime,
-            )?;
-            endpoints.push(QuicEndpoint {
-                endpoint,
-                config: config.clone(),
-                clients: self.client_credit.clone(),
-            });
+            endpoints.push(self.endpoint(shard_config, &config, socket, udp.runtime, bytes)?);
         }
         self.memory.reserved.store(total, Ordering::Relaxed);
         Ok(Some(endpoints))
+    }
+
+    /// An endpoint on `socket`, whose buffers hold `bytes` of the budget for as long as it runs.
+    fn endpoint(
+        &self,
+        endpoint_config: noq::EndpointConfig,
+        config: &noq::ServerConfig,
+        socket: Box<dyn noq::AsyncUdpSocket>,
+        runtime: Arc<dyn noq::Runtime>,
+        bytes: usize,
+    ) -> Result<QuicEndpoint, ServerError> {
+        let lease = self
+            .memory
+            .lease(bytes)
+            .ok_or("server memory budget cannot cover QUIC endpoint buffers")?;
+        let socket = Box::new(BudgetedSocket {
+            socket,
+            lease: Arc::new(lease),
+        });
+        let endpoint = noq::Endpoint::new_with_abstract_socket(endpoint_config, Some(config.clone()), socket, runtime)?;
+        Ok(QuicEndpoint {
+            endpoint,
+            config: config.clone(),
+            clients: self.client_credit.clone(),
+        })
     }
 
     /// One of `shards` endpoints admits its part of the server-wide incoming limits, rounded up.
