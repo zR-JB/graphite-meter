@@ -94,7 +94,7 @@ impl Discovery {
                 peer,
                 request.version(),
                 request.headers(),
-            )?,
+            ),
             Route::Preflight => json_response(self.for_host(&request_host(request))?.preflight.clone()),
             Route::Servers => match &self.for_host(&request_host(request))?.catalog {
                 Some(catalog) => json_response(catalog.clone()),

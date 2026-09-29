@@ -2,7 +2,6 @@
 use crate::{
     admission::Admission,
     client_address,
-    config::ConfigError,
     http::response::{json_response, text_body},
 };
 use bytes::Bytes;
@@ -21,7 +20,7 @@ pub(crate) fn respond(
     peer: SocketAddr,
     version: Version,
     headers: &HeaderMap,
-) -> Result<Response<Bytes>, ConfigError> {
+) -> Response<Bytes> {
     let client = client_address::resolve(peer, headers, trusted);
     let mut response = if client.usable {
         let (active, max) = admission.load();
@@ -36,10 +35,10 @@ pub(crate) fn respond(
             },
             load: Some(ProbeLoad { active, max }),
         };
-        json_response(serde_json::to_vec(&document)?)
+        json_response(serde_json::to_vec(&document).expect("a probe document serializes"))
     } else {
         text_body(StatusCode::BAD_REQUEST, "ambiguous client address")
     };
     response.extensions_mut().insert(Answer);
-    Ok(response)
+    response
 }
