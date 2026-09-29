@@ -1,20 +1,22 @@
 //! Go `time.ParseDuration` value semantics, including float64 fractional rounding.
 use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DurationError;
+/// Go's text for a duration it refuses, which quotes as Rust's Debug does, where Go escapes non-ASCII bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DurationError(String);
 
 impl fmt::Display for DurationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("invalid Go duration")
+        f.write_str(&self.0)
     }
 }
 impl std::error::Error for DurationError {}
 
-/// Parse a signed Go duration into nanoseconds. Error wording is intentionally
-/// local; accepted inputs, truncation and overflow follow Go 1.27 `time/format.go`.
+/// Parse a signed Go duration into nanoseconds. Accepted inputs, truncation, overflow and the order of its
+/// errors follow Go 1.27 `time/format.go`.
 pub fn parse_go_duration(input: &str) -> Result<i64, DurationError> {
     const LIMIT: u64 = 1 << 63;
+    let invalid = || DurationError(format!("time: invalid duration {input:?}"));
     let mut rest = input.as_bytes();
     let negative = rest.first() == Some(&b'-');
     if matches!(rest.first(), Some(b'-' | b'+')) {
@@ -24,7 +26,7 @@ pub fn parse_go_duration(input: &str) -> Result<i64, DurationError> {
         return Ok(0);
     }
     if rest.is_empty() {
-        return Err(DurationError);
+        return Err(invalid());
     }
     let mut total = 0_u64;
     while !rest.is_empty() {
@@ -33,11 +35,11 @@ pub fn parse_go_duration(input: &str) -> Result<i64, DurationError> {
         while let Some(&digit) = rest.first().filter(|b| b.is_ascii_digit()) {
             before = true;
             if integer > LIMIT / 10 {
-                return Err(DurationError);
+                return Err(invalid());
             }
             integer = integer * 10 + u64::from(digit - b'0');
             if integer > LIMIT {
-                return Err(DurationError);
+                return Err(invalid());
             }
             rest = &rest[1..];
         }
@@ -67,7 +69,7 @@ pub fn parse_go_duration(input: &str) -> Result<i64, DurationError> {
             }
         }
         if !before && !after {
-            return Err(DurationError);
+            return Err(invalid());
         }
         let length = rest
             .iter()
@@ -80,27 +82,33 @@ pub fn parse_go_duration(input: &str) -> Result<i64, DurationError> {
             b"s" => 1_000_000_000,
             b"m" => 60_000_000_000,
             b"h" => 3_600_000_000_000,
-            _ => return Err(DurationError),
+            b"" => return Err(DurationError(format!("time: missing unit in duration {input:?}"))),
+            unit => {
+                let unit = String::from_utf8_lossy(unit);
+                return Err(DurationError(format!(
+                    "time: unknown unit {unit:?} in duration {input:?}"
+                )));
+            }
         };
         rest = &rest[length..];
         if integer > LIMIT / unit {
-            return Err(DurationError);
+            return Err(invalid());
         }
         let mut nanos = integer * unit;
         // Preserve Go's operation order: f * (unit / scale), not f / scale * unit.
         nanos += (fraction as f64 * (unit as f64 / scale)) as u64;
         if nanos > LIMIT {
-            return Err(DurationError);
+            return Err(invalid());
         }
-        total = total.checked_add(nanos).ok_or(DurationError)?;
+        total = total.checked_add(nanos).ok_or_else(invalid)?;
         if total > LIMIT {
-            return Err(DurationError);
+            return Err(invalid());
         }
     }
     if negative {
         Ok((total as i64).wrapping_neg())
     } else {
-        i64::try_from(total).map_err(|_| DurationError)
+        i64::try_from(total).map_err(|_| invalid())
     }
 }
 
@@ -164,7 +172,7 @@ mod tests {
             "2562047h47m16.854775808s",
             "9223372036854775808h",
         ] {
-            assert_eq!(parse_go_duration(text), Err(DurationError), "{text}");
+            assert!(parse_go_duration(text).is_err(), "{text}");
         }
     }
 }
