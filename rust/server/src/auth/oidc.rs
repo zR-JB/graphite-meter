@@ -6,7 +6,7 @@ use super::{
     session::{random_token, token_hash},
 };
 use crate::config::{AuthConfig, ConfigError};
-use crate::sync::lock;
+use crate::{http::response::parse_query, sync::lock};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use graphite_meter_core::origin::split_url;
 use graphite_meter_net::{Proxy, connect};
@@ -396,14 +396,16 @@ impl Oidc {
         if !response.status().is_success() {
             return Err("OIDC token endpoint rejected the exchange".into());
         }
-        // As golang.org/x/oauth2 reads it: a form for form and text types, JSON otherwise.
+        // As golang.org/x/oauth2 reads it: a form for form and text types, which url.ParseQuery must accept whole,
+        // and JSON otherwise.
         let form = matches!(
             essence(&response).as_deref(),
             Some("application/x-www-form-urlencoded" | "text/plain")
         );
         let mut fields = serde_json::Map::new();
         if form {
-            for (key, value) in form_urlencoded::parse(response.body()) {
+            for pair in parse_query(response.body()) {
+                let (key, value) = pair.map_err(|()| "OIDC token response is malformed")?;
                 fields.entry(key).or_insert(value.into());
             }
         } else {

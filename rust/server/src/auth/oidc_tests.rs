@@ -41,6 +41,8 @@ struct Twist {
     metadata: Option<Value>,
     /// Token response members that replace the double's own.
     tokens: Option<Value>,
+    /// Answers the token request with a form, which this ends.
+    form: Option<&'static str>,
     /// User information members that replace the double's own.
     userinfo: Option<Value>,
 }
@@ -189,7 +191,10 @@ impl Double {
                 };
                 let id_token = self.keys.sign(&header, &with(token_claims, &twist.claims));
                 let tokens = json!({"access_token": "access", "token_type": "Bearer", "id_token": id_token});
-                ("application/json", with(tokens, &twist.tokens).to_string())
+                match twist.form {
+                    Some(end) => ("text/plain", format!("access_token=access&id_token={id_token}{end}")),
+                    None => ("application/json", with(tokens, &twist.tokens).to_string()),
+                }
             }
             "/userinfo" => {
                 assert_eq!(headers[header::AUTHORIZATION], "Bearer access");
@@ -572,6 +577,14 @@ async fn provider_members_read_as_go_reads_them() {
             ..Twist::default()
         };
         assert_eq!(provider.login(Claims::default()).await.is_ok(), signs_in, "{case}");
+    }
+    // A form, which x/oauth2 refuses where url.ParseQuery does.
+    for (form, signs_in) in [("", true), ("&x=%zz", false), ("&x=a;b", false)] {
+        *provider.twist.lock().unwrap() = Twist {
+            form: Some(form),
+            ..Twist::default()
+        };
+        assert_eq!(provider.login(Claims::default()).await.is_ok(), signs_in, "{form}");
     }
     provider.stop().await;
 }

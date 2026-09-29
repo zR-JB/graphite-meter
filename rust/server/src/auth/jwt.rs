@@ -329,19 +329,25 @@ pub(super) fn id_token(verified: Verified, expected: &Expected<'_>) -> Result<Id
     }
     let claims: Map<String, Value> = go_json(&verified.payload).map_err(|_| Reject::Malformed)?;
     audience_and_issuer(&claims, expected.issuer, expected.client_id)?;
-    // go-oidc's jsonTime, in whole seconds; nbf alone is a pointer, which null leaves absent.
+    // go-oidc's jsonTime: int64 seconds, where a float past that range reads as the least, as on amd64, and which
+    // time.Unix moves to Go's own epoch, year 1, wrapping; nbf alone is a pointer, which null leaves absent.
+    let go = |seconds: i64| seconds.wrapping_add(62_135_596_800);
     let time = |name: &str| match claims.get(name) {
         None => Ok(None),
         Some(Value::Null) if name == "nbf" => Ok(None),
-        Some(time) => go_number(time)
-            .and_then(|time| time.as_f64())
-            .map(|time| Some(time.trunc()))
-            .ok_or(Reject::Claims),
+        Some(time) => {
+            let time = go_number(time).ok_or(Reject::Claims)?;
+            let float = time.as_f64().filter(|&time| time < i64::MAX as f64);
+            Ok(Some(go(time
+                .as_i64()
+                .or(float.map(|time| time as i64))
+                .unwrap_or(i64::MIN))))
+        }
     };
     let (expiry, not_before) = (time("exp")?.ok_or(Reject::Claims)?, time("nbf")?);
     time("iat")?;
-    let now = expected.now as f64;
-    if now >= expiry || not_before.is_some_and(|nbf| nbf > now + 300.0) {
+    let now = go(expected.now as i64);
+    if now >= expiry || not_before.is_some_and(|nbf| nbf > now + 300) {
         return Err(Reject::Claims);
     }
     let claims = Value::Object(claims);
