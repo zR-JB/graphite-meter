@@ -2,8 +2,8 @@ use graphite_meter_core::{
     failure::{FailureReason, LaneEnding, UploadRefusal},
     route,
     wire::{
-        MAX_UPLOAD_COUNTER, UploadProgress, decode_ping, decode_pong, decode_upload_progress, encode_ping, encode_pong,
-        encode_upload_progress,
+        Counters, MAX_UPLOAD_COUNTER, UploadProgress, decode_json, decode_ping, decode_pong, decode_upload_progress,
+        encode_ping, encode_pong, encode_upload_progress,
     },
 };
 use serde::Deserialize;
@@ -87,6 +87,10 @@ fn progress_requires_exact_counters_and_rejects_duplicate_fields() {
     assert_eq!(decode_upload_progress(ready.as_bytes()), Ok(UploadProgress::Ready));
     let event = decode_upload_progress(br#"{"type":"progress","bytes":1e3,"nanos":0.0}"#).unwrap();
     assert_eq!(event, UploadProgress::Progress { bytes: 1000, nanos: 0 });
+    // A receiver checkpoint's counters follow the same rule, and only from an object.
+    let checkpoint = decode_json::<Counters>(br#"{"bytes":1e3,"nanos":1,"type":"any"}"#);
+    assert_eq!(checkpoint.ok(), Some(Counters { bytes: 1000, nanos: 1 }));
+    assert!(decode_json::<Counters>(b"[1000,1]").is_err());
     let event = decode_upload_progress(br#"{"type":"complete","bytes":9007199254740991,"nanos":1E+2}"#).unwrap();
     assert_eq!(
         event,

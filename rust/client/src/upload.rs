@@ -10,7 +10,7 @@ use graphite_meter_core::{
     failure::UploadRefusal,
     measurement::{ObservedUpload, ReceiverSnapshot},
     route::Route,
-    wire::{self, MAX_TRANSFER_BYTES, MAX_UPLOAD_COUNTER, MAX_WEBTRANSPORT_STREAMS, UploadProgress},
+    wire::{self, MAX_TRANSFER_BYTES, MAX_WEBTRANSPORT_STREAMS, UploadProgress},
 };
 use graphite_meter_http3::webtransport::RecvStream;
 use http::Method;
@@ -278,11 +278,6 @@ impl Upload {
         Ok(())
     }
     pub async fn checkpoint(&self, budget: Duration) -> Result<ReceiverSnapshot, Error> {
-        #[derive(Deserialize)]
-        struct Count {
-            bytes: u64,
-            nanos: u64,
-        }
         let deadline = Instant::now() + budget;
         loop {
             self.health()?;
@@ -290,7 +285,7 @@ impl Upload {
                 deadline,
                 self.plan
                     .control
-                    .json::<Count>(Method::POST, Route::UploadCheckpoint, &[("id", &self.id)]),
+                    .json::<wire::Counters>(Method::POST, Route::UploadCheckpoint, &[("id", &self.id)]),
             )
             .await;
             let count = match response {
@@ -311,7 +306,7 @@ impl Upload {
                     .into());
                 }
             };
-            if count.bytes > MAX_UPLOAD_COUNTER || count.nanos == 0 || count.nanos > MAX_UPLOAD_COUNTER {
+            if count.nanos == 0 {
                 return Err(wire::WireError::InvalidReceiverCheckpoint.into());
             }
             self.health()?;
@@ -848,7 +843,8 @@ mod tests {
                         .await?;
                     continue;
                 }
-                let body = br#"{"bytes":123,"nanos":456}"#;
+                // Go's decodeCounters takes any exact integer, in exponent form too.
+                let body = br#"{"bytes":1.23e2,"nanos":456}"#;
                 let headers = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
                 stream.write_all(headers.as_bytes()).await?;
                 stream.write_all(body).await?;

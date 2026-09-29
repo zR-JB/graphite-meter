@@ -148,6 +148,16 @@ impl<'de, T: Deserialize<'de>> Visitor<'de> for Object<T> {
     }
 }
 
+/// A receiver's counters, each present, integral and exact in JSON, as Go's decodeCounters holds
+/// an upload checkpoint's and a progress record's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct Counters {
+    #[serde(deserialize_with = "counter")]
+    pub bytes: u64,
+    #[serde(deserialize_with = "counter")]
+    pub nanos: u64,
+}
+
 /// As Go's DecodeUploadProgress, only the members a record's type uses are read.
 pub fn decode_upload_progress(data: &[u8]) -> Result<UploadProgress, WireError> {
     let members = |names: &[&str]| decode_object(data, Members(names)).map_err(|_| WireError::InvalidUploadProgress);
@@ -172,9 +182,7 @@ pub fn decode_upload_progress(data: &[u8]) -> Result<UploadProgress, WireError> 
             }
         }
         "progress" | "complete" => {
-            let mut fields = members(&["bytes", "nanos"])?;
-            let bytes = counter(fields.remove("bytes"))?;
-            let nanos = counter(fields.remove("nanos"))?;
+            let Counters { bytes, nanos } = decode_json(data).map_err(|_| WireError::InvalidUploadProgress)?;
             if kind == "progress" {
                 UploadProgress::Progress { bytes, nanos }
             } else {
@@ -186,13 +194,11 @@ pub fn decode_upload_progress(data: &[u8]) -> Result<UploadProgress, WireError> 
     Ok(event)
 }
 
-fn counter(value: Option<Value>) -> Result<u64, WireError> {
-    let Some(Value::Number(value)) = value else {
-        return Err(WireError::InvalidUploadProgress);
-    };
-    let number = value.as_f64().ok_or(WireError::InvalidUploadProgress)?;
-    if !number.is_finite() || number < 0.0 || number > MAX_UPLOAD_COUNTER as f64 || number.trunc() != number {
-        return Err(WireError::InvalidUploadProgress);
+/// A JSON number read as Go's float64, then held to the counter contract.
+fn counter<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
+    let number = f64::deserialize(deserializer)?;
+    if !(0.0..=MAX_UPLOAD_COUNTER as f64).contains(&number) || number.trunc() != number {
+        return Err(D::Error::custom("invalid upload progress counter"));
     }
     Ok(number as u64)
 }
