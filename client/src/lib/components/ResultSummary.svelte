@@ -162,7 +162,7 @@
               <dt {@attach row.tip ? tooltip(() => row.tip!) : null}>
                 {row.label}
               </dt>
-              <dd>{row.value}</dd>
+              <dd class:quiet={row.value === MISSING}>{row.value}</dd>
             </div>
           {/each}
         </dl>
@@ -328,6 +328,10 @@
     height: clamp(64px, 11svh, 132px);
     min-height: 0;
   }
+  /* A card with no data yet keeps its graph's room but draws nothing in it: only its rule, name and "—". */
+  .card:is(.pending, .not-run) > .graph-slot {
+    visibility: hidden;
+  }
   .facts {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 5.25rem), 1fr));
@@ -366,6 +370,10 @@
     font: var(--w-normal) var(--type-md) / 1.3 var(--font-sans);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+  }
+  /* "—" for a value not yet measured is soft; a measured value is full ink. */
+  .facts dd.quiet {
+    color: var(--text-soft);
   }
   .issues {
     display: grid;

@@ -366,7 +366,11 @@
 .status-dot {
   --tone-line: color-mix(in oklab, var(--tone) 38%, var(--border));
   --tone-wash: color-mix(in oklab, var(--tone) 14%, transparent);
-  --tone-ink: color-mix(in oklab, var(--tone) 80%, var(--text));
+  /* A light page needs more text in the mix for small type to keep 4.5:1 on a running card's wash. */
+  --tone-ink: light-dark(
+    color-mix(in oklab, var(--tone) 70%, var(--text)),
+    color-mix(in oklab, var(--tone) 80%, var(--text))
+  );
 }
 [data-tone="warmup"] {
   --tone: var(--phase-warmup);
