@@ -387,6 +387,22 @@ async fn approval_pages_require_client_evidence_behind_a_trusted_proxy() {
 }
 
 #[tokio::test]
+async fn an_empty_origin_is_given_no_cors_headers_as_in_go() {
+    let h = Harness::start().await;
+    let (session, _) = h.login().await;
+    let signed_in = format!("Cookie: __Host-gm_session={session}\r\nOrigin: \r\nSec-Fetch-Site: same-origin\r\n");
+    for path in ["/download?bytes=1", "/probe"] {
+        let (answer, _) = h.request("GET", path, &signed_in, "").await;
+        assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+        assert!(
+            !answer.contains("access-control-") && !answer.contains("timing-allow-origin") && !answer.contains("vary"),
+            "{answer}"
+        );
+    }
+    h.stop().await;
+}
+
+#[tokio::test]
 async fn native_listeners_authorize_routes_they_do_not_mount_before_404() {
     let h = Harness::start().await;
     let (session, _) = h.login().await;

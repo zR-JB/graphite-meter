@@ -547,7 +547,13 @@ impl HttpServer {
         if let Some(response) = self.refuse_route(authorized.request(), route, lease.as_ref(), accepted.peer) {
             return Err(Box::new(self.harden(response)));
         }
-        let origin = authorized.request().headers().get(header::ORIGIN).cloned();
+        // As Go's, CORS names only an Origin the policy accepted: the public origin, or a browser grant's.
+        let origin = authorized
+            .request()
+            .headers()
+            .get(header::ORIGIN)
+            .filter(|origin| !origin.is_empty())
+            .cloned();
         Ok((Checked::Authorized(authorized), Passed { route, lease, origin }))
     }
 
