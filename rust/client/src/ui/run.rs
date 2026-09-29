@@ -738,14 +738,7 @@ impl Ui {
             }
             readings.push(reading);
         }
-        let mut spans = Vec::new();
-        for reading in readings {
-            if !spans.is_empty() {
-                spans.push(Span::raw("   "));
-            }
-            spans.extend(reading);
-        }
-        Line::from(spans)
+        Line::from(readings.join(&Span::raw("   ")))
     }
 }
 

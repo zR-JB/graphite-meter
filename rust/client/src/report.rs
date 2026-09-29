@@ -179,13 +179,8 @@ pub(crate) fn render(snapshot: &Snapshot, width: usize, theme: Theme) -> Option<
         blocks.push(report.details(false));
     }
     blocks.extend(snapshot.error.as_deref().map(|error| vec![line(error, theme.err)]));
-    let mut lines = Vec::new();
-    for block in blocks.into_iter().filter(|block| !block.is_empty()) {
-        if !lines.is_empty() {
-            lines.push(Line::default());
-        }
-        lines.extend(block.into_iter().map(trim_end));
-    }
+    blocks.retain(|block| !block.is_empty());
+    let mut lines: Text = blocks.join(&Line::default()).into_iter().map(trim_end).collect();
     sanitize(&mut lines, &theme);
     Some(ansi(&lines))
 }
@@ -842,14 +837,11 @@ impl<'a> Report<'a> {
             let styled = std::iter::once((headers, muted)).chain(rows.into_iter().map(|row| (row, text)));
             return styled
                 .map(|(cells, base)| {
-                    let mut spans = Vec::new();
-                    for (index, (cell, width)) in cells.into_iter().zip(&widths).enumerate() {
-                        if index > 0 {
-                            spans.push(Span::raw("  "));
-                        }
-                        spans.extend(pad(under(cell, base), *width).spans);
-                    }
-                    trim_end(Line::from(spans))
+                    let cells = cells.into_iter().zip(&widths);
+                    let cells: Vec<_> = cells
+                        .map(|(cell, width)| pad(under(cell, base), *width).spans)
+                        .collect();
+                    trim_end(Line::from(cells.join(&Span::raw("  "))))
                 })
                 .collect();
         }
