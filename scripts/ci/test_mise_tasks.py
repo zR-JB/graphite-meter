@@ -87,6 +87,13 @@ class MiseTaskTests(unittest.TestCase):
             self.assertEqual(server["env"].pop("GM_RUST_ASSET_DIR"), str(legal / "browser-assets"))
             for call in (pipeline, server):
                 self.assertEqual(call["env"], {"VERSION": payload, "GM_ENGINE_VERSION": f"{payload}-rust"})
+            # prod stamps the Rust server as Go's prod stamps Go's, and leaves the browser client unstamped.
+            (root / "rust/target/release").mkdir(parents=True)
+            shutil.copy2(root / "bin/cargo", root / "rust/target/release/graphite-meter-server")
+            run("prod", GM_IMPLEMENTATION="rust", GM_CLIENT_REVISION="abc123")
+            client, pipeline = map(json.loads, trace.read_text().splitlines()[:2])
+            self.assertNotIn("VERSION", client["env"])
+            self.assertEqual(pipeline["env"]["GM_ENGINE_VERSION"], "abc123-rust")
             served = run("rust-server-run", "--listen", payload)
             self.assertEqual(served["args"][-3:], ["--", "--listen", payload])
             self.assertEqual(Path(served["env"]["GM_RUST_LEGAL_DIR"]).resolve(),

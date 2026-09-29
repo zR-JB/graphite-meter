@@ -425,7 +425,7 @@ case "${GM_IMPLEMENTATION:-go}" in
     set -- go run -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=$version" \
       ./cmd/graphite-meter ;;
   rust)
-    VERSION=$version mise run rust-server-build
+    GM_ENGINE_VERSION=$version-rust mise run rust-server-build
     set -- rust/target/release/graphite-meter-server ;;
   *) echo "GM_IMPLEMENTATION must be go or rust" >&2; exit 2 ;;
 esac
@@ -478,7 +478,8 @@ python3 -m scripts.legal.rust "$@"
 
 [tasks.rust-server-build]
 description = "Build the experimental Rust server with the production browser UI and development notices"
-env = { GM_ENGINE_VERSION = "{{ get_env(name='VERSION', default='development') }}-rust" }
+# prod stamps only the server, through GM_ENGINE_VERSION: a VERSION would stamp the browser client too.
+env = { GM_ENGINE_VERSION = "{{ get_env(name='GM_ENGINE_VERSION', default=get_env(name='VERSION', default='development') ~ '-rust') }}" }
 run = [
   { task = "_rust-dev-legal", args = ["graphite-meter-server", "release", "client-build-prod"] },
   'cd rust && legal="$PWD/target/dev-legal/graphite-meter-server-release" && GM_RUST_LEGAL_DIR="$legal" GM_RUST_ASSET_DIR="$legal/browser-assets" cargo build --release --locked -p graphite-meter-server',
