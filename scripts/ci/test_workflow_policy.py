@@ -110,6 +110,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (RELEASE, None, PUBLISH + "    env:\n      TOKEN: ${{ secrets.GHCR_TOKEN }}\n",
      "release secrets"),
     (REQUEST, "  contents: read\n", "  contents: read\n  actions: read\n", "only read contents"),
+    (REQUEST, "name: Build untrusted Rust macOS TUIs", "name: Build the Rust macOS TUIs", "as release.py expects"),
     (REQUEST, "    runs-on:", "    permissions: read-all\n    runs-on:", "only read contents"),
     (REQUEST, "EVENT_SHA: ${{ github.sha }}", "EVENT_SHA: ${{ inputs.sha }}", "EVENT_SHA"),
     (REQUEST, PREPARE, "        run: python3 -c pass\n", "release prepare"),

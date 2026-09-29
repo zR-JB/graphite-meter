@@ -10,6 +10,7 @@ import tomllib
 from pathlib import Path, PurePosixPath
 
 from .github_api import PEM, TLS_NAME, ControlPlaneError, fail
+from .release import BUILD_JOB, DARWIN_JOB
 from .toolchains import check as check_toolchain_literals, pin
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -235,6 +236,9 @@ def check_workflows(root: Path) -> None:
                 and "if: steps.verify.outputs.publish == 'true'" not in step):
             fail("release.yml: only publish mode may hand off verified artifacts")
     request = (workflows / "release-request.yml").read_text(encoding="utf-8")
+    # release.py takes each artifact only from the request job of its name.
+    if re.findall(r"(?m)^    name: (.*)$", request) != [BUILD_JOB, DARWIN_JOB]:
+        fail(f"release-request.yml: its jobs must be named {BUILD_JOB!r} and {DARWIN_JOB!r}, as release.py expects")
     scopes = re.findall(r"(?m)^ *permissions:.*(?:\n +\S.*)*", request)
     if scopes != ["permissions:\n  contents: read"]:
         fail("release-request.yml: the untrusted build may only read contents")
