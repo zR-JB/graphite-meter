@@ -239,6 +239,14 @@ class RustPlatformTests(unittest.TestCase):
         with patch.dict(os.environ, {'CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER': './linker'}):
             with self.assertRaisesRegex(LegalError, 'unreviewed linker'):
                 linker_version('x86_64-unknown-linux-gnu')
+        # A Cargo configuration file can name a linker too.
+        with tempfile.TemporaryDirectory() as scratch:
+            for config in ('.cargo/config.toml', 'rust/.cargo/config'):
+                (Path(scratch) / config).parent.mkdir(parents=True)
+                (Path(scratch) / config).write_text('[target.x86_64-unknown-linux-gnu]\nlinker = "./linker"\n')
+                with self.subTest(config=config), self.assertRaisesRegex(LegalError, 'no Cargo configuration'):
+                    linker_version('x86_64-unknown-linux-gnu', Path(scratch))
+                (Path(scratch) / config).unlink()
 
 
 class RustPlatformRecordTests(unittest.TestCase):

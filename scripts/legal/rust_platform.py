@@ -15,6 +15,7 @@ from ..ci.github_api import confined_path
 from .model import Json, LegalError, array, obj, read_json, sha256, string, strings, text
 
 SYSROOT = '$RUST_SYSROOT/'
+CHECKOUT = Path(__file__).resolve().parents[2]
 IMPORTS = {
     'elf': (['readelf', '--dynamic'], r'\(NEEDED\).*\[([^]]+)\]'),
     'pe': (['objdump', '-p'], r'DLL Name: (\S+)'),
@@ -50,7 +51,11 @@ def imports(executable: Path, target: str) -> set[str]:
     return {name.lower() for name in names} if kind == 'pe' else set(names)
 
 
-def linker_version(target: str) -> str:
+def linker_version(target: str, checkout: Path = CHECKOUT) -> str:
+    # Cargo, which runs in rust/, also takes a linker, rustc wrapper, environment or source from these files.
+    if found := [str(path) for directory in (checkout, checkout / 'rust') for name in ('config', 'config.toml')
+                 if (path := directory / '.cargo' / name).exists()]:
+        raise LegalError(f'release builds take no Cargo configuration from the checkout: {found}')
     linker = os.environ.get(f'CARGO_TARGET_{target.upper().replace("-", "_")}_LINKER', 'cc')
     # Only the linkers the reviewed builders configure; any other is an unreviewed toolchain.
     if linker not in ('cc', 'aarch64-linux-gnu-gcc', 'x86_64-linux-gnu-gcc', 'x86_64-w64-mingw32-gcc'):
