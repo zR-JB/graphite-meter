@@ -38,23 +38,23 @@ pub(crate) struct Theme {
     outcomes: [Style; 3],
 }
 
-/// A tone's light and dark shades: 24-bit, then as colorprofile converts them to 256 and 16 colours.
-type Tone = [(u32, u8, Color); 2];
+/// A tone's light and dark shades: 24-bit, then the 256- and 16-colour indexes colorprofile converts them to.
+type Tone = [(u32, u8, u8); 2];
 
-const INK: Tone = [(0x20242a, 235, Color::Black), (0xe6e8ea, 254, Color::White)];
-const TEXT: Tone = [(0x171b20, 234, Color::Black), (0xeef0f3, 255, Color::White)];
-const SOFT: Tone = [(0x5f646a, 241, Color::DarkGray), (0x8e9299, 246, Color::Gray)];
-const GOOD: Tone = [(0x2e734b, 29, Color::Green), (0x88d1a2, 115, Color::LightGreen)];
-const CAUTION: Tone = [(0x85671f, 94, Color::Red), (0xe8cf83, 186, Color::LightYellow)];
-const BAD: Tone = [(0xab413e, 131, Color::Red), (0xed8b88, 210, Color::LightRed)];
-const BADGE: Tone = [(0xfdfdfd, 231, Color::White), (0x0d1013, 233, Color::Black)];
-const BORDER: Tone = [(0xcacbcf, 252, Color::White), (0x3e4348, 238, Color::DarkGray)];
-const SELECTED: Tone = [(0xe6e6e9, 254, Color::White), (0x303236, 236, Color::Black)];
+const INK: Tone = [(0x20242a, 235, 0), (0xe6e8ea, 254, 15)];
+const TEXT: Tone = [(0x171b20, 234, 0), (0xeef0f3, 255, 15)];
+const SOFT: Tone = [(0x5f646a, 241, 8), (0x8e9299, 246, 7)];
+const GOOD: Tone = [(0x2e734b, 29, 2), (0x88d1a2, 115, 10)];
+const CAUTION: Tone = [(0x85671f, 94, 1), (0xe8cf83, 186, 11)];
+const BAD: Tone = [(0xab413e, 131, 1), (0xed8b88, 210, 9)];
+const BADGE: Tone = [(0xfdfdfd, 231, 15), (0x0d1013, 233, 0)];
+const BORDER: Tone = [(0xcacbcf, 252, 15), (0x3e4348, 238, 8)];
+const SELECTED: Tone = [(0xe6e6e9, 254, 15), (0x303236, 236, 0)];
 const STAGES: [Tone; 4] = [
-    [(0x1d7a73, 30, Color::Cyan), (0x70dbc4, 80, Color::LightCyan)],
-    [(0x254ea3, 25, Color::Blue), (0x71a3ff, 75, Color::LightBlue)],
-    [(0xa35d1d, 130, Color::Red), (0xfeb66a, 215, Color::LightRed)],
-    [(0x7f2456, 89, Color::Red), (0xe472ac, 169, Color::LightRed)],
+    [(0x1d7a73, 30, 6), (0x70dbc4, 80, 14)],
+    [(0x254ea3, 25, 4), (0x71a3ff, 75, 12)],
+    [(0xa35d1d, 130, 1), (0xfeb66a, 215, 9)],
+    [(0x7f2456, 89, 1), (0xe472ac, 169, 9)],
 ];
 
 /// Go asks for the background with OSC 11. DA1 follows, as in lipgloss's query: every terminal
@@ -77,7 +77,7 @@ impl Theme {
             match profile {
                 Profile::TrueColor => Some(Color::Rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)),
                 Profile::Ansi256 => Some(Color::Indexed(indexed)),
-                Profile::Ansi => Some(ansi),
+                Profile::Ansi => Some(Color::Indexed(ansi)),
                 _ => None,
             }
         };

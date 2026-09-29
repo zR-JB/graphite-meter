@@ -8,11 +8,9 @@ use crate::{
     theme::Theme,
     vocabulary::{ADDED_NOTE, MISSING, clock, compact_population, compact_stage, population_label},
 };
-use crossterm::style::ContentStyle;
 use graphite_meter_core::{failure::FailureReason, format, measurement::MeasurementResult, text::terminal_character};
 use ratatui::{
-    backend::IntoCrossterm,
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
 };
 use std::time::Duration;
@@ -132,11 +130,22 @@ pub(crate) fn wrap_parts(parts: &[String], limit: usize) -> Vec<String> {
     lines
 }
 
-/// The lines as a terminal prints them: each span in its style, as crossterm draws the TUI.
+/// The lines as a terminal prints them, each styled span in one SGR sequence as lipgloss writes
+/// it: an ANSI colour (an index under 16) as 30–37 or 90–97, where crossterm would write 38;5.
 pub(crate) fn ansi(lines: &[Line]) -> String {
+    let color = |color, base: u8| match color {
+        Some(Color::Indexed(index @ ..16)) => format!(";{}", base + index % 8 + index / 8 * 60),
+        Some(Color::Indexed(index)) => format!(";{};5;{index}", base + 8),
+        Some(Color::Rgb(red, green, blue)) => format!(";{};2;{red};{green};{blue}", base + 8),
+        _ => String::new(),
+    };
     let styled = |span: &Span| {
-        let style: ContentStyle = span.style.into_crossterm();
-        style.apply(span.content.as_ref()).to_string()
+        let bold = span.style.add_modifier.contains(Modifier::BOLD);
+        let bold = if bold { ";1" } else { "" };
+        match format!("{bold}{}{}", color(span.style.fg, 30), color(span.style.bg, 40)).strip_prefix(';') {
+            Some(codes) => format!("\x1b[{codes}m{}\x1b[m", span.content),
+            None => span.content.to_string(),
+        }
     };
     let lines = lines
         .iter()
@@ -880,16 +889,14 @@ mod tests {
             .join("\n")
         );
         let mut pair = partial_run();
-        let painted = render(&pair, WIDTH, Theme::new(Profile::Ansi256, true)).unwrap();
-        assert!(painted.starts_with("\x1b[38;5;254m\x1b[1mGraphite Meter\x1b[0m  \x1b[38;5;186m\x1b[1mPartial\x1b[0m"));
-        assert!(
-            painted.contains("\x1b[38;5;75m\x1b[1m12.00 Mbit/s\x1b[0m"),
-            "{painted:?}"
-        );
-        assert!(
-            painted.ends_with("\x1b[38;5;210m\x1b[1mStopped delivering data\x1b[0m"),
-            "{painted:?}"
-        );
+        // Painted as lipgloss writes each profile: 16 colours as 30–37 and 90–97.
+        #[rustfmt::skip]
+        let paints = [(Profile::Ansi256, ["1;38;5;254mGraphite Meter", "1;38;5;186mPartial", "1;38;5;75m12.00 Mbit/s"]),
+            (Profile::Ansi, ["\x1b[1;97mGraphite Meter\x1b[m  \x1b[1;93mPartial\x1b[m", "1;94m12.00", "1;91mStopped"])];
+        for (profile, parts) in paints {
+            let painted = render(&pair, WIDTH, Theme::new(profile, true)).unwrap();
+            assert!(parts.iter().all(|part| painted.contains(part)), "{painted:?}");
+        }
         pair.servers.push(server("b", "Beta"));
         let text = render(&pair, WIDTH, Theme::default()).unwrap();
         for line in [
@@ -916,6 +923,6 @@ mod tests {
         sanitize(&mut lines, &Theme::default());
         assert_eq!(lines[0].spans[0].style, Style::default());
         assert_eq!(plain(&lines[0]), "name�]52;c;secret��");
-        assert_eq!(ansi(&[Line::from(span("x", bold))]), "\x1b[1mx\x1b[0m");
+        assert_eq!(ansi(&[Line::from(span("x", bold))]), "\x1b[1mx\x1b[m");
     }
 }
