@@ -123,7 +123,7 @@ impl SessionStore {
 
 fn socket_target(raw: &str) -> Option<(String, String, Kind)> {
     // Split before URL normalization: /other/../wt/ping must not become /wt/ping.
-    // Go's URL parser permits an empty fragment but rejects nonempty fragments.
+    // Go's mintSocketToken refuses a query or a fragment; a bare '#' leaves url.URL's Fragment empty.
     let raw = raw.strip_suffix('#').unwrap_or(raw);
     if raw.contains(['?', '#', '\\']) {
         return None;

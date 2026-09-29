@@ -456,12 +456,12 @@ impl Service {
             return response(StatusCode::FORBIDDEN);
         }
         // As in Go, the CLI page redirects before it reads the client's address.
-        let client = self
-            .policy
-            .client_address(request.headers(), authorized.connection().peer);
         if !browser && let Some(destination) = self.sessions.browser_approval_redirect(challenge) {
             return redirect(&destination);
         }
+        let client = self
+            .policy
+            .client_address(request.headers(), authorized.connection().peer);
         // Public approval pages may inspect an ambient cookie, but never treat a
         // request carrying Authorization as a cookie-authenticated request.
         let session = if request
