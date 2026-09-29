@@ -319,6 +319,12 @@ fn heartbeat() -> JoinHandle<()> {
     })
 }
 
+/// `stage` beside `waiter`, which waits for one of its phases or failures: a stage that ends before
+/// that fails the test at this bound instead of hanging it.
+async fn joined<A, B>(stage: impl Future<Output = A>, waiter: impl Future<Output = B>) -> Result<(A, B), Error> {
+    Ok(tokio::time::timeout(Duration::from_secs(30), async { tokio::join!(stage, waiter) }).await?)
+}
+
 #[tokio::test]
 async fn a_stopped_bidirectional_start_drains_its_started_download() -> Result<(), Error> {
     let _ = crate::crypto::provider().install_default();
@@ -627,7 +633,7 @@ async fn loaded_latency_failure_keeps_every_http_participant() -> Result<(), Err
             }
             mode.store(9, Ordering::SeqCst);
         };
-        let (result, ()) = tokio::time::timeout(Duration::from_secs(5), async { tokio::join!(run, fail) }).await?;
+        let (result, ()) = joined(run, fail).await?;
         assert!(result?.is_empty());
         let snapshot = observed.borrow();
         let stage = &snapshot.results[0];
@@ -677,10 +683,8 @@ async fn mid_stage_auth_failure_keeps_reapproval_cause() -> Result<(), Error> {
         mode.store(3, Ordering::SeqCst);
     };
     let mut ledger = RunLedger::new();
-    let (result, ()) = tokio::join!(
-        measure(Stage::Download, &config, &servers, &snapshots, cancelled, &mut ledger),
-        revoke
-    );
+    let run = measure(Stage::Download, &config, &servers, &snapshots, cancelled, &mut ledger);
+    let (result, ()) = joined(run, revoke).await?;
     peer.abort();
     let error = result.unwrap_err();
     assert!(crate::failure::sign_in(error.as_ref()).is_some(), "{error}");
@@ -715,17 +719,15 @@ async fn silent_direction_removes_its_server_but_a_silent_lane_does_not() -> Res
         far_mode.store(7, Ordering::SeqCst);
     };
     let mut ledger = RunLedger::new();
-    let (result, ()) = tokio::join!(
-        measure(
-            Stage::Bidirectional,
-            &config,
-            &servers,
-            &snapshots,
-            cancelled,
-            &mut ledger
-        ),
-        stall_upload
+    let run = measure(
+        Stage::Bidirectional,
+        &config,
+        &servers,
+        &snapshots,
+        cancelled,
+        &mut ledger,
     );
+    let (result, ()) = joined(run, stall_upload).await?;
     near_task.abort();
     far_task.abort();
     assert_eq!(result?, ["far"]);
@@ -773,10 +775,8 @@ async fn a_lane_still_retrying_at_the_final_boundary_removes_its_quiet_server() 
             near_mode.store(busy, Ordering::SeqCst);
         };
         let mut ledger = RunLedger::new();
-        let (result, ()) = tokio::join!(
-            measure(stage, &config, &servers, &snapshots, cancelled, &mut ledger),
-            refuse_near
-        );
+        let run = measure(stage, &config, &servers, &snapshots, cancelled, &mut ledger);
+        let (result, ()) = joined(run, refuse_near).await?;
         near_task.abort();
         far_task.abort();
         assert_eq!(result?, ["near"], "{stage:?}");
@@ -826,10 +826,8 @@ async fn a_lane_refused_just_before_the_stage_end_takes_its_server_out() -> Resu
         near_mode.store(15, Ordering::SeqCst);
     };
     let mut ledger = RunLedger::new();
-    let (result, ()) = tokio::join!(
-        measure(Stage::Upload, &config, &servers, &snapshots, cancelled, &mut ledger),
-        refuse_near
-    );
+    let run = measure(Stage::Upload, &config, &servers, &snapshots, cancelled, &mut ledger);
+    let (result, ()) = joined(run, refuse_near).await?;
     near_task.abort();
     far_task.abort();
     heartbeat.abort();
@@ -877,10 +875,8 @@ async fn forgetful_receiver(forget: u8) -> Result<(Result<Vec<String>, Error>, S
         mode.store(forget, Ordering::SeqCst);
     };
     let mut ledger = RunLedger::new();
-    let (result, ()) = tokio::join!(
-        measure(Stage::Upload, &config, &servers, &snapshots, cancelled, &mut ledger),
-        forget_id
-    );
+    let run = measure(Stage::Upload, &config, &servers, &snapshots, cancelled, &mut ledger);
+    let (result, ()) = joined(run, forget_id).await?;
     peer.abort();
     let snapshot = observed.borrow().clone();
     Ok((result, snapshot))
@@ -1036,10 +1032,8 @@ async fn a_removal_at_the_final_boundary_collects_a_fresh_one_for_the_rest() -> 
         near_mode.store(3, Ordering::SeqCst);
     };
     let mut ledger = RunLedger::new();
-    let (result, ()) = tokio::join!(
-        measure(Stage::Upload, &config, &servers, &snapshots, cancelled, &mut ledger),
-        revoke_near
-    );
+    let run = measure(Stage::Upload, &config, &servers, &snapshots, cancelled, &mut ledger);
+    let (result, ()) = joined(run, revoke_near).await?;
     near_task.abort();
     far_task.abort();
     heartbeat.abort();
@@ -1141,7 +1135,7 @@ async fn a_sole_server_rejoins_its_next_stage_on_the_transport_it_prepared() -> 
     });
     let (_stop, cancelled) = watch::channel(false);
     super::super::run(config, http, snapshots.clone(), cancelled, Some(prepared)).await?;
-    drive_fault.await?;
+    tokio::time::timeout(Duration::from_secs(30), drive_fault).await??;
     peer.abort();
     heartbeat.abort();
     let snapshot = snapshots.borrow();
@@ -1211,7 +1205,7 @@ async fn intervals_and_failures_share_the_run_clock() -> Result<(), Error> {
     });
     let (_stop, cancelled) = watch::channel(false);
     super::super::run(config, http, snapshots.clone(), cancelled, Some(prepared)).await?;
-    drive_fault.await?;
+    tokio::time::timeout(Duration::from_secs(30), drive_fault).await??;
     near_task.abort();
     far_task.abort();
     heartbeat.abort();
@@ -1275,7 +1269,7 @@ async fn a_selection_that_lost_a_server_in_preparation_gets_no_sole_retry() -> R
         mode.store(14, Ordering::SeqCst);
     };
     let run = super::super::run(config, Http::new(true)?, snapshots.clone(), cancelled, None);
-    let (result, ()) = tokio::join!(run, refuse);
+    let (result, ()) = joined(run, refuse).await?;
     peer.abort();
     assert!(
         result.is_err(),
@@ -1397,10 +1391,8 @@ async fn latency_stage_losses_drop_one_server_and_the_run_continues() -> Result<
         far_mode.store(6, Ordering::SeqCst);
         lost
     };
-    let (result, lost) = tokio::join!(
-        super::super::run(config, http, snapshots.clone(), cancelled, Some(prepared)),
-        far_loses_later
-    );
+    let run = super::super::run(config, http, snapshots.clone(), cancelled, Some(prepared));
+    let (result, lost) = joined(run, far_loses_later).await?;
     near_peer.abort();
     far_peer.abort();
     result?;
@@ -1504,10 +1496,8 @@ async fn a_stop_records_the_evidence_its_stage_lacked() -> Result<(), Error> {
         };
         let servers = std::slice::from_ref(&server);
         let mut ledger = RunLedger::new();
-        let (result, ()) = tokio::join!(
-            measure(stage, &config, servers, &snapshots, cancelled, &mut ledger),
-            stop_early
-        );
+        let run = measure(stage, &config, servers, &snapshots, cancelled, &mut ledger);
+        let (result, ()) = joined(run, stop_early).await?;
         peer.abort();
         assert!(result?.is_empty());
         let snapshot = observed.borrow();
@@ -1560,10 +1550,8 @@ async fn a_warmup_loss_is_noticed_at_once_with_one_reason() -> Result<(), Error>
             mode.store(22, Ordering::SeqCst);
             begun.elapsed()
         };
-        let (result, completed) = tokio::join!(
-            measure(Stage::Upload, &config, &servers, &snapshots, cancelled, &mut ledger),
-            complete
-        );
+        let run = measure(Stage::Upload, &config, &servers, &snapshots, cancelled, &mut ledger);
+        let (result, completed) = joined(run, complete).await?;
         peer.abort();
         assert!(result.is_err());
         let snapshot = observed.borrow();
