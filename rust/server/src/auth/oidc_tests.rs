@@ -138,6 +138,12 @@ impl Double {
         }
         let headers = &request.headers;
         assert!(!headers.contains_key(header::PROXY_AUTHORIZATION));
+        // As Go's client asks: naming itself, and with no Accept.
+        assert_eq!(
+            headers[header::USER_AGENT],
+            format!("graphite-meter/{}", crate::config::ENGINE_VERSION)
+        );
+        assert!(!headers.contains_key(header::ACCEPT));
         let (claims, twist, issuer) = (*self.claims.lock().unwrap(), self.twist.lock().unwrap(), &self.issuer);
         let with = |mut value: Value, twist: &Option<Value>| {
             for (key, member) in twist.iter().filter_map(Value::as_object).flatten() {
@@ -156,12 +162,16 @@ impl Double {
                 ("application/json", with(metadata, &twist.metadata).to_string())
             }
             "/jwks" => {
+                assert_eq!(headers[header::CACHE_CONTROL], "no-cache");
                 self.jwks_requests.fetch_add(1, Ordering::SeqCst);
                 ("application/json", self.keys.jwks(twist.rotated).to_string())
             }
             "/token" => {
+                // Sorted, and escaped as Go's url.Values.Encode escapes them.
+                let names: Vec<_> = form_urlencoded::parse(&bytes).map(|(name, _)| name).collect();
+                assert_eq!(names, ["code", "code_verifier", "grant_type", "redirect_uri"]);
+                assert!(bytes.starts_with(b"code=valid~code%2A&"));
                 let form: HashMap<_, _> = form_urlencoded::parse(&bytes).into_owned().collect();
-                assert_eq!(form["code"], "valid-code");
                 assert_eq!(form["redirect_uri"], "https://meter.example/auth/oidc/callback");
                 let challenge = ring::digest::digest(&ring::digest::SHA256, form["code_verifier"].as_bytes());
                 let nonce = self.nonces.lock().unwrap()[&URL_SAFE_NO_PAD.encode(challenge)].clone();
@@ -202,10 +212,10 @@ impl Double {
     }
     async fn login(&self, claims: Claims) -> Result<Identity, Reason> {
         let tx = self.begin(claims).await?;
-        self.oidc.complete(&tx, "valid-code").await
+        self.oidc.complete(&tx, "valid~code*").await
     }
     async fn begin(&self, claims: Claims) -> Result<Transaction, Reason> {
-        self.oidc.retry_discovery().await;
+        self.oidc.discover().await.unwrap();
         let started = self
             .oidc
             .start("192.0.2.1".parse().unwrap(), "challenge".into(), None)
@@ -347,7 +357,7 @@ async fn callbacks_past_the_concurrent_exchanges_wait_within_gos_deadline() {
         .await
         .unwrap();
     let tx = provider.begin(Claims::default()).await.unwrap();
-    let mut callback = Box::pin(provider.oidc.complete(&tx, "valid-code"));
+    let mut callback = Box::pin(provider.oidc.complete(&tx, "valid~code*"));
     assert!(
         tokio::time::timeout(Duration::from_millis(100), &mut callback)
             .await
@@ -367,7 +377,7 @@ async fn callbacks_past_the_concurrent_exchanges_wait_within_gos_deadline() {
     tokio::time::pause();
     let waited = Instant::now();
     assert!(matches!(
-        provider.oidc.complete(&tx, "valid-code").await,
+        provider.oidc.complete(&tx, "valid~code*").await,
         Err(Reason::TokenExchange)
     ));
     // Tokio's timer rounds up to its next millisecond.
@@ -639,7 +649,7 @@ pub(in crate::auth) fn discovered(authorization_endpoint: &str, issuer_parameter
             mode: AuthMode::Oidc,
             public_url: "https://meter.example".into(),
             oidc_issuer: "https://identity.example".into(),
-            oidc_client_id: "meter".into(),
+            oidc_client_id: "meter~*".into(),
             oidc_client_secret: "secret".into(),
             oidc_allowed_groups: vec!["operators".into()],
             ..AuthConfig::default()
@@ -676,6 +686,8 @@ async fn authorization_is_pkce_bound_bounded_and_consumed_before_browser_validat
     let started = oidc.start(address, String::new(), None).await.unwrap();
     let names: Vec<_> = form_urlencoded::parse(started.url.split_once('?').unwrap().1.as_bytes()).collect();
     assert!(names.is_sorted_by_key(|(name, _)| name.clone()), "{names:?}");
+    // Go's url.QueryEscape keeps '~' and escapes '*'.
+    assert!(started.url.contains("?client_id=meter~%2A&"));
     let fields = query_fields(&started.url);
     assert_eq!(fields["code_challenge_method"], "S256");
     assert_eq!(fields["response_type"], "code");

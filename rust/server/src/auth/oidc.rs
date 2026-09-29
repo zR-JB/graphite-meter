@@ -215,16 +215,16 @@ impl Oidc {
         let pkce = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(ring::digest::digest(&ring::digest::SHA256, verifier.as_bytes()));
         // Sorted by name, as x/oauth2's AuthCodeURL encodes them.
-        let query = form_urlencoded::Serializer::new(String::new())
-            .append_pair("client_id", &self.config.oidc_client_id)
-            .append_pair("code_challenge", &pkce)
-            .append_pair("code_challenge_method", "S256")
-            .append_pair("nonce", &nonce)
-            .append_pair("redirect_uri", &self.redirect_uri())
-            .append_pair("response_type", "code")
-            .append_pair("scope", "openid profile groups")
-            .append_pair("state", &state)
-            .finish();
+        let query = encode(&[
+            ("client_id", &self.config.oidc_client_id),
+            ("code_challenge", &pkce),
+            ("code_challenge_method", "S256"),
+            ("nonce", &nonce),
+            ("redirect_uri", &self.redirect_uri()),
+            ("response_type", "code"),
+            ("scope", "openid profile groups"),
+            ("state", &state),
+        ]);
         let separator = match provider.authorization.split_once('?') {
             None => "?",
             Some((_, "")) => "",
@@ -379,28 +379,18 @@ impl Oidc {
         })
     }
     async fn exchange(&self, provider: &Provider, code: &str, verifier: &str) -> Result<Tokens, ConfigError> {
-        // x/oauth2 applies Go's url.QueryEscape, which keeps '~' and escapes '*' unlike a form encoder.
-        let encode = |value: &str| {
-            form_urlencoded::byte_serialize(value.as_bytes())
-                .collect::<String>()
-                .replace("%7E", "~")
-                .replace('*', "%2A")
-        };
-        let credentials = Zeroizing::new(format!(
-            "{}:{}",
-            encode(&self.config.oidc_client_id),
-            encode(&self.secret)
-        ));
+        let (id, secret) = (escape(&self.config.oidc_client_id), escape(&self.secret));
+        let credentials = Zeroizing::new(format!("{id}:{secret}"));
         let mut authorization = HeaderValue::from_str(&format!("Basic {}", STANDARD.encode(credentials.as_bytes())))?;
         authorization.set_sensitive(true);
-        let body = form_urlencoded::Serializer::new(String::new())
-            .append_pair("grant_type", "authorization_code")
-            .append_pair("code", code)
-            .append_pair("code_verifier", verifier)
-            .append_pair("redirect_uri", &self.redirect_uri())
-            .finish();
+        // Sorted by name, as x/oauth2 encodes them.
+        let body = encode(&[
+            ("code", code),
+            ("code_verifier", verifier),
+            ("grant_type", "authorization_code"),
+            ("redirect_uri", &self.redirect_uri()),
+        ]);
         let request = Request::post(&provider.token)
-            .header(header::ACCEPT, "application/json")
             .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
             .header(header::AUTHORIZATION, authorization)
             .body(body)?;
@@ -547,9 +537,19 @@ fn valid_url(url: &str) -> Result<(), ConfigError> {
 }
 
 fn get(url: &str) -> Result<Request<String>, ConfigError> {
-    Ok(Request::get(url)
-        .header(header::ACCEPT, "application/json")
-        .body(String::new())?)
+    Ok(Request::get(url).body(String::new())?)
+}
+
+/// Go's url.Values.Encode of `pairs`, which are sorted by name.
+fn encode(pairs: &[(&str, &str)]) -> String {
+    let pair = |(name, value): &(&str, &str)| format!("{name}={}", escape(value));
+    pairs.iter().map(pair).collect::<Vec<_>>().join("&")
+}
+
+/// Go's url.QueryEscape, which keeps '~' and escapes '*' unlike a form encoder.
+fn escape(value: &str) -> String {
+    let escaped: String = form_urlencoded::byte_serialize(value.as_bytes()).collect();
+    escaped.replace("%7E", "~").replace('*', "%2A")
 }
 
 fn essence(response: &Response<Vec<u8>>) -> Option<String> {
@@ -585,7 +585,11 @@ impl ProviderHttp {
         })
     }
     async fn jwks(&self, url: &str) -> Result<Jwks, ConfigError> {
-        let response = self.call(get(url)?).await?;
+        let mut request = get(url)?;
+        let headers = request.headers_mut();
+        // As go-oidc asks, so that no cache answers with the keys a rotation replaced.
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+        let response = self.call(request).await?;
         Jwks::parse(ok(&response)?).map_err(|_| "OIDC key set is malformed".into())
     }
     async fn call(&self, mut request: Request<String>) -> Result<Response<Vec<u8>>, ConfigError> {
@@ -594,9 +598,11 @@ impl ProviderHttp {
             valid_url(&uri)?;
             let (origin, path) = split_url(&uri)?;
             let host = origin.key().split_off("https://".len());
-            request
-                .headers_mut()
-                .insert(header::HOST, HeaderValue::from_str(&host)?);
+            let agent = format!("graphite-meter/{}", crate::config::ENGINE_VERSION);
+            let headers = request.headers_mut();
+            headers.insert(header::HOST, HeaderValue::from_str(&host)?);
+            // Go's client names itself; a provider's firewall may refuse a request that does not.
+            headers.insert(header::USER_AGENT, HeaderValue::from_str(&agent)?);
             *request.uri_mut() = if path.is_empty() { "/".parse()? } else { path.parse()? };
             // Its configuration offers no protocol, so it serves an HTTPS proxy's hop as well.
             let hop = std::future::ready(Ok::<_, std::io::Error>(self.tls.clone()));
