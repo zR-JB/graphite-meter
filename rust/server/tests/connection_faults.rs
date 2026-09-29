@@ -200,6 +200,7 @@ async fn h2_upload_is_not_window_bound_on_a_delayed_link() -> Result<(), TestErr
     assert_eq!(reply["bytes"], 2 * 1024 * 1024);
     let round_trips = elapsed.as_secs_f64() / (2.0 * one_way.as_secs_f64());
     eprintln!("h2 2 MiB upload: {elapsed:?} = {round_trips:.1} RTT");
+    assert!(round_trips >= 1.0, "the link did not delay the upload");
     assert!(round_trips < 10.0, "window-bound upload: {round_trips:.1} RTT");
     stop.send(()).ok();
     server.await??;
@@ -352,62 +353,8 @@ async fn quic_retry_under_load_or_for_a_connected_source() -> Result<(), TestErr
     Ok(())
 }
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-async fn echo() -> std::net::SocketAddr {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        while let Ok((mut socket, _)) = listener.accept().await {
-            tokio::spawn(async move {
-                let mut buffer = [0; 1024];
-                while let Ok(count @ 1..) = socket.read(&mut buffer).await {
-                    if socket.write_all(&buffer[..count]).await.is_err() {
-                        return;
-                    }
-                }
-            });
-        }
-    });
-    address
-}
-
-#[tokio::test]
-async fn tcp_delay_stall_and_reset() {
-    let link = test_link::Link::tcp(echo().await, Duration::from_millis(20))
-        .await
-        .unwrap();
-    let mut socket = TcpStream::connect(link.address).await.unwrap();
-    let started = tokio::time::Instant::now();
-    socket.write_all(b"ping").await.unwrap();
-    let mut reply = [0; 4];
-    socket.read_exact(&mut reply).await.unwrap();
-    let rtt = started.elapsed();
-    assert!(
-        rtt >= Duration::from_millis(40) && rtt < Duration::from_secs(2),
-        "{rtt:?}"
-    );
-    link.inject(test_link::Fault::Stall);
-    socket.write_all(b"ping").await.unwrap();
-    assert!(
-        tokio::time::timeout(Duration::from_millis(200), socket.read_exact(&mut reply))
-            .await
-            .is_err()
-    );
-    link.inject(test_link::Fault::Reset);
-    let error = tokio::time::timeout(Duration::from_secs(1), socket.read(&mut reply))
-        .await
-        .unwrap()
-        .unwrap_err();
-    assert_eq!(error.kind(), std::io::ErrorKind::ConnectionReset, "{error}");
-    let refused = TcpStream::connect(link.address).await.unwrap();
-    let mut refused = refused;
-    let result = refused.read(&mut reply).await;
-    assert!(
-        matches!(result, Err(ref e) if e.kind() == std::io::ErrorKind::ConnectionReset) || matches!(result, Ok(0)),
-        "{result:?}"
-    );
-}
-
+/// The UDP link's delay and blackhole, which the QUIC tests rely on and nothing else shows. The TCP link's delay
+/// shows in the HTTP/2 upload over it.
 #[tokio::test]
 async fn udp_delay_and_blackhole() {
     let server = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();

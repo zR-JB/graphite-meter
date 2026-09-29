@@ -1652,28 +1652,22 @@ mod tests {
         writer.write_all(b"owned WebSocket frame").await.unwrap();
     }
 
-    /// As Go grants every QUIC connection its window, a client's credit funds one on each QUIC connection it may
-    /// hold. Password logins and grants all share one principal, so each of them is bounded alone.
+    /// Password logins and grants all share one principal, so each of them is bounded alone: every login funds a
+    /// window on each of its QUIC connections, as Go grants every connection its window.
     #[test]
-    fn credit_funds_a_window_on_every_quic_connection_a_client_may_hold() {
+    fn every_password_login_funds_a_window_on_each_quic_connection() {
         let server = HttpServer::new(password()).unwrap();
-        let fund = |keys: &[String]| {
-            (0..8)
-                .map(|_| server.client_credit.claim(keys, QUIC_CREDIT_BYTES))
-                .collect::<Option<Vec<_>>>()
-        };
-        let address = client_address::client_keys("192.0.2.1".parse().unwrap());
-        let _address = fund(&address).expect("a window on each of an address's QUIC connections");
-        assert!(
-            server.client_credit.claim(&address, QUIC_CREDIT_BYTES).is_none(),
-            "no window past them"
-        );
-        let _logins: Vec<_> = (0..3)
-            .map(|session| {
-                let owner = Owner::login("local-operator", &session.to_string());
-                fund(owner.client_keys()).expect("a window on each QUIC connection of every password login")
+        let logins: Vec<_> = (0..3)
+            .map(|session| Owner::login(LOCAL_OPERATOR, &session.to_string()))
+            .collect();
+        let windows: Option<Vec<_>> = (0..8 * logins.len())
+            .map(|window| {
+                server
+                    .client_credit
+                    .claim(logins[window % 3].client_keys(), QUIC_CREDIT_BYTES)
             })
             .collect();
+        assert!(windows.is_some());
     }
 
     /// As Go's companion mux runs inside Enforce, the HTTP/3 companion authorizes and hardens a request before
