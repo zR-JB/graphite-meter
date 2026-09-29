@@ -1,5 +1,4 @@
-use graphite_meter_core::discovery::{Capabilities, LatencyTarget, LatencyTransport, Protocol, ThroughputTarget};
-use graphite_meter_core::origin::target_origin;
+use graphite_meter_core::discovery::{Capabilities, LatencyTarget, ThroughputTarget};
 use std::{collections::VecDeque, time::Duration};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -24,10 +23,10 @@ impl From<graphite_meter_core::measurement::Stage> for Stage {
 impl Stage {
     pub fn name(self) -> &'static str {
         match self {
-            Self::Latency => crate::vocabulary::LATENCY.label,
-            Self::Download => crate::vocabulary::DOWNLOAD.label,
-            Self::Upload => crate::vocabulary::UPLOAD.label,
-            Self::Bidirectional => crate::vocabulary::BIDIRECTIONAL.label,
+            Self::Latency => "Latency",
+            Self::Download => "Download",
+            Self::Upload => "Upload",
+            Self::Bidirectional => "Bidirectional",
         }
     }
     pub fn downloads(self) -> bool {
@@ -199,41 +198,6 @@ impl ServerSummary {
 
     pub fn has_check_result(&self) -> bool {
         self.checked() || self.error.is_some()
-    }
-
-    pub fn throughput_label(&self) -> Option<String> {
-        let target = self.throughput.as_ref()?;
-        let transport = crate::vocabulary::throughput_transport(Some(target.transport)).label;
-        let protocol = crate::vocabulary::protocol(Some(target.protocol)).label;
-        Some(format!("{transport} · {protocol} · {}", security(&target.base_url)))
-    }
-
-    pub fn latency_label(&self) -> Option<String> {
-        let target = self.latency.as_ref()?;
-        let transport = crate::vocabulary::latency_transport(Some(target.transport)).label;
-        let protocol = crate::vocabulary::protocol(Some(if target.transport == LatencyTransport::WebSocket {
-            Protocol::Http1
-        } else {
-            Protocol::Http3
-        }))
-        .label;
-        Some(format!("{transport} · {protocol} · {}", security(&target.base_url)))
-    }
-
-    pub fn connection_label(&self) -> String {
-        [self.throughput_label(), self.latency_label()]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" | ")
-    }
-}
-
-fn security(origin: &str) -> &'static str {
-    match target_origin(origin) {
-        Ok(Some(parsed)) if parsed.scheme == "https" => "TLS",
-        Ok(Some(_)) => "clear",
-        _ => "unknown",
     }
 }
 

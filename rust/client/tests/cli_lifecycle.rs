@@ -333,13 +333,15 @@ step = 0
 mark = 0
 mode = sys.argv[3]
 measuring = '░'.encode()
-keys = {'check-quit': [(b'Checking', b'q')],
-        'redirected-quit': [(b'WebSocket', b'q')],
-        'setup-interrupt': [(b'WebSocket', b'\x03')],
-        'run-interrupt': [(b'WebSocket', b'r'), (measuring, b'\x03')],
-        'run-quit': [(b'WebSocket', b'r'), (measuring, b'q')],
-        'run-abort': [(b'WebSocket', b'r'), (measuring, b'\x03\x03')],
-        'confirmed-stop': [(b'WebSocket', b'r'), (measuring, b'\x1b'), (b'confirm', b'\x1b'), (b'Stopped', b'q')]}[mode]
+# As in Go's view, the start note reads "checking paths" during the check and the plan once it ends.
+checked = b'about '
+keys = {'check-quit': [(b'checking paths', b'q')],
+        'redirected-quit': [(checked, b'q')],
+        'setup-interrupt': [(checked, b'\x03')],
+        'run-interrupt': [(checked, b'r'), (measuring, b'\x03')],
+        'run-quit': [(checked, b'r'), (measuring, b'q')],
+        'run-abort': [(checked, b'r'), (measuring, b'\x03\x03')],
+        'confirmed-stop': [(checked, b'r'), (measuring, b'\x1b'), (b'confirm', b'\x1b'), (b'Stopped', b'q')]}[mode]
 deadline = time.monotonic() + 8
 answered = False
 try:

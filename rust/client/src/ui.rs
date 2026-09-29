@@ -1,46 +1,45 @@
-//! Terminal input owns no measurement IO and never blocks its producer.
+//! Terminal input owns no measurement IO and never blocks its producer. The view follows Go's
+//! TUI (model.go and run.go): the controller's snapshots stand for its events.
 mod keys;
-mod render;
+mod run;
 mod setup;
+mod view;
 use crate::{
     Error,
     config::Config,
-    model::{Phase, Snapshot},
-    report::{run_servers, server_name, terminal_char},
+    model::{Phase, ServerSummary, Snapshot, Stage},
+    report::{ansi, line, run_servers},
     theme::Theme,
-    vocabulary::MISSING,
+    vocabulary::BLOCKED,
 };
 use crossterm::{
     event::{
         DisableBracketedPaste, EnableBracketedPaste, Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
     },
     execute,
+    terminal::{Clear, ClearType},
 };
 use futures_util::StreamExt;
-use graphite_meter_core::{catalog::MAX_SELECTED_SERVERS, text::terminal_character as safe_character};
+use graphite_meter_core::catalog::MAX_SELECTED_SERVERS;
 use keys::*;
-use ratatui::{
-    DefaultTerminal, Frame,
-    layout::{Constraint, Layout, Margin, Rect},
-    style::{Modifier, Style},
-    symbols::Marker,
-    text::{Line, Span},
-    widgets::{
-        Axis, Block, BorderType, Borders, Chart, Clear, Dataset, GraphType, List, ListItem, ListState, Paragraph, Wrap,
-    },
-};
-use setup::{Edit, Kind};
+use run::Run;
+use setup::{Edit, Setting};
 use std::{
-    io::{self, IsTerminal},
+    io::{self, IsTerminal, Write},
     time::Duration,
 };
-use tokio::sync::{mpsc, watch};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use tokio::{
+    sync::{mpsc, watch},
+    time::Instant,
+};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// How the interface ended: whether an interrupt stopped a run, whether one still runs, and the
+/// finished run it shows, which Go's final report prints.
+#[derive(Clone, Debug, Default)]
 pub struct Exit {
     pub interrupted: bool,
     pub running: bool,
+    pub shown: Option<Snapshot>,
 }
 
 #[derive(Clone, Debug)]
@@ -53,16 +52,14 @@ pub enum Command {
 
 const MAX_TEXT: usize = 4096;
 const MAX_SERVERS: usize = 128;
-/// As in the Go client, paths are checked again once path settings stop changing.
+/// Go's prepareDebounce: paths are checked again once path settings stop changing.
 const RECHECK_DELAY: Duration = Duration::from_millis(350);
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum CancelState {
-    #[default]
-    Idle,
-    Confirming,
-    Requested,
-}
+/// Go's PreparationFreshness: checked paths serve a run this long.
+const FRESHNESS: Duration = Duration::from_secs(30);
+/// Go's TUI takes the answer to its background query whenever it comes; this one waits this long.
+const ANSWER_LIMIT: Duration = Duration::from_secs(1);
+/// The controller's words for an approval that expired, which Go reads as a sign-in to repeat.
+const SIGN_IN_EXPIRED: &str = "Sign-in expired. Press v to request a new code.";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Popup {
@@ -72,44 +69,70 @@ enum Popup {
     Details,
 }
 
-/// Which keys apply, as Go's handleKey picks a handler: a sign-in, the editor, a stop to
-/// confirm, a popup, the reset prompt, or the run and setup views.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum InputMode {
-    Auth,
-    Edit,
-    Confirm,
-    Servers,
-    Details,
-    Reset,
-    Main,
+/// Go's prepareState.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Prepare {
+    Checking,
+    Ready,
+    SignIn,
+    Failed,
 }
 
-/// A panel's scroll position, clamped at each draw to the lines the panel hides.
-#[derive(Clone, Copy, Debug, Default)]
-struct Scroll {
-    offset: u16,
-    /// What the last draw left out, which the footer offers with PgDn.
-    hidden: u16,
+/// Go's terminal progress bar (OSC 9;4): indeterminate while paths are checked, then the share of stage time done.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Progress {
+    Checking,
+    Done(u8),
 }
 
-impl Scroll {
-    /// Go's line and page keys; other keys leave the position.
-    fn key(&mut self, code: KeyCode, page: u16) {
-        self.offset = match code {
-            KeyCode::Up | KeyCode::Char('k') => self.offset.saturating_sub(1),
-            KeyCode::Down | KeyCode::Char('j') => self.offset.saturating_add(1),
-            KeyCode::PageUp => self.offset.saturating_sub(page),
-            KeyCode::PageDown => self.offset.saturating_add(page),
-            _ => self.offset,
-        };
+/// The window title, progress bar and sign-in link Go's TUI writes beside its frame; the title
+/// and bar are cleared on exit.
+#[derive(Default)]
+struct Chrome {
+    title: String,
+    progress: Option<Progress>,
+}
+
+impl Chrome {
+    fn show(&mut self, ui: &Ui) -> io::Result<()> {
+        let mut sequences = self.update(ui.title(), ui.progress());
+        if let Some(auth) = &ui.snapshot.auth {
+            let url: String = auth.browser_url.chars().filter(|c| c.is_ascii_graphic()).collect();
+            for (row, text) in ui.link_rows() {
+                let text = ansi(&[line(text.trim_start(), ui.theme.accent)]);
+                sequences.push_str(&format!("\x1b[{};2H\x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\", row + 1));
+            }
+        }
+        if sequences.is_empty() {
+            return Ok(());
+        }
+        let mut stdout = io::stdout().lock();
+        stdout.write_all(sequences.as_bytes())?;
+        stdout.flush()
     }
 
-    /// Clamps the position to what `lines` hide in `visible` rows, as a paragraph scrolls.
-    fn clamp(&mut self, lines: usize, visible: usize) -> (u16, u16) {
-        self.hidden = u16::try_from(lines.saturating_sub(visible)).unwrap_or(u16::MAX);
-        self.offset = self.offset.min(self.hidden);
-        (self.offset, 0)
+    fn update(&mut self, title: String, progress: Option<Progress>) -> String {
+        let mut sequences = String::new();
+        if title != self.title {
+            sequences.push_str(&format!("\x1b]2;{title}\x07"));
+            self.title = title;
+        }
+        if progress != self.progress {
+            sequences.push_str(&match progress {
+                None => "\x1b]9;4;0\x07".to_owned(),
+                Some(Progress::Checking) => "\x1b]9;4;3\x07".to_owned(),
+                Some(Progress::Done(percent)) => format!("\x1b]9;4;1;{percent}\x07"),
+            });
+            self.progress = progress;
+        }
+        sequences
+    }
+}
+
+impl Drop for Chrome {
+    fn drop(&mut self) {
+        let sequences = self.update(String::new(), None);
+        let _ = io::stdout().lock().write_all(sequences.as_bytes());
     }
 }
 
@@ -123,55 +146,35 @@ impl Drop for Restore {
     }
 }
 
-struct TerminalSession {
-    terminal: DefaultTerminal,
-    theme: Theme,
-    _restore: Restore,
-}
-impl TerminalSession {
-    async fn enter() -> Result<Self, Error> {
-        // Like Bubble Tea, crossterm reads keys from the terminal when stdin is redirected.
-        if !io::stdout().is_terminal() {
-            return Err("interactive mode requires a terminal on stdout".into());
-        }
-        let restore = Restore;
-        let terminal = ratatui::try_init()?;
-        execute!(io::stdout(), EnableBracketedPaste)?;
-        // Raw mode keeps the answer off the screen, and it is read before crossterm reads keys;
-        // the clear wipes whatever a terminal that ignores the query printed.
-        let theme = Theme::ask().await;
-        execute!(
-            io::stdout(),
-            crossterm::terminal::Clear(crossterm::terminal::ClearType::All)
-        )?;
-        Ok(Self {
-            terminal,
-            theme,
-            _restore: restore,
-        })
-    }
-}
-
 pub async fn run(
     config: Config,
     mut snapshots: watch::Receiver<Snapshot>,
     commands: mpsc::Sender<Command>,
     mut interrupts: mpsc::Receiver<()>,
 ) -> Result<Exit, Error> {
-    let mut session = TerminalSession::enter().await?;
-    let mut chrome = render::Chrome::default();
+    // Like Bubble Tea, crossterm reads keys from the terminal when stdin is redirected.
+    if !io::stdout().is_terminal() {
+        return Err("interactive mode requires a terminal on stdout".into());
+    }
+    let _restore = Restore;
+    let mut terminal = ratatui::try_init()?;
+    execute!(io::stdout(), EnableBracketedPaste)?;
+    // Raw mode keeps the answer off the screen, and it is read before crossterm reads keys;
+    // the clear wipes whatever a terminal that ignores the query printed.
+    let theme = Theme::ask(ANSWER_LIMIT).await;
+    execute!(io::stdout(), Clear(ClearType::All))?;
+    let mut chrome = Chrome::default();
     let mut ui = Ui::new(config, snapshots.borrow_and_update().clone());
-    ui.theme = session.theme;
+    ui.theme = theme;
     let mut events = EventStream::new();
     let mut refresh = tokio::time::interval(Duration::from_millis(33));
     refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut dirty = true;
-    let mut snapshot_changed = false;
+    let (mut dirty, mut changed, mut stale) = (true, false, false);
     loop {
         tokio::select! {
-            changed = snapshots.changed() => {
-                changed.map_err(|_| "measurement controller stopped")?;
-                snapshot_changed = true;
+            result = snapshots.changed() => {
+                result.map_err(|_| "measurement controller stopped")?;
+                changed = true;
             }
             Some(()) = interrupts.recv() => {
                 if ui.interrupt(&commands) {
@@ -180,22 +183,23 @@ pub async fn run(
                 dirty = true;
             }
             _ = refresh.tick() => {
-                if snapshot_changed {
+                if changed {
                     ui.update(snapshots.borrow_and_update().clone());
-                    snapshot_changed = false;
-                    dirty = true;
+                    (changed, dirty) = (false, true);
                     if ui.quitting && !ui.running() {
                         return Ok(ui.exit());
                     }
                 }
                 dirty |= ui.recheck(&commands);
-                if ui.active() {
+                // As Go schedules a frame for it, checked paths read as needing a recheck once they expire.
+                dirty |= std::mem::replace(&mut stale, ui.stale()) != stale;
+                if ui.animating() {
                     ui.frame();
                     dirty = true;
                 }
                 if dirty {
-                    session.terminal.draw(|frame| ui.draw(frame))?;
-                    chrome.show(ui.title(), ui.progress())?;
+                    terminal.draw(|frame| ui.draw(frame))?;
+                    chrome.show(&ui)?;
                     dirty = false;
                 }
             }
@@ -223,88 +227,104 @@ pub async fn run(
 #[derive(Default)]
 struct Ui {
     config: Config,
+    /// The settings of the last run or check the controller was asked for.
     requested: Config,
     snapshot: Snapshot,
-    /// The results a run again replaces, shown again if it never starts.
-    previous: Option<Snapshot>,
+    /// Go's runState: what the view keeps of the run it shows.
+    run: Run,
+    /// The finished run a run again replaces, shown until the new one starts, as Go keeps m.run.
+    previous: Option<(Snapshot, Run)>,
+    /// Go's preparedRun: the catalogue as the last settled check left it.
+    prepared: Vec<ServerSummary>,
+    checked_at: Option<Instant>,
+    checked_key: Option<Config>,
+    check_started: Option<Instant>,
+    check_failed: bool,
+    check_error: Option<String>,
     theme: Theme,
+    size: (u16, u16),
+    spin: usize,
     advanced: bool,
-    rows: ListState,
-    servers: ListState,
+    row: usize,
+    edit: Option<Edit>,
+    popup: Popup,
+    draft: Vec<String>,
+    server_row: usize,
+    open_chooser: bool,
+    /// Go's body viewport offset.
+    body: usize,
+    help: bool,
+    notice: String,
+    reset_prompt: bool,
+    recheck: Option<Instant>,
+    awaiting: bool,
+    /// A run was asked for, or is shown: Go's m.next or m.run.
     live: bool,
     /// A requested run that has not started: the check it replaces is not a return to setup.
     starting: bool,
-    open_chooser: bool,
-    servers_before: Vec<String>,
-    popup: Popup,
-    details_scroll: Scroll,
-    auth_scroll: Scroll,
-    /// Go scrolls the body; here the panel whose lines can overflow scrolls.
-    body_scroll: Scroll,
-    help: bool,
-    edit: Option<Edit>,
-    reset_prompt: bool,
-    notice: String,
-    recheck: Option<tokio::time::Instant>,
-    awaiting: bool,
-    cancel: CancelState,
+    stop_prompt: bool,
     quitting: bool,
     interrupted: bool,
     latency_pick: Option<String>,
-    received_at: Option<tokio::time::Instant>,
-    shown_down: Option<f64>,
-    shown_up: Option<f64>,
+    /// Go's auth.opened: the sign-in page was opened for the code shown.
+    opened: bool,
+    /// The sign-in was canceled or expired: Go's prepareSignIn without a code.
+    signed_out: bool,
+    /// A late answer to the background query is arriving as keys.
+    answer: bool,
 }
+
 impl Ui {
     fn new(config: Config, snapshot: Snapshot) -> Self {
         Self {
             requested: config.clone(),
+            run: Run::new(config.clone()),
             config,
             theme: Theme::terminal(),
-            rows: ListState::default().with_selected(Some(0)),
-            servers: ListState::default().with_selected(Some(0)),
-            received_at: Some(tokio::time::Instant::now()),
-            shown_down: snapshot.latest.down_bps,
-            shown_up: snapshot.latest.up_bps,
+            size: (80, 24),
+            check_started: Some(Instant::now()),
             snapshot,
             ..Self::default()
         }
     }
+
+    /// Go's handlePreparation, handleEvents and the sign-in replies, from a new snapshot.
     fn update(&mut self, mut snapshot: Snapshot) {
-        let was_live = self.live;
-        if snapshot.auth != self.snapshot.auth {
-            self.auth_scroll.offset = 0;
-        }
-        if snapshot.error != self.snapshot.error {
-            self.notice.clear();
-        }
         snapshot.servers.truncate(MAX_SERVERS);
         snapshot.server_latencies.truncate(MAX_SELECTED_SERVERS);
         snapshot.results.truncate(16);
-        if self.live && self.snapshot.phase.live() && !snapshot.phase.live() && !self.quitting {
-            self.notice.clear();
+        match (&self.snapshot.auth, &snapshot.auth) {
+            (before, Some(auth)) if before.as_ref().is_none_or(|before| before.code != auth.code) => {
+                self.opened = false;
+                self.body = 0;
+                self.notice = "Check the code, then press enter to open the sign-in page.".into();
+            }
+            (Some(_), None) if snapshot.phase.busy() && !self.signed_out => {
+                self.notice = "Signed in. Checking the authenticated paths…".into();
+            }
+            _ => {}
         }
-        if self.live && !self.quitting && self.snapshot.participants.is_empty() && !snapshot.participants.is_empty() {
+        // In Go's event order: the run starts, its servers fail, then it finishes, which clears the notice.
+        if self.live && !self.quitting && !self.snapshot.started() && snapshot.started() {
             self.notice = "Test started. Press esc to stop.".into();
+            (self.body, self.previous) = (0, None);
         }
         let failed = snapshot
             .failures
             .get(self.snapshot.failures.len()..)
             .and_then(<[_]>::last);
         if let Some(failure) = failed.filter(|_| !self.quitting) {
-            let name = server_name(&snapshot, &failure.server_id);
+            let name = crate::report::server_name(&snapshot, &failure.server_id);
             self.notice = format!("{name}: {}", failure.reason.label());
+        }
+        if self.live && self.snapshot.phase.live() && !snapshot.phase.live() && !self.quitting {
+            self.notice.clear();
         }
         self.awaiting = false;
         if snapshot.auth.is_some() || !snapshot.phase.live() {
-            if self.cancel != CancelState::Idle {
-                self.notice.clear();
-            }
-            self.cancel = CancelState::Idle;
+            self.stop_prompt = false;
         }
-        if snapshot.stage != self.snapshot.stage {
-            (self.shown_down, self.shown_up) = (None, None);
-        }
+        let was_live = self.live;
         if snapshot.phase == Phase::Checking && !self.starting {
             self.live = false;
         }
@@ -313,8 +333,7 @@ impl Ui {
             .latency_pick
             .take()
             .filter(|pick| snapshot.participants.contains(pick));
-        self.received_at = Some(tokio::time::Instant::now());
-        // As in Go, a run that never starts leaves the last results, or setup, in place.
+        // As Go's startFailed, a run that never starts leaves the last results, or setup, in place.
         if self.live
             && !self.quitting
             && matches!(snapshot.phase, Phase::Failed | Phase::Cancelled)
@@ -322,90 +341,177 @@ impl Ui {
         {
             if snapshot.phase == Phase::Cancelled {
                 self.notice = "Test stopped before it started.".into();
+            } else {
+                self.notice = snapshot.error.take().unwrap_or_default();
+                self.recheck_soon();
             }
             match self.previous.take() {
-                Some(previous) => {
-                    snapshot = Snapshot {
-                        error: snapshot.error,
-                        ..previous
-                    }
-                }
+                Some((previous, run)) => (snapshot, self.run) = (previous, run),
                 None => self.live = false,
             }
         }
         if self.live != was_live {
-            self.body_scroll.offset = 0;
+            self.body = 0;
         }
         if snapshot.auth.is_some() || self.popup == Popup::Details && !self.live {
-            if self.popup == Popup::Servers {
-                self.config.servers = std::mem::take(&mut self.servers_before);
-            }
             self.popup = Popup::None;
-            self.details_scroll.offset = 0;
+        }
+        if self.live && (snapshot.phase.live() || snapshot.started()) && self.previous.is_none() {
+            self.run.observe(&snapshot);
         }
         self.snapshot = snapshot;
-        if self.open_chooser && !self.live && !self.checking() && !self.snapshot.servers.is_empty() {
+        self.settle();
+        if self.open_chooser && !self.live && !self.checking() && !self.prepared.is_empty() {
             self.open_chooser = false;
             self.open_servers();
         }
     }
-    fn frame(&mut self) {
-        for (shown, target) in [
-            (&mut self.shown_down, self.snapshot.latest.down_bps),
-            (&mut self.shown_up, self.snapshot.latest.up_bps),
-        ] {
-            *shown = target.map(|target| shown.map_or(target, |value| value + 0.35 * (target - value)));
+
+    /// Go's handlePreparation: a settled check's servers, and whether it failed or needs a sign-in.
+    fn settle(&mut self) {
+        if self.live {
+            return;
         }
-    }
-    fn elapsed(&self) -> Duration {
-        let since = self.received_at.filter(|_| self.active()).map(|at| at.elapsed());
-        self.snapshot.latest.elapsed + since.unwrap_or_default()
-    }
-    fn notice(&self) -> (&str, bool) {
-        if self.cancel == CancelState::Confirming {
-            ("Stop the test? esc confirms, any other key continues.", false)
-        } else if self.cancel == CancelState::Requested {
-            ("Stopping the test…", false)
-        } else if !self.notice.is_empty() {
-            (&self.notice, false)
-        } else if let Some(error) = self.snapshot.error.as_deref() {
-            (error, true)
+        if self.snapshot.phase == Phase::Checking {
+            self.check_started.get_or_insert_with(Instant::now);
+            return;
+        }
+        if self.awaiting || self.recheck.is_some() || !matches!(self.snapshot.phase, Phase::Setup | Phase::Failed) {
+            return;
+        }
+        self.prepared.clone_from(&self.snapshot.servers);
+        self.checked_at = Some(self.check_started.take().unwrap_or_else(Instant::now));
+        self.checked_key = Some(self.requested.preparation_key());
+        let error = self
+            .snapshot
+            .error
+            .clone()
+            .filter(|_| self.snapshot.phase == Phase::Failed);
+        if error.as_deref() == Some(SIGN_IN_EXPIRED) {
+            self.signed_out = true;
+            self.notice = SIGN_IN_EXPIRED.into();
+            (self.check_failed, self.check_error) = (false, None);
         } else {
-            ("", false)
+            (self.check_failed, self.check_error) = (error.is_some(), error);
         }
     }
-    fn latency_server(&self) -> Option<&str> {
-        self.latency_pick.as_deref().or(self.snapshot.latency_focus.as_deref())
+
+    /// Go's prepare state.
+    fn prepare(&self) -> Prepare {
+        if self.signed_out || self.snapshot.auth.is_some() && !self.live {
+            Prepare::SignIn
+        } else if self.checking() {
+            Prepare::Checking
+        } else if self.check_failed {
+            Prepare::Failed
+        } else {
+            Prepare::Ready
+        }
     }
-    fn active(&self) -> bool {
-        self.awaiting || self.snapshot.phase.busy()
-    }
-    /// Setup paths are being checked, or will be once edits settle.
+
+    /// Setup's paths are being checked, or will be once edits settle.
     fn checking(&self) -> bool {
-        self.awaiting || self.recheck.is_some() || self.snapshot.phase == Phase::Checking
+        !self.live && (self.awaiting || self.recheck.is_some() || self.snapshot.phase == Phase::Checking)
     }
+
+    /// Go's preparedRun.Servers: the selected servers the last check reached.
+    fn checked(&self) -> Vec<&ServerSummary> {
+        self.prepared
+            .iter()
+            .filter(|server| server.has_check_result())
+            .collect()
+    }
+
+    /// Go's canChooseServers.
+    fn can_choose_servers(&self) -> bool {
+        self.prepared.len() > 1
+    }
+
+    /// Go's m.run: the run the view shows, which a run again keeps until the new one starts.
+    fn shown(&self) -> Option<(&Snapshot, &Run)> {
+        if !self.live {
+            return None;
+        }
+        if self.snapshot.started() {
+            return Some((&self.snapshot, &self.run));
+        }
+        self.previous.as_ref().map(|(snapshot, run)| (snapshot, run))
+    }
+
+    /// Go's multipleRunServers.
+    fn several(&self) -> bool {
+        self.shown()
+            .is_some_and(|(snapshot, _)| run_servers(snapshot).len() > 1)
+    }
+
+    /// Go's latencyServer: the viewer's pick, or the run's focus.
+    fn latency_server(&self) -> Option<&str> {
+        let focus = self.shown().and_then(|(snapshot, _)| snapshot.latency_focus.as_deref());
+        self.latency_pick.as_deref().or(focus)
+    }
+
+    /// Go's running: a run was asked for or goes on.
     fn running(&self) -> bool {
-        self.snapshot.auth.is_none() && (self.awaiting && self.live || self.starting || self.snapshot.phase.live())
+        self.snapshot.auth.is_none() && self.live && (self.awaiting || self.starting || self.snapshot.phase.live())
     }
+
+    /// Go's animating: the spinner and the clocks move.
+    fn animating(&self) -> bool {
+        self.running()
+            || self.shown().is_none() && (self.prepare() == Prepare::Checking || self.snapshot.auth.is_some())
+    }
+
+    fn frame(&mut self) {
+        self.spin = self.spin.wrapping_add(1);
+        if self.live && self.previous.is_none() {
+            self.run.ease(&self.snapshot);
+        }
+    }
+
+    fn title(&self) -> String {
+        format!("Graphite Meter · {}", self.status_label())
+    }
+
+    /// Go's View progress bar.
+    fn progress(&self) -> Option<Progress> {
+        if !self.running() {
+            return None;
+        }
+        match self.snapshot.started() && self.snapshot.phase.live() {
+            true => Some(Progress::Done(self.run.progress(&self.snapshot))),
+            false => Some(Progress::Checking),
+        }
+    }
+
     fn exit(&self) -> Exit {
+        let shown = self
+            .shown()
+            .filter(|_| !self.running())
+            .map(|(snapshot, _)| snapshot.clone());
         Exit {
             interrupted: self.interrupted,
             running: self.running(),
+            shown,
         }
     }
+
+    /// Go's quit: a run stops first.
     fn quit(&mut self, commands: &mpsc::Sender<Command>) -> bool {
         if !self.running() {
             return true;
         }
         self.send(Command::Cancel, commands);
-        (self.quitting, self.cancel) = (true, CancelState::Idle);
+        (self.quitting, self.stop_prompt) = (true, false);
         self.notice = "Stopping the test before quitting… ctrl+c quits at once.".into();
         false
     }
+
+    /// Go's interrupt: a second one, or one outside a run, quits at once.
     fn interrupt(&mut self, commands: &mpsc::Sender<Command>) -> bool {
         self.interrupted |= self.running();
         self.quitting || self.quit(commands)
     }
+
     fn send(&mut self, command: Command, commands: &mpsc::Sender<Command>) -> bool {
         let requested = match &command {
             Command::Run(config) | Command::Verify(config) => Some(config.clone()),
@@ -415,10 +521,8 @@ impl Ui {
             Ok(()) => {
                 if let Some(requested) = requested {
                     self.requested = requested;
-                    self.cancel = CancelState::Idle;
                     self.recheck = None;
                 }
-                self.notice.clear();
                 self.awaiting = true;
                 true
             }
@@ -432,356 +536,222 @@ impl Ui {
             }
         }
     }
-    /// Paths depend on these settings, so changing one checks them again.
-    fn recheck_if_changed(&mut self, before: &Config) {
-        if before.preparation_key() != self.config.preparation_key() {
-            self.recheck_soon();
-        }
-    }
+
+    /// Go's reprepare: the paths are checked again once settings stop changing.
     fn recheck_soon(&mut self) {
-        self.recheck = Some(tokio::time::Instant::now() + RECHECK_DELAY);
+        self.recheck = Some(Instant::now() + RECHECK_DELAY);
+        self.signed_out = false;
     }
-    /// Sends a settled re-check, keeping the notice of the change behind it.
+
+    /// Sends a settled re-check.
     fn recheck(&mut self, commands: &mpsc::Sender<Command>) -> bool {
-        if self.recheck.is_none_or(|at| at > tokio::time::Instant::now()) {
+        if self.recheck.is_none_or(|at| at > Instant::now()) {
             return false;
         }
         self.recheck = None;
-        let notice = std::mem::take(&mut self.notice);
         if self.send(Command::Verify(self.config.clone()), commands) {
-            self.notice = notice;
+            self.check_started = Some(Instant::now());
         }
         true
     }
+
     fn paste(&mut self, text: &str) {
         if self.snapshot.auth.is_none()
             && let Some(edit) = &mut self.edit
         {
+            edit.error.clear();
             edit.insert(text);
         }
     }
-    /// Which keys apply now.
-    fn mode(&self) -> InputMode {
-        match self.popup {
-            _ if self.snapshot.auth.is_some() => InputMode::Auth,
-            _ if self.edit.is_some() => InputMode::Edit,
-            _ if self.cancel == CancelState::Confirming => InputMode::Confirm,
-            Popup::Servers => InputMode::Servers,
-            Popup::Details => InputMode::Details,
-            Popup::None if self.reset_prompt => InputMode::Reset,
-            Popup::None => InputMode::Main,
+
+    /// A late answer to the background query reaches crossterm as Alt+] and its characters; they
+    /// are swallowed up to its BEL or ST, as Bubble Tea's parser takes the answer whenever it comes.
+    fn answer(&mut self, key: KeyEvent, name: &str) -> bool {
+        if self.answer {
+            let plain = matches!(key.code, KeyCode::Char(_)) && !key.modifiers.contains(KeyModifiers::CONTROL);
+            self.answer = plain && name != "alt+\\";
+            return plain || name == "ctrl+g";
         }
+        self.answer = name == "alt+]";
+        self.answer
     }
+
     /// Go's handleKey; true quits.
     fn key(&mut self, key: KeyEvent, commands: &mpsc::Sender<Command>) -> bool {
-        let code = key.code;
-        if code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        let name = keys::name(key);
+        if self.answer(key, &name) {
+            return false;
+        }
+        if ABORT.matches(&name) {
             return self.interrupt(commands);
         }
-        match self.mode() {
-            InputMode::Auth => return self.auth_key(code, commands),
-            InputMode::Edit => self.edit_key(key),
-            _ if QUIT.matches(code) => return self.quit(commands),
-            InputMode::Confirm => {
-                self.cancel = CancelState::Idle;
-                if !CONFIRM_STOP.matches(code) {
+        if self.edit.is_some() {
+            self.edit_key(&name, key);
+            return false;
+        }
+        if QUIT.matches(&name) {
+            return self.quit(commands);
+        }
+        if HELP.matches(&name) && !self.stop_prompt {
+            self.help = !self.help;
+            return false;
+        }
+        match self.popup {
+            Popup::Details if CLOSE.matches(&name) || DETAILS.matches(&name) => {
+                (self.popup, self.body) = (Popup::None, 0);
+            }
+            Popup::Details if SCROLL.matches(&name) || PAGE.matches(&name) => self.scroll(&name),
+            Popup::Servers => self.chooser_key(&name),
+            Popup::Details => {}
+            Popup::None if self.stop_prompt => {
+                self.stop_prompt = false;
+                if !CONFIRM_STOP.matches(&name) {
                     self.notice = "Test continues.".into();
                 } else if self.send(Command::Cancel, commands) {
-                    self.cancel = CancelState::Requested;
+                    self.notice = "Stopping the test…".into();
                 }
             }
-            _ if HELP.matches(code) => self.help = !self.help,
-            InputMode::Servers => self.servers_key(code),
-            InputMode::Details if CLOSE.matches(code) => self.popup = Popup::None,
-            InputMode::Details => self.details_scroll.key(code, 10),
-            // Enter or Space on the row confirms the reset; any other key keeps the settings.
-            InputMode::Reset
-                if pressed(code, &[ACTIVATE, TOGGLE]).is_none() || !matches!(self.field().kind, Kind::Reset) =>
-            {
-                self.reset_prompt = false;
-                self.notice = "Settings kept.".into();
+            Popup::None if PAGE.matches(&name) || self.shown().is_some() && SCROLL.matches(&name) => self.scroll(&name),
+            Popup::None if self.snapshot.auth.is_some() && self.shown().is_none() => self.sign_in_key(&name, commands),
+            Popup::None if self.live => self.run_key(&name, commands),
+            Popup::None if self.prepare() == Prepare::SignIn && START.matches(&name) => {
+                self.notice = format!("{BLOCKED}: sign in first. Press v to request a new code.");
             }
-            InputMode::Reset | InputMode::Main => self.main_key(code, commands),
+            Popup::None => self.setup_key(&name, commands),
         }
         false
     }
-    fn auth_key(&mut self, code: KeyCode, commands: &mpsc::Sender<Command>) -> bool {
-        match pressed(code, &SIGN_IN) {
-            Some(QUIT) => return true,
-            Some(OPEN) => {
-                self.send(Command::OpenBrowser, commands);
-            }
-            Some(CANCEL) if self.send(Command::Cancel, commands) => {
-                self.live = false;
-                self.notice = "Sign-in canceled. Press v to request a new code.".into();
-            }
-            _ => self.auth_scroll.key(code, 4),
-        }
-        false
-    }
-    fn edit_key(&mut self, key: KeyEvent) {
+
+    /// Go's handleEditKey: Esc cancels, Enter applies, and other keys edit.
+    fn edit_key(&mut self, name: &str, key: KeyEvent) {
         let Some(edit) = &mut self.edit else { return };
-        match pressed(key.code, &EDIT) {
-            Some(DISCARD) => self.edit = None,
-            Some(APPLY) => {
-                let (field, value, before) = (edit.field, edit.text(), self.config.clone());
-                match self.apply(field, value) {
-                    Ok(()) => {
-                        self.edit = None;
-                        self.notice.clear();
-                        self.recheck_if_changed(&before);
+        if DISCARD.matches(name) {
+            self.edit = None;
+            self.notice = "Edit canceled.".into();
+        } else if APPLY.matches(name) {
+            let (setting, text, before) = (edit.setting, edit.text(), self.config.clone());
+            match self.commit_edit(setting, &text) {
+                Ok(()) => {
+                    self.edit = None;
+                    self.recheck_if_changed(&before);
+                }
+                Err(error) => {
+                    self.notice.clone_from(&error);
+                    if let Some(edit) = &mut self.edit {
+                        edit.error = error;
                     }
-                    Err(error) => self.notice = error.to_string(),
                 }
             }
-            _ if !key.modifiers.contains(KeyModifiers::CONTROL) => edit.key(key.code),
-            _ => {}
-        }
-    }
-    /// The chooser edits the selection in place until Enter applies or Esc restores it.
-    fn servers_key(&mut self, code: KeyCode) {
-        match pressed(code, &[DISCARD, APPLY, SCROLL, TOGGLE]) {
-            Some(DISCARD) => {
-                self.config.servers = std::mem::take(&mut self.servers_before);
-                self.popup = Popup::None;
-                self.notice = "Server selection unchanged.".into();
-            }
-            Some(APPLY) => {
-                self.popup = Popup::None;
-                self.notice = "Checking the selected servers…".into();
-                self.recheck_soon();
-            }
-            Some(SCROLL) => move_selection(self.snapshot.servers.len(), &mut self.servers, back(code)),
-            Some(TOGGLE) => self.toggle_server(),
-            _ => {}
-        }
-    }
-    /// The run and setup views; a changed path setting is checked again once edits settle.
-    fn main_key(&mut self, code: KeyCode, commands: &mpsc::Sender<Command>) {
-        let before = self.config.clone();
-        match pressed(code, &[LATENCY, MORE]) {
-            Some(LATENCY) if self.snapshot.participants.len() > 1 => {
-                let ids = &self.snapshot.participants;
-                let shown = ids.iter().position(|id| Some(id.as_str()) == self.latency_server());
-                let next = &ids[shown.map_or(0, |index| index + 1) % ids.len()];
-                self.latency_pick = (Some(next) != self.snapshot.latency_focus.as_ref()).then(|| next.clone());
-            }
-            // Go's scrolling keys: pages anywhere, lines too in the run view.
-            Some(MORE) if code == KeyCode::Home => self.body_scroll.offset = 0,
-            Some(MORE) if code == KeyCode::End => self.body_scroll.offset = u16::MAX,
-            Some(MORE) => self.body_scroll.key(code, 10),
-            _ if self.live => self.run_key(code, commands),
-            _ => self.setup_key(code, commands),
-        }
-        // The chooser's selection is a draft until Enter.
-        if self.popup != Popup::Servers {
-            self.recheck_if_changed(&before);
-        }
-    }
-    /// Go's handleRunKey.
-    fn run_key(&mut self, code: KeyCode, commands: &mpsc::Sender<Command>) {
-        let keys: &[Key] = if self.active() {
-            &[STOP, DETAILS]
         } else {
-            &[RUN_AGAIN, SETUP, DETAILS]
-        };
-        match pressed(code, keys) {
-            Some(DETAILS) => {
-                self.popup = Popup::Details;
-                self.details_scroll.offset = 0;
-            }
-            Some(STOP) if self.cancel != CancelState::Requested => self.cancel = CancelState::Confirming,
-            Some(RUN_AGAIN) => self.start(commands),
-            Some(SETUP) => {
-                // The run consumed the checked paths.
-                self.recheck_soon();
-                self.notice.clear();
-                self.body_scroll.offset = 0;
-                self.live = false;
-                self.rows.select(Some(0));
-            }
-            Some(_) => {}
-            None => self.body_scroll.key(code, 10),
+            let typed = match key.code {
+                KeyCode::Char(character) if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {
+                    Some(character)
+                }
+                _ => None,
+            };
+            edit.error.clear();
+            edit.key(name, typed);
         }
     }
+
+    /// Go's handleSignInKey.
+    fn sign_in_key(&mut self, name: &str, commands: &mpsc::Sender<Command>) {
+        if OPEN_SIGN_IN.matches(name) && self.send(Command::OpenBrowser, commands) {
+            self.opened = true;
+            self.notice = "Sign-in page opened in the browser.".into();
+        } else if CANCEL_SIGN_IN.matches(name) && self.send(Command::Cancel, commands) {
+            (self.signed_out, self.live) = (true, false);
+            self.notice = "Sign-in canceled. Press v to request a new code.".into();
+        }
+    }
+
+    /// Go's handleRunKey.
+    fn run_key(&mut self, name: &str, commands: &mpsc::Sender<Command>) {
+        let finished = self.shown().is_some() && !self.running();
+        if DETAILS.matches(name) {
+            (self.popup, self.body) = (Popup::Details, 0);
+        } else if self.several() && LATENCY_SERVER.matches(name) {
+            let Some((snapshot, _)) = self.shown() else { return };
+            let ids = &snapshot.participants;
+            if ids.is_empty() {
+                return;
+            }
+            let shown = ids.iter().position(|id| Some(id.as_str()) == self.latency_server());
+            let next = ids[shown.map_or(0, |index| index + 1) % ids.len()].clone();
+            let focus = snapshot.latency_focus.clone();
+            self.latency_pick = (Some(&next) != focus.as_ref()).then_some(next);
+        } else if self.running() && STOP.matches(name) {
+            self.stop_prompt = true;
+            self.notice = "Stop the test? esc confirms, any other key continues.".into();
+        } else if finished && SETUP.matches(name) {
+            (self.live, self.row, self.body) = (false, 0, 0);
+            self.notice.clear();
+            self.recheck_soon();
+        } else if finished && RUN_AGAIN.matches(name) {
+            self.start(commands);
+        }
+    }
+
     /// Go's handleSetupKey.
-    fn setup_key(&mut self, code: KeyCode, commands: &mpsc::Sender<Command>) {
-        let keys = [
-            START, ACTIVATE, RECHECK, STOP, ROWS, SERVERS, AVAILABLE, AUTOMATIC, CHANGE, TOGGLE,
-        ];
-        match pressed(code, &keys) {
-            // A path check never holds back a run; the run replaces it.
-            Some(START) => self.start(commands),
-            Some(ACTIVATE) if self.rows.selected() == Some(0) => self.start(commands),
-            Some(ACTIVATE) => self.activate(),
-            Some(RECHECK) => {
-                self.send(Command::Verify(self.config.clone()), commands);
-            }
-            Some(STOP) if self.active() => {
-                self.send(Command::Cancel, commands);
-            }
-            Some(STOP) => self.rows.select(Some(0)),
-            Some(ROWS) => move_selection(self.fields().len(), &mut self.rows, back(code)),
-            Some(SERVERS) => self.open_servers(),
-            Some(AVAILABLE) if !self.checking() => self.use_available(),
-            Some(AUTOMATIC) => {
-                self.config.throughput_origin = None;
-                self.config.throughput_protocol = None;
-                self.config.throughput_transport = None;
-                self.config.latency_origin = None;
-                self.config.latency_transport = None;
-                self.notice = "Transport paths set to automatic.".into();
-            }
-            Some(CHANGE) => self.change_field(!back(code)),
-            Some(TOGGLE) => self.toggle(),
-            _ => {}
+    fn setup_key(&mut self, name: &str, commands: &mpsc::Sender<Command>) {
+        let row = self.current();
+        if self.reset_prompt && !(CHANGE.matches(name) && row == Setting::Reset) {
+            self.reset_prompt = false;
+            self.notice = "Settings kept.".into();
+            return;
+        }
+        if ROWS.matches(name) {
+            self.navigate(name);
+        } else if ADJUST.matches(name) {
+            self.adjust(row, delta(name));
+        } else if let Some(on) = row.flag(&self.config).filter(|_| TOGGLE.matches(name)) {
+            let before = self.config.clone();
+            self.set_flag(row, !on);
+            self.recheck_if_changed(&before);
+        } else if CHANGE.matches(name) {
+            self.activate(row, commands);
+        } else if START.matches(name) {
+            self.start(commands);
+        } else if RECHECK.matches(name) {
+            self.recheck_soon();
+        } else if SERVERS.matches(name) {
+            self.open_servers();
+        } else if AVAILABLE.matches(name) && self.can_use_available() {
+            self.config.servers = self.ready_servers();
+            self.notice = "Using the available servers.".into();
+            self.recheck_soon();
+        } else if AUTOMATIC.matches(name) {
+            let config = &mut self.config;
+            (
+                config.throughput_origin,
+                config.throughput_protocol,
+                config.throughput_transport,
+            ) = (None, None, None);
+            (config.latency_origin, config.latency_transport) = (None, None);
+            self.notice = "Automatic paths applied to every selected server.".into();
+            self.recheck_soon();
         }
     }
-    /// A valid setup starts a run; the results it replaces stay until it starts.
+
+    /// Go's startRun: a valid setup starts a run; the results it replaces stay until it starts.
     fn start(&mut self, commands: &mpsc::Sender<Command>) {
         if let Err(error) = self.config.validate() {
-            self.notice = error.to_string();
-        } else if self.send(Command::Run(self.config.clone()), commands) {
-            self.previous = (self.live && self.snapshot.started()).then(|| self.snapshot.clone());
+            self.notice = format!("{BLOCKED}: {error}.");
+            self.row = self
+                .rows()
+                .iter()
+                .position(|row| *row == Setting::Stage(Stage::Latency))
+                .unwrap_or(0);
+            return;
+        }
+        if self.send(Command::Run(self.config.clone()), commands) {
+            let run = std::mem::replace(&mut self.run, Run::new(self.config.clone()));
+            self.previous = (self.live && self.snapshot.started()).then(|| (self.snapshot.clone(), run));
             (self.live, self.starting, self.open_chooser) = (true, true, false);
-            self.body_scroll.offset = 0;
-            self.popup = Popup::None;
+            (self.stop_prompt, self.popup, self.edit) = (false, Popup::None, None);
             self.notice = "Checking paths before the test. Press esc to stop.".into();
         }
     }
-    /// As in Go, only when some but not all checked servers are ready.
-    fn use_available(&mut self) {
-        let checked = self.snapshot.servers.iter().filter(|server| server.has_check_result());
-        let available: Vec<_> = checked
-            .clone()
-            .filter(|server| server.checked() && server.error.is_none())
-            .take(MAX_SELECTED_SERVERS)
-            .map(|server| server.id.clone())
-            .collect();
-        if !available.is_empty() && available.len() < checked.count() {
-            self.config.servers = available;
-            self.notice = "Using the available servers.".into();
-        }
-    }
-    /// Like the Go client, the chooser opens on a checked catalogue of several servers.
-    fn open_servers(&mut self) {
-        if self.checking() {
-            self.open_chooser = true;
-            self.notice = "Test servers open when the path check finishes.".into();
-        } else if self.snapshot.servers.is_empty() {
-            self.open_chooser = true;
-            self.notice = "Loading servers…".into();
-            self.recheck_soon();
-        } else if self.snapshot.servers.len() == 1 {
-            self.notice = "This catalogue offers one server.".into();
-        } else {
-            // The chooser edits the selection in place; Esc restores this one.
-            self.servers_before = self.config.servers.clone();
-            if self.config.servers.is_empty() {
-                // The checked servers are the catalogue's default selection.
-                self.config.servers = self
-                    .snapshot
-                    .servers
-                    .iter()
-                    .filter(|server| server.has_check_result())
-                    .take(MAX_SELECTED_SERVERS)
-                    .map(|server| server.id.clone())
-                    .collect();
-            }
-            self.servers.select(Some(0));
-            self.popup = Popup::Servers;
-            self.notice = "Space selects up to four servers; Enter applies.".into();
-        }
-    }
-    fn toggle_server(&mut self) {
-        let Some(server) = self
-            .servers
-            .selected()
-            .and_then(|index| self.snapshot.servers.get(index))
-        else {
-            return;
-        };
-        if let Some(index) = self.config.servers.iter().position(|id| id == &server.id) {
-            self.config.servers.remove(index);
-        } else if self.config.servers.len() < MAX_SELECTED_SERVERS {
-            self.config.servers.push(server.id.clone());
-        } else {
-            self.notice = "Select at most four servers.".into();
-        }
-    }
-}
-
-/// The keys that move up, back or left.
-fn back(code: KeyCode) -> bool {
-    matches!(
-        code,
-        KeyCode::Up | KeyCode::Char('k') | KeyCode::BackTab | KeyCode::Left
-    )
-}
-fn move_selection(length: usize, state: &mut ListState, back: bool) {
-    if length == 0 {
-        state.select(None);
-        return;
-    }
-    let next =
-        (state.selected().unwrap_or(0) as isize + if back { -1 } else { 1 }).rem_euclid(length as isize) as usize;
-    state.select(Some(next));
-}
-fn panel(title: &str, theme: Theme) -> Block<'_> {
-    Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme.border)
-        .style(theme.text)
-        .title(Span::styled(title, bold(theme.ink)))
-}
-fn bold(color: ratatui::style::Color) -> Style {
-    Style::new().fg(color).add_modifier(Modifier::BOLD)
-}
-fn popup(area: Rect, width: u16, height: u16) -> Rect {
-    let width = width.min(84).min(area.width.saturating_sub(4));
-    let height = height.min(area.height.saturating_sub(2));
-    Rect::new(
-        area.x + (area.width - width) / 2,
-        area.y + (area.height - height) / 2,
-        width,
-        height,
-    )
-}
-pub fn safe_text(value: &str, limit: usize) -> String {
-    value.chars().take(limit.min(MAX_TEXT)).map(terminal_char).collect()
-}
-fn cell_width(character: char) -> usize {
-    UnicodeWidthChar::width(character).unwrap_or(0)
-}
-/// The safe text that fits in `columns` cells.
-fn safe_text_width(value: &str, columns: usize) -> String {
-    if columns == 0 {
-        return String::new();
-    }
-    let mut width = 0;
-    let fits = |character: &char| {
-        width += cell_width(*character);
-        width <= columns
-    };
-    value
-        .chars()
-        .take(MAX_TEXT)
-        .map(terminal_char)
-        .take_while(fits)
-        .collect()
-}
-fn rate(value: Option<f64>) -> String {
-    value.filter(|value| value.is_finite() && *value >= 0.0).map_or_else(
-        || MISSING.into(),
-        |value| graphite_meter_core::format::rate(value / 8.0),
-    )
-}
-fn milliseconds(value: Option<f64>) -> String {
-    value.filter(|value| value.is_finite() && *value >= 0.0).map_or_else(
-        || MISSING.into(),
-        |value| format!("{} ms", graphite_meter_core::format::latency_ms(value)),
-    )
 }
 
 #[cfg(test)]

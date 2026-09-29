@@ -1,84 +1,256 @@
+//! The run's results as Go's view.go and servers.go write them (resultsView, finalReport and
+//! detailsView), in styled lines the TUI draws and the report prints.
 use crate::{
     model::{
-        Ending, FailureScope, Phase, ServerFailure, ServerLatencyResult, Snapshot, Stage, StageResult, StageStatus,
+        Ending, FailureScope, Phase, ServerFailure, ServerLatencyResult, ServerSummary, Snapshot, Stage, StageResult,
+        StageStatus,
     },
     theme::Theme,
-    vocabulary::MISSING,
+    vocabulary::{ADDED_NOTE, MISSING, clock, compact_population, compact_stage, population_label},
 };
 use graphite_meter_core::{failure::FailureReason, format, measurement::MeasurementResult, text::terminal_character};
-use ratatui::style::Color;
-use std::time::Duration;
+use ratatui::{
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+};
+use unicode_width::UnicodeWidthChar;
 
 pub const WIDTH: usize = 100;
-const ADDED_NOTE: &str = "Added: loaded median minus idle median, same server.";
-const RESET: &str = "\x1b[0m";
 
-/// The final report, terminal-safe. Go prints it through lipgloss's colour profile: a terminal gets
-/// the TUI palette unless TERM is dumb, and NO_COLOR keeps only bold, as the monochrome theme does.
-pub fn render(snapshot: &Snapshot, width: usize, terminal: bool) -> Option<String> {
-    let term = std::env::var("TERM").unwrap_or_default();
-    let dumb = term == "dumb" || term.is_empty() && !cfg!(windows);
-    compose(snapshot, width, (terminal && !dumb).then(Theme::terminal))
+pub(crate) type Text = Vec<Line<'static>>;
+
+/// Text in one style.
+pub(crate) fn span(text: impl Into<String>, style: Style) -> Span<'static> {
+    Span::styled(text.into(), style)
 }
 
-fn compose(snapshot: &Snapshot, width: usize, theme: Option<Theme>) -> Option<String> {
+/// A line in one style.
+pub(crate) fn line(text: impl Into<String>, style: Style) -> Line<'static> {
+    Line::from(span(text, style))
+}
+
+pub(crate) fn cell(character: char) -> usize {
+    character.width().unwrap_or(0)
+}
+
+/// Go's pad: spaces up to `to` cells.
+pub(crate) fn pad(mut line: Line<'static>, to: usize) -> Line<'static> {
+    let fill = to.saturating_sub(line.width());
+    if fill > 0 {
+        line.spans.push(Span::raw(" ".repeat(fill)));
+    }
+    line
+}
+
+/// Go's ansi.Truncate with "…".
+pub(crate) fn fit(line: Line<'static>, limit: usize) -> Line<'static> {
+    truncate(line, limit.max(1), "…")
+}
+
+/// Go's ansi.Truncate: a wider line keeps what fits before the tail, in the style it cuts.
+pub(crate) fn truncate(line: Line<'static>, limit: usize, tail: &str) -> Line<'static> {
+    if line.width() <= limit {
+        return line;
+    }
+    let mut room = limit.saturating_sub(tail.chars().map(cell).sum());
+    let mut spans = Vec::new();
+    for span in line.spans {
+        let mut kept = String::new();
+        for character in span.content.chars() {
+            if cell(character) > room {
+                kept.push_str(tail);
+                spans.push(Span::styled(kept, span.style));
+                return Line::from(spans);
+            }
+            room -= cell(character);
+            kept.push(character);
+        }
+        spans.push(Span::styled(kept, span.style));
+    }
+    Line::from(spans)
+}
+
+/// The line rendered in `base` as lipgloss nests styles: `base` underlies the first styled span,
+/// whose reset leaves the rest of the line unstyled.
+pub(crate) fn under(mut line: Line<'static>, base: Style) -> Line<'static> {
+    let mut active = base;
+    for span in &mut line.spans {
+        if span.style == Style::default() {
+            span.style = active;
+        } else {
+            span.style = active.patch(span.style);
+            active = Style::default();
+        }
+    }
+    line
+}
+
+/// The line's text without its styles.
+pub(crate) fn plain(line: &Line) -> String {
+    line.spans.iter().map(|span| span.content.as_ref()).collect()
+}
+
+/// A character the terminal shows as itself, or the replacement for one that could control it.
+pub fn terminal_char(character: char) -> char {
+    if terminal_character(character) {
+        character
+    } else {
+        '�'
+    }
+}
+
+/// Every span with its controls replaced, whatever sent the text; a plain theme also drops
+/// every style, as colorprofile's NoTTY strips them.
+pub(crate) fn sanitize(lines: &mut [Line<'static>], theme: &Theme) {
+    let plain = *theme == Theme::default();
+    for span in lines.iter_mut().flat_map(|line| line.spans.iter_mut()) {
+        if !span.content.chars().all(terminal_character) {
+            span.content = span.content.chars().map(terminal_char).collect::<String>().into();
+        }
+        if plain {
+            span.style = Style::default();
+        }
+    }
+}
+
+/// Go's wrapParts: parts joined by " · " while a line holds `limit` characters.
+pub(crate) fn wrap_parts(parts: &[String], limit: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for part in parts {
+        if line.is_empty() {
+            line.clone_from(part);
+        } else if line.chars().count() + 3 + part.chars().count() <= limit {
+            line.push_str(" · ");
+            line.push_str(part);
+        } else {
+            lines.push(std::mem::replace(&mut line, part.clone()));
+        }
+    }
+    lines.push(line);
+    lines
+}
+
+/// The lines as a terminal prints them, each span in its style's SGR codes.
+pub(crate) fn ansi(lines: &[Line]) -> String {
+    let mut out = String::new();
+    for (index, line) in lines.iter().enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+        for span in &line.spans {
+            let mut codes = Vec::new();
+            if span.style.add_modifier.contains(Modifier::BOLD) {
+                codes.push("1".to_owned());
+            }
+            if span.style.add_modifier.contains(Modifier::REVERSED) {
+                codes.push("7".to_owned());
+            }
+            codes.extend(span.style.fg.and_then(|color| sgr(color, false)));
+            codes.extend(span.style.bg.and_then(|color| sgr(color, true)));
+            match codes.is_empty() {
+                true => out.push_str(&span.content),
+                false => out.push_str(&format!("\x1b[{}m{}\x1b[0m", codes.join(";"), span.content)),
+            }
+        }
+    }
+    out
+}
+
+/// A colour's SGR parameters, as Go's colour profiles write each depth.
+fn sgr(color: Color, background: bool) -> Option<String> {
+    let (extended, base) = if background { (48, 40) } else { (38, 30) };
+    let ansi = match color {
+        Color::Reset => return None,
+        Color::Rgb(red, green, blue) => return Some(format!("{extended};2;{red};{green};{blue}")),
+        Color::Indexed(index) => return Some(format!("{extended};5;{index}")),
+        Color::Black => base,
+        Color::Red => base + 1,
+        Color::Green => base + 2,
+        Color::Yellow => base + 3,
+        Color::Blue => base + 4,
+        Color::Magenta => base + 5,
+        Color::Cyan => base + 6,
+        Color::Gray => base + 7,
+        Color::DarkGray => base + 60,
+        Color::LightRed => base + 61,
+        Color::LightGreen => base + 62,
+        Color::LightYellow => base + 63,
+        Color::LightBlue => base + 64,
+        Color::LightMagenta => base + 65,
+        Color::LightCyan => base + 66,
+        Color::White => base + 67,
+    };
+    Some(ansi.to_string())
+}
+
+/// Go's finalReport as lipgloss.Println prints it to stdout; none before a run reports.
+pub fn print(snapshot: &Snapshot, width: usize) -> Option<String> {
+    render(snapshot, width, Theme::terminal())
+}
+
+/// Asks the terminal for its background, as Go's runHeadless does before a report. Call it in raw mode.
+pub async fn ask_background() {
+    Theme::ask(std::time::Duration::from_secs(2)).await;
+}
+
+/// Go's finalReport in `theme`.
+pub(crate) fn render(snapshot: &Snapshot, width: usize, theme: Theme) -> Option<String> {
     if snapshot.participants.is_empty() && snapshot.results.is_empty() {
         return None;
     }
-    let mut report = Report::new(snapshot, snapshot.latency_focus.as_deref(), width);
-    report.theme = theme;
-    let heading = match snapshot.latency_focus.as_deref() {
-        Some(focus) if run_servers(snapshot).len() > 1 => format!("Latency to {}", server_name(snapshot, focus)),
-        _ => "Latency".to_owned(),
-    };
-    let (latency, failures, added) = report.latency(heading);
-    let mut blocks = vec![report.header()];
-    if report.measured() {
-        blocks.extend([report.throughput(), latency, failures.join("\n"), report.notes(added)]);
+    let report = Report::new(snapshot, snapshot.latency_focus.as_deref(), width, theme);
+    let mut heading = "Latency".to_owned();
+    if let Some(focus) = snapshot.latency_focus.as_deref().filter(|_| report.several()) {
+        heading = format!("Latency to {}", server_name(snapshot, focus));
     }
-    if run_servers(snapshot).len() > 1 {
+    let results = report.results(&heading);
+    let mut blocks = vec![vec![report.header()]];
+    if !results.view().is_empty() {
+        blocks.extend([
+            report.throughput(),
+            results.latency,
+            results.failures,
+            report.notes(results.added),
+        ]);
+    }
+    if report.several() {
         blocks.push(report.details(false));
     }
-    blocks.extend(snapshot.error.as_deref().map(|error| report.paint(Tone::Err, error)));
-    let text = blocks
-        .into_iter()
-        .filter(|block| !block.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    Some(
-        text.lines()
-            .map(|line| safe(line.trim_end()))
-            .collect::<Vec<_>>()
-            .join("\n"),
-    )
-}
-
-pub fn results(snapshot: &Snapshot, shown: Option<&str>, width: usize) -> (Vec<Vec<String>>, Vec<String>) {
-    let report = Report::new(snapshot, shown, width);
-    if !report.measured() {
-        return Default::default();
+    blocks.extend(snapshot.error.as_deref().map(|error| vec![line(error, theme.err)]));
+    let mut lines = Vec::new();
+    for block in blocks.into_iter().filter(|block| !block.is_empty()) {
+        if !lines.is_empty() {
+            lines.push(Line::default());
+        }
+        lines.extend(block.into_iter().map(trim_end));
     }
-    let (latency, failures, _) = report.latency("Latency".to_owned());
-    let grids = [report.rates(), latency]
-        .iter()
-        .filter(|grid| !grid.is_empty())
-        .map(|grid| grid.lines().map(str::to_owned).collect())
-        .collect();
-    (grids, failures)
+    sanitize(&mut lines, &theme);
+    Some(ansi(&lines))
 }
 
-pub fn label_stage(label: &str) -> Option<Stage> {
-    [Stage::Latency, Stage::Download, Stage::Upload, Stage::Bidirectional]
-        .into_iter()
-        .find(|stage| label == compact_stage(*stage) || label == compact_population(*stage))
-}
-
+/// Go's detailsView in full, as plain text.
 pub fn details(snapshot: &Snapshot, shown: Option<&str>, width: usize) -> String {
-    Report::new(snapshot, shown, width).details(true)
+    let lines = Report::new(snapshot, shown, width, Theme::default()).details(true);
+    lines.iter().map(plain).collect::<Vec<_>>().join("\n")
+}
+
+/// The line without trailing spaces.
+fn trim_end(mut line: Line<'static>) -> Line<'static> {
+    while let Some(last) = line.spans.last_mut() {
+        let trimmed = last.content.trim_end_matches(' ');
+        if !trimmed.is_empty() {
+            let trimmed = trimmed.to_owned();
+            last.content = trimmed.into();
+            break;
+        }
+        line.spans.pop();
+    }
+    line
 }
 
 /// The run's servers as Go's run details list them: every selected server the check reached.
-pub(crate) fn run_servers(snapshot: &Snapshot) -> Vec<&crate::model::ServerSummary> {
+pub(crate) fn run_servers(snapshot: &Snapshot) -> Vec<&ServerSummary> {
     snapshot
         .servers
         .iter()
@@ -92,70 +264,102 @@ pub(crate) fn server_name<'a>(snapshot: &'a Snapshot, id: &'a str) -> &'a str {
     server.map_or(id, |server| server.name.as_str())
 }
 
+/// Go's statusLabel of a run.
 pub fn status(snapshot: &Snapshot) -> &'static str {
     match snapshot.phase {
-        Phase::Setup | Phase::Checking => "Not started",
+        Phase::Setup | Phase::Checking | Phase::Preparing => "Checking paths",
         Phase::Warmup => "Warmup",
         Phase::Measuring => snapshot.stage.map_or("Checking paths", Stage::name),
-        Phase::Preparing => "Checking paths",
         phase => outcome(phase),
     }
 }
 
-struct Report<'a> {
+/// Go's outcomeLabels.
+pub fn outcome(phase: Phase) -> &'static str {
+    match phase {
+        Phase::Complete => "Complete",
+        Phase::Partial => "Partial",
+        Phase::Incomplete => "Incomplete",
+        Phase::Cancelled => "Stopped",
+        _ => "Failed",
+    }
+}
+
+/// Go's results: each grid, the failures under them, the notes Details shows and whether the
+/// latency grid has an Added column.
+#[derive(Default)]
+pub(crate) struct Results {
+    pub throughput: Text,
+    pub latency: Text,
+    pub failures: Text,
+    pub notes: Text,
+    pub added: bool,
+}
+
+impl Results {
+    /// Go's results.view: the grids, then the failures.
+    pub fn view(&self) -> Text {
+        [&self.throughput, &self.latency, &self.failures]
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect()
+    }
+}
+
+pub(crate) struct Report<'a> {
     snapshot: &'a Snapshot,
-    plan: &'a [Stage],
     shown: Option<&'a str>,
     width: usize,
-    theme: Option<Theme>,
+    theme: Theme,
 }
 
-/// Go's report styles.
 #[derive(Clone, Copy)]
-enum Tone {
-    Heading,
-    Text,
-    Muted,
-    Warn,
-    Err,
-    Stage(Stage),
-    Rate(Stage),
-    Outcome(Phase),
+enum Direction {
+    Down,
+    Up,
 }
 
-impl<'a> Report<'a> {
-    fn new(snapshot: &'a Snapshot, shown: Option<&'a str>, width: usize) -> Self {
-        Self {
-            snapshot,
-            plan: &snapshot.plan,
-            shown,
-            width,
-            theme: None,
+impl Direction {
+    /// The directions a stage transfers.
+    fn of(stage: Stage) -> impl Iterator<Item = Self> {
+        [
+            stage.downloads().then_some(Self::Down),
+            stage.uploads().then_some(Self::Up),
+        ]
+        .into_iter()
+        .flatten()
+    }
+
+    fn arrow(self) -> &'static str {
+        match self {
+            Self::Down => "↓",
+            Self::Up => "↑",
         }
     }
 
-    /// One line of text in Go's lipgloss style; the TUI's report stays plain.
-    fn paint(&self, tone: Tone, text: &str) -> String {
-        let Some(theme) = self.theme.filter(|_| !text.is_empty()) else {
-            return text.to_owned();
-        };
-        let (color, bold) = match tone {
-            Tone::Heading => (theme.ink, true),
-            Tone::Text => (theme.text, false),
-            Tone::Muted => (theme.muted, false),
-            Tone::Warn => (theme.warn, false),
-            Tone::Err => (theme.err, true),
-            Tone::Stage(stage) => (theme.stage(stage), false),
-            Tone::Rate(stage) => (theme.stage(stage), true),
-            Tone::Outcome(Phase::Complete) => (theme.ok, true),
-            Tone::Outcome(Phase::Partial | Phase::Incomplete | Phase::Cancelled) => (theme.warn, true),
-            Tone::Outcome(_) => (theme.err, true),
-        };
-        let codes: Vec<_> = bold.then(|| "1".to_owned()).into_iter().chain(sgr(color)).collect();
-        if codes.is_empty() {
-            return text.to_owned();
+    /// Go's directionLabel.
+    fn label(self, stage: Stage) -> String {
+        match stage {
+            Stage::Bidirectional => format!("Bi-dir {}", self.arrow()),
+            stage => stage.name().to_owned(),
         }
-        format!("\x1b[{}m{text}{RESET}", codes.join(";"))
+    }
+}
+
+impl<'a> Report<'a> {
+    pub fn new(snapshot: &'a Snapshot, shown: Option<&'a str>, width: usize, theme: Theme) -> Self {
+        Self {
+            snapshot,
+            shown,
+            width,
+            theme,
+        }
+    }
+
+    /// Go's multipleRunServers.
+    pub fn several(&self) -> bool {
+        run_servers(self.snapshot).len() > 1
     }
 
     fn result(&self, stage: Stage) -> Option<&StageResult> {
@@ -167,51 +371,12 @@ impl<'a> Report<'a> {
             .map_or(StageStatus::Skipped, |result| self.snapshot.stage_status(result))
     }
 
+    /// Go's unmeasured: a stage's status, or "—" for one that ended well.
     fn unmeasured(&self, stage: Stage) -> &'static str {
         match self.status(stage) {
             StageStatus::Complete => MISSING,
             status => status.label(),
         }
-    }
-
-    fn measured(&self) -> bool {
-        self.snapshot
-            .results
-            .iter()
-            .any(|result| result.down.is_some() || result.up.is_some())
-            || self.plan.iter().any(|stage| self.population(*stage).is_some())
-    }
-
-    fn header(&self) -> String {
-        let servers = run_servers(self.snapshot);
-        let mut facts = Vec::new();
-        match servers.as_slice() {
-            [] => {}
-            [server] => facts.push(server.name.clone()),
-            servers => facts.push(format!("{} servers", servers.len())),
-        }
-        facts.push(clock(self.snapshot.duration));
-        let total: u64 = self
-            .snapshot
-            .results
-            .iter()
-            .map(|result| result.down_bytes() + result.up_bytes())
-            .sum();
-        if total > 0 {
-            facts.push(format::bytes(total));
-        }
-        format!(
-            "{}  {}  {}",
-            self.paint(Tone::Heading, "Graphite Meter"),
-            self.paint(Tone::Outcome(self.snapshot.phase), outcome(self.snapshot.phase)),
-            self.paint(Tone::Muted, &facts.join(" · "))
-        )
-    }
-
-    fn directions(&self) -> Vec<(Stage, Direction)> {
-        let plan = self.plan.iter();
-        plan.flat_map(|stage| Direction::of(*stage).map(|direction| (*stage, direction)))
-            .collect()
     }
 
     fn measurement(&self, stage: Stage, direction: Direction) -> Option<&MeasurementResult> {
@@ -222,90 +387,7 @@ impl<'a> Report<'a> {
         }
     }
 
-    fn throughput(&self) -> String {
-        let rows: Vec<_> = self
-            .directions()
-            .into_iter()
-            .map(|(stage, direction)| {
-                let label = format!(
-                    "{} {}",
-                    self.paint(Tone::Stage(stage), direction.arrow()),
-                    self.paint(Tone::Text, stage.name())
-                );
-                let (value, mut facts) = match self.measurement(stage, direction) {
-                    None => (self.paint(Tone::Muted, self.unmeasured(stage)), Vec::new()),
-                    Some(measurement) => match measurement.mean_bytes_per_sec {
-                        None => (self.paint(Tone::Muted, MISSING), Vec::new()),
-                        Some(mean) => (
-                            self.paint(Tone::Rate(stage), &format::rate(mean)),
-                            throughput_facts(measurement, true),
-                        ),
-                    },
-                };
-                let partial = self.status(stage) == StageStatus::Partial;
-                if partial {
-                    facts.insert(0, StageStatus::Partial.label().to_owned());
-                }
-                (label, value, facts, partial)
-            })
-            .collect();
-        let label_width = rows.iter().map(|row| width(&row.0)).max().unwrap_or(0);
-        let value_width = rows.iter().map(|row| width(&row.1)).max().unwrap_or(0);
-        let indent = label_width + value_width + 2;
-        let mut lines = Vec::new();
-        for (label, value, facts, partial) in rows {
-            let line = format!("{}  {}", pad(&label, label_width), pad(&value, value_width));
-            for (index, part) in wrap_parts(&facts, self.width.saturating_sub(indent + 3).max(20))
-                .into_iter()
-                .enumerate()
-            {
-                let status = StageStatus::Partial.label();
-                lines.push(match index {
-                    0 if part.is_empty() => line.clone(),
-                    0 if partial => format!(
-                        "{line}   {}{}",
-                        self.paint(Tone::Warn, status),
-                        self.paint(Tone::Muted, part.strip_prefix(status).unwrap_or(&part))
-                    ),
-                    0 => format!("{line}   {}", self.paint(Tone::Muted, &part)),
-                    _ => format!("{}   {}", " ".repeat(indent), self.paint(Tone::Muted, &part)),
-                });
-            }
-        }
-        lines.join("\n")
-    }
-
-    fn rates(&self) -> String {
-        let mut rows = Vec::new();
-        for stage in self.plan.iter().filter(|stage| stage.downloads() || stage.uploads()) {
-            let rates: Vec<_> = Direction::of(*stage)
-                .filter_map(|direction| {
-                    let measurement = self.measurement(*stage, direction)?;
-                    let rate = measurement.mean_bytes_per_sec.map_or(MISSING.to_owned(), format::rate);
-                    Some(format!("{} {rate}", direction.arrow()))
-                })
-                .collect();
-            let mut rates = rates.join("  ");
-            if rates.is_empty() && !self.snapshot.phase.live() {
-                rates = self.unmeasured(*stage).to_owned();
-            } else if self.status(*stage) == StageStatus::Partial {
-                rates = format!("{rates}  {}", StageStatus::Partial.label());
-            }
-            if !rates.is_empty() {
-                rows.push(vec![compact_stage(*stage).to_owned(), rates]);
-            }
-        }
-        if rows.is_empty() {
-            return String::new();
-        }
-        let scope = if run_servers(self.snapshot).len() > 1 {
-            "All servers"
-        } else {
-            ""
-        };
-        self.grid(&["Throughput".to_owned(), scope.to_owned()], &rows)
-    }
-
+    /// The shown server's latency in a stage.
     fn population(&self, stage: Stage) -> Option<&ServerLatencyResult> {
         let shown = self.shown?;
         self.result(stage)?
@@ -314,13 +396,74 @@ impl<'a> Report<'a> {
             .find(|host| host.id == shown)
     }
 
-    fn latency(&self, heading: String) -> (String, Vec<String>, bool) {
+    /// Go's meanRates: each measured direction's arrow and mean rate.
+    pub fn rates(&self, stage: Stage) -> String {
+        let rates = Direction::of(stage).filter_map(|direction| {
+            let rate = self.measurement(stage, direction)?.mean_bytes_per_sec;
+            Some(format!(
+                "{} {}",
+                direction.arrow(),
+                rate.map_or(MISSING.to_owned(), format::rate)
+            ))
+        });
+        rates.collect::<Vec<_>>().join("  ")
+    }
+
+    /// Go's headline: a finished stage's rates, and an idle stage's median.
+    pub fn headline(&self, stage: Stage) -> Vec<Span<'static>> {
+        let mut spans = Vec::new();
+        let rates = self.rates(stage);
+        if !rates.is_empty() {
+            spans.push(span(rates, self.theme.value));
+        }
+        if let Some(median) = self.population(stage).and_then(ServerLatencyResult::median)
+            && stage == Stage::Latency
+        {
+            if !spans.is_empty() {
+                spans.push(Span::raw("  "));
+            }
+            spans.extend([span(ms(median), self.theme.value), span(" median", self.theme.muted)]);
+        }
+        spans
+    }
+
+    fn measured(&self) -> bool {
+        self.snapshot
+            .results
+            .iter()
+            .any(|result| result.down.is_some() || result.up.is_some())
+            || self.snapshot.plan.iter().any(|stage| self.population(*stage).is_some())
+    }
+
+    /// Go's resultsView.
+    pub fn results(&self, heading: &str) -> Results {
+        let theme = &self.theme;
+        let live = self.snapshot.phase.live();
         let idle = self.population(Stage::Latency).and_then(ServerLatencyResult::median);
-        let mut rows = Vec::new();
-        let mut failures = Vec::new();
-        for stage in self.plan {
-            for direction in Direction::of(*stage) {
-                failures.extend(self.throughput_failure(*stage, direction, &direction.label(*stage)));
+        let mut out = Results::default();
+        let (mut throughput, mut latency) = (Vec::new(), Vec::new());
+        for stage in &self.snapshot.plan {
+            let hue = theme.stage(*stage);
+            if stage.downloads() || stage.uploads() {
+                for direction in Direction::of(*stage) {
+                    let label = direction.label(*stage);
+                    if let Some(measurement) = self.measurement(*stage, direction)
+                        && (measurement.mean_bytes_per_sec.is_some() || measurement.total_bytes > 0)
+                    {
+                        out.notes
+                            .extend(self.note(&label, &throughput_facts(measurement, false)));
+                    }
+                    out.failures.extend(self.throughput_failure(*stage, direction, &label));
+                }
+                let mut rates = Line::from(self.rates(*stage));
+                if rates.width() == 0 && !live {
+                    rates = Line::from(self.unmeasured(*stage));
+                } else if self.status(*stage) == StageStatus::Partial {
+                    rates.spans.extend([Span::raw("  "), span("Partial", theme.warn)]);
+                }
+                if rates.width() > 0 {
+                    throughput.push(vec![line(compact_stage(*stage), hue), rates]);
+                }
             }
             match self.population(*stage) {
                 Some(population) => {
@@ -328,51 +471,72 @@ impl<'a> Report<'a> {
                     if *stage == Stage::Latency {
                         cells[1].clear();
                     }
-                    let label = self.paint(Tone::Stage(*stage), compact_population(*stage));
-                    rows.push([vec![label], cells].concat());
+                    out.added |= !cells[1].is_empty();
+                    let mut row = vec![line(compact_population(*stage), hue)];
+                    row.extend(cells.into_iter().map(Line::from));
+                    latency.push(row);
                     let label = population_label(*stage);
+                    out.notes.extend(self.note(&label, &latency_facts(population)));
+                    if let Some(timing) = population.summary.reflector_timing {
+                        let label = format!("Server timing ({} paired replies, means)", count(timing.count));
+                        let facts = [
+                            format!("raw {}", ms(timing.mean_raw_rtt)),
+                            format!("handling {}", ms(timing.mean_handling)),
+                        ];
+                        out.notes.extend(self.note(&label, &facts));
+                    }
                     match population.ending {
                         Some(Ending::Stopped) if self.snapshot.phase == Phase::Cancelled => {
-                            failures.push(self.paint(Tone::Warn, &format!("{label} stopped.")));
+                            out.failures.push(line(format!("{label} stopped."), theme.warn));
                         }
                         Some(Ending::Failed(reason)) => {
-                            failures.push(self.paint(Tone::Err, &format!("{label}: {}", reason.label())));
+                            out.failures
+                                .push(line(format!("{label}: {}", reason.label()), theme.err));
                         }
                         _ => {}
                     }
                 }
-                None if *stage == Stage::Latency && !self.snapshot.phase.live() => {
-                    rows.push(vec![
-                        self.paint(Tone::Stage(*stage), compact_population(*stage)),
-                        self.unmeasured(*stage).to_owned(),
+                None if *stage == Stage::Latency && !live => {
+                    latency.push(vec![
+                        line(compact_population(*stage), hue),
+                        Line::from(self.unmeasured(*stage)),
                     ]);
                 }
                 None => {}
             }
         }
-        let added = rows.iter().any(|row| row.get(2).is_some_and(|cell| !cell.is_empty()));
-        if rows.is_empty() {
-            return (String::new(), failures, added);
+        if !self.measured() {
+            return Results::default();
         }
-        let mut headers = vec![heading, "Median".into(), "Added".into(), "P95".into(), "Jitter".into()];
-        headers.push("Probe timeouts".into());
-        for row in &mut rows {
-            row.resize(headers.len(), String::new());
-            if !added {
-                row.remove(2);
+        if out.added {
+            out.notes.push(line(ADDED_NOTE, theme.muted));
+        }
+        if !throughput.is_empty() {
+            let scope = if self.several() { "All servers" } else { "" };
+            out.throughput = self.grid(&["Throughput", scope], throughput);
+        }
+        if !latency.is_empty() {
+            let mut headers = vec![heading, "Median", "Added", "P95", "Jitter", "Probe timeouts"];
+            for row in &mut latency {
+                row.resize(headers.len(), Line::default());
+                if !out.added {
+                    row.remove(2);
+                }
             }
+            if !out.added {
+                headers.remove(2);
+            }
+            out.latency = self.grid(&headers, latency);
         }
-        if !added {
-            headers.remove(2);
-        }
-        (self.grid(&headers, &rows), failures, added)
+        out
     }
 
-    fn throughput_failure(&self, stage: Stage, direction: Direction, label: &str) -> Option<String> {
+    /// Why a direction has no result, or ended early.
+    fn throughput_failure(&self, stage: Stage, direction: Direction, label: &str) -> Option<Line<'static>> {
         let result = self.result(stage)?;
         let measurement = self.measurement(stage, direction)?;
         if result.stopped {
-            return Some(self.paint(Tone::Warn, &format!("{label} stopped.")));
+            return Some(line(format!("{label} stopped."), self.theme.warn));
         }
         let stage_failures: Vec<_> = self
             .snapshot
@@ -390,13 +554,108 @@ impl<'a> Report<'a> {
             _ if measurement.mean_bytes_per_sec.is_none() => FailureReason::InsufficientEvidence,
             _ => return None,
         };
-        Some(self.paint(Tone::Err, &format!("{label}: {}", reason.label())))
+        Some(line(format!("{label}: {}", reason.label()), self.theme.err))
     }
 
-    fn notes(&self, added: bool) -> String {
+    /// Go's reportHeader.
+    pub fn header(&self) -> Line<'static> {
+        let servers = run_servers(self.snapshot);
+        let mut facts = Vec::new();
+        match servers.as_slice() {
+            [] => {}
+            [server] => facts.push(server.name.clone()),
+            servers => facts.push(format!("{} servers", servers.len())),
+        }
+        facts.push(clock(self.snapshot.duration));
+        let total: u64 = self
+            .snapshot
+            .results
+            .iter()
+            .flat_map(|result| [&result.down, &result.up])
+            .flatten()
+            .map(|measurement| measurement.total_bytes)
+            .sum();
+        if total > 0 {
+            facts.push(format::bytes(total));
+        }
+        let phase = self.snapshot.phase;
+        let tone = Style {
+            fg: self.theme.outcome(phase).bg,
+            ..Style::new().add_modifier(Modifier::BOLD)
+        };
+        Line::from(vec![
+            span("Graphite Meter", self.theme.heading),
+            Span::raw("  "),
+            span(outcome(phase), tone),
+            Span::raw("  "),
+            span(facts.join(" · "), self.theme.muted),
+        ])
+    }
+
+    /// Go's throughputReport: each planned direction's rate and facts.
+    pub fn throughput(&self) -> Text {
+        let theme = &self.theme;
+        let mut rows = Vec::new();
+        for stage in &self.snapshot.plan {
+            let hue = theme.stage(*stage);
+            for direction in Direction::of(*stage) {
+                let label = Line::from(vec![
+                    span(direction.arrow(), hue),
+                    Span::raw(" "),
+                    span(stage.name(), theme.text),
+                ]);
+                let (value, mut facts) = match self.measurement(*stage, direction) {
+                    None => (line(self.unmeasured(*stage), theme.muted), Vec::new()),
+                    Some(measurement) => match measurement.mean_bytes_per_sec {
+                        None => (line(MISSING, theme.muted), Vec::new()),
+                        Some(mean) => (
+                            line(format::rate(mean), hue.add_modifier(Modifier::BOLD)),
+                            throughput_facts(measurement, true),
+                        ),
+                    },
+                };
+                let partial = self.status(*stage) == StageStatus::Partial;
+                if partial {
+                    facts.insert(0, "Partial".to_owned());
+                }
+                rows.push((label, value, facts, partial));
+            }
+        }
+        let label_width = rows.iter().map(|row| row.0.width()).max().unwrap_or(0);
+        let value_width = rows.iter().map(|row| row.1.width()).max().unwrap_or(0);
+        let indent = label_width + value_width + 2;
         let mut lines = Vec::new();
+        for (label, value, facts, partial) in rows {
+            let mut first = pad(label, label_width);
+            first.spans.push(Span::raw("  "));
+            first.spans.extend(pad(value, value_width).spans);
+            for (index, part) in wrap_parts(&facts, self.width.saturating_sub(indent + 3).max(20))
+                .into_iter()
+                .enumerate()
+            {
+                let mut line = if index == 0 {
+                    first.clone()
+                } else {
+                    Line::from(" ".repeat(indent))
+                };
+                if index == 0 && partial {
+                    let rest = part.strip_prefix("Partial").unwrap_or(&part).to_owned();
+                    line.spans
+                        .extend([Span::raw("   "), span("Partial", theme.warn), span(rest, theme.muted)]);
+                } else if !part.is_empty() {
+                    line.spans.extend([Span::raw("   "), span(part, theme.muted)]);
+                }
+                lines.push(line);
+            }
+        }
+        lines
+    }
+
+    /// Go's reportNotes: latency issues, the server's share of the round trips, and Added.
+    pub fn notes(&self, added: bool) -> Text {
+        let mut notes = Vec::new();
         let mut timing = Vec::new();
-        for stage in self.plan {
+        for stage in &self.snapshot.plan {
             let Some(population) = self.population(*stage) else {
                 continue;
             };
@@ -406,7 +665,7 @@ impl<'a> Report<'a> {
                 || summary.unresolved > 0
                 || summary.send_failures > 0
             {
-                lines.extend(note(&population_label(*stage), &latency_facts(population), self.width));
+                notes.extend(self.note(&population_label(*stage), &latency_facts(population)));
             }
             if let Some(reflector) = summary.reflector_timing {
                 let mut part = format!(
@@ -422,40 +681,55 @@ impl<'a> Report<'a> {
             }
         }
         if !timing.is_empty() {
-            lines.extend(note("Server handling of the mean round trip", &timing, self.width));
+            notes.extend(self.note("Server handling of the mean round trip", &timing));
         }
         if added {
-            lines.push(ADDED_NOTE.to_owned());
+            notes.push(line(ADDED_NOTE, self.theme.muted));
         }
-        let lines: Vec<_> = lines.iter().map(|line| self.paint(Tone::Muted, line)).collect();
-        lines.join("\n")
+        notes
+    }
+
+    /// Go's note: the label and its facts, wrapped under the label when they do not fit beside it.
+    fn note(&self, label: &str, facts: &[String]) -> Text {
+        let first = format!("{label}: {}", facts[0]);
+        let (mut lines, facts) = if first.chars().map(cell).sum::<usize>() <= self.width.saturating_sub(2) {
+            (Vec::new(), [vec![first], facts[1..].to_vec()].concat())
+        } else {
+            (vec![format!("{label}:")], facts.to_vec())
+        };
+        for line in wrap_parts(&facts, self.width.saturating_sub(2)) {
+            lines.push(if lines.is_empty() { line } else { format!("  {line}") });
+        }
+        lines.into_iter().map(|text| line(text, self.theme.muted)).collect()
     }
 
     /// Go's detailsView: the outcome, the facts in full, the rates and latency medians by server,
     /// the issues and, in full once the run ends, its aggregation intervals.
-    fn details(&self, full: bool) -> String {
-        let mut lines = vec![self.paint(Tone::Heading, &self.outcome_notice())];
-        let facts = if full { self.facts() } else { Vec::new() };
-        if !facts.is_empty() {
-            lines.extend(facts);
-            lines.push(String::new());
+    pub fn details(&self, full: bool) -> Text {
+        let theme = &self.theme;
+        let mut lines = vec![line(self.outcome_notice(), theme.heading)];
+        let notes = self.results("Latency").notes;
+        if full && !notes.is_empty() {
+            lines.extend(notes);
+            lines.push(Line::default());
         }
-        lines.push(self.server_rates());
-        lines.extend([String::new(), self.paint(Tone::Heading, "Latency median by server")]);
-        lines.push(self.server_medians());
+        lines.extend(self.server_rates());
+        lines.extend([Line::default(), line("Latency median by server", theme.heading)]);
+        lines.extend(self.server_medians());
         if !self.snapshot.failures.is_empty() {
-            lines.extend([String::new(), self.paint(Tone::Heading, "Issues")]);
-            lines.extend(self.snapshot.failures.iter().map(|failure| self.issue(failure)));
+            lines.extend([Line::default(), line("Issues", theme.heading)]);
+            lines.extend(
+                self.snapshot
+                    .failures
+                    .iter()
+                    .map(|failure| Line::from(self.issue(failure))),
+            );
         }
         if full && !self.snapshot.phase.live() && !self.snapshot.intervals.is_empty() {
-            lines.extend([String::new(), "Aggregation intervals".to_owned()]);
-            lines.extend(self.intervals());
+            lines.extend([Line::default(), line("Aggregation intervals", theme.heading)]);
+            lines.extend(self.intervals().into_iter().map(|text| line(text, theme.muted)));
         }
-        let text = lines.join("\n");
-        text.lines()
-            .map(|line| fit(line, self.width))
-            .collect::<Vec<_>>()
-            .join("\n")
+        lines.into_iter().map(|line| fit(line, self.width)).collect()
     }
 
     /// Go's outcomeNotice: one server's status, or how many of the run's servers remain.
@@ -471,17 +745,22 @@ impl<'a> Report<'a> {
         }
     }
 
+    fn directions(&self) -> Vec<(Stage, Direction)> {
+        let plan = self.snapshot.plan.iter();
+        plan.flat_map(|stage| Direction::of(*stage).map(|direction| (*stage, direction)))
+            .collect()
+    }
+
     /// Each direction's mean rate for the run, then for each server; one that left is marked ✗.
-    fn server_rates(&self) -> String {
+    fn server_rates(&self) -> Text {
         let directions = self.directions();
         let rate = |measurement: Option<&MeasurementResult>| {
-            measurement
-                .and_then(|measurement| measurement.mean_bytes_per_sec)
-                .map_or_else(|| MISSING.to_owned(), format::rate)
+            let mean = measurement.and_then(|measurement| measurement.mean_bytes_per_sec);
+            Line::from(mean.map_or_else(|| MISSING.to_owned(), format::rate))
         };
         let mut headers = vec!["Server".to_owned()];
         headers.extend(directions.iter().map(|(stage, direction)| direction.label(*stage)));
-        let mut all = vec!["All servers".to_owned()];
+        let mut all = vec![Line::from("All servers")];
         all.extend(
             directions
                 .iter()
@@ -500,10 +779,11 @@ impl<'a> Report<'a> {
                     Direction::Up => contribution.up.as_ref(),
                 }
             };
-            let mut row = vec![server.name.clone()];
+            let mut name = server.name.clone();
             if !self.snapshot.participants.contains(&server.id) {
-                row[0].push_str(" ✗");
+                name.push_str(" ✗");
             }
+            let mut row = vec![Line::from(name)];
             row.extend(
                 directions
                     .iter()
@@ -511,28 +791,30 @@ impl<'a> Report<'a> {
             );
             rows.push(row);
         }
-        self.grid(&headers, &rows)
+        self.grid(&headers.iter().map(String::as_str).collect::<Vec<_>>(), rows)
     }
 
     /// Each server's latency median in each planned stage.
-    fn server_medians(&self) -> String {
-        let mut headers = vec!["Server".to_owned()];
-        headers.extend(self.plan.iter().map(|stage| compact_population(*stage).to_owned()));
+    fn server_medians(&self) -> Text {
+        let mut headers = vec!["Server"];
+        headers.extend(self.snapshot.plan.iter().map(|stage| compact_population(*stage)));
         let rows: Vec<_> = run_servers(self.snapshot)
             .into_iter()
             .map(|server| {
                 let median = |stage: &Stage| {
-                    self.result(*stage)
+                    let text = self
+                        .result(*stage)
                         .and_then(|result| result.server_latencies.iter().find(|host| host.id == server.id))
                         .and_then(ServerLatencyResult::median)
-                        .map_or_else(|| MISSING.to_owned(), ms)
+                        .map_or_else(|| MISSING.to_owned(), ms);
+                    Line::from(text)
                 };
-                std::iter::once(server.name.clone())
-                    .chain(self.plan.iter().map(median))
+                std::iter::once(Line::from(server.name.clone()))
+                    .chain(self.snapshot.plan.iter().map(median))
                     .collect()
             })
             .collect();
-        self.grid(&headers, &rows)
+        self.grid(&headers, rows)
     }
 
     fn issue(&self, failure: &ServerFailure) -> String {
@@ -551,7 +833,7 @@ impl<'a> Report<'a> {
 
     /// Go's run details: one list of the run's aggregation intervals, timed from its start.
     fn intervals(&self) -> Vec<String> {
-        let seconds = |nanos| Duration::from_nanos(nanos).as_secs_f64();
+        let seconds = |nanos| std::time::Duration::from_nanos(nanos).as_secs_f64();
         let mut lines: Vec<_> = self
             .snapshot
             .intervals
@@ -585,102 +867,51 @@ impl<'a> Report<'a> {
         lines
     }
 
-    fn facts(&self) -> Vec<String> {
-        let mut notes = Vec::new();
-        for stage in self.plan {
-            for direction in Direction::of(*stage) {
-                let Some(measurement) = self.measurement(*stage, direction) else {
-                    continue;
-                };
-                if measurement.mean_bytes_per_sec.is_some() || measurement.total_bytes > 0 {
-                    let facts = throughput_facts(measurement, false);
-                    notes.extend(note(&direction.label(*stage), &facts, self.width));
-                }
-            }
-            let Some(population) = self.population(*stage) else {
-                continue;
-            };
-            notes.extend(note(&population_label(*stage), &latency_facts(population), self.width));
-            if let Some(timing) = population.summary.reflector_timing {
-                notes.extend(note(
-                    &format!("Server timing ({} paired replies, means)", count(timing.count)),
-                    &[
-                        format!("raw {}", ms(timing.mean_raw_rtt)),
-                        format!("handling {}", ms(timing.mean_handling)),
-                    ],
-                    self.width,
-                ));
+    /// Go's grid: muted headers over text cells, or each row's facts when the columns do not fit.
+    fn grid(&self, headers: &[&str], rows: Vec<Vec<Line<'static>>>) -> Text {
+        let (muted, text) = (self.theme.muted, self.theme.text);
+        let headers: Vec<_> = headers.iter().map(|header| Line::from(header.to_string())).collect();
+        let mut widths = vec![0; headers.len()];
+        for row in std::iter::once(&headers).chain(&rows) {
+            for (index, cell) in row.iter().enumerate() {
+                widths[index] = widths[index].max(cell.width());
             }
         }
-        notes
-    }
-}
-
-#[derive(Clone, Copy)]
-enum Direction {
-    Down,
-    Up,
-}
-
-impl Direction {
-    /// The directions a stage transfers.
-    fn of(stage: Stage) -> impl Iterator<Item = Self> {
-        [
-            stage.downloads().then_some(Self::Down),
-            stage.uploads().then_some(Self::Up),
-        ]
-        .into_iter()
-        .flatten()
-    }
-
-    fn arrow(self) -> &'static str {
-        match self {
-            Self::Down => "↓",
-            Self::Up => "↑",
+        if widths.iter().map(|width| width + 2).sum::<usize>().saturating_sub(2) <= self.width {
+            let styled = std::iter::once((headers, muted)).chain(rows.into_iter().map(|row| (row, text)));
+            return styled
+                .map(|(cells, base)| {
+                    let mut spans = Vec::new();
+                    for (index, (cell, width)) in cells.into_iter().zip(&widths).enumerate() {
+                        if index > 0 {
+                            spans.push(Span::raw("  "));
+                        }
+                        spans.extend(pad(under(cell, base), *width).spans);
+                    }
+                    trim_end(Line::from(spans))
+                })
+                .collect();
         }
-    }
-
-    fn label(self, stage: Stage) -> String {
-        match stage {
-            Stage::Bidirectional => format!("Bi-dir {}", self.arrow()),
-            stage => stage.name().to_owned(),
+        let mut lines = vec![under(headers[0].clone(), muted)];
+        for row in rows {
+            let facts: Vec<_> = row[1..]
+                .iter()
+                .zip(&headers[1..])
+                .filter(|(cell, _)| cell.width() > 0)
+                .map(|(cell, header)| format!("{} {}", plain(header), plain(cell)).trim().to_owned())
+                .collect();
+            lines.push(under(row[0].clone(), text));
+            lines.extend(
+                wrap_parts(&facts, self.width.saturating_sub(2))
+                    .into_iter()
+                    .map(|fact| Line::from(vec![Span::raw("  "), span(fact, muted)])),
+            );
         }
+        lines
     }
 }
 
-fn outcome(phase: Phase) -> &'static str {
-    match phase {
-        Phase::Complete => "Complete",
-        Phase::Partial => "Partial",
-        Phase::Incomplete => "Incomplete",
-        Phase::Cancelled => "Stopped",
-        _ => "Failed",
-    }
-}
-
-fn compact_stage(stage: Stage) -> &'static str {
-    match stage {
-        Stage::Bidirectional => "Bi-dir",
-        stage => stage.name(),
-    }
-}
-
-fn population_label(stage: Stage) -> String {
-    match stage {
-        Stage::Latency => "Idle latency".to_owned(),
-        stage => format!("Loaded latency · {}", stage.name()),
-    }
-}
-
-fn compact_population(stage: Stage) -> &'static str {
-    match stage {
-        Stage::Latency => "Idle",
-        Stage::Download => "Loaded down",
-        Stage::Upload => "Loaded up",
-        Stage::Bidirectional => "Loaded bi-dir",
-    }
-}
-
+/// Go's latencyCells: median, Added, P95, jitter and probe timeouts.
 fn latency_cells(population: &ServerLatencyResult, idle: Option<u64>) -> Vec<String> {
     let summary = population.summary;
     let mut cells = vec![MISSING.to_owned(); 5];
@@ -711,6 +942,7 @@ fn latency_cells(population: &ServerLatencyResult, idle: Option<u64>) -> Vec<Str
     cells
 }
 
+/// Go's latencyFacts.
 fn latency_facts(population: &ServerLatencyResult) -> Vec<String> {
     let summary = population.summary;
     let mut facts = vec![format!("{} replies", count(summary.count))];
@@ -726,6 +958,7 @@ fn latency_facts(population: &ServerLatencyResult) -> Vec<String> {
     facts
 }
 
+/// Go's throughputFacts; `brief` leaves out the samples and the peak's unit when the mean has it.
 fn throughput_facts(measurement: &MeasurementResult, brief: bool) -> Vec<String> {
     let mut facts = Vec::new();
     if let Some(peak) = measurement.peak_bytes_per_sec.filter(|peak| *peak > 0.0) {
@@ -739,7 +972,7 @@ fn throughput_facts(measurement: &MeasurementResult, brief: bool) -> Vec<String>
     }
     facts.push(format::bytes(measurement.total_bytes));
     if let Some(elapsed) = measurement.elapsed_nanos.filter(|elapsed| *elapsed > 0) {
-        facts.push(clock(Duration::from_nanos(elapsed)));
+        facts.push(clock(std::time::Duration::from_nanos(elapsed)));
     }
     if measurement.samples > 0 && !brief {
         facts.push(format!("{} samples", count(measurement.samples)));
@@ -750,193 +983,12 @@ fn throughput_facts(measurement: &MeasurementResult, brief: bool) -> Vec<String>
     facts
 }
 
-fn note(label: &str, facts: &[String], width: usize) -> Vec<String> {
-    let first = format!("{label}: {}", facts[0]);
-    let (mut lines, facts) = if self::width(&first) <= width.saturating_sub(2) {
-        (Vec::new(), [vec![first], facts[1..].to_vec()].concat())
-    } else {
-        (vec![format!("{label}:")], facts.to_vec())
-    };
-    for line in wrap_parts(&facts, width.saturating_sub(2)) {
-        lines.push(if lines.is_empty() { line } else { format!("  {line}") });
-    }
-    lines
-}
-
-impl Report<'_> {
-    /// Go's grid: muted headers over text cells, or each row's facts when the columns do not fit.
-    fn grid(&self, headers: &[String], rows: &[Vec<String>]) -> String {
-        let limit = self.width;
-        let mut widths = vec![0; headers.len()];
-        for row in std::iter::once(headers).chain(rows.iter().map(Vec::as_slice)) {
-            for (index, cell) in row.iter().enumerate() {
-                widths[index] = widths[index].max(width(cell));
-            }
-        }
-        if widths.iter().map(|width| width + 2).sum::<usize>().saturating_sub(2) <= limit {
-            return std::iter::once(headers)
-                .chain(rows.iter().map(Vec::as_slice))
-                .enumerate()
-                .map(|(index, row)| {
-                    let tone = if index == 0 { Tone::Muted } else { Tone::Text };
-                    let cells: Vec<_> = row
-                        .iter()
-                        .zip(&widths)
-                        .map(|(cell, width)| pad(&self.paint(tone, cell), *width))
-                        .collect();
-                    cells.join("  ").trim_end().to_owned()
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-        }
-        let mut lines = vec![self.paint(Tone::Muted, &headers[0])];
-        for row in rows {
-            let facts: Vec<_> = row[1..]
-                .iter()
-                .zip(&headers[1..])
-                .filter(|(cell, _)| !cell.is_empty())
-                .map(|(cell, header)| format!("{header} {cell}").trim().to_owned())
-                .collect();
-            lines.push(self.paint(Tone::Text, &row[0]));
-            lines.extend(
-                wrap_parts(&facts, limit.saturating_sub(2))
-                    .into_iter()
-                    .map(|line| format!("  {}", self.paint(Tone::Muted, &line))),
-            );
-        }
-        lines.join("\n")
-    }
-}
-
-pub(crate) fn wrap_parts(parts: &[String], limit: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    let mut line = String::new();
-    for part in parts {
-        if line.is_empty() {
-            line.clone_from(part);
-        } else if line.chars().count() + 3 + part.chars().count() <= limit {
-            line.push_str(" · ");
-            line.push_str(part);
-        } else {
-            lines.push(std::mem::replace(&mut line, part.clone()));
-        }
-    }
-    lines.push(line);
-    lines
-}
-
-fn fit(line: &str, limit: usize) -> String {
-    if width(line) <= limit {
-        return line.to_owned();
-    }
-    let mut fitted = String::new();
-    let mut used = 0;
-    let mut rest = line;
-    while let Some(character) = rest.chars().next() {
-        if let Some(length) = sgr_length(rest) {
-            fitted.push_str(&rest[..length]);
-            rest = &rest[length..];
-            continue;
-        }
-        used += unicode_width::UnicodeWidthChar::width(character).unwrap_or(0);
-        if used >= limit.max(1) {
-            break;
-        }
-        fitted.push(character);
-        rest = &rest[character.len_utf8()..];
-    }
-    fitted.push('…');
-    if fitted.contains('\x1b') {
-        fitted.push_str(RESET);
-    }
-    fitted
-}
-
-/// Display width; the SGR sequences `paint` adds take none.
-fn width(text: &str) -> usize {
-    unicode_width::UnicodeWidthStr::width(unpainted(text).as_str())
-}
-
-fn unpainted(text: &str) -> String {
-    map_text(text, false, |character| character)
-}
-
-/// The length of the SGR sequence `text` starts with, as `paint` writes them.
-fn sgr_length(text: &str) -> Option<usize> {
-    let parameters = text.strip_prefix("\x1b[")?;
-    let end = parameters.find(|c: char| !c.is_ascii_digit() && c != ';')?;
-    parameters[end..].starts_with('m').then_some(end + 3)
-}
-
-/// The TUI's safe text for a report line, keeping only the SGR sequences `paint` adds.
-fn safe(line: &str) -> String {
-    map_text(line, true, terminal_char)
-}
-
-/// The text with each character mapped, keeping or dropping the SGR sequences `paint` adds.
-fn map_text(text: &str, keep_sgr: bool, map: fn(char) -> char) -> String {
-    let mut mapped = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(character) = rest.chars().next() {
-        let length = match sgr_length(rest) {
-            Some(length) if keep_sgr => {
-                mapped.push_str(&rest[..length]);
-                length
-            }
-            Some(length) => length,
-            None => {
-                mapped.push(map(character));
-                character.len_utf8()
-            }
-        };
-        rest = &rest[length..];
-    }
-    mapped
-}
-
-/// A character the terminal shows as itself, or the replacement for one that could control it.
-pub(crate) fn terminal_char(c: char) -> char {
-    if terminal_character(c) { c } else { '�' }
-}
-
-/// A foreground colour's SGR parameters, as Go's colour profiles write each depth.
-fn sgr(color: Color) -> Option<String> {
-    let ansi = match color {
-        Color::Reset => return None,
-        Color::Rgb(red, green, blue) => return Some(format!("38;2;{red};{green};{blue}")),
-        Color::Indexed(index) => return Some(format!("38;5;{index}")),
-        Color::Black => 30,
-        Color::Red => 31,
-        Color::Green => 32,
-        Color::Yellow => 33,
-        Color::Blue => 34,
-        Color::Magenta => 35,
-        Color::Cyan => 36,
-        Color::Gray => 37,
-        Color::DarkGray => 90,
-        Color::LightRed => 91,
-        Color::LightGreen => 92,
-        Color::LightYellow => 93,
-        Color::LightBlue => 94,
-        Color::LightMagenta => 95,
-        Color::LightCyan => 96,
-        Color::White => 97,
-    };
-    Some(ansi.to_string())
-}
-
-fn pad(text: &str, to: usize) -> String {
-    format!("{text}{}", " ".repeat(to.saturating_sub(width(text))))
-}
-
-fn ms(nanos: u64) -> String {
+/// Go's fmtMs of nanoseconds.
+pub(crate) fn ms(nanos: u64) -> String {
     format!("{} ms", format::latency_ms(nanos as f64 / 1e6))
 }
 
-fn clock(duration: Duration) -> String {
-    format!("{:.1} s", duration.as_secs_f64())
-}
-
+/// Go's fmtCount.
 fn count(value: usize) -> String {
     let digits = value.to_string();
     let mut out = String::new();
@@ -952,8 +1004,11 @@ fn count(value: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ServerContribution, ServerFailure, ServerSummary};
-    use crate::ui::tests::{download_measurement, latency_result, probes};
+    use crate::{
+        model::ServerContribution,
+        theme::Profile,
+        ui::tests::{download_measurement, latency_result, probes},
+    };
 
     /// One server's idle and loaded latency and a download a late probe timeout made partial.
     fn partial_run() -> Snapshot {
@@ -969,17 +1024,17 @@ mod tests {
             participants: vec!["a".into()],
             latency_focus: Some("a".into()),
             plan: vec![Stage::Latency, Stage::Download],
-            duration: Duration::from_secs(5),
+            duration: std::time::Duration::from_secs(5),
             results: vec![
                 StageResult {
                     stage: Stage::Latency,
-                    elapsed: Duration::from_secs(1),
+                    elapsed: std::time::Duration::from_secs(1),
                     server_latencies: latency(&[1_000_000, 2_000_000, 3_000_000], 1),
                     ..StageResult::default()
                 },
                 StageResult {
                     stage: Stage::Download,
-                    elapsed: Duration::from_secs(1),
+                    elapsed: std::time::Duration::from_secs(1),
                     down: Some(MeasurementResult {
                         peak_bytes_per_sec: Some(1_800_000.0),
                         ..download_measurement()
@@ -997,7 +1052,7 @@ mod tests {
                 stage: Stage::Download,
                 scope: FailureScope::Latency,
                 reason: FailureReason::Timeout,
-                at: Duration::from_secs(3),
+                at: std::time::Duration::from_secs(3),
             }],
             error: Some("Stopped delivering data".into()),
             ..Snapshot::default()
@@ -1005,81 +1060,72 @@ mod tests {
     }
 
     #[test]
+    fn the_report_reads_as_go_prints_it() {
+        let report = render(&partial_run(), WIDTH, Theme::default()).unwrap();
+        assert_eq!(
+            report,
+            [
+                "Graphite Meter  Partial  Alpha · 5.0 s · 1.5 MB",
+                "",
+                "↓ Download  12.00 Mbit/s   Partial · peak 14.40 · 1.5 MB · 1.0 s",
+                "",
+                "Latency      Median  Added    P95     Jitter  Probe timeouts",
+                "Idle         2.0 ms           3.0 ms  1.0 ms  1 / 4 (25.0%)",
+                "Loaded down  6.0 ms  +4.0 ms  7.0 ms  1.0 ms  0 / 3",
+                "",
+                "Idle latency: 3 replies · 1.0 s",
+                "Server handling of the mean round trip: Idle < 0.1 ms of 2.0 ms · Loaded down < 0.1 ms of 6.0 ms",
+                "Added: loaded median minus idle median, same server.",
+                "",
+                "Stopped delivering data",
+            ]
+            .join("\n")
+        );
+    }
+
+    #[test]
     fn a_terminal_report_paints_go_styles_over_the_plain_text() {
         let snapshot = partial_run();
-        let plain = compose(&snapshot, WIDTH, None).unwrap();
-        assert!(!plain.contains('\x1b'));
-        assert_eq!(render(&snapshot, WIDTH, false).as_ref(), Some(&plain));
-        let mut theme = Theme::terminal();
-        (theme.ink, theme.text, theme.muted) = (Color::Indexed(1), Color::Indexed(2), Color::Indexed(3));
-        (theme.warn, theme.err) = (Color::Indexed(4), Color::Rgb(5, 6, 7));
-        let painted = compose(&snapshot, WIDTH, Some(theme)).unwrap();
-        assert_eq!(unpainted(&painted), plain);
-        let report = Report {
-            theme: Some(theme),
-            ..Report::new(&snapshot, None, WIDTH)
-        };
-        let paint = |tone, text: &str| report.paint(tone, text);
-        let download = Stage::Download;
-        for line in [
-            "\x1b[1;38;5;1mGraphite Meter\x1b[0m  \x1b[1;38;5;4mPartial\x1b[0m  \x1b[38;5;3mAlpha · 5.0 s · 1.5 MB\x1b[0m"
-                .to_owned(),
-            format!(
-                "{} {}  {}   {}{}",
-                paint(Tone::Stage(download), "↓"),
-                paint(Tone::Text, "Download"),
-                paint(Tone::Rate(download), "12.00 Mbit/s"),
-                paint(Tone::Warn, "Partial"),
-                paint(Tone::Muted, " · peak 14.40 · 1.5 MB · 1.0 s")
-            ),
-            format!("{}      {}", paint(Tone::Muted, "Latency"), paint(Tone::Muted, "Median")),
-            format!(
-                "{}  {}",
-                paint(Tone::Text, &paint(Tone::Stage(download), "Loaded down")),
-                paint(Tone::Text, "6.0 ms")
-            ),
-            paint(Tone::Muted, ADDED_NOTE),
-            "\x1b[1;38;2;5;6;7mStopped delivering data\x1b[0m".to_owned(),
-        ] {
-            assert!(painted.lines().any(|painted| painted.contains(&line)), "{line:?} in {painted:?}");
-        }
-
-        // A multi-server run's details keep Go's headings; its issues stay plain.
-        let mut pair = partial_run();
+        let theme = Theme::new(Profile::Ansi256, true);
+        let painted = render(&snapshot, WIDTH, theme).unwrap();
+        assert!(painted.starts_with("\x1b[1;38;5;254mGraphite Meter\x1b[0m  \x1b[1;38;5;186mPartial\x1b[0m"));
+        assert!(painted.contains("\x1b[1;38;5;75m12.00 Mbit/s\x1b[0m"), "{painted:?}");
+        assert!(
+            painted.ends_with("\x1b[1;38;5;210mStopped delivering data\x1b[0m"),
+            "{painted:?}"
+        );
+        let mut pair = snapshot;
         pair.servers.push(ServerSummary {
             id: "b".into(),
             name: "Beta".into(),
             error: Some("checked".into()),
             ..ServerSummary::default()
         });
-        let painted = compose(&pair, WIDTH, Some(theme)).unwrap();
-        assert_eq!(unpainted(&painted), compose(&pair, WIDTH, None).unwrap());
+        let text = render(&pair, WIDTH, Theme::default()).unwrap();
         for line in [
-            paint(Tone::Heading, "Partial · 1 of 2 servers"),
-            paint(Tone::Heading, "Latency median by server"),
-            paint(Tone::Heading, "Issues"),
-            "Alpha · Download latency · at 3.0 s · Stopped delivering data".to_owned(),
+            "Partial · 1 of 2 servers",
+            "Latency median by server",
+            "Issues",
+            "Alpha · Download latency · at 3.0 s · Stopped delivering data",
         ] {
-            assert!(
-                painted.lines().any(|painted| painted == line),
-                "{line:?} in {painted:?}"
-            );
+            assert!(text.lines().any(|shown| shown == line), "{line:?} in {text}");
         }
     }
 
     #[test]
-    fn painted_lines_measure_fit_and_sanitize_around_their_colours() {
-        let name = "\x1b[1;38;5;1mname\x1b[0m";
-        assert_eq!(width(name), 4);
-        assert_eq!(pad(name, 6), format!("{name}  "));
-        assert_eq!(fit("\x1b[38;5;3mabcdef\x1b[0m", 4), "\x1b[38;5;3mabc…\x1b[0m");
-        assert_eq!(fit("abcdef", 4), "abc…");
+    fn lines_fit_pad_and_sanitize_around_their_styles() {
+        let bold = Style::new().add_modifier(Modifier::BOLD);
+        let styled = Line::from(vec![span("ab", bold), Span::raw("cdef")]);
         assert_eq!(
-            safe(&format!("{name}\x1b]52;c;secret\x07\u{202e}\x1b[2J")),
-            format!("{name}�]52;c;secret���[2J")
+            fit(styled.clone(), 4),
+            Line::from(vec![span("ab", bold), Span::raw("c…")])
         );
-        assert_eq!(sgr(Color::Reset), None);
-        assert_eq!(sgr(Color::LightRed).as_deref(), Some("91"));
-        assert_eq!(sgr(Color::Gray).as_deref(), Some("37"));
+        assert_eq!(fit(styled.clone(), 6), styled);
+        assert_eq!(pad(Line::from("ab"), 4).width(), 4);
+        let mut lines = vec![Line::from(span("name\x1b]52;c;secret\x07\u{202e}", bold))];
+        sanitize(&mut lines, &Theme::default());
+        assert_eq!(lines[0].spans[0].style, Style::default());
+        assert_eq!(plain(&lines[0]), "name�]52;c;secret��");
+        assert_eq!(ansi(&[Line::from(span("x", bold))]), "\x1b[1mx\x1b[0m");
     }
 }

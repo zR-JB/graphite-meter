@@ -24,18 +24,19 @@ release version) and the LICENSE, and the browser's About links that source.
 The packaged TUI keeps its reviewed notice compressed inside the executable and
 expands it only for `--legal`; the archive also carries it as `THIRD_PARTY_NOTICES.txt`.
 
-Run `mise run rust-client-run -- --url https://your-server` to open the experimental TUI.
-Start test is focused initially. Tab/Shift-Tab changes focus, arrows adjust
-settings, and Space toggles stages. Advanced exposes stream and timing settings.
-Press `d` for Details, `l` to change the displayed latency server, `?` for help,
-and `q` to quit. Esc asks to stop an active test; Enter runs again after it ends.
+Run `mise run rust-client-run -- --url https://your-server` to open the experimental TUI,
+which follows Go's views and keys. ↑/↓ move between setup rows, ←/→ change a value,
+Enter opens or edits a row, Space switches a stage on or off, and `r` starts the test
+from any row; `v` checks the paths again, `s` chooses servers, `a` makes every path
+automatic and `u` keeps the servers that are ready. During a run `d` shows Details,
+`l` changes the displayed latency server and Esc asks to stop it; afterwards Enter
+runs again and Esc returns to setup. `?` lists every key, and `q` quits.
 Pass `--report` for a single run without the TUI; redirected output also uses
 report mode. Completion exits 0, a failed or incomplete run exits 1, and signals
 exit 130 (interrupt, or Ctrl-Break on Windows) or 143 (terminate, or a closed
-Windows console). The graphite palette of Go's TUI follows `COLORFGBG` when available,
-otherwise the background the terminal reports to Go's OSC 11 query (not on Windows),
-and adapts to truecolor, 256-color, or ANSI terminals. Set `GM_TUI_THEME=light`
-or `dark` to override the background choice. `NO_COLOR` disables color.
+Windows console). The graphite palette follows the background the terminal reports
+to Go's OSC 11 query (not on Windows), in the colour profile Go's colorprofile picks
+from `TERM`, `COLORTERM`, `NO_COLOR`, `CLICOLOR` and `CLICOLOR_FORCE`.
 The TUI can connect to either implementation's server.
 
 `mise run rust-client-package VERSION` builds the experimental Linux and Windows

@@ -1,102 +1,211 @@
-//! Go's keymap: each binding's keys, the hint footers show for it and its help grid entry, so
-//! dispatch, the footers and the help grid cannot disagree.
-use super::{InputMode, Ui, run_servers};
-use crossterm::event::KeyCode::{
-    self, BackTab, Char, Down, End, Enter, Esc, Home, Left, PageDown, PageUp, Right, Tab, Up,
-};
+//! Go's keymap (keys.go): each binding's keys and its help, and the hints each mode offers.
+use super::{Popup, Ui, setup::Setting};
+use crate::report::{pad, span};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::text::{Line, Span};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) struct Key {
-    codes: &'static [KeyCode],
-    pub(super) hint: &'static str,
-    help: &'static str,
+/// A key.Binding: the key names it matches, and its help key and description.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Binding {
+    keys: &'static [&'static str],
+    pub key: &'static str,
+    pub desc: &'static str,
 }
 
-const fn key(codes: &'static [KeyCode], hint: &'static str, help: &'static str) -> Key {
-    Key { codes, hint, help }
+const fn bind(keys: &'static [&'static str], key: &'static str, desc: &'static str) -> Binding {
+    Binding { keys, key, desc }
 }
 
-pub(super) const ROWS: Key = key(
-    &[Up, Down, Char('k'), Char('j'), Tab, BackTab],
-    "↓ settings",
-    "Tab/Shift-Tab focus",
-);
-pub(super) const CHANGE: Key = key(&[Left, Right], "", "arrows change");
-pub(super) const ACTIVATE: Key = key(&[Enter], "", "Enter edit/run");
-pub(super) const TOGGLE: Key = key(&[Char(' ')], "Space toggle", "Space stage");
-pub(super) const STOP: Key = key(&[Esc], "Esc stop", "Esc close/stop");
-pub(super) const START: Key = key(&[Char('r')], "r Start test", "r run");
-pub(super) const RECHECK: Key = key(&[Char('v')], "v Recheck paths", "v recheck");
-pub(super) const SERVERS: Key = key(&[Char('s')], "s servers", "s servers");
-pub(super) const AVAILABLE: Key = key(&[Char('u')], "", "u available");
-pub(super) const AUTOMATIC: Key = key(&[Char('a')], "", "a auto");
-pub(super) const DETAILS: Key = key(&[Char('d')], "d Details", "d Details");
-pub(super) const LATENCY: Key = key(&[Char('l')], "l Latency server", "l latency");
-pub(super) const OPEN: Key = key(&[Char('o'), Enter, Char(' ')], "Enter/Space/o open", "o sign-in");
-pub(super) const QUIT: Key = key(&[Char('q')], "q quit", "q quit");
-/// Ctrl-C, which dispatch reads with its modifier.
-const ABORT: Key = key(&[], "", "Ctrl-C stop");
-pub(super) const HELP: Key = key(&[Char('?')], "? keys", "? keys");
-pub(super) const CANCEL: Key = key(&[Esc], "Esc cancel", "");
-pub(super) const CONFIRM_STOP: Key = key(&[Esc], "Esc confirm stop", "");
-/// Any key that does not confirm the stop.
-const CONTINUE: Key = key(&[], "any key continue", "");
-pub(super) const SETUP: Key = key(&[Esc], "Esc setup", "");
-pub(super) const RUN_AGAIN: Key = key(&[Enter, Char('r')], "Enter Run again", "");
-const BEGIN: Key = key(&[Enter], "Enter Start test", "");
-pub(super) const MORE: Key = key(&[PageUp, PageDown, Home, End], "PgDn more", "");
-pub(super) const SCROLL: Key = key(&[Up, Down, Char('k'), Char('j')], "↑/↓ scroll", "");
-pub(super) const CLOSE: Key = key(&[Char('d'), Esc], "d/Esc close", "");
-pub(super) const APPLY: Key = key(&[Enter], "Enter apply", "");
-pub(super) const DISCARD: Key = key(&[Esc], "Esc discard", "");
-const CURSOR: Key = key(&[Left, Right, Home, End], "←/→ Home/End move", "");
+pub(super) const ROWS: Binding = bind(&["up", "down", "k", "j", "tab", "shift+tab"], "↑/↓", "move");
+pub(super) const ADJUST: Binding = bind(&["left", "right"], "←/→", "change");
+pub(super) const CHANGE: Binding = bind(&["enter", "space"], "enter", "open");
+pub(super) const TOGGLE: Binding = bind(&["space"], "space", "on/off");
+pub(super) const START: Binding = bind(&["r"], "r", "start test");
+pub(super) const RECHECK: Binding = bind(&["v"], "v", "recheck paths");
+pub(super) const SERVERS: Binding = bind(&["s"], "s", "test servers");
+pub(super) const AUTOMATIC: Binding = bind(&["a"], "a", "automatic paths");
+pub(super) const AVAILABLE: Binding = bind(&["u"], "u", "use available servers");
+pub(super) const OPEN_SIGN_IN: Binding = bind(&["enter", "space", "o"], "enter/space", "open page");
+pub(super) const CANCEL_SIGN_IN: Binding = bind(&["esc"], "esc", "cancel");
+pub(super) const STOP: Binding = bind(&["esc"], "esc", "stop test");
+pub(super) const CONFIRM_STOP: Binding = bind(&["esc"], "esc", "confirm stop");
+pub(super) const SETUP: Binding = bind(&["esc"], "esc", "setup");
+pub(super) const RUN_AGAIN: Binding = bind(&["enter", "r"], "enter", "run again");
+pub(super) const LATENCY_SERVER: Binding = bind(&["l"], "l", "latency server");
+pub(super) const DETAILS: Binding = bind(&["d"], "d", "details");
+pub(super) const SCROLL: Binding = bind(&["up", "down", "k", "j"], "↑/↓", "scroll");
+pub(super) const PAGE: Binding = bind(&["pgup", "pgdown", "home", "end"], "pgdn", "more");
+pub(super) const CLOSE: Binding = bind(&["esc"], "esc", "close");
+pub(super) const TOGGLE_SERVER: Binding = bind(&["space"], "space", "select");
+pub(super) const APPLY: Binding = bind(&["enter"], "enter", "apply");
+pub(super) const DISCARD: Binding = bind(&["esc"], "esc", "cancel");
+const CURSOR: Binding = bind(&["left", "right", "home", "end"], "←/→", "move");
+pub(super) const HELP: Binding = bind(&["?"], "?", "keys");
+pub(super) const QUIT: Binding = bind(&["q"], "q", "quit");
+pub(super) const ABORT: Binding = bind(&["ctrl+c"], "ctrl+c", "quit");
 
-/// The sign-in popup's keys, which its footer lists.
-pub(super) const SIGN_IN: [Key; 3] = [OPEN, CANCEL, QUIT];
-/// The editor's keys, which its popup lists.
-pub(super) const EDIT: [Key; 3] = [APPLY, DISCARD, CURSOR];
-/// Go's FullHelp: the help grid, row by row.
-const FULL_HELP: [&[Key]; 6] = [
-    &[ROWS, CHANGE],
-    &[ACTIVATE, TOGGLE],
-    &[STOP, START, RECHECK],
-    &[SERVERS, AVAILABLE, AUTOMATIC],
-    &[DETAILS, LATENCY, OPEN],
-    &[QUIT, ABORT, HELP],
-];
+impl Binding {
+    pub(super) fn matches(self, name: &str) -> bool {
+        self.keys.contains(&name)
+    }
 
-impl Key {
-    pub(super) fn matches(self, code: KeyCode) -> bool {
-        self.codes.contains(&code)
+    /// Go's hint: the binding under another description.
+    const fn hint(self, desc: &'static str) -> Self {
+        Self { desc, ..self }
     }
 }
 
-/// The first of `keys` that `code` presses.
-pub(super) fn pressed(code: KeyCode, keys: &[Key]) -> Option<Key> {
-    keys.iter().copied().find(|key| key.matches(code))
+/// A press as Bubble Tea names it, such as "down", "shift+tab", "ctrl+c" or "q".
+pub(super) fn name(key: KeyEvent) -> String {
+    let base = match key.code {
+        KeyCode::Up => "up".into(),
+        KeyCode::Down => "down".into(),
+        KeyCode::Left => "left".into(),
+        KeyCode::Right => "right".into(),
+        KeyCode::Enter => "enter".into(),
+        KeyCode::Esc => "esc".into(),
+        KeyCode::Tab => "tab".into(),
+        KeyCode::BackTab => return "shift+tab".into(),
+        KeyCode::Backspace => "backspace".into(),
+        KeyCode::Delete => "delete".into(),
+        KeyCode::Home => "home".into(),
+        KeyCode::End => "end".into(),
+        KeyCode::PageUp => "pgup".into(),
+        KeyCode::PageDown => "pgdown".into(),
+        KeyCode::Char(' ') => "space".into(),
+        KeyCode::Char(character) => character.to_lowercase().collect::<String>(),
+        _ => return String::new(),
+    };
+    let mut name = String::new();
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        name.push_str("ctrl+");
+    }
+    if key.modifiers.contains(KeyModifiers::ALT) {
+        name.push_str("alt+");
+    }
+    // Bubble Tea names a shifted letter by its capital, which no binding matches.
+    if let KeyCode::Char(character) = key.code
+        && character.is_uppercase()
+    {
+        name.push_str("shift+");
+    }
+    name + &base
 }
 
-pub(super) fn hints(keys: &[Key]) -> Vec<&'static str> {
-    keys.iter().map(|key| key.hint).collect()
+/// Go's reverse: the keys that move up, back or left.
+pub(super) fn reverse(name: &str) -> bool {
+    matches!(name, "shift+tab" | "left" | "up" | "k")
 }
 
-pub(super) fn full_help() -> impl Iterator<Item = Vec<&'static str>> {
-    FULL_HELP.iter().map(|row| row.iter().map(|key| key.help).collect())
+/// Go's delta.
+pub(super) fn delta(name: &str) -> isize {
+    if reverse(name) { -1 } else { 1 }
 }
 
 impl Ui {
-    /// Go's ShortHelp: the footer's hints in this state. The popups and the editor keep those
-    /// of the view under them.
-    pub(super) fn short_help(&self) -> Vec<&'static str> {
-        match self.mode() {
-            InputMode::Confirm => hints(&[CONFIRM_STOP, CONTINUE, QUIT]),
-            _ if self.live => {
-                let run: &[Key] = if self.active() { &[STOP] } else { &[RUN_AGAIN, SETUP] };
-                let latency = (run_servers(&self.snapshot).len() > 1).then_some(LATENCY);
-                hints(&[run, &[DETAILS], latency.as_slice(), &[HELP, QUIT]].concat())
-            }
-            _ if self.rows.selected() == Some(0) => hints(&[BEGIN, ROWS, SERVERS, RECHECK, HELP, QUIT]),
-            _ => [self.field().hints(), &hints(&[START, HELP, QUIT])].concat(),
+    /// Go's ShortHelp: the footer's bindings in this state.
+    pub(super) fn short_help(&self) -> Vec<Binding> {
+        match self.popup {
+            Popup::Details => return vec![SCROLL, CLOSE, QUIT],
+            Popup::Servers => return vec![ROWS, TOGGLE_SERVER, APPLY, DISCARD, QUIT],
+            Popup::None => {}
         }
+        if self.edit.is_some() {
+            return vec![CURSOR, APPLY, DISCARD, ABORT];
+        }
+        if self.stop_prompt {
+            return vec![CONFIRM_STOP, QUIT];
+        }
+        if self.shown().is_some() || self.running() {
+            let mut bindings = if self.running() {
+                vec![STOP]
+            } else {
+                vec![RUN_AGAIN, SETUP]
+            };
+            bindings.push(DETAILS);
+            if self.several() {
+                bindings.push(LATENCY_SERVER);
+            }
+            return [bindings, vec![HELP, QUIT]].concat();
+        }
+        if self.snapshot.auth.is_some() {
+            return vec![OPEN_SIGN_IN, CANCEL_SIGN_IN, QUIT];
+        }
+        let row = self.current();
+        if row == Setting::Start {
+            return vec![CHANGE.hint("start test"), ROWS, HELP, QUIT];
+        }
+        let mut bindings = vec![START, ROWS];
+        if row.adjusts() {
+            bindings.push(ADJUST);
+        }
+        if matches!(row, Setting::Stage(_)) {
+            bindings.push(TOGGLE);
+        }
+        bindings.extend([CHANGE.hint(row.enter_verb()), HELP, QUIT]);
+        bindings
+    }
+
+    /// Go's FullHelp: setup's every key, or the short help, in columns of three.
+    pub(super) fn full_help(&self) -> Vec<Binding> {
+        if self.shown().is_some() || self.snapshot.auth.is_some() || self.edit.is_some() || self.popup != Popup::None {
+            return self.short_help();
+        }
+        let mut all = vec![START, ROWS, ADJUST, TOGGLE, CHANGE.hint("start or open"), RECHECK];
+        if self.can_choose_servers() {
+            all.push(SERVERS);
+        }
+        if self.can_use_available() {
+            all.push(AVAILABLE);
+        }
+        all.extend([AUTOMATIC, PAGE, HELP, QUIT]);
+        all
+    }
+
+    /// help.ShortHelpView: "key desc" items between separators.
+    pub(super) fn short_view(&self, bindings: &[Binding]) -> Line<'static> {
+        let mut spans = Vec::new();
+        for binding in bindings {
+            if !spans.is_empty() {
+                spans.push(span(" • ", self.theme.border));
+            }
+            spans.extend([
+                span(binding.key, self.theme.text),
+                Span::raw(" "),
+                span(binding.desc, self.theme.muted),
+            ]);
+        }
+        Line::from(spans)
+    }
+
+    /// help.FullHelpView: columns of three, keys beside their descriptions, four spaces apart.
+    pub(super) fn full_view(&self, bindings: &[Binding]) -> Vec<Line<'static>> {
+        let columns: Vec<_> = bindings.chunks(3).collect();
+        let height = columns.iter().map(|column| column.len()).max().unwrap_or(0);
+        let mut lines = vec![Line::default(); height];
+        for (index, column) in columns.iter().enumerate() {
+            let key_width = column
+                .iter()
+                .map(|binding| Line::from(binding.key).width())
+                .max()
+                .unwrap_or(0);
+            let desc_width = column
+                .iter()
+                .map(|binding| Line::from(binding.desc).width())
+                .max()
+                .unwrap_or(0);
+            for (row, line) in lines.iter_mut().enumerate() {
+                if index > 0 {
+                    line.spans.push(span("    ", self.theme.border));
+                }
+                let (key, desc) = column.get(row).map_or(("", ""), |binding| (binding.key, binding.desc));
+                line.spans
+                    .extend(pad(Line::from(span(key, self.theme.text)), key_width).spans);
+                line.spans.push(Span::raw(" "));
+                line.spans
+                    .extend(pad(Line::from(span(desc, self.theme.muted)), desc_width).spans);
+            }
+        }
+        lines
     }
 }

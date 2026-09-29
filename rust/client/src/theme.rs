@@ -1,173 +1,232 @@
-//! Go's TUI palette (the web tokens), with the indexed and ANSI colors Go's color profiles convert each to.
+//! Go's TUI styles (theme.go) over the graphite palette, in the colour profile Go's
+//! colorprofile.Detect picks, with the indexed and ANSI colours it converts each tone to.
 
 use crate::model::Stage;
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier, Style};
 
-/// The default theme is monochrome: every colour is the terminal's own.
-#[derive(Clone, Copy, Default)]
-pub(crate) struct Theme {
-    pub ink: Color,
-    pub text: Color,
-    pub muted: Color,
-    pub inverse: Color,
-    pub surface: Color,
-    pub border: Color,
-    pub ok: Color,
-    pub warn: Color,
-    pub err: Color,
-    stages: [Color; 4],
-}
-
-#[derive(Clone, Copy)]
-enum Depth {
-    TrueColor,
-    Indexed,
+/// colorprofile's profiles, in its order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Profile {
+    NoTty,
+    Ascii,
     Ansi,
+    Ansi256,
+    TrueColor,
 }
+
+/// Go's styles. The default has no style at all, as colorprofile's NoTTY strips them.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Theme {
+    pub title: Style,
+    pub pill: Style,
+    pub selected: Style,
+    pub text: Style,
+    pub value: Style,
+    pub muted: Style,
+    pub accent: Style,
+    pub ok: Style,
+    pub warn: Style,
+    pub err: Style,
+    pub border: Style,
+    pub heading: Style,
+    /// textinput's static cursor: ANSI 7, reversed.
+    pub cursor: Style,
+    stages: [Style; 4],
+    /// The complete, caution and failed badges.
+    outcomes: [Style; 3],
+}
+
+/// A tone's light and dark shades: 24-bit, then as colorprofile converts them to 256 and 16 colours.
+type Tone = [(u32, u8, Color); 2];
+
+const INK: Tone = [(0x20242a, 235, Color::Black), (0xe6e8ea, 254, Color::White)];
+const TEXT: Tone = [(0x171b20, 234, Color::Black), (0xeef0f3, 255, Color::White)];
+const SOFT: Tone = [(0x5f646a, 241, Color::DarkGray), (0x8e9299, 246, Color::Gray)];
+const GOOD: Tone = [(0x2e734b, 29, Color::Green), (0x88d1a2, 115, Color::LightGreen)];
+const CAUTION: Tone = [(0x85671f, 94, Color::Red), (0xe8cf83, 186, Color::LightYellow)];
+const BAD: Tone = [(0xab413e, 131, Color::Red), (0xed8b88, 210, Color::LightRed)];
+const BADGE: Tone = [(0xfdfdfd, 231, Color::White), (0x0d1013, 233, Color::Black)];
+const BORDER: Tone = [(0xcacbcf, 252, Color::White), (0x3e4348, 238, Color::DarkGray)];
+const SELECTED: Tone = [(0xe6e6e9, 254, Color::White), (0x303236, 236, Color::Black)];
+const STAGES: [Tone; 4] = [
+    [(0x1d7a73, 30, Color::Cyan), (0x70dbc4, 80, Color::LightCyan)],
+    [(0x254ea3, 25, Color::Blue), (0x71a3ff, 75, Color::LightBlue)],
+    [(0xa35d1d, 130, Color::Red), (0xfeb66a, 215, Color::LightRed)],
+    [(0x7f2456, 89, Color::Red), (0xe472ac, 169, Color::LightRed)],
+];
 
 /// Go's TUI asks for the background with OSC 11. DA1 follows, as in lipgloss's query: every
 /// terminal answers it, and in order, so its reply ends the wait.
 #[cfg(unix)]
 const QUERY: &[u8] = b"\x1b]11;?\x1b\\\x1b[c";
-/// Go's input parser takes an answer whenever it comes; one arriving after this would reach
-/// crossterm as key presses, so the wait covers a slow link's round trip.
-#[cfg(unix)]
-const ANSWER_LIMIT: std::time::Duration = std::time::Duration::from_secs(1);
 
-/// The terminal's answer to the TUI's query, so the report printed after it uses the same palette, as in Go.
-static ANSWER: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+/// The terminal's answer to the TUI's query, so the report printed after it uses the same palette.
+static DARK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
 impl Theme {
-    pub fn terminal() -> Self {
-        Self::background(ANSWER.get().copied())
-    }
-
-    /// The env decides first; otherwise the terminal's answer does. Call it in raw mode only.
-    pub async fn ask() -> Self {
-        if plain() || preference().is_some() {
-            return Self::terminal();
-        }
-        // The answer arrives where crossterm reads keys: stdin, or the terminal device when it is redirected.
-        #[cfg(unix)]
-        let answer = {
-            use std::io::IsTerminal;
-            if std::io::stdin().is_terminal() {
-                answer(std::io::stdin(), &mut std::io::stdout(), ANSWER_LIMIT).await
-            } else if let Ok(terminal) = std::fs::File::open("/dev/tty") {
-                answer(&terminal, &mut std::io::stdout(), ANSWER_LIMIT).await
-            } else {
-                None
-            }
-        };
-        #[cfg(not(unix))]
-        let answer = None; // Windows consoles would deliver the answer as key events.
-        if let Some(light) = answer {
-            let _ = ANSWER.set(light);
-        }
-        Self::background(answer)
-    }
-
-    fn background(answer: Option<bool>) -> Self {
-        if plain() {
+    /// Go's newStyles in `profile`.
+    pub fn new(profile: Profile, dark: bool) -> Self {
+        if profile == Profile::NoTty {
             return Self::default();
         }
-        let depth = Depth::terminal();
-        if preference().or(answer).unwrap_or(false) {
-            Self::light(depth)
-        } else {
-            Self::dark(depth)
+        let shade = usize::from(dark);
+        let color = |tone: Tone| {
+            let (rgb, indexed, ansi) = tone[shade];
+            match profile {
+                Profile::TrueColor => Some(Color::Rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)),
+                Profile::Ansi256 => Some(Color::Indexed(indexed)),
+                Profile::Ansi => Some(ansi),
+                _ => None,
+            }
+        };
+        let fg = |tone: Tone| Style {
+            fg: color(tone),
+            ..Style::new()
+        };
+        let badge = fg(BADGE).add_modifier(Modifier::BOLD);
+        let on = |tone: Tone| Style {
+            bg: color(tone),
+            ..badge
+        };
+        let text = fg(TEXT);
+        let accent = fg(INK);
+        Self {
+            title: on(INK),
+            pill: on(SOFT),
+            selected: Style {
+                bg: color(SELECTED),
+                ..text.add_modifier(Modifier::BOLD)
+            },
+            text,
+            value: text.add_modifier(Modifier::BOLD),
+            muted: fg(SOFT),
+            accent,
+            ok: fg(GOOD),
+            warn: fg(CAUTION),
+            err: fg(BAD).add_modifier(Modifier::BOLD),
+            border: fg(BORDER),
+            heading: accent.add_modifier(Modifier::BOLD),
+            cursor: Style {
+                fg: (profile > Profile::Ascii).then_some(Color::Gray),
+                ..Style::new().add_modifier(Modifier::REVERSED)
+            },
+            stages: STAGES.map(fg),
+            outcomes: [on(GOOD), on(CAUTION), on(BAD)],
         }
     }
 
-    pub fn stage(&self, stage: Stage) -> Color {
+    /// The styles for stdout, in the background the terminal's answer gave, dark without one.
+    pub fn terminal() -> Self {
+        use std::io::IsTerminal;
+        Self::new(
+            detect(std::io::stdout().is_terminal()),
+            DARK.get().copied().unwrap_or(true),
+        )
+    }
+
+    /// Asks the terminal for its background, then gives the TUI's styles. Call it in raw mode only.
+    pub async fn ask(limit: std::time::Duration) -> Self {
+        #[cfg(unix)]
+        if let Some(dark) = query(limit).await {
+            let _ = DARK.set(dark);
+        }
+        #[cfg(not(unix))]
+        let _ = limit; // Windows consoles would deliver the answer as key events.
+        Self::terminal()
+    }
+
+    pub fn stage(&self, stage: Stage) -> Style {
         self.stages[stage as usize]
     }
 
-    fn dark(depth: Depth) -> Self {
-        Self {
-            ink: tone(0xe6e8ea, 254, Color::White, depth),
-            text: tone(0xeef0f3, 255, Color::White, depth),
-            muted: tone(0x8e9299, 246, Color::Gray, depth),
-            inverse: tone(0x0d1013, 233, Color::Black, depth),
-            surface: tone(0x303236, 236, Color::Black, depth),
-            border: tone(0x3e4348, 238, Color::DarkGray, depth),
-            ok: tone(0x88d1a2, 115, Color::LightGreen, depth),
-            warn: tone(0xe8cf83, 186, Color::LightYellow, depth),
-            err: tone(0xed8b88, 210, Color::LightRed, depth),
-            stages: [
-                tone(0x70dbc4, 80, Color::LightCyan, depth),
-                tone(0x71a3ff, 75, Color::LightBlue, depth),
-                tone(0xfeb66a, 215, Color::LightRed, depth),
-                tone(0xe472ac, 169, Color::LightRed, depth),
-            ],
-        }
-    }
-
-    fn light(depth: Depth) -> Self {
-        Self {
-            ink: tone(0x20242a, 235, Color::Black, depth),
-            text: tone(0x171b20, 234, Color::Black, depth),
-            muted: tone(0x5f646a, 241, Color::DarkGray, depth),
-            inverse: tone(0xfdfdfd, 231, Color::White, depth),
-            surface: tone(0xe6e6e9, 254, Color::White, depth),
-            border: tone(0xcacbcf, 252, Color::White, depth),
-            ok: tone(0x2e734b, 29, Color::Green, depth),
-            warn: tone(0x85671f, 94, Color::Red, depth),
-            err: tone(0xab413e, 131, Color::Red, depth),
-            stages: [
-                tone(0x1d7a73, 30, Color::Cyan, depth),
-                tone(0x254ea3, 25, Color::Blue, depth),
-                tone(0xa35d1d, 130, Color::Red, depth),
-                tone(0x7f2456, 89, Color::Red, depth),
-            ],
-        }
+    /// The badge of a run's outcome.
+    pub fn outcome(&self, phase: crate::model::Phase) -> Style {
+        use crate::model::Phase;
+        self.outcomes[match phase {
+            Phase::Complete => 0,
+            Phase::Partial | Phase::Incomplete | Phase::Cancelled => 1,
+            _ => 2,
+        }]
     }
 }
 
-impl Depth {
-    fn terminal() -> Self {
-        let term = std::env::var("TERM").unwrap_or_default().to_ascii_lowercase();
-        let color_term = std::env::var("COLORTERM").unwrap_or_default().to_ascii_lowercase();
-        // Windows consoles render 24-bit color without advertising it; Go's TUI assumes the same.
-        if cfg!(windows)
-            || matches!(color_term.as_str(), "truecolor" | "24bit")
-            || term.ends_with("-direct")
-            || term.ends_with("-truecolor")
-        {
-            Self::TrueColor
-        } else if term.contains("256color") {
-            Self::Indexed
-        } else {
-            Self::Ansi
-        }
+/// Go's strconv.ParseBool of an environment variable.
+fn flag(name: &str) -> bool {
+    matches!(
+        std::env::var(name).as_deref(),
+        Ok("1" | "t" | "T" | "true" | "TRUE" | "True")
+    )
+}
+
+/// colorprofile.Detect for stdout: TERM, COLORTERM, NO_COLOR, CLICOLOR(_FORCE) and TTY_FORCE.
+/// Its terminfo lookup reads a named terminal as ANSI, and tmux as 256 colours, as when neither
+/// reports Tc or RGB.
+pub(crate) fn detect(tty: bool) -> Profile {
+    let (tty, term) = (tty || flag("TTY_FORCE"), std::env::var("TERM").ok());
+    let env = environment(term.as_deref().unwrap_or_default());
+    // colorProfile's dumb terminal: TERM=dumb, or none outside Windows.
+    let dumb = term.as_deref().map_or(!cfg!(windows), |term| term == "dumb");
+    let mut profile = if tty && !dumb { env } else { Profile::NoTty };
+    if flag("NO_COLOR") && tty {
+        return profile.min(Profile::Ascii);
+    }
+    if flag("CLICOLOR_FORCE") {
+        return profile.max(Profile::Ansi).max(env);
+    }
+    if flag("CLICOLOR") && tty && !dumb {
+        profile = profile.max(Profile::Ansi);
+    }
+    let named = term.as_deref().filter(|term| *term != "dumb");
+    let Some(term) = named.filter(|_| tty && profile != Profile::TrueColor && !flag("NO_COLOR")) else {
+        return profile;
+    };
+    let terminfo = if term.is_empty() { Profile::NoTty } else { Profile::Ansi };
+    let tmux = std::env::var_os("TMUX").is_some_and(|tmux| !tmux.is_empty());
+    profile
+        .max(terminfo)
+        .max(if tmux { Profile::Ansi256 } else { Profile::NoTty })
+}
+
+/// colorprofile's envColorProfile.
+fn environment(term: &str) -> Profile {
+    // Windows Terminal and cmd.exe render 24-bit colour without a TERM.
+    let mut profile = match term {
+        "" | "dumb" if cfg!(windows) => Profile::TrueColor,
+        "" | "dumb" => Profile::NoTty,
+        _ => Profile::Ansi,
+    };
+    let multiplexer = term.starts_with("tmux") || term.starts_with("screen");
+    if multiplexer {
+        profile = profile.max(Profile::Ansi256);
+    }
+    let color_term = std::env::var("COLORTERM").unwrap_or_default().to_ascii_lowercase();
+    let direct = ["truecolor", "24bit", "yes", "true"].contains(&color_term.as_str()) && !multiplexer;
+    let windows_terminal = std::env::var_os("WT_SESSION").is_some_and(|session| !session.is_empty());
+    let named = "alacritty contour foot ghostty kitty rio st wezterm"
+        .split(' ')
+        .any(|name| term.contains(name));
+    if named || windows_terminal || flag("GOOGLE_CLOUD_SHELL") || direct || term.ends_with("direct") {
+        return Profile::TrueColor;
+    }
+    match term.ends_with("256color") {
+        true => profile.max(Profile::Ansi256),
+        false => profile,
     }
 }
 
-const fn tone(rgb: u32, indexed: u8, ansi: Color, depth: Depth) -> Color {
-    match depth {
-        Depth::TrueColor => Color::Rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8),
-        Depth::Indexed => Color::Indexed(indexed),
-        Depth::Ansi => ansi,
+/// Sends QUERY where the keys are read (stdin, or the terminal device when it is redirected) and
+/// reads until DA1's reply or the limit: Some(dark) once OSC 11 answered.
+#[cfg(unix)]
+async fn query(limit: std::time::Duration) -> Option<bool> {
+    use std::io::IsTerminal;
+    if std::io::stdin().is_terminal() {
+        answer(std::io::stdin(), &mut std::io::stdout(), limit).await
+    } else {
+        let terminal = std::fs::File::open("/dev/tty").ok()?;
+        answer(&terminal, &mut std::io::stdout(), limit).await
     }
 }
 
-fn plain() -> bool {
-    std::env::var_os("NO_COLOR").is_some() || std::env::var("TERM").is_ok_and(|term| term == "dumb")
-}
-
-/// GM_TUI_THEME, then COLORFGBG's background: whether the env picks a light background.
-fn preference() -> Option<bool> {
-    match std::env::var("GM_TUI_THEME").ok().as_deref() {
-        Some("light") => Some(true),
-        Some("dark") => Some(false),
-        _ => std::env::var("COLORFGBG")
-            .ok()
-            .and_then(|value| value.rsplit(';').next()?.parse::<u8>().ok())
-            .map(|background| matches!(background, 7 | 9..=15)),
-    }
-}
-
-/// Sends QUERY and reads until DA1's reply or the limit; Some(light) once OSC 11 answered.
 /// A duplicate descriptor reads the terminal without std's stdin buffer; it blocks, but each
 /// read follows readiness, so it returns at once.
 #[cfg(unix)]
@@ -180,7 +239,7 @@ async fn answer(
     let input = std::fs::File::from(input.as_fd().try_clone_to_owned().ok()?);
     let input = tokio::io::unix::AsyncFd::with_interest(input, tokio::io::Interest::READABLE).ok()?;
     output.write_all(QUERY).and_then(|()| output.flush()).ok()?;
-    let (mut answers, mut light) = (Vec::new(), None);
+    let (mut answers, mut dark) = (Vec::new(), None);
     let _ = tokio::time::timeout(limit, async {
         let mut chunk = [0; 1024];
         while answers.len() < 4096 {
@@ -191,20 +250,20 @@ async fn answer(
             ready.clear_ready();
             answers.extend_from_slice(&chunk[..read]);
             let (answer, ended) = scan(&answers);
-            light = answer;
+            dark = answer;
             if ended {
                 return;
             }
         }
     })
     .await;
-    light
+    dark
 }
 
 /// The answers so far: OSC 11's background, if any, and whether DA1's reply has ended them.
 #[cfg(unix)]
 fn scan(answers: &[u8]) -> (Option<bool>, bool) {
-    let mut light = None;
+    let mut dark = None;
     let mut rest = answers;
     while let Some(escape) = rest.iter().position(|&byte| byte == 0x1b) {
         rest = &rest[escape + 1..];
@@ -219,7 +278,7 @@ fn scan(answers: &[u8]) -> (Option<bool>, bool) {
             if (body[end] == 0x07 || body[end + 1] == b'\\')
                 && let Some(color) = body[..end].strip_prefix(b"11;")
             {
-                light = Some(bright(color));
+                dark = Some(!bright(color));
             }
             rest = &body[end..];
         } else if let Some(body) = rest.strip_prefix(b"[") {
@@ -227,12 +286,12 @@ fn scan(answers: &[u8]) -> (Option<bool>, bool) {
                 break;
             };
             if body[0] == b'?' && body[end] == b'c' {
-                return (light, true);
+                return (dark, true);
             }
             rest = &body[end + 1..];
         }
     }
-    (light, false)
+    (dark, false)
 }
 
 /// Go's IsDark: HSL lightness under one half is dark, and so is an unreadable color.
@@ -288,9 +347,33 @@ mod tests {
     use std::{io::Write, time::Duration};
 
     #[test]
-    fn the_report_after_the_tui_keeps_the_terminal_answer() {
-        let _ = ANSWER.set(true);
-        assert_eq!(Theme::terminal().ink, Theme::background(Some(true)).ink);
+    fn profiles_strip_what_go_strips() {
+        let dark = Theme::new(Profile::TrueColor, true);
+        assert_eq!(dark.title.bg, Some(Color::Rgb(0xe6, 0xe8, 0xea)));
+        assert_eq!(dark.title.fg, Some(Color::Rgb(0x0d, 0x10, 0x13)));
+        assert_eq!(Theme::new(Profile::Ansi256, false).accent.fg, Some(Color::Indexed(235)));
+        let ascii = Theme::new(Profile::Ascii, true);
+        assert_eq!(ascii.value, Style::new().add_modifier(Modifier::BOLD));
+        assert_eq!(ascii.border, Style::new());
+        assert_eq!(Theme::new(Profile::NoTty, true), Theme::default());
+    }
+
+    #[test]
+    fn terms_pick_go_colour_profiles() {
+        for (term, profile) in [
+            ("xterm-kitty", Profile::TrueColor),
+            ("wezterm", Profile::TrueColor),
+            ("screen", Profile::Ansi256),
+            ("tmux-256color", Profile::Ansi256),
+            ("xterm-256color", Profile::Ansi256),
+            ("xterm", Profile::Ansi),
+            ("vt100", Profile::Ansi),
+            ("xterm-direct", Profile::TrueColor),
+            ("dumb", Profile::NoTty),
+            ("", Profile::NoTty),
+        ] {
+            assert_eq!(environment(term), profile, "{term}");
+        }
     }
 
     #[test]
@@ -315,11 +398,14 @@ mod tests {
     #[test]
     fn device_attributes_end_the_answers_and_only_whole_background_answers_count() {
         for (answers, expected) in [
-            (&b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?62;22c"[..], (Some(true), true)),
-            (b"\x1b[A\x1b]11;rgb:0000/0000/0000\x07\x1b[?6c", (Some(false), true)),
+            (
+                &b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?62;22c"[..],
+                (Some(false), true),
+            ),
+            (b"\x1b[A\x1b]11;rgb:0000/0000/0000\x07\x1b[?6c", (Some(true), true)),
             (b"\x1b]10;rgb:ffff/ffff/ffff\x07\x1b[?6c", (None, true)),
             (b"\x1b]11;rgb:ffff/ffff/ffff\x1bx\x1b[?6c", (None, true)),
-            (b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\", (Some(true), false)),
+            (b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\", (Some(false), false)),
             (b"\x1b]11;rgb:ffff/ffff/ffff\x1b", (None, false)),
             (b"\x1b[?62;2", (None, false)),
         ] {
@@ -340,7 +426,7 @@ mod tests {
         });
         let mut sent = Vec::new();
         let started = tokio::time::Instant::now();
-        assert_eq!(answer(&input, &mut sent, Duration::from_secs(5)).await, Some(true));
+        assert_eq!(answer(&input, &mut sent, Duration::from_secs(5)).await, Some(false));
         assert_eq!(sent, QUERY);
         let mut terminal = answering.join().unwrap();
         terminal.write_all(b"\x1b[?6c").unwrap();

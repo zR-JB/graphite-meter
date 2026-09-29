@@ -68,6 +68,12 @@ async fn run(action: Action) -> Result<i32, Error> {
     let _ = graphite_meter_client::crypto::provider().install_default();
     let terminal = std::io::stdout().is_terminal();
     let headless = report_only || !terminal;
+    if headless && terminal && std::io::stdin().is_terminal() {
+        // As Go's runHeadless asks lipgloss.HasDarkBackground before the run.
+        crossterm::terminal::enable_raw_mode()?;
+        report::ask_background().await;
+        crossterm::terminal::disable_raw_mode()?;
+    }
     let caught = Arc::new(AtomicU8::new(0));
     let interrupts = interrupts(headless, caught.clone())?;
     let (finished, exit) = if headless {
@@ -82,15 +88,24 @@ async fn run(action: Action) -> Result<i32, Error> {
         .ok()
         .filter(|_| terminal)
         .map_or(report::WIDTH, |(columns, _)| usize::from(columns).max(40));
-    if let Some(snapshot) = finished.as_ref().filter(|_| !exit.running) {
-        match report::render(snapshot, width, terminal) {
-            Some(report) => println!("{report}"),
-            None if headless => eprintln!(
-                "graphite-meter-client: {}",
-                snapshot.error.as_deref().unwrap_or("Test stopped before it started.")
-            ),
-            None => {}
-        }
+    // Go prints the run its view shows, which a return to setup leaves none of.
+    let shown = if headless {
+        finished.as_ref()
+    } else {
+        exit.shown.as_ref()
+    };
+    match shown.and_then(|snapshot| report::print(snapshot, width)) {
+        Some(report) => println!("{report}"),
+        None if headless => eprintln!(
+            "graphite-meter-client: {}",
+            safe(
+                finished
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.error.as_deref())
+                    .unwrap_or("Test stopped before it started.")
+            )
+        ),
+        None => {}
     }
     let last = finished.map(|snapshot| snapshot.phase);
     let signal = caught.load(Ordering::Relaxed);
@@ -145,5 +160,5 @@ fn interrupts(headless: bool, caught: Arc<AtomicU8>) -> Result<mpsc::Receiver<()
 }
 
 fn safe(value: &str) -> String {
-    ui::safe_text(value, usize::MAX)
+    value.chars().map(report::terminal_char).collect()
 }
