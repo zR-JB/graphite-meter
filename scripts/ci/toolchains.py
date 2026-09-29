@@ -102,10 +102,11 @@ def pin(name: str, root: Path = ROOT) -> str:
     return load_pins(root)[section][key]
 
 
-def rust_downloads(manifest: bytes) -> dict[tuple[str, str], tuple[object, ...]]:
-    """Each package archive of a channel manifest and its SHA-256, which rustup checks every download against."""
+def rust_downloads(manifest: bytes) -> dict[tuple[str, str], dict[str, object]]:
+    """Each package archive of a channel manifest and its SHA-256, which rustup checks every download against:
+    every compression's `url`/`hash` pair (`xz_url`, `zst_url`, ...), since rustup picks the one it prefers."""
     packages = tomllib.loads(manifest.decode()).get("pkg", {})
-    return {(name, target): tuple(item.get(key) for key in ("url", "hash", "xz_url", "xz_hash"))
+    return {(name, target): {key: value for key, value in item.items() if re.fullmatch(r"(?:\w+_)?(?:url|hash)", key)}
             for name, package in packages.items() for target, item in package.get("target", {}).items()}
 
 

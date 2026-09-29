@@ -88,9 +88,14 @@ class ToolchainBoundaryTests(unittest.TestCase):
         check_rust_manifest(installed, manifest, root)
         with self.assertRaisesRegex(ValueError, "does not match mise.toml's rust_manifest_sha256"):
             check_rust_manifest(installed, manifest + b"\n", root)
-        installed.write_bytes(installed.read_bytes().replace(b"1" * 64, b"2" * 64))
-        with self.assertRaisesRegex(ValueError, "installed Rust 1.98.1 from another manifest"):
-            check_rust_manifest(installed, manifest, root)
+        rewritten = installed.read_bytes()
+        # rustup prefers a zst archive, so one added beside unchanged gz and xz entries is another toolchain.
+        for tampered in (rewritten.replace(b"1" * 64, b"2" * 64), rewritten.replace(
+                b"available = true\n", b'available = true\nzst_url = "https://static.rust-lang.org/dist/'
+                b'rustc.tar.zst"\nzst_hash = "' + b"3" * 64 + b'"\n')):
+            installed.write_bytes(tampered)
+            with self.assertRaisesRegex(ValueError, "installed Rust 1.98.1 from another manifest"):
+                check_rust_manifest(installed, manifest, root)
         path.write_text(re.sub(r'(?m)^rust_manifest_sha256 = ".*"$', 'rust_manifest_sha256 = "latest"', path.read_text()))
         with self.assertRaisesRegex(ValueError, "rust_manifest_sha256 must be a SHA-256"):
             load_pins(root)
