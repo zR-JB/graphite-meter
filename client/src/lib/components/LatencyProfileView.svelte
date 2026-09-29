@@ -334,11 +334,13 @@
         <dl class="facts">
           <div>
             <dt {@attach term(() => JARGON.jitter)}>Jitter</dt>
-            <dd>{formatLatency(idle.jitter)}</dd>
+            <dd class:quiet={idle.jitter == null}>
+              {formatLatency(idle.jitter)}
+            </dd>
           </div>
           <div>
             <dt {@attach term(() => JARGON.latencyRange)}>Range</dt>
-            <dd>
+            <dd class:quiet={idle.min == null || idle.max == null}>
               {idle.min == null || idle.max == null
                 ? MISSING
                 : `${fmtMs(idle.min)}–${fmtMs(idle.max)} ms`}
@@ -347,11 +349,15 @@
           <!-- Held from Start, so the result lands without moving Timeouts. -->
           <div>
             <dt {@attach tooltip(() => JARGON.latencyStability)}>Stability</dt>
-            <dd>{stability == null ? MISSING : `${Math.round(stability)}%`}</dd>
+            <dd class:quiet={stability == null}>
+              {stability == null ? MISSING : `${Math.round(stability)}%`}
+            </dd>
           </div>
           <div>
             <dt {@attach tooltip(() => timeoutsTip(idle))}>Timeouts</dt>
-            <dd>{formatTimeouts(idle.timeoutRatio)}</dd>
+            <dd class:quiet={idle.timeoutRatio == null}>
+              {formatTimeouts(idle.timeoutRatio)}
+            </dd>
           </div>
         </dl>
       </div>
@@ -413,6 +419,7 @@
           </span>
           <strong
             class="lane-median"
+            class:quiet={lane.center == null}
             tabindex="-1"
             {@attach tooltip(() =>
               [
@@ -423,9 +430,12 @@
                 .join("\n"),
             )}>{formatLatency(lane.center)}</strong
           >
-          <em class="lane-jitter">{formatLatency(lane.jitter)}</em>
+          <em class="lane-jitter" class:quiet={lane.jitter == null}
+            >{formatLatency(lane.jitter)}</em
+          >
           <em
             class="lane-timeouts"
+            class:quiet={lane.timeoutRatio == null}
             tabindex="-1"
             {@attach tooltip(() => timeoutsTip(lane))}
             >{formatTimeouts(lane.timeoutRatio)}</em
@@ -645,6 +655,10 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
+  /* "—" for a value not yet measured is soft; a measured value is full ink. */
+  .facts dd.quiet {
+    color: var(--text-soft);
+  }
 
   /* One row per population on one scale: name, median, jitter, timeouts, spread, and what the load added.
      Rows abut, so the scale's gridlines and the idle median run through them as single lines;
@@ -729,6 +743,11 @@
     font-variant-numeric: tabular-nums;
     text-align: end;
     white-space: nowrap;
+  }
+  .lane-median.quiet,
+  .lane-jitter.quiet,
+  .lane-timeouts.quiet {
+    color: var(--text-soft);
   }
   .lane-added {
     color: var(--tone-ink);

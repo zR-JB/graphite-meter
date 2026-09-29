@@ -100,10 +100,13 @@ export function stageGraph(input: StageGraphInput): StageGraph {
           : [{ lane, x: x(input.head!.t), y: y(value) }],
       )
     : [];
+  // A live lane ends at its head: bins centred at or past it wait for the head to reach them.
   const drawn = bins.map((lane, index) => {
-    const points = lane.map((point) => ({ x: x(point.t), y: y(point.v) }));
     const head = heads.find((h) => h.lane === index);
-    if (head && head.x > (points.at(-1)?.x ?? -1)) points.push(head);
+    const points = lane
+      .map((point) => ({ x: x(point.t), y: y(point.v) }))
+      .filter((point) => !head || point.x < head.x);
+    if (head) points.push(head);
     return points;
   });
   const first = drawn[0] ?? [];

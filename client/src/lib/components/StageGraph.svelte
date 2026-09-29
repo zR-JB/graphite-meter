@@ -259,6 +259,7 @@
     gap: 6px;
     height: 100%;
     min-height: 0;
+    border-radius: var(--r-well);
     cursor: crosshair;
     outline-offset: 4px;
     touch-action: pan-y pinch-zoom;
