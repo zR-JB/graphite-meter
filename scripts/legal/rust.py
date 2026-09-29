@@ -4,7 +4,7 @@ Run `python3 -m scripts.legal.rust --help`. The inventory is a conservative
 compilation-input superset: build scripts and procedural macros are retained.
 It does not infer the licensing of the Rust sysroot or system libraries.
 `--development` keeps every dependency review but no platform record, for a build on any
-host; its notices say that they are unreviewed, and release verification refuses them.
+host; its notices say that they are unreviewed (legal/README.md).
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from .review import add_provenance, component_key, component_legal_files, valida
 from . import rust_platform as platform
 
 PACKAGES = ('graphite-meter-client', 'graphite-meter-server')
-# Opens the notices of a --development build; release verification refuses notices that contain it.
+# Opens the notices of a --development build.
 DEVELOPMENT = 'UNREVIEWED DEVELOPMENT BUILD'
 DEVELOPMENT_NOTICE = (f'{DEVELOPMENT}\n\nThis build\'s host generated these notices. They cover the dependencies it '
                       'compiled, but not its Rust standard library, C runtime or system libraries, which only the '
