@@ -260,6 +260,7 @@ impl Ui {
         Self {
             requested: config.clone(),
             config,
+            theme: Theme::terminal(),
             rows: ListState::default().with_selected(Some(0)),
             servers: ListState::default().with_selected(Some(0)),
             received_at: Some(tokio::time::Instant::now()),

@@ -3,7 +3,8 @@
 use crate::model::Stage;
 use ratatui::style::Color;
 
-#[derive(Clone, Copy)]
+/// The default theme is monochrome: every colour is the terminal's own.
+#[derive(Clone, Copy, Default)]
 pub(crate) struct Theme {
     pub ink: Color,
     pub text: Color,
@@ -35,13 +36,6 @@ const ANSWER_LIMIT: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// The terminal's answer to the TUI's query, so the report printed after it uses the same palette, as in Go.
 static ANSWER: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-
-/// The terminal's theme.
-impl Default for Theme {
-    fn default() -> Self {
-        Self::terminal()
-    }
-}
 
 impl Theme {
     pub fn terminal() -> Self {
@@ -75,7 +69,7 @@ impl Theme {
 
     fn background(answer: Option<bool>) -> Self {
         if plain() {
-            return Self::monochrome();
+            return Self::default();
         }
         let depth = Depth::terminal();
         if preference().or(answer).unwrap_or(false) {
@@ -126,21 +120,6 @@ impl Theme {
                 tone(0xa35d1d, 130, Color::Red, depth),
                 tone(0x7f2456, 89, Color::Red, depth),
             ],
-        }
-    }
-
-    const fn monochrome() -> Self {
-        Self {
-            ink: Color::Reset,
-            text: Color::Reset,
-            muted: Color::Reset,
-            inverse: Color::Reset,
-            surface: Color::Reset,
-            border: Color::Reset,
-            ok: Color::Reset,
-            warn: Color::Reset,
-            err: Color::Reset,
-            stages: [Color::Reset; 4],
         }
     }
 }
