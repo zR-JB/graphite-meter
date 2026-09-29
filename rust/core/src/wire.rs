@@ -1,9 +1,9 @@
 //! Text probe frames and upload progress records shared by server and clients.
 
-use serde::de::{Error as _, IgnoredAny, MapAccess, Visitor};
-use serde::{Deserializer, Serialize};
+use serde::de::{Error as _, IgnoredAny, MapAccess, Visitor, value::MapAccessDeserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
-use std::{collections::HashSet, fmt, time::Duration};
+use std::{collections::HashSet, fmt, marker::PhantomData, time::Duration};
 
 pub const MAX_UPLOAD_COUNTER: u64 = (1 << 53) - 1;
 pub const MAX_TRANSFER_BYTES: u64 = 64 << 30;
@@ -125,16 +125,32 @@ pub fn encode_upload_progress(event: &UploadProgress) -> Result<String, WireErro
     serde_json::to_string(&record).map_err(|_| WireError::InvalidUploadProgress)
 }
 
-/// Decodes JSON as Go's json/v2 does: [`strict`] refuses what it refuses, and serde skips unknown
-/// members without converting their numbers or bounding their nesting.
+/// Decodes a JSON object as Go's json/v2 does: [`strict`] refuses what it refuses, any other value
+/// is refused as a Go struct refuses it, and serde skips unknown members without converting their
+/// numbers or bounding their nesting.
 pub fn decode_json<T: serde::de::DeserializeOwned>(data: &[u8]) -> Result<T, serde_json::Error> {
-    strict(data)?;
-    serde_json::from_slice(data)
+    decode_object(data, Object(PhantomData))
+}
+
+/// A struct read from a JSON object alone: serde would read one from an array, field by field,
+/// which Go refuses. Only the top-level value is read so; a struct nested in it still takes one.
+struct Object<T>(PhantomData<T>);
+
+impl<'de, T: Deserialize<'de>> Visitor<'de> for Object<T> {
+    type Value = T;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a JSON object")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<T, A::Error> {
+        T::deserialize(MapAccessDeserializer::new(map))
+    }
 }
 
 /// As Go's DecodeUploadProgress, only the members a record's type uses are read.
 pub fn decode_upload_progress(data: &[u8]) -> Result<UploadProgress, WireError> {
-    let members = |names: &[&str]| decode_members(data, names).map_err(|_| WireError::InvalidUploadProgress);
+    let members = |names: &[&str]| decode_object(data, Members(names)).map_err(|_| WireError::InvalidUploadProgress);
     let kind = match members(&["type"])?.remove("type") {
         Some(Value::String(kind)) => kind,
         _ => return Err(WireError::InvalidUploadProgress),
@@ -213,13 +229,13 @@ fn strict(data: &[u8]) -> Result<(), serde_json::Error> {
     Ok(())
 }
 
-/// The members `names` lists of the object `data` holds, checked as [`decode_json`] checks it.
-fn decode_members(data: &[u8], names: &[&str]) -> Result<Map<String, Value>, serde_json::Error> {
+/// The object `data` holds, read by `visitor` once [`strict`] passed it.
+fn decode_object<'de, V: Visitor<'de>>(data: &'de [u8], visitor: V) -> Result<V::Value, serde_json::Error> {
     strict(data)?;
     let mut deserializer = serde_json::Deserializer::from_slice(data);
-    let members = (&mut deserializer).deserialize_map(Members(names))?;
+    let value = (&mut deserializer).deserialize_map(visitor)?;
     deserializer.end()?;
-    Ok(members)
+    Ok(value)
 }
 
 /// An object's members named here, as values; the others are skipped unparsed, as Go's json/v2

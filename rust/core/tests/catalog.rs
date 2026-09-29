@@ -202,4 +202,6 @@ fn a_received_catalogue_reads_null_as_empty() {
     );
     let nothing: ServerCatalog = graphite_meter_core::wire::decode_json(br#"{"servers": null}"#).unwrap();
     assert_eq!(nothing.received().err(), Some(CatalogError::InvalidServers));
+    let array = br#"[["self"],[["self",".","graphite-meter"]]]"#;
+    assert!(graphite_meter_core::wire::decode_json::<ServerCatalog>(array).is_err());
 }

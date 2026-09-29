@@ -45,6 +45,8 @@ fn rejects_duplicates_even_in_unknown_nested_fields_but_allows_additions() {
         (with(&format!(r#", "future":{deep}"#)), true),
         (fixture.replacen(r#""baseUrl""#, r#""future":1e400,"baseUrl""#, 1), true),
         (format!(r#"{head}"protocol":1e400,"baseUrl"{tail}"#), true),
+        // Go reads a struct from an object alone; serde would read this array field by field.
+        (r#"[["meter","here"],"1.0","gen",[false,[],[]]]"#.into(), false),
     ] {
         assert_eq!(Preflight::decode(raw.as_bytes()).is_ok(), accepted, "{raw}");
     }
@@ -61,6 +63,7 @@ fn rejects_duplicates_even_in_unknown_nested_fields_but_allows_additions() {
         "future": {"x": 0, "x": 1}
     }"#;
     assert!(Probe::decode(duplicate_unknown_field).is_err());
+    assert!(Probe::decode(br#"["192.0.2.1",4,"socket","h3",[1,2]]"#).is_err());
 }
 
 #[test]
