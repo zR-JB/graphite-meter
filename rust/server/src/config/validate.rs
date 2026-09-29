@@ -1,5 +1,5 @@
 use super::{AuthConfig, AuthMode, Config, ConfigError, NativeKind};
-use graphite_meter_core::origin::{Origin, key, split_url, target_origin};
+use graphite_meter_core::origin::{Origin, canonical_origin, key, split_url, target_origin};
 
 impl Config {
     pub fn validate(&self) -> Result<(), ConfigError> {
@@ -278,6 +278,8 @@ impl AuthConfig {
     }
 }
 
+/// A configured origin, which Go's `CanonicalOrigin` accepts: never on port 0.
 fn absolute(raw: &str) -> Option<Origin> {
+    canonical_origin(raw).ok()?;
     target_origin(raw).ok().flatten()
 }

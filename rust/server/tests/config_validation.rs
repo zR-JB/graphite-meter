@@ -180,3 +180,30 @@ fn listeners_and_advertisements_cannot_claim_conflicting_protocols() {
     config.native[NativeKind::H3 as usize].address = ":7248".into();
     assert!(config.validate().is_err(), "duplicate bind address");
 }
+
+#[test]
+fn origins_on_port_zero_are_refused_as_go_refuses_them() {
+    let mut config = Config::default();
+    config.public.both.push("https://meter.example:0".into());
+    assert_eq!(
+        config.validate().unwrap_err().to_string(),
+        "GM_PUBLIC_ORIGINS contains invalid origin \"https://meter.example:0\""
+    );
+    let mut config = Config {
+        tls_cert: "test-cert.pem".into(),
+        tls_key: "test-key.pem".into(),
+        ..Config::default()
+    };
+    config.native[NativeKind::H2 as usize].address = ":7248".into();
+    config.native[NativeKind::H2 as usize].public_origin = "https://meter.example:0".into();
+    assert_eq!(
+        config.validate().unwrap_err().to_string(),
+        "GM_H2_PUBLIC_ORIGIN must be an origin with https scheme"
+    );
+    let mut config = password();
+    config.auth.public_url = "https://meter.example:0".into();
+    assert_eq!(
+        config.validate().unwrap_err().to_string(),
+        "GM_AUTH_PUBLIC_URL must be an HTTPS origin with no path, query, or fragment"
+    );
+}
