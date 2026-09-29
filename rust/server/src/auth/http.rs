@@ -138,7 +138,13 @@ impl Service {
             return response(StatusCode::FORBIDDEN);
         }
         let path = request.uri().path();
-        let mut result = match AuthRoute::lookup(request.method(), path) {
+        // As Go's GET patterns, a page answers HEAD too; the policy has already refused one with no session.
+        let method = if request.method() == Method::HEAD {
+            &Method::GET
+        } else {
+            request.method()
+        };
+        let mut result = match AuthRoute::lookup(method, path) {
             Some(AuthRoute::Login) => self.login_page(request).await,
             Some(AuthRoute::OidcStart) => self.oidc_start(authorized).await,
             Some(AuthRoute::OidcCallback) => self.oidc_callback(authorized).await,
@@ -161,7 +167,13 @@ impl Service {
                 _ => error_response(StatusCode::NOT_FOUND),
             },
         };
-        // As Go's http.Redirect, a GET's redirect also links its destination.
+        // As Go's http.Redirect, a GET's or HEAD's redirect is HTML, and a GET's also links its destination.
+        if result.status() == StatusCode::SEE_OTHER && request.method() == Method::HEAD {
+            result.headers_mut().insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("text/html; charset=utf-8"),
+            );
+        }
         if result.status() == StatusCode::SEE_OTHER && request.method() == Method::GET {
             let location = result.headers()[header::LOCATION].to_str().unwrap_or_default();
             let mut link = String::with_capacity(location.len());

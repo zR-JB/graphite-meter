@@ -387,6 +387,31 @@ async fn approval_pages_require_client_evidence_behind_a_trusted_proxy() {
 }
 
 #[tokio::test]
+async fn signed_in_head_requests_reach_the_get_pages_as_in_go() {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    use sha2::{Digest, Sha256};
+
+    let h = Harness::start().await;
+    let (session, csrf) = h.login().await;
+    let signed_in = credentials(&session, &csrf);
+    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(b"head verifier"));
+    for path in [
+        "/login".to_owned(),
+        "/auth/session".into(),
+        format!("/auth/cli?challenge={challenge}"),
+    ] {
+        let (get, _) = h.request("GET", &path, &signed_in, "").await;
+        let (head, body) = h.request("HEAD", &path, &signed_in, "").await;
+        assert!(get.starts_with("HTTP/1.1 200"), "{path}: {get}");
+        assert!(head.starts_with("HTTP/1.1 200") && body.is_empty(), "{path}: {head}");
+    }
+    // As Go's public routes are GET alone, HEAD opens no page without a session.
+    let (head, _) = h.request("HEAD", "/login", "", "").await;
+    assert!(head.starts_with("HTTP/1.1 403"), "{head}");
+    h.stop().await;
+}
+
+#[tokio::test]
 async fn an_empty_origin_is_given_no_cors_headers_as_in_go() {
     let h = Harness::start().await;
     let (session, _) = h.login().await;
