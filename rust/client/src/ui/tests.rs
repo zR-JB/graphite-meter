@@ -149,8 +149,7 @@ fn running(ids: &[&str]) -> Ui {
     let servers = ids
         .iter()
         .map(|id| {
-            let (mut throughput, mut latency) = target(id);
-            (throughput.base_url, latency.base_url) = (format!("https://{id}"), format!("https://{id}"));
+            let (throughput, latency) = target(id);
             ServerSummary {
                 id: (*id).into(),
                 name: id.to_uppercase(),
@@ -246,6 +245,11 @@ pub(crate) fn lost(id: &str, stage: Stage) -> ServerFailure {
     }
 }
 
+/// The final report Go prints for the shown run, without styles.
+fn report(ui: &Ui) -> String {
+    crate::report::render(&ui.snapshot, 100, Theme::default()).unwrap()
+}
+
 fn prompt(code: &str, url: &str) -> AuthPrompt {
     AuthPrompt {
         deadline: Instant::now() + crate::net::AUTHORIZATION_TIMEOUT,
@@ -285,11 +289,9 @@ type Change = fn(&Ui) -> bool;
 fn setup_keys_move_and_change_rows_as_go_does() {
     let (commands, mut sent) = mpsc::channel(32);
     let mut ui = setup();
-    for (name, want) in [
-        ("up", Setting::Start),
-        ("down", Setting::Catalogue),
-        ("tab", Setting::Servers),
-    ] {
+    #[rustfmt::skip]
+    let cases = [("up", Setting::Start), ("down", Setting::Catalogue), ("tab", Setting::Servers)];
+    for (name, want) in cases {
         press(&mut ui, &commands, &[name]);
         assert_eq!(ui.current(), want, "after {name}");
     }
@@ -455,11 +457,9 @@ fn edits_apply_and_refuse_as_go_parses_them() {
     ui.begin_edit(Setting::Catalogue, String::new());
     assert!(!press(&mut ui, &commands, &["q"]) && ui.edit.as_ref().unwrap().text() == "q");
     let edit = ui.edit.as_mut().unwrap();
-    for (keys, text) in [
-        (&["ctrl+a"][..], "q"),
-        (&["end", "x", "left", "ctrl+k"], "q"),
-        (&["x", "left", "ctrl+u"], "x"),
-    ] {
+    #[rustfmt::skip]
+    let cases = [(&["ctrl+a"][..], "q"), (&["end", "x", "left", "ctrl+k"], "q"), (&["x", "left", "ctrl+u"], "x")];
+    for (keys, text) in cases {
         for name in keys {
             edit.key(name, name.chars().next().filter(|_| name.len() == 1));
         }
@@ -550,28 +550,19 @@ fn path_rows_cycle_the_checked_servers_paths() {
     let (commands, _sent) = mpsc::channel(32);
     let mut ui = setup();
     ui.config.url = "http://127.0.0.1:7246".into();
+    use ThroughputTransport::{FetchStream, WebTransport, WebTransportDatagram};
     let path = |base_url: &str, transport, protocol| ThroughputTarget {
         base_url: base_url.into(),
         transport,
         protocol,
     };
-    let fetch = path(
-        "http://127.0.0.1:7246",
-        ThroughputTransport::FetchStream,
-        Protocol::Http1,
-    );
-    let latency = LatencyTarget {
-        base_url: "http://127.0.0.1:7246".into(),
-        transport: LatencyTransport::WebSocket,
-    };
-    let throughput = [
-        ThroughputTransport::WebTransport,
-        ThroughputTransport::WebTransportDatagram,
-    ]
-    .map(|transport| path("https://127.0.0.1:7247", transport, Protocol::Http3));
+    let fetch = path(&ui.config.url, FetchStream, Protocol::Http1);
+    let tls = |transport| path("https://127.0.0.1:7247", transport, Protocol::Http3);
+    let (_, mut latency) = target("");
+    latency.base_url.clone_from(&ui.config.url);
     let offered = Capabilities {
         upload_checkpoint: true,
-        throughput: [vec![fetch.clone()], throughput.into()].concat(),
+        throughput: vec![fetch.clone(), tls(WebTransport), tls(WebTransportDatagram)],
         latency: vec![latency.clone()],
     };
     ui.prepared = vec![ServerSummary {
@@ -624,16 +615,9 @@ fn servers_ready_and_chosen_as_go_shows_them() {
     let mut ui = setup();
     prepare(&mut ui, &[None, Some("sign in"), Some("connection refused")]);
     let plan = screen(&mut ui);
-    for want in [
-        "● A",
-        "Ready",
-        "○ B",
-        "Sign in",
-        "✗ C",
-        "Failed",
-        "connection refused",
-        "u Use available servers",
-    ] {
+    #[rustfmt::skip]
+    let cases = ["● A", "Ready", "○ B", "Sign in", "✗ C", "Failed", "connection refused", "u Use available servers"];
+    for want in cases {
         assert!(plan.contains(want), "{want} in {plan}");
     }
     assert!(ui.can_use_available());
@@ -866,11 +850,10 @@ fn status_title_and_progress_follow_the_run_like_go() {
     let mut ui = running(&["a"]);
     assert_eq!(ui.title(), "Graphite Meter · Checking paths");
     assert_eq!(ui.progress(), Some(Progress::Done(0)));
-    for (stage, phase, want) in [
-        (Stage::Latency, Phase::Preparing, "Checking paths"),
-        (Stage::Download, Phase::Warmup, "Warmup"),
-        (Stage::Bidirectional, Phase::Measuring, "Bidirectional"),
-    ] {
+    #[rustfmt::skip]
+    let cases = [(Stage::Latency, Phase::Preparing, "Checking paths"), (Stage::Download, Phase::Warmup, "Warmup"),
+        (Stage::Bidirectional, Phase::Measuring, "Bidirectional")];
+    for (stage, phase, want) in cases {
         self::stage(&mut ui, stage, phase);
         assert_eq!(ui.status_label(), want);
     }
@@ -880,13 +863,10 @@ fn status_title_and_progress_follow_the_run_like_go() {
     // 4 s of latency and 5 s of download in a 34 s plan.
     assert_eq!(ui.title(), "Graphite Meter · Download");
     assert_eq!(ui.progress(), Some(Progress::Done(26)));
-    for (phase, want) in [
-        (Phase::Complete, "Complete"),
-        (Phase::Partial, "Partial"),
-        (Phase::Cancelled, "Stopped"),
-        (Phase::Failed, "Failed"),
-        (Phase::Incomplete, "Incomplete"),
-    ] {
+    #[rustfmt::skip]
+    let cases = [(Phase::Complete, "Complete"), (Phase::Partial, "Partial"), (Phase::Cancelled, "Stopped"),
+        (Phase::Failed, "Failed"), (Phase::Incomplete, "Incomplete")];
+    for (phase, want) in cases {
         step(&mut ui, |snapshot| snapshot.phase = phase);
         assert_eq!((ui.status_label(), ui.progress()), (want, None));
     }
@@ -941,7 +921,7 @@ fn multi_server_runs_name_their_latency_server() {
     let shown = screen(&mut ui);
     assert_eq!(ui.latency_server(), Some("b"));
     assert!(shown.contains("latency to B") && shown.contains("90.0 ms"), "{shown}");
-    let report = crate::report::render(&ui.snapshot, 100, Theme::default()).unwrap();
+    let report = self::report(&ui);
     // The report follows the run's focus.
     assert!(report.contains("Latency to A"), "{report}");
     assert!(report.contains("10.0 ms"), "{report}");
@@ -999,11 +979,11 @@ fn remote_errors_cannot_write_terminal_controls() {
 #[test]
 fn the_live_view_follows_the_stage_and_its_samples() {
     let mut ui = running(&["a"]);
-    for (stage, want, without) in [
-        (Stage::Latency, &["Idle latency", "3.0 ms"][..], &["↓", "↑"][..]),
+    #[rustfmt::skip]
+    let cases = [(Stage::Latency, &["Idle latency", "3.0 ms"][..], &["↓", "↑"][..]),
         (Stage::Download, &["↓", "Loaded latency"], &["↑"]),
-        (Stage::Bidirectional, &["↓", "↑", "Loaded latency"], &[]),
-    ] {
+        (Stage::Bidirectional, &["↓", "↑", "Loaded latency"], &[])];
+    for (stage, want, without) in cases {
         self::stage(&mut ui, stage, Phase::Measuring);
         for quarters in [1, 2] {
             sample(&mut ui, quarters, Some(8e6), Some(3.0), 0);
@@ -1025,11 +1005,10 @@ fn the_live_view_follows_the_stage_and_its_samples() {
     // Go's TestIdleReadingHoldsTheLastReplyThroughTimeouts: a reply ends the timeout streak.
     let mut ui = running(&["a"]);
     stage(&mut ui, Stage::Latency, Phase::Measuring);
-    for (quarters, latest, timeouts, reading) in [
-        (1, Some(12.0), 0, "Idle latency 12.0 ms"),
-        (2, None, 2, "Idle latency 12.0 ms  probe timeout ×2"),
-        (3, Some(12.0), 0, "Idle latency 12.0 ms"),
-    ] {
+    #[rustfmt::skip]
+    let cases = [(1, Some(12.0), 0, "Idle latency 12.0 ms"), (2, None, 2, "Idle latency 12.0 ms  probe timeout ×2"),
+        (3, Some(12.0), 0, "Idle latency 12.0 ms")];
+    for (quarters, latest, timeouts, reading) in cases {
         sample(&mut ui, quarters, None, latest, timeouts);
         let live = ui.live_text(60, 16);
         assert!(live.contains(reading), "{live}");
@@ -1068,11 +1047,9 @@ fn the_stage_track_follows_the_stages() {
         });
     });
     let track = ui.track_text(80);
-    for want in [
-        "✓ 4.0 ms median",
-        "Download      ✗ Failed",
-        "Upload        ! ↑ 8.00 Mbit/s Partial",
-    ] {
+    #[rustfmt::skip]
+    let cases = ["✓ 4.0 ms median", "Download      ✗ Failed", "Upload        ! ↑ 8.00 Mbit/s Partial"];
+    for want in cases {
         assert!(track.contains(want), "{want} in {track}");
     }
     step(&mut ui, |snapshot| snapshot.phase = Phase::Cancelled);
@@ -1094,19 +1071,11 @@ fn results_show_what_each_stage_measured_or_why_not() {
         snapshot.results = vec![latency, download, result(Stage::Upload, None, Some(5_000_000.0))];
         snapshot.phase = Phase::Complete;
     });
-    let text = crate::report::render(&ui.snapshot, 100, Theme::default()).unwrap();
-    let wants = [
-        "Complete",
-        "Idle",
-        "Loaded latency · Download",
-        "10.0 ms",
-        "940.0 Mbit/s",
-        "peak 1000 ·",
-    ];
-    for want in wants
-        .into_iter()
-        .chain(["17.8 ms", "+7.8 ms", "40.00 Mbit/s", "Bidirectional"])
-    {
+    let text = report(&ui);
+    #[rustfmt::skip]
+    let wants = ["Complete", "Idle", "Loaded latency · Download", "10.0 ms", "940.0 Mbit/s", "peak 1000 ·", "17.8 ms",
+        "+7.8 ms", "40.00 Mbit/s", "Bidirectional"];
+    for want in wants {
         assert!(text.contains(want), "{want} in {text}");
     }
     assert!(!text.to_lowercase().contains("loss"), "{text}");
@@ -1136,12 +1105,9 @@ fn results_show_what_each_stage_measured_or_why_not() {
         snapshot.phase = Phase::Incomplete;
     });
     let shown = screen(&mut ui);
-    for want in [
-        "Bi-dir ↓: Connection lost",
-        "Loaded latency · Bidirectional",
-        "Bi-dir ↓",
-        "—",
-    ] {
+    #[rustfmt::skip]
+    let cases = ["Bi-dir ↓: Connection lost", "Loaded latency · Bidirectional", "Bi-dir ↓", "—"];
+    for want in cases {
         assert!(shown.contains(want), "{want} in {shown}");
     }
     ui.popup = Popup::Details;
@@ -1155,10 +1121,7 @@ fn results_show_what_each_stage_measured_or_why_not() {
         snapshot.results = vec![self::idle(1_000_000), upload];
         snapshot.phase = Phase::Incomplete;
     });
-    let (details, report) = (
-        ui.details_text(120),
-        crate::report::render(&ui.snapshot, 100, Theme::default()).unwrap(),
-    );
+    let (details, report) = (ui.details_text(120), report(&ui));
     for wrong in ["0 B", "·  ·", "Added"] {
         assert!(!details.contains(wrong), "{wrong}: {details}");
         assert!(!report.contains(wrong), "{wrong}: {report}");
@@ -1166,10 +1129,7 @@ fn results_show_what_each_stage_measured_or_why_not() {
     // A failed run shows no activity.
     let mut ui = running(&["a"]);
     fail(&mut ui, "refused");
-    let (shown, report) = (
-        screen(&mut ui),
-        crate::report::render(&ui.snapshot, 100, Theme::default()).unwrap(),
-    );
+    let (shown, report) = (screen(&mut ui), self::report(&ui));
     for stale in ["Checking paths", "○", "Median"] {
         assert!(!shown.contains(stale), "{stale}: {shown}");
         assert!(!report.contains(stale), "{stale}: {report}");
