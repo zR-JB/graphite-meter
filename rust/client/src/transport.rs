@@ -208,8 +208,8 @@ impl Transport {
         crate::webtransport::SessionSlot::dial(&self.http, url(&self.origin, route, query)).await
     }
 
-    /// `request` to `target` on this target's HTTP/3 connection, dialled again once it closed;
-    /// None over HTTP/1.1 and HTTP/2, whose requests the client's pool carries.
+    /// `request` to `target` on this target's HTTP/3 connection, dialled again once it closed or
+    /// went away; None over HTTP/1.1 and HTTP/2, whose requests the client's pool carries.
     async fn open_h3(
         &self,
         request: http::request::Builder,

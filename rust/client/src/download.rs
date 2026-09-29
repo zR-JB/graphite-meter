@@ -351,6 +351,48 @@ mod tests {
         asked_again?
     }
 
+    /// A connection whose server sent GOAWAY takes no new request, so the next one dials anew.
+    #[tokio::test]
+    async fn an_http3_connection_going_away_is_dialled_again() -> Result<(), Error> {
+        use graphite_meter_http3::server::Connection;
+        let _ = crate::crypto::provider().install_default();
+        let (endpoint, origin) = h3_endpoint()?;
+        let (sent, goaway) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let mut first = Some(sent);
+            while let Some(incoming) = endpoint.accept().await {
+                let mut connection = Connection::new(incoming.await?, None);
+                let (_, stream) = connection.next().await?.ok_or("no request")?.resolve().await?;
+                let (mut send, _) = stream.split();
+                send.send_response(http::Response::new(())).await?;
+                // The first connection keeps its request open, so only GOAWAY retires it.
+                match first.take() {
+                    Some(sent) => {
+                        connection.goaway();
+                        let _ = sent.send(());
+                    }
+                    None => send.finish().await?,
+                }
+                tokio::spawn(async move {
+                    while let Ok(Some(_)) = connection.next().await {}
+                    drop(send)
+                });
+            }
+            Ok::<_, Error>(())
+        });
+        let transport = Transport::connect(Http::new(true)?, &origin, Protocol::Http3).await?;
+        let _open = transport
+            .receive(Method::GET, Route::Download, &[], 1, Duration::from_secs(5))
+            .await?;
+        goaway.await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let next = transport
+            .receive(Method::GET, Route::Probe, &[], 1, Duration::from_secs(5))
+            .await;
+        server.abort();
+        next.map(drop)
+    }
+
     /// A WebTransport session is dialled again as Go's restore dials it (webtransport.go:104-118),
     /// here once a busy answer's Retry-After has passed.
     #[tokio::test]

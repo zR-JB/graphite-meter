@@ -137,9 +137,9 @@ impl Http3Client {
         })
     }
 
-    /// The driver ends only with the connection.
+    /// Closed, or going away since the server's GOAWAY: either takes no new request.
     pub fn is_closed(&self) -> bool {
-        self.connection.close_reason().is_some()
+        self.connection.close_reason().is_some() || self.requests.going_away()
     }
 
     pub async fn open(self: &Arc<Self>, request: Request<()>, limits: RequestLimits) -> Result<Http3Stream, Error> {
