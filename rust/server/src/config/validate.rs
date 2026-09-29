@@ -152,6 +152,9 @@ impl Config {
     }
 
     fn validate_auth(&self) -> Result<(), ConfigError> {
+        if self.auth.unknown_mode {
+            return Err("GM_AUTH_MODE must be off, password, oidc, or hybrid".into());
+        }
         if self.auth.mode == AuthMode::Off {
             if self.auth.has_settings() {
                 return Err("authentication settings require GM_AUTH_MODE to be enabled".into());

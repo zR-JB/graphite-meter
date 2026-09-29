@@ -212,6 +212,23 @@ fn invalid_settings_name_what_failed() {
     }
 }
 
+#[test]
+fn the_auth_mode_is_checked_once_flags_apply_as_in_go() {
+    let config = load(&[("GM_AUTH_MODE", "bogus")], &["-auth-mode", "off"]).unwrap();
+    assert_eq!(config.auth.mode, AuthMode::Off);
+    for (env, args) in [
+        (&[("GM_AUTH_MODE", "bogus")][..], &[][..]),
+        (&[("GM_AUTH_MODE", "")], &[]),
+        (&[], &["-auth-mode=bogus"]),
+    ] {
+        assert_eq!(
+            failure(env, args),
+            "GM_AUTH_MODE must be off, password, oidc, or hybrid",
+            "{env:?} {args:?}"
+        );
+    }
+}
+
 fn server() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_graphite-meter-server"));
     command

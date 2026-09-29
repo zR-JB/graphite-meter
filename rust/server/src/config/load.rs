@@ -234,13 +234,15 @@ fn trusted_proxies(config: &mut Config, value: &str) -> Result<(), String> {
 }
 
 fn auth_mode(config: &mut Config, value: &str) -> Result<(), String> {
-    config.auth.mode = match value {
-        "off" => AuthMode::Off,
-        "password" => AuthMode::Password,
-        "oidc" => AuthMode::Oidc,
-        "hybrid" => AuthMode::Hybrid,
-        _ => return Err("must be off, password, oidc, or hybrid".into()),
+    let mode = match value {
+        "off" => Some(AuthMode::Off),
+        "password" => Some(AuthMode::Password),
+        "oidc" => Some(AuthMode::Oidc),
+        "hybrid" => Some(AuthMode::Hybrid),
+        _ => None,
     };
+    config.auth.mode = mode.unwrap_or_default();
+    config.auth.unknown_mode = mode.is_none();
     Ok(())
 }
 

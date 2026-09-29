@@ -106,6 +106,8 @@ impl AuthMode {
 pub struct AuthConfig {
     pub explicit: bool,
     pub mode: AuthMode,
+    /// GM_AUTH_MODE names no mode. As Go's text setting, it loads, and validation refuses it after the flags apply.
+    pub unknown_mode: bool,
     pub public_url: String,
     pub password_hash: String,
     pub password_hash_file: String,
@@ -121,6 +123,7 @@ impl Default for AuthConfig {
         Self {
             explicit: false,
             mode: AuthMode::Off,
+            unknown_mode: false,
             public_url: String::new(),
             password_hash: String::new(),
             password_hash_file: String::new(),
