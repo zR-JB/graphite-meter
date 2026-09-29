@@ -215,14 +215,7 @@ pub(crate) async fn verify(http: &Http, target: &LatencyTarget, insecure: bool) 
                                     return Ok(sent.elapsed());
                                 }
                             }
-                            Some(Ok(Message::Close(frame))) => {
-                                if let Some(ending) = frame.and_then(|frame| {
-                                    graphite_meter_core::failure::LaneEnding::from_websocket_code(frame.code.into())
-                                }) {
-                                    break Err(Box::new(crate::failure::LaneFailure(ending)) as Error);
-                                }
-                                break Err(Disconnected("latency channel closed before measurement ended").into());
-                            }
+                            Some(Ok(Message::Close(frame))) => return Err(closed(frame)),
                             None => {
                                 return Err("latency channel closed before replying".into());
                             }
@@ -352,6 +345,14 @@ impl std::fmt::Display for Disconnected {
 }
 impl std::error::Error for Disconnected {}
 
+/// The lane ending a close frame names, or a channel that closed before the stage ended.
+fn closed(frame: Option<tokio_tungstenite::tungstenite::protocol::CloseFrame>) -> Error {
+    match frame.and_then(|frame| graphite_meter_core::failure::LaneEnding::from_websocket_code(frame.code.into())) {
+        Some(ending) => Box::new(crate::failure::LaneFailure(ending)),
+        None => Disconnected("latency channel closed before measurement ended").into(),
+    }
+}
+
 async fn measure(
     socket: Bus,
     interval: Duration,
@@ -437,12 +438,7 @@ async fn measure(
                         };
                         if let Err(error) = emit(observations, observation) { break Err(error); }
                     }
-                    Some(Ok(Message::Close(frame))) => {
-                        if let Some(ending) = frame.and_then(|frame| graphite_meter_core::failure::LaneEnding::from_websocket_code(frame.code.into())) {
-                            break Err(Box::new(crate::failure::LaneFailure(ending)) as Error);
-                        }
-                        break Err(Disconnected("latency channel closed before measurement ended").into());
-                    }
+                    Some(Ok(Message::Close(frame))) => break Err(closed(frame)),
                     None => break Err(Disconnected("latency channel closed before measurement ended").into()),
                     Some(Err(error)) => {
                         let error = crate::failure::lane_error(error);

@@ -469,15 +469,8 @@ impl fmt::Display for AuthRequired {
 }
 impl std::error::Error for AuthRequired {}
 
-pub(crate) fn authentication_required<'a>(
-    mut error: &'a (dyn std::error::Error + 'static),
-) -> Option<&'a AuthRequired> {
-    loop {
-        if let Some(required) = error.downcast_ref::<AuthRequired>() {
-            return Some(required);
-        }
-        error = error.source()?;
-    }
+pub(crate) fn authentication_required<'a>(error: &'a (dyn std::error::Error + 'static)) -> Option<&'a AuthRequired> {
+    crate::failure::causes(error).find_map(|cause| cause.downcast_ref())
 }
 
 /// Go's ErrApprovalExpired: the approval window closed while the server kept answering.

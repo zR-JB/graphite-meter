@@ -42,7 +42,7 @@ impl std::fmt::Display for LaneFailure {
 impl std::error::Error for LaneFailure {}
 
 /// The error and its causes. io::Error::source() skips its own payload, which carries a wrapped cause.
-fn causes<'a>(
+pub(crate) fn causes<'a>(
     error: &'a (dyn std::error::Error + 'static),
 ) -> impl Iterator<Item = &'a (dyn std::error::Error + 'static)> {
     std::iter::successors(Some(error), |error| match error.downcast_ref::<std::io::Error>() {
@@ -63,7 +63,7 @@ pub(crate) fn refused(error: &(dyn std::error::Error + 'static), refusal: Upload
 /// Go's permanent (transfer.go:65-68): a sign-in, or a refusal no retry answers, which
 /// uploadRefusal makes of `invalid` and `ownerMismatch` (failure.go:56-60).
 pub(crate) fn permanent(error: &(dyn std::error::Error + 'static)) -> bool {
-    causes(error).any(|cause| cause.is::<crate::net::AuthRequired>())
+    crate::net::authentication_required(error).is_some()
         || refused(error, UploadRefusal::Invalid)
         || refused(error, UploadRefusal::OwnerMismatch)
 }

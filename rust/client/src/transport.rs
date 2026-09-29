@@ -2,7 +2,7 @@
 //! The connection owns its H3 driver; response bodies retain that owner.
 use crate::{
     Error,
-    failure::{MeasurementFailure, NotReplaced},
+    failure::{HttpFailure, MeasurementFailure, NotReplaced},
     net::Http,
     quic::{Http3Client, Http3Stream, RequestLimits},
 };
@@ -33,18 +33,12 @@ pub(crate) struct RetryBackoff {
 }
 
 impl RetryBackoff {
-    pub(crate) fn delay(&mut self, mut error: &(dyn std::error::Error + 'static), started: Instant) -> Duration {
-        loop {
-            if let Some(http) = error.downcast_ref::<crate::failure::HttpFailure>()
-                && http.busy()
-            {
-                self.busy = (self.busy * 2).clamp(BUSY_BACKOFF, BUSY_BACKOFF_CAP);
-                return self.busy.max(http.retry_after).min(BUSY_BACKOFF_CAP);
-            }
-            let Some(source) = error.source() else {
-                break;
-            };
-            error = source;
+    pub(crate) fn delay(&mut self, error: &(dyn std::error::Error + 'static), started: Instant) -> Duration {
+        let busy = crate::failure::causes(error)
+            .find_map(|cause| cause.downcast_ref::<HttpFailure>().filter(|http| http.busy()));
+        if let Some(http) = busy {
+            self.busy = (self.busy * 2).clamp(BUSY_BACKOFF, BUSY_BACKOFF_CAP);
+            return self.busy.max(http.retry_after).min(BUSY_BACKOFF_CAP);
         }
         self.busy = Duration::ZERO;
         if started.elapsed() < TRANSFER_RETRY_BACKOFF {
