@@ -2,7 +2,7 @@
 use crate::{
     Error,
     failure::MeasurementFailure,
-    net::Http,
+    net::{Http, url},
     transport::{Retrying, TransferRetry, Transport},
     webtransport::{Session, SessionSlot},
 };
@@ -130,7 +130,10 @@ impl Download {
         let start = async {
             for first in (0..lanes).step_by(MAX_WEBTRANSPORT_STREAMS) {
                 let group = (lanes - first).min(MAX_WEBTRANSPORT_STREAMS);
-                let target = format!("{origin}/wt/download?bytes={WT_STREAM_BYTES}&streams={group}");
+                let target = format!(
+                    "{}?bytes={WT_STREAM_BYTES}&streams={group}",
+                    url(&origin, Route::WtDownload, &[])
+                );
                 let slot = Arc::new(SessionSlot::dial(http, target).await?);
                 for lane in first..first + group {
                     let slot = slot.clone();

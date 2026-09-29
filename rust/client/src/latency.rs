@@ -10,6 +10,7 @@ use graphite_meter_core::{
     discovery::{LatencyTarget, LatencyTransport},
     latency::{DeadlineEstimator, ProbeOutcome},
     origin::canonical_origin,
+    route::Route,
     wire,
 };
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
@@ -240,7 +241,7 @@ async fn connect(http: &Http, origin: &str, transport: LatencyTransport) -> Resu
     Ok(match transport {
         LatencyTransport::WebSocket => Bus::WebSocket(Box::new(connect_ws(http, origin).await?)),
         LatencyTransport::WebTransport => {
-            let target = format!("{}/wt/ping", canonical_origin(origin)?);
+            let target = crate::net::url(&canonical_origin(origin)?, Route::WtPing, &[]);
             let session = crate::webtransport::Session::dial(http, &target, Duration::from_secs(10)).await?;
             Bus::WebTransport(Arc::new(session))
         }
@@ -249,7 +250,7 @@ async fn connect(http: &Http, origin: &str, transport: LatencyTransport) -> Resu
 
 async fn connect_ws(http: &Http, origin: &str) -> Result<Socket, Error> {
     let origin = canonical_origin(origin)?;
-    let target = format!("{origin}/ws/ping");
+    let target = crate::net::url(&origin, Route::Ping, &[]);
     let websocket = if let Some(rest) = target.strip_prefix("https://") {
         format!("wss://{rest}")
     } else {
@@ -279,7 +280,7 @@ async fn connect_ws(http: &Http, origin: &str) -> Result<Socket, Error> {
         *request.uri_mut() = if connection.absolute_form {
             target.parse()?
         } else {
-            "/ws/ping".parse()?
+            Route::Ping.path().parse()?
         };
         if let Some(authorization) = connection.proxy_authorization {
             request

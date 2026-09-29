@@ -277,8 +277,8 @@ async fn prepare_server(
 /// One dial within 3 s, as Go's verifyThroughputWebTransport (webtransport.go:74-83).
 async fn verify_throughput_webtransport(http: &Http, target: &ThroughputTarget) -> Result<(), Error> {
     let origin = graphite_meter_core::origin::canonical_origin(&target.base_url)?;
-    let url = format!("{origin}{}?bytes=0", Route::WtDownload.path());
-    let session = crate::webtransport::Session::dial(http, &url, Duration::from_secs(3)).await?;
+    let target = crate::net::url(&origin, Route::WtDownload, &[("bytes", "0")]);
+    let session = crate::webtransport::Session::dial(http, &target, Duration::from_secs(3)).await?;
     session.close().await;
     Ok(())
 }

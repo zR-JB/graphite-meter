@@ -3,7 +3,7 @@
 use crate::{
     Error,
     failure::{HttpFailure, MeasurementFailure, NotReplaced},
-    net::Http,
+    net::{Http, url},
     quic::{Http3Client, Http3Stream, RequestLimits},
 };
 use bytes::Bytes;
@@ -157,6 +157,10 @@ pub struct Transport {
     h3: Option<Mutex<Arc<Http3Client>>>,
 }
 
+async fn dial_h3(origin: &str, http: &Http) -> Result<Http3Client, Error> {
+    Http3Client::connect(&origin.parse()?, http.insecure, Duration::from_secs(10)).await
+}
+
 impl Transport {
     pub(crate) fn is_http3(&self) -> bool {
         self.h3.is_some()
@@ -178,27 +182,11 @@ impl Transport {
         }
     }
 
-    async fn h3_client(&self) -> Result<Option<Arc<Http3Client>>, Error> {
-        let Some(slot) = &self.h3 else {
-            return Ok(None);
-        };
-        let mut owner = slot.lock().await;
-        if owner.is_closed() {
-            *owner = Arc::new(
-                Http3Client::connect(&self.origin.parse()?, self.http.insecure, Duration::from_secs(10)).await?,
-            );
-        }
-        Ok(Some(owner.clone()))
-    }
-
     pub async fn connect(http: Http, origin: &str, protocol: Protocol) -> Result<Self, Error> {
         let origin = canonical_origin(origin)?;
-        let h3 = if protocol == Protocol::Http3 {
-            Some(Mutex::new(Arc::new(
-                Http3Client::connect(&origin.parse()?, http.insecure, Duration::from_secs(10)).await?,
-            )))
-        } else {
-            None
+        let h3 = match protocol {
+            Protocol::Http3 => Some(Mutex::new(Arc::new(dial_h3(&origin, &http).await?))),
+            _ => None,
         };
         Ok(Self {
             http,
@@ -213,20 +201,37 @@ impl Transport {
         route: Route,
         query: &[(&str, &str)],
     ) -> Result<crate::webtransport::SessionSlot, Error> {
-        crate::webtransport::SessionSlot::dial(&self.http, self.url(route, query)).await
+        crate::webtransport::SessionSlot::dial(&self.http, url(&self.origin, route, query)).await
     }
 
-    fn url(&self, route: Route, query: &[(&str, &str)]) -> String {
-        let mut url = format!("{}{}", self.origin, route.path());
-        if !query.is_empty() {
-            url.push('?');
-            url.push_str(
-                &form_urlencoded::Serializer::new(String::new())
-                    .extend_pairs(query.iter().copied())
-                    .finish(),
-            );
-        }
-        url
+    /// `request` to `target` on this target's HTTP/3 connection, dialled again once it closed;
+    /// None over HTTP/1.1 and HTTP/2, whose requests the client's pool carries.
+    async fn open_h3(
+        &self,
+        request: http::request::Builder,
+        target: &str,
+        limits: RequestLimits,
+    ) -> Result<Option<Http3Stream>, Error> {
+        let Some(slot) = &self.h3 else {
+            return Ok(None);
+        };
+        let client = {
+            let mut owner = slot.lock().await;
+            if owner.is_closed() {
+                *owner = Arc::new(dial_h3(&self.origin, &self.http).await?);
+            }
+            owner.clone()
+        };
+        let mut request = request.uri(target).body(())?;
+        self.http.authorize(target, request.headers_mut())?;
+        Ok(Some(client.open(request, limits).await?))
+    }
+
+    /// Ends an HTTP/3 request's body and checks the server's answer.
+    async fn answer_h3(&self, stream: &mut Http3Stream, target: &str) -> Result<(), Error> {
+        stream.finish().await?;
+        let response = stream.response().await?;
+        self.http.check_status(target, response.status(), response.headers())
     }
 
     pub async fn receive(
@@ -237,33 +242,24 @@ impl Transport {
         limit: u64,
         duration: Duration,
     ) -> Result<Body, Error> {
-        let target = self.url(route, query);
+        let target = url(&self.origin, route, query);
         let deadline = Instant::now()
             .checked_add(duration)
             .ok_or("request duration is too large")?;
+        let limits = RequestLimits {
+            timeout: duration,
+            max_send_bytes: 0,
+            max_receive_bytes: limit,
+        };
         let inner = timeout_at(deadline, async {
-            if let Some(h3) = self.h3_client().await? {
-                let mut request = Request::builder().method(method).uri(&target).body(())?;
-                self.http.authorize(&target, request.headers_mut())?;
-                let mut stream = h3
-                    .open(
-                        request,
-                        RequestLimits {
-                            timeout: duration,
-                            max_send_bytes: 0,
-                            max_receive_bytes: limit,
-                        },
-                    )
-                    .await?;
-                stream.finish().await?;
-                let response = stream.response().await?;
-                self.http.check_status(&target, response.status(), response.headers())?;
-                Ok::<_, Error>(BodyInner::H3(Box::new(stream)))
-            } else {
-                Ok(BodyInner::Http(
-                    self.http.request(method, &target, self.protocol).await?,
-                ))
-            }
+            let request = Request::builder().method(method.clone());
+            Ok::<_, Error>(match self.open_h3(request, &target, limits).await? {
+                Some(mut stream) => {
+                    self.answer_h3(&mut stream, &target).await?;
+                    BodyInner::H3(Box::new(stream))
+                }
+                None => BodyInner::Http(self.http.request(method, &target, self.protocol).await?),
+            })
         })
         .await??;
         Ok(Body {
@@ -286,47 +282,21 @@ impl Transport {
     where
         S: Stream<Item = Result<Bytes, Error>> + Send + 'static,
     {
-        let target = self.url(route, query);
+        let target = url(&self.origin, route, query);
         let deadline = Instant::now()
             .checked_add(duration)
             .ok_or("request duration is too large")?;
+        let limits = RequestLimits {
+            timeout: duration,
+            max_send_bytes: length,
+            max_receive_bytes: 64 * 1024,
+        };
         timeout_at(deadline, async {
-            if let Some(h3) = self.h3_client().await? {
-                let mut request = Request::builder()
-                    .method(Method::POST)
-                    .uri(&target)
-                    .header(http::header::CONTENT_TYPE, "application/octet-stream")
-                    .header(http::header::CONTENT_LENGTH, length)
-                    .body(())?;
-                self.http.authorize(&target, request.headers_mut())?;
-                let mut request = h3
-                    .open(
-                        request,
-                        RequestLimits {
-                            timeout: duration,
-                            max_send_bytes: length,
-                            max_receive_bytes: 64 * 1024,
-                        },
-                    )
-                    .await?;
-                futures_util::pin_mut!(body);
-                let mut sent = 0_u64;
-                while let Some(chunk) = body.next().await {
-                    let chunk = chunk?;
-                    sent = sent
-                        .checked_add(chunk.len() as u64)
-                        .filter(|sent| *sent <= length)
-                        .ok_or("request body exceeds content length")?;
-                    request.send_data(chunk).await?;
-                }
-                if sent != length {
-                    return Err("request body shorter than content length".into());
-                }
-                request.finish().await?;
-                let response = request.response().await?;
-                self.http.check_status(&target, response.status(), response.headers())?;
-                request.recv_body().await?;
-            } else {
+            let request = Request::builder()
+                .method(Method::POST)
+                .header(http::header::CONTENT_TYPE, "application/octet-stream")
+                .header(http::header::CONTENT_LENGTH, length);
+            let Some(mut stream) = self.open_h3(request, &target, limits).await? else {
                 let request = self
                     .http
                     .builder(Method::POST, &target)?
@@ -335,7 +305,23 @@ impl Transport {
                     .body(crate::net::streaming(body))?;
                 let response = self.http.send(request, self.protocol).await?;
                 crate::net::bounded_body(response).await?;
+                return Ok(());
+            };
+            futures_util::pin_mut!(body);
+            let mut sent = 0_u64;
+            while let Some(chunk) = body.next().await {
+                let chunk = chunk?;
+                sent = sent
+                    .checked_add(chunk.len() as u64)
+                    .filter(|sent| *sent <= length)
+                    .ok_or("request body exceeds content length")?;
+                stream.send_data(chunk).await?;
             }
+            if sent != length {
+                return Err("request body shorter than content length".into());
+            }
+            self.answer_h3(&mut stream, &target).await?;
+            stream.recv_body().await?;
             Ok(())
         })
         .await?

@@ -8,6 +8,7 @@ use graphite_meter_core::{
     catalog::{Rejected, ServerCatalog, ServerEntry},
     discovery::{Preflight, Probe, Protocol},
     origin::{canonical_origin, split_url, target_origin},
+    route::Route,
     wire::decode_json,
 };
 use graphite_meter_net::{Proxy, connect};
@@ -674,7 +675,7 @@ impl Http {
     pub async fn discover(&self, source: &str) -> Result<Discovery> {
         let source = canonical_origin(source)?;
         let catalog: ServerCatalog = self
-            .json(Method::GET, &format!("{source}/servers"), Protocol::Negotiated)
+            .json(Method::GET, &url(&source, Route::Servers, &[]), Protocol::Negotiated)
             .await?;
         let (catalog, rejected) = catalog.resolve(&source).received()?;
         Ok(Discovery {
@@ -686,7 +687,7 @@ impl Http {
     pub async fn preflight(&self, entry: &ServerEntry) -> Result<Preflight> {
         let origin = canonical_origin(&entry.url)?;
         let bytes = self
-            .control(Method::GET, &format!("{origin}/preflight"), Protocol::Negotiated)
+            .control(Method::GET, &url(&origin, Route::Preflight, &[]), Protocol::Negotiated)
             .await?;
         let mut preflight = Preflight::decode_received(&bytes)?;
         preflight.resolve_self(&origin);
@@ -697,9 +698,9 @@ impl Http {
     /// `protocolNegotiated` names the server's hop, which a reverse proxy may speak differently,
     /// so it stays evidence for diagnostics only.
     pub async fn probe(&self, origin: &str, protocol: Protocol) -> Result<(Protocol, Probe)> {
-        let origin = canonical_origin(origin)?;
+        let target = url(&canonical_origin(origin)?, Route::Probe, &[]);
         let (version, bytes) = tokio::time::timeout(CONTROL_TIMEOUT, async {
-            let response = self.request(Method::GET, &format!("{origin}/probe"), protocol).await?;
+            let response = self.request(Method::GET, &target, protocol).await?;
             let version = response.version();
             Ok::<_, Error>((version, bounded_body(response).await?))
         })
@@ -843,6 +844,20 @@ async fn read_bounded_body(response: Response) -> Result<Vec<u8>> {
     }
     Ok(bytes)
 }
+/// `route` at `origin`, with `query` form-encoded.
+pub(crate) fn url(origin: &str, route: Route, query: &[(&str, &str)]) -> String {
+    let mut url = format!("{origin}{}", route.path());
+    if !query.is_empty() {
+        url.push('?');
+        url.push_str(
+            &form_urlencoded::Serializer::new(String::new())
+                .extend_pairs(query.iter().copied())
+                .finish(),
+        );
+    }
+    url
+}
+
 fn destination_origin(raw: &str) -> Result<String> {
     Ok(canonical_origin(&split_url(raw)?.0.key())?)
 }
