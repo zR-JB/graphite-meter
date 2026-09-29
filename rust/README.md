@@ -127,7 +127,7 @@ peer can make Noq hold at most 192 KiB of reassembly. The first grant reserves
 the rest of Go's 48 MiB connection window until Noq drops the connection, and
 Noq charges the connection's buffers to it first. The window never shrinks, so
 the peer never holds more credit than is reserved; streams get Go's 32 MiB.
-Transmit windows adapt between 2 MiB and 48 MiB. Neither window grows once three
+Transmit windows adapt between 2 MiB and 16 MiB. Neither window grows once three
 quarters of the budget is used, so pressure slows new transfers instead of
 closing running ones; one log line reports when growth is held back, and one
 when usage falls below five eighths again.

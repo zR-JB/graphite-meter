@@ -897,6 +897,20 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_readme_states_the_transmit_window_bounds() {
+        let readme = include_str!("../../../README.md")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let bounds = format!(
+            "Transmit windows adapt between {} MiB and {} MiB.",
+            QUIC_MIN_SEND_WINDOW >> 20,
+            MAX_SEND_WINDOW >> 20
+        );
+        assert!(readme.contains(&bounds), "rust/README.md must say: {bounds}");
+    }
+
     #[tokio::test]
     async fn idle_send_window_shrinks_while_control_stream_stays_open() {
         let (tls, client_config) = tls();
