@@ -59,7 +59,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (SETUP, "inputs.client-deps == 'true' && inputs.cache == 'true'", "inputs.client-deps == 'true'",
      "follow the cache input"),
     (SETUP, "cache: ${{ inputs.cache }}", "cache: true", "follow the cache input"),
-    (REQUEST, "buildkitd-flags: --log-level=info",
+    (".github/actions/setup-buildx/action.yml", "buildkitd-flags: --log-level=info",
      "buildkitd-flags: --allow-insecure-entitlement network.host", "insecure-entitlement"),
     (W + "release.yml", "TARGET_SHA: ${{ github.sha }}",
      "TARGET_SHA: ${{ needs.verify.outputs.sha }}", "TARGET_SHA"),

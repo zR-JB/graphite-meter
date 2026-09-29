@@ -34,7 +34,7 @@ ALLOWED_USES = {
     "fuzz.yml": {"actions/checkout", "./.github/actions/setup-project", "actions/upload-artifact"},
     "release-request.yml": {
         "actions/checkout", "jdx/mise-action", "./.github/actions/setup-project",
-        "docker/setup-qemu-action", "docker/setup-buildx-action", "docker/build-push-action",
+        "docker/setup-qemu-action", "./.github/actions/setup-buildx", "docker/build-push-action",
         "actions/upload-artifact",
     },
     "release.yml": {
@@ -118,6 +118,7 @@ IMAGE_BUILD = (
     "GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}\n",
 )
 FORBIDDEN = {
+    "actions/setup-buildx/action.yml": ("allow-insecure-entitlement",),
     "workflows/release.yml": ("head_sha", "pull_request.head", "mise run", "secrets["),
     "workflows/release-request.yml": (
         "allow-insecure-entitlement", "cache-from:", "cache-to:", "GIT_AUTH_TOKEN",

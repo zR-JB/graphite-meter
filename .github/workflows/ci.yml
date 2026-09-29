@@ -291,13 +291,8 @@ jobs:
         with:
           chrome-version: ${{ steps.toolchain.outputs.chrome-version }}
           install-dependencies: true
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-        with:
-          version: v0.37.1
-          driver-opts: image=docker.io/moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
-          cache-binary: 'false'
-          buildkitd-flags: --log-level=info
+      - name: Set up pinned Buildx
+        uses: ./.github/actions/setup-buildx
       - name: Build the Rust server image with reviewed browser and runtime notices
         run: >-
           docker buildx build --platform linux/amd64 --file container/Dockerfile.rust --target server
@@ -349,13 +344,8 @@ jobs:
         with: {persist-credentials: false}
       - name: Set up pinned mise and Python
         uses: ./.github/actions/setup-project
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-        with:
-          version: v0.37.1
-          driver-opts: image=docker.io/moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
-          cache-binary: 'false'
-          buildkitd-flags: --log-level=info
+      - name: Set up pinned Buildx
+        uses: ./.github/actions/setup-buildx
       # A release request's exports with their provenance; the arm64 server is cross-compiled.
       - name: Export the Linux and Windows TUIs as a release request does
         run: >-
