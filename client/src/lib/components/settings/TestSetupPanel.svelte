@@ -291,7 +291,7 @@
   // Settings stays mounted: only a path problem is worth interrupting for.
   announceChanges(() =>
     READINESS[readiness].tone === "err" || readiness === "blocked"
-      ? `Connection paths: ${READINESS[readiness].label}`
+      ? `Connection: ${READINESS[readiness].label}`
       : "",
   );
 </script>
@@ -644,7 +644,7 @@
   open={resetConfirmOpen}
   id="settings-reset-confirm"
   title="Reset settings?"
-  description="Restore test, display and history-saving settings to their defaults? Your theme, panel layout and saved results are kept."
+  description="Test, display and history-saving settings return to their defaults. Your theme, panel layout and saved results are kept."
   cancelLabel="Keep settings"
   confirmLabel="Reset settings"
   onCancel={() => (resetConfirmOpen = false)}
