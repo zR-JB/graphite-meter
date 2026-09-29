@@ -47,7 +47,9 @@ use hyper::{
     service::service_fn,
 };
 use hyper_util::rt::{TokioIo, TokioTimer};
-use response::{empty_response, json_response, method_not_allowed, query, text_body, text_response};
+use response::{
+    clean_path, empty_response, json_response, method_not_allowed, query, redirect, text_body, text_response,
+};
 use std::{
     future::Future,
     io,
@@ -478,6 +480,16 @@ impl HttpServer {
         if path.contains('\\') || path.split('/').any(|part| matches!(part, "." | "..")) {
             return Some(text_response(StatusCode::NOT_FOUND));
         }
+        // Go's mux sends an unclean path, except a CONNECT's, to its clean form.
+        if request.method() != Method::CONNECT
+            && let Some(clean) = clean_path(path)
+        {
+            let location = match request.uri().query() {
+                Some(query) => format!("{clean}?{query}"),
+                None => clean,
+            };
+            return Some(redirect(request.method(), StatusCode::TEMPORARY_REDIRECT, &location));
+        }
         let route = route?;
         if !allowed(route).any(|method| request.method() == method) {
             let mut allow: Vec<_> = allowed(route).collect();
@@ -680,6 +692,14 @@ impl HttpServer {
         if !topology.spa || auth_route::claims(request.uri().path()) {
             return text_response(StatusCode::NOT_FOUND);
         }
+        // Go's mux sends the controller's subtree, which it mounts beside the app, to its trailing slash.
+        if request.uri().path() == "/auth" {
+            let location = match request.uri().query() {
+                Some(query) => format!("/auth/?{query}"),
+                None => "/auth/".into(),
+            };
+            return redirect(request.method(), StatusCode::TEMPORARY_REDIRECT, &location);
+        }
         let mut response = self
             .assets
             .serve(request.method(), request.uri().path(), request.headers())
@@ -796,16 +816,13 @@ impl HttpServer {
                     .expect("auth enabled")
                     .debug(format_args!("unauthenticated UI root redirected to login"));
                 *response.status_mut() = StatusCode::TEMPORARY_REDIRECT;
+                let link = response::redirect_link(StatusCode::TEMPORARY_REDIRECT, login.to_str().unwrap_or_default());
                 response.headers_mut().insert(header::LOCATION, login);
                 response.headers_mut().insert(
                     header::CONTENT_TYPE,
                     http::HeaderValue::from_static("text/html; charset=utf-8"),
                 );
-                *response.body_mut() = Bytes::from(format!(
-                    "<a href=\"{public}{}\">Temporary Redirect</a>.\n\n",
-                    AuthRoute::Login.path()
-                ))
-                .into();
+                *response.body_mut() = Bytes::from(link).into();
             }
             if let Some(origin) = request.headers().get(header::ORIGIN) {
                 if origin == public {
@@ -1532,6 +1549,39 @@ mod tests {
             );
             serving.await.unwrap();
         }
+    }
+
+    /// As Go's mux, an unclean path is sent to its clean form, and the controller's subtree, where the app is
+    /// served, to its trailing slash; only a GET's answer links the destination.
+    #[tokio::test]
+    async fn unclean_paths_are_redirected_as_go_s_mux_redirects_them() {
+        let server = HttpServer::new(Config::default().validated().unwrap()).unwrap();
+        for (method, path, location) in [
+            (Method::GET, "//probe", "/probe"),
+            (Method::POST, "/upload//session?id=x", "/upload/session?id=x"),
+            (Method::GET, "/probe//", "/probe/"),
+            (Method::DELETE, "/auth?next=1", "/auth/?next=1"),
+        ] {
+            let response = respond(&server, method, path).await;
+            assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT, "{path}");
+            assert_eq!(response.headers()[header::LOCATION], location, "{path}");
+        }
+        let mut get = respond(&server, Method::GET, "//probe").await;
+        assert_eq!(get.headers()[header::CONTENT_TYPE], "text/html; charset=utf-8");
+        let link = next_data(get.body_mut()).await.unwrap();
+        assert_eq!(link, "<a href=\"/probe\">Temporary Redirect</a>.\n\n");
+        let head = respond(&server, Method::HEAD, "//probe").await;
+        assert_eq!(head.headers()[header::CONTENT_TYPE], "text/html; charset=utf-8");
+        assert!(head.body().is_end_stream());
+        let h2 = Accepted {
+            tls: true,
+            topology: topology::tcp(NativeKind::H2, false).topology,
+            ..h1()
+        };
+        assert_eq!(
+            respond_on(&server, h2, Method::GET, "/auth").await.status(),
+            StatusCode::NOT_FOUND
+        );
     }
 
     /// Window growth is held back at three quarters of the budget; what all clients claim stays below that.

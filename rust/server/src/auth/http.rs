@@ -16,7 +16,7 @@ use super::{
 use crate::{
     config::{AuthConfig, AuthMode, ConfigError},
     cors::Access,
-    http::response::{json_response, query_pairs, text_response},
+    http::response::{json_response, query_pairs, redirect_link, text_response},
     log::rfc3339,
     sync::lock,
 };
@@ -176,18 +176,7 @@ impl Service {
         }
         if result.status() == StatusCode::SEE_OTHER && request.method() == Method::GET {
             let location = result.headers()[header::LOCATION].to_str().unwrap_or_default();
-            let mut link = String::with_capacity(location.len());
-            for character in location.chars() {
-                match character {
-                    '&' => link.push_str("&amp;"),
-                    '<' => link.push_str("&lt;"),
-                    '>' => link.push_str("&gt;"),
-                    '"' => link.push_str("&#34;"),
-                    '\'' => link.push_str("&#39;"),
-                    character => link.push(character),
-                }
-            }
-            *result.body_mut() = format!("<a href=\"{link}\">See Other</a>.\n\n").into();
+            *result.body_mut() = redirect_link(StatusCode::SEE_OTHER, location).into();
             result.headers_mut().insert(
                 header::CONTENT_TYPE,
                 HeaderValue::from_static("text/html; charset=utf-8"),
