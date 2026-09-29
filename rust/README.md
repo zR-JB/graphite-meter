@@ -220,6 +220,10 @@ Go's form parser, Rust does not accept passwords or CSRF proofs from URL queries
 A CLI approval page opened by another login is refused at once, where Go shows
 the page and then refuses its approval.
 
+The WebSocket handshake checks a request in the order Go's library does, but
+keeps two headers HTTP requires where that library omits them: a HEAD upgrade is
+refused with `Allow: GET`, and an HTTP/1.0 one with `Upgrade: websocket`.
+
 The workspace pins Rust 1.98.1. From the repository root:
 
 ```sh
