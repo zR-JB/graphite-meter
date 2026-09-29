@@ -3,6 +3,7 @@
 //! connection's floor, and each listener checks again with what it binds.
 use crate::{
     admission::Limits,
+    client_address::share_full,
     config::{Config, ConfigError, NativeKind},
     quic_shard,
     sync::lock,
@@ -289,23 +290,21 @@ impl ClientCredit {
 
     /// Charges `bytes` to every key of an admitted client, or to none if any would pass its share.
     pub(crate) fn claim(self: &Arc<Self>, keys: &[String], bytes: usize) -> Option<CreditClaim> {
-        let keys = || keys.iter().filter(|&key| Some(key) != self.shared.as_ref());
+        let mut keys = keys.to_vec();
+        keys.retain(|key| Some(key) != self.shared.as_ref());
         let mut held = lock(&self.held);
-        let fits = held.total.saturating_add(bytes) <= self.budget.unreserved().0 / 2
-            && keys().enumerate().all(|(index, key)| {
-                let share = self.share.saturating_mul(1 << index.min(usize::BITS as usize - 1));
-                held.keys.get(key).copied().unwrap_or_default().saturating_add(bytes) <= share
-            });
-        if !fits {
+        // A key's share is full for this claim when the claim's last byte would pass it.
+        let last = |key: &str| held.keys.get(key).map_or(bytes, |claimed| claimed + bytes) - 1;
+        if share_full(&keys, self.share, last) || held.total + bytes > self.budget.unreserved().0 / 2 {
             return None;
         }
         held.total += bytes;
-        for key in keys() {
+        for key in &keys {
             *held.keys.entry(key.clone()).or_default() += bytes;
         }
         Some(CreditClaim {
             credit: self.clone(),
-            keys: keys().cloned().collect(),
+            keys,
             bytes,
         })
     }
