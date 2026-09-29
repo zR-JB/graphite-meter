@@ -69,9 +69,6 @@ pub async fn run(config: Config, interrupts: mpsc::Receiver<()>) -> Result<(Opti
                     controller.operations.abort_all();
                     controller.cancel_deadline = None;
                 }
-                _ = deadline(controller.browser_deadline) => {
-                    controller.close_browser().await;
-                }
             }
         }
     }; // Drop the UI and restore the terminal before shutdown/reporting.
@@ -126,8 +123,6 @@ struct Controller {
     http: Http,
     config: Config,
     interactive: bool,
-    browser: Option<Child>,
-    browser_deadline: Option<Instant>,
 }
 impl Controller {
     async fn finish(&mut self) -> Result<Snapshot, Error> {
@@ -161,8 +156,6 @@ impl Controller {
             http: Http::new(config.insecure)?,
             config: config.clone(),
             interactive,
-            browser: None,
-            browser_deadline: None,
         })
     }
     fn launch(&mut self, work: Work) -> Result<(), Error> {
@@ -299,37 +292,19 @@ impl Controller {
         }
         Ok(())
     }
-    fn open_browser(&mut self) {
-        // Go opens the page on every press; only a launcher that is still starting is waited for.
-        if self
-            .browser
-            .as_mut()
-            .is_some_and(|child| !matches!(child.try_wait(), Ok(Some(_))))
-        {
-            return;
-        }
+    fn open_browser(&self) {
         let Some(prompt) = self.snapshots.borrow().auth.clone() else {
             return;
         };
-        // The URL came from validated PKCE setup, never a shell command.
-        if let Ok(child) = browser(&prompt.browser_url) {
-            self.browser = Some(child);
-            self.browser_deadline = Some(Instant::now() + Duration::from_secs(5));
-        }
-    }
-    async fn close_browser(&mut self) {
-        self.browser_deadline = None;
-        if let Some(mut child) = self.browser.take() {
-            if !matches!(child.try_wait(), Ok(Some(_))) {
-                let _ = child.kill().await;
-            }
-            let _ = child.wait().await;
+        // As Go's, every press starts a launcher, which is reaped and never stopped: the browser owns
+        // the outcome. The URL came from validated PKCE setup, never a shell command.
+        if let Ok(mut child) = browser(&prompt.browser_url) {
+            tokio::spawn(async move { child.wait().await });
         }
     }
     async fn stop(&mut self) {
         self.cancel();
         let _ = self.wait().await;
-        self.close_browser().await;
     }
 }
 
@@ -427,7 +402,6 @@ fn browser(url: &str) -> Result<Child, Error> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .kill_on_drop(true)
         .spawn()?)
 }
 
