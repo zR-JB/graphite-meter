@@ -14,6 +14,15 @@ use std::{collections::BTreeSet, error::Error, ops::Deref, time::Duration};
 
 pub type ConfigError = Box<dyn Error + Send + Sync>;
 
+/// Go's os.PathError text: the operation, the path and the C library's message, in lower case.
+pub(crate) fn path_error(operation: &str, path: impl std::fmt::Display, error: &std::io::Error) -> String {
+    let message = error.to_string().to_lowercase();
+    format!(
+        "{operation} {path}: {}",
+        message.split(" (os error").next().unwrap_or_default()
+    )
+}
+
 pub const ENGINE_VERSION: &str = match option_env!("GM_ENGINE_VERSION") {
     Some(version) => version,
     None => concat!(env!("CARGO_PKG_VERSION"), "-rust-dev"),

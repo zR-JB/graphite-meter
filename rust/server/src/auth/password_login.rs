@@ -148,12 +148,7 @@ pub(super) fn read_secret(name: &str, inline: &str, path: &str, limit: u64) -> R
     if !inline.is_empty() {
         return Ok(Zeroizing::new(inline.trim().to_owned()));
     }
-    // Go's os.PathError text: the operation, the path and the C library's message, in lower case.
-    let failed = |operation: &str, error: std::io::Error| {
-        let message = error.to_string().to_lowercase();
-        let message = message.split(" (os error").next().unwrap_or_default();
-        format!("{name}: {operation} {path}: {message}")
-    };
+    let failed = |operation, error| format!("{name}: {}", crate::config::path_error(operation, path, &error));
     let mut bytes = Zeroizing::new(Vec::new());
     let file = File::open(path).map_err(|error| failed("open", error))?;
     file.take(limit + 1)

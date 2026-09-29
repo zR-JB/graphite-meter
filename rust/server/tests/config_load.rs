@@ -397,8 +397,11 @@ fn executable_reports_usage_and_refuses_invalid_identity_like_go() {
             "must not exceed",
         ),
         (&[], &["-nope"], "flag provided but not defined: -nope\nUsage:\n"),
-        // Go says "load matching TLS certificate/key: open ...", which tls.rs does not yet; both name the file.
-        (&tls, &[], "/nonexistent-cert.pem"),
+        (
+            &tls,
+            &[],
+            "server error: \"load matching TLS certificate/key: open /nonexistent-cert.pem: no such file or directory\"",
+        ),
         (
             &password,
             &[],

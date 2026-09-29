@@ -173,35 +173,37 @@ fn read_identity(
     names: &[ServerName<'static>],
     now: SystemTime,
 ) -> Result<CertifiedKey, ConfigError> {
-    let identity = || -> Result<CertifiedKey, ConfigError> {
-        let chain = CertificateDer::pem_file_iter(certificate_path)?.collect::<Result<Vec<_>, _>>()?;
-        let leaf = chain.first().ok_or("TLS certificate chain is empty")?;
-        let (not_before, not_after) = validity(leaf).ok_or("TLS certificate is malformed")?;
-        if now < not_before {
-            return Err(format!("TLS certificate is not valid before {}", rfc3339(not_before)).into());
+    // Go's LoadX509KeyPair reads both files and pairs them before the leaf is checked.
+    let pair = || -> Result<CertifiedKey, ConfigError> {
+        let read = |path: &std::path::Path| {
+            std::fs::read(path).map_err(|error| crate::config::path_error("open", path.display(), &error))
+        };
+        let (certificate, key) = (read(certificate_path)?, read(key_path)?);
+        let chain: Vec<_> = CertificateDer::pem_slice_iter(&certificate).collect::<Result<_, _>>()?;
+        if chain.is_empty() {
+            return Err("tls: failed to find any PEM data in certificate input".into());
         }
-        if now >= not_after {
-            return Err(format!("TLS certificate expired at {}", rfc3339(not_after)).into());
-        }
-        let parsed = ParsedCertificate::try_from(leaf)?;
-        for name in names {
-            rustls::client::verify_server_name(&parsed, name)?;
-        }
-        let key = PrivateKeyDer::from_pem_file(key_path)?;
-        Ok(CertifiedKey::from_der(
-            chain,
-            key,
-            &rustls::crypto::ring::default_provider(),
-        )?)
+        let key = PrivateKeyDer::from_pem_slice(&key)?;
+        CertifiedKey::from_der(chain, key, &rustls::crypto::ring::default_provider()).map_err(|error| match error {
+            rustls::Error::InconsistentKeys(_) => "tls: private key does not match public key".into(),
+            error => error.into(),
+        })
     };
-    identity().map_err(|error| {
-        format!(
-            "TLS certificate {} or key {}: {error}",
-            certificate_path.display(),
-            key_path.display()
-        )
-        .into()
-    })
+    let identity = pair().map_err(|error| format!("load matching TLS certificate/key: {error}"))?;
+    let leaf = &identity.cert[0];
+    let (not_before, not_after) = validity(leaf).ok_or("TLS certificate is malformed")?;
+    if now < not_before {
+        return Err(format!("TLS certificate is not valid before {}", rfc3339(not_before)).into());
+    }
+    if now >= not_after {
+        return Err(format!("TLS certificate expired at {}", rfc3339(not_after)).into());
+    }
+    let parsed = ParsedCertificate::try_from(leaf)?;
+    for name in names {
+        rustls::client::verify_server_name(&parsed, name)
+            .map_err(|error| format!("TLS certificate incompatible with {}: {error}", name.to_str()))?;
+    }
+    Ok(identity)
 }
 
 fn validity(certificate: &[u8]) -> Option<(SystemTime, SystemTime)> {

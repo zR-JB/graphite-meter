@@ -75,9 +75,9 @@ async fn renewal_is_atomic_and_failed_reloads_keep_the_previous_identity() -> Re
     assert!(manager.reload(SystemTime::UNIX_EPOCH).is_err());
     assert!(manager.reload(SystemTime::now() + Duration::from_secs(172800)).is_err());
     fs::copy(second.directory().join("identity.key"), &config.tls_key)?;
-    assert!(
-        manager.reload(SystemTime::now()).is_err(),
-        "mismatched key must be rejected"
+    assert_eq!(
+        manager.reload(SystemTime::now()).unwrap_err().to_string(),
+        "load matching TLS certificate/key: tls: private key does not match public key"
     );
     assert_eq!(handshake(tls.clone(), &roots).await?, original);
 
