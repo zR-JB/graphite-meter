@@ -8,10 +8,29 @@ use sha2::{Digest, Sha256};
 pub const STYLES: &str = include_str!("../../../../go/internal/auth/assets/auth.css");
 pub const THEME_SCRIPT: &str = include_str!("../../../../go/internal/auth/assets/theme.js");
 pub const PENDING_SCRIPT: &str = include_str!("../../../../go/internal/auth/assets/pending.js");
-const LOGIN: &str = include_str!("../../../../go/internal/auth/assets/login.tmpl");
-const CLI: &str = include_str!("../../../../go/internal/auth/assets/cli.tmpl");
-const CLI_DONE: &str = include_str!("../../../../go/internal/auth/assets/cli-done.tmpl");
-const CONTINUE: &str = include_str!("../../../../go/internal/auth/assets/continue.tmpl");
+static LOGIN: LazyLock<Parts> = LazyLock::new(|| parts(include_str!("../../../../go/internal/auth/assets/login.tmpl")));
+static CLI: LazyLock<Parts> = LazyLock::new(|| parts(include_str!("../../../../go/internal/auth/assets/cli.tmpl")));
+static CLI_DONE: LazyLock<Parts> =
+    LazyLock::new(|| parts(include_str!("../../../../go/internal/auth/assets/cli-done.tmpl")));
+static CONTINUE: LazyLock<Parts> =
+    LazyLock::new(|| parts(include_str!("../../../../go/internal/auth/assets/continue.tmpl")));
+
+/// A template's actions, each with the text after it, where the first action is empty.
+type Parts = Vec<(String, String)>;
+
+/// `template` without its comments, split at its actions once rather than on every page.
+fn parts(template: &str) -> Parts {
+    let mut source = template.to_owned();
+    while let Some(start) = source.find("<!--") {
+        let end = source[start..].find("-->").map_or(source.len(), |end| start + end + 3);
+        source.replace_range(start..end, "");
+    }
+    let mut parts = source.split("{{");
+    let first = parts.next().unwrap_or_default();
+    let actions = parts.map(|part| part.split_once("}}").expect("closed action"));
+    let parts = std::iter::once(("", first)).chain(actions);
+    parts.map(|(action, text)| (action.into(), text.into())).collect()
+}
 
 pub struct LoginPage<'a> {
     pub csrf: &'a str,
@@ -27,7 +46,7 @@ pub struct LoginPage<'a> {
 impl LoginPage<'_> {
     pub fn render(&self) -> String {
         render(
-            LOGIN,
+            &LOGIN,
             &[
                 ("CSRF", self.csrf),
                 ("Provider", self.provider),
@@ -44,7 +63,7 @@ impl LoginPage<'_> {
 
 pub fn approval_page(code: &str, csrf: &str, challenge: &str, browser_origin: &str) -> String {
     render(
-        CLI,
+        &CLI,
         &[
             ("Code", code),
             ("CSRF", csrf),
@@ -56,15 +75,15 @@ pub fn approval_page(code: &str, csrf: &str, challenge: &str, browser_origin: &s
 
 pub fn capacity_page() -> String {
     let limit = super::grant::MAX_SESSION_GRANTS.to_string();
-    render(CLI, &[("BrowserCapacity", "true"), ("ClientLimit", &limit)])
+    render(&CLI, &[("BrowserCapacity", "true"), ("ClientLimit", &limit)])
 }
 
 pub fn done_page(browser: bool) -> String {
-    render(CLI_DONE, &[("Browser", flag(browser))])
+    render(&CLI_DONE, &[("Browser", flag(browser))])
 }
 
 pub fn continue_page(challenge: &str, opening: bool) -> String {
-    render(CONTINUE, &[("Challenge", challenge), ("Opening", flag(opening))])
+    render(&CONTINUE, &[("Challenge", challenge), ("Opening", flag(opening))])
 }
 
 fn flag(on: bool) -> &'static str {
@@ -72,9 +91,9 @@ fn flag(on: bool) -> &'static str {
 }
 
 /// Go's html/template for what these templates use: fields; `template`; and `if`, `else if` and `else` on a
-/// field, on `not` or `and` of fields, or on `eq` with a string. Comments are dropped, and a field is escaped
-/// for HTML, or for a URL query within an href.
-fn render(template: &str, fields: &[(&str, &str)]) -> String {
+/// field, on `not` or `and` of fields, or on `eq` with a string. A field is escaped for HTML, or for a URL query
+/// within an href.
+fn render(template: &Parts, fields: &[(&str, &str)]) -> String {
     let field = |name: &str| {
         let name = name.trim_start_matches('.');
         fields
@@ -89,18 +108,8 @@ fn render(template: &str, fields: &[(&str, &str)]) -> String {
         [name] => !field(name).is_empty(),
         _ => unreachable!("template condition {condition}"),
     };
-    let mut source = template.to_owned();
-    while let Some(start) = source.find("<!--") {
-        let end = source[start..].find("-->").map_or(source.len(), |end| start + end + 3);
-        source.replace_range(start..end, "");
-    }
     let (mut out, mut branches) = (String::new(), Vec::<(bool, bool)>::new());
-    for (index, part) in source.split("{{").enumerate() {
-        let (action, text) = if index == 0 {
-            ("", part)
-        } else {
-            part.split_once("}}").expect("closed action")
-        };
+    for (action, text) in template {
         let shown = |branches: &[(bool, bool)]| branches.iter().all(|&(_, on)| on);
         if let Some(condition) = action.strip_prefix("if ") {
             branches.push((test(condition), test(condition)));
@@ -110,7 +119,7 @@ fn render(template: &str, fields: &[(&str, &str)]) -> String {
         } else if action == "end" {
             branches.pop();
         } else if shown(&branches) {
-            match action {
+            match action.as_str() {
                 "" => {}
                 "template \"theme\"" => write!(out, "<script>{THEME_SCRIPT}</script>").expect("string writer"),
                 "template \"pending\"" => write!(out, "<script>{PENDING_SCRIPT}</script>").expect("string writer"),
