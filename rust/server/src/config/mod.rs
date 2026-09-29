@@ -26,36 +26,26 @@ pub enum NativeKind {
 
 impl NativeKind {
     pub const ALL: [Self; 4] = [Self::H1, Self::H1Tls, Self::H2, Self::H3];
-    pub const fn name(self) -> &'static str {
+    /// The endpoint name, its address and origin settings, and its protocol.
+    const fn row(self) -> [&'static str; 4] {
         match self {
-            Self::H1 => "http1-clear",
-            Self::H1Tls => "http1-tls",
-            Self::H2 => "http2",
-            Self::H3 => "http3",
+            Self::H1 => ["http1-clear", "GM_H1_ADDR", "GM_H1_PUBLIC_ORIGIN", "http1"],
+            Self::H1Tls => ["http1-tls", "GM_H1_TLS_ADDR", "GM_H1_TLS_PUBLIC_ORIGIN", "http1"],
+            Self::H2 => ["http2", "GM_H2_ADDR", "GM_H2_PUBLIC_ORIGIN", "http2"],
+            Self::H3 => ["http3", "GM_H3_ADDR", "GM_H3_PUBLIC_ORIGIN", "http3"],
         }
+    }
+    pub const fn name(self) -> &'static str {
+        self.row()[0]
     }
     pub const fn address_env(self) -> &'static str {
-        match self {
-            Self::H1 => "GM_H1_ADDR",
-            Self::H1Tls => "GM_H1_TLS_ADDR",
-            Self::H2 => "GM_H2_ADDR",
-            Self::H3 => "GM_H3_ADDR",
-        }
+        self.row()[1]
     }
     pub const fn origin_env(self) -> &'static str {
-        match self {
-            Self::H1 => "GM_H1_PUBLIC_ORIGIN",
-            Self::H1Tls => "GM_H1_TLS_PUBLIC_ORIGIN",
-            Self::H2 => "GM_H2_PUBLIC_ORIGIN",
-            Self::H3 => "GM_H3_PUBLIC_ORIGIN",
-        }
+        self.row()[2]
     }
     pub const fn protocol(self) -> &'static str {
-        match self {
-            Self::H1 | Self::H1Tls => "http1",
-            Self::H2 => "http2",
-            Self::H3 => "http3",
-        }
+        self.row()[3]
     }
     pub fn parse(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|kind| kind.name() == name)
