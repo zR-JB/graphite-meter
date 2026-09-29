@@ -56,7 +56,7 @@ impl HttpServer {
         tls: Arc<rustls::ServerConfig>,
         address: SocketAddr,
     ) -> Result<QuicEndpoint, ServerError> {
-        let udp = bind_udp(address, false)?;
+        let udp = bind_udp(address, 1)?;
         let endpoint_config = noq::EndpointConfig::default();
         let bytes = budget::endpoint_bytes(
             &endpoint_config,
@@ -107,7 +107,7 @@ impl HttpServer {
         const OVERFLOW: &str = "QUIC endpoint buffer size overflow";
         let bind = |runtime: &tokio::runtime::Handle, address| {
             let _entered = runtime.enter();
-            bind_udp(address, true)
+            bind_udp(address, runtimes.len())
         };
         let Some(runtime) = runtimes.first() else {
             return Ok(None);
@@ -348,15 +348,15 @@ fn ended_normally(error: &http3::Error) -> bool {
     }
 }
 
-/// A UDP socket bound in the current runtime, and the kernel buffer bytes it holds.
+/// One of `sockets` UDP sockets on an address, bound in the current runtime, and the kernel buffer bytes it holds.
 struct Udp {
     socket: Box<dyn noq::AsyncUdpSocket>,
     runtime: Arc<dyn noq::Runtime>,
     kernel_bytes: usize,
 }
 
-fn bind_udp(address: SocketAddr, reuse_port: bool) -> Result<Udp, ServerError> {
-    let (socket, warning) = graphite_meter_core::socket::udp_socket_with(address, reuse_port)?;
+fn bind_udp(address: SocketAddr, sockets: usize) -> Result<Udp, ServerError> {
+    let (socket, warning) = graphite_meter_core::socket::udp_socket_with(address, sockets)?;
     if let Some(warning) = warning {
         crate::log!("{warning}");
     }
@@ -1628,10 +1628,12 @@ mod tests {
             let count = shards.unwrap().map_or(0, |(endpoints, _)| endpoints.len());
             (count, server.endpoint_bytes.load(Ordering::Relaxed))
         };
-        let (two, bytes) = shards(1 << 40, &handles[..2]);
-        assert_eq!(two, 2);
-        assert_eq!(shards(floors + bytes, &handles), (2, bytes), "two of four shards fit");
-        assert_eq!(shards(floors + bytes - 1, &handles).0, 0, "fewer than two shards fit");
+        // Each socket keeps its part of the buffers all four offered runtimes would share, however many fit.
+        let (four, bytes) = shards(1 << 40, &handles);
+        assert_eq!(four, 4);
+        assert_eq!(shards(floors + bytes, &handles), (4, bytes));
+        assert_eq!(shards(floors + bytes - 1, &handles).0, 3, "three of four shards fit");
+        assert_eq!(shards(floors + bytes / 4, &handles).0, 0, "fewer than two shards fit");
     }
 
     #[tokio::test]

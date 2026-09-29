@@ -6,6 +6,8 @@ use std::{
 
 /// quic-go's desired UDP buffer size.
 const BUFFER_BYTES: usize = 7 * 1024 * 1024;
+/// What each of several sockets keeps of it: a single fast connection's headroom.
+const SHARED_BUFFER_FLOOR: usize = 2 * 1024 * 1024;
 /// quic-go warns once per process.
 static WARNED: AtomicBool = AtomicBool::new(false);
 
@@ -13,13 +15,13 @@ static WARNED: AtomicBool = AtomicBool::new(false);
 /// buffers stay short returns its warning, unless
 /// `QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING` is true.
 pub fn udp_socket(address: SocketAddr) -> io::Result<(UdpSocket, Option<String>)> {
-    udp_socket_with(address, false)
+    udp_socket_with(address, 1)
 }
 
-/// [`udp_socket`]; `reuse_port` sets `SO_REUSEPORT` before binding, so that this
-/// process's sockets can share the address. Only Linux balances unicast datagrams
-/// among them, so other targets refuse it.
-pub fn udp_socket_with(address: SocketAddr, reuse_port: bool) -> io::Result<(UdpSocket, Option<String>)> {
+/// [`udp_socket`] for one of `sockets` that share the address with `SO_REUSEPORT`
+/// and split quic-go's buffer size, down to a floor. Only Linux balances unicast
+/// datagrams among them, so other targets refuse several.
+pub fn udp_socket_with(address: SocketAddr, sockets: usize) -> io::Result<(UdpSocket, Option<String>)> {
     let socket = socket2::Socket::new(
         socket2::Domain::for_address(address),
         socket2::Type::DGRAM,
@@ -28,8 +30,9 @@ pub fn udp_socket_with(address: SocketAddr, reuse_port: bool) -> io::Result<(Udp
     if address.is_ipv6() {
         let _ = socket.set_only_v6(false);
     }
-    let receive = grow(&socket, Buffer::Receive);
-    let send = grow(&socket, Buffer::Send);
+    let bytes = buffer_bytes(sockets);
+    let receive = grow(&socket, Buffer::Receive, bytes);
+    let send = grow(&socket, Buffer::Send, bytes);
     let warning = receive
         .err()
         .or(send.err())
@@ -40,7 +43,7 @@ pub fn udp_socket_with(address: SocketAddr, reuse_port: bool) -> io::Result<(Udp
         .map(|shortfall| {
             format!("{shortfall}. See https://github.com/quic-go/quic-go/wiki/UDP-Buffer-Sizes for details.")
         });
-    if reuse_port {
+    if sockets > 1 {
         #[cfg(target_os = "linux")]
         socket.set_reuse_port(true)?;
         #[cfg(not(target_os = "linux"))]
@@ -53,14 +56,18 @@ pub fn udp_socket_with(address: SocketAddr, reuse_port: bool) -> io::Result<(Udp
     Ok((socket.into(), warning))
 }
 
+fn buffer_bytes(sockets: usize) -> usize {
+    (BUFFER_BYTES / sockets.max(1)).max(SHARED_BUFFER_FLOOR)
+}
+
 #[derive(Clone, Copy)]
 enum Buffer {
     Receive,
     Send,
 }
 
-/// quic-go's setReceiveBuffer and setSendBuffer, including their messages.
-fn grow(socket: &socket2::Socket, buffer: Buffer) -> Result<(), String> {
+/// quic-go's setReceiveBuffer and setSendBuffer, including their messages, for `bytes`.
+fn grow(socket: &socket2::Socket, buffer: Buffer, bytes: usize) -> Result<(), String> {
     let name = match buffer {
         Buffer::Receive => "receive",
         Buffer::Send => "send",
@@ -73,29 +80,29 @@ fn grow(socket: &socket2::Socket, buffer: Buffer) -> Result<(), String> {
         .map_err(|error| format!("failed to determine {name} buffer size: {error}"))
     };
     let before = size()?;
-    if before >= BUFFER_BYTES {
+    if before >= bytes {
         return Ok(());
     }
     let _ = match buffer {
-        Buffer::Receive => socket.set_recv_buffer_size(BUFFER_BYTES),
-        Buffer::Send => socket.set_send_buffer_size(BUFFER_BYTES),
+        Buffer::Receive => socket.set_recv_buffer_size(bytes),
+        Buffer::Send => socket.set_send_buffer_size(bytes),
     };
     #[cfg(target_os = "linux")]
-    if size()? < BUFFER_BYTES {
+    if size()? < bytes {
         // Privileged processes may exceed the sysctl maximum.
         let _ = match buffer {
-            Buffer::Receive => rustix::net::sockopt::set_socket_recv_buffer_size_force(socket, BUFFER_BYTES),
-            Buffer::Send => rustix::net::sockopt::set_socket_send_buffer_size_force(socket, BUFFER_BYTES),
+            Buffer::Receive => rustix::net::sockopt::set_socket_recv_buffer_size_force(socket, bytes),
+            Buffer::Send => rustix::net::sockopt::set_socket_send_buffer_size_force(socket, bytes),
         };
     }
-    shortfall(name, before, size()?).map_or(Ok(()), Err)
+    shortfall(name, before, size()?, bytes).map_or(Ok(()), Err)
 }
 
 /// quic-go's message for a buffer it could not grow to the desired size.
-fn shortfall(name: &str, before: usize, after: usize) -> Option<String> {
-    let (wanted, got) = (BUFFER_BYTES / 1024, after / 1024);
+fn shortfall(name: &str, before: usize, after: usize, bytes: usize) -> Option<String> {
+    let (wanted, got) = (bytes / 1024, after / 1024);
     match after {
-        _ if after >= BUFFER_BYTES => None,
+        _ if after >= bytes => None,
         _ if after == before => Some(format!(
             "failed to increase {name} buffer size (wanted: {wanted} kiB, got {got} kiB)"
         )),
@@ -118,14 +125,19 @@ mod tests {
     #[test]
     fn shortfalls_read_like_quic_go() {
         assert_eq!(
-            shortfall("receive", 212_992, 425_984).as_deref(),
+            shortfall("receive", 212_992, 425_984, BUFFER_BYTES).as_deref(),
             Some("failed to sufficiently increase receive buffer size (was: 208 kiB, wanted: 7168 kiB, got: 416 kiB)")
         );
         assert_eq!(
-            shortfall("send", 212_992, 212_992).as_deref(),
-            Some("failed to increase send buffer size (wanted: 7168 kiB, got 208 kiB)")
+            shortfall("send", 212_992, 212_992, buffer_bytes(2)).as_deref(),
+            Some("failed to increase send buffer size (wanted: 3584 kiB, got 208 kiB)")
         );
-        assert_eq!(shortfall("receive", 212_992, BUFFER_BYTES), None);
+        assert_eq!(shortfall("receive", 212_992, BUFFER_BYTES, BUFFER_BYTES), None);
+        assert_eq!(
+            [1, 2, 16].map(buffer_bytes),
+            [7 << 20, 7 << 19, 2 << 20],
+            "a floor past a few sockets"
+        );
     }
 
     #[test]
@@ -154,9 +166,9 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn reuse_port_sockets_share_an_address_that_others_cannot_take() {
-        let (first, _) = udp_socket_with("127.0.0.1:0".parse().unwrap(), true).unwrap();
+        let (first, _) = udp_socket_with("127.0.0.1:0".parse().unwrap(), 2).unwrap();
         let address = first.local_addr().unwrap();
-        let (second, _) = udp_socket_with(address, true).unwrap();
+        let (second, _) = udp_socket_with(address, 2).unwrap();
         assert_eq!(second.local_addr().unwrap(), address);
         assert!(udp_socket(address).is_err());
     }

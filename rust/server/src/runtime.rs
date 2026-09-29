@@ -175,8 +175,9 @@ impl Quic {
     /// and eight paced ones: each additional shard splits a connection's ACKs over more sockets, and so its sends
     /// into smaller bursts. Each shard holds its socket buffers, receive batch and forwarding queue for as long as it
     /// runs, and one connection never spreads over several, so sixteen keep those a small part of the default budget
-    /// on a host with many cores. Only Linux spreads unicast datagrams over `SO_REUSEPORT` sockets, so other targets
-    /// keep one endpoint on this runtime.
+    /// on a host with many cores. The shards split quic-go's 7 MiB socket buffers, each keeping 2 MiB at least, so
+    /// the server's own queue stays near quic-go's single socket. Only Linux spreads unicast datagrams over
+    /// `SO_REUSEPORT` sockets, so other targets keep one endpoint on this runtime.
     pub(crate) fn bind(
         server: &HttpServer,
         tls: Arc<rustls::ServerConfig>,

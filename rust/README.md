@@ -160,7 +160,8 @@ On Linux, HTTP/3 runs an endpoint for every two workers of the server's runtime
 (`TOKIO_WORKER_THREADS`), at least two and at most sixteen, as many as the
 buffer budget covers; a log line reports fewer. The cap keeps their reservations
 a small part of the default budget on hosts with many cores, which one
-connection never spreads over. On four workers, two endpoints cost less CPU per
+connection never spreads over, and the endpoints split quic-go's 7 MiB UDP
+socket buffers, each keeping 2 MiB at least. On four workers, two endpoints cost less CPU per
 byte than one or four, for one fast client and for eight paced ones. Each has its own
 thread, current-thread runtime and UDP socket on the shared port, which
 `SO_REUSEPORT` spreads by 4-tuple, so a connection stays on one thread.
