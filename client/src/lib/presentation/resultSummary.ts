@@ -256,6 +256,22 @@ export function summaryCards(
   });
 }
 
+// Facts read the same way on every card: what the link peaked at, how steady it was, what moved.
+const TRANSFER_FACTS = ["Peak", "Stability", "No data", "Transferred"];
+const FACTS: Record<TransportRole, string[]> = {
+  latency: [],
+  download: TRANSFER_FACTS,
+  upload: TRANSFER_FACTS,
+  bidirectional: ["Stability", "No data", "Down + up", "Transferred"],
+};
+
+/** A card's facts in every state, "—" until known, so a value arriving never moves the instrument; No data only after a stall. */
+export const cardFacts = (card: SummaryCard): SummaryRow[] =>
+  FACTS[card.key].flatMap((label) => {
+    const row = card.rows.find((row) => row.label === label);
+    return row ? [row] : label === "No data" ? [] : [{ label, value: MISSING }];
+  });
+
 /** A completed run spoken in card order: each headline, then latency's jitter and added latency. */
 export const resultSentence = (cards: SummaryCard[]) =>
   cards

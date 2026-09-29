@@ -10,17 +10,11 @@
     stageTip,
     stageTrackModel,
   } from "./stageTrack";
-  import {
-    STAGE,
-    STATUS,
-    STATUS_TONE,
-    type Tone,
-  } from "../presentation/vocabulary";
+  import { STAGE, STATUS, STATUS_TONE } from "../presentation/vocabulary";
   import { formatLatency, formatRate } from "../format";
   import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
   import type { StageKey } from "../state/store.svelte";
   import { planned, STAGES } from "../runner/schedule";
-  import { handoff, type Handoff } from "../presentation/motion.svelte";
 
   const controller = getApplicationController();
 
@@ -73,13 +67,11 @@
       stageShown(s.key, s.selected, store.stagePresentation[s.key]),
     ),
   );
-  const look = (key: StageKey) => {
-    const s = model.find((s) => s.key === key)!;
+  // The line under the name: the stage's progress while it runs, how it settled after.
+  const line = (s: (typeof model)[number]) => {
     const live = s.state === "active" && store.phaseBudgetMs > 0;
     return {
-      state: s.state,
-      reason: s.reason,
-      tone: s.state === "recovering" ? STATUS_TONE.recovering : key,
+      tone: s.state === "recovering" ? STATUS_TONE.recovering : s.key,
       live,
       progress:
         s.state === "warmup" || s.state === "failed"
@@ -89,25 +81,12 @@
             : s.fill / 100,
     };
   };
-  const looks = Object.fromEntries(
-    STAGES.map((key) => [
-      key,
-      handoff(
-        () => look(key),
-        (shown) => `${shown.state}:${shown.reason}`,
-      ),
-    ]),
-  ) as Record<StageKey, Handoff<ReturnType<typeof look>>>;
-  const SETTLED = new Set(["partial", "failed", "stopped"]);
-  // The wash and the line already say a stage runs or waits its turn.
-  const QUIET = new Set(["active", "pending", "warmup"]);
 </script>
 
 <fieldset class="stage-track">
   <legend class="sr-only">Test stages, toggle to include or skip</legend>
   {#each segments as s (s.key)}
-    {@const view = looks[s.key]}
-    {@const look = view.shown}
+    {@const look = line(s)}
     <button
       type="button"
       class="chip chip--{s.state}"
@@ -125,28 +104,17 @@
       disabled={s.locked}
       onclick={() => controller.toggleStage(s.key)}
     >
-      <span class="bead" aria-hidden="true"></span>
+      <!-- One glyph per chip, so no state changes its width and nothing on the row moves. -->
+      <span class="bead" aria-hidden="true"><Icon name="check" /></span>
       <span class="chip-label">{s.label}</span>
-      <!-- A settled result's word lives on its card; the line's pattern keeps the state here. -->
-      {#if look.reason && !SETTLED.has(look.state) && !QUIET.has(look.state)}
-        <span
-          class="chip-tag"
-          data-tone={(STATUS_TONE as Record<string, Tone>)[look.state]}
-          style:opacity={view.opacity}>{look.reason}</span
-        >
-      {:else if look.state === "complete"}
-        <span class="chip-check" style:opacity={view.opacity}
-          ><Icon name="check" /></span
-        >
-      {/if}
       <span class="chip-bar" aria-hidden="true">
         <span
           class="chip-fill"
           data-tone={look.tone}
-          class:chip-fill--warmup={look.state === "warmup"}
-          class:chip-fill--failed={look.state === "failed"}
-          class:is-partial={look.state === "partial"}
-          class:is-stalled={look.state === "recovering"}
+          class:chip-fill--warmup={s.state === "warmup"}
+          class:chip-fill--failed={s.state === "failed"}
+          class:is-partial={s.state === "partial"}
+          class:is-stalled={s.state === "recovering"}
           class:is-live={look.live}
           style:--progress={look.progress}
         ></span>
@@ -212,8 +180,9 @@
   .chip--disabled:disabled {
     opacity: 0.5;
   }
-  /* The bead is the stage's colour: filled when it runs, a ring when it is off. */
+  /* The bead is the stage's colour: filled when it runs, a ring when it is off, a check once complete. */
   .bead {
+    position: relative;
     flex: none;
     width: 8px;
     height: 8px;
@@ -225,34 +194,25 @@
     background: var(--tone);
     box-shadow: none;
   }
+  /* Centred on the bead, the check crossfades with it. */
+  .bead :global(svg) {
+    position: absolute;
+    top: calc((8px - var(--icon-sm)) / 2);
+    left: calc((8px - var(--icon-sm)) / 2);
+    width: var(--icon-sm);
+    height: var(--icon-sm);
+    color: var(--tone-ink);
+    opacity: 0;
+    transition: opacity var(--dur-graph) var(--ease-out);
+  }
+  .chip--complete .bead {
+    background-color: transparent;
+  }
+  .chip--complete .bead :global(svg) {
+    opacity: 1;
+  }
   .chip-label {
     font-weight: var(--w-strong);
-  }
-  .chip-check {
-    display: grid;
-    color: var(--tone-ink);
-  }
-  .chip-check :global(svg) {
-    width: 13px;
-    height: 13px;
-  }
-  /* A status reads like the cards: a dot and a word in its tone. */
-  .chip-tag {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    color: var(--text-soft);
-    font-size: var(--type-sm);
-  }
-  .chip-tag::before {
-    content: "";
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: currentColor;
-  }
-  .chip-tag[data-tone] {
-    color: var(--tone);
   }
   /* Progress is a hairline under the label, like a stage's rule. */
   .chip-bar {
@@ -316,7 +276,7 @@
       translate: 240%;
     }
   }
-  /* A phone gives the chips one row of equal columns; the bead alone says a chip is off, the card that it is done. */
+  /* A phone gives the chips one row of equal columns. */
   @container viz (max-width: 520px) {
     .stage-track {
       display: grid;
@@ -330,10 +290,6 @@
     }
     .chip-bar {
       inset-inline: var(--space-2);
-    }
-    .chip-check,
-    .chip-tag {
-      display: none;
     }
   }
 </style>
