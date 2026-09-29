@@ -8,7 +8,7 @@ use crate::{
     Error,
     config::Config,
     model::{Phase, ServerSummary, Snapshot, Stage},
-    report::{ansi, line, run_servers},
+    report::{ansi, line, plain, run_servers},
     theme::Theme,
     vocabulary::BLOCKED,
 };
@@ -90,13 +90,19 @@ struct Chrome {
 }
 
 impl Chrome {
-    fn show(&mut self, ui: &Ui) -> io::Result<()> {
+    fn show(&mut self, ui: &Ui, drawn: &ratatui::buffer::Buffer) -> io::Result<()> {
         let mut sequences = self.update(ui.title(), ui.progress());
         if let Some(auth) = &ui.snapshot.auth {
             let url: String = auth.browser_url.chars().filter(|c| c.is_ascii_graphic()).collect();
-            for (row, text) in ui.link_rows() {
-                let text = ansi(&[line(text.trim_start(), ui.theme.accent)]);
-                sequences.push_str(&format!("\x1b[{};2H\x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\", row + 1));
+            // The drawn rows that hold Go's signInLink, hard-wrapped at the frame's inner width.
+            let inner = usize::from(ui.size.0).max(view::MIN_WIDTH) - 2;
+            let link: Vec<_> = ui.sign_in_link(inner).iter().map(plain).collect();
+            for (row, cells) in drawn.content.chunks(usize::from(drawn.area.width).max(1)).enumerate() {
+                let text: String = cells.iter().map(|cell| cell.symbol()).collect();
+                if link.iter().any(|chunk| chunk == text.trim()) {
+                    let text = ansi(&[line(text.trim(), ui.theme.accent)]);
+                    sequences.push_str(&format!("\x1b[{};2H\x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\", row + 1));
+                }
             }
         }
         if sequences.is_empty() {
@@ -193,8 +199,8 @@ pub async fn run(
                     dirty = true;
                 }
                 if dirty {
-                    terminal.draw(|frame| ui.draw(frame))?;
-                    chrome.show(&ui)?;
+                    let drawn = terminal.draw(|frame| ui.draw(frame))?;
+                    chrome.show(&ui, drawn.buffer)?;
                     dirty = false;
                 }
             }

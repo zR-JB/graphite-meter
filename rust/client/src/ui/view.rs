@@ -20,7 +20,7 @@ use std::time::Duration;
 use unicode_width::UnicodeWidthStr;
 
 pub(super) const TWO_COLUMN_MIN: usize = 100;
-const MIN_WIDTH: usize = 40;
+pub(super) const MIN_WIDTH: usize = 40;
 const MIN_HEIGHT: usize = 12;
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -578,26 +578,11 @@ impl Ui {
     }
 
     /// Go's signInLink: the page's address outside any frame, hard-wrapped, as a link.
-    fn sign_in_link(&self, width: usize) -> Text {
+    pub(super) fn sign_in_link(&self, width: usize) -> Text {
         let auth = self.snapshot.auth.iter();
         let url: Vec<char> = auth.flat_map(|auth| auth.browser_url.chars()).collect();
         let lines = url.chunks(width.max(1)).map(String::from_iter);
         lines.map(|text| line(text, self.theme.accent)).collect()
-    }
-
-    /// Where the sign-in link is on screen: each of its rows in view, and its text there.
-    pub(super) fn link_rows(&self) -> Vec<(u16, String)> {
-        let (width, height) = (usize::from(self.size.0), usize::from(self.size.1));
-        let shown = self.snapshot.auth.is_some() && self.popup == Popup::None && self.shown().is_none();
-        if !shown || width < MIN_WIDTH || height < MIN_HEIGHT {
-            return Vec::new();
-        }
-        let layout = self.layout();
-        let offset = self.body.min(layout.body.len().saturating_sub(layout.body_height));
-        let first = layout.body.len() - self.sign_in_link(width - 2).len();
-        let rows = first.max(offset)..layout.body.len().min(offset + layout.body_height);
-        let at = |row: usize| u16::try_from(layout.top.len() + row - offset).unwrap_or(u16::MAX);
-        rows.map(|row| (at(row), plain(&layout.body[row]))).collect()
     }
 
     /// Go's serverChooserView: the catalogue's servers around the cursor, each over its address.
