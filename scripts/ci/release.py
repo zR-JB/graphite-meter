@@ -297,10 +297,10 @@ def command_verify() -> None:
         parts = [request_dir / f"release-rust-{part}-{run_id}" for part in ("assets", "darwin")[:1 + release.rust_tui]]
         with tempfile.TemporaryDirectory() as fetched:
             # A stable release builds this checkout; a prerelease the PR head, whose own CI checked its files.
-            source = Path(".") if release.stable else fetch_files(env("REPOSITORY"), release.sha, Path(fetched))
+            root = Path(".") if release.stable else fetch_files(env("REPOSITORY"), release.sha, Path(fetched))
             verify_release_assets.verify_rust(parts, assets, release.version,
                                               *verify_release_assets.rust_builds(release.rust),
-                                              release.sha, env("REPOSITORY"), source)
+                                              release.sha, env("REPOSITORY"), root)
     gh.write_checksums(assets)
     main, ci_run_id, codeql_id = require_publishable(env("REPOSITORY"), release)
     if main != env("PUBLISHER_SHA"):
@@ -511,8 +511,7 @@ def command_check_rust(darwin: bool = False) -> None:
 COMMANDS = {
     "prepare": command_prepare, "verify": command_verify, "recheck": command_recheck,
     "publish": command_publish, "stage-source": command_stage_source, "stage-rust": command_stage_rust,
-    "check-rust": command_check_rust,
-    "check-darwin": lambda: command_check_rust(darwin=True),
+    "check-rust": command_check_rust, "check-darwin": lambda: command_check_rust(darwin=True),
 }
 
 

@@ -303,8 +303,8 @@ def read_archive_text(path: Path, name: str) -> str:
         raise ControlPlaneError(f"cannot read {path.name}/{name}: {exc}") from exc
 
 
-def verify_rust_source(path: Path, package: str, target: str, source: Path = Path(".")) -> None:
-    """Verify a Rust build's source offer against the release commit's files, checked out at `source`."""
+def verify_rust_source(path: Path, package: str, target: str, root: Path = Path(".")) -> None:
+    """Verify a Rust build's source offer against the release commit's files, which `root` holds."""
     names = archive_names(path)
     inventory = expect_object(decode_json(read_archive_text(path, "inventory.json"), path.name), path.name)
     if int_field(inventory, "schemaVersion", path.name) != 1 or any(
@@ -315,7 +315,7 @@ def verify_rust_source(path: Path, package: str, target: str, source: Path = Pat
     lock = inventory.get("cargoLockSha256")
     if not isinstance(lock, str) or re.fullmatch(r"[0-9a-f]{64}", lock) is None:
         fail("invalid Rust Cargo lock identity")
-    if lock != file_sha256(source / "rust/Cargo.lock"):
+    if lock != file_sha256(root / "rust/Cargo.lock"):
         fail("Rust source inventory does not match release Cargo lock")
     components = expect_array(inventory.get("components"), "Rust components")
     if not components:
@@ -336,12 +336,12 @@ def verify_rust_source(path: Path, package: str, target: str, source: Path = Pat
             else:
                 manual.append(identity)
     if decode_json(read_archive_text(path, "legal/rust-forks.json"), "Rust forks") != decode_json(
-            (source / "legal/rust-forks.json").read_text(), "release Rust forks"):
+            (root / "legal/rust-forks.json").read_text(), "release Rust forks"):
         fail("Rust source fork identities differ from release tooling")
     try:
         reviewed: dict[tuple[str, ...], set[str]] = {
             (entry.ecosystem, entry.name, entry.version): set(manual_files(entry))
-            for entry in manual_sources(source, package)}
+            for entry in manual_sources(root, package)}
     except ValueError as exc:
         raise ControlPlaneError(f"invalid reviewed provenance: {exc}") from exc
     allowed = {"inventory.json", "LEGAL.txt", "legal/rust-forks.json"}.union(*reviewed.values())
@@ -368,21 +368,21 @@ def verify_rust_source(path: Path, package: str, target: str, source: Path = Pat
 
 
 def verify_rust_client_archive(dist: Path, version: str, platform: str, target: str,
-                               source: Path = Path(".")) -> None:
+                               root: Path = Path(".")) -> None:
     name, base, binary = tui_archive(version, platform, "_rust")
     path = dist / name
     require_same("Rust TUI archive files", {base, *(f"{base}/{file}" for file in (binary, *TUI_FILES))},
                  archive_names(path))
     if not native_executable(read_archive(path, f"{base}/{binary}", 128 * 1024 * 1024), target):
         fail(f"{name} does not hold a {target} executable")
-    offer = f"{base}_third-party-source.tar.gz"
-    verify_rust_source(dist / offer, "graphite-meter-client", target, source)
+    source = f"{base}_third-party-source.tar.gz"
+    verify_rust_source(dist / source, "graphite-meter-client", target, root)
     for filename in ("LICENSE", "COPYRIGHT"):
-        if read_archive_text(path, f"{base}/{filename}") != (source / filename).read_text():
+        if read_archive_text(path, f"{base}/{filename}") != (root / filename).read_text():
             fail(f"Rust TUI {filename} differs from release source")
-    if offer not in read_archive_text(path, f"{base}/SOURCE.txt"):
+    if source not in read_archive_text(path, f"{base}/SOURCE.txt"):
         fail("Rust TUI source notice lacks matching source archive")
-    if read_archive_text(path, f"{base}/THIRD_PARTY_NOTICES.txt") != read_archive_text(dist / offer, "LEGAL.txt"):
+    if read_archive_text(path, f"{base}/THIRD_PARTY_NOTICES.txt") != read_archive_text(dist / source, "LEGAL.txt"):
         fail("Rust TUI notices differ from source offer")
 
 
@@ -403,23 +403,23 @@ def verify_rust_provenance(dist: Path, name: str, files: set[str], commit: str, 
 
 
 def verify_rust_artifacts(dist: Path, version: str, server: list[str], tui: list[str],
-                          source: Path = Path(".")) -> None:
+                          root: Path = Path(".")) -> None:
     targets = tui_targets(TARGETS)
     for platform in server:
-        offer, = rust_files(version, "graphite-meter-server", platform)
-        verify_rust_source(dist / offer, "graphite-meter-server", targets[platform], source)
+        source, = rust_files(version, "graphite-meter-server", platform)
+        verify_rust_source(dist / source, "graphite-meter-server", targets[platform], root)
     for platform in tui:
-        verify_rust_client_archive(dist, version, platform, targets[platform], source)
+        verify_rust_client_archive(dist, version, platform, targets[platform], root)
 
 
 def verify_rust(parts: list[Path], assets: Path, version: str, server: list[str], tui: list[str],
-                commit: str, repository: str, source: Path = Path(".")) -> None:
-    """Merge the untrusted Rust artifacts into `assets` and verify them against `commit`'s files at `source`."""
+                commit: str, repository: str, root: Path = Path(".")) -> None:
+    """Merge the untrusted Rust artifacts into `assets` and verify them against `commit`'s files in `root`."""
     names = set().union(*(merge(part, assets) for part in parts))
     require_same("Rust artifacts", expected_rust_artifacts(version, server, tui), names)
     for name, files in rust_statements(version, server, tui).items():
         verify_rust_provenance(assets, name, files, commit, repository)
-    verify_rust_artifacts(assets, version, server, tui, source)
+    verify_rust_artifacts(assets, version, server, tui, root)
 
 
 def verify_artifacts(version: str, dist: Path) -> None:
