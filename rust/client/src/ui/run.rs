@@ -194,26 +194,20 @@ struct Axis {
     label: fn(f64) -> String,
 }
 
-/// Go's rateTier.
-fn rate_tier(bits: f64, headroom: f64) -> (f64, &'static str) {
-    let units = ["bit/s", "kbit/s", "Mbit/s", "Gbit/s", "Tbit/s"];
-    let mut tier = 0;
-    while tier < units.len() - 1 && bits >= headroom * 1000f64.powi(tier as i32 + 1) {
-        tier += 1;
-    }
-    (bits / 1000f64.powi(tier as i32), units[tier])
-}
-
 /// Go's roundLabel.
 fn round_label(value: f64) -> String {
     ((value * 1000.0).round() / 1000.0).to_string()
 }
 
+/// Go's rateAxis: the top in the largest unit it reaches, as Go's rateTier without headroom.
 const RATE_AXIS: Axis = Axis {
     scale: 8.0,
     label: |bits| {
-        let (value, unit) = rate_tier(bits, 1.0);
-        format!("{} {unit}", round_label(value))
+        let units = ["bit/s", "kbit/s", "Mbit/s", "Gbit/s", "Tbit/s"];
+        let tier = (1..units.len())
+            .take_while(|tier| bits >= 1000f64.powi(*tier as i32))
+            .count();
+        format!("{} {}", round_label(bits / 1000f64.powi(tier as i32)), units[tier])
     },
 };
 const MS_AXIS: Axis = Axis {
@@ -275,12 +269,8 @@ fn chart(
         owner[cell] = series;
     };
     let mut segment = |(mut x0, mut y0): (isize, isize), (x1, y1): (isize, isize), series: usize| {
-        let (dx, dy, sx, sy) = (
-            (x1 - x0).abs(),
-            -(y1 - y0).abs(),
-            (x1 - x0).signum(),
-            (y1 - y0).signum(),
-        );
+        let (dx, sx) = ((x1 - x0).abs(), (x1 - x0).signum());
+        let (dy, sy) = (-(y1 - y0).abs(), (y1 - y0).signum());
         let mut error = dx + dy;
         loop {
             set(x0, y0, series);
@@ -297,35 +287,29 @@ fn chart(
         }
     };
     for (index, (_, points)) in lines.iter().enumerate() {
-        let (mut column, mut sum, mut count, mut last, mut drawn) = (-1_isize, 0.0, 0usize, (0, 0), false);
-        let mut plot =
-            |column: isize, sum: &mut f64, count: &mut usize, last: &mut (isize, isize), drawn: &mut bool| {
-                if *count == 0 {
-                    return;
-                }
-                let share = (*sum / *count as f64 / top).clamp(0.0, 1.0);
-                let y = dot_height as isize - 1 - (share * (dot_height - 1) as f64).round() as isize;
-                if !*drawn {
-                    *last = (column, y);
-                }
-                segment(*last, (column, y), index);
-                (*last, *drawn, *sum, *count) = ((column, y), true, 0.0, 0);
-            };
+        // Each dot column's weighted sum and count, where None is a gap that breaks the line.
+        let mut columns: Vec<Option<(isize, f64, usize)>> = Vec::new();
         for point in points.iter() {
-            if point.1.is_nan() {
-                plot(column, &mut sum, &mut count, &mut last, &mut drawn);
-                drawn = false;
-                continue;
-            }
             let x = (((point.0 - t0) / (t1 - t0) * dot_width as f64) as isize).clamp(0, dot_width as isize - 1);
-            if x != column {
-                plot(column, &mut sum, &mut count, &mut last, &mut drawn);
-                column = x;
+            match columns.last_mut() {
+                _ if point.1.is_nan() => columns.push(None),
+                Some(Some((column, sum, count))) if *column == x => {
+                    (*sum, *count) = (*sum + point.1 * point.2 as f64, *count + point.2);
+                }
+                _ => columns.push(Some((x, point.1 * point.2 as f64, point.2))),
             }
-            sum += point.1 * point.2 as f64;
-            count += point.2;
         }
-        plot(column, &mut sum, &mut count, &mut last, &mut drawn);
+        let mut last = None;
+        for column in columns {
+            let Some((x, sum, count)) = column else {
+                last = None;
+                continue;
+            };
+            let share = (sum / count as f64 / top).clamp(0.0, 1.0);
+            let y = dot_height as isize - 1 - (share * (dot_height - 1) as f64).round() as isize;
+            segment(last.unwrap_or((x, y)), (x, y), index);
+            last = Some((x, y));
+        }
     }
     let mut out = Vec::new();
     for row in 0..rows {
