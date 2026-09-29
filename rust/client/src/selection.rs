@@ -15,6 +15,9 @@ pub fn servers<'a>(catalog: &'a ServerCatalog, config: &Config) -> Result<Vec<&'
         &config.servers
     };
     catalog.validate_selection(ids)?;
+    if ids.len() > 1 && (config.throughput_origin.is_some() || config.latency_origin.is_some()) {
+        return Err("explicit origins need a single selected server; use Automatic origins for several".into());
+    }
     Ok(catalog.servers.iter().filter(|entry| ids.contains(&entry.id)).collect())
 }
 
@@ -177,5 +180,24 @@ mod tests {
         );
         preflight.capabilities.throughput[0].base_url = "https://foreign.example".into();
         assert!(throughput(&config, &entry, &preflight, None).is_err());
+        // As Go's prepareRun (prepare.go:113-115), an explicit origin needs a single server.
+        let other = ServerEntry {
+            id: "other".into(),
+            url: "https://other.example".into(),
+            ..Default::default()
+        };
+        let ids = vec!["self".into(), "other".into()];
+        let catalog = ServerCatalog {
+            default_selection: ids,
+            servers: vec![entry, other],
+        };
+        let refused = servers(&catalog, &config).err().map(|error| error.to_string());
+        let message = "explicit origins need a single selected server; use Automatic origins for several";
+        assert_eq!(refused.as_deref(), Some(message));
+        let single = Config {
+            servers: vec!["self".into()],
+            ..config
+        };
+        assert_eq!(servers(&catalog, &single).map(|selected| selected.len()).ok(), Some(1));
     }
 }
