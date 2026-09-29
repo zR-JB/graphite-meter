@@ -165,6 +165,14 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (".github/ci-paths.yml", "  - 'scripts/ci/github_api.py'\n", "", r"darwin misses \['scripts/ci/github_api.py'\]"),
     ("scripts/legal/rust_platform.py", None, "from ..ci import trust\n", r"darwin misses \['scripts/ci/trust.py'\]"),
     (".dockerignore", "rust/http3/fuzz/corpus\n", "", r"misses Rust build output \['rust/http3/fuzz/corpus'\]"),
+    # Development notices stay out of CI and releases, directly or through a task a job runs.
+    (W + "ci.yml", None, "      - run: mise run rust-server-run\n", "unreviewed --development notices"),
+    ("mise.toml", '  "cargo fmt --all --check",\n', '  { task = "rust-client-build" },\n  "cargo fmt --all --check",\n',
+     "unreviewed --development notices"),
+    ("container/Dockerfile.rust", '--profile "$PROFILE"', '--profile "$PROFILE" --development',
+     "unreviewed --development notices"),
+    ("scripts/package_rust.py", '"--profile", "release",', '"--profile", "release", "--development",',
+     "unreviewed --development notices"),
 )
 
 

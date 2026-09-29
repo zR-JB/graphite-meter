@@ -104,6 +104,12 @@ lacks, such as musl's and LLVM's for the static musl targets, are committed unde
 and named by repository path. macOS records come from the release request's macOS job, the only
 environment with Apple's SDK.
 
+The development tasks (`rust-server-run`, `rust-server-build`, `rust-client-run`, `rust-client-build`)
+run `scripts.legal.rust --development` instead: it keeps every dependency review but reads no platform
+record or toolchain facts, so it works on any host, and its notices open with `UNREVIEWED DEVELOPMENT
+BUILD`. The workflow policy refuses the flag in any workflow, image build or task that CI or a release
+runs, and release verification refuses notices that carry the marker.
+
 ## Generated files
 
 Do not edit these by hand:

@@ -447,32 +447,63 @@ description = "Format the experimental Rust workspace"
 dir = "rust"
 run = "cargo fmt --all"
 
-# Development builds embed the browser UI but no reviewed notices, so they build on any host.
+# Development builds embed notices that the legal pipeline generates on any host: every dependency review
+# holds, but no platform record covers the host, so they open with a notice that they are unreviewed, which
+# CI and release verification refuse. Selecting the package with -p, as the pipeline does, reuses its build.
+[tasks._rust-dev-legal]
+hide = true
+usage = '''
+arg "<package>"
+arg "<profile>"
+arg "[client]" help="the browser build task whose assets and module scan the server embeds"
+'''
+run = '''
+#!/usr/bin/env sh
+set -eu
+set -- --development --package "$usage_package" --profile "$usage_profile" \
+  --out "rust/target/dev-legal/$usage_package-$usage_profile" --reviews legal/rust-reviewed-components.json
+if [ -n "${usage_client:-}" ]; then
+  scan=$(mktemp)
+  trap 'rm -f "$scan"' EXIT
+  GM_LEGAL_SCAN_OUT="$scan" mise run "$usage_client"
+  GM_RUST_ASSET_DIR="$PWD/client/dist"
+  export GM_RUST_ASSET_DIR
+  set -- "$@" --browser-scan "$scan"
+fi
+python3 -m scripts.legal.rust "$@"
+'''
+
 [tasks.rust-server-build]
-description = "Build the experimental Rust server with the production browser UI, without reviewed notices"
+description = "Build the experimental Rust server with the production browser UI and development notices"
+env = { GM_ENGINE_VERSION = "{{ get_env(name='VERSION', default='development') }}-rust" }
 run = [
-  { task = "client-build-prod" },
-  'cd rust && GM_RUST_ASSET_DIR="$PWD/../client/dist" GM_ENGINE_VERSION="${VERSION:-development}-rust" cargo build --release --locked -p graphite-meter-server',
+  { task = "_rust-dev-legal", args = ["graphite-meter-server", "release", "client-build-prod"] },
+  'cd rust && legal="$PWD/target/dev-legal/graphite-meter-server-release" && GM_RUST_LEGAL_DIR="$legal" GM_RUST_ASSET_DIR="$legal/browser-assets" cargo build --release --locked -p graphite-meter-server',
 ]
 
 [tasks.rust-server-run]
-description = "Run the experimental Rust server with GM_* configuration; arguments after -- go to the server"
+description = "Run the experimental Rust server with development notices and GM_* configuration; arguments after -- go to the server"
 raw = true
+env = { GM_ENGINE_VERSION = "development-rust" }
 run = [
-  { task = "client-build-dev" },
-  'cd rust && GM_RUST_ASSET_DIR="$PWD/../client/dist" GM_ENGINE_VERSION=development-rust cargo run --locked -p graphite-meter-server --',
+  { task = "_rust-dev-legal", args = ["graphite-meter-server", "dev", "client-build-dev"] },
+  'cd rust && legal="$PWD/target/dev-legal/graphite-meter-server-dev" && GM_RUST_LEGAL_DIR="$legal" GM_RUST_ASSET_DIR="$legal/browser-assets" cargo run --locked -p graphite-meter-server --',
 ]
 
 [tasks.rust-client-run]
-description = "Run the experimental Rust TUI against a server"
-dir = "rust"
+description = "Run the experimental Rust TUI, with development notices, against a server"
 raw = true
-run = "cargo run --locked --bin graphite-meter-client --"
+run = [
+  { task = "_rust-dev-legal", args = ["graphite-meter-client", "dev"] },
+  'cd rust && GM_RUST_LEGAL_DIR="$PWD/target/dev-legal/graphite-meter-client-dev" cargo run --locked -p graphite-meter-client --',
+]
 
 [tasks.rust-client-build]
-description = "Build the experimental Rust TUI without browser assets"
-dir = "rust"
-run = "cargo build --release --locked --bin graphite-meter-client"
+description = "Build the experimental Rust TUI without browser assets, with development notices"
+run = [
+  { task = "_rust-dev-legal", args = ["graphite-meter-client", "release"] },
+  'cd rust && GM_RUST_LEGAL_DIR="$PWD/target/dev-legal/graphite-meter-client-release" cargo build --release --locked -p graphite-meter-client',
+]
 
 [tasks.rust-check]
 description = "Check experimental Rust formatting, dependencies, lints, and tests"

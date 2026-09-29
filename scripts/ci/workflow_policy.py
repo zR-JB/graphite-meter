@@ -260,6 +260,24 @@ def check_ci(root: Path) -> None:
         fail(f"CI Gate must need every job: {missing}")
 
 
+def check_development_notices(root: Path) -> None:
+    """No workflow, image build or release script, nor any task they run, builds with the unreviewed notices of
+    `scripts.legal.rust --development`; only the development tasks do."""
+    tasks = tomllib.loads(read(root, "mise.toml"))["tasks"]
+    texts = [path.read_text(encoding="utf-8") for path in sorted((root / ".github").rglob("*.y*ml"))]
+    texts += [read(root, name) for name in ("container/Dockerfile", "container/Dockerfile.rust", *DARWIN_SCRIPTS)]
+    reached: set[str] = set()
+    while texts:
+        text = texts.pop()
+        if "--development" in text:
+            fail("CI and releases must not build with unreviewed --development notices")
+        for task in set(re.findall(r"mise run ([\w-]+)", text)) - reached:
+            reached.add(task)
+            run = tasks.get(task, {}).get("run", [])
+            texts += [step if isinstance(step, str) else f"mise run {step['task']}"
+                      for step in (run if isinstance(run, list) else [run])]
+
+
 def path_filters(text: str) -> dict[str, list[str]]:
     """The globs of each .github/ci-paths.yml filter, with its aliases expanded."""
     filters: dict[str, list[str]] = {}
@@ -370,6 +388,7 @@ def check_repository(root: Path = ROOT) -> None:
     check_actions(root)
     check_workflows(root)
     check_ci(root)
+    check_development_notices(root)
     check_paths(root)
     check_build_context(root)
     check_certificates(root)
