@@ -14,7 +14,7 @@ use graphite_meter_core::{
 use graphite_meter_net::{Proxy, connect};
 use http::{
     Method, Request, StatusCode, Version,
-    header::{AUTHORIZATION, CONTENT_TYPE, HOST, HeaderValue},
+    header::{AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, HOST, HeaderValue},
 };
 use http_body_util::{BodyExt, Empty, Full, StreamBody, combinators::UnsyncBoxBody};
 use hyper::{
@@ -518,12 +518,15 @@ impl Http {
         }
         Ok(())
     }
+    /// No answer is for a cache to keep: Go's control requests say so (httpjson.go:23), and the
+    /// browser's fetches, lanes included.
     pub fn builder(&self, method: Method, target: &str) -> Result<http::request::Builder> {
         destination_origin(target)?;
         let mut request = Request::builder()
             .method(method)
             .uri(target)
-            .header(http::header::ACCEPT, "*/*");
+            .header(http::header::ACCEPT, "*/*")
+            .header(CACHE_CONTROL, "no-store");
         if let Some(headers) = request.headers_mut() {
             self.authorize(target, headers)?;
         }
@@ -839,7 +842,10 @@ mod tests {
                     } else {
                         "GET /probe HTTP/1.1\r\n"
                     };
-                    assert!(head.starts_with(expected), "{head}");
+                    assert!(
+                        head.starts_with(expected) && head.contains("cache-control: no-store\r\n"),
+                        "{head}"
+                    );
                     assert_eq!(
                         head.contains("proxy-authorization: Basic dXNlcjpzZWNyZXQ="),
                         proxied,

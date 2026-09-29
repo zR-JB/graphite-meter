@@ -2,7 +2,7 @@
 use crate::{
     Error,
     failure::Failure,
-    transport::{REDIAL_WINDOW, Retrying, TRANSFER_RETRY_BACKOFF, TransferRetry, Transport, restore},
+    transport::{REDIAL_WINDOW, Retrying, TRANSFER_RETRY_BACKOFF, TransferRetry, Transport, cache_buster, restore},
     webtransport::SessionSlot,
 };
 use bytes::Bytes;
@@ -394,14 +394,9 @@ async fn send_lane(
                 ))
             },
         );
+        let query = [("cb", &*cache_buster()), ("id", id), ("lane", &*lane)];
         let result = transport
-            .send(
-                Route::Upload,
-                &[("id", id), ("lane", &lane)],
-                body,
-                MAX_TRANSFER_BYTES,
-                limit,
-            )
+            .send(Route::Upload, &query, body, MAX_TRANSFER_BYTES, limit)
             .await;
         // A lane the receiver ended as idle ends its attempt normally; any other answer, busy
         // included, means the lane made no progress, whatever it sent (upload.go:118-128).
@@ -679,7 +674,7 @@ mod tests {
                     }
                     assert!(headers.len() <= 16 * 1024, "upload headers are too large");
                 };
-                assert!(headers.starts_with(b"POST /upload?"));
+                assert!(headers.starts_with(b"POST /upload?cb="));
                 let mut payload_bytes = headers.len() - body_start;
                 while attempt == 0 && payload_bytes < 128 * 1024 {
                     let count = stream.read(&mut chunk).await?;
@@ -849,13 +844,22 @@ mod tests {
         let server = tokio::spawn(async move {
             let quic = endpoint.accept().await.ok_or("endpoint closed")?.await?;
             let mut connection = graphite_meter_http3::server::Connection::new(quic, None);
-            let (_, stream) = connection.next().await?.ok_or("no request")?.resolve().await?;
+            let (request, stream) = connection.next().await?.ok_or("no request")?.resolve().await?;
             let (mut send, mut recv) = stream.split();
             let mut received = 0;
             while received < 128 * 1024 {
                 received += recv.data().await?.ok_or("body ended")?.len();
             }
-            let refusal = UploadRefusal::GlobalFull;
+            // A request that lets caches keep its answer is refused as invalid instead.
+            let no_store = request
+                .headers()
+                .get(http::header::CACHE_CONTROL)
+                .is_some_and(|value| value == "no-store");
+            let refusal = if no_store {
+                UploadRefusal::GlobalFull
+            } else {
+                UploadRefusal::Invalid
+            };
             let busy = http::Response::builder()
                 .status(refusal.status())
                 .header("x-graphite-upload-refusal", refusal.name());

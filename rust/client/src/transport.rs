@@ -12,7 +12,7 @@ use graphite_meter_core::{
     discovery::Protocol, failure::FailureReason, origin::canonical_origin, route::Route, wire::decode_json,
 };
 use graphite_meter_http3::{self as http3, Code};
-use http::{Method, Request};
+use http::{Method, Request, header::CACHE_CONTROL};
 use serde::de::DeserializeOwned;
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use tokio::{
@@ -26,6 +26,12 @@ pub(crate) const TRANSFER_RETRY_BACKOFF: Duration = Duration::from_millis(500);
 /// Go's busyBackoff and busyBackoffCap: a busy answer's first wait, doubled up to the cap.
 const BUSY_BACKOFF: Duration = Duration::from_millis(300);
 const BUSY_BACKOFF_CAP: Duration = Duration::from_millis(1200);
+
+/// A lane request's cache buster, the time in nanoseconds, as Go's (download.go:51, upload.go:106).
+pub(crate) fn cache_buster() -> String {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+    now.unwrap_or_default().as_nanos().to_string()
+}
 
 #[derive(Default)]
 pub(crate) struct RetryBackoff {
@@ -220,7 +226,7 @@ impl Transport {
             }
             owner.clone()
         };
-        let mut request = request.uri(target).body(())?;
+        let mut request = request.uri(target).header(CACHE_CONTROL, "no-store").body(())?;
         self.http.authorize(target, request.headers_mut())?;
         Ok(Some(client.open(request, limits).await?))
     }

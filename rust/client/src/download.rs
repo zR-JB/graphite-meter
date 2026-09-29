@@ -3,7 +3,7 @@ use crate::{
     Error,
     failure::Failure,
     net::{Http, url},
-    transport::{Retrying, TransferRetry, Transport},
+    transport::{Retrying, TransferRetry, Transport, cache_buster},
     webtransport::{Session, SessionSlot},
 };
 use graphite_meter_core::{
@@ -193,14 +193,9 @@ async fn receive_http_lane(
         let started = Instant::now();
         let mut moved = false;
         let attempt = async {
+            let query = [("bytes", &*requested_bytes), ("cb", &*cache_buster()), ("lane", &*lane)];
             let mut body = transport
-                .receive(
-                    Method::GET,
-                    Route::Download,
-                    &[("bytes", &requested_bytes), ("lane", &lane)],
-                    MAX_TRANSFER_BYTES,
-                    duration,
-                )
+                .receive(Method::GET, Route::Download, &query, MAX_TRANSFER_BYTES, duration)
                 .await?;
             if !announced {
                 ready.send(()).await.map_err(|_| "download readiness receiver closed")?;
@@ -294,7 +289,7 @@ mod tests {
                 }
                 let mut request = [0_u8; 4096];
                 let count = stream.read(&mut request).await?;
-                assert!(request[..count].starts_with(b"GET /download?"));
+                assert!(request[..count].starts_with(b"GET /download?bytes=68719476736&cb="));
                 stream
                     .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 68719476736\r\n\r\n")
                     .await?;
