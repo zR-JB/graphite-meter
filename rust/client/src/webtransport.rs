@@ -41,15 +41,6 @@ impl Session {
         .await?
     }
 
-    /// The upload route's first server stream carries newline-delimited progress.
-    pub async fn upload_progress(&self) -> Result<UploadProgress, Error> {
-        Ok(UploadProgress {
-            stream: self.accept_uni().await?,
-            buffered: Vec::new(),
-            pending: Bytes::new(),
-        })
-    }
-
     fn ended(&self) -> Option<Result<(u32, String), graphite_meter_http3::Error>> {
         self.session.closed().now_or_never()
     }
@@ -152,35 +143,6 @@ impl SessionSlot {
         let session = self.current.into_inner();
         if let Ok(session) = Arc::try_unwrap(session) {
             session.close().await;
-        }
-    }
-}
-
-/// Bounded incremental progress decoder; only server-observed counters are returned.
-pub struct UploadProgress {
-    stream: RecvStream,
-    buffered: Vec<u8>,
-    pending: Bytes,
-}
-impl UploadProgress {
-    pub async fn next(&mut self) -> Result<graphite_meter_core::wire::UploadProgress, Error> {
-        const MAX_LINE: usize = 16 * 1024;
-        loop {
-            if self.pending.is_empty() {
-                self.pending = self.stream.read_chunk().await?.ok_or("upload progress stream closed")?;
-            }
-            let end = self.pending.iter().position(|&byte| byte == b'\n');
-            let count = end.map_or(self.pending.len(), |end| end + 1);
-            if self.buffered.len() + count > MAX_LINE {
-                return Err("upload progress line exceeds limit".into());
-            }
-            self.buffered.extend_from_slice(&self.pending.split_to(count));
-            if end.is_some() {
-                let line = std::mem::take(&mut self.buffered);
-                if let Ok(event) = graphite_meter_core::wire::decode_upload_progress(&line) {
-                    return Ok(event);
-                }
-            }
         }
     }
 }

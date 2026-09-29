@@ -12,6 +12,7 @@ use graphite_meter_core::{
     route::Route,
     wire::{self, MAX_TRANSFER_BYTES, MAX_UPLOAD_COUNTER, MAX_WEBTRANSPORT_STREAMS, UploadProgress},
 };
+use graphite_meter_http3::webtransport::RecvStream;
 use http::Method;
 use serde::Deserialize;
 use std::{
@@ -26,7 +27,6 @@ use tokio::{sync::watch, task::JoinSet, time::Instant};
 
 const FEED_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
-const MAX_LINE: usize = 64 * 1024;
 const CHECKPOINT_RETRY: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Copy, Debug)]
@@ -474,14 +474,28 @@ async fn progress_loop(transport: &Transport, id: &str, state: &watch::Sender<St
     }
 }
 
-/// The receiver's progress over HTTP, a record a line of at most 64 KiB.
+/// Where the receiver's progress arrives: its HTTP feed, or the upload session's first server stream.
+enum Source {
+    Http(crate::transport::Body),
+    WebTransport(RecvStream),
+}
+
+/// The receiver's progress, a record a line of at most 64 KiB over HTTP and 16 KiB over WebTransport.
 struct Feed {
-    body: crate::transport::Body,
+    source: Source,
     line: Vec<u8>,
     chunk: Bytes,
 }
 
 impl Feed {
+    fn new(source: Source) -> Self {
+        Self {
+            source,
+            line: Vec::new(),
+            chunk: Bytes::new(),
+        }
+    }
+
     /// Go's openUploadFeed (upload.go:299-318): open once the receiver answers `ready`.
     async fn open(transport: &Transport, id: &str, state: &watch::Sender<State>) -> Result<Self, Error> {
         let body = transport
@@ -493,11 +507,7 @@ impl Feed {
                 FEED_LIFETIME,
             )
             .await?;
-        let mut feed = Self {
-            body,
-            line: Vec::new(),
-            chunk: Bytes::new(),
-        };
+        let mut feed = Self::new(Source::Http(body));
         loop {
             let event = feed.next().await?;
             let ready = matches!(event, UploadProgress::Ready);
@@ -515,16 +525,25 @@ impl Feed {
 
     /// The next record that decodes; the receiver sends at least one a second.
     async fn next(&mut self) -> Result<UploadProgress, Error> {
+        let (limit, too_long) = match self.source {
+            Source::Http(_) => (64 * 1024, "upload progress line exceeds 64 KiB"),
+            Source::WebTransport(_) => (16 * 1024, "upload progress line exceeds limit"),
+        };
         loop {
             if self.chunk.is_empty() {
-                self.chunk = tokio::time::timeout(CONTROL_TIMEOUT, self.body.chunk())
-                    .await??
-                    .ok_or("upload progress ended without complete")?;
+                self.chunk = match &mut self.source {
+                    Source::Http(body) => tokio::time::timeout(CONTROL_TIMEOUT, body.chunk())
+                        .await??
+                        .ok_or("upload progress ended without complete")?,
+                    Source::WebTransport(stream) => {
+                        stream.read_chunk().await?.ok_or("upload progress stream closed")?
+                    }
+                };
             }
             let end = self.chunk.iter().position(|&byte| byte == b'\n');
             let count = end.map_or(self.chunk.len(), |end| end + 1);
-            if count > MAX_LINE - self.line.len() {
-                return Err("upload progress line exceeds 64 KiB".into());
+            if count > limit - self.line.len() {
+                return Err(too_long.into());
             }
             self.line.extend_from_slice(&self.chunk.split_to(count));
             if end.is_some()
@@ -589,9 +608,9 @@ async fn progress_feed(
 ) -> Result<(), Error> {
     if let Some(session) = session {
         let read = async {
-            let mut stream = session.current().await.upload_progress().await?;
+            let mut feed = Feed::new(Source::WebTransport(session.current().await.accept_uni().await?));
             loop {
-                let event = tokio::time::timeout(CONTROL_TIMEOUT, stream.next()).await??;
+                let event = tokio::time::timeout(CONTROL_TIMEOUT, feed.next()).await??;
                 if apply_event(event, state)? {
                     return Ok::<_, Error>(());
                 }
