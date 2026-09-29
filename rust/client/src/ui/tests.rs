@@ -844,6 +844,14 @@ fn run_keys_stop_quit_and_return_as_go_does() {
     assert!(ui.shown().is_some_and(|(shown, _)| shown.phase == Phase::Complete)); // a failed start keeps the results
     assert!(ui.notice.starts_with("Test could not start:") && ui.recheck.is_some());
     assert!(!screen(&mut ui).lines().last().unwrap_or_default().is_empty());
+    // A start that replaced the first check keeps it checking; stopped, it checks again, where Go's spins on.
+    let mut ui = setup();
+    step(&mut ui, |snapshot| snapshot.phase = Phase::Checking);
+    press(&mut ui, &commands, &["r"]);
+    step(&mut ui, |snapshot| snapshot.phase = Phase::Preparing);
+    assert!(ui.prepare() == Prepare::Checking && screen(&mut ui).contains("checking paths"));
+    step(&mut ui, |snapshot| snapshot.phase = Phase::Cancelled);
+    assert!(!ui.live && ui.recheck.is_some() && ui.notice == "Test stopped before it started.");
 }
 
 #[test]

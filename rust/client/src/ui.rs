@@ -328,6 +328,9 @@ impl Ui {
                 self.notice = "Test stopped before it started.".into();
             } else {
                 self.notice = snapshot.error.take().unwrap_or_default();
+            }
+            // Go checks again after a failed start only; a stopped one leaves a check it replaced spinning.
+            if snapshot.phase != Phase::Cancelled || self.previous.is_none() && self.check_started.is_some() {
                 self.recheck_soon();
             }
             match self.previous.take() {
@@ -389,9 +392,13 @@ impl Ui {
         }
     }
 
-    /// Setup's paths are being checked, or will be once edits settle.
+    /// Setup's paths are being checked, or will be once edits settle; as Go keeps its prepare state
+    /// until a run starts, a start that replaced an unsettled check keeps it checking.
     fn checking(&self) -> bool {
-        !self.live && (self.awaiting || self.recheck.is_some() || self.snapshot.phase == Phase::Checking)
+        match self.live {
+            true => self.shown().is_none() && self.check_started.is_some(),
+            false => self.awaiting || self.recheck.is_some() || self.snapshot.phase == Phase::Checking,
+        }
     }
 
     /// Go's preparedRun.Servers: the selected servers the last check reached.
@@ -514,6 +521,7 @@ impl Ui {
     /// Go's reprepare: the paths are checked again once settings stop changing.
     fn recheck_soon(&mut self) {
         self.recheck = Some(Instant::now() + RECHECK_DELAY);
+        self.check_started.get_or_insert_with(Instant::now);
         self.signed_out = false;
     }
 
