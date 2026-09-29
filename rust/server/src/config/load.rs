@@ -271,13 +271,7 @@ fn prefix(raw: &str) -> Result<ipnet::IpNet, String> {
 }
 
 fn auth_mode(config: &mut Config, value: &str) -> Result<(), String> {
-    let mode = match value {
-        "off" => Some(AuthMode::Off),
-        "password" => Some(AuthMode::Password),
-        "oidc" => Some(AuthMode::Oidc),
-        "hybrid" => Some(AuthMode::Hybrid),
-        _ => None,
-    };
+    let mode = AuthMode::ALL.into_iter().find(|mode| mode.name() == value);
     config.auth.mode = mode.unwrap_or_default();
     config.auth.unknown_mode = mode.is_none();
     Ok(())

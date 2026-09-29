@@ -83,6 +83,11 @@ pub enum AuthMode {
     Hybrid,
 }
 impl AuthMode {
+    pub const ALL: [Self; 4] = [Self::Off, Self::Password, Self::Oidc, Self::Hybrid];
+    /// Its GM_AUTH_MODE value.
+    pub const fn name(self) -> &'static str {
+        ["off", "password", "oidc", "hybrid"][self as usize]
+    }
     pub fn password(self) -> bool {
         matches!(self, Self::Password | Self::Hybrid)
     }

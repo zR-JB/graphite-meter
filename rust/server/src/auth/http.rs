@@ -65,14 +65,9 @@ impl Service {
             attempts,
             log,
         };
-        let mode = match config.mode {
-            AuthMode::Off => "off",
-            AuthMode::Password => "password",
-            AuthMode::Oidc => "oidc",
-            AuthMode::Hybrid => "hybrid",
-        };
         crate::log!(
-            "[gm:auth] mode={mode} origin={} provider={} issuer={} allowed-groups={} session-lifetime={}",
+            "[gm:auth] mode={} origin={} provider={} issuer={} allowed-groups={} session-lifetime={}",
+            config.mode.name(),
             config.public_url,
             config.oidc_provider_name,
             config.oidc_issuer,
