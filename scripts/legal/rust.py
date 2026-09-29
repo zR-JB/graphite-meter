@@ -367,9 +367,9 @@ def main() -> None:
                 add_bytes(archive, 'inventory.json', (output / 'inventory.json').read_bytes())
                 add_bytes(archive, 'LEGAL.txt', (output / 'LEGAL.txt').read_bytes())
                 add_bytes(archive, 'legal/rust-forks.json', (repo / 'legal/rust-forks.json').read_bytes())
-                for entry in provenance:
-                    for path in manual_files(entry):
-                        add_tree(archive, repo / path, path, repo / path)
+                # Entries can share a file, such as one licence text for two fonts; the archive holds it once.
+                for path in dict.fromkeys(path for entry in provenance for path in manual_files(entry)):
+                    add_tree(archive, repo / path, path, repo / path)
 
 
 if __name__ == '__main__':
