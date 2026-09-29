@@ -30,6 +30,7 @@
   import { announceChanges } from "../presentation/announcer.svelte";
   import { tooltip } from "../actions/tooltip";
   import { handoff } from "../presentation/motion.svelte";
+  import { MediaQuery } from "svelte/reactivity";
 
   const indicatedServers = $derived(
     store.serverDetails?.selection ??
@@ -59,6 +60,12 @@
 
   let gaugeWidth = $state(0);
   let gaugeHeight = $state(0);
+  let panelWidth = $state(0);
+  let noteHeight = $state(0);
+  // Beside the latency card (landscape, from the 760 px container), the ring centres on the card's axis and its
+  // note hangs just under it; portrait and phones keep the note in the column's flow.
+  const portrait = new MediaQuery("(orientation: portrait)");
+  const hung = $derived(panelWidth >= 760 && !portrait.current);
   const liveReadout = new LiveReadout();
   $effect(() => {
     const live = store.live;
@@ -83,8 +90,10 @@
     });
   });
 
+  // The latency stage's own warmup already reads in milliseconds, so the scale changes kind once.
   const msTicksActive = $derived(
     phase === "latency" ||
+      (phase === "warmup" && store.phaseStage === "latency") ||
       (phase === "complete" && completedKind === "latency"),
   );
   $effect(() => {
@@ -108,7 +117,9 @@
       ),
     }));
   });
-  const layout = $derived(gaugeLayout(gaugeWidth, gaugeHeight));
+  const layout = $derived(
+    gaugeLayout(gaugeWidth, gaugeHeight, hung ? noteHeight : 0),
+  );
   const liveTarget = $derived(liveTargets(store.live));
   const ticks = handoff(
     () =>
@@ -124,6 +135,16 @@
     (labels) => labels.join(),
   );
 
+  // While the latency stage's probes go unanswered, for how long: from the last reply to the newest bucket.
+  const unansweredMs = $derived.by(() => {
+    if (phase !== "latency" || !store.liveLatencyLost) return null;
+    const newest = store.latency.at(-1)?.endT ?? 0;
+    const answered =
+      store.latency.findLast(
+        (bucket) => bucket.phase === "latency" && bucket.medianRttMs !== null,
+      )?.endT ?? store.phaseStartedAtMs;
+    return newest - answered >= 1000 ? newest - answered : null;
+  });
   const readout = $derived(
     gaugeReadout({
       phase,
@@ -135,6 +156,7 @@
       latencyTimeout: store.liveLatencyLost,
       latencyMs: liveReadout.rtt.current,
       quietMs: store.live?.quietMs ?? null,
+      unansweredMs,
       hasLatencyResult: !!store.result?.latency,
       unusable: unusableStage,
       headline: headlineArc,
@@ -194,7 +216,7 @@
   });
   const footer = handoff(
     () => {
-      const { hint, status, failure, noData } = readout;
+      const { hint, status, failure, noData, noReplies } = readout;
       if (store.preparing)
         return { status: readout.preparationLabel, tone: "preparation" };
       if (failure)
@@ -210,6 +232,7 @@
           hint: status.action,
         };
       if (noData) return { hint: noData, tip: JARGON.noData };
+      if (noReplies) return { hint: noReplies, tip: JARGON.noReplies };
       const known = PHASE_HINT[phase];
       return hint ? { hint: known?.text ?? hint, tip: known?.tip } : {};
     },
@@ -219,9 +242,13 @@
   );
 </script>
 
-<section class="gauge-panel" data-phase={store.phase}>
+<section
+  class="gauge-panel"
+  data-phase={store.phase}
+  bind:clientWidth={panelWidth}
+>
   <div class="instrument">
-    <div class="dial">
+    <div class="dial" class:hung>
       {#if indicatedServers.length > 1}
         <div class="server-indicator">
           <ServerLens servers={indicatedServers} {participants} />
@@ -276,7 +303,10 @@
                 {/if}
               </div>
             {:else}
-              <span class="gauge-value" aria-hidden="true">{display.value}</span
+              <span
+                class="gauge-value"
+                class:quiet={display.value === MISSING}
+                aria-hidden="true">{display.value}</span
               >
               <span class="gauge-unit" aria-hidden="true">{display.unit}</span>
             {/if}
@@ -284,7 +314,14 @@
           </div>
         </div>
       </div>
-      <div class="gauge-footer" style:opacity={footer.opacity}>
+      <div
+        class="gauge-footer"
+        bind:clientHeight={noteHeight}
+        style:top={hung
+          ? `calc(100% - ${layout.height - layout.noteTop}px)`
+          : null}
+        style:opacity={footer.opacity}
+      >
         {#if footer.shown.status || footer.shown.hint}
           {@const { status, tone, hint, tip } = footer.shown}
           <div class="gauge-notes">
@@ -337,7 +374,7 @@
         "dial latency" minmax(min-content, 1fr)
         "run run" auto
         "results results" auto
-        / minmax(240px, 4fr) minmax(0, 8fr);
+        / max(240px, (100% - 2 * var(--space-5)) / 3) minmax(0, 1fr);
     }
     .instrument:not(:has(.latency-slot)) {
       grid-template:
@@ -463,13 +500,17 @@
     font-weight: 300;
     font-variant-numeric: lining-nums tabular-nums;
     line-height: 1;
-    letter-spacing: -0.03em;
+    letter-spacing: -0.025em;
     white-space: nowrap;
   }
   .gauge-value {
     min-width: 5ch;
     font-size: clamp(24px, 17cqmin, 76px);
     text-align: center;
+  }
+  /* "—" waits quietly where the value arrives, like the cards'. */
+  .gauge-value.quiet {
+    color: var(--text-soft);
   }
   .hero {
     display: flex;
@@ -515,35 +556,39 @@
   .terminal-number {
     font-size: clamp(30px, 17cqmin, 76px);
   }
-  /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. One line height for both, so the result lands where
-     the live value stood. */
+  /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. One size and line height for both, so the result
+     lands where the live value stood. */
   .terminal-unit,
   .gauge-unit {
     color: var(--text-muted);
-    font-family: var(--font-sans);
-    line-height: var(--type-md);
-  }
-  .terminal-unit {
-    font-size: clamp(var(--type-sm), 4cqmin, var(--type-lg));
-    font-weight: var(--w-normal);
+    font: var(--w-normal) clamp(var(--type-sm), 4cqmin, var(--type-lg)) /
+      var(--type-md) var(--font-sans);
   }
   /* Empty, it keeps its line, so "—" sits where the value arrives. */
   .gauge-unit {
     min-height: 1lh;
     margin-top: var(--space-1);
-    font-size: var(--type-md);
-    font-weight: var(--w-normal);
   }
+  /* Under the readout, out of its flow, so the value stays where it landed. */
   .terminal-partial {
-    color: var(--tone);
+    position: absolute;
+    top: calc(100% + var(--space-1));
+    color: var(--tone-ink);
     font-size: var(--type-xs);
   }
   /* A separate footer keeps notes off the dial; it holds two lines, so a longer note never shrinks the ring. */
   .gauge-footer {
     display: grid;
     align-items: center;
-    min-height: calc(var(--space-2) + 2.7 * var(--type-sm));
+    min-height: calc(var(--space-2) + 2.7 * var(--type-body));
     padding-top: var(--space-1);
+  }
+  /* Hung under the ring's tick ends, out of the column's flow, in a band gaugeLayout keeps free; one line sits up top. */
+  .hung .gauge-footer {
+    position: absolute;
+    inset-inline: 0;
+    align-items: start;
+    height: calc(var(--space-2) + 2.7 * var(--type-body));
   }
   .gauge-notes {
     display: grid;

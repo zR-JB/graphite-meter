@@ -14,6 +14,9 @@ export const GAUGE_TICK_FRACTIONS = [
 export const GAUGE_LABEL_FRACTIONS = [0, 2 / 8, 4 / 8, 6 / 8, 1] as const;
 const LABEL_CLEARANCE = 8;
 const AXIS_EPSILON = 1e-6;
+// The share of the labelled ring's height the centring shifts it down, and the room between tick ends and a note.
+const DROP = (1 - Math.SQRT1_2) / 2;
+const NOTE_GAP = 8;
 interface GaugePoint {
   x: number;
   y: number;
@@ -31,6 +34,8 @@ export interface GaugeLayout {
   arcWidth: number;
   arcStart: number;
   arcSweep: number;
+  /** Where a note hung under the ring starts: just under the tick ends. */
+  noteTop: number;
   majorTicks: ReadonlyArray<{
     angle: number;
     from: GaugePoint;
@@ -38,8 +43,12 @@ export interface GaugeLayout {
   }>;
   labelPoints: ReadonlyArray<GaugeLabelLayout>;
 }
-/** One CSS-pixel geometry model for the gauge surface and DOM tick labels. */
-export function gaugeLayout(width: number, height: number): GaugeLayout {
+/** One CSS-pixel geometry model for the gauge surface and DOM tick labels; `note` is a band hung under the ring. */
+export function gaugeLayout(
+  width: number,
+  height: number,
+  note = 0,
+): GaugeLayout {
   const safeWidth = Math.max(1, width);
   const safeHeight = Math.max(1, height);
   const radius = Math.max(
@@ -48,6 +57,13 @@ export function gaugeLayout(width: number, height: number): GaugeLayout {
       safeWidth * 0.37,
       (safeWidth / 2 - 25) / 1.145,
       ((safeHeight - 42) / (1 + Math.SQRT1_2) - 11) / 1.145,
+      // The labelled ring stays centred and its note still fits under the tick ends.
+      note
+        ? ((safeHeight / 2 - DROP * LABEL_CLEARANCE - NOTE_GAP - note) /
+            (DROP + Math.SQRT1_2) -
+            3) /
+            1.145
+        : Infinity,
     ),
   );
   const arcWidth = Math.max(6, radius * 0.13);
@@ -56,8 +72,7 @@ export function gaugeLayout(width: number, height: number): GaugeLayout {
   // Center the visible 270-degree sweep, including its label clearance.
   const center = {
     x: safeWidth / 2,
-    y:
-      safeHeight / 2 + ((1 - Math.SQRT1_2) * (tickOuter + LABEL_CLEARANCE)) / 2,
+    y: safeHeight / 2 + DROP * (tickOuter + LABEL_CLEARANCE),
   };
   const pointAt = (angle: number, distance: number): GaugePoint => ({
     x: center.x + Math.cos(angle) * distance,
@@ -101,6 +116,7 @@ export function gaugeLayout(width: number, height: number): GaugeLayout {
     height: safeHeight,
     center,
     radius,
+    noteTop: center.y + Math.SQRT1_2 * tickOuter + NOTE_GAP,
     arcWidth,
     arcStart: ARC_START,
     arcSweep: ARC_SWEEP,

@@ -150,20 +150,22 @@ hue, never by a boxed icon.
   page; History is read without it. A docked sheet slides from its edge while its column
   (`--dock-left`, `--dock-right`) grows, and back out when closed. A changed time rolls like a counter (`Roll`,
   320 ms): up as it grows, down as it shrinks.
-- While the latency stage runs, the dial's head beats on each idle reply, one `--dur-pulse` at a time: it swells a
-  little and settles, and without replies it holds still.
+- The dial's head is a flat bead in its hue, a little wider than the arc. While the latency stage runs, it beats on
+  each idle reply, one `--dur-pulse` at a time: it swells a little and settles, and without replies it holds still.
 - A radio's ring closes in and a check draws in (180 ms); a row that appears in a sheet unfolds from its own height.
 - Reduced motion keeps colour and opacity changes; sheets, rolls and glides jump to their end state.
 
 ## Components
 
 - **Instrument** (`GaugePanel`): the dial and the latency card share the top and take the height left over; the run
-  bar and three stage cards keep theirs. On a portrait screen, where the dial is bound by its width, the two share the
-  width evenly. Narrow, it stacks: dial, run bar, stage cards, latency. A tight screen scrolls rather than
-  overlapping rows. On a phone the dial takes about a third of the screen, so the running stage's card, its value and
-  its graph share the first screen with it. The readout keeps one place: "—" stands where the value arrives, and the
-  result lands on it. The footer under the dial holds the phase's note or a failure, and while no data arrives, for
-  how long.
+  bar and three stage cards keep theirs. The dial's column is one stage card wide, so the latency card starts on the
+  second card's edge. On a portrait screen, where the dial is bound by its width, the two share the width evenly.
+  Narrow, it stacks: dial, run bar, stage cards, latency. A tight screen scrolls rather than overlapping rows. On a
+  phone the dial takes about a third of the screen, so the running stage's card, its value and its graph share the
+  first screen with it. The readout keeps one place: "—" stands where the value arrives, and the result lands on it.
+  The footer under the dial holds the phase's note or a failure, and while no data or no reply arrives, for how long;
+  on a landscape screen it hangs just under the ring, and the ring and the latency card share one axis. Every rate on
+  the page reads in the dial's unit, zero included. Nothing above the run bar moves from Start to the result.
 - **Server lens** (`ServerLens`, `ServerScope quiet`): with several servers, one quiet field over the instrument
   (All servers or one), as wide as the choice it shows, drives the stage cards and which server's latency is shown
   once the run finishes. History's detail has its own.
