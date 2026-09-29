@@ -472,7 +472,7 @@ async fn socket_tickets_are_minted_only_where_mounted_and_only_for_post() {
         ("/ws/session", "https://localhost/ws/ping"),
         ("/wt/session", "https://localhost:8443/wt/ping"),
     ];
-    // The UI listener mounts both, for POST alone.
+    // The UI listener mounts both, for POST alone; as Go's "/" pattern, its app answers GET.
     for (route, target) in targets {
         let (refused, _) = h
             .request(
@@ -482,7 +482,7 @@ async fn socket_tickets_are_minted_only_where_mounted_and_only_for_post() {
                 "",
             )
             .await;
-        assert!(refused.starts_with("HTTP/1.1 405"), "{route}: {refused}");
+        assert!(refused.starts_with("HTTP/1.1 404"), "{route}: {refused}");
     }
     let stream = h
         .h2_connector

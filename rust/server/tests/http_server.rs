@@ -47,7 +47,8 @@ async fn real_http1_serves_discovery_and_streams_exact_download_then_joins_shutd
             assert!(headers.starts_with(&format!("HTTP/1.1 {status}")), "{method} {path}: {headers}");
             let body = &response[boundary + 4..];
             if status == 405 {
-                assert!(headers.contains("allow: GET, HEAD, OPTIONS\r\n"), "{headers}");
+                // As Go's "/" pattern, the app answers a method no route on this listener allows.
+                assert!(headers.contains("allow: GET, HEAD\r\n"), "{headers}");
             } else if status != 200 || method == "HEAD" {
                 if status == 204 || method == "HEAD" { assert!(body.is_empty()); }
             } else if path.starts_with("/download") {
@@ -241,8 +242,7 @@ async fn real_upload_lifecycle_uses_receiver_totals_and_owner_refusals() {
         assert!(headers.starts_with("HTTP/1.1 400"));
         assert!(headers.contains("x-graphite-upload-refusal: invalid"));
         let (headers, _) = upload_request(address, "GET", "/upload/session", "192.0.2.1", b"").await;
-        assert!(headers.starts_with("HTTP/1.1 405"));
-        assert!(headers.contains("allow: OPTIONS, POST\r\n"), "{headers}");
+        assert!(headers.starts_with("HTTP/1.1 404"), "{headers}");
 
         let (headers, body) = upload_request(
             address,

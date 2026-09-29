@@ -509,8 +509,12 @@ impl HttpServer {
         if let Some(response) = self.validate_request(&request, body_ended) {
             return Err(Box::new(response));
         }
-        // A route this listener does not mount is authorized first, as in Go, then answered 404.
-        let route = route::lookup(request.uri().path()).filter(|&route| accepted.topology.mounts(route));
+        // A route this listener does not mount is authorized first, as in Go, then answered 404. Where the app is
+        // served, Go's catch-all "/" pattern also takes a method the route does not allow.
+        let route = route::lookup(request.uri().path()).filter(|&route| {
+            accepted.topology.mounts(route)
+                && (!accepted.topology.spa || allowed(route).any(|method| request.method() == method))
+        });
         let Some(auth) = &self.auth else {
             if let Some(response) = self.refuse_route(&request, route, None, accepted.peer) {
                 return Err(Box::new(response));
@@ -1096,16 +1100,21 @@ mod tests {
 
     /// A request through the whole pipeline, on a clear HTTP/1.1 connection of its own from `peer`.
     async fn respond_from(server: &HttpServer, peer: &str, method: Method, path: &str) -> Response<ResponseBody> {
+        let accepted = Accepted {
+            peer: peer.parse().unwrap(),
+            ..h1()
+        };
+        respond_on(server, accepted, method, path).await
+    }
+
+    /// A request through the whole pipeline, on a connection of its own that `accepted` describes.
+    async fn respond_on(server: &HttpServer, accepted: Accepted, method: Method, path: &str) -> Response<ResponseBody> {
         let request = Request::builder()
             .method(method)
             .uri(path)
             .header(header::HOST, "localhost:7246")
             .body(String::new())
             .unwrap();
-        let accepted = Accepted {
-            peer: peer.parse().unwrap(),
-            ..h1()
-        };
         let operations = Arc::new(Mutex::new(Vec::new()));
         server
             .respond_incoming(request, accepted, &operations, None)
@@ -1166,8 +1175,14 @@ mod tests {
         config.limits.operations_per_client = 1;
         let server = HttpServer::new(config.validated().unwrap()).unwrap();
         let id = server.uploads.mint().unwrap();
+        // A listener without the app refuses a method no route allows, as Go's mux does.
+        let h2 = Accepted {
+            tls: true,
+            topology: topology::tcp(NativeKind::H2, false).topology,
+            ..h1()
+        };
 
-        let download = respond(&server, Method::POST, "/download?bytes=1048576").await;
+        let download = respond_on(&server, h2, Method::POST, "/download?bytes=1048576").await;
         assert_eq!(download.status(), StatusCode::METHOD_NOT_ALLOWED);
         assert_eq!(download.headers()[header::ALLOW], "GET, HEAD, OPTIONS");
         let head = respond(&server, Method::HEAD, "/download?bytes=1048576").await;
@@ -1180,29 +1195,45 @@ mod tests {
         for (method, path, allow) in [
             (Method::POST, "/download?bytes=1", "GET, HEAD, OPTIONS"),
             (Method::POST, "/probe", "GET, HEAD, OPTIONS"),
-            (Method::DELETE, "/preflight", "GET, HEAD, OPTIONS"),
-            (Method::POST, "/servers", "GET, HEAD, OPTIONS"),
             (Method::GET, "/upload/session", "OPTIONS, POST"),
             (Method::GET, "/upload/checkpoint", "OPTIONS, POST"),
             (Method::POST, "/upload/progress", "DELETE, GET, HEAD, OPTIONS"),
             (Method::HEAD, "/upload/progress", "GET, DELETE"),
         ] {
-            let response = respond(&server, method, path).await;
+            let response = respond_on(&server, h2, method, path).await;
             assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED, "{path}");
             assert_eq!(response.headers()[header::ALLOW], allow, "{path}");
         }
+        // A listener that serves the app answers them from its catch-all, as Go's "/" pattern does.
+        for (method, path, status) in [
+            (Method::POST, "/download?bytes=1", StatusCode::METHOD_NOT_ALLOWED),
+            (Method::POST, "/probe", StatusCode::METHOD_NOT_ALLOWED),
+            (Method::DELETE, "/preflight", StatusCode::METHOD_NOT_ALLOWED),
+            (Method::POST, "/servers", StatusCode::METHOD_NOT_ALLOWED),
+            (Method::GET, "/upload/session", StatusCode::NOT_FOUND),
+            (Method::GET, "/upload/checkpoint", StatusCode::NOT_FOUND),
+            (Method::POST, "/upload/progress", StatusCode::METHOD_NOT_ALLOWED),
+        ] {
+            let response = respond(&server, method, path).await;
+            assert_eq!(response.status(), status, "{path}");
+            if status == StatusCode::METHOD_NOT_ALLOWED {
+                assert_eq!(response.headers()[header::ALLOW], "GET, HEAD", "{path}");
+            }
+            assert!(!response.headers().contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN));
+        }
 
-        let request = Request::builder()
-            .method(Method::GET)
-            .uri(format!("/upload?id={id}"))
-            .body(UnreadBody)
-            .unwrap();
-        let response = server
-            .respond_incoming(request, h1(), &Arc::new(Mutex::new(Vec::new())), None)
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
-        assert_eq!(response.headers()[header::ALLOW], "OPTIONS, POST");
+        for (accepted, status) in [(h2, StatusCode::METHOD_NOT_ALLOWED), (h1(), StatusCode::NOT_FOUND)] {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri(format!("/upload?id={id}"))
+                .body(UnreadBody)
+                .unwrap();
+            let response = server
+                .respond_incoming(request, accepted, &Arc::new(Mutex::new(Vec::new())), None)
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status);
+        }
         assert_eq!(server.uploads.retained(), 0);
         drop(admitted);
     }

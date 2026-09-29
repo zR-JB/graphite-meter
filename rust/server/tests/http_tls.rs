@@ -121,8 +121,9 @@ async fn validated_tls13_serves_discovery_download_and_upload_after_rejected_tls
                 serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
                 serde_json::json!({"token":"","expires":0})
             );
+            // As Go's "/" pattern on a listener that serves the app, the app answers GET.
             let (headers, _) = request(address, &good, "GET", path, b"").await;
-            assert!(headers.starts_with("HTTP/1.1 405"));
+            assert!(headers.starts_with("HTTP/1.1 404"), "{headers}");
         }
         let (headers, download) = request(address, &good, "GET", "/download?bytes=300000", b"").await;
         assert!(headers.starts_with("HTTP/1.1 200"));
