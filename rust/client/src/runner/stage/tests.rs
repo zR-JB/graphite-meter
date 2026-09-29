@@ -483,9 +483,8 @@ fn replies_sent_before_stage_end_count_during_drain() {
     observe_latency(
         Observation::Sample {
             sent: end - Duration::from_millis(10),
-            received: end + Duration::from_millis(10),
             rtt: Duration::from_millis(20),
-            server_handling: Duration::ZERO,
+            handling_nanos: 0,
         },
         start,
         end,
@@ -508,9 +507,8 @@ fn warmup_and_poststage_probes_do_not_enter_measurement() {
         observe_latency(
             Observation::Sample {
                 sent,
-                received: sent + Duration::from_millis(1),
                 rtt: Duration::from_millis(1),
-                server_handling: Duration::ZERO,
+                handling_nanos: 0,
             },
             start,
             end,
@@ -537,9 +535,8 @@ fn host_latency_populations_and_continuity_are_independent() {
                 id.into(),
                 Observation::Sample {
                     sent: start + Duration::from_millis(10),
-                    received: start + Duration::from_millis(10 + rtt_ms),
                     rtt: Duration::from_millis(rtt_ms),
-                    server_handling: Duration::ZERO,
+                    handling_nanos: 0,
                 },
             ),
         );

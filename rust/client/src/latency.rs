@@ -28,9 +28,8 @@ pub enum Observation {
     ConnectionBoundary,
     Sample {
         sent: Instant,
-        received: Instant,
         rtt: Duration,
-        server_handling: Duration,
+        handling_nanos: u64,
     },
     Lost {
         sent: Instant,
@@ -42,11 +41,11 @@ impl Observation {
         Some(match self {
             Self::ConnectionBoundary => return None,
             Self::Sample {
-                rtt, server_handling, ..
+                rtt, handling_nanos, ..
             } => ProbeOutcome::Reply {
                 // run() bounds duration to the core's signed nanosecond clock range.
                 rtt_nanos: rtt.as_nanos() as i64,
-                handling_nanos: server_handling.as_nanos() as u64,
+                handling_nanos,
             },
             Self::Lost { outcome, .. } => outcome,
         })
@@ -412,7 +411,7 @@ async fn measure(
                         let observation = if received >= deadline {
                             Observation::Lost { sent, outcome: ProbeOutcome::Timeout }
                         } else {
-                            Observation::Sample { sent, received, rtt, server_handling: Duration::from_nanos(pong.handling_nanos) }
+                            Observation::Sample { sent, rtt, handling_nanos: pong.handling_nanos }
                         };
                         if let Err(error) = emit(observations, observation) { break Err(error); }
                     }
