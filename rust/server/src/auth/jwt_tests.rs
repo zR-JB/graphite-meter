@@ -187,6 +187,13 @@ fn every_ring_algorithm_verifies_against_the_matching_key_only() {
             Some(Reject::UnknownKey)
         );
     }
+    // Keys no token can use count nothing towards the cap.
+    let mut junk: Vec<_> = (0..64)
+        .map(|kid| json!({"kty": "oct", "kid": kid.to_string(), "k": "AAAA"}))
+        .collect();
+    junk.push(json!({"kty": "RSA", "n": B64.encode(&public.n), "e": B64.encode(&public.e)}));
+    let keys = Jwks::parse(json!({"keys": junk}).to_string().as_bytes()).unwrap();
+    assert!(verify(&signers.sign(json!({"alg": "RS256"}), &claims), &keys, &ALL).is_ok());
 }
 
 #[test]

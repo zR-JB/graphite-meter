@@ -140,7 +140,6 @@ impl Jwks {
         let keys = set
             .keys
             .iter()
-            .take(64)
             .filter(|key| key.get("use").is_none_or(|usage| usage.as_str() == Some("sig")))
             .filter(|key| key.get("alg").is_none_or(Value::is_string))
             .filter(|key| key.get("kid").is_none_or(Value::is_string))
@@ -172,6 +171,8 @@ impl Jwks {
                     material,
                 })
             })
+            // Past the filters, so that keys no token can use cannot push out the signing key.
+            .take(64)
             .collect();
         Ok(Self(keys))
     }

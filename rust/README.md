@@ -252,6 +252,14 @@ Discovery also refuses an authorization endpoint off a canonical HTTPS origin,
 such as one on port 0, which sign-in pages would name in their form-action;
 Go accepts it and renders those pages. It refuses one with a fragment too, after
 which Go appends the sign-in query; other endpoints drop theirs, as Go's client does.
+Key sets are read more strictly than go-jose reads them, deliberately so for a key
+marked for another purpose:
+
+- a key whose `use` is not `sig`, whose `key_ops` leaves out `verify` or whose
+  `alg` is not the token's verifies nothing, where go-jose ignores all three;
+- a `keys` member given twice refuses the set, where Go reads the last;
+- only the first 64 keys Rust can use are kept, and a key Go's decoder refuses,
+  such as one whose `alg` is a number, is skipped where Go refuses the set.
 
 `GM_AUTH_PUBLIC_URL` is used in canonical form: `HTTPS://Meter.Example` serves as
 `https://meter.example`, where Go keeps the host's spelling and so refuses every
