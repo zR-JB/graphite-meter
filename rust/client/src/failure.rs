@@ -220,16 +220,6 @@ fn clean(text: &str, limit: usize) -> String {
     graphite_meter_core::text::clean_with(text, limit, graphite_meter_core::text::terminal_character)
 }
 
-pub(crate) fn lane_error(error: Error) -> Error {
-    if let Some(quinn::ConnectionError::ApplicationClosed(close)) = error.downcast_ref::<quinn::ConnectionError>()
-        && let Ok(code) = u32::try_from(close.error_code.into_inner())
-        && let Some(ending) = LaneEnding::from_webtransport_code(code)
-    {
-        return Box::new(Failure::Lane(ending));
-    }
-    error
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

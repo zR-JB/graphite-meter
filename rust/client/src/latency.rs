@@ -418,11 +418,7 @@ async fn measure(
                     }
                     Some(Ok(Message::Close(frame))) => break Err(closed(frame)),
                     None => break Err(Failure::Disconnected("latency channel closed before measurement ended").into()),
-                    Some(Err(error)) => {
-                        let error = crate::failure::lane_error(error);
-                        if matches!(error.downcast_ref(), Some(Failure::Lane(_))) { break Err(error); }
-                        break Err(Failure::Disconnected("latency channel receive failed").into());
-                    }
+                    Some(Err(_)) => break Err(Failure::Disconnected("latency channel receive failed").into()),
                     _ => {}
                 }
             }
