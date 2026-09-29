@@ -6,10 +6,7 @@ pub(crate) use graphite_meter_core::duration::go_duration;
 pub use load::load;
 
 use crate::admission::Limits;
-use graphite_meter_core::{
-    catalog::ServerCatalog,
-    origin::{Origin, target_origin},
-};
+use graphite_meter_core::{catalog::ServerCatalog, origin::Origin};
 use std::{collections::BTreeSet, error::Error, ops::Deref, time::Duration};
 
 pub type ConfigError = Box<dyn Error + Send + Sync>;
@@ -217,7 +214,7 @@ impl Config {
         if self.auth.mode != AuthMode::Off {
             // Go keeps the spelling, and so refuses every sign-in whose browser writes the origin as browsers do: its
             // host in lower case, and its port without leading zeros, or none where it is the default.
-            let origin = target_origin(&self.auth.public_url)?.ok_or("GM_AUTH_PUBLIC_URL names no origin")?;
+            let origin = self.auth.validate_public_url()?;
             let port = Some(origin.port_number().to_string());
             self.auth.public_url = Origin { port, ..origin }.key();
         }

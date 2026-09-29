@@ -15,55 +15,36 @@ impl Config {
     }
 
     fn validate_limits(&self) -> Result<(), ConfigError> {
-        for (name, value) in [
-            ("GM_MAX_ACTIVE_MEASUREMENTS", self.limits.operations),
-            (
-                "GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT",
-                self.limits.operations_per_client,
-            ),
-            ("GM_MAX_ACTIVE_SESSIONS", self.limits.sessions),
-            ("GM_MAX_SESSIONS_PER_CLIENT", self.limits.sessions_per_client),
-            ("GM_MAX_CONNECTIONS", self.max_connections),
-            ("GM_MAX_CONNECTIONS_PER_CLIENT", self.max_connections_per_client),
-        ] {
-            if value == 0 {
-                return Err(format!("{name} must be greater than zero").into());
-            }
+        let operations = ("GM_MAX_ACTIVE_MEASUREMENTS", self.limits.operations);
+        let client_operations = (
+            "GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT",
+            self.limits.operations_per_client,
+        );
+        let sessions = ("GM_MAX_ACTIVE_SESSIONS", self.limits.sessions);
+        let client_sessions = ("GM_MAX_SESSIONS_PER_CLIENT", self.limits.sessions_per_client);
+        let connections = ("GM_MAX_CONNECTIONS", self.max_connections);
+        let client_connections = ("GM_MAX_CONNECTIONS_PER_CLIENT", self.max_connections_per_client);
+        let limits = [
+            operations,
+            client_operations,
+            sessions,
+            client_sessions,
+            connections,
+            client_connections,
+        ];
+        if let Some((name, _)) = limits.into_iter().find(|&(_, value)| value == 0) {
+            return Err(format!("{name} must be greater than zero").into());
         }
-        for (child_name, child, parent_name, parent) in [
-            (
-                "GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT",
-                self.limits.operations_per_client,
-                "GM_MAX_ACTIVE_MEASUREMENTS",
-                self.limits.operations,
-            ),
-            (
-                "GM_MAX_ACTIVE_SESSIONS",
-                self.limits.sessions,
-                "GM_MAX_ACTIVE_MEASUREMENTS",
-                self.limits.operations,
-            ),
-            (
-                "GM_MAX_SESSIONS_PER_CLIENT",
-                self.limits.sessions_per_client,
-                "GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT",
-                self.limits.operations_per_client,
-            ),
-            (
-                "GM_MAX_SESSIONS_PER_CLIENT",
-                self.limits.sessions_per_client,
-                "GM_MAX_ACTIVE_SESSIONS",
-                self.limits.sessions,
-            ),
-            (
-                "GM_MAX_CONNECTIONS_PER_CLIENT",
-                self.max_connections_per_client,
-                "GM_MAX_CONNECTIONS",
-                self.max_connections,
-            ),
+        // Sessions are a share of the pool, and no client may take the whole session budget.
+        for ((name, value), (parent, limit)) in [
+            (client_operations, operations),
+            (sessions, operations),
+            (client_sessions, client_operations),
+            (client_sessions, sessions),
+            (client_connections, connections),
         ] {
-            if child > parent {
-                return Err(format!("{child_name} must not exceed {parent_name}").into());
+            if value > limit {
+                return Err(format!("{name} must not exceed {parent}").into());
             }
         }
         if self.max_operation_duration.is_zero() {
@@ -98,15 +79,10 @@ impl Config {
                 }
             }
         }
-        if let Some(selected) = &self.advertised_native {
-            for &kind in selected {
-                if self.listener(kind).address.is_empty() {
-                    return Err(format!(
-                        "GM_ADVERTISED_NATIVE_ENDPOINTS includes disabled endpoint {:?}",
-                        kind.name()
-                    )
-                    .into());
-                }
+        for &kind in self.advertised_native.iter().flatten() {
+            if self.listener(kind).address.is_empty() {
+                let name = kind.name();
+                return Err(format!("GM_ADVERTISED_NATIVE_ENDPOINTS includes disabled endpoint {name:?}").into());
             }
         }
         Ok(())
@@ -166,10 +142,6 @@ impl Config {
         }
         let public = self.auth.validate_public_url()?;
         self.auth.validate_secrets()?;
-        self.validate_authenticated_origins(&public)
-    }
-
-    fn validate_authenticated_origins(&self, public: &Origin) -> Result<(), ConfigError> {
         if self.native_advertised(NativeKind::H1) {
             return Err("clear HTTP/1.1 cannot be advertised when authentication is enabled".into());
         }
@@ -194,19 +166,7 @@ impl Config {
 }
 
 impl AuthConfig {
-    fn has_password_source(&self) -> bool {
-        !self.password_hash.is_empty() || !self.password_hash_file.is_empty()
-    }
-
-    fn has_oidc_settings(&self) -> bool {
-        !self.oidc_issuer.is_empty()
-            || !self.oidc_client_id.is_empty()
-            || !self.oidc_client_secret.is_empty()
-            || !self.oidc_secret_file.is_empty()
-            || !self.oidc_allowed_groups.is_empty()
-    }
-
-    fn validate_public_url(&self) -> Result<Origin, ConfigError> {
+    pub(super) fn validate_public_url(&self) -> Result<Origin, ConfigError> {
         let public = absolute(&self.public_url)
             .filter(|origin| origin.scheme == "https")
             .ok_or("GM_AUTH_PUBLIC_URL must be an HTTPS origin with no path, query, or fragment")?;
@@ -219,27 +179,28 @@ impl AuthConfig {
     /// Go's validateSecrets, in its order: both exclusions, each method's settings, then the provider's.
     fn validate_secrets(&self) -> Result<(), ConfigError> {
         let (password, oidc) = (self.mode.password(), self.mode.oidc());
-        let oidc_complete = !self.oidc_issuer.is_empty()
-            && !self.oidc_client_id.is_empty()
-            && (!self.oidc_client_secret.is_empty() || !self.oidc_secret_file.is_empty())
-            && !self.oidc_allowed_groups.is_empty();
-        let issuer =
-            split_url(&self.oidc_issuer).is_ok_and(|(origin, rest)| origin.scheme == "https" && !rest.contains('?'));
+        let password_source = !self.password_hash.is_empty() || !self.password_hash_file.is_empty();
+        let secret_source = !self.oidc_client_secret.is_empty() || !self.oidc_secret_file.is_empty();
+        let (issuer, client, groups) = (&self.oidc_issuer, &self.oidc_client_id, &self.oidc_allowed_groups);
+        let oidc_complete = !issuer.is_empty() && !client.is_empty() && secret_source && !groups.is_empty();
+        let oidc_settings = !issuer.is_empty() || !client.is_empty() || secret_source || !groups.is_empty();
+        let https_issuer =
+            split_url(issuer).is_ok_and(|(origin, rest)| origin.scheme == "https" && !rest.contains('?'));
         let name = &self.oidc_provider_name;
         Err(
             if !self.password_hash.is_empty() && !self.password_hash_file.is_empty() {
                 "GM_AUTH_PASSWORD_HASH and GM_AUTH_PASSWORD_HASH_FILE are mutually exclusive"
             } else if !self.oidc_client_secret.is_empty() && !self.oidc_secret_file.is_empty() {
                 "GM_AUTH_OIDC_CLIENT_SECRET and GM_AUTH_OIDC_CLIENT_SECRET_FILE are mutually exclusive"
-            } else if password && !self.has_password_source() {
+            } else if password && !password_source {
                 "password authentication requires exactly one password hash source"
-            } else if !password && self.has_password_source() {
+            } else if !password && password_source {
                 "password hash configured while password authentication is disabled"
             } else if oidc && !oidc_complete {
                 "OIDC authentication requires issuer, client ID, one client secret source, and allowed groups"
-            } else if !oidc && self.has_oidc_settings() {
+            } else if !oidc && oidc_settings {
                 "OIDC settings configured while OIDC authentication is disabled"
-            } else if oidc && !issuer {
+            } else if oidc && !https_issuer {
                 "GM_AUTH_OIDC_ISSUER must be an HTTPS URL with no credentials, query, or fragment"
             } else if oidc && name.trim().is_empty() {
                 "GM_AUTH_OIDC_PROVIDER_NAME must not be empty"
