@@ -32,7 +32,7 @@ pub(super) struct Layout {
     footer: Text,
 }
 
-/// Go's readiness of a checked server.
+/// Go's readiness of a checked server, in the order of its label.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum PathState {
     Ready,
@@ -43,19 +43,14 @@ pub(super) enum PathState {
 }
 
 impl PathState {
+    /// Go's pathLabels.
     fn label(self) -> &'static str {
-        match self {
-            Self::Ready => "Ready",
-            Self::Checking => "Checking",
-            Self::Stale => "Recheck needed",
-            Self::Failed => "Failed",
-            Self::SignIn => "Sign in",
-        }
+        ["Ready", "Checking", "Recheck needed", "Failed", "Sign in"][self as usize]
     }
 }
 
 /// Go's panel: a rounded frame with its title in the top border; a height pads or clips the body.
-pub(super) fn panel(title: &str, body: Text, width: usize, height: usize, theme: &Theme) -> Text {
+pub(super) fn panel(title: &str, mut body: Text, width: usize, height: usize, theme: &Theme) -> Text {
     let inner = width.saturating_sub(4).max(1);
     let title = plain(&fit(Line::from(title.to_owned()), width.saturating_sub(6).max(1)));
     let fill = width.saturating_sub(5 + title.width());
@@ -64,7 +59,6 @@ pub(super) fn panel(title: &str, body: Text, width: usize, height: usize, theme:
         span(title, theme.heading),
         span(format!(" {}╮", "─".repeat(fill)), theme.border),
     ])];
-    let mut body = body;
     if height > 0 {
         body.truncate(height.saturating_sub(2).max(1));
         body.resize(height.saturating_sub(2), Line::default());

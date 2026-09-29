@@ -553,27 +553,15 @@ impl Ui {
 
     /// Go's handleKey; true quits.
     fn key(&mut self, key: KeyEvent, commands: &mpsc::Sender<Command>) -> bool {
-        let name = keys::name(key);
-        if self.answer(key, &name) {
-            return false;
-        }
-        if ABORT.matches(&name) {
-            return self.interrupt(commands);
-        }
-        if self.edit.is_some() {
-            self.edit_key(&name, key);
-            return false;
-        }
-        if QUIT.matches(&name) {
-            return self.quit(commands);
-        }
-        if HELP.matches(&name) && !self.stop_prompt {
-            self.help = !self.help;
-            return false;
-        }
-        match self.popup {
+        let (name, popup) = (keys::name(key), self.popup);
+        match popup {
+            _ if self.answer(key, &name) => {}
+            _ if ABORT.matches(&name) => return self.interrupt(commands),
+            _ if self.edit.is_some() => self.edit_key(&name, key),
+            _ if QUIT.matches(&name) => return self.quit(commands),
+            _ if HELP.matches(&name) && !self.stop_prompt => self.help = !self.help,
             Popup::Details if CLOSE.matches(&name) || DETAILS.matches(&name) => {
-                (self.popup, self.body) = (Popup::None, 0);
+                (self.popup, self.body) = (Popup::None, 0)
             }
             Popup::Details if SCROLL.matches(&name) || PAGE.matches(&name) => self.scroll(&name),
             Popup::Servers => self.chooser_key(&name),
