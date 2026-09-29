@@ -1,5 +1,5 @@
 //! Multiplexed HTTP/2 transport with owned, independently cancellable streams.
-use super::*;
+use super::{body::UploadFunding, *};
 use crate::{
     budget::{ClientCredit, CreditClaim, H2_STATE_BYTES, MemoryBudget},
     timeouts::H2_HANDSHAKE,
@@ -133,9 +133,8 @@ impl HttpServer {
         let exchange = async {
             let request = request.map(|stream| H2Body {
                 stream,
-                operations: operations.clone(),
                 window,
-                funded: false,
+                funding: UploadFunding::new(operations.clone()),
             });
             let response = self.respond_incoming(request, accepted, &operations, None).await?;
             send_response(&mut reply, response, head).await
@@ -236,9 +235,8 @@ impl UploadWindow {
 
 struct H2Body {
     stream: RecvStream,
-    operations: Operations,
     window: Arc<UploadWindow>,
-    funded: bool,
+    funding: UploadFunding,
 }
 
 impl Body for H2Body {
@@ -247,18 +245,18 @@ impl Body for H2Body {
 
     fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, h2::Error>>> {
         let this = &mut *self;
+        let (window, stream) = (&this.window, &mut this.stream);
         // Under pressure, or past its client's share, an admitted upload keeps reading at the current window.
-        if !this.funded
-            && this.window.memory.has_headroom()
-            && let Some(clients) = admitted_clients(&this.operations)
-        {
-            let window = &this.window;
-            this.funded =
-                window.uploads.fetch_add(1, Ordering::Relaxed) > 0 || window.raise(&mut this.stream, &clients);
-            if !this.funded {
-                window.uploads.fetch_sub(1, Ordering::Relaxed);
-            }
-        }
+        this.funding.fund(
+            || window.memory.has_headroom(),
+            |clients| {
+                let funded = window.uploads.fetch_add(1, Ordering::Relaxed) > 0 || window.raise(stream, clients);
+                if !funded {
+                    window.uploads.fetch_sub(1, Ordering::Relaxed);
+                }
+                funded
+            },
+        );
         match ready!(this.stream.poll_data(cx)) {
             Some(Ok(data)) => {
                 this.stream.flow_control().release_capacity(data.len())?;
@@ -276,7 +274,7 @@ impl Body for H2Body {
 
 impl Drop for H2Body {
     fn drop(&mut self) {
-        if self.funded && self.window.uploads.fetch_sub(1, Ordering::Relaxed) == 1 {
+        if self.funding.funded && self.window.uploads.fetch_sub(1, Ordering::Relaxed) == 1 {
             self.stream
                 .flow_control()
                 .set_target_connection_window_size(DEFAULT_WINDOW_BYTES);

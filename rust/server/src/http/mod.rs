@@ -1,5 +1,6 @@
 //! Shared endpoint state and an owned HTTP/1 connection loop.
 
+mod body;
 mod http2;
 mod http3;
 mod quic;
@@ -8,9 +9,10 @@ pub(crate) mod topology;
 mod upload;
 mod websocket;
 mod webtransport;
+pub(crate) use body::ResponseBody;
+use body::{Operation, Operations, check_operations, holds_permit};
 pub use quic::QuicEndpoint;
 use topology::Accepted;
-use upload::ProgressBody;
 
 use crate::{
     ServerError,
@@ -415,7 +417,7 @@ impl HttpServer {
                 self.upload_control(route, &request, owner)
             }
             _ => match self.discovery.respond(route, &request, peer) {
-                Ok(Some(response)) => response.map(ResponseBody::bytes),
+                Ok(Some(response)) => response.map(ResponseBody::from),
                 Ok(None) => text_response(StatusCode::NOT_FOUND),
                 Err(_) => text_response(StatusCode::INTERNAL_SERVER_ERROR),
             },
@@ -575,30 +577,27 @@ impl HttpServer {
                 Ok(self.respond_authorized(route, request.map(|_| ()), accepted.peer, &owner))
             }
         };
-        let mut response = tokio::select! {
+        // An upload whose lease ends is answered with its revocation, which retains no operation: the ended lease
+        // already ends the upload's own.
+        let (mut response, revoked) = tokio::select! {
             biased;
             _ = lease_ended(guard) => {
-                if upload {
-                    for operation in operations.lock().expect("operations poisoned").iter() {
-                        operation.lock().expect("operation poisoned").body_complete = true;
-                    }
-                    upload::refusal(graphite_meter_core::failure::UploadRefusal::Revoked)
-                } else {
+                if !upload {
                     return Err(io::ErrorKind::PermissionDenied.into());
                 }
+                for operation in operations.lock().expect("operations poisoned").iter() {
+                    operation.lock().expect("operation poisoned").body_complete = true;
+                }
+                (upload::refusal(graphite_meter_core::failure::UploadRefusal::Revoked), true)
             },
-            result = dispatch => result?,
+            result = dispatch => (result?, false),
         };
         if measurement && let (Some(lease), Some(origin)) = (&lease, &origin) {
             lease.access(origin).apply_measurement(response.headers_mut());
         } else if measurement && self.auth.is_none() {
             Access::Public.apply_measurement(response.headers_mut());
         }
-        if response
-            .headers()
-            .get("x-graphite-upload-refusal")
-            .is_none_or(|code| code != "revoked")
-        {
+        if !revoked {
             self.retain_operation(&mut response, lease, operations);
         }
         Ok(self.harden(response))
@@ -622,7 +621,7 @@ impl HttpServer {
             == Some(AuthRoute::Logout);
         let execute = async {
             let authorized = authorized.try_map_body(collect_auth_body).await?;
-            let mut response = auth.handle(&authorized).await.map(ResponseBody::bytes);
+            let mut response = auth.handle(&authorized).await.map(ResponseBody::from);
             let request = authorized.request();
             // The rest of an oversized body would read as the next request.
             if request.body().len() > crate::auth::http::FORM_BYTES && request.version() <= http::Version::HTTP_11 {
@@ -663,7 +662,7 @@ impl HttpServer {
         let mut response = self
             .assets
             .serve(request.method(), request.uri().path(), request.headers())
-            .map(ResponseBody::bytes);
+            .map(ResponseBody::from);
         let Ok(sources) = self.discovery.page_sources(&crate::discovery::request_host(request)) else {
             return text_response(StatusCode::BAD_REQUEST);
         };
@@ -781,13 +780,11 @@ impl HttpServer {
                     header::CONTENT_TYPE,
                     http::HeaderValue::from_static("text/html; charset=utf-8"),
                 );
-                *response.body_mut() = ResponseBody::bytes(
-                    format!(
-                        "<a href=\"{public}{}\">Temporary Redirect</a>.\n\n",
-                        AuthRoute::Login.path()
-                    )
-                    .into(),
-                );
+                *response.body_mut() = Bytes::from(format!(
+                    "<a href=\"{public}{}\">Temporary Redirect</a>.\n\n",
+                    AuthRoute::Login.path()
+                ))
+                .into();
             }
             if let Some(origin) = request.headers().get(header::ORIGIN) {
                 if origin == public {
@@ -829,18 +826,12 @@ impl HttpServer {
             Err(refusal) => return *refusal,
         };
         let count = download_bytes(request);
-        let mut body = ResponseBody {
-            block: self.download_block.clone(),
-            remaining: count,
-            progress: None,
-            transfer: (count != 0 && request.method() == Method::GET)
-                .then(|| self.download_meter.open())
-                .flatten(),
-            operation: Some(self.operation(Some(permit), count == 0 || request.method() == Method::HEAD)),
-        };
-        if request.method() == Method::HEAD {
-            body.remaining = 0;
-        }
+        let head = request.method() == Method::HEAD;
+        let transfer = (count != 0 && request.method() == Method::GET)
+            .then(|| self.download_meter.open())
+            .flatten();
+        let mut body = ResponseBody::download(self.download_block.clone(), if head { 0 } else { count }, transfer);
+        body.operation = Some(self.operation(Some(permit), count == 0 || head));
         Response::builder()
             .header(header::CONTENT_TYPE, "application/octet-stream")
             .header(header::CACHE_CONTROL, "no-store")
@@ -910,24 +901,6 @@ where
     Ok(bytes.freeze())
 }
 
-impl Operation {
-    fn check(&mut self, cx: &mut Context<'_>) -> io::Result<()> {
-        if self.revoked
-            || self
-                .revocation
-                .as_mut()
-                .is_some_and(|ended| ended.as_mut().poll(cx).is_ready())
-        {
-            self.revoked = true;
-            return Err(io::ErrorKind::PermissionDenied.into());
-        }
-        if self.deadline.as_mut().poll(cx).is_ready() {
-            return Err(io::ErrorKind::TimedOut.into());
-        }
-        Ok(())
-    }
-}
-
 fn download_bytes<B>(request: &Request<B>) -> u64 {
     query(request, "bytes")
         .and_then(|value| value.parse::<i64>().ok())
@@ -944,100 +917,6 @@ fn allowed(route: Route) -> impl Iterator<Item = &'static str> {
         .chain(methods.contains(&"GET").then_some("HEAD"))
         .chain((route.kind() == Kind::Http).then_some("OPTIONS"))
 }
-
-/// Direct callers own capacity through this body. A listener additionally holds
-/// the operation until its final bytes flush, or the connection is dropped.
-/// Chunks share a single immutable random block instead of allocating per write.
-pub struct ResponseBody {
-    block: Bytes,
-    remaining: u64,
-    progress: Option<ProgressBody>,
-    transfer: Option<crate::meter::Transfer>,
-    operation: Option<Arc<Mutex<Operation>>>,
-}
-
-impl From<Bytes> for ResponseBody {
-    fn from(block: Bytes) -> Self {
-        Self::bytes(block)
-    }
-}
-
-impl ResponseBody {
-    fn empty() -> Self {
-        Self::bytes(Bytes::new())
-    }
-    fn bytes(block: Bytes) -> Self {
-        Self {
-            remaining: block.len() as u64,
-            block,
-            progress: None,
-            transfer: None,
-            operation: None,
-        }
-    }
-}
-
-impl Body for ResponseBody {
-    type Data = Bytes;
-    type Error = std::io::Error;
-
-    fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
-        if self.is_end_stream() {
-            return Poll::Ready(None);
-        }
-        if let Some(operation) = &self.operation {
-            let error = operation.lock().expect("operation poisoned").check(cx).err();
-            if let Some(error) = error {
-                self.remaining = 0;
-                return Poll::Ready(Some(Err(error)));
-            }
-        }
-        if let Some(progress) = &mut self.progress {
-            let frame = progress.poll_frame(cx);
-            let done = progress.done;
-            if done && let Some(operation) = &self.operation {
-                operation.lock().expect("operation poisoned").body_complete = true;
-            }
-            return frame;
-        }
-        let length = self.remaining.min(self.block.len() as u64) as usize;
-        self.remaining -= length as u64;
-        if let Some(transfer) = &self.transfer {
-            transfer.record(length);
-        }
-        if self.remaining == 0
-            && let Some(operation) = &self.operation
-        {
-            operation.lock().expect("operation poisoned").body_complete = true;
-        }
-        Poll::Ready(Some(Ok(Frame::data(self.block.slice(..length)))))
-    }
-
-    fn is_end_stream(&self) -> bool {
-        self.progress
-            .as_ref()
-            .map_or(self.remaining == 0, |progress| progress.done)
-    }
-    fn size_hint(&self) -> SizeHint {
-        if self.progress.as_ref().is_some_and(|progress| !progress.done) {
-            SizeHint::default()
-        } else {
-            SizeHint::with_exact(self.remaining)
-        }
-    }
-}
-
-// An operation outlives the body when Hyper has queued its last frame but has
-// not flushed it. Keeping both deadline and permit here bounds stalled writes.
-struct Operation {
-    permit: Option<Permit>,
-    deadline: Pin<Box<Sleep>>,
-    body_complete: bool,
-    revocation: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
-    revoked: bool,
-}
-
-type Operations = Arc<Mutex<Vec<Arc<Mutex<Operation>>>>>;
 
 struct DeadlineIo<T> {
     inner: T,
@@ -1195,13 +1074,6 @@ async fn stopped(stopping: tokio::sync::watch::Sender<bool>) {
     }
 }
 
-fn check_operations(operations: &Operations, cx: &mut Context<'_>) -> io::Result<()> {
-    for operation in operations.lock().expect("operations poisoned").iter() {
-        operation.lock().expect("operation poisoned").check(cx)?;
-    }
-    Ok(())
-}
-
 /// Admitted operations on one connection; leftover receive credit is reclaimed the control bound after the last.
 #[derive(Clone)]
 struct AdmittedWork(Arc<Mutex<WorkState>>);
@@ -1240,22 +1112,6 @@ impl Drop for Admitted {
             work.idle_since = tokio::time::Instant::now();
         }
     }
-}
-
-fn holds_permit(operations: &Operations) -> bool {
-    let operations = operations.lock().expect("operations poisoned");
-    operations
-        .iter()
-        .any(|operation| operation.lock().expect("operation poisoned").permit.is_some())
-}
-
-/// The client keys an admitted exchange holds its permit under, which also bound its receive credit.
-fn admitted_clients(operations: &Operations) -> Option<Vec<String>> {
-    let operations = operations.lock().expect("operations poisoned");
-    operations.iter().find_map(|operation| {
-        let operation = operation.lock().expect("operation poisoned");
-        operation.permit.as_ref().map(|permit| permit.clients().to_vec())
-    })
 }
 
 #[cfg(test)]

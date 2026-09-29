@@ -1,5 +1,5 @@
 //! HTTP/3 adapts streams to the same authorized measurement dispatcher.
-use super::{quic::ReceiveCredit, *};
+use super::{body::UploadFunding, quic::ReceiveCredit, *};
 use graphite_meter_http3::{self as http3, RecvHalf, RequestStream, SendHalf};
 
 const DATA_BYTES: usize = 16 * 1024;
@@ -27,8 +27,7 @@ impl HttpServer {
                 stream: receive,
                 finished: false,
                 credit,
-                operations: operations.clone(),
-                funded: false,
+                funding: UploadFunding::new(operations.clone()),
             };
             let accepted = Accepted {
                 peer,
@@ -48,8 +47,7 @@ struct RequestBody {
     stream: RecvHalf,
     finished: bool,
     credit: ReceiveCredit,
-    operations: Operations,
-    funded: bool,
+    funding: UploadFunding,
 }
 
 impl Body for RequestBody {
@@ -60,11 +58,8 @@ impl Body for RequestBody {
         if self.finished {
             return Poll::Ready(None);
         }
-        if !self.funded
-            && let Some(clients) = admitted_clients(&self.operations)
-        {
-            self.funded = self.credit.fund(&clients);
-        }
+        let this = &mut *self;
+        this.funding.fund(|| true, |clients| this.credit.fund(clients));
         let frame = ready!(self.stream.poll_data(cx))
             .transpose()
             .map(|data| data.map(Frame::data));

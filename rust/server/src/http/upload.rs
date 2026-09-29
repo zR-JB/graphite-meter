@@ -60,13 +60,7 @@ impl HttpServer {
                     let mut response = match self.uploads.subscribe(&id, owner) {
                         Ok(subscription) => Response::builder()
                             .header(header::CONTENT_TYPE, "application/x-ndjson")
-                            .body(ResponseBody {
-                                block: Bytes::new(),
-                                remaining: 0,
-                                operation: None,
-                                transfer: None,
-                                progress: Some(ProgressBody::new(subscription)),
-                            })
+                            .body(ResponseBody::progress(ProgressBody::new(subscription)))
                             .expect("static progress response"),
                         Err(error) => refusal(error),
                     };
