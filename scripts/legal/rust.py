@@ -31,7 +31,7 @@ from .review import add_provenance, component_key, component_legal_files, valida
 from . import rust_platform as platform
 
 PACKAGES = ('graphite-meter-client', 'graphite-meter-server')
-# Opens the notices of a --development build.
+# Opens the notices of a --development build; rust/legal_build.rs also leaves it in its executable.
 DEVELOPMENT = 'UNREVIEWED DEVELOPMENT BUILD'
 DEVELOPMENT_NOTICE = (f'{DEVELOPMENT}\n\nThis build\'s host generated these notices. They cover the dependencies it '
                       'compiled, but not its Rust standard library, C runtime or system libraries, which only the '

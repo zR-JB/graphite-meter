@@ -32,8 +32,8 @@ MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
 SLSA = "https://slsa.dev/provenance/v1"
 BLOB_LIMIT = 4 * 1024 * 1024
 LAYER_LIMIT = 256 * 1024 * 1024
-# Where the Go and Rust images keep their third-party notices, which the legal build of their server wrote.
-NOTICES = "usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt"
+# Where the Go and Rust images keep their server and its third-party notices, which one legal build wrote.
+SERVER, NOTICES = "graphite-meter", "usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt"
 ARCHIVE = "oci-archive:/work/image.oci.tar"
 ENGINES = ("docker", "podman")
 
@@ -91,15 +91,16 @@ def blob(archive: tarfile.TarFile, digest: str) -> JsonObject:
     return expect_object(decode_json(member(archive, digest, BLOB_LIMIT).decode(errors="replace"), digest), digest)
 
 
-def image_notices(archive: tarfile.TarFile, image: str) -> list[bytes]:
-    """The start of each copy of the third-party notices in the layers of the image manifest `image`."""
-    texts: list[bytes] = []
+def image_files(archive: tarfile.TarFile, image: str) -> dict[str, list[bytes]]:
+    """Each copy of the server and of its notices in the layers of the image manifest `image`."""
+    found: dict[str, list[bytes]] = {SERVER: [], NOTICES: []}
     for item in expect_array(blob(archive, image).get("layers"), image):
         layer = member(archive, str_field(expect_object(item, image), "digest", image), LAYER_LIMIT)
         with tarfile.open(fileobj=io.BytesIO(layer)) as files:
-            texts += [text.read(BLOB_LIMIT) for entry in files if entry.name.lstrip("./") == NOTICES
-                      if (text := files.extractfile(entry))]
-    return texts
+            for entry in files:
+                if (name := entry.name.lstrip("./")) in found and (data := files.extractfile(entry)):
+                    found[name].append(data.read(LAYER_LIMIT))
+    return found
 
 
 def source_commit(statement: JsonObject, repository: str) -> str:
@@ -179,10 +180,12 @@ def verify(version: str, revision: str, archive: Path) -> str:
         with tarfile.open(archive, mode="r:") as tar:
             sources = set().union(*(provenance_sources(tar, digest, repository)
                                     for digest in attestations))
-            # The notices of an unreviewed development build open with its marker.
+            # An unreviewed development build's notices open with its marker, and its server carries it too.
             for image in images:
-                if not (texts := image_notices(tar, image)) or any(DEVELOPMENT.encode() in text for text in texts):
-                    fail(f"image {image} must ship {NOTICES} without {DEVELOPMENT!r}")
+                files = image_files(tar, image)
+                if not all(files.values()) or any(DEVELOPMENT.encode() in data for copies in files.values()
+                                                  for data in copies):
+                    fail(f"image {image} must ship {SERVER} and {NOTICES} without {DEVELOPMENT!r}")
     except tarfile.TarError as exc:
         raise ControlPlaneError(f"cannot read OCI archive layout: {exc}") from exc
     if sources != {revision}:

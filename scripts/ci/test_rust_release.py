@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ..legal.model import manual_files, manual_sources
-from ..legal.rust import DEVELOPMENT_NOTICE
+from ..legal.rust import DEVELOPMENT, DEVELOPMENT_NOTICE
 from .fixtures import statement, write_archive
 from .github_api import ControlPlaneError as VerificationError, JsonObject, file_sha256 as sha256_file, write_checksums
 from .toolchains import tui_targets
@@ -125,6 +125,10 @@ class RustArchiveBoundaryTests(unittest.TestCase):
                     verify_rust_client_archive(dist, "1.2.3", platform, target)
                     write_archive(dist / archive, files | {f"{base}/{binary}": executable(other)}, base)
                     with self.assertRaisesRegex(VerificationError, f"does not hold a {target} executable"):
+                        verify_rust_client_archive(dist, "1.2.3", platform, target)
+                    write_archive(dist / archive, files | {f"{base}/{binary}": files[f"{base}/{binary}"]
+                                                           + DEVELOPMENT.encode()}, base)
+                    with self.assertRaisesRegex(VerificationError, "unreviewed development build"):
                         verify_rust_client_archive(dist, "1.2.3", platform, target)
                 self.assertFalse(marker.exists())
 

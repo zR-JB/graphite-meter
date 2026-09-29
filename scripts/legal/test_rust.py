@@ -19,7 +19,7 @@ from scripts.legal.artifacts import render
 from scripts.legal.model import (Component, LegalError, Project, Provenance, Review, array, manual_files,
                                  manual_sources, marshal, read_json, sha256)
 from scripts.legal.review import add_provenance, validate_review
-from scripts.legal.rust import (DEVELOPMENT_NOTICE, about, add_cargo_sources, artifacts, capture, cargo,
+from scripts.legal.rust import (DEVELOPMENT, DEVELOPMENT_NOTICE, about, add_cargo_sources, artifacts, capture, cargo,
                                 image_additions, legal_report)
 from scripts.legal.rust_platform import SYSROOT, candidate, imports, link_map, linked, linker_version, notice
 
@@ -410,6 +410,51 @@ class RustBuildTests(unittest.TestCase):
                     rust.capture(ROOT, 'graphite-meter-client', target, 'dev', None)
                 # The development tasks build again with plain cargo, whose flags the build identity compares.
                 self.assertEqual('--remap-path-prefix' in str(built.exception), remapped, target)
+
+    def test_only_development_notices_leave_their_marker_in_the_executable(self) -> None:
+        from scripts.ci.toolchains import rust_channel
+
+        with tempfile.TemporaryDirectory() as scratch:
+            repo = Path(scratch).resolve()
+            # The real build script and release profile, and a compressor that keeps the notices unreadable.
+            files = {
+                'rust/Cargo.toml': '[workspace]\nmembers = ["app"]\nresolver = "2"\n'
+                                   '[profile.release]\nlto = "fat"\ncodegen-units = 1\nstrip = "symbols"\n',
+                'rust/app/Cargo.toml': '[package]\nname = "app"\nversion = "1.0.0"\nedition = "2021"\n'
+                                       '[build-dependencies]\nminiz_oxide = { path = "../miniz" }\n',
+                'rust/app/build.rs': '#[path = "../legal_build.rs"]\nmod legal;\nfn main() { legal::embed(false).unwrap() }\n',
+                'rust/app/src/main.rs': 'include!(concat!(env!("OUT_DIR"), "/legal.rs"));\n'
+                                        'fn main() { std::hint::black_box((LEGAL, DEVELOPMENT_NOTICES)); }\n',
+                'rust/miniz/Cargo.toml': '[package]\nname = "miniz_oxide"\nversion = "0.9.1"\nedition = "2021"\n',
+                'rust/miniz/src/lib.rs': 'pub mod deflate {\n    pub fn compress_to_vec_zlib(data: &[u8], _: u8) -> Vec<u8> '
+                                         '{ data.iter().map(|byte| !byte).collect() }\n}\n',
+                'rust/legal_build.rs': (ROOT / 'rust/legal_build.rs').read_text(),
+                'rust/rust-toolchain.toml': (ROOT / 'rust/rust-toolchain.toml').read_text(),
+            }
+            for name, content in files.items():
+                (repo / name).parent.mkdir(parents=True, exist_ok=True)
+                (repo / name).write_text(content)
+            channel = rust_channel(ROOT)
+            rustc = subprocess.check_output(['rustup', 'which', '--toolchain', channel, 'rustc'], text=True).strip()
+            host = next(line.split()[1] for line in subprocess.check_output([rustc, '-vV'], text=True).splitlines()
+                        if line.startswith('host:'))
+            with patch.dict(os.environ, {'CARGO_TERM_QUIET': 'true'}):
+                subprocess.run(cargo(repo, 'generate-lockfile', '--offline'), cwd=repo / 'rust', check=True)
+                # A development build is Cargo's host build; a release build names its --target.
+                for target, notices in ((None, DEVELOPMENT_NOTICE + 'notices\n'), (host, 'Reviewed notices\n')):
+                    # The notices must match the identity of the build that embeds them, which a first build writes.
+                    _, messages = capture(repo, 'app', target, 'release', None)
+                    output = Path(next(item['out_dir'] for item in messages if item.get('out_dir')))
+                    legal = repo / 'rust/target/notices' / (target or 'host')
+                    (legal / 'inputs/rust').mkdir(parents=True)
+                    for name, content in (('LEGAL.txt', notices), ('package.txt', 'app'), ('target.txt', host),
+                                          ('rustc-path.txt', rustc), ('inputs.txt', 'rust/Cargo.lock\n'),
+                                          ('inputs/rust/Cargo.lock', (repo / 'rust/Cargo.lock').read_text()),
+                                          ('build-identity.txt', (output / 'legal-build-identity.txt').read_text())):
+                        (legal / name).write_text(content)
+                    _, messages = capture(repo, 'app', target, 'release', None, legal)
+                    executable = Path(next(item['executable'] for item in messages if item.get('executable')))
+                    self.assertEqual(DEVELOPMENT.encode() in executable.read_bytes(), target is None, target)
 
 
 class RustSourceTests(unittest.TestCase):

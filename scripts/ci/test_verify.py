@@ -33,7 +33,7 @@ from .verify_oci import (
     verify as verify_oci,
 )
 from .github_api import ControlPlaneError, write_checksums
-from ..legal.rust import DEVELOPMENT_NOTICE
+from ..legal.rust import DEVELOPMENT, DEVELOPMENT_NOTICE
 from .verify_release_assets import (
     archive_names,
     tui_archives,
@@ -265,12 +265,14 @@ class OCITests(unittest.TestCase):
                 with patch.dict(os.environ, env), patch("scripts.ci.verify_oci.BLOB_LIMIT", limit):
                     outcome(self, error, lambda: verify_oci("1.2.3", "f" * 40, archive))
 
-    def test_each_image_ships_notices_without_the_development_marker(self) -> None:
-        for notices, error in ((b"THIRD-PARTY SOFTWARE NOTICES\n", None), (None, "must ship"),
-                               (DEVELOPMENT_NOTICE.encode() + b"THIRD-PARTY SOFTWARE NOTICES\n", "UNREVIEWED")):
-            with tempfile.TemporaryDirectory() as directory, self.subTest(error=error):
+    def test_each_image_ships_its_server_and_notices_without_the_development_marker(self) -> None:
+        reviewed, server = b"THIRD-PARTY SOFTWARE NOTICES\n", b"\x7fELF server"
+        for notices, executable, error in ((reviewed, server, None), (None, server, "must ship"),
+                                           (DEVELOPMENT_NOTICE.encode() + reviewed, server, "UNREVIEWED"),
+                                           (reviewed, server + DEVELOPMENT.encode(), "UNREVIEWED")):
+            with tempfile.TemporaryDirectory() as directory, self.subTest(notices=notices, server=executable):
                 archive = Path(directory) / "image.oci.tar"
-                oci = write_oci(archive, "example/repo", "f" * 40, remote=False, notices=notices)
+                oci = write_oci(archive, "example/repo", "f" * 40, remote=False, notices=notices, server=executable)
                 with patch.dict(os.environ, engine(Path(directory), "example/repo", "1.2.3", "f" * 40, oci)):
                     outcome(self, error, lambda: verify_oci("1.2.3", "f" * 40, archive))
 

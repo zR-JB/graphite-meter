@@ -373,8 +373,11 @@ def verify_rust_client_archive(dist: Path, version: str, platform: str, target: 
     path = dist / name
     require_same("Rust TUI archive files", {base, *(f"{base}/{file}" for file in (binary, *TUI_FILES))},
                  archive_names(path))
-    if not native_executable(read_archive(path, f"{base}/{binary}", 128 * 1024 * 1024), target):
+    executable = read_archive(path, f"{base}/{binary}", 128 * 1024 * 1024)
+    if not native_executable(executable, target):
         fail(f"{name} does not hold a {target} executable")
+    if DEVELOPMENT.encode() in executable:
+        fail(f"{name} holds the executable of an unreviewed development build")
     source = f"{base}_third-party-source.tar.gz"
     verify_rust_source(dist / source, "graphite-meter-client", target, root)
     for filename in ("LICENSE", "COPYRIGHT"):

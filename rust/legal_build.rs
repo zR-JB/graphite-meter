@@ -7,6 +7,10 @@ use std::{
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
+/// Opens the notices of an unreviewed development build (scripts/legal/rust.py); its executable also carries
+/// it in plain text, beside the compressed notices, for release verification to find.
+const DEVELOPMENT: &str = "UNREVIEWED DEVELOPMENT BUILD";
+
 /// Cargo runs build scripts in their package directory, two levels below the checkout.
 pub fn checkout() -> Result<PathBuf> {
     Ok(fs::canonicalize("../..")?)
@@ -50,7 +54,7 @@ pub fn embed(share_browser_notices: bool) -> Result<()> {
     let identity = build_identity();
     fs::write(output.join("legal-build-identity.txt"), &identity)?;
     let Some(configured) = env::var_os("GM_RUST_LEGAL_DIR") else {
-        return write_constants(&output, share_browser_notices, None, None);
+        return write_constants(&output, share_browser_notices, None, None, false);
     };
     if !Path::new(&configured).is_absolute() {
         return Err("GM_RUST_LEGAL_DIR must be an absolute directory".into());
@@ -119,7 +123,8 @@ pub fn embed(share_browser_notices: bool) -> Result<()> {
         output.join("LEGAL.zlib"),
         miniz_oxide::deflate::compress_to_vec_zlib(text.as_bytes(), 9),
     )?;
-    write_constants(&output, share_browser_notices, Some(text.len()), notices)
+    let development = text.starts_with(DEVELOPMENT);
+    write_constants(&output, share_browser_notices, Some(text.len()), notices, development)
 }
 
 fn write_constants(
@@ -127,6 +132,7 @@ fn write_constants(
     share_browser_notices: bool,
     report: Option<usize>,
     notices: Option<usize>,
+    development: bool,
 ) -> Result<()> {
     let mut generated = match report {
         Some(length) => format!(
@@ -134,6 +140,11 @@ fn write_constants(
         ),
         None => "const LEGAL: Option<(&[u8], usize)> = None;\n".into(),
     };
+    // Each main.rs refers to the marker, so that no linker drops it.
+    let marker = if development { DEVELOPMENT } else { "" };
+    generated.push_str(&format!(
+        "#[used]\npub static DEVELOPMENT_NOTICES: &str = {marker:?};\n"
+    ));
     if share_browser_notices {
         generated.push_str(&format!("const LEGAL_NOTICES: Option<usize> = {notices:?};\n"));
     }

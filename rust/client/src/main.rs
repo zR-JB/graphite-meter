@@ -25,6 +25,8 @@ static ALLOCATOR: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
 
 #[tokio::main]
 async fn main() {
+    // A development build's plain marker, which release verification refuses, stays in the executable.
+    std::hint::black_box(DEVELOPMENT_NOTICES);
     // Go's usage names the program as it was invoked.
     let program = std::env::args_os().next().unwrap_or_default();
     let usage = cli::usage(&safe(&program.to_string_lossy()));

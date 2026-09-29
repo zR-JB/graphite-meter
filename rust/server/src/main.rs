@@ -10,6 +10,8 @@ use graphite_meter_server::{
 
 #[tokio::main]
 async fn main() {
+    // A development build's plain marker, which release verification refuses, stays in the executable.
+    std::hint::black_box(graphite_meter_server::assets::DEVELOPMENT_NOTICES);
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     // Go's fatal log lines, which alerting keys on.
     let failure = match args.as_slice() {

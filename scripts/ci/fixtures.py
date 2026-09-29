@@ -16,7 +16,7 @@ from typing import cast
 from unittest.mock import patch
 
 from .github_api import ControlPlaneError, JsonObject, JsonValue, write_checksums
-from .verify_oci import NOTICES
+from .verify_oci import NOTICES, SERVER
 from .verify_release_assets import TARGETS, TUI_FILES, tui_archives
 
 AMD, ARM = "sha256:" + "a" * 64, "sha256:" + "b" * 64
@@ -113,10 +113,10 @@ def statement(repository: str, revision: str, *, remote: bool, subjects: Mapping
                           "runDetails": {"metadata": {"buildkit_metadata": {} if remote else {"vcs": vcs}}}}}
 
 
-def write_oci(path: Path, repository: str, revision: str, *, remote: bool, tamper: bool = False,
-              predicate: str = SLSA, notices: bytes | None = b"THIRD-PARTY SOFTWARE NOTICES\n") -> JsonObject:
-    """Write BuildKit-shaped images, which ship `notices` unless None, and their provenance into an OCI archive;
-    return its index."""
+def write_oci(path: Path, repository: str, revision: str, *, remote: bool, tamper: bool = False, predicate: str = SLSA,
+              notices: bytes | None = b"THIRD-PARTY SOFTWARE NOTICES\n", server: bytes = b"\x7fELF server") -> JsonObject:
+    """Write BuildKit-shaped images, which ship `server` and `notices` unless None, and their provenance into an
+    OCI archive; return its index."""
     blobs: dict[str, bytes] = {}
 
     def add(value: object) -> str:
@@ -127,10 +127,11 @@ def write_oci(path: Path, repository: str, revision: str, *, remote: bool, tampe
 
     files = io.BytesIO()
     with tarfile.open(fileobj=files, mode="w:gz") as layer:
-        name, data = (NOTICES, notices) if notices is not None else ("graphite-meter", b"executable")
-        info = tarfile.TarInfo(name)
-        info.size = len(data)
-        layer.addfile(info, io.BytesIO(data))
+        for name, data in {SERVER: server, NOTICES: notices}.items():
+            if data is not None:
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                layer.addfile(info, io.BytesIO(data))
     images = [add({"config": {"architecture": arch}, "layers": [{"digest": add(files.getvalue())}]})
               for arch in ("amd64", "arm64")]
     layer = {"mediaType": "application/vnd.in-toto+json", "digest": add(statement(repository, revision, remote=remote)),
