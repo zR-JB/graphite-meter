@@ -483,7 +483,7 @@ export class Page {
     await this.cdp("Network.enable");
     await this.cdp("Network.setBlockedURLs", { urls });
   }
-  /** The run's visible state, for a failure message: phase, run control, blocker and notices. */
+  /** The run's visible state, for a failure message: phase, run control, blocker, gauge status and notices. */
   async summary() {
     const state = await this.evaluate(() => {
       const text = (el: Element | null) =>
@@ -497,6 +497,8 @@ export class Page {
           busy: run.getAttribute("aria-busy"),
         },
         blocker: text(document.querySelector("#run-duration")),
+        // A refused or failed start shows its reason only in the gauge's footer.
+        gauge: text(document.querySelector(".gauge-footer")),
         notices: [
           ...document.querySelectorAll('[role="alert"], [role="status"]'),
         ]

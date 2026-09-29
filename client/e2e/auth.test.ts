@@ -264,7 +264,7 @@ test("a peer grant revoked mid-run ends in the sign-in state", async (page) => {
   await open(page, home.url, {
     servers: [home, locked],
     config: {
-      duration: { ...baseConfig.duration, downloadMs: 1500, uploadMs: 1000 },
+      duration: { ...baseConfig.duration, downloadMs: 1500 },
     },
   });
   await openSettings(page);

@@ -111,8 +111,8 @@ for (const fault of faults)
       ...baseConfig,
       duration: {
         ...baseConfig.duration,
-        downloadMs: fault.downloadMs ?? 1_000,
-        uploadMs: fault.uploadMs ?? 1_000,
+        downloadMs: fault.downloadMs ?? baseConfig.duration.downloadMs,
+        uploadMs: fault.uploadMs ?? baseConfig.duration.uploadMs,
       },
     };
     const relaunched: { kill(): void }[] = [];

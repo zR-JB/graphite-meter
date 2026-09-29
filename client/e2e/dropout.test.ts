@@ -14,7 +14,7 @@ import { expect, test, type Page } from "./webview";
 
 const long = {
   ...baseConfig,
-  duration: { ...baseConfig.duration, downloadMs: 1500, uploadMs: 1000 },
+  duration: { ...baseConfig.duration, downloadMs: 1500 },
 };
 
 async function killDuringDownload(page: Page, ...peers: Subprocess[]) {
