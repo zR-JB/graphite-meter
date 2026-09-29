@@ -19,7 +19,8 @@ pub const WT_ANSWER: Duration = Duration::from_secs(10);
 pub const WT_VERIFY_LINGER: Duration = Duration::from_secs(5);
 /// A `/wt/upload` refused at connect closes this long after its `error` record.
 pub const WT_REFUSAL_LINGER: Duration = Duration::from_secs(2);
-/// An upload progress stream sends a heartbeat line after this long without a record.
+/// Upload progress heartbeats: an HTTP progress stream sends one each second, as Go's feeds do, and the WebTransport
+/// feed one after a second without a record.
 pub const PROGRESS_HEARTBEAT: Duration = Duration::from_secs(1);
 /// A WebSocket close handshake, so an unresponsive peer cannot keep holding capacity.
 pub const WS_CLOSE: Duration = Duration::from_secs(5);
