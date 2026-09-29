@@ -171,7 +171,7 @@ pub(crate) enum Quic {
 impl Quic {
     /// Shards for half the workers of a multi-thread runtime, at least two, as many as the buffer budget covers.
     /// With four workers, two shards cost less CPU per byte than one or four for both one fast client and eight
-    /// paced ones: each more shard splits a connection's ACKs over more sockets and so its sends into smaller
+    /// paced ones: each additional shard splits a connection's ACKs over more sockets, and so its sends into smaller
     /// bursts. Only Linux spreads unicast datagrams over `SO_REUSEPORT` sockets, so other targets keep one
     /// endpoint on this runtime.
     pub(crate) fn bind(
