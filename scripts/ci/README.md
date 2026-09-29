@@ -88,6 +88,8 @@ release it as `graphite-meter-server_VERSION_linux_ARCH_rust.provenance.json` or
 stages only those and the expected archives. Verification requires each
 statement to attest exactly its export's files as released and to name the
 release commit, as for the images. The natively built macOS archives have none.
+A prerelease's Rust archives must match its PR head's `Cargo.lock`, fork and
+provenance records, `LICENSE` and `COPYRIGHT`, which the PR's CI checked.
 Rust release builds refuse a toolchain that rustup installed from any channel
 manifest but the one whose SHA-256 `mise.toml` pins (`rust_manifest_sha256`):
 `package_rust.py` and the image's server build compare every archive and hash

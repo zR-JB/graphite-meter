@@ -49,6 +49,8 @@ ASSETS_LIMIT = 2 * OCI_LIMIT
 # The release request's jobs, which each artifact must come from: the build runs the requested source
 # only inside BuildKit; the macOS job compiles it natively.
 BUILD_JOB, DARWIN_JOB = "Build untrusted release candidate", "Build untrusted Rust macOS TUIs"
+RUST_SOURCE_FILES = ("LICENSE", "COPYRIGHT", "rust/Cargo.lock", "legal/rust-forks.json", "legal/rust-provenance.json",
+                     "legal/provenance.json")
 # Seconds between reads while GitHub's read path catches up with a write.
 DELAYS = (0.25, 0.5, 1, 2, 4, 8)
 T = TypeVar("T")
@@ -244,6 +246,22 @@ def verify_request(request_dir: Path) -> tuple[Release, bool]:
     return release, request["mode"] == "publish"
 
 
+def fetch_files(repository: str, sha: str, directory: Path) -> Path:
+    """Write the repository files that Rust artifacts must match, as they are at commit `sha`, into `directory`."""
+    for name in RUST_SOURCE_FILES:
+        record = gh.expect_object(gh.api(f"repos/{repository}/contents/{name}?ref={sha}"), name)
+        content = gh.str_field(record, "content", name)
+        if record.get("encoding") != "base64" or len(content) > 4 * 1024 * 1024:
+            gh.fail(f"{name} at {sha} is not bounded base64 content")
+        try:
+            data = base64.b64decode(content.replace("\n", ""), validate=True)
+        except binascii.Error as exc:
+            raise gh.ControlPlaneError(f"{name} at {sha} is invalid base64") from exc
+        (directory / name).parent.mkdir(parents=True, exist_ok=True)
+        (directory / name).write_bytes(data)
+    return directory
+
+
 def command_verify() -> None:
     request_dir, handoff = gh.runner_path("REQUEST_DIR"), gh.runner_path("HANDOFF_DIR")
     release, publish = verify_request(request_dir)
@@ -271,20 +289,13 @@ def command_verify() -> None:
         verify_release_assets.verify_artifacts(release.version, request_dir / f"release-assets-{run_id}")
         verify_release_assets.merge(request_dir / f"release-assets-{run_id}", assets)
     if release.rust != "none":
-        lock_sha256 = None
-        if not release.stable:
-            lock_path = f"repos/{env('REPOSITORY')}/contents/rust/Cargo.lock?ref={release.sha}"
-            record = gh.expect_object(gh.api(lock_path), "Cargo lock")
-            content = gh.str_field(record, "content", "Cargo lock")
-            if record.get("encoding") != "base64" or len(content) > 4 * 1024 * 1024:
-                gh.fail("source Cargo lock is not bounded base64 content")
-            try:
-                lock_sha256 = hashlib.sha256(base64.b64decode(content.replace("\n", ""), validate=True)).hexdigest()
-            except binascii.Error as exc:
-                raise gh.ControlPlaneError("source Cargo lock is invalid base64") from exc
         parts = [request_dir / f"release-rust-{part}-{run_id}" for part in ("assets", "darwin")[:1 + release.rust_tui]]
-        verify_release_assets.verify_rust(parts, assets, release.version, *verify_release_assets.rust_builds(release.rust),
-                                          release.sha, env("REPOSITORY"), lock_sha256)
+        with tempfile.TemporaryDirectory() as fetched:
+            # A stable release builds this checkout; a prerelease the PR head, whose own CI checked its files.
+            source = Path(".") if release.stable else fetch_files(env("REPOSITORY"), release.sha, Path(fetched))
+            verify_release_assets.verify_rust(parts, assets, release.version,
+                                              *verify_release_assets.rust_builds(release.rust),
+                                              release.sha, env("REPOSITORY"), source)
     if assets.exists():
         gh.write_checksums(assets)
     main, ci_run_id, codeql_id = require_publishable(env("REPOSITORY"), release)

@@ -1,6 +1,7 @@
 """Rust release artifacts remain untrusted data throughout shared verification."""
 from __future__ import annotations
 
+import base64
 import contextlib
 import io
 import json
@@ -312,6 +313,34 @@ class RustStagingTests(unittest.TestCase):
                 else:
                     with self.assertRaisesRegex(VerificationError, error):
                         verify()
+
+
+class RustPrereleaseSourceTests(unittest.TestCase):
+    def test_a_prerelease_is_checked_against_the_files_of_its_pr_head(self) -> None:
+        from .fixtures import github
+        from .release import RUST_SOURCE_FILES, fetch_files
+
+        forks = json.loads(Path("legal/rust-forks.json").read_text())
+        bumped = json.dumps([dict(forks[0], rev="0" * 40), *forks[1:]]).encode()
+        head = {name: Path(name).read_bytes() for name in RUST_SOURCE_FILES} | {"legal/rust-forks.json": bumped}
+
+        def contents(encoding: str = "base64") -> dict[str, object]:
+            return {f"repos/{REPOSITORY}/contents/{name}?ref={COMMIT}":
+                    {"encoding": encoding, "content": base64.encodebytes(data).decode()} for name, data in head.items()}
+
+        target = RUST_TARGETS["linux/amd64"]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_source(root / "source.tar.gz", inventory("graphite-meter-client", target),
+                         {"legal/rust-forks.json": bumped})
+            with github(contents()):
+                source = fetch_files(REPOSITORY, COMMIT, root / "head")
+            verify_rust_source(root / "source.tar.gz", "graphite-meter-client", target, source)
+            # Main's files would refuse every PR that bumps a fork.
+            with self.assertRaisesRegex(VerificationError, "fork identities differ"):
+                verify_rust_source(root / "source.tar.gz", "graphite-meter-client", target)
+            with github(contents("none")), self.assertRaisesRegex(VerificationError, "not bounded base64"):
+                fetch_files(REPOSITORY, COMMIT, root / "other")
 
 
 class RustRequestBoundaryTests(unittest.TestCase):
