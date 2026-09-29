@@ -306,6 +306,13 @@ jobs:
           docker create --name rust-e2e graphite-meter-rust:smoke
           docker cp rust-e2e:/graphite-meter "$RUNNER_TEMP/graphite-meter-server"
           python3 rust/tests/browser_interop.py --server "$RUNNER_TEMP/graphite-meter-server"
+      # Firefox and WebKitGTK, which the script also drives, are not on the runner.
+      - name: Check Chromium's HTTP/3, WebTransport and session close codes against the image's server
+        env:
+          CHROME: ${{ steps.chrome.outputs.chrome-path }}
+        run: >-
+          python3 rust/tests/browser_transports.py --server "$RUNNER_TEMP/graphite-meter-server"
+          --browsers chromium --chromium "$CHROME"
       - name: Upload E2E failure diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -314,6 +321,8 @@ jobs:
           path: |
             client/test-results/webview
             client/test-results/servers
+            rust/target/browser-transports-*/*.json
+            rust/target/browser-transports-*/*.log
           if-no-files-found: ignore
 
   rust-release:

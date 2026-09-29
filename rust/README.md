@@ -277,7 +277,8 @@ through HTTP/3 downloads and uploads and WebTransport datagrams, streams and the
 close codes of sessions the server ends at their lifetime and when it stops;
 WebKitGTK, which has neither, is the negative control. It binds fixed loopback
 ports, so run it in a private network namespace. The Go server passes the same
-checks.
+checks. CI's Rust browser E2E job runs the Chromium checks (`--browsers chromium
+--chromium PATH`) against the image's server.
 
 `client_interop.py` starts an unchanged Go product server and runs the Rust
 measurement engine through all four stages with WebTransport streams and datagram latency,

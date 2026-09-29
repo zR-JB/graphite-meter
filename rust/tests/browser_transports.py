@@ -241,13 +241,13 @@ def page(base: int, *query: str) -> str:
     return f"https://127.0.0.2:{PAGE}/?base=https://127.0.0.1:{base}" + "".join(f"&{item}" for item in query)
 
 
-def chromium(directory: Path, pages: Pages, leaf: Path) -> dict:
+def chromium(directory: Path, pages: Pages, leaf: Path, binary: str) -> dict:
     public_key = run(["openssl", "x509", "-in", str(leaf), "-pubkey", "-noout"]).encode()
     spki = subprocess.run(["openssl", "pkey", "-pubin", "-outform", "der"], input=public_key,
                           check=True, capture_output=True).stdout
     certificate = hashlib.sha256(ssl.PEM_cert_to_DER_cert(leaf.read_text())).digest()
     return browse(pages, [
-        CHROMIUM, "--headless=new", "--no-sandbox", "--no-first-run", "--disable-gpu",
+        binary, "--headless=new", "--no-sandbox", "--no-first-run", "--disable-gpu",
         f"--user-data-dir={directory / 'chromium'}",
         f"--ignore-certificate-errors-spki-list={base64.b64encode(hashlib.sha256(spki).digest()).decode()}",
         f"--origin-to-force-quic-on=127.0.0.1:{H3}", page(H3, "hash=" + ",".join(map(str, certificate))),
@@ -302,6 +302,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--server", type=Path, required=True)
     parser.add_argument("--browsers", default="chromium,firefox,webkit")
+    parser.add_argument("--chromium", default=CHROMIUM, help="the Chromium or Chrome for Testing binary")
     args = parser.parse_args()
     target = ROOT / "rust/target"
     target.mkdir(exist_ok=True)
@@ -316,7 +317,7 @@ def main() -> None:
                f"--h2-addr=127.0.0.1:{H2}", f"--h3-addr=127.0.0.1:{H3}", f"--tls-cert={leaf}", f"--tls-key={key}"]
     environment = {"PATH": os.environ["PATH"], "HOME": str(directory), "GM_AUTH_MODE": "off",
                    "GM_MAX_OPERATION_DURATION": "2s", "GM_MAX_SESSION_DURATION": "3s"}
-    runners = {"chromium": lambda: chromium(directory, pages, leaf),
+    runners = {"chromium": lambda: chromium(directory, pages, leaf, args.chromium),
                "firefox": lambda: firefox(directory, pages, ca),
                "webkit": lambda: webkit(directory, pages)}
     requested = args.browsers.split(",")
