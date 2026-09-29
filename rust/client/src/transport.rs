@@ -233,25 +233,21 @@ impl Transport {
 
     /// Ends an HTTP/3 request's body and checks the server's answer.
     async fn answer_h3(&self, stream: &mut Http3Stream, target: &str) -> Result<(), Error> {
-        if let Err(error) = stream.finish().await {
-            return Err(self.early_answer(stream, target, error).await);
-        }
+        self.answered(stream.finish().await, stream, target).await?;
         let response = stream.response().await?;
         self.http.check_status(target, response.status(), response.headers())
     }
 
-    /// Why an HTTP/3 request's body could not be sent: a server that answers early stops reading
-    /// it, so its answer, read for a second, names the refusal, as Go's round trip returns it;
-    /// otherwise `error`.
-    async fn early_answer(&self, stream: &mut Http3Stream, target: &str, error: Error) -> Error {
-        match tokio::time::timeout(Duration::from_secs(1), stream.response()).await {
-            Ok(Ok(response)) => self
-                .http
-                .check_status(target, response.status(), response.headers())
-                .err()
-                .unwrap_or(error),
-            _ => error,
-        }
+    /// `sent`, or why an HTTP/3 request's body could not be sent: a server that answers early stops
+    /// reading it, so its answer, read for a second, names the refusal, as Go's round trip returns
+    /// it; otherwise the send's error.
+    async fn answered(&self, sent: Result<(), Error>, stream: &mut Http3Stream, target: &str) -> Result<(), Error> {
+        let Err(error) = sent else { return Ok(()) };
+        let Ok(Ok(response)) = tokio::time::timeout(Duration::from_secs(1), stream.response()).await else {
+            return Err(error);
+        };
+        let refusal = self.http.check_status(target, response.status(), response.headers());
+        Err(refusal.err().unwrap_or(error))
     }
 
     pub async fn receive(
@@ -335,9 +331,8 @@ impl Transport {
                     .checked_add(chunk.len() as u64)
                     .filter(|sent| *sent <= length)
                     .ok_or("request body exceeds content length")?;
-                if let Err(error) = stream.send_data(chunk).await {
-                    return Err(self.early_answer(&mut stream, &target, error).await);
-                }
+                self.answered(stream.send_data(chunk).await, &mut stream, &target)
+                    .await?;
             }
             if sent != length {
                 return Err("request body shorter than content length".into());

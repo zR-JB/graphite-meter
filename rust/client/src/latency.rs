@@ -20,11 +20,8 @@ use tokio::{
     sync::{mpsc, watch},
     time::Instant,
 };
-use tokio_tungstenite::tungstenite::{
-    Message,
-    client::IntoClientRequest,
-    protocol::{CloseFrame, WebSocketConfig},
-};
+use tokio_tungstenite::tungstenite::protocol::CloseFrame;
+use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest, protocol::WebSocketConfig};
 
 type Socket = tokio_tungstenite::WebSocketStream<Box<dyn graphite_meter_net::Stream>>;
 
@@ -83,11 +80,10 @@ pub(crate) async fn run(
     if duration.is_zero() || duration.as_nanos() > i64::MAX as u128 {
         return Err("latency interval and bounded duration must be positive".into());
     }
-    let first = dial(http, target, Instant::now() + REDIAL_WINDOW);
     let mut socket = tokio::select! {
         biased;
         _ = stopped(&mut cancel, Stop::Drain) => return Ok(()),
-        bus = first => bus?,
+        bus = dial(http, target, Instant::now() + REDIAL_WINDOW) => bus?,
     };
     let end = Instant::now()
         .checked_add(duration)
@@ -99,8 +95,7 @@ pub(crate) async fn run(
             .await
             .map_err(|_| "latency observation consumer closed")?;
         let opened = Instant::now();
-        let result = measure(socket, interval, window, end, &mut ledger, &observations, &mut cancel).await;
-        let Err(error) = result else {
+        let Err(error) = measure(socket, interval, window, end, &mut ledger, &observations, &mut cancel).await else {
             return Ok(());
         };
         // As Go's measureLatency (latency.go:244-264), a lost channel is dialled again whatever
@@ -123,13 +118,10 @@ pub(crate) async fn run(
         // once does (transfer.go:100-103), so a server that ends each channel at once is never
         // dialled in a tight loop.
         let bound = (now + REDIAL_WINDOW).min(window_end);
-        let pause = if opened.elapsed() < TRANSFER_RETRY_BACKOFF {
-            TRANSFER_RETRY_BACKOFF
-        } else {
-            Duration::ZERO
-        };
+        let quick = opened.elapsed() < TRANSFER_RETRY_BACKOFF;
+        let paced = now + if quick { TRANSFER_RETRY_BACKOFF } else { Duration::ZERO };
         let redial = async {
-            tokio::time::sleep_until((now + pause).min(bound)).await;
+            tokio::time::sleep_until(paced.min(bound)).await;
             dial(http, target, bound).await
         };
         socket = tokio::select! {

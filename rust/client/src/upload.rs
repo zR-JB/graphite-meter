@@ -412,9 +412,8 @@ async fn send_lane(
         let result = result.or_else(|error| if idle(&error) { Ok(()) } else { Err(error) });
         let answer = result.as_ref().err().and_then(|error| error.downcast_ref::<Failure>());
         let answered = matches!(answer, Some(Failure::Http { .. } | Failure::SignIn { .. }));
-        retry
-            .ended(result, started, moved.load(Ordering::Relaxed) && !answered)
-            .await?;
+        let progressed = moved.load(Ordering::Relaxed) && !answered;
+        retry.ended(result, started, progressed).await?;
     }
 }
 /// Go's followUploadFeed and attach (upload.go:284-297, 228-259): a feed that fails is reopened
