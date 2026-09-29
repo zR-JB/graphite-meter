@@ -1,8 +1,5 @@
 use crate::{Error, model::Stage};
-use graphite_meter_core::{
-    catalog::MAX_SELECTED_SERVERS,
-    discovery::{LatencyTransport, Protocol, ThroughputTarget, ThroughputTransport},
-};
+use graphite_meter_core::discovery::{LatencyTransport, Protocol, ThroughputTarget, ThroughputTransport};
 use std::time::Duration;
 
 pub const MAX_STREAMS: usize = 14;
@@ -99,16 +96,12 @@ impl Config {
         }
     }
 
-    /// Go's `Config.Validate` in its order and words; the origin and server ID checks follow.
+    /// Go's `Config.Validate` in its order and words. Like Go's, it leaves origins to the path check,
+    /// which refuses a malformed one, and server IDs to the catalogue's selection.
     pub fn validate(&self) -> Result<(), Error> {
         if self.stages.is_empty() {
             return Err("select at least one stage: latency, download, upload or bidirectional".into());
         }
-        self.validate_settings()
-    }
-
-    /// Setup edits check these alone, so an unfinished stage plan never blocks them.
-    pub fn validate_settings(&self) -> Result<(), Error> {
         if self.warmup > Duration::from_secs(4) {
             return Err("warmup must be from 0 s to 4 s".into());
         }
@@ -142,19 +135,6 @@ impl Config {
         }
         if cadences.iter().any(|interval| *interval > Duration::from_secs(15)) {
             return Err("latency interval must be at most 15s, half the server's 30s lane idle bound".into());
-        }
-        graphite_meter_core::origin::canonical_origin(&self.url)?;
-        for origin in [&self.throughput_origin, &self.latency_origin].into_iter().flatten() {
-            graphite_meter_core::origin::canonical_origin(origin)?;
-        }
-        if self.servers.len() > MAX_SELECTED_SERVERS
-            || self
-                .servers
-                .iter()
-                .enumerate()
-                .any(|(i, id)| id.is_empty() || self.servers[..i].contains(id))
-        {
-            return Err("select up to four different server IDs".into());
         }
         Ok(())
     }

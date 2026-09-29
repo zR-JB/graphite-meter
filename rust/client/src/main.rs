@@ -25,11 +25,23 @@ static ALLOCATOR: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
 
 #[tokio::main]
 async fn main() {
+    // Go's usage names the program as it was invoked.
+    let program = std::env::args_os().next().unwrap_or_default();
+    let usage = cli::usage(&safe(&program.to_string_lossy()));
     let code = match cli::parse(std::env::args_os().skip(1)) {
-        Ok(action) => run(action).await.unwrap_or_else(|error| fail(&error, 1)),
+        Ok(Action::Help) => {
+            eprint!("{usage}");
+            0
+        }
+        Ok(Action::Version) => {
+            println!("graphite-meter-client {}", graphite_meter_client::VERSION);
+            0
+        }
+        Ok(Action::Legal) => legal().map_or_else(|error| fail(&error, 1), |()| 0),
+        Ok(Action::Run { config, report }) => run(*config, report).await.unwrap_or_else(|error| fail(&error, 1)),
         // Go's flag package prints its refusal without the program name, then the usage.
         Err(error) if error.is::<cli::FlagError>() => {
-            eprint!("{}\n{}", safe(&error.to_string()), cli::HELP);
+            eprint!("{}\n{usage}", safe(&error.to_string()));
             2
         }
         Err(error) => fail(&error, 2),
@@ -42,29 +54,17 @@ fn fail(error: &Error, code: i32) -> i32 {
     eprintln!("graphite-meter-client: {}", safe(&error.to_string()));
     code
 }
-async fn run(action: Action) -> Result<i32, Error> {
-    let (config, report_only) = match action {
-        Action::Help => {
-            eprint!("{}", cli::HELP);
-            return Ok(0);
-        }
-        Action::Version => {
-            println!("graphite-meter-client {}", graphite_meter_client::VERSION);
-            return Ok(0);
-        }
-        Action::Legal => {
-            let (compressed, length) = LEGAL.ok_or("this development build has no reviewed Rust dependency notice bundle; build with GM_RUST_LEGAL_DIR to embed generated notices")?;
-            let report = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(compressed, length)
-                .map_err(|_| "embedded Rust legal notices are corrupt")?;
-            if report.len() != length {
-                return Err("embedded Rust legal notice length mismatch".into());
-            }
-            use std::io::Write;
-            std::io::stdout().lock().write_all(&report)?;
-            return Ok(0);
-        }
-        Action::Run { config, report } => (*config, report),
-    };
+fn legal() -> Result<(), Error> {
+    let (compressed, length) = LEGAL.ok_or("this development build has no reviewed Rust dependency notice bundle; build with GM_RUST_LEGAL_DIR to embed generated notices")?;
+    let report = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(compressed, length)
+        .map_err(|_| "embedded Rust legal notices are corrupt")?;
+    if report.len() != length {
+        return Err("embedded Rust legal notice length mismatch".into());
+    }
+    use std::io::Write;
+    Ok(std::io::stdout().lock().write_all(&report)?)
+}
+async fn run(config: graphite_meter_client::config::Config, report_only: bool) -> Result<i32, Error> {
     let _ = graphite_meter_client::crypto::provider().install_default();
     let terminal = std::io::stdout().is_terminal();
     let headless = report_only || !terminal;

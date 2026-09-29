@@ -512,7 +512,6 @@ async fn invalid_measurement_inputs_fail_before_connecting() -> Result<(), Error
         vec!["--download-duration=0"],
         vec!["--server=a", "--server=a"],
         vec!["--latency-transport=webtransport", "--ping=16s"],
-        vec!["--throughput-origin=https://user:secret@example.com"],
     ] {
         let output = tokio::time::timeout(
             Duration::from_secs(2),
@@ -613,16 +612,33 @@ async fn version_names_the_client_like_go() -> Result<(), Error> {
     Ok(())
 }
 
+/// Go's usage, which names the program as it was invoked.
+fn usage() -> String {
+    graphite_meter_client::cli::usage(env!("CARGO_BIN_EXE_graphite-meter-client"))
+}
+
 #[tokio::test]
 async fn help_goes_to_stderr_like_go() -> Result<(), Error> {
     for flag in ["-h", "-help", "--help", "--h", "-h=1"] {
         let output = flags(&[flag]).await?;
         assert_eq!(output.status.code(), Some(0), "{flag}");
         assert!(output.stdout.is_empty(), "{flag}");
+        assert_eq!(String::from_utf8(output.stderr)?, usage(), "{flag}");
+    }
+    Ok(())
+}
+
+/// Go checks origins when it prepares the run, so a malformed one fails the run, not the flags.
+#[tokio::test]
+async fn malformed_origins_fail_the_path_check_like_go() -> Result<(), Error> {
+    for url in ["ftp://meter.example", "https://user:secret@example.com"] {
+        let output = flags(&["-report", "-url", url]).await?;
+        assert_eq!(output.status.code(), Some(1), "{url}");
+        assert!(output.stdout.is_empty(), "{url}");
         assert_eq!(
             String::from_utf8(output.stderr)?,
-            graphite_meter_client::cli::HELP,
-            "{flag}"
+            "graphite-meter-client: Test could not start: expected an absolute HTTP(S) origin\n",
+            "{url}"
         );
     }
     Ok(())
@@ -666,7 +682,7 @@ async fn flag_errors_print_go_messages_then_the_usage() -> Result<(), Error> {
         assert!(output.stdout.is_empty(), "{args:?}");
         assert_eq!(
             String::from_utf8(output.stderr)?,
-            format!("{message}\n{}", graphite_meter_client::cli::HELP),
+            format!("{message}\n{}", usage()),
             "{args:?}"
         );
     }
@@ -677,6 +693,9 @@ async fn flag_errors_print_go_messages_then_the_usage() -> Result<(), Error> {
 async fn arguments_and_checks_after_parsing_fail_like_go() -> Result<(), Error> {
     for (args, message) in [
         (&["foo", "-x"][..], r#"unexpected argument "foo""#),
+        (&["x\u{1}y"], r#"unexpected argument "x\x01y""#),
+        // Go defines -legal, but only an exact --legal argument prints the notices.
+        (&["-legal", "foo"], r#"unexpected argument "foo""#),
         (&["--", "-x"], r#"unexpected argument "-x""#),
         (&["-"], r#"unexpected argument "-""#),
         (&["-report", "maybe"], r#"unexpected argument "maybe""#),
@@ -718,14 +737,15 @@ async fn arguments_and_checks_after_parsing_fail_like_go() -> Result<(), Error> 
     Ok(())
 }
 
-/// -version and -legal act once every flag parses, before arguments and settings are checked.
+/// -version acts once every flag parses, before arguments and settings are checked; an exact
+/// --legal argument anywhere prints the notices before any flag parses.
 #[tokio::test]
-async fn version_and_legal_act_after_parsing() -> Result<(), Error> {
+async fn version_and_legal_act_as_go_reads_them() -> Result<(), Error> {
     let version = flags(&["-version", "foo"]).await?;
     assert_eq!(version.status.code(), Some(0));
     assert!(version.stdout.starts_with(b"graphite-meter-client "));
     let legal = flags(&["--legal"]).await?;
-    for args in [&["-legal"][..], &["--legal=true", "foo"], &["-url", "--legal"]] {
+    for args in [&["-url", "--legal"][..], &["-nope", "--legal"]] {
         let output = flags(args).await?;
         assert_eq!(output.status.code(), legal.status.code(), "{args:?}");
         assert_eq!(
@@ -734,7 +754,8 @@ async fn version_and_legal_act_after_parsing() -> Result<(), Error> {
             "{args:?}"
         );
     }
-    let output = flags(&["-legal=false", "-version"]).await?;
-    assert_eq!(output.stdout, version.stdout);
+    for args in [&["-legal", "-version"][..], &["--legal=true", "-version"]] {
+        assert_eq!(flags(args).await?.stdout, version.stdout, "{args:?}");
+    }
     Ok(())
 }
