@@ -65,8 +65,9 @@ deployment when the Release run asks.
    at the highest published releases, which also repairs aliases a cancelled
    run left behind.
 
-The default `GITHUB_TOKEN` has no write scope in any workflow. Handoffs are
-retained 35 days to cover the approval window; the recheck fails closed.
+The default `GITHUB_TOKEN` has no write scope in any workflow. The verified
+handoff, one artifact with a directory each for the image, the Rust image and the
+native archives, is retained 35 days to cover the approval window; the recheck fails closed.
 GitHub's automatic source archives provide the project source; a stable
 release adds the third-party source archive and a source-availability note.
 

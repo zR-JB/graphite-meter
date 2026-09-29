@@ -82,36 +82,16 @@ jobs:
           HANDOFF_DIR: ${{ runner.temp }}/handoff
         run: python3 -m scripts.ci.release verify
 
-      - name: Upload verified image handoff
+      # One directory per handoff: image/, and rust-image/ and assets/ when verified.
+      - name: Upload verified handoff
         if: steps.verify.outputs.publish == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-image
-          path: ${{ runner.temp }}/handoff/image/graphite-meter.oci.tar
+          name: release-handoff
+          path: ${{ runner.temp }}/handoff/
           if-no-files-found: error
           retention-days: 35
           compression-level: 0
-          overwrite: true
-
-      - name: Upload verified Rust image handoff
-        if: steps.verify.outputs.publish == 'true' && steps.verify.outputs.rust_digest != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: release-rust-image
-          path: ${{ runner.temp }}/handoff/rust-image/graphite-meter.oci.tar
-          if-no-files-found: error
-          retention-days: 35
-          compression-level: 0
-          overwrite: true
-
-      - name: Upload verified native artifact handoff
-        if: steps.verify.outputs.publish == 'true' && steps.verify.outputs.assets_sha256 != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: release-assets
-          path: ${{ runner.temp }}/handoff/assets/*
-          if-no-files-found: error
-          retention-days: 35
           overwrite: true
 
   publish:
@@ -147,25 +127,11 @@ jobs:
           install_args: --locked python
           cache: false
 
-      - name: Download verified image handoff
+      - name: Download verified handoff
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: release-image
-          path: ${{ runner.temp }}/handoff/image
-
-      - name: Download verified native artifact handoff
-        if: needs.verify.outputs.assets_sha256 != ''
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: release-assets
-          path: ${{ runner.temp }}/handoff/assets
-
-      - name: Download verified Rust image handoff
-        if: needs.verify.outputs.rust_digest != ''
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: release-rust-image
-          path: ${{ runner.temp }}/handoff/rust-image
+          name: release-handoff
+          path: ${{ runner.temp }}/handoff
 
       - name: Recheck handoff, source, main, Gate and CodeQL after approval
         env:
