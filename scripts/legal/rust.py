@@ -52,6 +52,11 @@ def capture(repo: Path, package: str, target: str | None, profile: str, link_map
     """
     environment = dict(os.environ)
     environment.pop('GM_RUST_LEGAL_DIR', None)
+    # Like Go's -trimpath: the binary names neither the checkout nor Cargo's home, which holds every
+    # dependency's source. Both builds take the same flags, which build.rs keeps in the build identity.
+    cargo_home = os.environ.get('CARGO_HOME') or str(Path.home() / '.cargo')
+    environment['CARGO_ENCODED_RUSTFLAGS'] = '\x1f'.join(
+        f'--remap-path-prefix={path}={name}' for path, name in ((repo, '/src'), (cargo_home, '/cargo')))
     if asset_directory is not None:
         environment['GM_RUST_ASSET_DIR'] = str(asset_directory)
     if legal_directory is not None:

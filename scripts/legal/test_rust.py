@@ -351,6 +351,40 @@ class RustPlatformRecordTests(unittest.TestCase):
         self.assertIn('--- rust-standard-library/MIT.txt ---', self.notice(approved, inputs={self.STD, self.CRT1}))
 
 
+class RustBuildTests(unittest.TestCase):
+    def test_a_notice_build_names_no_build_machine_path(self) -> None:
+        from scripts.ci.toolchains import rust_channel
+        from scripts.legal.rust import capture
+
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch).resolve()
+            upstream, repo = root / 'upstream', root / 'repo'
+            (upstream / 'src').mkdir(parents=True)
+            (upstream / 'Cargo.toml').write_text('[package]\nname = "fixture"\nversion = "1.0.0"\nedition = "2021"\n')
+            # A bounds check embeds its source location, the dependency's path under Cargo's home.
+            (upstream / 'src/lib.rs').write_text('pub fn pick(bytes: &[u8], index: usize) -> u8 { bytes[index] }\n')
+            for args in (('init', '-q'), ('add', '.'), ('commit', '-qm', 'fixture')):
+                subprocess.run(['git', '-C', str(upstream), '-c', 'user.name=fixture',
+                                '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false',
+                                *args], check=True)
+            revision = subprocess.check_output(['git', '-C', str(upstream), 'rev-parse', 'HEAD'], text=True).strip()
+            (repo / 'rust/src').mkdir(parents=True)
+            shutil.copyfile(ROOT / 'rust/rust-toolchain.toml', repo / 'rust/rust-toolchain.toml')
+            (repo / 'rust/Cargo.toml').write_text(
+                '[package]\nname = "app"\nversion = "1.0.0"\nedition = "2021"\n'
+                f'[dependencies]\nfixture = {{ git = "{upstream.as_uri()}", rev = "{revision}" }}\n')
+            (repo / 'rust/src/main.rs').write_text(
+                'fn main() { println!("{}", fixture::pick(&[1, 2], std::env::args().count())); }\n')
+            host = subprocess.check_output(['rustc', f'+{rust_channel(ROOT)}', '-vV'], text=True)
+            target = next(line.split()[1] for line in host.splitlines() if line.startswith('host:'))
+            with patch.dict(os.environ, {'CARGO_HOME': str(root / 'cargo-home'), 'CARGO_TERM_QUIET': 'true'}):
+                subprocess.run(cargo(repo, 'generate-lockfile'), cwd=repo / 'rust', check=True)
+                _, messages = capture(repo, 'app', target, 'release', root / 'app.map')
+            binary = Path(next(message['executable'] for message in messages if message.get('executable'))).read_bytes()
+            self.assertTrue(b'/cargo/git/checkouts/' in binary, 'the dependency path is not remapped')
+            self.assertFalse(str(root).encode() in binary, 'the binary names a build path')
+
+
 class RustSourceTests(unittest.TestCase):
     def test_git_workspace_source_builds_without_its_checkout(self) -> None:
         with tempfile.TemporaryDirectory() as scratch:
