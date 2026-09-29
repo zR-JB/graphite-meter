@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zR-JB/graphite-meter/go/internal/apipin"
 	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 )
 
@@ -214,5 +215,54 @@ func TestPasswordLoginReachesAnAuthenticatedRoute(t *testing.T) {
 	}
 	if len(rr.Result().Cookies()) != 0 || len(upload.Result().Cookies()) != 0 {
 		t.Fatal("authenticated activity renewed a cookie; the session lifetime is absolute")
+	}
+}
+
+// The sign-in pages' two faces are served without a login; every other font, method and route still needs one.
+func TestOnlyTheSignInFontsArePublic(t *testing.T) {
+	s := testService(t)
+	ui := s.Enforce(statusHandler(http.StatusOK), Listener{UI: true})
+	for _, path := range []string{signInSans, signInMono} {
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			if rr := testkit.Record(ui.ServeHTTP, secureRequest(method, path, nil)); rr.Code != http.StatusOK {
+				t.Errorf("%s %s without a login = %d, want the file", method, path, rr.Code)
+			}
+		}
+	}
+	signInRequired := func(name string, h http.Handler, r *http.Request) {
+		t.Helper()
+		rr := testkit.Record(h.ServeHTTP, r)
+		if rr.Code == http.StatusOK || rr.Header().Get("Graphite-Meter-Auth") != "required" {
+			t.Errorf("%s answered %d without a login", name, rr.Code)
+		}
+	}
+	for _, path := range []string{"/fonts/ibm-plex-sans-var-latin2.woff2", "/fonts/ibm-plex-sans-var-pi.woff2",
+		"/fonts/ibm-plex-mono-500-latin1.woff2", "/fonts/ibm-plex-mono-600-latin2.woff2", "/fonts/", "/fonts",
+		signInSans + "/", signInSans + "x", "/fonts/.." + signInSans, "/" + signInSans,
+		"/FONTS/ibm-plex-sans-var-latin1.woff2"} {
+		signInRequired("GET "+path, ui, secureRequest(http.MethodGet, path, nil))
+	}
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete,
+		http.MethodOptions, http.MethodConnect} {
+		signInRequired(method+" "+signInSans, ui, secureRequest(method, signInSans, nil))
+	}
+	signInRequired("a measurement listener's font", s.Enforce(statusHandler(http.StatusOK), Listener{}),
+		secureRequest(http.MethodGet, signInSans, nil))
+	signInRequired("a clear request's font", ui, clearRequest(http.MethodGet, signInSans, "198.51.100.9:40000"))
+	for _, path := range []string{"/", "/index.html", "/favicon.svg", "/version.json", "/assets/index.js",
+		"/legal/licenses.txt", "/auth/session"} {
+		signInRequired("GET "+path, ui, secureRequest(http.MethodGet, path, nil))
+	}
+	for _, row := range apipin.Rows(t, "routes.txt", 3) {
+		signInRequired("GET "+row[1], ui, secureRequest(http.MethodGet, row[1], nil))
+	}
+}
+
+func TestAuthPagesAdmitOnlySameOriginFonts(t *testing.T) {
+	s := testService(t)
+	rr := serveMounted(s, secureRequest(http.MethodGet, "/login", nil))
+	if policy := rr.Header().Get("Content-Security-Policy"); rr.Code != http.StatusOK ||
+		!strings.Contains(policy, "; font-src 'self';") || strings.Count(policy, "font-src") != 1 {
+		t.Fatalf("login page policy %q, want exactly font-src 'self'", policy)
 	}
 }
