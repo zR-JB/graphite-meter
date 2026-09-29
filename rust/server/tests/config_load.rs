@@ -197,7 +197,7 @@ fn invalid_settings_name_what_failed() {
         (&["-max-operation-duration=1d"], "for flag -max-operation-duration"),
         (&["-name"], "flag needs an argument: -name"),
         (&["---name=x"], "bad flag syntax"),
-        (&["positional"], "positional"),
+        (&["-=x"], "bad flag syntax"),
         (
             &["-max-connections", "-5"],
             "GM_MAX_CONNECTIONS must be greater than zero",
@@ -210,6 +210,22 @@ fn invalid_settings_name_what_failed() {
         let message = failure(&[], args);
         assert!(message.contains(expected), "{args:?}: {message}");
     }
+}
+
+#[test]
+fn flag_parsing_stops_before_the_first_non_flag_as_in_go() {
+    for args in [
+        &["serve"][..],
+        &["-"],
+        &["--", "x"],
+        &["-verbose", "false"],
+        &["serve", "-max-connections=0"],
+    ] {
+        load(&[], args).unwrap_or_else(|error| panic!("{args:?}: {error}"));
+    }
+    assert!(load(&[], &["-verbose", "false"]).unwrap().verbose);
+    let config = load(&[], &["-location=a", "--", "-location=b"]).unwrap();
+    assert_eq!(config.server_location, "a");
 }
 
 #[test]

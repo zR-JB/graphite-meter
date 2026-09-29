@@ -107,15 +107,14 @@ pub fn load(
     let from_env = load_env(&mut config, &env);
     let mut args = args.iter();
     while let Some(argument) = args.next() {
-        let argument = argument.to_str().ok_or("command line arguments must be UTF-8")?;
-        if argument == "--" && args.len() == 0 {
+        // As Go's flag package, parsing stops before the first non-flag, or after "--"; nothing reads the rest.
+        let raw = argument.as_encoded_bytes();
+        if raw.len() < 2 || raw[0] != b'-' || raw == b"--" {
             break;
         }
-        let flag = argument.strip_prefix('-').unwrap_or_default();
+        let argument = argument.to_str().ok_or("command line arguments must be UTF-8")?;
+        let flag = &argument[1..];
         let flag = flag.strip_prefix('-').unwrap_or(flag);
-        if flag.is_empty() {
-            return Err(format!("unexpected positional argument {argument:?}").into());
-        }
         if flag.starts_with(['-', '=']) {
             return Err(failed(usage, format!("bad flag syntax: {argument}")));
         }
