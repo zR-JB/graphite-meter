@@ -1,5 +1,5 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
-use graphite_meter_core::origin::{Origin, target_origin};
+use graphite_meter_core::origin::{Origin, ascii_host, target_origin};
 use hyper_util::rt::TokioIo;
 use rustls::pki_types::ServerName;
 use std::{
@@ -208,7 +208,8 @@ async fn tunnel(stream: Box<dyn Stream>, authority: &str, authorization: Option<
 pub struct Proxy {
     http: Option<Result<Upstream, UnusableProxy>>,
     https: Option<Result<Upstream, UnusableProxy>>,
-    bypass: Vec<Bypass>,
+    /// NO_PROXY's entries, each with its port as written: Go compares it with the target's as a string.
+    bypass: Vec<(Bypass, Option<String>)>,
     /// Running under CGI, where HTTP_PROXY fails every cleartext request.
     cgi: bool,
 }
@@ -332,12 +333,8 @@ fn socks_reply(code: u8) -> String {
 enum Bypass {
     All,
     Network(ipnet::IpNet),
-    Address(IpAddr, Option<u16>),
-    Domain {
-        suffix: String,
-        apex: bool,
-        port: Option<u16>,
-    },
+    Address(IpAddr),
+    Domain { suffix: String, apex: bool },
 }
 
 impl Proxy {
@@ -403,27 +400,23 @@ impl Proxy {
 
     fn bypassed(&self, target: &Origin) -> bool {
         let host = target.host.to_ascii_lowercase();
-        let port = target.port_number();
+        // The target's port as written, else its scheme's default, as Go's canonicalAddr has it.
+        let port = target.port.clone().unwrap_or_else(|| target.port_number().to_string());
         // Go's net.IP matches an IPv4-mapped address as IPv4.
         let ip = host.parse::<IpAddr>().ok().map(|ip| ip.to_canonical());
         host == "localhost"
             || ip.is_some_and(|ip| ip.is_loopback())
-            || self.bypass.iter().any(|rule| match (rule, ip) {
-                (Bypass::All, _) => true,
-                (Bypass::Network(network), Some(ip)) => network.contains(&ip),
-                (Bypass::Address(address, only), Some(ip)) => *address == ip && only.is_none_or(|only| only == port),
-                (
-                    Bypass::Domain {
-                        suffix,
-                        apex,
-                        port: only,
-                    },
-                    None,
-                ) => {
-                    (host.ends_with(suffix.as_str()) || *apex && host == suffix[1..])
-                        && only.is_none_or(|only| only == port)
-                }
-                _ => false,
+            || self.bypass.iter().any(|(rule, only)| {
+                only.as_ref().is_none_or(|only| *only == port)
+                    && match (rule, ip) {
+                        (Bypass::All, _) => true,
+                        (Bypass::Network(network), Some(ip)) => network.contains(&ip),
+                        (Bypass::Address(address), Some(ip)) => *address == ip,
+                        (Bypass::Domain { suffix, apex }, None) => {
+                            host.ends_with(suffix.as_str()) || *apex && host == suffix[1..]
+                        }
+                        _ => false,
+                    }
             })
     }
 }
@@ -482,40 +475,33 @@ fn upstream(raw: &str) -> Result<Upstream, &'static str> {
 }
 
 /// One NO_PROXY entry as Go reads it; one Go keeps as a host name that no target matches is left out.
-fn bypass(entry: &str) -> Option<Bypass> {
+fn bypass(entry: &str) -> Option<(Bypass, Option<String>)> {
     let entry = entry.trim().to_ascii_lowercase();
     if entry == "*" {
-        return Some(Bypass::All);
+        return Some((Bypass::All, None));
     }
     if let Ok(network) = entry.parse() {
-        return Some(Bypass::Network(unmapped(network)));
+        return Some((Bypass::Network(unmapped(network)), None));
     }
     if let Ok(address) = entry.parse::<IpAddr>() {
-        return Some(Bypass::Address(address.to_canonical(), None));
+        return Some((Bypass::Address(address.to_canonical()), None));
     }
     let (host, port) = match entry.strip_prefix('[') {
         // As Go's SplitHostPort has it, a bracketed host needs its port, which may be empty.
         Some(bracketed) => bracketed.split_once("]:")?,
         None => entry.split_once(':').unwrap_or((&entry, "")),
     };
-    let port = match port {
-        "" => None,
-        port => Some(port.parse().ok()?),
-    };
+    let port = (!port.is_empty()).then(|| port.to_owned());
     if let Ok(address) = host.parse::<IpAddr>() {
-        return Some(Bypass::Address(address.to_canonical(), port));
+        return Some((Bypass::Address(address.to_canonical()), port));
     }
-    let host = host.strip_prefix('*').unwrap_or(host);
-    let suffix = if host.starts_with('.') {
-        host.to_owned()
-    } else {
-        format!(".{host}")
-    };
-    (suffix.len() > 1).then(|| Bypass::Domain {
-        apex: !host.starts_with('.'),
-        suffix,
-        port,
-    })
+    // Go drops the star of a leading "*." alone, so "*example.com" names no host.
+    let host = if host.starts_with("*.") { &host[1..] } else { host };
+    let apex = !host.starts_with('.');
+    let suffix = if apex { format!(".{host}") } else { host.to_owned() };
+    // Go's idnaASCII: an international name matches the punycode target Go dials.
+    let suffix = ascii_host(&suffix).filter(|_| !host.is_empty())?;
+    Some((Bypass::Domain { suffix, apex }, port))
 }
 
 /// Go's net.IPNet holds an IPv4-mapped network as the IPv4 network it maps.

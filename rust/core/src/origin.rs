@@ -126,20 +126,16 @@ pub fn ascii_origin(raw: &str) -> Result<String, OriginError> {
         Some((host, port)) => (host, Some(port)),
         None => (authority, None),
     };
-    let (name, root) = match host.strip_suffix('.') {
-        Some(name) => (name, "."),
-        None => (host, ""),
-    };
-    let labels = name
-        .split('.')
-        .map(ascii_label)
-        .collect::<Option<Vec<_>>>()
-        .ok_or(OriginError)?;
-    let host = labels.join(".") + root;
+    let host = ascii_host(host).ok_or(OriginError)?;
     Ok(match port {
         Some(port) => format!("{scheme}://{host}:{port}"),
         None => format!("{scheme}://{host}"),
     })
+}
+
+/// `host` with each international label in punycode, as [`ascii_origin`] converts them.
+pub fn ascii_host(host: &str) -> Option<String> {
+    Some(host.split('.').map(ascii_label).collect::<Option<Vec<_>>>()?.join("."))
 }
 
 /// One host label: an ASCII label is left to the origin's own checks; any other is lowercased,

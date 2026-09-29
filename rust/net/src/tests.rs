@@ -13,7 +13,7 @@ fn bypass_follows_go_no_proxy_rules_and_never_proxies_loopback() {
         concat!(
             "corp.example, .sub.example, *.wild.example, pinned.example:8443, 10.0.0.0/8, 192.0.2.7, ",
             "[2001:db8::1]:443, bad:port, ::ffff:198.51.100.1, ::ffff:203.0.113.0/120, [2001:db8::2], ",
-            "[2001:db8::3]:",
+            "[2001:db8::3]:, *star.example, BÜCHER.example, padded.example:080, 192.0.2.8:080, .",
         ),
     );
     for (raw, bypassed) in [
@@ -43,6 +43,18 @@ fn bypass_follows_go_no_proxy_rules_and_never_proxies_loopback() {
         // To Go, a bracketed entry without its port is a host name no target matches.
         ("https://[2001:db8::2]", false),
         ("https://[2001:db8::3]:8443", true),
+        // Go drops only a leading "*.", compares ports as written, matches an international
+        // name in punycode, and takes "." as the suffix of every fully qualified name.
+        ("https://star.example", false),
+        ("https://a.star.example", false),
+        ("https://xn--bcher-kva.example", true),
+        ("https://a.xn--bcher-kva.example", true),
+        ("http://padded.example", false),
+        ("http://padded.example:80", false),
+        ("http://padded.example:080", true),
+        ("http://192.0.2.8", false),
+        ("http://192.0.2.8:080", true),
+        ("https://meter.example.", true),
     ] {
         assert_eq!(proxy.bypassed(&origin(raw)), bypassed, "{raw}");
     }
