@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -324,4 +325,112 @@ func TestReloginConfirmsAPendingTerminalApproval(t *testing.T) {
 	if _, ok := s.authenticateGrant(nativeGrant(t, s, raw, sess, verifier)); !ok {
 		t.Fatal("the grant confirmed after signing back in was refused")
 	}
+}
+
+var markup = regexp.MustCompile(`<[^>]*>`)
+
+// refusalCard asserts an approval page refusal: a 403 whose card is one fixed sentence and echoes nothing.
+func refusalCard(t *testing.T, name string, rr *httptest.ResponseRecorder, sentence string, echoes ...string) {
+	t.Helper()
+	body := rr.Body.String()
+	_, card, _ := strings.Cut(body, "Graphite Meter</p>")
+	card, _, _ = strings.Cut(card, "</main>")
+	text := strings.Join(strings.Fields(markup.ReplaceAllString(card, " ")), " ")
+	if rr.Code != http.StatusForbidden || !strings.HasPrefix(rr.Header().Get("Content-Type"), "text/html") ||
+		text != "Approval unavailable "+sentence || strings.Contains(card, "<form") {
+		t.Errorf("%s: %d %q, want a 403 card saying only %q", name, rr.Code, text, sentence)
+	}
+	for _, echo := range echoes {
+		if strings.Contains(body, echo) {
+			t.Errorf("%s: the refusal echoes %q", name, echo)
+		}
+	}
+}
+
+func browserPageRequest(challenge, origin, remote, cookie string) *http.Request {
+	r := requestFrom(http.MethodGet, "/auth/browser?"+url.Values{"challenge": {challenge},
+		"client_origin": {origin}}.Encode(), remote)
+	if cookie != "" {
+		withSessionCookie(r, cookie)
+	}
+	return r
+}
+
+const refusedLinkSentence = "This approval link is not valid. Start sign-in again from the client."
+
+func TestApprovalPagesRefuseALinkTheyCannotApprove(t *testing.T) {
+	s := testService(t)
+	raw, _, _ := s.createSession("local-operator", "Local operator", "local")
+	otherRaw, _, _ := s.createSession("local-operator", "Local operator", "local")
+	const remote = "198.51.100.7:40000"
+	bound, elsewhere := challengeFor("bound-to-a-login"), challengeFor("opened-for-another-site")
+	testkit.Record(s.browserPage, browserPageRequest(bound, requestingUI, remote, raw))
+	testkit.Record(s.browserPage, browserPageRequest(elsewhere, requestingUI, remote, ""))
+	for name, tc := range map[string]struct {
+		page   http.HandlerFunc
+		r      *http.Request
+		echoes []string
+	}{
+		"terminal link without a challenge": {s.cliPage, cliPageRequest("not-a-challenge", raw),
+			[]string{"not-a-challenge"}},
+		"browser link without a challenge": {s.browserPage,
+			browserPageRequest("not-a-challenge", requestingUI, remote, raw), []string{"not-a-challenge", requestingUI}},
+		"clear audience": {s.browserPage, browserPageRequest(bound, "http://console.example", remote, raw),
+			[]string{bound, "console.example"}},
+		"another site's approval": {s.browserPage, browserPageRequest(elsewhere, "https://other.example", remote, raw),
+			[]string{elsewhere, "other.example", "console.example"}},
+		"another login's approval": {s.browserPage, browserPageRequest(bound, requestingUI, remote, otherRaw),
+			[]string{bound, "console.example"}},
+	} {
+		refusalCard(t, name, testkit.Record(tc.page, tc.r), refusedLinkSentence, tc.echoes...)
+	}
+}
+
+func TestApprovalPagesRefuseSpentBudgetsWithoutCounts(t *testing.T) {
+	const sentence = "Too many approvals are open. Try again from the client in a few minutes."
+	t.Run("terminal approvals of one login", func(t *testing.T) {
+		s := testService(t)
+		raw, _, _ := s.createSession("local-operator", "Local operator", "local")
+		for i := range maxSessionApprovals {
+			testkit.Record(s.cliPage, cliPageRequest(challengeFor(fmt.Sprint("open-", i)), raw))
+		}
+		over := challengeFor("one-too-many")
+		refusalCard(t, "cli", testkit.Record(s.cliPage, cliPageRequest(over, raw)), sentence, over)
+	})
+	t.Run("an ambiguous client", func(t *testing.T) {
+		s := proxiedService(t)
+		raw, _, _ := s.createSession("local-operator", "Local operator", "local")
+		challenge := challengeFor("unattributable")
+		r := withSessionCookie(requestFrom(http.MethodGet, "/auth/cli?challenge="+challenge, "192.0.2.10:40000"), raw)
+		refusalCard(t, "cli", testkit.Record(s.cliPage, r), sentence, challenge)
+		r = browserPageRequest(challenge, requestingUI, "192.0.2.10:40000", raw)
+		refusalCard(t, "browser", testkit.Record(s.browserPage, r), sentence, challenge, "console.example")
+	})
+	t.Run("browser approval pages of one address", func(t *testing.T) {
+		s := testService(t)
+		const remote = "198.51.100.8:40000"
+		refused := 0
+		for i := range maxAddressApprovals + 1 {
+			challenge := challengeFor(fmt.Sprint("page-", i))
+			rr := testkit.Record(s.browserPage, browserPageRequest(challenge, requestingUI, remote, ""))
+			if rr.Code == http.StatusForbidden {
+				refused++
+				refusalCard(t, fmt.Sprint("page ", i), rr, sentence, challenge, "console.example")
+			}
+		}
+		if refused != maxAddressApprovals+1-maxClientApprovals {
+			t.Fatalf("refused %d approval pages", refused)
+		}
+	})
+	t.Run("browser approvals of one login", func(t *testing.T) {
+		s := testService(t)
+		raw, _, _ := s.createSession("local-operator", "Local operator", "local")
+		for i := range maxSessionApprovals {
+			testkit.Record(s.browserPage, browserPageRequest(challengeFor(fmt.Sprint("bound-", i)), requestingUI,
+				addressFrom(i), raw))
+		}
+		over := challengeFor("unbound")
+		rr := testkit.Record(s.browserPage, browserPageRequest(over, requestingUI, addressFrom(99), raw))
+		refusalCard(t, "browser", rr, sentence, over, "console.example")
+	})
 }

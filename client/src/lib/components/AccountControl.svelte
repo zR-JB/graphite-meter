@@ -4,7 +4,10 @@
   import { authenticatedFetch } from "../auth";
   import { readJSONResponse, parseAccountSession } from "../api/decode";
   import { tooltip } from "../actions/tooltip";
+  import { getApplicationController } from "../runner/controllerContext";
   import ConfirmDialog from "./ConfirmDialog.svelte";
+
+  const app = getApplicationController();
 
   let session = $state<ReturnType<typeof parseAccountSession> | null>(null);
   let form = $state<HTMLFormElement>();
@@ -54,6 +57,7 @@
     method="post"
     action="/auth/logout"
     aria-label={`${label}, ${provider}`}
+    onsubmit={app.signOut}
   >
     <input type="hidden" name="csrf" value={session.csrf} />
     <div class="identity" {@attach tooltip(() => `${label}\n${provider}`)}>

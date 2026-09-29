@@ -686,6 +686,8 @@ export function createApplicationController(
   return {
     boot,
     dispose,
+    /** Sign-out lands by its own form; the session it ends must not redirect to "expired" over it. */
+    signOut: () => void (signingOut = true),
     retryCatalog,
     loadServerMetadata() {
       if (booted && store.serverCatalog && !store.isRunning && !store.preparing)

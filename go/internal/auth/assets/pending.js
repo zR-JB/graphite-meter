@@ -73,15 +73,21 @@ document.addEventListener("submit", (event) => {
         return;
       }
       return response.text().then((html) => {
-        const card = new DOMParser()
-          .parseFromString(html, "text/html")
-          .querySelector("main.card");
+        const page = new DOMParser().parseFromString(html, "text/html");
+        const card = page.querySelector("main.card");
         const current = document.querySelector("main.card");
         if (card && current) {
           current.replaceWith(document.importNode(card, true));
-          // Inserted nodes ignore autofocus, so focus the retry field here.
-          const focus = document.querySelector("input[autofocus]");
-          if (focus instanceof HTMLElement) focus.focus();
+          document.title = page.title;
+          // Inserted nodes ignore autofocus: focus the retry field, else the
+          // heading, so the outcome is announced and focus stays on the card.
+          const field = document.getElementById("password");
+          const heading = document.querySelector("main h1");
+          if (field) field.focus();
+          else if (heading instanceof HTMLElement) {
+            heading.tabIndex = -1;
+            heading.focus();
+          }
         } else if (response.ok) location.assign(response.url);
         else location.reload();
       });

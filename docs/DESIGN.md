@@ -80,11 +80,13 @@ gloss, no knockout rings in the page colour, and 1 px lines sit on whole pixels.
 raises stage and status chroma only, so contrast holds on both. **Contrast modes.** `prefers-contrast: more`
 strengthens subtle edges and `--text-soft`; it and `prefers-reduced-transparency` make glass opaque.
 
-The auth pages keep a pinned copy of the page, ink and text tokens (`go/internal/auth/assets/auth.css`), and
-`client/index.html` repeats `--canvas` and `--text` for the first paint. The terminal client repeats the text, ink,
-stage and status tokens in sRGB (`go/cmd/graphite-meter-client/theme.go`); a terminal draws everything as text, so
-its light stage colours are each hue's `--tone-ink`. A few values sit a unit or three off their token so that
-256-colour terminals still map ink and selection to grey and keep latency apart from ok.
+The auth pages keep a pinned copy of the page, ink and text tokens and of the Plex Sans and Plex Mono 600 faces
+(`go/internal/auth/assets/auth.css`; those two font files are the only ones served before sign-in), notices are
+app.css's `.notice`, and every page's card starts at one height so a notice grows it downward. `client/index.html`
+repeats `--canvas` and `--text` for the first paint. The terminal client repeats the text, ink, stage and status
+tokens in sRGB (`go/cmd/graphite-meter-client/theme.go`); a terminal draws everything as text, so its light stage
+colours are each hue's `--tone-ink`. A few values sit a unit or three off their token so that 256-colour terminals
+still map ink and selection to grey and keep latency apart from ok.
 
 ## Type
 
