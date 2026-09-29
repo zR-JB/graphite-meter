@@ -38,8 +38,11 @@ export const baseConfig = {
     warmupMs: 0,
     latencyMs: 1000,
     downloadMs: 1000,
-    uploadMs: 1000,
-    bidirectionalMs: 1000,
+    // A result needs 800 ms of upload evidence. In the browser, that evidence starts
+    // at the first progress record the page reads, and a busy page reads it up to
+    // ~350 ms late. So stages with upload keep headroom over 1 s.
+    uploadMs: 1500,
+    bidirectionalMs: 1500,
   },
   adaptive: false,
   transferStreams: { mode: "forced", count: 1 },
