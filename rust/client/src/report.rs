@@ -810,60 +810,54 @@ mod tests {
     use crate::{
         model::ServerFailure,
         theme::Profile,
-        ui::tests::{download_measurement, latency_result, probes},
+        ui::tests::{latency_result, lost, probes, result},
     };
+
+    /// A server of the run, as the catalogue names it.
+    fn server(id: &str, name: &str) -> ServerSummary {
+        let (id, name, error) = (id.into(), name.into(), Some("checked".into()));
+        ServerSummary {
+            id,
+            name,
+            error,
+            ..ServerSummary::default()
+        }
+    }
 
     /// One server's idle and loaded latency and a download a late probe timeout made partial.
     fn partial_run() -> Snapshot {
-        let latency = |rtts: &[i64], timeouts| vec![latency_result("a", probes(rtts, timeouts))];
+        let (mut idle, mut download) = (
+            result(Stage::Latency, None, None),
+            result(Stage::Download, Some(1.5e6), None),
+        );
+        idle.server_latencies = vec![latency_result("a", probes(&[1_000_000, 2_000_000, 3_000_000], 1))];
+        download.down.as_mut().unwrap().peak_bytes_per_sec = Some(1_800_000.0);
+        download.server_latencies = vec![latency_result("a", probes(&[5_000_000, 6_000_000, 7_000_000], 0))];
+        download.server_results = vec![ServerContribution::default()];
+        download.server_results[0].id = "a".into();
+        let (scope, reason, at) = (FailureScope::Latency, FailureReason::Timeout, Duration::from_secs(3));
         Snapshot {
             phase: Phase::Partial,
-            servers: vec![ServerSummary {
-                id: "a".into(),
-                name: "Alpha".into(),
-                error: Some("checked".into()),
-                ..ServerSummary::default()
-            }],
+            servers: vec![server("a", "Alpha")],
             participants: vec!["a".into()],
             latency_focus: Some("a".into()),
             plan: vec![Stage::Latency, Stage::Download],
-            duration: std::time::Duration::from_secs(5),
-            results: vec![
-                StageResult {
-                    stage: Stage::Latency,
-                    elapsed: std::time::Duration::from_secs(1),
-                    server_latencies: latency(&[1_000_000, 2_000_000, 3_000_000], 1),
-                    ..StageResult::default()
-                },
-                StageResult {
-                    stage: Stage::Download,
-                    elapsed: std::time::Duration::from_secs(1),
-                    down: Some(MeasurementResult {
-                        peak_bytes_per_sec: Some(1_800_000.0),
-                        ..download_measurement()
-                    }),
-                    server_latencies: latency(&[5_000_000, 6_000_000, 7_000_000], 0),
-                    server_results: vec![ServerContribution {
-                        id: "a".into(),
-                        ..ServerContribution::default()
-                    }],
-                    ..StageResult::default()
-                },
-            ],
+            duration: Duration::from_secs(5),
+            results: vec![idle, download],
             failures: vec![ServerFailure {
-                server_id: "a".into(),
-                stage: Stage::Download,
-                scope: FailureScope::Latency,
-                reason: FailureReason::Timeout,
-                at: std::time::Duration::from_secs(3),
+                scope,
+                reason,
+                at,
+                ..lost("a", Stage::Download)
             }],
             error: Some("Stopped delivering data".into()),
             ..Snapshot::default()
         }
     }
 
+    /// The report as Go prints it, then as a terminal paints it; several servers add their details.
     #[test]
-    fn the_report_reads_as_go_prints_it() {
+    fn the_report_reads_and_paints_as_go_prints_it() {
         let report = render(&partial_run(), WIDTH, Theme::default()).unwrap();
         assert_eq!(
             report,
@@ -884,13 +878,8 @@ mod tests {
             ]
             .join("\n")
         );
-    }
-
-    #[test]
-    fn a_terminal_report_paints_go_styles_over_the_plain_text() {
-        let snapshot = partial_run();
-        let theme = Theme::new(Profile::Ansi256, true);
-        let painted = render(&snapshot, WIDTH, theme).unwrap();
+        let mut pair = partial_run();
+        let painted = render(&pair, WIDTH, Theme::new(Profile::Ansi256, true)).unwrap();
         assert!(painted.starts_with("\x1b[38;5;254m\x1b[1mGraphite Meter\x1b[0m  \x1b[38;5;186m\x1b[1mPartial\x1b[0m"));
         assert!(
             painted.contains("\x1b[38;5;75m\x1b[1m12.00 Mbit/s\x1b[0m"),
@@ -900,13 +889,7 @@ mod tests {
             painted.ends_with("\x1b[38;5;210m\x1b[1mStopped delivering data\x1b[0m"),
             "{painted:?}"
         );
-        let mut pair = snapshot;
-        pair.servers.push(ServerSummary {
-            id: "b".into(),
-            name: "Beta".into(),
-            error: Some("checked".into()),
-            ..ServerSummary::default()
-        });
+        pair.servers.push(server("b", "Beta"));
         let text = render(&pair, WIDTH, Theme::default()).unwrap();
         for line in [
             "Partial · 1 of 2 servers",

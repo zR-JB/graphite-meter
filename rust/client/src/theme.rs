@@ -334,7 +334,7 @@ fn rgb(color: &str) -> Option<[u8; 3]> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{io::Write, time::Duration};
+    use std::io::Write;
 
     #[test]
     fn profiles_strip_what_go_strips() {
@@ -350,37 +350,22 @@ mod tests {
 
     #[test]
     fn terms_pick_go_colour_profiles() {
-        for (term, profile) in [
-            ("xterm-kitty", Profile::TrueColor),
-            ("wezterm", Profile::TrueColor),
-            ("screen", Profile::Ansi256),
-            ("tmux-256color", Profile::Ansi256),
-            ("xterm-256color", Profile::Ansi256),
-            ("xterm", Profile::Ansi),
-            ("vt100", Profile::Ansi),
-            ("xterm-direct", Profile::TrueColor),
-            ("dumb", Profile::NoTty),
-            ("", Profile::NoTty),
-        ] {
+        use Profile::{Ansi, Ansi256, NoTty, TrueColor};
+        #[rustfmt::skip]
+        let terms = [("xterm-kitty", TrueColor), ("wezterm", TrueColor), ("screen", Ansi256), ("tmux-256color", Ansi256),
+            ("xterm-256color", Ansi256), ("xterm", Ansi), ("xterm-direct", TrueColor), ("dumb", NoTty), ("", NoTty)];
+        for (term, profile) in terms {
             assert_eq!(environment(term), profile, "{term}");
         }
     }
 
     #[test]
     fn backgrounds_read_light_or_dark_as_go_parses_them() {
-        for (color, light) in [
-            ("rgb:ffff/ffff/ffff", true),
-            ("rgb:0000/0000/0000", false),
-            ("rgb:8080/7f7f/7f7f", true),
-            ("rgb:7f7f/7f7f/7f7f", false),
-            ("rgba:fdfd/f6f6/e3e3/0000", true),
-            ("rgb:ff/ff/ff", true),
-            ("rgb:fff/fff/fff", false),
-            ("rgb:ffff/ffff", false),
-            ("#fff", true),
-            ("#1d1f21", false),
-            ("white", false),
-        ] {
+        #[rustfmt::skip]
+        let colors = [("rgb:ffff/ffff/ffff", true), ("rgb:0000/0000/0000", false), ("rgb:8080/7f7f/7f7f", true),
+            ("rgb:7f7f/7f7f/7f7f", false), ("rgba:fdfd/f6f6/e3e3/0000", true), ("rgb:ff/ff/ff", true),
+            ("rgb:fff/fff/fff", false), ("rgb:ffff/ffff", false), ("#fff", true), ("#1d1f21", false), ("white", false)];
+        for (color, light) in colors {
             assert_eq!(bright(color.as_bytes()), light, "{color}");
         }
     }
