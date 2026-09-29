@@ -21,7 +21,7 @@ for language in go javascript-typescript python actions rust; do
         --command="go build -o /dev/null ../rust/tests/h3_client.go" --working-dir="$out/src/go")
     if [ "$language" = rust ]; then
         # Resolve OUT_DIR includes and macro expansions from a real build; also extract #[path] modules.
-        toolchain=+$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust/rust-toolchain.toml)
+        toolchain=+$(python3 -m scripts.ci.toolchains get rust.channel)
         export CODEQL_EXTRACTOR_RUST_PROC_MACRO_SERVER CODEQL_EXTRACTOR_RUST_BUILD_SCRIPT_COMMAND CODEQL_EXTRACTOR_RUST_EXTRA_INCLUDES
         CODEQL_EXTRACTOR_RUST_PROC_MACRO_SERVER=$(rustc "$toolchain" --print sysroot)/libexec/rust-analyzer-proc-macro-srv
         CODEQL_EXTRACTOR_RUST_BUILD_SCRIPT_COMMAND=$(jq -cn --arg toolchain "$toolchain" --arg target "$out/src/target" \
