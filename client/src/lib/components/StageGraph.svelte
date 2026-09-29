@@ -216,14 +216,14 @@
     {#if graph}
       <svg {width} height={TRACK} aria-hidden="true">
         {#if graph.baselineY !== null}<line
-            class="baseline"
+            class="reply-median"
             x1="0"
             x2={width}
             y1={graph.baselineY}
             y2={graph.baselineY}
           />{/if}
         {#each graph.dots as dot, index (index)}
-          <circle class="dot" cx={dot.x} cy={dot.y} r="1.6" />
+          <circle class="reply" cx={dot.x} cy={dot.y} r="1.6" />
         {/each}
         {#if hover}<line
             class="cursor"
@@ -281,7 +281,6 @@
   }
   /* Hairlines snap to device pixels instead of splitting across two rows. */
   .axis,
-  .baseline,
   .cursor {
     shape-rendering: crispEdges;
   }
@@ -301,14 +300,6 @@
   }
   .head {
     fill: var(--tone);
-  }
-  .baseline {
-    stroke: color-mix(in oklab, var(--phase-latency) 55%, transparent);
-    stroke-dasharray: 2 3;
-  }
-  .dot {
-    fill: var(--tone);
-    opacity: 0.7;
   }
   .cursor {
     stroke: color-mix(in oklab, var(--text) 45%, transparent);

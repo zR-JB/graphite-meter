@@ -11,6 +11,7 @@
   import type { LiveReadout } from "../presentation/liveReadout.svelte";
   import { announce } from "../presentation/announcer.svelte";
   import { handoff } from "../presentation/motion.svelte";
+  import { replies } from "../presentation/stageGraph";
   import { untrack } from "svelte";
   import {
     CARD_ORDER,
@@ -78,11 +79,7 @@
       const measured = times.length ? Math.max(...times) - start : 0;
       return {
         lanes,
-        latency: store.latency.flatMap((b) =>
-          b.phase === key && b.medianRttMs !== null
-            ? [{ t: b.t, ms: b.medianRttMs }]
-            : [],
-        ),
+        latency: replies(store.latency, key),
         start,
         span:
           Math.max(

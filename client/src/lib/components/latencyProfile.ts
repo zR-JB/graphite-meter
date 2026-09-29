@@ -1,6 +1,6 @@
 // Pure geometry, formatting, and hover-selection logic behind LatencyProfile.svelte.
 import { fmtCount, fmtMs } from "../format";
-import { latencyCeiling, latencyScale } from "../presentation/scales";
+import { latencyScale } from "../presentation/scales";
 import type { ReflectorTimingSummary, TransportRole } from "../runner/contract";
 import { LATENCY_POPULATION, MISSING } from "../presentation/vocabulary";
 import { STAGES } from "../runner/schedule";
@@ -57,15 +57,9 @@ export interface LatencyProfileViewLane extends LatencyProfileLaneLike {
   active?: boolean;
 }
 
-/** The lanes' axis runs from zero to the latency ceiling above their slowest reply, like the gauge's. */
-export function profileDomain(
-  lanes: readonly LatencyProfileLaneLike[],
-): number {
-  const slowest = lanes.flatMap((lane) => lane.max ?? lane.min ?? []);
-  return slowest.length
-    ? latencyCeiling(Math.max(...slowest))
-    : latencyScale([]);
-}
+/** The lanes' axis follows the gauge's rule over their P90s, so the boxes fill it; a slower reply runs off its end. */
+export const profileDomain = (lanes: readonly LatencyProfileLaneLike[]) =>
+  latencyScale(lanes.map((lane) => lane.p90 ?? lane.center));
 
 // Position of a value as a 0 to 100% offset along the track, clamped at both ends.
 export function pos(value: number | null, maxMs: number): number {

@@ -174,8 +174,16 @@
         : `${display.value === MISSING}:${display.unit}`,
   );
   const { terminal, display } = $derived(hero.shown);
+  // The dial beats only on idle replies, so a stall shows as stillness.
+  const reply = $derived(
+    phase === "latency"
+      ? (store.latency.findLast((bucket) => bucket.medianRttMs !== null)?.t ??
+          null)
+      : null,
+  );
   const dialState = $derived<GaugeDialState>({
     phase,
+    reply,
     showValue: !unusableStage,
     valueBytesPerSec: liveRates ? liveRates.down + liveRates.up : 0,
     scaleBytesPerSec: store.scales.gaugeBytesPerSec,

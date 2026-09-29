@@ -69,7 +69,7 @@
       )?.reason}
       {@const facts = cardFacts(card)}
       <article
-        class="card {card.status}"
+        class="card stage-area {card.status}"
         data-tone={card.key}
         style:--fade={fade}
       >
@@ -182,34 +182,14 @@
     grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
     gap: var(--space-4) var(--space-5);
   }
-  /* A card is its stage's light on the page: a rule in its hue and a wash that fades out, no box. */
+  /* A card is its stage's area (`.stage-area`): a rule and a wash, no box. */
   .card {
-    --wash: 0%;
     display: grid;
     grid-template-rows: 20px auto 18px;
     grid-auto-rows: auto;
     gap: 6px;
     min-width: 0;
     padding: var(--space-3) var(--space-4) var(--space-3);
-    border-top: 2px solid
-      color-mix(in oklab, var(--tone) var(--rule, 100%), transparent);
-    background: linear-gradient(
-      180deg,
-      color-mix(in oklab, var(--tone) var(--wash), transparent),
-      transparent 78%
-    );
-    transition:
-      --wash var(--dur-graph) var(--ease-out),
-      border-color var(--dur-graph) var(--ease-out);
-  }
-  .card:is(.complete, .partial, .failed, .stopped) {
-    --wash: 9%;
-  }
-  .card.active {
-    --wash: 16%;
-  }
-  .card:is(.pending, .not-run) {
-    --rule: 30%;
   }
   /* A phone stacks the cards, so an empty line has nothing to align with. */
   @container results (max-width: 520px) {

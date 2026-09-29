@@ -9,6 +9,8 @@
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
   import { fmtAddedMs, fmtMs, formatLatency } from "../format";
   import { fmtGaugeTick } from "./gaugeScale";
+  import { latencyScale } from "../presentation/scales";
+  import { stageGraph, type LatencyPoint } from "../presentation/stageGraph";
   import {
     entries,
     formatTimeouts,
@@ -31,13 +33,15 @@
     lanes: LatencyProfileViewLane[];
     variant?: "bare" | "compact";
     label?: string;
-    /** Signed ms each load added over the idle median; set once the run has it. */
+    /** Signed ms each load added over the idle median, once the run has it; until then the medians give it. */
     added?: Partial<
       Record<LatencyProfileViewLane["key"], number | null>
     > | null;
     stability?: number | null;
     /** Whose latency this is, when several servers ran. */
     source?: string;
+    /** The idle stage's replies over its time, while the run's series exists. */
+    trace?: { points: LatencyPoint[]; start: number; span: number } | null;
   }
 
   let {
@@ -47,8 +51,36 @@
     added = null,
     stability = null,
     source,
+    trace = null,
   }: Props = $props();
   const idle = $derived(lanes.find((lane) => lane.key === "latency") ?? null);
+  // Lit like a stage card: dim until something is measured, brightest while the idle stage runs.
+  const light = $derived(
+    idle?.active
+      ? "active"
+      : lanes.some((lane) => lane.center != null)
+        ? "complete"
+        : "pending",
+  );
+  let traceWidth = $state(0);
+  let traceHeight = $state(0);
+  // The trace reuses the stage graph's latency track: one dot per reply bucket over the idle median.
+  const drawn = $derived(
+    trace && traceWidth && traceHeight
+      ? stageGraph({
+          lanes: [],
+          latency: trace.points,
+          start: trace.start,
+          span: trace.span,
+          ceiling: 1,
+          baseline: idle?.center ?? null,
+          latencyTop: latencyScale(trace.points.map((point) => point.ms)),
+          width: traceWidth,
+          plotHeight: 0,
+          trackHeight: traceHeight,
+        })
+      : null,
+  );
 
   let motion = $state(false);
 
@@ -249,7 +281,11 @@
     `left:${from}%;width:${Math.max(0, to - from)}%`;
 </script>
 
-<section class="latency-card" data-tone="latency" aria-label={label}>
+<section
+  class="latency-card stage-area {light}"
+  data-tone="latency"
+  aria-label={label}
+>
   <header class="card-head">
     <span class="dot" aria-hidden="true"></span>
     <h3 {@attach tooltip(() => JARGON.latency)}>{STAGE.latency.label}</h3>
@@ -267,6 +303,29 @@
           {#if idle.center != null}<span class="unit">ms</span>{/if}
         </div>
         <span class="caption">Idle median</span>
+        {#if trace}
+          <div
+            class="trace"
+            aria-hidden="true"
+            bind:clientWidth={traceWidth}
+            bind:clientHeight={traceHeight}
+          >
+            {#if drawn}
+              <svg width={traceWidth} height={traceHeight}>
+                {#if drawn.baselineY !== null}<line
+                    class="reply-median"
+                    x1="0"
+                    x2={traceWidth}
+                    y1={drawn.baselineY}
+                    y2={drawn.baselineY}
+                  />{/if}
+                {#each drawn.dots as dot, index (index)}
+                  <circle class="reply" cx={dot.x} cy={dot.y} r="1.6" />
+                {/each}
+              </svg>
+            {/if}
+          </div>
+        {/if}
         <dl class="facts">
           <div>
             <dt {@attach term(() => JARGON.jitter)}>Jitter</dt>
@@ -314,7 +373,12 @@
             ? metrics.findIndex((entry) => entry.metric === hover!.metric)
             : -1}
         {@const plus =
-          lane.key === "latency" ? null : (added?.[lane.key] ?? null)}
+          lane.key === "latency"
+            ? null
+            : (added?.[lane.key] ??
+              (lane.center == null || idle?.center == null
+                ? null
+                : lane.center - idle.center))}
         <div
           class="lane"
           data-tone={lane.key}
@@ -390,6 +454,9 @@
               {#if lane.min != null && lane.max != null}
                 <i class="range" style={span(at(lane, "min"), at(lane, "max"))}
                 ></i>
+                {#if lane.max > scale}
+                  <i class="overflow" data-max="{fmtMs(lane.max)} ms"></i>
+                {/if}
               {/if}
               {#if lane.p10 != null && lane.p90 != null}
                 <i class="band" style={span(at(lane, "p10"), at(lane, "p90"))}
@@ -422,11 +489,11 @@
               </span>
             {/if}
           </div>
-          <span class="lane-added" class:baseline-word={lane.key === "latency"}
+          <span class="lane-added" class:quiet={plus == null}
             >{lane.key === "latency"
               ? "Baseline"
               : plus == null
-                ? ""
+                ? MISSING
                 : `${fmtAddedMs(plus)} ms`}</span
           >
         </div>
@@ -443,20 +510,12 @@
 </section>
 
 <style>
-  /* Latency is the stage's light on the page like every card: a rule in its hue and a wash.
-     The card is as tall as its table, so the wash fades only partway and still marks where it ends. */
+  /* Latency is its stage's area on the page like every card (`.stage-area`). */
   .latency-card {
-    --wash: 7%;
     display: grid;
     gap: var(--space-3);
     min-width: 0;
     padding: var(--space-3) var(--space-4) var(--space-3);
-    border-top: 2px solid var(--tone);
-    background: linear-gradient(
-      180deg,
-      color-mix(in oklab, var(--tone) var(--wash), transparent),
-      color-mix(in oklab, var(--tone) calc(var(--wash) / 3), transparent)
-    );
     container: latency / inline-size;
   }
   .card-head {
@@ -526,6 +585,20 @@
     margin-top: var(--space-3);
     padding-top: var(--space-2);
     border-top: var(--hairline) solid var(--border-subtle);
+  }
+  /* The idle replies over the stage, a latency track (`.reply`) whose floor is the facts' edge. */
+  .trace {
+    position: relative;
+    height: 32px;
+    margin-top: var(--space-2);
+  }
+  .trace + .facts {
+    margin-top: 0;
+  }
+  .trace svg {
+    position: absolute;
+    inset: 0;
+    overflow: visible;
   }
   .facts > div {
     display: grid;
@@ -605,7 +678,7 @@
     text-align: end;
     white-space: nowrap;
   }
-  .lane-added.baseline-word {
+  .lane-added.quiet {
     color: var(--text-soft);
     font-weight: var(--w-normal);
   }
@@ -695,10 +768,37 @@
     height: 2px;
     background: color-mix(in oklab, var(--tone) 50%, transparent);
   }
-  .range {
+  .range,
+  .overflow {
     top: calc(50% - 0.5px);
     height: 1px;
     background: color-mix(in oklab, var(--tone) 45%, transparent);
+  }
+  /* A reply past the axis: its whisker runs on to the edge, ends in an arrowhead and names its value. */
+  .overflow {
+    left: 100%;
+    width: var(--edge);
+  }
+  .overflow::before,
+  .overflow::after {
+    position: absolute;
+    right: 0;
+  }
+  /* The value ends inside the axis, clear of its last gridline. */
+  .overflow::before {
+    content: attr(data-max);
+    right: calc(var(--edge) + var(--space-1));
+    bottom: var(--space-1);
+    color: var(--text-soft);
+    font: var(--type-2xs) / 1 var(--font-sans);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .overflow::after {
+    content: "";
+    top: -3px;
+    border-left: 5px solid var(--tone);
+    border-block: 3.5px solid transparent;
   }
   .band {
     top: calc(50% - 6px);
@@ -786,6 +886,11 @@
       padding: 0;
       border: 0;
     }
+    /* The trace spans the card under the idle figures, on its own floor. */
+    .idle .trace {
+      grid-column: 1 / -1;
+      border-bottom: var(--hairline) solid var(--border-subtle);
+    }
   }
   @container latency (max-width: 480px) {
     .idle {
@@ -834,6 +939,11 @@
     }
     .ticks {
       grid-column: 1 / -1;
+    }
+    /* Figures sit above a phone's plot, so an overflow names its value under the whisker. */
+    .overflow::before {
+      top: var(--space-1);
+      bottom: auto;
     }
   }
 </style>
