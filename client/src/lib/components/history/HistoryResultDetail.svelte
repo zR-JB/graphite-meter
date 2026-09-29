@@ -432,9 +432,10 @@
     font: var(--w-strong) var(--type-md) / 1.3 var(--font-display);
     letter-spacing: var(--track-tight);
   }
+  /* Pulled out by its padding, so the arrow starts on the title's edge. */
   .back {
     display: none;
-    margin-left: calc(-1 * var(--space-2));
+    margin-left: calc(-1 * (var(--space-3) + var(--hit-pad)));
   }
   .detail-body {
     display: grid;
@@ -443,6 +444,16 @@
   }
   .detail-body > :global(.result-summary) {
     max-width: none;
+  }
+  /* The stage areas' text shares the detail's one edge, a row inset in like its head and groups. */
+  .detail-body :global(.stage-area) {
+    padding-inline: var(--row-inset);
+  }
+  /* A saved result's three cards run three across or one to a row, never two and an orphan (3 × 240 px + 2 gaps). */
+  @container results (width < 768px) {
+    .detail-body :global(.result-cards:has(> :nth-child(3))) {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
   /* Fact groups share the width in columns, so a long server list stays beside the rest. */
   .facts {
@@ -454,9 +465,10 @@
   .latency {
     grid-column: 1 / -1;
   }
+  /* On the reason's first baseline, so its label reads on the same line. */
   .status {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     gap: var(--space-2);
   }
   @container history (max-width: 820px) {

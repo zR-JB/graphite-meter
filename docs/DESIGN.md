@@ -124,11 +124,11 @@ emphasised values, 600 titles and controls.
 | Page     | The instrument: dial, latency card, run bar, stage cards; History's list and detail | Grain and the stage light on `--canvas`. Areas are marked by a 2 px rule and a wash in their hue, fading out downward: `--wash` 9 % once measured, 16 % while running, none while pending. |
 | Floating | Side sheets, dialogs, popovers, menus, tooltips, readouts                           | `--sheet` or glass with blur, a `--border-subtle` hairline, `--elev-float` or `--elev-tooltip`. Grouped lists inside are `--surface-1` plates without shadow.                              |
 
-Hairlines mark structure only: a plate's edge, row separators inside plates, a head once content scrolls under it,
-the axis under a graph, the latency card's gridlines and the facts' top edge in a card. Spacing separates everything
-else. A sheet, and a dialog built as one (About & legal, opaque `--sheet-solid`), takes the `--border-subtle` edge;
-glass over the instrument (menus, popovers, toasts, tips) and a confirm dialog's opaque `--surface-1` take
-`--border-strong`.
+Hairlines mark structure only: a plate's edge, row separators inside plates and History's list, a head once content
+scrolls under it, the axis under a graph, the latency card's gridlines and the facts' top edge in a card. Spacing
+separates everything else. A sheet, and a dialog built as one (About & legal, opaque `--sheet-solid`), takes the
+`--border-subtle` edge; glass over the instrument (menus, popovers, toasts, tips) and a confirm dialog's opaque
+`--surface-1` take `--border-strong`.
 
 ## Icons
 
@@ -210,11 +210,15 @@ hue, never by a boxed icon.
   limit bounds every time, and its notice names each stage over it.
 - **Switch**: a plate row with the link row's wash and ring; off is an empty track with the check box's edge
   (`--check-edge`), on an ink track with an inverse knob. **Check**: 18 px, ink when checked.
-- **History**: rows show the time with the server and recency, then per column a value over a note: added latency
-  under each rate in its hue, jitter under idle, the stage under loaded. The detail repeats the stage cards and the
-  latency card, then each server's facts. From 821 px it sits beside the list, and the hairline between them is a
-  handle like a docked sheet's edge: the list keeps its share of the width (40 % by default), never under 360 px,
-  and the detail never under 460 px.
+- **History**: the list is page, not plate: a day's rows sit between two rules, with hairlines between them. A row
+  shows the time over its server and recency (a long name is cut), then per column a value over a note on the same two
+  baselines: added latency under each rate in its hue, jitter under idle, the stage under loaded; bars share a zero
+  end per column. Columns never shrink below their content: once they no longer fit, each row folds, its time on one
+  line and its values under it. Sort by lists only the shown columns. The detail repeats the stage cards (three across
+  or one to a row, never two and an orphan) and the latency card on the same 12 px text edge as its head, then each
+  server's facts. From 821 px it sits beside the list, and the hairline between them is a handle like a docked sheet's
+  edge: the list keeps its share of the width (40 % by default), never under 360 px, and the detail never under
+  460 px.
 - **Facts** (`dl.kv`): label/value pairs; a qualifier that belongs to a value is an `.aside`, never joined with a dot.
 - **Tooltip and readout** share one glass shell (`.inspect-card`). A tip opens when the pointer rests on its word:
   within 8 px of where it settled for 0.4 s (jargon 0.25 s, 0.12 s while another tip shows or for 0.6 s after one

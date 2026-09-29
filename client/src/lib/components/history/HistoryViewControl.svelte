@@ -112,7 +112,7 @@
       >
     </h3>
     <div class="menu" role="radiogroup" aria-label="Sort by">
-      {#each HISTORY_SORTS as option}
+      {#each HISTORY_SORTS.filter((option) => option === "date" || columns.includes(option)) as option}
         <button
           type="button"
           role="radio"
@@ -151,11 +151,12 @@
     width: 15px;
     height: 15px;
   }
+  /* As tall as the room beside its trigger allows, less its 6 px margins, so the order control stays in view. */
   .view-popover {
     display: grid;
     gap: var(--space-1);
     width: min(240px, calc(100vw - 2 * var(--space-4)));
-    max-height: min(80dvh, 520px);
+    max-height: calc(100% - 12px);
     padding: var(--space-2);
     overflow-y: auto;
   }
