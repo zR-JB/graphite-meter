@@ -235,7 +235,7 @@ impl SendHalf {
     }
 
     /// Writes whatever frame is pending.
-    pub fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+    pub(crate) fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
         while self.header_written < self.header_end {
             let header = &self.header[usize::from(self.header_written)..usize::from(self.header_end)];
             let written = ready!(pin!(self.stream.write(header)).poll(cx))?;

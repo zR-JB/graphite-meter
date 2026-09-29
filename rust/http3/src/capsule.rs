@@ -3,7 +3,6 @@ use crate::{code::Code, frame::Pair, varint};
 use bytes::{Buf, BufMut, Bytes};
 
 const CLOSE: u64 = 0x2843;
-const DRAIN: u64 = 0x78ae;
 /// WT_MAX_STREAM_DATA and WT_STREAM_DATA_BLOCKED exist only over HTTP/2.
 const HTTP2_ONLY: [u64; 2] = [0x190b4d3e, 0x190b4d42];
 pub(crate) const MAX_REASON: usize = 1024;
@@ -11,10 +10,10 @@ pub(crate) const MAX_REASON: usize = 1024;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Capsule {
     Close { code: u32, reason: String },
-    Drain,
 }
 
-/// Reads capsules from a CONNECT stream's DATA. Others, flow control included, are skipped unbuffered.
+/// Reads CLOSE capsules from a CONNECT stream's DATA. Others, DRAIN and flow control included, are
+/// skipped unbuffered.
 #[derive(Default)]
 pub(crate) struct Reader {
     header: Pair,
@@ -45,15 +44,11 @@ impl Reader {
                 return Ok(None);
             }
             self.body = None;
-            match kind {
-                CLOSE => {
-                    let mut close = std::mem::take(&mut self.close);
-                    let reason = String::from_utf8(close.split_off(4)).map_err(|_| Code::H3_MESSAGE_ERROR)?;
-                    let code = u32::from_be_bytes(close.try_into().expect("four code bytes"));
-                    return Ok(Some(Capsule::Close { code, reason }));
-                }
-                DRAIN => return Ok(Some(Capsule::Drain)),
-                _ => {}
+            if kind == CLOSE {
+                let mut close = std::mem::take(&mut self.close);
+                let reason = String::from_utf8(close.split_off(4)).map_err(|_| Code::H3_MESSAGE_ERROR)?;
+                let code = u32::from_be_bytes(close.try_into().expect("four code bytes"));
+                return Ok(Some(Capsule::Close { code, reason }));
             }
         }
     }
@@ -115,18 +110,15 @@ mod tests {
     }
 
     #[test]
-    fn every_split_skips_flow_control_and_grease() {
+    fn every_split_skips_flow_control_grease_and_drain() {
         let mut bytes = capsule(0x190b4d3d, &[0x80, 0, 0, 1]);
         bytes.extend(capsule(0x17 + 41 * 3, b"grease"));
-        bytes.extend(capsule(DRAIN, b""));
+        bytes.extend(capsule(0x78ae, b""));
         bytes.extend(close(0xf123_4567, "done"));
-        let expected = vec![
-            Capsule::Drain,
-            Capsule::Close {
-                code: 0xf123_4567,
-                reason: "done".into(),
-            },
-        ];
+        let expected = vec![Capsule::Close {
+            code: 0xf123_4567,
+            reason: "done".into(),
+        }];
         for split in 0..=bytes.len() {
             let (first, second) = bytes.split_at(split);
             assert_eq!(

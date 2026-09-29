@@ -446,7 +446,6 @@ impl Connect {
                     self.peer_closed = true;
                     self.end(Ok((code, reason)));
                 }
-                Ok(Some(Capsule::Drain)) => {}
                 Ok(None) => match self.recv.poll_data(cx) {
                     Poll::Pending => break,
                     Poll::Ready(Ok(Some(data))) => {
