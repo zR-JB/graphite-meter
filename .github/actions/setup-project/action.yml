@@ -143,7 +143,7 @@ runs:
       shell: bash
       run: |
         version=$(python3 -m scripts.ci.toolchains get rust.channel)
-        rustup toolchain install "$version" --profile minimal --component rustfmt --component clippy
+        rustup toolchain install --no-self-update "$version" --profile minimal --component rustfmt --component clippy
 
     - name: Cache Cargo downloads and dependency builds
       if: inputs.rust == 'true' && inputs.cache == 'true'

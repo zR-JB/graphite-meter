@@ -180,6 +180,9 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "unreviewed --development notices"),
     ("scripts/package_rust.py", '"--profile", "release",', '"--profile", "release", "--development",',
      "unreviewed --development notices"),
+    # rustup would replace itself from the network before it installs and checks a toolchain.
+    (SETUP, "install --no-self-update", "install", "--no-self-update"),
+    ("scripts/package_rust.py", '"install", "--no-self-update",', '"install",', "--no-self-update"),
 )
 
 

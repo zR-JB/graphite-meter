@@ -270,9 +270,10 @@ def check_ci(root: Path) -> None:
         fail(f"CI Gate must need every job: {missing}")
 
 
-def check_development_notices(root: Path) -> None:
+def check_run_commands(root: Path) -> None:
     """No workflow, image build or release script, nor any task they run, builds with the unreviewed notices of
-    `scripts.legal.rust --development`; only the development tasks do."""
+    `scripts.legal.rust --development`, which only the development tasks use, or lets rustup replace itself
+    while it installs a toolchain."""
     tasks = tomllib.loads(read(root, "mise.toml"))["tasks"]
     texts = [path.read_text(encoding="utf-8") for path in sorted((root / ".github").rglob("*.y*ml"))]
     texts += [read(root, name) for name in ("container/Dockerfile", "container/Dockerfile.rust", *DARWIN_SCRIPTS)]
@@ -281,6 +282,8 @@ def check_development_notices(root: Path) -> None:
         text = texts.pop()
         if "--development" in text:
             fail("CI and releases must not build with unreviewed --development notices")
+        if any("--no-self-update" not in line for line in re.findall(r"rustup\W+toolchain\W+install\b.*", text)):
+            fail("CI and releases must install Rust toolchains with --no-self-update")
         for task in set(re.findall(r"mise run ([\w-]+)", text)) - reached:
             reached.add(task)
             run = tasks.get(task, {}).get("run", [])
@@ -398,7 +401,7 @@ def check_repository(root: Path = ROOT) -> None:
     check_actions(root)
     check_workflows(root)
     check_ci(root)
-    check_development_notices(root)
+    check_run_commands(root)
     check_paths(root)
     check_build_context(root)
     check_certificates(root)

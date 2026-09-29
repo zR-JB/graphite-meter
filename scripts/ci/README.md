@@ -97,11 +97,13 @@ A prerelease's Rust archives must match its PR head's `Cargo.lock`, fork and
 provenance records, `LICENSE` and `COPYRIGHT`, which the PR's CI checked.
 Rust release builds refuse a toolchain that rustup installed from any channel
 manifest but the one whose SHA-256 `mise.toml` pins (`rust_manifest_sha256`):
-`package_rust.py` and the image's server build compare every archive and hash
-of the installed manifest with the pinned one before they add targets or
-build, since rustup rewrites the copy it keeps. A new
-`rust/rust-toolchain.toml` channel needs the SHA-256 of its
-`channel-rust-<version>.toml`.
+`package_rust.py` and the image's server build compare the URL and SHA-256 of
+every package archive, in every compression, in the installed manifest with the
+pinned one before they add targets or build, since rustup rewrites the copy it
+keeps. Every toolchain install passes `--no-self-update`, so the rustup that
+installs and reports the toolchain is the builder image's or the runner's, not
+one it fetched meanwhile. A new `rust/rust-toolchain.toml` channel needs the
+SHA-256 of its `channel-rust-<version>.toml`.
 
 ### Owner setup
 

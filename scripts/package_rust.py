@@ -94,7 +94,7 @@ def main() -> None:
         parser.error(f"scripts/tui-targets.txt lists no platform of {args.os}")
     try:
         channel = rust_channel(REPO)
-        subprocess.run(["rustup", "toolchain", "install", channel, "--profile", "minimal"], check=True)
+        subprocess.run(["rustup", "toolchain", "install", "--no-self-update", channel, "--profile", "minimal"], check=True)
         # The targets' standard libraries come from the archives of the manifest checked here.
         verify_rust_toolchain(REPO)
         subprocess.run(["rustup", "target", "add", "--toolchain", channel, *targets.values()], check=True)
