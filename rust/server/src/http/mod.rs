@@ -177,14 +177,12 @@ impl HttpServer {
             .max_connections_per_client
             .min(config.max_connections)
             .min(QUIC_PER_CLIENT);
-        let client_credit = budget::ClientCredit::new(
-            quic_per_client.saturating_mul(QUIC_CREDIT_BYTES),
-            config
-                .auth
-                .mode
-                .password()
-                .then(|| Owner::principal_key(LOCAL_OPERATOR)),
-        );
+        let shared = config
+            .auth
+            .mode
+            .password()
+            .then(|| Owner::principal_key(LOCAL_OPERATOR));
+        let client_credit = budget::ClientCredit::new(quic_per_client.saturating_mul(QUIC_CREDIT_BYTES), shared, bytes);
         let download_memory = memory
             .lease(DOWNLOAD_BLOCK_BYTES)
             .ok_or("server memory budget cannot cover the download block")?;
@@ -1476,5 +1474,22 @@ mod tests {
                 fund(owner.client_keys()).expect("a window on each QUIC connection of every password login")
             })
             .collect();
+    }
+
+    /// Window growth is held back at three quarters of the budget; what all clients claim stays below that.
+    #[test]
+    fn claims_alone_never_hold_back_window_growth() {
+        let limit = 16 * QUIC_CREDIT_BYTES;
+        let server = HttpServer::with_memory(Config::default().validated().unwrap(), limit).unwrap();
+        let claims: Vec<_> = (0..16)
+            .map_while(|client| {
+                let keys = client_address::client_keys([192, 0, 2, client].into());
+                server.client_credit.claim(&keys, QUIC_CREDIT_BYTES)
+            })
+            .collect();
+        let claimed = claims.len() * QUIC_CREDIT_BYTES;
+        assert!(claimed <= limit / 2, "{} windows claimed", claims.len());
+        let _reserved = server.memory.lease(claimed).unwrap();
+        assert!(server.memory.has_headroom());
     }
 }

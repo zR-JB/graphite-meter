@@ -251,20 +251,28 @@ impl Drop for Lease {
 
 /// The receive-window credit each client may hold across its connections, `share` for its narrowest key. As in
 /// admission, each wider key (an IPv6 /56 and /48, or a login's principal) may hold twice the one before it. A key
-/// that many clients share, the password operator's principal, bounds no claim; the budget's hold-back bounds all
-/// clients together.
+/// that many clients share, the password operator's principal, bounds no claim. All claims together stay within half
+/// of a `budget`, below the three quarters at which window growth is held back, so claims alone never hold it back.
 #[derive(Debug)]
 pub(crate) struct ClientCredit {
     share: usize,
     shared: Option<String>,
-    held: Mutex<HashMap<String, usize>>,
+    limit: usize,
+    held: Mutex<Held>,
+}
+
+#[derive(Debug, Default)]
+struct Held {
+    keys: HashMap<String, usize>,
+    total: usize,
 }
 
 impl ClientCredit {
-    pub(crate) fn new(share: usize, shared: Option<String>) -> Arc<Self> {
+    pub(crate) fn new(share: usize, shared: Option<String>, budget: usize) -> Arc<Self> {
         Arc::new(Self {
             share,
             shared,
+            limit: budget / 2,
             held: Mutex::default(),
         })
     }
@@ -277,15 +285,17 @@ impl ClientCredit {
             .cloned()
             .collect();
         let mut held = lock(&self.held);
-        let fits = keys.iter().enumerate().all(|(index, key)| {
-            let share = self.share.saturating_mul(1 << index.min(usize::BITS as usize - 1));
-            held.get(key).copied().unwrap_or_default().saturating_add(bytes) <= share
-        });
+        let fits = held.total.saturating_add(bytes) <= self.limit
+            && keys.iter().enumerate().all(|(index, key)| {
+                let share = self.share.saturating_mul(1 << index.min(usize::BITS as usize - 1));
+                held.keys.get(key).copied().unwrap_or_default().saturating_add(bytes) <= share
+            });
         if !fits {
             return None;
         }
+        held.total += bytes;
         for key in &keys {
-            *held.entry(key.clone()).or_default() += bytes;
+            *held.keys.entry(key.clone()).or_default() += bytes;
         }
         Some(CreditClaim {
             credit: self.clone(),
@@ -306,11 +316,12 @@ pub(crate) struct CreditClaim {
 impl Drop for CreditClaim {
     fn drop(&mut self) {
         let mut held = lock(&self.credit.held);
+        held.total -= self.bytes;
         for key in &self.keys {
-            let bytes = held.get_mut(key).expect("claimed keys are held");
+            let bytes = held.keys.get_mut(key).expect("claimed keys are held");
             *bytes -= self.bytes;
             if *bytes == 0 {
-                held.remove(key);
+                held.keys.remove(key);
             }
         }
     }
@@ -322,7 +333,7 @@ mod tests {
 
     #[test]
     fn a_client_share_doubles_for_wider_keys_and_a_shared_key_bounds_no_claim() {
-        let credit = ClientCredit::new(1 << 20, Some("principal:shared".into()));
+        let credit = ClientCredit::new(1 << 20, Some("principal:shared".into()), usize::MAX);
         let claim =
             |address: &str| credit.claim(&crate::client_address::client_keys(address.parse().unwrap()), 1 << 20);
         let first = claim("2001:db8:1:1::1").unwrap();
@@ -359,6 +370,7 @@ mod tests {
             );
         }
         drop(held);
-        assert!(credit.held.lock().unwrap().is_empty());
+        let held = credit.held.lock().unwrap();
+        assert!(held.keys.is_empty() && held.total == 0);
     }
 }
