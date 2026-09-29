@@ -357,14 +357,9 @@ impl HttpServer {
                 control: Some(Box::pin(tokio::time::sleep(CONTROL))),
             };
             async move {
-                let mut response =
-                    if bootstrap_port.is_some() && !route.is_some_and(|route| accepted.topology.mounts(route)) {
-                        text_response(StatusCode::NOT_FOUND)
-                    } else {
-                        server
-                            .respond_incoming(request, accepted, &operations, Some(&pending_upgrade))
-                            .await?
-                    };
+                let mut response = server
+                    .respond_incoming(request, accepted, &operations, Some(&pending_upgrade))
+                    .await?;
                 if let Some(port) = bootstrap_port
                     && probe
                     && response.status().is_success()
@@ -1135,6 +1130,20 @@ mod tests {
         }
     }
 
+    /// Password authentication for https://localhost, which advertises no clear listener.
+    fn password() -> ValidatedConfig {
+        let mut config = Config {
+            advertised_native: Some(Default::default()),
+            ..Config::default()
+        };
+        config.public.both.push("self".into());
+        config.auth.mode = AuthMode::Password;
+        config.auth.public_url = "https://localhost".into();
+        config.auth.password_hash =
+            "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0".into();
+        config.validated().unwrap()
+    }
+
     struct UnreadBody;
 
     impl Body for UnreadBody {
@@ -1447,16 +1456,7 @@ mod tests {
     /// hold. Password logins and grants all share one principal, so each of them is bounded alone.
     #[test]
     fn credit_funds_a_window_on_every_quic_connection_a_client_may_hold() {
-        let mut config = Config {
-            advertised_native: Some(Default::default()),
-            ..Config::default()
-        };
-        config.public.both.push("self".into());
-        config.auth.mode = AuthMode::Password;
-        config.auth.public_url = "https://localhost".into();
-        config.auth.password_hash =
-            "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0".into();
-        let server = HttpServer::new(config.validated().unwrap()).unwrap();
+        let server = HttpServer::new(password()).unwrap();
         let fund = |keys: &[String]| {
             (0..8)
                 .map(|_| server.client_credit.claim(keys, QUIC_CREDIT_BYTES))
@@ -1474,6 +1474,33 @@ mod tests {
                 fund(owner.client_keys()).expect("a window on each QUIC connection of every password login")
             })
             .collect();
+    }
+
+    /// As Go's companion mux runs inside Enforce, the HTTP/3 companion authorizes and hardens a request before
+    /// answering 404 for a route it does not mount.
+    #[tokio::test]
+    async fn the_http3_companion_authorizes_and_hardens_before_its_404() {
+        let server = Arc::new(HttpServer::new(password()).unwrap());
+        let accepted = Accepted {
+            peer: "127.0.0.1:31000".parse().unwrap(),
+            tls: true,
+            topology: topology::tcp(NativeKind::H3, true).topology,
+        };
+        for path in ["/", "/download?bytes=1"] {
+            let (mut client, served) = tokio::io::duplex(1 << 16);
+            let serving = tokio::spawn(server.clone().serve_http1_connection(served, accepted, Some(7249)));
+            let request = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+            client.write_all(request.as_bytes()).await.unwrap();
+            let mut answer = String::new();
+            client.read_to_string(&mut answer).await.unwrap();
+            assert!(answer.starts_with("HTTP/1.1 403"), "{answer}");
+            assert!(answer.contains("graphite-meter-auth: required\r\n"), "{answer}");
+            assert!(
+                answer.contains("strict-transport-security: max-age=31536000\r\n"),
+                "{answer}"
+            );
+            serving.await.unwrap();
+        }
     }
 
     /// Window growth is held back at three quarters of the budget; what all clients claim stays below that.
