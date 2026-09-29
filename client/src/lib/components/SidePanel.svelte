@@ -212,6 +212,7 @@
       transform: var(--closed);
     }
   }
+  /* The scrim comes and goes with the flyout it shades, on the sheet's own clock. */
   .scrim {
     position: fixed;
     z-index: var(--z-scrim);
@@ -220,8 +221,8 @@
     opacity: 0;
     visibility: hidden;
     transition:
-      opacity var(--dur-slide) var(--ease-out),
-      visibility var(--dur-slide) allow-discrete;
+      opacity var(--dur-sheet) var(--ease-out),
+      visibility var(--dur-sheet) allow-discrete;
   }
   .scrim.open {
     opacity: calc(1 - var(--sheet-drag, 0));
