@@ -13,7 +13,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 KEYS = ("VERSION", "GM_CLIENT_REVISION", "GM_BENCH_FILTER", "GM_ENGINE_VERSION", "GM_RUST_ASSET_DIR",
-        "GM_RUST_LEGAL_DIR", "GM_LEGAL_SCAN_OUT", "DEVELOPER_DIR")
+        "GM_LEGAL_SCAN_OUT", "DEVELOPER_DIR", "CARGO_TARGET_DIR")
 # Records each tool's argv and the task environment variables the test inspects; the last call wins.
 SPY = """import json, os, sys
 with open(os.environ["GM_TASK_TRACE"], "a") as output:
@@ -45,7 +45,7 @@ class MiseTaskTests(unittest.TestCase):
                 (root / "bin" / name).chmod(0o755)
             trace, canary = root / "trace.jsonl", root / "injected"
             env = {key: value for key, value in os.environ.items()
-                   if not key.startswith(("MISE_", "usage_", "GM_CLIENT_")) and key != "VERSION"}
+                   if not key.startswith(("MISE_", "usage_", "GM_CLIENT_")) and key not in ("VERSION", "CARGO_TARGET_DIR")}
             env |= {
                 "PATH": f"{root / 'bin'}{os.pathsep}{os.environ['PATH']}",
                 "MISE_CONFIG_DIR": str(root / "config"), "MISE_STATE_DIR": str(root / "state"),
@@ -75,35 +75,29 @@ class MiseTaskTests(unittest.TestCase):
                         "--reviews", "legal/rust-reviewed-components.json", *browser]
 
             # Development builds embed the notices the legal pipeline generates for them on any host: the
-            # browser build hands the server's its module scan, and cargo builds with them.
-            server = run("rust-server-build", VERSION=payload)
-            client, pipeline, _ = map(json.loads, trace.read_text().splitlines())
+            # browser build hands the server's its module scan, and the pipeline's build in rust/target is the
+            # executable the tasks leave or run.
+            for name in ("debug/graphite-meter-server", "debug/graphite-meter-client", "release/graphite-meter-server"):
+                (root / "rust/target" / name).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(root / "bin/cargo", root / "rust/target" / name)
+            pipeline = run("rust-server-build", VERSION=payload)
+            client = json.loads(trace.read_text().splitlines()[0])
             scan = client["env"].pop("GM_LEGAL_SCAN_OUT")
             self.assertEqual(pipeline["args"], development("graphite-meter-server", "release", "--browser-scan", scan))
-            self.assertEqual(Path(pipeline["env"].pop("GM_RUST_ASSET_DIR")).resolve(), (root / "client/dist").resolve())
-            self.assertEqual(server["args"], ["build", "--release", "--locked", "-p", "graphite-meter-server"])
-            legal = Path(server["env"].pop("GM_RUST_LEGAL_DIR"))
-            self.assertEqual(legal.resolve(), (root / "rust/target/dev-legal/graphite-meter-server-release").resolve())
-            self.assertEqual(server["env"].pop("GM_RUST_ASSET_DIR"), str(legal / "browser-assets"))
-            for call in (pipeline, server):
-                self.assertEqual(call["env"], {"VERSION": payload, "GM_ENGINE_VERSION": f"{payload}-rust"})
+            for key, path in (("GM_RUST_ASSET_DIR", "client/dist"), ("CARGO_TARGET_DIR", "rust/target")):
+                self.assertEqual(Path(pipeline["env"].pop(key)).resolve(), (root / path).resolve())
+            self.assertEqual(pipeline["env"], {"VERSION": payload, "GM_ENGINE_VERSION": f"{payload}-rust"})
             # prod stamps the Rust server as Go's prod stamps Go's, and leaves the browser client unstamped.
-            (root / "rust/target/release").mkdir(parents=True)
-            shutil.copy2(root / "bin/cargo", root / "rust/target/release/graphite-meter-server")
             run("prod", GM_IMPLEMENTATION="rust", GM_CLIENT_REVISION="abc123")
             client, pipeline = map(json.loads, trace.read_text().splitlines()[:2])
             self.assertNotIn("VERSION", client["env"])
             self.assertEqual(pipeline["env"]["GM_ENGINE_VERSION"], "abc123-rust")
-            served = run("rust-server-run", "--listen", payload)
-            self.assertEqual(served["args"][-3:], ["--", "--listen", payload])
-            self.assertEqual(Path(served["env"]["GM_RUST_LEGAL_DIR"]).resolve(),
-                             (root / "rust/target/dev-legal/graphite-meter-server-dev").resolve())
-            tui = run("tui", "-legal", GM_IMPLEMENTATION="rust")
+            self.assertEqual(run("rust-server-run", "--listen", payload)["args"], ["--listen", payload])
+            tui = run("tui", "-legal", GM_IMPLEMENTATION="rust", GM_CLIENT_REVISION="abc123")
             pipeline = json.loads(trace.read_text().splitlines()[0])
-            self.assertEqual(pipeline["args"], development("graphite-meter-client", "dev"))
-            self.assertEqual(tui["args"], ["run", "--locked", "-p", "graphite-meter-client", "--", "-legal"])
-            self.assertEqual(Path(tui["env"]["GM_RUST_LEGAL_DIR"]).resolve(),
-                             (root / "rust/target/dev-legal/graphite-meter-client-dev").resolve())
+            self.assertEqual((pipeline["args"], pipeline["env"]["GM_ENGINE_VERSION"]),
+                             (development("graphite-meter-client", "dev"), "abc123-rust"))
+            self.assertEqual(tui["args"], ["-legal"])
             # Release requests and CI package the macOS TUIs with one task, on the reviewed Xcode.
             darwin = run("rust-darwin-package", payload, RELEASE_DIST=str(root / "dist"))
             self.assertEqual(darwin["args"], [
