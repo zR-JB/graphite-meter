@@ -40,10 +40,7 @@ impl Hash {
             let value = param
                 .strip_prefix(prefix)
                 .ok_or("password hash has invalid Argon2 parameters")?;
-            if value.is_empty()
-                || !value.bytes().all(|byte| byte.is_ascii_digit())
-                || value.parse::<u32>().ok() != Some(expected)
-            {
+            if !value.bytes().all(|byte| byte.is_ascii_digit()) || value.parse::<u32>().ok() != Some(expected) {
                 return Err("password hash must use m=19456,t=2,p=1");
             }
         }
