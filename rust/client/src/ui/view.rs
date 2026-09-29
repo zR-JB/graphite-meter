@@ -17,6 +17,7 @@ use ratatui::{
     widgets::Paragraph,
 };
 use std::time::Duration;
+use unicode_width::UnicodeWidthStr;
 
 pub(super) const TWO_COLUMN_MIN: usize = 100;
 const MIN_WIDTH: usize = 40;
@@ -57,7 +58,7 @@ impl PathState {
 pub(super) fn panel(title: &str, body: Text, width: usize, height: usize, theme: &Theme) -> Text {
     let inner = width.saturating_sub(4).max(1);
     let title = plain(&fit(Line::from(title.to_owned()), width.saturating_sub(6).max(1)));
-    let fill = width.saturating_sub(5 + Line::from(title.as_str()).width());
+    let fill = width.saturating_sub(5 + title.width());
     let mut lines = vec![Line::from(vec![
         span("╭─ ", theme.border),
         span(title, theme.heading),
@@ -263,7 +264,7 @@ impl Ui {
             let mut screen = vec![Line::default(); height.saturating_sub(lines.len()) / 2];
             for text in lines {
                 let text = text.trim_end().to_owned();
-                let indent = width.saturating_sub(Line::from(text.as_str()).width()) / 2;
+                let indent = width.saturating_sub(text.width()) / 2;
                 screen.push(Line::from(format!("{}{text}", " ".repeat(indent))));
             }
             return screen;
@@ -394,7 +395,7 @@ impl Ui {
     /// Go's setupList: the grouped rows, and the line the cursor's row is on.
     pub(super) fn setup_list(&self, width: usize) -> (Text, usize) {
         let rows = self.rows();
-        let widest = rows.iter().map(|row| Line::from(self.row(*row).label).width()).max();
+        let widest = rows.iter().map(|row| self.row(*row).label.width()).max();
         let label_width = widest.unwrap_or(0).min((width / 2).max(12));
         let (mut lines, mut selected) = (Vec::new(), 0);
         // The rows are ROWS in order, each group after a blank line and its heading.
@@ -590,10 +591,7 @@ impl Ui {
         let waited = words::clock(crate::net::AUTHORIZATION_TIMEOUT.saturating_sub(remaining));
         let expires = words::setting(Duration::from_secs((remaining.as_secs_f64() + 0.5) as u64));
         // The code in a box of its own, after its label.
-        let (label, rule) = (
-            "Match this code ",
-            "─".repeat(Line::from(auth.code.as_str()).width() + 2),
-        );
+        let (label, rule) = ("Match this code ", "─".repeat(auth.code.width() + 2));
         let edge = |corners: [&str; 2]| {
             let edge = span(format!("{}{rule}{}", corners[0], corners[1]), theme.border);
             Line::from(vec![Span::raw(" ".repeat(label.len())), edge])

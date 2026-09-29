@@ -3,6 +3,7 @@ use super::{Popup, Ui, setup::Setting};
 use crate::report::{pad, span};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthStr;
 
 /// A key.Binding: the key names it matches, and its help key and description.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -184,16 +185,8 @@ impl Ui {
         let height = columns.iter().map(|column| column.len()).max().unwrap_or(0);
         let mut lines = vec![Line::default(); height];
         for (index, column) in columns.iter().enumerate() {
-            let key_width = column
-                .iter()
-                .map(|binding| Line::from(binding.key).width())
-                .max()
-                .unwrap_or(0);
-            let desc_width = column
-                .iter()
-                .map(|binding| Line::from(binding.desc).width())
-                .max()
-                .unwrap_or(0);
+            let key_width = column.iter().map(|binding| binding.key.width()).max().unwrap_or(0);
+            let desc_width = column.iter().map(|binding| binding.desc.width()).max().unwrap_or(0);
             for (row, line) in lines.iter_mut().enumerate() {
                 if index > 0 {
                     line.spans.push(span("    ", self.theme.border));

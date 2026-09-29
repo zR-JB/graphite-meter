@@ -17,6 +17,7 @@ use ratatui::{
     text::{Line, Span},
 };
 use tokio::time::Instant;
+use unicode_width::UnicodeWidthStr;
 
 /// Go's historyPoints and traceStep.
 const HISTORY_POINTS: usize = 480;
@@ -391,7 +392,7 @@ fn chart(
         if room >= 3 {
             let label = plain(&fit(Line::from(compact_stage(*stage)), room as usize));
             labels.push(Span::raw(" ".repeat((x as usize).saturating_sub(written))));
-            written = x as usize + Line::from(label.as_str()).width();
+            written = x as usize + label.width();
             labels.push(span(label, theme.stage(*stage)));
         }
     }
@@ -446,13 +447,8 @@ impl Ui {
             title = format!("{title} · latency to {}", server_name(snapshot, id));
         }
         let mut bottom = panel(&title, results.clone(), width, 0, theme);
-        let results_width = results
-            .iter()
-            .map(Line::width)
-            .max()
-            .unwrap_or(0)
-            .max(Line::from(title.as_str()).width() + 2)
-            + 4;
+        let widest = results.iter().map(Line::width).max().unwrap_or(0);
+        let results_width = widest.max(title.width() + 2) + 4;
         if width >= TWO_COLUMN_MIN && width.saturating_sub(1 + results_width) >= 30 {
             let fields = self.test_fields(snapshot, run, width - 1 - results_width - 4);
             let height = results.len().max(fields.len()) + 2;
