@@ -15,18 +15,25 @@ pub(crate) enum FixtureMode {
     Negotiated,
 }
 
-pub(crate) async fn serve(mut stream: TcpStream, origin: String, mode: FixtureMode) -> Result<(), Error> {
+/// The path of the request `stream` carries, read without taking it; None once the stream closed.
+pub(crate) async fn request_path(stream: &TcpStream) -> Result<Option<String>, Error> {
     let mut request = [0_u8; 2048];
-    let path = loop {
+    loop {
         let size = stream.peek(&mut request).await?;
         if size == 0 {
-            return Ok(());
+            return Ok(None);
         }
-        if let Some(line_end) = request[..size].windows(2).position(|pair| pair == b"\r\n") {
-            let line = std::str::from_utf8(&request[..line_end])?;
-            break line.split_whitespace().nth(1).unwrap_or("").to_owned();
+        if let Some(end) = request[..size].windows(2).position(|pair| pair == b"\r\n") {
+            let line = std::str::from_utf8(&request[..end])?;
+            return Ok(Some(line.split_whitespace().nth(1).unwrap_or("").to_owned()));
         }
         tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+}
+
+pub(crate) async fn serve(mut stream: TcpStream, origin: String, mode: FixtureMode) -> Result<(), Error> {
+    let Some(path) = request_path(&stream).await? else {
+        return Ok(());
     };
     if path == "/ws/ping" {
         let mut socket = tokio_tungstenite::accept_async(stream).await?;
@@ -39,7 +46,7 @@ pub(crate) async fn serve(mut stream: TcpStream, origin: String, mode: FixtureMo
         }
         return Ok(());
     }
-    let _ = stream.read(&mut request).await?;
+    let _ = stream.read(&mut [0_u8; 2048]).await?;
     let body = match path.as_str() {
         "/servers" => serde_json::json!({
             "defaultSelection": ["self"],
@@ -98,6 +105,21 @@ pub(crate) async fn serve(mut stream: TcpStream, origin: String, mode: FixtureMo
     Ok(())
 }
 
+/// A download-only check of the catalogue at `url`.
+fn download(url: String) -> Config {
+    Config {
+        url,
+        stages: vec![Stage::Download],
+        loaded_latency: false,
+        ..Config::default()
+    }
+}
+
+/// A path check of `config` within the preparation timeout.
+async fn check(config: &Config, http: &Http, snapshots: &watch::Sender<Snapshot>) -> Result<Preparation, Error> {
+    prepare(config, http, snapshots, Instant::now() + PREPARATION_TIMEOUT).await
+}
+
 async fn fixture(mode: FixtureMode) -> Result<(String, tokio::task::JoinHandle<()>), Error> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let origin = format!("http://{}", listener.local_addr()?);
@@ -120,20 +142,8 @@ async fn serve_selected(
     barrier: Arc<Barrier>,
     no_throughput: bool,
 ) -> Result<(), Error> {
-    let mut request = [0_u8; 2048];
-    let path = loop {
-        let size = stream.peek(&mut request).await?;
-        if size == 0 {
-            return Ok(());
-        }
-        if let Some(end) = request[..size].windows(2).position(|pair| pair == b"\r\n") {
-            break std::str::from_utf8(&request[..end])?
-                .split_whitespace()
-                .nth(1)
-                .unwrap_or("")
-                .to_owned();
-        }
-        tokio::task::yield_now().await;
+    let Some(path) = request_path(&stream).await? else {
+        return Ok(());
     };
     if path == "/preflight" {
         barrier.wait().await;
@@ -142,7 +152,7 @@ async fn serve_selected(
         }
     }
     if path == "/servers" {
-        let _ = stream.read(&mut request).await?;
+        let _ = stream.read(&mut [0_u8; 2048]).await?;
         stream
             .write_all(
                 format!(
@@ -189,23 +199,9 @@ async fn selected_servers_verify_concurrently_and_report_each_result() -> Result
     };
     let first_server = serve_listener(first, first_origin.clone(), false);
     let second_server = serve_listener(second, second_origin, true);
-    let config = Config {
-        url: first_origin,
-        stages: vec![Stage::Download],
-        loaded_latency: false,
-        ..Config::default()
-    };
+    let config = download(first_origin);
     let (snapshots, _) = watch::channel(Snapshot::default());
-    let result = tokio::time::timeout(
-        Duration::from_secs(3),
-        prepare(
-            &config,
-            &Http::new(false)?,
-            &snapshots,
-            Instant::now() + PREPARATION_TIMEOUT,
-        ),
-    )
-    .await?;
+    let result = tokio::time::timeout(Duration::from_secs(3), check(&config, &Http::new(false)?, &snapshots)).await?;
     let Ok(Preparation { servers, failures }) = result else {
         return Err("one unusable server failed the whole selection".into());
     };
@@ -262,12 +258,7 @@ async fn a_slow_server_fails_alone_at_the_shared_deadline() -> Result<(), Error>
             }
         }
     });
-    let config = Config {
-        url: fast_origin,
-        stages: vec![Stage::Download],
-        loaded_latency: false,
-        ..Config::default()
-    };
+    let config = download(fast_origin);
     let (snapshots, _) = watch::channel(Snapshot::default());
     let deadline = Instant::now() + Duration::from_secs(1);
     let Preparation { servers, failures } = prepare(&config, &Http::new(false)?, &snapshots, deadline).await?;
@@ -310,15 +301,9 @@ async fn an_unreachable_server_shows_a_reason() -> Result<(), Error> {
             ));
         }
     });
-    let config = Config {
-        url: reachable_origin,
-        stages: vec![Stage::Download],
-        loaded_latency: false,
-        ..Config::default()
-    };
+    let config = download(reachable_origin);
     let (snapshots, _) = watch::channel(Snapshot::default());
-    let deadline = Instant::now() + PREPARATION_TIMEOUT;
-    let Preparation { failures, .. } = prepare(&config, &Http::new(false)?, &snapshots, deadline).await?;
+    let Preparation { failures, .. } = check(&config, &Http::new(false)?, &snapshots).await?;
     server.abort();
     assert_eq!(failures[0].id, "gone");
     let snapshot = snapshots.borrow();
@@ -343,7 +328,7 @@ async fn automatic_latency_uses_websocket_when_advertised_quic_cannot_reply() ->
         ..Config::default()
     };
     let (snapshots, _) = watch::channel(Snapshot::default());
-    let prepared = prepare(&config, &http, &snapshots, Instant::now() + PREPARATION_TIMEOUT).await?;
+    let prepared = check(&config, &http, &snapshots).await?;
     assert_eq!(
         prepared.servers[0].latency.as_ref().unwrap().transport,
         LatencyTransport::WebSocket
@@ -353,11 +338,7 @@ async fn automatic_latency_uses_websocket_when_advertised_quic_cannot_reply() ->
         latency_transport: Some(LatencyTransport::WebTransport),
         ..config
     };
-    assert!(
-        prepare(&forced, &http, &snapshots, Instant::now() + PREPARATION_TIMEOUT)
-            .await
-            .is_err()
-    );
+    assert!(check(&forced, &http, &snapshots).await.is_err());
     fixture.abort();
     Ok(())
 }
@@ -366,22 +347,12 @@ async fn automatic_latency_uses_websocket_when_advertised_quic_cannot_reply() ->
 async fn unreachable_webtransport_preserves_ambiguous_fetch_error() -> Result<(), Error> {
     let _ = crate::crypto::provider().install_default();
     let (origin, fixture) = fixture(FixtureMode::Throughput).await?;
-    let config = Config {
-        url: origin,
-        stages: vec![Stage::Download],
-        loaded_latency: false,
-        ..Config::default()
-    };
+    let config = download(origin);
     let (snapshots, _) = watch::channel(Snapshot::default());
-    let error = prepare(
-        &config,
-        &Http::new(false)?,
-        &snapshots,
-        Instant::now() + PREPARATION_TIMEOUT,
-    )
-    .await
-    .err()
-    .ok_or("unreachable WebTransport unexpectedly passed preparation")?;
+    let error = check(&config, &Http::new(false)?, &snapshots)
+        .await
+        .err()
+        .ok_or("unreachable WebTransport unexpectedly passed preparation")?;
     assert!(error.to_string().contains("select an origin explicitly"));
     assert!(error.to_string().contains("advertised WebTransport is unavailable"));
     fixture.abort();
@@ -413,20 +384,11 @@ async fn selecting_a_left_out_catalogue_entry_names_its_fault() -> Result<(), Er
         }
     });
     let config = Config {
-        url: origin,
         servers: vec!["broken".into()],
-        stages: vec![Stage::Download],
-        loaded_latency: false,
-        ..Config::default()
+        ..download(origin)
     };
     let (snapshots, _) = watch::channel(Snapshot::default());
-    let result = prepare(
-        &config,
-        &Http::new(false)?,
-        &snapshots,
-        Instant::now() + PREPARATION_TIMEOUT,
-    )
-    .await;
+    let result = check(&config, &Http::new(false)?, &snapshots).await;
     server.abort();
     let error = result.err().ok_or("a left-out entry was prepared")?;
     assert_eq!(
@@ -485,20 +447,11 @@ async fn negotiated_protocol_behind_a_reverse_proxy_is_the_clients_own() -> Resu
         }
     });
     let config = Config {
-        url: origin,
-        stages: vec![Stage::Download],
-        loaded_latency: false,
         insecure: true,
-        ..Config::default()
+        ..download(origin)
     };
     let (snapshots, _) = watch::channel(Snapshot::default());
-    let prepared = prepare(
-        &config,
-        &Http::new(true)?,
-        &snapshots,
-        Instant::now() + PREPARATION_TIMEOUT,
-    )
-    .await;
+    let prepared = check(&config, &Http::new(true)?, &snapshots).await;
     proxy.abort();
     assert_eq!(
         prepared?.servers[0]
@@ -515,20 +468,9 @@ async fn negotiated_protocol_behind_a_reverse_proxy_is_the_clients_own() -> Resu
 async fn negotiated_fetch_protocol_uses_verified_http_version() -> Result<(), Error> {
     let _ = crate::crypto::provider().install_default();
     let (origin, fixture) = fixture(FixtureMode::Negotiated).await?;
-    let config = Config {
-        url: origin,
-        stages: vec![Stage::Download],
-        loaded_latency: false,
-        ..Config::default()
-    };
+    let config = download(origin);
     let (snapshots, _) = watch::channel(Snapshot::default());
-    let prepared = prepare(
-        &config,
-        &Http::new(false)?,
-        &snapshots,
-        Instant::now() + PREPARATION_TIMEOUT,
-    )
-    .await?;
+    let prepared = check(&config, &Http::new(false)?, &snapshots).await?;
     assert_eq!(
         prepared.servers[0].throughput.as_ref().unwrap().protocol,
         Protocol::Http1

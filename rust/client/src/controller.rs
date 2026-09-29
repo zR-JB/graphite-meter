@@ -469,8 +469,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn a_run_replacing_a_path_check_starts_at_once() {
+    /// A controller whose path check runs until it is cancelled.
+    fn checking() -> Controller {
         let _ = crate::crypto::provider().install_default();
         let (snapshots, _) = watch::channel(Snapshot {
             phase: Phase::Checking,
@@ -483,6 +483,12 @@ mod tests {
             let _ = cancelled.wait_for(|cancelled| *cancelled).await;
             Ok(None)
         });
+        controller
+    }
+
+    #[tokio::test]
+    async fn a_run_replacing_a_path_check_starts_at_once() {
+        let mut controller = checking();
         controller.replace(Work::Run(Config::default())).unwrap();
         assert_eq!(controller.snapshots.borrow().phase, Phase::Preparing);
         // The check ending is the run's preparation, not a stopped run.
@@ -492,17 +498,7 @@ mod tests {
         assert_eq!(controller.operations.len(), 1, "the run launched");
         controller.stop().await;
 
-        let (snapshots, _) = watch::channel(Snapshot {
-            phase: Phase::Checking,
-            ..Snapshot::default()
-        });
-        let mut controller = Controller::new(&Config::default(), snapshots, true).unwrap();
-        let (cancel, mut cancelled) = watch::channel(false);
-        controller.cancel = Some(cancel);
-        controller.operations.spawn(async move {
-            let _ = cancelled.wait_for(|cancelled| *cancelled).await;
-            Ok(None)
-        });
+        let mut controller = checking();
         controller.replace(Work::Run(Config::default())).unwrap();
         controller.cancel();
         controller.wait().await.unwrap();
@@ -674,7 +670,7 @@ mod tests {
 
     #[tokio::test]
     async fn controller_reuses_fresh_paths_and_reprepares_changed_settings() -> Result<(), Error> {
-        use crate::runner::prepare_tests::{FixtureMode, serve};
+        use crate::runner::prepare_tests::{FixtureMode, request_path, serve};
         use std::sync::{
             Arc,
             atomic::{AtomicUsize, Ordering},
@@ -690,21 +686,8 @@ mod tests {
                 let origin = server_origin.clone();
                 let count = count.clone();
                 tokio::spawn(async move {
-                    let mut request = [0; 2048];
-                    loop {
-                        let Ok(size) = stream.peek(&mut request).await else {
-                            return;
-                        };
-                        if size == 0 {
-                            return;
-                        }
-                        if request[..size].contains(&b'\n') {
-                            if request[..size].starts_with(b"GET /servers ") {
-                                count.fetch_add(1, Ordering::SeqCst);
-                            }
-                            break;
-                        }
-                        tokio::task::yield_now().await;
+                    if request_path(&stream).await.ok().flatten().as_deref() == Some("/servers") {
+                        count.fetch_add(1, Ordering::SeqCst);
                     }
                     let _ = serve(stream, origin, FixtureMode::Negotiated).await;
                 });

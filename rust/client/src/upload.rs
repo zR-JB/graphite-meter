@@ -656,22 +656,23 @@ mod tests {
     /// A stage's operation limit, the lifetime a stage gives its lanes' requests.
     const OPERATION_LIMIT: Duration = Duration::from_secs(60);
     use crate::transport::TRANSFER_RETRY_BACKOFF;
+    use graphite_meter_core::discovery::Protocol;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
+
+    /// A client of `origin` over `protocol`, sharing none of its connections.
+    async fn transport(origin: &str, protocol: Protocol) -> Result<Transport, Error> {
+        Transport::connect(crate::net::Http::new(false)?, origin, protocol).await
+    }
 
     #[tokio::test]
     async fn http_lane_retries_dropped_streaming_request() -> Result<(), Error> {
         let _ = crate::crypto::provider().install_default();
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let origin = format!("http://{}", listener.local_addr()?);
-        let transport = Transport::connect(
-            crate::net::Http::new(false)?,
-            &origin,
-            graphite_meter_core::discovery::Protocol::Http1,
-        )
-        .await?;
+        let transport = transport(&origin, Protocol::Http1).await?;
         let active = Arc::new(AtomicBool::new(false));
         let lane = tokio::spawn(async move {
             send_lane(
@@ -755,8 +756,7 @@ mod tests {
         let slot = SessionSlot::dial(&http, format!("{origin}/wt/upload?id=test-session")).await?;
         // Nothing answers the HTTP feed the old refusal fell back to.
         let closed = format!("http://{}", TcpListener::bind("127.0.0.1:0").await?.local_addr()?);
-        let protocol = graphite_meter_core::discovery::Protocol::Http1;
-        let control = Transport::connect(http, &closed, protocol).await?;
+        let control = Transport::connect(http, &closed, Protocol::Http1).await?;
         let (state, _) = watch::channel(State::default());
         let fed = progress_feed(&control, "test-session", &state, Some(Arc::new(slot))).await;
         server.abort();
@@ -772,8 +772,7 @@ mod tests {
         let _ = crate::crypto::provider().install_default();
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let origin = format!("http://{}", listener.local_addr()?);
-        let protocol = graphite_meter_core::discovery::Protocol::Http1;
-        let transport = Transport::connect(crate::net::Http::new(false)?, &origin, protocol).await?;
+        let transport = transport(&origin, Protocol::Http1).await?;
         let block = Bytes::from(vec![42; 64 * 1024]);
         let active = Arc::new(AtomicBool::new(false));
         let retry = TransferRetry::new(Retrying::default(), 0);
@@ -834,14 +833,7 @@ mod tests {
                 return Ok::<_, Error>(refused);
             }
         });
-        let transport = Arc::new(
-            Transport::connect(
-                crate::net::Http::new(false)?,
-                &origin,
-                graphite_meter_core::discovery::Protocol::Http1,
-            )
-            .await?,
-        );
+        let transport = Arc::new(transport(&origin, Protocol::Http1).await?);
         let (state_sender, state) = watch::channel(State::default());
         let (stop_lanes, _) = watch::channel(false);
         let (stop_all, _) = watch::channel(false);
@@ -1075,12 +1067,7 @@ mod tests {
                 );
             }
         });
-        let transport = Transport::connect(
-            crate::net::Http::new(false)?,
-            &origin,
-            graphite_meter_core::discovery::Protocol::Http2,
-        )
-        .await?;
+        let transport = transport(&origin, Protocol::Http2).await?;
         Ok((Arc::new(transport), server))
     }
 
@@ -1107,12 +1094,7 @@ mod tests {
             stream.write_all(body.as_bytes()).await?;
             Ok::<_, Error>(())
         });
-        let transport = Transport::connect(
-            crate::net::Http::new(false)?,
-            &origin,
-            graphite_meter_core::discovery::Protocol::Http1,
-        )
-        .await?;
+        let transport = transport(&origin, Protocol::Http1).await?;
         let (state, observed) = watch::channel(State::default());
         progress_loop(&transport, "test-session", &state).await?;
         server.await??;
@@ -1143,12 +1125,7 @@ mod tests {
             }
             Ok::<_, Error>(())
         });
-        let transport = Transport::connect(
-            crate::net::Http::new(false)?,
-            &origin,
-            graphite_meter_core::discovery::Protocol::Http1,
-        )
-        .await?;
+        let transport = transport(&origin, Protocol::Http1).await?;
         let (state, _) = watch::channel(State::default());
         let lost = progress_loop(&transport, "test-session", &state).await;
         server.abort();

@@ -132,7 +132,7 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                                 }
                             }
                             let record = |kind: &str| format!("{{\"type\":\"{kind}\",\"bytes\":{},\"nanos\":1}}\n", progress.load(Ordering::SeqCst));
-                            while (matches!(flag.load(Ordering::SeqCst), 9 | 10) || !finalized.load(Ordering::SeqCst)) && stream.write_all(record("progress").as_bytes()).await.is_ok() {
+                            while !finalized.load(Ordering::SeqCst) && stream.write_all(record("progress").as_bytes()).await.is_ok() {
                                 tokio::time::sleep(Duration::from_millis(5)).await;
                             }
                             let _ = stream.write_all(record("complete").as_bytes()).await;
@@ -140,7 +140,6 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                         }
                         if request.starts_with(b"DELETE /upload/progress") {
                             finalized.store(true, Ordering::SeqCst);
-                            let _ = flag.compare_exchange(9, 10, Ordering::SeqCst, Ordering::SeqCst);
                             let _ = flag.compare_exchange(12, 13, Ordering::SeqCst, Ordering::SeqCst);
                             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n").await;
                             return;
@@ -210,9 +209,6 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                         }
                         let bytes = [0_u8; 65536];
                         while !matches!(flag.load(Ordering::SeqCst), 3 | 14) && stream.write_all(&bytes).await.is_ok() {
-                            if flag.load(Ordering::SeqCst) == 4 {
-                                std::future::pending::<()>().await;
-                            }
                             tokio::time::sleep(Duration::from_millis(5)).await;
                         }
                     });
@@ -245,18 +241,7 @@ async fn selected_peers_start_stage_together_and_keep_catalogue_order() -> Resul
         loaded_latency: false,
         ..Config::default()
     };
-    let (snapshots, observed) = watch::channel(Snapshot {
-        servers: servers
-            .iter()
-            .map(|server| ServerSummary {
-                id: server.entry.id.clone(),
-                name: server.entry.name.clone(),
-                origin: server.entry.url.clone(),
-                ..ServerSummary::default()
-            })
-            .collect(),
-        ..Snapshot::default()
-    });
+    let (snapshots, observed) = watch::channel(listing(&servers));
     let (_stop, cancelled) = watch::channel(false);
     let result = tokio::time::timeout(
         Duration::from_secs(3),
@@ -280,6 +265,20 @@ async fn selected_peers_start_stage_together_and_keep_catalogue_order() -> Resul
     near_task.abort();
     far_task.abort();
     Ok(())
+}
+
+/// A snapshot listing `servers` as the catalogue names them.
+fn listing(servers: &[PreparedServer]) -> Snapshot {
+    let summary = |server: &PreparedServer| ServerSummary {
+        id: server.entry.id.clone(),
+        name: server.entry.name.clone(),
+        origin: server.entry.url.clone(),
+        ..ServerSummary::default()
+    };
+    Snapshot {
+        servers: servers.iter().map(summary).collect(),
+        ..Snapshot::default()
+    }
 }
 
 async fn prepared_download(id: &str, origin: &str, http: &Http) -> Result<PreparedServer, Error> {
@@ -404,18 +403,7 @@ async fn first_stage_setup_failure_keeps_survivors_and_its_sign_in_cause() -> Re
         loaded_latency: false,
         ..Config::default()
     };
-    let (snapshots, observed) = watch::channel(Snapshot {
-        servers: servers
-            .iter()
-            .map(|server| ServerSummary {
-                id: server.entry.id.clone(),
-                name: server.entry.name.clone(),
-                origin: server.entry.url.clone(),
-                ..ServerSummary::default()
-            })
-            .collect(),
-        ..Snapshot::default()
-    });
+    let (snapshots, observed) = watch::channel(listing(&servers));
     let (_stop, cancelled) = watch::channel(false);
     near_failed.store(3, Ordering::SeqCst);
     let mut ledger = RunLedger::new();
@@ -703,16 +691,7 @@ async fn silent_direction_removes_its_server_but_a_silent_lane_does_not() -> Res
         loaded_latency: false,
         ..Config::default()
     };
-    let (snapshots, mut observed) = watch::channel(Snapshot {
-        servers: servers
-            .iter()
-            .map(|server| ServerSummary {
-                id: server.entry.id.clone(),
-                ..ServerSummary::default()
-            })
-            .collect(),
-        ..Snapshot::default()
-    });
+    let (snapshots, mut observed) = watch::channel(listing(&servers));
     let (_stop, cancelled) = watch::channel(false);
     let stall_upload = async {
         observed
@@ -1386,15 +1365,7 @@ async fn latency_stage_losses_drop_one_server_and_the_run_continues() -> Result<
         key: config.preparation_key(),
         verified_at: Instant::now(),
     };
-    let (snapshots, _) = watch::channel(Snapshot {
-        servers: ["near", "far"]
-            .map(|id| ServerSummary {
-                id: id.into(),
-                ..ServerSummary::default()
-            })
-            .into(),
-        ..Snapshot::default()
-    });
+    let (snapshots, _) = watch::channel(listing(&prepared.servers));
     let (_stop, cancelled) = watch::channel(false);
     let mut observed = snapshots.subscribe();
     let far_loses_later = async {

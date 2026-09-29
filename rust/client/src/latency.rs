@@ -628,6 +628,20 @@ mod tests {
         }
     }
 
+    type Peer = tokio_tungstenite::WebSocketStream<tokio::io::DuplexStream>;
+
+    /// A latency channel over an in-memory link, whose far end `peer` serves.
+    async fn linked<F>(peer: impl FnOnce(Peer) -> F + Send + 'static) -> (Bus, tokio::task::JoinHandle<()>)
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let (client, server) = tokio::io::duplex(4096);
+        let socket = Socket::from_raw_socket(Box::new(client), Role::Client, None).await;
+        let peer = tokio::spawn(async move { peer(Peer::from_raw_socket(server, Role::Server, None).await).await });
+        (Bus::WebSocket(Box::new(socket)), peer)
+    }
+
     async fn outcomes(bus: Bus, interval: u64, duration: u64) -> Result<(usize, usize), Error> {
         let (observations, mut receiver) = mpsc::channel(16);
         let (_stop, mut cancelled) = watch::channel(Stop::Running);
@@ -658,27 +672,8 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn replies_count_until_their_deadline_after_the_stage_boundary() -> Result<(), Error> {
         for (delay, expected) in [(150, (2, 0)), (300, (0, 2))] {
-            let (client, server) = tokio::io::duplex(4096);
-            let socket = Socket::from_raw_socket(
-                Box::new(client),
-                tokio_tungstenite::tungstenite::protocol::Role::Client,
-                None,
-            )
-            .await;
-            let peer = tokio::spawn(async move {
-                let server = tokio_tungstenite::WebSocketStream::from_raw_socket(
-                    server,
-                    tokio_tungstenite::tungstenite::protocol::Role::Server,
-                    None,
-                )
-                .await;
-                echo(server, Duration::from_millis(delay)).await;
-            });
-            assert_eq!(
-                outcomes(Bus::WebSocket(Box::new(socket)), 80, 100).await?,
-                expected,
-                "{delay} ms echo"
-            );
+            let (bus, peer) = linked(move |server| echo(server, Duration::from_millis(delay))).await;
+            assert_eq!(outcomes(bus, 80, 100).await?, expected, "{delay} ms echo");
             peer.abort();
         }
         Ok(())
@@ -686,23 +681,13 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn reply_driven_probes_follow_replies_until_the_queue_is_full() -> Result<(), Error> {
-        use tokio_tungstenite::tungstenite::protocol::Role;
-        let (client, server) = tokio::io::duplex(4096);
-        let socket = Socket::from_raw_socket(Box::new(client), Role::Client, None).await;
-        let peer = tokio::spawn(async move {
-            echo(
-                tokio_tungstenite::WebSocketStream::from_raw_socket(server, Role::Server, None).await,
-                Duration::ZERO,
-            )
-            .await;
-        });
+        let (bus, peer) = linked(|server| echo(server, Duration::ZERO)).await;
         let (observations, mut receiver) = mpsc::channel(64);
         let (_stop, mut cancel) = watch::channel(Stop::Running);
         // Off a millisecond boundary, where tokio's timer rounds a wait up.
         tokio::time::advance(Duration::from_micros(500)).await;
         let started = Instant::now();
         let end = started + Duration::from_millis(10);
-        let bus = Bus::WebSocket(Box::new(socket));
         measure(
             bus,
             Duration::ZERO,
@@ -725,23 +710,14 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_fixed_cadence_keeps_its_schedule_like_gos_ticker() -> Result<(), Error> {
-        use tokio_tungstenite::tungstenite::protocol::Role;
-        let (client, server) = tokio::io::duplex(4096);
-        let socket = Socket::from_raw_socket(Box::new(client), Role::Client, None).await;
-        let peer = tokio::spawn(async move {
-            echo(
-                tokio_tungstenite::WebSocketStream::from_raw_socket(server, Role::Server, None).await,
-                Duration::ZERO,
-            )
-            .await;
-        });
+        let (bus, peer) = linked(|server| echo(server, Duration::ZERO)).await;
         let (observations, mut receiver) = mpsc::channel(256);
         let (_stop, mut cancel) = watch::channel(Stop::Running);
         // Off a millisecond boundary, where tokio's timer rounds each wait up.
         tokio::time::advance(Duration::from_micros(500)).await;
         let started = Instant::now();
         measure(
-            Bus::WebSocket(Box::new(socket)),
+            bus,
             Duration::from_millis(80),
             16,
             started + Duration::from_secs(10),
@@ -762,13 +738,9 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn every_pong_sends_the_next_reply_driven_probe() -> Result<(), Error> {
-        use tokio_tungstenite::tungstenite::protocol::Role;
-        let (client, server) = tokio::io::duplex(4096);
-        let socket = Socket::from_raw_socket(Box::new(client), Role::Client, None).await;
         // Probe 0 is answered after 10 ms. Probe 1 is answered after 260 ms: 10 ms past its deadline,
         // before the expiry sweep at 300 ms. Later probes get no answer.
-        let peer = tokio::spawn(async move {
-            let mut socket = tokio_tungstenite::WebSocketStream::from_raw_socket(server, Role::Server, None).await;
+        let (bus, peer) = linked(|mut socket| async move {
             let mut due = None;
             loop {
                 tokio::select! {
@@ -787,12 +759,13 @@ mod tests {
                     }
                 }
             }
-        });
+        })
+        .await;
         let (observations, mut receiver) = mpsc::channel(64);
         let (_stop, mut cancel) = watch::channel(Stop::Running);
         let started = Instant::now();
         measure(
-            Bus::WebSocket(Box::new(socket)),
+            bus,
             Duration::ZERO,
             4,
             started + Duration::from_millis(400),
@@ -836,29 +809,14 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_stop_settles_pending_probes_without_waiting_for_their_deadlines() -> Result<(), Error> {
-        let (client, server) = tokio::io::duplex(4096);
-        let socket = Socket::from_raw_socket(
-            Box::new(client),
-            tokio_tungstenite::tungstenite::protocol::Role::Client,
-            None,
-        )
-        .await;
-        let peer = tokio::spawn(async move {
-            let mut socket = tokio_tungstenite::WebSocketStream::from_raw_socket(
-                server,
-                tokio_tungstenite::tungstenite::protocol::Role::Server,
-                None,
-            )
-            .await;
-            while let Some(Ok(_)) = socket.next().await {}
-        });
+        let (bus, peer) = linked(|mut socket| async move { while let Some(Ok(_)) = socket.next().await {} }).await;
         let (observations, mut receiver) = mpsc::channel(64);
         let (stop, mut cancel) = watch::channel(Stop::Running);
         let mut estimator = DeadlineEstimator::default();
         estimator.observe(9_000_000_000);
         let started = Instant::now();
         let session = measure(
-            Bus::WebSocket(Box::new(socket)),
+            bus,
             Duration::from_millis(100),
             16,
             started + Duration::from_secs(60),
