@@ -1,6 +1,6 @@
 //! Validated public discovery and connection evidence; no derived measurements.
 
-use crate::{origin::target_origin, wire::decode_json};
+use crate::{origin::target_origin, text::label, wire::decode_json};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
 use std::time::Duration;
@@ -41,9 +41,6 @@ pub(crate) fn null_default<'de, D: Deserializer<'de>, T: Deserialize<'de> + Defa
 ) -> Result<T, D::Error> {
     Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
-fn is_false(value: &bool) -> bool {
-    !value
-}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerInfo {
@@ -67,7 +64,11 @@ pub struct Preflight {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Capabilities {
-    #[serde(default, deserialize_with = "null_default", skip_serializing_if = "is_false")]
+    #[serde(
+        default,
+        deserialize_with = "null_default",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
     pub upload_checkpoint: bool,
     #[serde(default, deserialize_with = "null_default", skip_serializing_if = "is_zero")]
     pub max_stage_ms: i64,
@@ -191,10 +192,7 @@ impl Preflight {
     /// as Go's client dials them.
     pub fn decode_received(data: &[u8]) -> Result<Self, DiscoveryError> {
         let mut value: Self = decode_json(data).map_err(|_| DiscoveryError::InvalidJson)?;
-        let targets = &mut value.capabilities;
-        let throughput = targets.throughput.iter_mut().map(|target| &mut target.base_url);
-        let latency = targets.latency.iter_mut().map(|target| &mut target.base_url);
-        for base_url in throughput.chain(latency) {
+        for base_url in value.base_urls_mut() {
             if let Ok(origin) = crate::origin::ascii_origin(base_url) {
                 *base_url = origin;
             }
@@ -203,20 +201,13 @@ impl Preflight {
         Ok(value)
     }
     pub fn validate(&self) -> Result<(), DiscoveryError> {
-        if self.server.name.len() > 256
-            || self.server.location.len() > 256
-            || self.engine_version.len() > 256
-            || !self
-                .server
-                .name
-                .chars()
-                .chain(self.server.location.chars())
-                .chain(self.engine_version.chars())
-                .chain(self.generation.chars())
-                .all(crate::text::display_character)
-            || self.generation.is_empty()
-            || self.generation.len() > 256
-        {
+        let metadata = [
+            &self.server.name,
+            &self.server.location,
+            &self.engine_version,
+            &self.generation,
+        ];
+        if self.generation.is_empty() || !metadata.into_iter().all(|text| label(text)) {
             return Err(DiscoveryError::InvalidMetadata);
         }
         if self.capabilities.throughput.len() > 32 || self.capabilities.latency.len() > 32 {
@@ -236,12 +227,14 @@ impl Preflight {
         throughput.chain(self.capabilities.latency.iter().map(|target| &target.base_url))
     }
     pub fn resolve_self(&mut self, origin: &str) {
-        let targets = &mut self.capabilities;
-        let throughput = targets.throughput.iter_mut().map(|target| &mut target.base_url);
-        let latency = targets.latency.iter_mut().map(|target| &mut target.base_url);
-        for base_url in throughput.chain(latency).filter(|base_url| *base_url == ".") {
+        for base_url in self.base_urls_mut().filter(|base_url| *base_url == ".") {
             *base_url = origin.to_owned();
         }
+    }
+    fn base_urls_mut(&mut self) -> impl Iterator<Item = &mut String> {
+        let targets = &mut self.capabilities;
+        let throughput = targets.throughput.iter_mut().map(|target| &mut target.base_url);
+        throughput.chain(targets.latency.iter_mut().map(|target| &mut target.base_url))
     }
 }
 

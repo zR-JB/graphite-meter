@@ -3,6 +3,7 @@
 use crate::{
     discovery::{DiscoveryError, Preflight, null_default},
     origin::{browser_connect_source_supported, canonical_origin, catalog_origin, key, target_origin},
+    text::label,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
@@ -109,21 +110,9 @@ impl ServerCatalog {
     /// One entry, against the entries before it.
     fn validate_entry(&self, index: usize) -> Result<(), CatalogError> {
         let entry = &self.servers[index];
-        let valid_id = !entry.id.is_empty()
-            && entry.id.len() <= 64
-            && entry
-                .id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'));
-        if !valid_id
-            || entry.name.len() > 256
-            || entry.location.len() > 256
-            || !entry
-                .name
-                .chars()
-                .chain(entry.location.chars())
-                .all(crate::text::display_character)
-        {
+        let id_byte = |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-');
+        let valid_id = !entry.id.is_empty() && entry.id.len() <= 64 && entry.id.bytes().all(id_byte);
+        if !valid_id || !label(&entry.name) || !label(&entry.location) {
             return Err(CatalogError::InvalidIdentity);
         }
         let origin_key = key(&entry.url);
