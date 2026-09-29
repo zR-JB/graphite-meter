@@ -1,5 +1,19 @@
 import { expect, test } from "bun:test";
-import { stageGraph } from "./stageGraph";
+import { replies, stageGraph } from "./stageGraph";
+import { singleLatencyBucket } from "../runner/series";
+
+test("a stage's replies are its measured buckets; a bucket of timeouts has no point", () => {
+  const history = [
+    singleLatencyBucket(100, 12, false, "latency"),
+    singleLatencyBucket(300, 0, true, "latency"),
+    singleLatencyBucket(500, 40, false, "download"),
+    singleLatencyBucket(700, 14, false, "latency"),
+  ];
+  expect(replies(history, "latency")).toEqual([
+    { t: 100, ms: 12 },
+    { t: 700, ms: 14 },
+  ]);
+});
 
 const base = {
   latency: [],

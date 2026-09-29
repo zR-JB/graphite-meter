@@ -1,3 +1,4 @@
+import type { LatencyBucket, Phase } from "../runner/contract";
 import { monotoneCurve } from "./smoothPath";
 
 export interface GraphPoint {
@@ -8,6 +9,17 @@ export interface LatencyPoint {
   t: number;
   ms: number;
 }
+
+/** A stage's reply buckets as points; a bucket of timeouts has none. */
+export const replies = (
+  history: readonly LatencyBucket[],
+  phase: Phase,
+): LatencyPoint[] =>
+  history.flatMap((b) =>
+    b.phase === phase && b.medianRttMs !== null
+      ? [{ t: b.t, ms: b.medianRttMs }]
+      : [],
+  );
 
 export interface StageGraphInput {
   /** One lane per direction, `t` in ms on the run's timeline; bidirectional has two. */

@@ -99,8 +99,8 @@ export function throughputScales(
   };
 }
 
-/** The latency ceiling at or above a value; lanes use it directly for their slowest reply. */
-export const latencyCeiling = (ms: number) =>
+/** The latency ceiling at or above a value. */
+const latencyCeiling = (ms: number) =>
   Math.max(LATENCY_FLOOR_MS, ceilStep(ms, LATENCY_STEPS));
 
 /** The ladder tier above the p95 of reply medians, with headroom. */

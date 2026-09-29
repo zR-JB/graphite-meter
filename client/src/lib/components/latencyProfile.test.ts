@@ -33,9 +33,16 @@ function lane(over: Partial<LatencyLane> = {}): LatencyLane {
   };
 }
 
-test("lanes share the gauge's latency ladder from zero", () => {
+test("lanes take the gauge's ladder over their P90s, so one slow reply never sets the axis", () => {
   expect(profileDomain([lane(), lane({ min: 30, max: 60 })])).toBe(100);
-  expect(profileDomain([lane({ min: 0.05, max: 0.4 })])).toBe(1);
+  const lan = [
+    lane({ p90: 0.5, max: 3.5 }),
+    lane({ p90: 3, max: 45 }),
+    lane({ p90: 1.2, max: 6 }),
+  ];
+  expect(profileDomain(lan)).toBe(4);
+  expect(profileDomain([lane({ p90: null, center: 30 })])).toBe(40);
+  expect(profileDomain([lane({ p90: 0.2, max: 0.4 })])).toBe(1);
 });
 
 test("timeouts read as a share of resolved probes, and the tip counts them", () => {

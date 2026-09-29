@@ -3,6 +3,8 @@
   import type { ResultArcPhase } from "./resultGauge";
   export interface GaugeDialState extends SweepTargetInput {
     showValue: boolean;
+    /** The latest idle reply's time while the latency stage runs; the head beats on each new one. */
+    reply?: number | null;
   }
   interface ResultArc {
     phase: ResultArcPhase;
@@ -98,6 +100,17 @@
         revealed = true;
         course = current;
       });
+  });
+  // One pulse at a time, each started by a reply: a steady link beats, a stalled one holds still.
+  let beat = $state<number | null>(null);
+  let beating = false;
+  $effect(() => {
+    const reply = input.reply;
+    untrack(() => {
+      if (reply == null || reply === beat || beating || !motion) return;
+      beat = reply;
+      beating = true;
+    });
   });
   const capUnderHead = $derived(
     (sweep.current * Math.PI * layout.radius) / 180 <
@@ -323,12 +336,16 @@
         viewBox={`${-headExtent} ${-headExtent} ${headExtent * 2} ${headExtent * 2}`}
       >
         <circle class="sweep-end-cap" r={layout.arcWidth / 2} fill={accent} />
-        <circle
-          r={headRadius + 0.75}
-          fill={accent}
-          stroke="var(--surface-inset)"
-          stroke-width="1.5"
-        />
+        {#key beat}
+          <circle
+            class:beat={beat !== null}
+            r={headRadius + 0.75}
+            fill={accent}
+            stroke="var(--surface-inset)"
+            stroke-width="1.5"
+            onanimationend={() => (beating = false)}
+          />
+        {/key}
       </svg>
     </div>
   </div>
@@ -412,5 +429,16 @@
   .live-head svg {
     position: absolute;
     max-width: none;
+  }
+  /* A reply's beat: the head swells and settles over one live pulse. */
+  .beat {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: beat var(--dur-pulse) var(--ease-out);
+  }
+  @keyframes beat {
+    from {
+      scale: 1.2;
+    }
   }
 </style>
