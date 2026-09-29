@@ -71,7 +71,8 @@ use tokio::{
 
 const MAX_HEADER_BYTES: usize = 32 * 1024;
 const DEFAULT_DOWNLOAD_BYTES: u64 = 25 * 1024 * 1024;
-/// As Go's `http.Server`, a failed accept retries after a delay that doubles from the first bound to the last.
+/// As Go's `http.Server`, a failed accept is logged and retried after a delay that doubles from the first bound to
+/// the last.
 const ACCEPT_RETRY_FIRST: Duration = Duration::from_millis(5);
 const ACCEPT_RETRY_LAST: Duration = Duration::from_secs(1);
 /// Go's TCP_NOTSENT_LOWAT for HTTP/2, which keeps unsent downloads in the scheduler where control replies interleave.
@@ -247,6 +248,7 @@ impl HttpServer {
         let mut accept_delay = Duration::ZERO;
         let mut accept_at = tokio::time::Instant::now();
         let mut accepts = 0_usize;
+        let local = listener.local_addr()?;
         let result = loop {
             tokio::select! {
                 _ = &mut shutdown => break Ok(()),
@@ -259,8 +261,14 @@ impl HttpServer {
                 } => {
                     let (socket, peer) = match accepted {
                         Ok(accepted) => accepted,
-                        Err(_) => {
+                        // Only a socket that no longer listens ends the service. Go's also ends at a failure that
+                        // passes, such as a lack of buffers or a pending connection's network error.
+                        Err(error) if error.kind() == io::ErrorKind::InvalidInput => {
+                            break Err(format!("{}: accept tcp {local}: {error}", spec.role).into());
+                        }
+                        Err(error) => {
                             accept_delay = (accept_delay * 2).clamp(ACCEPT_RETRY_FIRST, ACCEPT_RETRY_LAST);
+                            crate::log!("http: Accept error: accept tcp {local}: {error}; retrying in {accept_delay:?}");
                             accept_at = tokio::time::Instant::now() + accept_delay;
                             continue;
                         }
@@ -1435,6 +1443,25 @@ mod tests {
         assert_eq!(server.admission.load().0, 1);
         drop(io);
         assert_eq!(server.admission.load().0, 0);
+    }
+
+    /// As Go's `Serve` returns, a socket that stops listening ends its listener's service.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_socket_that_stops_listening_ends_its_service() {
+        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        // Linux closes a listening socket that is shut down, and accept then fails with EINVAL.
+        socket2::SockRef::from(&listener)
+            .shutdown(std::net::Shutdown::Read)
+            .unwrap();
+        let serving = server.serve(NativeKind::H1, listener, None, std::future::pending());
+        let error = tokio::time::timeout(Duration::from_secs(5), serving)
+            .await
+            .expect("an accept that keeps failing retried")
+            .unwrap_err();
+        let role = "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets: accept tcp 127.0.0.1:";
+        assert!(error.to_string().starts_with(role), "{error}");
     }
 
     /// As Go's Shutdown closes its listeners, a connection during the drain is refused, not accepted to go unserved.

@@ -100,6 +100,48 @@ fn log_lines_match_go_and_peer_failures_are_limited() {
     assert!(!rest.iter().any(|line| line.contains("[gm:discovery]")), "{rest:?}");
 }
 
+/// As Go's `http.Server`, an accept that fails for want of descriptors is logged, then retried after a delay.
+#[cfg(unix)]
+#[test]
+fn failed_accepts_are_logged_and_retried() {
+    let mut command = Command::new("/bin/sh");
+    command.args([
+        "-c",
+        "ulimit -n 64 && exec \"$0\"",
+        env!("CARGO_BIN_EXE_graphite-meter-server"),
+    ]);
+    command
+        .env_clear()
+        .env("GM_H1_ADDR", "127.0.0.1:0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null());
+    let mut server = Server(command.stderr(Stdio::piped()).spawn().unwrap());
+    let (lines, received) = mpsc::channel();
+    let stderr = BufReader::new(server.0.stderr.take().unwrap());
+    std::thread::spawn(move || {
+        stderr
+            .lines()
+            .map_while(Result::ok)
+            .try_for_each(|line| lines.send(line))
+    });
+    let mut lines = std::iter::from_fn(|| received.recv_timeout(Duration::from_secs(10)).ok());
+    let listening = lines
+        .find(|line| line.contains(" listening on "))
+        .expect("a listener line");
+    let (_, address) = listening.split_once(" listening on ").unwrap();
+    let address = &address[..address.find("/tcp").unwrap()];
+    let _held: Vec<_> = (0..64).map_while(|_| TcpStream::connect(address).ok()).collect();
+    let failure = lines
+        .find(|line| line.contains("Accept error"))
+        .expect("an accept error line");
+    let expected = format!("http: Accept error: accept tcp {address}: ");
+    let failure = timestamped(&failure).unwrap();
+    assert!(
+        failure.starts_with(&expected) && failure.ends_with("; retrying in 5ms"),
+        "{failure}"
+    );
+}
+
 /// A close reason that would add a whole forged log line and clear the operator's terminal.
 const FORGED: &[u8] = b"\n2026/01/01 00:00:00 [gm:auth] forged line\x1b[2J";
 
