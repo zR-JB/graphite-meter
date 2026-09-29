@@ -17,12 +17,6 @@ pub struct Stats {
     pub rejected_client: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Refusal {
-    GlobalFull,
-    ClientFull,
-}
-
 #[derive(Default)]
 struct Counts {
     stats: Stats,
@@ -73,21 +67,21 @@ impl Connections {
         lock(&self.0.counts).quic.holds_any(&keys)
     }
 
-    /// A QUIC connection also takes Go's per-client QUIC share.
-    pub fn acquire(&self, peer: SocketAddr, quic: bool) -> Result<Permit, Refusal> {
+    /// A QUIC connection also takes Go's per-client QUIC share. The stats count which limit refused one.
+    pub fn acquire(&self, peer: SocketAddr, quic: bool) -> Option<Permit> {
         let keys = self.keys(peer);
         let mut counts = lock(&self.0.counts);
         if counts.clients.full(&keys, self.0.client_max) {
             counts.stats.rejected_client = counts.stats.rejected_client.saturating_add(1);
-            return Err(Refusal::ClientFull);
+            return None;
         }
         if counts.stats.active >= self.0.global_max {
             counts.stats.rejected_global = counts.stats.rejected_global.saturating_add(1);
-            return Err(Refusal::GlobalFull);
+            return None;
         }
         // Checked last and left out of the counters, like Go's QUIC share.
         if quic && counts.quic.full(&keys, self.0.client_max.min(QUIC_PER_CLIENT)) {
-            return Err(Refusal::ClientFull);
+            return None;
         }
         counts.stats.active += 1;
         counts.stats.peak = counts.stats.peak.max(counts.stats.active);
@@ -95,7 +89,7 @@ impl Connections {
         if quic {
             counts.quic.hold(&keys);
         }
-        Ok(Permit {
+        Some(Permit {
             owner: self.clone(),
             keys,
             quic,
@@ -125,7 +119,7 @@ mod tests {
         let connections = super::Connections::new(64, 64, vec![]);
         let peer = "192.0.2.1:1".parse().unwrap();
         let quic: Vec<_> = (0..8).map(|_| connections.acquire(peer, true).unwrap()).collect();
-        assert_eq!(connections.acquire(peer, true).err(), Some(super::Refusal::ClientFull));
+        assert!(connections.acquire(peer, true).is_none());
         // Like Go, TCP connections from the same address count only toward the client's total.
         let tcp: Vec<_> = (0..16).map(|_| connections.acquire(peer, false).unwrap()).collect();
         assert_eq!(connections.stats().active, quic.len() + tcp.len());

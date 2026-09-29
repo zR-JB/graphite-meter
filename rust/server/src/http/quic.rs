@@ -225,7 +225,7 @@ impl HttpServer {
                         let _ = incoming.retry();
                         continue;
                     }
-                    let Ok(permit) = self.connections.acquire(peer, true) else {
+                    let Some(permit) = self.connections.acquire(peer, true) else {
                         incoming.refuse();
                         continue;
                     };
