@@ -3,6 +3,7 @@
 
 use crate::model::Stage;
 use ratatui::style::{Color, Modifier, Style};
+#[cfg(unix)]
 use std::time::Duration;
 
 /// colorprofile's profiles, in its order.
@@ -56,13 +57,13 @@ const STAGES: [Tone; 4] = [
     [(0x7f2456, 89, Color::Red), (0xe472ac, 169, Color::LightRed)],
 ];
 
-/// Go's TUI asks for the background with OSC 11. DA1 follows, as in lipgloss's query: every
-/// terminal answers it, and in order, so its reply ends the wait.
+/// Go asks for the background with OSC 11. DA1 follows, as in lipgloss's query: every terminal
+/// answers it, and in order, so its reply ends a report's wait.
 #[cfg(unix)]
-const QUERY: &[u8] = b"\x1b]11;?\x1b\\\x1b[c";
+pub(crate) const QUERY: &[u8] = b"\x1b]11;?\x1b\\\x1b[c";
 
-/// The terminal's answer to the TUI's query, so the report printed after it uses the same palette.
-static DARK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+/// The terminal's answer to the query, so the report printed after the TUI uses the same palette.
+pub(crate) static DARK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
 impl Theme {
     /// Go's newStyles in `profile`.
@@ -123,15 +124,12 @@ impl Theme {
         Self::new(detect(tty), DARK.get().copied().unwrap_or(true))
     }
 
-    /// Asks the terminal for its background, then gives the TUI's styles. Call it in raw mode only.
-    pub async fn ask(limit: Duration) -> Self {
-        #[cfg(unix)]
-        if let Some(dark) = query(limit).await {
+    /// Asks the terminal on stdin for its background, which later styles follow. Call it in raw mode only.
+    #[cfg(unix)]
+    pub async fn ask(limit: Duration) {
+        if let Some(dark) = answer(std::io::stdin(), &mut std::io::stdout(), limit).await {
             let _ = DARK.set(dark);
         }
-        #[cfg(not(unix))]
-        let _ = limit; // Windows consoles would deliver the answer as key events.
-        Self::terminal()
     }
 
     pub fn stage(&self, stage: Stage) -> Style {
@@ -213,21 +211,16 @@ fn environment(term: &str) -> Profile {
     }
 }
 
-/// Sends QUERY where the keys are read (stdin, or the terminal device when it is redirected) and
-/// reads until DA1's reply or the limit: Some(dark) once OSC 11 answered.
-#[cfg(unix)]
-async fn query(limit: Duration) -> Option<bool> {
-    use std::io::IsTerminal;
-    if std::io::stdin().is_terminal() {
-        answer(std::io::stdin(), &mut std::io::stdout(), limit).await
-    } else {
-        let terminal = std::fs::File::open("/dev/tty").ok()?;
-        answer(&terminal, &mut std::io::stdout(), limit).await
-    }
+/// Takes the body of the TUI's OSC 11 answer (`11;rgb:…`), which its keys carried: whether it named
+/// the background.
+pub(crate) fn answered(body: &str) -> bool {
+    body.strip_prefix("11;")
+        .is_some_and(|color| DARK.set(!bright(color.as_bytes())).is_ok())
 }
 
-/// A duplicate descriptor reads the terminal without std's stdin buffer; it blocks, but each
-/// read follows readiness, so it returns at once.
+/// Sends QUERY and reads until DA1's reply or the limit: Some(dark) once OSC 11 answered. A
+/// duplicate descriptor reads the terminal without std's stdin buffer; it blocks, but each read
+/// follows readiness, so it returns at once.
 #[cfg(unix)]
 async fn answer(input: impl std::os::fd::AsFd, output: &mut impl std::io::Write, limit: Duration) -> Option<bool> {
     use std::io::Read;
@@ -290,7 +283,6 @@ fn scan(answers: &[u8]) -> (Option<bool>, bool) {
 }
 
 /// Go's IsDark: HSL lightness under one half is dark, and so is an unreadable color.
-#[cfg(unix)]
 fn bright(color: &[u8]) -> bool {
     let rgb = std::str::from_utf8(color).ok().and_then(rgb);
     rgb.is_some_and(|[red, green, blue]| {
@@ -300,7 +292,6 @@ fn bright(color: &[u8]) -> bool {
 
 /// Go's ansi.XParseColor for the forms terminals answer with: a 16-bit component keeps its
 /// high byte and a malformed one reads as zero.
-#[cfg(unix)]
 fn rgb(color: &str) -> Option<[u8; 3]> {
     let hex = |digits: &str| !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_hexdigit());
     if let Some(digits) = color.strip_prefix('#') {

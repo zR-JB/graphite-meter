@@ -151,6 +151,7 @@ pub fn print(snapshot: &Snapshot, width: usize) -> Option<String> {
 
 /// Asks the terminal for its background, as Go's runHeadless does before a report. Call it in raw mode.
 pub async fn ask_background() {
+    #[cfg(unix)]
     Theme::ask(Duration::from_secs(2)).await;
 }
 

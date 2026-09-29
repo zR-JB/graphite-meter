@@ -54,8 +54,6 @@ const MAX_TEXT: usize = 4096;
 const RECHECK_DELAY: Duration = Duration::from_millis(350);
 /// Go's PreparationFreshness: checked paths serve a run this long.
 const FRESHNESS: Duration = Duration::from_secs(30);
-/// Go's TUI takes the answer to its background query whenever it comes; this one waits this long.
-const ANSWER_LIMIT: Duration = Duration::from_secs(1);
 /// The controller's words for an approval that expired, which Go reads as a sign-in to repeat.
 const SIGN_IN_EXPIRED: &str = "Sign-in expired. Press v to request a new code.";
 
@@ -156,14 +154,13 @@ pub async fn run(
     }
     let _restore = Restore;
     let mut terminal = ratatui::try_init()?;
-    execute!(io::stdout(), EnableBracketedPaste)?;
-    // Raw mode keeps the answer off the screen, and it is read before crossterm reads keys;
-    // the clear wipes whatever a terminal that ignores the query printed.
-    let theme = Theme::ask(ANSWER_LIMIT).await;
-    execute!(io::stdout(), Clear(ClearType::All))?;
+    // As Go's, the first frame does not wait for the background query: its answer arrives among the
+    // keys whenever it comes. The clear wipes whatever a terminal that ignores the query printed.
+    #[cfg(unix)]
+    io::stdout().write_all(crate::theme::QUERY)?;
+    execute!(io::stdout(), EnableBracketedPaste, Clear(ClearType::All))?;
     let mut chrome = Chrome::default();
     let mut ui = Ui::new(config, snapshots.borrow_and_update().clone());
-    ui.theme = theme;
     let mut events = EventStream::new();
     let mut refresh = tokio::time::interval(Duration::from_millis(33));
     refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -268,8 +265,8 @@ struct Ui {
     opened: bool,
     /// The sign-in was canceled or expired: Go's prepareSignIn without a code.
     signed_out: bool,
-    /// A late answer to the background query is arriving as keys.
-    answer: bool,
+    /// The answer to the background query, while it arrives as keys.
+    answer: Option<String>,
 }
 
 impl Ui {
@@ -541,16 +538,23 @@ impl Ui {
         }
     }
 
-    /// A late answer to the background query reaches crossterm as Alt+] and its characters; they
-    /// are swallowed up to its BEL or ST, as Bubble Tea's parser takes the answer whenever it comes.
+    /// The background query's answer reaches crossterm as Alt+] and its characters; they are gathered
+    /// up to its BEL or ST, which sets the palette, as Bubble Tea's parser takes the answer whenever it comes.
     fn answer(&mut self, key: KeyEvent, name: &str) -> bool {
-        if self.answer {
-            let plain = matches!(key.code, KeyCode::Char(_)) && !key.modifiers.contains(KeyModifiers::CONTROL);
-            self.answer = plain && name != "alt+\\";
-            return plain || name == "ctrl+g";
+        let Some(answer) = &mut self.answer else {
+            self.answer = (name == "alt+]").then(String::new);
+            return self.answer.is_some();
+        };
+        let plain = matches!(key.code, KeyCode::Char(_)) && !key.modifiers.contains(KeyModifiers::CONTROL);
+        if plain && name != "alt+\\" {
+            answer.extend(key.code.as_char());
+            return true;
         }
-        self.answer = name == "alt+]";
-        self.answer
+        if (plain || name == "ctrl+g") && crate::theme::answered(answer) {
+            self.theme = Theme::terminal();
+        }
+        self.answer = None;
+        plain || name == "ctrl+g"
     }
 
     /// Go's handleKey; true quits.

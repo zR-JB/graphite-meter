@@ -707,6 +707,7 @@ fn a_late_background_answer_never_becomes_keys() {
     let answer: Vec<_> = std::iter::once("alt+]").chain(answer).chain(["alt+\\"]).collect();
     assert!(!press(&mut ui, &commands, &answer));
     assert!(sent.try_recv().is_err() && !ui.live && ui.popup == Popup::None && !ui.help); // the answer runs no keys
+    assert_eq!(crate::theme::DARK.get(), Some(&false)); // the light answer sets the palette
     press(&mut ui, &commands, &["alt+]", "1", "1", "ctrl+g", "r"]);
     assert!(matches!(sent.try_recv(), Ok(Command::Run(_)))); // keys after the answer work
 }
