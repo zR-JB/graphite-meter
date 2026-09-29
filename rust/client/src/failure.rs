@@ -192,7 +192,14 @@ pub fn text(error: &(dyn std::error::Error + 'static)) -> String {
         if let Some(proxy) = cause.downcast_ref::<graphite_meter_net::UnusableProxy>() {
             return clean(&proxy.to_string(), 320);
         }
-        if let Some(rustls::Error::InvalidCertificate(certificate)) = cause.downcast_ref() {
+        // A QUIC handshake keeps its TLS error, beside the alert it sent (0x12a–0x131 for a certificate),
+        // where no source reaches it.
+        let quic = match cause.downcast_ref() {
+            Some(quinn::ConnectionError::TransportError(quic)) => quic.crypto.as_deref(),
+            _ => None,
+        };
+        let tls = quic.map_or(cause.downcast_ref(), |tls| tls.downcast_ref());
+        if let Some(rustls::Error::InvalidCertificate(certificate)) = tls {
             use rustls::CertificateError::{Expired, ExpiredContext, NotValidYet, NotValidYetContext, UnknownIssuer};
             let detail = match certificate {
                 UnknownIssuer => "certificate signed by unknown authority".into(),

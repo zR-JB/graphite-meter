@@ -347,7 +347,10 @@ mod tests {
             let _ = h3.next().await;
             Ok::<_, Error>(())
         });
-        assert!(Http3Client::connect(&uri, false, Duration::from_secs(5)).await.is_err());
+        // Go's wording for a certificate the QUIC handshake refused.
+        let refused = Http3Client::connect(&uri, false, Duration::from_secs(5)).await;
+        let text = crate::failure::text(refused.map(drop).unwrap_err().as_ref());
+        assert!(text.starts_with("Certificate not trusted: "), "{text}");
         let client = Arc::new(Http3Client::connect(&uri, true, Duration::from_secs(5)).await?);
         for max_receive_bytes in [100, 3] {
             let request = Request::post(uri.clone()).body(())?;
