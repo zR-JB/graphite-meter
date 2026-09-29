@@ -1480,7 +1480,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn four_workers_run_four_shards_that_follow_rebound_clients() {
+    async fn four_workers_run_two_shards_that_follow_rebound_clients() {
         use super::*;
         let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
         let (tls, client_config) = tls();
@@ -1489,7 +1489,7 @@ mod tests {
         let crate::runtime::Quic::Shards { shards, router } = &bound else {
             panic!("four runtime workers served HTTP/3 from one endpoint");
         };
-        assert_eq!(shards.len(), 4);
+        assert_eq!(shards.len(), 2);
         let router = router.clone();
         let (stop, stopped) = tokio::sync::watch::channel(false);
         let serving = tokio::spawn(futures_util::future::try_join_all(bound.serve(&server, &stopped)));
@@ -1510,7 +1510,7 @@ mod tests {
             let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
             let (quic, requests) = h3_client(&client, client_config, address).await;
             assert_eq!(download(&requests, 13).await.unwrap(), 13);
-            // A new port lands on another shard three times in four, whose socket must forward to the connection's.
+            // A new port lands on the other shard one time in two, whose socket must forward to the connection's.
             let mut crossed = 0;
             for rebind in 1.. {
                 let forwarded = router.forwarded();

@@ -156,7 +156,7 @@ async fn cancelled(mut stopped: watch::Receiver<bool>) {
     let _ = stopped.wait_for(|value| *value).await;
 }
 
-/// HTTP/3 on the caller's runtime, or on one shard per runtime worker.
+/// HTTP/3 on the caller's runtime, or on shards for half of its workers.
 pub(crate) enum Quic {
     Endpoint(QuicEndpoint),
     /// Each shard serves its endpoint from a current-thread runtime on a thread of its own.
@@ -169,33 +169,32 @@ pub(crate) enum Quic {
 }
 
 impl Quic {
-    /// One shard per worker of the caller's runtime, as many as the buffer budget covers. Only Linux spreads
-    /// unicast datagrams over `SO_REUSEPORT` sockets, so other targets keep one endpoint on this runtime.
+    /// Shards for half the workers of a multi-thread runtime, at least two, as many as the buffer budget covers.
+    /// With four workers, two shards cost less CPU per byte than one or four for both one fast client and eight
+    /// paced ones: each more shard splits a connection's ACKs over more sockets and so its sends into smaller
+    /// bursts. Only Linux spreads unicast datagrams over `SO_REUSEPORT` sockets, so other targets keep one
+    /// endpoint on this runtime.
     pub(crate) fn bind(
         server: &HttpServer,
         tls: Arc<rustls::ServerConfig>,
         address: SocketAddr,
     ) -> Result<Self, ServerError> {
         let workers = if cfg!(target_os = "linux") {
-            tokio::runtime::Handle::current()
-                .metrics()
-                .num_workers()
-                .min(quic_shard::MAX_SHARDS)
+            tokio::runtime::Handle::current().metrics().num_workers()
         } else {
             1
         };
+        let wanted = (workers / 2).clamp(2, quic_shard::MAX_SHARDS);
         let fewer = |shards: usize| {
-            crate::log!(
-                "[gm:memory] the buffer budget covers QUIC endpoints for {shards} of {workers} runtime workers"
-            );
+            crate::log!("[gm:memory] the buffer budget covers {shards} of {wanted} QUIC endpoints");
         };
         if workers > 1 {
-            let runtimes = (0..workers)
+            let runtimes = (0..wanted)
                 .map(|_| ShardRuntime::new())
                 .collect::<std::io::Result<Vec<_>>>()?;
             let handles: Vec<_> = runtimes.iter().map(ShardRuntime::handle).collect();
             if let Some((endpoints, _router)) = server.quic_shards(tls.clone(), address, &handles)? {
-                if endpoints.len() < workers {
+                if endpoints.len() < wanted {
                     fewer(endpoints.len());
                 }
                 return Ok(Self::Shards {
