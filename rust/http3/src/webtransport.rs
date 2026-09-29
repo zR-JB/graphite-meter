@@ -15,10 +15,10 @@ use crate::{
 use bytes::Bytes;
 use std::{
     collections::VecDeque,
-    future::{Future, poll_fn},
+    future::Future,
     pin::pin,
     sync::Arc,
-    task::{Context, Poll, ready},
+    task::{Context, Poll},
     time::Duration,
 };
 use tokio::{
@@ -160,8 +160,21 @@ impl Registry {
 /// A session's end, which its streams watch: the drafts end them with it, and send nothing more.
 type Ended = watch::Receiver<Option<Result<(u32, String), Error>>>;
 
+/// `work`'s outcome, refused once the session ended, even while `work` waits: webtransport-go's
+/// closeWithSession wakes a blocked read or write so. Work that is ready at once watches nothing,
+/// so a busy stream never waits on the session.
+async fn unless_ended<T>(session: Option<&mut Ended>, work: impl Future<Output = T>) -> Result<T, Error> {
+    let gone = session.as_deref().is_some_and(|session| session.borrow().is_some());
+    tokio::select! {
+        biased;
+        done = work, if !gone => Ok(done),
+        Some(()) = async { session?.wait_for(Option::is_some).await.ok().map(drop) } => Err(Error::Refused),
+    }
+}
+
 /// A peer's stream in a session: noq's chunks as they arrived. Dropping it unread cancels the lane;
-/// once its session ended, reads are refused and it is stopped with WT_SESSION_GONE.
+/// once its session ended, reads are refused, a waiting one too, and it is stopped with
+/// WT_SESSION_GONE.
 pub struct RecvStream {
     stream: noq::RecvStream,
     /// Bytes that followed the stream header in its first chunk.
@@ -183,21 +196,21 @@ impl RecvStream {
         }
     }
 
-    fn poll_chunk(&mut self, cx: &mut Context<'_>) -> Poll<Result<Option<Bytes>, Error>> {
-        if self.session.as_ref().is_some_and(|session| session.borrow().is_some()) {
-            self.stop(Code::WT_SESSION_GONE);
-            return Poll::Ready(Err(Error::Refused));
-        }
-        if !self.first.is_empty() {
-            return Poll::Ready(Ok(Some(std::mem::take(&mut self.first))));
-        }
-        let chunk = ready!(pin!(self.stream.read_chunk(usize::MAX)).poll(cx));
-        self.done |= !matches!(chunk, Ok(Some(_)));
-        Poll::Ready(chunk.map_err(Error::from))
-    }
-
+    /// The next chunk, `None` at the stream's end.
     pub async fn read_chunk(&mut self) -> Result<Option<Bytes>, Error> {
-        poll_fn(|cx| self.poll_chunk(cx)).await
+        let (first, stream) = (&mut self.first, &mut self.stream);
+        let read = async {
+            match std::mem::take(first) {
+                first if first.is_empty() => stream.read_chunk(usize::MAX).await,
+                first => Ok(Some(first)),
+            }
+        };
+        let Ok(chunk) = unless_ended(self.session.as_mut(), read).await else {
+            self.stop(Code::WT_SESSION_GONE);
+            return Err(Error::Refused);
+        };
+        self.done |= !matches!(chunk, Ok(Some(_)));
+        Ok(chunk?)
     }
 
     /// Stops the stream with `code`, or once its session ended with WT_SESSION_GONE.
@@ -218,7 +231,7 @@ impl Drop for RecvStream {
 
 /// A stream this side opened in a session. Dropping it resets after its association header, which
 /// peers that support RESET_STREAM_AT still receive; it is never finished by accident. Once its
-/// session ended, writes are refused and the reset carries WT_SESSION_GONE.
+/// session ended, writes are refused, a waiting one too, and the reset carries WT_SESSION_GONE.
 pub struct SendStream {
     stream: Option<noq::SendStream>,
     header: [u8; 16],
@@ -253,16 +266,17 @@ impl SendStream {
         Ok(opened)
     }
 
-    /// The stream, refused once the session ended.
-    fn stream(&mut self) -> Result<&mut noq::SendStream, Error> {
+    /// The stream and its session's end, refused once the session ended.
+    fn stream(&mut self) -> Result<(&mut noq::SendStream, &mut Ended), Error> {
         if self.session.borrow().is_some() {
             return Err(Error::Refused);
         }
-        Ok(self.stream.as_mut().expect("open stream"))
+        Ok((self.stream.as_mut().expect("open stream"), &mut self.session))
     }
 
     pub async fn write_all(&mut self, bytes: &[u8]) -> Result<(), Error> {
-        Ok(self.stream()?.write_all(bytes).await?)
+        let (stream, session) = self.stream()?;
+        Ok(unless_ended(Some(session), stream.write_all(bytes)).await??)
     }
 
     /// Noq keeps `chunk` uncopied, charged by length, so it must not pin a larger buffer.
@@ -270,7 +284,8 @@ impl SendStream {
         let mut chunks = [chunk];
         let mut unwritten = &mut chunks[..];
         while !unwritten.is_empty() {
-            self.stream()?.write_leased_chunks(&mut unwritten).await?;
+            let (stream, session) = self.stream()?;
+            unless_ended(Some(session), stream.write_leased_chunks(&mut unwritten)).await??;
         }
         Ok(())
     }

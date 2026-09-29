@@ -1099,17 +1099,21 @@ async fn data_after_the_peers_close_is_a_message_error() -> Result<(), TestError
 }
 
 /// Once a session ended, it opens no stream and sends no datagram, and its streams refuse reads
-/// and writes and end with WT_SESSION_GONE, as the drafts require and webtransport-go does.
+/// and writes and end with WT_SESSION_GONE, as the drafts require and webtransport-go does. A read
+/// or write already waiting then wakes at once, as closeWithSession wakes it.
 #[tokio::test]
 async fn an_ended_session_ends_its_streams_and_datagrams() -> Result<(), TestError> {
-    let peers = peers(usize::MAX).await?;
+    // The client's 16-byte window holds the server's write.
+    let peers = peers_with(usize::MAX, Some(16), true, true).await?;
     let (outcomes, mut outcome) = tokio::sync::mpsc::unbounded_channel();
     let (serving, _) = serve_sessions(&peers, move |session| {
         let outcomes = outcomes.clone();
         async move {
             let (mut lane, mut own) = (session.accept_uni().await.unwrap(), session.open_uni().await.unwrap());
-            let _ = session.closed().await;
+            let waiting = tokio::join!(lane.read_chunk(), own.write_chunk(Bytes::from_static(&[0; 64])));
             let _ = outcomes.send(vec![
+                waiting.0.err(),
+                waiting.1.err(),
                 lane.read_chunk().await.err(),
                 own.write_all(b"late").await.err(),
                 session.send_datagram(b"late").err(),
@@ -1118,12 +1122,20 @@ async fn an_ended_session_ends_its_streams_and_datagrams() -> Result<(), TestErr
         }
     });
     let _control = uni(&peers.client, &settings(&DRAFT02), false).await?;
+    // A plain request first, so the connection outlives the session and cannot wake them instead.
+    let (mut send, mut recv) = peers.client.open_bi().await?;
+    send.write_all(&request_head(&[])).await?;
+    send.finish()?;
+    assert!(response_bytes(&mut recv).await.is_ok());
     let (mut connect, _response) = raw_connect(&peers.client, "/wt").await?;
-    // A stream of session 0 (0x54, 0) with data that an ended session no longer reads.
-    let lane = uni(&peers.client, b"\x40\x54\x00data", false).await?;
+    // A stream of session 4 (0x54, 4), the second request stream, that sends the server's read nothing.
+    let lane = uni(&peers.client, b"\x40\x54\x04", false).await?;
     let (_server_control, mut own) = (peers.client.accept_uni().await?, peers.client.accept_uni().await?);
+    // A byte past the header: the server's write has begun and its read waits.
+    own.read_exact(&mut [0; 4]).await?;
     connect.write_all(&close_capsule(2, "lifetime")).await?;
-    assert_eq!(outcome.recv().await, Some(vec![Some(Error::Refused); 4]));
+    let ended = tokio::time::timeout(Duration::from_secs(5), outcome.recv()).await?;
+    assert_eq!(ended, Some(vec![Some(Error::Refused); 6]));
     assert_eq!(stopped(&lane).await, Some(Code::WT_SESSION_GONE));
     assert_eq!(raw_stream(&mut own).await.1, Err(Code::WT_SESSION_GONE));
     drop(serving);
