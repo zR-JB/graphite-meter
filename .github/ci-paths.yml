@@ -72,7 +72,8 @@ rust-release:
   - 'rust/rust-toolchain.toml'
 
 # Inputs that can change what a macOS TUI compiles, links or imports, or how its notices are
-# checked: the TUI's crates, and every script module packaging reaches, which the policy checks.
+# checked: the TUI's crates and the files at rust/ their builds and tests include, and every
+# script module packaging reaches, which the policy checks.
 darwin:
   - '.github/workflows/ci.yml'
   - '.github/ci-paths.yml'
@@ -91,7 +92,7 @@ darwin:
   - 'rust/Cargo.toml'
   - 'rust/*/Cargo.toml'
   - 'rust/*/build.rs'
-  - 'rust/legal_build.rs'
+  - 'rust/*.rs'
   - 'rust/rust-toolchain.toml'
   - 'rust/client/**'
   - 'rust/core/**'
