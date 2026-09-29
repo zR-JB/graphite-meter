@@ -576,6 +576,7 @@ impl Http {
         if !status.is_success() {
             return Err(Box::new(Failure::Http {
                 status: status.as_u16(),
+                from: crate::failure::source(target),
                 retry_after: headers
                     .get(http::header::RETRY_AFTER)
                     .and_then(|value| value.to_str().ok())

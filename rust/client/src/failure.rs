@@ -5,9 +5,11 @@ use std::{fmt, sync::Arc, time::Duration};
 /// The client's own failures; `reason`, `permanent` and `retryable` tell them apart by kind.
 #[derive(Debug)]
 pub enum Failure {
-    /// The server's answer: its status, the wait it asked for, and an upload refusal's code.
+    /// The server's answer: its status, what it answered as Go's statusError names it (`source`),
+    /// the wait it asked for, and an upload refusal's code.
     Http {
         status: u16,
+        from: String,
         retry_after: Duration,
         refusal: Option<UploadRefusal>,
     },
@@ -38,7 +40,7 @@ impl fmt::Display for Failure {
                 refusal: Some(refusal),
                 ..
             } => write!(formatter, "{} (HTTP {status})", refusal.message()),
-            Self::Http { status, .. } => write!(formatter, "server returned HTTP {status}"),
+            Self::Http { status, from, .. } => write!(formatter, "HTTP {status} from {from}"),
             Self::SignIn { login_url, .. } if login_url.is_empty() => formatter.write_str("authentication required"),
             Self::SignIn { login_url, .. } => write!(formatter, "authentication required at {login_url}"),
             Self::ApprovalExpired => formatter.write_str("browser approval timed out"),
@@ -91,6 +93,22 @@ pub(crate) fn sign_in<'a>(error: &'a (dyn std::error::Error + 'static)) -> Optio
         Some(Failure::SignIn { origin, login_url }) => Some((origin.as_str(), login_url.as_str())),
         _ => None,
     })
+}
+
+/// What a request to `target` asked for, as Go's statusError names it: the control request's
+/// name, or the path of any other.
+pub(crate) fn source(target: &str) -> String {
+    let path = target
+        .split_once("://")
+        .map_or(target, |(_, rest)| &rest[rest.find('/').unwrap_or(rest.len())..]);
+    match path.split(['?', '#']).next().unwrap_or_default() {
+        "/servers" => "server catalogue".into(),
+        "/preflight" => "preflight".into(),
+        "/probe" => "probe".into(),
+        "/upload/checkpoint" => "receiver checkpoint".into(),
+        "/upload/session" => "upload session".into(),
+        path => path.into(),
+    }
 }
 
 /// The wait a busy answer behind `error` asked for, if the server was busy.
@@ -217,6 +235,29 @@ mod tests {
     use super::*;
     use graphite_meter_core::wire::WireError;
     use std::io::{Error as IoError, ErrorKind};
+
+    /// Go's statusError names a control request, or the path of any other.
+    #[test]
+    fn refusals_name_what_the_server_answered_as_go_does() {
+        let refusal = |target: &str| Failure::Http {
+            status: 404,
+            from: source(target),
+            retry_after: Duration::ZERO,
+            refusal: None,
+        };
+        for (target, text) in [
+            ("http://meter.example/servers", "HTTP 404 from server catalogue"),
+            ("https://[::1]:7246/preflight", "HTTP 404 from preflight"),
+            (
+                "https://meter.example/upload/checkpoint?id=7",
+                "HTTP 404 from receiver checkpoint",
+            ),
+            ("https://meter.example/download?bytes=9", "HTTP 404 from /download"),
+            ("/upload/progress", "HTTP 404 from /upload/progress"),
+        ] {
+            assert_eq!(refusal(target).to_string(), text, "{target}");
+        }
+    }
 
     #[test]
     fn invalid_data_is_classified_by_its_payload() {

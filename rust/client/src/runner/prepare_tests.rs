@@ -224,7 +224,7 @@ async fn selected_servers_verify_concurrently_and_report_each_result() -> Result
             && server
                 .error
                 .as_deref()
-                .is_some_and(|error| error.contains("not advertised"))
+                .is_some_and(|error| error.contains("unavailable"))
     }));
     first_server.abort();
     second_server.abort();
@@ -353,7 +353,11 @@ async fn unreachable_webtransport_preserves_ambiguous_fetch_error() -> Result<()
         .await
         .err()
         .ok_or("unreachable WebTransport unexpectedly passed preparation")?;
-    assert!(error.to_string().contains("select an origin explicitly"));
+    assert!(
+        error
+            .to_string()
+            .contains("several throughput targets are available; select an origin")
+    );
     assert!(error.to_string().contains("advertised WebTransport is unavailable"));
     fixture.abort();
     Ok(())

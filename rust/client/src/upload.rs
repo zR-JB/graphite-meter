@@ -612,6 +612,7 @@ fn apply_event(event: UploadProgress, state: &watch::Sender<State>) -> Result<bo
             }
             return Err(Box::new(Failure::Http {
                 status: refusal.map_or(400, |refusal| refusal.status()),
+                from: crate::failure::source(Route::UploadProgress.path()),
                 retry_after: Duration::ZERO,
                 refusal,
             }));

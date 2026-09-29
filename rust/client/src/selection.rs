@@ -39,7 +39,12 @@ pub fn throughput(
             }
         }
     }
-    Err(first_error.unwrap_or_else(|| "selected throughput endpoint is not advertised".into()))
+    Err(first_error.unwrap_or_else(|| unavailable("throughput", config.throughput_origin.as_deref())))
+}
+
+/// Go's pickTarget refusal: no advertised target matches the selection, which is "auto" unset.
+fn unavailable(kind: &str, selected: Option<&str>) -> Error {
+    format!("{kind} target {:?} unavailable", selected.unwrap_or("auto")).into()
 }
 
 fn throughput_candidate(
@@ -63,7 +68,8 @@ fn throughput_candidate(
                     .is_none_or(|protocol| target.protocol == Protocol::Negotiated || target.protocol == protocol)
         })
         .collect::<Vec<_>>();
-    let Some(target) = choose(&candidates, config.throughput_origin.as_deref(), &entry.url, |target| {
+    let selected = config.throughput_origin.as_deref();
+    let Some(target) = choose("throughput", &candidates, selected, &entry.url, |target| {
         &target.base_url
     })?
     else {
@@ -97,24 +103,28 @@ pub fn latency(
             .iter()
             .filter(|target| target.transport == transport)
             .collect::<Vec<_>>();
-        if let Some(target) = choose(&candidates, config.latency_origin.as_deref(), &entry.url, |target| {
-            &target.base_url
-        })? {
+        let selected = config.latency_origin.as_deref();
+        if let Some(target) = choose("latency", &candidates, selected, &entry.url, |target| &target.base_url)? {
             return Ok((*target).clone());
         }
     }
-    Err("selected latency endpoint is not advertised".into())
+    Err(unavailable("latency", config.latency_origin.as_deref()))
 }
 
 fn choose<'a, T>(
+    kind: &str,
     candidates: &[&'a T],
     selected: Option<&str>,
     base: &str,
     origin: impl Fn(&T) -> &str,
 ) -> Result<Option<&'a T>, Error> {
-    let wanted = canonical_origin(selected.unwrap_or(base))?;
+    // As Go's pickTarget, a malformed selection matches no target.
+    let wanted = match selected {
+        Some(selected) => canonical_origin(selected).ok(),
+        None => Some(canonical_origin(base)?),
+    };
     for &candidate in candidates {
-        if canonical_origin(origin(candidate))? == wanted {
+        if Some(canonical_origin(origin(candidate))?) == wanted {
             return Ok(Some(candidate));
         }
     }
@@ -124,7 +134,7 @@ fn choose<'a, T>(
     match candidates {
         [] => Ok(None),
         [only] => Ok(Some(*only)),
-        _ => Err("multiple endpoints available; select an origin explicitly".into()),
+        _ => Err(format!("several {kind} targets are available; select an origin").into()),
     }
 }
 
