@@ -37,7 +37,7 @@ async fn main() {
             println!("graphite-meter-client {}", graphite_meter_client::VERSION);
             0
         }
-        Ok(Action::Legal) => legal().map_or_else(|error| fail(&error, 1), |()| 0),
+        Ok(Action::Legal) => legal().unwrap_or_else(|error| fail(&error, 1)),
         Ok(Action::Run { config, report }) => run(*config, report).await.unwrap_or_else(|error| fail(&error, 1)),
         // Go's flag package prints its refusal without the program name, then the usage.
         Err(error) if error.is::<cli::FlagError>() => {
@@ -54,15 +54,22 @@ fn fail(error: &Error, code: i32) -> i32 {
     eprintln!("graphite-meter-client: {}", safe(&error.to_string()));
     code
 }
-fn legal() -> Result<(), Error> {
+fn legal() -> Result<i32, Error> {
     let (compressed, length) = LEGAL.ok_or("this build embeds no notices; mise run rust-client-run -- --legal builds the TUI with development notices and prints them")?;
     let report = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(compressed, length)
         .map_err(|_| "embedded Rust legal notices are corrupt")?;
     if report.len() != length {
         return Err("embedded Rust legal notice length mismatch".into());
     }
-    use std::io::Write;
-    Ok(std::io::stdout().lock().write_all(&report)?)
+    Ok(print(std::io::stdout().lock(), &report)?)
+}
+/// Writes `report` and returns the exit status. Into a closed pipe it ends quietly with Go's: Go dies of
+/// SIGPIPE on Unix, which shells report as 141, and ignores the failed write elsewhere.
+fn print(mut out: impl std::io::Write, report: &[u8]) -> std::io::Result<i32> {
+    match out.write_all(report).and_then(|()| out.flush()) {
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(if cfg!(unix) { 141 } else { 0 }),
+        written => written.map(|()| 0),
+    }
 }
 async fn run(config: graphite_meter_client::config::Config, report_only: bool) -> Result<i32, Error> {
     let _ = graphite_meter_client::crypto::provider().install_default();
@@ -151,4 +158,15 @@ fn interrupts(headless: bool, caught: Arc<AtomicU8>) -> Result<mpsc::Receiver<()
 
 fn safe(value: &str) -> String {
     value.chars().map(report::terminal_char).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn notices_into_a_closed_pipe_end_quietly_with_go_status() -> std::io::Result<()> {
+        let (reader, writer) = std::io::pipe()?;
+        drop(reader);
+        assert_eq!(super::print(writer, b"notices\n")?, if cfg!(unix) { 141 } else { 0 });
+        Ok(())
+    }
 }
