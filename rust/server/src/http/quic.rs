@@ -1283,9 +1283,10 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(10), async {
             let peers = [(); 2].map(|()| client.connect(address, "localhost").unwrap());
             let peers = futures_util::future::try_join_all(peers).await.unwrap();
-            // New requests need layer state from the budget, so both start before it runs out.
+            // New requests need layer state from the budget, so both start before it runs out. The larger body is
+            // four times the server's first send window, so most of it moves after the budget runs out.
             let mut bodies = Vec::new();
-            for (peer, bytes) in peers.iter().zip([64 * 1024 * 1024, 13]) {
+            for (peer, bytes) in peers.iter().zip([4 * QUIC_MIN_SEND_WINDOW as usize, 13]) {
                 let request = http::Request::get(format!("https://localhost/download?bytes={bytes}"))
                     .body(())
                     .unwrap();
