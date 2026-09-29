@@ -252,14 +252,8 @@ async fn connect(http: &Http, origin: &str, transport: LatencyTransport) -> Resu
 async fn connect_ws(http: &Http, origin: &str) -> Result<Socket, Error> {
     let origin = canonical_origin(origin)?;
     let target = crate::net::url(&origin, Route::Ping, &[]);
-    let websocket = if let Some(rest) = target.strip_prefix("https://") {
-        format!("wss://{rest}")
-    } else {
-        format!(
-            "ws://{}",
-            target.strip_prefix("http://").ok_or("invalid WebSocket origin")?
-        )
-    };
+    // The canonical origin is http:// or https://, so the channel is ws:// or wss://.
+    let websocket = format!("ws{}", target.strip_prefix("http").ok_or("invalid WebSocket origin")?);
     let mut request = websocket.into_client_request()?;
     http.authorize(&target, request.headers_mut())?;
     // TLS 1.2 and 1.3 as for throughput and in Go; only QUIC requires 1.3.

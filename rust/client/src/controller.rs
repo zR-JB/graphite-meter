@@ -263,10 +263,7 @@ impl Controller {
                 snapshot.auth = None;
             });
         } else {
-            let result = result
-                .map_err(|error| Box::new(error) as Error)
-                .and_then(|result| result);
-            match result {
+            match result.map_err(Error::from).and_then(|result| result) {
                 Ok(prepared) => self.prepared = prepared,
                 Err(error) => {
                     let signed_out = sign_in(error.as_ref()).is_some();
