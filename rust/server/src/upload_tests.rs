@@ -1,10 +1,141 @@
-use graphite_meter_core::{
-    failure::UploadRefusal,
-    wire::{UploadProgress, decode_upload_progress, encode_upload_progress},
-};
-use graphite_meter_server::upload::{MAX_LIVE_UPLOADS, MAX_UPLOADS_PER_CLIENT, Owner, UPLOAD_RETENTION, UploadStore};
-use std::time::Duration;
-use tokio::time::Instant;
+//! The upload store's tests, which reach its internals.
+use super::*;
+use graphite_meter_core::wire::{decode_upload_progress, encode_upload_progress};
+
+impl UploadStore {
+    fn new() -> Option<Self> {
+        Self::with_meter(crate::meter::Meter::default())
+    }
+
+    pub(crate) fn retained(&self) -> usize {
+        lock(&self.inner.entries).by_id.len()
+    }
+}
+
+impl Owner {
+    fn principal(subject: impl Into<String>) -> Self {
+        Self {
+            client_keys: vec![format!("principal:{}", subject.into())],
+        }
+    }
+}
+
+#[test]
+fn token_age_is_checked_only_when_creating_an_aggregate() {
+    let mut store = UploadStore::new().unwrap();
+    Arc::get_mut(&mut store.inner).unwrap().origin = Instant::now() - Duration::from_secs(300);
+    let signed = |issued: u64| {
+        let mut raw = [0; 56];
+        raw[..8].copy_from_slice(&issued.to_be_bytes());
+        let mut mac = token_mac(&store.inner.key);
+        mac.update(&raw[..24]);
+        raw[24..].copy_from_slice(&mac.finalize().into_bytes());
+        format!("gmu_{}", URL_SAFE_NO_PAD.encode(raw))
+    };
+    assert_eq!(
+        store
+            .begin(&signed(nanos(Duration::from_secs(1))), &Owner::principal("a"))
+            .err(),
+        Some(UploadRefusal::Invalid)
+    );
+    assert_eq!(
+        store
+            .begin(&signed(nanos(Duration::from_secs(600))), &Owner::principal("a"))
+            .err(),
+        Some(UploadRefusal::Invalid)
+    );
+    let id = store.mint().unwrap();
+    let mut lane = store.begin(&id, &Owner::principal("a")).unwrap();
+    lane.record(15);
+    Arc::get_mut(&mut store.inner).unwrap().origin -= Duration::from_secs(121);
+    assert!(!store.valid(&id));
+    assert_eq!(store.checkpoint(&id, &Owner::principal("a")).unwrap().bytes, 15);
+    drop(store.begin(&id, &Owner::principal("a")).unwrap());
+}
+
+#[test]
+fn observing_and_finishing_do_not_refresh_idle_retention() {
+    let store = UploadStore::new().unwrap();
+    let id = store.mint().unwrap();
+    drop(store.begin(&id, &Owner::principal("a")).unwrap());
+    let aggregate = store.inner.entries.lock().unwrap().by_id[&id].clone();
+    let old = Instant::now() - Duration::from_secs(80);
+    aggregate.lock().unwrap().touched = old;
+    store.checkpoint(&id, &Owner::principal("a")).unwrap();
+    let _subscription = store.subscribe(&id, &Owner::principal("a")).unwrap();
+    store.finish(&id, &Owner::principal("a")).unwrap();
+    assert_eq!(aggregate.lock().unwrap().touched, old);
+    store.sweep_at(old + UPLOAD_RETENTION + Duration::from_secs(1));
+    assert_eq!(store.retained(), 0);
+}
+
+#[test]
+fn finished_id_cannot_reopen_at_the_last_valid_token_age() {
+    let store = UploadStore::new().unwrap();
+    let id = store.mint().unwrap();
+    let owner = Owner::principal("original");
+    drop(store.begin(&id, &owner).unwrap());
+    store.finish(&id, &owner).unwrap();
+    let aggregate = store.inner.entries.lock().unwrap().by_id[&id].clone();
+    let touched = Instant::now() - TOKEN_TTL;
+    aggregate.lock().unwrap().touched = touched;
+
+    store.sweep_at(touched + TOKEN_TTL);
+    assert_eq!(store.retained(), 1);
+    assert_eq!(store.begin(&id, &owner).err(), Some(UploadRefusal::Invalid));
+    assert_eq!(
+        store.begin(&id, &Owner::principal("other")).err(),
+        Some(UploadRefusal::OwnerMismatch)
+    );
+}
+
+#[test]
+fn an_unresolved_owner_creates_and_reaches_nothing() {
+    let store = UploadStore::new().unwrap();
+    let id = store.mint().unwrap();
+    let nobody = Owner::unresolved();
+    // As Go's accessFor, joining refuses the owner before looking at the ID.
+    assert_eq!(
+        store.begin("invalid", &nobody).err(),
+        Some(UploadRefusal::OwnerMismatch)
+    );
+    assert_eq!(store.subscribe(&id, &nobody).err(), Some(UploadRefusal::OwnerMismatch));
+    assert_eq!(store.retained(), 0);
+    drop(store.begin(&id, &Owner::principal("a")).unwrap());
+    assert_eq!(store.checkpoint(&id, &nobody).err(), Some(UploadRefusal::OwnerMismatch));
+    assert_eq!(store.finish(&id, &nobody).err(), Some(UploadRefusal::OwnerMismatch));
+    assert_eq!(
+        store.checkpoint(&store.mint().unwrap(), &nobody).err(),
+        Some(UploadRefusal::Invalid)
+    );
+}
+
+#[test]
+fn client_capacity_index_tracks_partial_sweeps() {
+    let store = UploadStore::new().unwrap();
+    let owner = Owner::principal("a");
+    let other = Owner::principal("b");
+    let mut first = None;
+    for _ in 0..MAX_UPLOADS_PER_CLIENT {
+        let id = store.mint().unwrap();
+        drop(store.begin(&id, &owner).unwrap());
+        first.get_or_insert(id);
+    }
+    let other_id = store.mint().unwrap();
+    drop(store.begin(&other_id, &other).unwrap());
+    let first = first.unwrap();
+    let aggregate = store.inner.entries.lock().unwrap().by_id[&first].clone();
+    aggregate.lock().unwrap().touched = Instant::now() - UPLOAD_RETENTION - Duration::from_secs(1);
+    store.sweep_at(Instant::now());
+
+    assert_eq!(store.retained(), MAX_UPLOADS_PER_CLIENT);
+    drop(store.begin(&store.mint().unwrap(), &owner).unwrap());
+    assert_eq!(
+        store.begin(&store.mint().unwrap(), &owner).err(),
+        Some(UploadRefusal::ClientFull)
+    );
+    drop(store.begin(&store.mint().unwrap(), &other).unwrap());
+}
 
 #[test]
 fn tokens_are_stateless_authenticated_and_store_local() {

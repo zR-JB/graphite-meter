@@ -33,5 +33,5 @@ pub mod runtime;
 mod sync;
 mod timeouts;
 pub mod tls;
-pub mod upload;
+mod upload;
 pub mod websocket;
