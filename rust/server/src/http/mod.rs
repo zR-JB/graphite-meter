@@ -61,7 +61,7 @@ use std::{
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     task::JoinSet,
     time::Sleep,
 };
@@ -269,36 +269,11 @@ impl HttpServer {
                     } else { None };
                     let server = self.clone();
                     let tls = tls.clone();
+                    let accepted = Accepted { peer, tls: tls.is_some(), topology: spec.topology };
                     tasks.spawn(async move {
                         let _permit = permit;
                         let _memory = memory;
-                        let accepted = Accepted { peer, tls: tls.is_some(), topology: spec.topology };
-                        let Some(tls) = tls else {
-                            return server.serve_http1_connection(socket, accepted, None).await;
-                        };
-                        let stream = tokio::select! {
-                            biased;
-                            _ = stopped(server.stopping.clone()) => return,
-                            result = tokio::time::timeout(CONTROL, tls.accept(socket).into_fallible()) => {
-                                let peer = SocketAddr::new(peer.ip().to_canonical(), peer.port());
-                                match result {
-                                    Ok(Ok(stream)) => stream,
-                                    Ok(Err((error, _socket))) => {
-                                        server.peers.write(format_args!("[gm:http] http: TLS handshake error from {peer}: {error}"));
-                                        return;
-                                    }
-                                    Err(_) => {
-                                        server.peers.write(format_args!("[gm:http] http: TLS handshake error from {peer}: timed out"));
-                                        return;
-                                    }
-                                }
-                            }
-                        };
-                        if !h2 {
-                            server.serve_http1_connection(stream, accepted, bootstrap).await;
-                        } else if stream.get_ref().1.alpn_protocol() == Some(b"h2") {
-                            server.serve_http2_connection(stream, accepted).await;
-                        }
+                        server.serve_tcp_connection(socket, accepted, tls, h2, bootstrap).await;
                     });
                 }
             }
@@ -307,6 +282,42 @@ impl HttpServer {
         let _ = tokio::time::timeout(SHUTDOWN_GRACE, async { while tasks.join_next().await.is_some() {} }).await;
         tasks.shutdown().await;
         result
+    }
+
+    /// One accepted connection: its TLS handshake within the control bound, then HTTP/1.1, or HTTP/2 on the HTTP/2
+    /// listener when the handshake chose it.
+    async fn serve_tcp_connection(
+        self: Arc<Self>,
+        socket: TcpStream,
+        accepted: Accepted,
+        tls: Option<tokio_rustls::TlsAcceptor>,
+        h2: bool,
+        bootstrap: Option<u16>,
+    ) {
+        let Some(tls) = tls else {
+            return self.serve_http1_connection(socket, accepted, None).await;
+        };
+        let peer = SocketAddr::new(accepted.peer.ip().to_canonical(), accepted.peer.port());
+        let stream = tokio::select! {
+            biased;
+            _ = stopped(self.stopping.clone()) => return,
+            result = tokio::time::timeout(CONTROL, tls.accept(socket).into_fallible()) => match result {
+                Ok(Ok(stream)) => stream,
+                Ok(Err((error, _socket))) => {
+                    self.peers.write(format_args!("[gm:http] http: TLS handshake error from {peer}: {error}"));
+                    return;
+                }
+                Err(_) => {
+                    self.peers.write(format_args!("[gm:http] http: TLS handshake error from {peer}: timed out"));
+                    return;
+                }
+            },
+        };
+        if !h2 {
+            self.serve_http1_connection(stream, accepted, bootstrap).await;
+        } else if stream.get_ref().1.alpn_protocol() == Some(b"h2") {
+            self.serve_http2_connection(stream, accepted).await;
+        }
     }
 
     async fn serve_http1_connection<T>(self: Arc<Self>, stream: T, accepted: Accepted, bootstrap_port: Option<u16>)
