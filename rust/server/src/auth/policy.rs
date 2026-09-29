@@ -100,6 +100,8 @@ impl<B> RejectedRequest<B> {
 pub enum Refusal {
     AuthenticationRequired,
     Forbidden,
+    /// A repeated security-relevant field, which Go's Enforce refuses before it trusts the connection.
+    Ambiguous,
 }
 
 /// Construct only for an enabled, validated authentication configuration.
@@ -197,7 +199,7 @@ impl Policy {
         .iter()
         .any(|name| request.headers().get_all(name).iter().nth(1).is_some())
         {
-            return Err(Refusal::Forbidden);
+            return Err(Refusal::Ambiguous);
         }
         let trust = self.trust(request, peer, tls);
         if tls && !trust.secure {

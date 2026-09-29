@@ -157,11 +157,11 @@ fn explicit_credentials_never_fall_back_to_ambient_cookies() {
     req.headers_mut().insert(header::AUTHORIZATION, "".parse().unwrap());
     req.headers_mut()
         .append(header::AUTHORIZATION, "Bearer invalid".parse().unwrap());
-    refused(&policy, &req, Refusal::Forbidden);
+    refused(&policy, &req, Refusal::Ambiguous);
     bearer(&mut req, &cli);
     req.headers_mut()
         .append(header::AUTHORIZATION, "Bearer invalid".parse().unwrap());
-    refused(&policy, &req, Refusal::Forbidden);
+    refused(&policy, &req, Refusal::Ambiguous);
     req.headers_mut().insert(header::AUTHORIZATION, "".parse().unwrap());
     refused(&policy, &req, Refusal::AuthenticationRequired);
     bearer(&mut req, &cli);
@@ -210,7 +210,7 @@ fn ambiguous_cookie_and_origin_evidence_cannot_authorize_a_measurement() {
         ),
     ] {
         req.headers_mut().append(name.clone(), value.parse().unwrap());
-        refused(&policy, &req, Refusal::Forbidden);
+        refused(&policy, &req, Refusal::Ambiguous);
         req.headers_mut().remove(name.clone());
         req.headers_mut().insert(name, value.parse().unwrap());
     }
@@ -373,6 +373,6 @@ fn repeated_security_headers_are_forbidden_before_anything_else() {
         let mut req = request("POST", "/auth/password");
         req.headers_mut().append(name, "a".parse().unwrap());
         req.headers_mut().append(name, "b".parse().unwrap());
-        refused(&policy, &req, Refusal::Forbidden);
+        refused(&policy, &req, Refusal::Ambiguous);
     }
 }

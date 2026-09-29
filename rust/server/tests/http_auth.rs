@@ -412,6 +412,26 @@ async fn signed_in_head_requests_reach_the_get_pages_as_in_go() {
 }
 
 #[tokio::test]
+async fn an_ambiguous_request_is_refused_before_hsts_as_in_go() {
+    let h = Harness::start().await;
+    let repeated = "Authorization: Bearer a\r\nAuthorization: Bearer b\r\n";
+    let (refused, _) = h.request("GET", "/probe", repeated, "").await;
+    assert!(refused.starts_with("HTTP/1.1 403"), "{refused}");
+    assert!(refused.contains("x-frame-options: DENY\r\n"), "{refused}");
+    assert!(!refused.contains("strict-transport-security"), "{refused}");
+    // A refusal once the connection is trusted keeps it.
+    let (refused, _) = h
+        .request("GET", "/probe", "Authorization: Bearer invalid\r\n", "")
+        .await;
+    assert!(refused.starts_with("HTTP/1.1 403"), "{refused}");
+    assert!(
+        refused.contains("strict-transport-security: max-age=31536000\r\n"),
+        "{refused}"
+    );
+    h.stop().await;
+}
+
+#[tokio::test]
 async fn an_empty_origin_is_given_no_cors_headers_as_in_go() {
     let h = Harness::start().await;
     let (session, _) = h.login().await;

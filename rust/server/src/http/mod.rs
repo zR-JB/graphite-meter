@@ -791,7 +791,9 @@ impl HttpServer {
         let mut response = Response::new(ResponseBody::empty());
         *response.status_mut() = StatusCode::FORBIDDEN;
         *response.headers_mut() = crate::auth::pages::security_headers(None).expect("static auth CSP");
-        let secure = policy.trust(request, connection.peer, connection.tls).secure;
+        // As Go's, only a refusal after the connection is trusted carries HSTS.
+        let secure = reason != crate::auth::policy::Refusal::Ambiguous
+            && policy.trust(request, connection.peer, connection.tls).secure;
         crate::auth::pages::harden(response.headers_mut(), secure);
         if reason == crate::auth::policy::Refusal::AuthenticationRequired {
             if request.version() <= http::Version::HTTP_11 {
