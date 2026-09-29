@@ -379,7 +379,7 @@ class RustRequestBoundaryTests(unittest.TestCase):
                             "sourceSha": release.sha, "pr": release.pr, "mode": "validate",
                             "requestRunId": 4242, "requestRunAttempt": 1, "rust": selection,
                         }))
-                        names = [candidate.name] + ["release-assets-4242"] * stable
+                        names = [candidate.name, "release-assets-4242"]
                         names += ["release-rust-assets-4242"] * (selection != "none")
                         names += ["release-rust-darwin-4242"] * release.rust_tui
                         for name in names[1:]:

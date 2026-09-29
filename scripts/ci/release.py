@@ -231,9 +231,8 @@ def verify_request(request_dir: Path) -> tuple[Release, bool]:
         gh.fail("request mode must be validate or publish")
     if release.stable and release.sha != publisher:
         gh.fail("a stable release must build the trusted main commit")
-    artifacts = {candidate.name: (BUILD_JOB, OCI_LIMIT * (2 if release.rust_server else 1) + 1024 * 1024)}
-    if release.stable:
-        artifacts[f"release-assets-{run_id}"] = (BUILD_JOB, ASSETS_LIMIT)
+    artifacts = {candidate.name: (BUILD_JOB, OCI_LIMIT * (2 if release.rust_server else 1) + 1024 * 1024),
+                 f"release-assets-{run_id}": (BUILD_JOB, ASSETS_LIMIT)}
     if release.rust != "none":
         artifacts[f"release-rust-assets-{run_id}"] = (BUILD_JOB, ASSETS_LIMIT)
     if release.rust_tui:
@@ -285,9 +284,15 @@ def command_verify() -> None:
         if checksum != f"{rust_digest}  graphite-meter-rust.oci.tar\n":
             gh.fail("Rust OCI archive does not match the request checksum")
         rust_manifest = verify_oci.verify(release.version + "-rust", release.sha, rust_archive)
+    offer = request_dir / f"release-assets-{run_id}"
     if release.stable:
-        verify_release_assets.verify_artifacts(release.version, request_dir / f"release-assets-{run_id}")
-        verify_release_assets.merge(request_dir / f"release-assets-{run_id}", assets)
+        verify_release_assets.verify_artifacts(release.version, offer)
+    else:
+        # A prerelease ships the Go image and no Go archive: its assets are the image's source offer.
+        verify_release_assets.require_same("prerelease assets", {source_archive(release.version)},
+                                           verify_release_assets.verify_checksums(offer))
+        verify_release_assets.verify_third_party_source_archive(offer, release.version)
+    verify_release_assets.merge(offer, assets)
     if release.rust != "none":
         parts = [request_dir / f"release-rust-{part}-{run_id}" for part in ("assets", "darwin")[:1 + release.rust_tui]]
         with tempfile.TemporaryDirectory() as fetched:
@@ -296,8 +301,7 @@ def command_verify() -> None:
             verify_release_assets.verify_rust(parts, assets, release.version,
                                               *verify_release_assets.rust_builds(release.rust),
                                               release.sha, env("REPOSITORY"), source)
-    if assets.exists():
-        gh.write_checksums(assets)
+    gh.write_checksums(assets)
     main, ci_run_id, codeql_id = require_publishable(env("REPOSITORY"), release)
     if main != env("PUBLISHER_SHA"):
         gh.fail("main moved during verification; start a fresh request")
@@ -307,14 +311,13 @@ def command_verify() -> None:
     if release.rust_server:
         (handoff / "rust-image").mkdir()
         shutil.copyfile(candidate / "graphite-meter-rust.oci.tar", handoff / "rust-image" / OCI)
-    if assets.exists():
-        shutil.copytree(assets, handoff / "assets")
+    shutil.copytree(assets, handoff / "assets")
     gh.append_output(
         tag=release.tag, version=release.version, stable=str(release.stable).lower(),
         publish=str(publish).lower(), sha=release.sha, main_sha=main, pr=release.pr or "",
         oci_sha256=digest, digest=manifest, rust=release.rust,
         rust_oci_sha256=rust_digest, rust_digest=rust_manifest,
-        assets_sha256=assets_sha256(handoff / "assets") if assets.exists() else "",
+        assets_sha256=assets_sha256(handoff / "assets"),
     )
     gh.append_summary(
         f"### {'Stable release' if release.stable else f'PR #{release.pr} prerelease'} verified"
@@ -334,7 +337,7 @@ def command_recheck() -> None:
     exact_files(handoff / "image", {OCI})
     if gh.file_sha256(handoff / "image" / OCI) != env("OCI_SHA256"):
         gh.fail("approved OCI handoff does not match the verified archive")
-    if (release.stable or release.rust != "none") and assets_sha256(handoff / "assets") != env("ASSETS_SHA256"):
+    if assets_sha256(handoff / "assets") != env("ASSETS_SHA256"):
         gh.fail("approved asset handoff does not match the verified assets")
     if release.rust_server:
         exact_files(handoff / "rust-image", {OCI})
@@ -359,6 +362,10 @@ def asset_digests(repository: str, release_id: int) -> dict[str, str]:
     return {gh.str_field(asset, "name", "asset"): str(asset.get("digest") or "") for asset in assets}
 
 
+def source_archive(version: str) -> str:
+    return f"graphite-meter_{version}_third-party-source.tar.gz"
+
+
 def source_notice(release: Release, rust_sources: list[str]) -> str:
     """The release body's source offer: the tagged repository and the third-party source of each build."""
     notice = (
@@ -366,22 +373,15 @@ def source_notice(release: Release, rust_sources: list[str]) -> str:
         f"Graphite Meter source for this release is the repository snapshot at tag **{release.tag}** "
         f"(commit **{release.sha}**). GitHub provides that tagged project source below as "
         "**Source code (zip)** and **Source code (tar.gz)**.\n\n"
+        "Source for third-party components included in the Go builds is attached as "
+        f"**{source_archive(release.version)}**. Together, the tagged repository source and that archive "
+        "form the source offer for them."
     )
     rust = ", ".join(f"**{name}**" for name in rust_sources)
-    if not release.stable:
-        # A prerelease attaches only its Rust builds' sources, one archive per build.
-        return notice + (
-            "Source for the third-party components of each experimental Rust build is attached as the archive "
-            f"its name identifies: {rust}. Together with the tagged repository source, each archive forms the "
-            f"source offer for its build. Prereleases attach no third-party source for the Go image "
-            f"**{release.version}**."
-        )
-    notice += (
-        "Source for third-party components included in the distributed artifacts is attached as "
-        f"**graphite-meter_{release.version}_third-party-source.tar.gz**. Together, the tagged repository source "
-        "and that archive form the source offer for this release."
-    )
-    return notice + (f"\n\nMatching experimental Rust dependency sources: {rust}." if rust_sources else "")
+    return notice + (
+        "\n\nSource for the third-party components of each experimental Rust build is attached as the archive "
+        f"its name identifies: {rust}. Together with the tagged repository source, each archive forms the source "
+        "offer for its build." if rust_sources else "")
 
 
 def command_publish() -> None:
@@ -390,19 +390,16 @@ def command_publish() -> None:
     pr = env_int("PR") if os.environ.get("PR") else 0
     release = parse_release(env("TAG"), env_sha("SOURCE_SHA") if pr else env_sha("TARGET_SHA"), pr,
                             os.environ.get("RUST", "none"))
-    if not release.stable and release.rust == "none":
-        gh.fail("PR GitHub Releases require an explicit Rust artifact opt-in")
     tag, base = release.tag, f"repos/{repository}"
     prerelease = not release.stable
     assets = gh.runner_path("ASSETS_DIR")
     exact_files(assets, names := {entry.name for entry in assets.iterdir()})
     local = {name: "sha256:" + gh.file_sha256(assets / name) for name in names}
-    source = f"graphite-meter_{release.version}_third-party-source.tar.gz"
     rust_sources = sorted(name for name in names if name.endswith("_rust_third-party-source.tar.gz"))
-    if release.stable and source not in local:
-        gh.fail(f"release handoff is missing the third-party source asset {source}")
-    if not release.stable and not rust_sources:
-        gh.fail("Rust prerelease handoff is missing its dependency source offer")
+    if source_archive(release.version) not in local:
+        gh.fail(f"release handoff is missing the third-party source asset {source_archive(release.version)}")
+    if (release.rust != "none") != bool(rust_sources):
+        gh.fail("the handoff's Rust source offers do not match the Rust selection")
     notice = source_notice(release, rust_sources)
 
     def require_tag() -> None:
@@ -490,6 +487,15 @@ def command_stage_rust() -> None:
                                      *verify_release_assets.rust_builds(env("RUST")))
 
 
+def command_stage_source() -> None:
+    """Stage the image's third-party source that a prerelease exports, as a stable build stages its own."""
+    name, dist = source_archive(env("VERSION")), gh.runner_path("RELEASE_ASSETS")
+    dist.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(gh.runner_path("SOURCE_EXPORT") / name, dist / name)
+    verify_release_assets.verify_third_party_source_archive(dist, env("VERSION"))
+    gh.write_checksums(dist)
+
+
 def command_check_rust(darwin: bool = False) -> None:
     """Verify CI's staged Docker exports, or its macOS TUIs, as the release verifies a request's."""
     server, tui = verify_release_assets.rust_builds("tui" if darwin else env("RUST"))
@@ -504,7 +510,8 @@ def command_check_rust(darwin: bool = False) -> None:
 
 COMMANDS = {
     "prepare": command_prepare, "verify": command_verify, "recheck": command_recheck,
-    "publish": command_publish, "stage-rust": command_stage_rust, "check-rust": command_check_rust,
+    "publish": command_publish, "stage-source": command_stage_source, "stage-rust": command_stage_rust,
+    "check-rust": command_check_rust,
     "check-darwin": lambda: command_check_rust(darwin=True),
 }
 

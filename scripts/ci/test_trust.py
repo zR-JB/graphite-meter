@@ -15,10 +15,11 @@ from .github_api import (
     ControlPlaneError, JsonObject, confined_path, file_sha256, local_path, runner_path,
 )
 from .fixtures import (
-    AMD, Answers, engine, git_head, github, outcome, pages, write_oci, write_release_assets,
+    AMD, Answers, engine, git_head, github, outcome, pages, write_archive, write_oci, write_release_assets,
 )
 from .release import (
     BUILD_JOB,
+    COMMANDS,
     DARWIN_JOB,
     OCI,
     Release,
@@ -129,7 +130,7 @@ def release_of(stable: bool) -> Release:
 
 def trusted(stable: bool, mode: str = "publish") -> dict[str, object]:
     """Every GitHub answer that authorizes a stable release or a PR #101 prerelease."""
-    names = ["release-request-4242"] + (["release-assets-4242"] if stable else [])
+    names = ["release-request-4242", "release-assets-4242"]
     responses: dict[str, object] = {
         MAIN_COMMIT: {"sha": MAIN}, REQUEST_WORKFLOW: {"id": 31337},
         REQUEST_RUN: dispatch_run(31337, 4242, request_title(mode, release_of(stable), MAIN)),
@@ -447,8 +448,8 @@ class RequestTests(unittest.TestCase):
             "REQUEST_RUN_ID": "4242",
         }
         for change, env, artifacts_present, error in (
-            ({}, {}, True, None), (prerelease, {}, False, None),
-            (prerelease, {}, True, "downloaded artifacts"), ({}, {}, False, "downloaded artifacts"),
+            ({}, {}, True, None), (prerelease, {}, True, None),
+            (prerelease, {}, False, "downloaded artifacts"), ({}, {}, False, "downloaded artifacts"),
             ({"sourceSha": HEAD}, {}, True, "trusted main commit"),
             ({"requestRunAttempt": True}, {}, True, "requestRunAttempt"),
             ({"requestRunId": 1}, {}, True, "requestRunId"),
@@ -494,8 +495,7 @@ def write_request(root: Path, stable: bool, mode: str) -> tuple[Path, JsonObject
     }))
     oci = write_oci(candidate / OCI, REPO, release.sha, remote=not stable)
     (candidate / f"{OCI}.sha256").write_text(f"{file_sha256(candidate / OCI)}  {OCI}\n")
-    if stable:
-        write_release_assets(request_dir / "release-assets-4242", "1.2.3")
+    write_release_assets(request_dir / "release-assets-4242", release.version, tuis=stable)
     return request_dir, oci
 
 
@@ -559,9 +559,20 @@ class CommandTests(unittest.TestCase):
                 self.assertEqual((result["digest"], result["publish"], result["sha"]),
                                  (AMD, str(mode == "publish").lower(), release.sha))
                 self.assertEqual(file_sha256(root / "handoff/image" / OCI), result["oci_sha256"])
-                if stable:
-                    self.assertEqual(result["assets_sha256"],
-                                     assets_sha256(request_dir / "release-assets-4242"))
+                self.assertEqual(result["assets_sha256"], assets_sha256(request_dir / "release-assets-4242"))
+
+    def test_a_prerelease_stages_the_image_source_offer_it_exported(self) -> None:
+        name = "graphite-meter_1.2.3-rc.1_third-party-source.tar.gz"
+        export, staged = self.root / "export", self.root / "staged"
+        write_release_assets(export, "1.2.3-rc.1", tuis=False)
+        environment = {"RUNNER_TEMP": str(self.root), "VERSION": "1.2.3-rc.1",
+                       "SOURCE_EXPORT": str(export), "RELEASE_ASSETS": str(staged)}
+        with patch.dict(os.environ, environment):
+            COMMANDS["stage-source"]()
+            self.assertEqual(sorted(path.name for path in staged.iterdir()), ["checksums.txt", name])
+            write_archive(export / name, {"graphite-meter_1.2.3-rc.1_third-party-source/README.txt": b"x"})
+            with self.assertRaisesRegex(ControlPlaneError, "source-offer metadata"):
+                COMMANDS["stage-source"]()
 
     def test_recheck_reauthorizes_the_exact_handoff_after_approval(self) -> None:
         handoff = self.root / "handoff"

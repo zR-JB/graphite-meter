@@ -153,6 +153,18 @@ jobs:
         uses: ./.github/actions/setup-project
       - name: Build and verify local container
         run: mise run container-smoke
+      # The smoke image's build arguments, so the client and server stages come from its cache.
+      - name: Export the image's third-party source as a prerelease request does
+        run: >-
+          docker build --file container/Dockerfile --target third-party-source --build-arg VERSION=0.0.0-ci
+          --build-arg CLIENT_VERSION=0.0.0-ci --build-arg GM_CLIENT_REVISION=local --build-arg GM_CLIENT_VALIDATE=0
+          --output "type=local,dest=$RUNNER_TEMP/source-offer" .
+      - name: Stage it as a prerelease request does
+        env:
+          VERSION: 0.0.0-ci
+          SOURCE_EXPORT: ${{ runner.temp }}/source-offer
+          RELEASE_ASSETS: ${{ runner.temp }}/release-assets
+        run: python3 -m scripts.ci.release stage-source
 
   release:
     name: Release package checks

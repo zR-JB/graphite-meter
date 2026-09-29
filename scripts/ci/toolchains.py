@@ -142,6 +142,8 @@ def literal_updates(root: Path = ROOT) -> dict[Path, str]:
              f"FROM {pins['images']['bun']} AS client"),
             (r"(?m)^FROM docker\.io/library/golang:\S+ AS server$",
              f"FROM {pins['images']['golang']} AS server"),
+            (r"(?m)^FROM docker\.io/library/python:\S+ AS source-offer$",
+             f"FROM {pins['images']['python']} AS source-offer"),
         ],
         "container/Dockerfile.rust": [
             (r"(?m)^(FROM --platform=\$BUILDPLATFORM )docker\.io/library/python:\S+( AS python)$",

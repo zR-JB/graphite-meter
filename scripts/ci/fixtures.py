@@ -189,11 +189,11 @@ def source_members(version: str) -> dict[str, bytes]:
     }
 
 
-def write_release_assets(dist: Path, version: str, reported: str = "") -> None:
-    """Write the native release a stable request uploads; each TUI prints `reported`."""
+def write_release_assets(dist: Path, version: str, reported: str = "", tuis: bool = True) -> None:
+    """Write the native release a stable request uploads, each TUI printing `reported`, or a prerelease's."""
     dist.mkdir(parents=True, exist_ok=True)
     write_archive(dist / f"graphite-meter_{version}_third-party-source.tar.gz", source_members(version))
     script = f"#!/bin/sh\necho graphite-meter-client {reported or version}\n".encode()
-    for name, (base, binary) in tui_archives(version, TARGETS).items():
+    for name, (base, binary) in tui_archives(version, TARGETS).items() if tuis else ():
         write_archive(dist / name, {f"{base}/{file}": b"x" for file in TUI_FILES} | {f"{base}/{binary}": script})
     write_checksums(dist)

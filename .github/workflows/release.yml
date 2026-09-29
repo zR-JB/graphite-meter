@@ -82,7 +82,7 @@ jobs:
           HANDOFF_DIR: ${{ runner.temp }}/handoff
         run: python3 -m scripts.ci.release verify
 
-      # One directory per handoff: image/, and rust-image/ and assets/ when verified.
+      # One directory per handoff: image/, assets/ and, with the Rust server, rust-image/.
       - name: Upload verified handoff
         if: steps.verify.outputs.publish == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -172,7 +172,6 @@ jobs:
 
       - id: app
         name: Mint the release App token
-        if: needs.verify.outputs.assets_sha256 != ''
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
@@ -180,7 +179,6 @@ jobs:
           permission-contents: write
 
       - name: Publish the verified GitHub Release
-        if: needs.verify.outputs.assets_sha256 != ''
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           REPOSITORY: ${{ github.repository }}

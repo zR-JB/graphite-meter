@@ -45,6 +45,7 @@ gh() { case "$*" in *_rust_*) printf '%s\\n' $RUST_RELEASES ;; *) printf '%s\\n'
 """
 TAG, SHA, OTHER_SHA = "v1.2.3", "d" * 40, "e" * 40
 SOURCE = "graphite-meter_1.2.3_third-party-source.tar.gz"
+GO_SOURCE = "graphite-meter_1.2.3-rc.1_third-party-source.tar.gz"
 ASSETS = {SOURCE: b"third-party source", "checksums.txt": b"checksums"}
 # GitHub's tags, annotated tags, releases and uploads behind `gh api`. A write becomes readable
 # only after `lag` reads of a new tag or `publish_lag` reads of a published release; a publish
@@ -269,7 +270,7 @@ class ReleasePublicationTests(unittest.TestCase):
         tag = "v1.2.3-rc.1"
         sources = [f"graphite-meter-{build}_1.2.3-rc.1_linux_amd64_rust_third-party-source.tar.gz"
                    for build in ("client", "server")]
-        assets = {source: b"verified source" for source in sources} | {"checksums.txt": b"verified checksums"}
+        assets = {source: b"verified source" for source in [GO_SOURCE, *sources]} | {"checksums.txt": b"checksums"}
         identity = {"TAG": tag, "PR": "101", "SOURCE_SHA": OTHER_SHA, "RUST": "both"}
         error, output, published = self.publish(copy.deepcopy(EMPTY), assets, **identity)
         self.assertIsNone(error, output)
@@ -278,10 +279,10 @@ class ReleasePublicationTests(unittest.TestCase):
                          (False, True, OTHER_SHA))
         self.assertEqual(published["tags"], {tag: {"type": "commit", "sha": OTHER_SHA}})
         self.assertIn(OTHER_SHA, release["body"])
-        # Each build's archive is the source of that build alone, and the Go image gets none.
+        # Each Rust build's archive is the source of that build alone; the Go image's is the Go builds'.
         self.assertIn(f"**{sources[0]}**, **{sources[1]}**. Together with the tagged repository source, each archive",
                       release["body"])
-        self.assertIn("no third-party source for the Go image **1.2.3-rc.1**", release["body"])
+        self.assertIn(f"included in the Go builds is attached as **{GO_SOURCE}**", release["body"])
         error, output, retried = self.publish(copy.deepcopy(published), assets, **identity)
         self.assertIsNone(error, output)
         self.assertEqual(retried["writes"], published["writes"])
@@ -289,6 +290,16 @@ class ReleasePublicationTests(unittest.TestCase):
             error, _, rejected = self.publish(copy.deepcopy(published), assets, **(identity | change))
             self.assertIsNotNone(error)
             self.assertEqual(rejected["writes"], published["writes"])
+
+    def test_a_prerelease_without_rust_offers_the_source_of_its_image(self) -> None:
+        assets = {GO_SOURCE: b"verified source", "checksums.txt": b"checksums"}
+        error, output, published = self.publish(copy.deepcopy(EMPTY), assets, TAG="v1.2.3-rc.1", PR="101",
+                                                SOURCE_SHA=OTHER_SHA)
+        self.assertIsNone(error, output)
+        release = published["releases"][0]
+        self.assertEqual((release["prerelease"], release["target_commitish"]), (True, OTHER_SHA))
+        self.assertIn(f"attached as **{GO_SOURCE}**", release["body"])
+        self.assertNotIn("Rust", release["body"])
 
     def test_release_without_the_third_party_source_offer_is_refused(self) -> None:
         error, _, after = self.publish(copy.deepcopy(EMPTY), {"checksums.txt": b"checksums"})

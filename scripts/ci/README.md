@@ -47,8 +47,9 @@ deployment when the Release run asks.
    prepare` sees the inputs, which GitHub also renders into the run title. A
    stable build checks the committed legal outputs, stamps the version and
    builds the native archives, the third-party source archive and the OCI
-   image from main; a prerelease builds only the image, which BuildKit fetches
-   as the exact remote commit without a token. The `rust` input adds the
+   image from main; a prerelease builds the image and the source archive of its
+   third-party components, which BuildKit fetches as the exact remote commit
+   without a token. The `rust` input adds the
    experimental Rust image and archives, built the same way, and a macOS job
    that builds the macOS archives from the validated commit without a token.
 2. **Trusted verification.** `release.yml` runs main's tooling on
@@ -64,8 +65,8 @@ deployment when the Release run asks.
    deployments.
 3. **Approved publication.** One `ghcr-release` job holds the only write
    credentials. It rechecks the handoff digests and all trust above, pushes the
-   verified digest to its exact version tag, and for a stable release
-   publishes the GitHub Release and points the `major.minor` and `latest`
+   verified digest to its exact version tag, publishes the GitHub Release,
+   and for a stable release points the `major.minor` and `latest`
    aliases (and their `-rust` forms, over releases that shipped a Rust image)
    at the highest published releases, which also repairs aliases a cancelled
    run left behind.
@@ -73,8 +74,9 @@ deployment when the Release run asks.
 The default `GITHUB_TOKEN` has no write scope in any workflow. The verified
 handoff, one artifact with a directory each for the image, the Rust image and the
 native archives, is retained 35 days to cover the approval window; the recheck fails closed.
-GitHub's automatic source archives provide the project source; a stable
-release adds the third-party source archive and a source-availability note.
+GitHub's automatic source archives provide the project source; every release
+adds the Go builds' third-party source archive, one for each Rust build, and a
+source-availability note.
 
 OCI builds request `provenance: mode=max`, pin the privileged binfmt image and
 keep BuildKit's insecure entitlements disabled. The Dockerfile may not select a
