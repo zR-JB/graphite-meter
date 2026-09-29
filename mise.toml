@@ -493,6 +493,11 @@ run = [
   "RUSTFLAGS='--cfg fuzzing' cargo build --locked --manifest-path http3/fuzz/Cargo.toml",
 ]
 
+[tasks.rust-cache-trim]
+description = "Drop the workspace crates' builds, so a new Rust cache holds only dependency builds"
+dir = "rust"
+run = "cargo clean -p graphite-meter-server -p graphite-meter-client -p graphite-meter-core -p graphite-meter-net -p graphite-meter-http3"
+
 [tasks.rust-fuzz]
 description = "Fuzz one HTTP/3 codec target with libFuzzer on the pinned stable toolchain"
 dir = "rust/http3/fuzz"

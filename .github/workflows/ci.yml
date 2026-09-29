@@ -229,8 +229,7 @@ jobs:
       - name: Check the Windows and musl TUIs, the HTTP/3 codec without I/O and the fuzz targets
         run: mise run rust-check-targets
       - name: Keep only dependency builds in a new cache
-        working-directory: rust
-        run: cargo clean -p graphite-meter-server -p graphite-meter-client -p graphite-meter-core -p graphite-meter-net -p graphite-meter-http3
+        run: mise run rust-cache-trim
 
   rust-interop:
     name: Experimental Rust interoperability
@@ -257,8 +256,7 @@ jobs:
       - name: Delayed HTTP/3 and WebTransport downloads
         run: mise run rust-delayed-downloads
       - name: Keep only dependency builds in a new cache
-        working-directory: rust
-        run: cargo clean -p graphite-meter-server -p graphite-meter-client -p graphite-meter-core -p graphite-meter-net -p graphite-meter-http3
+        run: mise run rust-cache-trim
 
   rust-e2e:
     name: Experimental Rust browser E2E
