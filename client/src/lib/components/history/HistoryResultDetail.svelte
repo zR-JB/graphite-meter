@@ -26,6 +26,7 @@
     summaryCards,
     summaryEvidence,
   } from "../../presentation/resultSummary";
+  import { throughputScales } from "../../presentation/scales";
   import {
     LATENCY_LANES,
     savedLatencyHasProbeEvidence,
@@ -52,7 +53,18 @@
   const run = $derived(result.multiServer);
   const multiple = $derived(run.selection.length > 1);
   const details = $derived(multiple ? run : null);
-  const units = $derived({ base: store.unitBase, kind: store.unitKind });
+  // A saved result reads in one tier, as the page did: the tier its own peaks set.
+  const units = $derived({
+    base: store.unitBase,
+    kind: store.unitKind,
+    tier: throughputScales(
+      [],
+      result,
+      store.config.visualization.throughputMaxBytesPerSec,
+      store.unitBase,
+      store.unitKind,
+    ).unitIndex,
+  });
   const completed = $derived(new Date(record.completedAt));
 
   const cards = $derived.by(() => {
