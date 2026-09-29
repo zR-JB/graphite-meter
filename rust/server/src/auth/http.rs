@@ -16,7 +16,7 @@ use super::{
 use crate::{
     config::{AuthConfig, AuthMode, ConfigError},
     cors::Access,
-    http::response::{json_response, query_pairs, redirect_link, text_response},
+    http::response::{json_response, query_pairs, redirect as go_redirect, text_response},
     log::rfc3339,
     sync::lock,
 };
@@ -139,7 +139,7 @@ impl Service {
         } else {
             request.method()
         };
-        let mut result = match AuthRoute::lookup(method, path) {
+        match AuthRoute::lookup(method, path) {
             Some(AuthRoute::Login) => self.login_page(request).await,
             Some(AuthRoute::OidcStart) => self.oidc_start(authorized).await,
             Some(AuthRoute::OidcCallback) => self.oidc_callback(authorized).await,
@@ -159,19 +159,7 @@ impl Service {
                 Some(Route::WsSession) if request.method() == Method::POST => self.ticket(authorized, Kind::WebSocket),
                 _ => error_response(StatusCode::NOT_FOUND),
             },
-        };
-        // As Go's http.Redirect, a GET's or HEAD's redirect is HTML, and a GET's also links its destination.
-        if result.status() == StatusCode::SEE_OTHER && *method == Method::GET {
-            if request.method() == Method::GET {
-                let location = result.headers()[header::LOCATION].to_str().unwrap_or_default();
-                *result.body_mut() = redirect_link(StatusCode::SEE_OTHER, location).into();
-            }
-            result.headers_mut().insert(
-                header::CONTENT_TYPE,
-                HeaderValue::from_static("text/html; charset=utf-8"),
-            );
         }
-        result
     }
 
     async fn login_page(&self, request: &Request<Bytes>) -> Response<Bytes> {
@@ -224,7 +212,7 @@ impl Service {
             return error_response(StatusCode::NOT_FOUND);
         };
         let Ok(form) = form(request) else {
-            return self.rejected(Reason::MalformedForm, "");
+            return self.rejected(request.method(), Reason::MalformedForm, "");
         };
         let challenge = value(&form, "challenge");
         let result = password
@@ -248,13 +236,13 @@ impl Service {
                 } else {
                     "/".into()
                 };
-                let mut result = redirect(&destination);
+                let mut result = redirect(request.method(), &destination);
                 session_cookies(&mut result, &token, &session);
                 let (device, expires) = password.device_cookie(SystemTime::now());
                 set_cookie(&mut result, "__Host-gm_device", &device, expires, "Strict");
                 result
             }
-            Err(reason) => self.rejected(reason, challenge),
+            Err(reason) => self.rejected(request.method(), reason, challenge),
         }
     }
 
@@ -266,33 +254,33 @@ impl Service {
         let form = form(request);
         let challenge = form.as_ref().map_or("", |form| value(form, "challenge"));
         if oidc.ready().is_none() {
-            return self.oidc_rejected(Reason::ProviderNotReady, challenge);
+            return self.oidc_rejected(request.method(), Reason::ProviderNotReady, challenge);
         }
         let Ok(form) = &form else {
-            return self.oidc_rejected(Reason::MalformedForm, "");
+            return self.oidc_rejected(request.method(), Reason::MalformedForm, "");
         };
         let origin = text(request.headers(), "origin").unwrap_or_default();
         let nonce = cookie(request.headers(), "__Host-gm_login");
         if let Err(reason) = check_csrf(self.policy.public_origin(), origin, nonce, value(form, "csrf")) {
-            return self.oidc_rejected(reason, challenge);
+            return self.oidc_rejected(request.method(), reason, challenge);
         }
         let address = self
             .policy
             .client_address(request.headers(), authorized.connection().peer);
         let Some(address) = address.filter(|&address| self.attempts.allow(Budget::OidcStart, address)) else {
-            return self.oidc_rejected(Reason::Throttled, challenge);
+            return self.oidc_rejected(request.method(), Reason::Throttled, challenge);
         };
         let prior = cookie(request.headers(), "__Host-gm_session").and_then(|token| self.sessions.lookup(token));
         let stored = if valid_challenge(challenge) { challenge } else { "" };
         match oidc.start(address, stored.to_owned(), prior).await {
             Ok(started) => {
-                let mut result = redirect(&started.url);
+                let mut result = redirect(request.method(), &started.url);
                 result.headers_mut().extend(started.provider.page_headers.clone());
                 let expires = SystemTime::now() + super::oidc::TRANSACTION_LIFETIME;
                 set_cookie(&mut result, "__Host-gm_oidc", &started.browser, expires, "Lax");
                 result
             }
-            Err(reason) => self.oidc_rejected(reason, challenge),
+            Err(reason) => self.oidc_rejected(request.method(), reason, challenge),
         }
     }
 
@@ -300,15 +288,16 @@ impl Service {
         let Some(oidc) = &self.oidc else {
             return error_response(StatusCode::NOT_FOUND);
         };
+        let request = authorized.request();
         let mut result = self
             .oidc_login(oidc, authorized)
             .await
             .unwrap_or_else(|(reason, mut challenge)| {
                 // As Go's refusal, which reads the callback's own challenge where the transaction names none.
                 if challenge.is_empty() {
-                    challenge = value(&query_pairs(authorized.request()), "challenge").to_owned();
+                    challenge = value(&query_pairs(request), "challenge").to_owned();
                 }
-                self.oidc_rejected(reason, &challenge)
+                self.oidc_rejected(request.method(), reason, &challenge)
             });
         clear_cookie(&mut result, "__Host-gm_oidc", "Lax");
         result
@@ -359,19 +348,19 @@ impl Service {
         Ok(result)
     }
 
-    fn oidc_rejected(&self, reason: Reason, challenge: &str) -> Response<Bytes> {
+    fn oidc_rejected(&self, method: &Method, reason: Reason, challenge: &str) -> Response<Bytes> {
         self.log.count(Counter::OidcFailure);
-        self.rejected(reason, challenge)
+        self.rejected(method, reason, challenge)
     }
 
-    fn rejected(&self, reason: Reason, challenge: &str) -> Response<Bytes> {
+    fn rejected(&self, method: &Method, reason: Reason, challenge: &str) -> Response<Bytes> {
         self.log.refused(reason);
         let mut fields = Vec::new();
         if valid_challenge(challenge) {
             fields.push(("challenge", challenge));
         }
         fields.push(("error", reason.notice()));
-        redirect(&query_url(AuthRoute::Login.path(), &fields))
+        redirect(method, &query_url(AuthRoute::Login.path(), &fields))
     }
 
     fn session_info(&self, authorized: &AuthorizedRequest<Bytes>) -> Response<Bytes> {
@@ -406,7 +395,8 @@ impl Service {
             }
         }
         self.log.count(Counter::Logout);
-        let mut result = redirect(&query_url(AuthRoute::Login.path(), &[("reason", "signed_out")]));
+        let signed_out = query_url(AuthRoute::Login.path(), &[("reason", "signed_out")]);
+        let mut result = redirect(authorized.request().method(), &signed_out);
         for name in ["__Host-gm_session", "__Host-gm_login", "__Host-gm_csrf"] {
             clear_cookie(&mut result, name, "Strict");
         }
@@ -422,7 +412,7 @@ impl Service {
         }
         // As in Go, the CLI page redirects before it reads the client's address.
         if !browser && let Some(destination) = self.sessions.browser_approval_redirect(challenge) {
-            return redirect(&destination);
+            return redirect(request.method(), &destination);
         }
         let client = self
             .policy
@@ -452,7 +442,10 @@ impl Service {
                 .begin_browser_approval(challenge, origin, session.as_ref(), client)
         } else {
             let Some(session) = &session else {
-                return redirect(&query_url(AuthRoute::Login.path(), &[("challenge", challenge)]));
+                return redirect(
+                    request.method(),
+                    &query_url(AuthRoute::Login.path(), &[("challenge", challenge)]),
+                );
             };
             let Some(client) = client else {
                 return response(StatusCode::FORBIDDEN);
@@ -469,7 +462,10 @@ impl Service {
                     {
                         return html(StatusCode::OK, pages::continue_page(challenge, true));
                     }
-                    return redirect(&query_url(AuthRoute::Login.path(), &[("challenge", challenge)]));
+                    return redirect(
+                        request.method(),
+                        &query_url(AuthRoute::Login.path(), &[("challenge", challenge)]),
+                    );
                 };
                 let origin = view.browser_origin.as_deref().unwrap_or_default();
                 html(
@@ -636,13 +632,12 @@ fn json(status: StatusCode, value: serde_json::Value) -> Response<Bytes> {
 fn error_response(status: StatusCode) -> Response<Bytes> {
     secured(status, text_response(status))
 }
-fn redirect(destination: &str) -> Response<Bytes> {
-    let mut response = response(StatusCode::SEE_OTHER);
-    response.headers_mut().insert(
-        header::LOCATION,
-        HeaderValue::from_str(destination).expect("encoded redirect"),
-    );
-    response
+/// Go's http.Redirect, under the auth pages' headers.
+fn redirect(method: &Method, destination: &str) -> Response<Bytes> {
+    secured(
+        StatusCode::SEE_OTHER,
+        go_redirect(method, StatusCode::SEE_OTHER, destination),
+    )
 }
 fn capacity_page() -> Response<Bytes> {
     html(StatusCode::TOO_MANY_REQUESTS, pages::capacity_page())
