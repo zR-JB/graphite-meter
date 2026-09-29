@@ -120,6 +120,24 @@ function reportPolicyViolations() {
   );
 }
 
+/** Every page: the last clicks and their targets, so a click that started nothing shows where it landed. */
+function recordClicks() {
+  const clicks: string[] = [];
+  Object.assign(window, { clicks });
+  document.addEventListener(
+    "click",
+    (event) => {
+      const target = event.target as Element | null;
+      const name = target?.closest("button")?.textContent?.trim().slice(0, 40);
+      clicks.push(
+        `${Math.round(performance.now())} ms ${target?.tagName ?? "?"}${name ? ` "${name}"` : ""}`,
+      );
+      clicks.splice(0, clicks.length - 5);
+    },
+    true,
+  );
+}
+
 /** Every page: no readout ever shows NaN or Infinity, and the dial moves while a transfer shows a rate. */
 function watchDisplay() {
   const TRANSFER = ["download", "upload", "bidirectional"];
@@ -404,6 +422,7 @@ export class Page {
         await this.raw.cdp("Runtime.enable");
         for (const guard of [
           reportPolicyViolations,
+          recordClicks,
           watchDisplay,
           recordStorage,
         ])
@@ -499,6 +518,7 @@ export class Page {
         blocker: text(document.querySelector("#run-duration")),
         // A refused or failed start shows its reason only in the gauge's footer.
         gauge: text(document.querySelector(".gauge-footer")),
+        clicks: (window as any).clicks,
         notices: [
           ...document.querySelectorAll('[role="alert"], [role="status"]'),
         ]
