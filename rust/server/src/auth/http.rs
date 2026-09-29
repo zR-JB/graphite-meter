@@ -1,7 +1,7 @@
 //! HTTP authentication controller. Requests arrive only after policy authorization.
 use super::{
-    ApprovalError, ApprovalKind, AuthLease, AuthRoute, Exchange, ExchangeError, SESSION_LIFETIME, SessionStore,
-    TicketError,
+    ApprovalError, ApprovalKind, AuthLease, AuthRoute, Exchange, ExchangeError, SESSION_LIFETIME, SessionLease,
+    SessionStore, TicketError,
     logging::{Counter, SecurityLog},
     oidc::Oidc,
     pages::{self, LoginPage},
@@ -219,7 +219,7 @@ impl Service {
             "__Host-gm_login",
             &nonce,
             SystemTime::now() + LOGIN_NONCE_LIFETIME,
-            true,
+            "Strict",
         );
         result
     }
@@ -255,23 +255,9 @@ impl Service {
                     "/".into()
                 };
                 let mut result = redirect(&destination);
-                set_cookie(
-                    &mut result,
-                    "__Host-gm_session",
-                    &token,
-                    session.session().expires(),
-                    true,
-                );
-                set_cookie(
-                    &mut result,
-                    "__Host-gm_csrf",
-                    session.session().csrf(),
-                    session.session().expires(),
-                    false,
-                );
-                clear_cookie(&mut result, "__Host-gm_login");
+                session_cookies(&mut result, &token, &session);
                 let (device, expires) = password.device_cookie(SystemTime::now());
-                set_cookie(&mut result, "__Host-gm_device", &device, expires, true);
+                set_cookie(&mut result, "__Host-gm_device", &device, expires, "Strict");
                 result
             }
             Err(reason) => self.rejected(reason, challenge),
@@ -308,15 +294,8 @@ impl Service {
             Ok(started) => {
                 let mut result = redirect(&started.url);
                 result.headers_mut().extend(started.provider.page_headers.clone());
-                result.headers_mut().append(
-                    header::SET_COOKIE,
-                    HeaderValue::from_str(&format!(
-                        "__Host-gm_oidc={}; Path=/; Max-Age={}; Secure; HttpOnly; SameSite=Lax",
-                        started.browser,
-                        super::oidc::TRANSACTION_LIFETIME.as_secs()
-                    ))
-                    .expect("transaction cookie"),
-                );
+                let expires = SystemTime::now() + super::oidc::TRANSACTION_LIFETIME;
+                set_cookie(&mut result, "__Host-gm_oidc", &started.browser, expires, "Lax");
                 result
             }
             Err(reason) => self.oidc_rejected(reason, challenge),
@@ -331,7 +310,7 @@ impl Service {
             .oidc_login(oidc, authorized)
             .await
             .unwrap_or_else(|(reason, challenge)| self.oidc_rejected(reason, &challenge));
-        clear_cookie(&mut result, "__Host-gm_oidc");
+        clear_cookie(&mut result, "__Host-gm_oidc", "Lax");
         result
     }
 
@@ -375,21 +354,7 @@ impl Service {
             self.sessions.revoke(prior);
         }
         let mut result = html(StatusCode::OK, pages::continue_page(&tx.challenge, false));
-        set_cookie(
-            &mut result,
-            "__Host-gm_session",
-            &token,
-            session.session().expires(),
-            true,
-        );
-        set_cookie(
-            &mut result,
-            "__Host-gm_csrf",
-            session.session().csrf(),
-            session.session().expires(),
-            false,
-        );
-        clear_cookie(&mut result, "__Host-gm_login");
+        session_cookies(&mut result, &token, &session);
         self.log.count(Counter::Oidc);
         Ok(result)
     }
@@ -443,7 +408,7 @@ impl Service {
         self.log.count(Counter::Logout);
         let mut result = redirect(&query_url(AuthRoute::Login.path(), &[("reason", "signed_out")]));
         for name in ["__Host-gm_session", "__Host-gm_login", "__Host-gm_csrf"] {
-            clear_cookie(&mut result, name);
+            clear_cookie(&mut result, name, "Strict");
         }
         result
     }
@@ -728,27 +693,27 @@ fn form(request: &Request<Bytes>) -> Result<Vec<(String, String)>, ()> {
         })
         .collect()
 }
-fn set_cookie(response: &mut Response<Bytes>, name: &str, value: &str, expires: SystemTime, http_only: bool) {
+/// Go's setCookie: only the CSRF cookie, which the pages' script reads, lacks HttpOnly.
+fn set_cookie(response: &mut Response<Bytes>, name: &str, value: &str, expires: SystemTime, same_site: &str) {
     let age = expires.duration_since(SystemTime::now()).unwrap_or_default().as_secs();
-    let value = format!(
-        "{name}={value}; Path=/; Expires={}; Max-Age={age}; Secure; SameSite=Strict{}",
-        httpdate::fmt_http_date(expires),
-        if http_only { "; HttpOnly" } else { "" }
-    );
+    let http_only = if name == "__Host-gm_csrf" { "" } else { "; HttpOnly" };
+    let date = httpdate::fmt_http_date(expires);
+    let value =
+        format!("{name}={value}; Path=/; Expires={date}; Max-Age={age}{http_only}; Secure; SameSite={same_site}");
     response.headers_mut().append(
         header::SET_COOKIE,
         HeaderValue::from_str(&value).expect("generated cookie"),
     );
 }
-fn clear_cookie(response: &mut Response<Bytes>, name: &str) {
-    let value = format!(
-        "{name}=; Path=/; Expires={}; Max-Age=0; Secure; HttpOnly; SameSite=Strict",
-        httpdate::fmt_http_date(UNIX_EPOCH + Duration::from_secs(1))
-    );
-    response.headers_mut().append(
-        header::SET_COOKIE,
-        HeaderValue::from_str(&value).expect("generated cookie"),
-    );
+fn clear_cookie(response: &mut Response<Bytes>, name: &str, same_site: &str) {
+    set_cookie(response, name, "", UNIX_EPOCH + Duration::from_secs(1), same_site);
+}
+/// Go's issueSessionCookies.
+fn session_cookies(response: &mut Response<Bytes>, token: &str, lease: &SessionLease) {
+    let session = lease.session();
+    set_cookie(response, "__Host-gm_session", token, session.expires(), "Strict");
+    set_cookie(response, "__Host-gm_csrf", session.csrf(), session.expires(), "Strict");
+    clear_cookie(response, "__Host-gm_login", "Strict");
 }
 fn unix_ms(time: SystemTime) -> u64 {
     time.duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
@@ -1066,6 +1031,13 @@ mod tests {
         );
         let foreign = call(&service, Method::GET, &callback, &[("cookie", &browser)], String::new()).await;
         assert_eq!(location(&foreign), format!("/login?challenge={challenge}&error=failed"));
+        let transaction = started.headers()[header::SET_COOKIE].to_str().unwrap();
+        assert!(transaction.contains("; Expires=") && transaction.ends_with("; HttpOnly; Secure; SameSite=Lax"));
+        let cleared = foreign.headers()[header::SET_COOKIE].to_str().unwrap();
+        assert!(
+            cleared.ends_with("; Max-Age=0; HttpOnly; Secure; SameSite=Lax"),
+            "{cleared}"
+        );
         let cookieless = call(&service, Method::GET, &callback, &[], String::new()).await;
         assert_eq!(location(&cookieless), "/login?error=stale");
     }
@@ -1336,6 +1308,17 @@ mod tests {
             let form = encoded(&[("csrf", current.session().csrf()), ("scope", scope)]);
             let logged_out = call(&service, Method::POST, "/auth/logout", &headers, form).await;
             assert_eq!(logged_out.status(), StatusCode::SEE_OTHER);
+            let cleared = logged_out.headers().get_all(header::SET_COOKIE);
+            let cleared: Vec<_> = cleared.iter().map(|value| value.to_str().unwrap()).collect();
+            let expired = "=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT; Max-Age=0";
+            assert_eq!(
+                cleared,
+                [
+                    format!("__Host-gm_session{expired}; HttpOnly; Secure; SameSite=Strict"),
+                    format!("__Host-gm_login{expired}; HttpOnly; Secure; SameSite=Strict"),
+                    format!("__Host-gm_csrf{expired}; Secure; SameSite=Strict"),
+                ]
+            );
             assert!(!current.is_active() && other.is_active());
             assert_eq!(sibling.is_active(), scope.is_empty(), "scope {scope:?}");
         }
