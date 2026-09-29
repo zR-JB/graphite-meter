@@ -145,7 +145,7 @@ fn socket_target(raw: &str) -> Option<(String, String, Kind)> {
     if parsed.scheme != "https" {
         return None;
     }
-    let path = decode_path(&format!("/{path}"))?;
+    let path = unescape(&format!("/{path}"), false)?;
     let route = route::lookup(&path)?;
     Some((
         format!("{}{path}", canonical_origin(&origin).ok()?),
@@ -154,19 +154,22 @@ fn socket_target(raw: &str) -> Option<(String, String, Kind)> {
     ))
 }
 
-fn decode_path(raw: &str) -> Option<String> {
-    let mut path = Vec::with_capacity(raw.len());
+/// Go's `url.QueryUnescape` for a form value, where '+' is a space, or its `PathUnescape`.
+pub(super) fn unescape(raw: &str, form: bool) -> Option<String> {
+    let mut out = Vec::with_capacity(raw.len());
     let mut bytes = raw.bytes();
     while let Some(byte) = bytes.next() {
-        path.push(if byte == b'%' {
-            let high = (bytes.next()? as char).to_digit(16)?;
-            let low = (bytes.next()? as char).to_digit(16)?;
-            (high * 16 + low) as u8
-        } else {
-            byte
+        out.push(match byte {
+            b'+' if form => b' ',
+            b'%' => {
+                let high = (bytes.next()? as char).to_digit(16)?;
+                let low = (bytes.next()? as char).to_digit(16)?;
+                (high * 16 + low) as u8
+            }
+            byte => byte,
         });
     }
-    String::from_utf8(path).ok()
+    String::from_utf8(out).ok()
 }
 
 #[cfg(test)]

@@ -17,9 +17,6 @@ impl Config {
             return Err("per-client stream budgets exceed the QUIC stream limit".into());
         }
         crate::budget::check_configured(self)?;
-        if self.trusted_proxies.iter().any(|prefix| prefix.prefix_len() == 0) {
-            return Err("trusted proxy prefix must not cover every address".into());
-        }
         for (name, value) in [
             ("GM_MAX_ACTIVE_MEASUREMENTS", self.limits.operations),
             (

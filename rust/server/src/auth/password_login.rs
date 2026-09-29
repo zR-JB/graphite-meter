@@ -64,9 +64,6 @@ impl PasswordLogin {
         sessions: SessionStore,
         attempts: Arc<AttemptLimiter>,
     ) -> Result<Self, ConfigError> {
-        if !config.mode.password() {
-            return Err("password authentication is disabled".into());
-        }
         let encoded = read_secret("password hash", &config.password_hash, &config.password_hash_file, 4096)?;
         Ok(Self {
             public_origin: config.public_url.clone(),

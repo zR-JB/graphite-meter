@@ -112,7 +112,6 @@ pub fn connect_origins(document: &Document) -> Vec<String> {
 }
 
 fn add_throughput(capabilities: &mut Capabilities, base: &str, protocol: Protocol) {
-    let base = base.trim_end_matches('/');
     if let Some(target) = capabilities
         .throughput
         .iter_mut()
@@ -131,7 +130,6 @@ fn add_throughput(capabilities: &mut Capabilities, base: &str, protocol: Protoco
 }
 
 fn add_latency(capabilities: &mut Capabilities, base: &str) {
-    let base = base.trim_end_matches('/');
     if !capabilities
         .latency
         .iter()

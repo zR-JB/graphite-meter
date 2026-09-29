@@ -116,7 +116,7 @@ pub struct Policy {
 impl Policy {
     pub fn new(public: &str, mode: AuthMode, trusted: Vec<IpNet>, sessions: SessionStore) -> Result<Self, ConfigError> {
         let origin = target_origin(public)?.ok_or("authentication requires a public origin")?;
-        if mode == AuthMode::Off || origin.scheme != "https" || canonical_origin(public)? != public {
+        if origin.scheme != "https" || canonical_origin(public)? != public {
             return Err("authentication requires an enabled mode and canonical HTTPS origin".into());
         }
         Ok(Self {

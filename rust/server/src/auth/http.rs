@@ -10,6 +10,7 @@ use super::{
     rate::{AttemptLimiter, Budget},
     reason::Reason,
     session::random_token,
+    ticket::unescape,
     valid_challenge,
 };
 use crate::{
@@ -736,25 +737,9 @@ fn parse_form_pairs(raw: &str) -> Result<Vec<(String, String)>, ()> {
                 return Err(());
             }
             let (key, value) = field.split_once('=').unwrap_or((field, ""));
-            Ok((decode_form(key)?, decode_form(value)?))
+            Ok((unescape(key, true).ok_or(())?, unescape(value, true).ok_or(())?))
         })
         .collect()
-}
-fn decode_form(raw: &str) -> Result<String, ()> {
-    let mut out = Vec::with_capacity(raw.len());
-    let mut bytes = raw.bytes();
-    while let Some(byte) = bytes.next() {
-        out.push(match byte {
-            b'+' => b' ',
-            b'%' => {
-                let high = (bytes.next().ok_or(())? as char).to_digit(16).ok_or(())?;
-                let low = (bytes.next().ok_or(())? as char).to_digit(16).ok_or(())?;
-                (high * 16 + low) as u8
-            }
-            byte => byte,
-        });
-    }
-    String::from_utf8(out).map_err(|_| ())
 }
 fn set_cookie(response: &mut Response<Bytes>, name: &str, value: &str, expires: SystemTime, http_only: bool) {
     let age = expires.duration_since(SystemTime::now()).unwrap_or_default().as_secs();
