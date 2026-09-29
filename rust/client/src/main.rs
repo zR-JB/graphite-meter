@@ -2,6 +2,7 @@
 
 include!(concat!(env!("OUT_DIR"), "/legal.rs"));
 
+use crossterm::terminal::size as terminal_size;
 use graphite_meter_client::{
     Error,
     cli::{self, Action},
@@ -77,14 +78,16 @@ async fn run(config: graphite_meter_client::config::Config, report_only: bool) -
     let _ = graphite_meter_client::crypto::provider().install_default();
     let terminal = std::io::stdout().is_terminal();
     let headless = report_only || !terminal;
-    if headless && terminal && std::io::stdin().is_terminal() {
-        // As Go's runHeadless asks lipgloss.HasDarkBackground before the run.
+    // The handlers come first, as Go's: a signal during the query stops the run once the terminal is restored.
+    let caught = Arc::new(AtomicU8::new(0));
+    let interrupts = interrupts(headless, caught.clone())?;
+    let columns = || terminal_size().ok().filter(|(columns, _)| terminal && *columns > 0);
+    if headless && columns().is_some() && std::io::stdin().is_terminal() {
+        // As Go's runHeadless asks lipgloss.HasDarkBackground before the run, when stdout has a width.
         crossterm::terminal::enable_raw_mode()?;
         report::ask_background().await;
         crossterm::terminal::disable_raw_mode()?;
     }
-    let caught = Arc::new(AtomicU8::new(0));
-    let interrupts = interrupts(headless, caught.clone())?;
     let (finished, exit) = match headless {
         true => (
             Some(controller::run_once(config, interrupts).await?),
@@ -92,10 +95,7 @@ async fn run(config: graphite_meter_client::config::Config, report_only: bool) -
         ),
         false => controller::run(config, interrupts).await?,
     };
-    let width = crossterm::terminal::size()
-        .ok()
-        .filter(|_| terminal)
-        .map_or(report::WIDTH, |(columns, _)| usize::from(columns).max(40));
+    let width = columns().map_or(report::WIDTH, |(columns, _)| usize::from(columns).max(40));
     // Go prints the run its view shows, which a return to setup leaves none of.
     let shown = if headless { &finished } else { &exit.shown };
     match shown.as_ref().and_then(|snapshot| report::print(snapshot, width)) {
