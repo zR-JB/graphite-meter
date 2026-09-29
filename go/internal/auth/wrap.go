@@ -96,10 +96,14 @@ func (s *Service) serveAuthenticated(w http.ResponseWriter, r *http.Request, nex
 	next.ServeHTTP(w, r)
 }
 
+// The two faces auth.css sets its pages in, public like the pages themselves; no other font is.
+const signInSans, signInMono = "/fonts/ibm-plex-sans-var-latin1.woff2", "/fonts/ibm-plex-mono-600-latin1.woff2"
+
 func (s *Service) isPublicAuthRoute(method, path string) bool {
 	password, oidc := authModes(s.cfg.Mode)
 	switch method + " " + path {
-	case "GET /login", "GET /auth/cli", "GET /auth/browser", "POST /auth/cli/token", "POST /auth/browser/token":
+	case "GET /login", "GET /auth/cli", "GET /auth/browser", "POST /auth/cli/token", "POST /auth/browser/token",
+		"GET " + signInSans, "HEAD " + signInSans, "GET " + signInMono, "HEAD " + signInMono:
 		return true
 	case "POST /auth/password":
 		return password

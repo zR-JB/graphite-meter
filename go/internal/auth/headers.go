@@ -38,6 +38,7 @@ func authPageCSP(authorizationOrigin string) string {
 	return strings.Join([]string{
 		"default-src 'none'",
 		"style-src 'sha256-" + authStyleHash + "'",
+		"font-src 'self'",
 		"script-src 'sha256-" + authThemeHash + "' 'sha256-" + authPendingHash + "'",
 		"connect-src 'self'",
 		// data: covers the inlined favicon and admits no remote host.

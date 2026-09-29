@@ -111,10 +111,24 @@ func (s *Service) approvalRoomLocked(sess *session, clients []string, now time.T
 	return bySession < maxSessionApprovals, !clientFull && global
 }
 
+// An approval page refuses a link it cannot approve, or a request whose budgets are spent for now.
+const (
+	refusedLink = "link"
+	refusedBusy = "busy"
+)
+
+// refusePage answers 403 with one fixed sentence per kind, echoing nothing from the request.
+func refusePage(w http.ResponseWriter, kind string) {
+	securityHeaders(w.Header())
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+	_ = cliTemplate.Execute(w, map[string]any{"Styles": authStyles, "Refused": kind})
+}
+
 func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
 	challenge := r.URL.Query().Get("challenge")
 	if !validChallenge(challenge) {
-		forbidden(w)
+		refusePage(w, refusedLink)
 		return
 	}
 	s.mu.Lock()
@@ -132,7 +146,7 @@ func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
 	}
 	clients, ok := ClientKeys(r, s.trusted)
 	if !ok {
-		forbidden(w)
+		refusePage(w, refusedBusy)
 		return
 	}
 	now := time.Now()
@@ -147,7 +161,7 @@ func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	if a == nil {
 		s.count(countCapacity)
-		forbidden(w)
+		refusePage(w, refusedBusy)
 		return
 	}
 	render(w, cliTemplate,
@@ -158,16 +172,16 @@ func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
 	challenge := r.URL.Query().Get("challenge")
 	clientOrigin, valid := secureBrowserOrigin(r.URL.Query().Get("client_origin"))
 	clients, ok := ClientKeys(r, s.trusted)
-	if !validChallenge(challenge) || !valid || !ok {
-		forbidden(w)
+	if !validChallenge(challenge) || !valid {
+		refusePage(w, refusedLink)
 		return
 	}
 	now := time.Now()
 	s.mu.Lock()
 	a := s.approvals[challenge]
 	s.mu.Unlock()
-	if a == nil && !s.allowBrowserApproval(r) {
-		forbidden(w)
+	if !ok || a == nil && !s.allowBrowserApproval(r) {
+		refusePage(w, refusedBusy)
 		return
 	}
 	p, authenticated := s.authenticate(r)
@@ -184,10 +198,13 @@ func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
 			browserOrigin: clientOrigin, clients: clients}
 		s.approvals[challenge] = a
 	}
-	valid = a != nil && a.browserOrigin == clientOrigin
 	s.mu.Unlock()
-	if !valid {
-		forbidden(w)
+	if a == nil {
+		refusePage(w, refusedBusy)
+		return
+	}
+	if a.browserOrigin != clientOrigin {
+		refusePage(w, refusedLink)
 		return
 	}
 	if !signedIn {
@@ -203,6 +220,10 @@ func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	sessionRoom, _ := s.approvalRoomLocked(p.session, clients, now)
 	valid = s.approvals[challenge] == a && (a.session == p.session || a.session == nil && sessionRoom)
+	refusal := refusedLink
+	if a.session == nil && !sessionRoom {
+		refusal = refusedBusy
+	}
 	if valid {
 		a.session = p.session
 	}
@@ -210,7 +231,7 @@ func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	switch {
 	case !valid:
-		forbidden(w)
+		refusePage(w, refusal)
 	case atCapacity:
 		writeBrowserGrantCapacity(w, clientOrigin)
 	default:
