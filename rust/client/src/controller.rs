@@ -300,7 +300,12 @@ impl Controller {
         Ok(())
     }
     fn open_browser(&mut self) {
-        if self.browser.is_some() {
+        // Go opens the page on every press; only a launcher that is still starting is waited for.
+        if self
+            .browser
+            .as_mut()
+            .is_some_and(|child| !matches!(child.try_wait(), Ok(Some(_))))
+        {
             return;
         }
         let Some(prompt) = self.snapshots.borrow().auth.clone() else {
