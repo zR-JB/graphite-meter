@@ -271,9 +271,10 @@ def check_ci(root: Path) -> None:
 
 
 def check_run_commands(root: Path) -> None:
-    """No workflow, image build or release script, nor any task they run, builds with the unreviewed notices of
-    `scripts.legal.rust --development`, which only the development tasks use, or lets rustup replace itself
-    while it installs a toolchain."""
+    """No workflow, image build or release script, nor any task or scripts/ shell script they run, builds with
+    the unreviewed notices of `scripts.legal.rust --development`, which only the development tasks use, or lets
+    rustup replace itself while it installs a toolchain. Python modules are not followed: scripts.legal.rust
+    defines the flag, and package_rust.py, the one that runs it, is read."""
     tasks = tomllib.loads(read(root, "mise.toml"))["tasks"]
     texts = [path.read_text(encoding="utf-8") for path in sorted((root / ".github").rglob("*.y*ml"))]
     texts += [read(root, name) for name in ("container/Dockerfile", "container/Dockerfile.rust", *DARWIN_SCRIPTS)]
@@ -284,11 +285,18 @@ def check_run_commands(root: Path) -> None:
             fail("CI and releases must not build with unreviewed --development notices")
         if any("--no-self-update" not in line for line in re.findall(r"rustup\W+toolchain\W+install\b.*", text)):
             fail("CI and releases must install Rust toolchains with --no-self-update")
-        for task in set(re.findall(r"mise run ([\w-]+)", text)) - reached:
-            reached.add(task)
-            run = tasks.get(task, {}).get("run", [])
-            texts += [step if isinstance(step, str) else f"mise run {step['task']}"
-                      for step in (run if isinstance(run, list) else [run])]
+        found = re.findall(r"mise run ([\w-]+)|(?<![\w/.-])(scripts/[\w/.-]+\.sh)\b", text)
+        for name in {task or script for task, script in found} - reached:
+            reached.add(name)
+            if name.endswith(".sh"):
+                texts.append(read(root, name))
+                continue
+            # A task runs its steps and, before and after them, the tasks it depends on.
+            for key in ("run", "depends", "depends_post"):
+                steps = tasks.get(name, {}).get(key, [])
+                for step in steps if isinstance(steps, list) else [steps]:
+                    texts.append(step if key == "run" and isinstance(step, str)
+                                 else f"mise run {step if isinstance(step, str) else step['task']}")
 
 
 def path_filters(text: str) -> dict[str, list[str]]:

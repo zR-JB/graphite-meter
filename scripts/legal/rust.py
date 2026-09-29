@@ -228,7 +228,8 @@ def review_candidates(components: list[Component]) -> list[dict]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    # Only the full --development selects development notices, which the workflow policy looks for.
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument('--repo', type=Path, default=Path(__file__).resolve().parents[2])
     parser.add_argument('--package', choices=PACKAGES, required=True)
     parser.add_argument('--target', help='required, except that a --development build defaults to Cargo\'s host build')

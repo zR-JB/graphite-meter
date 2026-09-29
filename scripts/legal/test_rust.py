@@ -145,7 +145,9 @@ class RustDevelopmentTests(unittest.TestCase):
         for args, error in ((['--out', 'x'], '--target is required'),
                             (['--development', '--supplement', 'legal/rust-platform-macos.json', '--out', 'x'],
                              '--development reviews no platform'),
-                            (['--development', '--review-template', '--out', 'x'], '--development reviews no platform')):
+                            (['--development', '--review-template', '--out', 'x'], '--development reviews no platform'),
+                            (['--dev', '--supplement', 'legal/rust-platform-macos.json', '--out', 'x'],
+                             'unrecognized arguments: --dev')):
             with self.subTest(args=args):
                 result = subprocess.run([sys.executable, '-m', 'scripts.legal.rust', '--package', 'graphite-meter-client',
                                          *args], cwd=ROOT, capture_output=True, text=True, check=False)
