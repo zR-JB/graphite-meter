@@ -433,7 +433,6 @@ struct GrantScope {
     targets: HashSet<String>,
 }
 pub struct Discovery {
-    pub source: String,
     pub catalog: ServerCatalog,
     /// Entries the catalogue named but the client left out.
     pub rejected: Vec<Rejected>,
@@ -613,11 +612,7 @@ impl Http {
             .json(Method::GET, &url(&source, Route::Servers, &[]), Protocol::Negotiated)
             .await?;
         let (catalog, rejected) = catalog.resolve(&source).received()?;
-        Ok(Discovery {
-            source,
-            catalog,
-            rejected,
-        })
+        Ok(Discovery { catalog, rejected })
     }
     pub async fn preflight(&self, entry: &ServerEntry) -> Result<Preflight> {
         let origin = canonical_origin(&entry.url)?;
