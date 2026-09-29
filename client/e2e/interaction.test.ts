@@ -15,6 +15,18 @@ async function centre(locator: Locator) {
 const moveMouse = (page: Page, x: number, y: number) =>
   page.cdp("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
 
+type Point = { x: number; y: number };
+
+// A hand crossing at a normal speed: 12 px a step, a step every 16 ms or so.
+async function sweep(page: Page, from: Point, to: Point) {
+  const steps = Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / 12);
+  for (let step = 1; step <= steps; step++) {
+    const at = (a: number, b: number) => a + ((b - a) * step) / steps;
+    await moveMouse(page, at(from.x, to.x), at(from.y, to.y));
+    await Bun.sleep(16);
+  }
+}
+
 const touch = (page: Page, type: string, x = 0, y = 0) =>
   page.cdp("Input.dispatchTouchEvent", {
     type,
@@ -42,6 +54,36 @@ test("a pause on a control opens its tip while the hand drifts, and leaving clos
   await expect(tip(page)).toContainText("Settings");
   await moveMouse(page, x, y + 240);
   await expect(tip(page)).toHaveCount(0);
+});
+
+test("a hand sweeping across tips opens none, even just after one showed, and a rest opens one", async (page) => {
+  await open(page, home.http);
+  const icon = (name: string) =>
+    centre(page.getByRole("button", { name, exact: true }));
+  const history = await icon("History");
+  const details = await icon("Details");
+  await page.evaluate(() => {
+    const opened: string[] = ((window as any).opened = []);
+    new MutationObserver((records) => {
+      for (const record of records)
+        for (const node of record.addedNodes)
+          if ((node as Element).classList?.contains("tooltip"))
+            opened.push(node.textContent ?? "");
+    }).observe(document.body, { childList: true });
+  });
+  const opened = () => page.evaluate<string[]>(() => (window as any).opened);
+  // History, Theme and Details sit side by side; the sweep starts and ends off them.
+  const left = { x: history.x - 80, y: history.y };
+  const right = { x: details.x + 20, y: details.y };
+  await sweep(page, left, right);
+  await sweep(page, right, left);
+  expect(await opened()).toEqual([]);
+  await moveMouse(page, history.x, history.y);
+  await expect(tip(page)).toContainText("History");
+  // Its neighbours need a rest of their own, so sweeping on across them opens neither.
+  await sweep(page, history, right);
+  await expect(tip(page)).toHaveCount(0);
+  expect((await opened()).length).toBe(1);
 });
 
 test("a finger scrolls past graphs, reads one by dragging sideways and toggles jargon by a tap", async (page) => {

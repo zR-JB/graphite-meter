@@ -5,9 +5,11 @@ import { claim, isWarm, release, warmUp } from "./intent";
 const ACTIONABLE_SELECTOR =
   "button, a, label, summary, [role='switch'], [role='tab']";
 let uid = 0;
-// A pause on the word opens its tip; jargon answers sooner, the next tip at once.
-const OPEN_MS = 400;
-const TERM_OPEN_MS = 200;
+// A hand at rest on the word opens its tip; jargon answers sooner, the next tip after a short rest, never at once.
+const REST_PX = 8;
+const REST_MS = 400;
+const TERM_REST_MS = 250;
+const WARM_REST_MS = 120;
 const CLOSE_MS = 150;
 const LONG_PRESS_MS = 450;
 // A finger that drifts further is scrolling, not pressing.
@@ -17,7 +19,7 @@ const anchored =
   typeof CSS !== "undefined" && CSS.supports("position-area", "block-start");
 /** A plain label or control; the getter updates the text in place, so an open tip stays open. */
 export const tooltip = (text: () => string) => fromAction(tooltipAction, text);
-/** Jargon: a quiet mark, a short pause, and a click or tap opens it outright. */
+/** Jargon: a quiet mark, a shorter rest, and a click or tap opens it outright. */
 export const term = (text: () => string) =>
   fromAction(
     (node: HTMLElement, initial: string) => tooltipAction(node, initial, true),
@@ -79,6 +81,8 @@ function tooltipAction(node: HTMLElement, initial: string, marked = false) {
   let pressTimer = 0;
   // Where a finger landed, until it lifts, drifts away or the page takes it to scroll.
   let press: { x: number; y: number } | null = null;
+  // Where a mouse or pen settled on the word; a move beyond REST_PX restarts the rest from there.
+  let rest: { x: number; y: number } | null = null;
   // A long press showed the tip; the click it ends in is not a tap on the control.
   let pressed = false;
   // A touch showed the tip; the next tap closes it.
@@ -239,15 +243,25 @@ function tooltipAction(node: HTMLElement, initial: string, marked = false) {
   function onEnter(event: PointerEvent) {
     if (!hovers(event)) return;
     clearTimeout(closeTimer);
-    if (bubble || clicked) return;
-    const wait = isWarm() ? 0 : marked ? TERM_OPEN_MS : OPEN_MS;
-    if (!wait) return show();
-    // Not motion: hover intent is a pause on the word, however the hand drifts.
-    openTimer = window.setTimeout(() => show(), wait);
+    settle(event);
+  }
+  // Hover intent: only a hand that stays near one point opens the tip; a sweep keeps moving it, a drag never counts.
+  function settle(event: PointerEvent) {
+    if (!hovers(event) || event.buttons || bubble || clicked) return;
+    const { clientX: x, clientY: y } = event;
+    if (rest && Math.hypot(x - rest.x, y - rest.y) <= REST_PX) return;
+    rest = { x, y };
+    clearTimeout(openTimer);
+    // Not motion: hover intent is judged by rest time; a reading hand drifts within REST_PX.
+    openTimer = window.setTimeout(
+      () => show(),
+      isWarm() ? WARM_REST_MS : marked ? TERM_REST_MS : REST_MS,
+    );
   }
   function onLeave(event: PointerEvent) {
     if (!hovers(event)) return;
     clearTimeout(openTimer);
+    rest = null;
     clicked = false;
     // Not motion: a slip off a small word keeps its tip a moment.
     if (bubble && !touchOpen) closeTimer = window.setTimeout(hide, CLOSE_MS);
@@ -291,6 +305,7 @@ function tooltipAction(node: HTMLElement, initial: string, marked = false) {
       Math.hypot(event.clientX - press.x, event.clientY - press.y) > SLOP_PX
     )
       endPress();
+    settle(event);
   }
   // A tap on jargon or a fact toggles its tip; a tap on a control only runs it.
   function onPointerUp(event: PointerEvent) {
