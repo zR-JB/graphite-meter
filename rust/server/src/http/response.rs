@@ -10,15 +10,27 @@ pub(crate) fn query<B>(request: &Request<B>, name: &str) -> Option<String> {
         .map(|(_, value)| value)
 }
 
-/// Every query parameter, decoded, in order, as Go's `url.ParseQuery` keeps them: it drops a pair with a semicolon
-/// or with an escape that is not two hex digits.
+/// Every query parameter Go's `url.ParseQuery` keeps, decoded, in order.
 pub(crate) fn query_pairs<B>(request: &Request<B>) -> Vec<(String, String)> {
-    let hex = |escape: &str| escape.len() >= 2 && escape.as_bytes()[..2].iter().all(u8::is_ascii_hexdigit);
-    let pairs = request.uri().query().unwrap_or_default().split('&');
-    pairs
-        .filter(|pair| !pair.contains(';') && pair.split('%').skip(1).all(hex))
-        .flat_map(|pair| form_urlencoded::parse(pair.as_bytes()).into_owned())
+    parse_query(request.uri().query().unwrap_or_default().as_bytes())
+        .flatten()
         .collect()
+}
+
+/// Go's `url.ParseQuery`: each pair decoded, or an error for one holding ';' or a bad escape, which Go leaves out.
+pub(crate) fn parse_query(query: &[u8]) -> impl Iterator<Item = Result<(String, String), ()>> {
+    query
+        .split(|&byte| byte == b'&')
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| {
+            let escaped = |at: usize| {
+                pair.get(at + 1..at + 3)
+                    .is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit))
+            };
+            let valid = !pair.contains(&b';') && pair.iter().enumerate().all(|(at, &byte)| byte != b'%' || escaped(at));
+            let (name, value) = form_urlencoded::parse(pair).next().unwrap_or_default();
+            valid.then(|| (name.into_owned(), value.into_owned())).ok_or(())
+        })
 }
 
 /// Go's `httpguts.ValidHostHeader`: the bytes a host name, an IP literal with its zone and a port may hold.

@@ -300,7 +300,13 @@ impl Service {
         let mut result = self
             .oidc_login(oidc, authorized)
             .await
-            .unwrap_or_else(|(reason, challenge)| self.oidc_rejected(reason, &challenge));
+            .unwrap_or_else(|(reason, mut challenge)| {
+                // As Go's refusal, which reads the callback's own challenge where the transaction names none.
+                if challenge.is_empty() {
+                    challenge = value(&query_pairs(authorized.request()), "challenge").to_owned();
+                }
+                self.oidc_rejected(reason, &challenge)
+            });
         clear_cookie(&mut result, "__Host-gm_oidc", "Lax");
         result
     }
@@ -1031,6 +1037,11 @@ mod tests {
         );
         let cookieless = call(&service, Method::GET, &callback, &[], String::new()).await;
         assert_eq!(location(&cookieless), "/login?error=stale");
+        // Where no transaction names a challenge, Go's refusal keeps the callback's own.
+        let unknown = [("state", "unknown"), ("code", "code"), ("challenge", &challenge)];
+        let unknown = query_url("/auth/oidc/callback", &unknown);
+        let unknown = call(&service, Method::GET, &unknown, &[("cookie", &browser)], String::new()).await;
+        assert_eq!(location(&unknown), format!("/login?challenge={challenge}&error=failed"));
     }
 
     #[tokio::test]
@@ -1182,6 +1193,12 @@ mod tests {
         .unwrap();
         let login = call(&service, Method::GET, "/login", &[], String::new()).await;
         assert_eq!(login.status(), StatusCode::OK);
+        let page = async |query: &str| {
+            let page = call(&service, Method::GET, &format!("/login?{query}"), &[], String::new()).await;
+            String::from_utf8(page.body().to_vec()).unwrap()
+        };
+        // No notice from a pair url.ParseQuery leaves out.
+        assert!(!page("error=stale%zz").await.contains("role=\"alert\""));
         let exchange = json!({"verifier": "v".repeat(43)}).to_string();
         let foreign = [("origin", "http://client.example")];
         let refused = call(&service, Method::POST, "/auth/browser/token", &foreign, exchange).await;
