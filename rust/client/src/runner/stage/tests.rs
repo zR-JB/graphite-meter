@@ -312,6 +312,16 @@ async fn prepared_download(id: &str, origin: &str, http: &Http) -> Result<Prepar
     })
 }
 
+/// `prepared_download`'s server, which also measures latency over a WebSocket to its origin.
+async fn prepared_latency(id: &str, origin: &str, http: &Http) -> Result<PreparedServer, Error> {
+    let mut server = prepared_download(id, origin, http).await?;
+    server.latency = Some(graphite_meter_core::discovery::LatencyTarget {
+        base_url: origin.into(),
+        transport: LatencyTransport::WebSocket,
+    });
+    Ok(server)
+}
+
 /// Paused time leaps to the next timer whenever the runtime waits on a socket; a millisecond timer
 /// keeps each leap to a millisecond, so loopback exchanges stay ahead of every stage deadline.
 fn heartbeat() -> JoinHandle<()> {
@@ -607,17 +617,11 @@ async fn loaded_latency_failure_keeps_every_http_participant() -> Result<(), Err
         let (quiet, quiet_mode, quiet_peer) = download_peer().await?;
         quiet_mode.store(8, Ordering::SeqCst);
         let http = Http::new(true)?;
-        let mut servers = vec![
-            prepared_download("near", &near, &http).await?,
-            prepared_download("far", &far, &http).await?,
-            prepared_download("quiet", &quiet, &http).await?,
+        let servers = vec![
+            prepared_latency("near", &near, &http).await?,
+            prepared_latency("far", &far, &http).await?,
+            prepared_latency("quiet", &quiet, &http).await?,
         ];
-        for server in &mut servers {
-            server.latency = Some(graphite_meter_core::discovery::LatencyTarget {
-                base_url: server.entry.url.clone(),
-                transport: LatencyTransport::WebSocket,
-            });
-        }
         let config = Config {
             insecure: true,
             warmup: Duration::from_millis(500),
@@ -1296,15 +1300,11 @@ async fn the_latency_result_follows_the_focus_server() -> Result<(), Error> {
         [near_mode, far_mode][usize::from(!silent_focus)].store(8, Ordering::SeqCst);
         let http = Http::new(true)?;
         let mut servers = vec![
-            prepared_download("near", &near, &http).await?,
-            prepared_download("far", &far, &http).await?,
+            prepared_latency("near", &near, &http).await?,
+            prepared_latency("far", &far, &http).await?,
         ];
         for (server, rtt) in servers.iter_mut().zip([4, 1]) {
             server.idle_rtt = Duration::from_millis(rtt);
-            server.latency = Some(graphite_meter_core::discovery::LatencyTarget {
-                base_url: server.entry.url.clone(),
-                transport: LatencyTransport::WebSocket,
-            });
         }
         let config = Config {
             stages: vec![Stage::Latency],
@@ -1473,11 +1473,7 @@ async fn a_stop_records_the_evidence_its_stage_lacked() -> Result<(), Error> {
         // The peer reads pings without answering, so the latency stage has no sample when it stops.
         mode.store(8, Ordering::SeqCst);
         let http = Http::new(true)?;
-        let mut server = prepared_download("peer", &origin, &http).await?;
-        server.latency = Some(graphite_meter_core::discovery::LatencyTarget {
-            base_url: origin.clone(),
-            transport: LatencyTransport::WebSocket,
-        });
+        let server = prepared_latency("peer", &origin, &http).await?;
         let config = Config {
             warmup: Duration::ZERO,
             latency_duration: Duration::from_secs(2),
@@ -1532,11 +1528,7 @@ async fn a_warmup_loss_is_noticed_at_once_with_one_reason() -> Result<(), Error>
     for loaded_latency in [false, true] {
         let (origin, mode, peer) = download_peer().await?;
         let http = Http::new(true)?;
-        let mut servers = vec![prepared_download("peer", &origin, &http).await?];
-        servers[0].latency = Some(graphite_meter_core::discovery::LatencyTarget {
-            base_url: origin,
-            transport: LatencyTransport::WebSocket,
-        });
+        let servers = vec![prepared_latency("peer", &origin, &http).await?];
         let config = Config {
             warmup: Duration::from_millis(1500),
             upload_duration: Duration::from_secs(1),
@@ -1579,11 +1571,7 @@ async fn a_loss_between_the_window_end_and_the_drain_is_no_failure() -> Result<(
     let _ = crate::crypto::provider().install_default();
     let (origin, mode, peer) = download_peer().await?;
     let http = Http::new(true)?;
-    let mut server = prepared_download("peer", &origin, &http).await?;
-    server.latency = Some(graphite_meter_core::discovery::LatencyTarget {
-        base_url: origin,
-        transport: LatencyTransport::WebSocket,
-    });
+    let server = prepared_latency("peer", &origin, &http).await?;
     let config = Config {
         ping_interval: Duration::from_millis(20),
         insecure: true,
@@ -1620,11 +1608,7 @@ async fn a_channel_lost_in_the_window_fails_unless_restored_by_its_end() -> Resu
     let _ = crate::crypto::provider().install_default();
     let (origin, mode, peer) = download_peer().await?;
     let http = Http::new(true)?;
-    let mut server = prepared_download("peer", &origin, &http).await?;
-    server.latency = Some(graphite_meter_core::discovery::LatencyTarget {
-        base_url: origin,
-        transport: LatencyTransport::WebSocket,
-    });
+    let server = prepared_latency("peer", &origin, &http).await?;
     let config = Config {
         warmup: Duration::ZERO,
         latency_duration: Duration::from_secs(2),
