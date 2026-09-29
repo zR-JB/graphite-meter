@@ -278,6 +278,12 @@ class RustPlatformRecordTests(unittest.TestCase):
         self.assertEqual(listing, self.listing)
         # Byte equality also compares the order of the fields and of the notices.
         self.assertEqual(marshal(record), marshal(self.entry | {'reviewDecision': 'pending', 'reviewNotes': ''}))
+        # A build that does not link a reviewed native input keeps it while it exists, so the same record returns.
+        gone = SYSROOT + 'lib/rustlib/t/lib/self-contained/gone.o'
+        with patch('scripts.legal.rust_platform.linker_version', return_value='cc 1'):
+            record, listing = candidate(self.entry | {'nativeInputs': [self.NATIVE, gone]}, **self.facts(inputs={self.STD}))
+        self.assertEqual(listing, self.listing)
+        self.assertEqual(marshal(record), marshal(self.entry | {'reviewDecision': 'pending', 'reviewNotes': ''}))
         # A build that links a new native input: the candidate lists it, and approving it passes.
         self.write(self.CRT1, 'crt1')
         with patch('scripts.legal.rust_platform.linker_version', return_value='cc 1'):

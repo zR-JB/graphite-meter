@@ -95,7 +95,9 @@ sysroot. `inputsSha256` is the SHA-256 of one `path<TAB>sha256` line per file of
 sorted by path. `scripts.legal.rust` reads the linker map of every Rust build and refuses a
 target whose compiler, linked native files, imported libraries or inputs differ from its record;
 the error prints this build's unreviewed record and the listing it hashes, and
-`--review-template` writes them to `platform-candidate.json` and `platform-inputs.txt`. Review
+`--review-template` writes them to `platform-candidate.json` and `platform-inputs.txt`. The
+record keeps the reviewed native inputs this build did not link while they exist, such as import
+libraries only unoptimized builds take, so re-approving it drops no fingerprinted input. Review
 both, add each package text that covers the native files to `notices`, rerun with that record
 for its digest, then approve it and commit it to the environment's file. Texts the environment
 lacks, such as musl's and LLVM's for the static musl targets, are committed under `legal/manual`

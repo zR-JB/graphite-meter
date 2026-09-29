@@ -125,12 +125,17 @@ def notice(entry: dict[str, Json] | None, *, target: str, compiler: str, sysroot
 
 def candidate(entry: dict[str, Json] | None, *, target: str, compiler: str, sysroot: Path,
               inputs: set[str], libraries: set[str]) -> tuple[dict[str, object], str]:
-    """This build's unreviewed record, and the listing of its inputs that its inputsSha256 hashes."""
+    """This build's unreviewed record, and the listing of its inputs that its inputsSha256 hashes.
+
+    It keeps the reviewed native inputs this build did not link while they exist, such as import
+    libraries only unoptimized builds take, so re-approving it never drops a fingerprinted input.
+    """
     rlib = rlibs(sysroot, target)
-    listing, _ = fingerprint(rlib | inputs | notice_names(entry, sysroot).keys(), sysroot, set())
+    native = inputs - rlib | {path for path in strings(entry or {}, 'nativeInputs') if source(path, sysroot).exists()}
+    listing, _ = fingerprint(rlib | native | notice_names(entry, sysroot).keys(), sysroot, set())
     return {
         'target': target, 'rustc': compiler, 'nativeCompiler': linker_version(target),
         'systemLibraries': sorted(libraries), 'reviewDecision': 'pending', 'reviewNotes': '',
-        'description': text(entry or {}, 'description'), 'nativeInputs': sorted(inputs - rlib),
+        'description': text(entry or {}, 'description'), 'nativeInputs': sorted(native),
         'notices': own_notices(entry), 'inputsSha256': sha256(listing.encode()),
     }, listing
