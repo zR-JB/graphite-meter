@@ -153,7 +153,6 @@ impl Upload {
             upload_id: String,
         }
         let mut cancel = plan.cancel.clone();
-        let (stagger, limit) = plan.http.unwrap_or_default();
         // Go's mint is tried again for 2 s (upload.go:33-39).
         let mint = || plan.control.json(Method::POST, Route::UploadSession, &[]);
         let minted: Minted = tokio::select! {
@@ -169,120 +168,111 @@ impl Upload {
         }
         let mut block = vec![0_u8; 64 * 1024];
         getrandom::fill(&mut block).map_err(|_| "secure randomness unavailable")?;
-        let block = Bytes::from(block);
         let (state_tx, state) = watch::channel(State::default());
-        let (stop_lanes, lane_stop) = watch::channel(false);
-        let (stop_all, all_stop) = watch::channel(false);
         let mut owner = Self {
             plan,
             id: minted.upload_id,
             state,
-            stop_lanes,
-            stop_all,
+            stop_lanes: watch::Sender::new(false),
+            stop_all: watch::Sender::new(false),
             lanes: JoinSet::new(),
             progress: JoinSet::new(),
             session: None,
             retrying: Retrying::default(),
         };
-        if owner.plan.http.is_none() {
-            let query = [("id", owner.id.as_str())];
-            let session = tokio::select! {
-                biased;
-                _ = cancel.wait_for(|cancelled| *cancelled) => Err("WebTransport upload cancelled during setup".into()),
-                session = owner.plan.transport.webtransport_slot(Route::WtUpload, &query) => session,
-            };
-            match session {
-                Ok(session) => owner.session = Some(Arc::new(session)),
-                Err(error) => {
-                    let _ = owner.finish(false).await;
-                    return Err(error);
-                }
-            }
-        }
-        {
-            let transport = owner.plan.control.clone();
-            let id = owner.id.clone();
-            let state = state_tx.clone();
-            let mut stop = all_stop.clone();
-            let session = owner.session.clone();
-            owner.progress.spawn(async move {
-                tokio::select! {
-                    biased;
-                    _ = stop.wait_for(|stopped| *stopped) => {},
-                    result = progress_feed(&transport, &id, &state, session) => {
-                        if let Err(error) = result {
-                            fail(&state, error);
-                        }
-                    },
-                }
-            });
-        }
-        let mut started = Vec::with_capacity(owner.plan.lanes);
-        for index in 0..owner.plan.lanes {
-            let active = Arc::new(AtomicBool::new(false));
-            started.push(active.clone());
-            let transport = owner.plan.transport.clone();
-            let id = owner.id.clone();
-            let state = state_tx.clone();
-            let mut health = owner.state.clone();
-            let block = block.clone();
-            let mut stop = lane_stop.clone();
-            let mut all_stop = all_stop.clone();
-            let mut cancelled_stage = cancel.clone();
-            let session = owner.session.clone();
-            let retry = TransferRetry::new(owner.retrying.clone(), index);
-            owner.lanes.spawn(async move {
-                tokio::select! {
-                    biased;
-                    _ = stop.wait_for(|stopped| *stopped) => {},
-                    _ = all_stop.wait_for(|stopped| *stopped) => {},
-                    _ = cancelled_stage.wait_for(|cancelled| *cancelled) => {},
-                    _ = health.wait_for(|state| state.error.is_some() || state.complete) => {},
-                    result = async {
-                        if index > 0 && !stagger.is_zero() {
-                            tokio::time::sleep(stagger * index as u32).await;
-                        }
-                        if let Some(session) = session {
-                            send_wt_reconnecting(&session, block, active, retry).await
-                        } else {
-                            send_lane(&transport, &id, index, block, active, retry, limit).await
-                        }
-                    } => {
-                        if let Err(error) = result {
-                            fail(&state, error);
-                        }
-                    },
-                }
-            });
-        }
-        let ready = tokio::time::timeout(CONTROL_TIMEOUT, async {
-            loop {
-                owner.health()?;
-                let state = owner.state.borrow().clone();
-                let receiver_observed = state.latest.is_some_and(|count| count.bytes > 0 && count.nanos > 0);
-                let all_lanes_started = started.iter().all(|active| active.load(Ordering::Acquire));
-                if state.ready && receiver_observed && all_lanes_started {
-                    return Ok::<(), Error>(());
-                }
-                tokio::select! {
-                    biased;
-                    _ = cancel.wait_for(|cancelled| *cancelled) => return Err("upload cancelled during startup".into()),
-                    changed = owner.state.changed() => changed.map_err(|_| "upload workers ended before receiver became ready")?,
-                }
-            }
-        }).await;
-        match ready {
-            Ok(Ok(())) => Ok(owner),
-            result => {
-                let error: Error = match result {
-                    Ok(Err(error)) => error,
-                    Err(error) => error.into(),
-                    _ => unreachable!(),
-                };
+        match owner.run(&state_tx, Bytes::from(block)).await {
+            Ok(()) => Ok(owner),
+            Err(error) => {
                 let _ = owner.finish(false).await;
                 Err(error)
             }
         }
+    }
+    /// Starts the progress feed and the lanes, and waits until the receiver counts their bytes.
+    async fn run(&mut self, state: &watch::Sender<State>, block: Bytes) -> Result<(), Error> {
+        let mut cancel = self.plan.cancel.clone();
+        if self.plan.http.is_none() {
+            let query = [("id", self.id.as_str())];
+            self.session = Some(Arc::new(tokio::select! {
+                biased;
+                _ = cancel.wait_for(|cancelled| *cancelled) => return Err("WebTransport upload cancelled during setup".into()),
+                session = self.plan.transport.webtransport_slot(Route::WtUpload, &query) => session?,
+            }));
+        }
+        let (transport, id, feed, session) = (
+            self.plan.control.clone(),
+            self.id.clone(),
+            state.clone(),
+            self.session.clone(),
+        );
+        let mut stop = self.stop_all.subscribe();
+        self.progress.spawn(async move {
+            tokio::select! {
+                biased;
+                _ = stop.wait_for(|stopped| *stopped) => {},
+                result = progress_feed(&transport, &id, &feed, session) => if let Err(error) = result {
+                    fail(&feed, error);
+                },
+            }
+        });
+        let started: Vec<_> = (0..self.plan.lanes)
+            .map(|index| self.spawn_lane(index, state, &block))
+            .collect();
+        tokio::time::timeout(CONTROL_TIMEOUT, async {
+            loop {
+                self.health()?;
+                let state = self.state.borrow().clone();
+                let receiver_observed = state.latest.is_some_and(|count| count.bytes > 0 && count.nanos > 0);
+                let all_lanes_started = started.iter().all(|active| active.load(Ordering::Acquire));
+                if state.ready && receiver_observed && all_lanes_started {
+                    return Ok(());
+                }
+                tokio::select! {
+                    biased;
+                    _ = cancel.wait_for(|cancelled| *cancelled) => return Err("upload cancelled during startup".into()),
+                    changed = self.state.changed() => changed.map_err(|_| "upload workers ended before receiver became ready")?,
+                }
+            }
+        })
+        .await?
+    }
+    /// Lane `index`, which ends with the lanes, the stage or the receiver; its flag rises as it sends.
+    fn spawn_lane(&mut self, index: usize, state: &watch::Sender<State>, block: &Bytes) -> Arc<AtomicBool> {
+        let active = Arc::new(AtomicBool::new(false));
+        let (transport, id, state, block) = (
+            self.plan.transport.clone(),
+            self.id.clone(),
+            state.clone(),
+            block.clone(),
+        );
+        let (session, sending, (stagger, limit)) =
+            (self.session.clone(), active.clone(), self.plan.http.unwrap_or_default());
+        let (mut stop, mut cancelled, mut health) = (
+            self.stop_lanes.subscribe(),
+            self.plan.cancel.clone(),
+            self.state.clone(),
+        );
+        let retry = TransferRetry::new(self.retrying.clone(), index);
+        self.lanes.spawn(async move {
+            tokio::select! {
+                biased;
+                _ = stop.wait_for(|stopped| *stopped) => {},
+                _ = cancelled.wait_for(|cancelled| *cancelled) => {},
+                _ = health.wait_for(|state| state.error.is_some() || state.complete) => {},
+                result = async {
+                    if index > 0 && !stagger.is_zero() {
+                        tokio::time::sleep(stagger * index as u32).await;
+                    }
+                    match session {
+                        Some(session) => send_wt_reconnecting(&session, block, sending, retry).await,
+                        None => send_lane(&transport, &id, index, block, sending, retry, limit).await,
+                    }
+                } => if let Err(error) = result {
+                    fail(&state, error);
+                },
+            }
+        });
+        active
     }
     pub fn observed(&self) -> Option<ObservedUpload> {
         self.state.borrow().latest.map(|value| ObservedUpload {
