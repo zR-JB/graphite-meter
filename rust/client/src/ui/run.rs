@@ -16,7 +16,7 @@ use ratatui::{
     style::Style,
     text::{Line, Span},
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
 use tokio::time::Instant;
 use unicode_width::UnicodeWidthStr;
 
@@ -86,7 +86,7 @@ pub(super) struct Run {
     latest: HashMap<String, f64>,
     step: Option<(Option<Stage>, Phase)>,
     pub since: Option<Instant>,
-    sample: Option<std::time::Duration>,
+    sample: Option<Duration>,
     pub shown: [Option<f64>; 2],
 }
 
@@ -160,8 +160,8 @@ impl Run {
     }
 
     /// How long the current stage phase has run, as Go's now minus the stage's since.
-    fn elapsed(&self) -> f64 {
-        self.since.map_or(0.0, |since| since.elapsed().as_secs_f64())
+    fn elapsed(&self) -> Duration {
+        self.since.map_or(Duration::ZERO, |since| since.elapsed())
     }
 
     /// Go's span: the run's time so far, or until it ended.
@@ -171,9 +171,9 @@ impl Run {
 
     /// Go's progress: the planned stage time done, where a partial or failed stage counts nothing.
     pub(super) fn progress(&self, snapshot: &Snapshot) -> u8 {
-        let (mut done, mut total) = (0.0, 0.0);
+        let (mut done, mut total) = (Duration::ZERO, Duration::ZERO);
         for stage in &self.config.stages {
-            let duration = self.config.duration(*stage).as_secs_f64();
+            let duration = self.config.duration(*stage);
             total += duration;
             if let Some(result) = snapshot.results.iter().rfind(|result| result.stage == *stage) {
                 if snapshot.stage_status(result) == StageStatus::Complete {
@@ -183,7 +183,7 @@ impl Run {
                 done += self.elapsed().min(duration);
             }
         }
-        (done / f64::max(total, 1.0) * 100.0) as u8
+        (done.as_secs_f64() / total.as_secs_f64().max(1.0) * 100.0) as u8
     }
 }
 
@@ -344,10 +344,7 @@ fn chart(
         out.push(Line::from(spans));
     }
     let mut ruler: Vec<char> = "─".repeat(cols).chars().collect();
-    let end: String = words::clock(std::time::Duration::from_secs_f64(t1))
-        .chars()
-        .take(cols)
-        .collect();
+    let end: String = words::clock(Duration::from_secs_f64(t1)).chars().take(cols).collect();
     let end_at = cols.saturating_sub(end.chars().count());
     let column = |at: f64| (((at - t0) / (t1 - t0) * cols as f64) as isize).min(cols as isize - 1);
     let (mut labels, mut written) = (Vec::new(), 0);
@@ -573,41 +570,29 @@ impl Ui {
             let current = snapshot.stage == Some(*stage);
             match result.map(|result| snapshot.stage_status(result)) {
                 Some(StageStatus::Complete) => {
-                    let mut value = report.headline(*stage);
-                    if value.is_empty() {
-                        value = vec![span(words::setting(duration), theme.muted)];
-                    }
+                    let (headline, planned) = (report.headline(*stage), span(words::setting(duration), theme.muted));
                     line.push(span("✓ ", theme.ok));
-                    line.extend(value);
+                    line.extend(if headline.is_empty() { vec![planned] } else { headline });
                 }
                 Some(StageStatus::Partial) => {
-                    let mut value = report.headline(*stage);
-                    if !value.is_empty() {
-                        value.push(Span::raw(" "));
-                    }
-                    value.push(span("Partial", theme.muted));
+                    let headline = report.headline(*stage);
+                    let gap = (!headline.is_empty()).then(|| Span::raw(" "));
                     line.push(span("! ", theme.warn));
-                    line.extend(value);
+                    line.extend(headline.into_iter().chain(gap).chain([span("Partial", theme.muted)]));
                 }
                 Some(status) => line.extend([span("✗ ", theme.err), span(status.label(), theme.muted)]),
                 None if current && live => match snapshot.phase {
                     Phase::Warmup => line.extend([
                         self.spinner(),
                         span(" warmup ", theme.muted),
-                        span(
-                            words::clock(std::time::Duration::from_secs_f64(run.elapsed())),
-                            theme.value,
-                        ),
+                        span(words::clock(run.elapsed()), theme.value),
                     ]),
                     Phase::Measuring => {
                         let (elapsed, total) = (run.elapsed(), duration.as_secs_f64());
-                        line.extend(bar(hue, elapsed, total, bar_width, theme));
+                        line.extend(bar(hue, elapsed.as_secs_f64(), total, bar_width, theme));
                         line.extend([
                             Span::raw("  "),
-                            span(
-                                words::clock(std::time::Duration::from_secs_f64(elapsed.min(total))),
-                                theme.value,
-                            ),
+                            span(words::clock(elapsed.min(duration)), theme.value),
                             span(format!(" / {}", words::setting(duration)), theme.muted),
                         ]);
                     }
@@ -628,15 +613,13 @@ impl Ui {
     pub(super) fn live_view(&self, snapshot: &Snapshot, run: &Run, width: usize, height: usize) -> Text {
         let theme = &self.theme;
         let live = snapshot.phase.live();
-        let Some(stage) = snapshot.stage.filter(|stage| run.config.stages.contains(stage)) else {
-            return match live {
-                true => vec![Line::from(vec![self.spinner(), span(" Checking paths…", theme.muted)])],
-                false => vec![line(MISSING, theme.muted)],
-            };
-        };
-        if live && snapshot.phase == Phase::Preparing {
-            return vec![Line::from(vec![self.spinner(), span(" Checking paths…", theme.muted)])];
+        let stage = snapshot.stage.filter(|stage| run.config.stages.contains(stage));
+        if stage.is_none() && !live {
+            return vec![line(MISSING, theme.muted)];
         }
+        let Some(stage) = stage.filter(|_| !live || snapshot.phase != Phase::Preparing) else {
+            return vec![Line::from(vec![self.spinner(), span(" Checking paths…", theme.muted)])];
+        };
         let mut directions = Vec::new();
         for (moves, trace) in [(stage.downloads(), &run.down), (stage.uploads(), &run.up)] {
             if if live { moves } else { !trace.points.is_empty() } {
@@ -656,26 +639,18 @@ impl Ui {
             let name = self.latency_server().map_or("", |id| server_name(snapshot, id));
             out.push(line(format!("Latency to {name} · l switches server"), theme.muted));
         }
-        let chart_height = height.saturating_sub(out.len());
-        let span_ = run.span();
+        let (chart_height, time) = (height.saturating_sub(out.len()), run.span());
         let rtt = self.latency_server().and_then(|id| run.rtt.get(id));
         let rtt = stage_series(rtt.map_or(&[], |trace| &trace.points), &run.marks, theme);
+        let rates = |height| chart(&series, &run.marks, RATE_AXIS, time, width, height, theme);
+        let rtts = |marks: &[(f64, Stage)], height| chart(&rtt, marks, MS_AXIS, time, width, height, theme);
         if chart_height < 5 {
         } else if directions.is_empty() {
-            out.extend(chart(&rtt, &run.marks, MS_AXIS, span_, width, chart_height, theme));
+            out.extend(rtts(&run.marks, chart_height));
         } else if loaded && chart_height >= 12 {
-            out.extend(chart(
-                &series,
-                &run.marks,
-                RATE_AXIS,
-                span_,
-                width,
-                chart_height - 5,
-                theme,
-            ));
-            out.extend(chart(&rtt, &[], MS_AXIS, span_, width, 5, theme));
+            out.extend([rates(chart_height - 5), rtts(&[], 5)].concat());
         } else {
-            out.extend(chart(&series, &run.marks, RATE_AXIS, span_, width, chart_height, theme));
+            out.extend(rates(chart_height));
         }
         out
     }
