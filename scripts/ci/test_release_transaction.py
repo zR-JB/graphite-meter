@@ -267,9 +267,10 @@ class ReleasePublicationTests(unittest.TestCase):
 
     def test_rust_prerelease_assets_target_the_verified_pr_commit(self) -> None:
         tag = "v1.2.3-rc.1"
-        source = "graphite-meter-client_1.2.3-rc.1_linux_amd64_rust_third-party-source.tar.gz"
-        assets = {source: b"verified source", "checksums.txt": b"verified checksums"}
-        identity = {"TAG": tag, "PR": "101", "SOURCE_SHA": OTHER_SHA, "RUST": "tui"}
+        sources = [f"graphite-meter-{build}_1.2.3-rc.1_linux_amd64_rust_third-party-source.tar.gz"
+                   for build in ("client", "server")]
+        assets = {source: b"verified source" for source in sources} | {"checksums.txt": b"verified checksums"}
+        identity = {"TAG": tag, "PR": "101", "SOURCE_SHA": OTHER_SHA, "RUST": "both"}
         error, output, published = self.publish(copy.deepcopy(EMPTY), assets, **identity)
         self.assertIsNone(error, output)
         release = published["releases"][0]
@@ -277,6 +278,10 @@ class ReleasePublicationTests(unittest.TestCase):
                          (False, True, OTHER_SHA))
         self.assertEqual(published["tags"], {tag: {"type": "commit", "sha": OTHER_SHA}})
         self.assertIn(OTHER_SHA, release["body"])
+        # Each build's archive is the source of that build alone, and the Go image gets none.
+        self.assertIn(f"**{sources[0]}**, **{sources[1]}**. Together with the tagged repository source, each archive",
+                      release["body"])
+        self.assertIn("no third-party source for the Go image **1.2.3-rc.1**", release["body"])
         error, output, retried = self.publish(copy.deepcopy(published), assets, **identity)
         self.assertIsNone(error, output)
         self.assertEqual(retried["writes"], published["writes"])

@@ -347,16 +347,29 @@ def asset_digests(repository: str, release_id: int) -> dict[str, str]:
     return {gh.str_field(asset, "name", "asset"): str(asset.get("digest") or "") for asset in assets}
 
 
-def source_notice(release: Release, source: str) -> str:
-    return (
+def source_notice(release: Release, rust_sources: list[str]) -> str:
+    """The release body's source offer: the tagged repository and the third-party source of each build."""
+    notice = (
         "## Source availability\n\n"
         f"Graphite Meter source for this release is the repository snapshot at tag **{release.tag}** "
         f"(commit **{release.sha}**). GitHub provides that tagged project source below as "
         "**Source code (zip)** and **Source code (tar.gz)**.\n\n"
-        "Source for third-party components included in the distributed artifacts is attached as "
-        f"**{source}**. Together, the tagged repository source and that archive form the source "
-        "offer for this release."
     )
+    rust = ", ".join(f"**{name}**" for name in rust_sources)
+    if not release.stable:
+        # A prerelease attaches only its Rust builds' sources, one archive per build.
+        return notice + (
+            "Source for the third-party components of each experimental Rust build is attached as the archive "
+            f"its name identifies: {rust}. Together with the tagged repository source, each archive forms the "
+            f"source offer for its build. Prereleases attach no third-party source for the Go image "
+            f"**{release.version}**."
+        )
+    notice += (
+        "Source for third-party components included in the distributed artifacts is attached as "
+        f"**graphite-meter_{release.version}_third-party-source.tar.gz**. Together, the tagged repository source "
+        "and that archive form the source offer for this release."
+    )
+    return notice + (f"\n\nMatching experimental Rust dependency sources: {rust}." if rust_sources else "")
 
 
 def command_publish() -> None:
@@ -374,17 +387,11 @@ def command_publish() -> None:
     local = {name: "sha256:" + gh.file_sha256(assets / name) for name in names}
     source = f"graphite-meter_{release.version}_third-party-source.tar.gz"
     rust_sources = sorted(name for name in names if name.endswith("_rust_third-party-source.tar.gz"))
-    if release.stable:
-        if source not in local:
-            gh.fail(f"release handoff is missing the third-party source asset {source}")
-        notice = source_notice(release, source)
-    else:
-        if not rust_sources:
-            gh.fail("Rust prerelease handoff is missing its dependency source offer")
-        notice = source_notice(release, rust_sources.pop(0))
-    if rust_sources:
-        notice += "\n\nMatching experimental Rust dependency sources: " + ", ".join(
-            f"**{name}**" for name in rust_sources) + "."
+    if release.stable and source not in local:
+        gh.fail(f"release handoff is missing the third-party source asset {source}")
+    if not release.stable and not rust_sources:
+        gh.fail("Rust prerelease handoff is missing its dependency source offer")
+    notice = source_notice(release, rust_sources)
 
     def require_tag() -> None:
         if (sha := converge(f"{tag} visibility", lambda: release_tag_target(repository, tag))) != release.sha:
