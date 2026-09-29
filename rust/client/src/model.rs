@@ -344,10 +344,6 @@ impl Snapshot {
         });
     }
 
-    pub fn sample(&mut self, point: Point) {
-        self.latest = point;
-    }
-
     /// A stage opens for the servers `ids`, with no samples yet.
     pub(crate) fn open_stage(&mut self, stage: Stage, ids: impl Iterator<Item = String>) {
         (self.phase, self.stage, self.latest) = (Phase::Preparing, Some(stage), Point::default());

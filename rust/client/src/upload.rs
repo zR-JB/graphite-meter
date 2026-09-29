@@ -2,7 +2,7 @@
 use crate::{
     Error,
     failure::Failure,
-    transport::{REDIAL_WINDOW, Retrying, TRANSFER_RETRY_BACKOFF, TransferRetry, Transport, cache_buster, restore},
+    transport::{REDIAL_WINDOW, Retrying, TransferRetry, Transport, cache_buster, restore, retry_pause},
     webtransport::SessionSlot,
 };
 use bytes::Bytes;
@@ -44,7 +44,7 @@ struct State {
 
 /// Dropping it aborts every owned task; finish(false) only sends its DELETE, finish(true) also awaits `complete`.
 pub struct Upload {
-    plan: Plan,
+    pub(crate) plan: Plan,
     id: String,
     state: watch::Receiver<State>,
     stop_lanes: watch::Sender<bool>,
@@ -56,7 +56,7 @@ pub struct Upload {
 
 /// What a receiver starts from, so that its replacement starts the same lanes on the same connections.
 #[derive(Clone)]
-struct Plan {
+pub(crate) struct Plan {
     transport: Arc<Transport>,
     control: Arc<Transport>,
     lanes: usize,
@@ -68,8 +68,9 @@ struct Plan {
 }
 
 impl Plan {
-    /// Takes the server's one replacement when its receiver refused the upload id as `invalid`.
-    fn replaces(&self, error: &Error) -> bool {
+    /// Takes the server's one replacement when its receiver refused the upload id as `invalid`
+    /// (upload.go:23-31).
+    pub(crate) fn replaces(&self, error: &Error) -> bool {
         crate::failure::refused(error.as_ref(), UploadRefusal::Invalid) && !self.replaced.swap(true, Ordering::Relaxed)
     }
 }
@@ -120,10 +121,6 @@ impl Upload {
             Err(error) if plan.replaces(&error) => Self::begin(plan).await,
             started => started,
         }
-    }
-    /// Whether this receiver's failure takes the server's one replacement (upload.go:23-31).
-    pub(crate) fn replaces(&self, error: &Error) -> bool {
-        self.plan.replaces(error)
     }
     /// Ends this receiver and starts another on the same connections; its new id resumes the
     /// aggregate's evidence, as Go's replacement does.
@@ -423,9 +420,7 @@ async fn progress_loop(transport: &Transport, id: &str, state: &watch::Sender<St
             Err(error) if crate::failure::permanent(error.as_ref()) => return Err(error),
             Err(_) => deadline = Instant::now() + REDIAL_WINDOW,
         }
-        if opened.elapsed() < TRANSFER_RETRY_BACKOFF {
-            tokio::time::sleep(TRANSFER_RETRY_BACKOFF).await;
-        }
+        tokio::time::sleep(retry_pause(opened)).await;
     }
 }
 

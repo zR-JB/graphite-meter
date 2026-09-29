@@ -45,12 +45,13 @@ impl RetryBackoff {
             return self.busy.max(retry_after).min(BUSY_BACKOFF_CAP);
         }
         self.busy = Duration::ZERO;
-        if started.elapsed() < TRANSFER_RETRY_BACKOFF {
-            TRANSFER_RETRY_BACKOFF
-        } else {
-            Duration::ZERO
-        }
+        retry_pause(started)
     }
+}
+
+/// Go's retryBackoff (transfer.go:100-103): an attempt that failed within it waits it out.
+pub(crate) fn retry_pause(started: Instant) -> Duration {
+    TRANSFER_RETRY_BACKOFF * u32::from(started.elapsed() < TRANSFER_RETRY_BACKOFF)
 }
 
 /// Go's restore (transfer.go:36-59): `attempt` again, each try bounded by `deadline`, until it

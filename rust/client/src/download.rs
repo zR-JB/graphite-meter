@@ -59,11 +59,8 @@ impl Download {
             });
         }
         drop(ready);
-        let mut counted = 0;
-        let readiness = owner.ready(&mut received, lanes, "download", &mut counted);
-        timeout(Duration::from_secs(10), readiness).await.map_err(|_| {
-            format!("download readiness timed out: {counted}/{lanes} lanes received response headers")
-        })??;
+        let readiness = timeout(Duration::from_secs(10), owner.ready(&mut received, lanes, "download"));
+        readiness.await.map_err(|_| "download readiness timed out")??;
         Ok(owner)
     }
 
@@ -103,7 +100,7 @@ impl Download {
                 }
             }
             drop(ready);
-            owner.ready(&mut received, lanes, "WebTransport download", &mut 0).await
+            owner.ready(&mut received, lanes, "WebTransport download").await
         };
         tokio::select! {biased;
             _ = cancel.wait_for(|value| *value) => return Err("download cancelled before readiness".into()),
@@ -132,15 +129,9 @@ impl Download {
         });
     }
 
-    /// Waits until `lanes` lanes are ready, counting them; a lane that ends first reports its cause.
-    async fn ready(
-        &mut self,
-        received: &mut mpsc::Receiver<()>,
-        lanes: usize,
-        kind: &str,
-        counted: &mut usize,
-    ) -> Result<(), Error> {
-        while *counted < lanes {
+    /// Waits until `lanes` lanes are ready; a lane that ends first reports its cause.
+    async fn ready(&mut self, received: &mut mpsc::Receiver<()>, lanes: usize, kind: &str) -> Result<(), Error> {
+        for _ in 0..lanes {
             tokio::select! {
                 // Lanes drop their sender before their task completes; report the lane's cause.
                 value = received.recv() => if value.is_none() {
@@ -152,7 +143,6 @@ impl Download {
                     return Err(format!("{kind} cancelled before readiness").into());
                 }
             }
-            *counted += 1;
         }
         Ok(())
     }

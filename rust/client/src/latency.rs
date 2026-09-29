@@ -4,7 +4,7 @@ use crate::{
     Error,
     failure::Failure,
     net::Http,
-    transport::{REDIAL_WINDOW, TRANSFER_RETRY_BACKOFF, restore},
+    transport::{REDIAL_WINDOW, restore, retry_pause},
 };
 use futures_util::{SinkExt, StreamExt};
 use graphite_meter_core::{
@@ -118,8 +118,7 @@ pub(crate) async fn run(
         // once does (transfer.go:100-103), so a server that ends each channel at once is never
         // dialled in a tight loop.
         let bound = (now + REDIAL_WINDOW).min(window_end);
-        let quick = opened.elapsed() < TRANSFER_RETRY_BACKOFF;
-        let paced = now + if quick { TRANSFER_RETRY_BACKOFF } else { Duration::ZERO };
+        let paced = now + retry_pause(opened);
         let redial = async {
             tokio::time::sleep_until(paced.min(bound)).await;
             dial(http, target, bound).await
@@ -219,13 +218,8 @@ impl Reader {
                     Ok(text) => Message::Text(text.into()),
                     Err(_) => Message::Binary(bytes),
                 })),
-                // A session the server closed reads as a WebSocket closed with the same lane ending.
-                Err(_) => session.ending().map(|ending| {
-                    Ok(Message::Close(Some(CloseFrame {
-                        code: ending.websocket_code().into(),
-                        reason: ending.reason().into(),
-                    })))
-                }),
+                // A session the server closed ends with its lane ending, as a WebSocket's close frame does.
+                Err(_) => session.ending().map(|ending| Err(Failure::Lane(ending).into())),
             },
         }
     }
@@ -460,6 +454,7 @@ async fn measure(
                     }
                     Some(Ok(Message::Close(frame))) => break Err(closed(frame)),
                     None => break Err(Failure::Disconnected("latency channel closed before measurement ended").into()),
+                    Some(Err(error)) if error.is::<Failure>() => break Err(error),
                     Some(Err(_)) => break Err(Failure::Disconnected("latency channel receive failed").into()),
                     _ => {}
                 }

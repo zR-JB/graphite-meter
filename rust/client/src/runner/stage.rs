@@ -102,7 +102,7 @@ impl Member {
         let Err(error) = up.health() else {
             return Ok(());
         };
-        if !up.replaces(&error) {
+        if !up.plan.replaces(&error) {
             return Err(error);
         }
         if let Some(up) = lanes.up.take() {
@@ -723,14 +723,14 @@ impl<'a> StageRun<'a> {
         let hosts = &mut self.hosts;
         self.snapshots.send_modify(|snapshot| {
             sample_hosts(hosts, snapshot);
-            snapshot.sample(Point {
+            snapshot.latest = Point {
                 elapsed,
                 sample_count: 1,
                 down_bps: window
                     .and_then(|window| window.down_bytes_per_sec)
                     .map(|rate| rate * 8.0),
                 up_bps: window.and_then(|window| window.up_bytes_per_sec).map(|rate| rate * 8.0),
-            });
+            };
         });
     }
 
