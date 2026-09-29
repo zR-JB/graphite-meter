@@ -20,60 +20,23 @@ pub struct Session {
     session: layer::Session,
 }
 
-#[derive(Debug)]
-pub struct ConnectRejected {
-    pub status: http::StatusCode,
-    pub headers: http::HeaderMap,
-}
-impl std::fmt::Display for ConnectRejected {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "WebTransport CONNECT refused: {}", self.status)
-    }
-}
-impl std::error::Error for ConnectRejected {}
-
 impl Session {
-    /// Apply the shared pinned-origin grant policy and authentication refusal handling.
-    pub async fn dial(
-        http: &crate::net::Http,
-        target: &str,
-        insecure: bool,
-        deadline: Duration,
-    ) -> Result<Self, Error> {
+    /// One session, on a connection of its own, to `target`, an absolute HTTPS URL: its grant
+    /// goes to that URL alone, redirects are never followed, and a refusal is the server's answer.
+    pub async fn dial(http: &Http, target: &str, deadline: Duration) -> Result<Self, Error> {
         let mut request = Request::get(target).body(())?;
-        if let Some(auth) = http.authorization(target) {
-            if insecure {
-                return Err("authenticated operation refuses insecure TLS".into());
-            }
-            request.headers_mut().insert(http::header::AUTHORIZATION, auth);
-        }
-        match Self::connect(request, insecure, deadline).await {
-            Err(error) => {
-                if let Some(rejected) = error.downcast_ref::<ConnectRejected>() {
-                    http.check_status(target, rejected.status, &rejected.headers)?;
-                }
-                Err(error)
-            }
-            result => result,
-        }
-    }
-    /// Request must be an absolute HTTPS URL. Authorization headers are sent only
-    /// to that URL; redirects are never followed. One session owns one connection.
-    pub async fn connect(request: Request<()>, insecure: bool, deadline: Duration) -> Result<Self, Error> {
+        http.authorize(target, request.headers_mut())?;
         timeout(deadline, async {
-            let (connection, requests) = Connection::dial(&Origin::from_uri(request.uri())?, insecure).await?;
-            let session = match layer::Session::connect(&requests, request).await {
-                Ok(Ok((session, _))) => session,
+            let (connection, requests) = Connection::dial(&Origin::from_uri(request.uri())?, http.insecure).await?;
+            match layer::Session::connect(&requests, request).await {
+                Ok(Ok((session, _))) => Ok(Self { connection, session }),
                 Ok(Err(response)) => {
-                    return Err(Box::new(ConnectRejected {
-                        status: response.status(),
-                        headers: response.headers().clone(),
-                    }) as Error);
+                    http.check_status(target, response.status(), response.headers())?;
+                    Err(format!("WebTransport CONNECT refused: {}", response.status()).into())
                 }
-                Err(graphite_meter_http3::Error::Refused) => return Err("peer did not negotiate WebTransport".into()),
-                Err(error) => return Err(error.into()),
-            };
-            Ok(Self { connection, session })
+                Err(graphite_meter_http3::Error::Refused) => Err("peer did not negotiate WebTransport".into()),
+                Err(error) => Err(error.into()),
+            }
         })
         .await?
     }
@@ -124,25 +87,23 @@ pub struct SessionSlot {
     current: Mutex<Arc<Session>>,
     http: Http,
     target: String,
-    insecure: bool,
 }
 
 impl SessionSlot {
-    pub async fn dial(http: &Http, target: String, insecure: bool) -> Result<Self, Error> {
-        let session = Self::open(http, &target, insecure).await?;
+    pub async fn dial(http: &Http, target: String) -> Result<Self, Error> {
+        let session = Self::open(http, &target).await?;
         Ok(Self {
             current: Mutex::new(Arc::new(session)),
             http: http.clone(),
             target,
-            insecure,
         })
     }
 
     /// Go's stage session dial and redial (webtransport.go:104-154), tried again for 2 s.
-    async fn open(http: &Http, target: &str, insecure: bool) -> Result<Session, Error> {
+    async fn open(http: &Http, target: &str) -> Result<Session, Error> {
         let deadline = Instant::now() + REDIAL_WINDOW;
         restore("WebTransport session", deadline, || {
-            Session::dial(http, target, insecure, REDIAL_WINDOW)
+            Session::dial(http, target, REDIAL_WINDOW)
         })
         .await
     }
@@ -159,7 +120,7 @@ impl SessionSlot {
         if !failed.is_closed() {
             return Err("WebTransport stream failed while its session remained open".into());
         }
-        *current = Arc::new(Self::open(&self.http, &self.target, self.insecure).await?);
+        *current = Arc::new(Self::open(&self.http, &self.target).await?);
         Ok(current.clone())
     }
 

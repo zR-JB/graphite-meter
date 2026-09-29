@@ -209,7 +209,7 @@ async fn prepare_server(
         if let Some(target) = &throughput
             && target.transport != ThroughputTransport::FetchStream
         {
-            match verify_throughput_webtransport(&client, target, config.insecure).await {
+            match verify_throughput_webtransport(&client, target).await {
                 Ok(()) => {}
                 Err(error) if crate::net::authentication_required(error.as_ref()).is_some() => {
                     return Err(error);
@@ -229,8 +229,7 @@ async fn prepare_server(
             }
         }
         let transport = if let Some(target) = &mut throughput {
-            let connection =
-                Transport::connect(client.clone(), &target.base_url, target.protocol, config.insecure).await?;
+            let connection = Transport::connect(client.clone(), &target.base_url, target.protocol).await?;
             if target.protocol == Protocol::Negotiated {
                 (target.protocol, _) = client.probe(&target.base_url, Protocol::Negotiated).await?;
             } else {
@@ -250,14 +249,14 @@ async fn prepare_server(
         else {
             return Ok((None, Duration::ZERO));
         };
-        let rtt = match crate::latency::verify(&client, &target, config.insecure).await {
+        let rtt = match crate::latency::verify(&client, &target).await {
             Err(error)
                 if target.transport == LatencyTransport::WebTransport
                     && config.latency_transport.is_none()
                     && crate::net::authentication_required(error.as_ref()).is_none() =>
             {
                 target = selection::latency(config, entry, &preflight, Some(LatencyTransport::WebSocket))?;
-                crate::latency::verify(&client, &target, config.insecure).await?
+                crate::latency::verify(&client, &target).await?
             }
             rtt => rtt?,
         };
@@ -276,10 +275,10 @@ async fn prepare_server(
 }
 
 /// One dial within 3 s, as Go's verifyThroughputWebTransport (webtransport.go:74-83).
-async fn verify_throughput_webtransport(http: &Http, target: &ThroughputTarget, insecure: bool) -> Result<(), Error> {
+async fn verify_throughput_webtransport(http: &Http, target: &ThroughputTarget) -> Result<(), Error> {
     let origin = graphite_meter_core::origin::canonical_origin(&target.base_url)?;
     let url = format!("{origin}{}?bytes=0", Route::WtDownload.path());
-    let session = crate::webtransport::Session::dial(http, &url, insecure, Duration::from_secs(3)).await?;
+    let session = crate::webtransport::Session::dial(http, &url, Duration::from_secs(3)).await?;
     session.close().await;
     Ok(())
 }

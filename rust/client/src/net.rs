@@ -433,7 +433,8 @@ impl Connections {
 pub struct Http {
     connections: Arc<Connections>,
     lanes: Lanes,
-    insecure: bool,
+    /// Skip TLS verification: every connection this client makes, and no grant is sent over one.
+    pub(crate) insecure: bool,
     grants: Arc<Mutex<HashMap<String, Grant>>>,
     scope: Option<Arc<GrantScope>>,
 }
@@ -565,14 +566,24 @@ impl Http {
             .get(issuer)
             .map(|grant| grant.header.clone())
     }
+    /// Adds `target`'s grant to `headers`; an authenticated operation refuses TLS it does not verify.
+    pub(crate) fn authorize(&self, target: &str, headers: &mut http::HeaderMap) -> Result<()> {
+        if let Some(grant) = self.authorization(target) {
+            if self.insecure {
+                return Err("authenticated operation refuses insecure TLS".into());
+            }
+            headers.insert(AUTHORIZATION, grant);
+        }
+        Ok(())
+    }
     pub fn builder(&self, method: Method, target: &str) -> Result<http::request::Builder> {
         destination_origin(target)?;
         let mut request = Request::builder()
             .method(method)
             .uri(target)
             .header(http::header::ACCEPT, "*/*");
-        if let Some(header) = self.authorization(target) {
-            request = request.header(AUTHORIZATION, header);
+        if let Some(headers) = request.headers_mut() {
+            self.authorize(target, headers)?;
         }
         Ok(request)
     }

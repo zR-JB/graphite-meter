@@ -111,7 +111,6 @@ impl Download {
         target: &ThroughputTarget,
         lanes: usize,
         duration: Duration,
-        insecure: bool,
         mut cancel: watch::Receiver<bool>,
     ) -> Result<Self, Error> {
         if !(1..=128).contains(&lanes) || duration.is_zero() {
@@ -132,7 +131,7 @@ impl Download {
             for first in (0..lanes).step_by(MAX_WEBTRANSPORT_STREAMS) {
                 let group = (lanes - first).min(MAX_WEBTRANSPORT_STREAMS);
                 let target = format!("{origin}/wt/download?bytes={WT_STREAM_BYTES}&streams={group}");
-                let slot = Arc::new(SessionSlot::dial(http, target, insecure).await?);
+                let slot = Arc::new(SessionSlot::dial(http, target).await?);
                 for lane in first..first + group {
                     let slot = slot.clone();
                     let bytes = owner.bytes.clone();
@@ -332,7 +331,7 @@ pub(crate) mod tests {
             }
             Ok::<_, Error>(())
         });
-        let transport = Arc::new(Transport::connect(Http::new(false)?, &origin, Protocol::Http1, false).await?);
+        let transport = Arc::new(Transport::connect(Http::new(false)?, &origin, Protocol::Http1).await?);
         let (_stop, cancelled) = watch::channel(false);
         let mut download = Download::start(transport, 1, Duration::from_secs(5), Duration::ZERO, cancelled).await?;
         tokio::time::timeout(Duration::from_secs(5), async {
@@ -367,7 +366,7 @@ pub(crate) mod tests {
             }
             Ok::<_, Error>(())
         });
-        let transport = Arc::new(Transport::connect(Http::new(true)?, &origin, Protocol::Http3, true).await?);
+        let transport = Arc::new(Transport::connect(Http::new(true)?, &origin, Protocol::Http3).await?);
         let (_stop, cancelled) = watch::channel(false);
         let mut download = Download::start(transport, 1, Duration::from_secs(5), Duration::ZERO, cancelled).await?;
         let asked_again = timeout(Duration::from_secs(5), async {
@@ -414,7 +413,7 @@ pub(crate) mod tests {
             }
         });
         let target = format!("{origin}/wt/download?bytes=0");
-        let slot = SessionSlot::dial(&Http::new(true)?, target, true).await;
+        let slot = SessionSlot::dial(&Http::new(true)?, target).await;
         server.abort();
         slot?.close().await;
         let dials = dials.lock().unwrap();
@@ -457,7 +456,7 @@ pub(crate) mod tests {
                 let served = Arc::new(AtomicU64::new(0));
                 // Without an answer the port closes, and every dial is refused.
                 let server = answer.map(|answer| tokio::spawn(serve(listener, answer, served.clone())));
-                let transport = Transport::connect(Http::new(false)?, &origin, Protocol::Http1, false).await?;
+                let transport = Transport::connect(Http::new(false)?, &origin, Protocol::Http1).await?;
                 let (ready, _announced) = mpsc::channel(1);
                 let bytes = AtomicU64::new(0);
                 let retry = TransferRetry::new(Retrying::default(), 0);

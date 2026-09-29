@@ -154,7 +154,6 @@ pub struct Transport {
     http: Http,
     origin: String,
     protocol: Protocol,
-    insecure: bool,
     h3: Option<Mutex<Arc<Http3Client>>>,
 }
 
@@ -165,7 +164,7 @@ impl Transport {
 
     pub(crate) async fn isolated_connection(&self) -> Result<Arc<Self>, Error> {
         Ok(Arc::new(
-            Self::connect(self.http.clone(), &self.origin, self.protocol, self.insecure).await?,
+            Self::connect(self.http.clone(), &self.origin, self.protocol).await?,
         ))
     }
 
@@ -175,7 +174,6 @@ impl Transport {
             http: self.http.for_upload_lanes(),
             origin: self.origin.clone(),
             protocol: self.protocol,
-            insecure: self.insecure,
             h3: None,
         }
     }
@@ -186,17 +184,18 @@ impl Transport {
         };
         let mut owner = slot.lock().await;
         if owner.is_closed() {
-            *owner =
-                Arc::new(Http3Client::connect(&self.origin.parse()?, self.insecure, Duration::from_secs(10)).await?);
+            *owner = Arc::new(
+                Http3Client::connect(&self.origin.parse()?, self.http.insecure, Duration::from_secs(10)).await?,
+            );
         }
         Ok(Some(owner.clone()))
     }
 
-    pub async fn connect(http: Http, origin: &str, protocol: Protocol, insecure: bool) -> Result<Self, Error> {
+    pub async fn connect(http: Http, origin: &str, protocol: Protocol) -> Result<Self, Error> {
         let origin = canonical_origin(origin)?;
         let h3 = if protocol == Protocol::Http3 {
             Some(Mutex::new(Arc::new(
-                Http3Client::connect(&origin.parse()?, insecure, Duration::from_secs(10)).await?,
+                Http3Client::connect(&origin.parse()?, http.insecure, Duration::from_secs(10)).await?,
             )))
         } else {
             None
@@ -205,7 +204,6 @@ impl Transport {
             http,
             origin,
             protocol,
-            insecure,
             h3,
         })
     }
@@ -215,7 +213,7 @@ impl Transport {
         route: Route,
         query: &[(&str, &str)],
     ) -> Result<crate::webtransport::SessionSlot, Error> {
-        crate::webtransport::SessionSlot::dial(&self.http, self.url(route, query), self.insecure).await
+        crate::webtransport::SessionSlot::dial(&self.http, self.url(route, query)).await
     }
 
     fn url(&self, route: Route, query: &[(&str, &str)]) -> String {
@@ -245,13 +243,11 @@ impl Transport {
             .ok_or("request duration is too large")?;
         let inner = timeout_at(deadline, async {
             if let Some(h3) = self.h3_client().await? {
-                let mut request = Request::builder().method(method).uri(&target);
-                if let Some(auth) = self.http.authorization(&target) {
-                    request = request.header(http::header::AUTHORIZATION, auth);
-                }
+                let mut request = Request::builder().method(method).uri(&target).body(())?;
+                self.http.authorize(&target, request.headers_mut())?;
                 let mut stream = h3
                     .open(
-                        request.body(())?,
+                        request,
                         RequestLimits {
                             timeout: duration,
                             max_send_bytes: 0,
@@ -300,13 +296,12 @@ impl Transport {
                     .method(Method::POST)
                     .uri(&target)
                     .header(http::header::CONTENT_TYPE, "application/octet-stream")
-                    .header(http::header::CONTENT_LENGTH, length);
-                if let Some(auth) = self.http.authorization(&target) {
-                    request = request.header(http::header::AUTHORIZATION, auth);
-                }
+                    .header(http::header::CONTENT_LENGTH, length)
+                    .body(())?;
+                self.http.authorize(&target, request.headers_mut())?;
                 let mut request = h3
                     .open(
-                        request.body(())?,
+                        request,
                         RequestLimits {
                             timeout: duration,
                             max_send_bytes: length,

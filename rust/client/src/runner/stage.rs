@@ -309,7 +309,6 @@ impl<'a> StageRun<'a> {
             .boxed(),
         );
         self.hosts.insert(id.clone(), HostLatency::default());
-        let insecure = self.config.insecure;
         let idle = self.stage == Stage::Latency;
         let interval = if idle {
             self.config.ping_interval
@@ -327,7 +326,6 @@ impl<'a> StageRun<'a> {
             let result = crate::latency::run(
                 &http,
                 &target,
-                insecure,
                 (interval, operation_limit, window),
                 observations,
                 stopped.clone(),
@@ -911,12 +909,7 @@ async fn start_transfer(
     {
         // Sustained downloads can occupy the connection send window
         // and starve upload control traffic at high lane counts.
-        let connect = Transport::connect(
-            server.client.clone(),
-            &target.base_url,
-            target.protocol,
-            config.insecure,
-        );
+        let connect = Transport::connect(server.client.clone(), &target.base_url, target.protocol);
         tokio::select! {
             biased;
             _ = stopped.wait_for(|stopped| *stopped) => return Err("stage stopped before its lanes started".into()),
@@ -940,15 +933,7 @@ async fn start_transfer(
             )
             .await
         } else {
-            Download::start_webtransport(
-                &server.client,
-                target,
-                down,
-                operation_limit,
-                config.insecure,
-                stopped.clone(),
-            )
-            .await
+            Download::start_webtransport(&server.client, target, down, operation_limit, stopped.clone()).await
         };
         started.map(Some)
     };

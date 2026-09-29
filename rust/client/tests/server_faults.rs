@@ -148,7 +148,6 @@ async fn exercise(peer: Peer, reset: bool) -> Result<(), Error> {
             },
             1,
             Duration::from_secs(30),
-            true,
             cancelled,
         )
         .await?
@@ -161,7 +160,6 @@ async fn exercise(peer: Peer, reset: bool) -> Result<(), Error> {
             } else {
                 Protocol::Http3
             },
-            true,
         )
         .await?;
         Download::start(

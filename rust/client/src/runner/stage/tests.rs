@@ -307,7 +307,7 @@ async fn prepared_download(id: &str, origin: &str, http: &Http) -> Result<Prepar
             protocol: Protocol::Http1,
         }),
         http: Some(Arc::new(
-            Transport::connect(http.clone(), origin, Protocol::Http1, false).await?,
+            Transport::connect(http.clone(), origin, Protocol::Http1).await?,
         )),
         latency: None,
         idle_rtt: Duration::ZERO,

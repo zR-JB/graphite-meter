@@ -665,7 +665,6 @@ mod tests {
             crate::net::Http::new(false)?,
             &origin,
             graphite_meter_core::discovery::Protocol::Http1,
-            false,
         )
         .await?;
         let active = Arc::new(AtomicBool::new(false));
@@ -748,11 +747,11 @@ mod tests {
             revoked
         });
         let http = crate::net::Http::new(true)?;
-        let slot = SessionSlot::dial(&http, format!("{origin}/wt/upload?id=test-session"), true).await?;
+        let slot = SessionSlot::dial(&http, format!("{origin}/wt/upload?id=test-session")).await?;
         // Nothing answers the HTTP feed the old refusal fell back to.
         let closed = format!("http://{}", TcpListener::bind("127.0.0.1:0").await?.local_addr()?);
         let protocol = graphite_meter_core::discovery::Protocol::Http1;
-        let control = Transport::connect(http, &closed, protocol, false).await?;
+        let control = Transport::connect(http, &closed, protocol).await?;
         let (state, _) = watch::channel(State::default());
         let fed = progress_feed(&control, "test-session", &state, Some(Arc::new(slot))).await;
         server.abort();
@@ -769,7 +768,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let origin = format!("http://{}", listener.local_addr()?);
         let protocol = graphite_meter_core::discovery::Protocol::Http1;
-        let transport = Transport::connect(crate::net::Http::new(false)?, &origin, protocol, false).await?;
+        let transport = Transport::connect(crate::net::Http::new(false)?, &origin, protocol).await?;
         let block = Bytes::from(vec![42; 64 * 1024]);
         let active = Arc::new(AtomicBool::new(false));
         let retry = TransferRetry::new(Retrying::default(), 0);
@@ -835,7 +834,6 @@ mod tests {
                 crate::net::Http::new(false)?,
                 &origin,
                 graphite_meter_core::discovery::Protocol::Http1,
-                false,
             )
             .await?,
         );
@@ -1076,7 +1074,6 @@ mod tests {
             crate::net::Http::new(false)?,
             &origin,
             graphite_meter_core::discovery::Protocol::Http2,
-            false,
         )
         .await?;
         Ok((Arc::new(transport), server))
@@ -1109,7 +1106,6 @@ mod tests {
             crate::net::Http::new(false)?,
             &origin,
             graphite_meter_core::discovery::Protocol::Http1,
-            false,
         )
         .await?;
         let (state, observed) = watch::channel(State::default());
@@ -1146,7 +1142,6 @@ mod tests {
             crate::net::Http::new(false)?,
             &origin,
             graphite_meter_core::discovery::Protocol::Http1,
-            false,
         )
         .await?;
         let (state, _) = watch::channel(State::default());

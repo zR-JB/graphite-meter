@@ -65,7 +65,6 @@ pub(crate) enum Stop {
 pub(crate) async fn run(
     http: &Http,
     target: &LatencyTarget,
-    insecure: bool,
     timing: (Duration, Duration, usize),
     observations: mpsc::Sender<Observation>,
     mut cancel: watch::Receiver<Stop>,
@@ -74,7 +73,7 @@ pub(crate) async fn run(
     if duration.is_zero() || duration.as_nanos() > i64::MAX as u128 {
         return Err("latency interval and bounded duration must be positive".into());
     }
-    let Some(mut socket) = redial(http, target, insecure, &mut cancel, Instant::now() + REDIAL_WINDOW).await? else {
+    let Some(mut socket) = redial(http, target, &mut cancel, Instant::now() + REDIAL_WINDOW).await? else {
         return Ok(());
     };
     let end = Instant::now()
@@ -105,7 +104,7 @@ pub(crate) async fn run(
         }
         // A redial's window is cut short by the stage end (latency.go:256).
         let window = (Instant::now() + REDIAL_WINDOW).min(end);
-        socket = match redial(http, target, insecure, &mut cancel, window).await {
+        socket = match redial(http, target, &mut cancel, window).await {
             Ok(Some(socket)) => socket,
             Ok(None) => return Ok(()),
             Err(_) if Instant::now() >= end => return Ok(()),
@@ -119,12 +118,11 @@ pub(crate) async fn run(
 async fn redial(
     http: &Http,
     target: &LatencyTarget,
-    insecure: bool,
     cancel: &mut watch::Receiver<Stop>,
     deadline: Instant,
 ) -> Result<Option<Bus>, Error> {
     let dial = restore("latency channel", deadline, || {
-        connect(http, &target.base_url, insecure, target.transport)
+        connect(http, &target.base_url, target.transport)
     });
     tokio::select! {
         biased;
@@ -193,12 +191,10 @@ impl Reader {
 
 /// Check the actual latency channel before a run starts. A successful HTTP
 /// probe does not establish that QUIC datagrams or WebSocket pings work.
-pub(crate) async fn verify(http: &Http, target: &LatencyTarget, insecure: bool) -> Result<Duration, Error> {
+pub(crate) async fn verify(http: &Http, target: &LatencyTarget) -> Result<Duration, Error> {
     let attempt = async {
         // One dial, as Go's verifyLatency (latency.go:85-97).
-        let (mut writer, mut reader) = connect(http, &target.base_url, insecure, target.transport)
-            .await?
-            .split();
+        let (mut writer, mut reader) = connect(http, &target.base_url, target.transport).await?.split();
         let result = async {
             let reply_window = match target.transport {
                 LatencyTransport::WebTransport => Duration::from_millis(750),
@@ -240,18 +236,18 @@ pub(crate) async fn verify(http: &Http, target: &LatencyTarget, insecure: bool) 
         .await
         .map_err(|_| -> Error { "latency channel did not reply within three seconds".into() })?
 }
-async fn connect(http: &Http, origin: &str, insecure: bool, transport: LatencyTransport) -> Result<Bus, Error> {
+async fn connect(http: &Http, origin: &str, transport: LatencyTransport) -> Result<Bus, Error> {
     Ok(match transport {
-        LatencyTransport::WebSocket => Bus::WebSocket(Box::new(connect_ws(http, origin, insecure).await?)),
+        LatencyTransport::WebSocket => Bus::WebSocket(Box::new(connect_ws(http, origin).await?)),
         LatencyTransport::WebTransport => {
             let target = format!("{}/wt/ping", canonical_origin(origin)?);
-            let session = crate::webtransport::Session::dial(http, &target, insecure, Duration::from_secs(10)).await?;
+            let session = crate::webtransport::Session::dial(http, &target, Duration::from_secs(10)).await?;
             Bus::WebTransport(Arc::new(session))
         }
     })
 }
 
-async fn connect_ws(http: &Http, origin: &str, insecure: bool) -> Result<Socket, Error> {
+async fn connect_ws(http: &Http, origin: &str) -> Result<Socket, Error> {
     let origin = canonical_origin(origin)?;
     let target = format!("{origin}/ws/ping");
     let websocket = if let Some(rest) = target.strip_prefix("https://") {
@@ -263,15 +259,10 @@ async fn connect_ws(http: &Http, origin: &str, insecure: bool) -> Result<Socket,
         )
     };
     let mut request = websocket.into_client_request()?;
-    if let Some(authorization) = http.authorization(&target) {
-        if insecure {
-            return Err("authenticated operation refuses insecure TLS".into());
-        }
-        request.headers_mut().insert(http::header::AUTHORIZATION, authorization);
-    }
+    http.authorize(&target, request.headers_mut())?;
     // TLS 1.2 and 1.3 as for throughput and in Go; only QUIC requires 1.3.
     let tls = match origin.starts_with("https://") {
-        true => Some(crate::tls::tcp(insecure, crate::tls::Alpn::Http1).await?),
+        true => Some(crate::tls::tcp(http.insecure, crate::tls::Alpn::Http1).await?),
         false => None,
     };
     let config = WebSocketConfig::default()
@@ -541,7 +532,7 @@ mod tests {
             transport: LatencyTransport::WebSocket,
         };
         let (_stop, mut cancel) = watch::channel(Stop::Running);
-        let bus = redial(&http, &target, false, &mut cancel, Instant::now() + REDIAL_WINDOW).await?;
+        let bus = redial(&http, &target, &mut cancel, Instant::now() + REDIAL_WINDOW).await?;
         assert!(bus.is_some());
         let (attempts, minimum) = peer.await??;
         assert!(attempts[1] - attempts[0] + Duration::from_millis(20) >= minimum);
@@ -573,7 +564,7 @@ mod tests {
         let (observations, mut observed) = mpsc::channel(64);
         let (_stop, cancel) = watch::channel(Stop::Running);
         let timing = (Duration::from_millis(50), Duration::from_millis(300), 16);
-        let measured = run(&Http::new(false)?, &target, false, timing, observations, cancel).await;
+        let measured = run(&Http::new(false)?, &target, timing, observations, cancel).await;
         peer.abort();
         measured?;
         let mut replies = 0;
@@ -614,7 +605,7 @@ mod tests {
         let (observations, _observed) = mpsc::channel(64);
         let (_stop, cancel) = watch::channel(Stop::Running);
         let timing = (Duration::from_millis(50), Duration::from_secs(10), 16);
-        let lost = run(&Http::new(false)?, &target, false, timing, observations, cancel).await;
+        let lost = run(&Http::new(false)?, &target, timing, observations, cancel).await;
         peer.abort();
         let redials = redials.lock().unwrap();
         assert!(lost.is_err_and(|error| error.to_string().contains("not replaced")));
@@ -844,7 +835,7 @@ mod tests {
             .await;
             Ok::<_, Error>(())
         });
-        let bus = connect(&Http::new(false)?, &origin, false, LatencyTransport::WebSocket).await?;
+        let bus = connect(&Http::new(false)?, &origin, LatencyTransport::WebSocket).await?;
         assert_eq!(outcomes(bus, 500, 1600).await?, (3, 1));
         peer.abort();
         Ok(())
@@ -927,7 +918,7 @@ mod tests {
             Ok::<_, Error>(())
         });
         let pong = tokio::time::timeout(Duration::from_secs(5), async {
-            let mut socket = connect_ws(&Http::new(true)?, &origin, true).await?;
+            let mut socket = connect_ws(&Http::new(true)?, &origin).await?;
             socket.send(Message::Text(wire::encode_ping(7).into())).await?;
             match socket.next().await.ok_or("latency channel closed")?? {
                 Message::Text(text) => Ok::<_, Error>(wire::decode_pong(&text)?.id),
@@ -984,7 +975,7 @@ mod tests {
                 "",
             ));
             tokio::time::timeout(Duration::from_secs(5), async {
-                let result = connect_ws(&http, "http://meter.test", false).await;
+                let result = connect_ws(&http, "http://meter.test").await;
                 if valid {
                     let mut socket = result?;
                     assert_eq!(socket.next().await.unwrap()?, Message::Text("pong".into()));
