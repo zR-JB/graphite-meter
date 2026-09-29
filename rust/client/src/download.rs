@@ -17,7 +17,7 @@ use http::Method;
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -27,6 +27,8 @@ use tokio::{
     time::{Instant, timeout},
 };
 
+/// A stage's download lanes, which count what they receive together.
+#[derive(Default)]
 pub struct Download {
     bytes: Arc<AtomicU64>,
     retrying: Retrying,
@@ -45,61 +47,23 @@ impl Download {
         if !(1..=128).contains(&lanes) || stagger > Duration::from_millis(75) {
             return Err("invalid download lane count or stagger".into());
         }
-        let bytes = Arc::new(AtomicU64::new(0));
-        let mut owner = Self {
-            bytes,
-            retrying: Retrying::default(),
-            tasks: JoinSet::new(),
-        };
+        let mut owner = Self::default();
         let (ready, mut received) = mpsc::channel(lanes);
         for lane in 0..lanes {
-            let transport = transport.clone();
-            let bytes = owner.bytes.clone();
-            let ready = ready.clone();
-            let mut cancel = cancel.clone();
-            let retry = TransferRetry::new(owner.retrying.clone(), lane);
-            owner.tasks.spawn(async move {
-                let transfer = async {
-                    if lane > 0 && !stagger.is_zero() {
-                        tokio::time::sleep(stagger * lane as u32).await;
-                    }
-                    receive_http_lane(&transport, lane, &bytes, &ready, duration, retry).await
-                };
-                tokio::select! {
-                    biased;
-                    _ = cancel.wait_for(|value| *value) => Ok(()),
-                    result = transfer => result,
+            let (transport, ready) = (transport.clone(), ready.clone());
+            owner.spawn(lane, &cancel, move |bytes, retry| async move {
+                if lane > 0 && !stagger.is_zero() {
+                    tokio::time::sleep(stagger * lane as u32).await;
                 }
+                receive_http_lane(&transport, lane, &bytes, &ready, duration, retry).await
             });
         }
         drop(ready);
-        let mut ready_lanes = 0;
-        let readiness = async {
-            for _ in 0..lanes {
-                tokio::select! {
-                    // Lanes drop their sender before their task completes; report the lane's cause.
-                    value = received.recv() => if value.is_none() {
-                        owner.tasks.join_next().await.ok_or("no download lanes")???;
-                        return Err("download ended before readiness".into());
-                    },
-                    task = owner.tasks.join_next() => {
-                        task.ok_or("no download lanes")???;
-                        return Err::<(), Error>("download cancelled before readiness".into());
-                    }
-                }
-                ready_lanes += 1;
-            }
-            Ok(())
-        };
-        match timeout(Duration::from_secs(10), readiness).await {
-            Ok(result) => result?,
-            Err(_) => {
-                return Err(format!(
-                    "download readiness timed out: {ready_lanes}/{lanes} lanes received response headers"
-                )
-                .into());
-            }
-        }
+        let mut counted = 0;
+        let readiness = owner.ready(&mut received, lanes, "download", &mut counted);
+        timeout(Duration::from_secs(10), readiness).await.map_err(|_| {
+            format!("download readiness timed out: {counted}/{lanes} lanes received response headers")
+        })??;
         Ok(owner)
     }
 
@@ -120,11 +84,7 @@ impl Download {
             return Err("WebTransport download requires a stream target".into());
         }
         let origin = canonical_origin(&target.base_url)?;
-        let mut owner = Self {
-            bytes: Arc::new(AtomicU64::new(0)),
-            retrying: Retrying::default(),
-            tasks: JoinSet::new(),
-        };
+        let mut owner = Self::default();
         let (ready, mut received) = mpsc::channel(lanes);
         let lane_cancel = cancel.clone();
         let start = async {
@@ -136,39 +96,65 @@ impl Download {
                 );
                 let slot = Arc::new(SessionSlot::dial(http, target).await?);
                 for lane in first..first + group {
-                    let slot = slot.clone();
-                    let bytes = owner.bytes.clone();
-                    let ready = ready.clone();
-                    let mut cancel = lane_cancel.clone();
-                    let retry = TransferRetry::new(owner.retrying.clone(), lane);
-                    owner.tasks.spawn(async move {
-                        tokio::select! {biased;
-                            _ = cancel.wait_for(|value| *value) => Ok(()),
-                            result = timeout(duration, receive_webtransport(slot, bytes, ready, retry)) => result?,
-                        }
+                    let (slot, ready) = (slot.clone(), ready.clone());
+                    owner.spawn(lane, &lane_cancel, move |bytes, retry| async move {
+                        timeout(duration, receive_webtransport(slot, bytes, ready, retry)).await?
                     });
                 }
             }
             drop(ready);
-            for _ in 0..lanes {
-                tokio::select! {
-                    value = received.recv() => if value.is_none() {
-                        owner.tasks.join_next().await.ok_or("no WebTransport download lanes")???;
-                        return Err("WebTransport download ended before readiness".into());
-                    },
-                    task = owner.tasks.join_next() => {
-                        task.ok_or("no WebTransport download lanes")???;
-                        return Err::<(), Error>("WebTransport download cancelled before readiness".into());
-                    }
-                }
-            }
-            Ok(())
+            owner.ready(&mut received, lanes, "WebTransport download", &mut 0).await
         };
         tokio::select! {biased;
             _ = cancel.wait_for(|value| *value) => return Err("download cancelled before readiness".into()),
             result = timeout(Duration::from_secs(10), start) => result??,
         }
         Ok(owner)
+    }
+
+    /// Runs lane `lane` until `cancel`, counting into this download's bytes and reporting its retries.
+    fn spawn<F>(
+        &mut self,
+        lane: usize,
+        cancel: &watch::Receiver<bool>,
+        run: impl FnOnce(Arc<AtomicU64>, TransferRetry) -> F,
+    ) where
+        F: Future<Output = Result<(), Error>> + Send + 'static,
+    {
+        let mut cancel = cancel.clone();
+        let run = run(self.bytes.clone(), TransferRetry::new(self.retrying.clone(), lane));
+        self.tasks.spawn(async move {
+            tokio::select! {
+                biased;
+                _ = cancel.wait_for(|value| *value) => Ok(()),
+                result = run => result,
+            }
+        });
+    }
+
+    /// Waits until `lanes` lanes are ready, counting them; a lane that ends first reports its cause.
+    async fn ready(
+        &mut self,
+        received: &mut mpsc::Receiver<()>,
+        lanes: usize,
+        kind: &str,
+        counted: &mut usize,
+    ) -> Result<(), Error> {
+        while *counted < lanes {
+            tokio::select! {
+                // Lanes drop their sender before their task completes; report the lane's cause.
+                value = received.recv() => if value.is_none() {
+                    self.tasks.join_next().await.ok_or_else(|| format!("no {kind} lanes"))???;
+                    return Err(format!("{kind} ended before readiness").into());
+                },
+                task = self.tasks.join_next() => {
+                    task.ok_or_else(|| format!("no {kind} lanes"))???;
+                    return Err(format!("{kind} cancelled before readiness").into());
+                }
+            }
+            *counted += 1;
+        }
+        Ok(())
     }
 
     pub fn bytes(&self) -> u64 {
@@ -237,61 +223,45 @@ async fn receive_webtransport(
     slot: Arc<SessionSlot>,
     bytes: Arc<AtomicU64>,
     ready: mpsc::Sender<()>,
-    mut retry: TransferRetry,
+    retry: TransferRetry,
 ) -> Result<(), Error> {
-    let mut announced = false;
-    loop {
-        let session = slot.current().await;
-        let started = Instant::now();
-        let mut moved = false;
-        let result = receive_webtransport_chunk(&session, &bytes, &ready, &mut announced, &mut moved).await;
-        retry.ended(result, started, moved).await?;
-        if session.is_closed() {
-            let started = Instant::now();
-            if let Err(error) = slot.reconnect(&session).await {
-                retry.ended(Err(error), started, false).await?;
+    let (bytes, ready, announced) = (&*bytes, &ready, &AtomicBool::new(false));
+    slot.lane(retry, move |session| receive_stream(session, bytes, ready, announced))
+        .await
+}
+
+/// One server stream of the lane, counted as it arrives; the lane is ready at its first bytes.
+async fn receive_stream(
+    session: Arc<Session>,
+    bytes: &AtomicU64,
+    ready: &mpsc::Sender<()>,
+    announced: &AtomicBool,
+) -> (Result<(), Error>, bool) {
+    let mut moved = false;
+    let result = async {
+        let mut stream = session.accept_uni().await?;
+        let mut received = 0_u64;
+        while let Some(chunk) = stream.read_chunk().await? {
+            received = received
+                .checked_add(chunk.len() as u64)
+                .ok_or("download byte count overflow")?;
+            moved |= !chunk.is_empty();
+            bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+            if !announced.load(Ordering::Relaxed) && !chunk.is_empty() {
+                ready.try_send(()).map_err(|_| "download readiness receiver closed")?;
+                announced.store(true, Ordering::Relaxed);
+            }
+            if received > WT_STREAM_BYTES {
+                return Err("WebTransport download exceeded its declared byte count".into());
             }
         }
-    }
-}
-
-async fn receive_webtransport_chunk(
-    session: &Session,
-    bytes: &AtomicU64,
-    ready: &mpsc::Sender<()>,
-    announced: &mut bool,
-    moved: &mut bool,
-) -> Result<(), Error> {
-    let mut stream = session.accept_uni().await?;
-    let mut received = 0_u64;
-    while let Some(chunk) = stream.read_chunk().await? {
-        received = received
-            .checked_add(chunk.len() as u64)
-            .ok_or("download byte count overflow")?;
-        *moved |= !chunk.is_empty();
-        record_webtransport(bytes, ready, announced, chunk.len())?;
-        if received > WT_STREAM_BYTES {
-            return Err("WebTransport download exceeded its declared byte count".into());
+        if received != WT_STREAM_BYTES {
+            return Err("WebTransport download ended before its declared byte count".into());
         }
+        Ok(())
     }
-    if received != WT_STREAM_BYTES {
-        return Err("WebTransport download ended before its declared byte count".into());
-    }
-    Ok(())
-}
-
-fn record_webtransport(
-    bytes: &AtomicU64,
-    ready: &mpsc::Sender<()>,
-    announced: &mut bool,
-    count: usize,
-) -> Result<(), Error> {
-    bytes.fetch_add(count as u64, Ordering::Relaxed);
-    if !*announced && count > 0 {
-        ready.try_send(()).map_err(|_| "download readiness receiver closed")?;
-        *announced = true;
-    }
-    Ok(())
+    .await;
+    (result, moved)
 }
 
 #[cfg(test)]

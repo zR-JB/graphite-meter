@@ -567,21 +567,18 @@ async fn send_wt_reconnecting(
     slot: &SessionSlot,
     block: Bytes,
     active: Arc<AtomicBool>,
-    mut retry: TransferRetry,
+    retry: TransferRetry,
 ) -> Result<(), Error> {
-    loop {
-        let session = slot.current().await;
-        let started = Instant::now();
-        let mut moved = false;
-        let Err(error) = send_wt_lane(&session, block.clone(), &active, &mut moved).await;
-        retry.ended(Err(error), started, moved).await?;
-        if session.is_closed() {
-            let started = Instant::now();
-            if let Err(error) = slot.reconnect(&session).await {
-                retry.ended(Err(error), started, false).await?;
-            }
+    let active = &*active;
+    slot.lane(retry, move |session| {
+        let block = block.clone();
+        async move {
+            let mut moved = false;
+            let Err(error) = send_wt_lane(&session, block, active, &mut moved).await;
+            (Err(error), moved)
         }
-    }
+    })
+    .await
 }
 
 async fn progress_feed(

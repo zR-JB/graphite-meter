@@ -3,7 +3,7 @@ use crate::{
     Error,
     net::Http,
     quic::{Connection, Origin},
-    transport::{REDIAL_WINDOW, restore},
+    transport::{REDIAL_WINDOW, TransferRetry, restore},
 };
 use bytes::Bytes;
 use futures_util::FutureExt;
@@ -112,16 +112,40 @@ impl SessionSlot {
         self.current.lock().await.clone()
     }
 
-    pub async fn reconnect(&self, failed: &Arc<Session>) -> Result<Arc<Session>, Error> {
+    async fn reconnect(&self, failed: &Arc<Session>) -> Result<(), Error> {
         let mut current = self.current.lock().await;
         if !Arc::ptr_eq(&current, failed) {
-            return Ok(current.clone());
+            return Ok(());
         }
         if !failed.is_closed() {
             return Err("WebTransport stream failed while its session remained open".into());
         }
         *current = Arc::new(Self::open(&self.http, &self.target).await?);
-        Ok(current.clone())
+        Ok(())
+    }
+
+    /// Go's runWTLane: `attempt` on the current session again and again, paced by `retry`, with
+    /// the session dialled again once it closed. An attempt says whether it moved bytes.
+    pub(crate) async fn lane<F>(
+        &self,
+        mut retry: TransferRetry,
+        mut attempt: impl FnMut(Arc<Session>) -> F,
+    ) -> Result<(), Error>
+    where
+        F: Future<Output = (Result<(), Error>, bool)>,
+    {
+        loop {
+            let session = self.current().await;
+            let started = Instant::now();
+            let (result, moved) = attempt(session.clone()).await;
+            retry.ended(result, started, moved).await?;
+            if session.is_closed() {
+                let started = Instant::now();
+                if let Err(error) = self.reconnect(&session).await {
+                    retry.ended(Err(error), started, false).await?;
+                }
+            }
+        }
     }
 
     pub async fn close(self) {
