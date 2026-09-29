@@ -334,14 +334,11 @@ fn rgb(color: &str) -> Option<[u8; 3]> {
         };
         (if value > 0xff { value >> 8 } else { value }) as u8
     };
-    Some([
-        component(components[0]),
-        component(components[1]),
-        component(components[2]),
-    ])
+    Some([0, 1, 2].map(|index| component(components[index])))
 }
 
-#[cfg(all(test, unix))]
+#[cfg(unix)]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::{io::Write, time::Duration};
