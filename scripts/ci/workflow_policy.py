@@ -60,7 +60,8 @@ ORDERED = {
         "--target tui-artifacts", "--target server-artifacts",
         "python3 -m scripts.ci.release stage-rust\n", "python3 -m scripts.ci.release check-rust\n",
         "run: mise run rust-darwin-package 0.0.0-dev\n",
-        "cargo test --locked -p graphite-meter-client -p graphite-meter-core -p graphite-meter-net\n",
+        "cargo test --locked --no-fail-fast -p graphite-meter-client -p graphite-meter-core -p graphite-meter-net \\\n"
+        "            -p graphite-meter-http3\n",
     ),
     "workflows/release.yml": (
         "github.event.workflow_run.conclusion == 'success'\n",

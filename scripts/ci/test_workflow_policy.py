@@ -151,7 +151,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "rust-darwin-package"),
     (W + "ci.yml", "run: mise run rust-darwin-package 0.0.0-dev\n", "run: mise run rust-client-package\n",
      "rust-darwin-package"),
-    (W + "ci.yml", " -p graphite-meter-core -p graphite-meter-net\n", "\n", "graphite-meter-net"),
+    (W + "ci.yml", " \\\n            -p graphite-meter-http3\n", "\n", "graphite-meter-http3"),
     (W + "ci.yml", "          python3 -m scripts.ci.release check-rust\n", "", "release check-rust"),
     (W + "ci.yml", "run: mise run rust-check-targets\n", "run: mise run rust-check\n", "rust-check-targets"),
     (W + "ci.yml", "check_git_sources --verify\n", "check_git_sources\n", "check_git_sources --verify"),

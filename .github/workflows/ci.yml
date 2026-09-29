@@ -389,7 +389,8 @@ jobs:
         run: |
           PATH="$(brew --prefix openssl@3)/bin:$PATH"
           openssl version | grep '^OpenSSL 3'
-          cargo test --locked -p graphite-meter-client -p graphite-meter-core -p graphite-meter-net
+          cargo test --locked --no-fail-fast -p graphite-meter-client -p graphite-meter-core -p graphite-meter-net \
+            -p graphite-meter-http3
 
   gate:
     name: Gate

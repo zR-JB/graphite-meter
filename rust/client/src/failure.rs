@@ -268,6 +268,8 @@ mod tests {
         assert_eq!(reason(&plain, false), FailureReason::ConnectionLost);
     }
 
+    // Only Linux drops handshakes beyond a full accept queue; macOS completes them, so the dial never times out.
+    #[cfg(target_os = "linux")]
     #[tokio::test(start_paused = true)]
     async fn a_silent_server_reads_as_unreachable() -> Result<(), Error> {
         let _ = crate::crypto::provider().install_default();
