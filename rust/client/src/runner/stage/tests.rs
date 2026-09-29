@@ -1,7 +1,7 @@
 use super::*;
 use crate::transport::Transport;
 use crate::{
-    model::{ServerSummary, StageStatus},
+    model::{ServerLatency, ServerSummary, StageStatus},
     net::Http,
 };
 use graphite_meter_core::discovery::{LatencyTransport, Protocol};

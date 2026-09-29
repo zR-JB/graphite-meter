@@ -7,15 +7,14 @@ use crate::{
     failure::Failure,
     latency::{Observation, Stop},
     model::{
-        Ending, FailureScope, Phase, Point, ServerContribution, ServerLatency, ServerLatencyResult, Snapshot, Stage,
-        StageResult,
+        Ending, FailureScope, Phase, Point, ServerContribution, ServerLatencyResult, Snapshot, Stage, StageResult,
     },
     transport::{REDIAL_WINDOW, Transport},
     upload::Upload,
 };
 use futures_util::{
     FutureExt, StreamExt,
-    future::BoxFuture,
+    future::{BoxFuture, OptionFuture},
     stream::{BoxStream, FuturesUnordered, SelectAll},
 };
 use graphite_meter_core::{
@@ -204,43 +203,12 @@ impl<'a> StageRun<'a> {
         snapshots: &'a watch::Sender<Snapshot>,
         ledger: &'a mut RunLedger,
     ) -> Result<Self, Error> {
-        let planned_warmup = servers.iter().fold(config.warmup, |warmup, server| {
-            warmup.max(adaptive_warmup(config.warmup, server.idle_rtt))
-        });
-        let operation_limit = planned_warmup
+        let operation_limit = planned_warmup(config, servers.iter())
             .checked_add(config.duration(stage))
             .and_then(|duration| duration.checked_add(Duration::from_secs(60)))
             .ok_or("stage duration overflow")?;
-        snapshots.send_modify(|snapshot| {
-            snapshot.phase = Phase::Preparing;
-            snapshot.stage = Some(stage);
-            snapshot.latest = Point::default();
-            let offset = snapshot.results.iter().map(|result| result.elapsed).sum::<Duration>();
-            snapshot.history.add(Point {
-                elapsed: offset,
-                ..Point::default()
-            });
-            let mut previous = std::mem::take(&mut snapshot.server_latencies);
-            snapshot.server_latencies = servers
-                .iter()
-                .map(|server| {
-                    let mut history = previous
-                        .iter_mut()
-                        .find(|host| host.id == server.entry.id)
-                        .map(|host| std::mem::take(&mut host.history))
-                        .unwrap_or_default();
-                    history.add(Point {
-                        elapsed: offset,
-                        ..Point::default()
-                    });
-                    ServerLatency {
-                        id: server.entry.id.clone(),
-                        history,
-                        ..ServerLatency::default()
-                    }
-                })
-                .collect();
-        });
+        let ids = servers.iter().map(|server| server.entry.id.clone());
+        snapshots.send_modify(|snapshot| snapshot.open_stage(stage, ids));
         let opened = Instant::now();
         let mut run = Self {
             stage,
@@ -409,12 +377,10 @@ impl<'a> StageRun<'a> {
     }
 
     async fn warmup(&mut self, servers: &[PreparedServer]) -> Result<(), Error> {
-        let warmup = servers
+        let members = servers
             .iter()
-            .filter(|server| self.members.iter().any(|member| member.id == server.entry.id))
-            .fold(self.config.warmup, |warmup, server| {
-                warmup.max(adaptive_warmup(self.config.warmup, server.idle_rtt))
-            });
+            .filter(|server| self.members.iter().any(|member| member.id == server.entry.id));
+        let warmup = planned_warmup(self.config, members);
         self.snapshots.send_modify(|snapshot| snapshot.phase = Phase::Warmup);
         let end = Instant::now() + warmup;
         loop {
@@ -801,19 +767,21 @@ impl<'a> StageRun<'a> {
         let now = Instant::now();
         let (started, end) = self.window.unwrap_or((now, now));
         let ended = end.min(now);
-        let elapsed = ended.saturating_duration_since(started);
         let accounting = &self.ledger.accounting;
-        let down = self
-            .transfer
-            .filter(|stage| measuring && stage.needs_down())
-            .map(|_| accounting.result(Direction::Down));
-        let up = self
-            .transfer
-            .filter(|stage| measuring && stage.needs_up())
-            .map(|_| accounting.result(Direction::Up));
-        let missing = (self.stage.downloads()
-            && down.as_ref().is_none_or(|result| result.mean_bytes_per_sec.is_none()))
-            || (self.stage.uploads() && up.as_ref().is_none_or(|result| result.mean_bytes_per_sec.is_none()));
+        let measured = self.transfer.filter(|_| measuring);
+        let mut result = StageResult {
+            stage: self.stage,
+            elapsed: ended.saturating_duration_since(started),
+            down: measured
+                .filter(|stage| stage.needs_down())
+                .map(|_| accounting.result(Direction::Down)),
+            up: measured
+                .filter(|stage| stage.needs_up())
+                .map(|_| accounting.result(Direction::Up)),
+            stopped,
+            ..StageResult::default()
+        };
+        let missing = result.lacks_throughput();
         // The run's account holds earlier stages; a stage that never opened its window has no results there.
         let own = |id: &str, direction| {
             if measuring {
@@ -824,12 +792,12 @@ impl<'a> StageRun<'a> {
         };
         let at = self.ledger.since_start(now);
         let hosts = &mut self.hosts;
-        let (stage, transfer, members, participants) = (self.stage, self.transfer, &self.members, &self.participants);
+        let (transfer, members, participants) = (self.transfer, &self.members, &self.participants);
         self.snapshots.send_modify(|snapshot| {
             if measuring {
-                sample_hosts(hosts, snapshot, elapsed);
+                sample_hosts(hosts, snapshot, result.elapsed);
             }
-            let server_latencies: Vec<_> = snapshot
+            result.server_latencies = snapshot
                 .server_latencies
                 .iter()
                 .map(|host| {
@@ -851,20 +819,21 @@ impl<'a> StageRun<'a> {
                 let throughput_failed = snapshot
                     .failures
                     .iter()
-                    .any(|failure| failure.stage == stage && failure.scope == FailureScope::Throughput);
+                    .any(|failure| failure.stage == result.stage && failure.scope == FailureScope::Throughput);
                 for member in members {
                     if missing && !throughput_failed {
                         snapshot.failure(&member.id, FailureScope::Throughput, &insufficient, at);
                     }
-                    let unmeasured = server_latencies
+                    let unmeasured = result
+                        .server_latencies
                         .iter()
                         .any(|host| host.id == member.id && host.median().is_none());
-                    if stage == Stage::Latency && unmeasured {
+                    if result.stage == Stage::Latency && unmeasured {
                         snapshot.failure(&member.id, FailureScope::Latency, &insufficient, at);
                     }
                 }
             }
-            let server_results = transfer
+            result.server_results = transfer
                 .map(|transfer| {
                     participants
                         .iter()
@@ -876,15 +845,7 @@ impl<'a> StageRun<'a> {
                         .collect()
                 })
                 .unwrap_or_default();
-            snapshot.results.push(StageResult {
-                stage,
-                elapsed,
-                down,
-                up,
-                stopped,
-                server_latencies,
-                server_results,
-            });
+            snapshot.results.push(result);
             snapshot.intervals.clone_from(accounting.intervals());
             snapshot.omitted_intervals = accounting.omitted_intervals();
             snapshot.refocus();
@@ -901,11 +862,9 @@ async fn start_transfer(
 ) -> Result<Lanes, Error> {
     let target = server.throughput.as_ref().ok_or("missing throughput target")?;
     let transport = server.http.as_ref().ok_or("missing throughput connection")?;
+    let fetch = target.transport == ThroughputTransport::FetchStream;
     let (down, up) = config.lanes(target);
-    let upload_transport = if stage == Stage::Bidirectional
-        && target.transport == ThroughputTransport::FetchStream
-        && target.protocol == Protocol::Http3
-    {
+    let upload_transport = if stage == Stage::Bidirectional && fetch && target.protocol == Protocol::Http3 {
         // Sustained downloads can occupy the connection send window
         // and starve upload control traffic at high lane counts.
         let connect = Transport::connect(server.client.clone(), &target.base_url, target.protocol);
@@ -918,38 +877,25 @@ async fn start_transfer(
         transport.clone()
     };
     // Both directions start together, as Go's roles do.
-    let download = async {
-        if !stage.downloads() {
-            return Ok(None);
-        }
-        let started = if target.transport == ThroughputTransport::FetchStream {
-            Download::start(
-                transport.clone(),
-                down,
-                operation_limit,
-                lane_stagger(config.warmup, server.idle_rtt, down),
-                stopped.clone(),
-            )
-            .await
+    let download = OptionFuture::from(stage.downloads().then_some(async {
+        if fetch {
+            let stagger = lane_stagger(config.warmup, server.idle_rtt, down);
+            Download::start(transport.clone(), down, operation_limit, stagger, stopped.clone()).await
         } else {
             Download::start_webtransport(&server.client, target, down, operation_limit, stopped.clone()).await
-        };
-        started.map(Some)
-    };
-    let upload = async {
-        if !stage.uploads() {
-            return Ok(None);
         }
+    }));
+    let upload = OptionFuture::from(stage.uploads().then_some(async {
         let (replaced, stopped) = (server.replaced_upload.clone(), stopped.clone());
-        let started = if target.transport == ThroughputTransport::FetchStream {
+        if fetch {
             let stagger = lane_stagger(config.warmup, server.idle_rtt, up);
             Upload::start(upload_transport, up, stagger, operation_limit, replaced, stopped).await
         } else {
             Upload::start_webtransport(upload_transport, up, replaced, stopped).await
-        };
-        started.map(Some)
-    };
-    let (down, up, error) = match tokio::join!(download, upload) {
+        }
+    }));
+    let (down, up) = tokio::join!(download, upload);
+    let (down, up, error) = match (down.transpose(), up.transpose()) {
         (Ok(down), Ok(up)) => (down, up, None),
         (Err(error), up) => (None, up.ok().flatten(), Some(error)),
         (down, Err(error)) => (down.ok().flatten(), None, Some(error)),
@@ -978,7 +924,7 @@ fn observe(
 }
 
 fn sample_hosts(hosts: &mut BTreeMap<String, HostLatency>, snapshot: &mut Snapshot, elapsed: Duration) {
-    let offset = snapshot.results.iter().map(|result| result.elapsed).sum::<Duration>();
+    let offset = snapshot.offset();
     for host in &mut snapshot.server_latencies {
         host.latest_ms = hosts.get_mut(&host.id).and_then(|state| state.latest.take());
         host.history.add(Point {
@@ -1012,6 +958,13 @@ fn observe_latency(
     if let Some(outcome) = event.outcome() {
         accumulator.record(outcome);
     }
+}
+
+/// The longest adaptive warmup of `servers`, at least the configured one.
+fn planned_warmup<'a>(config: &Config, servers: impl Iterator<Item = &'a PreparedServer>) -> Duration {
+    servers.fold(config.warmup, |warmup, server| {
+        warmup.max(adaptive_warmup(config.warmup, server.idle_rtt))
+    })
 }
 
 fn adaptive_warmup(base: Duration, rtt: Duration) -> Duration {

@@ -95,6 +95,10 @@ impl StageResult {
     pub fn up_bytes(&self) -> u64 {
         self.up.as_ref().map_or(0, |result| result.total_bytes)
     }
+    /// A direction the stage measures has no rate.
+    pub fn lacks_throughput(&self) -> bool {
+        self.stage.downloads() && self.down_bps().is_none() || self.stage.uploads() && self.up_bps().is_none()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -259,16 +263,10 @@ pub struct Snapshot {
 impl Snapshot {
     /// Failed when a planned result is missing (a present focus's median included), partial after a failure.
     pub fn stage_status(&self, result: &StageResult) -> StageStatus {
-        let unavailable = |measurement: &Option<graphite_meter_core::measurement::MeasurementResult>| {
-            measurement
-                .as_ref()
-                .is_none_or(|measurement| measurement.mean_bytes_per_sec.is_none())
-        };
         let stage = result.stage;
         if result.stopped {
             StageStatus::Stopped
-        } else if stage.downloads() && unavailable(&result.down)
-            || stage.uploads() && unavailable(&result.up)
+        } else if result.lacks_throughput()
             || stage == Stage::Latency
                 && result
                     .server_latencies
@@ -348,8 +346,38 @@ impl Snapshot {
 
     pub fn sample(&mut self, mut point: Point) {
         self.latest = point.clone();
-        point.elapsed += self.results.iter().map(|result| result.elapsed).sum::<Duration>();
+        point.elapsed += self.offset();
         self.history.add(point);
+    }
+
+    /// The time the run's recorded stages took, where the current stage's trace points start.
+    pub(crate) fn offset(&self) -> Duration {
+        self.results.iter().map(|result| result.elapsed).sum()
+    }
+
+    /// A stage opens for the servers `ids`: each keeps its latency trace, marked at the stage's start.
+    pub(crate) fn open_stage(&mut self, stage: Stage, ids: impl Iterator<Item = String>) {
+        let start = Point {
+            elapsed: self.offset(),
+            ..Point::default()
+        };
+        (self.phase, self.stage, self.latest) = (Phase::Preparing, Some(stage), Point::default());
+        self.history.add(start.clone());
+        let mut previous = std::mem::take(&mut self.server_latencies);
+        self.server_latencies = ids
+            .map(|id| {
+                let earlier = previous.iter_mut().find(|host| host.id == id);
+                let mut history = earlier
+                    .map(|host| std::mem::take(&mut host.history))
+                    .unwrap_or_default();
+                history.add(start.clone());
+                ServerLatency {
+                    id,
+                    history,
+                    ..ServerLatency::default()
+                }
+            })
+            .collect();
     }
 }
 
