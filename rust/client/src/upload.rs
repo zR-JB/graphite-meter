@@ -436,7 +436,8 @@ enum Source {
     WebTransport(RecvStream),
 }
 
-/// The receiver's progress, a record a line of at most 64 KiB over HTTP and 16 KiB over WebTransport.
+/// The receiver's progress, a record a line of at most 64 KiB over either source, as api/upload.md
+/// bounds it.
 struct Feed {
     source: Source,
     line: Vec<u8>,
@@ -481,10 +482,6 @@ impl Feed {
 
     /// The next record that decodes; the receiver sends at least one a second.
     async fn next(&mut self) -> Result<UploadProgress, Error> {
-        let (limit, too_long) = match self.source {
-            Source::Http(_) => (64 * 1024, "upload progress line exceeds 64 KiB"),
-            Source::WebTransport(_) => (16 * 1024, "upload progress line exceeds limit"),
-        };
         loop {
             if self.chunk.is_empty() {
                 self.chunk = match &mut self.source {
@@ -498,8 +495,8 @@ impl Feed {
             }
             let end = self.chunk.iter().position(|&byte| byte == b'\n');
             let count = end.map_or(self.chunk.len(), |end| end + 1);
-            if count > limit - self.line.len() {
-                return Err(too_long.into());
+            if count > 64 * 1024 - self.line.len() {
+                return Err("upload progress line exceeds 64 KiB".into());
             }
             self.line.extend_from_slice(&self.chunk.split_to(count));
             if end.is_some()
@@ -700,38 +697,59 @@ mod tests {
         Ok(())
     }
 
-    /// A WebTransport receiver that withdraws the grant with a `revoked` record asks for sign-in,
-    /// as Go's uploadRefusal (failure.go:69-70), not a refusal that falls back to the HTTP feed.
-    #[tokio::test]
-    async fn a_revoked_record_asks_for_sign_in() -> Result<(), Error> {
+    /// The progress feed of a WebTransport receiver that writes `records` on its first stream, and
+    /// the state it left; nothing answers the HTTP feed a failing one falls back to.
+    async fn webtransport_feed(records: &'static [u8]) -> Result<(Result<(), Error>, State), Error> {
         let _ = crate::crypto::provider().install_default();
         let (endpoint, origin) = crate::fixtures::h3_endpoint()?;
         let server = tokio::spawn(async move {
             let quic = endpoint.accept().await.ok_or("endpoint closed")?.await?;
             let mut connection = graphite_meter_http3::server::Connection::new(quic, None);
             let (_, stream) = connection.next().await?.ok_or("no CONNECT")?.resolve().await?;
-            let revoke = async {
+            let feed = async {
                 let session =
                     graphite_meter_http3::webtransport::Session::accept(stream, http::HeaderMap::new()).await?;
-                let mut records = session.open_uni().await?;
-                records
-                    .write_all(b"{\"type\":\"ready\"}\n{\"type\":\"error\",\"code\":\"revoked\"}\n")
-                    .await?;
+                let mut stream = session.open_uni().await?;
+                stream.write_all(records).await?;
                 std::future::pending::<Result<(), Error>>().await
             };
-            let (revoked, ()) = tokio::join!(revoke, async { while let Ok(Some(_)) = connection.next().await {} });
-            revoked
+            let (fed, ()) = tokio::join!(feed, async { while let Ok(Some(_)) = connection.next().await {} });
+            fed
         });
         let http = crate::net::Http::new(true)?;
         let slot = SessionSlot::dial(&http, format!("{origin}/wt/upload?id=test-session")).await?;
-        // Nothing answers the HTTP feed the old refusal fell back to.
         let closed = format!("http://{}", TcpListener::bind("127.0.0.1:0").await?.local_addr()?);
         let control = Transport::connect(http, &closed, Protocol::Http1).await?;
-        let (state, _) = watch::channel(State::default());
+        let (state, observed) = watch::channel(State::default());
         let fed = progress_feed(&control, "test-session", &state, Some(Arc::new(slot))).await;
         server.abort();
+        let observed = observed.borrow().clone();
+        Ok((fed, observed))
+    }
+
+    /// A WebTransport receiver that withdraws the grant with a `revoked` record asks for sign-in,
+    /// as Go's uploadRefusal (failure.go:69-70), not a refusal that falls back to the HTTP feed.
+    #[tokio::test]
+    async fn a_revoked_record_asks_for_sign_in() -> Result<(), Error> {
+        let (fed, _) = webtransport_feed(b"{\"type\":\"ready\"}\n{\"type\":\"error\",\"code\":\"revoked\"}\n").await?;
         let error = fed.err().ok_or("the feed completed")?;
         assert!(crate::failure::sign_in(error.as_ref()).is_some(), "{error}");
+        Ok(())
+    }
+
+    /// A WebTransport record may take the 64 KiB api/upload.md allows every record, as over HTTP.
+    #[tokio::test]
+    async fn a_webtransport_record_takes_64_kib() -> Result<(), Error> {
+        static RECORDS: std::sync::LazyLock<Vec<u8>> = std::sync::LazyLock::new(|| {
+            let note = "x".repeat(60 * 1024);
+            format!("{{\"type\":\"ready\"}}\n{{\"type\":\"complete\",\"bytes\":7,\"nanos\":9,\"note\":\"{note}\"}}\n")
+                .into_bytes()
+        });
+        let (fed, state) = webtransport_feed(&RECORDS).await?;
+        fed?;
+        assert!(state.complete);
+        let latest = state.latest.ok_or("no count")?;
+        assert_eq!((latest.bytes, latest.nanos), (7, 9));
         Ok(())
     }
 
