@@ -509,7 +509,9 @@ impl HttpServer {
             allow.sort_unstable();
             return Some(method_not_allowed(&allow.join(", ")));
         }
+        // As Go's mux answers a route's preflight itself, admission never sees it.
         if route.admission() != route::Admission::Unmetered
+            && request.method() != Method::OPTIONS
             && lease.is_none()
             && !client_address::resolve(peer, request.headers(), &self.config.trusted_proxies).usable
         {
@@ -1290,6 +1292,22 @@ mod tests {
         drop(held);
         let download = respond(&server, Method::GET, "/download?bytes=0").await;
         assert_eq!(download.status(), StatusCode::OK);
+    }
+
+    /// As Go's mux, a route's preflight needs no client evidence: a proxied browser without a forwarded address gets
+    /// its CORS answer, and only its measurement is refused.
+    #[tokio::test]
+    async fn an_unresolved_proxied_client_is_answered_its_preflight() {
+        let config = Config {
+            trusted_proxies: vec!["127.0.0.0/8".parse().unwrap()],
+            ..Config::default()
+        };
+        let server = HttpServer::new(config.validated().unwrap()).unwrap();
+        let refused = respond(&server, Method::GET, "/download?bytes=1").await;
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+        let preflight = respond(&server, Method::OPTIONS, "/download").await;
+        assert_eq!(preflight.status(), StatusCode::NO_CONTENT);
+        assert_eq!(preflight.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
     }
 
     #[tokio::test]
