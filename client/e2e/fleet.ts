@@ -99,6 +99,8 @@ export async function closeSettings(page: Page) {
   await expect
     .poll(() => panel.all((els) => els.every((el) => el.inert)))
     .toBe(true);
+  // Its column narrows after it: a pointer aimed mid-slide lands beside its button.
+  await page.evaluate(settled);
 }
 
 export async function ready(page: Page) {
