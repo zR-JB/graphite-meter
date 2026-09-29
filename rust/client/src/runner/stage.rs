@@ -801,20 +801,19 @@ impl<'a> StageRun<'a> {
             if measuring {
                 sample_hosts(hosts, snapshot);
             }
+            // Only a server whose latency this stage measured has a population, as in Go.
             result.server_latencies = snapshot
                 .server_latencies
                 .iter()
-                .map(|host| {
-                    let own = hosts.get(&host.id);
-                    ServerLatencyResult {
-                        elapsed: own
-                            .and_then(|own| own.ended_at)
-                            .filter(|_| measuring)
-                            .map(|at| at.min(ended).saturating_duration_since(started)),
-                        id: host.id.clone(),
-                        summary: own.map(|own| own.accumulator.snapshot()).unwrap_or_default(),
-                        ending: own.and_then(|own| own.ending).or(stopped.then_some(Ending::Stopped)),
-                    }
+                .filter_map(|host| Some((host, hosts.get(&host.id)?)))
+                .map(|(host, own)| ServerLatencyResult {
+                    elapsed: own
+                        .ended_at
+                        .filter(|_| measuring)
+                        .map(|at| at.min(ended).saturating_duration_since(started)),
+                    id: host.id.clone(),
+                    summary: own.accumulator.snapshot(),
+                    ending: own.ending.or(stopped.then_some(Ending::Stopped)),
                 })
                 .collect();
             // As Go's close(), a stopped stage also names the evidence it lacked.

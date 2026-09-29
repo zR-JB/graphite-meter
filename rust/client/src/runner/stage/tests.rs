@@ -277,6 +277,32 @@ async fn selected_peers_start_stage_together_and_keep_catalogue_order() -> Resul
     Ok(())
 }
 
+/// Without loaded latency a transfer stage records no latency population, as Go's does, so no
+/// report prints an empty latency table for it.
+#[tokio::test]
+async fn a_transfer_stage_without_loaded_latency_records_no_latency() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let (origin, _, peer) = download_peer().await?;
+    let http = Http::new(true)?;
+    let servers = vec![prepared_download("peer", &origin, &http).await?];
+    let config = Config {
+        warmup: Duration::ZERO,
+        download_duration: Duration::from_secs(1),
+        streams: 1,
+        loaded_latency: false,
+        ..Config::default()
+    };
+    let (snapshots, observed) = watch::channel(listing(&servers));
+    let (_stop, cancelled) = watch::channel(false);
+    let mut ledger = RunLedger::new();
+    let result = measure(Stage::Download, &config, &servers, &snapshots, cancelled, &mut ledger).await;
+    peer.abort();
+    assert!(result?.is_empty());
+    let latencies = &observed.borrow().results[0].server_latencies;
+    assert!(latencies.is_empty(), "{latencies:?}");
+    Ok(())
+}
+
 /// A snapshot listing `servers` as the catalogue names them.
 fn listing(servers: &[PreparedServer]) -> Snapshot {
     let summary = |server: &PreparedServer| ServerSummary {
