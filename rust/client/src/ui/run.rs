@@ -16,6 +16,7 @@ use ratatui::{
     style::Style,
     text::{Line, Span},
 };
+use std::collections::HashMap;
 use tokio::time::Instant;
 use unicode_width::UnicodeWidthStr;
 
@@ -80,9 +81,9 @@ pub(super) struct Run {
     marks: Vec<(f64, Stage)>,
     down: Trace,
     up: Trace,
-    rtt: Vec<(String, Trace)>,
+    rtt: HashMap<String, Trace>,
     /// Each server's last reply in this stage, in milliseconds.
-    pub latest: Vec<(String, f64)>,
+    latest: HashMap<String, f64>,
     step: Option<(Option<Stage>, Phase)>,
     pub since: Option<Instant>,
     sample: Option<std::time::Duration>,
@@ -115,10 +116,7 @@ impl Run {
             }
             if let (Some(stage), Phase::Measuring) = step {
                 self.marks.push((at, stage));
-                for trace in [&mut self.down, &mut self.up]
-                    .into_iter()
-                    .chain(self.rtt.iter_mut().map(|(_, trace)| trace))
-                {
+                for trace in [&mut self.down, &mut self.up].into_iter().chain(self.rtt.values_mut()) {
                     trace.add(at, f64::NAN);
                 }
             }
@@ -144,18 +142,8 @@ impl Run {
             }
             for host in &snapshot.server_latencies {
                 let Some(ms) = host.latest_ms else { continue };
-                match self.latest.iter_mut().find(|(id, _)| *id == host.id) {
-                    Some((_, latest)) => *latest = ms,
-                    None => self.latest.push((host.id.clone(), ms)),
-                }
-                match self.rtt.iter_mut().find(|(id, _)| *id == host.id) {
-                    Some((_, trace)) => trace.add(at, ms * 1e6),
-                    None => {
-                        let mut trace = Trace::default();
-                        trace.add(at, ms * 1e6);
-                        self.rtt.push((host.id.clone(), trace));
-                    }
-                }
+                self.latest.insert(host.id.clone(), ms);
+                self.rtt.entry(host.id.clone()).or_default().add(at, ms * 1e6);
             }
         }
         if !snapshot.phase.live() {
@@ -686,12 +674,8 @@ impl Ui {
         }
         let chart_height = height.saturating_sub(out.len());
         let span_ = run.span();
-        let rtt = run
-            .rtt
-            .iter()
-            .find(|(id, _)| Some(id.as_str()) == self.latency_server())
-            .map_or(&[][..], |(_, trace)| &trace.points[..]);
-        let rtt = stage_series(rtt, &run.marks, theme);
+        let rtt = self.latency_server().and_then(|id| run.rtt.get(id));
+        let rtt = stage_series(rtt.map_or(&[], |trace| &trace.points), &run.marks, theme);
         if chart_height < 5 {
         } else if directions.is_empty() {
             out.extend(chart(&rtt, &run.marks, MS_AXIS, span_, width, chart_height, theme));
@@ -738,13 +722,16 @@ impl Ui {
         let transfers = stage.downloads() || stage.uploads();
         if !transfers || run.config.loaded_latency {
             let label = if transfers { "Loaded latency " } else { "Idle latency " };
-            let shown = |id: &String| Some(id.as_str()) == self.latency_server();
-            let value = match run.latest.iter().find(|(id, _)| shown(id)) {
-                Some((_, ms)) => span(format!("{} ms", format::latency_ms(*ms)), theme.value),
+            let shown = self.latency_server();
+            let value = match shown.and_then(|id| run.latest.get(id)) {
+                Some(ms) => span(format!("{} ms", format::latency_ms(*ms)), theme.value),
                 None => span(MISSING, theme.muted),
             };
             let mut reading = vec![span(label, theme.text), value];
-            let host = snapshot.server_latencies.iter().find(|host| shown(&host.id));
+            let host = snapshot
+                .server_latencies
+                .iter()
+                .find(|host| Some(host.id.as_str()) == shown);
             if let Some(streak) = host.map(|host| host.timeouts).filter(|streak| *streak > 0) {
                 let style = if streak >= 3 { theme.err } else { theme.warn };
                 reading.push(span(format!("  probe timeout ×{streak}"), style));
