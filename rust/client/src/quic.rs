@@ -164,10 +164,6 @@ impl Http3Client {
             _owner: self.clone(),
         })
     }
-
-    pub async fn close(self) {
-        self.connection.close(b"client complete").await;
-    }
 }
 
 pub struct Http3Stream {
@@ -332,7 +328,7 @@ mod tests {
                 send.send_data(Bytes::from(body)).await?;
                 send.finish().await?;
             }
-            // Keep driving HTTP/3 until the client explicitly closes its owner.
+            // Keep driving HTTP/3 until the client drops its owner, which closes the connection.
             let _ = h3.next().await;
             Ok::<_, Error>(())
         });
@@ -361,10 +357,7 @@ mod tests {
                 assert!(result.unwrap_err().to_string().contains("exceeds limit"));
             }
         }
-        Arc::try_unwrap(client)
-            .map_err(|_| "request stream retained its HTTP/3 owner")?
-            .close()
-            .await;
+        drop(Arc::try_unwrap(client).map_err(|_| "request stream retained its HTTP/3 owner")?);
         timeout(Duration::from_secs(5), tasks.join_next())
             .await?
             .ok_or("missing server task")???;
