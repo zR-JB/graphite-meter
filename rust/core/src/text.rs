@@ -11,7 +11,12 @@ pub fn terminal_character(c: char) -> bool {
 /// Go's `wire.CleanText`: blanks controls and bidi overrides and keeps at most
 /// `limit` characters, ending a longer text with an ellipsis.
 pub fn clean(text: &str, limit: usize) -> String {
-    let mut characters = text.chars().map(|c| if display_character(c) { c } else { ' ' });
+    clean_with(text, limit, display_character)
+}
+
+/// `clean`, keeping the characters `keep` accepts.
+pub fn clean_with(text: &str, limit: usize, keep: fn(char) -> bool) -> String {
+    let mut characters = text.chars().map(|c| if keep(c) { c } else { ' ' });
     let cleaned: String = characters.by_ref().take(limit).collect();
     if characters.next().is_none() {
         return cleaned;

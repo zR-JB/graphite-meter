@@ -146,18 +146,6 @@ pub struct ServerContribution {
     pub up: Option<graphite_meter_core::measurement::MeasurementResult>,
 }
 
-impl ServerContribution {
-    pub fn down_bps(&self) -> Option<f64> {
-        self.down.as_ref()?.mean_bytes_per_sec.map(|rate| rate * 8.0)
-    }
-    pub fn up_bps(&self) -> Option<f64> {
-        self.up.as_ref()?.mean_bytes_per_sec.map(|rate| rate * 8.0)
-    }
-    pub fn down_bytes(&self) -> u64 {
-        self.down.as_ref().map_or(0, |result| result.total_bytes)
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct ServerLatencyResult {
     pub elapsed: Option<Duration>,

@@ -17,6 +17,18 @@ use tokio::{
 
 use crate::test_identity;
 
+impl ServerContribution {
+    fn down_bps(&self) -> Option<f64> {
+        self.down.as_ref()?.mean_bytes_per_sec
+    }
+    fn up_bps(&self) -> Option<f64> {
+        self.up.as_ref()?.mean_bytes_per_sec
+    }
+    fn down_bytes(&self) -> u64 {
+        self.down.as_ref().map_or(0, |result| result.total_bytes)
+    }
+}
+
 async fn download_peer() -> Result<(String, Arc<AtomicU8>, JoinHandle<()>), Error> {
     download_peer_with_gate(None).await
 }

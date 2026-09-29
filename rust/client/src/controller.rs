@@ -277,10 +277,9 @@ impl Controller {
                             Phase::Failed
                         };
                         let text = crate::failure::text(error.as_ref());
-                        let started = !snapshot.participants.is_empty() || !snapshot.results.is_empty();
                         snapshot.error = Some(if expired {
                             SIGN_IN_EXPIRED.into()
-                        } else if !running || started {
+                        } else if !running || snapshot.started() {
                             text
                         } else if signed_out {
                             SIGN_IN.into()

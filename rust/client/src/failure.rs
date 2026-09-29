@@ -155,18 +155,7 @@ pub fn text(error: &(dyn std::error::Error + 'static)) -> String {
 }
 
 fn clean(text: &str, limit: usize) -> String {
-    let text = text.chars().map(|character| {
-        if graphite_meter_core::text::terminal_character(character) {
-            character
-        } else {
-            ' '
-        }
-    });
-    let text: String = text.collect();
-    if text.chars().count() <= limit {
-        return text;
-    }
-    text.chars().take(limit.saturating_sub(1)).chain(['…']).collect()
+    graphite_meter_core::text::clean_with(text, limit, graphite_meter_core::text::terminal_character)
 }
 
 pub(crate) fn lane_error(error: Error) -> Error {
