@@ -117,8 +117,14 @@ def artifacts(messages: list[dict], package_id: str, binary: str) -> dict[str, d
     return collected
 
 
-def discover(repo: Path, metadata: dict, messages: list[dict], package: str,
-             reviews: list[Review], provenance: list[Provenance] | None = None) -> tuple[list[Component], list[dict], list[str]]:
+def script_output(messages: list[dict], package_id: str) -> Path:
+    """The OUT_DIR of the build script that Cargo ran for `package_id`."""
+    return Path(next(message['out_dir'] for message in messages
+                     if message.get('reason') == 'build-script-executed' and message['package_id'] == package_id))
+
+
+def discover(repo: Path, metadata: dict, messages: list[dict], package: str, reviews: list[Review],
+             provenance: list[Provenance] | None = None) -> tuple[list[Component], list[dict], list[str], str]:
     packages = {item['id']: item for item in metadata['packages']}
     own = {item['id'] for item in packages.values()
            if Path(item['manifest_path']).resolve().parent in
@@ -190,7 +196,7 @@ def discover(repo: Path, metadata: dict, messages: list[dict], package: str,
                           'upstreamRevision': revision, **build})
     components.sort(key=lambda item: (item.name, item.version, item.source))
     inventory.sort(key=lambda item: (item['component']['name'], item['component']['version'], item['component']['source']))
-    return components, inventory, failures
+    return components, inventory, failures, root
 
 
 def legal_report(repo: Path, version: str, sections: str, development: bool = False) -> bytes:
@@ -269,7 +275,7 @@ def main() -> None:
     # A development build reads no native inputs or imports: only a platform record, which it lacks, reviews them.
     mapped = None if args.development else link_map
     metadata, messages = capture(repo, args.package, args.target, args.profile, mapped)
-    components, inventory, failures = discover(repo, metadata, messages, args.package, reviews, provenance)
+    components, inventory, failures, root = discover(repo, metadata, messages, args.package, reviews, provenance)
     manifest = {'schemaVersion': 1, 'package': args.package, 'target': target,
                 'profile': args.profile, 'rustc': toolchain,
                 'scope': 'compiled Cargo inputs, including build scripts and procedural macros',
@@ -372,24 +378,17 @@ def main() -> None:
     # build.rs requires Cargo to compile with exactly this compiler.
     (output / 'rustc-path.txt').write_text(subprocess.check_output(
         ['rustup', 'which', '--toolchain', channel, 'rustc'], text=True).strip())
-    root_directory = 'client' if args.package == 'graphite-meter-client' else 'server'
-    root_id = next(item['id'] for item in metadata['packages']
-                   if Path(item['manifest_path']).resolve() == repo / f'rust/{root_directory}/Cargo.toml')
-    script = next(message for message in messages
-                  if message.get('reason') == 'build-script-executed' and message['package_id'] == root_id)
-    identity = (Path(script['out_dir']) / 'legal-build-identity.txt').read_bytes()
-    (output / 'build-identity.txt').write_bytes(identity)
+    (output / 'build-identity.txt').write_bytes((script_output(messages, root) / 'legal-build-identity.txt').read_bytes())
     try:
         rebuilt_metadata, rebuilt_messages = capture(repo, args.package, args.target, args.profile, mapped,
                                                      output, staged_assets)
-        _, rebuilt_inventory, rebuilt_failures = discover(repo, rebuilt_metadata, rebuilt_messages, args.package, reviews, provenance)
+        _, rebuilt_inventory, rebuilt_failures, _ = discover(repo, rebuilt_metadata, rebuilt_messages, args.package,
+                                                             reviews, provenance)
         if rebuilt_failures or rebuilt_inventory != inventory or not args.development and (
                 platform.linked(link_map, sysroot, cargo_outputs) != facts['inputs']
                 or platform.imports(executable, target) != facts['libraries']):
             raise LegalError('embedded-notice rebuild changed the compiled dependency or native closure')
-        script = next(message for message in rebuilt_messages
-                      if message.get('reason') == 'build-script-executed' and message['package_id'] == root_id)
-        payload = (Path(script['out_dir']) / 'LEGAL.zlib').read_bytes()
+        payload = (script_output(rebuilt_messages, root) / 'LEGAL.zlib').read_bytes()
         if payload not in executable.read_bytes() or zlib.decompress(payload) != (output / 'LEGAL.txt').read_bytes():
             raise LegalError('executable does not embed the generated notices')
     except (LegalError, OSError, ValueError, zlib.error, subprocess.CalledProcessError):
