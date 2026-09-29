@@ -98,7 +98,12 @@ impl Upload {
         let (transport, control) = if http.is_none() {
             (transport.clone(), transport)
         } else if transport.is_http3() {
-            let control = transport.isolated_connection().await?;
+            let mut stopped = cancel.clone();
+            let control = tokio::select! {
+                biased;
+                _ = stopped.wait_for(|cancelled| *cancelled) => return Err("upload cancelled before startup".into()),
+                control = transport.isolated_connection() => control?,
+            };
             (transport, control)
         } else {
             (Arc::new(transport.for_upload_lanes()), transport)
@@ -1031,6 +1036,37 @@ mod tests {
         server.abort();
         let snapshot = checkpoint?;
         assert_eq!((snapshot.bytes, snapshot.nanos), (1, 1));
+        Ok(())
+    }
+
+    /// A stop ends an HTTP/3 upload's start at once, also while its control connection dials, so
+    /// the stopped stage closes within the controller's 5 s grace (controller.rs:19).
+    #[tokio::test]
+    async fn a_stop_ends_an_http3_start_while_its_control_connection_dials() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        let (endpoint, origin) = crate::fixtures::h3_endpoint()?;
+        // Only the lanes' connection completes its handshake; the control connection's never does.
+        let server = tokio::spawn(async move {
+            let _lanes = endpoint.accept().await.ok_or("closed")?.await?;
+            std::future::pending::<Result<(), Error>>().await
+        });
+        let transport = Transport::connect(crate::net::Http::new(true)?, &origin, Protocol::Http3).await?;
+        let (stop, cancel) = watch::channel(false);
+        let started = Instant::now();
+        let stop_soon = async {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            stop.send_replace(true);
+        };
+        let (start, _) = tokio::join!(
+            Upload::start(Arc::new(transport), 1, HTTP_LANES, Arc::default(), cancel),
+            stop_soon
+        );
+        server.abort();
+        assert!(
+            start.is_err() && started.elapsed() < Duration::from_secs(1),
+            "{:?}",
+            started.elapsed()
+        );
         Ok(())
     }
 
