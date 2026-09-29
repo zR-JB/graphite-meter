@@ -1,5 +1,6 @@
 use super::*;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use hyper::{body::Incoming, server::conn::http1, service::service_fn};
 use ring::{
     rand::SystemRandom,
     signature::{self, EcdsaKeyPair, KeyPair, RsaKeyPair},
@@ -115,18 +116,123 @@ fn at_hash(token: &str) -> String {
     URL_SAFE_NO_PAD.encode(&digest.as_ref()[..16])
 }
 
-struct ProviderDouble {
+/// A provider that answers as its twist says, and the client that signs in with it.
+struct Double {
     oidc: Oidc,
     issuer: String,
-    claims: Arc<Mutex<Claims>>,
-    nonces: Arc<Mutex<HashMap<String, String>>>,
-    twist: Arc<Mutex<Twist>>,
-    jwks_requests: Arc<AtomicUsize>,
-    stop: tokio::sync::oneshot::Sender<()>,
-    server: tokio::task::JoinHandle<()>,
+    algorithms: Vec<String>,
+    keys: Keys,
+    claims: Mutex<Claims>,
+    nonces: Mutex<HashMap<String, String>>,
+    twist: Mutex<Twist>,
+    jwks_requests: AtomicUsize,
+    server: Mutex<Option<(tokio::sync::oneshot::Sender<()>, tokio::task::JoinHandle<()>)>>,
 }
 
-async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> ProviderDouble {
+impl Double {
+    async fn answer(self: Arc<Self>, request: Request<Incoming>) -> http::Result<Response<String>> {
+        let (request, mut body) = request.into_parts();
+        let mut bytes = Vec::new();
+        while let Some(frame) = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
+            bytes.extend_from_slice(&frame.unwrap().into_data().unwrap());
+        }
+        let headers = &request.headers;
+        assert!(!headers.contains_key(header::PROXY_AUTHORIZATION));
+        let (claims, twist, issuer) = (*self.claims.lock().unwrap(), self.twist.lock().unwrap(), &self.issuer);
+        let with = |mut value: Value, twist: &Option<Value>| {
+            for (key, member) in twist.iter().filter_map(Value::as_object).flatten() {
+                value[key] = member.clone();
+            }
+            value
+        };
+        let (content_type, body) = match request.uri.path() {
+            "/.well-known/openid-configuration" if twist.unavailable => ("application/json", "{}".into()),
+            "/.well-known/openid-configuration" => {
+                let metadata = json!({"issuer": issuer, "authorization_endpoint": format!("{issuer}/authorize"),
+                    "token_endpoint": format!("{issuer}/token"), "userinfo_endpoint": format!("{issuer}/userinfo"),
+                    "jwks_uri": format!("{issuer}/jwks"), "response_types_supported": ["code"],
+                    "subject_types_supported": ["public"], "id_token_signing_alg_values_supported": self.algorithms,
+                    "authorization_response_iss_parameter_supported": true});
+                ("application/json", with(metadata, &twist.metadata).to_string())
+            }
+            "/jwks" => {
+                self.jwks_requests.fetch_add(1, Ordering::SeqCst);
+                ("application/json", self.keys.jwks(twist.rotated).to_string())
+            }
+            "/token" => {
+                let form: HashMap<_, _> = form_urlencoded::parse(&bytes).into_owned().collect();
+                assert_eq!(form["code"], "valid-code");
+                assert_eq!(form["redirect_uri"], "https://meter.example/auth/oidc/callback");
+                let challenge = ring::digest::digest(&ring::digest::SHA256, form["code_verifier"].as_bytes());
+                let nonce = self.nonces.lock().unwrap()[&URL_SAFE_NO_PAD.encode(challenge)].clone();
+                let basic = format!("Basic {}", STANDARD.encode("meter:s3cret~%2A"));
+                assert_eq!(headers[header::AUTHORIZATION], basic);
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                let nonce = if claims.wrong_nonce { "invalid" } else { &nonce };
+                let token_claims = json!({"iss": issuer, "aud": "meter", "sub": "operator", "iat": now,
+                    "exp": now + 300, "nonce": nonce, "at_hash": at_hash("access")});
+                let header = match (&twist.header, twist.rotated, twist.unknown_kid) {
+                    (Some(header), ..) => header.clone(),
+                    (_, _, true) => json!({"alg": "ES256", "kid": "gone"}),
+                    (_, true, _) => json!({"alg": "ES256", "kid": "rotated", "typ": "JWT"}),
+                    _ => json!({"alg": "RS256", "kid": "test-key"}),
+                };
+                let id_token = self.keys.sign(&header, &with(token_claims, &twist.claims));
+                let tokens = json!({"access_token": "access", "token_type": "Bearer", "id_token": id_token});
+                ("application/json", with(tokens, &twist.tokens).to_string())
+            }
+            "/userinfo" => {
+                assert_eq!(headers[header::AUTHORIZATION], "Bearer access");
+                let name = twist.name.as_deref().unwrap_or("Example Operator");
+                let groups = [if claims.denied_group { "outsiders" } else { "operators" }];
+                let subject = if claims.wrong_subject { "other" } else { "operator" };
+                let info = json!({"sub": subject, "name": name, "groups": groups});
+                let info = with(with(info, &twist.userinfo), &twist.signed_userinfo);
+                let header = json!({"alg": "RS256", "kid": "test-key"});
+                match twist.signed_userinfo {
+                    Some(_) => ("application/jwt", self.keys.sign(&header, &info)),
+                    None => ("application/json", info.to_string()),
+                }
+            }
+            path => panic!("unexpected provider endpoint {path}"),
+        };
+        Response::builder()
+            .header(header::CONTENT_TYPE, content_type)
+            .body(body)
+    }
+    async fn login(&self, claims: Claims) -> Result<Identity, Reason> {
+        let tx = self.begin(claims).await?;
+        self.oidc.complete(&tx, "valid-code").await
+    }
+    async fn begin(&self, claims: Claims) -> Result<Transaction, Reason> {
+        self.oidc.retry_discovery().await;
+        let started = self
+            .oidc
+            .start("192.0.2.1".parse().unwrap(), "challenge".into(), None)
+            .await
+            .unwrap();
+        let fields = tests::query_fields(&started.url);
+        self.nonces
+            .lock()
+            .unwrap()
+            .insert(fields["code_challenge"].clone(), fields["nonce"].clone());
+        *self.claims.lock().unwrap() = claims;
+        let tx = self
+            .oidc
+            .take(&fields["state"], &started.browser, Some(&self.issuer))
+            .map_err(|(reason, _)| reason)?;
+        assert_eq!(tx.challenge, "challenge");
+        Ok(tx)
+    }
+    /// Stops the server, failing the test where the double's own checks failed.
+    async fn stop(&self) {
+        let (stop, server) = self.server.lock().unwrap().take().unwrap();
+        stop.send(()).unwrap();
+        server.await.unwrap();
+    }
+}
+
+async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Arc<Double> {
     let (certificate, key) = test_identity::generate_identity(host).unwrap();
     let certificates = CertificateDer::pem_slice_iter(certificate.as_bytes())
         .collect::<Result<Vec<_>, _>>()
@@ -154,9 +260,7 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Provi
     )
     .unwrap();
     let mut roots = rustls::RootCertStore::empty();
-    for cert in certificates {
-        roots.add(cert).unwrap();
-    }
+    roots.add_parsable_certificates(certificates);
     let client_tls = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
         .with_safe_default_protocol_versions()
         .unwrap()
@@ -166,164 +270,39 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Provi
         tls: TlsConnector::from(Arc::new(client_tls)),
         proxy,
     };
-    let claims = Arc::new(Mutex::new(Claims::default()));
-    let twist = Arc::new(Mutex::new(Twist::default()));
-    let nonces = Arc::new(Mutex::new(HashMap::<String, String>::new()));
-    let jwks_requests = Arc::new(AtomicUsize::new(0));
+    let double = Arc::new(Double {
+        oidc,
+        issuer,
+        algorithms: algorithms.iter().map(|alg| (*alg).to_owned()).collect(),
+        keys: Keys::new(),
+        claims: Mutex::default(),
+        nonces: Mutex::default(),
+        twist: Mutex::default(),
+        jwks_requests: AtomicUsize::new(0),
+        server: Mutex::default(),
+    });
     let (stop, mut stopped) = tokio::sync::oneshot::channel();
-    let (server_claims, server_twist, server_jwks, server_issuer, server_nonces) = (
-        claims.clone(),
-        twist.clone(),
-        jwks_requests.clone(),
-        issuer.clone(),
-        nonces.clone(),
-    );
-    let algorithms: Vec<String> = algorithms.iter().map(|alg| (*alg).to_owned()).collect();
+    let (acceptor, answering) = (TlsAcceptor::from(Arc::new(tls)), double.clone());
     let server = tokio::spawn(async move {
-        let acceptor = TlsAcceptor::from(Arc::new(tls));
-        let keys = Arc::new(Keys::new());
         let mut connections = JoinSet::new();
         loop {
             let socket = tokio::select! {
                 _ = &mut stopped => break,
                 accepted = listener.accept() => accepted.unwrap().0,
-                Some(result) = connections.join_next(), if !connections.is_empty() => { result.unwrap(); continue; },
             };
-            let (acceptor, claims, twist, jwks, issuer, keys, algorithms, nonces) = (
-                acceptor.clone(),
-                server_claims.clone(),
-                server_twist.clone(),
-                server_jwks.clone(),
-                server_issuer.clone(),
-                keys.clone(),
-                algorithms.clone(),
-                server_nonces.clone(),
-            );
+            let (acceptor, double) = (acceptor.clone(), answering.clone());
             connections.spawn(async move {
-                let mut socket = acceptor.accept(socket).await.unwrap();
-                let mut raw = Vec::new();
-                let header_end = loop {
-                    let mut buffer = [0; 2048];
-                    let read = socket.read(&mut buffer).await.unwrap();
-                    assert!(read > 0);
-                    raw.extend_from_slice(&buffer[..read]);
-                    if let Some(end) = raw.windows(4).position(|bytes| bytes == b"\r\n\r\n") { break end + 4; }
-                    assert!(raw.len() <= 16384);
-                };
-                let headers = String::from_utf8(raw[..header_end].to_vec()).unwrap();
-                assert!(!headers.to_ascii_lowercase().contains("proxy-authorization:"));
-                let length = headers.lines().find_map(|line| line.to_ascii_lowercase().strip_prefix("content-length: ").map(|length| length.parse::<usize>().unwrap())).unwrap_or(0);
-                assert!(length <= 4096);
-                while raw.len() < header_end + length {
-                    let mut buffer = [0; 2048];
-                    let read = socket.read(&mut buffer).await.unwrap();
-                    assert!(read > 0);
-                    raw.extend_from_slice(&buffer[..read]);
-                }
-                let path = headers.split_whitespace().nth(1).unwrap();
-                let (content_type, body) = {
-                    let claims = *claims.lock().unwrap();
-                    let twist = twist.lock().unwrap();
-                    match path {
-                        "/.well-known/openid-configuration" if twist.unavailable => ("application/json", "{}".into()),
-                        "/.well-known/openid-configuration" => {
-                            let mut metadata = json!({"issuer": issuer, "authorization_endpoint": format!("{issuer}/authorize"), "token_endpoint": format!("{issuer}/token"), "userinfo_endpoint": format!("{issuer}/userinfo"), "jwks_uri": format!("{issuer}/jwks"), "response_types_supported": ["code"], "subject_types_supported": ["public"], "id_token_signing_alg_values_supported": algorithms, "authorization_response_iss_parameter_supported": true});
-                            for (key, value) in twist.metadata.as_ref().and_then(Value::as_object).into_iter().flatten() {
-                                metadata[key] = value.clone();
-                            }
-                            ("application/json", metadata.to_string())
-                        }
-                        "/jwks" => {
-                            jwks.fetch_add(1, Ordering::SeqCst);
-                            ("application/json", keys.jwks(twist.rotated).to_string())
-                        }
-                        "/token" => {
-                            let form: HashMap<_, _> = form_urlencoded::parse(&raw[header_end..]).into_owned().collect();
-                            assert_eq!(form["code"], "valid-code");
-                            assert_eq!(form["redirect_uri"], "https://meter.example/auth/oidc/callback");
-                            let challenge = URL_SAFE_NO_PAD.encode(ring::digest::digest(&ring::digest::SHA256, form["code_verifier"].as_bytes()));
-                            let nonce = nonces.lock().unwrap().get(&challenge).cloned().expect("PKCE verifier matches a started transaction");
-                            assert!(headers.contains(&format!("authorization: Basic {}\r\n", STANDARD.encode("meter:s3cret~%2A"))), "{headers}");
-                            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-                            let mut token_claims = json!({"iss": issuer, "aud": "meter", "sub": "operator", "iat": now, "exp": now + 300, "nonce": if claims.wrong_nonce { "invalid" } else { nonce.as_str() }, "at_hash": at_hash("access")});
-                            for (key, value) in twist.claims.as_ref().and_then(Value::as_object).into_iter().flatten() {
-                                token_claims[key] = value.clone();
-                            }
-                            let header = twist.header.clone().unwrap_or_else(|| match (twist.rotated, twist.unknown_kid) {
-                                (_, true) => json!({"alg": "ES256", "kid": "gone"}),
-                                (true, _) => json!({"alg": "ES256", "kid": "rotated", "typ": "JWT"}),
-                                _ => json!({"alg": "RS256", "kid": "test-key"}),
-                            });
-                            let mut tokens = json!({"access_token": "access", "token_type": "Bearer", "id_token": keys.sign(&header, &token_claims)});
-                            for (key, value) in twist.tokens.as_ref().and_then(Value::as_object).into_iter().flatten() {
-                                tokens[key] = value.clone();
-                            }
-                            ("application/json", tokens.to_string())
-                        }
-                        "/userinfo" => {
-                            assert!(headers.contains("authorization: Bearer access\r\n"), "{headers}");
-                            let mut info = json!({"sub": if claims.wrong_subject { "other" } else { "operator" }, "name": twist.name.as_deref().unwrap_or("Example Operator"), "groups": if claims.denied_group { vec!["outsiders"] } else { vec!["operators"] }});
-                            for (key, value) in twist.userinfo.iter().chain(&twist.signed_userinfo).filter_map(Value::as_object).flatten() {
-                                info[key] = value.clone();
-                            }
-                            match twist.signed_userinfo {
-                                Some(_) => ("application/jwt", keys.sign(&json!({"alg": "RS256", "kid": "test-key"}), &info)),
-                                None => ("application/json", info.to_string()),
-                            }
-                        }
-                        _ => panic!("unexpected provider endpoint {path}"),
-                    }
-                };
-                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await.unwrap();
-                socket.write_all(body.as_bytes()).await.unwrap();
-                socket.shutdown().await.unwrap();
+                let socket = TokioIo::new(acceptor.accept(socket).await.unwrap());
+                let service = service_fn(move |request| double.clone().answer(request));
+                http1::Builder::new().serve_connection(socket, service).await.unwrap();
             });
         }
         while let Some(result) = connections.join_next().await {
             result.unwrap();
         }
     });
-    ProviderDouble {
-        oidc,
-        issuer,
-        claims,
-        nonces,
-        twist,
-        jwks_requests,
-        stop,
-        server,
-    }
-}
-
-impl ProviderDouble {
-    async fn login(&self, claims: Claims) -> Result<Identity, Reason> {
-        let tx = self.begin(claims).await?;
-        self.oidc.complete(&tx, "valid-code").await
-    }
-    async fn begin(&self, claims: Claims) -> Result<Transaction, Reason> {
-        self.oidc.retry_discovery().await;
-        let started = self
-            .oidc
-            .start("192.0.2.1".parse().unwrap(), "challenge".into(), None)
-            .await
-            .unwrap();
-        let fields = tests::query_fields(&started.url);
-        self.nonces
-            .lock()
-            .unwrap()
-            .insert(fields["code_challenge"].clone(), fields["nonce"].clone());
-        *self.claims.lock().unwrap() = claims;
-        let tx = self
-            .oidc
-            .take(&fields["state"], &started.browser, Some(&self.issuer))
-            .map_err(|(reason, _)| reason)?;
-        assert_eq!(tx.challenge, "challenge");
-        Ok(tx)
-    }
-    async fn stop(self) {
-        self.stop.send(()).unwrap();
-        self.server.await.unwrap();
-    }
+    *double.server.lock().unwrap() = Some((stop, server));
+    double
 }
 
 #[tokio::test]
