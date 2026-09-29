@@ -19,7 +19,7 @@
   import TopbarMore from "./TopbarMore.svelte";
   import { statusLabel, THEME } from "../presentation/vocabulary";
   import { handoff } from "../presentation/motion.svelte";
-  import { tooltip } from "../actions/tooltip";
+  import { keyHint as tipKey, tooltip } from "../actions/tooltip";
   import { canFocus, activeModal } from "../actions/focus";
   import { MediaQuery } from "svelte/reactivity";
   import {
@@ -204,7 +204,7 @@
 
   const THEME_CYCLE = ["light", "dark", "auto"] as const;
   // Tips name a key only while the page shortcuts act on it.
-  const keyHint = (key: string) => (store.keyShortcuts ? ` (${key})` : "");
+  const keyHint = (key: string) => tipKey(key, store.keyShortcuts);
 
   function toggleTheme() {
     const next =
@@ -805,6 +805,7 @@
     transition:
       --dock-left var(--dur-sheet) var(--ease-out),
       --dock-right var(--dur-sheet) var(--ease-out);
+    timeline-scope: --column;
   }
   /* Each stage's light is its own layer, so a stage change cross-fades on the compositor. */
   .amb {
@@ -839,7 +840,19 @@
     align-items: center;
     gap: var(--space-2);
     padding-inline: var(--space-4) var(--space-2);
+    border-bottom: var(--hairline) solid transparent;
     container: topbar / inline-size;
+  }
+  /* The measurement column scrolls under the bar, so its rule comes in as content passes beneath, as a sheet's head's does. */
+  @supports (animation-timeline: scroll()) {
+    .measurement-stage {
+      scroll-timeline: --column block;
+    }
+    .topbar {
+      animation: sheet-rule linear both;
+      animation-timeline: --column;
+      animation-range: 0 var(--space-3);
+    }
   }
   .topbar > :global(*) {
     flex-shrink: 0;
@@ -1017,7 +1030,11 @@
       padding: 0;
     }
     .connectivity {
-      width: 24px;
+      width: var(--hit);
+    }
+    /* The menu ends on the page's 16 px gutter, as its trigger's icon does. */
+    .topbar-more :global(.more-menu) {
+      margin-inline-end: calc((var(--hit) - var(--icon)) / 2);
     }
     .connectivity :global(.spark) {
       display: none;

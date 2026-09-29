@@ -115,10 +115,10 @@ test("a stage tip names its result, or why it is locked or skipped", () => {
       value: "940 Mbit/s",
       ...overrides,
     });
-  expect(tip({ locked: true })).toBe("Complete · 940 Mbit/s");
+  expect(tip({ locked: true })).toBe("Complete\n940 Mbit/s");
   expect(
     tip({ state: "partial", reason: "Partial", failure: "connection-lost" }),
-  ).toBe("Partial · 940 Mbit/s · Connection lost");
+  ).toBe("Partial\n940 Mbit/s\nConnection lost");
   expect(
     tip({ state: "active", locked: true, reason: "Running", value: null }),
   ).toBe("Locked while it runs");

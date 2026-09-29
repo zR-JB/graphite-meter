@@ -655,6 +655,7 @@
   .settings {
     display: grid;
     gap: var(--space-5);
+    container: settings / inline-size;
   }
   .group-head > .aside {
     color: var(--text-soft);
@@ -669,6 +670,7 @@
   }
   .presets button {
     flex: 1 1 0;
+    min-width: max-content;
   }
   .kv > .presets + .strip-row {
     border-top: 0;
@@ -730,6 +732,16 @@
   }
   .units > span {
     margin-inline-end: auto;
+  }
+  /* A narrow sheet stacks every stepper row and the units row alike, so no row wraps where its neighbour does not. */
+  @container settings (max-width: 320px) {
+    .stage-row:has(:global(.stepper)) {
+      flex-flow: column nowrap;
+      align-items: flex-start;
+    }
+    .units > span {
+      flex-basis: 100%;
+    }
   }
   .kv select {
     width: auto;

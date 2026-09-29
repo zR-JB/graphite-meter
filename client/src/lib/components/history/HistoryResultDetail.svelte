@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from "../Icon.svelte";
   import { httpProtocolLabel } from "../../runner/paths";
-  import { term, tipGroup, tooltip } from "../../actions/tooltip";
+  import { keyHint, term, tipGroup, tooltip } from "../../actions/tooltip";
   import {
     fmtBytes,
     fmtDuration,
@@ -269,7 +269,7 @@
         class="btn btn-icon btn-quiet close-detail"
         type="button"
         aria-label="Close result"
-        {@attach tooltip(() => "Close (Esc)")}
+        {@attach tooltip(() => `Close${keyHint("Esc")}`)}
         onclick={onClose}
       >
         <Icon name="close" />
@@ -479,7 +479,12 @@
       display: none;
     }
   }
+  /* A phone keeps the result's reading height: the head scrolls away under History's own. */
   @container detail (max-width: 560px) {
+    .detail-head {
+      position: static;
+      animation: none;
+    }
     .title,
     .head-facts {
       order: 3;

@@ -67,8 +67,10 @@
 <div
   class="float phase-toast"
   class:visible={visible || stalled}
+  class:stall={stalled}
   data-tone={shown.tone}
   aria-hidden="true"
+  style:--linger="{LINGER_MS}ms"
 >
   <span class="notice-icon"><Icon name="info" /></span>
   <span class="kicker">{shown.kicker}</span>
@@ -128,6 +130,16 @@
       inset-inline: var(--space-4);
       min-width: 0;
       max-width: none;
+    }
+    /* A phone keeps the running card in view: a stall shows for its reading time, then the status bar holds it. */
+    .phase-toast.stall {
+      animation: linger var(--dur-slide) var(--ease-out) var(--linger) forwards;
+    }
+  }
+  @keyframes linger {
+    to {
+      opacity: 0;
+      translate: 0 4px;
     }
   }
 </style>

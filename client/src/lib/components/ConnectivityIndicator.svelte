@@ -74,9 +74,11 @@
     gap: var(--space-2);
     padding: 0 6px;
   }
-  /* A finger gets a full-height target for the facts. */
+  /* A finger gets a full hit target for the facts. */
   @media (pointer: coarse) {
     .pulse {
+      justify-content: center;
+      min-width: var(--hit);
       min-height: var(--hit);
     }
   }
