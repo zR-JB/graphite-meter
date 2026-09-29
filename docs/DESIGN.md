@@ -185,10 +185,12 @@ hue, never by a boxed icon.
 - **Latency card** (`LatencyProfileView`): as tall as its content and centred beside the dial, lit like a stage card
   (`.stage-area`). The idle median as the headline; under it the idle replies over the stage, drawn like a stage
   graph's latency track (one dot per reply bucket over the dashed median), growing through the stage and kept as the
-  record (History has no series); then Jitter, Range, Stability and Timeouts. Then a table, one 40 px row per
-  population: name, median, jitter, timeouts (the share of resolved probes that got no reply, which is not packet
-  loss), box plot (P10–P90 box, min–max whisker, median tick, latest reply as a dot while live) and the added latency
-  in its hue, from the medians until the run saves it, "—" without evidence. The rows share one ms axis on the
+  record (History has no series); then Jitter, Range, Stability and Timeouts, each held from Start. A failed stage
+  names its reason under the headline. Then a table, one 40 px row per population: name, median, jitter, timeouts
+  (the share of resolved probes that got no reply, which is not packet loss), box plot (P10–P90 box over its min–max
+  whisker, median tick, latest reply as a dot while live) and the added latency in its hue, from the medians until the
+  run saves it, "—" without evidence. Figures are as wide as their longest value from Start, and a row whose probes
+  timed out or were lost shows a note in its dot's place, so no column moves mid-run. The rows share one ms axis on the
   gauge's ladder over their P90s, so the boxes fill it; a whisker past it runs on to the edge, ends in an arrowhead
   and names its value. The axis sits under the last row and its ticks run up through the rows as gridlines behind the
   plots; the idle median is one line from its tick through the loaded rows, and each loaded row's added-latency span
