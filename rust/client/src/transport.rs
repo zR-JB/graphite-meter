@@ -303,7 +303,7 @@ impl Transport {
                     .header(http::header::CONTENT_TYPE, "application/octet-stream")
                     .header(http::header::CONTENT_LENGTH, length)
                     .body(crate::net::streaming(body))?;
-                let response = self.http.send(request, self.protocol).await?;
+                let response = self.http.send(request, self.protocol, None).await?;
                 crate::net::bounded_body(response).await?;
                 return Ok(());
             };

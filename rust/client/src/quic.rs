@@ -26,16 +26,6 @@ pub struct RequestLimits {
     pub max_receive_bytes: u64,
 }
 
-impl Default for RequestLimits {
-    fn default() -> Self {
-        Self {
-            timeout: Duration::from_secs(10),
-            max_send_bytes: 1024 * 1024,
-            max_receive_bytes: 1024 * 1024,
-        }
-    }
-}
-
 /// Close even when cancellation occurs before QUIC or HTTP/3 setup finishes.
 struct Endpoint(quinn::Endpoint);
 impl Drop for Endpoint {
@@ -78,14 +68,11 @@ impl Connection {
                 quinn::default_runtime().ok_or("no async runtime for QUIC")?,
             )?);
             let connecting = endpoint.0.connect_with(config.clone(), address, &origin.host)?;
-            let quic = match timeout(Duration::from_secs(3), connecting).await {
-                Ok(Ok(quic)) => quic,
-                Ok(Err(error)) => {
-                    last_error = Some(error.into());
-                    continue;
-                }
+            let connected = timeout(Duration::from_secs(3), connecting).await.map_err(Error::from);
+            let quic = match connected.and_then(|quic| Ok(quic?)) {
+                Ok(quic) => quic,
                 Err(error) => {
-                    last_error = Some(error.into());
+                    last_error = Some(error);
                     continue;
                 }
             };
@@ -368,8 +355,9 @@ mod tests {
                 .open(
                     request,
                     RequestLimits {
+                        timeout: Duration::from_secs(10),
+                        max_send_bytes: 1024 * 1024,
                         max_receive_bytes,
-                        ..RequestLimits::default()
                     },
                 )
                 .await?;

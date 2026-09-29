@@ -218,17 +218,6 @@ impl Connections {
         }
     }
 
-    /// The same proxy and TLS settings with no connections yet.
-    fn renewed(&self) -> Self {
-        Self {
-            proxy: self.proxy.clone(),
-            insecure: self.insecure,
-            pools: Mutex::new(HashMap::new()),
-            maintenance: OnceLock::new(),
-            ids: AtomicU64::new(0),
-        }
-    }
-
     /// A pooled connection, or a new one dialled outside the pool's lock, so no request waits
     /// behind another's dial unless that dial may bring the HTTP/2 connection it would share.
     /// The flag is true when the connection is not this request's own new dial.
@@ -436,12 +425,9 @@ pub struct Http {
     lanes: Lanes,
     /// Skip TLS verification: every connection this client makes, and no grant is sent over one.
     pub(crate) insecure: bool,
-    grants: Arc<Mutex<HashMap<String, Grant>>>,
+    /// Each issuer's grant, as its Authorization header.
+    grants: Arc<Mutex<HashMap<String, HeaderValue>>>,
     scope: Option<Arc<GrantScope>>,
-}
-#[derive(Clone)]
-struct Grant {
-    header: HeaderValue,
 }
 struct GrantScope {
     issuer: String,
@@ -542,7 +528,7 @@ impl Http {
     /// a sleep or a network change may have killed since.
     pub fn fresh(&self) -> Self {
         Self {
-            connections: Arc::new(self.connections.renewed()),
+            connections: Arc::new(Connections::new(self.insecure, self.connections.proxy.clone())),
             ..self.clone()
         }
     }
@@ -554,18 +540,21 @@ impl Http {
     pub(crate) fn set_proxy(&mut self, proxy: Proxy) {
         Arc::get_mut(&mut self.connections).unwrap().proxy = proxy;
     }
+    /// The issuer whose grant `origin` takes: a client bound to a server sends its grant to the
+    /// server's enrolled targets alone, and an unbound client each origin's own.
+    fn issuer(&self, origin: String) -> Option<String> {
+        match &self.scope {
+            Some(scope) => scope.targets.contains(&origin).then(|| scope.issuer.clone()),
+            None => Some(origin),
+        }
+    }
     pub fn authorization(&self, target: &str) -> Option<HeaderValue> {
-        let origin = destination_origin(target).ok()?;
-        let issuer = match &self.scope {
-            Some(scope) if scope.targets.contains(&origin) => &scope.issuer,
-            Some(_) => return None,
-            None => &origin,
-        };
+        let issuer = self.issuer(destination_origin(target).ok()?)?;
         self.grants
             .lock()
             .expect("client grants poisoned")
-            .get(issuer)
-            .map(|grant| grant.header.clone())
+            .get(&issuer)
+            .cloned()
     }
     /// Adds `target`'s grant to `headers`; an authenticated operation refuses TLS it does not verify.
     pub(crate) fn authorize(&self, target: &str, headers: &mut http::HeaderMap) -> Result<()> {
@@ -588,11 +577,9 @@ impl Http {
         }
         Ok(request)
     }
-    /// A streamed request, whose headers may wait on its body: the caller bounds it.
-    pub async fn send(&self, request: Request<Body>, protocol: Protocol) -> Result<Response> {
-        self.send_by(request, protocol, None).await
-    }
-    async fn send_by(
+    /// The response headers by `deadline`; without one, as for a streamed request whose headers
+    /// may wait on its body, the caller bounds it.
+    pub async fn send(
         &self,
         request: Request<Body>,
         protocol: Protocol,
@@ -610,7 +597,7 @@ impl Http {
     pub async fn request(&self, method: Method, target: &str, protocol: Protocol) -> Result<Response> {
         let request = self.builder(method, target)?.body(empty())?;
         let deadline = tokio::time::Instant::now() + CONTROL_TIMEOUT;
-        self.send_by(request, protocol, Some(deadline)).await
+        self.send(request, protocol, Some(deadline)).await
     }
     pub fn check_status(&self, target: &str, status: http::StatusCode, headers: &http::HeaderMap) -> Result<()> {
         if status == StatusCode::FORBIDDEN
@@ -618,24 +605,18 @@ impl Http {
                 .get("graphite-meter-auth")
                 .is_some_and(|value| value == "required")
         {
-            let origin = destination_origin(target)?;
-            let issuer = match &self.scope {
-                Some(scope) if scope.targets.contains(&origin) => &scope.issuer,
-                Some(_) => {
-                    return Err("authentication refusal came from an unapproved target".into());
-                }
-                None => &origin,
-            };
+            let issuer = self
+                .issuer(destination_origin(target)?)
+                .ok_or("authentication refusal came from an unapproved target")?;
             // Both servers name no login page when they end a revoked lane (go/internal/endpoint/
             // upload.go:65-66); Go's client asks for sign-in all the same (auth.go:32-40).
             let login_url = match headers.get("graphite-meter-auth-url") {
-                Some(raw) => validated_login(issuer, raw.to_str()?)?,
+                Some(raw) => validated_login(&issuer, raw.to_str()?)?,
                 None => String::new(),
             };
-            let mut grants = self.grants.lock().expect("client grants poisoned");
-            grants.remove(issuer);
+            self.grants.lock().expect("client grants poisoned").remove(&issuer);
             return Err(Box::new(AuthRequired {
-                origin: issuer.clone(),
+                origin: issuer,
                 login_url,
             }));
         }
@@ -817,15 +798,12 @@ impl Http {
         let mut header = HeaderValue::from_str(&format!("Bearer {}", token.as_str()))?;
         header.set_sensitive(true);
         let mut grants = self.grants.lock().expect("client grants poisoned");
-        grants.insert(pending.source.clone(), Grant { header });
+        grants.insert(pending.source.clone(), header);
         Ok(Approval::Granted)
     }
 }
 
 pub async fn bounded_body(response: Response) -> Result<Vec<u8>> {
-    tokio::time::timeout(CONTROL_TIMEOUT, read_bounded_body(response)).await?
-}
-async fn read_bounded_body(response: Response) -> Result<Vec<u8>> {
     let mut body = response.into_body();
     if hyper::body::Body::size_hint(&body)
         .exact()
@@ -833,16 +811,19 @@ async fn read_bounded_body(response: Response) -> Result<Vec<u8>> {
     {
         return Err("control response exceeds 64 KiB".into());
     }
-    let mut bytes = Vec::new();
-    while let Some(frame) = body.frame().await {
-        if let Ok(chunk) = frame?.into_data() {
-            if chunk.len() > CONTROL_LIMIT - bytes.len() {
-                return Err("control response exceeds 64 KiB".into());
+    tokio::time::timeout(CONTROL_TIMEOUT, async {
+        let mut bytes = Vec::new();
+        while let Some(frame) = body.frame().await {
+            if let Ok(chunk) = frame?.into_data() {
+                if chunk.len() > CONTROL_LIMIT - bytes.len() {
+                    return Err("control response exceeds 64 KiB".into());
+                }
+                bytes.extend_from_slice(&chunk);
             }
-            bytes.extend_from_slice(&chunk);
         }
-    }
-    Ok(bytes)
+        Ok::<_, Error>(bytes)
+    })
+    .await?
 }
 /// `route` at `origin`, with `query` form-encoded.
 pub(crate) fn url(origin: &str, route: Route, query: &[(&str, &str)]) -> String {
@@ -1268,12 +1249,11 @@ mod tests {
     #[test]
     fn grants_require_explicit_validated_target_enrollment() {
         let http = http(false);
-        http.grants.lock().unwrap().insert(
-            "https://meter.example".into(),
-            Grant {
-                header: HeaderValue::from_static("Bearer fixture"),
-            },
-        );
+        let fixture = HeaderValue::from_static("Bearer fixture");
+        http.grants
+            .lock()
+            .unwrap()
+            .insert("https://meter.example".into(), fixture);
         assert!(http.authorization("https://meter.example/download").is_some());
         for target in [
             "https://meter.example:8443/download",
@@ -1308,12 +1288,8 @@ mod tests {
         let first = "https://meter.example:7247";
         let second = "https://meter.example:7248";
         for (issuer, token) in [(first, "Bearer first"), (second, "Bearer second")] {
-            http.grants.lock().unwrap().insert(
-                issuer.into(),
-                Grant {
-                    header: HeaderValue::from_str(token).unwrap(),
-                },
-            );
+            let grant = HeaderValue::from_str(token).unwrap();
+            http.grants.lock().unwrap().insert(issuer.into(), grant);
         }
         let entry = |id: &str, url: &str| ServerEntry {
             id: id.into(),
