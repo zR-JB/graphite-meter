@@ -56,7 +56,14 @@ const hash = query.get("hash");
 const options = hash ? { serverCertificateHashes: [{ algorithm: "sha-256", value: Uint8Array.from(hash.split(","), Number) }] } : {};
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const within = (promise, ms) => Promise.race([promise, sleep(ms).then(() => { throw new Error(`timeout ${ms} ms`); })]);
-const protocol = (url) => performance.getEntriesByName(url).at(-1)?.nextHopProtocol;
+// A fetch's timing entry can land after its body has been read.
+async function protocol(url) {
+  for (let waited = 0; waited < 2000; waited += 20) {
+    const entry = performance.getEntriesByName(url).at(-1);
+    if (entry) return entry.nextHopProtocol;
+    await sleep(20);
+  }
+}
 async function drain(readable) {
   const reader = readable.getReader();
   for (let bytes = 0; ; ) {
@@ -91,12 +98,12 @@ async function* records(readable) {
 const transport = {
   async download() {
     const url = base + "/download?bytes=1048576";
-    return { bytes: await drain((await fetched(url)).body), protocol: protocol(url) };
+    return { bytes: await drain((await fetched(url)).body), protocol: await protocol(url) };
   },
   async upload() {
     const url = base + "/upload?id=" + await uploadId();
     const response = await fetched(url, { method: "POST", body: new Uint8Array(1048576) });
-    return { bytes: (await response.json()).bytes, protocol: protocol(url) };
+    return { bytes: (await response.json()).bytes, protocol: await protocol(url) };
   },
   wt_ping: () => session("/wt/ping", async (wt) => {
     await wt.datagrams.writable.getWriter().write(new TextEncoder().encode("PING,7"));
@@ -136,7 +143,7 @@ const negative = {
   webtransport: async () => typeof WebTransport,
   async download() {
     const url = base + "/download?bytes=65536";
-    return { bytes: await drain((await fetched(url)).body), protocol: protocol(url) };
+    return { bytes: await drain((await fetched(url)).body), protocol: await protocol(url) };
   },
 };
 (async () => {
