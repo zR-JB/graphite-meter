@@ -72,6 +72,15 @@ def write_build(dist: Path, package: str, platform: str) -> None:
     write_source(dist / source, inventory(package, target))
 
 
+def write_darwin(dist: Path) -> None:
+    """Write the macOS TUIs as a release request's macOS job packages them."""
+    dist.mkdir()
+    for platform in RUST_TARGETS:
+        if platform.startswith("darwin/"):
+            write_build(dist, "graphite-meter-client", platform)
+    write_checksums(dist)
+
+
 def write_exports(root: Path, server: list[str], tui: list[str], revision: str = COMMIT) -> None:
     """Write BuildKit's local exports of a request, each platform's statement beside the files it attests.
 
@@ -227,40 +236,39 @@ class RustStagingTests(unittest.TestCase):
     DOCKER = [platform for platform in TUI if not platform.startswith("darwin/")]
 
     def test_a_staged_request_passes_the_release_verification(self) -> None:
-        # A release request exports every server platform; CI exports only the first.
-        for server, macos in ((self.SERVER, True), (self.SERVER[:1], False)):
-            with self.subTest(server=server), tempfile.TemporaryDirectory() as temporary:
+        for macos in (True, False):
+            with self.subTest(macos=macos), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
-                write_exports(root / "export", server, self.DOCKER)
-                stage_rust(root / "export", root / "staged", "1.2.3", server, self.TUI)
+                write_exports(root / "export", self.SERVER, self.DOCKER)
+                stage_rust(root / "export", root / "staged", "1.2.3", self.SERVER, self.TUI)
                 self.assertEqual({path.name for path in (root / "staged").iterdir()},
-                                 expected_rust_artifacts("1.2.3", server, self.DOCKER) | {"checksums.txt"})
+                                 expected_rust_artifacts("1.2.3", self.SERVER, self.DOCKER) | {"checksums.txt"})
                 parts, tui = [root / "staged"], self.DOCKER
                 if macos:
-                    (root / "darwin").mkdir()
-                    for platform in set(self.TUI) - set(self.DOCKER):
-                        write_build(root / "darwin", "graphite-meter-client", platform)
-                    write_checksums(root / "darwin")
+                    write_darwin(root / "darwin")
                     parts, tui = parts + [root / "darwin"], self.TUI
-                verify_rust(parts, root / "assets", "1.2.3", server, tui, COMMIT, REPOSITORY)
+                verify_rust(parts, root / "assets", "1.2.3", self.SERVER, tui, COMMIT, REPOSITORY)
 
-    def test_ci_stages_and_checks_its_exports_with_the_release_commands(self) -> None:
-        from .release import command_check_rust, command_stage_rust
+    def test_ci_checks_its_exports_and_macos_tuis_with_the_release_commands(self) -> None:
+        from .release import COMMANDS
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
-            write_exports(root / "export", self.SERVER[:1], self.DOCKER)
+            write_exports(root / "export", self.SERVER, self.DOCKER)
+            write_darwin(root / "darwin")
             environment = {
-                "RUNNER_TEMP": str(root), "RUST": "both", "RUST_SERVER": self.SERVER[0], "VERSION": "1.2.3",
+                "RUNNER_TEMP": str(root), "RUST": "both", "VERSION": "1.2.3",
                 "RUST_EXPORT": str(root / "export"), "RUST_ASSETS": str(root / "staged"),
                 "GITHUB_SHA": COMMIT, "GITHUB_REPOSITORY": REPOSITORY,
             }
             with patch.dict(os.environ, environment), contextlib.redirect_stdout(io.StringIO()):
-                command_stage_rust()
-                command_check_rust()
-                with patch.dict(os.environ, {"RUST_SERVER": "linux/s390x"}), \
-                        self.assertRaisesRegex(VerificationError, "RUST_SERVER"):
-                    command_stage_rust()
+                COMMANDS["stage-rust"]()
+                COMMANDS["check-rust"]()
+                with patch.dict(os.environ, {"RUST_ASSETS": str(root / "darwin")}):
+                    COMMANDS["check-darwin"]()
+                    # Each check takes exactly its part.
+                    with self.assertRaisesRegex(VerificationError, "missing="):
+                        COMMANDS["check-rust"]()
 
     def test_staging_refuses_an_export_it_cannot_account_for(self) -> None:
         arm64 = Path("server") / self.SERVER[1].replace("/", "_")

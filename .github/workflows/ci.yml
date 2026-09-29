@@ -335,20 +335,19 @@ jobs:
           driver-opts: image=docker.io/moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
           cache-binary: 'false'
           buildkitd-flags: --log-level=info
-      # A release request's exports with its provenance; only the arm64 server is left out.
+      # A release request's exports with their provenance; the arm64 server is cross-compiled.
       - name: Export the Linux and Windows TUIs as a release request does
         run: >-
           docker buildx build --platform linux/amd64 --file container/Dockerfile.rust --target tui-artifacts
           --build-arg VERSION=0.0.0-ci --provenance mode=max --output "type=local,dest=$RUNNER_TEMP/rust-export/tui" .
-      - name: Export the amd64 server source as a release request does
+      - name: Export the amd64 and arm64 server sources as a release request does
         run: >-
-          docker buildx build --platform linux/amd64 --file container/Dockerfile.rust --target server-artifacts
-          --build-arg VERSION=0.0.0-ci --build-arg GM_CLIENT_VALIDATE=0 --provenance mode=max
+          docker buildx build --platform linux/amd64,linux/arm64 --file container/Dockerfile.rust
+          --target server-artifacts --build-arg VERSION=0.0.0-ci --build-arg GM_CLIENT_VALIDATE=0 --provenance mode=max
           --output "type=local,dest=$RUNNER_TEMP/rust-export/server" .
       - name: Stage them as a release request does and verify them as the release does
         env:
           RUST: both
-          RUST_SERVER: linux/amd64
           VERSION: 0.0.0-ci
           RUST_EXPORT: ${{ runner.temp }}/rust-export
           RUST_ASSETS: ${{ runner.temp }}/rust-assets
@@ -379,6 +378,11 @@ jobs:
         env:
           RELEASE_DIST: ${{ runner.temp }}/rust-darwin
         run: mise run rust-darwin-package 0.0.0-dev
+      - name: Verify them as the release does
+        env:
+          VERSION: 0.0.0-dev
+          RUST_ASSETS: ${{ runner.temp }}/rust-darwin
+        run: python3 -m scripts.ci.release check-darwin
       - name: Test the TUI's crates on macOS
         working-directory: rust
         env:

@@ -484,30 +484,20 @@ def command_publish() -> None:
     print(f"::notice::published {tag} with verified SHA-256 assets and source notice")
 
 
-def rust_request_builds() -> tuple[list[str], list[str]]:
-    """The builds of the RUST selection; CI narrows its server platforms with RUST_SERVER."""
-    server, tui = verify_release_assets.rust_builds(env("RUST"))
-    if narrowed := os.environ.get("RUST_SERVER", "").split():
-        if not set(narrowed) <= set(server):
-            gh.fail(f"RUST_SERVER must name server platforms that {env('RUST')} builds")
-        server = narrowed
-    return server, tui
-
-
 def command_stage_rust() -> None:
     """Stage a request's Docker-built Rust artifacts for upload; the macOS job stages its own."""
     verify_release_assets.stage_rust(gh.runner_path("RUST_EXPORT"), gh.runner_path("RUST_ASSETS"), env("VERSION"),
-                                     *rust_request_builds())
+                                     *verify_release_assets.rust_builds(env("RUST")))
 
 
-def command_check_rust() -> None:
-    """Verify staged Rust artifacts of this CI checkout as the release verifies a request's (no macOS part)."""
-    server, tui = rust_request_builds()
+def command_check_rust(darwin: bool = False) -> None:
+    """Verify CI's staged Docker exports, or its macOS TUIs, as the release verifies a request's."""
+    server, tui = verify_release_assets.rust_builds("tui" if darwin else env("RUST"))
     staged = gh.runner_path("RUST_ASSETS")
     with tempfile.TemporaryDirectory(dir=staged.parent) as merged:
         verify_release_assets.verify_rust(
             [staged], Path(merged) / "assets", env("VERSION"), server,
-            [platform for platform in tui if not platform.startswith("darwin/")], env_sha("GITHUB_SHA"),
+            [platform for platform in tui if platform.startswith("darwin/") == darwin], env_sha("GITHUB_SHA"),
             env("GITHUB_REPOSITORY"))
     print(f"Rust release artifacts verified: {sorted(path.name for path in staged.iterdir())}")
 
@@ -515,6 +505,7 @@ def command_check_rust() -> None:
 COMMANDS = {
     "prepare": command_prepare, "verify": command_verify, "recheck": command_recheck,
     "publish": command_publish, "stage-rust": command_stage_rust, "check-rust": command_check_rust,
+    "check-darwin": lambda: command_check_rust(darwin=True),
 }
 
 

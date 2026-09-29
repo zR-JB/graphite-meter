@@ -53,13 +53,13 @@ ORDERED = {
         "run: python3 -m scripts.ci.release stage-rust\n", 'run: mise run rust-darwin-package "$VERSION"\n',
     ),
     # CI builds, stages and verifies the Rust exports as a release request and the release do, and
-    # packages the macOS TUIs with the release request's task.
+    # packages the macOS TUIs with the release request's task and verifies them as the release does.
     "workflows/ci.yml": (
         "run: mise run rust-check\n", "run: python3 -m scripts.legal.check_git_sources --verify\n",
         "run: mise run rust-check-targets\n", "run: mise run rust-delayed-downloads\n",
         "--target tui-artifacts", "--target server-artifacts",
         "python3 -m scripts.ci.release stage-rust\n", "python3 -m scripts.ci.release check-rust\n",
-        "run: mise run rust-darwin-package 0.0.0-dev\n",
+        "run: mise run rust-darwin-package 0.0.0-dev\n", "run: python3 -m scripts.ci.release check-darwin\n",
         "cargo test --locked --no-fail-fast -p graphite-meter-client -p graphite-meter-core -p graphite-meter-net \\\n"
         "            -p graphite-meter-http3\n",
     ),

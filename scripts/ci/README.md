@@ -25,9 +25,10 @@ its steps has no CI job. The Rust jobs are not part of it: they run `rust-check`
 `Gate` is the only required status and needs every job. Path filters (`.github/ci-paths.yml`)
 narrow PR runs only; every push to main runs every job. `advisories.yml`
 rechecks Rust dependencies against the live RustSec database daily. The Rust
-release job exports what a release request's Docker builds export, except the
-arm64 server, then stages and verifies it with `release.py stage-rust` and
-`check-rust`, the code a release request and the release run.
+release job exports what a release request's Docker builds export, then stages
+and verifies it with `release.py stage-rust` and `check-rust`, the code a
+release request and the release run; the macOS job verifies its TUIs with
+`check-darwin`.
 
 ## Releases
 
