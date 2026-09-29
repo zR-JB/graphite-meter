@@ -179,6 +179,9 @@ export const JARGON = {
   noData:
     "No data\nTime in the result's window when no bytes arrived\n" +
     "It counts in the average: a stall is part of the link",
+  noReplies:
+    "No replies\nProbes sent in this time got no reply before the deadline\n" +
+    "Each counts as a timeout, not as packet loss",
   latencyStability: "Stability\n100% minus jitter as a share of the median",
   addedLatency:
     "Added latency\nLoaded median minus idle median, same server\nNegative: faster under load",

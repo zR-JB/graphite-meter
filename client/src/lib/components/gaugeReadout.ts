@@ -21,6 +21,8 @@ export interface GaugeReadoutInput {
   latencyMs: number;
   /** How long no data has arrived while the run stalls; null otherwise. */
   quietMs: number | null;
+  /** How long latency probes have gone unanswered; null otherwise. */
+  unansweredMs: number | null;
   hasLatencyResult: boolean;
   unusable: boolean;
   headline: ResultGaugeArc | null;
@@ -37,10 +39,7 @@ function displayed(input: GaugeReadoutInput) {
   const { phase, headline } = input;
   const latency = { value: fmtMs(input.latencyMs), unit: "ms" };
   if (input.unusable) return EMPTY;
-  if (phase === "latency")
-    return input.latencyTimeout
-      ? { value: MISSING, unit: "probe timeout" }
-      : latency;
+  if (phase === "latency") return input.latencyTimeout ? EMPTY : latency;
   if (phase === "complete") {
     if (headline)
       return {
@@ -101,6 +100,10 @@ export function gaugeReadout(input: GaugeReadoutInput) {
       input.quietMs == null
         ? ""
         : `No data for ${fmtDuration(input.quietMs, 0)}`,
+    noReplies:
+      input.unansweredMs == null
+        ? ""
+        : `No replies for ${fmtDuration(input.unansweredMs, 0)}`,
     announcement: statusText || (quiet ? "" : phaseLabel(phase)),
   };
 }
