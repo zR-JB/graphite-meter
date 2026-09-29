@@ -3,7 +3,7 @@
 use super::{
     FRESHNESS, Popup, Prepare, Ui,
     keys::PAGE,
-    setup::{GROUPS, Setting},
+    setup::{ROWS, Setting},
 };
 use crate::{
     model::ServerSummary,
@@ -396,24 +396,17 @@ impl Ui {
         let rows = self.rows();
         let widest = rows.iter().map(|row| Line::from(self.row(*row).label).width()).max();
         let label_width = widest.unwrap_or(0).min((width / 2).max(12));
-        let (mut lines, mut selected, mut index) = (Vec::new(), 0, 0);
-        for (group, (heading, settings)) in GROUPS.iter().enumerate() {
-            if group > 0 {
-                lines.push(Line::default());
+        let (mut lines, mut selected) = (Vec::new(), 0);
+        // The rows are ROWS in order, each group after a blank line and its heading.
+        for (index, setting) in rows.into_iter().enumerate() {
+            if let Some(heading) = ROWS[index].0 {
+                lines.extend((index > 0).then(Line::default));
+                lines.extend((!heading.is_empty()).then(|| line(heading, self.theme.heading)));
             }
-            if !heading.is_empty() {
-                lines.push(line(*heading, self.theme.heading));
+            if index == self.row {
+                selected = lines.len();
             }
-            for setting in *settings {
-                if rows.get(index) != Some(setting) {
-                    break;
-                }
-                if index == self.row {
-                    selected = lines.len();
-                }
-                lines.push(self.setting_line(*setting, index == self.row, label_width, width));
-                index += 1;
-            }
+            lines.push(self.setting_line(setting, index == self.row, label_width, width));
         }
         (lines, selected)
     }

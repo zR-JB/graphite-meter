@@ -39,15 +39,37 @@ pub(super) enum Setting {
     Reset,
 }
 
-/// Go's setupGroups: a heading and its rows; Advanced hides the rows after it.
+/// Go's setupGroups in order: the heading of the group a row starts, the row, its label, which its
+/// notices repeat, and its help; a path's help goes on to its choices. Advanced hides the rows after it.
 #[rustfmt::skip]
-pub(super) const GROUPS: [(&str, &[Setting]); 4] = [
-    ("", &[Setting::Start]),
-    ("Connection", &[Setting::Catalogue, Setting::Servers, Setting::Path(false), Setting::Protocol, Setting::Path(true)]),
-    ("Stages", &[Setting::Stage(Stage::Latency), Setting::Stage(Stage::Download), Setting::Stage(Stage::Upload),
-        Setting::Stage(Stage::Bidirectional), Setting::LoadedLatency]),
-    ("", &[Setting::Advanced, Setting::Warmup, Setting::Cadence(false), Setting::Cadence(true), Setting::ForceStreams,
-        Setting::Streams, Setting::Insecure, Setting::Reset]),
+pub(super) const ROWS: [(Option<&str>, Setting, &str, &str); 19] = [
+    (Some(""), Setting::Start, "Start test", "Runs the checked stages in order. r starts from any row."),
+    (Some("Connection"), Setting::Catalogue, "Catalogue URL", "Origin that lists the test servers. enter types one."),
+    (None, Setting::Servers, "Test servers", "Measured at once; their speeds add up. enter picks up to 4."),
+    (None, Setting::Path(false), "Throughput path", "How transfers reach the server"),
+    (None, Setting::Protocol, "HTTP version", "Where the path negotiates. ←/→ Automatic, HTTP/1.1, HTTP/2, HTTP/3."),
+    (None, Setting::Path(true), "Latency path", "How probes travel"),
+    (Some("Stages"), Setting::Stage(Stage::Latency), "Latency",
+        "Idle round trips. ←/→ ±1 s (1 s–300 s), space on/off."),
+    (None, Setting::Stage(Stage::Download), "Download", "Server to client. ←/→ ±1 s (1 s–300 s), space on/off."),
+    (None, Setting::Stage(Stage::Upload), "Upload",
+        "Client to server, receiver-timed. ←/→ ±1 s (1 s–300 s), space on/off."),
+    (None, Setting::Stage(Stage::Bidirectional), "Bidirectional",
+        "Download and upload at once. ←/→ ±1 s (1 s–300 s), space on/off."),
+    (None, Setting::LoadedLatency, "Loaded latency",
+        "Round trips during transfers: the latency load adds. space on/off."),
+    (Some(""), Setting::Advanced, "Advanced", "Warmup, probe cadence, streams and TLS. ←/→ shows or hides."),
+    (None, Setting::Warmup, "Warmup",
+        "Ramp-up before each window, at least ten round trips. ←/→ ±100 ms (0 ms–4 s)."),
+    (None, Setting::Cadence(false), "Idle latency cadence",
+        "Probe spacing when idle. ←/→ reply-driven, 80, 250, 600 ms."),
+    (None, Setting::Cadence(true), "Loaded latency cadence",
+        "Probe spacing during transfers. ←/→ reply-driven, 80, 250, 600 ms."),
+    (None, Setting::ForceStreams, "Force exact stream count",
+        "Off: each path picks its count. On: the count below everywhere."),
+    (None, Setting::Streams, "Maximum H1 streams per direction", "Upper bound on HTTP/1.1 paths. ←/→ ±1 (1–14)."),
+    (None, Setting::Insecure, "Skip TLS verify", "Accepts any certificate. Unsafe; sign-in is refused. space on/off."),
+    (None, Setting::Reset, "Reset settings", "Restores defaults; keeps the catalogue and servers."),
 ];
 
 /// Go's setupRow: what a row shows and explains; an inert value is muted.
@@ -59,51 +81,14 @@ pub(super) struct Row {
 }
 
 impl Setting {
-    /// Go's label: the row's name, which its notices repeat.
-    fn label(self) -> &'static str {
-        match self {
-            Self::Start => "Start test",
-            Self::Catalogue => "Catalogue URL",
-            Self::Servers => "Test servers",
-            Self::Path(false) => "Throughput path",
-            Self::Protocol => "HTTP version",
-            Self::Path(true) => "Latency path",
-            Self::Stage(stage) => stage.name(),
-            Self::LoadedLatency => "Loaded latency",
-            Self::Advanced => "Advanced",
-            Self::Warmup => "Warmup",
-            Self::Cadence(false) => "Idle latency cadence",
-            Self::Cadence(true) => "Loaded latency cadence",
-            Self::ForceStreams => "Force exact stream count",
-            Self::Streams => "Maximum H1 streams per direction",
-            Self::Insecure => "Skip TLS verify",
-            Self::Reset => "Reset settings",
-        }
+    /// The row's label and help in `ROWS`.
+    fn text(self) -> (&'static str, &'static str) {
+        let row = ROWS.iter().find(|row| row.1 == self).expect("every setting is a row");
+        (row.2, row.3)
     }
 
-    /// Go's help: what the row does and how its keys change it. A path's goes on to its choices.
-    fn help(self) -> &'static str {
-        match self {
-            Self::Start => "Runs the checked stages in order. r starts from any row.",
-            Self::Catalogue => "Origin that lists the test servers. enter types one.",
-            Self::Servers => "Measured at once; their speeds add up. enter picks up to 4.",
-            Self::Path(false) => "How transfers reach the server",
-            Self::Protocol => "Where the path negotiates. ←/→ Automatic, HTTP/1.1, HTTP/2, HTTP/3.",
-            Self::Path(true) => "How probes travel",
-            Self::Stage(Stage::Latency) => "Idle round trips. ←/→ ±1 s (1 s–300 s), space on/off.",
-            Self::Stage(Stage::Download) => "Server to client. ←/→ ±1 s (1 s–300 s), space on/off.",
-            Self::Stage(Stage::Upload) => "Client to server, receiver-timed. ←/→ ±1 s (1 s–300 s), space on/off.",
-            Self::Stage(Stage::Bidirectional) => "Download and upload at once. ←/→ ±1 s (1 s–300 s), space on/off.",
-            Self::LoadedLatency => "Round trips during transfers: the latency load adds. space on/off.",
-            Self::Advanced => "Warmup, probe cadence, streams and TLS. ←/→ shows or hides.",
-            Self::Warmup => "Ramp-up before each window, at least ten round trips. ←/→ ±100 ms (0 ms–4 s).",
-            Self::Cadence(false) => "Probe spacing when idle. ←/→ reply-driven, 80, 250, 600 ms.",
-            Self::Cadence(true) => "Probe spacing during transfers. ←/→ reply-driven, 80, 250, 600 ms.",
-            Self::ForceStreams => "Off: each path picks its count. On: the count below everywhere.",
-            Self::Streams => "Upper bound on HTTP/1.1 paths. ←/→ ±1 (1–14).",
-            Self::Insecure => "Accepts any certificate. Unsafe; sign-in is refused. space on/off.",
-            Self::Reset => "Restores defaults; keeps the catalogue and servers.",
-        }
+    fn label(self) -> &'static str {
+        self.text().0
     }
 
     /// Go's span bound: a duration row's range and step.
@@ -233,16 +218,13 @@ fn discovered(offered: &Capabilities, latency: bool) -> Vec<PathChoice> {
 }
 
 impl Ui {
-    /// Go's rows: every group's rows, up to Advanced while it is hidden.
+    /// Go's rows: every row, up to Advanced while it is hidden.
     pub(super) fn rows(&self) -> Vec<Setting> {
-        let mut rows = Vec::new();
-        for setting in GROUPS.iter().flat_map(|(_, group)| group.iter()) {
-            rows.push(*setting);
-            if *setting == Setting::Advanced && !self.advanced {
-                break;
-            }
-        }
-        rows
+        let hidden = ROWS.iter().position(|row| row.1 == Setting::Advanced && !self.advanced);
+        ROWS[..hidden.map_or(ROWS.len(), |advanced| advanced + 1)]
+            .iter()
+            .map(|row| row.1)
+            .collect()
     }
 
     pub(super) fn current(&self) -> Setting {
@@ -261,8 +243,8 @@ impl Ui {
     /// Go's setting.row: the row's label, value, help and whether its value is inert.
     pub(super) fn row(&self, setting: Setting) -> Row {
         let config = &self.config;
-        let (mut label, mut help) = (setting.label(), setting.help().to_owned());
-        let checkbox = |on| Line::from(self.checkbox(on));
+        let (mut label, help) = setting.text();
+        let (mut help, checkbox) = (help.to_owned(), |on| Line::from(self.checkbox(on)));
         let (value, inert) = match setting {
             Setting::Start | Setting::Reset => (Line::default(), false),
             Setting::Advanced => (Line::from(if self.advanced { "▾ shown" } else { "▸ hidden" }), false),
