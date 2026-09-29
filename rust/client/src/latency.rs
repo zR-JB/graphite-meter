@@ -210,6 +210,13 @@ impl Writer {
             let _ = tokio::time::timeout(Duration::from_millis(250), socket.close(None)).await;
         }
     }
+    /// The lane ending the server closed a WebTransport session with, once it has.
+    fn ending(&self) -> Option<LaneEnding> {
+        match self {
+            Self::WebTransport(session) => session.ending(),
+            Self::WebSocket(_) => None,
+        }
+    }
 }
 impl Reader {
     async fn next(&mut self) -> Option<Result<Message, Error>> {
@@ -430,7 +437,11 @@ async fn measure(
                 if !matches!(tokio::time::timeout(Duration::from_secs(1), writer.send(wire::encode_ping(id))).await, Ok(Ok(()))) {
                     pending.remove(&id);
                     if let Err(error) = emit(observations, Observation::Lost { sent, outcome: ProbeOutcome::SendFailure }) { break Err(error); }
-                    break Err(Failure::Disconnected("latency channel send failed").into());
+                    // Only the session's first probe ends it (latency.go:218-220), with the ending the server closed
+                    // it with, if any; a later one's failure is counted and the reader decides (latency.go:265-268).
+                    if id == 0 && !ledger.answered {
+                        break Err(writer.ending().map_or_else(|| Failure::Disconnected("latency channel send failed").into(), |ending| Failure::Lane(ending).into()));
+                    }
                 }
             }
             message = reader.next() => {
@@ -763,35 +774,51 @@ mod tests {
 
     /// A WebTransport session the server closes as revoked reads as that lane ending, as a
     /// WebSocket's close frame does, so it asks for sign-in and is not dialled again
-    /// (latency.go:33-47, failure.go:83-95).
+    /// (latency.go:33-47, failure.go:83-95). Here the close arrives before a due probe, whose failed
+    /// send once decided the outcome: the session's first probe reports the session's ending, and
+    /// a later one's failure is counted while the reader decides, as Go's (latency.go:218-220, 265-268).
     #[tokio::test]
     async fn a_webtransport_session_closed_as_revoked_is_not_dialled_again() -> Result<(), Error> {
         use graphite_meter_http3::{server::Connection, webtransport::Session};
         let _ = crate::crypto::provider().install_default();
-        let (endpoint, origin) = crate::fixtures::h3_endpoint()?;
-        let server = tokio::spawn(async move {
-            let mut connection = Connection::new(endpoint.accept().await.ok_or("closed")?.await?, None);
-            let (_, stream) = connection.next().await?.ok_or("no CONNECT")?.resolve().await?;
-            let revoke = async {
-                let session = Session::accept(stream, http::HeaderMap::new()).await?;
-                session.read_datagram().await;
-                let revoked = LaneEnding::Revoked;
-                session.close(revoked.webtransport_code(), revoked.reason()).await;
-                std::future::pending::<Result<(), Error>>().await
+        let mut seen = Vec::new();
+        for answered in [false, true] {
+            let (endpoint, origin) = crate::fixtures::h3_endpoint()?;
+            let server = tokio::spawn(async move {
+                let mut connection = Connection::new(endpoint.accept().await.ok_or("closed")?.await?, None);
+                let (_, stream) = connection.next().await?.ok_or("no CONNECT")?.resolve().await?;
+                let revoke = async {
+                    let session = Session::accept(stream, http::HeaderMap::new()).await?;
+                    let revoked = LaneEnding::Revoked;
+                    session.close(revoked.webtransport_code(), revoked.reason()).await;
+                    std::future::pending::<Result<(), Error>>().await
+                };
+                let (revoked, ()) = tokio::join!(revoke, async { while let Ok(Some(_)) = connection.next().await {} });
+                revoked
+            });
+            let bus = connect(&Http::new(true)?, &origin, LatencyTransport::WebTransport).await?;
+            let Bus::WebTransport(session) = &bus else {
+                unreachable!()
             };
-            let (revoked, ()) = tokio::join!(revoke, async { while let Ok(Some(_)) = connection.next().await {} });
-            revoked
-        });
-        let target = LatencyTarget {
-            base_url: origin,
-            transport: LatencyTransport::WebTransport,
-        };
-        let (observations, _observed) = mpsc::channel(64);
-        let (_stop, cancel) = watch::channel(Stop::Running);
-        let timing = (Duration::from_millis(20), Duration::from_secs(1), 16);
-        let result = run(&Http::new(true)?, &target, timing, observations, cancel).await;
-        server.abort();
-        assert_eq!(format!("{result:?}"), "Err(Lane(Revoked))");
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while !session.is_closed() {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await?;
+            let mut ledger = Ledger::default();
+            if answered {
+                ledger.observe(Duration::from_millis(1));
+            }
+            let (observations, _observed) = mpsc::channel(64);
+            let (_stop, mut cancel) = watch::channel(Stop::Running);
+            let end = Instant::now() + Duration::from_secs(5);
+            let interval = Duration::from_millis(20);
+            let result = measure(bus, interval, 16, end, &mut ledger, &observations, &mut cancel).await;
+            server.abort();
+            seen.push((format!("{result:?}"), result.as_ref().err().is_some_and(lost)));
+        }
+        assert_eq!(seen, vec![(String::from("Err(Lane(Revoked))"), false); 2]);
         Ok(())
     }
 
