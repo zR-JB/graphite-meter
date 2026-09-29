@@ -120,9 +120,10 @@ impl RecvHalf {
         poll_fn(|cx| self.poll_data(cx)).await
     }
 
-    /// Reads a response head, skipping interim responses.
+    /// Reads a response head, skipping up to five interim responses; a sixth ends the request with
+    /// H3_EXCESSIVE_LOAD, as quic-go's max1xxResponses does.
     pub async fn response(&mut self) -> Result<http::Response<()>, Error> {
-        loop {
+        for _ in 0..=5 {
             let section = poll_fn(|cx| self.poll_head(cx)).await?;
             match self.message.response(&section, &self.method) {
                 Ok(Some(response)) => return Ok(response),
@@ -130,6 +131,7 @@ impl RecvHalf {
                 Err(code) => return Err(self.abort(code)),
             }
         }
+        Err(self.abort(Code::H3_EXCESSIVE_LOAD))
     }
 
     pub fn stop(&mut self, code: Code) {

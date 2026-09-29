@@ -481,22 +481,39 @@ async fn a_stopped_control_stream_closes_the_connection() -> Result<(), TestErro
     Ok(())
 }
 
+/// A push the client never allowed closes the connection; five interim heads pass, as quic-go lets
+/// them, and a sixth ends the request, as does 101, which HTTP/3 does not have (RFC 9114 §4.5).
 #[tokio::test]
-async fn a_push_promise_names_a_push_the_client_never_allowed() -> Result<(), TestError> {
-    let peers = peers(usize::MAX).await?;
-    let (driver, requests) = client(&peers);
-    let (_send, mut recv) = requests.send_request(get("/")).await?.split();
-    // Push ID 0 and an empty field section; our client sends no MAX_PUSH_ID.
-    let (mut response, _request) = peers.server.accept_bi().await?;
-    response.write_all(&frame(0x05, &[0x00, 0x00, 0x00])).await?;
-    let id_error = Error::Connection {
+async fn responses_the_client_refuses() -> Result<(), TestError> {
+    let head = |status: &str| frame(0x01, &section(&[(":status", status)]));
+    let closed = |code| Error::Connection {
         local: true,
-        code: Code::H3_ID_ERROR,
+        code,
         reason: Bytes::new(),
     };
-    assert_eq!(recv.response().await.err(), Some(id_error.clone()));
-    assert_eq!(closed_with(&peers.server).await, Code::H3_ID_ERROR);
-    assert_eq!(driver.await?, Err(id_error));
+    for (bytes, expected) in [
+        // Push ID 0 and an empty field section; our client sends no MAX_PUSH_ID.
+        (frame(0x05, &[0x00, 0x00, 0x00]), Err(closed(Code::H3_ID_ERROR))),
+        ([head("103").repeat(5), head("200")].concat(), Ok(http::StatusCode::OK)),
+        (head("100").repeat(6), Err(Error::Protocol(Code::H3_EXCESSIVE_LOAD))),
+        (head("101"), Err(Error::Protocol(Code::H3_MESSAGE_ERROR))),
+    ] {
+        let peers = peers(usize::MAX).await?;
+        let (driver, requests) = client(&peers);
+        let (_send, mut recv) = requests.send_request(get("/")).await?.split();
+        let (mut response, _request) = peers.server.accept_bi().await?;
+        response.write_all(&bytes).await?;
+        let received = tokio::time::timeout(Duration::from_secs(5), recv.response()).await?;
+        assert_eq!(received.map(|response| response.status()), expected);
+        match expected {
+            Err(Error::Protocol(code)) => assert_eq!(stopped(&response).await, Some(code)),
+            Err(error @ Error::Connection { code, .. }) => {
+                assert_eq!(closed_with(&peers.server).await, code);
+                assert_eq!(driver.await?, Err(error));
+            }
+            _ => {}
+        }
+    }
     Ok(())
 }
 

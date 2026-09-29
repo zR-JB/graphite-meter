@@ -151,7 +151,8 @@ pub(crate) fn decode_response(section: &[u8], limit: u64) -> Result<Head<http::R
     qpack::decode(section, |name, value| {
         fields.count(name, value, limit)?;
         match name {
-            b":status" => set(&mut status, StatusCode::from_bytes(value))?,
+            // HTTP/3 has no 101 (RFC 9114 §4.5), so a head that claims it is malformed.
+            b":status" if value != b"101" => set(&mut status, StatusCode::from_bytes(value))?,
             _ if name.starts_with(b":") => return Err(Invalid::Malformed),
             _ => return fields.regular(name, value),
         }
