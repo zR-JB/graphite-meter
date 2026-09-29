@@ -71,6 +71,7 @@ HTTP/3/WebTransport listeners share authentication and measurement state.
 Password, OIDC, and hybrid authentication are implemented. OIDC has been checked
 against a local signed-token provider and a temporary HTTPS Keycloak realm,
 including allowed and denied group membership. Other deployments remain untested.
+Log lines carry UTC timestamps, where Go's use the host's time zone.
 
 The server shares one buffer budget across QUIC and HTTP/2 listeners,
 configured by `GM_MAX_BUFFER_BYTES` or `--max-buffer-bytes` (default 8 GiB).
@@ -114,6 +115,9 @@ Once a quarter of either connection capacity or the budget is used, unvalidated
 QUIC handshakes require Retry; as in Go, so does one from a source whose IPv4
 address or IPv6 /64, /56 or /48 already holds a QUIC connection. A connection
 whose floor does not fit is refused while established connections continue.
+A QUIC handshake has 10 seconds in all, as in quic-go, which also ends one after
+5 seconds without a packet; Noq cannot tell that, so a silent client holds its
+handshake for the full 10 seconds.
 
 Noq's floor holds the state of every stream the peer may open, 64 KiB for local
 streams and 64 KiB for each of its five buffer pools. Beyond it, Noq charges its
