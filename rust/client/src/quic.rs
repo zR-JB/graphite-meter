@@ -55,7 +55,7 @@ impl Connection {
         transport.max_idle_timeout(Some(Duration::from_secs(60).try_into()?));
         config.transport_config(Arc::new(transport));
         let mut last_error: Option<Error> = None;
-        for address in graphite_meter_net::resolve(&origin.host, origin.port).await? {
+        for address in ipv4_first(graphite_meter_net::resolve(&origin.host, origin.port).await?) {
             let bind: SocketAddr = if address.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" }.parse()?;
             let (socket, warning) = graphite_meter_core::socket::udp_socket(bind)?;
             if let Some(warning) = warning {
@@ -103,6 +103,13 @@ impl Connection {
         self.driver.shutdown().await;
         let _ = timeout(Duration::from_secs(1), self.endpoint.0.wait_idle()).await;
     }
+}
+
+/// quic-go dials the first IPv4 address, or the first address when none is, as an IPv6 literal
+/// resolves to itself alone (quic-go http3/ip_addr.go:23-48, client.go:42-50); the rest follow.
+fn ipv4_first(mut addresses: Vec<SocketAddr>) -> Vec<SocketAddr> {
+    addresses.sort_by_key(|address| !address.ip().to_canonical().is_ipv4());
+    addresses
 }
 
 /// HTTP/3 or QUIC that this side found the peer breaking, which no retry mends. A stream or
@@ -268,6 +275,14 @@ mod tests {
         ] {
             assert!(Origin::from_uri(&uri.parse().unwrap()).is_err());
         }
+    }
+
+    #[test]
+    fn quic_dials_ipv4_first_as_quic_go() {
+        let [v6, v4, other]: [SocketAddr; 3] =
+            ["[2001:db8::1]:443", "192.0.2.1:443", "[2001:db8::2]:443"].map(|address| address.parse().unwrap());
+        assert_eq!(ipv4_first(vec![v6, v4, other]), [v4, v6, other]);
+        assert_eq!(ipv4_first(vec![other, v6]), [other, v6]);
     }
 
     #[test]
