@@ -384,7 +384,12 @@ jobs:
           CARGO_INCREMENTAL: '0'
           CARGO_PROFILE_DEV_DEBUG: line-tables-only
           CARGO_PROFILE_TEST_DEBUG: line-tables-only
-        run: cargo test --locked -p graphite-meter-client -p graphite-meter-core -p graphite-meter-net
+        # The tests' disposable identities come from the openssl CLI; macOS ships LibreSSL, whose certificates
+        # rustls rejects, so the runner's Homebrew OpenSSL makes them as on Linux.
+        run: |
+          PATH="$(brew --prefix openssl@3)/bin:$PATH"
+          openssl version | grep '^OpenSSL 3'
+          cargo test --locked -p graphite-meter-client -p graphite-meter-core -p graphite-meter-net
 
   gate:
     name: Gate
