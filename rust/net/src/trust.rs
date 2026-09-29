@@ -6,7 +6,7 @@ use rustls::{
         danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
         verify_server_name,
     },
-    crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature},
+    crypto::{CryptoProvider, WebPkiSupportedAlgorithms, verify_tls12_signature, verify_tls13_signature},
     pki_types::{CertificateDer, ServerName, UnixTime, pem::PemObject},
     server::ParsedCertificate,
 };
@@ -14,7 +14,7 @@ use std::{
     ffi::{OsStr, OsString},
     fs, io,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 
 /// Go's Linux roots: the first of these files that reads, and every file in these directories.
@@ -33,6 +33,9 @@ const CERT_DIRECTORIES: &[&str] = &["/etc/ssl/certs", "/etc/pki/tls/certs"];
 fn provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
+
+/// The signature algorithms webpki's verifier checks handshakes with.
+static ALGORITHMS: LazyLock<WebPkiSupportedAlgorithms> = LazyLock::new(|| provider().signature_verification_algorithms);
 
 /// The verifier every verified connection shares. The first caller loads the trust store on a
 /// blocking thread and later callers wait for it. A store that cannot be loaded does not stop
@@ -98,20 +101,24 @@ pub(crate) fn verifying(roots: Vec<CertificateDer<'static>>, error: Option<io::E
         return untrusted(error.map(|error| Arc::new(RootsUnavailable(error)) as _));
     }
     match WebPkiServerVerifier::builder_with_provider(Arc::new(store), provider()).build() {
-        Ok(inner) => Arc::new(RootLeaves { inner, roots }),
+        Ok(webpki) => Arc::new(Verifier {
+            webpki: Ok(webpki),
+            roots,
+        }),
         Err(error) => untrusted(Some(Arc::new(error))),
     }
 }
 
-/// Go's x509 takes a leaf that is itself a trusted root as a chain of its own, as `openssl req -x509` makes one,
-/// where webpki refuses every CA as a leaf. A self-issued CA it does not trust reads as Go reads it: signed by an
-/// unknown authority.
+/// webpki's verifier over the roots, where Go's x509 agrees. Go takes a leaf that is itself a trusted root as a
+/// chain of its own, as `openssl req -x509` makes one, where webpki refuses every CA as a leaf, and a self-issued
+/// CA it does not trust reads as Go reads it: signed by an unknown authority. Without roots every certificate is
+/// refused, as Go refuses one signed by an unknown authority, or with the reason the store could not be read.
 #[derive(Debug)]
-struct RootLeaves {
-    inner: Arc<WebPkiServerVerifier>,
+struct Verifier {
+    webpki: Result<Arc<WebPkiServerVerifier>, Option<Arc<dyn std::error::Error + Send + Sync>>>,
     roots: Vec<CertificateDer<'static>>,
 }
-impl ServerCertVerifier for RootLeaves {
+impl ServerCertVerifier for Verifier {
     fn verify_server_cert(
         &self,
         end_entity: &CertificateDer<'_>,
@@ -120,9 +127,12 @@ impl ServerCertVerifier for RootLeaves {
         ocsp: &[u8],
         now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
-        let result = self
-            .inner
-            .verify_server_cert(end_entity, intermediates, server_name, ocsp, now);
+        let webpki = match &self.webpki {
+            Ok(webpki) => webpki,
+            Err(Some(reason)) => return Err(CertificateError::Other(OtherError(reason.clone())).into()),
+            Err(None) => return Err(CertificateError::UnknownIssuer.into()),
+        };
+        let result = webpki.verify_server_cert(end_entity, intermediates, server_name, ocsp, now);
         let Err(rustls::Error::InvalidCertificate(CertificateError::Other(OtherError(error)))) = &result else {
             return result;
         };
@@ -135,9 +145,7 @@ impl ServerCertVerifier for RootLeaves {
             return Ok(ServerCertVerified::assertion());
         }
         match webpki::EndEntityCert::try_from(end_entity) {
-            Ok(cert) if cert.subject() == cert.issuer() => {
-                Err(rustls::Error::InvalidCertificate(CertificateError::UnknownIssuer))
-            }
+            Ok(cert) if cert.subject() == cert.issuer() => Err(CertificateError::UnknownIssuer.into()),
             _ => result,
         }
     }
@@ -147,7 +155,7 @@ impl ServerCertVerifier for RootLeaves {
         certificate: &CertificateDer<'_>,
         signature: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        self.inner.verify_tls12_signature(message, certificate, signature)
+        verify_tls12_signature(message, certificate, signature, &ALGORITHMS)
     }
     fn verify_tls13_signature(
         &self,
@@ -155,10 +163,10 @@ impl ServerCertVerifier for RootLeaves {
         certificate: &CertificateDer<'_>,
         signature: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        self.inner.verify_tls13_signature(message, certificate, signature)
+        verify_tls13_signature(message, certificate, signature, &ALGORITHMS)
     }
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        self.inner.supported_verify_schemes()
+        ALGORITHMS.supported_schemes()
     }
 }
 
@@ -254,60 +262,8 @@ impl std::error::Error for RootsUnavailable {
 }
 
 fn untrusted(reason: Option<Arc<dyn std::error::Error + Send + Sync>>) -> Arc<dyn ServerCertVerifier> {
-    Arc::new(Untrusted {
-        reason,
-        provider: provider(),
+    Arc::new(Verifier {
+        webpki: Err(reason),
+        roots: Vec::new(),
     })
-}
-
-/// No root loaded: every certificate is refused, as Go refuses one signed by an unknown authority,
-/// or with the reason the store could not be read.
-#[derive(Debug)]
-struct Untrusted {
-    reason: Option<Arc<dyn std::error::Error + Send + Sync>>,
-    provider: Arc<CryptoProvider>,
-}
-impl ServerCertVerifier for Untrusted {
-    fn verify_server_cert(
-        &self,
-        _: &CertificateDer<'_>,
-        _: &[CertificateDer<'_>],
-        _: &ServerName<'_>,
-        _: &[u8],
-        _: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        Err(rustls::Error::InvalidCertificate(match &self.reason {
-            Some(reason) => CertificateError::Other(OtherError(reason.clone())),
-            None => CertificateError::UnknownIssuer,
-        }))
-    }
-    fn verify_tls12_signature(
-        &self,
-        message: &[u8],
-        certificate: &CertificateDer<'_>,
-        signature: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        verify_tls12_signature(
-            message,
-            certificate,
-            signature,
-            &self.provider.signature_verification_algorithms,
-        )
-    }
-    fn verify_tls13_signature(
-        &self,
-        message: &[u8],
-        certificate: &CertificateDer<'_>,
-        signature: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        verify_tls13_signature(
-            message,
-            certificate,
-            signature,
-            &self.provider.signature_verification_algorithms,
-        )
-    }
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        self.provider.signature_verification_algorithms.supported_schemes()
-    }
 }
