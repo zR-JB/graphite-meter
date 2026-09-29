@@ -1109,15 +1109,47 @@ async fn data_after_the_peers_close_is_a_message_error() -> Result<(), TestError
     Ok(())
 }
 
+/// Once a session ended, it opens no stream and sends no datagram, and its streams refuse reads
+/// and writes and end with WT_SESSION_GONE, as the drafts require and webtransport-go does.
 #[tokio::test]
-async fn an_ended_session_opens_no_streams() -> Result<(), TestError> {
+async fn an_ended_session_ends_its_streams_and_datagrams() -> Result<(), TestError> {
     let peers = peers(usize::MAX).await?;
-    let (serving, _) = serve_sessions(&peers, |session| async move { session.close(2, "lifetime").await });
-    let (driver, requests) = client(&peers);
-    let (session, _) = Session::connect(&requests, connect_request()).await?.expect("accepted");
-    assert_eq!(session.closed().await?, (2, "lifetime".into()));
-    assert_eq!(session.open_uni().await.err(), Some(Error::Refused));
-    drop((session, driver, serving));
+    let (outcomes, mut outcome) = tokio::sync::mpsc::unbounded_channel();
+    let (serving, _) = serve_sessions(&peers, move |session| {
+        let outcomes = outcomes.clone();
+        async move {
+            let (mut lane, mut own) = (session.accept_uni().await.unwrap(), session.open_uni().await.unwrap());
+            let _ = session.closed().await;
+            let _ = outcomes.send(vec![
+                lane.read_chunk().await.err(),
+                own.write_all(b"late").await.err(),
+                session.send_datagram(b"late").err(),
+                session.open_uni().await.err(),
+            ]);
+        }
+    });
+    let _control = uni(&peers.client, &settings(&DRAFT02), false).await?;
+    let (mut connect, _response) = raw_connect(&peers.client, "/wt").await?;
+    // A stream of session 0 (0x54, 0) with data that an ended session no longer reads.
+    let lane = uni(&peers.client, b"\x40\x54\x00data", false).await?;
+    let (_server_control, mut own) = (peers.client.accept_uni().await?, peers.client.accept_uni().await?);
+    connect.write_all(&close_capsule(2, "lifetime")).await?;
+    assert_eq!(outcome.recv().await, Some(vec![Some(Error::Refused); 4]));
+    assert_eq!(stopped(&lane).await, Some(Code::WT_SESSION_GONE));
+    assert_eq!(raw_stream(&mut own).await.1, Err(Code::WT_SESSION_GONE));
+    drop(serving);
+    Ok(())
+}
+
+/// A session stream the budget cannot hold gets the draft's code for one not buffered.
+#[tokio::test]
+async fn a_session_stream_over_the_budget_is_refused_as_unbuffered() -> Result<(), TestError> {
+    let peers = peers(0).await?;
+    let (serving, _) = serve(&peers, |_, _| async {});
+    // The first stream is in the floor kept for critical ones; its session stream is not.
+    let stream = uni(&peers.client, b"\x40\x54\x00", false).await?;
+    assert_eq!(stopped(&stream).await, Some(Code::WT_BUFFERED_STREAM_REJECTED));
+    drop(serving);
     Ok(())
 }
 

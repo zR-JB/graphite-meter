@@ -1,7 +1,7 @@
 mod support;
 
 use bytes::Bytes;
-use graphite_meter_http3::{self as http3, Code, WtCode, client, webtransport::Session};
+use graphite_meter_http3::{self as http3, Code, client, webtransport::Session};
 use graphite_meter_server::config::{Config, NativeKind};
 use graphite_meter_server::http::HttpServer;
 use http::{Request, Version};
@@ -555,14 +555,9 @@ async fn cancelled_download_without_reliable_reset_preserves_http3_connection() 
                 .map_err(|refused| format!("{refused:?}"))?;
             let mut lane = session.accept_uni().await.ok_or("missing download stream")?;
             assert!(lane.read_chunk().await?.is_some());
+            // The ended session stops the lane, as the server resets it, both with WT_SESSION_GONE.
             session.close(0, "").await;
-            loop {
-                match lane.read_chunk().await {
-                    Ok(Some(_)) => {}
-                    Err(http3::Error::Reset(code)) if code == WtCode(0).to_http() => break,
-                    outcome => panic!("cancelled download must reset without closing the connection: {outcome:?}"),
-                }
-            }
+            assert_eq!(lane.read_chunk().await, Err(http3::Error::Refused));
             assert!(quic.close_reason().is_none());
         }
         quic.close(0_u32.into(), b"done");

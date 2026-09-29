@@ -467,7 +467,7 @@ impl Connection {
                     }
                     None => {
                         let mut stream = uni.stream;
-                        let _ = stream.stop(Code::H3_REQUEST_REJECTED.into());
+                        let _ = stream.stop(Code::WT_BUFFERED_STREAM_REJECTED.into());
                     }
                 }
             }

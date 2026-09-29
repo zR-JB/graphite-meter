@@ -157,12 +157,18 @@ impl Registry {
     }
 }
 
-/// A peer's stream in a session: noq's chunks as they arrived. Dropping it unread cancels the lane.
+/// A session's end, which its streams watch: the drafts end them with it, and send nothing more.
+type Ended = watch::Receiver<Option<Result<(u32, String), Error>>>;
+
+/// A peer's stream in a session: noq's chunks as they arrived. Dropping it unread cancels the lane;
+/// once its session ended, reads are refused and it is stopped with WT_SESSION_GONE.
 pub struct RecvStream {
     stream: noq::RecvStream,
     /// Bytes that followed the stream header in its first chunk.
     first: Bytes,
     done: bool,
+    /// Its session's end, from when the session hands it over.
+    session: Option<Ended>,
     _charge: Charge,
 }
 
@@ -172,11 +178,16 @@ impl RecvStream {
             stream,
             first,
             done: false,
+            session: None,
             _charge: charge,
         }
     }
 
     pub fn poll_chunk(&mut self, cx: &mut Context<'_>) -> Poll<Result<Option<Bytes>, Error>> {
+        if self.session.as_ref().is_some_and(|session| session.borrow().is_some()) {
+            self.stop(Code::WT_SESSION_GONE);
+            return Poll::Ready(Err(Error::Refused));
+        }
         if !self.first.is_empty() {
             return Poll::Ready(Ok(Some(std::mem::take(&mut self.first))));
         }
@@ -189,8 +200,11 @@ impl RecvStream {
         poll_fn(|cx| self.poll_chunk(cx)).await
     }
 
+    /// Stops the stream with `code`, or once its session ended with WT_SESSION_GONE.
     pub fn stop(&mut self, code: Code) {
         if !std::mem::replace(&mut self.done, true) {
+            let gone = self.session.as_ref().is_some_and(|session| session.borrow().is_some());
+            let code = if gone { Code::WT_SESSION_GONE } else { code };
             let _ = self.stream.stop(code.into());
         }
     }
@@ -207,22 +221,24 @@ impl Drop for RecvStream {
 }
 
 /// A stream this side opened in a session. Dropping it resets after its association header, which
-/// peers that support RESET_STREAM_AT still receive; it is never finished by accident.
+/// peers that support RESET_STREAM_AT still receive; it is never finished by accident. Once its
+/// session ended, writes are refused and the reset carries WT_SESSION_GONE.
 pub struct SendStream {
     stream: Option<noq::SendStream>,
     header: [u8; 16],
     header_end: u8,
     written: u8,
-    code: WtCode,
+    code: Code,
     shared: Arc<Shared>,
+    session: Ended,
 }
 
 impl SendStream {
-    async fn open(shared: &Arc<Shared>, session: u64) -> Result<Self, Error> {
+    async fn open(shared: &Arc<Shared>, id: u64, session: Ended) -> Result<Self, Error> {
         let mut header = [0; 16];
         let mut rest = &mut header[..];
         varint::put(frame::WEBTRANSPORT_STREAM, &mut rest);
-        varint::put(session, &mut rest);
+        varint::put(id, &mut rest);
         let header_end = (16 - rest.len()) as u8;
         let stream = shared.quic.open_uni().await?;
         let mut opened = Self {
@@ -230,8 +246,9 @@ impl SendStream {
             header,
             header_end,
             written: 0,
-            code: LANE_CANCELLED,
+            code: LANE_CANCELLED.to_http(),
             shared: shared.clone(),
+            session,
         };
         while opened.written < opened.header_end {
             let header = &opened.header[usize::from(opened.written)..usize::from(opened.header_end)];
@@ -240,12 +257,16 @@ impl SendStream {
         Ok(opened)
     }
 
-    fn stream(&mut self) -> &mut noq::SendStream {
-        self.stream.as_mut().expect("open stream")
+    /// The stream, refused once the session ended.
+    fn stream(&mut self) -> Result<&mut noq::SendStream, Error> {
+        if self.session.borrow().is_some() {
+            return Err(Error::Refused);
+        }
+        Ok(self.stream.as_mut().expect("open stream"))
     }
 
     pub async fn write_all(&mut self, bytes: &[u8]) -> Result<(), Error> {
-        Ok(self.stream().write_all(bytes).await?)
+        Ok(self.stream()?.write_all(bytes).await?)
     }
 
     /// Noq keeps `chunk` uncopied, charged by length, so it must not pin a larger buffer.
@@ -253,18 +274,20 @@ impl SendStream {
         let mut chunks = [chunk];
         let mut unwritten = &mut chunks[..];
         while !unwritten.is_empty() {
-            self.stream().write_leased_chunks(&mut unwritten).await?;
+            self.stream()?.write_leased_chunks(&mut unwritten).await?;
         }
         Ok(())
     }
 
+    /// Refused once the session ended, when the stream is reset instead.
     pub fn finish(mut self) -> Result<(), Error> {
+        self.stream()?;
         let mut stream = self.stream.take().expect("open stream");
         stream.finish().map_err(|_| Error::Stopped(Code::H3_REQUEST_CANCELLED))
     }
 
     pub fn reset(mut self, code: WtCode) {
-        self.code = code;
+        self.code = code.to_http();
     }
 
     pub fn id(&self) -> u64 {
@@ -275,12 +298,13 @@ impl SendStream {
 impl Drop for SendStream {
     fn drop(&mut self) {
         let Some(stream) = self.stream.take() else { return };
+        let gone = self.session.borrow().is_some();
         let mut pending = PendingReset {
             stream,
             header: self.header,
             header_end: self.header_end,
             written: self.written,
-            code: self.code.to_http(),
+            code: if gone { Code::WT_SESSION_GONE } else { self.code },
             deadline: Instant::now() + RESET_DEADLINE,
             _charge: None,
         };
@@ -474,7 +498,7 @@ pub struct Session {
     datagram_prefix: ([u8; 8], usize),
     streams: Mutex<mpsc::Receiver<RecvStream>>,
     datagrams: Mutex<mpsc::Receiver<Bytes>>,
-    ended: watch::Receiver<Option<Result<(u32, String), Error>>>,
+    ended: Ended,
     _charge: Charge,
 }
 
@@ -610,7 +634,9 @@ impl Session {
     /// The next stream the peer opened in this session; `None` once the session ended, also with
     /// its connection, and [`Self::closed`] says how.
     pub async fn accept_uni(&self) -> Option<RecvStream> {
-        self.streams.lock().await.recv().await
+        let mut stream = self.streams.lock().await.recv().await?;
+        stream.session = Some(self.ended.clone());
+        Some(stream)
     }
 
     /// The next datagram in this session; `None` once the session ended, as for [`Self::accept_uni`].
@@ -623,7 +649,7 @@ impl Session {
         if self.ended.borrow().is_some() {
             return Err(Error::Refused);
         }
-        SendStream::open(&self.shared, self.id).await
+        SendStream::open(&self.shared, self.id, self.ended.clone()).await
     }
 
     /// The largest payload a datagram in this session can carry now.
@@ -634,19 +660,23 @@ impl Session {
             .checked_sub(self.datagram_prefix.1)
     }
 
-    fn datagram(&self, payload: &[u8]) -> Bytes {
+    /// A datagram's bytes, refused once the session ended: the drafts send none after it.
+    fn datagram(&self, payload: &[u8]) -> Result<Bytes, Error> {
+        if self.ended.borrow().is_some() {
+            return Err(Error::Refused);
+        }
         let (prefix, length) = &self.datagram_prefix;
-        [&prefix[..*length], payload].concat().into()
+        Ok([&prefix[..*length], payload].concat().into())
     }
 
     /// Sends a datagram, displacing the oldest unsent ones if the queue is full.
     pub fn send_datagram(&self, payload: &[u8]) -> Result<(), Error> {
-        Ok(self.shared.quic.send_datagram(self.datagram(payload))?)
+        Ok(self.shared.quic.send_datagram(self.datagram(payload)?)?)
     }
 
     /// Sends a datagram once the queue has room.
     pub async fn send_datagram_wait(&self, payload: &[u8]) -> Result<(), Error> {
-        Ok(self.shared.quic.send_datagram_wait(self.datagram(payload)).await?)
+        Ok(self.shared.quic.send_datagram_wait(self.datagram(payload)?).await?)
     }
 
     /// Resolves once the session ends: with the peer's CLOSE code and reason, code 0 when the peer
