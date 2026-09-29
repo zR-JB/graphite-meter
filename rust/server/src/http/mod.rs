@@ -410,7 +410,7 @@ impl HttpServer {
         peer: SocketAddr,
         owner: &Owner,
     ) -> Response<ResponseBody> {
-        let mut response = match route {
+        match route {
             _ if request.method() == Method::OPTIONS => empty_response(StatusCode::NO_CONTENT),
             Route::WtSession | Route::WsSession if self.auth.is_none() => {
                 json_response(Bytes::from_static(br#"{"token":"","expires":0}"#))
@@ -424,11 +424,7 @@ impl HttpServer {
                 Ok(None) => text_response(StatusCode::NOT_FOUND),
                 Err(_) => text_response(StatusCode::INTERNAL_SERVER_ERROR),
             },
-        };
-        if self.auth.is_none() {
-            Access::Public.apply_measurement(response.headers_mut());
         }
-        response
     }
 
     fn validate_request<B>(&self, request: &Request<B>, body_ended: bool) -> Option<Response<ResponseBody>> {
