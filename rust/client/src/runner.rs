@@ -2,7 +2,7 @@
 use crate::{
     Error,
     config::Config,
-    model::{ServerSummary, Snapshot, Stage},
+    model::{FailureScope, ServerSummary, Snapshot, Stage},
     net::Http,
     selection,
     transport::Transport,
@@ -296,8 +296,7 @@ pub async fn run(
                 snapshot.stage = config.stages.first().copied();
                 // Go records these as its run starts, at zero.
                 for failure in &preparation.failures {
-                    let scope = crate::model::FailureScope::Throughput;
-                    snapshot.failure(&failure.id, scope, &failure.source, Duration::ZERO);
+                    snapshot.failure(&failure.id, FailureScope::Throughput, &failure.source, Duration::ZERO);
                 }
             });
             (preparation.servers, preparation.failures.len())
@@ -315,14 +314,11 @@ pub async fn run(
             break;
         }
         // As Go's openStage: a sole server whose stage was skipped rejoins on the transport it prepared.
-        if let Some(sole) = &sole {
-            snapshots.send_if_modified(|snapshot| {
-                let rejoins = !snapshot.participants.contains(sole);
-                if rejoins {
-                    snapshot.participants.push(sole.clone());
-                }
-                rejoins
-            });
+        if let Some(sole) = sole
+            .as_ref()
+            .filter(|sole| !snapshots.borrow().participants.contains(sole))
+        {
+            snapshots.send_modify(|snapshot| snapshot.participants.push(sole.clone()));
         }
         let measured = measure(*stage, &config, &prepared, &snapshots, cancel.clone(), &mut ledger).await;
         let failed = match measured {
