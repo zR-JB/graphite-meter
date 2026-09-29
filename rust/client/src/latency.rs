@@ -9,6 +9,7 @@ use crate::{
 use futures_util::{SinkExt, StreamExt};
 use graphite_meter_core::{
     discovery::{LatencyTarget, LatencyTransport},
+    failure::LaneEnding,
     latency::{DeadlineEstimator, ProbeOutcome},
     origin::canonical_origin,
     route::Route,
@@ -19,7 +20,11 @@ use tokio::{
     sync::{mpsc, watch},
     time::Instant,
 };
-use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest, protocol::WebSocketConfig};
+use tokio_tungstenite::tungstenite::{
+    Message,
+    client::IntoClientRequest,
+    protocol::{CloseFrame, WebSocketConfig},
+};
 
 type Socket = tokio_tungstenite::WebSocketStream<Box<dyn graphite_meter_net::Stream>>;
 
@@ -100,8 +105,13 @@ pub(crate) async fn run(
         let Err(error) = result else {
             return Ok(());
         };
-        if !matches!(error.downcast_ref(), Some(Failure::Disconnected(_))) {
+        // As Go's measureLatency (latency.go:244-264), a lost channel is dialled again whatever
+        // ended it but a revoked grant; once the window has ended, the loss ends the session.
+        if !lost(&error) {
             return Err(error);
+        }
+        if *cancel.borrow() >= Stop::Drain {
+            return Ok(());
         }
         // A redial's window is cut short by the stage end (latency.go:256).
         let window = (Instant::now() + REDIAL_WINDOW).min(end);
@@ -111,6 +121,15 @@ pub(crate) async fn run(
             Err(_) if Instant::now() >= end => return Ok(()),
             Err(error) => return Err(error),
         };
+    }
+}
+
+/// A channel the server ended with any lane ending but a revoked grant, or that failed
+/// (failure.go:83-95), which Go's measureLatency dials again.
+fn lost(error: &Error) -> bool {
+    match error.downcast_ref() {
+        Some(Failure::Lane(ending)) => *ending != LaneEnding::Revoked,
+        other => matches!(other, Some(Failure::Disconnected(_))),
     }
 }
 
@@ -175,17 +194,19 @@ impl Reader {
     async fn next(&mut self) -> Option<Result<Message, Error>> {
         match self {
             Self::WebSocket(reader) => reader.next().await.map(|result| result.map_err(Into::into)),
-            Self::WebTransport(session) => {
-                Some(
-                    session
-                        .recv_datagram()
-                        .await
-                        .map(|bytes| match String::from_utf8(bytes.to_vec()) {
-                            Ok(text) => Message::Text(text.into()),
-                            Err(_) => Message::Binary(bytes),
-                        }),
-                )
-            }
+            Self::WebTransport(session) => match session.recv_datagram().await {
+                Ok(bytes) => Some(Ok(match String::from_utf8(bytes.to_vec()) {
+                    Ok(text) => Message::Text(text.into()),
+                    Err(_) => Message::Binary(bytes),
+                })),
+                // A session the server closed reads as a WebSocket closed with the same lane ending.
+                Err(_) => session.ending().map(|ending| {
+                    Ok(Message::Close(Some(CloseFrame {
+                        code: ending.websocket_code().into(),
+                        reason: ending.reason().into(),
+                    })))
+                }),
+            },
         }
     }
 }
@@ -323,8 +344,8 @@ async fn connect_ws(http: &Http, origin: &str) -> Result<Socket, Error> {
 }
 
 /// The lane ending a close frame names, or a channel that closed before the stage ended.
-fn closed(frame: Option<tokio_tungstenite::tungstenite::protocol::CloseFrame>) -> Error {
-    match frame.and_then(|frame| graphite_meter_core::failure::LaneEnding::from_websocket_code(frame.code.into())) {
+fn closed(frame: Option<CloseFrame>) -> Error {
+    match frame.and_then(|frame| LaneEnding::from_websocket_code(frame.code.into())) {
         Some(ending) => Box::new(Failure::Lane(ending)),
         None => Failure::Disconnected("latency channel closed before measurement ended").into(),
     }
@@ -549,11 +570,7 @@ mod tests {
         let measured = run(&Http::new(false)?, &target, timing, observations, cancel).await;
         peer.abort();
         measured?;
-        let mut replies = 0;
-        while let Ok(observation) = observed.try_recv() {
-            replies += usize::from(matches!(observation, Observation::Sample { .. }));
-        }
-        assert!(replies > 0);
+        assert!(replies(&mut observed) > 0);
         Ok(())
     }
 
@@ -594,6 +611,192 @@ mod tests {
         assert!((3..=5).contains(&redials.len()), "{} redials", redials.len());
         for pair in redials.windows(2) {
             assert!(pair[1] - pair[0] >= crate::transport::TRANSFER_RETRY_BACKOFF);
+        }
+        Ok(())
+    }
+
+    /// A close frame naming `ending`.
+    fn close_frame(ending: LaneEnding) -> CloseFrame {
+        CloseFrame {
+            code: ending.websocket_code().into(),
+            reason: ending.reason().into(),
+        }
+    }
+
+    /// Answers the first probe on `socket`, then ends it with `ending`.
+    async fn end_after_an_answer<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+        socket: &mut tokio_tungstenite::WebSocketStream<S>,
+        ending: LaneEnding,
+    ) -> Result<(), Error> {
+        if let Some(Ok(Message::Text(text))) = socket.next().await {
+            let pong = wire::encode_pong(wire::decode_ping(&text)?, 0);
+            socket.send(Message::Text(pong.into())).await?;
+        }
+        Ok(socket.close(Some(close_frame(ending))).await?)
+    }
+
+    /// The samples among `observed`.
+    fn replies(observed: &mut mpsc::Receiver<Observation>) -> usize {
+        let mut replies = 0;
+        while let Ok(observation) = observed.try_recv() {
+            replies += usize::from(matches!(observation, Observation::Sample { .. }));
+        }
+        replies
+    }
+
+    /// A session whose first channel answered and then `ending` ended, after `dials` dials: its
+    /// channel was dialled again and answered, unless the ending revoked the grant, which asks
+    /// for sign-in after the one dial.
+    fn check_ending(result: Result<(), Error>, ending: LaneEnding, dials: usize, replies: usize) {
+        let revoked = ending == LaneEnding::Revoked;
+        match result {
+            Ok(()) => assert!(
+                !revoked && dials > 1 && replies > 1,
+                "{ending:?}: {dials} dials, {replies} replies"
+            ),
+            Err(error) => {
+                let reason = crate::failure::reason(error.as_ref(), false);
+                let sign_in = reason == graphite_meter_core::failure::FailureReason::SignInRequired;
+                assert!(
+                    revoked && dials == 1 && sign_in,
+                    "{ending:?}: {error} after {dials} dials"
+                );
+            }
+        }
+    }
+
+    /// As Go's TestLaneEndingsNameTheirReason (latency_test.go:67-110): a channel the server ends
+    /// with a lane ending after an answer is dialled again, unless the ending revokes the grant.
+    #[tokio::test]
+    async fn a_lane_ending_is_dialled_again_unless_it_revokes_the_grant() -> Result<(), Error> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let _ = crate::crypto::provider().install_default();
+        for ending in [
+            LaneEnding::Idle,
+            LaneEnding::Lifetime,
+            LaneEnding::Shutdown,
+            LaneEnding::Revoked,
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+            let target = LatencyTarget {
+                base_url: format!("http://{}", listener.local_addr()?),
+                transport: LatencyTransport::WebSocket,
+            };
+            let dials = Arc::new(AtomicUsize::new(0));
+            let dialled = dials.clone();
+            // The first channel answers a probe and ends; later ones echo.
+            let peer = tokio::spawn(async move {
+                while let Ok((stream, _)) = listener.accept().await {
+                    let Ok(mut socket) = tokio_tungstenite::accept_async(stream).await else {
+                        continue;
+                    };
+                    if dialled.fetch_add(1, Ordering::SeqCst) > 0 {
+                        tokio::spawn(echo(socket, Duration::ZERO));
+                    } else {
+                        let _ = end_after_an_answer(&mut socket, ending).await;
+                    }
+                }
+            });
+            let (observations, mut observed) = mpsc::channel(256);
+            let (_stop, cancel) = watch::channel(Stop::Running);
+            let timing = (Duration::from_millis(20), Duration::from_millis(1500), 16);
+            let result = run(&Http::new(false)?, &target, timing, observations, cancel).await;
+            peer.abort();
+            check_ending(result, ending, dials.load(Ordering::SeqCst), replies(&mut observed));
+        }
+        Ok(())
+    }
+
+    /// A channel the server ends once the window ended, while the last probes drain, ends the
+    /// session cleanly: Go leaves a loss after the window alone (latency.go:252).
+    #[tokio::test]
+    async fn a_lane_ending_while_the_last_probes_drain_ends_the_session() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let target = LatencyTarget {
+            base_url: format!("http://{}", listener.local_addr()?),
+            transport: LatencyTransport::WebSocket,
+        };
+        let (holding, held) = tokio::sync::oneshot::channel();
+        let (ended, window_ended) = tokio::sync::oneshot::channel();
+        // The first probe is answered and the second held until the window ended.
+        let peer = tokio::spawn(async move {
+            let mut socket = tokio_tungstenite::accept_async(listener.accept().await?.0).await?;
+            for held in [false, true] {
+                let Some(Ok(Message::Text(text))) = socket.next().await else {
+                    return Err("no probe".into());
+                };
+                if !held {
+                    let pong = wire::encode_pong(wire::decode_ping(&text)?, 0);
+                    socket.send(Message::Text(pong.into())).await?;
+                }
+            }
+            let _ = holding.send(());
+            let _: Result<(), _> = window_ended.await;
+            Ok::<_, Error>(socket.close(Some(close_frame(LaneEnding::Lifetime))).await?)
+        });
+        let (observations, _observed) = mpsc::channel(64);
+        let (stop, cancel) = watch::channel(Stop::Running);
+        let timing = (Duration::from_millis(50), Duration::from_secs(10), 16);
+        let http = Http::new(false)?;
+        let session = run(&http, &target, timing, observations, cancel);
+        let end_window = async {
+            let _ = held.await;
+            stop.send_replace(Stop::Drain);
+            let _ = ended.send(());
+        };
+        let (result, ()) =
+            tokio::time::timeout(Duration::from_secs(5), async { tokio::join!(session, end_window) }).await?;
+        peer.abort();
+        result
+    }
+
+    /// A WebTransport session the server closes with a lane ending's code is dialled again as a
+    /// WebSocket is, unless the ending revokes the grant (latency.go:33-47, failure.go:83-95).
+    #[tokio::test]
+    async fn a_webtransport_lane_ending_is_dialled_again_unless_it_revokes_the_grant() -> Result<(), Error> {
+        use graphite_meter_http3::{server::Connection, webtransport::Session};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let _ = crate::crypto::provider().install_default();
+        for ending in [LaneEnding::Lifetime, LaneEnding::Revoked] {
+            let (endpoint, origin) = crate::fixtures::h3_endpoint()?;
+            let dials = Arc::new(AtomicUsize::new(0));
+            let dialled = dials.clone();
+            // The first session answers a probe and ends; later ones echo.
+            let server = tokio::spawn(async move {
+                let mut connections = tokio::task::JoinSet::new();
+                while let Some(incoming) = endpoint.accept().await {
+                    let first = dialled.fetch_add(1, Ordering::SeqCst) == 0;
+                    connections.spawn(async move {
+                        let mut connection = Connection::new(incoming.await?, None);
+                        let (_, stream) = connection.next().await?.ok_or("no CONNECT")?.resolve().await?;
+                        let serve = async {
+                            let session = Session::accept(stream, http::HeaderMap::new()).await?;
+                            while let Some(ping) = session.read_datagram().await {
+                                let pong = wire::encode_pong(wire::decode_ping(std::str::from_utf8(&ping)?)?, 0);
+                                session.send_datagram(pong.as_bytes())?;
+                                if first {
+                                    session.close(ending.webtransport_code(), ending.reason()).await;
+                                }
+                            }
+                            Ok::<_, Error>(())
+                        };
+                        let (served, ()) =
+                            tokio::join!(serve, async { while let Ok(Some(_)) = connection.next().await {} });
+                        served
+                    });
+                }
+            });
+            let target = LatencyTarget {
+                base_url: origin,
+                transport: LatencyTransport::WebTransport,
+            };
+            let (observations, mut observed) = mpsc::channel(256);
+            let (_stop, cancel) = watch::channel(Stop::Running);
+            let timing = (Duration::from_millis(20), Duration::from_millis(1500), 16);
+            let result = run(&Http::new(true)?, &target, timing, observations, cancel).await;
+            server.abort();
+            check_ending(result, ending, dials.load(Ordering::SeqCst), replies(&mut observed));
         }
         Ok(())
     }

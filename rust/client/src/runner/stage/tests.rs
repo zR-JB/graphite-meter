@@ -78,8 +78,13 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                                 if flag.load(Ordering::SeqCst) == 8 {
                                     continue;
                                 }
-                                if flag.load(Ordering::SeqCst) == 6 {
-                                    let ending = graphite_meter_core::failure::LaneEnding::Idle;
+                                // Mode 6 ends the channel as idle, mode 9 as revoked.
+                                let ending = match flag.load(Ordering::SeqCst) {
+                                    6 => Some(graphite_meter_core::failure::LaneEnding::Idle),
+                                    9 => Some(graphite_meter_core::failure::LaneEnding::Revoked),
+                                    _ => None,
+                                };
+                                if let Some(ending) = ending {
                                     let _ = socket.send(tokio_tungstenite::tungstenite::Message::Close(Some(tokio_tungstenite::tungstenite::protocol::CloseFrame {
                                         code: ending.websocket_code().into(),
                                         reason: ending.reason().into(),
@@ -615,11 +620,12 @@ async fn loaded_latency_failure_keeps_every_http_participant() -> Result<(), Err
         let (_stop, cancelled) = watch::channel(false);
         let mut ledger = RunLedger::new();
         let run = measure(Stage::Download, &config, &servers, &snapshots, cancelled, &mut ledger);
+        // A channel ended as revoked is not dialled again (latency.go:248-249).
         let fail = async {
             while observed.borrow().phase != failure_phase {
                 observed.changed().await.unwrap();
             }
-            mode.store(6, Ordering::SeqCst);
+            mode.store(9, Ordering::SeqCst);
         };
         let (result, ()) = tokio::time::timeout(Duration::from_secs(5), async { tokio::join!(run, fail) }).await?;
         assert!(result?.is_empty());

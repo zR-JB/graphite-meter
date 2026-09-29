@@ -7,6 +7,7 @@ use crate::{
 };
 use bytes::Bytes;
 use futures_util::FutureExt;
+use graphite_meter_core::failure::LaneEnding;
 use graphite_meter_http3::webtransport::{self as layer, RecvStream, SendStream};
 use http::Request;
 use std::{sync::Arc, time::Duration};
@@ -48,6 +49,11 @@ impl Session {
     /// Closed with its connection, or once the server ended the session.
     pub fn is_closed(&self) -> bool {
         self.connection.close_reason().is_some() || self.ended().is_some()
+    }
+    /// The lane ending the server closed the session with, once it has, as Go's laneEnding reads
+    /// a session error's code (failure.go:83-95).
+    pub fn ending(&self) -> Option<LaneEnding> {
+        LaneEnding::from_webtransport_code(self.ended()?.ok()?.0)
     }
     pub async fn send_datagram(&self, payload: &[u8]) -> Result<(), Error> {
         Ok(self.session.send_datagram_wait(payload).await?)
