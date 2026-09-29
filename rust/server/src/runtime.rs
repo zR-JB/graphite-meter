@@ -187,12 +187,7 @@ impl Pool {
 /// HTTP/3 on the caller's runtime, or on shards on half of the pool's runtimes.
 pub(crate) enum Quic {
     Endpoint(QuicEndpoint),
-    Shards {
-        shards: Vec<(tokio::runtime::Handle, QuicEndpoint)>,
-        /// Tests count the datagrams it forwarded.
-        #[cfg(all(test, target_os = "linux"))]
-        router: crate::quic_shard::Router,
-    },
+    Shards(Vec<(tokio::runtime::Handle, QuicEndpoint)>),
 }
 
 const MAX_QUIC_SHARDS: usize = 16;
@@ -217,15 +212,11 @@ impl Quic {
             crate::log!("[gm:memory] the buffer budget covers {shards} of {wanted} QUIC endpoints");
         };
         if cfg!(target_os = "linux") && runtimes.len() > 1 {
-            if let Some((endpoints, _router)) = server.quic_shards(tls.clone(), address, &runtimes[..wanted])? {
+            if let Some(endpoints) = server.quic_shards(tls.clone(), address, &runtimes[..wanted])? {
                 if endpoints.len() < wanted {
                     fewer(endpoints.len());
                 }
-                return Ok(Self::Shards {
-                    shards: runtimes.iter().cloned().zip(endpoints).collect(),
-                    #[cfg(all(test, target_os = "linux"))]
-                    router: _router,
-                });
+                return Ok(Self::Shards(runtimes.iter().cloned().zip(endpoints).collect()));
             }
             fewer(1);
         }
@@ -235,7 +226,7 @@ impl Quic {
     pub(crate) fn local_addr(&self) -> std::io::Result<SocketAddr> {
         match self {
             Self::Endpoint(quic) => quic.local_addr(),
-            Self::Shards { shards, .. } => shards[0].1.local_addr(),
+            Self::Shards(shards) => shards[0].1.local_addr(),
         }
     }
 
@@ -244,7 +235,7 @@ impl Quic {
         let serve = |quic| server.clone().serve_quic(quic, cancelled(stopped.clone()));
         match self {
             Self::Endpoint(quic) => vec![Box::pin(serve(quic))],
-            Self::Shards { shards, .. } => shards
+            Self::Shards(shards) => shards
                 .into_iter()
                 .map(|(runtime, quic)| -> Service {
                     let serving = runtime.spawn(serve(quic));

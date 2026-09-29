@@ -103,7 +103,7 @@ impl HttpServer {
         tls: Arc<rustls::ServerConfig>,
         address: SocketAddr,
         runtimes: &[tokio::runtime::Handle],
-    ) -> Result<Option<(Vec<QuicEndpoint>, quic_shard::Router)>, ServerError> {
+    ) -> Result<Option<Vec<QuicEndpoint>>, ServerError> {
         const OVERFLOW: &str = "QUIC endpoint buffer size overflow";
         let bind = |runtime: &tokio::runtime::Handle, address| {
             let _entered = runtime.enter();
@@ -181,7 +181,7 @@ impl HttpServer {
             });
         }
         self.memory.reserved.store(total, Ordering::Relaxed);
-        Ok(Some((endpoints, router)))
+        Ok(Some(endpoints))
     }
 
     /// One of `shards` endpoints admits its part of the server-wide incoming limits, rounded up.
@@ -1524,11 +1524,14 @@ mod tests {
         let (tls, client_config) = tls();
         let bound = crate::runtime::Quic::bind(&server, tls, "127.0.0.1:0".parse().unwrap()).unwrap();
         let address = bound.local_addr().unwrap();
-        let crate::runtime::Quic::Shards { shards, router } = &bound else {
+        let crate::runtime::Quic::Shards(shards) = &bound else {
             panic!("four runtime workers served HTTP/3 from one endpoint");
         };
         assert_eq!(shards.len(), 2);
-        let router = router.clone();
+        // A shard counts the handshakes it accepts, so a new connection shows where the kernel hands its address.
+        let endpoints: Vec<_> = shards.iter().map(|(_, quic)| quic.endpoint.clone()).collect();
+        let handshakes = || endpoints.iter().map(|endpoint| endpoint.stats().accepted_handshakes);
+        let grew = |before: Vec<u64>| handshakes().zip(before).position(|(now, then)| now > then).unwrap();
         let (stop, stopped) = tokio::sync::watch::channel(false);
         let serving = tokio::spawn(futures_util::future::try_join_all(bound.serve(&server, &stopped)));
         tokio::time::timeout(Duration::from_secs(30), async {
@@ -1546,22 +1549,27 @@ mod tests {
             assert_eq!(futures_util::future::join_all(transfers).await, [1 << 20; 8]);
 
             let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
-            let (quic, requests) = h3_client(&client, client_config, address).await;
+            let before = handshakes().collect();
+            let (quic, requests) = h3_client(&client, client_config.clone(), address).await;
+            let home = grew(before);
             assert_eq!(download(&requests, 13).await.unwrap(), 13);
             // A new port lands on the other shard one time in two, whose socket must forward to the connection's.
-            let mut crossed = 0;
-            for rebind in 1.. {
-                let forwarded = router.forwarded();
+            for rebind in 1..32 {
                 client
                     .rebind(std::net::UdpSocket::bind("127.0.0.1:0").unwrap())
                     .unwrap();
+                let before = handshakes().collect();
+                let probe = client
+                    .connect_with(client_config.clone(), address, "localhost")
+                    .unwrap();
+                probe.await.unwrap().close(0_u32.into(), b"done");
+                let crossed = grew(before) != home;
                 let received = download(&requests, 64 * 1024).await.unwrap();
                 assert_eq!(received, 64 * 1024, "after rebind {rebind}");
-                crossed += usize::from(router.forwarded() > forwarded);
-                if rebind >= 4 && crossed > 0 {
+                if crossed {
                     break;
                 }
-                assert!(rebind < 32, "{rebind} rebinds never left the connection's shard");
+                assert!(rebind < 31, "{rebind} rebinds never left the connection's shard");
             }
             quic.close(0_u32.into(), b"done");
         })
@@ -1589,7 +1597,7 @@ mod tests {
         let bind = |memory| {
             let server = HttpServer::with_memory(config.clone(), memory).unwrap();
             let quic = crate::runtime::Quic::bind(&server, tls.clone(), "127.0.0.1:0".parse().unwrap()).unwrap();
-            let crate::runtime::Quic::Shards { shards, .. } = &quic else {
+            let crate::runtime::Quic::Shards(shards) = &quic else {
                 panic!("forty workers served HTTP/3 from one endpoint");
             };
             assert_eq!(shards.len(), 16, "twenty shards wanted");
@@ -1626,7 +1634,7 @@ mod tests {
         let shards = |memory, runtimes: &[tokio::runtime::Handle]| {
             let server = HttpServer::with_memory(config.clone(), memory).unwrap();
             let shards = server.quic_shards(tls.clone(), "127.0.0.1:0".parse().unwrap(), runtimes);
-            let count = shards.unwrap().map_or(0, |(endpoints, _)| endpoints.len());
+            let count = shards.unwrap().map_or(0, |endpoints| endpoints.len());
             (count, server.memory.reserved.load(Ordering::Relaxed))
         };
         // Each socket keeps its part of the buffers all four offered runtimes would share, however many fit.

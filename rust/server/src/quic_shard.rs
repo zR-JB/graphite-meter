@@ -10,10 +10,7 @@ use std::{
     io::{self, IoSliceMut},
     num::NonZeroUsize,
     pin::Pin,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
@@ -120,7 +117,6 @@ pub(crate) fn queue_bytes(max_datagram: usize) -> Option<usize> {
 pub(crate) struct Router {
     queues: Arc<[mpsc::Sender<Forwarded>]>,
     max_datagram: usize,
-    forwarded: Arc<AtomicUsize>,
 }
 
 /// The datagrams other shards forwarded to one shard.
@@ -139,15 +135,8 @@ impl Router {
         let router = Self {
             queues: queues.into(),
             max_datagram,
-            forwarded: Arc::default(),
         };
         (router, inboxes)
-    }
-
-    /// Datagrams queued for another shard so far.
-    #[cfg(test)]
-    pub(crate) fn forwarded(&self) -> usize {
-        self.forwarded.load(Ordering::Relaxed)
     }
 
     /// The other shard a short-header packet's destination connection ID names. Long headers stay: the handshake
@@ -192,9 +181,7 @@ impl Router {
             meta,
             datagram: datagram.into(),
         };
-        if self.queues[shard].try_send(forwarded).is_ok() {
-            self.forwarded.fetch_add(1, Ordering::Relaxed);
-        }
+        let _ = self.queues[shard].try_send(forwarded);
     }
 }
 
@@ -282,7 +269,11 @@ impl AsyncUdpSocket for ShardSocket {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{net::SocketAddr, sync::atomic::AtomicBool, task::Wake};
+    use std::{
+        net::SocketAddr,
+        sync::atomic::{AtomicBool, Ordering},
+        task::Wake,
+    };
 
     const PEER: SocketAddr = SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 4433);
 
@@ -361,7 +352,6 @@ mod tests {
         let meta = forwarded[0].meta;
         assert_eq!((meta.addr, meta.len, meta.stride), (PEER, 40, 40));
         assert!(inboxes.iter_mut().all(|inbox| drain(inbox).is_empty()));
-        assert_eq!(router.forwarded(), 1);
     }
 
     #[test]
@@ -407,7 +397,6 @@ mod tests {
             router.route(0, &mut buf, &mut meta);
             assert_eq!(meta.len, 0, "a dropped datagram does not stay either");
         }
-        assert_eq!(router.forwarded(), QUEUE_DATAGRAMS);
         assert_eq!(drain(&mut inboxes[1]).len(), QUEUE_DATAGRAMS);
     }
 
