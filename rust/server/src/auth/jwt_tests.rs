@@ -198,18 +198,32 @@ fn id_token_claims_bind_issuer_audience_nonce_time_and_access_token() {
         B64.encode(&hash.as_ref()[..hash.as_ref().len() / 2])
     };
     let base = json!({"iss": "https://id.example", "sub": "operator", "aud": "meter", "exp": now + 300, "iat": now, "nonce": "n0nce", "name": "Operator"});
-    let check = |alg: &str, kid: &str, changes: Value| {
-        let mut claims = base.clone();
-        for (key, value) in changes.as_object().unwrap() {
-            if value.is_null() {
-                claims.as_object_mut().unwrap().remove(key);
-            } else {
-                claims[key] = value.clone();
-            }
-        }
-        let verified = verify(&signers.sign(json!({"alg": alg, "kid": kid}), &claims), &keys, &ALL).unwrap();
+    let sign_in = |alg: &str, kid: &str, claims: &Value| {
+        let verified = verify(&signers.sign(json!({"alg": alg, "kid": kid}), claims), &keys, &ALL).unwrap();
         id_token(verified, &expected).map(|claims| claims.subject)
     };
+    // The base claims with `changes` set; a null change sends null.
+    let check = |alg: &str, kid: &str, changes: Value| {
+        let mut claims = base.clone();
+        claims
+            .as_object_mut()
+            .unwrap()
+            .extend(changes.as_object().unwrap().clone());
+        sign_in(alg, kid, &claims)
+    };
+    for (absent, expected) in [
+        ("iat", Ok("operator".to_owned())),
+        ("at_hash", Ok("operator".to_owned())),
+        ("exp", Err(Reject::Claims)),
+        ("nonce", Err(Reject::Nonce)),
+        ("aud", Err(Reject::Claims)),
+    ] {
+        let mut claims = base.clone();
+        claims.as_object_mut().unwrap().remove(absent);
+        assert_eq!(sign_in("RS256", "rsa", &claims), expected, "{absent}");
+    }
+    // As in go-oidc, a null subject is empty, which the user information check refuses.
+    assert_eq!(check("RS256", "rsa", json!({"sub": null})), Ok(String::new()));
     for (alg, kid, digest) in [
         ("RS256", "rsa", &ring::digest::SHA256),
         ("ES384", "p384", &ring::digest::SHA384),
@@ -225,19 +239,21 @@ fn id_token_claims_bind_issuer_audience_nonce_time_and_access_token() {
         json!({"aud": ["meter"], "azp": "meter", "nbf": now + 299}),
         json!({"aud": ["other", "meter"], "azp": "other"}),
         json!({"aud": ["meter", "meter"]}),
-        json!({"iat": null}),
         json!({"iat": now.to_string()}),
+        json!({"at_hash": null, "nbf": null, "name": null, "preferred_username": null}),
     ] {
         assert!(check("RS256", "rsa", changes.clone()).is_ok(), "{changes}");
     }
     for (changes, reject) in [
         (json!({"iss": "https://id.example/"}), Reject::Claims),
+        (json!({"iss": null}), Reject::Claims),
         (json!({"aud": "other"}), Reject::Claims),
         (json!({"aud": []}), Reject::Claims),
         (json!({"aud": ["meter", 7]}), Reject::Claims),
         (json!({"aud": null}), Reject::Claims),
         (json!({"exp": now}), Reject::Claims),
         (json!({"exp": null}), Reject::Claims),
+        (json!({"iat": null}), Reject::Claims),
         (json!({"iat": "soon"}), Reject::Claims),
         (json!({"nbf": now + 301}), Reject::Claims),
         (json!({"sub": 7}), Reject::Claims),

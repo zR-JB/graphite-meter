@@ -433,9 +433,9 @@ impl Oidc {
 
 #[derive(Deserialize)]
 struct Tokens {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "jwt::go_string")]
     access_token: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "jwt::go_string")]
     error: String,
     id_token: Option<serde_json::Value>,
 }

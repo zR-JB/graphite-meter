@@ -38,6 +38,8 @@ struct Twist {
     name: Option<String>,
     /// Discovery members that replace the double's own.
     metadata: Option<Value>,
+    /// Token response members that replace the double's own.
+    tokens: Option<Value>,
 }
 
 struct Keys {
@@ -250,7 +252,11 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Provi
                                 (true, _) => json!({"alg": "ES256", "kid": "rotated", "typ": "JWT"}),
                                 _ => json!({"alg": "RS256", "kid": "test-key"}),
                             });
-                            ("application/json", json!({"access_token": "access", "token_type": "Bearer", "id_token": keys.sign(&header, &token_claims)}).to_string())
+                            let mut tokens = json!({"access_token": "access", "token_type": "Bearer", "id_token": keys.sign(&header, &token_claims)});
+                            for (key, value) in twist.tokens.as_ref().and_then(Value::as_object).into_iter().flatten() {
+                                tokens[key] = value.clone();
+                            }
+                            ("application/json", tokens.to_string())
                         }
                         "/userinfo" => {
                             assert!(headers.contains("authorization: Bearer access\r\n"), "{headers}");
@@ -560,6 +566,19 @@ async fn an_authorization_endpoint_off_a_canonical_origin_fails_discovery() {
     provider.twist.lock().unwrap().metadata = None;
     provider.oidc.discover().await.unwrap();
     assert!(provider.oidc.ready().is_some());
+    provider.stop().await;
+}
+
+#[tokio::test]
+async fn a_null_optional_string_reads_as_empty_as_in_go() {
+    let provider = provider_double("localhost", &["RS256"], Proxy::default()).await;
+    *provider.twist.lock().unwrap() = Twist {
+        claims: Some(json!({"at_hash": null})),
+        tokens: Some(json!({"error": null})),
+        ..Twist::default()
+    };
+    let identity = provider.login(Claims::default()).await.unwrap();
+    assert_eq!(identity.subject, "oidc:operator");
     provider.stop().await;
 }
 

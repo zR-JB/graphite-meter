@@ -260,15 +260,21 @@ pub(super) fn audience_and_issuer(claims: &Map<String, Value>, issuer: &str, cli
     Ok(())
 }
 
+/// A string member as Go's decoder fills a string field: absent or null, it stays empty.
+pub(super) fn go_string<'de, D: serde::Deserializer<'de>>(member: D) -> Result<String, D::Error> {
+    Ok(Option::deserialize(member)?.unwrap_or_default())
+}
+
 pub(super) fn id_token(verified: Verified, expected: &Expected<'_>) -> Result<IdClaims, Reject> {
     #[derive(Deserialize)]
     struct Standard {
+        #[serde(default, deserialize_with = "go_string")]
         sub: String,
         exp: f64,
         nbf: Option<f64>,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "go_string")]
         nonce: String,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "go_string")]
         at_hash: String,
     }
     #[derive(Deserialize)]
