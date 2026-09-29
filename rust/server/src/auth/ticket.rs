@@ -2,6 +2,7 @@ use super::{
     grant::AuthLease,
     session::{SessionStore, random_token, token_hash},
 };
+use crate::sync::lock;
 use graphite_meter_core::{
     origin::{canonical_origin, target_origin},
     route::{self, Kind},
@@ -81,7 +82,7 @@ impl SessionStore {
         if public.scheme != "https" || !target_host.eq_ignore_ascii_case(&public.host) || route_kind != expected {
             return Err(TicketError::InvalidTarget);
         }
-        let mut state = self.0.lock().expect("session mutex poisoned");
+        let mut state = lock(&self.0);
         state.sweep(now);
         if !state.contains(&lease.session) || !lease.active_at(now) {
             return Err(TicketError::NoSession);
@@ -120,7 +121,7 @@ impl SessionStore {
     }
 
     fn consume_ticket_at(&self, raw: &str, target: &str, origin: &str, now: Instant) -> Option<AuthLease> {
-        let mut state = self.0.lock().expect("session mutex poisoned");
+        let mut state = lock(&self.0);
         let ticket = state.tickets.remove(&token_hash(raw))?;
         let (target, _, _) = socket_target(target)?;
         if ticket.target != target || ticket.origin != origin || !ticket.active_at(now) {

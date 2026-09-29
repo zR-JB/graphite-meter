@@ -1,4 +1,5 @@
 use super::{approval::Approval, grant::AuthLease, ticket::StoredTicket};
+use crate::sync::lock;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use sha2::{Digest, Sha256};
 use std::{
@@ -201,7 +202,7 @@ impl SessionStore {
             deadline: now + SESSION_LIFETIME,
             revoked,
         });
-        let mut state = self.0.lock().expect("session mutex poisoned");
+        let mut state = lock(&self.0);
         state.sweep(now);
         let same_subject = state.sessions.values().filter(|session| session.subject == subject);
         let oldest = same_subject
@@ -228,7 +229,7 @@ impl SessionStore {
 
     fn lookup_at(&self, token: &str, now: Instant) -> Option<SessionLease> {
         let hash = token_hash(token);
-        let mut state = self.0.lock().expect("session mutex poisoned");
+        let mut state = lock(&self.0);
         let session = state.sessions.get(&hash)?;
         if !session.active_at(now) {
             state.remove(&hash);
@@ -238,7 +239,7 @@ impl SessionStore {
     }
 
     pub fn revoke(&self, lease: &SessionLease) -> bool {
-        let mut state = self.0.lock().expect("session mutex poisoned");
+        let mut state = lock(&self.0);
         state.contains(lease) && state.remove(&lease.0.hash)
     }
 }

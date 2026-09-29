@@ -1,4 +1,5 @@
 //! When a multiplexed connection goes away and closes, as its admitted work and receive credit allow.
+use crate::sync::lock;
 use crate::timeouts::{CONTROL, SHUTDOWN_GRACE};
 use std::{
     future::Future,
@@ -26,12 +27,12 @@ impl AdmittedWork {
     }
 
     pub(super) fn admit(&self) -> Admitted {
-        self.0.lock().expect("admitted work poisoned").running += 1;
+        lock(&self.0).running += 1;
         Admitted(self.clone())
     }
 
     pub(super) fn idle_since(&self) -> Option<Instant> {
-        let work = self.0.lock().expect("admitted work poisoned");
+        let work = lock(&self.0);
         (work.running == 0).then_some(work.idle_since)
     }
 }
@@ -40,7 +41,7 @@ pub(super) struct Admitted(AdmittedWork);
 
 impl Drop for Admitted {
     fn drop(&mut self) {
-        let mut work = self.0.0.lock().expect("admitted work poisoned");
+        let mut work = lock(&self.0.0);
         work.running -= 1;
         if work.running == 0 {
             work.idle_since = Instant::now();

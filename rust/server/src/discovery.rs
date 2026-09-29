@@ -4,6 +4,7 @@ use crate::{
     config::{AuthMode, Config, ConfigError, NativeKind, ValidatedConfig},
     http::response::{json_response, text_body},
     preflight::{Preflight, connect_origins, discovery_host},
+    sync::lock,
 };
 use bytes::Bytes;
 use graphite_meter_core::{
@@ -116,11 +117,11 @@ impl Discovery {
         if let Some(responses) = self.configured.get(host) {
             return Ok(responses.clone());
         }
-        if let Some(responses) = self.hosts.lock().expect("discovery cache poisoned").get(host) {
+        if let Some(responses) = lock(&self.hosts).get(host) {
             return Ok(responses.clone());
         }
         let responses = Arc::new(build(&self.config, &self.preflight, host)?);
-        let mut hosts = self.hosts.lock().expect("discovery cache poisoned");
+        let mut hosts = lock(&self.hosts);
         if hosts.len() >= MAX_HOSTS
             && let Some(evicted) = hosts.keys().next().cloned()
         {

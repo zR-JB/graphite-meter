@@ -6,6 +6,7 @@ use super::{
     session::{random_token, token_hash},
 };
 use crate::config::{AuthConfig, ConfigError};
+use crate::sync::lock;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use graphite_meter_core::origin::split_url;
 use graphite_meter_net::{Proxy, connect};
@@ -228,7 +229,7 @@ impl Oidc {
             Some(_) => "&",
         };
         let url = format!("{}{separator}{query}", provider.authorization);
-        let mut transactions = self.transactions.lock().expect("OIDC transactions poisoned");
+        let mut transactions = lock(&self.transactions);
         let now = Instant::now();
         transactions.retain(|_, transaction| transaction.deadline > now);
         let client_keys = crate::client_address::client_keys(address);
@@ -264,10 +265,7 @@ impl Oidc {
         format!("{}/auth/oidc/callback", self.config.public_url)
     }
     pub fn take(&self, state: &str, browser: &str, issuer: Option<&str>) -> Result<Transaction, (Reason, String)> {
-        let tx = self
-            .transactions
-            .lock()
-            .expect("OIDC transactions poisoned")
+        let tx = lock(&self.transactions)
             .remove(&token_hash(state))
             .ok_or((Reason::TransactionReplay, String::new()))?;
         if tx.deadline <= Instant::now() || tx.browser != token_hash(browser) {

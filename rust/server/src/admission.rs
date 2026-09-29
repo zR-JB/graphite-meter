@@ -1,6 +1,6 @@
 //! Shared operation budgets. A permit lives until the operation has fully stopped.
-use crate::client_address::Shares;
-use std::sync::{Arc, Mutex, MutexGuard};
+use crate::{client_address::Shares, sync::lock};
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
@@ -35,14 +35,6 @@ impl Refusal {
             Self::GlobalFull | Self::SessionsFull => 503,
         }
     }
-}
-
-pub(crate) fn recover<'a, T>(counts: &'a Mutex<T>, name: &str) -> MutexGuard<'a, T> {
-    counts.lock().unwrap_or_else(|poisoned| {
-        crate::log!("[gm:admission] {name} counts recovered after a panic and may be inaccurate");
-        counts.clear_poison();
-        poisoned.into_inner()
-    })
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -90,7 +82,7 @@ impl Admission {
     /// Call after resolving the request or session client keys. Unmetered routes
     /// and CORS preflight do not acquire a permit.
     pub fn acquire(&self, session: bool, keys: &[String]) -> Result<Permit, Refusal> {
-        let mut counts = recover(&self.0.counts, "operation");
+        let mut counts = lock(&self.0.counts);
         let Counts {
             stats,
             requests_by_client,
@@ -140,7 +132,7 @@ impl Admission {
     }
 
     pub fn stats(&self) -> Stats {
-        recover(&self.0.counts, "operation").stats
+        lock(&self.0.counts).stats
     }
 }
 
@@ -153,7 +145,7 @@ impl Permit {
 
 impl Drop for Permit {
     fn drop(&mut self) {
-        let mut counts = recover(&self.admission.0.counts, "operation");
+        let mut counts = lock(&self.admission.0.counts);
         counts.stats.active -= 1;
         if self.session {
             counts.stats.sessions -= 1;

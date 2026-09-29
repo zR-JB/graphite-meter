@@ -17,6 +17,7 @@ use crate::{
     cors::Access,
     http::response::{json_response, query_pairs, text_response},
     log::rfc3339,
+    sync::lock,
 };
 use bytes::Bytes;
 use graphite_meter_core::route::{self, Route};
@@ -432,7 +433,7 @@ impl Service {
         {
             // Checking the originating login and revoking its scope is one
             // transaction; an already revoked lease cannot revoke sibling logins.
-            let mut state = self.sessions.0.lock().expect("session mutex poisoned");
+            let mut state = lock(&self.sessions.0);
             if !state.contains(&lease.session) || !lease.is_active() {
                 return response(StatusCode::FORBIDDEN);
             }

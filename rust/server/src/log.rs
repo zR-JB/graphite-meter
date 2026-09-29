@@ -1,8 +1,9 @@
 //! Go's `log` line format, in UTC, and its one-line-a-minute limit for failures any peer can cause.
+use crate::sync::lock;
 use std::{
     fmt,
     io::Write,
-    sync::{Mutex, PoisonError},
+    sync::Mutex,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::time::Instant;
@@ -28,7 +29,7 @@ pub(crate) struct PeerLog(Mutex<(Option<Instant>, usize)>);
 
 impl PeerLog {
     pub(crate) fn write(&self, message: fmt::Arguments<'_>) {
-        let mut state = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut state = lock(&self.0);
         let (next, suppressed) = &mut *state;
         let now = Instant::now();
         if next.is_some_and(|next| now < next) {

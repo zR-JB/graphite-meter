@@ -1,5 +1,6 @@
 //! Bounded rolling-window budgets for authentication attempts.
 use super::logging::{Ceiling, SecurityLog};
+use crate::sync::lock;
 use std::{
     collections::{HashMap, VecDeque},
     net::IpAddr,
@@ -55,7 +56,7 @@ impl AttemptLimiter {
 
     pub fn allow(&self, budget: Budget, address: IpAddr) -> bool {
         let keys = crate::client_address::client_keys(address);
-        let mut state = self.state.lock().expect("auth attempt mutex poisoned");
+        let mut state = lock(&self.state);
         // Sample after acquiring the lock to keep stored timestamps ordered.
         let now = Instant::now();
         let State {
@@ -102,7 +103,7 @@ impl AttemptLimiter {
 
     /// Only a wrong password spends the global ceiling, so a spray cannot lock out the operator.
     pub fn note_failed_password(&self) {
-        let mut state = self.state.lock().expect("auth attempt mutex poisoned");
+        let mut state = lock(&self.state);
         let now = Instant::now();
         expire(&mut state.failed_passwords, now);
         state.failed_passwords.push_back(now);

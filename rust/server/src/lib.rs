@@ -30,6 +30,7 @@ pub mod preflight;
 mod probe;
 mod quic_shard;
 pub mod runtime;
+mod sync;
 mod timeouts;
 pub mod tls;
 pub mod upload;

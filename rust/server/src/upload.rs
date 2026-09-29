@@ -1,5 +1,5 @@
 //! Receiver-owned upload totals shared by HTTP and WebTransport lanes.
-use crate::client_address::Shares;
+use crate::{client_address::Shares, sync::lock};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use graphite_meter_core::{failure::UploadRefusal, wire::UploadProgress};
 use hmac::{Hmac, KeyInit, Mac};
@@ -183,7 +183,7 @@ impl UploadStore {
             return Err(UploadRefusal::OwnerMismatch);
         }
         self.sweep_if_due();
-        let mut entries = self.inner.entries.lock().expect("upload store lock");
+        let mut entries = lock(&self.inner.entries);
         let aggregate = if let Some(aggregate) = entries.by_id.get(id) {
             aggregate.clone()
         } else {
@@ -201,7 +201,7 @@ impl UploadStore {
                     .by_id
                     .iter()
                     .filter_map(|(id, aggregate)| {
-                        let state = aggregate.lock().expect("upload aggregate lock");
+                        let state = lock(aggregate);
                         (state.lanes == 0 && state.bytes == 0 && !state.finished).then(|| (id.clone(), state.touched))
                     })
                     .min_by_key(|(_, touched)| *touched);
@@ -209,7 +209,7 @@ impl UploadStore {
                     return Err(UploadRefusal::GlobalFull);
                 };
                 let aggregate = entries.by_id.remove(&victim).expect("selected receiver exists");
-                let mut state = aggregate.lock().expect("upload aggregate lock");
+                let mut state = lock(&aggregate);
                 entries.by_client.release(state.owner.client_keys());
                 state.expired = true;
                 state.changed.notify_waiters();
@@ -231,7 +231,7 @@ impl UploadStore {
             aggregate
         };
         {
-            let mut state = aggregate.lock().expect("upload aggregate lock");
+            let mut state = lock(&aggregate);
             state.authorize(owner)?;
             // Join under the store lock so sweeping cannot remove a just-admitted lane.
             if lane {
@@ -255,15 +255,12 @@ impl UploadStore {
     }
     /// Read-only observation never extends retention and never creates an aggregate.
     pub fn checkpoint(&self, id: &str, owner: &Owner) -> Result<UploadCheckpoint, UploadRefusal> {
-        Ok(self
-            .access(id, owner, false, false)?
-            .lock()
-            .expect("upload aggregate lock")
-            .checkpoint())
+        let aggregate = self.access(id, owner, false, false)?;
+        Ok(lock(&aggregate).checkpoint())
     }
     pub fn finish(&self, id: &str, owner: &Owner) -> Result<(), UploadRefusal> {
         let aggregate = self.access(id, owner, false, false)?;
-        let mut state = aggregate.lock().expect("upload aggregate lock");
+        let mut state = lock(&aggregate);
         state.finished = true;
         state.changed.notify_waiters();
         Ok(())
@@ -272,7 +269,7 @@ impl UploadStore {
         let aggregate = self.access(id, owner, true, false)?;
         let claim = Arc::new(());
         let changed = {
-            let mut state = aggregate.lock().expect("upload aggregate lock");
+            let mut state = lock(&aggregate);
             state.claim = Some(claim.clone());
             state.changed.notify_waiters();
             state.changed.clone()
@@ -289,7 +286,7 @@ impl UploadStore {
     }
     fn sweep_if_due(&self) {
         let now = Instant::now();
-        let mut next = self.inner.next_sweep.lock().expect("upload sweep lock");
+        let mut next = lock(&self.inner.next_sweep);
         if now >= *next {
             self.sweep_at(now);
             *next = now + SWEEP_INTERVAL;
@@ -297,11 +294,11 @@ impl UploadStore {
     }
     /// Also permits a caller-owned maintenance loop; no background task is spawned.
     pub fn sweep_at(&self, now: Instant) {
-        let mut entries = self.inner.entries.lock().expect("upload store lock");
+        let mut entries = lock(&self.inner.entries);
         entries.tombstones.retain(|_, until| *until >= now);
         let UploadEntries { by_id, by_client, .. } = &mut *entries;
         by_id.retain(|_, aggregate| {
-            let mut state = aggregate.lock().expect("upload aggregate lock");
+            let mut state = lock(aggregate);
             if state.lanes == 0 && now.saturating_duration_since(state.touched) > UPLOAD_RETENTION {
                 by_client.release(state.owner.client_keys());
                 state.expired = true;
@@ -313,7 +310,7 @@ impl UploadStore {
         });
     }
     pub fn retained(&self) -> usize {
-        self.inner.entries.lock().expect("upload store lock").by_id.len()
+        lock(&self.inner.entries).by_id.len()
     }
 }
 
@@ -329,13 +326,13 @@ impl UploadLane {
     pub fn finished(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
         let aggregate = self.aggregate.clone();
         async move {
-            let changed = aggregate.lock().expect("upload aggregate lock").changed.clone();
+            let changed = lock(&aggregate).changed.clone();
             loop {
                 let notified = changed.notified();
                 tokio::pin!(notified);
                 notified.as_mut().enable();
                 {
-                    let state = aggregate.lock().expect("upload aggregate lock");
+                    let state = lock(&aggregate);
                     if state.finished || state.expired {
                         return;
                     }
@@ -349,7 +346,7 @@ impl UploadLane {
         if bytes == 0 {
             return;
         }
-        let mut state = self.aggregate.lock().expect("upload aggregate lock");
+        let mut state = lock(&self.aggregate);
         let now = Instant::now();
         state.first_chunk.get_or_insert(now);
         state.bytes = state.bytes.saturating_add(bytes as u64);
@@ -364,7 +361,7 @@ impl UploadLane {
 }
 impl Drop for UploadLane {
     fn drop(&mut self) {
-        let mut state = self.aggregate.lock().expect("upload aggregate lock");
+        let mut state = lock(&self.aggregate);
         state.lanes -= 1;
         state.touched = Instant::now();
         state.changed.notify_waiters();
@@ -396,7 +393,7 @@ impl UploadSubscription {
             notified.as_mut().enable();
             self.store.sweep_if_due();
             {
-                let state = self.aggregate.lock().expect("upload aggregate lock");
+                let state = lock(&self.aggregate);
                 if !state
                     .claim
                     .as_ref()
@@ -446,7 +443,7 @@ impl UploadSubscription {
 }
 impl Drop for UploadSubscription {
     fn drop(&mut self) {
-        let mut state = self.aggregate.lock().expect("upload aggregate lock");
+        let mut state = lock(&self.aggregate);
         if state
             .claim
             .as_ref()

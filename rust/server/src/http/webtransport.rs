@@ -32,7 +32,7 @@ type Lane<'a> = Pin<Box<dyn Future<Output = Result<(), Failure>> + Send + 'a>>;
 type Activity = Arc<Mutex<Instant>>;
 
 fn touch(activity: &Activity) {
-    *activity.lock().expect("WT activity poisoned") = Instant::now();
+    *lock(activity) = Instant::now();
 }
 
 impl HttpServer {
@@ -215,7 +215,7 @@ impl<'a> Lanes<'a> {
                 _ = lease_ended(lease.clone()) => return LaneEnding::Revoked,
                 _ = tick.tick() => {
                     self.fund();
-                    let last = *self.activity.lock().expect("WT activity poisoned");
+                    let last = *lock(&self.activity);
                     if Instant::now().duration_since(last) >= IDLE_BOUND {
                         return LaneEnding::Idle;
                     }

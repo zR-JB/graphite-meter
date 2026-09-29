@@ -450,7 +450,7 @@ struct Held {
 impl ConnectionBudget {
     /// Reserves the window once, from the budget and from the admitted client's share of it.
     fn reserve(&self, clients: &[String]) -> bool {
-        let mut held = self.held.lock().expect("connection budget poisoned");
+        let mut held = lock(&self.held);
         if held.credit.is_none()
             && self.memory.has_headroom()
             && let Some(claim) = self.clients.claim(clients, QUIC_CREDIT_BYTES)
@@ -466,7 +466,7 @@ impl ConnectionBudget {
 
 impl SharedBudget for ConnectionBudget {
     fn try_charge(&self, bytes: usize) -> bool {
-        let mut held = self.held.lock().expect("connection budget poisoned");
+        let mut held = lock(&self.held);
         let credit = held.undrawn.min(bytes);
         if credit < bytes && !self.memory.try_charge(bytes - credit) {
             return false;
@@ -477,7 +477,7 @@ impl SharedBudget for ConnectionBudget {
     }
 
     fn refund(&self, bytes: usize) {
-        let mut held = self.held.lock().expect("connection budget poisoned");
+        let mut held = lock(&self.held);
         let overdraft = held.overdraft.min(bytes);
         held.overdraft -= overdraft;
         held.undrawn += bytes - overdraft;
@@ -522,13 +522,7 @@ impl ReceiveCredit {
     }
 
     fn reserved(&self) -> bool {
-        self.0
-            .budget
-            .held
-            .lock()
-            .expect("connection budget poisoned")
-            .credit
-            .is_some()
+        lock(&self.0.budget.held).credit.is_some()
     }
 }
 

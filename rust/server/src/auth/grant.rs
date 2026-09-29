@@ -1,5 +1,5 @@
 use super::session::{Session, SessionError, SessionLease, SessionStore, State, random_token, token_hash};
-use crate::cors::Access;
+use crate::{cors::Access, sync::lock};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use graphite_meter_core::origin::canonical_origin;
 use http::HeaderValue;
@@ -115,7 +115,7 @@ impl SessionStore {
     }
 
     fn issue_grant(&self, session: &SessionLease, origin: Option<&str>) -> Result<(String, AuthLease), GrantError> {
-        let mut state = self.0.lock().expect("session mutex poisoned");
+        let mut state = lock(&self.0);
         let now = Instant::now();
         state.sweep(now);
         state.issue_grant(session, origin, now)
@@ -133,7 +133,7 @@ impl SessionStore {
             return None;
         }
         let key = token_hash(token);
-        let mut state = self.0.lock().expect("session mutex poisoned");
+        let mut state = lock(&self.0);
         let grant = state.grants.get(&key)?;
         if grant.active_at(now) {
             return Some(grant.clone());
@@ -150,10 +150,7 @@ impl SessionStore {
     }
 
     pub fn revoke_grant(&self, token: &str) -> bool {
-        self.0
-            .lock()
-            .expect("session mutex poisoned")
-            .remove_grant(&token_hash(token))
+        lock(&self.0).remove_grant(&token_hash(token))
     }
 }
 

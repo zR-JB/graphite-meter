@@ -59,7 +59,7 @@ impl HttpServer {
         });
         let response = websocket::handshake(&request, approved_origin);
         if response.status() == StatusCode::SWITCHING_PROTOCOLS {
-            *pending.lock().expect("WebSocket upgrade poisoned") = Some(Upgrade {
+            *lock(pending) = Some(Upgrade {
                 handshake: hyper::upgrade::on(&mut request),
                 deadline: tokio::time::Instant::now() + self.config.max_operation_duration,
                 _permit: permit,

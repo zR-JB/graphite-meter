@@ -30,6 +30,7 @@ use crate::{
     connections::Connections,
     cors::Access,
     discovery::Discovery,
+    sync::lock,
     timeouts::{CONTROL, IDLE_BOUND, SHUTDOWN_GRACE},
     upload::Owner,
     upload::UploadStore,
@@ -334,7 +335,7 @@ impl HttpServer {
             let route = route::lookup(request.uri().path());
             let probe = route == Some(Route::Probe) && request.method() != Method::OPTIONS;
             let lifecycle = lifecycle.clone();
-            *lifecycle.lock().expect("HTTP/1 lifecycle poisoned") = Http1Lifecycle::Active {
+            *lock(&lifecycle) = Http1Lifecycle::Active {
                 complete: false,
                 control: Some(Box::pin(tokio::time::sleep(CONTROL))),
             };
@@ -359,11 +360,11 @@ impl HttpServer {
                         .insert(header::CONNECTION, http::HeaderValue::from_static("close"));
                 }
                 let admitted = response.body().operation.as_ref().is_some_and(|operation| {
-                    let mut operation = operation.lock().expect("operation poisoned");
+                    let mut operation = lock(operation);
                     operation.body_complete |= head;
                     operation.permit.is_some()
                 });
-                let mut state = lifecycle.lock().expect("HTTP/1 lifecycle poisoned");
+                let mut state = lock(&lifecycle);
                 let control = match &mut *state {
                     Http1Lifecycle::Active { control, .. } => control.take(),
                     _ => None,
@@ -396,7 +397,7 @@ impl HttpServer {
             },
             _ = &mut serving => {},
         }
-        let pending = upgrade.lock().expect("WebSocket upgrade poisoned").take();
+        let pending = lock(&upgrade).take();
         if let Some(upgrade) = pending {
             upgrade.run().await;
         }
@@ -587,8 +588,8 @@ impl HttpServer {
                 if !upload {
                     return Err(io::ErrorKind::PermissionDenied.into());
                 }
-                for operation in operations.lock().expect("operations poisoned").iter() {
-                    operation.lock().expect("operation poisoned").body_complete = true;
+                for operation in lock(operations).iter() {
+                    lock(operation).body_complete = true;
                 }
                 (upload::refusal(graphite_meter_core::failure::UploadRefusal::Revoked), true)
             },
@@ -694,16 +695,16 @@ impl HttpServer {
     ) {
         if let Some(lease) = lease {
             let complete = response.body().is_end_stream();
-            response
-                .body_mut()
-                .operation
-                .get_or_insert_with(|| self.operation(None, complete))
-                .lock()
-                .expect("operation poisoned")
-                .revocation = Some(Box::pin(async move { lease.ended().await }));
+            lock(
+                response
+                    .body_mut()
+                    .operation
+                    .get_or_insert_with(|| self.operation(None, complete)),
+            )
+            .revocation = Some(Box::pin(async move { lease.ended().await }));
         }
         if let Some(operation) = &response.body().operation {
-            let mut operations = operations.lock().expect("operations poisoned");
+            let mut operations = lock(operations);
             if !operations.iter().any(|entry| Arc::ptr_eq(entry, operation)) {
                 operations.push(operation.clone());
             }
@@ -951,7 +952,7 @@ impl Body for Http1Body {
     fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, io::Error>>> {
         let result = Pin::new(&mut self.inner).poll_frame(cx);
         if self.inner.is_end_stream() || matches!(result, Poll::Ready(None)) {
-            let mut lifecycle = self.lifecycle.lock().expect("HTTP/1 lifecycle poisoned");
+            let mut lifecycle = lock(&self.lifecycle);
             if let Http1Lifecycle::Active { complete, .. } = &mut *lifecycle {
                 *complete = true;
             }
@@ -969,7 +970,7 @@ impl Body for Http1Body {
 impl<T> DeadlineIo<T> {
     fn check_deadlines(&self, cx: &mut Context<'_>) -> io::Result<()> {
         if let Some(lifecycle) = &self.lifecycle {
-            let mut lifecycle = lifecycle.lock().expect("HTTP/1 lifecycle poisoned");
+            let mut lifecycle = lock(lifecycle);
             let control = match &mut *lifecycle {
                 Http1Lifecycle::Headers(deadline)
                 | Http1Lifecycle::Idle(deadline)
@@ -995,7 +996,7 @@ impl<T> DeadlineIo<T> {
 
     fn flushed(&self, cx: &mut Context<'_>) {
         if let Some(lifecycle) = &self.lifecycle {
-            let mut lifecycle = lifecycle.lock().expect("HTTP/1 lifecycle poisoned");
+            let mut lifecycle = lock(lifecycle);
             if matches!(*lifecycle, Http1Lifecycle::Active { complete: true, .. }) {
                 *lifecycle = Http1Lifecycle::Idle(Box::pin(tokio::time::sleep(CONTROL)));
             } else if matches!(*lifecycle, Http1Lifecycle::UpgradePending(_)) {
@@ -1005,18 +1006,15 @@ impl<T> DeadlineIo<T> {
                 let _ = deadline.as_mut().poll(cx);
             }
         }
-        self.operations
-            .lock()
-            .expect("connection operations poisoned")
-            .retain(|operation| {
-                let mut operation = operation.lock().expect("operation poisoned");
-                if operation.body_complete {
-                    operation.permit.take();
-                    false
-                } else {
-                    true
-                }
-            });
+        lock(&self.operations).retain(|operation| {
+            let mut operation = lock(operation);
+            if operation.body_complete {
+                operation.permit.take();
+                false
+            } else {
+                true
+            }
+        });
     }
 }
 
@@ -1028,7 +1026,7 @@ impl<T: AsyncRead + Unpin> AsyncRead for DeadlineIo<T> {
         if buffer.filled().len() > before
             && let Some(lifecycle) = &self.lifecycle
         {
-            let mut lifecycle = lifecycle.lock().expect("HTTP/1 lifecycle poisoned");
+            let mut lifecycle = lock(lifecycle);
             if matches!(*lifecycle, Http1Lifecycle::Idle(_)) {
                 *lifecycle = Http1Lifecycle::Headers(Box::pin(tokio::time::sleep(CONTROL)));
             }

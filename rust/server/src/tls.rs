@@ -3,6 +3,7 @@
 use crate::{
     config::{Config, ConfigError, NativeKind},
     log::rfc3339,
+    sync,
 };
 use graphite_meter_core::origin::target_origin;
 use rustls::{
@@ -15,7 +16,7 @@ use std::{
     fmt,
     future::Future,
     path::PathBuf,
-    sync::{Arc, PoisonError, RwLock},
+    sync::{Arc, RwLock},
     time::{Duration, SystemTime},
 };
 
@@ -126,7 +127,7 @@ impl Certificates {
             now,
         )?);
         (self.budget)(handshake_bytes(&replacement.cert))?;
-        let mut current = self.current.write().unwrap_or_else(PoisonError::into_inner);
+        let mut current = sync::write(&self.current);
         let changed = current.cert != replacement.cert;
         if changed {
             log_certificate(&replacement, now);
@@ -149,7 +150,7 @@ impl Certificates {
 
 impl ResolvesServerCert for Certificates {
     fn resolve(&self, _hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
-        Some(self.current.read().unwrap_or_else(PoisonError::into_inner).clone())
+        Some(sync::read(&self.current).clone())
     }
 }
 

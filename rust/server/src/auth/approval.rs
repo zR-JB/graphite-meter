@@ -3,6 +3,7 @@ use super::{
     grant::{AuthLease, GrantError, MAX_SESSION_GRANTS, secure_browser_origin},
     session::{SessionLease, SessionStore, State},
 };
+use crate::sync::lock;
 use graphite_meter_core::approval;
 use std::{net::IpAddr, time::Duration};
 use tokio::time::Instant;
@@ -104,7 +105,7 @@ impl SessionStore {
         client: IpAddr,
     ) -> Result<ApprovalView, ApprovalError> {
         let code = approval::verification_code(challenge).ok_or(ApprovalError::InvalidChallenge)?;
-        let mut state = self.0.lock().expect("session mutex poisoned");
+        let mut state = lock(&self.0);
         let now = Instant::now();
         state.sweep(now);
         if !state.contains(session) || !session.0.active_at(now) {
@@ -153,7 +154,7 @@ impl SessionStore {
         if !secure_browser_origin(origin) {
             return Err(ApprovalError::InvalidOrigin);
         }
-        let mut state = self.0.lock().expect("session mutex poisoned");
+        let mut state = lock(&self.0);
         let now = Instant::now();
         state.sweep(now);
         if let Some(session) = session
@@ -205,7 +206,7 @@ impl SessionStore {
     }
 
     pub fn approve(&self, session: &SessionLease, challenge: &str, kind: ApprovalKind) -> Result<(), ApprovalError> {
-        let mut state = self.0.lock().expect("session mutex poisoned");
+        let mut state = lock(&self.0);
         let now = Instant::now();
         let approval = state.approvals.get(challenge).ok_or(ApprovalError::InvalidApproval)?;
         if !approval.active_at(now)
@@ -224,7 +225,7 @@ impl SessionStore {
 
     /// Preserve a browser challenge through /login -> /auth/cli reentry.
     pub fn browser_approval_redirect(&self, challenge: &str) -> Option<String> {
-        let state = self.0.lock().expect("session mutex poisoned");
+        let state = lock(&self.0);
         let approval = state.approvals.get(challenge)?;
         if !approval.active_at(Instant::now()) {
             return None;
@@ -256,7 +257,7 @@ impl SessionStore {
 
     fn exchange_at(&self, verifier: &str, origin: Option<&str>, now: Instant) -> Result<Exchange, ExchangeError> {
         let challenge = approval::challenge(verifier);
-        let mut state = self.0.lock().expect("session mutex poisoned");
+        let mut state = lock(&self.0);
         let Some(approval) = state.approvals.get(&challenge) else {
             return Ok(Exchange::Pending);
         };

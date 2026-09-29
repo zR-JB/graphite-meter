@@ -205,7 +205,7 @@ struct UploadWindow {
 impl UploadWindow {
     /// Raises the connection window for its first funded upload, within the admitted client's share.
     fn raise(&self, stream: &mut RecvStream, clients: &[String]) -> bool {
-        let mut claim = self.claim.lock().expect("upload window poisoned");
+        let mut claim = lock(&self.claim);
         if claim.is_none() {
             *claim = self
                 .clients

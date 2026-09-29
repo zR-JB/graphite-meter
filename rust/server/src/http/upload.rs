@@ -96,10 +96,7 @@ impl HttpServer {
         };
         // Register before awaiting the body: socket IO must enforce this deadline
         // even while the response future has not produced its first byte.
-        operations
-            .lock()
-            .expect("connection operations poisoned")
-            .push(operation.clone());
+        lock(operations).push(operation.clone());
         let mut lane = match self.uploads.begin(&query(&request, "id").unwrap_or_default(), owner) {
             Ok(lane) => lane,
             Err(error) => {
@@ -109,7 +106,7 @@ impl HttpServer {
             }
         };
         let mut body = request.into_body();
-        let deadline = operation.lock().expect("operation poisoned").deadline.deadline();
+        let deadline = lock(&operation).deadline.deadline();
         let mut idle = Instant::now() + IDLE_BOUND;
         loop {
             let frame = tokio::time::timeout_at(
@@ -143,7 +140,7 @@ impl HttpServer {
 }
 
 fn attach_operation(response: &mut Response<ResponseBody>, operation: Arc<Mutex<Operation>>) {
-    operation.lock().expect("operation poisoned").body_complete = response.body().is_end_stream();
+    lock(&operation).body_complete = response.body().is_end_stream();
     response.body_mut().operation = Some(operation);
 }
 

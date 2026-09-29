@@ -1,3 +1,4 @@
+use crate::sync::lock;
 use std::{
     fmt::Write,
     sync::{
@@ -103,7 +104,7 @@ impl SecurityLog {
         }
     }
     fn ceiling_due(&self, ceiling: Ceiling) -> bool {
-        let mut ceilings = self.ceilings.lock().expect("auth log mutex poisoned");
+        let mut ceilings = lock(&self.ceilings);
         let now = Instant::now();
         let last = &mut ceilings[ceiling as usize];
         if last.is_some_and(|last| now.duration_since(last) < CEILING_LOG_INTERVAL) {

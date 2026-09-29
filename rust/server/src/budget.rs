@@ -5,6 +5,7 @@ use crate::{
     admission::Limits,
     config::{Config, ConfigError, NativeKind},
     quic_shard,
+    sync::lock,
     timeouts::IDLE_BOUND,
 };
 use graphite_meter_core::wire::MAX_WEBTRANSPORT_STREAMS;
@@ -274,7 +275,7 @@ impl ClientCredit {
 
     /// Charges `bytes` to every key of an admitted client, or to none if any would pass its share.
     pub(crate) fn claim(self: &Arc<Self>, keys: &[String], bytes: usize) -> Option<CreditClaim> {
-        let mut held = crate::admission::recover(&self.held, "receive credit");
+        let mut held = lock(&self.held);
         let fits = keys.iter().enumerate().all(|(index, key)| {
             let share = self.share.saturating_mul(1 << index.min(usize::BITS as usize - 1));
             held.get(key).copied().unwrap_or_default().saturating_add(bytes) <= share
@@ -303,7 +304,7 @@ pub(crate) struct CreditClaim {
 
 impl Drop for CreditClaim {
     fn drop(&mut self) {
-        let mut held = crate::admission::recover(&self.credit.held, "receive credit");
+        let mut held = lock(&self.credit.held);
         for key in &self.keys {
             let bytes = held.get_mut(key).expect("claimed keys are held");
             *bytes -= self.bytes;

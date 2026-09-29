@@ -1,6 +1,6 @@
 //! Response bodies and the admitted operations that bound them.
 use super::upload::ProgressBody;
-use crate::{admission::Permit, meter::Transfer};
+use crate::{admission::Permit, meter::Transfer, sync::lock};
 use bytes::Bytes;
 use http::Response;
 use hyper::body::{Body, Frame, SizeHint};
@@ -67,7 +67,7 @@ impl ResponseBody {
 
     fn complete(&self) {
         if let Some(operation) = &self.operation {
-            operation.lock().expect("operation poisoned").body_complete = true;
+            lock(operation).body_complete = true;
         }
     }
 }
@@ -81,7 +81,7 @@ impl Body for ResponseBody {
             return Poll::Ready(None);
         }
         if let Some(operation) = &self.operation {
-            let error = operation.lock().expect("operation poisoned").check(cx).err();
+            let error = lock(operation).check(cx).err();
             if let Some(error) = error {
                 // A byte body ends with its error; a progress stream reports it again when polled again.
                 match &mut self.content {
@@ -212,17 +212,15 @@ impl Operation {
 }
 
 pub(super) fn check_operations(operations: &Operations, cx: &mut Context<'_>) -> io::Result<()> {
-    for operation in operations.lock().expect("operations poisoned").iter() {
-        operation.lock().expect("operation poisoned").check(cx)?;
+    for operation in lock(operations).iter() {
+        lock(operation).check(cx)?;
     }
     Ok(())
 }
 
 pub(super) fn holds_permit(operations: &Operations) -> bool {
-    let operations = operations.lock().expect("operations poisoned");
-    operations
-        .iter()
-        .any(|operation| operation.lock().expect("operation poisoned").permit.is_some())
+    let operations = lock(operations);
+    operations.iter().any(|operation| lock(operation).permit.is_some())
 }
 
 /// An upload body asks its connection for a wider receive window once its exchange holds a permit, on each read
@@ -252,9 +250,9 @@ impl UploadFunding {
     }
 
     fn admitted_clients(&self) -> Option<Vec<String>> {
-        let operations = self.operations.lock().expect("operations poisoned");
+        let operations = lock(&self.operations);
         operations.iter().find_map(|operation| {
-            let operation = operation.lock().expect("operation poisoned");
+            let operation = lock(operation);
             operation.permit.as_ref().map(|permit| permit.clients().to_vec())
         })
     }
