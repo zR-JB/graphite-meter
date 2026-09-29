@@ -342,6 +342,15 @@ fn the_authentication_origin_is_canonical_once_validated() {
         ("GM_PUBLIC_ORIGINS", "self"),
     ];
     assert_eq!(load(&env, &[]).unwrap().auth.public_url, "https://meter.example:8443");
+    // As a browser writes the origin: a port without leading zeros, and none where it is the default.
+    for (public, canonical) in [(":08443", ":8443"), (":0443", "")] {
+        let public = format!("https://meter.example{public}");
+        let env = [env.as_slice(), &[("GM_AUTH_PUBLIC_URL", public.as_str())]].concat();
+        assert_eq!(
+            load(&env, &[]).unwrap().auth.public_url,
+            format!("https://meter.example{canonical}")
+        );
+    }
     let (code, stderr) = start(&env, &[]);
     assert_eq!(code, None, "{stderr}");
     assert!(stderr.contains(" origin=https://meter.example:8443 "), "{stderr}");

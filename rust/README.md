@@ -263,9 +263,10 @@ marked for another purpose:
 - only the first 64 keys Rust can use are kept, and a key Go's decoder refuses,
   such as one whose `alg` is a number, is skipped where Go refuses the set.
 
-`GM_AUTH_PUBLIC_URL` is used in canonical form: `HTTPS://Meter.Example` serves as
-`https://meter.example`, where Go keeps the host's spelling and so refuses every
-sign-in whose browser sends it in lower case.
+`GM_AUTH_PUBLIC_URL` is used in canonical form: `HTTPS://Meter.Example:08443`
+serves as `https://meter.example:8443`, and a port of `0443` as none, where Go
+keeps the spelling and so refuses every sign-in whose browser writes the origin
+as browsers do.
 
 Authentication forms require URL-encoded POST bodies with unique fields; another
 body fails as malformed, where Go reads no fields and reports a stale form. Unlike
