@@ -3,6 +3,7 @@ use graphite_meter_server::{
     auth::{
         ApprovalKind, AuthLease, Exchange, SessionLease, SessionStore,
         policy::{Authorization, Connection, Listener, Policy, Refusal},
+        valid_challenge,
     },
     config::AuthMode,
 };
@@ -29,10 +30,10 @@ fn grant(store: &SessionStore, session: &SessionLease, origin: Option<&str>) -> 
     let client = "192.0.2.1".parse().unwrap();
     let kind = match origin {
         Some(origin) => store
-            .begin_browser_approval(&challenge, origin, Some(session), client)
+            .begin_browser_approval(&valid_challenge(&challenge).unwrap(), origin, Some(session), client)
             .map(|_| ApprovalKind::Browser),
         None => store
-            .begin_cli_approval(session, &challenge, client)
+            .begin_cli_approval(session, &valid_challenge(&challenge).unwrap(), client)
             .map(|_| ApprovalKind::Cli),
     };
     store.approve(session, &challenge, kind.unwrap()).unwrap();

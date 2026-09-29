@@ -169,7 +169,7 @@ impl Service {
         };
         let query = query_pairs(request);
         let challenge = value(&query, "challenge");
-        let challenge = if valid_challenge(challenge) { challenge } else { "" };
+        let challenge = valid_challenge(challenge).map_or("", |_| challenge);
         let notice = match value(&query, "error") {
             "" => "",
             value @ ("provider" | "busy" | "stale" | "throttled" | "password") => value,
@@ -231,7 +231,7 @@ impl Service {
         match result {
             Ok((token, session)) => {
                 self.log.count(Counter::Local);
-                let destination = if valid_challenge(challenge) {
+                let destination = if valid_challenge(challenge).is_some() {
                     query_url(AuthRoute::CliPage.path(), &[("challenge", challenge)])
                 } else {
                     "/".into()
@@ -271,7 +271,7 @@ impl Service {
             return self.oidc_rejected(request.method(), Reason::Throttled, challenge);
         };
         let prior = cookie(request.headers(), "__Host-gm_session").and_then(|token| self.sessions.lookup(token));
-        let stored = if valid_challenge(challenge) { challenge } else { "" };
+        let stored = valid_challenge(challenge).map_or("", |_| challenge);
         match oidc.start(address, stored.to_owned(), prior).await {
             Ok(started) => {
                 let mut result = redirect(request.method(), &started.url);
@@ -356,7 +356,7 @@ impl Service {
     fn rejected(&self, method: &Method, reason: Reason, challenge: &str) -> Response<Bytes> {
         self.log.refused(reason);
         let mut fields = Vec::new();
-        if valid_challenge(challenge) {
+        if valid_challenge(challenge).is_some() {
             fields.push(("challenge", challenge));
         }
         fields.push(("error", reason.notice()));
@@ -407,9 +407,9 @@ impl Service {
         let request = authorized.request();
         let query = query_pairs(request);
         let challenge = value(&query, "challenge");
-        if !valid_challenge(challenge) {
+        let Some(valid) = valid_challenge(challenge) else {
             return response(StatusCode::FORBIDDEN);
-        }
+        };
         // As in Go, the CLI page redirects before it reads the client's address.
         if !browser && let Some(destination) = self.sessions.browser_approval_redirect(challenge) {
             return redirect(request.method(), &destination);
@@ -439,7 +439,7 @@ impl Service {
                 return response(StatusCode::FORBIDDEN);
             }
             self.sessions
-                .begin_browser_approval(challenge, origin, session.as_ref(), client)
+                .begin_browser_approval(&valid, origin, session.as_ref(), client)
         } else {
             let Some(session) = &session else {
                 return redirect(
@@ -450,7 +450,7 @@ impl Service {
             let Some(client) = client else {
                 return response(StatusCode::FORBIDDEN);
             };
-            self.sessions.begin_cli_approval(session, challenge, client)
+            self.sessions.begin_cli_approval(session, &valid, client)
         };
         match approval {
             Ok(view) => {

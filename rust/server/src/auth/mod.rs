@@ -20,4 +20,4 @@ pub use grant::{AuthLease, secure_browser_origin};
 pub use route::AuthRoute;
 pub use ticket::{Ticket, TicketError};
 
-pub use approval::{ApprovalError, ApprovalKind, ApprovalView, Exchange, ExchangeError, valid_challenge};
+pub use approval::{ApprovalError, ApprovalKind, ApprovalView, Challenge, Exchange, ExchangeError, valid_challenge};

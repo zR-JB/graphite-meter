@@ -98,9 +98,10 @@ impl SessionStore {
     pub fn begin_cli_approval(
         &self,
         session: &SessionLease,
-        challenge: &str,
+        challenge: &Challenge,
         client: IpAddr,
     ) -> Result<ApprovalView, ApprovalError> {
+        let Challenge(challenge, code) = challenge;
         let mut state = lock(&self.0);
         let now = Instant::now();
         state.sweep(now);
@@ -128,7 +129,7 @@ impl SessionStore {
             client_keys: crate::client_address::client_keys(client),
             session: Some(session.clone()),
             browser_origin: None,
-            code: code(challenge),
+            code: code.clone(),
             deadline: now + APPROVAL_LIFETIME,
             approved: false,
         };
@@ -141,11 +142,12 @@ impl SessionStore {
     /// Reentry can attach it to one cookie session, never switch its parent.
     pub fn begin_browser_approval(
         &self,
-        challenge: &str,
+        challenge: &Challenge,
         origin: &str,
         session: Option<&SessionLease>,
         client: IpAddr,
     ) -> Result<ApprovalView, ApprovalError> {
+        let Challenge(challenge, code) = challenge;
         let mut state = lock(&self.0);
         let now = Instant::now();
         state.sweep(now);
@@ -164,7 +166,7 @@ impl SessionStore {
                     client_keys: crate::client_address::client_keys(client),
                     session: None,
                     browser_origin: Some(origin.into()),
-                    code: code(challenge),
+                    code: code.clone(),
                     deadline: now + APPROVAL_LIFETIME,
                     approved: false,
                 },
@@ -280,13 +282,11 @@ impl SessionStore {
     }
 }
 
-pub fn valid_challenge(challenge: &str) -> bool {
-    approval::verification_code(challenge).is_some()
-}
+/// A challenge whose approval page can show a code, the only kind the store takes.
+pub struct Challenge(String, String);
 
-/// The code a page shows for a challenge the HTTP handler validated.
-fn code(challenge: &str) -> String {
-    approval::verification_code(challenge).expect("a validated challenge")
+pub fn valid_challenge(challenge: &str) -> Option<Challenge> {
+    Some(Challenge(challenge.into(), approval::verification_code(challenge)?))
 }
 
 #[cfg(test)]
@@ -299,9 +299,10 @@ mod tests {
         let (_, session) = store.create("subject", "Name", "local", None).unwrap();
         let verifier = "v".repeat(32);
         let challenge = approval::challenge(&verifier);
+        let valid = valid_challenge(&challenge).unwrap();
         store
             .begin_browser_approval(
-                &challenge,
+                &valid,
                 "https://client.example",
                 Some(&session),
                 "192.0.2.1".parse().unwrap(),
@@ -312,7 +313,7 @@ mod tests {
             .collect();
         assert!(matches!(
             store.begin_browser_approval(
-                &challenge,
+                &valid,
                 "https://client.example",
                 Some(&session),
                 "192.0.2.1".parse().unwrap()
@@ -351,13 +352,14 @@ mod tests {
         let store = SessionStore::new();
         let (_, session) = store.create("subject", "name", "local", None).unwrap();
         let challenge = approval::challenge("verifier");
+        let valid = valid_challenge(&challenge).unwrap();
         store
-            .begin_browser_approval(&challenge, "https://client.example", None, "192.0.2.1".parse().unwrap())
+            .begin_browser_approval(&valid, "https://client.example", None, "192.0.2.1".parse().unwrap())
             .unwrap();
         let deadline = store.0.lock().unwrap().approvals[&challenge].deadline;
         store
             .begin_browser_approval(
-                &challenge,
+                &valid,
                 "https://client.example",
                 Some(&session),
                 "192.0.2.1".parse().unwrap(),
@@ -374,8 +376,9 @@ mod tests {
         let store = SessionStore::new();
         let (_, session) = store.create("subject", "name", "local", None).unwrap();
         let challenge = approval::challenge("verifier");
+        let valid = valid_challenge(&challenge).unwrap();
         store
-            .begin_cli_approval(&session, &challenge, "192.0.2.1".parse().unwrap())
+            .begin_cli_approval(&session, &valid, "192.0.2.1".parse().unwrap())
             .unwrap();
         store.0.lock().unwrap().approvals.get_mut(&challenge).unwrap().deadline = Instant::now();
         assert_eq!(
@@ -390,8 +393,9 @@ mod tests {
         let (_, session) = store.create("subject", "name", "local", None).unwrap();
         let verifier = "v".repeat(32);
         let challenge = approval::challenge(&verifier);
+        let valid = valid_challenge(&challenge).unwrap();
         store
-            .begin_cli_approval(&session, &challenge, "192.0.2.1".parse().unwrap())
+            .begin_cli_approval(&session, &valid, "192.0.2.1".parse().unwrap())
             .unwrap();
         store.approve(&session, &challenge, ApprovalKind::Cli).unwrap();
         tokio::time::advance(APPROVAL_LIFETIME).await;
