@@ -273,17 +273,19 @@ struct Ui {
 }
 
 impl Ui {
+    /// Setup whose first snapshot settles as any later one does, however early its check ended.
     fn new(config: Config, snapshot: Snapshot) -> Self {
-        Self {
+        let mut ui = Self {
             requested: config.clone(),
             run: Run::new(config.clone()),
             config,
             theme: Theme::terminal(),
             size: (80, 24),
             check_started: Some(Instant::now()),
-            snapshot,
             ..Self::default()
-        }
+        };
+        ui.update(snapshot);
+        ui
     }
 
     /// Go's handlePreparation, handleEvents and the sign-in replies, from a new snapshot.

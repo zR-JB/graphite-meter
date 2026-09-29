@@ -870,6 +870,10 @@ fn status_title_and_progress_follow_the_run_like_go() {
         step(&mut ui, |snapshot| snapshot.phase = phase);
         assert_eq!((ui.status_label(), ui.progress()), (want, None));
     }
+    // A check that ended before the view read its first snapshot settles, as Go takes it whenever it comes.
+    #[rustfmt::skip]
+    let failed = Ui::new(Config::default(), Snapshot { phase: Phase::Failed, error: Some("x".into()), ..Default::default() });
+    assert_eq!(failed.status_label(), "Test could not start");
     let mut setup = setup();
     assert_eq!(setup.status_label(), "Not started");
     step(&mut setup, |snapshot| snapshot.phase = Phase::Checking);
