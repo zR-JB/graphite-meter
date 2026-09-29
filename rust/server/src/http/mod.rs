@@ -374,8 +374,6 @@ impl HttpServer {
             let operations = operations.clone();
             let pending_upgrade = pending_upgrade.clone();
             let head = request.method() == Method::HEAD;
-            let route = route::lookup(request.uri().path());
-            let probe = route == Some(Route::Probe) && request.method() != Method::OPTIONS;
             let lifecycle = lifecycle.clone();
             *lock(&lifecycle) = Http1Lifecycle::Active {
                 complete: false,
@@ -386,8 +384,7 @@ impl HttpServer {
                     .respond_incoming(request, accepted, &operations, Some(&pending_upgrade))
                     .await?;
                 if let Some(port) = bootstrap_port
-                    && probe
-                    && response.status().is_success()
+                    && response.extensions().get::<crate::probe::Answer>().is_some()
                 {
                     response
                         .headers_mut()
@@ -1181,6 +1178,36 @@ mod tests {
             tls: false,
             topology: topology::tcp(NativeKind::H1, false).topology,
         }
+    }
+
+    /// As Go's bootstrap probe, its refusal of an ambiguous client also names the QUIC port and ends the connection.
+    #[tokio::test]
+    async fn the_bootstrap_probe_names_its_quic_port_to_an_ambiguous_client() {
+        let config = Config {
+            trusted_proxies: vec!["127.0.0.0/8".parse().unwrap()],
+            ..Config::default()
+        };
+        let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
+        let accepted = Accepted {
+            tls: true,
+            topology: topology::tcp(NativeKind::H3, false).topology,
+            ..h1()
+        };
+        let (mut client, served) = tokio::io::duplex(1 << 16);
+        let serving = tokio::spawn(server.serve_http1_connection(served, accepted, Some(7249)));
+        client
+            .write_all(b"GET /probe HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut answer = String::new();
+        tokio::time::timeout(Duration::from_secs(5), client.read_to_string(&mut answer))
+            .await
+            .expect("the connection stayed open")
+            .unwrap();
+        assert!(answer.starts_with("HTTP/1.1 400"), "{answer}");
+        assert!(answer.contains("alt-svc: h3=\":7249\"\r\n"), "{answer}");
+        assert!(answer.contains("connection: close\r\n"), "{answer}");
+        serving.await.unwrap();
     }
 
     /// Password authentication for https://localhost, which advertises no clear listener.

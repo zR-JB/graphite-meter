@@ -11,6 +11,10 @@ use http::{HeaderMap, Response, StatusCode, Version};
 use ipnet::IpNet;
 use std::net::SocketAddr;
 
+/// Marks the probe's own answers, which the HTTP/3 companion points at its QUIC port, as Go's bootstrap probe does.
+#[derive(Clone, Copy)]
+pub(crate) struct Answer;
+
 pub(crate) fn respond(
     admission: &Admission,
     trusted: &[IpNet],
@@ -19,20 +23,23 @@ pub(crate) fn respond(
     headers: &HeaderMap,
 ) -> Result<Response<Bytes>, ConfigError> {
     let client = client_address::resolve(peer, headers, trusted);
-    if !client.usable {
-        return Ok(text_body(StatusCode::BAD_REQUEST, "ambiguous client address"));
-    }
-    let (active, max) = admission.load();
-    let document = Probe {
-        client_ip: client.addr.to_string(),
-        client_ip_version: client.version(),
-        client_ip_source: client.source,
-        protocol_negotiated: match version {
-            Version::HTTP_3 => ProtocolNegotiated::Http3,
-            Version::HTTP_2 => ProtocolNegotiated::Http2,
-            _ => ProtocolNegotiated::Http1,
-        },
-        load: Some(ProbeLoad { active, max }),
+    let mut response = if client.usable {
+        let (active, max) = admission.load();
+        let document = Probe {
+            client_ip: client.addr.to_string(),
+            client_ip_version: client.version(),
+            client_ip_source: client.source,
+            protocol_negotiated: match version {
+                Version::HTTP_3 => ProtocolNegotiated::Http3,
+                Version::HTTP_2 => ProtocolNegotiated::Http2,
+                _ => ProtocolNegotiated::Http1,
+            },
+            load: Some(ProbeLoad { active, max }),
+        };
+        json_response(serde_json::to_vec(&document)?)
+    } else {
+        text_body(StatusCode::BAD_REQUEST, "ambiguous client address")
     };
-    Ok(json_response(serde_json::to_vec(&document)?))
+    response.extensions_mut().insert(Answer);
+    Ok(response)
 }
