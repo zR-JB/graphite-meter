@@ -67,10 +67,10 @@ ORDERED = {
         "cargo test --locked --no-fail-fast -p graphite-meter-client -p graphite-meter-core -p graphite-meter-net \\\n"
         "            -p graphite-meter-http3\n",
     ),
-    # Every HTTP/3 fuzz target runs, and a failure keeps the crash inputs.
+    # Every HTTP/3 fuzz target runs, and a failed or cancelled run keeps the crash inputs.
     "workflows/fuzz.yml": (
         "for source in rust/http3/fuzz/fuzz_targets/*.rs; do\n", 'mise run rust-fuzz "$(basename "$source" .rs)"',
-        "if: failure()\n        uses: actions/upload-artifact@",
+        "if: failure() || cancelled()\n        uses: actions/upload-artifact@",
     ),
     "workflows/release.yml": (
         "github.event.workflow_run.conclusion == 'success'\n",

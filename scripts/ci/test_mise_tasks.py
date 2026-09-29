@@ -114,6 +114,12 @@ class MiseTaskTests(unittest.TestCase):
             run("rust-delayed-downloads", status=1,
                 FAKE_OUTPUT="inconclusive: webtransport=true, loopback below 671 Mbit/s")
 
+            # A fuzz run reports an input that takes 10 s as a hang, so the weekly job stays inside its hour.
+            fuzz = root / "rust/http3/fuzz/target/x86_64-unknown-linux-gnu/release/frame"
+            fuzz.parent.mkdir(parents=True)
+            shutil.copy2(root / "bin/cargo", fuzz)
+            self.assertEqual(run("rust-fuzz", "frame", "5")["args"][:2], ["-max_total_time=5", "-timeout=10"])
+
 
 if __name__ == "__main__":
     unittest.main()

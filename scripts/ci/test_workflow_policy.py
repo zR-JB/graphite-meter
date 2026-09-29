@@ -87,7 +87,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (W + "extra.yml", None, "on:\n  push:\n", "unreviewed workflow set"),
     (W + "fuzz.yml", "  workflow_dispatch:\n", "  workflow_dispatch:\n  pull_request_target:\n", "triggered only by"),
     (W + "fuzz.yml", "    steps:\n", "    steps:" + PINNED_STEP.format("actions/cache"), "repository code"),
-    (W + "fuzz.yml", "        if: failure()\n", "", "misorders invariant"),
+    (W + "fuzz.yml", "        if: failure() || cancelled()\n", "        if: failure()\n", "misorders invariant"),
     (W + "ci.yml", "permissions:\n  contents: read\n\nenv:", "env:", "top-level permissions"),
     (REQUEST, "  contents: read", "  contents: write", "write permission"),
     (W + "release.yml", "    steps:\n", "    steps:" + PINNED_STEP.format("actions/cache"),

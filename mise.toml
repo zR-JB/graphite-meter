@@ -569,8 +569,9 @@ RUSTFLAGS="--cfg fuzzing -Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-
 -Cllvm-args=-sanitizer-coverage-trace-compares -Cdebug-assertions -Coverflow-checks" \
   cargo build --locked --release --target x86_64-unknown-linux-gnu --bin "$usage_target"
 mkdir -p "corpus/$usage_target" "artifacts/$usage_target"
-"target/x86_64-unknown-linux-gnu/release/$usage_target" -max_total_time="$usage_seconds" -rss_limit_mb=512 \
-  -artifact_prefix="artifacts/$usage_target/" "corpus/$usage_target"
+# An input that runs for 10 s is reported as a hang; libFuzzer's default waits 20 minutes.
+"target/x86_64-unknown-linux-gnu/release/$usage_target" -max_total_time="$usage_seconds" -timeout=10 \
+  -rss_limit_mb=512 -artifact_prefix="artifacts/$usage_target/" "corpus/$usage_target"
 '''
 
 [tasks.rust-client-package]
