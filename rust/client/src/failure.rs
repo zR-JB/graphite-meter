@@ -26,8 +26,8 @@ pub enum Failure {
     Measurement(FailureReason),
     /// A latency channel that closed or failed, which is dialled again.
     Disconnected(&'static str),
-    /// What was lost and not replaced within Go's redial window, with the last cause.
-    NotReplaced(&'static str, Error),
+    /// What was lost and not replaced within the window it had, with the last cause.
+    NotReplaced(&'static str, Duration, Error),
     /// A lane's failure, which its stage and its retries share.
     Shared(Arc<Error>),
 }
@@ -53,8 +53,9 @@ impl fmt::Display for Failure {
             Self::Lane(ending) => formatter.write_str(ending.reason()),
             Self::Measurement(reason) => formatter.write_str(reason.label()),
             Self::Disconnected(what) => formatter.write_str(what),
-            Self::NotReplaced(what, error) => {
-                let window = crate::transport::REDIAL_WINDOW;
+            Self::NotReplaced(what, window, error) => {
+                // To the millisecond, as Go rounds it (transfer.go:37).
+                let window = Duration::from_millis(((window.as_micros() + 500) / 1000) as u64);
                 write!(formatter, "{what} lost and not replaced within {window:?}: {error}")
             }
             Self::Shared(error) => fmt::Display::fmt(error, formatter),
@@ -65,7 +66,7 @@ impl fmt::Display for Failure {
 impl std::error::Error for Failure {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::ApprovalUnreachable(error) | Self::NotReplaced(_, error) => Some(error.as_ref()),
+            Self::ApprovalUnreachable(error) | Self::NotReplaced(_, _, error) => Some(error.as_ref()),
             Self::Shared(error) => Some(error.as_ref().as_ref()),
             _ => None,
         }
@@ -247,6 +248,17 @@ mod tests {
         ] {
             assert_eq!(refusal(target).to_string(), text, "{target}");
         }
+    }
+
+    /// Go's restore names the window it had (transfer.go:37, 58), which the window's end may have
+    /// cut short, not always 2 s.
+    #[tokio::test(start_paused = true)]
+    async fn a_redial_that_was_not_replaced_names_its_window() {
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
+        let refused = || async { Err::<(), crate::Error>("refused".into()) };
+        let lost = crate::transport::restore("latency channel", deadline, refused).await;
+        let text = "latency channel lost and not replaced within 300ms: refused";
+        assert_eq!(lost.map_err(|error| error.to_string()), Err(text.into()));
     }
 
     #[test]

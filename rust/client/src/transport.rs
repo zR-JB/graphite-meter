@@ -56,14 +56,15 @@ pub(crate) fn retry_pause(started: Instant) -> Duration {
 
 /// Go's restore (transfer.go:36-59): `attempt` again, each try bounded by `deadline`, until it
 /// succeeds or fails permanently, paced as a lane's retries; past the deadline the error names
-/// what was lost and the last cause.
+/// what was lost, the window it had and the last cause.
 pub(crate) async fn restore<T, F: Future<Output = Result<T, Error>>>(
     what: &'static str,
     deadline: Instant,
     mut attempt: impl FnMut() -> F,
 ) -> Result<T, Error> {
-    let mut backoff = RetryBackoff::default();
-    let mut cause = None;
+    let (mut backoff, mut cause) = (RetryBackoff::default(), None);
+    let window = deadline.saturating_duration_since(Instant::now());
+    let lost = |error| -> Error { Failure::NotReplaced(what, window, error).into() };
     loop {
         let started = Instant::now();
         let error = match timeout_at(deadline, attempt()).await {
@@ -71,12 +72,12 @@ pub(crate) async fn restore<T, F: Future<Output = Result<T, Error>>>(
             Ok(Err(error)) if crate::failure::permanent(error.as_ref()) => return Err(error),
             Ok(Err(error)) => error,
             // A try the deadline cut short keeps the cause before it.
-            Err(elapsed) => return Err(Failure::NotReplaced(what, cause.unwrap_or_else(|| elapsed.into())).into()),
+            Err(elapsed) => return Err(lost(cause.unwrap_or_else(|| elapsed.into()))),
         };
         let wake = Instant::now() + backoff.delay(error.as_ref(), started);
         tokio::time::sleep_until(wake.min(deadline)).await;
         if wake >= deadline {
-            return Err(Failure::NotReplaced(what, error).into());
+            return Err(lost(error));
         }
         cause = Some(error);
     }
