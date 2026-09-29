@@ -101,8 +101,9 @@ libraries only unoptimized builds take, so re-approving it drops no fingerprinte
 both, add each package text that covers the native files to `notices`, rerun with that record
 for its digest, then approve it and commit it to the environment's file. Texts the environment
 lacks, such as musl's and LLVM's for the static musl targets, are committed under `legal/manual`
-and named by repository path. macOS records come from the release request's macOS job, the only
-environment with Apple's SDK.
+and named by repository path. macOS records come from a macOS runner, the only environment with
+Apple's SDK: CI's `rust-darwin` job runs the release request's `rust-darwin-package` task on the
+same runner image and Xcode and prints this build's record when the committed one goes stale.
 
 The development tasks (`rust-server-run`, `rust-server-build`, `rust-client-run`, `rust-client-build`)
 run `scripts.legal.rust --development` instead: it keeps every dependency review but reads no platform

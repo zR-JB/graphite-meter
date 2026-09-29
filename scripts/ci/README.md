@@ -140,8 +140,10 @@ The hook refuses commits to `main` and whitespace errors, and scans the index
 with the pinned Gitleaks. `precommit.py` selects the mise checks for the staged
 paths, counting both sides of a rename; `api/`, `mise.toml` and `mise.lock`
 select the full `check`. The checks run on the exact staged tree in a disposable
-worktree with frozen client dependencies. `workflow-check` refuses tracked TLS
-key and certificate names and PEM material.
+worktree with frozen client dependencies. `rust/` selects no check: without a
+Cargo build in that worktree, `rust-check` would compile the whole workspace for
+every commit, so run it yourself; CI runs it for every change to `rust/`. `workflow-check`
+refuses tracked TLS key and certificate names and PEM material.
 
 ## Python and dependencies
 

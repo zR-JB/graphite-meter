@@ -19,6 +19,8 @@ def staged_paths(cwd: Path | None = None) -> tuple[str, ...]:
 
 
 def plan_checks(paths: tuple[str, ...]) -> tuple[str, ...]:
+    """The mise checks for `paths`. Rust paths select none: the snapshot has no Cargo build, so rust-check
+    would compile the whole workspace for every commit; CI runs it for every change to rust/."""
     def touched(*prefixes: str) -> bool:
         return any(path.startswith(prefixes) for path in paths)
 

@@ -223,8 +223,9 @@ jobs:
         run: mise run rust-check
       - name: Verify the Cargo fork pins against their branches, upstream tags and reviewed change sets
         run: python3 -m scripts.legal.check_git_sources --verify
-      # ring compiles C for each target: mingw-w64 for Windows, the host GCC for x86_64 musl.
-      - name: Install the pinned builder's Windows cross toolchain packages
+      # ring compiles C for each target: mingw-w64 for Windows, the host GCC for x86_64 musl. Only cargo check
+      # uses Ubuntu's current mingw-w64; the Windows TUI links with the version the builder image pins.
+      - name: Install Ubuntu's Windows cross compiler for cargo check
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-win32 mingw-w64-x86-64-dev
       - name: Check the Windows and musl TUIs, the HTTP/3 codec without I/O and the fuzz targets
         run: mise run rust-check-targets
