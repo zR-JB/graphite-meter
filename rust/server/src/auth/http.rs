@@ -48,8 +48,8 @@ pub struct Service {
 }
 
 impl Service {
-    pub fn new(config: &AuthConfig, trusted: Vec<IpNet>, sessions: Option<SessionStore>) -> Result<Self, ConfigError> {
-        let sessions = sessions.unwrap_or_default();
+    pub fn new(config: &AuthConfig, trusted: Vec<IpNet>) -> Result<Self, ConfigError> {
+        let sessions = SessionStore::default();
         let log = Arc::new(SecurityLog::default());
         let attempts = Arc::new(AttemptLimiter::with_log(log.clone()));
         let service = Self {
@@ -123,9 +123,6 @@ impl Service {
 
     pub fn policy(&self) -> &Policy {
         &self.policy
-    }
-    pub fn sessions(&self) -> &SessionStore {
-        &self.sessions
     }
 
     /// Answers the controller's own paths and the socket ticket routes, whose bounded bodies the caller collected;
@@ -781,6 +778,12 @@ mod tests {
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use std::net::Ipv4Addr;
 
+    impl Service {
+        pub(crate) fn sessions(&self) -> &SessionStore {
+            &self.sessions
+        }
+    }
+
     #[test]
     fn auth_forms_require_unambiguous_body_fields() {
         let request = Request::builder()
@@ -865,7 +868,7 @@ mod tests {
             oidc_client_secret: "provider-secret".into(),
             oidc_allowed_groups: vec!["operators".into()],
             ..AuthConfig::default()
-        }, vec![], None).unwrap());
+        }, vec![]).unwrap());
         tokio::time::pause();
         tokio::time::timeout(Duration::from_secs(1), service.initialize())
             .await
@@ -934,7 +937,6 @@ mod tests {
                 ..AuthConfig::default()
             },
             vec![],
-            None,
         )
         .unwrap();
         service.oidc = Some(super::super::oidc::tests::ready());
@@ -999,7 +1001,6 @@ mod tests {
                 ..AuthConfig::default()
             },
             vec![],
-            None,
         )
         .unwrap();
         // No browser can post a sign-in form to port 0, so no page may name it in its form-action.
@@ -1044,7 +1045,6 @@ mod tests {
                 ..AuthConfig::default()
             },
             vec![],
-            None,
         )
         .unwrap();
         service.oidc = Some(super::super::oidc::tests::ready());
@@ -1089,7 +1089,6 @@ mod tests {
                 ..AuthConfig::default()
             },
             vec![],
-            None,
         )
         .unwrap();
         let callback = query_url(
@@ -1128,7 +1127,7 @@ mod tests {
                 password_hash: HASH.into(),
                 ..AuthConfig::default()
             };
-            let service = Service::new(&config, vec!["192.0.2.1/32".parse().unwrap()], None).unwrap();
+            let service = Service::new(&config, vec!["192.0.2.1/32".parse().unwrap()]).unwrap();
             let sign_in = async |address: &str, device: Option<&str>| {
                 let login = call(&service, Method::GET, "/login", &[], String::new()).await;
                 let nonce = set_cookie_value(&login, "__Host-gm_login");
@@ -1222,7 +1221,6 @@ mod tests {
                 ..AuthConfig::default()
             },
             vec![],
-            None,
         )
         .unwrap();
         let login = call(&service, Method::GET, "/login", &[], String::new()).await;
@@ -1330,7 +1328,7 @@ mod tests {
                     .into(),
             ..AuthConfig::default()
         };
-        let service = Service::new(&config, vec![], None).unwrap();
+        let service = Service::new(&config, vec![]).unwrap();
         for scope in ["", "all"] {
             let (token, current) = service.sessions().create("subject", "name", "local", None).unwrap();
             let (_, sibling) = service.sessions().create("subject", "name", "local", None).unwrap();
@@ -1360,7 +1358,7 @@ mod tests {
             ..AuthConfig::default()
         };
         // The peer is a trusted proxy whose forwarding names no usable client, as in Go's cliPage.
-        let service = Service::new(&config, vec!["192.0.2.1/32".parse().unwrap()], None).unwrap();
+        let service = Service::new(&config, vec!["192.0.2.1/32".parse().unwrap()]).unwrap();
         let challenge = "A".repeat(43);
         let page = query_url("/auth/cli", &[("challenge", &challenge)]);
         let forwarded = [("x-forwarded-for", "unknown")];

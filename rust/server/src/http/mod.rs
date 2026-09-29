@@ -162,7 +162,6 @@ impl HttpServer {
             Some(crate::auth::http::Service::new(
                 &config.auth,
                 config.trusted_proxies.clone(),
-                None,
             )?)
         };
         let assets = crate::assets::Assets::new(auth.is_some(), config.result_history_default);
