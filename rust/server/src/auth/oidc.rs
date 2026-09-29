@@ -160,9 +160,6 @@ impl Oidc {
             exchanges: Semaphore::new(MAX_EXCHANGES),
         })
     }
-    pub fn name(&self) -> &str {
-        &self.config.oidc_provider_name
-    }
     pub fn ready(&self) -> Option<&Arc<Provider>> {
         self.provider.get()
     }

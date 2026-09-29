@@ -42,6 +42,8 @@ pub struct Service {
     sessions: SessionStore,
     password: Option<PasswordLogin>,
     oidc: Option<Oidc>,
+    /// Go's OIDCProviderName, which the sign-in page names in every mode.
+    provider: String,
     mode: AuthMode,
     log: Arc<SecurityLog>,
     attempts: Arc<AttemptLimiter>,
@@ -60,6 +62,7 @@ impl Service {
                 .then(|| PasswordLogin::new(config, sessions.clone(), attempts.clone()))
                 .transpose()?,
             oidc: config.mode.oidc().then(|| Oidc::new(config, log.clone())).transpose()?,
+            provider: config.oidc_provider_name.clone(),
             mode: config.mode,
             sessions,
             attempts,
@@ -192,7 +195,7 @@ impl Service {
             StatusCode::OK,
             LoginPage {
                 csrf: &nonce,
-                provider: self.oidc.as_ref().map_or("", |oidc| oidc.name()),
+                provider: &self.provider,
                 challenge,
                 password: self.password.is_some(),
                 oidc: self.oidc.is_some(),
@@ -345,7 +348,7 @@ impl Service {
         let identity = oidc.complete(&tx, code).await.map_err(fail)?;
         let (token, session) = self
             .sessions
-            .create(&identity.subject, &identity.name, oidc.name(), None)
+            .create(&identity.subject, &identity.name, &self.provider, None)
             .map_err(|_| fail(Reason::SessionCapacity))?;
         if let Some(prior) = &tx.prior {
             self.sessions.revoke(prior);
@@ -1197,8 +1200,10 @@ mod tests {
             let page = call(&service, Method::GET, &format!("/login?{query}"), &[], String::new()).await;
             String::from_utf8(page.body().to_vec()).unwrap()
         };
-        // No notice from a pair url.ParseQuery leaves out.
+        // No notice from a pair url.ParseQuery leaves out, and the provider's name in every mode, as Go renders them.
         assert!(!page("error=stale%zz").await.contains("role=\"alert\""));
+        let provider = page("error=provider").await;
+        assert!(provider.contains(">Authelia is unreachable right now. Sign in with the operator password.<"));
         let exchange = json!({"verifier": "v".repeat(43)}).to_string();
         let foreign = [("origin", "http://client.example")];
         let refused = call(&service, Method::POST, "/auth/browser/token", &foreign, exchange).await;
