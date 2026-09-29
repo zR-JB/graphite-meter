@@ -9,6 +9,7 @@ fn password() -> Config {
         ..Config::default()
     };
     config.auth.mode = AuthMode::Password;
+    config.auth.explicit = true;
     config.auth.public_url = "https://meter.example".into();
     config.auth.password_hash = "test-hash".into();
     config.public.throughput.push("https://meter.example".into());

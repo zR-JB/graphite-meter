@@ -1,5 +1,5 @@
 use super::{AuthConfig, AuthMode, Config, ConfigError, NativeKind};
-use graphite_meter_core::origin::{Origin, canonical_origin, key, split_url, target_origin};
+use graphite_meter_core::origin::{Origin, key, split_url, target_origin};
 
 impl Config {
     pub fn validate(&self) -> Result<(), ConfigError> {
@@ -154,7 +154,7 @@ impl Config {
             return Err("GM_AUTH_MODE must be off, password, oidc, or hybrid".into());
         }
         if self.auth.mode == AuthMode::Off {
-            if self.auth.has_settings() {
+            if self.auth.explicit {
                 return Err("authentication settings require GM_AUTH_MODE to be enabled".into());
             }
             return Ok(());
@@ -199,14 +199,6 @@ impl AuthConfig {
             || !self.oidc_client_secret.is_empty()
             || !self.oidc_secret_file.is_empty()
             || !self.oidc_allowed_groups.is_empty()
-    }
-
-    fn has_settings(&self) -> bool {
-        self.explicit
-            || !self.public_url.is_empty()
-            || self.has_password_source()
-            || self.has_oidc_settings()
-            || self.oidc_provider_name != "Authelia"
     }
 
     fn validate_public_url(&self) -> Result<Origin, ConfigError> {
@@ -271,6 +263,8 @@ fn url_host(raw: &str) -> Option<(&str, &str)> {
 
 /// A configured origin, which Go's `CanonicalOrigin` accepts: never on port 0.
 fn absolute(raw: &str) -> Option<Origin> {
-    canonical_origin(raw).ok()?;
-    target_origin(raw).ok().flatten()
+    target_origin(raw)
+        .ok()
+        .flatten()
+        .filter(|origin| origin.port_number() != 0)
 }
