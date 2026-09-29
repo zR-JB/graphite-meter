@@ -507,6 +507,9 @@ async fn cancelled_download_without_reliable_reset_preserves_http3_connection() 
             assert_eq!(lane.read_chunk().await, Err(http3::Error::Refused));
             assert!(quic.close_reason().is_none());
         }
+        // The connection still carries a request once the server has reset both lanes.
+        let request = Request::get("https://localhost/download?bytes=1").body(())?;
+        h3_body(&requests, request, Bytes::new()).await?;
         quic.close(0_u32.into(), b"done");
         driving.abort();
         stop.send(()).ok();
