@@ -765,7 +765,7 @@ mod tests {
             send_lane(&transport, "upload-session", 0, block, active, retry, OPERATION_LIMIT).await
         });
         let requests = tokio::time::timeout(Duration::from_secs(5), async {
-            let mut requests = Vec::new();
+            let (mut requests, mut held) = (Vec::new(), Vec::new());
             for _ in 0..2 {
                 let (mut stream, _) = listener.accept().await?;
                 requests.push(Instant::now());
@@ -776,6 +776,9 @@ mod tests {
                 let idle =
                     "HTTP/1.1 408 Request Timeout\r\nX-Graphite-Upload-Refusal: idle\r\nContent-Length: 0\r\n\r\n";
                 stream.write_all(idle.as_bytes()).await?;
+                // Closing with the body still arriving resets the connection, and macOS then drops the
+                // unread answer; a real receiver ends only an idle lane, with nothing in flight.
+                held.push(stream);
             }
             Ok::<_, Error>(requests)
         })
