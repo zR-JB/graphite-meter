@@ -183,7 +183,11 @@ impl HttpServer {
             .mode
             .password()
             .then(|| Owner::principal_key(LOCAL_OPERATOR));
-        let client_credit = budget::ClientCredit::new(quic_per_client.saturating_mul(QUIC_CREDIT_BYTES), shared, bytes);
+        let client_credit = budget::ClientCredit::new(
+            quic_per_client.saturating_mul(QUIC_CREDIT_BYTES),
+            shared,
+            memory.clone(),
+        );
         let download_memory = memory
             .lease(DOWNLOAD_BLOCK_BYTES)
             .ok_or("server memory budget cannot cover the download block")?;

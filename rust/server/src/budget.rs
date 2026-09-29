@@ -83,8 +83,8 @@ pub(crate) fn packet_bytes(config: &noq::EndpointConfig) -> Option<usize> {
     usize::try_from(config.get_max_udp_payload_size().min(64 * 1024)).ok()
 }
 
-/// One of `shards` endpoints: its receive batch, the pending incoming packets its part of the incoming limits
-/// admits, its forwarding queue and its kernel buffers.
+/// One of `shards` endpoints: its receive batch, the first packet of each handshake its part of the incoming limits
+/// admits and its part of their further packets, its forwarding queue and its kernel buffers.
 pub(crate) fn endpoint_bytes(
     config: &noq::EndpointConfig,
     shards: usize,
@@ -93,15 +93,15 @@ pub(crate) fn endpoint_bytes(
     receive_segments: usize,
 ) -> Option<usize> {
     let packet = packet_bytes(config)?;
-    let receive = packet.checked_mul(receive_segments)?;
     let queue = if shards > 1 {
         quic_shard::queue_bytes(packet)?
     } else {
         0
     };
-    receive
+    packet
+        .checked_mul(receive_segments)?
         .checked_mul(noq::udp::BATCH_SIZE)?
-        .checked_add(receive.checked_mul(max_connections.div_ceil(shards).checked_add(1)?)?)?
+        .checked_add(packet.checked_mul(max_connections.div_ceil(shards).checked_add(1)?)?)?
         .checked_add((QUIC_INCOMING_TOTAL_BYTES as usize).div_ceil(shards))?
         .checked_add(queue)?
         .checked_add(kernel_bytes)
@@ -155,6 +155,8 @@ pub(crate) fn check(
 pub(crate) struct MemoryBudget {
     pub(crate) limit: usize,
     used: AtomicUsize,
+    /// The QUIC endpoints' buffers, which pressure leaves out: they grow with the host's cores, not its load.
+    reserved: AtomicUsize,
     held_back: AtomicBool,
 }
 
@@ -163,6 +165,7 @@ impl MemoryBudget {
         Arc::new(Self {
             limit,
             used: AtomicUsize::new(0),
+            reserved: AtomicUsize::new(0),
             held_back: AtomicBool::new(false),
         })
     }
@@ -171,7 +174,16 @@ impl MemoryBudget {
         self.try_charge(bytes).then(|| Lease {
             budget: self.clone(),
             bytes,
+            reserved: false,
         })
+    }
+
+    /// A lease for an endpoint's buffers, which it holds for as long as it runs.
+    pub(crate) fn reserve(self: &Arc<Self>, bytes: usize) -> Option<Lease> {
+        let mut lease = self.lease(bytes)?;
+        self.reserved.fetch_add(bytes, Ordering::Relaxed);
+        lease.reserved = true;
+        Some(lease)
     }
 
     #[cfg(test)]
@@ -179,20 +191,24 @@ impl MemoryBudget {
         self.limit - self.used.load(Ordering::Relaxed)
     }
 
+    /// The budget past the endpoints' reservations, and how much of it is used.
+    fn unreserved(&self) -> (usize, usize) {
+        let reserved = self.reserved.load(Ordering::Relaxed);
+        let used = self.used.load(Ordering::Relaxed).saturating_sub(reserved);
+        (self.limit.saturating_sub(reserved), used)
+    }
+
     pub(crate) fn under_pressure(&self) -> bool {
-        self.used.load(Ordering::Relaxed) >= self.limit / 4
+        let (limit, used) = self.unreserved();
+        used >= limit / 4
     }
 
     pub(crate) fn has_headroom(&self) -> bool {
-        let used = self.used.load(Ordering::Relaxed);
-        let headroom = used < self.limit / 4 * 3;
+        let (limit, used) = self.unreserved();
+        let headroom = used < limit / 4 * 3;
         // Reported recovery waits for five eighths, so usage hovering at the threshold cannot flood the log.
         let held_back = self.held_back.load(Ordering::Relaxed);
-        let changed = if held_back {
-            used < self.limit / 8 * 5
-        } else {
-            !headroom
-        };
+        let changed = if held_back { used < limit / 8 * 5 } else { !headroom };
         if changed
             && self
                 .held_back
@@ -200,12 +216,13 @@ impl MemoryBudget {
                 .is_ok()
         {
             crate::log!(
-                "[gm:memory] window growth {}: {used} of {} buffer bytes in use",
+                "[gm:memory] window growth {}: {} of {} buffer bytes in use",
                 if held_back {
                     "resumed"
                 } else {
                     "held back by memory pressure"
                 },
+                self.used.load(Ordering::Relaxed),
                 self.limit
             );
         }
@@ -241,10 +258,14 @@ impl h2::SharedBudget for MemoryBudget {
 pub(crate) struct Lease {
     pub(crate) budget: Arc<MemoryBudget>,
     pub(crate) bytes: usize,
+    reserved: bool,
 }
 
 impl Drop for Lease {
     fn drop(&mut self) {
+        if self.reserved {
+            self.budget.reserved.fetch_sub(self.bytes, Ordering::Relaxed);
+        }
         self.budget.refund(self.bytes);
     }
 }
@@ -252,12 +273,13 @@ impl Drop for Lease {
 /// The receive-window credit each client may hold across its connections, `share` for its narrowest key. As in
 /// admission, each wider key (an IPv6 /56 and /48, or a login's principal) may hold twice the one before it. A key
 /// that many clients share, the password operator's principal, bounds no claim. All claims together stay within half
-/// of a `budget`, below the three quarters at which window growth is held back, so claims alone never hold it back.
+/// of the `budget` past its reservations, below the three quarters at which window growth is held back, so claims
+/// alone never hold it back.
 #[derive(Debug)]
 pub(crate) struct ClientCredit {
     share: usize,
     shared: Option<String>,
-    limit: usize,
+    budget: Arc<MemoryBudget>,
     held: Mutex<Held>,
 }
 
@@ -268,11 +290,11 @@ struct Held {
 }
 
 impl ClientCredit {
-    pub(crate) fn new(share: usize, shared: Option<String>, budget: usize) -> Arc<Self> {
+    pub(crate) fn new(share: usize, shared: Option<String>, budget: Arc<MemoryBudget>) -> Arc<Self> {
         Arc::new(Self {
             share,
             shared,
-            limit: budget / 2,
+            budget,
             held: Mutex::default(),
         })
     }
@@ -281,7 +303,7 @@ impl ClientCredit {
     pub(crate) fn claim(self: &Arc<Self>, keys: &[String], bytes: usize) -> Option<CreditClaim> {
         let keys = || keys.iter().filter(|&key| Some(key) != self.shared.as_ref());
         let mut held = lock(&self.held);
-        let fits = held.total.saturating_add(bytes) <= self.limit
+        let fits = held.total.saturating_add(bytes) <= self.budget.unreserved().0 / 2
             && keys().enumerate().all(|(index, key)| {
                 let share = self.share.saturating_mul(1 << index.min(usize::BITS as usize - 1));
                 held.keys.get(key).copied().unwrap_or_default().saturating_add(bytes) <= share
@@ -325,11 +347,19 @@ impl Drop for CreditClaim {
 
 #[cfg(test)]
 mod tests {
-    use super::ClientCredit;
+    use super::{ClientCredit, MemoryBudget};
+
+    /// A handshake waiting to be accepted holds its first datagram, which Noq copies out of the receive batch.
+    #[test]
+    fn a_waiting_handshake_reserves_one_packet_whatever_the_receive_batch() {
+        let config = noq::EndpointConfig::default();
+        let bytes = |connections| super::endpoint_bytes(&config, 1, connections, 0, 64).unwrap();
+        assert_eq!(bytes(4097) - bytes(4096), super::packet_bytes(&config).unwrap());
+    }
 
     #[test]
     fn a_client_share_doubles_for_wider_keys_and_a_shared_key_bounds_no_claim() {
-        let credit = ClientCredit::new(1 << 20, Some("principal:shared".into()), usize::MAX);
+        let credit = ClientCredit::new(1 << 20, Some("principal:shared".into()), MemoryBudget::new(usize::MAX));
         let claim =
             |address: &str| credit.claim(&crate::client_address::client_keys(address.parse().unwrap()), 1 << 20);
         let first = claim("2001:db8:1:1::1").unwrap();

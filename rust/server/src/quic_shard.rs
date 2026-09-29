@@ -19,8 +19,6 @@ use std::{
 };
 use tokio::sync::mpsc;
 
-/// A shard index is one connection ID byte.
-pub(crate) const MAX_SHARDS: usize = 1 << u8::BITS;
 /// Forwarded datagrams a shard queues; a full queue drops more, as a full socket buffer would.
 const QUEUE_DATAGRAMS: usize = 1024;
 /// Set in the first byte of long-header packets: Initial, 0-RTT, Handshake, Retry and version negotiation.

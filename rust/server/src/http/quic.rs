@@ -74,7 +74,7 @@ impl HttpServer {
         )?;
         let lease = Arc::new(
             self.memory
-                .lease(bytes)
+                .reserve(bytes)
                 .ok_or("server memory budget cannot cover QUIC endpoint buffers")?,
         );
         self.endpoint_bytes.store(bytes, Ordering::Relaxed);
@@ -158,7 +158,7 @@ impl HttpServer {
         for (shard, ((udp, bytes), inbox)) in sockets.into_iter().zip(bytes).zip(inboxes).enumerate() {
             let lease = Arc::new(
                 self.memory
-                    .lease(bytes)
+                    .reserve(bytes)
                     .ok_or("server memory budget cannot cover QUIC endpoint buffers")?,
             );
             let socket = quic_shard::ShardSocket::new(udp.socket, shard, router.clone(), inbox);
@@ -1568,6 +1568,36 @@ mod tests {
         .unwrap();
         stop.send_replace(true);
         serving.await.unwrap().unwrap();
+    }
+
+    /// The shards' reservations grow with the host's cores, not its load, so an idle server is not under pressure
+    /// however much of the budget they take.
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 40)]
+    async fn an_idle_server_with_many_shards_is_not_under_pressure() {
+        use super::*;
+        let config = Config {
+            max_connections: 4,
+            max_connections_per_client: 4,
+            ..Config::default()
+        }
+        .validated()
+        .unwrap();
+        let floors = 4 * (connection_floor(0) + noq_floor(&config.limits).unwrap()) + DOWNLOAD_BLOCK_BYTES;
+        let (tls, _) = tls();
+        let bind = |memory| {
+            let server = HttpServer::with_memory(config.clone(), memory).unwrap();
+            let quic = crate::runtime::Quic::bind(&server, tls.clone(), "127.0.0.1:0".parse().unwrap()).unwrap();
+            let crate::runtime::Quic::Shards { shards, .. } = &quic else {
+                panic!("forty workers served HTTP/3 from one endpoint");
+            };
+            assert_eq!(shards.len(), 16, "twenty shards wanted");
+            (server, quic)
+        };
+        let (measured, _quic) = bind(1 << 40);
+        let (server, _quic) = bind(floors + measured.endpoint_bytes.load(Ordering::Relaxed));
+        assert!(!server.memory.under_pressure());
+        assert!(server.memory.has_headroom());
     }
 
     #[cfg(target_os = "linux")]

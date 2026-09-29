@@ -4,7 +4,6 @@ use crate::{
     ServerError,
     config::{AuthMode, NativeKind, ValidatedConfig},
     http::{HttpServer, QuicEndpoint, topology},
-    quic_shard,
     tls::Certificates,
 };
 use futures_util::{StreamExt, stream::FuturesUnordered};
@@ -164,16 +163,20 @@ pub(crate) enum Quic {
         shards: Vec<(ShardRuntime, QuicEndpoint)>,
         /// Tests count the datagrams it forwarded.
         #[cfg(all(test, target_os = "linux"))]
-        router: quic_shard::Router,
+        router: crate::quic_shard::Router,
     },
 }
 
+const MAX_QUIC_SHARDS: usize = 16;
+
 impl Quic {
-    /// Shards for half the workers of a multi-thread runtime, at least two, as many as the buffer budget covers.
-    /// With four workers, two shards cost less CPU per byte than one or four for both one fast client and eight
-    /// paced ones: each additional shard splits a connection's ACKs over more sockets, and so its sends into smaller
-    /// bursts. Only Linux spreads unicast datagrams over `SO_REUSEPORT` sockets, so other targets keep one
-    /// endpoint on this runtime.
+    /// Shards for half the workers of a multi-thread runtime, at least two and at most sixteen, as many as the buffer
+    /// budget covers. With four workers, two shards cost less CPU per byte than one or four for both one fast client
+    /// and eight paced ones: each additional shard splits a connection's ACKs over more sockets, and so its sends
+    /// into smaller bursts. Each shard holds its socket buffers, receive batch and forwarding queue for as long as it
+    /// runs, and one connection never spreads over several, so sixteen keep those a small part of the default budget
+    /// on a host with many cores. Only Linux spreads unicast datagrams over `SO_REUSEPORT` sockets, so other targets
+    /// keep one endpoint on this runtime.
     pub(crate) fn bind(
         server: &HttpServer,
         tls: Arc<rustls::ServerConfig>,
@@ -184,7 +187,7 @@ impl Quic {
         } else {
             1
         };
-        let wanted = (workers / 2).clamp(2, quic_shard::MAX_SHARDS);
+        let wanted = (workers / 2).clamp(2, MAX_QUIC_SHARDS);
         let fewer = |shards: usize| {
             crate::log!("[gm:memory] the buffer budget covers {shards} of {wanted} QUIC endpoints");
         };

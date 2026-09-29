@@ -146,17 +146,22 @@ their windows together hold at most half of it, so they alone never trigger the
 hold-back. Each connection's window counts against the admitted client that
 first raised it until the connection closes; past its share, or past that half,
 an upload reads at the current window, as under pressure. Endpoint
-reservations cover the configured UDP socket buffers, receive batches, pending
-incoming packets and shard forwarding queues until the socket and its senders
-drop. Additional incoming packets are capped at 64 KiB per handshake and 4 MiB
-in all; several endpoints each take an equal part of the 4 MiB, while every
-handshake keeps its 64 KiB on the one endpoint its packets reach. The shared
-256 KiB download block is charged once.
+reservations cover the configured UDP socket buffers, receive batches, the first
+packet of each handshake waiting to be accepted and shard forwarding queues until
+the socket and its senders drop. They grow with the host's cores, not its load,
+so the Retry and hold-back thresholds and the clients' half count only the
+budget past them, and an idle server is never under pressure. Additional
+incoming packets are capped at 64 KiB per handshake and 4 MiB in all; several
+endpoints each take an equal part of the 4 MiB, while every handshake keeps its
+64 KiB on the one endpoint its packets reach. The shared 256 KiB download block
+is charged once.
 
 On Linux, HTTP/3 runs an endpoint for every two workers of the server's runtime
-(`TOKIO_WORKER_THREADS`), at least two, as many as the buffer budget covers; a
-log line reports fewer. On four workers, two endpoints cost less CPU per byte
-than one or four, for one fast client and for eight paced ones. Each has its own
+(`TOKIO_WORKER_THREADS`), at least two and at most sixteen, as many as the
+buffer budget covers; a log line reports fewer. The cap keeps their reservations
+a small part of the default budget on hosts with many cores, which one
+connection never spreads over. On four workers, two endpoints cost less CPU per
+byte than one or four, for one fast client and for eight paced ones. Each has its own
 thread, current-thread runtime and UDP socket on the shared port, which
 `SO_REUSEPORT` spreads by 4-tuple, so a connection stays on one thread.
 Connection IDs begin with their endpoint's index, and an endpoint forwards
