@@ -141,7 +141,8 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                                 }
                             }
                             let record = |kind: &str| format!("{{\"type\":\"{kind}\",\"bytes\":{},\"nanos\":1}}\n", progress.load(Ordering::SeqCst));
-                            while !finalized.load(Ordering::SeqCst) && stream.write_all(record("progress").as_bytes()).await.is_ok() {
+                            // Mode 22 completes the receiver before the stage finishes.
+                            while !finalized.load(Ordering::SeqCst) && flag.load(Ordering::SeqCst) != 22 && stream.write_all(record("progress").as_bytes()).await.is_ok() {
                                 tokio::time::sleep(Duration::from_millis(5)).await;
                             }
                             let _ = stream.write_all(record("complete").as_bytes()).await;
@@ -172,7 +173,7 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                             return;
                         }
                         let mode = flag.load(Ordering::SeqCst);
-                        if request.starts_with(b"POST /upload/checkpoint") && matches!(mode, 0 | 5 | 7 | 15 | 17 | 19 | 20 | 21) {
+                        if request.starts_with(b"POST /upload/checkpoint") && matches!(mode, 0 | 5 | 7 | 15 | 17 | 19 | 20 | 21 | 22) {
                             if mode == 17 {
                                 tokio::time::sleep(Duration::from_millis(100)).await;
                             }
@@ -1595,6 +1596,64 @@ async fn a_stop_records_the_evidence_its_stage_lacked() -> Result<(), Error> {
                 graphite_meter_core::failure::FailureReason::InsufficientEvidence
             )
         );
+    }
+    Ok(())
+}
+
+/// A lane lost in warmup is noticed when it is lost, not once the window opens, and has one reason,
+/// Go's for a failure before measuring (stage.go:195-197, 240-260), in the failure list and in the
+/// latency population alike.
+#[tokio::test]
+async fn a_warmup_loss_is_noticed_at_once_with_one_reason() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    for loaded_latency in [false, true] {
+        let (origin, mode, peer) = download_peer().await?;
+        let http = Http::new(true)?;
+        let mut server = prepared_download("peer", &origin, &http).await?;
+        server.latency = Some(graphite_meter_core::discovery::LatencyTarget {
+            base_url: origin,
+            transport: LatencyTransport::WebSocket,
+        });
+        let config = Config {
+            warmup: Duration::from_millis(1500),
+            upload_duration: Duration::from_secs(1),
+            streams: 1,
+            loaded_latency,
+            insecure: true,
+            ..Config::default()
+        };
+        let (snapshots, mut observed) = watch::channel(Snapshot::default());
+        let (_stop, cancelled) = watch::channel(false);
+        let begun = Instant::now();
+        let mut ledger = RunLedger::new();
+        // The receiver completes as the warmup starts, ending the upload the stage still needs.
+        let complete = async {
+            observed
+                .wait_for(|snapshot| snapshot.phase == Phase::Warmup)
+                .await
+                .unwrap();
+            mode.store(22, Ordering::SeqCst);
+            begun.elapsed()
+        };
+        let servers = std::slice::from_ref(&server);
+        let (result, completed) = tokio::join!(
+            measure(Stage::Upload, &config, servers, &snapshots, cancelled, &mut ledger),
+            complete
+        );
+        peer.abort();
+        assert!(result.is_err());
+        let snapshot = observed.borrow();
+        let [failure] = &snapshot.failures[..] else {
+            panic!("{:?}", snapshot.failures);
+        };
+        let preparing = graphite_meter_core::failure::FailureReason::PreparationFailed;
+        assert_eq!(failure.reason, preparing, "loaded latency {loaded_latency}");
+        let late = failure.at.saturating_sub(completed);
+        assert!(late < Duration::from_millis(750), "noticed {late:?} late");
+        if loaded_latency {
+            let ending = snapshot.results[0].server_latencies[0].ending;
+            assert_eq!(ending, Some(Ending::Failed(preparing)));
+        }
     }
     Ok(())
 }

@@ -312,7 +312,8 @@ pub async fn run(
                 snapshot.stage = config.stages.first().copied();
                 // Go records these as its run starts, at zero.
                 for failure in &preparation.failures {
-                    snapshot.failure(&failure.id, FailureScope::Throughput, &failure.source, Duration::ZERO);
+                    let reason = crate::failure::reason(failure.source.as_ref(), true);
+                    snapshot.failure(&failure.id, FailureScope::Throughput, reason, Duration::ZERO);
                 }
             });
             (preparation.servers, preparation.failures.len())

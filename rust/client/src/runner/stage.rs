@@ -343,7 +343,7 @@ impl<'a> StageRun<'a> {
                         )
                         .into();
                         let scope = if starting { FailureScope::Throughput } else { FailureScope::Latency };
-                        removed |= self.fail(&id, scope, error, true, ready_by);
+                        removed |= self.fail(&id, scope, error, ready_by);
                     }
                     self.settle(removed)?;
                 },
@@ -366,7 +366,7 @@ impl<'a> StageRun<'a> {
                 Ok(())
             }
             Err(error) => {
-                let removed = self.fail(id, FailureScope::Throughput, error, true, Instant::now());
+                let removed = self.fail(id, FailureScope::Throughput, error, Instant::now());
                 self.settle(removed)
             }
         }
@@ -385,10 +385,14 @@ impl<'a> StageRun<'a> {
         let warmup = planned_warmup(self.config, members);
         self.snapshots.send_modify(|snapshot| snapshot.phase = Phase::Warmup);
         let end = Instant::now() + warmup;
+        // Lanes are checked as often as in the window, so a loss is noticed when it happens, as
+        // Go's stage handles each outcome as it arrives (stage.go:240-260).
+        let mut health = tokio::time::interval(SAMPLE_INTERVAL);
         loop {
             self.check_health()?;
             tokio::select! {
                 () = tokio::time::sleep_until(end) => return Ok(()),
+                _ = health.tick() => {}
                 Some(event) = self.events.next(), if !self.events.is_empty() => self.observe_latency(event),
                 Some(joined) = self.latency.join_next(), if !self.latency.is_empty() => self.latency_ended(joined)?,
             }
@@ -404,7 +408,7 @@ impl<'a> StageRun<'a> {
                     .into_keys()
                     .map(|id| (id, "receiver checkpoint unavailable before measurement".into()))
                     .collect();
-                self.depart(unprepared, true)?;
+                self.depart(unprepared)?;
                 self.check_health()?;
                 Some(initial)
             }
@@ -506,7 +510,7 @@ impl<'a> StageRun<'a> {
                     .map(|failure| (member.id.clone(), failure))
             })
             .collect();
-        self.depart(retrying, false)
+        self.depart(retrying)
     }
 
     fn check_health(&mut self) -> Result<(), Error> {
@@ -515,26 +519,27 @@ impl<'a> StageRun<'a> {
             .iter_mut()
             .filter_map(|member| member.health().err().map(|error| (member.id.clone(), error)))
             .collect();
-        self.depart(failures, false)
+        self.depart(failures)
     }
 
-    fn depart(&mut self, failures: Vec<(String, Error)>, preparing: bool) -> Result<(), Error> {
+    fn depart(&mut self, failures: Vec<(String, Error)>) -> Result<(), Error> {
         let mut removed = false;
         let at = Instant::now();
         for (id, error) in failures {
-            removed |= self.fail(&id, FailureScope::Throughput, error, preparing, at);
+            removed |= self.fail(&id, FailureScope::Throughput, error, at);
         }
         self.settle(removed)
     }
 
-    /// Records a failure once, at its time on the run's clock; a throughput failure, or a latency-stage
-    /// loss beside another server, removes it.
-    fn fail(&mut self, id: &str, scope: FailureScope, error: Error, preparing: bool, at: Instant) -> bool {
+    /// Records a failure once, at its time on the run's clock, with one reason, Go's for a failure
+    /// before the window opened or in it (stage.go:195-197); a throughput failure, or a
+    /// latency-stage loss beside another server, removes it.
+    fn fail(&mut self, id: &str, scope: FailureScope, error: Error, at: Instant) -> bool {
         let Some(index) = self.members.iter().position(|member| member.id == id) else {
             return false;
         };
         let at = self.ledger.since_start(at);
-        let reason = crate::failure::reason(error.as_ref(), preparing);
+        let reason = crate::failure::reason(error.as_ref(), self.window.is_none());
         let remaining = self.members.len();
         let member = &mut self.members[index];
         let removed = match scope {
@@ -552,7 +557,7 @@ impl<'a> StageRun<'a> {
             host.ending.get_or_insert(Ending::Failed(reason));
         }
         self.snapshots.send_modify(|snapshot| {
-            snapshot.failure(id, scope, &error, at);
+            snapshot.failure(id, scope, reason, at);
             if let Some(latency) = snapshot.server_latencies.iter_mut().find(|latency| latency.id == id) {
                 latency.latest_ms = None;
             }
@@ -603,8 +608,7 @@ impl<'a> StageRun<'a> {
             Ok(()) => "latency session ended before stage boundary".into(),
             Err(error) => error,
         };
-        let preparing = self.window.is_none();
-        let removed = self.fail(&completion.id, FailureScope::Latency, error, preparing, completion.at);
+        let removed = self.fail(&completion.id, FailureScope::Latency, error, completion.at);
         self.settle(removed)
     }
 
@@ -710,7 +714,7 @@ impl<'a> StageRun<'a> {
                 }
             }
         }
-        self.depart(departures, false)?;
+        self.depart(departures)?;
         Ok(window)
     }
 
@@ -818,21 +822,21 @@ impl<'a> StageRun<'a> {
                 .collect();
             // As Go's close(), a stopped stage also names the evidence it lacked.
             if measuring {
-                let insufficient: Error = Box::new(Failure::Measurement(FailureReason::InsufficientEvidence));
+                let insufficient = FailureReason::InsufficientEvidence;
                 let throughput_failed = snapshot
                     .failures
                     .iter()
                     .any(|failure| failure.stage == result.stage && failure.scope == FailureScope::Throughput);
                 for member in members {
                     if missing && !throughput_failed {
-                        snapshot.failure(&member.id, FailureScope::Throughput, &insufficient, at);
+                        snapshot.failure(&member.id, FailureScope::Throughput, insufficient, at);
                     }
                     let unmeasured = result
                         .server_latencies
                         .iter()
                         .any(|host| host.id == member.id && host.median().is_none());
                     if result.stage == Stage::Latency && unmeasured {
-                        snapshot.failure(&member.id, FailureScope::Latency, &insufficient, at);
+                        snapshot.failure(&member.id, FailureScope::Latency, insufficient, at);
                     }
                 }
             }

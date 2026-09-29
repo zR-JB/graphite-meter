@@ -316,23 +316,25 @@ impl Snapshot {
         }
     }
 
-    /// Records a server's first failure in a stage and scope; `at` is the time since the run started.
+    /// Records a server's first failure in a stage and scope, for `reason`; `at` is the time since
+    /// the run started.
     pub fn failure(
         &mut self,
         id: &str,
         scope: FailureScope,
-        error: &crate::Error,
+        reason: graphite_meter_core::failure::FailureReason,
         at: Duration,
-    ) -> Option<graphite_meter_core::failure::FailureReason> {
-        let stage = self.stage?;
+    ) {
+        let Some(stage) = self.stage else {
+            return;
+        };
         if self
             .failures
             .iter()
             .any(|failure| failure.server_id == id && failure.stage == stage && failure.scope == scope)
         {
-            return None;
+            return;
         }
-        let reason = crate::failure::reason(error.as_ref(), self.phase != Phase::Measuring);
         self.failures.push(ServerFailure {
             server_id: id.into(),
             stage,
@@ -340,7 +342,6 @@ impl Snapshot {
             reason,
             at,
         });
-        Some(reason)
     }
 
     pub fn sample(&mut self, point: Point) {
