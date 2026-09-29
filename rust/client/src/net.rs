@@ -624,10 +624,10 @@ impl Http {
         entry.validate_discovery(&preflight)?;
         Ok(preflight)
     }
-    /// The protocol is this connection's own HTTP version, as Go's `response.Proto`. The probe's
-    /// `protocolNegotiated` names the server's hop, which a reverse proxy may speak differently,
-    /// so it stays evidence for diagnostics only.
-    pub async fn probe(&self, origin: &str, protocol: Protocol) -> Result<(Protocol, Probe)> {
+    /// The protocol a valid probe answer came over: this connection's own HTTP version, as Go's
+    /// `response.Proto`. The probe's `protocolNegotiated` names the server's hop, which a reverse
+    /// proxy may speak differently, so it stays evidence for diagnostics only.
+    pub async fn probe(&self, origin: &str, protocol: Protocol) -> Result<Protocol> {
         let target = url(&canonical_origin(origin)?, Route::Probe, &[]);
         let (version, bytes) = tokio::time::timeout(CONTROL_TIMEOUT, async {
             let response = self.request(Method::GET, &target, protocol).await?;
@@ -635,13 +635,12 @@ impl Http {
             Ok::<_, Error>((version, bounded_body(response).await?))
         })
         .await??;
-        let probe = Probe::decode(&bytes)?;
-        let actual = match version {
-            Version::HTTP_11 => Protocol::Http1,
-            Version::HTTP_2 => Protocol::Http2,
-            _ => return Err("probe used an unsupported HTTP protocol".into()),
-        };
-        Ok((actual, probe))
+        Probe::decode(&bytes)?;
+        match version {
+            Version::HTTP_11 => Ok(Protocol::Http1),
+            Version::HTTP_2 => Ok(Protocol::Http2),
+            _ => Err("probe used an unsupported HTTP protocol".into()),
+        }
     }
     /// Bind one selected server's grant to its validated HTTPS targets. The
     /// shared grant store retains issuer tokens only; overlapping target ports

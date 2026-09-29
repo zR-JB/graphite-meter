@@ -241,7 +241,7 @@ async fn prepare_server(
         let transport = if let Some(target) = &mut throughput {
             let connection = Transport::connect(client.clone(), &target.base_url, target.protocol).await?;
             if target.protocol == Protocol::Negotiated {
-                (target.protocol, _) = client.probe(&target.base_url, Protocol::Negotiated).await?;
+                target.protocol = client.probe(&target.base_url, Protocol::Negotiated).await?;
             } else {
                 let probe: Probe = connection.json(Method::GET, Route::Probe, &[]).await?;
                 probe.validate()?;
