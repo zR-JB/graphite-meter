@@ -314,6 +314,18 @@ def check_paths(root: Path) -> None:
             fail(f".github/ci-paths.yml {name} misses {missing}")
 
 
+def check_build_context(root: Path) -> None:
+    """Local Rust build output, which the .gitignore files under rust/ name, stays out of the image build context."""
+    excluded, missing = set(read(root, ".dockerignore").splitlines()), []
+    for directory, subdirectories, files in (root / "rust").walk():
+        ignored = [line.strip("/") for line in (directory / ".gitignore").read_text().splitlines()
+                   if line.strip() and not line.startswith("#")] if ".gitignore" in files else []
+        subdirectories[:] = [name for name in subdirectories if name not in ignored]
+        missing += [path for name in ignored if (path := (directory / name).relative_to(root).as_posix()) not in excluded]
+    if missing:
+        fail(f".dockerignore misses Rust build output {missing}")
+
+
 def check_certificates(root: Path) -> None:
     listed = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True, check=False)
     if listed.returncode == 0:
@@ -358,6 +370,7 @@ def check_repository(root: Path = ROOT) -> None:
     check_workflows(root)
     check_ci(root)
     check_paths(root)
+    check_build_context(root)
     check_certificates(root)
 
 

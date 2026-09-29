@@ -164,6 +164,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     ("container/Dockerfile.rust", None, "COPY docs/ docs/\n", r"rust misses \['docs/x'\]"),
     (".github/ci-paths.yml", "  - 'scripts/ci/github_api.py'\n", "", r"darwin misses \['scripts/ci/github_api.py'\]"),
     ("scripts/legal/rust_platform.py", None, "from ..ci import trust\n", r"darwin misses \['scripts/ci/trust.py'\]"),
+    (".dockerignore", "rust/http3/fuzz/corpus\n", "", r"misses Rust build output \['rust/http3/fuzz/corpus'\]"),
 )
 
 
@@ -175,7 +176,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         shutil.copytree(ROOT / ".github", root / ".github")
         shutil.copytree(ROOT / "scripts", root / "scripts", ignore=shutil.ignore_patterns("__pycache__"))
         for name in ("mise.toml", "mise.lock", "go/go.mod", "container/Dockerfile", "container/Dockerfile.rust",
-                     "rust/rust-toolchain.toml"):
+                     ".dockerignore", "rust/rust-toolchain.toml", "rust/.gitignore", "rust/http3/fuzz/.gitignore"):
             (root / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, root / name)
         return root
