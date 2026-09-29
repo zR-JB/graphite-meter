@@ -103,13 +103,11 @@ impl SessionSlot {
         self.current.lock().await.clone()
     }
 
+    /// Replaces `failed`, which closed, unless another lane already replaced it.
     async fn reconnect(&self, failed: &Arc<Session>) -> Result<(), Error> {
         let mut current = self.current.lock().await;
         if !Arc::ptr_eq(&current, failed) {
             return Ok(());
-        }
-        if !failed.is_closed() {
-            return Err("WebTransport stream failed while its session remained open".into());
         }
         *current = Arc::new(Self::open(&self.http, &self.target).await?);
         Ok(())
