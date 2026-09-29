@@ -2,8 +2,9 @@
 use crate::{
     Error,
     config::Config,
+    failure::{Failure, sign_in},
     model::{AuthPrompt, Phase, Snapshot},
-    net::{ApprovalExpired, Http, authentication_required},
+    net::Http,
     runner,
     ui::{self, Command},
 };
@@ -268,8 +269,8 @@ impl Controller {
             match result {
                 Ok(prepared) => self.prepared = prepared,
                 Err(error) => {
-                    let signed_out = authentication_required(error.as_ref()).is_some();
-                    let expired = error.is::<ApprovalExpired>();
+                    let signed_out = sign_in(error.as_ref()).is_some();
+                    let expired = matches!(error.downcast_ref(), Some(Failure::ApprovalExpired));
                     self.snapshots.send_modify(|snapshot| {
                         snapshot.phase = if snapshot.measured() {
                             Phase::Incomplete
@@ -374,13 +375,11 @@ async fn execute(
             return Err(error);
         }
         // Without a login page the run ends, and the check that follows finds it (finished).
-        let Some(required) =
-            authentication_required(error.as_ref()).filter(|required| interactive && !required.login_url.is_empty())
+        let Some((origin, login)) = sign_in(error.as_ref()).filter(|(_, login)| interactive && !login.is_empty())
         else {
             return Err(error);
         };
-        let origin = required.origin.clone();
-        let login = required.login_url.clone();
+        let (origin, login) = (origin.to_owned(), login.to_owned());
         if !approvals.insert(origin.clone()) {
             return Err("server rejected the approved credential; verify its authentication configuration".into());
         }
@@ -531,7 +530,7 @@ mod tests {
                     ..Default::default()
                 })
             });
-            Err(Box::new(crate::net::AuthRequired {
+            Err(Box::new(Failure::SignIn {
                 origin: "https://meter.test".into(),
                 login_url: "https://meter.test/login".into(),
             }) as Error)
@@ -594,7 +593,7 @@ mod tests {
             controller.running = running;
             controller
                 .operations
-                .spawn(async { Err(Box::new(ApprovalExpired) as Error) });
+                .spawn(async { Err(Box::new(Failure::ApprovalExpired) as Error) });
             let result = controller.operations.join_next().await.unwrap();
             controller.finished(result).unwrap();
             assert_eq!(controller.snapshots.borrow().error.as_deref(), Some(SIGN_IN_EXPIRED));

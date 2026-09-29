@@ -4,7 +4,7 @@ use crate::{
     Error,
     config::Config,
     download::Download,
-    failure::MeasurementFailure,
+    failure::Failure,
     latency::{Observation, Stop},
     model::{
         Ending, FailureScope, Phase, Point, ServerContribution, ServerLatency, ServerLatencyResult, Snapshot, Stage,
@@ -119,8 +119,7 @@ impl Member {
             return None;
         };
         self.checkpoint_misses += 1;
-        (crate::net::authentication_required(error.as_ref()).is_some()
-            || self.checkpoint_misses >= 3 && !final_boundary)
+        (crate::failure::sign_in(error.as_ref()).is_some() || self.checkpoint_misses >= 3 && !final_boundary)
             .then_some(error)
     }
 }
@@ -734,7 +733,7 @@ impl<'a> StageRun<'a> {
                 if accounting.bytes(&member.id, *direction) > before {
                     *moved = collected;
                 } else if collected.saturating_duration_since(*moved) >= REDIAL_WINDOW {
-                    let stalled: Error = Box::new(MeasurementFailure(FailureReason::Timeout));
+                    let stalled: Error = Box::new(Failure::Measurement(FailureReason::Timeout));
                     departures.push((member.id.clone(), stalled));
                     break;
                 }
@@ -848,7 +847,7 @@ impl<'a> StageRun<'a> {
                 .collect();
             // As Go's close(), a stopped stage also names the evidence it lacked.
             if measuring {
-                let insufficient: Error = Box::new(MeasurementFailure(FailureReason::InsufficientEvidence));
+                let insufficient: Error = Box::new(Failure::Measurement(FailureReason::InsufficientEvidence));
                 let throughput_failed = snapshot
                     .failures
                     .iter()

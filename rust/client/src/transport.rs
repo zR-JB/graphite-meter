@@ -2,7 +2,7 @@
 //! The connection owns its H3 driver; response bodies retain that owner.
 use crate::{
     Error,
-    failure::{HttpFailure, MeasurementFailure, NotReplaced},
+    failure::Failure,
     net::{Http, url},
     quic::{Http3Client, Http3Stream, RequestLimits},
 };
@@ -34,11 +34,9 @@ pub(crate) struct RetryBackoff {
 
 impl RetryBackoff {
     pub(crate) fn delay(&mut self, error: &(dyn std::error::Error + 'static), started: Instant) -> Duration {
-        let busy = crate::failure::causes(error)
-            .find_map(|cause| cause.downcast_ref::<HttpFailure>().filter(|http| http.busy()));
-        if let Some(http) = busy {
+        if let Some(retry_after) = crate::failure::busy_wait(error) {
             self.busy = (self.busy * 2).clamp(BUSY_BACKOFF, BUSY_BACKOFF_CAP);
-            return self.busy.max(http.retry_after).min(BUSY_BACKOFF_CAP);
+            return self.busy.max(retry_after).min(BUSY_BACKOFF_CAP);
         }
         self.busy = Duration::ZERO;
         if started.elapsed() < TRANSFER_RETRY_BACKOFF {
@@ -66,12 +64,12 @@ pub(crate) async fn restore<T, F: Future<Output = Result<T, Error>>>(
             Ok(Err(error)) if crate::failure::permanent(error.as_ref()) => return Err(error),
             Ok(Err(error)) => error,
             // A try the deadline cut short keeps the cause before it.
-            Err(elapsed) => return Err(NotReplaced(what, cause.unwrap_or_else(|| elapsed.into())).into()),
+            Err(elapsed) => return Err(Failure::NotReplaced(what, cause.unwrap_or_else(|| elapsed.into())).into()),
         };
         let wake = Instant::now() + backoff.delay(error.as_ref(), started);
         tokio::time::sleep_until(wake.min(deadline)).await;
         if wake >= deadline {
-            return Err(NotReplaced(what, error).into());
+            return Err(Failure::NotReplaced(what, error).into());
         }
         cause = Some(error);
     }
@@ -86,7 +84,7 @@ impl Retrying {
         lanes
             .values()
             .next()
-            .map(|error| Box::new(crate::failure::SharedFailure(error.clone())) as Error)
+            .map(|error| Box::new(Failure::Shared(error.clone())) as Error)
     }
 }
 
@@ -124,7 +122,7 @@ impl TransferRetry {
                 self.publish(None);
                 return Ok(());
             }
-            Ok(()) => Box::new(MeasurementFailure(FailureReason::Timeout)),
+            Ok(()) => Box::new(Failure::Measurement(FailureReason::Timeout)),
             Err(error) => error,
         };
         if moved {

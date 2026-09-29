@@ -691,7 +691,7 @@ async fn mid_stage_auth_failure_keeps_reapproval_cause() -> Result<(), Error> {
     );
     peer.abort();
     let error = result.unwrap_err();
-    assert!(crate::net::authentication_required(error.as_ref()).is_some(), "{error}");
+    assert!(crate::failure::sign_in(error.as_ref()).is_some(), "{error}");
     Ok(())
 }
 
@@ -1095,7 +1095,7 @@ fn checkpoints_skip_two_misses_reset_on_success_and_keep_final_misses() {
     assert!(member.missed(refused(), false).is_none());
     assert!(member.missed(refused(), false).is_none());
     assert!(member.missed(refused(), false).is_some());
-    let revoked = crate::net::AuthRequired {
+    let revoked = Failure::SignIn {
         origin: "https://meter.test".into(),
         login_url: "https://meter.test/login".into(),
     };

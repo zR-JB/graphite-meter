@@ -81,7 +81,7 @@ struct Preparation {
 fn preferred(mut failures: Vec<ServerError>) -> Error {
     let index = failures
         .iter()
-        .position(|failure| crate::net::authentication_required(failure.source.as_ref()).is_some())
+        .position(|failure| crate::failure::sign_in(failure.source.as_ref()).is_some())
         .unwrap_or(0);
     failures.swap_remove(index).into()
 }
@@ -211,7 +211,7 @@ async fn prepare_server(
         {
             match verify_throughput_webtransport(&client, target).await {
                 Ok(()) => {}
-                Err(error) if crate::net::authentication_required(error.as_ref()).is_some() => {
+                Err(error) if crate::failure::sign_in(error.as_ref()).is_some() => {
                     return Err(error);
                 }
                 Err(error) if config.throughput_transport.is_none() => {
@@ -253,7 +253,7 @@ async fn prepare_server(
             Err(error)
                 if target.transport == LatencyTransport::WebTransport
                     && config.latency_transport.is_none()
-                    && crate::net::authentication_required(error.as_ref()).is_none() =>
+                    && crate::failure::sign_in(error.as_ref()).is_none() =>
             {
                 target = selection::latency(config, entry, &preflight, Some(LatencyTransport::WebSocket))?;
                 crate::latency::verify(&client, &target).await?
@@ -348,7 +348,7 @@ pub async fn run(
             Ok(failed) => failed,
             Err(error)
                 if sole.is_some()
-                    && crate::net::authentication_required(error.as_ref()).is_none()
+                    && crate::failure::sign_in(error.as_ref()).is_none()
                     && snapshots.borrow().measured() =>
             {
                 continue;

@@ -2,8 +2,9 @@
 use graphite_meter_client::{
     Error,
     config::Config,
+    failure::Failure,
     model::{Phase, Snapshot, Stage},
-    net::{AuthRequired, Http},
+    net::Http,
     runner,
 };
 use graphite_meter_core::{
@@ -71,8 +72,10 @@ async fn go_server_completes_approved_native_stages() -> Result<(), Error> {
         ..ServerEntry::default()
     };
     let challenge = http.preflight(&entry).await.unwrap_err();
-    let required = challenge.downcast::<AuthRequired>()?;
-    let pending = http.begin_authorization(&required.origin, &required.login_url)?;
+    let Failure::SignIn { origin, login_url } = *challenge.downcast::<Failure>()? else {
+        return Err("the server did not ask for sign-in".into());
+    };
+    let pending = http.begin_authorization(&origin, &login_url)?;
     let helper = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .ok_or("missing Rust workspace directory")?

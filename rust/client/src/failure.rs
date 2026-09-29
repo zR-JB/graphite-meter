@@ -1,45 +1,79 @@
 use crate::Error;
 use graphite_meter_core::failure::{FailureReason, LaneEnding, UploadRefusal};
+use std::{fmt, sync::Arc, time::Duration};
 
+/// The client's own failures; `reason`, `permanent` and `retryable` tell them apart by kind.
 #[derive(Debug)]
-pub struct HttpFailure {
-    pub status: u16,
-    pub retry_after: std::time::Duration,
-    pub refusal: Option<UploadRefusal>,
+pub enum Failure {
+    /// The server's answer: its status, the wait it asked for, and an upload refusal's code.
+    Http {
+        status: u16,
+        retry_after: Duration,
+        refusal: Option<UploadRefusal>,
+    },
+    /// The server asks for sign-in at `origin`. The login page is empty when the server named
+    /// none, as for a revoked lane: checking the servers again finds it, as Go's client re-prepares.
+    SignIn { origin: String, login_url: String },
+    /// Go's ErrApprovalExpired: the approval window closed while the server kept answering.
+    ApprovalExpired,
+    /// The approval window closed after the last poll failed to reach the server.
+    ApprovalUnreachable(Error),
+    /// The server ended a lane or a latency channel this way.
+    Lane(LaneEnding),
+    /// A measurement rule failed the server for this reason.
+    Measurement(FailureReason),
+    /// A latency channel that closed or failed, which is dialled again.
+    Disconnected(&'static str),
+    /// What was lost and not replaced within Go's redial window, with the last cause.
+    NotReplaced(&'static str, Error),
+    /// A lane's failure, which its stage and its retries share.
+    Shared(Arc<Error>),
 }
 
-impl HttpFailure {
-    /// Go's statusError.busy (failure.go:44-46).
-    pub fn busy(&self) -> bool {
-        matches!(self.status, 429 | 503)
-    }
-    pub fn reason(&self) -> FailureReason {
-        match self.refusal {
-            Some(refusal) => refusal.failure_reason(),
-            None if self.busy() => FailureReason::ServerBusy,
-            None => FailureReason::ProtocolError,
+impl fmt::Display for Failure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Http {
+                status,
+                refusal: Some(refusal),
+                ..
+            } => write!(formatter, "{} (HTTP {status})", refusal.message()),
+            Self::Http { status, .. } => write!(formatter, "server returned HTTP {status}"),
+            Self::SignIn { login_url, .. } if login_url.is_empty() => formatter.write_str("authentication required"),
+            Self::SignIn { login_url, .. } => write!(formatter, "authentication required at {login_url}"),
+            Self::ApprovalExpired => formatter.write_str("browser approval timed out"),
+            Self::ApprovalUnreachable(error) => {
+                write!(
+                    formatter,
+                    "server unreachable while waiting for browser approval: {error}"
+                )
+            }
+            Self::Lane(ending) => formatter.write_str(ending.reason()),
+            Self::Measurement(reason) => formatter.write_str(reason.label()),
+            Self::Disconnected(what) => formatter.write_str(what),
+            Self::NotReplaced(what, error) => {
+                let window = crate::transport::REDIAL_WINDOW;
+                write!(formatter, "{what} lost and not replaced within {window:?}: {error}")
+            }
+            Self::Shared(error) => fmt::Display::fmt(error, formatter),
         }
     }
 }
 
-impl std::fmt::Display for HttpFailure {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.refusal {
-            Some(refusal) => write!(formatter, "{} (HTTP {})", refusal.message(), self.status),
-            None => write!(formatter, "server returned HTTP {}", self.status),
+impl std::error::Error for Failure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::ApprovalUnreachable(error) | Self::NotReplaced(_, error) => Some(error.as_ref()),
+            Self::Shared(error) => Some(error.as_ref().as_ref()),
+            _ => None,
         }
     }
 }
-impl std::error::Error for HttpFailure {}
 
-#[derive(Debug)]
-pub struct LaneFailure(pub LaneEnding);
-impl std::fmt::Display for LaneFailure {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(self.0.reason())
-    }
+/// Go's statusError.busy (failure.go:44-46).
+fn busy(status: u16) -> bool {
+    matches!(status, 429 | 503)
 }
-impl std::error::Error for LaneFailure {}
 
 /// The error and its causes. io::Error::source() skips its own payload, which carries a wrapped cause.
 pub(crate) fn causes<'a>(
@@ -51,21 +85,35 @@ pub(crate) fn causes<'a>(
     })
 }
 
+/// The sign-in the server asked for behind `error`: its origin and login page.
+pub(crate) fn sign_in<'a>(error: &'a (dyn std::error::Error + 'static)) -> Option<(&'a str, &'a str)> {
+    causes(error).find_map(|cause| match cause.downcast_ref() {
+        Some(Failure::SignIn { origin, login_url }) => Some((origin.as_str(), login_url.as_str())),
+        _ => None,
+    })
+}
+
+/// The wait a busy answer behind `error` asked for, if the server was busy.
+pub(crate) fn busy_wait(error: &(dyn std::error::Error + 'static)) -> Option<Duration> {
+    causes(error).find_map(|cause| match cause.downcast_ref() {
+        Some(&Failure::Http {
+            status, retry_after, ..
+        }) if busy(status) => Some(retry_after),
+        _ => None,
+    })
+}
+
 /// Whether the server's answer behind the error refused the upload id with `refusal`.
 pub(crate) fn refused(error: &(dyn std::error::Error + 'static), refusal: UploadRefusal) -> bool {
-    causes(error).any(|cause| {
-        cause
-            .downcast_ref::<HttpFailure>()
-            .is_some_and(|http| http.refusal == Some(refusal))
-    })
+    causes(error).any(
+        |cause| matches!(cause.downcast_ref(), Some(Failure::Http { refusal: Some(found), .. }) if *found == refusal),
+    )
 }
 
 /// Go's permanent (transfer.go:65-68): a sign-in, or a refusal no retry answers, which
 /// uploadRefusal makes of `invalid` and `ownerMismatch` (failure.go:56-60).
 pub(crate) fn permanent(error: &(dyn std::error::Error + 'static)) -> bool {
-    crate::net::authentication_required(error).is_some()
-        || refused(error, UploadRefusal::Invalid)
-        || refused(error, UploadRefusal::OwnerMismatch)
+    sign_in(error).is_some() || refused(error, UploadRefusal::Invalid) || refused(error, UploadRefusal::OwnerMismatch)
 }
 
 /// A lane retries what Go's persist retries (transfer.go:84-86): all but a permanent error, its
@@ -73,7 +121,7 @@ pub(crate) fn permanent(error: &(dyn std::error::Error + 'static)) -> bool {
 /// or QUIC violation this side found in what the peer sent.
 pub(crate) fn retryable(error: &Error) -> bool {
     !permanent(error.as_ref())
-        && error.downcast_ref::<HttpFailure>().is_none_or(HttpFailure::busy)
+        && !matches!(error.downcast_ref(), Some(&Failure::Http { status, .. }) if !busy(status))
         && !crate::quic::violation(error.as_ref())
 }
 
@@ -83,21 +131,17 @@ pub fn reason(error: &(dyn std::error::Error + 'static), preparing: bool) -> Fai
         return FailureReason::PreparationFailed;
     }
     for error in causes(error) {
-        if let Some(failure) = error.downcast_ref::<MeasurementFailure>() {
-            return failure.0;
-        }
-        if error.is::<crate::net::AuthRequired>() {
-            return FailureReason::SignInRequired;
-        }
-        if let Some(http) = error.downcast_ref::<HttpFailure>() {
-            return http.reason();
-        }
-        if let Some(lane) = error.downcast_ref::<LaneFailure>() {
-            return match lane.0 {
-                LaneEnding::Revoked => FailureReason::SignInRequired,
-                LaneEnding::Shutdown | LaneEnding::Finished => FailureReason::ConnectionLost,
-                _ => FailureReason::Timeout,
-            };
+        match error.downcast_ref() {
+            Some(Failure::Measurement(reason)) => return *reason,
+            Some(Failure::SignIn { .. } | Failure::Lane(LaneEnding::Revoked)) => return FailureReason::SignInRequired,
+            Some(Failure::Http {
+                refusal: Some(refusal), ..
+            }) => return refusal.failure_reason(),
+            Some(&Failure::Http { status, .. }) if busy(status) => return FailureReason::ServerBusy,
+            Some(Failure::Http { .. }) => return FailureReason::ProtocolError,
+            Some(Failure::Lane(LaneEnding::Shutdown | LaneEnding::Finished)) => return FailureReason::ConnectionLost,
+            Some(Failure::Lane(_)) => return FailureReason::Timeout,
+            _ => {}
         }
         if error.is::<tokio::time::error::Elapsed>() {
             return FailureReason::Timeout;
@@ -163,53 +207,9 @@ pub(crate) fn lane_error(error: Error) -> Error {
         && let Ok(code) = u32::try_from(close.error_code.into_inner())
         && let Some(ending) = LaneEnding::from_webtransport_code(code)
     {
-        return Box::new(LaneFailure(ending));
+        return Box::new(Failure::Lane(ending));
     }
     error
-}
-
-pub(crate) struct SharedFailure(pub std::sync::Arc<Error>);
-impl std::fmt::Debug for SharedFailure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Debug::fmt(self.0.as_ref(), f)
-    }
-}
-impl std::fmt::Display for SharedFailure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(self.0.as_ref(), f)
-    }
-}
-impl std::error::Error for SharedFailure {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.0.as_ref().as_ref())
-    }
-}
-
-#[derive(Debug)]
-pub struct MeasurementFailure(pub FailureReason);
-impl std::fmt::Display for MeasurementFailure {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(self.0.label())
-    }
-}
-impl std::error::Error for MeasurementFailure {}
-
-#[derive(Debug)]
-pub(crate) struct NotReplaced(pub &'static str, pub Error);
-impl std::fmt::Display for NotReplaced {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let window = crate::transport::REDIAL_WINDOW;
-        write!(
-            formatter,
-            "{} lost and not replaced within {window:?}: {}",
-            self.0, self.1
-        )
-    }
-}
-impl std::error::Error for NotReplaced {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.1.as_ref())
-    }
 }
 
 #[cfg(test)]

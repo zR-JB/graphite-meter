@@ -1,7 +1,7 @@
 //! Stage-owned upload lanes and authoritative receiver evidence.
 use crate::{
     Error,
-    failure::{HttpFailure, SharedFailure},
+    failure::Failure,
     transport::{REDIAL_WINDOW, Retrying, TRANSFER_RETRY_BACKOFF, TransferRetry, Transport, restore},
     webtransport::SessionSlot,
 };
@@ -286,7 +286,7 @@ impl Upload {
     pub fn health(&self) -> Result<(), Error> {
         let state = self.state.borrow();
         if let Some(error) = &state.error {
-            return Err(SharedFailure(error.clone()).into());
+            return Err(Failure::Shared(error.clone()).into());
         }
         if state.complete {
             return Err("upload receiver completed before stage finish".into());
@@ -314,7 +314,7 @@ impl Upload {
             .await;
             let count = match response {
                 Ok(Ok(count)) => count,
-                Ok(Err(error)) if crate::net::authentication_required(error.as_ref()).is_none() => {
+                Ok(Err(error)) if crate::failure::sign_in(error.as_ref()).is_none() => {
                     if deadline.saturating_duration_since(Instant::now()) <= CHECKPOINT_RETRY {
                         return Err(error);
                     }
@@ -370,7 +370,7 @@ impl Upload {
                 .await
                 .map_err(|_| "upload progress ended without complete")?;
             match &state.error {
-                Some(error) => Err::<_, Error>(SharedFailure(error.clone()).into()),
+                Some(error) => Err::<_, Error>(Failure::Shared(error.clone()).into()),
                 None => Ok(()),
             }
         })
@@ -437,10 +437,9 @@ async fn send_lane(
             )
             .await;
         // A lane the receiver ended as idle ends its attempt normally (upload.go:124-130).
-        let idle = |error: &Error| {
-            error
-                .downcast_ref::<HttpFailure>()
-                .is_some_and(|http| http.status == 408 && http.refusal == Some(UploadRefusal::Idle))
+        let idle = |error: &Error| match error.downcast_ref() {
+            Some(Failure::Http { status, refusal, .. }) => (*status, *refusal) == (408, Some(UploadRefusal::Idle)),
+            _ => false,
         };
         let result = result.or_else(|error| if idle(&error) { Ok(()) } else { Err(error) });
         retry.ended(result, started, moved.load(Ordering::Relaxed)).await?;
@@ -622,12 +621,12 @@ fn apply_event(event: UploadProgress, state: &watch::Sender<State>) -> Result<bo
             let refusal = UploadRefusal::from_name(&code);
             // A withdrawn grant asks for sign-in, as Go's uploadRefusal (failure.go:69-70).
             if refusal == Some(UploadRefusal::Revoked) {
-                return Err(Box::new(crate::net::AuthRequired {
+                return Err(Box::new(Failure::SignIn {
                     origin: String::new(),
                     login_url: String::new(),
                 }));
             }
-            return Err(Box::new(HttpFailure {
+            return Err(Box::new(Failure::Http {
                 status: refusal.map_or(400, |refusal| refusal.status()),
                 retry_after: Duration::ZERO,
                 refusal,
@@ -762,7 +761,7 @@ mod tests {
         let fed = progress_feed(&control, "test-session", &state, Some(Arc::new(slot))).await;
         server.abort();
         let error = fed.err().ok_or("the feed completed")?;
-        assert!(crate::net::authentication_required(error.as_ref()).is_some(), "{error}");
+        assert!(crate::failure::sign_in(error.as_ref()).is_some(), "{error}");
         Ok(())
     }
 

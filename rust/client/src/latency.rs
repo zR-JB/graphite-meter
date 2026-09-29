@@ -2,6 +2,7 @@
 //! Native CLI grants authenticate the handshake directly: they cannot mint browser tickets.
 use crate::{
     Error,
+    failure::Failure,
     net::Http,
     transport::{REDIAL_WINDOW, restore},
 };
@@ -100,7 +101,7 @@ pub(crate) async fn run(
         let Err(error) = result else {
             return Ok(());
         };
-        if !error.is::<Disconnected>() {
+        if !matches!(error.downcast_ref(), Some(Failure::Disconnected(_))) {
             return Err(error);
         }
         // A redial's window is cut short by the stage end (latency.go:256).
@@ -328,20 +329,11 @@ async fn connect_ws(http: &Http, origin: &str) -> Result<Socket, Error> {
     tokio::time::timeout(Duration::from_secs(10), connection).await?
 }
 
-#[derive(Debug)]
-struct Disconnected(&'static str);
-impl std::fmt::Display for Disconnected {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(self.0)
-    }
-}
-impl std::error::Error for Disconnected {}
-
 /// The lane ending a close frame names, or a channel that closed before the stage ended.
 fn closed(frame: Option<tokio_tungstenite::tungstenite::protocol::CloseFrame>) -> Error {
     match frame.and_then(|frame| graphite_meter_core::failure::LaneEnding::from_websocket_code(frame.code.into())) {
-        Some(ending) => Box::new(crate::failure::LaneFailure(ending)),
-        None => Disconnected("latency channel closed before measurement ended").into(),
+        Some(ending) => Box::new(Failure::Lane(ending)),
+        None => Failure::Disconnected("latency channel closed before measurement ended").into(),
     }
 }
 
@@ -406,7 +398,7 @@ async fn measure(
                 if !matches!(tokio::time::timeout(Duration::from_secs(1), writer.send(wire::encode_ping(id))).await, Ok(Ok(()))) {
                     pending.remove(&id);
                     if let Err(error) = emit(observations, Observation::Lost { sent, outcome: ProbeOutcome::SendFailure }) { break Err(error); }
-                    break Err(Disconnected("latency channel send failed").into());
+                    break Err(Failure::Disconnected("latency channel send failed").into());
                 }
             }
             message = reader.next() => {
@@ -431,11 +423,11 @@ async fn measure(
                         if let Err(error) = emit(observations, observation) { break Err(error); }
                     }
                     Some(Ok(Message::Close(frame))) => break Err(closed(frame)),
-                    None => break Err(Disconnected("latency channel closed before measurement ended").into()),
+                    None => break Err(Failure::Disconnected("latency channel closed before measurement ended").into()),
                     Some(Err(error)) => {
                         let error = crate::failure::lane_error(error);
-                        if error.is::<crate::failure::LaneFailure>() { break Err(error); }
-                        break Err(Disconnected("latency channel receive failed").into());
+                        if matches!(error.downcast_ref(), Some(Failure::Lane(_))) { break Err(error); }
+                        break Err(Failure::Disconnected("latency channel receive failed").into());
                     }
                     _ => {}
                 }

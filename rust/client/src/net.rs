@@ -1,5 +1,5 @@
 //! Validated discovery and origin-scoped ephemeral credentials. Redirects never carry authority.
-use crate::{Error, tls::Alpn};
+use crate::{Error, failure::Failure, tls::Alpn};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::Bytes;
 use futures_util::{Stream, TryStreamExt};
@@ -25,7 +25,6 @@ use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use serde::de::DeserializeOwned;
 use std::{
     collections::{HashMap, HashSet},
-    fmt,
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicU64, Ordering},
@@ -439,52 +438,6 @@ pub struct Discovery {
     /// Entries the catalogue named but the client left out.
     pub rejected: Vec<Rejected>,
 }
-#[derive(Debug)]
-pub struct AuthRequired {
-    pub origin: String,
-    /// Empty when the server named no login page, as for a revoked lane: checking the servers
-    /// again finds it, as Go's client re-prepares.
-    pub login_url: String,
-}
-impl fmt::Display for AuthRequired {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("authentication required")?;
-        match self.login_url.as_str() {
-            "" => Ok(()),
-            url => write!(f, " at {url}"),
-        }
-    }
-}
-impl std::error::Error for AuthRequired {}
-
-pub(crate) fn authentication_required<'a>(error: &'a (dyn std::error::Error + 'static)) -> Option<&'a AuthRequired> {
-    crate::failure::causes(error).find_map(|cause| cause.downcast_ref())
-}
-
-/// Go's ErrApprovalExpired: the approval window closed while the server kept answering.
-#[derive(Debug)]
-pub struct ApprovalExpired;
-impl fmt::Display for ApprovalExpired {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("browser approval timed out")
-    }
-}
-impl std::error::Error for ApprovalExpired {}
-
-/// The approval window closed after the last poll failed to reach the server.
-#[derive(Debug)]
-struct ApprovalUnreachable(Error);
-impl fmt::Display for ApprovalUnreachable {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "server unreachable while waiting for browser approval: {}", self.0)
-    }
-}
-impl std::error::Error for ApprovalUnreachable {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.0.as_ref())
-    }
-}
-
 enum Approval {
     Pending,
     Granted,
@@ -615,13 +568,13 @@ impl Http {
                 None => String::new(),
             };
             self.grants.lock().expect("client grants poisoned").remove(&issuer);
-            return Err(Box::new(AuthRequired {
+            return Err(Box::new(Failure::SignIn {
                 origin: issuer,
                 login_url,
             }));
         }
         if !status.is_success() {
-            return Err(Box::new(crate::failure::HttpFailure {
+            return Err(Box::new(Failure::Http {
                 status: status.as_u16(),
                 retry_after: headers
                     .get(http::header::RETRY_AFTER)
@@ -754,8 +707,8 @@ impl Http {
                 biased;
                 () = tokio::time::sleep_until(pending.deadline) => {
                     return Err(match unreachable {
-                        Some(error) => Box::new(ApprovalUnreachable(error)),
-                        None => Box::new(ApprovalExpired),
+                        Some(error) => Box::new(Failure::ApprovalUnreachable(error)),
+                        None => Box::new(Failure::ApprovalExpired),
                     });
                 }
                 _ = ticks.tick() => {}
@@ -1169,7 +1122,10 @@ mod tests {
             .poll_authorization(pending(answered, Duration::from_millis(1500)))
             .await
             .unwrap_err();
-        assert!(expired.is::<ApprovalExpired>(), "{expired}");
+        assert!(
+            matches!(expired.downcast_ref(), Some(Failure::ApprovalExpired)),
+            "{expired}"
+        );
         let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await?.local_addr()?;
         let unreachable = http
             .poll_authorization(pending(
@@ -1331,7 +1287,7 @@ mod tests {
         let error = first_client
             .check_status(&target, StatusCode::FORBIDDEN, &headers)
             .unwrap_err();
-        assert_eq!(authentication_required(error.as_ref()).unwrap().origin, first);
+        assert_eq!(crate::failure::sign_in(error.as_ref()).unwrap().0, first);
         assert!(first_client.authorization(&target).is_none());
         assert_eq!(second_client.authorization(&target).unwrap(), "Bearer second");
     }

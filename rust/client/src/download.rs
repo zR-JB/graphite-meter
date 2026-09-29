@@ -1,7 +1,7 @@
 //! Owned download lanes. Only received bytes contribute to measurement.
 use crate::{
     Error,
-    failure::MeasurementFailure,
+    failure::Failure,
     net::{Http, url},
     transport::{Retrying, TransferRetry, Transport},
     webtransport::{Session, SessionSlot},
@@ -168,7 +168,7 @@ impl Download {
     pub fn health(&mut self) -> Result<(), Error> {
         if let Some(task) = self.tasks.try_join_next() {
             task??;
-            return Err(Box::new(MeasurementFailure(FailureReason::ConnectionLost)));
+            return Err(Box::new(Failure::Measurement(FailureReason::ConnectionLost)));
         }
         Ok(())
     }
