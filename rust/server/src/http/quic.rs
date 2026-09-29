@@ -1068,7 +1068,7 @@ mod tests {
         let connecting = client.connect_with(distrusting, address, "localhost").unwrap();
         assert!(connecting.await.is_err());
         tokio::time::pause();
-        for _ in 0..200 {
+        for _ in 0..QUIC_HANDSHAKE.as_millis() / 25 {
             if server.connections.stats().active == 0 {
                 break;
             }
@@ -1086,6 +1086,53 @@ mod tests {
             tokio::time::advance(Duration::from_secs(1)).await;
         }
         assert_eq!(server.memory.available(), idle);
+        tokio::time::resume();
+        stop.send(()).unwrap();
+        serving.await.unwrap().unwrap();
+    }
+
+    /// As quic-go's, a handshake has ten seconds in all.
+    #[tokio::test]
+    async fn a_handshake_has_ten_seconds_in_all() {
+        use super::*;
+        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
+        let (tls, client_config) = tls();
+        let (address, stop, serving) = serve(&server, tls);
+        // A client's first Initial, from a socket that never answers the server.
+        let silent = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let _connecting = client
+            .connect_with(client_config, silent.local_addr().unwrap(), "localhost")
+            .unwrap();
+        let mut initial = [0; 1500];
+        let length = silent.recv(&mut initial).await.unwrap();
+        silent.send_to(&initial[..length], address).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while server.connections.stats().active == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        tokio::time::pause();
+        let wait = async |seconds| {
+            for _ in 0..seconds * 10 {
+                tokio::time::advance(Duration::from_millis(100)).await;
+            }
+        };
+        // Real time passed since the handshake began, so the first check leaves it a margin.
+        wait(8).await;
+        assert_eq!(
+            server.connections.stats().active,
+            1,
+            "the handshake ended before ten seconds"
+        );
+        wait(3).await;
+        assert_eq!(
+            server.connections.stats().active,
+            0,
+            "the handshake outlived ten seconds"
+        );
         tokio::time::resume();
         stop.send(()).unwrap();
         serving.await.unwrap().unwrap();

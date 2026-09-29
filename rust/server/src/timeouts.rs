@@ -9,8 +9,8 @@ pub use graphite_meter_core::wire::IDLE_BOUND;
 pub const CONTROL: Duration = Duration::from_secs(15);
 /// Connection tasks drain within this at shutdown, as does admitted work that raced a GOAWAY.
 pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
-/// Go's QUIC `HandshakeIdleTimeout`.
-pub const QUIC_HANDSHAKE: Duration = Duration::from_secs(5);
+/// quic-go's bound on a whole handshake: twice Go's `HandshakeIdleTimeout` of five seconds.
+pub const QUIC_HANDSHAKE: Duration = Duration::from_secs(10);
 /// An HTTP/2 connection's preface and first SETTINGS.
 pub const H2_HANDSHAKE: Duration = Duration::from_secs(10);
 /// Writing the answer to a WebTransport CONNECT that opens no session.
