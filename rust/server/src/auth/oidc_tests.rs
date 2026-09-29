@@ -18,7 +18,7 @@ use tokio::{
 };
 use tokio_rustls::TlsAcceptor;
 
-use crate::test_identity;
+use crate::{config::AuthMode, test_identity};
 
 #[derive(Clone, Copy, Default)]
 struct Claims {
@@ -142,7 +142,7 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Provi
     let issuer = format!("https://{host}:{}", listener.local_addr().unwrap().port());
     let mut oidc = Oidc::new(
         &AuthConfig {
-            mode: crate::config::AuthMode::Oidc,
+            mode: AuthMode::Oidc,
             public_url: "https://meter.example".into(),
             oidc_issuer: issuer.clone(),
             oidc_client_id: "meter".into(),
@@ -641,4 +641,142 @@ async fn unavailable_provider_refuses_logins_until_discovery_recovers_once() {
     );
     assert!(provider.oidc.start(address, String::new(), None).await.is_ok());
     provider.stop().await;
+}
+
+pub(in crate::auth) fn ready() -> Oidc {
+    ready_with(true)
+}
+
+fn ready_with(issuer_parameter: bool) -> Oidc {
+    let oidc = discovered("https://identity.example/authorize", issuer_parameter);
+    assert!(oidc.ready().is_some());
+    oidc
+}
+
+/// A client that discovered metadata naming `authorization_endpoint`, ready if discovery accepted it.
+pub(in crate::auth) fn discovered(authorization_endpoint: &str, issuer_parameter: bool) -> Oidc {
+    let oidc = Oidc::new(
+        &AuthConfig {
+            mode: AuthMode::Oidc,
+            public_url: "https://meter.example".into(),
+            oidc_issuer: "https://identity.example".into(),
+            oidc_client_id: "meter".into(),
+            oidc_client_secret: "secret".into(),
+            oidc_allowed_groups: vec!["operators".into()],
+            ..AuthConfig::default()
+        },
+        Arc::new(crate::auth::logging::SecurityLog::default()),
+    )
+    .unwrap();
+    let metadata = serde_json::from_value(serde_json::json!({
+        "issuer": "https://identity.example",
+        "authorization_endpoint": authorization_endpoint,
+        "token_endpoint": "https://identity.example/token",
+        "userinfo_endpoint": "https://identity.example/userinfo",
+        "jwks_uri": "https://identity.example/jwks",
+        "id_token_signing_alg_values_supported": ["RS256"],
+        "authorization_response_iss_parameter_supported": issuer_parameter
+    }))
+    .unwrap();
+    if let Ok(provider) = Provider::new(metadata, "https://identity.example") {
+        assert!(oidc.provider.set(Arc::new(provider)).is_ok());
+    }
+    oidc
+}
+
+pub(in crate::auth) fn query_fields(url: &str) -> HashMap<String, String> {
+    form_urlencoded::parse(url.split_once('?').unwrap().1.as_bytes())
+        .into_owned()
+        .collect()
+}
+
+#[tokio::test]
+async fn authorization_is_pkce_bound_bounded_and_consumed_before_browser_validation() {
+    let oidc = ready();
+    let address = "192.0.2.1".parse().unwrap();
+    let started = oidc.start(address, String::new(), None).await.unwrap();
+    let fields = query_fields(&started.url);
+    assert_eq!(fields["code_challenge_method"], "S256");
+    assert_eq!(fields["response_type"], "code");
+    assert_eq!(fields["redirect_uri"], "https://meter.example/auth/oidc/callback");
+    let issuer = Some("https://identity.example");
+    let refused = oidc.take(&fields["state"], "wrong-browser", issuer).err();
+    assert_eq!(refused, Some((Reason::TransactionReplay, String::new())));
+    assert!(oidc.transactions.lock().unwrap().is_empty());
+    assert!(oidc.take(&fields["state"], &started.browser, issuer).is_err());
+    for _ in 0..8 {
+        oidc.start(address, String::new(), None).await.unwrap();
+    }
+    assert!(oidc.start(address, String::new(), None).await.is_err());
+    assert_eq!(oidc.transactions.lock().unwrap().len(), 8);
+}
+
+#[tokio::test]
+async fn transactions_charge_wider_ipv6_shares_before_global_capacity() {
+    let oidc = ready();
+    for subnet in 0..2 {
+        for host in 1..=8 {
+            let address = format!("2001:db8:1:{subnet:x}::{host}").parse().unwrap();
+            oidc.start(address, String::new(), None).await.unwrap();
+        }
+    }
+    assert!(
+        oidc.start("2001:db8:1:2::1".parse().unwrap(), String::new(), None)
+            .await
+            .is_err()
+    );
+    assert!(
+        oidc.start("2001:db8:2::1".parse().unwrap(), String::new(), None)
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn mismatched_response_issuer_cannot_redeem_a_code() {
+    let oidc = ready();
+    let started = oidc
+        .start("192.0.2.2".parse().unwrap(), "challenge".into(), None)
+        .await
+        .unwrap();
+    let state = query_fields(&started.url)["state"].clone();
+    let refused = oidc.take(&state, &started.browser, Some("https://other.example")).err();
+    assert_eq!(refused, Some((Reason::ResponseIssuer, "challenge".into())));
+    assert!(oidc.transactions.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn an_empty_response_issuer_is_absent_like_go() {
+    for advertised in [false, true] {
+        let oidc = ready_with(advertised);
+        let started = oidc
+            .start("192.0.2.3".parse().unwrap(), "challenge".into(), None)
+            .await
+            .unwrap();
+        let state = query_fields(&started.url)["state"].clone();
+        let taken = oidc
+            .take(&state, &started.browser, Some(""))
+            .map(|_| ())
+            .map_err(|(reason, _)| reason);
+        assert_eq!(
+            taken,
+            if advertised {
+                Err(Reason::ResponseIssuer)
+            } else {
+                Ok(())
+            }
+        );
+    }
+}
+
+#[test]
+fn provider_endpoints_require_https_without_embedded_credentials() {
+    for endpoint in [
+        "http://identity.example/token",
+        "https://user@identity.example/token",
+        "https://identity.example/token#fragment",
+    ] {
+        assert!(valid_url(endpoint).is_err());
+    }
+    assert!(valid_url("https://identity.example/token").is_ok());
 }
