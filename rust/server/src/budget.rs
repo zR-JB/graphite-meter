@@ -155,8 +155,9 @@ pub(crate) fn check(
 pub(crate) struct MemoryBudget {
     pub(crate) limit: usize,
     used: AtomicUsize,
-    /// The QUIC endpoints' buffers, which pressure leaves out: they grow with the host's cores, not its load.
-    reserved: AtomicUsize,
+    /// What the QUIC endpoints' buffers hold of it, which pressure leaves out: it grows with the host's cores, not
+    /// its load.
+    pub(crate) reserved: AtomicUsize,
     held_back: AtomicBool,
 }
 
@@ -174,16 +175,7 @@ impl MemoryBudget {
         self.try_charge(bytes).then(|| Lease {
             budget: self.clone(),
             bytes,
-            reserved: false,
         })
-    }
-
-    /// A lease for an endpoint's buffers, which it holds for as long as it runs.
-    pub(crate) fn reserve(self: &Arc<Self>, bytes: usize) -> Option<Lease> {
-        let mut lease = self.lease(bytes)?;
-        self.reserved.fetch_add(bytes, Ordering::Relaxed);
-        lease.reserved = true;
-        Some(lease)
     }
 
     #[cfg(test)]
@@ -258,14 +250,10 @@ impl h2::SharedBudget for MemoryBudget {
 pub(crate) struct Lease {
     pub(crate) budget: Arc<MemoryBudget>,
     pub(crate) bytes: usize,
-    reserved: bool,
 }
 
 impl Drop for Lease {
     fn drop(&mut self) {
-        if self.reserved {
-            self.budget.reserved.fetch_sub(self.bytes, Ordering::Relaxed);
-        }
         self.budget.refund(self.bytes);
     }
 }

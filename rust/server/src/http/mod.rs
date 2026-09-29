@@ -87,7 +87,6 @@ pub struct HttpServer {
     memory: Arc<budget::MemoryBudget>,
     client_credit: Arc<budget::ClientCredit>,
     handshake_bytes: AtomicUsize,
-    endpoint_bytes: AtomicUsize,
     download_block: Bytes,
     download_meter: crate::meter::Meter,
     peers: crate::log::PeerLog,
@@ -139,7 +138,7 @@ impl HttpServer {
     }
 
     pub fn cover_handshake(&self, handshake_bytes: usize) -> Result<(), ConfigError> {
-        let endpoint = self.endpoint_bytes.load(Ordering::Relaxed);
+        let endpoint = self.memory.reserved.load(Ordering::Relaxed);
         budget::check(
             &self.config,
             self.memory.limit,
@@ -206,7 +205,6 @@ impl HttpServer {
             memory,
             client_credit,
             handshake_bytes: AtomicUsize::new(0),
-            endpoint_bytes: AtomicUsize::new(0),
             download_block: block.into(),
             download_meter,
             peers: Default::default(),

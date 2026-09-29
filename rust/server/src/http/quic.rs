@@ -74,10 +74,10 @@ impl HttpServer {
         )?;
         let lease = Arc::new(
             self.memory
-                .reserve(bytes)
+                .lease(bytes)
                 .ok_or("server memory budget cannot cover QUIC endpoint buffers")?,
         );
-        self.endpoint_bytes.store(bytes, Ordering::Relaxed);
+        self.memory.reserved.store(bytes, Ordering::Relaxed);
         let config = self.quic_config(tls, 1)?;
         let endpoint = noq::Endpoint::new_with_abstract_socket(
             endpoint_config,
@@ -158,7 +158,7 @@ impl HttpServer {
         for (shard, ((udp, bytes), inbox)) in sockets.into_iter().zip(bytes).zip(inboxes).enumerate() {
             let lease = Arc::new(
                 self.memory
-                    .reserve(bytes)
+                    .lease(bytes)
                     .ok_or("server memory budget cannot cover QUIC endpoint buffers")?,
             );
             let socket = quic_shard::ShardSocket::new(udp.socket, shard, router.clone(), inbox);
@@ -180,7 +180,7 @@ impl HttpServer {
                 clients: self.client_credit.clone(),
             });
         }
-        self.endpoint_bytes.store(total, Ordering::Relaxed);
+        self.memory.reserved.store(total, Ordering::Relaxed);
         Ok(Some((endpoints, router)))
     }
 
@@ -1596,7 +1596,7 @@ mod tests {
             (server, quic)
         };
         let (measured, _quic) = bind(1 << 40);
-        let (server, _quic) = bind(floors + measured.endpoint_bytes.load(Ordering::Relaxed));
+        let (server, _quic) = bind(floors + measured.memory.reserved.load(Ordering::Relaxed));
         assert!(!server.memory.under_pressure());
         assert!(server.memory.has_headroom());
     }
@@ -1627,7 +1627,7 @@ mod tests {
             let server = HttpServer::with_memory(config.clone(), memory).unwrap();
             let shards = server.quic_shards(tls.clone(), "127.0.0.1:0".parse().unwrap(), runtimes);
             let count = shards.unwrap().map_or(0, |(endpoints, _)| endpoints.len());
-            (count, server.endpoint_bytes.load(Ordering::Relaxed))
+            (count, server.memory.reserved.load(Ordering::Relaxed))
         };
         // Each socket keeps its part of the buffers all four offered runtimes would share, however many fit.
         let (four, bytes) = shards(1 << 40, &handles);
