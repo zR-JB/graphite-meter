@@ -32,6 +32,9 @@ image_binfmt = "docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5
 # The experimental Rust image (container/Dockerfile.rust).
 image_python = "docker.io/library/python:3.14.7-slim-bookworm@sha256:82bc3c539b8813ada9d68c63b40158fa002f7f33de9bf3312a3dfdc0620dff56"
 image_rust = "docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e"
+# SHA-256 of static.rust-lang.org's dist/channel-rust-<rust/rust-toolchain.toml channel>.toml, the manifest
+# rustup installs that toolchain from; release builds refuse a toolchain installed from any other.
+rust_manifest_sha256 = "a7c8774a5fd8441c997d94c029776cbc5eb111e9d72ab5d256fa69866644347e"
 
 [env]
 CGO_ENABLED = "0"

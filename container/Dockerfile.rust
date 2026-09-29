@@ -9,7 +9,7 @@ ENV LD_LIBRARY_PATH=/usr/local/lib \
     CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-gnu-gcc \
     CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc
 WORKDIR /src
-COPY LICENSE COPYRIGHT ./
+COPY LICENSE COPYRIGHT mise.toml ./
 COPY scripts/ scripts/
 COPY legal/ legal/
 COPY rust/ rust/
@@ -67,9 +67,10 @@ COPY --from=browser /src/client/ /src/client/
 # The legal scan reads the bundled packages through Bun's installation cache, at the same paths.
 COPY --from=browser /root/.bun/install/cache/ /root/.bun/install/cache/
 COPY --from=browser /tmp/browser-modules.json /tmp/browser-modules.json
-# The server is a static musl executable, like the Linux TUIs and Go's server.
+# The server is a static musl executable, like the Linux TUIs and Go's server. Its standard library
+# comes from the archives of the pinned channel manifest.
 RUN target=$(awk -v platform="linux/$TARGETARCH" '$1 == platform { print $2 }' scripts/tui-targets.txt) \
-    && (cd rust && rustup target add "$target") \
+    && python3 -m scripts.ci.toolchains verify-rust && (cd rust && rustup target add "$target") \
     && python3 -m scripts.legal.rust --package graphite-meter-server --target "$target" --profile "$PROFILE" --version "$VERSION" \
         --out /src/rust/target/server-notices --reviews legal/rust-reviewed-components.json \
         --supplement legal/rust-platform-debian-bookworm.json --browser-scan /tmp/browser-modules.json \

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import pathlib
 import re
 import shutil
@@ -7,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from .toolchains import ROOT, check, host_platform, literal_updates, load_pins, runtime_pins
+from .toolchains import ROOT, check, check_rust_manifest, host_platform, literal_updates, load_pins, runtime_pins
 
 
 class ToolchainBoundaryTests(unittest.TestCase):
@@ -72,6 +73,27 @@ class ToolchainBoundaryTests(unittest.TestCase):
         path.write_text(path.read_text().replace(image, image[:-1] + ("0" if image[-1] != "0" else "1")))
         with self.assertRaisesRegex(ValueError, "release.yml"):
             check(root)
+
+    def test_rust_is_installed_only_from_the_pinned_channel_manifest(self) -> None:
+        root = self.copy_pins()
+        manifest = (b'manifest-version = "2"\n\n[pkg.rustc]\nversion = "1.98.1"\ngit_commit_hash = "c0ffee"\n\n'
+                    b'[pkg.rustc.target.aarch64-apple-darwin]\navailable = true\n'
+                    b'url = "https://static.rust-lang.org/dist/rustc.tar.gz"\nhash = "' + b"1" * 64 + b'"\n')
+        path = root / "mise.toml"
+        path.write_text(re.sub(r'(?m)^rust_manifest_sha256 = ".*"$',
+                               f'rust_manifest_sha256 = "{hashlib.sha256(manifest).hexdigest()}"', path.read_text()))
+        # rustup installs a rewritten manifest, with fields dropped and added, but the same archives.
+        installed = root / "multirust-channel-manifest.toml"
+        installed.write_bytes(manifest.replace(b'git_commit_hash = "c0ffee"\n', b"") + b"components = []\n")
+        check_rust_manifest(installed, manifest, root)
+        with self.assertRaisesRegex(ValueError, "does not match mise.toml's rust_manifest_sha256"):
+            check_rust_manifest(installed, manifest + b"\n", root)
+        installed.write_bytes(installed.read_bytes().replace(b"1" * 64, b"2" * 64))
+        with self.assertRaisesRegex(ValueError, "installed Rust 1.98.1 from another manifest"):
+            check_rust_manifest(installed, manifest, root)
+        path.write_text(re.sub(r'(?m)^rust_manifest_sha256 = ".*"$', 'rust_manifest_sha256 = "latest"', path.read_text()))
+        with self.assertRaisesRegex(ValueError, "rust_manifest_sha256 must be a SHA-256"):
+            load_pins(root)
 
     def test_skopeo_tags_require_an_immutable_digest(self) -> None:
         root = self.copy_pins()

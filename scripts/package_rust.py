@@ -16,7 +16,7 @@ import zipfile
 from pathlib import Path
 
 from .ci.github_api import ControlPlaneError, confined_path, local_path, write_checksums
-from .ci.toolchains import host_platform, rust_channel, tui_targets
+from .ci.toolchains import host_platform, rust_channel, tui_targets, verify_rust_toolchain
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -95,6 +95,8 @@ def main() -> None:
     try:
         channel = rust_channel(REPO)
         subprocess.run(["rustup", "toolchain", "install", channel, "--profile", "minimal"], check=True)
+        # The targets' standard libraries come from the archives of the manifest checked here.
+        verify_rust_toolchain(REPO)
         subprocess.run(["rustup", "target", "add", "--toolchain", channel, *targets.values()], check=True)
         for platform in targets:
             build(args.version, platform, args.output, args.supplement)

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import platform
 import re
 import subprocess
 import tomllib
+import urllib.request
 from pathlib import Path
 
 from .github_api import fail
@@ -86,7 +88,10 @@ def load_pins(root: Path = ROOT) -> dict[str, dict[str, str]]:
     for name, runtime in (("bun", "bun"), ("golang", "go"), ("python", "python")):
         if pins["images"][name].split(":")[1].split("@")[0].split("-")[0] != pins["runtime"][runtime]:
             raise ValueError(f"mise.toml images.{name} must use the tools.{runtime} version")
-    pins["rust"] = {"channel": rust_channel(root)}
+    manifest = metadata.get("rust_manifest_sha256")
+    if not isinstance(manifest, str) or re.fullmatch(r"[0-9a-f]{64}", manifest) is None:
+        raise ValueError("mise.toml vars.rust_manifest_sha256 must be a SHA-256")
+    pins["rust"] = {"channel": rust_channel(root), "manifest": manifest}
     if pins["images"]["rust"].split(":")[1].split("-")[0] != pins["rust"]["channel"]:
         raise ValueError("mise.toml images.rust must use the rust/rust-toolchain.toml channel")
     return pins
@@ -95,6 +100,32 @@ def load_pins(root: Path = ROOT) -> dict[str, dict[str, str]]:
 def pin(name: str, root: Path = ROOT) -> str:
     section, key = name.split(".", 1)
     return load_pins(root)[section][key]
+
+
+def rust_downloads(manifest: bytes) -> dict[tuple[str, str], tuple[object, ...]]:
+    """Each package archive of a channel manifest and its SHA-256, which rustup checks every download against."""
+    packages = tomllib.loads(manifest.decode()).get("pkg", {})
+    return {(name, target): tuple(item.get(key) for key in ("url", "hash", "xz_url", "xz_hash"))
+            for name, package in packages.items() for target, item in package.get("target", {}).items()}
+
+
+def check_rust_manifest(installed: Path, manifest: bytes, root: Path = ROOT) -> None:
+    """Require the pinned channel `manifest` and the one rustup installed to name the same archives.
+
+    rustup rewrites the manifest it installs, so the copies are compared by what rustup verifies."""
+    if hashlib.sha256(manifest).hexdigest() != pin("rust.manifest", root):
+        raise ValueError("the Rust channel manifest does not match mise.toml's rust_manifest_sha256")
+    if rust_downloads(installed.read_bytes()) != rust_downloads(manifest):
+        raise ValueError(f"rustup installed Rust {rust_channel(root)} from another manifest than the pinned one")
+
+
+def verify_rust_toolchain(root: Path = ROOT) -> None:
+    """Check the pinned Rust toolchain that rustup installed against the pinned channel manifest."""
+    channel = rust_channel(root)
+    with urllib.request.urlopen(f"https://static.rust-lang.org/dist/channel-rust-{channel}.toml", timeout=60) as reply:
+        manifest = reply.read(64 * 1024 * 1024)
+    sysroot = Path(subprocess.check_output(["rustc", f"+{channel}", "--print", "sysroot"], text=True).strip())
+    check_rust_manifest(sysroot / "lib/rustlib/multirust-channel-manifest.toml", manifest, root)
 
 
 def runtime_pins(root: Path = ROOT) -> dict[str, str]:
@@ -195,7 +226,7 @@ def doctor(root: Path = ROOT) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("get", "check", "sync", "doctor", "python-target"))
+    parser.add_argument("command", choices=("get", "check", "sync", "doctor", "python-target", "verify-rust"))
     parser.add_argument("name", nargs="?")
     args = parser.parse_args()
     try:
@@ -214,6 +245,8 @@ def main() -> None:
                     print(path.relative_to(ROOT))
             case "doctor":
                 doctor()
+            case "verify-rust":
+                verify_rust_toolchain()
     except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as exc:
         parser.exit(1, f"toolchains: {exc}\n")
 
