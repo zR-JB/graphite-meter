@@ -8,9 +8,11 @@ use crate::{
     theme::Theme,
     vocabulary::{ADDED_NOTE, MISSING, clock, compact_population, compact_stage, population_label},
 };
+use crossterm::style::ContentStyle;
 use graphite_meter_core::{failure::FailureReason, format, measurement::MeasurementResult, text::terminal_character};
 use ratatui::{
-    style::{Color, Modifier, Style},
+    backend::IntoCrossterm,
+    style::{Modifier, Style},
     text::{Line, Span},
 };
 use unicode_width::UnicodeWidthChar;
@@ -131,57 +133,16 @@ pub(crate) fn wrap_parts(parts: &[String], limit: usize) -> Vec<String> {
     lines
 }
 
-/// The lines as a terminal prints them, each span in its style's SGR codes.
+/// The lines as a terminal prints them: each span in its style, as crossterm draws the TUI.
 pub(crate) fn ansi(lines: &[Line]) -> String {
-    let mut out = String::new();
-    for (index, line) in lines.iter().enumerate() {
-        if index > 0 {
-            out.push('\n');
-        }
-        for span in &line.spans {
-            let mut codes = Vec::new();
-            if span.style.add_modifier.contains(Modifier::BOLD) {
-                codes.push("1".to_owned());
-            }
-            if span.style.add_modifier.contains(Modifier::REVERSED) {
-                codes.push("7".to_owned());
-            }
-            codes.extend(span.style.fg.and_then(|color| sgr(color, false)));
-            codes.extend(span.style.bg.and_then(|color| sgr(color, true)));
-            match codes.is_empty() {
-                true => out.push_str(&span.content),
-                false => out.push_str(&format!("\x1b[{}m{}\x1b[0m", codes.join(";"), span.content)),
-            }
-        }
-    }
-    out
-}
-
-/// A colour's SGR parameters, as Go's colour profiles write each depth.
-fn sgr(color: Color, background: bool) -> Option<String> {
-    let (extended, base) = if background { (48, 40) } else { (38, 30) };
-    let ansi = match color {
-        Color::Reset => return None,
-        Color::Rgb(red, green, blue) => return Some(format!("{extended};2;{red};{green};{blue}")),
-        Color::Indexed(index) => return Some(format!("{extended};5;{index}")),
-        Color::Black => base,
-        Color::Red => base + 1,
-        Color::Green => base + 2,
-        Color::Yellow => base + 3,
-        Color::Blue => base + 4,
-        Color::Magenta => base + 5,
-        Color::Cyan => base + 6,
-        Color::Gray => base + 7,
-        Color::DarkGray => base + 60,
-        Color::LightRed => base + 61,
-        Color::LightGreen => base + 62,
-        Color::LightYellow => base + 63,
-        Color::LightBlue => base + 64,
-        Color::LightMagenta => base + 65,
-        Color::LightCyan => base + 66,
-        Color::White => base + 67,
+    let styled = |span: &Span| {
+        let style: ContentStyle = span.style.into_crossterm();
+        style.apply(span.content.as_ref()).to_string()
     };
-    Some(ansi.to_string())
+    let lines = lines
+        .iter()
+        .map(|line| line.spans.iter().map(styled).collect::<String>());
+    lines.collect::<Vec<_>>().join("\n")
 }
 
 /// Go's finalReport as lipgloss.Println prints it to stdout; none before a run reports.
@@ -1088,10 +1049,13 @@ mod tests {
         let snapshot = partial_run();
         let theme = Theme::new(Profile::Ansi256, true);
         let painted = render(&snapshot, WIDTH, theme).unwrap();
-        assert!(painted.starts_with("\x1b[1;38;5;254mGraphite Meter\x1b[0m  \x1b[1;38;5;186mPartial\x1b[0m"));
-        assert!(painted.contains("\x1b[1;38;5;75m12.00 Mbit/s\x1b[0m"), "{painted:?}");
+        assert!(painted.starts_with("\x1b[38;5;254m\x1b[1mGraphite Meter\x1b[0m  \x1b[38;5;186m\x1b[1mPartial\x1b[0m"));
         assert!(
-            painted.ends_with("\x1b[1;38;5;210mStopped delivering data\x1b[0m"),
+            painted.contains("\x1b[38;5;75m\x1b[1m12.00 Mbit/s\x1b[0m"),
+            "{painted:?}"
+        );
+        assert!(
+            painted.ends_with("\x1b[38;5;210m\x1b[1mStopped delivering data\x1b[0m"),
             "{painted:?}"
         );
         let mut pair = snapshot;
