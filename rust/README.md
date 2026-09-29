@@ -149,8 +149,9 @@ an upload reads at the current window, as under pressure. Endpoint
 reservations cover the configured UDP socket buffers, receive batches, pending
 incoming packets and shard forwarding queues until the socket and its senders
 drop. Additional incoming packets are capped at 64 KiB per handshake and 4 MiB
-in all; several endpoints each take an equal part of both. The shared 256 KiB
-download block is charged once.
+in all; several endpoints each take an equal part of the 4 MiB, while every
+handshake keeps its 64 KiB on the one endpoint its packets reach. The shared
+256 KiB download block is charged once.
 
 On Linux, HTTP/3 runs an endpoint for every two workers of the server's runtime
 (`TOKIO_WORKER_THREADS`), at least two, as many as the buffer budget covers; a

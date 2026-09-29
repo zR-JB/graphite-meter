@@ -192,7 +192,8 @@ impl HttpServer {
         let mut config = noq::ServerConfig::with_crypto(Arc::new(crypto));
         config
             .max_incoming(self.config.max_connections.div_ceil(shards))
-            .incoming_buffer_size(QUIC_INCOMING_BYTES.div_ceil(shards as u64))
+            // Every Initial of a handshake reaches the endpoint that holds it, so its limit is not split.
+            .incoming_buffer_size(QUIC_INCOMING_BYTES)
             .incoming_buffer_size_total(QUIC_INCOMING_TOTAL_BYTES.div_ceil(shards as u64));
         let mut transport = budget::quic_transport(&self.config.limits)?;
         transport.shared_budget(Some(self.memory.clone()));
@@ -617,6 +618,11 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     fn tls() -> (Arc<rustls::ServerConfig>, noq::ClientConfig) {
+        tls_offering(vec![b"h3".to_vec()])
+    }
+
+    /// An identity for localhost, and a client that trusts it and offers `alpn`.
+    fn tls_offering(alpn: Vec<Vec<u8>>) -> (Arc<rustls::ServerConfig>, noq::ClientConfig) {
         use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
         let (certificate, key) = crate::test_identity::generate_identity("localhost").unwrap();
         let certificate = CertificateDer::from_pem_slice(certificate.as_bytes()).unwrap();
@@ -638,7 +644,7 @@ mod tests {
             .unwrap()
             .with_root_certificates(roots)
             .with_no_client_auth();
-        client.alpn_protocols = vec![b"h3".to_vec()];
+        client.alpn_protocols = alpn;
         let client = noq::ClientConfig::new(Arc::new(
             noq::crypto::rustls::QuicClientConfig::try_from(client).unwrap(),
         ));
@@ -1476,6 +1482,37 @@ mod tests {
         .unwrap();
         stop.send(()).unwrap();
         serving.await.unwrap().unwrap();
+    }
+
+    /// Go's and browsers' post-quantum ClientHello spans Initials that arrive while the handshake waits to be
+    /// accepted; one of many endpoints keeps them all.
+    #[tokio::test]
+    async fn a_waiting_handshake_keeps_every_initial_on_one_of_many_endpoints() {
+        use super::*;
+        let server = HttpServer::new(Config::default().validated().unwrap()).unwrap();
+        // Protocols the server does not speak spread this ClientHello over six Initials.
+        let unspoken = (0..256).map(|index| format!("unspoken-protocol-{index:03}").into_bytes());
+        let (tls, client_config) = tls_offering(unspoken.chain([b"h3".to_vec()]).collect());
+        let config = server.quic_config(tls, 16).unwrap();
+        let endpoint = QuicEndpoint {
+            endpoint: noq::Endpoint::server(config.clone(), "127.0.0.1:0".parse().unwrap()).unwrap(),
+            config,
+            clients: server.client_credit.clone(),
+        };
+        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let address = endpoint.local_addr().unwrap();
+        let connecting = client.connect_with(client_config, address, "localhost").unwrap();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let incoming = endpoint.endpoint.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let floor = server.memory.lease(connection_floor(0)).unwrap();
+            let (accepting, _budget) = endpoint.accept(incoming, floor).unwrap();
+            let (connected, accepted) = tokio::join!(connecting, accepting);
+            let (connected, _accepted) = (connected.unwrap(), accepted.unwrap());
+            assert_eq!(connected.stats().lost_packets, 0, "an Initial was dropped");
+        })
+        .await
+        .unwrap();
     }
 
     #[cfg(target_os = "linux")]
