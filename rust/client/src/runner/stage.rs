@@ -302,7 +302,7 @@ impl<'a> StageRun<'a> {
             .await;
             LatencyCompletion {
                 at: Instant::now(),
-                stopped: *stopped.borrow() != Stop::Running,
+                stopped: *stopped.borrow() >= Stop::Drain,
                 result,
                 id,
             }
@@ -411,7 +411,8 @@ impl<'a> StageRun<'a> {
             None => None,
         };
         let started = Instant::now();
-        self.window = Some((started, started + self.config.duration(self.stage)));
+        let end = started + self.config.duration(self.stage);
+        self.window = Some((started, end));
         if let (Some(stage), Some(mut initial)) = (self.transfer, initial) {
             // Download counters restart at the actual measurement start; as in Go, the observed upload
             // stays as read before the checkpoints, so what the receiver took meanwhile counts.
@@ -425,6 +426,8 @@ impl<'a> StageRun<'a> {
         }
         for member in &mut self.members {
             member.moved = [started; 2];
+            // Go's probes.open (latency.go:233): the window's end bounds a lost channel's redial.
+            member.stop_latency(Stop::Window(end));
         }
         Ok(())
     }

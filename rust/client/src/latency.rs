@@ -57,11 +57,15 @@ impl Observation {
     }
 }
 
-/// How a session ends: at the stage end in-window probes drain to their deadlines; a stop ends it at once.
+/// How far a session's stage has come: once its window opens, the window's end bounds a lost
+/// channel's redial; at the stage end in-window probes drain to their deadlines; a stop ends it
+/// at once.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Stop {
     #[default]
     Running,
+    /// The measured window opened and ends at this instant.
+    Window(Instant),
     Drain,
     Now,
 }
@@ -105,14 +109,20 @@ pub(crate) async fn run(
         if !lost(&error) || !ledger.answered {
             return Err(error);
         }
-        if *cancel.borrow() >= Stop::Drain {
+        let now = Instant::now();
+        let window_end = match *cancel.borrow() {
+            Stop::Running => end,
+            Stop::Window(window_end) => window_end.min(end),
+            Stop::Drain | Stop::Now => return Ok(()),
+        };
+        if now >= window_end {
             return Ok(());
         }
-        // A redial's window is cut short by the stage end (latency.go:256). A channel lost as
-        // it opened waits as a lane that failed at once does (transfer.go:100-103), so a server
-        // that ends each channel at once is never dialled in a tight loop.
-        let now = Instant::now();
-        let bound = (now + REDIAL_WINDOW).min(end);
+        // The window's end cuts a redial short and fails it (probeLedger.bound, latency.go:256),
+        // so only a stop ends one. A channel lost as it opened waits as a lane that failed at
+        // once does (transfer.go:100-103), so a server that ends each channel at once is never
+        // dialled in a tight loop.
+        let bound = (now + REDIAL_WINDOW).min(window_end);
         let pause = if opened.elapsed() < TRANSFER_RETRY_BACKOFF {
             TRANSFER_RETRY_BACKOFF
         } else {
@@ -124,9 +134,10 @@ pub(crate) async fn run(
         };
         socket = tokio::select! {
             biased;
-            _ = stopped(&mut cancel, Stop::Drain) => return Ok(()),
+            _ = stopped(&mut cancel, Stop::Now) => return Ok(()),
             bus = redial => match bus {
                 Ok(bus) => bus,
+                // The session's own end, which the window's precedes, ends it.
                 Err(_) if Instant::now() >= end => return Ok(()),
                 Err(error) => return Err(error),
             },
