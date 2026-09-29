@@ -110,7 +110,6 @@
     z-index: -1;
     border-radius: inherit;
     background: var(--brand);
-    box-shadow: inset 0 1px 0 var(--edge-highlight);
     opacity: calc(1 - var(--stop));
     transition:
       background-color var(--dur-hover) var(--ease-out),
@@ -136,7 +135,9 @@
     border-radius: 2px;
     background: currentColor;
   }
+  /* On the label's baseline (app.css, --role-label). */
   .duration {
+    margin-top: calc(var(--type-md) - var(--type-sm));
     color: color-mix(in oklab, currentColor 62%, transparent);
     font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
     font-variant-numeric: tabular-nums;

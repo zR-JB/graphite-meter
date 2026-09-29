@@ -23,7 +23,7 @@
   );
   const issue = $derived(
     issues.length > 1
-      ? `${issues.length} measurement issues — details under the results`
+      ? `${issues.length} measurement issues, each marked on its card`
       : issues.map(({ stages, reason }) => `${stages}: ${reason}`).join(""),
   );
   const kicker = $derived(

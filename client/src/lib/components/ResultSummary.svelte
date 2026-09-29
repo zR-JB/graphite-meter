@@ -2,6 +2,7 @@
   import StageGraph from "./StageGraph.svelte";
   import {
     cardFacts,
+    cardNoData,
     cardTip,
     type CardScale,
     type SummaryCard,
@@ -44,14 +45,18 @@
     /** A run is under way: on a phone only the running card stays open. */
     running?: boolean;
   } = $props();
-  // One shown server's reasons sit on the card they failed; only All servers needs an attributed list.
+  // A failed transfer's reason sits on its card's line, named by server when several ran, so it never adds a row.
   const attributed = $derived((details?.selection.length ?? 1) > 1 && !scope);
-  const onCards = $derived(
-    attributed ? [] : issues.filter((issue) => issue.throughput.length),
-  );
-  const listed = $derived(
-    attributed ? issues : issues.filter((issue) => !issue.throughput.length),
-  );
+  const listed = $derived(issues.filter((issue) => !issue.throughput.length));
+  const reasonOn = (key: TransportRole) =>
+    issues
+      .filter((issue) => issue.throughput.includes(key))
+      .map(({ server, reason }) =>
+        attributed
+          ? `${server}: ${reason.charAt(0).toLowerCase()}${reason.slice(1)}`
+          : reason,
+      )
+      .join(", ");
   // Latency has its own card; this row holds the transfers.
   const transfers = $derived(cards.filter((card) => card.key !== "latency"));
 </script>
@@ -64,10 +69,9 @@
       {@const lanes = card.rows.filter(
         (row): row is SummaryRow & { stage: TransportRole } => !!row.stage,
       )}
-      {@const reason = onCards.find((issue) =>
-        issue.throughput.includes(card.key),
-      )?.reason}
+      {@const reason = reasonOn(card.key)}
       {@const facts = cardFacts(card)}
+      {@const noData = cardNoData(card)}
       <article
         class="card stage-area {card.status}"
         data-tone={card.key}
@@ -120,6 +124,14 @@
               <span class="delta">{wire.overhead}</span></span
             >
           {/if}
+          {#if noData && !quiet}
+            <span class="no-data"
+              ><span class="label" {@attach term(() => noData.tip!)}
+                >No data</span
+              >
+              {noData.value}</span
+            >
+          {/if}
         </div>
         {#if card.graph && scale}
           <div class="graph-slot">
@@ -147,10 +159,10 @@
         >
           {#each facts as row (row.label)}
             <div>
-              <dt {@attach row.tip ? term(() => row.tip!) : null}>
+              <dt {@attach row.tip ? tooltip(() => row.tip!) : null}>
                 {row.label}
               </dt>
-              <dd>{row.value}</dd>
+              <dd class:quiet={row.value === MISSING}>{row.value}</dd>
             </div>
           {/each}
         </dl>
@@ -182,11 +194,13 @@
     grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
     gap: var(--space-4) var(--space-5);
   }
-  /* A card is its stage's area (`.stage-area`): a rule and a wash, no box. */
+  /* A card is its stage's area (`.stage-area`): a rule and a wash, no box. Stretched by a taller
+     neighbour, its rows stay put and the room falls below them. */
   .card {
     display: grid;
     grid-template-rows: 20px auto 18px;
     grid-auto-rows: auto;
+    align-content: start;
     gap: 6px;
     min-width: 0;
     padding: var(--space-3) var(--space-4) var(--space-3);
@@ -203,7 +217,7 @@
     /* The running card stays in view: one that waits, or is done while the run goes on, is its name and value. */
     .line:empty,
     .card:is(.pending, .not-run) > :is(.line, .graph-slot, .facts),
-    .running .card:not(.active) > :is(.line, .graph-slot, .facts) {
+    .running .card:not(.active, .recovering) > :is(.line, .graph-slot, .facts) {
       display: none;
     }
   }
@@ -225,11 +239,12 @@
     font: var(--w-strong) var(--type-md) / 20px var(--font-sans);
     white-space: nowrap;
   }
+  /* On the title's baseline (app.css, --role-label). */
   .state {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    margin-left: auto;
+    margin: calc(var(--type-md) - var(--type-sm)) 0 0 auto;
     /* Muted, not soft: small text on a running card's wash keeps 4.5:1. */
     color: var(--text-muted);
     font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
@@ -285,8 +300,20 @@
     font: var(--w-normal) var(--type-body) / 18px var(--font-sans);
     white-space: nowrap;
   }
-  .wire .label {
+  .reason,
+  .wire {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .label {
     color: var(--text-soft);
+  }
+  /* After a stall, how long no data came, at the line's end. */
+  .no-data {
+    flex: none;
+    margin-left: auto;
+    padding-left: var(--space-3);
   }
   .delta {
     margin-left: 4px;
@@ -301,12 +328,27 @@
     height: clamp(64px, 11svh, 132px);
     min-height: 0;
   }
+  /* A card with no data yet keeps its graph's room but draws nothing in it: only its rule, name and "—". */
+  .card:is(.pending, .not-run) > .graph-slot {
+    visibility: hidden;
+  }
   .facts {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 5.25rem), 1fr));
     gap: var(--space-2) var(--space-3);
     padding-top: var(--space-2);
     border-top: var(--hairline) solid var(--border-subtle);
+  }
+  /* Under the dial on a landscape page, which fits one screen down to 1024 x 768, a card's rows sit closer. */
+  @media (orientation: landscape) {
+    @container viz (min-width: 760px) {
+      .card {
+        gap: var(--space-1);
+      }
+      .facts {
+        column-gap: var(--space-2);
+      }
+    }
   }
   /* Until one fact is known the row keeps its place unseen, so the first values never move the instrument. */
   .facts.unknown {
@@ -328,6 +370,10 @@
     font: var(--w-normal) var(--type-md) / 1.3 var(--font-sans);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+  }
+  /* "—" for a value not yet measured is soft; a measured value is full ink. */
+  .facts dd.quiet {
+    color: var(--text-soft);
   }
   .issues {
     display: grid;

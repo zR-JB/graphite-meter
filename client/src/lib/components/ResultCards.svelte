@@ -32,7 +32,12 @@
 
   const shown = $derived(store.resultScope);
   const details = $derived(store.result?.multiServer);
-  const units = $derived({ base: store.unitBase, kind: store.unitKind });
+  // One tier for every rate on the page, the dial's, so live and settled figures read in one unit.
+  const units = $derived({
+    base: store.unitBase,
+    kind: store.unitKind,
+    tier: store.scales.unitIndex,
+  });
   const status = (key: Stage) => store.stagePresentation[key].status;
   // A stalled stage is still running: it keeps its plan's width and its leading edge.
   const running = (key: Stage) =>
@@ -131,8 +136,11 @@
     () => ({
       run: store.runSeq,
       cards,
+      // Lost latency probes are marked on the latency card's rows; nothing is added under the cards mid-run.
       issues: store.serverDetails
-        ? serverIssues(store.serverDetails, shown)
+        ? serverIssues(store.serverDetails, shown).filter(
+            (issue) => issue.throughput.length,
+          )
         : [],
     }),
     (view) => view.run,
@@ -205,7 +213,9 @@
       label: STAGE[key].short,
       icon: STAGE[key].icon,
       status: active
-        ? "active"
+        ? status(key) === "recovering"
+          ? "recovering"
+          : "active"
         : stopped
           ? "stopped"
           : store.phase === "aborted"

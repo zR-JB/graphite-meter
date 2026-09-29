@@ -158,13 +158,14 @@ export function rawRateFrom(
   return kind === "bytes" ? baseUnits : baseUnits / 8;
 }
 
-export type RateUnits = { base: UnitBase; kind: UnitKind };
+/** A page that sets `tier` reads every rate in that one unit, zero included. */
+export type RateUnits = { base: UnitBase; kind: UnitKind; tier?: number };
 
-/** A rate in its own unit tier by the live rule unless a chart gives its tier. */
+/** A rate in the page's tier, else its own by the live rule, unless a chart gives its tier. */
 export function resultRate(
   bytesPerSec: number,
   units: RateUnits,
-  tier = throughputUnitIndex(bytesPerSec, units.base, units.kind),
+  tier = units.tier ?? throughputUnitIndex(bytesPerSec, units.base, units.kind),
 ) {
   return {
     num: fmtSpeed(rateValueAt(bytesPerSec, units.base, units.kind, tier)),
