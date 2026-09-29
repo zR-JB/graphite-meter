@@ -385,6 +385,23 @@ class RustBuildTests(unittest.TestCase):
             self.assertFalse(str(root).encode() in binary, 'the binary names a build path')
 
 
+    def test_only_a_target_build_remaps_paths(self) -> None:
+        from scripts.legal import rust
+
+        class Built(Exception):
+            pass
+
+        def run(command, **kwargs):
+            raise Built(kwargs['env'].get('CARGO_ENCODED_RUSTFLAGS'))
+
+        with patch.object(rust.subprocess, 'run', run), patch.dict(os.environ, {'CARGO_ENCODED_RUSTFLAGS': ''}):
+            for target, remapped in ((None, False), ('x86_64-unknown-linux-musl', True)):
+                with self.assertRaises(Built) as built:
+                    rust.capture(ROOT, 'graphite-meter-client', target, 'dev', None)
+                # The development tasks build again with plain cargo, whose flags the build identity compares.
+                self.assertEqual('--remap-path-prefix' in str(built.exception), remapped, target)
+
+
 class RustSourceTests(unittest.TestCase):
     def test_git_workspace_source_builds_without_its_checkout(self) -> None:
         with tempfile.TemporaryDirectory() as scratch:
