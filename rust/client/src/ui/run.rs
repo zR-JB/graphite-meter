@@ -7,7 +7,7 @@ use super::{
 use crate::{
     config::Config,
     model::{Phase, Snapshot, Stage, StageStatus},
-    report::{Report, Text, fit, line, plain, run_servers, server_name, span, wrap_parts},
+    report::{ARROWS, Report, Text, directions, fit, line, plain, run_servers, server_name, span, wrap_parts},
     theme::Theme,
     vocabulary::{self as words, MISSING, compact_stage},
 };
@@ -49,23 +49,19 @@ impl Trace {
         }
         if self.points.len() == HISTORY_POINTS {
             // Go's coarsen: pairs merge, and a gap in either keeps the pair a gap.
-            self.points = self
-                .points
-                .chunks(2)
-                .map(|pair| {
-                    let mut point = pair[0];
-                    if let Some(next) = pair.get(1) {
-                        if next.1.is_nan() {
-                            point.1 = next.1;
-                        } else if !point.1.is_nan() {
-                            point.1 = (point.1 * point.2 as f64 + next.1 * next.2 as f64) / (point.2 + next.2) as f64;
-                            point.2 += next.2;
-                        }
+            let pairs = self.points.chunks(2).map(|pair| {
+                let mut point = pair[0];
+                if let Some(next) = pair.get(1) {
+                    if next.1.is_nan() {
+                        point.1 = next.1;
+                    } else if !point.1.is_nan() {
+                        point.1 = (point.1 * point.2 as f64 + next.1 * next.2 as f64) / (point.2 + next.2) as f64;
+                        point.2 += next.2;
                     }
-                    point
-                })
-                .collect();
-            self.step *= 2.0;
+                }
+                point
+            });
+            (self.points, self.step) = (pairs.collect(), self.step * 2.0);
         }
         self.points.push((at, value, 1));
     }
@@ -79,8 +75,8 @@ pub(super) struct Run {
     started: Option<Instant>,
     ended: Option<Instant>,
     marks: Vec<(f64, Stage)>,
-    down: Trace,
-    up: Trace,
+    /// The download and upload rates.
+    traces: [Trace; 2],
     rtt: HashMap<String, Trace>,
     /// Each server's last reply in this stage, in milliseconds.
     latest: HashMap<String, f64>,
@@ -116,7 +112,7 @@ impl Run {
             }
             if let (Some(stage), Phase::Measuring) = step {
                 self.marks.push((at, stage));
-                for trace in [&mut self.down, &mut self.up].into_iter().chain(self.rtt.values_mut()) {
+                for trace in self.traces.iter_mut().chain(self.rtt.values_mut()) {
                     trace.add(at, f64::NAN);
                 }
             }
@@ -125,19 +121,11 @@ impl Run {
         let latest = &snapshot.latest;
         if snapshot.phase == Phase::Measuring && latest.sample_count > 0 && self.sample != Some(latest.elapsed) {
             self.sample = Some(latest.elapsed);
-            let stage = snapshot.stage.unwrap_or_default();
-            for (index, (trace, rate, moves)) in [
-                (&mut self.down, latest.down_bps, stage.downloads()),
-                (&mut self.up, latest.up_bps, stage.uploads()),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                if moves {
-                    trace.add(at, rate.map_or(f64::NAN, |bits| bits / 8.0));
-                    if rate.is_none() || self.shown[index].is_none() {
-                        self.shown[index] = rate;
-                    }
+            let rates = [latest.down_bps, latest.up_bps];
+            for index in directions(snapshot.stage.unwrap_or_default()) {
+                self.traces[index].add(at, rates[index].map_or(f64::NAN, |bits| bits / 8.0));
+                if rates[index].is_none() || self.shown[index].is_none() {
+                    self.shown[index] = rates[index];
                 }
             }
             for host in &snapshot.server_latencies {
@@ -204,10 +192,8 @@ const RATE_AXIS: Axis = Axis {
     scale: 8.0,
     label: |bits| {
         let units = ["bit/s", "kbit/s", "Mbit/s", "Gbit/s", "Tbit/s"];
-        let tier = (1..units.len())
-            .take_while(|tier| bits >= 1000f64.powi(*tier as i32))
-            .count();
-        format!("{} {}", round_label(bits / 1000f64.powi(tier as i32)), units[tier])
+        let tier = (1..5).take_while(|tier| bits >= 1e3_f64.powi(*tier)).count();
+        format!("{} {}", round_label(bits / 1e3_f64.powi(tier as i32)), units[tier])
     },
 };
 const MS_AXIS: Axis = Axis {
@@ -221,11 +207,8 @@ fn nice_ceil(value: f64) -> f64 {
         return 1.0;
     }
     let decade = 10f64.powf(value.log10().floor());
-    [1.0, 2.0, 2.5, 5.0]
-        .into_iter()
-        .map(|step| step * decade)
-        .find(|ceiling| *ceiling >= value)
-        .unwrap_or(10.0 * decade)
+    let mut ceilings = [1.0, 2.0, 2.5, 5.0].into_iter().map(|step| step * decade);
+    ceilings.find(|ceiling| *ceiling >= value).unwrap_or(10.0 * decade)
 }
 
 /// A chart line: its stage's style and its points.
@@ -254,11 +237,9 @@ fn chart(
 ) -> Text {
     let (cols, rows) = (width.saturating_sub(CHART_AXIS).max(4), height.saturating_sub(2).max(2));
     let (t0, t1) = (0.0, span_.max(1.0));
-    let peak = lines
-        .iter()
-        .flat_map(|(_, points)| points.iter())
-        .filter(|point| !point.1.is_nan())
-        .fold(0.0_f64, |peak, point| peak.max(point.1));
+    // f64::max passes over the gaps.
+    let peak = lines.iter().flat_map(|(_, points)| points.iter().map(|point| point.1));
+    let peak = peak.fold(0.0_f64, f64::max);
     let top = nice_ceil(peak * axis.scale * 1.05) / axis.scale;
     let (dot_width, dot_height) = (cols * 2, rows * 4);
     let (mut dots, mut owner) = (vec![0u8; cols * rows], vec![0usize; cols * rows]);
@@ -365,27 +346,19 @@ fn chart(
             labels.push(span(label, theme.stage(*stage)));
         }
     }
-    out.push(Line::from(vec![
-        Span::raw(" ".repeat(CHART_AXIS - 1)),
-        span(format!("└{}", ruler.into_iter().collect::<String>()), theme.border),
-    ]));
-    let mut last = vec![Span::raw(" ".repeat(CHART_AXIS))];
+    let ruler = span(format!("└{}", ruler.into_iter().collect::<String>()), theme.border);
+    out.push(Line::from(vec![Span::raw(" ".repeat(CHART_AXIS - 1)), ruler]));
+    let (mut last, gap) = (vec![Span::raw(" ".repeat(CHART_AXIS))], end_at.saturating_sub(written));
     last.extend(labels);
-    last.extend([
-        Span::raw(" ".repeat(end_at.saturating_sub(written))),
-        span(end, theme.muted),
-    ]);
+    last.extend([Span::raw(" ".repeat(gap)), span(end, theme.muted)]);
     out.push(Line::from(last));
     out
 }
 
 /// Go's bar: whole cells and an eighth, over the rest in shade.
 fn bar(fill: Style, value: f64, scale: f64, width: usize, theme: &Theme) -> Vec<Span<'static>> {
-    let cells = if scale > 0.0 {
-        (value / scale * width as f64).clamp(0.0, width as f64)
-    } else {
-        0.0
-    };
+    let share = if scale > 0.0 { value / scale } else { 0.0 };
+    let cells = (share * width as f64).clamp(0.0, width as f64);
     let full = cells as usize;
     let part = EIGHTHS[((cells - full as f64) * 8.0) as usize];
     let rest = width - full - usize::from(!part.is_empty());
@@ -421,11 +394,8 @@ impl Ui {
         if width >= TWO_COLUMN_MIN && width.saturating_sub(1 + results_width) >= 30 {
             let fields = self.test_fields(snapshot, run, width - 1 - results_width - 4);
             let height = results.len().max(fields.len()) + 2;
-            bottom = join(
-                panel(&title, results, results_width, height, theme),
-                panel("Test", fields, width - 1 - results_width, height, theme),
-                true,
-            );
+            let fields = panel("Test", fields, width - 1 - results_width, height, theme);
+            bottom = join(panel(&title, results, results_width, height, theme), fields, true);
         }
         match height.saturating_sub(bottom.len()) {
             timeline if timeline >= 8 => [self.timeline_panel(snapshot, run, width, timeline), bottom].concat(),
@@ -449,18 +419,12 @@ impl Ui {
         }
         if side && (live || live_height >= 9) {
             let live_height = live_height.max(test_height).max(9);
-            return join(
-                panel("Test", test, left, live_height, theme),
-                self.timeline_panel(snapshot, run, right, live_height),
-                true,
-            );
+            let timeline = self.timeline_panel(snapshot, run, right, live_height);
+            return join(panel("Test", test, left, live_height, theme), timeline, true);
         }
         if live || live_height >= 9 {
-            return [
-                panel("Test", test, left, 0, theme),
-                self.timeline_panel(snapshot, run, right, live_height.max(7)),
-            ]
-            .concat();
+            let timeline = self.timeline_panel(snapshot, run, right, live_height.max(7));
+            return [panel("Test", test, left, 0, theme), timeline].concat();
         }
         panel("Test", self.test_view(snapshot, run, width - 4, !side), width, 0, theme)
     }
@@ -471,13 +435,8 @@ impl Ui {
         if snapshot.phase.live() {
             title = format!("{title} · {}", self.status_label());
         }
-        panel(
-            &title,
-            self.live_view(snapshot, run, width - 4, height - 2),
-            width,
-            height,
-            &self.theme,
-        )
+        let live = self.live_view(snapshot, run, width - 4, height - 2);
+        panel(&title, live, width, height, &self.theme)
     }
 
     /// Go's testView: the run's settings over the stage track, or the track alone.
@@ -503,24 +462,18 @@ impl Ui {
             return vec![Line::from(line)];
         }
         let servers = run_servers(snapshot);
-        let mut throughputs = Vec::new();
-        for path in servers
-            .iter()
-            .filter_map(|server| server.throughput.as_ref().map(words::throughput_path))
-        {
-            if !throughputs.contains(&path) {
+        let mut throughputs: Vec<String> = Vec::new();
+        for server in &servers {
+            let path = server.throughput.as_ref().map(words::throughput_path);
+            if let Some(path) = path.filter(|path| !throughputs.contains(path)) {
                 throughputs.push(path);
             }
         }
-        let latency = servers
-            .iter()
-            .find(|server| Some(server.id.as_str()) == self.latency_server())
-            .and_then(|server| server.latency.as_ref().map(words::latency_path));
-        let mut names = servers
-            .iter()
-            .map(|server| server.name.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
+        let shown = self.latency_server();
+        let latency = servers.iter().find(|server| Some(server.id.as_str()) == shown);
+        let latency = latency.and_then(|server| server.latency.as_ref().map(words::latency_path));
+        let names: Vec<_> = servers.iter().map(|server| server.name.as_str()).collect();
+        let mut names = names.join(", ");
         let target = servers.iter().rev().find_map(|server| server.throughput.as_ref());
         let mut streams = words::streams(&run.config, target);
         if servers.len() > 1 {
@@ -542,14 +495,10 @@ impl Ui {
             ("Timing", timing),
         ] {
             let parts: Vec<_> = value.split(" · ").map(str::to_owned).collect();
-            for (index, text) in wrap_parts(&parts, width.saturating_sub(11).max(12))
-                .into_iter()
-                .enumerate()
-            {
-                lines.push(Line::from(vec![
-                    label(if index == 0 { name } else { "" }),
-                    span(text, theme.value),
-                ]));
+            let parts = wrap_parts(&parts, width.saturating_sub(11).max(12));
+            for (index, text) in parts.into_iter().enumerate() {
+                let name = if index == 0 { name } else { "" };
+                lines.push(Line::from(vec![label(name), span(text, theme.value)]));
             }
         }
         lines
@@ -621,7 +570,7 @@ impl Ui {
             return vec![Line::from(vec![self.spinner(), span(" Checking paths…", theme.muted)])];
         };
         let mut directions = Vec::new();
-        for (moves, trace) in [(stage.downloads(), &run.down), (stage.uploads(), &run.up)] {
+        for (moves, trace) in [stage.downloads(), stage.uploads()].into_iter().zip(&run.traces) {
             if if live { moves } else { !trace.points.is_empty() } {
                 directions.push(trace);
             }
@@ -660,23 +609,14 @@ impl Ui {
         let theme = &self.theme;
         let mut readings = Vec::new();
         let latest = &snapshot.latest;
-        for (moves, arrow, rate, shown) in [
-            (stage.downloads(), "↓", latest.down_bps, run.shown[0]),
-            (stage.uploads(), "↑", latest.up_bps, run.shown[1]),
-        ] {
-            if !moves {
-                continue;
-            }
-            let value = match (
-                latest.sample_count > 0 && snapshot.phase == Phase::Measuring,
-                rate,
-                shown,
-            ) {
+        let sampled = latest.sample_count > 0 && snapshot.phase == Phase::Measuring;
+        for index in directions(stage) {
+            let value = match (sampled, [latest.down_bps, latest.up_bps][index], run.shown[index]) {
                 (false, ..) => span(MISSING, theme.muted),
                 (true, None, _) => span(format!("{MISSING} window restarting"), theme.muted),
                 (true, Some(rate), shown) => span(format::rate(shown.unwrap_or(rate) / 8.0), theme.value),
             };
-            readings.push(vec![span(format!("{arrow} "), theme.text), value]);
+            readings.push(vec![span(format!("{} ", ARROWS[index]), theme.text), value]);
         }
         let transfers = stage.downloads() || stage.uploads();
         if !transfers || run.config.loaded_latency {
@@ -687,10 +627,8 @@ impl Ui {
                 None => span(MISSING, theme.muted),
             };
             let mut reading = vec![span(label, theme.text), value];
-            let host = snapshot
-                .server_latencies
-                .iter()
-                .find(|host| Some(host.id.as_str()) == shown);
+            let mut hosts = snapshot.server_latencies.iter();
+            let host = hosts.find(|host| Some(host.id.as_str()) == shown);
             if let Some(streak) = host.map(|host| host.timeouts).filter(|streak| *streak > 0) {
                 let style = if streak >= 3 { theme.err } else { theme.warn };
                 reading.push(span(format!("  probe timeout ×{streak}"), style));

@@ -20,7 +20,7 @@ use unicode_width::UnicodeWidthChar;
 
 pub const WIDTH: usize = 100;
 /// The arrows of a stage's directions, indexed as its results' down and up.
-const ARROWS: [&str; 2] = ["↓", "↑"];
+pub(crate) const ARROWS: [&str; 2] = ["↓", "↑"];
 
 pub(crate) type Text = Vec<Line<'static>>;
 
@@ -229,7 +229,7 @@ pub fn outcome(phase: Phase) -> &'static str {
 }
 
 /// The directions a stage transfers, as indexes of `ARROWS`.
-fn directions(stage: Stage) -> impl Iterator<Item = usize> {
+pub(crate) fn directions(stage: Stage) -> impl Iterator<Item = usize> {
     let moves = [stage.downloads(), stage.uploads()];
     (0..2).filter(move |direction| moves[*direction])
 }
