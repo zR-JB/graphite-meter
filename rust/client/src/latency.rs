@@ -1000,9 +1000,11 @@ mod tests {
         Ok(())
     }
 
-    /// A message longer than a pong is skipped first, as Go's wsBus.Recv skips it (latency.go:33-47),
-    /// up to the 32 KiB its WebSocket library reads by default, where one over 1 KiB once ended the
-    /// channel.
+    /// Over a real socket, a reply after its probe's deadline counts as a timeout and extends the
+    /// deadlines of the probes after it, which their replies then meet (probeLedger.reply and
+    /// observe, latency.go:315-322, 382-387). A message longer than a pong is skipped first, as
+    /// Go's wsBus.Recv skips it (latency.go:33-47), up to the 32 KiB its WebSocket library reads
+    /// by default, where one over 1 KiB once ended the channel.
     #[tokio::test]
     async fn a_late_reply_over_a_real_socket_extends_later_deadlines() -> Result<(), Error> {
         let _ = crate::crypto::provider().install_default();

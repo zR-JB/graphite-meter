@@ -964,9 +964,15 @@ mod tests {
             std::future::pending::<Result<(), Error>>().await
         });
         let transport = Transport::connect(crate::net::Http::new(true)?, &origin, Protocol::Http3).await?;
-        let (_stop, stopped) = watch::channel(true);
+        let (stop, stopped) = watch::channel(false);
         let start = Upload::start(Arc::new(transport), 1, HTTP_LANES, Arc::default(), stopped);
-        let started = tokio::time::timeout(Duration::from_secs(1), start).await;
+        // The stop arrives 100 ms into the control connection's dial, which a check made only as the
+        // start began misses.
+        let stop_soon = async {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            stop.send_replace(true);
+        };
+        let (started, ()) = tokio::join!(tokio::time::timeout(Duration::from_secs(1), start), stop_soon);
         server.abort();
         assert!(started?.is_err());
         Ok(())
