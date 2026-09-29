@@ -10,8 +10,9 @@ const WT_ENABLE_DRAFT02: u64 = 0x2b603742;
 const WT_MAX_SESSIONS_DRAFT07: u64 = 0xc671706a;
 const WT_MAX_SESSIONS_DRAFT13: u64 = 0x14e9cd29;
 const WT_ENABLED: u64 = 0x2c7cf000;
-/// Go's bound on a SETTINGS frame, with at most this many distinct identifiers.
+/// Go's bound on a SETTINGS frame.
 const MAX_LENGTH: u64 = 8 * 1024;
+/// Our own bound on a frame's distinct identifiers, over which it is H3_EXCESSIVE_LOAD; Go has none.
 const MAX_IDS: usize = 64;
 
 /// The largest field section each role accepts: Go's server limit, and our client's.

@@ -387,7 +387,7 @@ impl Connect {
     /// Ends the session once the peer does or this side asks: CLOSE unless the peer ended it, FIN,
     /// the peer's FIN within 1 s, and only then STOP_SENDING. `true` once the stream is done with.
     pub(crate) fn poll(&mut self, cx: &mut Context<'_>, now: Instant, shared: &Shared) -> bool {
-        // A peer that withholds credit for the head still gets the close, bounded by the drain.
+        // A peer that withholds credit for the head gets no CLOSE: the drain ends it with WT_SESSION_GONE.
         let mut flushed = true;
         let failed = match self.poll_read(cx) {
             Ok(()) if self.deadline.is_none() => match self.send.poll_ready(cx) {
