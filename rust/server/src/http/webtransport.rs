@@ -60,7 +60,10 @@ impl HttpServer {
         let Some(route) = route else {
             return answer(stream, self.harden(text_response(StatusCode::NOT_FOUND))).await;
         };
-        let request = request.into_request();
+        let request = match request {
+            Checked::Public(request) => request,
+            Checked::Authorized(authorized) => authorized.into_parts().0,
+        };
         let owner = self.owner(&request, lease.as_ref(), peer);
         let _permit = match self.admit(route, &owner) {
             Ok(permit) => permit,

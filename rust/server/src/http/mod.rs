@@ -926,15 +926,6 @@ enum Checked<B> {
     Authorized(AuthorizedRequest<B>),
 }
 
-impl<B> Checked<B> {
-    fn into_request(self) -> Request<B> {
-        match self {
-            Self::Public(request) => request,
-            Self::Authorized(authorized) => authorized.into_parts().0,
-        }
-    }
-}
-
 /// What the gate learned of a request it let through.
 struct Passed {
     /// The route, when the listener mounts it.
