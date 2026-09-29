@@ -55,6 +55,8 @@ export interface LatencyProfileViewLane extends LatencyProfileLaneLike {
   sendFailureCount: number | null;
   count: number;
   active?: boolean;
+  /** Why this population's probes stopped, by server when several ran. */
+  failure?: string;
 }
 
 /** The lanes' axis follows the gauge's rule over their P90s, so the boxes fill it; a slower reply runs off its end. */
