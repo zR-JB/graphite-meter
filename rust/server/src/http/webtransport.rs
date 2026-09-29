@@ -1,7 +1,7 @@
 //! A CONNECT task owns every application lane; dropping it cancels all session IO.
 //! The connection advertises no WT_INITIAL_* settings, so session flow control
 //! is not negotiated. QUIC flow control and the local lane limit remain active.
-use super::{quic::ReceiveCredit, *};
+use super::{body::write_reply, http3::H3Reply, quic::ReceiveCredit, *};
 use crate::{
     timeouts::{PROGRESS_HEARTBEAT, WT_ANSWER, WT_REFUSAL_LINGER, WT_VERIFY_LINGER},
     upload::{UploadLane, UploadStore, UploadSubscription},
@@ -13,7 +13,7 @@ use graphite_meter_core::{
     wire::{self, UploadProgress},
 };
 use graphite_meter_http3::{
-    self as http3, RequestStream,
+    RequestStream,
     webtransport::{RecvStream, Session},
 };
 use tokio::time::Instant;
@@ -42,7 +42,7 @@ impl HttpServer {
         stream: RequestStream,
         credit: ReceiveCredit,
         peer: SocketAddr,
-    ) -> Result<(), http3::Error> {
+    ) -> io::Result<()> {
         let accepted = Accepted {
             peer,
             tls: true,
@@ -81,7 +81,7 @@ impl HttpServer {
         let session = tokio::select! {
             biased;
             _ = lease_ended(lease.clone()) => return Ok(()),
-            session = Session::accept(stream, headers) => session?,
+            session = Session::accept(stream, headers) => session.map_err(io::Error::other)?,
         };
         let mut lanes = match route {
             Route::WtDownload => Lanes::download(&self, &session, &request),
@@ -296,20 +296,12 @@ impl<'a> Lanes<'a> {
     }
 }
 
-async fn answer(stream: RequestStream, response: Response<ResponseBody>) -> Result<(), http3::Error> {
+/// The answer to a CONNECT that opens no session, within its own bound.
+async fn answer(stream: RequestStream, response: Response<ResponseBody>) -> io::Result<()> {
     let (mut send, _receive) = stream.split();
-    let (parts, mut body) = response.into_parts();
-    tokio::time::timeout(WT_ANSWER, async {
-        send.send_response(Response::from_parts(parts, ())).await?;
-        while let Some(Ok(frame)) = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
-            if let Ok(data) = frame.into_data() {
-                send.send_data(data).await?;
-            }
-        }
-        send.finish().await
-    })
-    .await
-    .map_err(|_| http3::Error::TimedOut)?
+    tokio::time::timeout(WT_ANSWER, write_reply(&mut H3Reply::new(&mut send), response, false))
+        .await
+        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?
 }
 
 fn datagram_mode(value: &str) -> bool {

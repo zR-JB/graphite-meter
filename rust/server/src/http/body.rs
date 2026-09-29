@@ -2,6 +2,7 @@
 use super::upload::ProgressBody;
 use crate::{admission::Permit, meter::Transfer};
 use bytes::Bytes;
+use http::Response;
 use hyper::body::{Body, Frame, SizeHint};
 use std::{
     future::Future,
@@ -135,6 +136,48 @@ impl Body for ResponseBody {
             Content::Progress(_) => SizeHint::default(),
         }
     }
+}
+
+/// Where a multiplexed reply goes: an HTTP/2 stream, or an HTTP/3 request stream.
+pub(super) trait DataSink {
+    /// Sends the head, as the whole reply when `end`; `true` when that completed the reply.
+    async fn head(&mut self, head: Response<()>, end: bool) -> io::Result<bool>;
+    /// Writes a prefix of `data`, which ends the reply when `end` and it leaves nothing; `true` when it did.
+    async fn data(&mut self, data: &mut Bytes, end: bool) -> io::Result<bool>;
+    /// Ends a reply that no write ended.
+    async fn finish(&mut self) -> io::Result<()>;
+    /// An error once the peer cancels the reply; it is awaited while the body has no data ready.
+    async fn cancelled(&mut self) -> io::Error {
+        std::future::pending().await
+    }
+}
+
+/// Writes a reply to `sink`: its head, then, unless it answers HEAD, its body's data as the sink takes it.
+pub(super) async fn write_reply(sink: &mut impl DataSink, reply: Response<ResponseBody>, head: bool) -> io::Result<()> {
+    let (parts, mut body) = reply.into_parts();
+    if sink
+        .head(Response::from_parts(parts, ()), head || body.is_end_stream())
+        .await?
+    {
+        return Ok(());
+    }
+    if !head {
+        loop {
+            let frame = tokio::select! {
+                error = sink.cancelled() => return Err(error),
+                frame = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)) => frame,
+            };
+            let Some(frame) = frame else { break };
+            if let Ok(mut data) = frame?.into_data() {
+                while !data.is_empty() {
+                    if sink.data(&mut data, body.is_end_stream()).await? {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+    sink.finish().await
 }
 
 // An operation outlives the body when Hyper has queued its last frame but has

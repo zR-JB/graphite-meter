@@ -1,5 +1,9 @@
 //! Multiplexed HTTP/2 transport with owned, independently cancellable streams.
-use super::{body::UploadFunding, *};
+use super::{
+    body::{DataSink, UploadFunding, write_reply},
+    lifecycle::ConnectionLifecycle,
+    *,
+};
 use crate::{
     budget::{ClientCredit, CreditClaim, H2_STATE_BYTES, MemoryBudget},
     timeouts::H2_HANDSHAKE,
@@ -48,32 +52,17 @@ impl HttpServer {
             granted: AtomicBool::new(false),
             work: AdmittedWork::new(),
         });
-        let mut last_idle = None;
-        let mut stale: Option<Pin<Box<Sleep>>> = None;
+        let mut lifecycle = ConnectionLifecycle::new(window.work.clone(), true);
         let mut idle = Some(Box::pin(tokio::time::sleep(CONTROL)));
-        let mut closing: Option<Pin<Box<Sleep>>> = None;
         let mut stopping = Box::pin(stopped(self.stopping.clone()));
-        let mut shutting_down = false;
         std::future::poll_fn(|cx| {
             while let Poll::Ready(Some(())) = Pin::new(&mut streams).poll_next(cx) {}
-            let idle_since = window.work.idle_since();
-            if idle_since != last_idle {
-                last_idle = idle_since;
-                let granted = window.granted.load(Ordering::Relaxed);
-                stale = idle_since
-                    .filter(|_| granted)
-                    .map(|since| Box::pin(tokio::time::sleep_until(since + CONTROL)));
-                if let (Some(since), Some(deadline)) = (idle_since, closing.as_mut())
-                    && !shutting_down
-                {
-                    deadline.as_mut().reset(since + SHUTDOWN_GRACE);
-                }
+            let expired = lifecycle.poll_stale(cx, || window.granted.load(Ordering::Relaxed));
+            if !lifecycle.stopping() && stopping.as_mut().poll(cx).is_ready() {
+                lifecycle.stop();
             }
-            let expired = stale.as_mut().is_some_and(|stale| stale.as_mut().poll(cx).is_ready());
-            shutting_down = shutting_down || stopping.as_mut().poll(cx).is_ready();
-            if closing.is_none() && (expired || shutting_down) {
+            if (expired || lifecycle.stopping()) && lifecycle.go_away() {
                 connection.graceful_shutdown();
-                closing = Some(Box::pin(tokio::time::sleep(SHUTDOWN_GRACE)));
             }
             match connection.poll_accept(cx) {
                 Poll::Ready(Some(Ok((request, mut reply)))) => {
@@ -92,13 +81,9 @@ impl HttpServer {
                 }
                 Poll::Ready(Some(Err(_)) | None) => Poll::Ready(()),
                 Poll::Pending => {
-                    if let Some(deadline) = &mut closing {
-                        // Admitted work that raced the GOAWAY runs on, then gets the grace to drain.
-                        return if idle_since.is_some() || shutting_down {
-                            deadline.as_mut().poll(cx)
-                        } else {
-                            Poll::Pending
-                        };
+                    // Admitted work that raced the GOAWAY runs on, then gets the grace to drain.
+                    if lifecycle.going_away() {
+                        return lifecycle.poll_close(cx);
                     }
                     // Transport state includes queued END_STREAM frames even
                     // after the endpoint future completes. Neither active work
@@ -109,8 +94,8 @@ impl HttpServer {
                     }
                     let deadline = idle.get_or_insert_with(|| Box::pin(tokio::time::sleep(CONTROL)));
                     if deadline.as_mut().poll(cx).is_ready() {
+                        lifecycle.go_away();
                         connection.graceful_shutdown();
-                        closing = Some(Box::pin(tokio::time::sleep(SHUTDOWN_GRACE)));
                         cx.waker().wake_by_ref();
                     }
                     Poll::Pending
@@ -137,7 +122,11 @@ impl HttpServer {
                 funding: UploadFunding::new(operations.clone()),
             });
             let response = self.respond_incoming(request, accepted, &operations, None).await?;
-            send_response(&mut reply, response, head).await
+            let mut sink = H2Reply {
+                respond: &mut reply,
+                stream: None,
+            };
+            write_reply(&mut sink, response, head).await
         };
         if self.guard(&operations, &work, exchange).await.is_err() {
             // Reset only this stream, including when peer flow control stopped
@@ -147,45 +136,45 @@ impl HttpServer {
     }
 }
 
-async fn send_response(
-    reply: &mut SendResponse<Bytes>,
-    response: Response<ResponseBody>,
-    head: bool,
-) -> io::Result<()> {
-    let (parts, mut body) = response.into_parts();
-    let finished = head || body.is_end_stream();
-    let mut stream = reply
-        .send_response(Response::from_parts(parts, ()), finished)
-        .map_err(io::Error::other)?;
-    if finished {
-        return Ok(());
+/// An HTTP/2 stream's reply. Its head and last data carry END_STREAM, and a peer's reset ends it.
+struct H2Reply<'a> {
+    respond: &'a mut SendResponse<Bytes>,
+    /// Set by the head.
+    stream: Option<SendStream<Bytes>>,
+}
+
+impl H2Reply<'_> {
+    fn stream(&mut self) -> &mut SendStream<Bytes> {
+        self.stream.as_mut().expect("a reply's head comes first")
     }
-    loop {
-        let frame = tokio::select! {
-            reset = std::future::poll_fn(|cx| stream.poll_reset(cx)) => {
-                return Err(io::Error::other(format!("HTTP/2 stream reset: {reset:?}")));
-            }
-            frame = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)) => frame,
-        };
-        let Some(frame) = frame else {
-            stream.send_data(Bytes::new(), true).map_err(io::Error::other)?;
-            return Ok(());
-        };
-        let frame = frame?;
-        if let Ok(mut data) = frame.into_data() {
-            while !data.is_empty() {
-                // Capacity is both peer flow control and h2's per-stream buffer
-                // budget. Never enqueue a whole large body frame speculatively.
-                let length = data.len().min(FRAME_BYTES);
-                let capacity = reserve(&mut stream, length).await?;
-                let chunk = data.split_to(length.min(capacity));
-                let finished = data.is_empty() && body.is_end_stream();
-                stream.send_data(chunk, finished).map_err(io::Error::other)?;
-                if finished {
-                    return Ok(());
-                }
-            }
-        }
+}
+
+impl DataSink for H2Reply<'_> {
+    async fn head(&mut self, head: Response<()>, end: bool) -> io::Result<bool> {
+        self.stream = Some(self.respond.send_response(head, end).map_err(io::Error::other)?);
+        Ok(end)
+    }
+
+    async fn data(&mut self, data: &mut Bytes, end: bool) -> io::Result<bool> {
+        let stream = self.stream();
+        // Capacity is both peer flow control and h2's per-stream buffer
+        // budget. Never enqueue a whole large body frame speculatively.
+        let length = data.len().min(FRAME_BYTES);
+        let capacity = reserve(stream, length).await?;
+        let chunk = data.split_to(length.min(capacity));
+        let end = end && data.is_empty();
+        stream.send_data(chunk, end).map_err(io::Error::other)?;
+        Ok(end)
+    }
+
+    async fn finish(&mut self) -> io::Result<()> {
+        self.stream().send_data(Bytes::new(), true).map_err(io::Error::other)
+    }
+
+    async fn cancelled(&mut self) -> io::Error {
+        let stream = self.stream();
+        let reset = std::future::poll_fn(|cx| stream.poll_reset(cx)).await;
+        io::Error::other(format!("HTTP/2 stream reset: {reset:?}"))
     }
 }
 

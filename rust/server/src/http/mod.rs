@@ -3,6 +3,7 @@
 mod body;
 mod http2;
 mod http3;
+mod lifecycle;
 mod quic;
 pub(crate) mod response;
 pub(crate) mod topology;
@@ -11,6 +12,7 @@ mod websocket;
 mod webtransport;
 pub(crate) use body::ResponseBody;
 use body::{Operation, Operations, check_operations, holds_permit};
+use lifecycle::AdmittedWork;
 pub use quic::QuicEndpoint;
 use topology::Accepted;
 
@@ -1071,46 +1073,6 @@ async fn stopped(stopping: tokio::sync::watch::Sender<bool>) {
     let mut receiver = stopping.subscribe();
     if !*receiver.borrow_and_update() {
         let _ = receiver.changed().await;
-    }
-}
-
-/// Admitted operations on one connection; leftover receive credit is reclaimed the control bound after the last.
-#[derive(Clone)]
-struct AdmittedWork(Arc<Mutex<WorkState>>);
-
-struct WorkState {
-    running: usize,
-    idle_since: tokio::time::Instant,
-}
-
-impl AdmittedWork {
-    fn new() -> Self {
-        Self(Arc::new(Mutex::new(WorkState {
-            running: 0,
-            idle_since: tokio::time::Instant::now(),
-        })))
-    }
-
-    fn admit(&self) -> Admitted {
-        self.0.lock().expect("admitted work poisoned").running += 1;
-        Admitted(self.clone())
-    }
-
-    fn idle_since(&self) -> Option<tokio::time::Instant> {
-        let work = self.0.lock().expect("admitted work poisoned");
-        (work.running == 0).then_some(work.idle_since)
-    }
-}
-
-struct Admitted(AdmittedWork);
-
-impl Drop for Admitted {
-    fn drop(&mut self) {
-        let mut work = self.0.0.lock().expect("admitted work poisoned");
-        work.running -= 1;
-        if work.running == 0 {
-            work.idle_since = tokio::time::Instant::now();
-        }
     }
 }
 

@@ -1,5 +1,9 @@
 //! HTTP/3 adapts streams to the same authorized measurement dispatcher.
-use super::{body::UploadFunding, quic::ReceiveCredit, *};
+use super::{
+    body::{DataSink, UploadFunding, write_reply},
+    quic::ReceiveCredit,
+    *,
+};
 use graphite_meter_http3::{self as http3, RecvHalf, RequestStream, SendHalf};
 
 const DATA_BYTES: usize = 16 * 1024;
@@ -37,7 +41,16 @@ impl HttpServer {
             let response = self
                 .respond_incoming(request.map(|()| body), accepted, &operations, None)
                 .await?;
-            respond(&mut send, response, head, active_responses).await
+            let large = response
+                .body()
+                .size_hint()
+                .upper()
+                .is_some_and(|size| size > LARGE_RESPONSE_BYTES);
+            let mut sink = H3Reply {
+                send: &mut send,
+                active: (!head && large).then(|| ActiveResponse::new(active_responses)),
+            };
+            write_reply(&mut sink, response, head).await
         };
         self.guard(&operations, &work, exchange).await
     }
@@ -72,6 +85,7 @@ impl Body for RequestBody {
     }
 }
 
+/// A large reply on its connection, whose writes yield to its siblings once more than the fairness lanes run.
 struct ActiveResponse(Arc<AtomicUsize>);
 
 impl ActiveResponse {
@@ -91,39 +105,46 @@ impl Drop for ActiveResponse {
     }
 }
 
-async fn respond(
-    send: &mut SendHalf,
-    response: Response<ResponseBody>,
-    head: bool,
-    active_responses: Arc<AtomicUsize>,
-) -> io::Result<()> {
-    let (parts, mut body) = response.into_parts();
-    let active = (!head && body.size_hint().upper().is_some_and(|size| size > LARGE_RESPONSE_BYTES))
-        .then(|| ActiveResponse::new(active_responses));
-    // Go's idle writer, from the head on: a write the peer's stream credit holds for the idle bound ends the reply.
-    // Each write gets a fresh bound, and the operation's lifetime still caps them all.
-    let written = |result: Result<Result<(), http3::Error>, tokio::time::error::Elapsed>| {
-        result
-            .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?
-            .map_err(io::Error::other)
-    };
-    written(tokio::time::timeout(IDLE_BOUND, send.send_response(Response::from_parts(parts, ()))).await)?;
-    if !head {
-        while let Some(frame) = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
-            if let Ok(mut data) = frame?.into_data() {
-                while !data.is_empty() {
-                    let chunk = data.split_to(data.len().min(DATA_BYTES));
-                    written(tokio::time::timeout(IDLE_BOUND, send.send_data(chunk)).await)?;
-                    if active.as_ref().is_some_and(ActiveResponse::contended) {
-                        // Only a crowded connection needs a scheduler
-                        // handoff; per-chunk yields halve ordinary H3
-                        // download throughput on this workload.
-                        tokio::task::yield_now().await;
-                    }
-                }
-            }
-        }
+/// An HTTP/3 request stream's reply, as Go's idle writer from the head on: a write the peer's stream credit holds
+/// for the idle bound ends it. Each write gets a fresh bound, and the operation's lifetime still caps them all.
+pub(super) struct H3Reply<'a> {
+    pub(super) send: &'a mut SendHalf,
+    active: Option<ActiveResponse>,
+}
+
+impl<'a> H3Reply<'a> {
+    /// A reply that never yields to its siblings.
+    pub(super) fn new(send: &'a mut SendHalf) -> Self {
+        Self { send, active: None }
     }
-    // The layer resets a response it has not finished, so a failure above never reads as complete.
-    send.finish().await.map_err(io::Error::other)
+}
+
+impl DataSink for H3Reply<'_> {
+    async fn head(&mut self, head: Response<()>, _end: bool) -> io::Result<bool> {
+        written(tokio::time::timeout(IDLE_BOUND, self.send.send_response(head)).await)?;
+        Ok(false)
+    }
+
+    async fn data(&mut self, data: &mut Bytes, _end: bool) -> io::Result<bool> {
+        let chunk = data.split_to(data.len().min(DATA_BYTES));
+        written(tokio::time::timeout(IDLE_BOUND, self.send.send_data(chunk)).await)?;
+        if self.active.as_ref().is_some_and(ActiveResponse::contended) {
+            // Only a crowded connection needs a scheduler
+            // handoff; per-chunk yields halve ordinary H3
+            // download throughput on this workload.
+            tokio::task::yield_now().await;
+        }
+        Ok(false)
+    }
+
+    /// The layer resets a response it has not finished, so a failure before this never reads as complete.
+    async fn finish(&mut self) -> io::Result<()> {
+        self.send.finish().await.map_err(io::Error::other)
+    }
+}
+
+fn written(result: Result<Result<(), http3::Error>, tokio::time::error::Elapsed>) -> io::Result<()> {
+    result
+        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?
+        .map_err(io::Error::other)
 }

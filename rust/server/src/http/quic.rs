@@ -1,6 +1,9 @@
 //! A QUIC connection owns its request futures; the HTTP/3 layer owns sessions and resets.
 
-use super::*;
+use super::{
+    lifecycle::{ConnectionLifecycle, Event},
+    *,
+};
 use crate::{
     budget::{
         self, ClientCredit, CreditClaim, Lease, MemoryBudget, QUIC_CREDIT_BYTES, QUIC_INCOMING_BYTES,
@@ -288,23 +291,11 @@ impl HttpServer {
         let active_responses = Arc::new(AtomicUsize::new(0));
         let stopping = stopped(self.stopping.clone());
         tokio::pin!(stopping);
-        let (mut shutting_down, mut closing) = (false, false);
-        let close = tokio::time::sleep(Duration::ZERO);
-        tokio::pin!(close);
-        let mut leftover = None;
-        let stale = tokio::time::sleep(Duration::ZERO);
-        tokio::pin!(stale);
+        let mut shutting_down = false;
+        let mut lifecycle = ConnectionLifecycle::new(credit.work().clone(), false);
         let mut tuning = tokio::time::interval(SEND_WINDOW_TUNING);
         tuning.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            let idle_since = credit.work().idle_since();
-            let since = idle_since.filter(|_| credit.reserved());
-            if since != leftover {
-                leftover = since;
-                if let Some(since) = since {
-                    stale.as_mut().reset(since + CONTROL);
-                }
-            }
             tokio::select! {
                 request = http.next() => {
                     let Some(request) = request? else { return Ok(()) };
@@ -328,17 +319,11 @@ impl HttpServer {
                     shutting_down = true;
                     http.shutdown(LaneEnding::Shutdown.webtransport_code(), LaneEnding::Shutdown.reason());
                 }
-                _ = &mut stale, if leftover.is_some() && !closing => {
-                    if credit.work().idle_since() == leftover {
-                        closing = true;
-                        http.goaway();
-                        close.as_mut().reset(tokio::time::Instant::now() + SHUTDOWN_GRACE);
-                    }
-                }
                 // Admitted work that raced the GOAWAY runs on; the rest gets the grace.
-                _ = &mut close, if closing && idle_since.is_some() => {
-                    if credit.work().idle_since().is_some() { return Ok(()); }
-                }
+                event = std::future::poll_fn(|cx| lifecycle.poll(cx, || credit.reserved())) => match event {
+                    Event::GoAway => http.goaway(),
+                    Event::Close => return Ok(()),
+                },
                 _ = tuning.tick() => {
                     if requests.is_empty() {
                         window.release(credit.quic());
