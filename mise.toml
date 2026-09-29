@@ -374,38 +374,59 @@ cd go && go build -trimpath -o graphite-meter-client \
   -ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal/goclient.Version=$version" ./cmd/graphite-meter-client
 '''
 
+# GM_IMPLEMENTATION=rust runs the experimental Rust server or TUI in dev, prod and tui; Go is the default.
+# mise appends a task's arguments to its script's last line, so each script ends by running "$@".
 [tasks.tui]
 shell = "bash -e -o pipefail -c"
-description = "Run the native TUI; arguments after -- go to the client (e.g. -- -server http://host:7246)"
+description = "Run the native TUI (GM_IMPLEMENTATION=go|rust); arguments after -- go to the client"
 raw = true
 run = '''
 version=$(scripts/build-version.sh)
-cd go && go run -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/goclient.Version=$version" \
-  ./cmd/graphite-meter-client "$@"
-'''
+case "${GM_IMPLEMENTATION:-go}" in
+  go)
+    cd go
+    set -- go run -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/goclient.Version=$version" \
+      ./cmd/graphite-meter-client ;;
+  rust) set -- env GM_ENGINE_VERSION="$version-rust" mise run rust-client-run -- ;;
+  *) echo "GM_IMPLEMENTATION must be go or rust" >&2; exit 2 ;;
+esac
+exec "$@"'''
 
 [tasks.dev]
-description = "Build the development client and run the embedded server"
+shell = "bash -e -o pipefail -c"
+description = "Build the development client and run the embedded server (GM_IMPLEMENTATION=go|rust)"
 raw = true
-run = [
-  { task = "client-build-dev" },
-  { task = "_embed-client" },
-  "cd go && go run ./cmd/graphite-meter",
-]
+run = '''
+case "${GM_IMPLEMENTATION:-go}" in
+  go)
+    mise run client-build-dev
+    mise run _embed-client
+    cd go
+    set -- go run ./cmd/graphite-meter ;;
+  rust) set -- mise run rust-server-run -- ;;
+  *) echo "GM_IMPLEMENTATION must be go or rust" >&2; exit 2 ;;
+esac
+exec "$@"'''
 
 [tasks.prod]
 shell = "bash -e -o pipefail -c"
-description = "Build the production client and run the stamped server"
+description = "Build the production client and run the stamped server (GM_IMPLEMENTATION=go|rust)"
 raw = true
-run = [
-  { task = "client-build-prod" },
-  { task = "_embed-client" },
-  '''
+run = '''
 version=$(scripts/build-version.sh)
-cd go && go run \
-  -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=$version" ./cmd/graphite-meter
-''',
-]
+case "${GM_IMPLEMENTATION:-go}" in
+  go)
+    mise run client-build-prod
+    mise run _embed-client
+    cd go
+    set -- go run -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=$version" \
+      ./cmd/graphite-meter ;;
+  rust)
+    VERSION=$version mise run rust-server-build
+    set -- rust/target/release/graphite-meter-server ;;
+  *) echo "GM_IMPLEMENTATION must be go or rust" >&2; exit 2 ;;
+esac
+exec "$@"'''
 
 [tasks.container-build]
 description = "Build the production Docker or Podman image"

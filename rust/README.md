@@ -61,9 +61,10 @@ the Rust image takes its CA roots and their copyright from the pinned Go builder
 its `THIRD_PARTY_NOTICES.txt` lists them after the binary's notices. The port remains
 blocked from merging until a human decides its design.
 
-`mise run rust-server-run` builds the browser UI and runs the experimental server
-using `GM_*` configuration or server flags after `--`; `rust-server-build` builds a
-release binary with the production UI. Neither embeds reviewed notices, so both work
+`GM_IMPLEMENTATION=rust` switches `mise run dev`, `prod` and `tui` from Go to the
+experimental server or TUI. `mise run rust-server-run` builds the browser UI and runs
+the experimental server using `GM_*` configuration or server flags after `--`;
+`rust-server-build` builds a release binary with the production UI. Neither embeds reviewed notices, so both work
 on any host; the builder image produces the reviewed release binaries. HTTP/1, HTTPS/WSS, HTTP/2, and
 HTTP/3/WebTransport listeners share authentication and measurement state.
 Password, OIDC, and hybrid authentication are implemented. OIDC has been checked
