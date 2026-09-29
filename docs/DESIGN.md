@@ -164,7 +164,8 @@ hue, never by a boxed icon.
   second card's edge. On a portrait screen, where the dial is bound by its width, the two share the width evenly.
   Narrow, it stacks: dial, run bar, stage cards, latency. A tight screen scrolls rather than overlapping rows. On a
   phone the dial takes about a third of the screen, so the running stage's card, its value and its graph share the
-  first screen with it. The readout keeps one place: "—" stands where the value arrives, and the result lands on it.
+  first screen with it: the running card is the first under the run button, and while the latency stage runs its
+  card is. The readout keeps one place: "—" stands where the value arrives, and the result lands on it.
   Every "—" that waits for a value, on the dial, the latency card and the stage cards, is `--text-soft`; a measured
   value is full ink. The footer under the dial holds the phase's note or a failure, and while no data or no reply
   arrives, for how long; on a landscape screen it hangs just under the ring, and the ring and the latency card share
