@@ -42,13 +42,12 @@ struct State {
     error: Option<Arc<Error>>,
 }
 
-/// Drop cancels every owned task; finish(false) only sends its DELETE, finish(true) also awaits `complete`.
+/// Dropping it aborts every owned task; finish(false) only sends its DELETE, finish(true) also awaits `complete`.
 pub struct Upload {
     plan: Plan,
     id: String,
     state: watch::Receiver<State>,
     stop_lanes: watch::Sender<bool>,
-    stop_all: watch::Sender<bool>,
     lanes: JoinSet<()>,
     progress: JoinSet<()>,
     session: Option<Arc<SessionSlot>>,
@@ -174,7 +173,6 @@ impl Upload {
             id: minted.upload_id,
             state,
             stop_lanes: watch::Sender::new(false),
-            stop_all: watch::Sender::new(false),
             lanes: JoinSet::new(),
             progress: JoinSet::new(),
             session: None,
@@ -205,14 +203,9 @@ impl Upload {
             state.clone(),
             self.session.clone(),
         );
-        let mut stop = self.stop_all.subscribe();
         self.progress.spawn(async move {
-            tokio::select! {
-                biased;
-                _ = stop.wait_for(|stopped| *stopped) => {},
-                result = progress_feed(&transport, &id, &feed, session) => if let Err(error) = result {
-                    fail(&feed, error);
-                },
+            if let Err(error) = progress_feed(&transport, &id, &feed, session).await {
+                fail(&feed, error);
             }
         });
         let started: Vec<_> = (0..self.plan.lanes)
@@ -375,7 +368,6 @@ impl Upload {
             }
         })
         .await;
-        let _ = self.stop_all.send(true);
         self.lanes.abort_all();
         self.progress.abort_all();
         while self.lanes.join_next().await.is_some() {}
@@ -386,14 +378,6 @@ impl Upload {
             let _ = tokio::time::timeout(Duration::from_secs(1), session.close()).await;
         }
         result?
-    }
-}
-impl Drop for Upload {
-    fn drop(&mut self) {
-        let _ = self.stop_all.send(true);
-        let _ = self.stop_lanes.send(true);
-        self.lanes.abort_all();
-        self.progress.abort_all();
     }
 }
 
@@ -836,7 +820,6 @@ mod tests {
         let transport = Arc::new(transport(&origin, Protocol::Http1).await?);
         let (state_sender, state) = watch::channel(State::default());
         let (stop_lanes, _) = watch::channel(false);
-        let (stop_all, _) = watch::channel(false);
         let upload = Upload {
             plan: Plan {
                 transport: transport.clone(),
@@ -849,7 +832,6 @@ mod tests {
             id: "test-session".into(),
             state,
             stop_lanes,
-            stop_all,
             lanes: JoinSet::new(),
             progress: JoinSet::new(),
             session: None,
