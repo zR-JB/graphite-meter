@@ -1,5 +1,10 @@
 //! Native client flags, read as Go's `flag` package reads them. Parsing has no network or terminal side effects.
-use crate::{Error, config::Config, model::Stage, vocabulary::CADENCES};
+use crate::{
+    Error,
+    config::Config,
+    model::Stage,
+    vocabulary::{CADENCES, wire},
+};
 use graphite_meter_core::{
     catalog::MAX_SELECTED_SERVERS,
     discovery::{LatencyTransport, Protocol, ThroughputTransport},
@@ -184,53 +189,31 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, Error> 
     let mut config = parsed.config;
     config.validate()?;
     let [protocol, throughput, latency] = &parsed.paths;
-    paths(&mut config, protocol, throughput, latency)?;
+    let protocols = [Protocol::Http1, Protocol::Http2, Protocol::Http3];
+    config.throughput_protocol = choice("throughput protocol", protocol, &protocols)?;
+    let transports = [ThroughputTransport::FetchStream, ThroughputTransport::WebTransport];
+    config.throughput_transport = choice("throughput transport", throughput, &transports)?;
+    let transports = [LatencyTransport::WebSocket, LatencyTransport::WebTransport];
+    config.latency_transport = choice("latency transport", latency, &transports)?;
     Ok(Action::Run {
         config: Box::new(config),
         report: parsed.report,
     })
 }
 
-/// Go reads an empty path choice as auto and refuses an unknown one with the settings, after every flag has parsed.
-fn paths(config: &mut Config, protocol: &str, throughput: &str, latency: &str) -> Result<(), Error> {
-    config.throughput_protocol = match protocol {
-        "" | "auto" => None,
-        "http1" => Some(Protocol::Http1),
-        "http2" => Some(Protocol::Http2),
-        "http3" => Some(Protocol::Http3),
-        _ => {
-            return Err(format!(
-                "invalid throughput protocol {}: use auto, http1, http2, or http3",
-                quote(protocol)
-            )
-            .into());
-        }
-    };
-    config.throughput_transport = match throughput {
-        "" | "auto" => None,
-        "fetch-stream" => Some(ThroughputTransport::FetchStream),
-        "webtransport" => Some(ThroughputTransport::WebTransport),
-        _ => {
-            return Err(format!(
-                "invalid throughput transport {}: use auto, fetch-stream, or webtransport",
-                quote(throughput)
-            )
-            .into());
-        }
-    };
-    config.latency_transport = match latency {
-        "" | "auto" => None,
-        "websocket" => Some(LatencyTransport::WebSocket),
-        "webtransport" => Some(LatencyTransport::WebTransport),
-        _ => {
-            return Err(format!(
-                "invalid latency transport {}: use auto, websocket, or webtransport",
-                quote(latency)
-            )
-            .into());
-        }
-    };
-    Ok(())
+/// Go reads an empty path choice as auto and a choice by its wire name, and refuses an unknown one
+/// with the settings, after every flag has parsed.
+fn choice<T: Copy + serde::Serialize>(what: &str, value: &str, choices: &[T]) -> Result<Option<T>, Error> {
+    if matches!(value, "" | "auto") {
+        return Ok(None);
+    }
+    let names: Vec<_> = choices.iter().map(|choice| wire(Some(*choice))).collect();
+    if let Some(at) = names.iter().position(|name| name == value) {
+        return Ok(Some(choices[at]));
+    }
+    let (last, others) = names.split_last().expect("choices to name");
+    let others = others.join(", ");
+    Err(format!("invalid {what} {}: use auto, {others}, or {last}", quote(value)).into())
 }
 
 fn automatic(value: &str) -> Option<String> {
