@@ -94,10 +94,6 @@ impl PasswordLogin {
             .clone()
             .try_acquire_owned()
             .map_err(|_| Reason::VerifierBusy)?;
-        if crate::password::validate_password(attempt.password).is_err() {
-            self.attempts.note_failed_password();
-            return Err(Reason::PasswordMismatch);
-        }
         let hash = self.hash.clone();
         let password = Zeroizing::new(attempt.password.to_owned());
         // The worker owns its permit. Cancelling the HTTP request cannot free a

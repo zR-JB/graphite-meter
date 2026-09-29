@@ -20,7 +20,7 @@ fn random_password() -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
-fn command(input: &str) -> std::process::Output {
+fn command(input: impl AsRef<[u8]>) -> std::process::Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_graphite-meter-server"))
         .arg("hash-password")
         .stdin(Stdio::piped())
@@ -32,7 +32,7 @@ fn command(input: &str) -> std::process::Output {
         .stdin
         .take()
         .expect("piped stdin")
-        .write_all(input.as_bytes())
+        .write_all(input.as_ref())
         .expect("supply password twice");
     child.wait_with_output().expect("password command result")
 }
@@ -119,17 +119,29 @@ fn rejects_invalid_passwords_before_hashing() {
 #[test]
 fn piped_password_command_emits_compatible_hash_without_echoing_secret() {
     let password = random_password();
-    let result = command(&format!("{password}\n{password}\n"));
+    let result = command(format!("{password}\n{password}\n"));
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     let encoded = String::from_utf8(result.stdout).expect("ASCII PHC hash");
     assert!(Hash::parse(encoded.trim()).expect("valid PHC hash").verify(&password));
     assert!(!String::from_utf8_lossy(&result.stderr).contains(&password));
 }
 
+/// As Go's hashPassword: both entries are read and compared before either is validated, and bytes are hashed.
 #[test]
-fn mismatched_passwords_fail_without_emitting_a_hash() {
-    let result = command("one\ntwo\n");
-    assert!(!result.status.success());
-    assert!(result.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&result.stderr).contains("passwords do not match"));
+fn the_password_command_compares_before_it_validates() {
+    for (input, error) in [
+        (&b"one\ntwo\n"[..], "passwords do not match"),
+        (b"alone", "passwords do not match"),
+        (b"\n\n", "password must contain 1 to 1024 bytes"),
+        (b"\xe9t\xe9\n\xe9t\xe9\r\n", ""),
+    ] {
+        let result = command(input);
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.starts_with("Password: Confirm password: ") && stderr.contains(error),
+            "{stderr}"
+        );
+        assert_eq!(result.status.success(), error.is_empty(), "{stderr}");
+        assert_eq!(result.stdout.is_empty(), !error.is_empty());
+    }
 }

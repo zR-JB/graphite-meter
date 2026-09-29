@@ -54,17 +54,19 @@ impl Hash {
     }
 
     pub fn verify(&self, password: &str) -> bool {
-        if validate_password(password).is_err() {
+        if validate_password(password.as_bytes()).is_err() {
             return false;
         }
-        match derive(password, &self.salt) {
+        match derive(password.as_bytes(), &self.salt) {
             Ok(actual) => bool::from(actual.ct_eq(&self.expected)),
             Err(_) => false,
         }
     }
 }
 
-pub fn hash_password(password: &str) -> Result<String, &'static str> {
+/// As Go's, hashes the password's bytes, which need not be UTF-8.
+pub fn hash_password(password: impl AsRef<[u8]>) -> Result<String, &'static str> {
+    let password = password.as_ref();
     validate_password(password)?;
     let mut salt = [0; 16];
     getrandom::fill(&mut salt).map_err(|_| "failed to generate password salt")?;
@@ -76,21 +78,21 @@ pub fn hash_password(password: &str) -> Result<String, &'static str> {
     ))
 }
 
-pub fn validate_password(password: &str) -> Result<(), &'static str> {
+pub fn validate_password(password: &[u8]) -> Result<(), &'static str> {
     if password.is_empty() || password.len() > 1024 {
         return Err("password must contain 1 to 1024 bytes");
     }
-    if password.contains(['\r', '\n']) {
+    if password.contains(&b'\r') || password.contains(&b'\n') {
         return Err("password must not contain line breaks");
     }
     Ok(())
 }
 
-fn derive(password: &str, salt: &[u8; 16]) -> Result<[u8; 32], &'static str> {
+fn derive(password: &[u8], salt: &[u8; 16]) -> Result<[u8; 32], &'static str> {
     let params = Params::new(MEMORY, TIME, THREADS, Some(32)).map_err(|_| "invalid password hashing parameters")?;
     let mut key = [0; 32];
     Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
-        .hash_password_into(password.as_bytes(), salt, &mut key)
+        .hash_password_into(password, salt, &mut key)
         .map_err(|_| "password hashing failed")?;
     Ok(key)
 }

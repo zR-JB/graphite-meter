@@ -4,8 +4,6 @@ use graphite_meter_server::{ServerError, password};
 use std::io::{self, BufRead, IsTerminal, Write};
 use zeroize::Zeroizing;
 
-const MAX_INPUT_LINE: u64 = 1024 + 2; // Password bytes plus an optional CRLF.
-
 pub fn run() -> Result<(), ServerError> {
     let stdin = io::stdin();
     let terminal = stdin.is_terminal();
@@ -22,13 +20,13 @@ pub fn run() -> Result<(), ServerError> {
 
     write!(prompts, "Password: ")?;
     prompts.flush()?;
-    let first = read_password(&mut input)?;
+    let first = read_line(&mut input)?;
     if terminal {
         writeln!(prompts)?;
     }
     write!(prompts, "Confirm password: ")?;
     prompts.flush()?;
-    let second = read_password(&mut input)?;
+    let second = read_line(&mut input)?;
     if terminal {
         writeln!(prompts)?;
     }
@@ -38,21 +36,22 @@ pub fn run() -> Result<(), ServerError> {
         guard.restore()?;
     }
 
+    // As Go's hashPassword: the entries are compared first, then validated and hashed as bytes.
     if first != second {
         return Err("passwords do not match".into());
     }
-    let hash = password::hash_password(&first)?;
+    let hash = password::hash_password(&*first)?;
     writeln!(output, "{hash}")?;
     Ok(())
 }
 
-fn read_password(input: &mut impl BufRead) -> Result<Zeroizing<String>, ServerError> {
-    let mut bytes = Zeroizing::new(Vec::new());
-    io::Read::take(input, MAX_INPUT_LINE).read_until(b'\n', &mut bytes)?;
-    let line = std::str::from_utf8(&bytes)?;
-    let value = line.trim_end_matches(['\r', '\n']);
-    password::validate_password(value)?;
-    Ok(Zeroizing::new(value.to_owned()))
+/// A line without its trailing line breaks, as Go's ReadString and TrimRight read it.
+fn read_line(input: &mut impl BufRead) -> io::Result<Zeroizing<Vec<u8>>> {
+    let mut line = Zeroizing::new(Vec::new());
+    input.read_until(b'\n', &mut line)?;
+    let end = line.iter().rposition(|byte| !matches!(byte, b'\r' | b'\n'));
+    line.truncate(end.map_or(0, |end| end + 1));
+    Ok(line)
 }
 
 #[cfg(unix)]
