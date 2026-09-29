@@ -201,11 +201,7 @@ impl Controller {
         // Grants carry over; connections belong to this check or run alone.
         let http = self.http.fresh();
         let snapshots = self.snapshots.clone();
-        let prepared = if matches!(work, Work::Run(_)) {
-            self.prepared.take()
-        } else {
-            None
-        };
+        let prepared = self.prepared.take();
         let interactive = self.interactive;
         self.operations
             .spawn(async move { execute(work, http, snapshots, cancelled, prepared, interactive).await });
