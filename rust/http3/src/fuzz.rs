@@ -137,6 +137,7 @@ fn control_model(mut data: &[u8], client: bool) -> (Vec<control::Event>, Result<
             (_, true) => Some(Code::H3_MISSING_SETTINGS),
             (0x0d, false) if client => Some(Code::H3_FRAME_UNEXPECTED),
             (0x03 | 0x07 | 0x0d, false) if !(1..=8).contains(&length) => Some(Code::H3_FRAME_ERROR),
+            (0x41, false) => Some(Code::H3_FRAME_ERROR),
             (0x00..=0x02 | 0x04..=0x06 | 0x08 | 0x09, false) => Some(Code::H3_FRAME_UNEXPECTED),
             _ => None,
         };
@@ -615,7 +616,7 @@ fn push(events: &mut Events, event: Event) {
 /// may not carry PUSH_PROMISE, as we allow no push, an interim head starts it over, and its
 /// request's method and its status bound its content (RFC 9110 §6.4.1, §9.3.6, RFC 9114 §4.1.2).
 fn model(mut data: &[u8], limit: u64, side: Side) -> (Events, Result<(), Code>) {
-    let (mut events, mut phase, mut owed) = (Vec::new(), 0, None);
+    let (mut events, mut phase, mut owed, mut first) = (Vec::new(), 0, None, true);
     loop {
         let Some((kind, a)) = varint::decode(data) else {
             let end = match (data.is_empty(), phase, owed) {
@@ -630,10 +631,14 @@ fn model(mut data: &[u8], limit: u64, side: Side) -> (Events, Result<(), Code>) 
             return (events, Err(Code::H3_FRAME_ERROR));
         };
         data = &data[a + b..];
+        // Only a client's WebTransport stream opens with the signal, and a client bidirectional session ID.
+        let opening = std::mem::replace(&mut first, false) && matches!(side, Side::Request(_));
         match (kind, phase) {
             (0x01, 0 | 1) if length_field > limit => return (events, Err(Code::H3_EXCESSIVE_LOAD)),
             (0x01, 0 | 1) | (0x00, 1) => {}
-            (0x41, 0) => return (events, Err(WtCode(0).to_http())),
+            (0x41, _) if !opening => return (events, Err(Code::H3_FRAME_ERROR)),
+            (0x41, _) if !length_field.is_multiple_of(4) => return (events, Err(Code::H3_ID_ERROR)),
+            (0x41, _) => return (events, Err(WtCode(0).to_http())),
             (0x05, _) if matches!(side, Side::Response(_)) => return (events, Err(Code::H3_ID_ERROR)),
             (0x00..=0x09 | 0x0d, _) => return (events, Err(Code::H3_FRAME_UNEXPECTED)),
             _ => {}

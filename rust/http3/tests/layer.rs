@@ -373,7 +373,9 @@ async fn closed_with(quic: &noq::Connection) -> Code {
 #[tokio::test]
 async fn protocol_violations_close_the_connection_with_their_code() -> Result<(), TestError> {
     let request = |bytes: Vec<u8>| (None, Some(bytes));
+    let after_head = |bytes: Vec<u8>| request([request_head(&[]), bytes].concat());
     let streams = |streams: Vec<(Vec<u8>, bool)>| (Some(streams), None);
+    let control = |bytes: Vec<u8>| streams(vec![([&CONTROL[..], &bytes].concat(), false)]);
     let cases = [
         (
             streams(vec![([&[0x00][..], &frame(0x07, &[4])].concat(), false)]),
@@ -384,10 +386,11 @@ async fn protocol_violations_close_the_connection_with_their_code() -> Result<()
             Code::H3_STREAM_CREATION_ERROR,
         ),
         (streams(vec![(CONTROL.to_vec(), true)]), Code::H3_CLOSED_CRITICAL_STREAM),
-        (
-            streams(vec![([&CONTROL[..], &frame(0x06, &[0; 8])].concat(), false)]),
-            Code::H3_FRAME_UNEXPECTED,
-        ),
+        (control(frame(0x06, &[0; 8])), Code::H3_FRAME_UNEXPECTED),
+        // The WebTransport signal only opens a stream, with a client bidirectional stream's ID.
+        (control(frame(0x41, &[])), Code::H3_FRAME_ERROR),
+        (after_head(frame(0x41, &[])), Code::H3_FRAME_ERROR),
+        (request(frame(0x41, &[0])), Code::H3_ID_ERROR),
         (
             streams(vec![(
                 [&[0x00][..], &frame(0x04, &[0x21, 0x00, 0x21, 0x01])].concat(),
@@ -410,10 +413,7 @@ async fn protocol_violations_close_the_connection_with_their_code() -> Result<()
             Code::H3_ID_ERROR,
         ),
         (request(frame(0x00, b"body")), Code::H3_FRAME_UNEXPECTED),
-        (
-            request([request_head(&[]), frame(0x04, &[])].concat()),
-            Code::H3_FRAME_UNEXPECTED,
-        ),
+        (after_head(frame(0x04, &[])), Code::H3_FRAME_UNEXPECTED),
         (
             request(frame(0x01, &[0x01, 0x00, 0xd1])),
             Code::QPACK_DECOMPRESSION_FAILED,
@@ -497,6 +497,7 @@ async fn responses_the_client_refuses() -> Result<(), TestError> {
         ([head("103").repeat(5), head("200")].concat(), Ok(http::StatusCode::OK)),
         (head("100").repeat(6), Err(Error::Protocol(Code::H3_EXCESSIVE_LOAD))),
         (head("101"), Err(Error::Protocol(Code::H3_MESSAGE_ERROR))),
+        (frame(0x41, &[]), Err(closed(Code::H3_FRAME_ERROR))),
     ] {
         let peers = peers(usize::MAX).await?;
         let (driver, requests) = client(&peers);

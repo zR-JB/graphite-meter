@@ -83,6 +83,8 @@ impl Message {
         while let Some(piece) = self.frames.next(input) {
             match piece {
                 Piece::Header { kind, length } => {
+                    // The WebTransport signal may open a client's stream, before any frame.
+                    let opening = self.kind == 0 && self.phase == Phase::Head && !self.response;
                     self.kind = kind;
                     match (kind, self.phase) {
                         (frame::HEADERS, Phase::Head | Phase::Body) if length > self.limit => {
@@ -92,8 +94,10 @@ impl Message {
                             return Ok(Some(self.fields(Bytes::new())));
                         }
                         (frame::HEADERS, Phase::Head | Phase::Body) | (frame::DATA, Phase::Body) => {}
+                        (frame::WEBTRANSPORT_BIDI, _) if !opening => return Err(Code::H3_FRAME_ERROR),
+                        (frame::WEBTRANSPORT_BIDI, _) if !length.is_multiple_of(4) => return Err(Code::H3_ID_ERROR),
                         // No route takes a peer's WebTransport stream: refuse it like a cancelled lane.
-                        (frame::WEBTRANSPORT_BIDI, Phase::Head) => return Err(WtCode(0).to_http()),
+                        (frame::WEBTRANSPORT_BIDI, _) => return Err(WtCode(0).to_http()),
                         // We send no MAX_PUSH_ID, so every push ID is over our limit (RFC 9114 §7.2.5).
                         (frame::PUSH_PROMISE, _) if self.response => return Err(Code::H3_ID_ERROR),
                         (

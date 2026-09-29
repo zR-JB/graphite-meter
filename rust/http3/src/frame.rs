@@ -9,7 +9,8 @@ pub(crate) const SETTINGS: u64 = 0x04;
 pub(crate) const PUSH_PROMISE: u64 = 0x05;
 pub(crate) const GOAWAY: u64 = 0x07;
 pub(crate) const MAX_PUSH_ID: u64 = 0x0d;
-/// Opens a peer-initiated WebTransport bidirectional stream in place of a frame type.
+/// Opens a peer-initiated WebTransport bidirectional stream in place of a frame type, its session ID
+/// in place of a length; anywhere else it is H3_FRAME_ERROR, as the WebTransport draft requires.
 pub(crate) const WEBTRANSPORT_BIDI: u64 = 0x41;
 
 pub(crate) const CONTROL_STREAM: u64 = 0x00;

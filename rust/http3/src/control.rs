@@ -61,6 +61,7 @@ impl Reader {
                         frame::SETTINGS | frame::DATA | frame::HEADERS | frame::PUSH_PROMISE => {
                             return Err(Code::H3_FRAME_UNEXPECTED);
                         }
+                        frame::WEBTRANSPORT_BIDI => return Err(Code::H3_FRAME_ERROR),
                         kind if frame::is_http2(kind) => return Err(Code::H3_FRAME_UNEXPECTED),
                         _ => {}
                     }
