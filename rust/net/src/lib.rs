@@ -47,8 +47,13 @@ pub async fn connect(proxy: &Proxy, target: &Origin, tls: Option<&TlsConnector>)
         Some(Ok(upstream)) => {
             let tcp = tcp(&upstream.origin.host, upstream.origin.port_number()).await?;
             let stream: Box<dyn Stream> = if upstream.origin.scheme == "https" {
-                let tls = proxy_tls().await?;
-                Box::new(tls.connect(server_name(&upstream.origin.host)?, tcp).await?)
+                // Go's transport makes both handshakes with its one TLS configuration, so an HTTPS
+                // target's, which skips verification with -insecure, serves its proxy too.
+                let proxy = match tls {
+                    Some(tls) => tls.clone(),
+                    None => proxy_tls().await?,
+                };
+                Box::new(proxy.connect(server_name(&upstream.origin.host)?, tcp).await?)
             } else {
                 Box::new(tcp)
             };
@@ -515,7 +520,7 @@ fn unmapped(network: ipnet::IpNet) -> ipnet::IpNet {
         .map_or(network, ipnet::IpNet::V4)
 }
 
-/// Verified TLS to an HTTPS proxy, built once when the first connection needs it.
+/// Verified TLS to a cleartext target's HTTPS proxy, built once when the first connection needs it.
 static PROXY_TLS: tokio::sync::OnceCell<TlsConnector> = tokio::sync::OnceCell::const_new();
 
 async fn proxy_tls() -> io::Result<TlsConnector> {
