@@ -21,16 +21,12 @@ import tomllib
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+from ..ci.fork_upkeep import ancestor, git
+
 REPO = Path(__file__).resolve().parents[2]
 SHA = re.compile(r'[0-9a-f]{40}')
 REGISTRY = 'registry+https://github.com/rust-lang/crates.io-index'
 WORKSPACE_FILES = {'Cargo.toml', 'Cargo.lock'}
-GIT_TIMEOUT = 600  # seconds, per network operation
-
-
-def git(directory: Path, *args: str) -> str:
-    return subprocess.run(['git', '-C', str(directory), *args], check=True, text=True,
-                          stdout=subprocess.PIPE, timeout=GIT_TIMEOUT).stdout
 
 
 def check_lock(forks: list[dict], lock: dict) -> list[str]:
@@ -59,11 +55,6 @@ def check_lock(forks: list[dict], lock: dict) -> list[str]:
     return errors
 
 
-def ancestor(directory: Path, older: str, newer: str) -> bool:
-    return subprocess.run(['git', '-C', str(directory), 'merge-base', '--is-ancestor', older, newer],
-                          timeout=GIT_TIMEOUT).returncode == 0
-
-
 def check_fork(fork: dict, directory: Path) -> list[str]:
     name, rev, base = fork['fork'], fork['rev'], fork['base']
     git(directory.parent, 'init', '-q', '--bare', str(directory))
@@ -73,8 +64,8 @@ def check_fork(fork: dict, directory: Path) -> list[str]:
         git(directory, 'fetch', '-q', fork['upstream'], f'+{tag}:{tag}')
     except subprocess.CalledProcessError:
         return [f"{name}: branch {fork['branch']} or upstream tag {fork['baseTag']} is unavailable"]
-    head = git(directory, 'rev-parse', branch).strip()
-    tag = git(directory, 'rev-parse', tag + '^{commit}').strip()
+    head = git(directory, 'rev-parse', branch)
+    tag = git(directory, 'rev-parse', tag + '^{commit}')
     errors = []
     if tag != base:
         errors.append(f"{name}: upstream {fork['baseTag']} is {tag}, not base {base}")
@@ -83,8 +74,9 @@ def check_fork(fork: dict, directory: Path) -> list[str]:
         return errors + [f"{name}: {rev} is not on branch {fork['branch']}"]
     if not ancestor(directory, base, rev):
         return errors + [f'{name}: base {base} is not an ancestor of {rev}']
+    # The reviewed digest hashes diff-tree's output with the final line break git() strips.
     changes = git(directory, 'diff-tree', '-r', '--no-renames', '--full-index', base, rev)
-    if hashlib.sha256(changes.encode()).hexdigest() != fork['diffSha256']:
+    if hashlib.sha256(changes.encode() + b'\n').hexdigest() != fork['diffSha256']:
         errors.append(f'{name}: change set differs from the reviewed diffSha256')
     for line in changes.splitlines():
         path = line.split('\t', 1)[1]

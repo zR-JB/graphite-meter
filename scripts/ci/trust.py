@@ -61,18 +61,6 @@ def read_record(path: Path, keys: set[str], expected: gh.JsonObject) -> gh.JsonO
     return record
 
 
-def _number(value: gh.JsonValue) -> int:
-    return value if isinstance(value, int) and not isinstance(value, bool) else 0
-
-
-def _text(value: gh.JsonValue) -> str:
-    return value if isinstance(value, str) else ""
-
-
-def _get(value: gh.JsonValue, key: str) -> gh.JsonValue:
-    return value.get(key) if isinstance(value, dict) else None
-
-
 def _bound_to_pr(item: gh.JsonObject, pr_number: int | None) -> bool:
     if pr_number is None:
         return True
@@ -121,7 +109,7 @@ def require_control_plane_matches_main(repository: str, pr_sha: str, main_sha: s
     def entries(ref: str) -> dict[str, gh.JsonValue]:
         tree = gh.expect_object(gh.api(f"repos/{repository}/git/trees/{ref}"), f"tree at {ref}")
         items = [gh.expect_object(item, "entry") for item in gh.expect_array(tree.get("tree"), "tree")]
-        return {_text(item.get("path")): item.get("sha") for item in items}
+        return {gh.str_field(item, "path", "entry"): item.get("sha") for item in items}
 
     pr, main = entries(pr_sha), entries(main_sha)
     if changed := [path for path in CONTROL_PLANE if pr.get(path) != main.get(path)]:
@@ -192,9 +180,7 @@ def require_ci_gate(
     scope = f"PR #{pr_number}" if pr_number is not None else branch
     if not runs:
         gh.fail(f"CI for {scope} at {sha} is missing")
-    run = max(runs, key=lambda item: (_number(item.get("run_number")),
-                                      _number(item.get("run_attempt")),
-                                      _text(item.get("updated_at"))))
+    run = max(runs, key=lambda item: gh.int_field(item, "run_number", "CI run"))
     run_id = gh.int_field(run, "id", "CI run")
     if (run.get("status"), run.get("conclusion")) != DONE:
         gh.fail(f"latest CI run {run_id} for {scope} at {sha} is "
@@ -205,7 +191,7 @@ def require_ci_gate(
     gates = [job for job in jobs if job.get("name") == "Gate"]
     if [(gate.get("status"), gate.get("conclusion")) for gate in gates] != [DONE]:
         gh.fail(f"Gate in CI run {run_id} did not succeed")
-    if event == "push" and (partial := [_text(job.get("name")) for job in jobs
+    if event == "push" and (partial := [str(job.get("name")) for job in jobs
                                         if (job.get("status"), job.get("conclusion")) != DONE]):
         gh.fail(f"CI run {run_id} on {branch} did not run every job: {', '.join(partial)}")
     return run_id
@@ -217,14 +203,13 @@ def require_check_run(
     pages = gh.api(gh.query(f"repos/{repository}/commits/{sha}/check-runs", per_page=100,
                          filter="all"), paginate=True)
     checks = [check for check in gh.page_items(pages, "check_runs")
-              if check.get("name") == name and _get(check.get("app"), "slug") == app_slug
+              if check.get("name") == name and gh.object_field(check, "app", name).get("slug") == app_slug
               and _bound_to_pr(check, pr_number)]
     scope = f"{name} for PR #{pr_number}" if pr_number is not None else name
     if not checks:
         gh.fail(f"{scope} at {sha} is missing")
     # Unfinished checks block; an older slow success must not hide a newer retry.
-    check = max(checks, key=lambda item: (item.get("status") != "completed",
-                                          _text(item.get("started_at")), _number(item.get("id"))))
+    check = max(checks, key=lambda item: (item.get("status") != "completed", gh.int_field(item, "id", name)))
     if (check.get("status"), check.get("conclusion")) != DONE:
         gh.fail(f"{scope} at {sha} is {check.get('status')}/{check.get('conclusion')}")
     return gh.int_field(check, "id", name)
@@ -235,20 +220,20 @@ def require_main_codeql(repository: str, sha: str) -> None:
     pages = gh.api(gh.query(f"repos/{repository}/code-scanning/analyses", ref="refs/heads/main",
                          tool_name="CodeQL", per_page=100), paginate=True)
     def order(item: gh.JsonObject) -> tuple[str, int]:
-        return _text(item.get("created_at")), _number(item.get("id"))
+        return gh.str_field(item, "created_at", "analysis"), gh.int_field(item, "id", "analysis")
 
     matching = [item for item in gh.page_items(pages)
-                if item.get("commit_sha") == sha and _get(item.get("tool"), "name") == "CodeQL"]
+                if item.get("commit_sha") == sha and gh.object_field(item, "tool", "analysis").get("name") == "CodeQL"]
     identity = ("category", "analysis_key", "environment")
-    newest = {tuple(_text(item.get(key)) for key in identity): item
+    newest = {tuple(gh.str_field(item, key, "analysis") for key in identity): item
               for item in sorted(matching, key=order)}
     if not newest:
         gh.fail(f"CodeQL analysis for {sha} is missing")
     if errors := [f"{key[0] or key[1]}: {item['error']}" for key, item in newest.items()
-                  if _text(item.get("error"))]:
+                  if gh.str_field(item, "error", "analysis")]:
         gh.fail(f"latest CodeQL analysis for {sha} has errors: {'; '.join(errors)}")
     for item in newest.values():
-        if warning := _text(item.get("warning")):
+        if warning := gh.str_field(item, "warning", "analysis"):
             print(f"::warning::CodeQL analysis warning for {sha}: {warning}")
 
 
@@ -261,10 +246,11 @@ def require_protected_environment(repository: str) -> None:
     if not any(rule.get("type") == "required_reviewers" and rule.get("reviewers")
                for rule in rules):
         gh.fail(f"{ENVIRONMENT} must require reviewers")
-    if _get(environment.get("deployment_branch_policy"), "custom_branch_policies") is not True:
+    policy = gh.expect_object(environment.get("deployment_branch_policy") or {}, "deployment branch policy")
+    if policy.get("custom_branch_policies") is not True:
         gh.fail(f"{ENVIRONMENT} must limit deployments to main")
     policies = gh.expect_object(gh.api(f"{path}/deployment-branch-policies"), "branch policies")
-    branches = [(_get(item, "name"), _get(item, "type"))
+    branches = [gh.expect_object(item, "branch policy")
                 for item in gh.expect_array(policies.get("branch_policies"), "branch policies")]
-    if branches != [("main", "branch")]:
+    if [(item.get("name"), item.get("type")) for item in branches] != [("main", "branch")]:
         gh.fail(f"{ENVIRONMENT} must limit deployments to main")

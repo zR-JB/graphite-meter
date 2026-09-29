@@ -59,7 +59,7 @@ class PlatformRecordTests(unittest.TestCase):
     TARGETS = 'linux/amd64 x86_64-unknown-linux-musl\ndarwin/arm64 aarch64-apple-darwin\n'
 
     def repo(self, darwin_records: list[dict] | None) -> Path:
-        root = Path(tempfile.mkdtemp())
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         (root / 'container').mkdir()
         (root / 'legal').mkdir()
         (root / 'rust').mkdir()
