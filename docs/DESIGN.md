@@ -157,17 +157,20 @@ hue, never by a boxed icon.
   bar and three stage cards keep theirs. On a portrait screen, where the dial is bound by its width, the two share the
   width evenly. Narrow, it stacks: dial, run bar, stage cards, latency. A tight screen scrolls rather than
   overlapping rows. On a phone the dial takes about a third of the screen, so the running stage's card, its value and
-  its graph share the first screen with it. The footer under the dial holds the phase's note or a failure, and while
-  no data arrives, for how long.
+  its graph share the first screen with it. The readout keeps one place: "—" stands where the value arrives, and the
+  result lands on it. The footer under the dial holds the phase's note or a failure, and while no data arrives, for
+  how long.
 - **Server lens** (`ServerLens`, `ServerScope quiet`): with several servers, one quiet field over the instrument
   (All servers or one), as wide as the choice it shows, drives the stage cards and which server's latency is shown
   once the run finishes. History's detail has its own.
 - **Stage card** (`ResultSummary`): a rule and wash in the stage hue; the name and a status word when not complete;
-  the value (bidirectional: ↓ and ↑ in their own hues); the wire rate or a failure's reason; the graph; then facts:
-  Peak, Stability, No data (from 0.5 s), Down + up, Transferred, in columns of at least 84 px, so a phone's card
-  holds three to a row. A saved result has no graph row. On a phone the cards stack, and a card that has not run, or
-  is done while the run goes on, folds to its name and value; the running card and every card of a finished run are
-  whole.
+  the value, one line tall (bidirectional: ↓ and ↑ in their own hues, on the same baseline); the wire rate or a
+  failure's reason; the graph; then facts: Peak, Stability, No data (from 0.5 s), Down + up, Transferred, in columns
+  of at least 84 px, so a phone's card holds three to a row. A card holds the same facts in every state (`cardFacts`):
+  unseen until one is known, "—" while one is not, so it keeps its height from Start to the result and neither the
+  dial nor the run bar moves; only No data, after a stall, adds one. A saved result has no graph row. On a phone the
+  cards stack, and a card that has not run, or is done while the run goes on, folds to its name and value; the running
+  card and every card of a finished run are whole.
 - **Stage graph** (`StageGraph`): the rate from zero to the shared ceiling (`store.scales.chartBytesPerSec`), a dashed
   second lane for bidirectional upload, and a 20 px latency track below: one dot per reply bucket, height being time
   over the idle median (dashed baseline). A mouse, a tap, a sideways drag or arrow keys show a readout at once: time
@@ -181,13 +184,14 @@ hue, never by a boxed icon.
   ticks run up through the rows as gridlines behind the plots; the idle median is one line from its tick through the
   loaded rows, and each loaded row's added-latency span starts from it. Narrow cards put the idle facts above and
   drop jitter, never timeouts; a phone gives each population its figures, then its plot.
-- **Run bar**: the stage chips and the run button on one line; on a phone the chips share one row in equal columns
-  and the run button spans the row under them at 44 px. A chip whose stage can still change is a switch drawn as an
-  ink control (`.btn`): a plate and a filled bead when on, its edge alone and a ring bead when off; hover strengthens
-  the edge and adds a wash, a press deepens the wash. A stage the run has reached locks its chip, which drops the
-  plate and shows progress instead: a line and a wash while its stage runs, and a check once complete (on a phone
-  the card says so). The run button is the one ink button, sentence case, with the estimate as a quiet suffix; Stop
-  steps back to an outline.
+- **Run bar**: the stage chips and the run button on one line; on a phone the chips share one row in equal columns and
+  the run button spans the row under them at 44 px. A chip whose stage can still change is a switch drawn as an ink
+  control (`.btn`): a plate and a filled bead when on, its edge alone and a ring bead when off; hover strengthens the
+  edge and adds a wash, a press deepens the wash. A stage the run has reached locks its chip, which drops the plate
+  and shows progress instead: a line and a wash while its stage runs; once complete, a check in the stage's ink takes
+  the bead's place. A chip has one glyph and no status word (its tip says why it is locked or skipped), so it keeps
+  its width in every state: from Start to the result neither the chips nor the run button move. The run button is the
+  one ink button, sentence case, with the estimate as a quiet suffix; Stop steps back to an outline.
 - **Sheet** (`SidePanel`, `.sheet`): the title, quiet head actions, grouped plates. **Choice list** (`.choices`): rows
   with a name and a second line saying what the choice does (`PATH_NOTE`) or why it is unavailable, cut with an
   ellipsis; the ring or check alone marks the choice. Unavailable choices fold into one row. While a run locks a list,
@@ -219,7 +223,7 @@ hue, never by a boxed icon.
 | Choice row               | 42 (two lines) | 5, concentric      | row + `small`   | hover `--hover-wash`; chosen by its mark             |
 | `.btn`                   | 32             | 8                  | control         | quiet: hover, press and open washes; disabled 0.5    |
 | Run button               | 40 (44 phone)  | 8                  | 14 px 600       | ink fill, `--text-inverse`; running: outline         |
-| Stage chip               | 36             | 8                  | 13 px, name 600 | on: plate, filled bead; off: edge; running: hue wash |
+| Stage chip               | 36             | 8                  | 13 px, name 600 | on: plate, bead; off: ring; running: wash; done: ✓   |
 | `.segmented`             | 32             | 8 track, 6 segment | control         | selected `--selected-wash`                           |
 | Switch                   | 22 × 38        | full               | row label       | off: check edge; on: ink track                       |
 | Check, radio             | 18             | 4, full            | —               | ink fill or ring                                     |

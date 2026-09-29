@@ -1,6 +1,7 @@
 <script lang="ts">
   import StageGraph from "./StageGraph.svelte";
   import {
+    cardFacts,
     cardTip,
     type CardScale,
     type SummaryCard,
@@ -9,7 +10,12 @@
   import type { MultiServerResult } from "../runner/measure";
   import type { TransportRole } from "../runner/contract";
   import { term, tipGroup, tooltip } from "../actions/tooltip";
-  import { STAGE, STATUS, STATUS_TONE } from "../presentation/vocabulary";
+  import {
+    MISSING,
+    STAGE,
+    STATUS,
+    STATUS_TONE,
+  } from "../presentation/vocabulary";
 
   let {
     cards,
@@ -48,20 +54,6 @@
   );
   // Latency has its own card; this row holds the transfers.
   const transfers = $derived(cards.filter((card) => card.key !== "latency"));
-  // Facts read the same way on every card: what the link peaked at, how steady it was, what moved.
-  const FACT_ORDER = [
-    "Peak",
-    "Stability",
-    "No data",
-    "Down + up",
-    "Transferred",
-  ];
-  const facts = (card: SummaryCard) =>
-    card.rows
-      .filter((row) => !row.stage)
-      .toSorted(
-        (a, b) => FACT_ORDER.indexOf(a.label) - FACT_ORDER.indexOf(b.label),
-      );
 </script>
 
 <div class="result-summary">
@@ -75,6 +67,7 @@
       {@const reason = onCards.find((issue) =>
         issue.throughput.includes(card.key),
       )?.reason}
+      {@const facts = cardFacts(card)}
       <article
         class="card {card.status}"
         data-tone={card.key}
@@ -148,8 +141,11 @@
             />
           </div>
         {/if}
-        <dl class="facts">
-          {#each facts(card) as row (row.label)}
+        <dl
+          class="facts"
+          class:unknown={facts.every((row) => row.value === MISSING)}
+        >
+          {#each facts as row (row.label)}
             <div>
               <dt {@attach row.tip ? term(() => row.tip!) : null}>
                 {row.label}
@@ -264,16 +260,20 @@
   .graph-slot {
     opacity: var(--fade);
   }
+  /* Light numerals read as measured values, not as headings. */
   .headline {
     display: flex;
     align-items: baseline;
     gap: 10px;
     min-width: 0;
+    font: 300 clamp(32px, 2.6vw, 46px) / 1 var(--font-display);
     white-space: nowrap;
   }
-  /* Light numerals read as measured values, not as headings. */
+  /* A strut one value tall, so a bidirectional pair's smaller figures sit on its baseline and keep the card's height. */
+  .headline::after {
+    content: "\200b";
+  }
   .num {
-    font: 300 clamp(32px, 2.6vw, 46px) / 1 var(--font-display);
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.025em;
   }
@@ -328,13 +328,9 @@
     padding-top: var(--space-2);
     border-top: var(--hairline) solid var(--border-subtle);
   }
-  /* Empty, the row keeps one line of facts (label and value), so the first facts never push the instrument up. */
-  .facts:empty {
+  /* Until one fact is known the row keeps its place unseen, so the first values never move the instrument. */
+  .facts.unknown {
     visibility: hidden;
-    min-height: calc(
-      var(--space-2) + var(--hairline) + 1.3 *
-        (var(--type-sm) + var(--type-md)) + 1px
-    );
   }
   .facts > div {
     display: grid;

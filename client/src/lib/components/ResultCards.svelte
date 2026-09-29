@@ -148,26 +148,31 @@
     announce(untrack(() => resultSentence(settled)));
   });
 
-  // A running stage fills its facts as it goes: bytes so far, and each bidirectional lane's rate.
+  // A running stage fills its facts as it goes: bytes so far, and each bidirectional lane's rate and their sum.
   function liveRows(key: Stage): SummaryRow[] {
     if (key === "latency") return [];
-    if (key !== "bidirectional")
-      return [
-        {
-          label: "Transferred",
-          value: fmtBytes(store.liveStageBytes, units.base),
-        },
-      ];
+    const moved = {
+      label: "Transferred",
+      value: fmtBytes(store.liveStageBytes, units.base),
+    };
+    if (key !== "bidirectional") return [moved];
     const combined = live.rates && live.rates.down + live.rates.up;
-    return (["download", "upload"] as const).map((stage) => {
-      const rate = live.rates?.[stage === "download" ? "down" : "up"];
-      return {
-        label: STAGE[stage].short,
-        value: rate == null ? MISSING : formatRate(rate, units),
-        short: laneShort(rate, combined, units),
-        stage,
-      };
-    });
+    return [
+      ...(["download", "upload"] as const).map((stage) => {
+        const rate = live.rates?.[stage === "download" ? "down" : "up"];
+        return {
+          label: STAGE[stage].short,
+          value: rate == null ? MISSING : formatRate(rate, units),
+          short: laneShort(rate, combined, units),
+          stage,
+        };
+      }),
+      {
+        label: "Down + up",
+        value: combined == null ? MISSING : formatRate(combined, units),
+      },
+      moved,
+    ];
   }
 
   // Animated values are visual only; the accessible value uses receiver accounting.

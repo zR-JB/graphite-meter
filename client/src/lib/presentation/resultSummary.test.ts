@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { summaryCards, summaryEvidence } from "./resultSummary";
+import {
+  cardFacts,
+  summaryCards,
+  summaryEvidence,
+  type SummaryCard,
+} from "./resultSummary";
 import { JARGON } from "./vocabulary";
 
 test("run evidence keeps only stages with a result", () => {
@@ -142,4 +147,49 @@ test("time without data is an explained fact from half a second, the longer lane
     tip: JARGON.noData,
   });
   expect(noData(8_000, [600, 2_500])).toEqual([fact("8.0 s"), fact("2.5 s")]);
+});
+
+test("a transfer card keeps the same facts in every state, a dash until known, No data only after a stall", () => {
+  const facts = (card: SummaryCard) =>
+    cardFacts(card).map((row) => `${row.label} ${row.value}`);
+  const waiting: SummaryCard = {
+    key: "download",
+    label: "Down",
+    icon: "download",
+    status: "pending",
+    num: "—",
+    unit: "",
+    tip: "",
+    rows: [],
+  };
+  expect(facts(waiting)).toEqual(["Peak —", "Stability —", "Transferred —"]);
+  const running = [{ label: "Transferred", value: "1.0 MB" }];
+  expect(facts({ ...waiting, status: "active", rows: running })).toEqual([
+    "Peak —",
+    "Stability —",
+    "Transferred 1.0 MB",
+  ]);
+  const [download, bidirectional] = summaryCards(
+    {
+      status: { download: "complete", bidirectional: "complete" },
+      download: { ...lane(100), peakBytesPerSec: 120, quietMs: 800 },
+      upload: null,
+      bidirectional: { down: lane(40), up: lane(20) },
+      latency: null,
+      added: null,
+    },
+    units,
+    true,
+  );
+  expect(facts(download)).toEqual([
+    "Peak 120.0 B/s",
+    "Stability 95%",
+    "No data 0.8 s",
+    "Transferred 1.0 MB",
+  ]);
+  expect(facts(bidirectional)).toEqual([
+    "Stability 95%",
+    "Down + up 60.00 B/s",
+    "Transferred 2.0 MB",
+  ]);
 });

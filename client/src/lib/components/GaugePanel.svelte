@@ -270,9 +270,7 @@
             {:else}
               <span class="gauge-value" aria-hidden="true">{display.value}</span
               >
-              {#if display.unit}<span class="gauge-unit" aria-hidden="true"
-                  >{display.unit}</span
-                >{/if}
+              <span class="gauge-unit" aria-hidden="true">{display.unit}</span>
             {/if}
             <span class="sr-only">{spoken.value} {spoken.unit}</span>
           </div>
@@ -456,13 +454,13 @@
     font-family: var(--font-display);
     font-weight: 300;
     font-variant-numeric: lining-nums tabular-nums;
+    line-height: 1;
     letter-spacing: -0.03em;
     white-space: nowrap;
   }
   .gauge-value {
     min-width: 5ch;
     font-size: clamp(24px, 17cqmin, 76px);
-    line-height: 0.95;
     text-align: center;
   }
   .hero {
@@ -508,20 +506,22 @@
   }
   .terminal-number {
     font-size: clamp(30px, 17cqmin, 76px);
-    line-height: 1;
   }
-  /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. */
+  /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. One line height for both, so the result lands where
+     the live value stood. */
   .terminal-unit,
   .gauge-unit {
     color: var(--text-muted);
     font-family: var(--font-sans);
-    line-height: 1;
+    line-height: var(--type-md);
   }
   .terminal-unit {
     font-size: clamp(var(--type-sm), 4cqmin, var(--type-lg));
     font-weight: var(--w-normal);
   }
+  /* Empty, it keeps its line, so "—" sits where the value arrives. */
   .gauge-unit {
+    min-height: 1lh;
     margin-top: var(--space-1);
     font-size: var(--type-md);
     font-weight: var(--w-normal);
