@@ -20,7 +20,6 @@ use crossterm::{
     terminal::{Clear, ClearType},
 };
 use futures_util::StreamExt;
-use graphite_meter_core::catalog::MAX_SELECTED_SERVERS;
 use keys::*;
 use run::Run;
 use setup::{Edit, Setting};
@@ -51,7 +50,6 @@ pub enum Command {
 }
 
 const MAX_TEXT: usize = 4096;
-const MAX_SERVERS: usize = 128;
 /// Go's prepareDebounce: paths are checked again once path settings stop changing.
 const RECHECK_DELAY: Duration = Duration::from_millis(350);
 /// Go's PreparationFreshness: checked paths serve a run this long.
@@ -239,7 +237,7 @@ struct Ui {
     checked_at: Option<Instant>,
     checked_key: Option<Config>,
     check_started: Option<Instant>,
-    check_failed: bool,
+    /// Why the last settled check failed: Go's prepareFailed and its error.
     check_error: Option<String>,
     theme: Theme,
     size: (u16, u16),
@@ -290,9 +288,6 @@ impl Ui {
 
     /// Go's handlePreparation, handleEvents and the sign-in replies, from a new snapshot.
     fn update(&mut self, mut snapshot: Snapshot) {
-        snapshot.servers.truncate(MAX_SERVERS);
-        snapshot.server_latencies.truncate(MAX_SELECTED_SERVERS);
-        snapshot.results.truncate(16);
         match (&self.snapshot.auth, &snapshot.auth) {
             (before, Some(auth)) if before.as_ref().is_none_or(|before| before.code != auth.code) => {
                 self.opened = false;
@@ -390,10 +385,8 @@ impl Ui {
         if error.as_deref() == Some(SIGN_IN_EXPIRED) {
             self.signed_out = true;
             self.notice = SIGN_IN_EXPIRED.into();
-            (self.check_failed, self.check_error) = (false, None);
-        } else {
-            (self.check_failed, self.check_error) = (error.is_some(), error);
         }
+        self.check_error = error.filter(|error| error != SIGN_IN_EXPIRED);
     }
 
     /// Go's prepare state.
@@ -402,7 +395,7 @@ impl Ui {
             Prepare::SignIn
         } else if self.checking() {
             Prepare::Checking
-        } else if self.check_failed {
+        } else if self.check_error.is_some() {
             Prepare::Failed
         } else {
             Prepare::Ready
