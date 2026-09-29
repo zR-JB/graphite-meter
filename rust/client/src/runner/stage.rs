@@ -321,14 +321,17 @@ impl<'a> StageRun<'a> {
     }
 
     /// Transfers and latency sessions share one readiness budget; latency is ready once dialled.
+    /// Started lanes are checked as in warmup, so a loss is noticed while others still start.
     async fn ready(&mut self) -> Result<(), Error> {
         let ready_by = Instant::now() + STAGE_READY_TIMEOUT;
         let mut expired = false;
+        let mut health = tokio::time::interval(SAMPLE_INTERVAL);
         while !self.starts.is_empty() || self.members.iter().any(Member::dialling) {
             tokio::select! {
                 Some((id, started)) = self.starts.next(), if !self.starts.is_empty() => self.started(&id, started)?,
                 Some(event) = self.events.next(), if !self.events.is_empty() => self.observe_latency(event),
                 Some(joined) = self.latency.join_next(), if !self.latency.is_empty() => self.latency_ended(joined)?,
+                _ = health.tick() => self.check_health()?,
                 () = tokio::time::sleep_until(ready_by), if !expired => {
                     expired = true;
                     let late: Vec<_> = self

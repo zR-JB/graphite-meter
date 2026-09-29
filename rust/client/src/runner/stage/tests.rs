@@ -1606,3 +1606,47 @@ async fn a_loss_between_the_window_end_and_the_drain_is_no_failure() -> Result<(
     );
     Ok(())
 }
+
+/// A member's lane lost while another member still starts is noticed when it is lost, as Go's
+/// ready handles each outcome as it arrives (stage.go:240-289), not once every start has ended.
+#[tokio::test]
+async fn a_lane_lost_while_another_member_starts_is_noticed_at_once() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let gate = Arc::new(Barrier::new(2));
+    let (near, near_mode, near_task) = download_peer().await?;
+    let (far, _, far_task) = download_peer_with_gate(Some(gate.clone())).await?;
+    let http = Http::new(true)?;
+    let servers = vec![
+        prepared_download("near", &near, &http).await?,
+        prepared_download("far", &far, &http).await?,
+    ];
+    let config = Config {
+        warmup: Duration::ZERO,
+        download_duration: Duration::from_secs(1),
+        streams: 1,
+        loaded_latency: false,
+        ..Config::default()
+    };
+    let (snapshots, mut observed) = watch::channel(Snapshot::default());
+    let (_stop, cancelled) = watch::channel(false);
+    // Near's started lane asks for sign-in while far's start waits at its gate, which opens once the
+    // loss is recorded, or after 5 s.
+    let revoke_near = async {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        near_mode.store(3, Ordering::SeqCst);
+        let failed = |snapshot: &Snapshot| !snapshot.failures.is_empty();
+        let noticed = tokio::time::timeout(Duration::from_secs(5), observed.wait_for(failed))
+            .await
+            .is_ok();
+        gate.wait().await;
+        noticed
+    };
+    let mut ledger = RunLedger::new();
+    let run = measure(Stage::Download, &config, &servers, &snapshots, cancelled, &mut ledger);
+    let (result, noticed) = joined(run, revoke_near).await?;
+    near_task.abort();
+    far_task.abort();
+    assert!(noticed, "{:?}", observed.borrow().failures);
+    assert_eq!(result?, ["near"]);
+    Ok(())
+}
