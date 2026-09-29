@@ -262,37 +262,13 @@ async fn selected_peers_start_stage_together_and_keep_catalogue_order() -> Resul
     let snapshot = observed.borrow();
     let stage = &snapshot.results[0];
     assert!(snapshot.failures.is_empty(), "{:?}", snapshot.failures);
+    // Without loaded latency no latency population is recorded, as in Go.
+    assert!(stage.server_latencies.is_empty(), "{:?}", stage.server_latencies);
     assert_eq!(stage.server_results[0].id, "near");
     assert_eq!(stage.server_results[1].id, "far");
     assert!(stage.server_results.iter().all(|server| server.down_bytes() > 0));
     near_task.abort();
     far_task.abort();
-    Ok(())
-}
-
-/// Without loaded latency a transfer stage records no latency population, as Go's does, so no
-/// report prints an empty latency table for it.
-#[tokio::test]
-async fn a_transfer_stage_without_loaded_latency_records_no_latency() -> Result<(), Error> {
-    let _ = crate::crypto::provider().install_default();
-    let (origin, _, peer) = download_peer().await?;
-    let http = Http::new(true)?;
-    let servers = vec![prepared_download("peer", &origin, &http).await?];
-    let config = Config {
-        warmup: Duration::ZERO,
-        download_duration: Duration::from_secs(1),
-        streams: 1,
-        loaded_latency: false,
-        ..Config::default()
-    };
-    let (snapshots, observed) = watch::channel(listing(&servers));
-    let (_stop, cancelled) = watch::channel(false);
-    let mut ledger = RunLedger::new();
-    let result = measure(Stage::Download, &config, &servers, &snapshots, cancelled, &mut ledger).await;
-    peer.abort();
-    assert!(result?.is_empty());
-    let latencies = &observed.borrow().results[0].server_latencies;
-    assert!(latencies.is_empty(), "{latencies:?}");
     Ok(())
 }
 
@@ -765,51 +741,58 @@ async fn silent_direction_removes_its_server_but_a_silent_lane_does_not() -> Res
     Ok(())
 }
 
+/// A lane still retrying at the final boundary removes its quiet server: a busy download, and
+/// upload lanes answered busy as they send, which made no progress as Go's uploadLane counts it
+/// (upload.go:118-128), where they once went on retrying and the stage completed with the server.
 #[tokio::test]
 async fn a_lane_still_retrying_at_the_final_boundary_removes_its_quiet_server() -> Result<(), Error> {
     let _ = crate::crypto::provider().install_default();
-    let (near, near_mode, near_task) = download_peer().await?;
-    let (far, _, far_task) = download_peer().await?;
-    let http = Http::new(true)?;
-    let servers = vec![
-        prepared_download("near", &near, &http).await?,
-        prepared_download("far", &far, &http).await?,
-    ];
-    let config = Config {
-        warmup: Duration::ZERO,
-        download_duration: Duration::from_millis(1900),
-        streams: 1,
-        loaded_latency: false,
-        ..Config::default()
-    };
-    let (snapshots, mut observed) = watch::channel(Snapshot::default());
-    let (_stop, cancelled) = watch::channel(false);
-    let refuse_near = async {
-        observed
-            .wait_for(|snapshot| snapshot.phase == Phase::Measuring)
-            .await
-            .unwrap();
-        near_mode.store(14, Ordering::SeqCst);
-    };
-    let mut ledger = RunLedger::new();
-    let (result, ()) = tokio::join!(
-        measure(Stage::Download, &config, &servers, &snapshots, cancelled, &mut ledger),
-        refuse_near
-    );
-    near_task.abort();
-    far_task.abort();
-    assert_eq!(result?, ["near"]);
-    let snapshot = observed.borrow();
-    let failure = &snapshot.failures[0];
-    assert_eq!(
-        (failure.server_id.as_str(), failure.reason),
-        ("near", graphite_meter_core::failure::FailureReason::ServerBusy)
-    );
-    assert!(snapshot.results[0].down_bps().is_some());
-    let intervals = &snapshot.intervals;
-    let (first, last) = (&intervals[0], intervals.back().unwrap());
-    assert!(last.end_nanos - first.end_nanos >= 500_000_000, "{intervals:?}");
-    assert_eq!(last.participants, ["far"]);
+    for (stage, busy) in [(Stage::Download, 14), (Stage::Upload, 16)] {
+        let (near, near_mode, near_task) = download_peer().await?;
+        let (far, _, far_task) = download_peer().await?;
+        let http = Http::new(true)?;
+        let servers = vec![
+            prepared_download("near", &near, &http).await?,
+            prepared_download("far", &far, &http).await?,
+        ];
+        let config = Config {
+            warmup: Duration::ZERO,
+            download_duration: Duration::from_millis(1900),
+            upload_duration: Duration::from_millis(1900),
+            streams: 1,
+            loaded_latency: false,
+            ..Config::default()
+        };
+        let (snapshots, mut observed) = watch::channel(Snapshot::default());
+        let (_stop, cancelled) = watch::channel(false);
+        let refuse_near = async {
+            observed
+                .wait_for(|snapshot| snapshot.phase == Phase::Measuring)
+                .await
+                .unwrap();
+            near_mode.store(busy, Ordering::SeqCst);
+        };
+        let mut ledger = RunLedger::new();
+        let (result, ()) = tokio::join!(
+            measure(stage, &config, &servers, &snapshots, cancelled, &mut ledger),
+            refuse_near
+        );
+        near_task.abort();
+        far_task.abort();
+        assert_eq!(result?, ["near"], "{stage:?}");
+        let snapshot = observed.borrow();
+        let failure = &snapshot.failures[0];
+        assert_eq!(
+            (failure.server_id.as_str(), failure.reason),
+            ("near", graphite_meter_core::failure::FailureReason::ServerBusy)
+        );
+        let result = &snapshot.results[0];
+        assert!(result.down_bps().or(result.up_bps()).is_some());
+        let intervals = &snapshot.intervals;
+        let (first, last) = (&intervals[0], intervals.back().unwrap());
+        assert!(last.end_nanos - first.end_nanos >= 500_000_000, "{intervals:?}");
+        assert_eq!(last.participants, ["far"]);
+    }
     Ok(())
 }
 
@@ -864,53 +847,6 @@ async fn a_lane_refused_just_before_the_stage_end_takes_its_server_out() -> Resu
         )
     );
     assert_eq!(snapshot.stage_status(&snapshot.results[0]), StageStatus::Partial);
-    Ok(())
-}
-
-/// A server that refuses its upload lanes as busy leaves as busy, as in Go, where lanes answered
-/// busy while they moved bytes went on retrying and the stage completed without it.
-#[tokio::test]
-async fn a_server_that_refuses_upload_lanes_as_busy_leaves_as_busy() -> Result<(), Error> {
-    let _ = crate::crypto::provider().install_default();
-    let (near, near_mode, near_task) = download_peer().await?;
-    let (far, _, far_task) = download_peer().await?;
-    let http = Http::new(true)?;
-    let servers = vec![
-        prepared_download("near", &near, &http).await?,
-        prepared_download("far", &far, &http).await?,
-    ];
-    let config = Config {
-        warmup: Duration::ZERO,
-        upload_duration: Duration::from_secs(3),
-        streams: 1,
-        loaded_latency: false,
-        ..Config::default()
-    };
-    let (snapshots, mut observed) = watch::channel(Snapshot::default());
-    let (_stop, cancelled) = watch::channel(false);
-    let refuse_near = async {
-        observed
-            .wait_for(|snapshot| snapshot.phase == Phase::Measuring)
-            .await
-            .unwrap();
-        near_mode.store(16, Ordering::SeqCst);
-    };
-    let mut ledger = RunLedger::new();
-    let (result, ()) = tokio::join!(
-        measure(Stage::Upload, &config, &servers, &snapshots, cancelled, &mut ledger),
-        refuse_near
-    );
-    near_task.abort();
-    far_task.abort();
-    assert_eq!(result?, ["near"]);
-    let snapshot = observed.borrow();
-    let [failure] = &snapshot.failures[..] else {
-        panic!("{:?}", snapshot.failures);
-    };
-    assert_eq!(
-        (failure.server_id.as_str(), failure.reason),
-        ("near", graphite_meter_core::failure::FailureReason::ServerBusy)
-    );
     Ok(())
 }
 
@@ -1601,8 +1537,8 @@ async fn a_warmup_loss_is_noticed_at_once_with_one_reason() -> Result<(), Error>
     for loaded_latency in [false, true] {
         let (origin, mode, peer) = download_peer().await?;
         let http = Http::new(true)?;
-        let mut server = prepared_download("peer", &origin, &http).await?;
-        server.latency = Some(graphite_meter_core::discovery::LatencyTarget {
+        let mut servers = vec![prepared_download("peer", &origin, &http).await?];
+        servers[0].latency = Some(graphite_meter_core::discovery::LatencyTarget {
             base_url: origin,
             transport: LatencyTransport::WebSocket,
         });
@@ -1620,32 +1556,24 @@ async fn a_warmup_loss_is_noticed_at_once_with_one_reason() -> Result<(), Error>
         let mut ledger = RunLedger::new();
         // The receiver completes as the warmup starts, ending the upload the stage still needs.
         let complete = async {
-            observed
-                .wait_for(|snapshot| snapshot.phase == Phase::Warmup)
-                .await
-                .unwrap();
+            let _ = observed.wait_for(|snapshot| snapshot.phase == Phase::Warmup).await;
             mode.store(22, Ordering::SeqCst);
             begun.elapsed()
         };
-        let servers = std::slice::from_ref(&server);
         let (result, completed) = tokio::join!(
-            measure(Stage::Upload, &config, servers, &snapshots, cancelled, &mut ledger),
+            measure(Stage::Upload, &config, &servers, &snapshots, cancelled, &mut ledger),
             complete
         );
         peer.abort();
         assert!(result.is_err());
         let snapshot = observed.borrow();
-        let [failure] = &snapshot.failures[..] else {
-            panic!("{:?}", snapshot.failures);
-        };
-        let preparing = graphite_meter_core::failure::FailureReason::PreparationFailed;
+        assert_eq!(snapshot.failures.len(), 1, "{:?}", snapshot.failures);
+        let (failure, preparing) = (&snapshot.failures[0], FailureReason::PreparationFailed);
         assert_eq!(failure.reason, preparing, "loaded latency {loaded_latency}");
+        let population = snapshot.results[0].server_latencies.first().map(|host| host.ending);
+        assert_eq!(population, loaded_latency.then_some(Some(Ending::Failed(preparing))));
         let late = failure.at.saturating_sub(completed);
         assert!(late < Duration::from_millis(750), "noticed {late:?} late");
-        if loaded_latency {
-            let ending = snapshot.results[0].server_latencies[0].ending;
-            assert_eq!(ending, Some(Ending::Failed(preparing)));
-        }
     }
     Ok(())
 }

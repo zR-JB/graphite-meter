@@ -842,10 +842,8 @@ mod tests {
                     } else {
                         "GET /probe HTTP/1.1\r\n"
                     };
-                    assert!(
-                        head.starts_with(expected) && head.contains("cache-control: no-store\r\n"),
-                        "{head}"
-                    );
+                    assert!(head.starts_with(expected), "{head}");
+                    assert!(head.contains("cache-control: no-store\r\n"), "{head}");
                     assert_eq!(
                         head.contains("proxy-authorization: Basic dXNlcjpzZWNyZXQ="),
                         proxied,

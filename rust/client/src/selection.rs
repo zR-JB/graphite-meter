@@ -167,7 +167,7 @@ mod tests {
                 }],
             },
         };
-        let config = Config {
+        let mut config = Config {
             throughput_origin: Some(entry.url.clone()),
             throughput_protocol: Some(Protocol::Http3),
             ..Default::default()
@@ -186,18 +186,14 @@ mod tests {
             url: "https://other.example".into(),
             ..Default::default()
         };
-        let ids = vec!["self".into(), "other".into()];
         let catalog = ServerCatalog {
-            default_selection: ids,
+            default_selection: vec!["self".into(), "other".into()],
             servers: vec![entry, other],
         };
         let refused = servers(&catalog, &config).err().map(|error| error.to_string());
         let message = "explicit origins need a single selected server; use Automatic origins for several";
         assert_eq!(refused.as_deref(), Some(message));
-        let single = Config {
-            servers: vec!["self".into()],
-            ..config
-        };
-        assert_eq!(servers(&catalog, &single).map(|selected| selected.len()).ok(), Some(1));
+        config.servers = vec!["self".into()];
+        assert_eq!(servers(&catalog, &config).map(|selected| selected.len()).ok(), Some(1));
     }
 }

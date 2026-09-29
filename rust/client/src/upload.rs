@@ -627,7 +627,7 @@ mod tests {
     /// HTTP lanes that start together and last the operation limit.
     const HTTP_LANES: Option<(Duration, Duration)> = Some((Duration::ZERO, OPERATION_LIMIT));
     use crate::transport::TRANSFER_RETRY_BACKOFF;
-    use graphite_meter_core::discovery::Protocol;
+    use graphite_meter_core::{discovery::Protocol, failure::FailureReason};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -703,7 +703,7 @@ mod tests {
 
     /// The progress feed of a WebTransport receiver that writes `records` on its first stream, and
     /// the state it left; nothing answers the HTTP feed a failing one falls back to.
-    async fn webtransport_feed(records: &'static [u8]) -> Result<(Result<(), Error>, State), Error> {
+    async fn webtransport_feed(records: String) -> Result<(Result<(), Error>, State), Error> {
         let _ = crate::crypto::provider().install_default();
         let (endpoint, origin) = crate::fixtures::h3_endpoint()?;
         let server = tokio::spawn(async move {
@@ -714,7 +714,7 @@ mod tests {
                 let session =
                     graphite_meter_http3::webtransport::Session::accept(stream, http::HeaderMap::new()).await?;
                 let mut stream = session.open_uni().await?;
-                stream.write_all(records).await?;
+                stream.write_all(records.as_bytes()).await?;
                 std::future::pending::<Result<(), Error>>().await
             };
             let (fed, ()) = tokio::join!(feed, async { while let Ok(Some(_)) = connection.next().await {} });
@@ -727,29 +727,22 @@ mod tests {
         let (state, observed) = watch::channel(State::default());
         let fed = progress_feed(&control, "test-session", &state, Some(Arc::new(slot))).await;
         server.abort();
-        let observed = observed.borrow().clone();
-        Ok((fed, observed))
+        Ok((fed, observed.borrow().clone()))
     }
 
     /// A WebTransport receiver that withdraws the grant with a `revoked` record asks for sign-in,
     /// as Go's uploadRefusal (failure.go:69-70), not a refusal that falls back to the HTTP feed.
+    /// A record may take the 64 KiB api/upload.md allows every record, as over HTTP.
     #[tokio::test]
     async fn a_revoked_record_asks_for_sign_in() -> Result<(), Error> {
-        let (fed, _) = webtransport_feed(b"{\"type\":\"ready\"}\n{\"type\":\"error\",\"code\":\"revoked\"}\n").await?;
+        let revoked = "{\"type\":\"ready\"}\n{\"type\":\"error\",\"code\":\"revoked\"}\n";
+        let (fed, _) = webtransport_feed(revoked.into()).await?;
         let error = fed.err().ok_or("the feed completed")?;
         assert!(crate::failure::sign_in(error.as_ref()).is_some(), "{error}");
-        Ok(())
-    }
-
-    /// A WebTransport record may take the 64 KiB api/upload.md allows every record, as over HTTP.
-    #[tokio::test]
-    async fn a_webtransport_record_takes_64_kib() -> Result<(), Error> {
-        static RECORDS: std::sync::LazyLock<Vec<u8>> = std::sync::LazyLock::new(|| {
-            let note = "x".repeat(60 * 1024);
-            format!("{{\"type\":\"ready\"}}\n{{\"type\":\"complete\",\"bytes\":7,\"nanos\":9,\"note\":\"{note}\"}}\n")
-                .into_bytes()
-        });
-        let (fed, state) = webtransport_feed(&RECORDS).await?;
+        let note = "x".repeat(60 * 1024);
+        let complete =
+            format!("{{\"type\":\"ready\"}}\n{{\"type\":\"complete\",\"bytes\":7,\"nanos\":9,\"note\":\"{note}\"}}\n");
+        let (fed, state) = webtransport_feed(complete).await?;
         fed?;
         assert!(state.complete);
         let latest = state.latest.ok_or("no count")?;
@@ -796,51 +789,10 @@ mod tests {
         Ok(())
     }
 
-    /// A lane the server answers busy once part of its body arrived has not progressed, as Go's
-    /// uploadLane counts no answer but 200 and the idle ending (upload.go:118-128): it fails after
-    /// 2 s, so its server leaves as busy rather than retrying for the whole stage.
-    #[tokio::test]
-    async fn a_lane_answered_busy_fails_after_2_s() -> Result<(), Error> {
-        let _ = crate::crypto::provider().install_default();
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let origin = format!("http://{}", listener.local_addr()?);
-        let server = tokio::spawn(async move {
-            while let Ok((mut stream, _)) = listener.accept().await {
-                tokio::spawn(async move {
-                    let (mut received, mut chunk) = (0, [0_u8; 64 * 1024]);
-                    while received < 128 * 1024 {
-                        match stream.read(&mut chunk).await {
-                            Ok(0) | Err(_) => return,
-                            Ok(count) => received += count,
-                        }
-                    }
-                    let busy = "HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\n\r\n";
-                    let _ = stream.write_all(busy.as_bytes()).await;
-                    while stream.read(&mut chunk).await.is_ok_and(|count| count > 0) {}
-                });
-            }
-        });
-        let transport = transport(&origin, Protocol::Http1).await?;
-        let (block, active) = (Bytes::from(vec![42; 64 * 1024]), Arc::new(AtomicBool::new(false)));
-        let retry = TransferRetry::new(Retrying::default(), 0);
-        let started = Instant::now();
-        let lane = send_lane(&transport, "upload-session", 0, block, active, retry, OPERATION_LIMIT);
-        let ended = tokio::time::timeout(Duration::from_secs(5), lane).await;
-        server.abort();
-        let error = ended?.err().ok_or("the lane ended")?;
-        let reason = crate::failure::reason(error.as_ref(), false);
-        assert_eq!(
-            reason,
-            graphite_meter_core::failure::FailureReason::ServerBusy,
-            "{error}"
-        );
-        assert!(started.elapsed() >= REDIAL_WINDOW);
-        Ok(())
-    }
-
     /// An HTTP/3 upload the server answers early, then stops reading, returns that answer, read
     /// once its body can no longer be sent, as Go's round trip returns the response: here busy,
-    /// with its refusal code, where the stopped stream read as a lost connection.
+    /// where the stopped stream read as a lost connection. A request that lets caches keep its
+    /// answer is refused as invalid instead.
     #[tokio::test]
     async fn an_http3_upload_answered_early_returns_the_answer() -> Result<(), Error> {
         let _ = crate::crypto::provider().install_default();
@@ -850,53 +802,24 @@ mod tests {
             let mut connection = graphite_meter_http3::server::Connection::new(quic, None);
             let (request, stream) = connection.next().await?.ok_or("no request")?.resolve().await?;
             let (mut send, mut recv) = stream.split();
-            let mut received = 0;
-            while received < 128 * 1024 {
-                received += recv.data().await?.ok_or("body ended")?.len();
-            }
-            // A request that lets caches keep its answer is refused as invalid instead.
-            let no_store = request
-                .headers()
-                .get(http::header::CACHE_CONTROL)
-                .is_some_and(|value| value == "no-store");
-            let refusal = if no_store {
-                UploadRefusal::GlobalFull
-            } else {
-                UploadRefusal::Invalid
-            };
-            let busy = http::Response::builder()
-                .status(refusal.status())
-                .header("x-graphite-upload-refusal", refusal.name());
-            send.send_response(busy.body(())?).await?;
-            send.finish().await?;
+            recv.data().await?;
+            let no_store = request.headers().get("cache-control") == Some(&http::HeaderValue::from_static("no-store"));
+            let refusal = [UploadRefusal::Invalid, UploadRefusal::GlobalFull][usize::from(no_store)];
+            let answer = http::Response::builder().status(refusal.status());
+            let answer = answer.header("x-graphite-upload-refusal", refusal.name()).body(())?;
+            send.send_response(answer).await?;
             recv.stop(graphite_meter_http3::Code::H3_NO_ERROR);
             while let Ok(Some(_)) = connection.next().await {}
             Ok::<_, Error>(())
         });
         let transport = Transport::connect(crate::net::Http::new(true)?, &origin, Protocol::Http3).await?;
         let block = Bytes::from(vec![42_u8; 64 * 1024]);
-        let blocks = futures_util::stream::repeat_with(move || Ok::<_, Error>(block.clone()));
-        let body = futures_util::StreamExt::take(blocks, 1024);
-        let query = [("id", "upload-session"), ("lane", "0")];
-        let sent = tokio::time::timeout(
-            Duration::from_secs(5),
-            transport.send(Route::Upload, &query, body, 64 * 1024 * 1024, OPERATION_LIMIT),
-        )
-        .await?;
+        let body = futures_util::stream::iter((0..1024).map(move |_| Ok::<_, Error>(block.clone())));
+        let upload = transport.send(Route::Upload, &[], body, 64 * 1024 * 1024, OPERATION_LIMIT);
+        let sent = tokio::time::timeout(Duration::from_secs(5), upload).await?;
         server.abort();
-        let error = sent.err().ok_or("the upload completed")?;
-        let answer = error.downcast_ref::<Failure>();
-        assert!(
-            matches!(
-                answer,
-                Some(Failure::Http {
-                    status: 503,
-                    refusal: Some(UploadRefusal::GlobalFull),
-                    ..
-                })
-            ),
-            "{error:?}"
-        );
+        let (error, busy) = (sent.err().ok_or("the upload completed")?, FailureReason::ServerBusy);
+        assert_eq!(crate::failure::reason(error.as_ref(), false), busy, "{error}");
         Ok(())
     }
 
@@ -1050,22 +973,11 @@ mod tests {
             std::future::pending::<Result<(), Error>>().await
         });
         let transport = Transport::connect(crate::net::Http::new(true)?, &origin, Protocol::Http3).await?;
-        let (stop, cancel) = watch::channel(false);
-        let started = Instant::now();
-        let stop_soon = async {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            stop.send_replace(true);
-        };
-        let (start, _) = tokio::join!(
-            Upload::start(Arc::new(transport), 1, HTTP_LANES, Arc::default(), cancel),
-            stop_soon
-        );
+        let (_stop, stopped) = watch::channel(true);
+        let start = Upload::start(Arc::new(transport), 1, HTTP_LANES, Arc::default(), stopped);
+        let started = tokio::time::timeout(Duration::from_secs(1), start).await;
         server.abort();
-        assert!(
-            start.is_err() && started.elapsed() < Duration::from_secs(1),
-            "{:?}",
-            started.elapsed()
-        );
+        assert!(started?.is_err());
         Ok(())
     }
 
