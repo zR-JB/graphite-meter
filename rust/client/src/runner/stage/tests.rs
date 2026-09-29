@@ -68,10 +68,6 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                         let Ok(length) = stream.read(&mut request).await else { return; };
                         if request[..length].starts_with(b"GET /ws/ping ") {
                             use futures_util::SinkExt;
-                            if flag.load(Ordering::SeqCst) == 10 {
-                                let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
-                                return;
-                            }
                             let Ok(header) = std::str::from_utf8(&request[..length]) else { return; };
                             let Some(key) = header.lines().find_map(|line| line.split_once(':').filter(|(name, _)| name.eq_ignore_ascii_case("sec-websocket-key")).map(|(_, value)| value.trim())) else { return; };
                             let accept = tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
@@ -82,12 +78,8 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                                 if flag.load(Ordering::SeqCst) == 8 {
                                     continue;
                                 }
-                                // Modes 6 and 10 end the channel as idle, 9 as revoked; 10 refuses new ones.
-                                let ending = match flag.load(Ordering::SeqCst) {
-                                    6 | 10 => Some(graphite_meter_core::failure::LaneEnding::Idle),
-                                    9 => Some(graphite_meter_core::failure::LaneEnding::Revoked),
-                                    _ => None,
-                                };
+                                // Mode 6 ends the channel as idle, 9 as revoked.
+                                let ending = match flag.load(Ordering::SeqCst) { 6 => Some(graphite_meter_core::failure::LaneEnding::Idle), 9 => Some(graphite_meter_core::failure::LaneEnding::Revoked), _ => None };
                                 if let Some(ending) = ending {
                                     let _ = socket.send(tokio_tungstenite::tungstenite::Message::Close(Some(tokio_tungstenite::tungstenite::protocol::CloseFrame {
                                         code: ending.websocket_code().into(),
@@ -1655,54 +1647,5 @@ async fn a_warmup_loss_is_noticed_at_once_with_one_reason() -> Result<(), Error>
             assert_eq!(ending, Some(Ending::Failed(preparing)));
         }
     }
-    Ok(())
-}
-
-/// A latency channel lost in the last 2 s of the window and not restored by its end fails, as Go
-/// bounds the redial by the window's end (latency.go:256); the stage's end once cut it short.
-#[tokio::test]
-async fn a_channel_lost_near_the_window_end_fails_unless_restored_by_then() -> Result<(), Error> {
-    let _ = crate::crypto::provider().install_default();
-    let (origin, mode, peer) = download_peer().await?;
-    let http = Http::new(true)?;
-    let mut server = prepared_download("peer", &origin, &http).await?;
-    server.latency = Some(graphite_meter_core::discovery::LatencyTarget {
-        base_url: origin,
-        transport: LatencyTransport::WebSocket,
-    });
-    let config = Config {
-        warmup: Duration::ZERO,
-        latency_duration: Duration::from_secs(2),
-        ping_interval: Duration::from_millis(100),
-        insecure: true,
-        ..Config::default()
-    };
-    let (snapshots, mut observed) = watch::channel(Snapshot::default());
-    let (_stop, cancelled) = watch::channel(false);
-    // Half a second before the window's end the channel ends, and no new one is accepted.
-    let lose_channel = async {
-        observed
-            .wait_for(|snapshot| snapshot.phase == Phase::Measuring)
-            .await
-            .unwrap();
-        tokio::time::sleep(Duration::from_millis(1500)).await;
-        mode.store(10, Ordering::SeqCst);
-    };
-    let servers = std::slice::from_ref(&server);
-    let mut ledger = RunLedger::new();
-    let (result, ()) = tokio::join!(
-        measure(Stage::Latency, &config, servers, &snapshots, cancelled, &mut ledger),
-        lose_channel
-    );
-    peer.abort();
-    assert!(result?.is_empty());
-    let snapshot = observed.borrow();
-    let [failure] = &snapshot.failures[..] else {
-        panic!("{:?}", snapshot.failures);
-    };
-    assert_eq!(
-        (failure.server_id.as_str(), failure.scope),
-        ("peer", FailureScope::Latency)
-    );
     Ok(())
 }
