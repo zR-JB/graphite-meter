@@ -11,7 +11,7 @@ import {
   runButton,
   savedResult,
 } from "./fleet";
-import { seriousViolations, expect, test } from "./webview";
+import { seriousViolations, expect, settled, test } from "./webview";
 
 test("an HTTP/1.1 and WebSocket run is saved and listed after reload", async (page) => {
   const version = await fetch(`${home.http}/version.json`);
@@ -130,6 +130,8 @@ test("reduced motion still updates every readout and completes", async (page) =>
 test("a run in a hidden tab completes and saves", async (page) => {
   await open(page);
   await ready(page);
+  // Closing Settings leaves its toggle's wash fading on the compositor; Chrome freezes a page minimized mid-fade.
+  await page.evaluate(settled);
   const { windowId } = await page.cdp("Browser.getWindowForTarget");
   const bounds = (windowState: string) =>
     page.cdp("Browser.setWindowBounds", { windowId, bounds: { windowState } });
