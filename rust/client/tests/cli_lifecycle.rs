@@ -694,8 +694,8 @@ async fn arguments_and_checks_after_parsing_fail_like_go() -> Result<(), Error> 
     for (args, message) in [
         (&["foo", "-x"][..], r#"unexpected argument "foo""#),
         (&["x\u{1}y"], r#"unexpected argument "x\x01y""#),
-        // Go defines -legal, but only an exact --legal argument prints the notices.
-        (&["-legal", "foo"], r#"unexpected argument "foo""#),
+        // A false -legal parses as any boolean flag.
+        (&["-legal=false", "foo"], r#"unexpected argument "foo""#),
         (&["--", "-x"], r#"unexpected argument "-x""#),
         (&["-"], r#"unexpected argument "-""#),
         (&["-report", "maybe"], r#"unexpected argument "maybe""#),
@@ -737,15 +737,20 @@ async fn arguments_and_checks_after_parsing_fail_like_go() -> Result<(), Error> 
     Ok(())
 }
 
-/// -version acts once every flag parses, before arguments and settings are checked; an exact
-/// --legal argument anywhere prints the notices before any flag parses.
+/// -legal and -version act once every flag parses, before arguments and settings are checked, and
+/// a true -legal, in either form, prints the notices first.
 #[tokio::test]
 async fn version_and_legal_act_as_go_reads_them() -> Result<(), Error> {
     let version = flags(&["-version", "foo"]).await?;
     assert_eq!(version.status.code(), Some(0));
     assert!(version.stdout.starts_with(b"graphite-meter-client "));
     let legal = flags(&["--legal"]).await?;
-    for args in [&["-url", "--legal"][..], &["-nope", "--legal"]] {
+    for args in [
+        &["-legal"][..],
+        &["-legal=true", "foo"],
+        &["--legal=1", "-warmup", "9s"],
+        &["-version", "--legal"],
+    ] {
         let output = flags(args).await?;
         assert_eq!(output.status.code(), legal.status.code(), "{args:?}");
         assert_eq!(
@@ -754,7 +759,7 @@ async fn version_and_legal_act_as_go_reads_them() -> Result<(), Error> {
             "{args:?}"
         );
     }
-    for args in [&["-legal", "-version"][..], &["--legal=true", "-version"]] {
+    for args in [&["-legal=false", "-version"][..], &["--legal=0", "-version"]] {
         assert_eq!(flags(args).await?.stdout, version.stdout, "{args:?}");
     }
     Ok(())

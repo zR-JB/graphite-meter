@@ -27,11 +27,12 @@ impl std::fmt::Display for FlagError {
 }
 impl std::error::Error for FlagError {}
 
-/// What the flags set: the run, and -version, which acts once every flag has parsed.
+/// What the flags set: the run, and -legal and -version, which act once every flag has parsed.
 #[derive(Default)]
 struct Parsed {
     config: Config,
     report: bool,
+    legal: bool,
     version: bool,
     /// Go checks the path choices after parsing, so the last one given counts.
     paths: [String; 3],
@@ -62,8 +63,7 @@ const FLAGS: [(&str, &str, &str, Flag); 22] = [
         Value(|p, v| put(&mut p.config.latency_origin, automatic(v)))),
     ("latency-transport", "string", "latency transport: auto, websocket, or webtransport (default \"auto\")",
         Value(|p, v| put(&mut p.paths[2], v.into()))),
-    // Go defines -legal, but only an exact --legal argument prints the notices.
-    ("legal", "", "print the licences of the bundled software and exit", Toggle(|_, _| {})),
+    ("legal", "", "print the licences of the bundled software and exit", Toggle(|p, on| p.legal = on)),
     ("loaded-latency", "", "measure latency while transfer stages are loaded (default true)",
         Toggle(|p, on| p.config.loaded_latency = on)),
     ("loaded-ping", "value", "loaded latency cadence (default medium): reply-driven, fast, medium, slow, or a duration \
@@ -116,10 +116,6 @@ pub fn usage(program: &str) -> String {
 }
 
 pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, Error> {
-    let args = args.into_iter().collect::<Vec<_>>();
-    if args.iter().any(|arg| arg == "--legal") {
-        return Ok(Action::Legal);
-    }
     let mut args = args.into_iter();
     let mut parsed = Parsed::default();
     let mut argument = None;
@@ -175,7 +171,10 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, Error> 
             }
         }
     }
-    // Like Go's -version, it acts once every flag has parsed, before arguments and settings are checked.
+    // Like Go's -legal and -version, they act once every flag has parsed, before arguments and settings are checked.
+    if parsed.legal {
+        return Ok(Action::Legal);
+    }
     if parsed.version {
         return Ok(Action::Version);
     }
