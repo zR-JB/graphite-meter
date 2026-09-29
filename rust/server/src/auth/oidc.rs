@@ -48,8 +48,8 @@ struct Metadata {
     token_endpoint: String,
     userinfo_endpoint: String,
     jwks_uri: String,
-    #[serde(default)]
-    id_token_signing_alg_values_supported: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "jwt::nullable")]
+    id_token_signing_alg_values_supported: Vec<String>,
     /// Go reads this member apart from the rest and takes a mistyped value as false.
     #[serde(default)]
     authorization_response_iss_parameter_supported: serde_json::Value,
@@ -85,11 +85,7 @@ impl Provider {
             .map_err(|_| format!("OIDC authorization endpoint origin {origin:?} is not a canonical HTTPS origin"))?;
         Ok(Self {
             page_headers,
-            algorithms: metadata
-                .id_token_signing_alg_values_supported
-                .as_deref()
-                .map(Alg::allowed)
-                .unwrap_or_else(|| vec![Alg::RS256]),
+            algorithms: Alg::allowed(&metadata.id_token_signing_alg_values_supported),
             authorization: metadata.authorization_endpoint,
             token: metadata.token_endpoint,
             userinfo: metadata.userinfo_endpoint,
@@ -433,9 +429,9 @@ impl Oidc {
 
 #[derive(Deserialize)]
 struct Tokens {
-    #[serde(default, deserialize_with = "jwt::go_string")]
+    #[serde(default, deserialize_with = "jwt::nullable")]
     access_token: String,
-    #[serde(default, deserialize_with = "jwt::go_string")]
+    #[serde(default, deserialize_with = "jwt::nullable")]
     error: String,
     id_token: Option<serde_json::Value>,
 }

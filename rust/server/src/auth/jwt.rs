@@ -35,7 +35,14 @@ impl Alg {
         })
     }
 
+    /// The advertised algorithms ring verifies, or RS256 where go-oidc, which also knows ES512, knows none.
     pub fn allowed(advertised: &[String]) -> Vec<Self> {
+        if !advertised
+            .iter()
+            .any(|name| name == "ES512" || Self::parse(name).is_some())
+        {
+            return vec![Self::RS256];
+        }
         advertised.iter().filter_map(|name| Self::parse(name)).collect()
     }
 
@@ -260,21 +267,23 @@ pub(super) fn audience_and_issuer(claims: &Map<String, Value>, issuer: &str, cli
     Ok(())
 }
 
-/// A string member as Go's decoder fills a string field: absent or null, it stays empty.
-pub(super) fn go_string<'de, D: serde::Deserializer<'de>>(member: D) -> Result<String, D::Error> {
+/// A member as Go's decoder fills a string or slice field: absent or null, it keeps its zero value.
+pub(super) fn nullable<'de, D: serde::Deserializer<'de>, T: Deserialize<'de> + Default>(
+    member: D,
+) -> Result<T, D::Error> {
     Ok(Option::deserialize(member)?.unwrap_or_default())
 }
 
 pub(super) fn id_token(verified: Verified, expected: &Expected<'_>) -> Result<IdClaims, Reject> {
     #[derive(Deserialize)]
     struct Standard {
-        #[serde(default, deserialize_with = "go_string")]
+        #[serde(default, deserialize_with = "nullable")]
         sub: String,
         exp: f64,
         nbf: Option<f64>,
-        #[serde(default, deserialize_with = "go_string")]
+        #[serde(default, deserialize_with = "nullable")]
         nonce: String,
-        #[serde(default, deserialize_with = "go_string")]
+        #[serde(default, deserialize_with = "nullable")]
         at_hash: String,
     }
     #[derive(Deserialize)]

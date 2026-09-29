@@ -546,10 +546,14 @@ async fn provider_traffic_uses_the_https_proxy() {
 }
 
 #[tokio::test]
-async fn unadvertised_signing_algorithms_are_refused() {
-    for algorithms in [vec![], vec!["HS256", "ES512"]] {
+async fn rs256_signs_in_only_where_go_oidc_supports_no_advertised_algorithm() {
+    for (algorithms, signs_in) in [(vec![], true), (vec!["HS256"], true), (vec!["HS256", "ES512"], false)] {
         let provider = provider_double("localhost", &algorithms, Proxy::default()).await;
-        assert!(provider.login(Claims::default()).await.is_err());
+        assert_eq!(
+            provider.login(Claims::default()).await.is_ok(),
+            signs_in,
+            "{algorithms:?}"
+        );
         provider.stop().await;
     }
 }
