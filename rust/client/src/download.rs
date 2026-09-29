@@ -68,8 +68,8 @@ impl Download {
     }
 
     /// Start bounded WebTransport lanes using the same received-byte owner as HTTP.
-    /// Each connection has one session and at most sixteen readers. Lost
-    /// connections are replaced once per group; observed bytes remain counted.
+    /// Each connection has one session and at most sixteen readers. A group's session is
+    /// dialled again each time it is lost, one dial at a time; observed bytes remain counted.
     pub async fn start_webtransport(
         http: &Http,
         target: &ThroughputTarget,

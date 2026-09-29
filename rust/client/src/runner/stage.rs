@@ -268,8 +268,8 @@ impl<'a> StageRun<'a> {
         let id = server.entry.id.clone();
         let http = server.client.clone();
         let (stop, stopped) = watch::channel(Stop::Running);
-        // Each transport can settle up to 256 unresolved probes at once.
-        // Keep headroom for observations queued during receiver checkpoints.
+        // A session settles at most its window of probes at once, 2, 4 or 16; the rest is headroom
+        // for observations queued during receiver checkpoints.
         let (observations, receiver) = mpsc::channel(1024);
         self.events.push(
             futures_util::stream::unfold((id.clone(), receiver), |(id, mut receiver)| async {
