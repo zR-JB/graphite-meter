@@ -7,7 +7,7 @@ use graphite_meter_client::{
     cli::{self, Action},
     controller,
     model::Phase,
-    report, ui,
+    report,
 };
 use std::{
     io::IsTerminal,
@@ -76,35 +76,25 @@ async fn run(config: graphite_meter_client::config::Config, report_only: bool) -
     }
     let caught = Arc::new(AtomicU8::new(0));
     let interrupts = interrupts(headless, caught.clone())?;
-    let (finished, exit) = if headless {
-        (
+    let (finished, exit) = match headless {
+        true => (
             Some(controller::run_once(config, interrupts).await?),
-            ui::Exit::default(),
-        )
-    } else {
-        controller::run(config, interrupts).await?
+            Default::default(),
+        ),
+        false => controller::run(config, interrupts).await?,
     };
     let width = crossterm::terminal::size()
         .ok()
         .filter(|_| terminal)
         .map_or(report::WIDTH, |(columns, _)| usize::from(columns).max(40));
     // Go prints the run its view shows, which a return to setup leaves none of.
-    let shown = if headless {
-        finished.as_ref()
-    } else {
-        exit.shown.as_ref()
-    };
-    match shown.and_then(|snapshot| report::print(snapshot, width)) {
+    let shown = if headless { &finished } else { &exit.shown };
+    match shown.as_ref().and_then(|snapshot| report::print(snapshot, width)) {
         Some(report) => println!("{report}"),
-        None if headless => eprintln!(
-            "graphite-meter-client: {}",
-            safe(
-                finished
-                    .as_ref()
-                    .and_then(|snapshot| snapshot.error.as_deref())
-                    .unwrap_or("Test stopped before it started.")
-            )
-        ),
+        None if headless => {
+            let error = finished.as_ref().and_then(|snapshot| snapshot.error.as_deref());
+            fail(&error.unwrap_or("Test stopped before it started.").into(), 1);
+        }
         None => {}
     }
     let last = finished.map(|snapshot| snapshot.phase);

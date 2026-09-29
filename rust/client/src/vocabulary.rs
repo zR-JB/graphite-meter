@@ -109,11 +109,12 @@ fn security(origin: &str) -> &'static str {
 
 /// Go's connectionSummary of a throughput path.
 pub fn throughput_path(target: &ThroughputTarget) -> String {
-    let (kind, version) = (
-        transport(&wire(Some(target.transport)), false),
+    let kind = transport(&wire(Some(target.transport)), false);
+    format!(
+        "{kind} · {} · {}",
         protocol(Some(target.protocol)),
-    );
-    format!("{kind} · {version} · {}", security(&target.base_url))
+        security(&target.base_url)
+    )
 }
 
 /// Go's connectionSummary of a latency path: WebSocket runs over HTTP/1.1, WebTransport over HTTP/3.

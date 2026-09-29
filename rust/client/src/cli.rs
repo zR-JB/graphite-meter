@@ -110,20 +110,14 @@ fn put<T>(target: &mut T, value: T) -> Result<(), String> {
 pub fn usage(program: &str) -> String {
     let mut usage = format!("Usage of {program}:\n");
     for (name, kind, text, _) in &FLAGS {
-        let kind = if kind.is_empty() {
-            String::new()
-        } else {
-            format!(" {kind}")
-        };
-        usage.push_str(&format!("  -{name}{kind}\n    \t{text}\n"));
+        let space = if kind.is_empty() { "" } else { " " };
+        usage.push_str(&format!("  -{name}{space}{kind}\n    \t{text}\n"));
     }
     usage
 }
 
 pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, Error> {
-    let mut args = args.into_iter();
-    let mut parsed = Parsed::default();
-    let mut argument = None;
+    let (mut args, mut parsed, mut argument) = (args.into_iter(), Parsed::default(), None);
     while let Some(arg) = args.next() {
         let arg = arg.into_string().map_err(|_| "flags must be valid UTF-8")?;
         // Parsing stops at "--" or at the first argument that is not a flag.
@@ -153,13 +147,8 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, Error> 
         {
             Toggle(toggle) => {
                 let value = inline.unwrap_or("true");
-                let on = boolean(value).ok_or_else(|| {
-                    FlagError(format!(
-                        "invalid boolean value {} for -{name}: parse error",
-                        quote(value)
-                    ))
-                })?;
-                toggle(&mut parsed, on);
+                let refused = format!("invalid boolean value {} for -{name}: parse error", quote(value));
+                toggle(&mut parsed, boolean(value).ok_or(FlagError(refused))?);
             }
             Value(apply) => {
                 let value = match inline {
@@ -170,9 +159,8 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, Error> 
                         .into_string()
                         .map_err(|_| "flag values must be valid UTF-8")?,
                 };
-                apply(&mut parsed, &value).map_err(|reason| {
-                    FlagError(format!("invalid value {} for flag -{name}: {reason}", quote(&value)))
-                })?;
+                let refused = |reason| FlagError(format!("invalid value {} for flag -{name}: {reason}", quote(&value)));
+                apply(&mut parsed, &value).map_err(refused)?;
             }
         }
     }
@@ -309,22 +297,20 @@ fn duration(value: &str, negative: Duration) -> Result<Duration, &'static str> {
     Ok(u64::try_from(nanos).map_or(negative, Duration::from_nanos))
 }
 
+const STAGES: &str = "latency, download, upload, or bidirectional";
+
 fn stages(value: &str) -> Result<Vec<Stage>, String> {
-    let mut stages = value
-        .split(',')
-        .map(|part| part.trim().to_lowercase())
-        .filter(|part| !part.is_empty())
-        .map(|part| match part.as_str() {
-            "latency" | "ping" => Ok(Stage::Latency),
-            "download" | "down" => Ok(Stage::Download),
-            "upload" | "up" => Ok(Stage::Upload),
-            "bidirectional" | "bidi" => Ok(Stage::Bidirectional),
-            _ => Err(format!(
-                "unknown stage {}: use latency, download, upload, or bidirectional",
-                quote(&part)
-            )),
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut stages = Vec::new();
+    for part in value.split(',').map(|part| part.trim().to_lowercase()) {
+        stages.push(match part.as_str() {
+            "" => continue,
+            "latency" | "ping" => Stage::Latency,
+            "download" | "down" => Stage::Download,
+            "upload" | "up" => Stage::Upload,
+            "bidirectional" | "bidi" => Stage::Bidirectional,
+            _ => return Err(format!("unknown stage {}: use {STAGES}", quote(&part))),
+        });
+    }
     stages.sort_unstable();
     stages.dedup();
     Ok(stages)

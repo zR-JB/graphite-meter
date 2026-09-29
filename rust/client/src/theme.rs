@@ -3,6 +3,7 @@
 
 use crate::model::Stage;
 use ratatui::style::{Color, Modifier, Style};
+use std::time::Duration;
 
 /// colorprofile's profiles, in its order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -118,14 +119,12 @@ impl Theme {
     /// The styles for stdout, in the background the terminal's answer gave, dark without one.
     pub fn terminal() -> Self {
         use std::io::IsTerminal;
-        Self::new(
-            detect(std::io::stdout().is_terminal()),
-            DARK.get().copied().unwrap_or(true),
-        )
+        let tty = std::io::stdout().is_terminal();
+        Self::new(detect(tty), DARK.get().copied().unwrap_or(true))
     }
 
     /// Asks the terminal for its background, then gives the TUI's styles. Call it in raw mode only.
-    pub async fn ask(limit: std::time::Duration) -> Self {
+    pub async fn ask(limit: Duration) -> Self {
         #[cfg(unix)]
         if let Some(dark) = query(limit).await {
             let _ = DARK.set(dark);
@@ -217,7 +216,7 @@ fn environment(term: &str) -> Profile {
 /// Sends QUERY where the keys are read (stdin, or the terminal device when it is redirected) and
 /// reads until DA1's reply or the limit: Some(dark) once OSC 11 answered.
 #[cfg(unix)]
-async fn query(limit: std::time::Duration) -> Option<bool> {
+async fn query(limit: Duration) -> Option<bool> {
     use std::io::IsTerminal;
     if std::io::stdin().is_terminal() {
         answer(std::io::stdin(), &mut std::io::stdout(), limit).await
@@ -230,11 +229,7 @@ async fn query(limit: std::time::Duration) -> Option<bool> {
 /// A duplicate descriptor reads the terminal without std's stdin buffer; it blocks, but each
 /// read follows readiness, so it returns at once.
 #[cfg(unix)]
-async fn answer(
-    input: impl std::os::fd::AsFd,
-    output: &mut impl std::io::Write,
-    limit: std::time::Duration,
-) -> Option<bool> {
+async fn answer(input: impl std::os::fd::AsFd, output: &mut impl std::io::Write, limit: Duration) -> Option<bool> {
     use std::io::Read;
     let input = std::fs::File::from(input.as_fd().try_clone_to_owned().ok()?);
     let input = tokio::io::unix::AsyncFd::with_interest(input, tokio::io::Interest::READABLE).ok()?;
@@ -297,12 +292,10 @@ fn scan(answers: &[u8]) -> (Option<bool>, bool) {
 /// Go's IsDark: HSL lightness under one half is dark, and so is an unreadable color.
 #[cfg(unix)]
 fn bright(color: &[u8]) -> bool {
-    std::str::from_utf8(color)
-        .ok()
-        .and_then(rgb)
-        .is_some_and(|[red, green, blue]| {
-            u16::from(red.max(green).max(blue)) + u16::from(red.min(green).min(blue)) >= 255
-        })
+    let rgb = std::str::from_utf8(color).ok().and_then(rgb);
+    rgb.is_some_and(|[red, green, blue]| {
+        u16::from(red.max(green).max(blue)) + u16::from(red.min(green).min(blue)) >= 255
+    })
 }
 
 /// Go's ansi.XParseColor for the forms terminals answer with: a 16-bit component keeps its
