@@ -164,10 +164,10 @@ pub(crate) fn detect(tty: bool) -> Profile {
     if flag("NO_COLOR") && tty {
         return profile.min(Profile::Ascii);
     }
+    // As Detect after colorProfile, a forced profile still takes terminfo's and tmux's maximum.
     if flag("CLICOLOR_FORCE") {
-        return profile.max(Profile::Ansi).max(env);
-    }
-    if flag("CLICOLOR") && tty && !dumb {
+        profile = profile.max(Profile::Ansi).max(env);
+    } else if flag("CLICOLOR") && tty && !dumb {
         profile = profile.max(Profile::Ansi);
     }
     let named = term.as_deref().filter(|term| *term != "dumb");

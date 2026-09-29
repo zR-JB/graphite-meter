@@ -37,9 +37,11 @@ report mode. Completion exits 0, a failed or incomplete run exits 1, and signals
 exit 130 (interrupt, or Ctrl-Break on Windows) or 143 (terminate, or a closed
 Windows console). The graphite palette follows the background the terminal reports
 to Go's OSC 11 query (not on Windows), in the colour profile Go's colorprofile picks
-from `TERM`, `COLORTERM`, `NO_COLOR`, `CLICOLOR` and `CLICOLOR_FORCE`. In the 16-colour profile the
-report writes Go's SGR codes (30–37 and 90–97), but the TUI's frames give those colours as `38;5;0`–`15`,
-the only form crossterm writes, which a terminal limited to 16 colours may ignore.
+from `TERM`, `COLORTERM`, `NO_COLOR`, `CLICOLOR` and `CLICOLOR_FORCE`. Unlike colorprofile,
+it reads neither terminfo nor `tmux info`, so 24-bit colour that only those report (Tc or
+RGB) gets 16 or 256 colours where Go's TUI draws 24-bit. In the 16-colour profile the report
+writes Go's SGR codes (30–37 and 90–97), but the TUI's frames give those colours as
+`38;5;0`–`15`, the only form crossterm writes, which a terminal limited to 16 colours may ignore.
 The TUI can connect to either implementation's server.
 
 `mise run rust-client-package VERSION` builds the experimental Linux and Windows
