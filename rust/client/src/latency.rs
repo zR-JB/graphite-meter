@@ -1017,7 +1017,9 @@ mod tests {
             Ok::<_, Error>(())
         });
         let bus = connect(&Http::new(false)?, &origin, LatencyTransport::WebSocket).await?;
-        assert_eq!(outcomes(bus, 500, 1600).await?, (3, 1));
+        // Probes at 0 and 900 ms: the first's reply, 400 ms on, passes the 250 ms floor but comes
+        // 500 ms before the second, whose 1.2 s deadline its own reply then meets.
+        assert_eq!(outcomes(bus, 900, 1000).await?, (1, 1));
         peer.abort();
         Ok(())
     }

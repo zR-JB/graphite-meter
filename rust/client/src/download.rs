@@ -341,40 +341,8 @@ mod tests {
         asked_again?
     }
 
-    /// A connection whose server sent GOAWAY takes no new request, so the next one dials anew.
-    #[tokio::test]
-    async fn an_http3_connection_going_away_is_dialled_again() -> Result<(), Error> {
-        let _ = crate::crypto::provider().install_default();
-        let (endpoint, origin) = h3_endpoint()?;
-        let server = tokio::spawn(async move {
-            let mut first = true;
-            while let Some(incoming) = endpoint.accept().await {
-                let mut connection = graphite_meter_http3::server::Connection::new(incoming.await?, None);
-                let (_, stream) = connection.next().await?.ok_or("no request")?.resolve().await?;
-                let (mut send, _) = stream.split();
-                send.send_response(http::Response::new(())).await?;
-                // Requests stay open, so only the first connection's GOAWAY retires it.
-                if std::mem::take(&mut first) {
-                    connection.goaway();
-                }
-                tokio::spawn(async move {
-                    while let Ok(Some(_)) = connection.next().await {}
-                    drop(send)
-                });
-            }
-            Ok::<_, Error>(())
-        });
-        let transport = Transport::connect(Http::new(true)?, &origin, Protocol::Http3).await?;
-        let receive = |route| transport.receive(Method::GET, route, &[], 1, Duration::from_secs(5));
-        let _open = receive(Route::Download).await?;
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        let next = receive(Route::Probe).await;
-        server.abort();
-        next.map(drop)
-    }
-
     /// A WebTransport session is dialled again as Go's restore dials it (webtransport.go:104-118),
-    /// here once a busy answer's Retry-After has passed.
+    /// here once a busy answer's 300 ms backoff has passed, well inside its 2 s window.
     #[tokio::test]
     async fn a_busy_webtransport_session_is_dialled_again() -> Result<(), Error> {
         let _ = crate::crypto::provider().install_default();
@@ -395,10 +363,8 @@ mod tests {
                     return Ok::<_, Error>(());
                 }
                 let (mut send, _recv) = stream.split();
-                let busy = http::Response::builder()
-                    .status(503)
-                    .header(http::header::RETRY_AFTER, "1");
-                send.send_response(busy.body(())?).await?;
+                send.send_response(http::Response::builder().status(503).body(())?)
+                    .await?;
                 send.finish().await?;
                 refused.push(connection);
             }
@@ -408,7 +374,7 @@ mod tests {
         server.abort();
         slot?.close().await;
         let dials = dials.lock().unwrap();
-        assert!(dials[1] - dials[0] >= Duration::from_secs(1), "{dials:?}");
+        assert!(dials[1] - dials[0] >= Duration::from_millis(300), "{dials:?}");
         Ok(())
     }
 

@@ -408,3 +408,47 @@ impl Body {
         Ok(chunk)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A connection whose server sent GOAWAY takes no new request, so the next one dials anew.
+    #[tokio::test]
+    async fn an_http3_connection_going_away_is_dialled_again() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        let (endpoint, origin) = crate::fixtures::h3_endpoint()?;
+        let server = tokio::spawn(async move {
+            let mut first = true;
+            while let Some(incoming) = endpoint.accept().await {
+                let mut connection = http3::server::Connection::new(incoming.await?, None);
+                let (_, stream) = connection.next().await?.ok_or("no request")?.resolve().await?;
+                let (mut send, _) = stream.split();
+                send.send_response(http::Response::new(())).await?;
+                // Requests stay open, so only the first connection's GOAWAY retires it.
+                if std::mem::take(&mut first) {
+                    connection.goaway();
+                }
+                tokio::spawn(async move {
+                    while let Ok(Some(_)) = connection.next().await {}
+                    drop(send)
+                });
+            }
+            Ok::<_, Error>(())
+        });
+        let transport = Transport::connect(Http::new(true)?, &origin, Protocol::Http3).await?;
+        let receive = |route| transport.receive(Method::GET, route, &[], 1, Duration::from_secs(5));
+        let _open = receive(Route::Download).await?;
+        // The next request follows the client's reading of the GOAWAY, which a pause once guessed.
+        let first = transport.h3.as_ref().ok_or("not HTTP/3")?.lock().await.clone();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !first.is_closed() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await?;
+        let next = receive(Route::Probe).await;
+        server.abort();
+        next.map(drop)
+    }
+}

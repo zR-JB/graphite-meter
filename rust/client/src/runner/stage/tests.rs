@@ -167,12 +167,13 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                             return;
                         }
                         let mode = flag.load(Ordering::SeqCst);
-                        if request.starts_with(b"POST /upload/checkpoint") && matches!(mode, 0 | 5 | 7 | 15 | 17 | 19 | 20 | 21 | 22) {
+                        if request.starts_with(b"POST /upload/checkpoint") && matches!(mode, 0 | 5 | 7 | 15 | 16 | 17 | 19 | 20 | 21 | 22) {
                             if mode == 17 {
                                 tokio::time::sleep(Duration::from_millis(100)).await;
                             }
                             let bytes = match mode {
-                                7 => checkpoints.load(Ordering::SeqCst),
+                                // The receiver takes nothing more.
+                                7 | 16 => checkpoints.load(Ordering::SeqCst),
                                 // The receiver counts 64 KiB more, and reports them, while its first checkpoint is in flight.
                                 19 => {
                                     let bytes = progress.load(Ordering::SeqCst);
@@ -693,7 +694,9 @@ async fn mid_stage_auth_failure_keeps_reapproval_cause() -> Result<(), Error> {
     Ok(())
 }
 
-#[tokio::test]
+/// On worker threads, as the client runs: eight TLS lanes on one loaded thread kept both first
+/// checkpoints past their 1.5 s budget, which ended the stage before its window.
+#[tokio::test(flavor = "multi_thread")]
 async fn silent_direction_removes_its_server_but_a_silent_lane_does_not() -> Result<(), Error> {
     let _ = crate::crypto::provider().install_default();
     let (near, near_mode, near_task) = download_peer().await?;
@@ -748,6 +751,7 @@ async fn silent_direction_removes_its_server_but_a_silent_lane_does_not() -> Res
 /// A lane still retrying at the final boundary removes its quiet server: a busy download, and
 /// upload lanes answered busy as they send, which made no progress as Go's uploadLane counts it
 /// (upload.go:118-128), where they once went on retrying and the stage completed with the server.
+/// The 1.5 s window leaves the quiet server 500 ms before the 2 s stall rule would remove it first.
 #[tokio::test]
 async fn a_lane_still_retrying_at_the_final_boundary_removes_its_quiet_server() -> Result<(), Error> {
     let _ = crate::crypto::provider().install_default();
@@ -761,8 +765,8 @@ async fn a_lane_still_retrying_at_the_final_boundary_removes_its_quiet_server() 
         ];
         let config = Config {
             warmup: Duration::ZERO,
-            download_duration: Duration::from_millis(1900),
-            upload_duration: Duration::from_millis(1900),
+            download_duration: Duration::from_millis(1500),
+            upload_duration: Duration::from_millis(1500),
             streams: 1,
             loaded_latency: false,
             ..Config::default()
@@ -781,19 +785,18 @@ async fn a_lane_still_retrying_at_the_final_boundary_removes_its_quiet_server() 
         let (result, ()) = joined(run, refuse_near).await?;
         near_task.abort();
         far_task.abort();
-        assert_eq!(result?, ["near"], "{stage:?}");
+        let removed = result.map_err(|error| format!("{stage:?}: {error}"))?;
         let snapshot = observed.borrow();
-        let failure = &snapshot.failures[0];
-        assert_eq!(
-            (failure.server_id.as_str(), failure.reason),
-            ("near", graphite_meter_core::failure::FailureReason::ServerBusy)
-        );
-        let result = &snapshot.results[0];
-        assert!(result.down_bps().or(result.up_bps()).is_some());
+        let (failures, result) = (&snapshot.failures, &snapshot.results[0]);
+        assert_eq!(removed, ["near"], "{stage:?}");
+        let failure = (failures[0].server_id.as_str(), failures[0].reason);
+        assert_eq!(failure, ("near", FailureReason::ServerBusy), "{stage:?}: {failures:?}");
+        assert!(result.down_bps().or(result.up_bps()).is_some(), "{stage:?}");
         let intervals = &snapshot.intervals;
         let (first, last) = (&intervals[0], intervals.back().unwrap());
-        assert!(last.end_nanos - first.end_nanos >= 500_000_000, "{intervals:?}");
-        assert_eq!(last.participants, ["far"]);
+        let span = last.end_nanos - first.end_nanos;
+        assert!(span >= 500_000_000, "{stage:?}: {intervals:?}");
+        assert_eq!(last.participants, ["far"], "{stage:?}");
     }
     Ok(())
 }
@@ -850,8 +853,9 @@ async fn a_lane_refused_just_before_the_stage_end_takes_its_server_out() -> Resu
     Ok(())
 }
 
-/// A 3 s upload stage whose receiver forgets its upload id 1 s into the window, in fixture mode
-/// `forget`: 20 until the next mint, 21 for good. Each side of the loss holds evidence enough.
+/// A 3 s upload stage whose receiver forgets its upload id as the window opens, in fixture mode
+/// `forget`: 20 until the next mint, 21 for good. Only the evidence after a replacement counts,
+/// as the interval its new id ends is incomplete, so the replacement gets most of the window.
 /// Runs on real time: a paused clock races ahead of the real sockets on a busy machine and closes the window
 /// before its evidence arrives.
 async fn forgetful_receiver(forget: u8) -> Result<(Result<Vec<String>, Error>, Snapshot), Error> {
@@ -873,7 +877,6 @@ async fn forgetful_receiver(forget: u8) -> Result<(Result<Vec<String>, Error>, S
             .wait_for(|snapshot| snapshot.phase == Phase::Measuring)
             .await
             .unwrap();
-        tokio::time::sleep(Duration::from_secs(1)).await;
         mode.store(forget, Ordering::SeqCst);
     };
     let mut ledger = RunLedger::new();
