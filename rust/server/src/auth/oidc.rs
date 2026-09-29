@@ -1,4 +1,4 @@
-use super::jwt::{self, Alg, Jwks, Reject};
+use super::jwt::{self, Alg, Jwks, Reject, go_json, go_str};
 use super::{
     SessionLease,
     password_login::read_secret,
@@ -42,20 +42,6 @@ const RETRY_MAX: Duration = Duration::from_secs(60);
 /// Concurrent token exchanges; a callback past them waits within its deadline.
 const MAX_EXCHANGES: usize = 8;
 
-#[derive(Deserialize)]
-struct Metadata {
-    issuer: String,
-    authorization_endpoint: String,
-    token_endpoint: String,
-    userinfo_endpoint: String,
-    jwks_uri: String,
-    #[serde(default, deserialize_with = "jwt::nullable")]
-    id_token_signing_alg_values_supported: Vec<String>,
-    /// Go reads this member apart from the rest and takes a mistyped value as false.
-    #[serde(default)]
-    authorization_response_iss_parameter_supported: serde_json::Value,
-}
-
 pub(super) struct Provider {
     authorization: String,
     token: String,
@@ -68,35 +54,46 @@ pub(super) struct Provider {
     pub page_headers: HeaderMap,
 }
 impl Provider {
-    fn new(metadata: Metadata, issuer: &str) -> Result<Self, ConfigError> {
-        if metadata.issuer != issuer {
+    /// From go-oidc's providerJSON, whose members Go's decoder matches in any case, the last one winning, and where
+    /// one of another type refuses the document.
+    fn new(metadata: &Members, issuer: &str) -> Result<Self, ConfigError> {
+        let malformed = "OIDC discovery document is malformed";
+        let text = |name| metadata.text(name).ok_or(malformed);
+        let algorithms = metadata
+            .strings("id_token_signing_alg_values_supported")
+            .ok_or(malformed)?;
+        text("device_authorization_endpoint")?;
+        if text("issuer")? != issuer {
             return Err("OIDC discovery issuer mismatch".into());
         }
         // Go's client leaves out a fragment. One on the authorization endpoint stays refused: Go appends the
         // sign-in query to it, where no provider reads it.
-        let fetched = |url: String| url.split('#').next().unwrap_or_default().to_owned();
+        let fetched = |name| text(name).map(|url| url.split('#').next().unwrap_or_default().to_owned());
         let (token, userinfo, jwks_uri) = (
-            fetched(metadata.token_endpoint),
-            fetched(metadata.userinfo_endpoint),
-            fetched(metadata.jwks_uri),
+            fetched("token_endpoint")?,
+            fetched("userinfo_endpoint")?,
+            fetched("jwks_uri")?,
         );
-        for endpoint in [&metadata.authorization_endpoint, &token, &userinfo, &jwks_uri] {
+        let authorization = text("authorization_endpoint")?.to_owned();
+        for endpoint in [&authorization, &token, &userinfo, &jwks_uri] {
             valid_url(endpoint)?;
         }
         // Checked here rather than on every sign-in page: a browser can post only to a canonical origin.
-        let origin = split_url(&metadata.authorization_endpoint)?.0.key();
+        let origin = split_url(&authorization)?.0.key();
         let page_headers = super::pages::security_headers(Some(&origin))
             .ok_or_else(|| format!("OIDC authorization endpoint origin {origin:?} is not a canonical HTTPS origin"))?;
+        // Go reads this member apart from the rest, where one of another type leaves it as it was.
+        let issuer_parameter = metadata.named("authorization_response_iss_parameter_supported");
         Ok(Self {
             page_headers,
-            algorithms: Alg::allowed(&metadata.id_token_signing_alg_values_supported),
-            authorization: metadata.authorization_endpoint,
+            algorithms: Alg::allowed(&algorithms),
+            authorization,
             token,
             userinfo,
             jwks_uri,
             // Fetched with the first token, as by go-oidc.
             keys: AsyncMutex::new(Arc::new(Jwks::parse(br#"{"keys":[]}"#).expect("empty key set"))),
-            issuer_parameter: metadata.authorization_response_iss_parameter_supported == true,
+            issuer_parameter: issuer_parameter.fold(false, |on, value| value.as_bool().unwrap_or(on)),
         })
     }
     async fn verify(&self, http: &ProviderHttp, token: &str) -> Result<jwt::Verified, Reject> {
@@ -199,8 +196,7 @@ impl Oidc {
             .http
             .call(get(&format!("{issuer}{separator}.well-known/openid-configuration"))?)
             .await?;
-        let metadata: Metadata = serde_json::from_slice(ok(&response)?)?;
-        Provider::new(metadata, issuer)
+        Provider::new(&go_json(ok(&response)?)?, issuer)
     }
     pub async fn start(
         &self,
@@ -338,9 +334,11 @@ impl Oidc {
         {
             return Err(Reason::UserInfoOrSubject);
         }
-        let (Some(groups), Some(name), Some(username)) =
-            (info.groups(), info.text("name"), info.text("preferred_username"))
-        else {
+        let (Some(groups), Some(name), Some(username)) = (
+            info.strings("groups"),
+            info.text("name"),
+            info.text("preferred_username"),
+        ) else {
             return Err(Reason::UserInfoClaims);
         };
         if !groups
@@ -409,13 +407,10 @@ impl Oidc {
                 fields.entry(key).or_insert(value.into());
             }
         } else {
-            fields = serde_json::from_slice(response.body())?;
+            fields = go_json(response.body())?;
         }
         // tokenJSON's strings, where null is empty, and a JSON expires_in in whole seconds.
-        let text = |name| match fields.get(name) {
-            None | Some(Value::Null) => Some(""),
-            value => value.and_then(Value::as_str),
-        };
+        let text = |name| fields.get(name).map_or(Some(""), go_str);
         let expiry = fields.get("expires_in").filter(|expiry| !form && !expiry.is_null());
         let access_token = text("access_token").unwrap_or_default();
         if text("error") != Some("")
@@ -442,17 +437,17 @@ impl Oidc {
             return Err("OIDC user information unavailable".into());
         }
         if essence(&response).as_deref() != Some("application/jwt") {
-            return Ok(serde_json::from_slice(response.body())?);
+            return Ok(go_json(response.body())?);
         }
-        let token = std::str::from_utf8(response.body())?.trim();
+        let token = std::str::from_utf8(response.body())?;
         let verified = provider
             .verify(&self.http, token)
             .await
             .map_err(|_| "OIDC user information signature rejected")?;
-        let claims = serde_json::from_slice(&verified.payload)?;
+        let claims = go_json(&verified.payload)?;
         jwt::audience_and_issuer(&claims, &self.config.oidc_issuer, &self.config.oidc_client_id)
             .map_err(|_| "OIDC user information claims rejected")?;
-        Ok(serde_json::from_slice(&verified.payload)?)
+        Ok(go_json(&verified.payload)?)
     }
 }
 
@@ -503,15 +498,11 @@ impl Members {
             |text, value| if value.is_null() { Some(text) } else { value.as_str() },
         )
     }
-    /// The application's groups, which a null empties; a null group is empty.
-    fn groups(&self) -> Option<Vec<&str>> {
-        self.named("groups").try_fold(Vec::new(), |_, value| match value {
+    /// A list of strings, which a null empties; a null element is empty.
+    fn strings(&self, name: &'static str) -> Option<Vec<&str>> {
+        self.named(name).try_fold(Vec::new(), |_, value| match value {
             Value::Null => Some(Vec::new()),
-            value => value
-                .as_array()?
-                .iter()
-                .map(|group| if group.is_null() { Some("") } else { group.as_str() })
-                .collect(),
+            value => value.as_array()?.iter().map(go_str).collect(),
         })
     }
 }

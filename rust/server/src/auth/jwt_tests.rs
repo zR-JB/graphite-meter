@@ -162,6 +162,8 @@ fn every_ring_algorithm_verifies_against_the_matching_key_only() {
     }
     let token = signers.sign(json!({"alg": "RS256", "kid": "rsa", "typ": "JWT"}), &claims);
     assert!(verify(&token, &keys, &ALL).is_ok());
+    // go-jose strips whitespace, which a provider may wrap the token in.
+    assert!(verify(&format!(" {token}\r\n"), &keys, &ALL).is_ok());
     assert_eq!(verify(&token, &keys, &[Alg::ES256]).err(), Some(Reject::Algorithm));
     let (message, _) = token.rsplit_once('.').unwrap();
     let forged = format!("{message}.{}", B64.encode([0; 256]));
@@ -239,6 +241,19 @@ fn id_token_claims_bind_issuer_audience_nonce_time_and_access_token() {
     }
     // As in go-oidc, a null subject is empty, which the user information check refuses.
     assert_eq!(check("RS256", "rsa", json!({"sub": null})), Ok(String::new()));
+    // Go's decoder reads each byte of invalid UTF-8 as U+FFFD.
+    let mut payload = base.to_string().into_bytes();
+    payload.pop();
+    payload.extend_from_slice(b",\"preferred_username\":\"J\xf6rg\"}");
+    let latin1 = id_token(
+        Verified {
+            alg: Alg::RS256,
+            payload,
+        },
+        &expected,
+    )
+    .map(|claims| claims.preferred_username);
+    assert_eq!(latin1, Ok(Some("J\u{fffd}rg".into())));
     for (alg, kid, digest) in [
         ("RS256", "rsa", &ring::digest::SHA256),
         ("ES384", "p384", &ring::digest::SHA384),
@@ -254,6 +269,7 @@ fn id_token_claims_bind_issuer_audience_nonce_time_and_access_token() {
         json!({"aud": ["meter"], "azp": "meter", "nbf": now + 299}),
         json!({"aud": ["other", "meter"], "azp": "other"}),
         json!({"aud": ["meter", "meter"]}),
+        json!({"aud": ["meter", null]}),
         json!({"iat": now.to_string()}),
         json!({"exp": (now + 300).to_string(), "nbf": format!("{now}.5"), "iat": 1e9}),
         json!({"at_hash": null, "nbf": null, "name": null, "preferred_username": null}),

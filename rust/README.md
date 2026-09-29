@@ -245,9 +245,10 @@ the configured issuer, an audience that includes the client ID, expiry and the
 nonce; issued-at is optional, azp is not read, and a present at_hash must match.
 Unlike go-oidc, tokens over 16 KiB, cty, crit or enc headers and a typ other than
 JWT or JOSE are rejected, and signed user information must name the issuer and
-the client. User information members match in any letter case, as Go's decoder
-matches them; ID token and token response members must be in lower case, where
-Go accepts any case. Unknown signing keys trigger one coordinated JWKS refresh.
+the client. User information and discovery members match in any letter case, as
+Go's decoder matches them; ID token, token response and key set members must be
+in lower case, where Go accepts any case. Unknown signing keys trigger one
+coordinated JWKS refresh.
 Discovery also refuses an authorization endpoint off a canonical HTTPS origin,
 such as one on port 0, which sign-in pages would name in their form-action;
 Go accepts it and renders those pages. It refuses one with a fragment too, after

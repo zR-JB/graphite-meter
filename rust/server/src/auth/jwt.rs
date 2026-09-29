@@ -37,10 +37,10 @@ impl Alg {
     }
 
     /// The advertised algorithms ring verifies, or RS256 where go-oidc, which also knows ES512, knows none.
-    pub fn allowed(advertised: &[String]) -> Vec<Self> {
+    pub fn allowed(advertised: &[&str]) -> Vec<Self> {
         if !advertised
             .iter()
-            .any(|name| name == "ES512" || Self::parse(name).is_some())
+            .any(|&name| name == "ES512" || Self::parse(name).is_some())
         {
             return vec![Self::RS256];
         }
@@ -130,7 +130,7 @@ impl Jwks {
         struct Set {
             keys: Vec<Value>,
         }
-        let set: Set = serde_json::from_slice(body).map_err(|_| Reject::Malformed)?;
+        let set: Set = go_json(body).map_err(|_| Reject::Malformed)?;
         let text = |key: &Value, field: &str| key.get(field).and_then(Value::as_str).map(str::to_owned);
         let bytes = |key: &Value, field: &str| {
             key.get(field)
@@ -190,6 +190,8 @@ pub(super) struct Verified {
 }
 
 pub(super) fn verify(token: &str, keys: &Jwks, allowed: &[Alg]) -> Result<Verified, Reject> {
+    // go-jose drops the whitespace a provider may wrap a token in.
+    let token = token.trim();
     if token.len() > 16 * 1024 {
         return Err(Reject::Malformed);
     }
@@ -259,10 +261,7 @@ pub(super) struct Expected<'a> {
 pub(super) fn audience_and_issuer(claims: &Map<String, Value>, issuer: &str, client_id: &str) -> Result<(), Reject> {
     let audiences = match claims.get("aud") {
         Some(Value::String(one)) => vec![one.as_str()],
-        Some(Value::Array(many)) => many
-            .iter()
-            .map(|aud| aud.as_str().ok_or(Reject::Claims))
-            .collect::<Result<_, _>>()?,
+        Some(Value::Array(many)) => many.iter().map(go_str).collect::<Option<_>>().ok_or(Reject::Claims)?,
         _ => return Err(Reject::Claims),
     };
     // Like Go's go-oidc: the audience includes this client, whatever else it names, and azp is not read.
@@ -285,6 +284,21 @@ pub(super) fn nullable<'de, D: serde::Deserializer<'de>, T: Deserialize<'de> + D
     member: D,
 ) -> Result<T, D::Error> {
     Ok(Option::deserialize(member)?.unwrap_or_default())
+}
+
+/// A string as Go's decoder fills one, which null leaves empty.
+pub(super) fn go_str(value: &Value) -> Option<&str> {
+    value.as_str().or(value.is_null().then_some(""))
+}
+
+/// A document as Go's decoder reads it, each byte of invalid UTF-8 as U+FFFD.
+pub(super) fn go_json<T: serde::de::DeserializeOwned>(document: &[u8]) -> serde_json::Result<T> {
+    let mut text = String::with_capacity(document.len());
+    for chunk in document.utf8_chunks() {
+        text.push_str(chunk.valid());
+        text.extend(chunk.invalid().iter().map(|_| char::REPLACEMENT_CHARACTER));
+    }
+    serde_json::from_str(&text)
 }
 
 pub(super) fn id_token(verified: Verified, expected: &Expected<'_>) -> Result<IdClaims, Reject> {
@@ -313,7 +327,7 @@ pub(super) fn id_token(verified: Verified, expected: &Expected<'_>) -> Result<Id
         name: Option<String>,
         preferred_username: Option<String>,
     }
-    let claims: Map<String, Value> = serde_json::from_slice(&verified.payload).map_err(|_| Reject::Malformed)?;
+    let claims: Map<String, Value> = go_json(&verified.payload).map_err(|_| Reject::Malformed)?;
     audience_and_issuer(&claims, expected.issuer, expected.client_id)?;
     // go-oidc's jsonTime, in whole seconds; nbf alone is a pointer, which null leaves absent.
     let time = |name: &str| match claims.get(name) {

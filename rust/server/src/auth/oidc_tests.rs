@@ -215,7 +215,7 @@ impl Double {
         self.oidc.complete(&tx, "valid~code*").await
     }
     async fn begin(&self, claims: Claims) -> Result<Transaction, Reason> {
-        self.oidc.discover().await.unwrap();
+        assert!(self.oidc.ready().is_some() || self.oidc.discover().await.is_ok());
         let started = self
             .oidc
             .start("192.0.2.1".parse().unwrap(), "challenge".into(), None)
@@ -596,6 +596,11 @@ async fn discovery_refuses_only_an_authorization_endpoint_that_breaks_sign_in() 
                 "userinfo_endpoint": format!("{issuer}/userinfo#"), "jwks_uri": format!("{issuer}/jwks#x")}),
             true,
         ),
+        // go-oidc's providerJSON, as Go's decoder fills it: a member in any case, the last winning, where null
+        // leaves a string as it was and a null element is empty; one of another type refuses the document.
+        (json!({"Issuer": issuer, "issuer": null}), true),
+        (json!({"id_token_signing_alg_values_supported": [null, "RS256"]}), true),
+        (json!({"device_authorization_endpoint": 5}), false),
     ] {
         provider.twist.lock().unwrap().metadata = Some(metadata);
         assert_eq!(provider.oidc.discover().await.is_ok(), discovered);
@@ -667,7 +672,7 @@ pub(in crate::auth) fn discovered(authorization_endpoint: &str, issuer_parameter
         "authorization_response_iss_parameter_supported": issuer_parameter
     }))
     .unwrap();
-    if let Ok(provider) = Provider::new(metadata, "https://identity.example") {
+    if let Ok(provider) = Provider::new(&metadata, "https://identity.example") {
         assert!(oidc.provider.set(Arc::new(provider)).is_ok());
     }
     oidc
