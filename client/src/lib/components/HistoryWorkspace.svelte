@@ -123,6 +123,11 @@
     return `${sameYear ? new Date(first).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : dateLabel(first)} – ${dateLabel(last)}`;
   });
 
+  // A sorted head's name is its text and its order, with no stray space before the comma.
+  const headText = (column: HistorySort) =>
+    column === "date"
+      ? "Date"
+      : `${COLUMN[column].short} ${scales[column].unit}`.trim();
   const COLUMN: Record<
     HistoryColumn,
     { short: string; icon: IconName; help: string }
@@ -187,6 +192,25 @@
     descending = nextDescending;
     pages = 1;
     list?.scrollTo({ top: 0 });
+  }
+
+  // A hidden column cannot order the list; Date takes over.
+  $effect(() => {
+    if (sort !== "date" && !columns.includes(sort)) setSort("date", true);
+  });
+
+  // Rows fold to the compact layout once the table's columns no longer fit their content;
+  // reading the rows and columns measures again whenever they change.
+  function fitTable(node: HTMLElement) {
+    void [groups, columns];
+    const fit = () => {
+      node.classList.remove("compact");
+      node.classList.toggle("compact", node.scrollWidth > node.clientWidth);
+    };
+    const observer = new ResizeObserver(fit);
+    observer.observe(node);
+    void document.fonts.ready.then(fit);
+    return () => observer.disconnect();
   }
 
   function loadMore() {
@@ -572,7 +596,7 @@
         <p>Completed tests appear here automatically.</p>
       {:else}
         <p>
-          Saving is paused. Resume it to keep future results on this device.
+          Saving is paused. Resume it to keep future results in this browser.
         </p>
         <button
           class="btn btn-accent"
@@ -589,12 +613,15 @@
       style:--split={store.historySplit}
       bind:clientWidth={bodyWidth}
     >
-      <div class="history-list" bind:this={list}>
+      <div class="history-list" bind:this={list} {@attach fitTable}>
         <div class="history-table" style:--metric-columns={columns.length}>
           <div class="column-head page-fill" role="group" aria-label="Sort by">
             {#each ["date" as const, ...columns] as column (column)}
               <button
                 type="button"
+                aria-label={sort === column
+                  ? `${headText(column)}, ${descending ? "descending" : "ascending"}`
+                  : undefined}
                 aria-pressed={sort === column}
                 data-order={sort !== column
                   ? undefined
@@ -611,18 +638,18 @@
                     class="head-icon"
                     data-tone={column}><Icon name={COLUMN[column].icon} /></span
                   >{/if}
+                <!-- The unit is part of the explained word, so a tip that flips below never covers it. -->
                 <span
                   {@attach column === "date"
                     ? null
                     : tooltip(() => COLUMN[column].help)}
-                  >{column === "date" ? "Date" : COLUMN[column].short}</span
+                  >{column === "date"
+                    ? "Date"
+                    : COLUMN[column]
+                        .short}{#if column !== "date" && scales[column].unit}<span
+                      class="unit">{scales[column].unit}</span
+                    >{/if}</span
                 >
-                {#if column !== "date" && scales[column].unit}<span class="unit"
-                    >{scales[column].unit}</span
-                  >{/if}
-                {#if sort === column}<span class="sr-only"
-                    >, {descending ? "descending" : "ascending"}</span
-                  >{/if}
                 <i aria-hidden="true"></i>
               </button>
               {#if column === "date"}<span class="outcome-head"></span>{/if}
@@ -634,7 +661,6 @@
                   {group.heading}
                 </h3>{/if}
               <ol
-                class="kv"
                 aria-label={group.heading ? undefined : "Saved results"}
                 aria-labelledby={group.heading
                   ? `history-day-${index}`
@@ -645,7 +671,7 @@
                     <svelte:boundary>
                       {@const row = historyRow(record)}
                       <a
-                        class="result-row tile"
+                        class="result-row link-row"
                         data-history-id={record.id}
                         href={`#/history/${record.id}`}
                         aria-current={selectedId === record.id
@@ -687,7 +713,7 @@
                       </a>
                       {#snippet failed()}
                         <a
-                          class="result-row tile"
+                          class="result-row link-row"
                           data-history-id={record.id}
                           href={`#/history/${record.id}`}
                           onclick={(event) => select(event, record.id)}
@@ -746,14 +772,12 @@
         <div class="detail-pane empty-state" role="status">
           <span class="empty-icon">!</span>
           <h2>
-            {malformed
-              ? "Unreadable saved result"
-              : "Result no longer available"}
+            {malformed ? "Unreadable saved result" : "Result not found"}
           </h2>
           <p>
             {malformed
               ? "This record uses an unsupported format or failed validation."
-              : "It may have been deleted in another tab."}
+              : "This result is not in History."}
           </p>
           <button class="btn" type="button" onclick={() => onNavigate(null)}
             >Back to results</button
@@ -818,18 +842,22 @@
     border-bottom-color: var(--border);
     animation: none;
   }
+  /* The dot sits on the word's baseline, so a row keeps one line of text. */
   .history-workspace :global(.outcome) {
     display: inline-flex;
-    align-items: center;
+    align-items: baseline;
     gap: var(--space-2);
     color: var(--text-muted);
     font-size: var(--type-sm);
     white-space: nowrap;
   }
+  /* Reserving the list's scrollbar gutter, a notice ends on the rows' edge. */
   .notices {
     display: grid;
     gap: var(--space-1);
     padding: var(--space-3) var(--panel-pad) 0;
+    overflow: hidden;
+    scrollbar-gutter: stable;
   }
   .notice {
     align-items: center;
@@ -889,11 +917,10 @@
   .history-list {
     container: history-list / inline-size;
   }
+  /* Columns never shrink below their content: the rows fold first (fitTable). */
   .history-table {
     display: grid;
-    grid-template-columns:
-      minmax(8.5rem, 1.2fr) auto
-      repeat(var(--metric-columns), minmax(6rem, 1fr));
+    grid-template-columns: 2fr auto repeat(var(--metric-columns), 1fr);
     row-gap: var(--space-5);
     padding: 0 var(--panel-pad) var(--space-6);
   }
@@ -917,17 +944,15 @@
   .column-head button {
     position: relative;
     display: flex;
-    flex-wrap: wrap;
-    align-content: flex-start;
-    align-items: baseline;
+    align-items: flex-start;
     justify-content: flex-end;
-    gap: 0 5px;
-    min-width: 0;
+    gap: 5px;
     min-height: var(--control-h);
     padding: 6px var(--space-3);
     border-radius: var(--r-well);
     color: var(--text-muted);
     font: var(--w-strong) var(--type-sm) / 1.3 var(--font-sans);
+    text-align: end;
     white-space: nowrap;
     transition: var(--transition-control);
   }
@@ -958,10 +983,10 @@
       opacity var(--dur-hover) var(--ease-out),
       rotate var(--dur-hover) var(--ease-out);
   }
+  /* Centred on its word's line, however tall the row of heads is. */
   .column-head > button:first-child i {
     position: static;
-    align-self: center;
-    margin-left: 2px;
+    margin: calc((1.3em - 5px) / 2) 0 0 2px;
   }
   .column-head [data-order] i {
     opacity: 1;
@@ -969,10 +994,12 @@
   .column-head [data-order="ascending"] i {
     rotate: 225deg;
   }
+  /* One label line tall, so the icon centres on its word above the unit. */
   .head-icon {
     display: grid;
     flex: none;
-    align-self: center;
+    align-content: center;
+    height: 1.3em;
     color: var(--tone);
   }
   .head-icon :global(svg) {
@@ -980,43 +1007,42 @@
     height: var(--icon-sm);
   }
   .unit {
-    flex-basis: 100%;
+    display: block;
     color: var(--text-soft);
     font: var(--w-normal) var(--type-2xs) / 1.4 var(--font-mono);
-    text-align: end;
   }
   .day > h3 {
     grid-column: 1 / -1;
   }
+  /* The list is page, not plate: a day's rows sit between two rules, with hairlines between them. */
   ol {
-    overflow: hidden;
-    padding-inline: 0;
+    border-block: var(--hairline) solid var(--border-subtle);
+    font: var(--role-row);
   }
-  li {
-    gap: 0;
-    padding-block: 0;
+  li + li {
+    border-top: var(--hairline) solid var(--border-subtle);
   }
+  /* Its wash and focus ring sit 2 px inside the row (.link-row), which has no plate inset. */
   .result-row {
-    align-items: center;
+    --row-inset: 0px;
+    align-items: first baseline;
     min-height: var(--row-h);
   }
-  .result-row:focus-visible {
-    outline-offset: -2px;
-  }
   .result-row > * {
-    min-width: 0;
     padding: 7px var(--space-3);
   }
+  /* The time over its server, on the lines of the values and their notes; a long name is cut, never wrapped. */
   time {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 0 var(--space-2);
+    display: grid;
     font-weight: var(--w-normal);
+    white-space: nowrap;
   }
   time small {
+    contain: inline-size;
+    overflow: hidden;
     color: var(--text-soft);
-    font-size: var(--type-xs);
+    font: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
+    text-overflow: ellipsis;
   }
   .outcome:empty {
     padding: 0;
@@ -1025,14 +1051,15 @@
   .metric {
     display: grid;
     grid-template: "bar value" auto ". note" auto / minmax(0, 4.5rem) auto;
-    align-items: center;
+    align-items: baseline;
     justify-content: end;
     column-gap: var(--space-2);
   }
+  /* Deeper than --tone-ink, so a note keeps 4.5:1 on a row's wash as on the page. */
   .note {
     grid-area: note;
     justify-self: end;
-    color: var(--tone-ink);
+    color: color-mix(in oklab, var(--tone) 65%, var(--text));
     font: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
@@ -1042,7 +1069,9 @@
   }
   /* A magnitude, never a verdict: the column's largest value fills the bar. */
   .bar {
+    display: none;
     grid-area: bar;
+    align-self: center;
     width: 100%;
     height: 3px;
     border-radius: var(--r-full);
@@ -1065,6 +1094,12 @@
     color: var(--text-soft);
     font-weight: var(--w-normal);
   }
+  /* The selected wash dims soft text below 4.5:1; muted keeps it, as on a running card. */
+  .result-row[aria-current] time small,
+  .result-row[aria-current] .missing .value,
+  .result-row[aria-current] .metric[data-tone="idle"] .note {
+    color: var(--text-muted);
+  }
   .load-more {
     display: flex;
     align-items: center;
@@ -1074,42 +1109,65 @@
     color: var(--text-soft);
     font-size: var(--type-sm);
   }
-  @container history-list (max-width: 900px) {
+  /* Where bars have the room, every row's value is as wide, so a column's bars share their zero end. */
+  @container history-list (min-width: 901px) {
+    .metric {
+      grid-template-columns: minmax(0, 4.5rem) minmax(4.5rem, auto);
+    }
     .bar {
-      display: none;
+      display: block;
     }
   }
-  @container history-list (max-width: 560px) {
-    .history-table {
-      grid-template-columns: repeat(var(--metric-columns), minmax(0, 1fr));
-      row-gap: var(--space-4);
-    }
-    .column-head > button:first-child,
-    .outcome-head {
+  /* Compact: the time heads its row and the values share the width under it. */
+  .history-list:global(.compact) .history-table {
+    grid-template-columns: repeat(var(--metric-columns), minmax(0, 1fr));
+    row-gap: var(--space-4);
+  }
+  .history-list:global(.compact) .column-head > button:first-child,
+  .history-list:global(.compact) .outcome-head,
+  .history-list:global(.compact) .head-icon {
+    display: none;
+  }
+  .history-list:global(.compact) .column-head button {
+    padding-inline: var(--space-2);
+    font-size: var(--type-xs);
+  }
+  .history-list:global(.compact) .result-row {
+    padding-block: 2px 4px;
+  }
+  .history-list:global(.compact) .result-row > * {
+    padding: 4px var(--space-2);
+  }
+  /* The server beside its time, clear of an outcome at the row's end. */
+  .history-list:global(.compact) .result-row > time {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    grid-column: 1 / -1;
+    padding-inline-start: var(--space-3);
+  }
+  .history-list:global(.compact)
+    .result-row:has(> .outcome:not(:empty))
+    > time {
+    padding-inline-end: 7rem;
+  }
+  .history-list:global(.compact) time small {
+    flex: 1;
+  }
+  /* Five columns at the list's minimum leave a status like "Down only" two lines, not the neighbour's room. */
+  .history-list:global(.compact) .missing .value {
+    text-align: end;
+    white-space: normal;
+  }
+  .history-list:global(.compact) .outcome {
+    position: absolute;
+    top: 4px;
+    right: 0;
+  }
+  /* The detail replaces the list here, and the list's view control goes with it. */
+  @container history (max-width: 820px) {
+    .history-workspace:has(.has-detail) .history-head :global(.view-control) {
       display: none;
-    }
-    .head-icon {
-      display: none;
-    }
-    .column-head button {
-      padding-inline: var(--space-2);
-      font-size: var(--type-xs);
-    }
-    .result-row {
-      position: relative;
-      padding-block: 2px 4px;
-    }
-    .result-row > * {
-      padding: 4px var(--space-2);
-    }
-    time {
-      grid-column: 1 / -1;
-      padding-inline: var(--space-3) 7rem;
-    }
-    .outcome {
-      position: absolute;
-      top: 4px;
-      right: var(--space-1);
     }
   }
   @container history (max-width: 560px) {

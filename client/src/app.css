@@ -1005,6 +1005,10 @@
       background-color: var(--hover-wash);
     }
   }
+  /* After hover, so the current row keeps its wash under the pointer. */
+  .link-row[aria-current]:not([aria-current="false"])::before {
+    background-color: var(--selected-wash);
+  }
   /* The row or its own control (a switch's checkbox) may hold focus; the ring is the row's. */
   .link-row:is(:focus-visible, :has(> :focus-visible)) {
     outline: none;
@@ -1130,30 +1134,27 @@
   .segmented > button:focus-visible {
     outline-offset: -2px;
   }
-  .tile,
   .segmented > button {
     transition: var(--transition-control);
   }
   /* The hover wash is an image layer, so it adds to a selected fill instead of replacing it. */
   @media (hover: hover) {
-    :is(.tile, .segmented > button):hover:not(
-        :disabled,
-        [aria-disabled="true"]
-      ) {
+    .segmented > button:hover:not(:disabled, [aria-disabled="true"]) {
       background-image: linear-gradient(var(--hover-wash) 0 0);
     }
   }
-  :is(.tile, .segmented > button):is(
-    [aria-pressed="true"],
-    [aria-checked="true"],
-    [aria-selected="true"],
-    [aria-current]:not([aria-current="false"]),
-    :has(> input:checked)
-  ) {
+  .segmented
+    > button:is(
+      [aria-pressed="true"],
+      [aria-checked="true"],
+      [aria-selected="true"],
+      [aria-current]:not([aria-current="false"]),
+      :has(> input:checked)
+    ) {
     background-color: var(--selected-wash);
     color: var(--brand-strong);
   }
-  /* A pressed segment is raised like a key; a selected row stays flat in its plate. */
+  /* A pressed segment is raised like a key. */
   .segmented > button[aria-pressed="true"] {
     box-shadow: var(--elev-tile);
   }

@@ -992,7 +992,8 @@
   }
 
   @media (max-width: 759px) {
-    .stage {
+    /* History brings its own 16 px gutter. */
+    .stage:not(.history-stage) {
       padding-inline: var(--space-4);
     }
     /* 44 px targets put their 16 px icons on the page's 16 px gutter. */
