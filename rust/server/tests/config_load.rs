@@ -183,29 +183,58 @@ fn invalid_settings_name_what_failed() {
     ] {
         assert!(failure(&[(name, value)], &[]).contains(name), "{name}={value}");
     }
-    for (name, value, expected) in [
+    // Go's texts, and its order of checks.
+    let auth = "GM_AUTH_MODE=password GM_AUTH_PUBLIC_URL=https://meter.example GM_AUTH_PASSWORD_HASH=h \
+                GM_ADVERTISED_NATIVE_ENDPOINTS=none";
+    for (env, expected) in [
         (
-            "GM_TRUSTED_PROXIES",
-            "10.0.0.1",
-            r#""10.0.0.1": netip.ParsePrefix("10.0.0.1"): no '/'"#,
+            "GM_TRUSTED_PROXIES=10.0.0.1".into(),
+            r#": "10.0.0.1": netip.ParsePrefix("10.0.0.1"): no '/'"#,
         ),
         (
-            "GM_TRUSTED_PROXIES",
-            "10.0.0.0/08",
-            r#""10.0.0.0/08": netip.ParsePrefix("10.0.0.0/08"): bad bits after slash: "08""#,
+            "GM_TRUSTED_PROXIES=10.0.0.0/08".into(),
+            r#"ParsePrefix("10.0.0.0/08"): bad bits after slash: "08""#,
+        ),
+        ("GM_TRUSTED_PROXIES=10.0.0.0/33".into(), "): prefix length out of range"),
+        (
+            "GM_MAX_OPERATION_DURATION=5".into(),
+            r#": time: missing unit in duration "5""#,
         ),
         (
-            "GM_TRUSTED_PROXIES",
-            "10.0.0.0/33",
-            r#""10.0.0.0/33": netip.ParsePrefix("10.0.0.0/33"): prefix length out of range"#,
+            "GM_MAX_OPERATION_DURATION=1h5q".into(),
+            r#": time: unknown unit "q" in duration "1h5q""#,
+        ),
+        (
+            "GM_MAX_OPERATION_DURATION=1h.".into(),
+            r#": time: invalid duration "1h.""#,
+        ),
+        (
+            "GM_H1_PUBLIC_ORIGIN=http://a.example GM_PUBLIC_ORIGINS=http://a.example GM_PUBLIC_LATENCY_ORIGINS=x"
+                .into(),
+            "cannot be both native deterministic and public negotiated",
+        ),
+        (
+            format!("{auth} GM_PUBLIC_ORIGINS=https://meter.example/p"),
+            "GM_PUBLIC_ORIGINS contains invalid origin",
+        ),
+        (
+            format!("{auth} GM_AUTH_OIDC_CLIENT_SECRET=s GM_AUTH_OIDC_CLIENT_SECRET_FILE=f"),
+            "SECRET_FILE are mutually",
+        ),
+        (
+            format!("{auth} GM_AUTH_OIDC_PROVIDER_NAME=a\tb"),
+            "64 bytes of UTF-8 without control characters",
         ),
     ] {
-        assert_eq!(
-            failure(&[(name, value)], &[]),
-            format!("{name}: {expected}"),
-            "Go's text"
-        );
+        let env: Vec<_> = env.split(' ').map(|pair: &str| pair.split_once('=').unwrap()).collect();
+        let message = failure(&env, &[]);
+        assert!(message.contains(expected), "{message}");
     }
+    let huge = [
+        ("GM_MAX_ACTIVE_MEASUREMENTS", "5000000000"),
+        ("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", "5000000000"),
+    ];
+    load(&huge, &[]).expect("without HTTP/3, Go takes limits past a QUIC stream count");
     assert!(failure(&[("GM_SERVER_CATALOG", ""), ("GM_SERVER_CATALOG_FILE", "")], &[]).contains("only one"));
     assert!(failure(&[("GM_SERVER_CATALOG_FILE", "/nonexistent-catalog.json")], &[]).contains("/nonexistent-catalog"));
     assert!(failure(&[("GM_MAX_CONNECTIONS", "many")], &["-max-connections=9"]).contains("GM_MAX_CONNECTIONS"));
@@ -364,7 +393,11 @@ fn executable_reports_usage_and_refuses_invalid_identity_like_go() {
             &[],
             "server error: \"TLS certificate /nonexistent-cert.pem or key /k.pem:",
         ),
-        (&password, &[], "server error: \"password hash: /nonexistent-hash:"),
+        (
+            &password,
+            &[],
+            "server error: \"password hash: open /nonexistent-hash: no such file or directory\"",
+        ),
     ] {
         let (code, stderr) = start(env, args);
         assert_eq!(code, Some(1), "{stderr}");

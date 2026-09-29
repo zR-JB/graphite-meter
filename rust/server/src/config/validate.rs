@@ -9,14 +9,12 @@ impl Config {
         self.validate_auth()?;
         self.validate_limits()?;
         self.validate_listeners()?;
-        self.validate_origins()
+        self.validate_origins()?;
+        // Go has no buffer budget, so its checks come first.
+        crate::budget::check_configured(self)
     }
 
     fn validate_limits(&self) -> Result<(), ConfigError> {
-        if crate::budget::max_requests(&self.limits).is_none() {
-            return Err("per-client stream budgets exceed the QUIC stream limit".into());
-        }
-        crate::budget::check_configured(self)?;
         for (name, value) in [
             ("GM_MAX_ACTIVE_MEASUREMENTS", self.limits.operations),
             (
@@ -135,11 +133,11 @@ impl Config {
                 if raw != "self" && absolute(raw).is_none() {
                     return Err(format!("{name} contains invalid origin {raw:?}").into());
                 }
-            }
-        }
-        for raw in self.public.both.iter().chain(&self.public.throughput) {
-            if deterministic.contains_key(&key(raw)) {
-                return Err(format!("origin {raw:?} cannot be both native deterministic and public negotiated").into());
+                if name != "GM_PUBLIC_LATENCY_ORIGINS" && deterministic.contains_key(&key(raw)) {
+                    return Err(
+                        format!("origin {raw:?} cannot be both native deterministic and public negotiated").into(),
+                    );
+                }
             }
         }
         if !NativeKind::ALL.into_iter().any(|kind| self.native_advertised(kind))
@@ -162,8 +160,7 @@ impl Config {
             return Ok(());
         }
         let public = self.auth.validate_public_url()?;
-        self.auth.validate_password()?;
-        self.auth.validate_oidc()?;
+        self.auth.validate_secrets()?;
         self.validate_authenticated_origins(&public)
     }
 
@@ -171,23 +168,20 @@ impl Config {
         if self.native_advertised(NativeKind::H1) {
             return Err("clear HTTP/1.1 cannot be advertised when authentication is enabled".into());
         }
-        let check_auth_origin = |name: &str, raw: &str| -> Result<(), ConfigError> {
-            if raw.is_empty() || raw == "self" {
-                return Ok(());
-            }
-            if !absolute(raw).is_some_and(|origin| {
-                origin.scheme == "https" && origin.host.to_lowercase() == public.host.to_lowercase()
-            }) {
-                return Err(format!("{name} must use HTTPS and the canonical authentication hostname").into());
-            }
-            Ok(())
-        };
-        for kind in &NativeKind::ALL[1..] {
-            check_auth_origin(kind.origin_env(), &self.listener(*kind).public_origin)?;
-        }
-        for (name, values) in self.public.lists() {
-            for raw in values {
-                check_auth_origin(name, raw)?;
+        let natives = NativeKind::ALL[1..].iter().map(|&kind| {
+            (
+                kind.origin_env(),
+                std::slice::from_ref(&self.listener(kind).public_origin),
+            )
+        });
+        for (name, values) in self.public.lists().into_iter().chain(natives) {
+            for raw in values.iter().filter(|raw| !raw.is_empty() && *raw != "self") {
+                // Read as Go's url.Parse reads it; whether it is an origin is checked with the others.
+                if !url_host(raw).is_some_and(|(scheme, host)| {
+                    scheme.eq_ignore_ascii_case("https") && host.eq_ignore_ascii_case(&public.host)
+                }) {
+                    return Err(format!("{name} must use HTTPS and the canonical authentication hostname").into());
+                }
             }
         }
         Ok(())
@@ -225,60 +219,54 @@ impl AuthConfig {
         Ok(public)
     }
 
-    fn validate_password(&self) -> Result<(), ConfigError> {
-        if !self.password_hash.is_empty() && !self.password_hash_file.is_empty() {
-            return Err("GM_AUTH_PASSWORD_HASH and GM_AUTH_PASSWORD_HASH_FILE are mutually exclusive".into());
-        }
-        if self.mode.password() != self.has_password_source() {
-            let message = if self.mode.password() {
-                "password authentication requires exactly one password hash source"
-            } else {
-                "password hash configured while password authentication is disabled"
-            };
-            return Err(message.into());
-        }
-        Ok(())
-    }
-
-    fn validate_oidc(&self) -> Result<(), ConfigError> {
-        if !self.oidc_client_secret.is_empty() && !self.oidc_secret_file.is_empty() {
-            return Err("GM_AUTH_OIDC_CLIENT_SECRET and GM_AUTH_OIDC_CLIENT_SECRET_FILE are mutually exclusive".into());
-        }
+    /// Go's validateSecrets, in its order: both exclusions, each method's settings, then the provider's.
+    fn validate_secrets(&self) -> Result<(), ConfigError> {
+        let (password, oidc) = (self.mode.password(), self.mode.oidc());
         let oidc_complete = !self.oidc_issuer.is_empty()
             && !self.oidc_client_id.is_empty()
             && (!self.oidc_client_secret.is_empty() || !self.oidc_secret_file.is_empty())
             && !self.oidc_allowed_groups.is_empty();
-        if self.mode.oidc() && !oidc_complete {
-            return Err(
-                "OIDC authentication requires issuer, client ID, one client secret source, and allowed groups".into(),
-            );
-        }
-        if !self.mode.oidc() && self.has_oidc_settings() {
-            return Err("OIDC settings configured while OIDC authentication is disabled".into());
-        }
-        if self.mode.oidc() {
-            self.validate_oidc_issuer()?;
-            if self.oidc_provider_name.trim().is_empty() {
-                return Err("GM_AUTH_OIDC_PROVIDER_NAME must not be empty".into());
+        let issuer =
+            split_url(&self.oidc_issuer).is_ok_and(|(origin, rest)| origin.scheme == "https" && !rest.contains('?'));
+        let name = &self.oidc_provider_name;
+        Err(
+            if !self.password_hash.is_empty() && !self.password_hash_file.is_empty() {
+                "GM_AUTH_PASSWORD_HASH and GM_AUTH_PASSWORD_HASH_FILE are mutually exclusive"
+            } else if !self.oidc_client_secret.is_empty() && !self.oidc_secret_file.is_empty() {
+                "GM_AUTH_OIDC_CLIENT_SECRET and GM_AUTH_OIDC_CLIENT_SECRET_FILE are mutually exclusive"
+            } else if password && !self.has_password_source() {
+                "password authentication requires exactly one password hash source"
+            } else if !password && self.has_password_source() {
+                "password hash configured while password authentication is disabled"
+            } else if oidc && !oidc_complete {
+                "OIDC authentication requires issuer, client ID, one client secret source, and allowed groups"
+            } else if !oidc && self.has_oidc_settings() {
+                "OIDC settings configured while OIDC authentication is disabled"
+            } else if oidc && !issuer {
+                "GM_AUTH_OIDC_ISSUER must be an HTTPS URL with no credentials, query, or fragment"
+            } else if oidc && name.trim().is_empty() {
+                "GM_AUTH_OIDC_PROVIDER_NAME must not be empty"
+            } else if name.len() > 64 || !name.chars().all(graphite_meter_core::text::display_character) {
+                "GM_AUTH_OIDC_PROVIDER_NAME must be at most 64 bytes of UTF-8 without control characters"
+            } else {
+                return Ok(());
             }
-        }
-        if self.oidc_provider_name.len() > 64
-            || self
-                .oidc_provider_name
-                .chars()
-                .any(|c| !graphite_meter_core::text::display_character(c))
-        {
-            return Err("GM_AUTH_OIDC_PROVIDER_NAME must be at most 64 bytes without control characters".into());
-        }
-        Ok(())
+            .into(),
+        )
     }
+}
 
-    fn validate_oidc_issuer(&self) -> Result<(), ConfigError> {
-        if !split_url(&self.oidc_issuer).is_ok_and(|(origin, rest)| origin.scheme == "https" && !rest.contains('?')) {
-            return Err("GM_AUTH_OIDC_ISSUER must be an HTTPS URL with no credentials, query, or fragment".into());
-        }
-        Ok(())
-    }
+/// The scheme and hostname Go's url.Parse reads from `raw`, where it parses: a port must be numeric.
+fn url_host(raw: &str) -> Option<(&str, &str)> {
+    let (scheme, rest) = raw.split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let host = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    let (host, port) = match host.strip_prefix('[') {
+        Some(bracketed) => bracketed.split_once(']')?,
+        None => host.rsplit_once(':').unwrap_or((host, "")),
+    };
+    let port = port.strip_prefix(':').unwrap_or(port);
+    port.bytes().all(|byte| byte.is_ascii_digit()).then_some((scheme, host))
 }
 
 /// A configured origin, which Go's `CanonicalOrigin` accepts: never on port 0.

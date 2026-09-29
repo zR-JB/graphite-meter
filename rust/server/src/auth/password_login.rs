@@ -152,10 +152,17 @@ pub(super) fn read_secret(name: &str, inline: &str, path: &str, limit: u64) -> R
     if !inline.is_empty() {
         return Ok(Zeroizing::new(inline.trim().to_owned()));
     }
+    // Go's os.PathError text: the operation, the path and the C library's message, in lower case.
+    let failed = |operation: &str, error: std::io::Error| {
+        let message = error.to_string().to_lowercase();
+        let message = message.split(" (os error").next().unwrap_or_default();
+        format!("{name}: {operation} {path}: {message}")
+    };
     let mut bytes = Zeroizing::new(Vec::new());
-    File::open(path)
-        .and_then(|file| file.take(limit + 1).read_to_end(&mut bytes))
-        .map_err(|error| format!("{name}: {path}: {error}"))?;
+    let file = File::open(path).map_err(|error| failed("open", error))?;
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| failed("read", error))?;
     if bytes.len() as u64 > limit {
         return Err(format!("{name}: secret file exceeds {limit} bytes").into());
     }

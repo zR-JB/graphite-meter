@@ -185,7 +185,7 @@ fn apply(config: &mut Config, Setting(env, _, _, kind): &Setting, raw: &str) -> 
             *field(config) = usize::try_from(value.parse::<i64>().map_err(|_| "must be an integer")?).unwrap_or(0);
         }
         Span(field) => {
-            let nanos = parse_go_duration(value).map_err(|_| format!("time: invalid duration {value:?}"))?;
+            let nanos = parse_go_duration(value).map_err(|_| duration_error(value))?;
             *field(config) = Duration::from_nanos(u64::try_from(nanos).unwrap_or(0));
         }
         Bool(field) => {
@@ -197,6 +197,30 @@ fn apply(config: &mut Config, Setting(env, _, _, kind): &Setting, raw: &str) -> 
         }
     }
     Ok(())
+}
+
+/// Go's time.ParseDuration text for a refused duration: the first segment without digits, unit, or a known unit.
+fn duration_error(value: &str) -> String {
+    fn digits(text: &str) -> &str {
+        text.trim_start_matches(|c: char| c.is_ascii_digit())
+    }
+    let mut rest = value.strip_prefix(['+', '-']).unwrap_or(value);
+    while !rest.is_empty() {
+        let after = digits(rest);
+        let after = after.strip_prefix('.').map_or(after, digits);
+        let unit = &after[..after
+            .find(|c: char| c == '.' || c.is_ascii_digit())
+            .unwrap_or(after.len())];
+        if !rest[..rest.len() - after.len()].contains(|c: char| c.is_ascii_digit()) {
+            break;
+        } else if unit.is_empty() {
+            return format!("time: missing unit in duration {value:?}");
+        } else if !["ns", "us", "µs", "μs", "ms", "s", "m", "h"].contains(&unit) {
+            return format!("time: unknown unit {unit:?} in duration {value:?}");
+        }
+        rest = &after[unit.len()..];
+    }
+    format!("time: invalid duration {value:?}")
 }
 
 fn advertised_native(config: &mut Config, value: &str) -> Result<(), String> {
