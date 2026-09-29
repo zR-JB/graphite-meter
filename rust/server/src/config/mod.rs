@@ -202,9 +202,13 @@ impl Deref for ValidatedConfig {
 }
 
 impl Config {
-    /// This configuration, once `validate` accepts it.
-    pub fn validated(self) -> Result<ValidatedConfig, ConfigError> {
+    /// This configuration, once `validate` accepts it, with a canonical authentication origin.
+    pub fn validated(mut self) -> Result<ValidatedConfig, ConfigError> {
         self.validate()?;
+        if self.auth.mode != AuthMode::Off {
+            // Go keeps the host's spelling, and so refuses every sign-in whose Origin spells it in lower case.
+            self.auth.public_url = graphite_meter_core::origin::canonical_origin(&self.auth.public_url)?;
+        }
         Ok(ValidatedConfig(self))
     }
 

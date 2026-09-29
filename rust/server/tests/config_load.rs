@@ -276,6 +276,24 @@ fn start(env: &[(&str, &str)], args: &[&str]) -> (Option<i32>, String) {
 }
 
 #[test]
+fn the_authentication_origin_is_canonical_once_validated() {
+    let env = [
+        ("GM_AUTH_MODE", "password"),
+        ("GM_AUTH_PUBLIC_URL", "HTTPS://Meter.Example:8443"),
+        (
+            "GM_AUTH_PASSWORD_HASH",
+            "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0",
+        ),
+        ("GM_ADVERTISED_NATIVE_ENDPOINTS", "none"),
+        ("GM_PUBLIC_ORIGINS", "self"),
+    ];
+    assert_eq!(load(&env, &[]).unwrap().auth.public_url, "https://meter.example:8443");
+    let (code, stderr) = start(&env, &[]);
+    assert_eq!(code, None, "{stderr}");
+    assert!(stderr.contains(" origin=https://meter.example:8443 "), "{stderr}");
+}
+
+#[test]
 fn executable_reports_usage_and_refuses_invalid_identity_like_go() {
     let help = server().arg("-h").output().unwrap();
     let usage = String::from_utf8(help.stderr).unwrap();

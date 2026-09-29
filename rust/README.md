@@ -223,6 +223,9 @@ Discovery also refuses an authorization endpoint off a canonical HTTPS origin,
 such as one on port 0, which sign-in pages would name in their form-action;
 Go accepts it and renders those pages.
 
+`GM_AUTH_PUBLIC_URL` is used in canonical form: `HTTPS://Meter.Example` serves as
+`https://meter.example`, where Go keeps the host's spelling and so refuses every
+sign-in whose browser sends it in lower case.
 Authentication forms require URL-encoded POST bodies with unique fields. Unlike
 Go's form parser, Rust does not accept passwords or CSRF proofs from URL queries.
 A CLI approval page opened by another login is refused at once, where Go shows
