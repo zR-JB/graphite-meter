@@ -203,6 +203,7 @@ fn sample(ui: &mut Ui, quarters: u64, down_bps: Option<f64>, latest_ms: Option<f
             id: "a".into(),
             latest_ms,
             timeouts,
+            steps: vec![(Instant::now(), latest_ms.unwrap_or(f64::NAN), 1)],
         }];
     });
 }

@@ -36,15 +36,18 @@ pub(super) struct Trace {
 }
 
 impl Trace {
-    pub(super) fn add(&mut self, at: f64, value: f64) {
+    /// Adds the mean of `count` samples; one from before the last point, such as replies ahead of a
+    /// stage's mark, joins that point.
+    pub(super) fn add(&mut self, at: f64, value: f64, count: usize) {
         self.step = self.step.max(TRACE_STEP);
+        let at = self.points.last().map_or(at, |last| at.max(last.0));
         if let Some(last) = self.points.last_mut()
             && at - last.0 < self.step
             && !value.is_nan()
             && !last.1.is_nan()
         {
-            last.2 += 1;
-            last.1 += (value - last.1) / last.2 as f64;
+            last.2 += count;
+            last.1 += (value - last.1) * count as f64 / last.2 as f64;
             return;
         }
         if self.points.len() == HISTORY_POINTS {
@@ -63,7 +66,7 @@ impl Trace {
             });
             (self.points, self.step) = (pairs.collect(), self.step * 2.0);
         }
-        self.points.push((at, value, 1));
+        self.points.push((at, value, count));
     }
 }
 
@@ -95,15 +98,10 @@ impl Run {
         }
     }
 
-    fn clock(&self, at: Instant) -> f64 {
-        self.started
-            .map_or(0.0, |started| at.saturating_duration_since(started).as_secs_f64())
-    }
-
     /// Go's apply: stage events set the marks and clear the stage's readings; samples extend the traces.
     pub(super) fn observe(&mut self, snapshot: &Snapshot) {
         let now = Instant::now();
-        let at = self.clock(now);
+        let at = clock(self.started, now);
         let step = (snapshot.stage, snapshot.phase);
         if self.step != Some(step) {
             if snapshot.phase == Phase::Preparing {
@@ -113,7 +111,7 @@ impl Run {
             if let (Some(stage), Phase::Measuring) = step {
                 self.marks.push((at, stage));
                 for trace in self.traces.iter_mut().chain(self.rtt.values_mut()) {
-                    trace.add(at, f64::NAN);
+                    trace.add(at, f64::NAN, 1);
                 }
             }
             (self.step, self.since, self.sample) = (Some(step), Some(now), None);
@@ -123,15 +121,18 @@ impl Run {
             self.sample = Some(latest.elapsed);
             let rates = [latest.down_bps, latest.up_bps];
             for index in directions(snapshot.stage.unwrap_or_default()) {
-                self.traces[index].add(at, rates[index].map_or(f64::NAN, |bits| bits / 8.0));
+                self.traces[index].add(at, rates[index].map_or(f64::NAN, |bits| bits / 8.0), 1);
                 if rates[index].is_none() || self.shown[index].is_none() {
                     self.shown[index] = rates[index];
                 }
             }
+            // Go's chart takes every reply, as a mean per step, and each timeout as a gap.
             for host in &snapshot.server_latencies {
-                let Some(ms) = host.latest_ms else { continue };
-                self.latest.insert(host.id.clone(), ms);
-                self.rtt.entry(host.id.clone()).or_default().add(at, ms * 1e6);
+                self.latest.extend(host.latest_ms.map(|ms| (host.id.clone(), ms)));
+                let trace = self.rtt.entry(host.id.clone()).or_default();
+                for (step, ms, count) in &host.steps {
+                    trace.add(clock(self.started, *step), ms * 1e6, *count);
+                }
             }
         }
         if !snapshot.phase.live() {
@@ -154,7 +155,7 @@ impl Run {
 
     /// Go's span: the run's time so far, or until it ended.
     fn span(&self) -> f64 {
-        self.clock(self.ended.unwrap_or_else(Instant::now))
+        clock(self.started, self.ended.unwrap_or_else(Instant::now))
     }
 
     /// Go's progress: the planned stage time done, where a partial or failed stage counts nothing.
@@ -173,6 +174,11 @@ impl Run {
         }
         (done.as_secs_f64() / total.as_secs_f64().max(1.0) * 100.0) as u8
     }
+}
+
+/// Seconds of the run's clock from its start to `at`.
+fn clock(started: Option<Instant>, at: Instant) -> f64 {
+    started.map_or(0.0, |started| at.saturating_duration_since(started).as_secs_f64())
 }
 
 /// Go's axis: the unit its values scale to and the label of the top.
@@ -644,6 +650,27 @@ mod tests {
     use super::*;
 
     /// Go's TestChartJoinsSamplesAndBreaksOnlyAtGaps, and an empty chart claims no scale.
+    /// Go's run.go:369-378: the RTT chart takes each measured reply, as a mean per step, and a gap per timeout.
+    #[test]
+    fn the_rtt_chart_takes_every_reply_and_timeout() {
+        let (mut run, at, ms) = (Run::new(Config::default()), Instant::now(), Duration::from_millis);
+        let steps = vec![(at, 2.0, 3), (at + ms(60), f64::NAN, 1), (at + ms(80), 4.0, 1)];
+        #[rustfmt::skip]
+        let host = crate::model::ServerLatency { id: "a".into(), latest_ms: Some(4.0), steps, ..Default::default() };
+        let latest = crate::model::Point {
+            sample_count: 1,
+            ..Default::default()
+        };
+        #[rustfmt::skip]
+        run.observe(&Snapshot { phase: Phase::Measuring, latest, server_latencies: vec![host], ..Default::default() });
+        let points: Vec<_> = run.rtt["a"]
+            .points
+            .iter()
+            .map(|point| (point.1 / 1e6, point.2))
+            .collect();
+        assert_eq!(format!("{points:?}"), "[(2.0, 3), (NaN, 1), (4.0, 1)]");
+    }
+
     #[test]
     fn charts_join_samples_and_break_only_at_gaps() {
         let mut trace = Trace::default();
@@ -653,7 +680,7 @@ mod tests {
                 101..130 => continue,
                 _ => 1e6 + 9e5 * (f64::from(index) / 3.0).sin(),
             };
-            trace.add(f64::from(index) * 0.1, value);
+            trace.add(f64::from(index) * 0.1, value, 1);
         }
         let theme = Theme::new(crate::theme::Profile::TrueColor, true);
         let marks = [(0.0, Stage::Latency), (4.0, Stage::Download), (19.5, Stage::Upload)];

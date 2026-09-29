@@ -136,6 +136,8 @@ struct HostLatency {
     latest: Option<f64>,
     /// The probes in a row that timed out, which Go's live view reads out.
     timeouts: u32,
+    /// What Go's chart takes of the probes measured since the last sample.
+    steps: Vec<(Instant, f64, usize)>,
     ended_at: Option<Instant>,
     ending: Option<Ending>,
 }
@@ -927,13 +929,23 @@ fn observe(
     (id, event): (String, Observation),
 ) {
     if let (Some(host), Some((start, end))) = (hosts.get_mut(&id), window) {
-        match event {
-            Observation::Sample { .. } => host.timeouts = 0,
+        // Go's chart takes every reply and timeout of a probe the window measures.
+        let charted = match event {
+            Observation::Sample { sent, rtt, .. } => {
+                host.timeouts = 0;
+                Some((sent, sent + rtt, rtt.as_secs_f64() * 1000.0))
+            }
             Observation::Lost {
+                sent,
                 outcome: ProbeOutcome::Timeout,
-                ..
-            } => host.timeouts += 1,
-            Observation::Lost { .. } | Observation::ConnectionBoundary => {}
+            } => {
+                host.timeouts += 1;
+                Some((sent, Instant::now(), f64::NAN))
+            }
+            Observation::Lost { .. } | Observation::ConnectionBoundary => None,
+        };
+        if let Some((_, at, ms)) = charted.filter(|(sent, ..)| (start..end).contains(sent)) {
+            crate::model::ServerLatency::step(&mut host.steps, at, ms);
         }
         observe_latency(event, start, end, &mut host.accumulator, &mut host.latest);
     }
@@ -943,6 +955,10 @@ fn sample_hosts(hosts: &mut BTreeMap<String, HostLatency>, snapshot: &mut Snapsh
     for host in &mut snapshot.server_latencies {
         host.timeouts = hosts.get(&host.id).map_or(0, |state| state.timeouts);
         host.latest_ms = hosts.get_mut(&host.id).and_then(|state| state.latest.take());
+        host.steps = hosts
+            .get_mut(&host.id)
+            .map(|state| std::mem::take(&mut state.steps))
+            .unwrap_or_default();
     }
 }
 

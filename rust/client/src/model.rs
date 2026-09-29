@@ -171,6 +171,22 @@ pub struct ServerLatency {
     pub latest_ms: Option<f64>,
     /// The probes in a row that timed out, as Go's live view counts them.
     pub timeouts: u32,
+    /// Since the last sample, the measured probes as Go's chart takes each one: every 50 ms step's
+    /// start, mean round trip in milliseconds and replies, with a timeout as a NaN step.
+    pub steps: Vec<(tokio::time::Instant, f64, usize)>,
+}
+
+impl ServerLatency {
+    /// Adds a measured reply's round trip in milliseconds, or NaN for a timeout, to `steps`.
+    pub(crate) fn step(steps: &mut Vec<(tokio::time::Instant, f64, usize)>, at: tokio::time::Instant, ms: f64) {
+        match steps.last_mut() {
+            Some((start, mean, count)) if at < *start + Duration::from_millis(50) && !(ms + *mean).is_nan() => {
+                *count += 1;
+                *mean += (ms - *mean) / *count as f64;
+            }
+            _ => steps.push((at, ms, 1)),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
