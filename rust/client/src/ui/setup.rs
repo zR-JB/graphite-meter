@@ -542,9 +542,10 @@ impl Ui {
         let raw = raw
             .parse::<f64>()
             .map_or_else(|_| raw.to_owned(), |seconds| format!("{seconds}s"));
-        let nanos = parse_go_duration(&raw).ok().and_then(|nanos| u64::try_from(nanos).ok());
-        let nanos = nanos.ok_or("use a duration like 800ms, 4s, or 1m; a bare number is seconds")?;
-        let value = Duration::from_nanos(nanos);
+        let nanos =
+            parse_go_duration(&raw).map_err(|_| "use a duration like 800ms, 4s, or 1m; a bare number is seconds");
+        // A negative duration is out of range, as Go's DurationBound.Check reads it.
+        let value = u64::try_from(nanos?).map_or(Duration::MAX, Duration::from_nanos);
         if !bound.contains(&value) {
             let seconds = |bound: &Duration| format!("{} s", bound.as_secs_f64());
             let (min, max) = (seconds(bound.start()), seconds(bound.end()));

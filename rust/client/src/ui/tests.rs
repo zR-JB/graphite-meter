@@ -387,7 +387,7 @@ fn edits_apply_and_refuse_as_go_parses_them() {
     let (commands, _sent) = mpsc::channel(32);
     let (download, upload) = (Setting::Stage(Stage::Download), Setting::Stage(Stage::Upload));
     let origin = "use an http:// or https:// origin, for example https://meter.example";
-    let upload_bound = "Upload must be from 1 s to 300 s";
+    let (upload_bound, warmup) = ("Upload must be from 1 s to 300 s", "Warmup must be from 0 s to 4 s");
     let duration = "use a duration like 800ms, 4s, or 1m; a bare number is seconds";
     let streams = "streams must be a whole number from 1 to 14";
     #[rustfmt::skip]
@@ -397,11 +397,11 @@ fn edits_apply_and_refuse_as_go_parses_them() {
         (Setting::Catalogue, "https://METER.example", Ok("https://meter.example")),
         (Setting::Catalogue, "ftp://x", Err(origin)),
         (Setting::Warmup, "0", Ok("0s")),
-        (Setting::Warmup, "5s", Err("Warmup must be from 0 s to 4 s")),
+        (Setting::Warmup, "5s", Err(warmup)),
         (download, "12", Ok("12s")),
         (download, "1.5m", Ok("1m30s")),
         (upload, "0", Err(upload_bound)),
-        (upload, "6m", Err(upload_bound)),
+        (upload, "6m", Err(upload_bound)), (upload, "-2", Err(upload_bound)), (Setting::Warmup, "-1", Err(warmup)),
         (upload, "soon", Err(duration)),
         (Setting::Streams, "8", Ok("8 0")),
         (Setting::Streams, "15", Err(streams)),
