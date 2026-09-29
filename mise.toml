@@ -347,7 +347,8 @@ run = [
   "scripts/verify-container.sh graphite-meter:smoke",
 ]
 
-# Mirrors CI job by job: server-race replaces check's server-test.
+# Mirrors the Go, browser, release and container CI jobs (server-race replaces check's
+# server-test); the Rust jobs run their own tasks, as scripts/ci/README.md lists.
 [tasks.ci]
 description = "Run deterministic, race, advisory, browser, release, and container gates"
 run = [

@@ -17,8 +17,11 @@ mise run workflow-check    # actionlint, zizmor, workflow_policy.py, tool pins
 mise run pipeline-test     # ty type check, control-plane and legal tests
 ```
 
-`mise run check` is the deterministic developer gate; `mise run ci` runs every
-CI job's task locally, and the policy fails if one of its steps has no CI job.
+`mise run check` is the deterministic developer gate; `mise run ci` runs the tasks
+of the Go, browser, release and container CI jobs locally, and the policy fails if one of
+its steps has no CI job. The Rust jobs are not part of it: they run `rust-check`,
+`rust-check-targets`, the interop scripts with `rust-delayed-downloads`, Docker builds of
+`container/Dockerfile.rust` and `rust-darwin-package`.
 `Gate` is the only required status and needs every job. Path filters (`.github/ci-paths.yml`)
 narrow PR runs only; every push to main runs every job. `advisories.yml`
 rechecks Rust dependencies against the live RustSec database daily. The Rust

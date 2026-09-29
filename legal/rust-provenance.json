@@ -23,7 +23,7 @@
         "kind": "license"
       }
     ],
-    "reviewNotes": "Candidate only. The crate and exact upstream commit omit license files. Cargo.toml.upstream is byte-identical to the published Cargo.toml.orig and declares MIT OR Apache-2.0. LICENSE-APACHE was fetched from https://www.apache.org/licenses/LICENSE-2.0.txt. Proposed selection: Apache-2.0. Source declaration: https://github.com/Eolu/enum-assoc/blob/351b306939b150601451df752a183b077b0de85a/Cargo.toml. No upstream NOTICE file exists at that revision."
+    "reviewNotes": "The crate and exact upstream commit omit license files. Cargo.toml.upstream is byte-identical to the published Cargo.toml.orig and declares MIT OR Apache-2.0. LICENSE-APACHE was fetched from https://www.apache.org/licenses/LICENSE-2.0.txt. Selected: Apache-2.0, as its approved review records. Source declaration: https://github.com/Eolu/enum-assoc/blob/351b306939b150601451df752a183b077b0de85a/Cargo.toml. No upstream NOTICE file exists at that revision."
   },
   {
     "ecosystem": "cargo",
