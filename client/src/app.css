@@ -179,6 +179,8 @@
   --role-caption: var(--w-normal) var(--type-xs) / 1.5 var(--font-sans);
   --role-panel-title: var(--w-strong) var(--type-lg) / 1.25 var(--font-display);
   --role-label: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
+  /* Centred beside a larger word, a smaller one sits half their size gap high; that gap as its top margin sets it
+     on the larger word's baseline, e.g. margin-top: calc(var(--type-md) - var(--type-sm)). */
   --track-tight: -0.02em;
   --track-wide: 0.1em;
 
@@ -756,7 +758,7 @@
   .stage-area:is(.complete, .partial, .failed, .stopped) {
     --wash: 9%;
   }
-  .stage-area.active {
+  .stage-area:is(.active, .recovering) {
     --wash: 16%;
   }
   .stage-area:is(.pending, .not-run) {
