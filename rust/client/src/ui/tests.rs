@@ -628,6 +628,11 @@ fn servers_ready_and_chosen_as_go_shows_them() {
     }
     assert!(ui.can_use_available());
     assert!(crate::report::plain(&ui.row(Setting::Servers).value).contains("1 of 3 ready"));
+    // Go mutes the checked paths unless every selected server is ready.
+    ui.theme = Theme::new(crate::theme::Profile::Ansi256, true);
+    #[rustfmt::skip]
+    let summary = ui.layout().body.into_iter().flat_map(|line| line.spans).find(|span| span.content.starts_with("Fetch"));
+    assert_eq!(summary.map(|span| span.style), Some(ui.theme.muted));
     press(&mut ui, &commands, &["u"]);
     assert_eq!(ui.notice, "Using the available servers.");
     assert_eq!(ui.config.servers, ["a"]);

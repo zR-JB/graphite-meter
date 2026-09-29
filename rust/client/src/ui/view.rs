@@ -480,10 +480,13 @@ impl Ui {
         if self.can_use_available() && self.snapshot.auth.is_none() {
             lines.push(line("u Use available servers", theme.muted));
         }
-        // Go's pathSummaries: each distinct path the check chose, muted once it is no longer fresh.
+        // Go's pathSummaries: each distinct path the check chose, muted once it is no longer fresh,
+        // which as Go's FreshFor needs these settings checked lately and every server ready.
         let (mut throughputs, mut latencies) = (Vec::<String>::new(), Vec::<String>::new());
+        let mut fresh = self.checked_key == Some(self.config.preparation_key()) && !self.stale();
         for server in self.checked() {
             if !server.checked() || server.error.is_some() {
+                fresh = false;
                 continue;
             }
             let throughput = server.throughput.as_ref().map(words::throughput_path);
@@ -494,7 +497,6 @@ impl Ui {
                 }
             }
         }
-        let fresh = self.checked_key == Some(self.config.preparation_key()) && !self.stale();
         let style = if fresh { theme.value } else { theme.muted };
         let value = |summaries: Vec<String>| match summaries.is_empty() {
             true => span(MISSING, theme.muted),
