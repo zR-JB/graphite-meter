@@ -63,6 +63,34 @@ fn upgrade_validates_origin_and_key_without_negotiating_compression() {
     assert_eq!(handshake(&request, None).status(), StatusCode::BAD_REQUEST);
 }
 
+#[test]
+fn upgrade_checks_run_in_go_s_order() {
+    use http::{Method, Request, StatusCode, header};
+    // As Go's library, the upgrade tokens come before the method, and the method before the version and key.
+    let request = |method: Method, upgrade: bool| {
+        let mut request = Request::builder().method(method).uri("/ws/ping");
+        if upgrade {
+            request = request
+                .header(header::CONNECTION, "Upgrade")
+                .header(header::UPGRADE, "websocket");
+        }
+        request
+    };
+    let response = handshake(&request(Method::HEAD, false).body(()).unwrap(), None);
+    assert_eq!(response.status(), StatusCode::UPGRADE_REQUIRED);
+    assert_eq!(response.headers()[header::UPGRADE], "websocket");
+    let response = handshake(&request(Method::HEAD, true).body(()).unwrap(), None);
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    let repeated = request(Method::GET, true)
+        .header(header::SEC_WEBSOCKET_KEY, NONCE)
+        .header(header::SEC_WEBSOCKET_KEY, NONCE)
+        .body(())
+        .unwrap();
+    let response = handshake(&repeated, None);
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.headers()[header::SEC_WEBSOCKET_VERSION], "13");
+}
+
 async fn session() -> (
     WebSocketStream<DuplexStream>,
     oneshot::Sender<CloseReason>,

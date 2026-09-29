@@ -2,7 +2,7 @@
 
 use crate::timeouts::{IDLE_BOUND, WS_CLOSE};
 use futures_util::{SinkExt, StreamExt};
-use http::{Request, Response, StatusCode, header};
+use http::{Method, Request, Response, StatusCode, header};
 use std::future::Future;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::{
@@ -31,13 +31,11 @@ pub fn handshake<B>(request: &Request<B>, allowed_origin: Option<&str>) -> Respo
     {
         return refusal(StatusCode::FORBIDDEN);
     }
-    if request.headers().get_all(header::SEC_WEBSOCKET_KEY).iter().count() > 1 {
-        return refusal(StatusCode::BAD_REQUEST);
-    }
     // Go accepts token lists spread across repeated upgrade headers. Normalize
-    // those lists for Tungstenite, which expects a single Upgrade value.
+    // those lists for Tungstenite, which expects a single Upgrade value. Its
+    // checks run as for a GET: Go's library checks the version and the upgrade
+    // tokens before the method, and the method before the key.
     let mut normalized = Request::new(());
-    *normalized.method_mut() = request.method().clone();
     *normalized.version_mut() = request.version();
     *normalized.headers_mut() = request.headers().clone();
     for (name, token) in [(header::CONNECTION, "Upgrade"), (header::UPGRADE, "websocket")] {
@@ -52,14 +50,6 @@ pub fn handshake<B>(request: &Request<B>, allowed_origin: Option<&str>) -> Respo
         }
     }
     match create_response_with_body(&normalized, || ()) {
-        Ok(response) => response,
-        Err(Error::Protocol(ProtocolError::WrongHttpMethod)) => {
-            let mut response = refusal(StatusCode::METHOD_NOT_ALLOWED);
-            response
-                .headers_mut()
-                .insert(header::ALLOW, http::HeaderValue::from_static("GET"));
-            response
-        }
         Err(Error::Protocol(
             ProtocolError::WrongHttpVersion
             | ProtocolError::MissingConnectionUpgradeHeader
@@ -74,6 +64,13 @@ pub fn handshake<B>(request: &Request<B>, allowed_origin: Option<&str>) -> Respo
                 .insert(header::UPGRADE, "websocket".parse().unwrap());
             response
         }
+        _ if request.method() != Method::GET => {
+            let mut response = refusal(StatusCode::METHOD_NOT_ALLOWED);
+            response
+                .headers_mut()
+                .insert(header::ALLOW, http::HeaderValue::from_static("GET"));
+            response
+        }
         Err(Error::Protocol(ProtocolError::MissingSecWebSocketVersionHeader)) => {
             let mut response = refusal(StatusCode::BAD_REQUEST);
             response
@@ -81,6 +78,10 @@ pub fn handshake<B>(request: &Request<B>, allowed_origin: Option<&str>) -> Respo
                 .insert(header::SEC_WEBSOCKET_VERSION, "13".parse().unwrap());
             response
         }
+        _ if request.headers().get_all(header::SEC_WEBSOCKET_KEY).iter().count() > 1 => {
+            refusal(StatusCode::BAD_REQUEST)
+        }
+        Ok(response) => response,
         Err(_) => refusal(StatusCode::BAD_REQUEST),
     }
 }
