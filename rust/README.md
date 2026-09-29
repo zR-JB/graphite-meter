@@ -221,7 +221,8 @@ JWT or JOSE are rejected, and signed user information must name the issuer and
 the client. Unknown signing keys trigger one coordinated JWKS refresh.
 Discovery also refuses an authorization endpoint off a canonical HTTPS origin,
 such as one on port 0, which sign-in pages would name in their form-action;
-Go accepts it and renders those pages.
+Go accepts it and renders those pages. It refuses one with a fragment too, after
+which Go appends the sign-in query; other endpoints drop theirs, as Go's client does.
 
 `GM_AUTH_PUBLIC_URL` is used in canonical form: `HTTPS://Meter.Example` serves as
 `https://meter.example`, where Go keeps the host's spelling and so refuses every

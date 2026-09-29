@@ -481,6 +481,13 @@ async fn forged_or_misbound_tokens_are_refused_and_rotation_refetches_keys_once(
     let identity = provider.login(Claims::default()).await.unwrap();
     assert_eq!(identity.subject, "oidc:operator");
     assert_eq!(identity.name, "München  العربية  👩\u{200d}💻");
+    // As in Go's decoder, a null string is empty.
+    *provider.twist.lock().unwrap() = Twist {
+        claims: Some(json!({"at_hash": null})),
+        tokens: Some(json!({"error": null})),
+        ..Twist::default()
+    };
+    assert!(provider.login(Claims::default()).await.is_ok());
     let before = provider.jwks_requests.load(Ordering::SeqCst);
     assert_eq!(before, 2);
     *provider.twist.lock().unwrap() = Twist {
@@ -559,46 +566,33 @@ async fn rs256_signs_in_only_where_go_oidc_supports_no_advertised_algorithm() {
 }
 
 #[tokio::test]
-async fn an_authorization_endpoint_off_a_canonical_origin_fails_discovery() {
+async fn discovery_refuses_only_an_authorization_endpoint_that_breaks_sign_in() {
     let provider = provider_double("localhost", &["RS256"], Proxy::default()).await;
-    // Sign-in pages name the authorization origin in their form-action; port 0 is no origin a browser can post to.
-    provider.twist.lock().unwrap().metadata =
-        Some(json!({"authorization_endpoint": "https://idp.example:0/authorize"}));
-    let error = provider.oidc.discover().await.unwrap_err();
-    assert!(error.to_string().contains("authorization endpoint"), "{error}");
-    assert!(provider.oidc.ready().is_none());
-    provider.twist.lock().unwrap().metadata = None;
-    provider.oidc.discover().await.unwrap();
-    assert!(provider.oidc.ready().is_some());
-    provider.stop().await;
-}
-
-#[tokio::test]
-async fn a_null_optional_string_reads_as_empty_as_in_go() {
-    let provider = provider_double("localhost", &["RS256"], Proxy::default()).await;
-    *provider.twist.lock().unwrap() = Twist {
-        claims: Some(json!({"at_hash": null})),
-        tokens: Some(json!({"error": null})),
-        ..Twist::default()
-    };
-    let identity = provider.login(Claims::default()).await.unwrap();
-    assert_eq!(identity.subject, "oidc:operator");
-    provider.stop().await;
-}
-
-/// Go's TestOIDCDiscoveryToleratesMistypedOptionalMetadata.
-#[tokio::test]
-async fn discovery_tolerates_mistyped_optional_metadata() {
-    let provider = provider_double("localhost", &["RS256"], Proxy::default()).await;
-    provider.twist.lock().unwrap().metadata = Some(json!({"authorization_response_iss_parameter_supported": "yes"}));
-    provider.oidc.discover().await.unwrap();
-    let ready = provider
-        .oidc
-        .ready()
-        .expect("a mistyped optional metadata field disabled OIDC");
-    assert!(
-        !ready.issuer_parameter,
-        "the response issuer read from a mistyped field"
+    let issuer = provider.issuer.clone();
+    for (metadata, discovered) in [
+        // Sign-in pages name the authorization origin in their form-action; port 0 is no origin a browser can post to.
+        (
+            json!({"authorization_endpoint": "https://idp.example:0/authorize"}),
+            false,
+        ),
+        (
+            json!({"authorization_endpoint": format!("{issuer}/authorize#x")}),
+            false,
+        ),
+        // Go's TestOIDCDiscoveryToleratesMistypedOptionalMetadata, and fragments Go's client leaves out.
+        (
+            json!({"authorization_response_iss_parameter_supported": "yes", "token_endpoint": format!("{issuer}/token#x"),
+                "userinfo_endpoint": format!("{issuer}/userinfo#"), "jwks_uri": format!("{issuer}/jwks#x")}),
+            true,
+        ),
+    ] {
+        provider.twist.lock().unwrap().metadata = Some(metadata);
+        assert_eq!(provider.oidc.discover().await.is_ok(), discovered);
+    }
+    assert!(!provider.oidc.ready().unwrap().issuer_parameter);
+    assert_eq!(
+        provider.login(Claims::default()).await.unwrap().subject,
+        "oidc:operator"
     );
     provider.stop().await;
 }

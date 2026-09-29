@@ -71,12 +71,15 @@ impl Provider {
         if metadata.issuer != issuer {
             return Err("OIDC discovery issuer mismatch".into());
         }
-        for endpoint in [
-            &metadata.authorization_endpoint,
-            &metadata.token_endpoint,
-            &metadata.userinfo_endpoint,
-            &metadata.jwks_uri,
-        ] {
+        // Go's client leaves out a fragment. One on the authorization endpoint stays refused: Go appends the
+        // sign-in query to it, where no provider reads it.
+        let fetched = |url: String| url.split('#').next().unwrap_or_default().to_owned();
+        let (token, userinfo, jwks_uri) = (
+            fetched(metadata.token_endpoint),
+            fetched(metadata.userinfo_endpoint),
+            fetched(metadata.jwks_uri),
+        );
+        for endpoint in [&metadata.authorization_endpoint, &token, &userinfo, &jwks_uri] {
             valid_url(endpoint)?;
         }
         // Checked here rather than on every sign-in page: a browser can post only to a canonical origin.
@@ -87,9 +90,9 @@ impl Provider {
             page_headers,
             algorithms: Alg::allowed(&metadata.id_token_signing_alg_values_supported),
             authorization: metadata.authorization_endpoint,
-            token: metadata.token_endpoint,
-            userinfo: metadata.userinfo_endpoint,
-            jwks_uri: metadata.jwks_uri,
+            token,
+            userinfo,
+            jwks_uri,
             // Fetched with the first token, as by go-oidc.
             keys: AsyncMutex::new(Arc::new(Jwks::parse(br#"{"keys":[]}"#).expect("empty key set"))),
             issuer_parameter: metadata.authorization_response_iss_parameter_supported == true,
