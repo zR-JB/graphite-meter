@@ -564,17 +564,6 @@ impl Ui {
         self.prepare() != Prepare::Checking && ready > 0 && ready < self.readiness().len()
     }
 
-    /// Go's readinessSummary.
-    pub(super) fn readiness_summary(&self) -> String {
-        let (rows, ready) = (self.readiness().len(), self.ready_servers().len());
-        match () {
-            _ if rows == 0 => String::new(),
-            _ if self.prepare() == Prepare::Checking => "checking".into(),
-            _ if ready == rows => "ready".into(),
-            _ => format!("{ready} of {rows} ready"),
-        }
-    }
-
     /// Go's signInView: the code to match and how long the approval waits.
     fn sign_in_view(&self) -> (String, Text) {
         let theme = &self.theme;

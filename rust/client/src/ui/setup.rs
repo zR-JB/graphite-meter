@@ -1,5 +1,5 @@
 //! Go's setup list (setup.go): its settings, what each row shows, and what its keys change.
-use super::{Command, MAX_TEXT, Popup, Ui};
+use super::{Command, MAX_TEXT, Popup, Prepare, Ui};
 use crate::{
     config::{Config, MAX_STREAMS},
     model::{ServerSummary, Stage},
@@ -8,7 +8,11 @@ use crate::{
 };
 use graphite_meter_core::{
     catalog::MAX_SELECTED_SERVERS,
-    discovery::{Capabilities, Protocol, ThroughputTarget, ThroughputTransport},
+    discovery::{
+        Capabilities,
+        Protocol::{self, Http1, Http2, Http3},
+        ThroughputTarget, ThroughputTransport,
+    },
     duration::parse_go_duration,
     origin::{canonical_origin, catalog_origin, target_origin},
     text::terminal_character,
@@ -138,7 +142,7 @@ fn duration(config: &mut Config, setting: Setting) -> &mut Duration {
 }
 
 /// Go's pathChoice: an origin and transport as Go's settings name them, where "auto" is automatic.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(super) struct PathChoice {
     target: String,
     transport: String,
@@ -147,8 +151,8 @@ pub(super) struct PathChoice {
 }
 
 impl PathChoice {
-    fn automatic(transport: &str, label: String, note: String) -> Self {
-        let (target, transport) = ("auto".into(), transport.into());
+    fn new(target: &str, transport: &str, label: String, note: String) -> Self {
+        let (target, transport) = (target.into(), transport.into());
         Self {
             target,
             transport,
@@ -189,42 +193,26 @@ fn short_origin(base: &str, target: &str) -> String {
 
 /// Go's discoveredTargets: the advertised paths but datagram throughput, as choices without notes.
 fn discovered(offered: &Capabilities, latency: bool) -> Vec<PathChoice> {
-    let choice = |target: &String, transport, label| PathChoice {
-        target: target.clone(),
-        transport,
-        label,
-        ..PathChoice::default()
-    };
+    let new = |url: &str, transport: String, label| PathChoice::new(url, &transport, label, String::new());
     if latency {
-        let targets = offered.latency.iter();
-        let choices = targets.map(|target| {
-            choice(
-                &target.base_url,
-                wire(Some(target.transport)),
-                words::latency_path(target),
-            )
-        });
-        return choices.collect();
+        let paths = offered.latency.iter();
+        return paths
+            .map(|path| new(&path.base_url, wire(Some(path.transport)), words::latency_path(path)))
+            .collect();
     }
-    let targets = offered.throughput.iter().filter_map(|target| match target.transport {
-        ThroughputTransport::WebTransportDatagram => None,
-        kind => Some(choice(
-            &target.base_url,
-            wire(Some(kind)),
-            words::throughput_path(target),
-        )),
-    });
-    targets.collect()
+    let datagrams = ThroughputTransport::WebTransportDatagram;
+    let paths = offered.throughput.iter().filter(|path| path.transport != datagrams);
+    paths
+        .map(|path| new(&path.base_url, wire(Some(path.transport)), words::throughput_path(path)))
+        .collect()
 }
 
 impl Ui {
     /// Go's rows: every row, up to Advanced while it is hidden.
     pub(super) fn rows(&self) -> Vec<Setting> {
         let hidden = ROWS.iter().position(|row| row.1 == Setting::Advanced && !self.advanced);
-        ROWS[..hidden.map_or(ROWS.len(), |advanced| advanced + 1)]
-            .iter()
-            .map(|row| row.1)
-            .collect()
+        let shown = hidden.map_or(ROWS.len(), |advanced| advanced + 1);
+        ROWS[..shown].iter().map(|row| row.1).collect()
     }
 
     pub(super) fn current(&self) -> Setting {
@@ -250,17 +238,18 @@ impl Ui {
             Setting::Advanced => (Line::from(if self.advanced { "▾ shown" } else { "▸ hidden" }), false),
             Setting::Catalogue => (Line::from(config.url.clone()), false),
             Setting::Servers => {
+                // Go's selectedServerNames and readinessSummary.
                 let names: Vec<_> = self.checked().iter().map(|server| server.name.as_str()).collect();
-                let mut value = if names.is_empty() {
-                    MISSING.into()
-                } else {
-                    names.join(", ")
+                let names = names.join(", ");
+                let (rows, ready) = (self.readiness().len(), self.ready_servers().len());
+                let summary = match () {
+                    _ if rows == 0 => String::new(),
+                    _ if self.prepare() == Prepare::Checking => " · checking".into(),
+                    _ if ready == rows => " · ready".into(),
+                    _ => format!(" · {ready} of {rows} ready"),
                 };
-                let summary = self.readiness_summary();
-                if !summary.is_empty() {
-                    value = format!("{value} · {summary}");
-                }
-                (Line::from(value), !self.can_choose_servers())
+                let names = if names.is_empty() { MISSING } else { &names };
+                (Line::from(format!("{names}{summary}")), !self.can_choose_servers())
             }
             Setting::Path(latency) => {
                 let (choices, (target, transport)) = (self.path_choices(latency), path(config, latency));
@@ -330,18 +319,15 @@ impl Ui {
             false => server.throughput.as_ref().map(|target| &target.base_url),
         };
         let note = resolved.map(|origin| format!("→ {}", short_origin(&self.config.url, origin)));
-        let mut choices = vec![PathChoice::automatic(
-            "auto",
-            "Automatic".into(),
-            note.unwrap_or_default(),
-        )];
-        for mut choice in discovered(offered, latency) {
+        let automatic = PathChoice::new("auto", "auto", "Automatic".into(), note.unwrap_or_default());
+        let mut choices = vec![automatic];
+        for mut path in discovered(offered, latency) {
             if !choices
                 .iter()
-                .any(|known| known.selects((&choice.target, &choice.transport)))
+                .any(|known| known.selects((&path.target, &path.transport)))
             {
-                choice.note = short_origin(&self.config.url, &choice.target);
-                choices.push(choice);
+                path.note = short_origin(&self.config.url, &path.target);
+                choices.push(path);
             }
         }
         choices
@@ -349,12 +335,13 @@ impl Ui {
 
     /// Go's sharedPaths: Automatic and each transport, noting the servers that lack it.
     fn shared_paths(&self, latency: bool) -> Vec<PathChoice> {
-        let kinds = if latency {
-            ["websocket", "webtransport"]
-        } else {
-            ["fetch-stream", "webtransport"]
-        };
-        let mut choices = vec![PathChoice::automatic("auto", "Automatic".into(), "each server".into())];
+        let kinds = [if latency { "websocket" } else { "fetch-stream" }, "webtransport"];
+        let mut choices = vec![PathChoice::new(
+            "auto",
+            "auto",
+            "Automatic".into(),
+            "each server".into(),
+        )];
         for kind in kinds {
             let lacking = self.checked().into_iter().filter(|server| {
                 let paths = server.offered.as_ref().map(|offered| discovered(offered, latency));
@@ -365,7 +352,7 @@ impl Ui {
                 true => "every server".into(),
                 false => format!("unavailable on {}", names.join(", ")),
             };
-            choices.push(PathChoice::automatic(kind, words::transport(kind, latency), note));
+            choices.push(PathChoice::new("auto", kind, words::transport(kind, latency), note));
         }
         choices
     }
@@ -395,15 +382,8 @@ impl Ui {
                 self.notice = "Press enter again to reset every setting; any other key keeps them.".into();
             }
             Setting::Reset => {
-                let (url, servers) = (self.config.url.clone(), self.config.servers.clone());
-                (self.config, self.reset_prompt) = (
-                    Config {
-                        url,
-                        servers,
-                        ..Config::default()
-                    },
-                    false,
-                );
+                let kept = std::mem::take(&mut self.config);
+                (self.config.url, self.config.servers, self.reset_prompt) = (kept.url, kept.servers, false);
                 self.notice = "Settings reset to defaults.".into();
             }
             Setting::Stage(_) | Setting::Warmup => {
@@ -425,7 +405,7 @@ impl Ui {
         if let Some((bound, unit)) = setting.bound() {
             let value = duration(&mut self.config, setting);
             let moved = if step > 0 {
-                value.saturating_add(unit)
+                *value + unit
             } else {
                 value.saturating_sub(unit)
             };
@@ -486,17 +466,10 @@ impl Ui {
                     self.notice = format!("This path serves {} only.", words::protocol(Some(fixed)));
                     return;
                 }
-                let protocols = [
-                    None,
-                    Some(Protocol::Http1),
-                    Some(Protocol::Http2),
-                    Some(Protocol::Http3),
-                ];
-                let at = protocols
-                    .iter()
-                    .position(|protocol| *protocol == self.config.throughput_protocol);
-                self.config.throughput_protocol = protocols[next(at, protocols.len())];
-                self.notice = format!("HTTP version: {}.", words::protocol(self.config.throughput_protocol));
+                let (protocols, config) = ([None, Some(Http1), Some(Http2), Some(Http3)], &mut self.config);
+                let current = config.throughput_protocol;
+                config.throughput_protocol = protocols[next(protocols.iter().position(|at| *at == current), 4)];
+                self.notice = format!("HTTP version: {}.", words::protocol(config.throughput_protocol));
             }
             Setting::Cadence(loaded) => {
                 let config = &mut self.config;
@@ -510,12 +483,9 @@ impl Ui {
                 self.notice = format!("{}: {}.", setting.label(), words::cadence(*interval));
             }
             Setting::ForceStreams => {
-                self.config.streams = if self.config.streams > 0 {
-                    0
-                } else {
-                    self.config.auto_streams
-                };
-                self.notice = format!("Stream count: {}.", words::streams(&self.config, None));
+                let config = &mut self.config;
+                config.streams = if config.streams > 0 { 0 } else { config.auto_streams };
+                self.notice = format!("Stream count: {}.", words::streams(config, None));
             }
             Setting::Streams => self.set_streams(self.stream_count().saturating_add_signed(step).clamp(1, MAX_STREAMS)),
             _ => {}
@@ -539,7 +509,7 @@ impl Ui {
         let h1 = ThroughputTarget {
             base_url: String::new(),
             transport: ThroughputTransport::FetchStream,
-            protocol: Protocol::Http1,
+            protocol: Http1,
         };
         self.notice = format!("Stream count: {}.", words::streams(&self.config, Some(&h1)));
     }
@@ -614,11 +584,9 @@ impl Ui {
             self.notice = "This catalogue offers one server.".into();
         } else {
             (self.popup, self.server_row) = (Popup::Servers, 0);
-            let checked = self.checked().iter().map(|server| server.id.clone()).collect();
-            let ids = if self.config.servers.is_empty() {
-                checked
-            } else {
-                self.config.servers.clone()
+            let ids: Vec<_> = match self.config.servers.is_empty() {
+                true => self.checked().iter().map(|server| server.id.clone()).collect(),
+                false => self.config.servers.clone(),
             };
             let prepared = self.prepared.iter().map(|server| &server.id);
             self.draft = prepared.filter(|id| ids.contains(id)).cloned().collect();
@@ -662,15 +630,12 @@ fn default_scheme(raw: &str) -> &'static str {
         Some((name, port)) if port.bytes().all(|byte| byte.is_ascii_digit()) => name,
         _ => host,
     };
-    let host = host
-        .strip_prefix('[')
-        .and_then(|host| host.strip_suffix(']'))
-        .unwrap_or(host);
+    let bracketed = host.strip_prefix('[').and_then(|host| host.strip_suffix(']'));
+    let host = bracketed.unwrap_or(host);
     let loopback = host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback());
-    if loopback || host.eq_ignore_ascii_case("localhost") {
-        "http://"
-    } else {
-        "https://"
+    match loopback || host.eq_ignore_ascii_case("localhost") {
+        true => "http://",
+        false => "https://",
     }
 }
 
@@ -706,12 +671,11 @@ pub(super) struct Edit {
 
 impl Edit {
     fn new(setting: Setting, value: &str) -> Self {
-        let (chars, cursor, error) = (Vec::new(), 0, String::new());
         let mut edit = Self {
             setting,
-            chars,
-            cursor,
-            error,
+            chars: Vec::new(),
+            cursor: 0,
+            error: String::new(),
         };
         edit.insert(value);
         edit
@@ -735,21 +699,18 @@ impl Edit {
 
     /// textinput's default keymap; any other key types its text.
     pub(super) fn key(&mut self, name: &str, text: Option<char>) {
-        let (length, space) = (self.chars.len(), |at: usize| self.chars[at].is_whitespace());
-        let mut word_end = self.cursor;
-        while word_end < length && space(word_end) {
-            word_end += 1;
-        }
-        while word_end < length && !space(word_end) {
-            word_end += 1;
-        }
-        let mut word_start = self.cursor;
-        while word_start > 0 && space(word_start - 1) {
-            word_start -= 1;
-        }
-        while word_start > 0 && !space(word_start - 1) {
-            word_start -= 1;
-        }
+        let length = self.chars.len();
+        let (before, after) = self.chars.split_at(self.cursor);
+        // A word and the spaces before it, on each side of the cursor.
+        let spaces = after.iter().take_while(|c| c.is_whitespace()).count();
+        let word_end = self.cursor + spaces + after[spaces..].iter().take_while(|c| !c.is_whitespace()).count();
+        let spaces = before.iter().rev().take_while(|c| c.is_whitespace()).count();
+        let word = before[..before.len() - spaces]
+            .iter()
+            .rev()
+            .take_while(|c| !c.is_whitespace())
+            .count();
+        let word_start = self.cursor - spaces - word;
         match name {
             "right" | "ctrl+f" => self.cursor = (self.cursor + 1).min(length),
             "left" | "ctrl+b" => self.cursor = self.cursor.saturating_sub(1),
@@ -784,13 +745,9 @@ impl Edit {
     pub(super) fn view(&self, ui: &Ui) -> Line<'static> {
         let (before, rest) = self.chars.split_at(self.cursor);
         let under = rest.first().map_or(" ".into(), char::to_string);
-        let after: String = rest.iter().skip(1).collect();
-        let before: String = before.iter().collect();
-        let spans = [
-            (before, ui.theme.value),
-            (under, ui.theme.cursor),
-            (after, ui.theme.value),
-        ];
+        let (after, before): (String, String) = (rest.iter().skip(1).collect(), before.iter().collect());
+        let theme = &ui.theme;
+        let spans = [(before, theme.value), (under, theme.cursor), (after, theme.value)];
         let spans = spans.into_iter().filter(|(text, _)| !text.is_empty());
         Line::from(spans.map(|(text, style)| span(text, style)).collect::<Vec<_>>())
     }
