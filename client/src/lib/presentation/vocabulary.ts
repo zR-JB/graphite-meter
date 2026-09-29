@@ -182,6 +182,9 @@ export const JARGON = {
   noReplies:
     "No replies\nProbes sent in this time got no reply before the deadline\n" +
     "Each counts as a timeout, not as packet loss",
+  replies:
+    "Replies\nIdle probes answered so far in this stage\n" +
+    "The median, jitter and range are drawn from them",
   latencyStability: "Stability\n100% minus jitter as a share of the median",
   addedLatency:
     "Added latency\nLoaded median minus idle median, same server\nNegative: faster under load",

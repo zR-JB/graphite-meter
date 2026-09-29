@@ -12,6 +12,7 @@ const input = (overrides: Partial<GaugeReadoutInput>): GaugeReadoutInput => ({
   latencyMs: 12,
   quietMs: null,
   unansweredMs: null,
+  replies: null,
   hasLatencyResult: false,
   unusable: false,
   headline: null,
@@ -63,6 +64,20 @@ test("unanswered latency probes count in the footer like a stall, not in the uni
   );
   expect(readout.noReplies).toBe("No replies for 3 s");
   expect(readout.display).toEqual({ value: "—", unit: "" });
+});
+
+test("the latency stage counts its replies under the dial; other stages keep their hint", () => {
+  expect(gaugeReadout(input({ phase: "latency", replies: 0 })).hint).toBe("");
+  expect(gaugeReadout(input({ phase: "latency", replies: 1 })).hint).toBe(
+    "1 reply",
+  );
+  expect(gaugeReadout(input({ phase: "latency", replies: 1234 })).hint).toBe(
+    "1,234 replies",
+  );
+  expect(gaugeReadout(input({ phase: "download", replies: 12 })).hint).toBe("");
+  expect(gaugeReadout(input({ phase: "warmup", replies: 12 })).hint).toBe(
+    "Warmup",
+  );
 });
 
 test("terminal readouts carry the measured direction and status", () => {

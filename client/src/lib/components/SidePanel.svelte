@@ -18,6 +18,8 @@
     dockMaxWidth?: number;
     onResize?: (px: number) => void;
     onResetWidth?: () => void;
+    /** A pointer drag on the handle starts or ends. */
+    onResizing?: (dragging: boolean) => void;
     onClose: () => void;
     children: Snippet;
   }
@@ -31,6 +33,7 @@
     dockMaxWidth = MAX_DOCK_WIDTH,
     onResize,
     onResetWidth,
+    onResizing,
     onClose,
     children,
   }: Props = $props();
@@ -38,13 +41,19 @@
   const flyoutWidth = $derived(
     Math.max(MIN_DOCK_WIDTH, Math.min(MAX_DOCK_WIDTH, preferredWidth)),
   );
+  // A closing sheet keeps the width its column gave it, so it leaves as it stood rather than at its preferred width.
+  let settledDockWidth = $state(0);
+  $effect(() => {
+    if (dockWidth) settledDockWidth = dockWidth;
+  });
+  const sheetWidth = $derived(dockWidth || settledDockWidth || flyoutWidth);
 </script>
 
 <div
   class="panel-layer"
   class:docked
   style:--panel-w="{flyoutWidth}px"
-  style:--dock-w="{dockWidth || flyoutWidth}px"
+  style:--dock-w="{sheetWidth}px"
 >
   {#if !docked}<button
       class="scrim"
@@ -117,6 +126,7 @@
             max: () => dockMaxWidth,
             set: (px) => onResize?.(px),
             reset: () => onResetWidth?.(),
+            active: (dragging) => onResizing?.(dragging),
           })}
       ></div>
     {/if}
@@ -153,11 +163,13 @@
     border-radius: 0 0 calc(var(--r-surface) - var(--hairline))
       calc(var(--r-surface) - var(--hairline));
   }
-  /* Docked, the sheet keeps its width and slides in with its column, from its own edge. */
+  /* Docked, the sheet keeps its width and hugs its column's inner edge, so the column's glide is its slide:
+     the sheet and the page it makes room in move in the same layout pass, with no second animation to
+     fall behind on a slow machine. Closed, the column is 0 wide and the sheet hangs off the viewport's
+     edge; it stays displayed for the glide out, then closes. */
   .docked > :global(dialog.panel) {
-    --closed: translateX(calc(100% + var(--space-3)));
     grid-area: rightdock;
-    justify-self: end;
+    justify-self: start;
     position: relative;
     width: calc(var(--dock-w) - var(--space-3));
     height: auto;
@@ -165,27 +177,14 @@
     /* Docked, only the plain page lies behind it: a blur would cost every frame and change nothing. */
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
-    transform: var(--closed);
     transition:
-      transform var(--dur-sheet) var(--ease-out),
       overlay var(--dur-sheet) allow-discrete,
       display var(--dur-sheet) allow-discrete;
   }
   .docked > :global(dialog.panel.left) {
-    --closed: translateX(calc(-100% - var(--space-3)));
-    justify-self: start;
-    margin: 0 0 var(--space-3) var(--space-3);
-  }
-  .docked > :global(dialog.panel[open]) {
-    transform: none;
-  }
-  @starting-style {
-    .docked > :global(dialog.panel[open]) {
-      transform: var(--closed);
-    }
-  }
-  .docked > :global(dialog.panel.left) {
     grid-area: leftdock;
+    justify-self: end;
+    margin: 0 0 var(--space-3) var(--space-3);
   }
   .panel-layer:not(.docked) > :global(dialog.panel) {
     --closed: translateX(calc(100% + var(--space-4)));
