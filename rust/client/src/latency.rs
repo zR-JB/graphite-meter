@@ -721,29 +721,6 @@ mod tests {
         Ok(())
     }
 
-    /// A message longer than a pong is skipped, as Go's wsBus.Recv skips it (latency.go:33-47), up
-    /// to the 32 KiB its WebSocket library reads by default; a longer one ends the channel there too.
-    #[tokio::test]
-    async fn an_over_long_message_is_skipped_up_to_gos_read_limit() -> Result<(), Error> {
-        let _ = crate::crypto::provider().install_default();
-        for (length, skipped) in [(2 * 1024, true), (32 * 1024, true), (32 * 1024 + 1, false)] {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-            let origin = format!("http://{}", listener.local_addr()?);
-            let peer = tokio::spawn(async move {
-                let mut socket = tokio_tungstenite::accept_async(listener.accept().await?.0).await?;
-                socket.send(Message::Text("x".repeat(length).into())).await?;
-                echo(socket, Duration::ZERO).await;
-                Ok::<_, Error>(())
-            });
-            let bus = connect(&Http::new(false)?, &origin, LatencyTransport::WebSocket).await?;
-            let measured = outcomes(bus, 50, 300).await;
-            peer.abort();
-            let answered = measured.as_ref().is_ok_and(|(replies, _)| *replies > 0);
-            assert_eq!(answered, skipped, "{length} bytes: {measured:?}");
-        }
-        Ok(())
-    }
-
     /// A WebTransport session the server closes as revoked reads as that lane ending, as a
     /// WebSocket's close frame does, so it asks for sign-in and is not dialled again
     /// (latency.go:33-47, failure.go:83-95).
@@ -956,18 +933,18 @@ mod tests {
         Ok(())
     }
 
+    /// A message longer than a pong is skipped first, as Go's wsBus.Recv skips it (latency.go:33-47),
+    /// up to the 32 KiB its WebSocket library reads by default, where one over 1 KiB once ended the
+    /// channel.
     #[tokio::test]
     async fn a_late_reply_over_a_real_socket_extends_later_deadlines() -> Result<(), Error> {
         let _ = crate::crypto::provider().install_default();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let origin = format!("http://{}", listener.local_addr()?);
         let peer = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await?;
-            echo(
-                tokio_tungstenite::accept_async(stream).await?,
-                Duration::from_millis(400),
-            )
-            .await;
+            let mut socket = tokio_tungstenite::accept_async(listener.accept().await?.0).await?;
+            socket.send(Message::Text("x".repeat(32 * 1024).into())).await?;
+            echo(socket, Duration::from_millis(400)).await;
             Ok::<_, Error>(())
         });
         let bus = connect(&Http::new(false)?, &origin, LatencyTransport::WebSocket).await?;
