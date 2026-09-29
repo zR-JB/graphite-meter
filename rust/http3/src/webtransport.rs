@@ -26,6 +26,7 @@ use tokio::{
     time::Instant,
 };
 
+/// How long a server waits for its client's SETTINGS, as webtransport-go's does.
 const SETTINGS_WAIT: Duration = Duration::from_secs(5);
 const REORDERING: Duration = Duration::from_secs(5);
 const MAX_PENDING: usize = 64;
@@ -537,7 +538,7 @@ impl Session {
         let shared = stream.shared().clone();
         let mut response = http::Response::new(());
         *response.headers_mut() = headers;
-        let Some(dialect) = dialect(&shared).await else {
+        let Some(dialect) = dialect(&shared, SETTINGS_WAIT).await.ok().flatten() else {
             *response.status_mut() = http::StatusCode::BAD_REQUEST;
             // A peer that withholds credit cannot hold the refusal.
             let answer = async {
@@ -563,21 +564,22 @@ impl Session {
     }
 
     /// Client: opens a session, speaking the server's dialect, with the response that accepted it.
-    /// A refusal returns its response; after the server's GOAWAY none is sent (RFC 9114 §5.2).
+    /// A refusal returns its response; after the server's GOAWAY none is sent (RFC 9114 §5.2). The
+    /// server's SETTINGS are awaited as long as the caller waits, as webtransport-go awaits them.
     pub async fn connect(
         requests: &SendRequest,
         request: http::Request<()>,
     ) -> Result<Result<(Self, http::Response<()>), http::Response<()>>, Error> {
         let shared = requests.shared();
-        let dialect = dialect(shared)
-            .await
+        let dialect = dialect(shared, Duration::MAX)
+            .await?
             .filter(|_| shared.peer.borrow().is_some_and(|peer| peer.connect_protocol));
         if shared.going_away() {
-            return Err(Error::Refused);
+            return Err(Error::GoingAway);
         }
         let (mut parts, ()) = request.into_parts();
         parts.method = http::Method::CONNECT;
-        let protocol = match dialect.ok_or(Error::Refused)? {
+        let protocol = match dialect.ok_or(Error::NoWebTransport)? {
             Dialect::Draft02 => {
                 parts
                     .headers
@@ -688,12 +690,12 @@ impl Drop for Session {
     }
 }
 
-/// Waits up to 5 s for the peer's SETTINGS, then applies the WebTransport rules to them.
-async fn dialect(shared: &Shared) -> Option<Dialect> {
+/// The WebTransport rules applied to the peer's SETTINGS, awaited for `wait`, or the error the
+/// connection ended with first.
+async fn dialect(shared: &Shared, wait: Duration) -> Result<Option<Dialect>, Error> {
     let mut peer = shared.peer.subscribe();
-    let peer = *tokio::time::timeout(SETTINGS_WAIT, peer.wait_for(Option::is_some))
-        .await
-        .ok()?
-        .ok()?;
-    peer?.webtransport(shared.quic.max_datagram_size().is_some())
+    let settled = peer.wait_for(|peer| peer.is_some() || shared.quic.close_reason().is_some());
+    let peer = tokio::time::timeout(wait, settled).await.map_err(|_| Error::TimedOut)?;
+    let peer = peer.ok().and_then(|peer| *peer).ok_or_else(|| shared.close_error())?;
+    Ok(peer.webtransport(shared.quic.max_datagram_size().is_some()))
 }

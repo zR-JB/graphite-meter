@@ -34,7 +34,7 @@ impl Session {
                     http.check_status(target, response.status(), response.headers())?;
                     Err(format!("WebTransport CONNECT refused: {}", response.status()).into())
                 }
-                Err(graphite_meter_http3::Error::Refused) => Err("peer did not negotiate WebTransport".into()),
+                Err(graphite_meter_http3::Error::NoWebTransport) => Err("peer did not negotiate WebTransport".into()),
                 Err(error) => Err(error.into()),
             }
         })

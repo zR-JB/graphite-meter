@@ -673,9 +673,9 @@ async fn goaway_refuses_new_requests_and_closes_after_the_last() -> Result<(), T
     started.notified().await;
     stop.notify_one();
     until_goaway(&requests).await?;
-    // No session starts after it either.
+    // No session starts after it either, and the refusal says why.
     let connected = Session::connect(&requests, connect_request()).await;
-    assert_eq!(connected.err(), Some(Error::Refused));
+    assert_eq!(connected.err(), Some(Error::GoingAway));
     // A request that ignores the GOAWAY gets H3_REQUEST_REJECTED.
     let mut ignoring = peers.client.open_bi().await?;
     ignoring.0.write_all(&request_head(&[])).await?;
@@ -692,7 +692,7 @@ async fn until_goaway(requests: &client::SendRequest) -> Result<(), Error> {
     loop {
         tokio::task::yield_now().await;
         match requests.send_request(get("/late")).await {
-            Err(Error::Refused) => return Ok(()),
+            Err(Error::GoingAway) => return Ok(()),
             Ok(late) => drop(late),
             Err(error) => return Err(error),
         }
@@ -1349,6 +1349,32 @@ async fn webtransport_needs_the_peer_signal_and_datagrams() -> Result<(), TestEr
     jump(Duration::from_secs(6)).await;
     assert_eq!(first_frame(&mut recv).await?, bad_request);
     drop((send, serving));
+    Ok(())
+}
+
+/// A client awaits the server's SETTINGS as long as its caller, as webtransport-go does, not 5 s,
+/// then names why no session starts: SETTINGS without WebTransport, or the connection they closed.
+#[tokio::test]
+async fn a_client_awaits_settings_to_name_why_no_session_starts() -> Result<(), TestError> {
+    let closed = Error::Connection {
+        local: true,
+        code: Code::H3_SETTINGS_ERROR,
+        reason: Bytes::new(),
+    };
+    for (pairs, expected) in [
+        (&[(0x33, 1)][..], Error::NoWebTransport),
+        (&[(0x21, 0), (0x21, 1)], closed),
+    ] {
+        let peers = peers(usize::MAX).await?;
+        let (_driver, requests) = client(&peers);
+        let connecting = tokio::spawn(async move { Session::connect(&requests, connect_request()).await.err() });
+        tokio::task::yield_now().await;
+        jump(Duration::from_secs(6)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!connecting.is_finished(), "gave up waiting for SETTINGS");
+        let _control = uni(&peers.server, &settings(pairs), false).await?;
+        assert_eq!(connecting.await?, Some(expected));
+    }
     Ok(())
 }
 

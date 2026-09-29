@@ -17,7 +17,11 @@ pub enum Error {
     Transport(noq::ConnectionError),
     /// A protocol deadline passed.
     TimedOut,
-    /// Refused locally: over a limit or the budget, after GOAWAY, or in an ended session.
+    /// The peer's SETTINGS do not enable WebTransport, so no session starts.
+    NoWebTransport,
+    /// After the server's GOAWAY, no request or session starts on the connection (RFC 9114 §5.2).
+    GoingAway,
+    /// Refused locally: over a limit or the budget, or in an ended session.
     Refused,
 }
 
@@ -50,6 +54,8 @@ impl fmt::Display for Error {
             ),
             Self::Transport(error) => write!(f, "QUIC connection failed: {error}"),
             Self::TimedOut => f.write_str("HTTP/3 deadline passed"),
+            Self::NoWebTransport => f.write_str("peer did not negotiate WebTransport"),
+            Self::GoingAway => f.write_str("HTTP/3 connection going away after the server's GOAWAY"),
             Self::Refused => f.write_str("HTTP/3 request refused"),
         }
     }

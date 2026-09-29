@@ -34,7 +34,7 @@ impl SendRequest {
     /// Opens a request stream and sends the head, within the server's field section limit.
     pub async fn send_request(&self, request: http::Request<()>) -> Result<RequestStream, Error> {
         if self.0.going_away() {
-            return Err(Error::Refused);
+            return Err(Error::GoingAway);
         }
         let (parts, ()) = request.into_parts();
         let head = fields::encode_request(&parts, None, self.0.peer_field_limit()).map_err(|_| Error::Refused)?;

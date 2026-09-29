@@ -321,6 +321,8 @@ impl Connection {
     /// Every session ends with the connection: its streams and datagrams end, and `closed` says why.
     fn end_sessions(&mut self) {
         self.shared.state().sessions.end();
+        // A session awaiting SETTINGS that never came learns the connection ended.
+        self.shared.peer.send_modify(|_| {});
         // A session handed over from now on finds no driver, and its CONNECT stream goes.
         self.connects.close();
         while let Ok(connect) = self.connects.try_recv() {
