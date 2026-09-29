@@ -2,7 +2,7 @@
 use crate::{
     Error,
     config::Config,
-    model::{Phase, Point, ServerSummary, Snapshot, Stage},
+    model::{ServerSummary, Snapshot, Stage},
     net::Http,
     selection,
     transport::Transport,
@@ -142,14 +142,12 @@ async fn prepare(
             })
             .collect();
     });
-    let transfers = config.stages.iter().any(|stage| stage.downloads() || stage.uploads());
-    let latency = config.loaded_latency || config.stages.contains(&crate::model::Stage::Latency);
     // Results publish as they arrive; catalogue order stays for lane planning and error selection.
     let mut checks = selected
         .iter()
         .enumerate()
         .map(|(index, entry)| async move {
-            let check = tokio::time::timeout_at(deadline, prepare_server(config, http, entry, transfers, latency));
+            let check = tokio::time::timeout_at(deadline, prepare_server(config, http, entry));
             (index, check.await.map_err(|_| late()).and_then(|result| result))
         })
         .collect::<FuturesUnordered<_>>();
@@ -190,13 +188,9 @@ async fn prepare(
     })
 }
 
-async fn prepare_server(
-    config: &Config,
-    http: &Http,
-    entry: &ServerEntry,
-    transfers: bool,
-    needs_latency: bool,
-) -> Result<PreparedServer, Error> {
+async fn prepare_server(config: &Config, http: &Http, entry: &ServerEntry) -> Result<PreparedServer, Error> {
+    let transfers = config.stages.iter().any(|stage| stage.downloads() || stage.uploads());
+    let needs_latency = config.loaded_latency || config.stages.contains(&Stage::Latency);
     let preflight = http.preflight(entry).await?;
     let client = http.for_server(entry, &preflight)?;
     let throughput_path = async {
@@ -290,21 +284,9 @@ pub async fn run(
     mut cancel: watch::Receiver<bool>,
     prepared: Option<PreparedRun>,
 ) -> Result<(), Error> {
-    snapshots.send_modify(|snapshot| {
-        snapshot.plan.clone_from(&config.stages);
-        snapshot.results.clear();
-        snapshot.failures.clear();
-        snapshot.intervals.clear();
-        snapshot.omitted_intervals = 0;
-        snapshot.server_latencies.clear();
-        snapshot.participants.clear();
-        snapshot.latency_focus = None;
-        snapshot.history = Default::default();
-        snapshot.latest = Point::default();
-        snapshot.stage = None;
-    });
-    let (mut prepared, selected) = match prepared.filter(|prepared| prepared.fresh_for(&config)) {
-        Some(prepared) => (prepared.servers, None),
+    snapshots.send_modify(|snapshot| snapshot.start_run(&config.stages));
+    let (mut prepared, lost) = match prepared.filter(|prepared| prepared.fresh_for(&config)) {
+        Some(prepared) => (prepared.servers, 0),
         None => {
             let preparation = tokio::select! {
                 result = prepare(&config, &http, &snapshots, Instant::now() + PREPARATION_TIMEOUT) => result?,
@@ -318,8 +300,7 @@ pub async fn run(
                     snapshot.failure(&failure.id, scope, &failure.source, Duration::ZERO);
                 }
             });
-            let selected = preparation.servers.len() + preparation.failures.len();
-            (preparation.servers, Some(selected))
+            (preparation.servers, preparation.failures.len())
         }
     };
     // Go's coordinator starts its clock once the servers are prepared.
@@ -328,7 +309,7 @@ pub async fn run(
         snapshot.participants = prepared.iter().map(|server| server.entry.id.clone()).collect();
         snapshot.latency_focus = prepared.first().map(|server| server.entry.id.clone());
     });
-    let sole = (selected.unwrap_or(prepared.len()) == 1).then(|| prepared[0].entry.id.clone());
+    let sole = (prepared.len() + lost == 1).then(|| prepared[0].entry.id.clone());
     for stage in &config.stages {
         if *cancel.borrow() {
             break;
@@ -355,36 +336,20 @@ pub async fn run(
             }
             Err(error) => return Err(error),
         };
-        if *stage == Stage::Latency {
-            let snapshot = snapshots.borrow();
-            if let Some(result) = snapshot.results.last() {
-                for measured in &result.server_latencies {
-                    if let Some(distribution) = measured.summary.distribution
-                        && let Some(server) = prepared.iter_mut().find(|server| server.entry.id == measured.id)
-                    {
-                        server.idle_rtt = Duration::from_nanos(distribution.p50);
-                    }
+        // An idle latency stage's medians pace the later stages' warmups and lane staggers.
+        if let Some(result) = snapshots.borrow().results.last().filter(|_| *stage == Stage::Latency) {
+            for measured in &result.server_latencies {
+                if let Some(distribution) = measured.summary.distribution
+                    && let Some(server) = prepared.iter_mut().find(|server| server.entry.id == measured.id)
+                {
+                    server.idle_rtt = Duration::from_nanos(distribution.p50);
                 }
             }
         }
         prepared.retain(|server| !failed.contains(&server.entry.id));
     }
     let stopped = *cancel.borrow();
-    snapshots.send_modify(|snapshot| {
-        let missing = snapshot
-            .results
-            .iter()
-            .any(|result| snapshot.stage_status(result) == crate::model::StageStatus::Failed);
-        snapshot.phase = if stopped {
-            Phase::Cancelled
-        } else if missing {
-            Phase::Incomplete
-        } else if !snapshot.failures.is_empty() {
-            Phase::Partial
-        } else {
-            Phase::Complete
-        };
-    });
+    snapshots.send_modify(|snapshot| snapshot.finish_run(stopped));
     Ok(())
 }
 

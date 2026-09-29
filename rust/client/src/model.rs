@@ -282,6 +282,36 @@ impl Snapshot {
         }
     }
 
+    /// A run of `plan` starts: the servers the check found, the phase, prompt and error stay.
+    pub(crate) fn start_run(&mut self, plan: &[Stage]) {
+        *self = Self {
+            phase: self.phase,
+            servers: std::mem::take(&mut self.servers),
+            error: self.error.take(),
+            auth: self.auth.take(),
+            duration: self.duration,
+            plan: plan.to_vec(),
+            ..Self::default()
+        };
+    }
+
+    /// A run ends: stopped, incomplete when a stage lacks a planned result, or partial after a failure.
+    pub(crate) fn finish_run(&mut self, stopped: bool) {
+        let missing = self
+            .results
+            .iter()
+            .any(|result| self.stage_status(result) == StageStatus::Failed);
+        self.phase = if stopped {
+            Phase::Cancelled
+        } else if missing {
+            Phase::Incomplete
+        } else if !self.failures.is_empty() {
+            Phase::Partial
+        } else {
+            Phase::Complete
+        };
+    }
+
     pub fn measured(&self) -> bool {
         self.results.iter().any(|result| result.elapsed > Duration::ZERO)
     }
