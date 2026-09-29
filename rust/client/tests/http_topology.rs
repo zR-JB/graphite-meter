@@ -301,7 +301,15 @@ async fn pooled_connections_expire_without_another_request_and_preserve_active_b
             } else {
                 drop(response);
             }
-            tokio::time::timeout(Duration::from_secs(5), server).await???;
+            // A close with bytes still in flight reaches the server as a reset on macOS; either way it ended.
+            if let Err(error) = tokio::time::timeout(Duration::from_secs(5), server).await?? {
+                let reset = std::error::Error::source(&error)
+                    .and_then(|source| source.downcast_ref::<std::io::Error>())
+                    .is_some_and(|io| io.kind() == std::io::ErrorKind::ConnectionReset);
+                if !reset {
+                    return Err(error.into());
+                }
+            }
             drop(client);
         }
     }
