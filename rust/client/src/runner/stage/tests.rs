@@ -555,6 +555,15 @@ fn host_latency_populations_and_continuity_are_independent() {
         Some((start, end)),
         ("near".into(), Observation::ConnectionBoundary),
     );
+    // Go's live view counts the probes in a row that timed out.
+    for _ in 0..2 {
+        let sent = start + Duration::from_millis(20);
+        let timeout = Observation::Lost {
+            sent,
+            outcome: graphite_meter_core::latency::ProbeOutcome::Timeout,
+        };
+        observe(&mut hosts, Some((start, end)), ("far".into(), timeout));
+    }
     let mut snapshot = Snapshot {
         server_latencies: vec![
             ServerLatency {
@@ -571,6 +580,8 @@ fn host_latency_populations_and_continuity_are_independent() {
     sample_hosts(&mut hosts, &mut snapshot, Duration::from_millis(500));
     assert_eq!(snapshot.server_latencies[0].latest_ms, Some(4.0));
     assert_eq!(snapshot.server_latencies[1].latest_ms, Some(220.0));
+    let streaks = snapshot.server_latencies.iter().map(|host| host.timeouts);
+    assert_eq!(streaks.collect::<Vec<_>>(), [0, 2]);
     sample_hosts(&mut hosts, &mut snapshot, Duration::from_secs(1));
     assert_eq!(snapshot.server_latencies[0].latest_ms, None);
     assert_eq!(snapshot.server_latencies[1].latest_ms, None);

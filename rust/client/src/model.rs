@@ -1,4 +1,4 @@
-use graphite_meter_core::discovery::{LatencyTarget, LatencyTransport, Protocol, ThroughputTarget};
+use graphite_meter_core::discovery::{Capabilities, LatencyTarget, LatencyTransport, Protocol, ThroughputTarget};
 use graphite_meter_core::origin::target_origin;
 use std::{collections::VecDeque, time::Duration};
 
@@ -171,6 +171,8 @@ impl ServerLatencyResult {
 pub struct ServerLatency {
     pub id: String,
     pub latest_ms: Option<f64>,
+    /// The probes in a row that timed out, as Go's live view counts them.
+    pub timeouts: u32,
     pub history: Trace,
 }
 
@@ -178,10 +180,16 @@ pub struct ServerLatency {
 pub struct ServerSummary {
     pub id: String,
     pub name: String,
+    pub location: String,
     pub origin: String,
     pub throughput: Option<ThroughputTarget>,
     pub latency: Option<LatencyTarget>,
+    /// The paths the server's discovery advertised, kept when its check failed after discovery,
+    /// as Go keeps a preparation error's preflight.
+    pub offered: Option<Capabilities>,
     pub error: Option<String>,
+    /// The check stopped at a sign-in the server requires, which Go shows as Sign in, not Failed.
+    pub sign_in: bool,
 }
 
 impl ServerSummary {

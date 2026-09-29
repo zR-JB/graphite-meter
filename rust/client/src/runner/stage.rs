@@ -20,7 +20,7 @@ use futures_util::{
 use graphite_meter_core::{
     discovery::{Protocol, ThroughputTransport},
     failure::FailureReason,
-    latency::LatencyAccumulator,
+    latency::{LatencyAccumulator, ProbeOutcome},
     measurement::{
         AggregateMeasurements, AggregateWindow, Boundary, CHECKPOINT_BUDGET, CLIENT_STALL, Direction,
         FINAL_CHECKPOINT_BUDGET, MeasurementResult, SAMPLE_INTERVAL, Stage as TransferStage,
@@ -134,6 +134,8 @@ struct LatencyCompletion {
 struct HostLatency {
     accumulator: LatencyAccumulator,
     latest: Option<f64>,
+    /// The probes in a row that timed out, which Go's live view reads out.
+    timeouts: u32,
     ended_at: Option<Instant>,
     ending: Option<Ending>,
 }
@@ -919,6 +921,14 @@ fn observe(
     (id, event): (String, Observation),
 ) {
     if let (Some(host), Some((start, end))) = (hosts.get_mut(&id), window) {
+        match event {
+            Observation::Sample { .. } => host.timeouts = 0,
+            Observation::Lost {
+                outcome: ProbeOutcome::Timeout,
+                ..
+            } => host.timeouts += 1,
+            Observation::Lost { .. } | Observation::ConnectionBoundary => {}
+        }
         observe_latency(event, start, end, &mut host.accumulator, &mut host.latest);
     }
 }
@@ -926,6 +936,7 @@ fn observe(
 fn sample_hosts(hosts: &mut BTreeMap<String, HostLatency>, snapshot: &mut Snapshot, elapsed: Duration) {
     let offset = snapshot.offset();
     for host in &mut snapshot.server_latencies {
+        host.timeouts = hosts.get(&host.id).map_or(0, |state| state.timeouts);
         host.latest_ms = hosts.get_mut(&host.id).and_then(|state| state.latest.take());
         host.history.add(Point {
             elapsed: offset + elapsed,

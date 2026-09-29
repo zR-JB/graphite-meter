@@ -11,7 +11,9 @@ use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_core::route::Route;
 use graphite_meter_core::{
     catalog::ServerEntry,
-    discovery::{LatencyTarget, LatencyTransport, Probe, Protocol, ThroughputTarget, ThroughputTransport},
+    discovery::{
+        Capabilities, LatencyTarget, LatencyTransport, Probe, Protocol, ThroughputTarget, ThroughputTransport,
+    },
 };
 use http::Method;
 use std::{
@@ -137,6 +139,7 @@ async fn prepare(
             .map(|entry| ServerSummary {
                 id: entry.id.clone(),
                 name: entry.name.clone(),
+                location: entry.location.clone(),
                 origin: entry.url.clone(),
                 ..ServerSummary::default()
             })
@@ -147,21 +150,27 @@ async fn prepare(
         .iter()
         .enumerate()
         .map(|(index, entry)| async move {
-            let check = tokio::time::timeout_at(deadline, prepare_server(config, http, entry));
-            (index, check.await.map_err(|_| late()).and_then(|result| result))
+            let mut offered = None;
+            let check = tokio::time::timeout_at(deadline, prepare_server(config, http, entry, &mut offered));
+            let result = check.await.map_err(|_| late()).and_then(|result| result);
+            (index, offered, result)
         })
         .collect::<FuturesUnordered<_>>();
     let mut results: Vec<_> = (0..selected.len()).map(|_| None).collect();
-    while let Some((index, result)) = checks.next().await {
+    while let Some((index, offered, result)) = checks.next().await {
         let entry = selected[index];
         snapshots.send_modify(|snapshot| {
             if let Some(summary) = snapshot.servers.iter_mut().find(|summary| summary.id == entry.id) {
+                summary.offered = offered;
                 match &result {
                     Ok(server) => {
                         summary.throughput.clone_from(&server.throughput);
                         summary.latency.clone_from(&server.latency);
                     }
-                    Err(error) => summary.error = Some(crate::failure::text(error.as_ref())),
+                    Err(error) => {
+                        summary.error = Some(crate::failure::text(error.as_ref()));
+                        summary.sign_in = crate::failure::sign_in(error.as_ref()).is_some();
+                    }
                 }
             }
         });
@@ -188,10 +197,17 @@ async fn prepare(
     })
 }
 
-async fn prepare_server(config: &Config, http: &Http, entry: &ServerEntry) -> Result<PreparedServer, Error> {
+/// Checks one server's paths; `offered` keeps what its discovery advertised, even if a later step fails.
+async fn prepare_server(
+    config: &Config,
+    http: &Http,
+    entry: &ServerEntry,
+    offered: &mut Option<Capabilities>,
+) -> Result<PreparedServer, Error> {
     let transfers = config.stages.iter().any(|stage| stage.downloads() || stage.uploads());
     let needs_latency = config.loaded_latency || config.stages.contains(&Stage::Latency);
     let preflight = http.preflight(entry).await?;
+    *offered = Some(preflight.capabilities.clone());
     let client = http.for_server(entry, &preflight)?;
     let throughput_path = async {
         let mut throughput = transfers

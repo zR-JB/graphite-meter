@@ -1043,7 +1043,7 @@ mod tests {
                 base_url: origin,
                 transport: latency,
             }),
-            error: None,
+            ..ServerSummary::default()
         }
     }
 
