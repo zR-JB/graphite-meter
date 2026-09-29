@@ -124,8 +124,16 @@ fn every_ring_algorithm_verifies_against_the_matching_key_only() {
             Ok(json!("operator")),
             "{alg}"
         );
-        let token = signers.sign(json!({"alg": alg}), &claims);
-        assert!(verify(&token, &keys, &ALL).is_ok(), "{alg} without kid");
+        for header in [
+            json!({"alg": alg}),
+            json!({"alg": alg, "kid": ""}),
+            json!({"alg": alg, "kid": null}),
+        ] {
+            assert!(
+                verify(&signers.sign(header.clone(), &claims), &keys, &ALL).is_ok(),
+                "{header}"
+            );
+        }
     }
     let refused = [
         (json!({"alg": "RS256", "kid": "p256"}), Reject::UnknownKey),
@@ -240,6 +248,7 @@ fn id_token_claims_bind_issuer_audience_nonce_time_and_access_token() {
         json!({"aud": ["other", "meter"], "azp": "other"}),
         json!({"aud": ["meter", "meter"]}),
         json!({"iat": now.to_string()}),
+        json!({"exp": (now + 300).to_string(), "nbf": format!("{now}.5"), "iat": 1e9}),
         json!({"at_hash": null, "nbf": null, "name": null, "preferred_username": null}),
     ] {
         assert!(check("RS256", "rsa", changes.clone()).is_ok(), "{changes}");
@@ -255,6 +264,9 @@ fn id_token_claims_bind_issuer_audience_nonce_time_and_access_token() {
         (json!({"exp": null}), Reject::Claims),
         (json!({"iat": null}), Reject::Claims),
         (json!({"iat": "soon"}), Reject::Claims),
+        (json!({"exp": format!(" {}", now + 300)}), Reject::Claims),
+        (json!({"exp": now as f64 + 0.5}), Reject::Claims),
+        (json!({"nbf": true}), Reject::Claims),
         (json!({"nbf": now + 301}), Reject::Claims),
         (json!({"sub": 7}), Reject::Claims),
         (json!({"nonce": "other"}), Reject::Nonce),

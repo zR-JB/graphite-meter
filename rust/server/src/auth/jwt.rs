@@ -217,9 +217,10 @@ pub(super) fn verify(token: &str, keys: &Jwks, allowed: &[Alg]) -> Result<Verifi
         .and_then(Alg::parse)
         .filter(|alg| allowed.contains(alg))
         .ok_or(Reject::Algorithm)?;
+    // As go-jose and go-oidc read it, a null or empty kid names no key.
     let kid = match header.get("kid") {
-        None => None,
-        Some(kid) => Some(kid.as_str().ok_or(Reject::Malformed)?),
+        None | Some(Value::Null) => None,
+        Some(kid) => Some(kid.as_str().ok_or(Reject::Malformed)?).filter(|kid| !kid.is_empty()),
     };
     let signature = decode(signature)?;
     let mut candidates = keys
@@ -267,6 +268,15 @@ pub(super) fn audience_and_issuer(claims: &Map<String, Value>, issuer: &str, cli
     Ok(())
 }
 
+/// A time as go-oidc reads one: a JSON number, or a string that holds exactly one, in whole seconds.
+fn seconds(time: &Value) -> Option<f64> {
+    let seconds = match time {
+        Value::String(text) if text.trim() == text => serde_json::from_str(text).ok(),
+        time => time.as_f64(),
+    };
+    seconds.map(f64::trunc)
+}
+
 /// A member as Go's decoder fills a string or slice field: absent or null, it keeps its zero value.
 pub(super) fn nullable<'de, D: serde::Deserializer<'de>, T: Deserialize<'de> + Default>(
     member: D,
@@ -279,8 +289,6 @@ pub(super) fn id_token(verified: Verified, expected: &Expected<'_>) -> Result<Id
     struct Standard {
         #[serde(default, deserialize_with = "nullable")]
         sub: String,
-        exp: f64,
-        nbf: Option<f64>,
         #[serde(default, deserialize_with = "nullable")]
         nonce: String,
         #[serde(default, deserialize_with = "nullable")]
@@ -292,18 +300,20 @@ pub(super) fn id_token(verified: Verified, expected: &Expected<'_>) -> Result<Id
         preferred_username: Option<String>,
     }
     audience_and_issuer(&verified.claims, expected.issuer, expected.client_id)?;
-    // Go takes any issue time, as a number or a numeric string, or none.
-    let issued = match verified.claims.get("iat") {
-        None => true,
-        Some(Value::String(time)) => serde_json::from_str::<serde_json::Number>(time).is_ok(),
-        Some(time) => time.is_number(),
+    // go-oidc's jsonTime; nbf alone is a pointer, which null leaves absent.
+    let time = |name: &str| match verified.claims.get(name) {
+        None => Ok(None),
+        Some(Value::Null) if name == "nbf" => Ok(None),
+        Some(time) => seconds(time).map(Some).ok_or(Reject::Claims),
     };
-    let claims = Value::Object(verified.claims);
-    let standard = Standard::deserialize(&claims).map_err(|_| Reject::Claims)?;
+    let (expiry, not_before) = (time("exp")?.ok_or(Reject::Claims)?, time("nbf")?);
+    time("iat")?;
     let now = expected.now as f64;
-    if !issued || now >= standard.exp || standard.nbf.is_some_and(|nbf| nbf > now + 300.0) {
+    if now >= expiry || not_before.is_some_and(|nbf| nbf > now + 300.0) {
         return Err(Reject::Claims);
     }
+    let claims = Value::Object(verified.claims);
+    let standard = Standard::deserialize(&claims).map_err(|_| Reject::Claims)?;
     let names = Names::deserialize(&claims).map_err(|_| Reject::Nonce)?;
     let digest = |value: &str| digest::digest(&digest::SHA256, value.as_bytes());
     if standard.nonce.is_empty() || digest(&standard.nonce).as_ref() != digest(expected.nonce).as_ref() {
