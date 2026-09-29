@@ -248,7 +248,7 @@ async fn h3_upload_is_not_floor_window_bound_on_a_delayed_link() -> Result<(), T
     Ok(())
 }
 
-fn h3_client(quic: quinn::Connection) -> (tokio::task::JoinHandle<Result<(), http3::Error>>, client::SendRequest) {
+fn h3_client(quic: noq::Connection) -> (tokio::task::JoinHandle<Result<(), http3::Error>>, client::SendRequest) {
     let (mut driver, requests) = client::new(quic);
     (tokio::spawn(async move { driver.drive().await }), requests)
 }
@@ -298,7 +298,7 @@ async fn quic_server(
     Ok((address, task, stop))
 }
 
-fn quic_client_config(tls: &Tls) -> Result<quinn::ClientConfig, TestError> {
+fn quic_client_config(tls: &Tls) -> Result<noq::ClientConfig, TestError> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let mut roots = RootCertStore::empty();
     roots.add(tls.certificate.clone())?;
@@ -307,19 +307,19 @@ fn quic_client_config(tls: &Tls) -> Result<quinn::ClientConfig, TestError> {
         .with_root_certificates(roots)
         .with_no_client_auth();
     client_tls.alpn_protocols = vec![b"h3".to_vec()];
-    Ok(quinn::ClientConfig::new(Arc::new(
-        quinn::crypto::rustls::QuicClientConfig::try_from(client_tls)?,
+    Ok(noq::ClientConfig::new(Arc::new(
+        noq::crypto::rustls::QuicClientConfig::try_from(client_tls)?,
     )))
 }
 
-fn quic_client(tls: &Tls, reliable_reset: bool) -> Result<quinn::Endpoint, TestError> {
-    let mut endpoint_config = quinn::EndpointConfig::default();
+fn quic_client(tls: &Tls, reliable_reset: bool) -> Result<noq::Endpoint, TestError> {
+    let mut endpoint_config = noq::EndpointConfig::default();
     endpoint_config.reliable_stream_reset(reliable_reset);
-    let endpoint = quinn::Endpoint::new(
+    let endpoint = noq::Endpoint::new(
         endpoint_config,
         None,
         graphite_meter_core::socket::udp_socket("127.0.0.1:0".parse()?)?.0,
-        quinn::default_runtime().unwrap(),
+        noq::default_runtime().unwrap(),
     )?;
     endpoint.set_default_client_config(quic_client_config(tls)?);
     Ok(endpoint)
@@ -468,7 +468,7 @@ async fn download_rate(webtransport: bool, one_way: Duration) -> Result<f64, Tes
     let link = test_link::Link::udp(address, one_way).await?;
     let target = if one_way.is_zero() { address } else { link.address };
     let mut config = quic_client_config(&tls)?;
-    let mut transport = quinn::TransportConfig::default();
+    let mut transport = noq::TransportConfig::default();
     transport.stream_receive_window((64_u32 << 20).into());
     transport.receive_window((64_u32 << 20).into());
     config.transport_config(Arc::new(transport));
@@ -529,7 +529,7 @@ async fn download_rate(webtransport: bool, one_way: Duration) -> Result<f64, Tes
 }
 
 /// Opens a WebTransport session on its own connection.
-async fn session(quic: quinn::Connection, path: &str) -> Result<Session, TestError> {
+async fn session(quic: noq::Connection, path: &str) -> Result<Session, TestError> {
     let (_, requests) = h3_client(quic);
     let request = Request::get(format!("https://localhost{path}")).body(())?;
     Ok(Session::connect(&requests, request)
@@ -574,9 +574,9 @@ async fn cancelled_download_without_reliable_reset_preserves_http3_connection() 
     .await?
 }
 
-async fn assert_closed_without_error(quic: &quinn::Connection) {
+async fn assert_closed_without_error(quic: &noq::Connection) {
     match quic.closed().await {
-        quinn::ConnectionError::ApplicationClosed(close) => assert_eq!(close.error_code, Code::H3_NO_ERROR.into()),
+        noq::ConnectionError::ApplicationClosed(close) => assert_eq!(close.error_code, Code::H3_NO_ERROR.into()),
         error => panic!("connection must close with H3_NO_ERROR: {error:?}"),
     }
 }
@@ -596,7 +596,7 @@ async fn webtransport_only_connection_ends_with_its_session() -> Result<(), Test
         let endpoint = quic_client(&tls, true)?;
 
         let mut config = quic_client_config(&tls)?;
-        let mut transport = quinn::TransportConfig::default();
+        let mut transport = noq::TransportConfig::default();
         transport.stream_receive_window(16_u32.into());
         config.transport_config(Arc::new(transport));
         let refused = endpoint.connect_with(config, address, "localhost")?.await?;

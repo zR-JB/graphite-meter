@@ -15,7 +15,7 @@ use crate::{
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_core::failure::LaneEnding;
 use graphite_meter_http3::{self as http3, Code};
-use quinn::SharedBudget;
+use noq::SharedBudget;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 const MAX_SEND_WINDOW: u64 = 16 * 1024 * 1024;
@@ -25,8 +25,8 @@ const SEND_WINDOW_SHRINK_DELAY: Duration = Duration::from_secs(1);
 const SEND_WINDOW_TUNING: Duration = Duration::from_millis(250);
 
 pub struct QuicEndpoint {
-    endpoint: quinn::Endpoint,
-    config: quinn::ServerConfig,
+    endpoint: noq::Endpoint,
+    config: noq::ServerConfig,
     clients: Arc<ClientCredit>,
 }
 
@@ -35,7 +35,7 @@ impl QuicEndpoint {
         self.endpoint.local_addr()
     }
 
-    fn accept(&self, incoming: quinn::Incoming, floor: Lease) -> Option<(quinn::Connecting, Arc<ConnectionBudget>)> {
+    fn accept(&self, incoming: noq::Incoming, floor: Lease) -> Option<(noq::Connecting, Arc<ConnectionBudget>)> {
         let budget = Arc::new(ConnectionBudget {
             memory: floor.budget.clone(),
             clients: self.clients.clone(),
@@ -57,7 +57,7 @@ impl HttpServer {
         address: SocketAddr,
     ) -> Result<QuicEndpoint, ServerError> {
         let udp = bind_udp(address, false)?;
-        let endpoint_config = quinn::EndpointConfig::default();
+        let endpoint_config = noq::EndpointConfig::default();
         let bytes = budget::endpoint_bytes(
             &endpoint_config,
             1,
@@ -79,7 +79,7 @@ impl HttpServer {
         );
         self.endpoint_bytes.store(bytes, Ordering::Relaxed);
         let config = self.quic_config(tls, 1)?;
-        let endpoint = quinn::Endpoint::new_with_abstract_socket(
+        let endpoint = noq::Endpoint::new_with_abstract_socket(
             endpoint_config,
             Some(config.clone()),
             Box::new(BudgetedSocket {
@@ -115,7 +115,7 @@ impl HttpServer {
         let first = bind(runtime, address)?;
         // The others join the first socket's port, which the OS picks for port 0.
         let address = first.socket.local_addr()?;
-        let endpoint_config = quinn::EndpointConfig::default();
+        let endpoint_config = noq::EndpointConfig::default();
         let handshake_bytes = self.handshake_bytes.load(Ordering::Relaxed);
         let shard_bytes = |shards, udp: &Udp| {
             let segments = udp.socket.max_receive_segments().get();
@@ -165,7 +165,7 @@ impl HttpServer {
             let mut shard_config = endpoint_config.clone();
             shard_config.cid_generator(quic_shard::cid_generator(u8::try_from(shard)?));
             let _entered = runtimes[shard].enter();
-            let endpoint = quinn::Endpoint::new_with_abstract_socket(
+            let endpoint = noq::Endpoint::new_with_abstract_socket(
                 shard_config,
                 Some(config.clone()),
                 Box::new(BudgetedSocket {
@@ -185,11 +185,11 @@ impl HttpServer {
     }
 
     /// One of `shards` endpoints admits its part of the server-wide incoming limits, rounded up.
-    fn quic_config(&self, tls: Arc<rustls::ServerConfig>, shards: usize) -> Result<quinn::ServerConfig, ServerError> {
+    fn quic_config(&self, tls: Arc<rustls::ServerConfig>, shards: usize) -> Result<noq::ServerConfig, ServerError> {
         let mut tls = (*tls).clone();
         tls.alpn_protocols = vec![topology::QUIC.alpn.to_vec()];
-        let crypto = quinn::crypto::rustls::QuicServerConfig::try_from(tls)?;
-        let mut config = quinn::ServerConfig::with_crypto(Arc::new(crypto));
+        let crypto = noq::crypto::rustls::QuicServerConfig::try_from(tls)?;
+        let mut config = noq::ServerConfig::with_crypto(Arc::new(crypto));
         config
             .max_incoming(self.config.max_connections.div_ceil(shards))
             .incoming_buffer_size(QUIC_INCOMING_BYTES.div_ceil(shards as u64))
@@ -279,7 +279,7 @@ impl HttpServer {
     /// Drives the connection until the layer ends it, which a stop does with every session's close.
     async fn serve_quic_connection(
         self: Arc<Self>,
-        quic: quinn::Connection,
+        quic: noq::Connection,
         budget: Arc<ConnectionBudget>,
         peer: SocketAddr,
     ) -> Result<(), http3::Error> {
@@ -338,19 +338,19 @@ impl HttpServer {
 
 /// Go logs neither a peer's close nor an idle timeout.
 fn ended_normally(error: &http3::Error) -> bool {
-    use quinn::ConnectionError::{ConnectionClosed, LocallyClosed, TimedOut};
+    use noq::ConnectionError::{ConnectionClosed, LocallyClosed, TimedOut};
     match error {
         http3::Error::Connection { local, .. } => !local,
         http3::Error::Transport(TimedOut | LocallyClosed) => true,
-        http3::Error::Transport(ConnectionClosed(close)) => close.error_code == quinn::TransportErrorCode::NO_ERROR,
+        http3::Error::Transport(ConnectionClosed(close)) => close.error_code == noq::TransportErrorCode::NO_ERROR,
         _ => false,
     }
 }
 
 /// A UDP socket bound in the current runtime, and the kernel buffer bytes it holds.
 struct Udp {
-    socket: Box<dyn quinn::AsyncUdpSocket>,
-    runtime: Arc<dyn quinn::Runtime>,
+    socket: Box<dyn noq::AsyncUdpSocket>,
+    runtime: Arc<dyn noq::Runtime>,
     kernel_bytes: usize,
 }
 
@@ -364,7 +364,7 @@ fn bind_udp(address: SocketAddr, reuse_port: bool) -> Result<Udp, ServerError> {
         .recv_buffer_size()?
         .checked_add(socket_buffers.send_buffer_size()?)
         .ok_or("UDP socket buffer size overflow")?;
-    let runtime = quinn::default_runtime().ok_or("no async runtime for QUIC")?;
+    let runtime = noq::default_runtime().ok_or("no async runtime for QUIC")?;
     let socket = runtime.wrap_udp_socket(socket)?;
     Ok(Udp {
         socket,
@@ -375,12 +375,12 @@ fn bind_udp(address: SocketAddr, reuse_port: bool) -> Result<Udp, ServerError> {
 
 #[derive(Debug)]
 struct BudgetedSocket {
-    socket: Box<dyn quinn::AsyncUdpSocket>,
+    socket: Box<dyn noq::AsyncUdpSocket>,
     lease: Arc<Lease>,
 }
 
-impl quinn::AsyncUdpSocket for BudgetedSocket {
-    fn create_sender(&self) -> Pin<Box<dyn quinn::UdpSender>> {
+impl noq::AsyncUdpSocket for BudgetedSocket {
+    fn create_sender(&self) -> Pin<Box<dyn noq::UdpSender>> {
         Box::pin(BudgetedSender {
             sender: self.socket.create_sender(),
             _lease: self.lease.clone(),
@@ -391,7 +391,7 @@ impl quinn::AsyncUdpSocket for BudgetedSocket {
         &mut self,
         cx: &mut Context<'_>,
         bufs: &mut [io::IoSliceMut<'_>],
-        meta: &mut [quinn::udp::RecvMeta],
+        meta: &mut [noq::udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
         self.socket.poll_recv(cx, bufs, meta)
     }
@@ -411,14 +411,14 @@ impl quinn::AsyncUdpSocket for BudgetedSocket {
 
 #[derive(Debug)]
 struct BudgetedSender {
-    sender: Pin<Box<dyn quinn::UdpSender>>,
+    sender: Pin<Box<dyn noq::UdpSender>>,
     _lease: Arc<Lease>,
 }
 
-impl quinn::UdpSender for BudgetedSender {
+impl noq::UdpSender for BudgetedSender {
     fn poll_send(
         mut self: Pin<&mut Self>,
-        transmit: &quinn::udp::Transmit<'_>,
+        transmit: &noq::udp::Transmit<'_>,
         cx: &mut Context<'_>,
     ) -> Poll<io::Result<()>> {
         self.sender.as_mut().poll_send(transmit, cx)
@@ -490,13 +490,13 @@ impl SharedBudget for ConnectionBudget {
 pub(super) struct ReceiveCredit(Arc<CreditState>);
 
 struct CreditState {
-    quic: quinn::Connection,
+    quic: noq::Connection,
     budget: Arc<ConnectionBudget>,
     work: AdmittedWork,
 }
 
 impl ReceiveCredit {
-    fn new(quic: quinn::Connection, budget: Arc<ConnectionBudget>) -> Self {
+    fn new(quic: noq::Connection, budget: Arc<ConnectionBudget>) -> Self {
         Self(Arc::new(CreditState {
             quic,
             budget,
@@ -504,7 +504,7 @@ impl ReceiveCredit {
         }))
     }
 
-    pub(super) fn quic(&self) -> &quinn::Connection {
+    pub(super) fn quic(&self) -> &noq::Connection {
         &self.0.quic
     }
 
@@ -547,11 +547,11 @@ impl SendWindow {
         }
     }
 
-    fn update(&mut self, connection: &quinn::Connection, budget: &MemoryBudget) {
+    fn update(&mut self, connection: &noq::Connection, budget: &MemoryBudget) {
         // Read the aggregate first so a concurrent send on the initial path
         // cannot look like traffic on another path.
         let all_sent = connection.stats().udp_tx.bytes;
-        let Some(path) = connection.path_stats(quinn::PathId::ZERO) else {
+        let Some(path) = connection.path_stats(noq::PathId::ZERO) else {
             self.last = None;
             self.low_demand_since = None;
             return;
@@ -592,7 +592,7 @@ impl SendWindow {
         Some(self.limit)
     }
 
-    fn release(&mut self, connection: &quinn::Connection) {
+    fn release(&mut self, connection: &noq::Connection) {
         self.last = None;
         self.low_demand_since = None;
         if self.limit != QUIC_MIN_SEND_WINDOW {
@@ -622,7 +622,7 @@ mod tests {
     };
     use std::{sync::Arc, time::Duration};
 
-    fn tls() -> (Arc<rustls::ServerConfig>, quinn::ClientConfig) {
+    fn tls() -> (Arc<rustls::ServerConfig>, noq::ClientConfig) {
         use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
         let (certificate, key) = crate::test_identity::generate_identity("localhost").unwrap();
         let certificate = CertificateDer::from_pem_slice(certificate.as_bytes()).unwrap();
@@ -645,8 +645,8 @@ mod tests {
             .with_root_certificates(roots)
             .with_no_client_auth();
         client.alpn_protocols = vec![b"h3".to_vec()];
-        let client = quinn::ClientConfig::new(Arc::new(
-            quinn::crypto::rustls::QuicClientConfig::try_from(client).unwrap(),
+        let client = noq::ClientConfig::new(Arc::new(
+            noq::crypto::rustls::QuicClientConfig::try_from(client).unwrap(),
         ));
         (Arc::new(tls), client)
     }
@@ -670,7 +670,7 @@ mod tests {
         })
     }
 
-    async fn settled(memory: &super::MemoryBudget, peers: &[&quinn::Connection]) -> usize {
+    async fn settled(memory: &super::MemoryBudget, peers: &[&noq::Connection]) -> usize {
         let activity = || {
             let datagrams = peers.iter().map(|peer| {
                 let stats = peer.stats();
@@ -694,7 +694,7 @@ mod tests {
 
     type Requests = graphite_meter_http3::client::SendRequest;
 
-    fn requests(quic: quinn::Connection) -> Requests {
+    fn requests(quic: noq::Connection) -> Requests {
         let (mut driver, requests) = graphite_meter_http3::client::new(quic);
         tokio::spawn(async move { driver.drive().await });
         requests
@@ -732,10 +732,10 @@ mod tests {
     }
 
     async fn h3_client(
-        client: &quinn::Endpoint,
-        config: quinn::ClientConfig,
+        client: &noq::Endpoint,
+        config: noq::ClientConfig,
         address: std::net::SocketAddr,
-    ) -> (quinn::Connection, Requests) {
+    ) -> (noq::Connection, Requests) {
         let quic = client
             .connect_with(config, address, "localhost")
             .unwrap()
@@ -804,7 +804,7 @@ mod tests {
             error.to_string().contains(&format!("at least {}", minimum + 4)),
             "{error}"
         );
-        let client = quinn::Endpoint::client(address).unwrap();
+        let client = noq::Endpoint::client(address).unwrap();
         client.set_default_client_config(client_config);
         let mut connections = Vec::new();
         for _ in 0..4 {
@@ -837,9 +837,9 @@ mod tests {
     #[tokio::test]
     async fn retained_udp_sender_keeps_socket_budget_until_last_drop() {
         use super::*;
-        use quinn::AsyncUdpSocket;
+        use noq::AsyncUdpSocket;
         let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let runtime = quinn::default_runtime().unwrap();
+        let runtime = noq::default_runtime().unwrap();
         let socket = runtime
             .wrap_udp_socket(
                 graphite_meter_core::socket::udp_socket("127.0.0.1:0".parse().unwrap())
@@ -856,7 +856,7 @@ mod tests {
         let mut sender = socket.create_sender();
         drop(socket);
         assert_eq!(memory.available(), 0);
-        let transmit = quinn::udp::Transmit {
+        let transmit = noq::udp::Transmit {
             destination: receiver.local_addr().unwrap(),
             ecn: None,
             contents: b"retained",
@@ -906,11 +906,10 @@ mod tests {
     #[tokio::test]
     async fn idle_send_window_shrinks_while_control_stream_stays_open() {
         let (tls, client_config) = tls();
-        let config = quinn::ServerConfig::with_crypto(Arc::new(
-            quinn::crypto::rustls::QuicServerConfig::try_from(tls).unwrap(),
-        ));
-        let server = quinn::Endpoint::server(config, "127.0.0.1:0".parse().unwrap()).unwrap();
-        let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let config =
+            noq::ServerConfig::with_crypto(Arc::new(noq::crypto::rustls::QuicServerConfig::try_from(tls).unwrap()));
+        let server = noq::Endpoint::server(config, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
         client.set_default_client_config(client_config);
         tokio::time::timeout(Duration::from_secs(5), async {
             let (client, server) = tokio::join!(
@@ -960,12 +959,12 @@ mod tests {
         use futures_util::FutureExt;
         let server = HttpServer::new(Config::default().validated().unwrap()).unwrap();
         let (tls, mut client_config) = tls();
-        let mut transport = quinn::TransportConfig::default();
+        let mut transport = noq::TransportConfig::default();
         transport.send_window(2 * u64::from(QUIC_RECEIVE_WINDOW));
         client_config.transport_config(Arc::new(transport));
         let quic = server.quic_endpoint(tls, "127.0.0.1:0".parse().unwrap()).unwrap();
         let address = quic.local_addr().unwrap();
-        let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
         client.set_default_client_config(client_config);
         let floor = connection_floor(0);
         tokio::time::timeout(Duration::from_secs(20), async {
@@ -977,7 +976,7 @@ mod tests {
                 });
                 (peer.unwrap(), credit)
             };
-            let fill = |peer: &quinn::Connection| {
+            let fill = |peer: &noq::Connection| {
                 let peer = peer.clone();
                 async move {
                     let mut total = 0;
@@ -994,7 +993,7 @@ mod tests {
                     }
                 }
             };
-            let round_trip = |peer: &quinn::Connection, credit: &ReceiveCredit| {
+            let round_trip = |peer: &noq::Connection, credit: &ReceiveCredit| {
                 let (peer, server) = (peer.clone(), credit.quic().clone());
                 async move {
                     let mut probe = server.open_uni().await.unwrap();
@@ -1051,7 +1050,7 @@ mod tests {
         let (address, stop, serving) = serve(&server, identity);
         let floor = connection_floor(0);
         let idle = server.memory.available();
-        let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
         let connecting = client.connect_with(distrusting, address, "localhost").unwrap();
         assert!(connecting.await.is_err());
         tokio::time::pause();
@@ -1083,11 +1082,11 @@ mod tests {
         use super::*;
         let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
         let (tls, mut client_config) = tls();
-        let mut transport = quinn::TransportConfig::default();
+        let mut transport = noq::TransportConfig::default();
         transport.receive_window(4096_u32.into());
         client_config.transport_config(Arc::new(transport));
         let (address, stop, serving) = serve(&server, tls);
-        let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
         let (quic, _requests, _unread) = tokio::time::timeout(Duration::from_secs(10), async {
             let (quic, requests) = h3_client(&client, client_config, address).await;
             let id = upload_id(&requests).await;
@@ -1116,7 +1115,7 @@ mod tests {
         tokio::time::sleep(CONTROL + SHUTDOWN_GRACE - Duration::from_secs(1)).await;
         tokio::time::resume();
         match tokio::time::timeout(Duration::from_secs(2), quic.closed()).await {
-            Ok(quinn::ConnectionError::ApplicationClosed(close)) => {
+            Ok(noq::ConnectionError::ApplicationClosed(close)) => {
                 assert_eq!(close.error_code, Code::H3_NO_ERROR.into())
             }
             outcome => panic!("unread probes kept leftover credit: {outcome:?}"),
@@ -1142,11 +1141,11 @@ mod tests {
         let (_, session) = sessions.create("subject", "Name", "local", None).unwrap();
         let (token, _grant) = sessions.issue_cli_grant(&session).unwrap();
         let (tls, mut client_config) = tls();
-        let mut transport = quinn::TransportConfig::default();
+        let mut transport = noq::TransportConfig::default();
         transport.stream_receive_window(16_u32.into());
         client_config.transport_config(Arc::new(transport));
         let (address, stop, serving) = serve(&server, tls);
-        let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
         tokio::time::timeout(Duration::from_secs(10), async {
             let (quic, requests) = h3_client(&client, client_config, address).await;
             let idle = server.memory.available();
@@ -1189,7 +1188,7 @@ mod tests {
         let (token, _grant) = sessions.issue_cli_grant(&session).unwrap();
         let (tls, client_config) = tls();
         let (address, stop, serving) = serve(&server, tls);
-        let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
         tokio::time::timeout(Duration::from_secs(10), async {
             let (quic, requests) = h3_client(&client, client_config, address).await;
             let request = http::Request::get("https://localhost/wt/ping")
@@ -1222,7 +1221,7 @@ mod tests {
         let (tls, client_config) = tls();
         let quic = server.quic_endpoint(tls, "127.0.0.1:0".parse().unwrap()).unwrap();
         let address = quic.local_addr().unwrap();
-        let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
         client.set_default_client_config(client_config);
         let floor = connection_floor(0);
         tokio::time::timeout(Duration::from_secs(10), async {
@@ -1265,7 +1264,7 @@ mod tests {
         let serving = tokio::spawn(server.clone().serve_quic(endpoint, async {
             let _ = stopped.await;
         }));
-        let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
         client.set_default_client_config(client_config);
         tokio::time::timeout(Duration::from_secs(10), async {
             let peers = [(); 2].map(|()| client.connect(address, "localhost").unwrap());
@@ -1312,7 +1311,7 @@ mod tests {
             let mut held = Vec::new();
             let mut charged = Vec::new();
             for source in [1, 1, 1, 2] {
-                let client = quinn::Endpoint::client(SocketAddr::from(([127, 0, 0, source], 0))).unwrap();
+                let client = noq::Endpoint::client(SocketAddr::from(([127, 0, 0, source], 0))).unwrap();
                 let (quic, requests) = h3_client(&client, client_config.clone(), address).await;
                 let id = upload_id(&requests).await;
                 let before = settled(&server.memory, &[&quic]).await;
@@ -1345,13 +1344,13 @@ mod tests {
         use super::*;
         let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
         let (tls, mut client_config) = tls();
-        let mut transport = quinn::TransportConfig::default();
+        let mut transport = noq::TransportConfig::default();
         // Too little stream credit for any reply's head; pings keep the stalled connection open.
         transport.stream_receive_window(64_u32.into());
         transport.keep_alive_interval(Some(Duration::from_secs(5)));
         client_config.transport_config(Arc::new(transport));
         let (address, stop, serving) = serve(&server, tls);
-        let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
         let (quic, requests) = tokio::time::timeout(Duration::from_secs(5), h3_client(&client, client_config, address))
             .await
             .unwrap();
@@ -1398,9 +1397,9 @@ mod tests {
         let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
         let (tls, mut client_config) = tls();
         // A validation token from the first connection would prove the address without a Retry.
-        client_config.token_store(Arc::new(quinn::NoneTokenStore));
+        client_config.token_store(Arc::new(noq::NoneTokenStore));
         let (address, stop, serving) = serve(&server, tls);
-        let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
         client.set_default_client_config(client_config);
         tokio::time::timeout(Duration::from_secs(10), async {
             // Both links relay from 127.0.0.1, so the second Initial comes from a source holding the first connection.
@@ -1442,7 +1441,7 @@ mod tests {
             let mut clients = Vec::new();
             let mut connecting = Vec::new();
             for source in 2..=11 {
-                let client = quinn::Endpoint::client(SocketAddr::from(([127, 0, 0, source], 0))).unwrap();
+                let client = noq::Endpoint::client(SocketAddr::from(([127, 0, 0, source], 0))).unwrap();
                 client.set_default_client_config(client_config.clone());
                 if source <= 10 {
                     for _ in 0..8 {
@@ -1486,7 +1485,7 @@ mod tests {
             let transfers = (2..10).map(|source| {
                 let config = client_config.clone();
                 async move {
-                    let client = quinn::Endpoint::client(SocketAddr::from(([127, 0, 0, source], 0))).unwrap();
+                    let client = noq::Endpoint::client(SocketAddr::from(([127, 0, 0, source], 0))).unwrap();
                     let (quic, requests) = h3_client(&client, config, address).await;
                     let received = download(&requests, 1 << 20).await.unwrap();
                     quic.close(0_u32.into(), b"done");
@@ -1495,7 +1494,7 @@ mod tests {
             });
             assert_eq!(futures_util::future::join_all(transfers).await, [1 << 20; 8]);
 
-            let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+            let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
             let (quic, requests) = h3_client(&client, client_config, address).await;
             assert_eq!(download(&requests, 13).await.unwrap(), 13);
             // A new port lands on another shard three times in four, whose socket must forward to the connection's.
@@ -1610,7 +1609,7 @@ mod tests {
             tls.alpn_protocols = vec![b"h3".to_vec()];
             let config = server.quic_config(Arc::new(tls), 1).unwrap();
             let endpoint = QuicEndpoint {
-                endpoint: quinn::Endpoint::server(config.clone(), "127.0.0.1:0".parse().unwrap()).unwrap(),
+                endpoint: noq::Endpoint::server(config.clone(), "127.0.0.1:0".parse().unwrap()).unwrap(),
                 config,
                 clients: server.client_credit.clone(),
             };
@@ -1638,9 +1637,9 @@ mod tests {
             let (mut h2, driver) = h2::client::handshake(stream).await.unwrap();
             let h2_driver = tokio::spawn(driver);
             client_tls.alpn_protocols = vec![b"h3".to_vec()];
-            let client_endpoint = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
-            client_endpoint.set_default_client_config(quinn::ClientConfig::new(Arc::new(
-                quinn::crypto::rustls::QuicClientConfig::try_from(client_tls).unwrap(),
+            let client_endpoint = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+            client_endpoint.set_default_client_config(noq::ClientConfig::new(Arc::new(
+                noq::crypto::rustls::QuicClientConfig::try_from(client_tls).unwrap(),
             )));
             let unloaded = crate::test_link::Link::udp(quic_address, Duration::ZERO).await.unwrap();
             let quic = client_endpoint

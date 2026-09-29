@@ -20,7 +20,7 @@ async fn h3_shared_upload_routes_and_stalled_stream_deadline_preserve_siblings()
 }
 
 async fn exercise() -> Result<(), TestError> {
-    let mut transport = quinn::TransportConfig::default();
+    let mut transport = noq::TransportConfig::default();
     transport.stream_receive_window(4096_u32.into());
     let (requests, driver, stop, task) = serve_quic(
         Config {
@@ -74,7 +74,7 @@ type Served = (
     tokio::task::JoinHandle<Result<(), graphite_meter_server::ServerError>>,
 );
 
-async fn serve_quic(config: Config, client: quinn::TransportConfig) -> Result<Served, TestError> {
+async fn serve_quic(config: Config, client: noq::TransportConfig) -> Result<Served, TestError> {
     let identity = support::Identity::generate();
     let certificate = CertificateDer::from_pem_file(identity.directory().join("identity.pem"))?;
     let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key"))?;
@@ -97,9 +97,9 @@ async fn serve_quic(config: Config, client: quinn::TransportConfig) -> Result<Se
         .with_root_certificates(roots)
         .with_no_client_auth();
     tls.alpn_protocols = vec![b"h3".to_vec()];
-    let mut config = quinn::ClientConfig::new(Arc::new(quinn::crypto::rustls::QuicClientConfig::try_from(tls)?));
+    let mut config = noq::ClientConfig::new(Arc::new(noq::crypto::rustls::QuicClientConfig::try_from(tls)?));
     config.transport_config(Arc::new(client));
-    let client = quinn::Endpoint::client("127.0.0.1:0".parse()?)?;
+    let client = noq::Endpoint::client("127.0.0.1:0".parse()?)?;
     let connection = client.connect_with(config, address, "localhost")?.await?;
     let (mut driver, requests) = client::new(connection);
     let driving = tokio::spawn(async move { driver.drive().await });
@@ -145,7 +145,7 @@ async fn body(
 
 #[tokio::test]
 async fn idle_http3_connection_does_not_consume_the_shutdown_drain() -> Result<(), TestError> {
-    let (requests, driving, stop, task) = serve_quic(Config::default(), quinn::TransportConfig::default()).await?;
+    let (requests, driving, stop, task) = serve_quic(Config::default(), noq::TransportConfig::default()).await?;
     body(&requests, "GET", "/download?bytes=1", b"").await?;
     stop.send(()).unwrap();
     tokio::time::timeout(Duration::from_secs(2), task).await???;
@@ -162,7 +162,7 @@ async fn advance(duration: Duration) {
 
 #[tokio::test]
 async fn admitted_work_keeps_leftover_credit_and_probes_do_not() -> Result<(), TestError> {
-    let (requests, driving, stop, task) = serve_quic(Config::default(), quinn::TransportConfig::default()).await?;
+    let (requests, driving, stop, task) = serve_quic(Config::default(), noq::TransportConfig::default()).await?;
     let session = body(&requests, "POST", "/upload/session", b"").await?;
     let session: serde_json::Value = serde_json::from_slice(&session)?;
     let path = format!("https://localhost/upload?id={}", session["uploadId"].as_str().unwrap());

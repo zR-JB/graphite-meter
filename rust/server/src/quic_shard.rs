@@ -4,7 +4,7 @@
 //! packets can reach another shard. Connection IDs therefore begin with their shard's index, and each shard's socket
 //! forwards the short-header packets that name another shard to that shard's queue.
 
-use quinn::{AsyncUdpSocket, ConnectionId, ConnectionIdGenerator, InvalidCid, UdpSender, udp::RecvMeta};
+use noq::{AsyncUdpSocket, ConnectionId, ConnectionIdGenerator, InvalidCid, UdpSender, udp::RecvMeta};
 use std::{
     hash::{BuildHasher, RandomState},
     io::{self, IoSliceMut},
@@ -423,7 +423,7 @@ mod tests {
 
     #[tokio::test]
     async fn forwarding_wakes_the_shard_whose_socket_delivers_it_before_its_own() {
-        let runtime = quinn::default_runtime().unwrap();
+        let runtime = noq::default_runtime().unwrap();
         let socket = runtime
             .wrap_udp_socket(std::net::UdpSocket::bind("127.0.0.1:0").unwrap())
             .unwrap();

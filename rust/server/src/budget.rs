@@ -9,7 +9,7 @@ use crate::{
 };
 use graphite_meter_core::wire::MAX_WEBTRANSPORT_STREAMS;
 use graphite_meter_http3 as http3;
-use quinn::SharedBudget;
+use noq::SharedBudget;
 use std::{
     collections::HashMap,
     sync::{
@@ -53,8 +53,8 @@ pub(crate) fn max_requests(limits: &Limits) -> Option<u32> {
 }
 
 /// The transport of every QUIC connection, whose floor the plan counts.
-pub(crate) fn quic_transport(limits: &Limits) -> Result<quinn::TransportConfig, ConfigError> {
-    let mut transport = quinn::TransportConfig::default();
+pub(crate) fn quic_transport(limits: &Limits) -> Result<noq::TransportConfig, ConfigError> {
+    let mut transport = noq::TransportConfig::default();
     let requests = max_requests(limits).ok_or("per-client stream budgets exceed the QUIC stream limit")?;
     transport.max_concurrent_bidi_streams(requests.into());
     transport.max_concurrent_uni_streams(QUIC_UNI_STREAMS.into());
@@ -78,14 +78,14 @@ pub(crate) fn noq_floor(limits: &Limits) -> Result<usize, ConfigError> {
 }
 
 /// The largest datagram an endpoint reads into one receive segment.
-pub(crate) fn packet_bytes(config: &quinn::EndpointConfig) -> Option<usize> {
+pub(crate) fn packet_bytes(config: &noq::EndpointConfig) -> Option<usize> {
     usize::try_from(config.get_max_udp_payload_size().min(64 * 1024)).ok()
 }
 
 /// One of `shards` endpoints: its receive batch, the pending incoming packets its part of the incoming limits
 /// admits, its forwarding queue and its kernel buffers.
 pub(crate) fn endpoint_bytes(
-    config: &quinn::EndpointConfig,
+    config: &noq::EndpointConfig,
     shards: usize,
     max_connections: usize,
     kernel_bytes: usize,
@@ -99,7 +99,7 @@ pub(crate) fn endpoint_bytes(
         0
     };
     receive
-        .checked_mul(quinn::udp::BATCH_SIZE)?
+        .checked_mul(noq::udp::BATCH_SIZE)?
         .checked_add(receive.checked_mul(max_connections.div_ceil(shards).checked_add(1)?)?)?
         .checked_add((QUIC_INCOMING_TOTAL_BYTES as usize).div_ceil(shards))?
         .checked_add(queue)?
@@ -112,7 +112,7 @@ pub(crate) fn check_configured(config: &Config) -> Result<(), ConfigError> {
         None
     } else {
         Some(
-            endpoint_bytes(&quinn::EndpointConfig::default(), 1, config.max_connections, 0, 1)
+            endpoint_bytes(&noq::EndpointConfig::default(), 1, config.max_connections, 0, 1)
                 .ok_or("QUIC endpoint buffer size overflow")?,
         )
     };
