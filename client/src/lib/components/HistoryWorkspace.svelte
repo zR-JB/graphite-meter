@@ -917,11 +917,17 @@
   .history-list {
     container: history-list / inline-size;
   }
-  /* Columns never shrink below their content: the rows fold first (fitTable). */
+  /* A reading table, not a spread: the time takes the slack and each value column is as wide as its content, so
+     the figures sit together at the right, and the table stops at a width the eye crosses in one line. Columns
+     never shrink below their content: the rows fold first (fitTable). */
   .history-table {
     display: grid;
-    grid-template-columns: 2fr auto repeat(var(--metric-columns), 1fr);
+    grid-template-columns: minmax(0, 1fr) auto repeat(
+        var(--metric-columns),
+        max-content
+      );
     row-gap: var(--space-5);
+    max-width: 1120px;
     padding: 0 var(--panel-pad) var(--space-6);
   }
   .column-head,
@@ -934,12 +940,24 @@
     grid-template-columns: subgrid;
     min-width: 0;
   }
+  /* Its rule comes in as rows pass beneath it, as a sheet's head's does. */
   .column-head {
     position: sticky;
     top: 0;
     z-index: 1;
-    margin: 0 calc(-1 * var(--panel-pad)) calc(-1 * var(--space-3));
-    padding: var(--space-3) var(--panel-pad) 0;
+    margin: 0 calc(-1 * var(--panel-pad)) calc(-1 * var(--space-2));
+    padding: var(--space-3) var(--panel-pad) var(--space-1);
+    border-bottom: var(--hairline) solid transparent;
+  }
+  @supports (animation-timeline: scroll()) {
+    .history-list {
+      scroll-timeline: --list block;
+    }
+    .column-head {
+      animation: sheet-rule linear both;
+      animation-timeline: --list;
+      animation-range: 0 var(--space-3);
+    }
   }
   .column-head button {
     position: relative;
@@ -1040,10 +1058,11 @@
   .result-row > * {
     padding: 7px var(--space-3);
   }
-  /* The time over its server, on the lines of the values and their notes; a long name is cut, never wrapped. */
+  /* The time over its server, on the lines of the values and their notes; a long name is cut, never wrapped.
+     The time is the row's name, weighted like its values. */
   time {
     display: grid;
-    font-weight: var(--w-normal);
+    font-weight: 500;
     white-space: nowrap;
   }
   time small {
@@ -1076,19 +1095,20 @@
   .metric[data-tone="idle"] .note {
     color: var(--text-soft);
   }
-  /* A magnitude, never a verdict: the column's largest value fills the bar. */
+  /* A magnitude, never a verdict: the column's largest value fills the bar, and the track behind it shows the
+     scale it fills, so a short bar reads as a share and not as a stray dash. */
   .bar {
     display: none;
     grid-area: bar;
     align-self: center;
     width: 100%;
-    height: 3px;
+    height: 4px;
     border-radius: var(--r-full);
     background: linear-gradient(
         270deg,
-        color-mix(in oklab, var(--tone) 60%, transparent)
+        color-mix(in oklab, var(--tone) 62%, transparent)
           calc(var(--share) * 100%),
-        transparent 0
+        var(--track) 0
       )
       no-repeat;
   }
@@ -1114,6 +1134,7 @@
     align-items: center;
     justify-content: center;
     gap: var(--space-3);
+    max-width: 1120px;
     padding: 0 var(--panel-pad) var(--space-5);
     color: var(--text-soft);
     font-size: var(--type-sm);

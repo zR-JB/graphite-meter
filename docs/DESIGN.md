@@ -231,8 +231,10 @@ hue, never by a boxed icon.
 - **History**: the list is page, not plate: a day's rows sit between two rules, with hairlines between them. A row
   shows the time over its server and recency (a long name is cut), then per column a value over a note on the same two
   baselines: added latency under each rate in its hue, jitter under idle, the stage under loaded; bars share a zero
-  end per column. Columns never shrink below their content: once they no longer fit, each row folds, its time on one
-  line and its values under it. Sort by lists only the shown columns. The detail repeats the stage cards (three across
+  end per column and run on a track that shows the column's scale. The time takes the row's slack and each value
+  column is as wide as its content, so the figures sit together at the right; the table stops at 1120 px, and the
+  column heads' rule comes in as rows scroll under them. Columns never shrink below their content: once they no
+  longer fit, each row folds, its time on one line and its values under it. Sort by lists only the shown columns. The detail repeats the stage cards (three across
   or one to a row, never two and an orphan) and the latency card on the same 12 px text edge as its head, then each
   server's facts. From 821 px it sits beside the list, and the hairline between them is a handle like a docked sheet's
   edge: the list keeps its share of the width (40 % by default), never under 360 px, and the detail never under
