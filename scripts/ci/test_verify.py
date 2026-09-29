@@ -24,7 +24,7 @@ from .fixtures import (
     write_release_assets,
     SLSA,
     write_oci,
-    write_tar,
+    write_archive,
 )
 from .verify_oci import (
     BLOB_LIMIT,
@@ -98,7 +98,7 @@ class ReleaseAssetTests(unittest.TestCase):
                             ("device.zip", "link or special")):
             path = self.dist / name
             if name == "escape.tar.gz":
-                write_tar(path, {"../escape": b"x"})
+                write_archive(path, {"../escape": b"x"})
             elif name == "link.tar.gz":
                 with tarfile.open(path, "w:gz") as tar:
                     tar.addfile(link)
@@ -118,7 +118,7 @@ class ReleaseAssetTests(unittest.TestCase):
             ({f"{root}/project/LICENSE": b"x"}, "unexpected non-third-party"),
             ({f"{root}/README.txt": b"source is elsewhere"}, "describe the source offer"),
         ):
-            write_tar(self.dist / f"{root}.tar.gz", base | extra)
+            write_archive(self.dist / f"{root}.tar.gz", base | extra)
             with self.subTest(error=error):
                 outcome(self, error, lambda: verify_third_party_source_archive(self.dist, "1.2.3"))
 
@@ -133,7 +133,7 @@ class ReleaseAssetTests(unittest.TestCase):
         })
         targets.write_text("linux/amd64 x86_64-unknown-linux-gnu\n")
         legal = ("LICENSE", "COPYRIGHT", "THIRD_PARTY_NOTICES.txt", "SOURCE.txt")
-        write_tar(self.dist / f"{linux}.tar.gz", {f"{linux}/{name}": b"x" for name in legal})
+        write_archive(self.dist / f"{linux}.tar.gz", {f"{linux}/{name}": b"x" for name in legal})
         with self.assertRaisesRegex(ControlPlaneError, "graphite-meter-client"):
             verify_client_archives(self.dist, "1.2.3", targets)
 
@@ -149,15 +149,15 @@ class ReleaseAssetTests(unittest.TestCase):
             members = {f"{LINUX}/{name}": b"x" for name in (
                 "graphite-meter-client", "LICENSE", "COPYRIGHT", "THIRD_PARTY_NOTICES.txt",
                 "SOURCE.txt", "certs/server.key")}
-            write_tar(dist / f"{LINUX}.tar.gz", members)
+            write_archive(dist / f"{LINUX}.tar.gz", members)
             write_checksums(dist)
 
         def no_binary(dist: Path) -> None:
-            write_tar(dist / f"{LINUX}.tar.gz", {f"{LINUX}/LICENSE": b"x"})
+            write_archive(dist / f"{LINUX}.tar.gz", {f"{LINUX}/LICENSE": b"x"})
             write_checksums(dist)
 
         def bad_offer(dist: Path) -> None:
-            write_tar(dist / f"{SOURCE}.tar.gz", source_members("1.2.3") | {
+            write_archive(dist / f"{SOURCE}.tar.gz", source_members("1.2.3") | {
                 f"{SOURCE}/README.txt": b"source is elsewhere"})
             write_checksums(dist)
 

@@ -156,11 +156,23 @@ def engine(directory: Path, repository: str, version: str, revision: str,
     }
 
 
-def write_tar(path: Path, members: dict[str, bytes]) -> None:
+def write_archive(path: Path, members: dict[str, bytes], base: str = "") -> None:
+    """Write `members` as a zip or, by any other suffix, a gzip tar, after the directory `base` if given."""
+    if path.suffix == ".zip":
+        with zipfile.ZipFile(path, "w") as archive:
+            if base:
+                archive.writestr(f"{base}/", b"")
+            for name, payload in members.items():
+                archive.writestr(name, payload)
+        return
     with tarfile.open(path, "w:gz") as archive:
+        if base:
+            directory = tarfile.TarInfo(base)
+            directory.type = tarfile.DIRTYPE
+            archive.addfile(directory)
         for name, payload in members.items():
             info = tarfile.TarInfo(name)
-            info.size = len(payload)
+            info.size, info.mode = len(payload), 0o755
             archive.addfile(info, io.BytesIO(payload))
 
 
@@ -180,15 +192,8 @@ def source_members(version: str) -> dict[str, bytes]:
 def write_release_assets(dist: Path, version: str, reported: str = "") -> None:
     """Write the native release a stable request uploads; each TUI prints `reported`."""
     dist.mkdir(parents=True, exist_ok=True)
-    write_tar(dist / f"graphite-meter_{version}_third-party-source.tar.gz",
-              source_members(version))
+    write_archive(dist / f"graphite-meter_{version}_third-party-source.tar.gz", source_members(version))
     script = f"#!/bin/sh\necho graphite-meter-client {reported or version}\n".encode()
     for name, (base, binary) in tui_archives(version, TARGETS).items():
-        members = {f"{base}/{file}": b"x" for file in TUI_FILES} | {f"{base}/{binary}": script}
-        if name.endswith(".zip"):
-            with zipfile.ZipFile(dist / name, "w") as archive:
-                for member, payload in members.items():
-                    archive.writestr(member, payload)
-        else:
-            write_tar(dist / name, members)
+        write_archive(dist / name, {f"{base}/{file}": b"x" for file in TUI_FILES} | {f"{base}/{binary}": script})
     write_checksums(dist)

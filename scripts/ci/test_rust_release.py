@@ -6,15 +6,13 @@ import io
 import json
 import os
 import shutil
-import tarfile
 import tempfile
 import unittest
-import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
 from ..legal.model import manual_files, manual_sources
-from .fixtures import statement
+from .fixtures import statement, write_archive
 from .github_api import ControlPlaneError as VerificationError, JsonObject, file_sha256 as sha256_file, write_checksums
 from .toolchains import tui_targets
 from .verify_release_assets import (
@@ -45,34 +43,12 @@ def executable(target: str) -> bytes:
     return bytes(data)
 
 
-def write_archive(path: Path, base: str, files: dict[str, bytes]) -> None:
-    if path.suffix == ".zip":
-        with zipfile.ZipFile(path, "w") as archive:
-            archive.writestr(f"{base}/", b"")
-            for name, payload in files.items():
-                archive.writestr(name, payload)
-        return
-    with tarfile.open(path, "w:gz") as archive:
-        directory = tarfile.TarInfo(base)
-        directory.type = tarfile.DIRTYPE
-        archive.addfile(directory)
-        for name, payload in files.items():
-            member = tarfile.TarInfo(name)
-            member.size, member.mode = len(payload), 0o755
-            archive.addfile(member, io.BytesIO(payload))
-
-
 def write_source(path: Path, inventory: JsonObject, extra: dict[str, bytes] | None = None) -> None:
-    members = {
+    write_archive(path, {
         "inventory.json": json.dumps(inventory).encode(), "LEGAL.txt": b"fixture notices\n",
         "legal/rust-forks.json": Path("legal/rust-forks.json").read_bytes(),
         "third_party/cargo/example-1.0/source.rs": b"fixture",
-    } | (extra or {})
-    with tarfile.open(path, "w:gz") as archive:
-        for name, payload in members.items():
-            member = tarfile.TarInfo(name)
-            member.size = len(payload)
-            archive.addfile(member, io.BytesIO(payload))
+    } | (extra or {}))
 
 
 def inventory(package: str, target: str) -> JsonObject:
@@ -86,10 +62,10 @@ def write_build(dist: Path, package: str, platform: str) -> None:
     target = RUST_TARGETS[platform]
     if package == "graphite-meter-client":
         archive, base, binary = tui_archive("1.2.3", platform, "_rust")
-        write_archive(dist / archive, base, {
+        write_archive(dist / archive, {
             f"{base}/{binary}": executable(target), f"{base}/THIRD_PARTY_NOTICES.txt": b"fixture notices\n",
             f"{base}/LICENSE": Path("LICENSE").read_bytes(), f"{base}/COPYRIGHT": Path("COPYRIGHT").read_bytes(),
-            f"{base}/SOURCE.txt": f"{base}_third-party-source.tar.gz".encode()})
+            f"{base}/SOURCE.txt": f"{base}_third-party-source.tar.gz".encode()}, base)
     source, = (name for name in rust_files("1.2.3", package, platform) if name.endswith("_third-party-source.tar.gz"))
     write_source(dist / source, inventory(package, target))
 
@@ -130,13 +106,13 @@ class RustArchiveBoundaryTests(unittest.TestCase):
                     f"{base}/COPYRIGHT": Path("COPYRIGHT").read_bytes(),
                     f"{base}/SOURCE.txt": f"{base}_third-party-source.tar.gz".encode(),
                 }
-                write_archive(dist / archive, base, files)
+                write_archive(dist / archive, files, base)
                 write_source(dist / f"{base}_third-party-source.tar.gz", inventory("graphite-meter-client", target))
                 arch, rest = target.split("-", 1)
                 other = {"x86_64": "aarch64", "aarch64": "x86_64"}[arch] + "-" + rest
                 with patch("subprocess.Popen", side_effect=AssertionError("artifact execution")):
                     verify_rust_client_archive(dist, "1.2.3", platform, target)
-                    write_archive(dist / archive, base, files | {f"{base}/{binary}": executable(other)})
+                    write_archive(dist / archive, files | {f"{base}/{binary}": executable(other)}, base)
                     with self.assertRaisesRegex(VerificationError, f"does not hold a {target} executable"):
                         verify_rust_client_archive(dist, "1.2.3", platform, target)
                 self.assertFalse(marker.exists())
@@ -144,7 +120,7 @@ class RustArchiveBoundaryTests(unittest.TestCase):
     def test_member_read_rejects_oversize_member(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "archive.tar.gz"
-            write_archive(path, "base", {"base/SOURCE.txt": b" " * 32})
+            write_archive(path, {"base/SOURCE.txt": b" " * 32}, "base")
             with self.assertRaisesRegex(VerificationError, "exceeds limit"):
                 read_archive(path, "base/SOURCE.txt", limit=16)
 
