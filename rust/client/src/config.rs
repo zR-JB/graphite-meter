@@ -61,7 +61,8 @@ impl Config {
         let mut key = self.clone();
         key.url = graphite_meter_core::origin::canonical_origin(&key.url).unwrap_or(key.url);
         key.servers.sort_unstable();
-        let latency = key.loaded_latency || key.stages.contains(&Stage::Latency);
+        // As Go's key, loaded latency counts only through the latency it needs.
+        let latency = std::mem::take(&mut key.loaded_latency) || key.stages.contains(&Stage::Latency);
         let upload = key.stages.iter().any(|stage| stage.uploads());
         let transfer = key.stages.iter().any(|stage| stage.downloads() || stage.uploads());
         key.stages = [
@@ -156,5 +157,32 @@ impl Config {
             return Err("select up to four different server IDs".into());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Go's PreparationKey: loaded latency changes the checked paths only through the latency they need.
+    #[test]
+    fn loaded_latency_changes_the_key_only_through_the_latency_it_needs() {
+        let (on, transfers) = (Config::default(), vec![Stage::Download, Stage::Upload]);
+        let off = Config {
+            loaded_latency: false,
+            ..on.clone()
+        };
+        assert_eq!(on.preparation_key(), off.preparation_key());
+        let (on, off) = (
+            Config {
+                stages: transfers.clone(),
+                ..on
+            },
+            Config {
+                stages: transfers,
+                ..off
+            },
+        );
+        assert_ne!(on.preparation_key(), off.preparation_key());
     }
 }
