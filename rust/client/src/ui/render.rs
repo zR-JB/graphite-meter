@@ -669,11 +669,12 @@ impl Ui {
 
     fn outcome(&self, result: &crate::model::StageResult) -> Vec<Span<'static>> {
         let headline = if result.stage == Stage::Latency {
-            milliseconds(
-                self.result_latency(result)
-                    .and_then(|host| host.median())
-                    .map(|median| median as f64 / 1e6),
-            )
+            let shown = self.latency_server();
+            let host = result
+                .server_latencies
+                .iter()
+                .find(|host| Some(host.id.as_str()) == shown);
+            milliseconds(host.and_then(|host| host.median()).map(|median| median as f64 / 1e6))
         } else {
             [
                 result.stage.downloads().then(|| rate(result.down_bps())),
@@ -699,17 +700,6 @@ impl Ui {
                 Span::styled(status.label(), muted),
             ],
         }
-    }
-
-    fn result_latency<'a>(
-        &'a self,
-        result: &'a crate::model::StageResult,
-    ) -> Option<&'a crate::model::ServerLatencyResult> {
-        let shown = self.latency_server();
-        result
-            .server_latencies
-            .iter()
-            .find(|host| Some(host.id.as_str()) == shown)
     }
 
     fn draw_timeline(&self, frame: &mut Frame, area: Rect) {
