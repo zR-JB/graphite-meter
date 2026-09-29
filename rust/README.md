@@ -229,7 +229,9 @@ which Go appends the sign-in query; other endpoints drop theirs, as Go's client 
 `GM_AUTH_PUBLIC_URL` is used in canonical form: `HTTPS://Meter.Example` serves as
 `https://meter.example`, where Go keeps the host's spelling and so refuses every
 sign-in whose browser sends it in lower case.
-Authentication forms require URL-encoded POST bodies with unique fields. Unlike
+
+Authentication forms require URL-encoded POST bodies with unique fields; another
+body fails as malformed, where Go reads no fields and reports a stale form. Unlike
 Go's form parser, Rust does not accept passwords or CSRF proofs from URL queries.
 A CLI approval page opened by another login is refused at once, where Go shows
 the page and then refuses its approval.
