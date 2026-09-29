@@ -50,8 +50,9 @@ struct Metadata {
     jwks_uri: String,
     #[serde(default)]
     id_token_signing_alg_values_supported: Option<Vec<String>>,
+    /// Go reads this member apart from the rest and takes a mistyped value as false.
     #[serde(default)]
-    authorization_response_iss_parameter_supported: bool,
+    authorization_response_iss_parameter_supported: serde_json::Value,
 }
 
 pub(super) struct Provider {
@@ -95,7 +96,7 @@ impl Provider {
             jwks_uri: metadata.jwks_uri,
             // Fetched with the first token, as by go-oidc.
             keys: AsyncMutex::new(Arc::new(Jwks::parse(br#"{"keys":[]}"#).expect("empty key set"))),
-            issuer_parameter: metadata.authorization_response_iss_parameter_supported,
+            issuer_parameter: metadata.authorization_response_iss_parameter_supported == true,
         })
     }
     async fn verify(&self, http: &ProviderHttp, token: &str) -> Result<jwt::Verified, Reject> {
