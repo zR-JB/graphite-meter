@@ -300,9 +300,11 @@ impl<'a> StageRun<'a> {
                 stopped.clone(),
             )
             .await;
+            // A session ends Ok past Running only once the stage stopped it or its window ended,
+            // which ends it as Go's probes.ended does (latency.go:252-253).
             LatencyCompletion {
                 at: Instant::now(),
-                stopped: *stopped.borrow() >= Stop::Drain,
+                stopped: *stopped.borrow() != Stop::Running,
                 result,
                 id,
             }

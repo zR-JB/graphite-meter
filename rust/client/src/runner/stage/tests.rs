@@ -1565,3 +1565,44 @@ async fn a_warmup_loss_is_noticed_at_once_with_one_reason() -> Result<(), Error>
     }
     Ok(())
 }
+
+/// A channel lost once the window has ended, before the stage drains, ends its session as the
+/// window's end does, with no failure, as Go's probes.ended leads to finish(nil) (latency.go:252-253):
+/// the stage once failed the server there as a session that ended before the stage boundary.
+#[tokio::test]
+async fn a_loss_between_the_window_end_and_the_drain_is_no_failure() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let (origin, mode, peer) = download_peer().await?;
+    let http = Http::new(true)?;
+    let mut server = prepared_download("peer", &origin, &http).await?;
+    server.latency = Some(graphite_meter_core::discovery::LatencyTarget {
+        base_url: origin,
+        transport: LatencyTransport::WebSocket,
+    });
+    let config = Config {
+        ping_interval: Duration::from_millis(20),
+        insecure: true,
+        ..Config::default()
+    };
+    let (snapshots, observed) = watch::channel(Snapshot::default());
+    let mut ledger = RunLedger::new();
+    let servers = std::slice::from_ref(&server);
+    let mut run = StageRun::open(Stage::Latency, &config, servers, &snapshots, &mut ledger)?;
+    run.ready().await?;
+    // The window ends 300 ms in, the peer ends the channel as idle 30 ms later, and no drain follows.
+    let end = Instant::now() + Duration::from_millis(300);
+    run.window = Some((Instant::now(), end));
+    run.members[0].stop_latency(Stop::Window(end));
+    tokio::time::sleep_until(end + Duration::from_millis(30)).await;
+    mode.store(6, Ordering::SeqCst);
+    let ended = tokio::time::timeout(Duration::from_secs(5), run.latency.join_next()).await?;
+    run.latency_ended(ended.ok_or("no latency session")?)?;
+    drop(run);
+    peer.abort();
+    assert!(
+        observed.borrow().failures.is_empty(),
+        "{:?}",
+        observed.borrow().failures
+    );
+    Ok(())
+}
