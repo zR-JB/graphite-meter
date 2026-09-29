@@ -573,6 +573,9 @@ class CommandTests(unittest.TestCase):
             write_archive(export / name, {"graphite-meter_1.2.3-rc.1_third-party-source/README.txt": b"x"})
             with self.assertRaisesRegex(ControlPlaneError, "source-offer metadata"):
                 COMMANDS["stage-source"]()
+        with patch.dict(os.environ, environment | {"VERSION": "/../../x"}):
+            with self.assertRaisesRegex(ControlPlaneError, "is outside"):
+                COMMANDS["stage-source"]()
 
     def test_recheck_reauthorizes_the_exact_handoff_after_approval(self) -> None:
         handoff = self.root / "handoff"

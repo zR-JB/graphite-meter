@@ -489,9 +489,10 @@ def command_stage_rust() -> None:
 
 def command_stage_source() -> None:
     """Stage the image's third-party source that a prerelease exports, as a stable build stages its own."""
-    name, dist = source_archive(env("VERSION")), gh.runner_path("RELEASE_ASSETS")
+    name, export = source_archive(env("VERSION")), gh.runner_path("SOURCE_EXPORT")
+    dist = gh.runner_path("RELEASE_ASSETS")
     dist.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(gh.runner_path("SOURCE_EXPORT") / name, dist / name)
+    shutil.copyfile(gh.confined_path(export / name, export), gh.confined_path(dist / name, dist))
     verify_release_assets.verify_third_party_source_archive(dist, env("VERSION"))
     gh.write_checksums(dist)
 
