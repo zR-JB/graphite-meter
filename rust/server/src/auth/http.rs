@@ -1,7 +1,7 @@
 //! HTTP authentication controller. Requests arrive only after policy authorization.
 use super::{
     ApprovalError, ApprovalKind, AuthLease, AuthRoute, Exchange, ExchangeError, SESSION_LIFETIME, SessionStore,
-    SocketKind, TicketError,
+    TicketError,
     logging::{Counter, SecurityLog},
     oidc::Oidc,
     pages::{self, LoginPage},
@@ -21,7 +21,7 @@ use crate::{
     sync::lock,
 };
 use bytes::Bytes;
-use graphite_meter_core::route::{self, Route};
+use graphite_meter_core::route::{self, Kind, Route};
 use http::{HeaderValue, Method, Request, Response, StatusCode, header};
 use ipnet::IpNet;
 use serde::Deserialize;
@@ -156,11 +156,9 @@ impl Service {
             Some(AuthRoute::BrowserToken) => self.exchange(request, true),
             None => match route::lookup(path) {
                 Some(Route::WtSession) if request.method() == Method::POST => {
-                    self.ticket(authorized, SocketKind::WebTransport)
+                    self.ticket(authorized, Kind::WebTransport)
                 }
-                Some(Route::WsSession) if request.method() == Method::POST => {
-                    self.ticket(authorized, SocketKind::WebSocket)
-                }
+                Some(Route::WsSession) if request.method() == Method::POST => self.ticket(authorized, Kind::WebSocket),
                 _ => error_response(StatusCode::NOT_FOUND),
             },
         };
@@ -594,7 +592,7 @@ impl Service {
         result
     }
 
-    fn ticket(&self, authorized: &AuthorizedRequest<Bytes>, kind: SocketKind) -> Response<Bytes> {
+    fn ticket(&self, authorized: &AuthorizedRequest<Bytes>, kind: Kind) -> Response<Bytes> {
         let request = authorized.request();
         let Some(lease) = principal(authorized) else {
             return error_response(StatusCode::FORBIDDEN);

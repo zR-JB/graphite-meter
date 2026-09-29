@@ -14,12 +14,6 @@ const TICKET_LIFETIME: Duration = Duration::from_secs(30);
 const MAX_SESSION_TICKETS: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SocketKind {
-    WebSocket,
-    WebTransport,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TicketError {
     NoSession,
     Capacity,
@@ -53,7 +47,7 @@ impl SessionStore {
         public_origin: &str,
         target: &str,
         request_origin: &str,
-        kind: SocketKind,
+        kind: Kind,
     ) -> Result<Ticket, TicketError> {
         self.mint_ticket_at(lease, public_origin, target, request_origin, kind, Instant::now())
     }
@@ -64,7 +58,7 @@ impl SessionStore {
         public_origin: &str,
         target: &str,
         request_origin: &str,
-        kind: SocketKind,
+        kind: Kind,
         now: Instant,
     ) -> Result<Ticket, TicketError> {
         if lease.is_bearer() && lease.browser_origin().is_none() {
@@ -75,11 +69,7 @@ impl SessionStore {
             .ok()
             .flatten()
             .ok_or(TicketError::InvalidTarget)?;
-        let expected = match kind {
-            SocketKind::WebSocket => Kind::WebSocket,
-            SocketKind::WebTransport => Kind::WebTransport,
-        };
-        if public.scheme != "https" || !target_host.eq_ignore_ascii_case(&public.host) || route_kind != expected {
+        if public.scheme != "https" || !target_host.eq_ignore_ascii_case(&public.host) || route_kind != kind {
             return Err(TicketError::InvalidTarget);
         }
         let mut state = lock(&self.0);
@@ -187,10 +177,10 @@ mod tests {
         let (grant, browser) = store.issue_browser_grant(&session, AUDIENCE).unwrap();
         let (_, sibling) = store.issue_browser_grant(&session, AUDIENCE).unwrap();
         let ticket = store
-            .mint_ticket(&browser, PUBLIC, TARGET, AUDIENCE, SocketKind::WebTransport)
+            .mint_ticket(&browser, PUBLIC, TARGET, AUDIENCE, Kind::WebTransport)
             .unwrap();
         let unused = store
-            .mint_ticket(&browser, PUBLIC, TARGET, AUDIENCE, SocketKind::WebTransport)
+            .mint_ticket(&browser, PUBLIC, TARGET, AUDIENCE, Kind::WebTransport)
             .unwrap();
         let active = store.consume_ticket(&ticket.token, TARGET, AUDIENCE).unwrap();
         assert_eq!(active.owner(), browser.owner());
@@ -203,12 +193,12 @@ mod tests {
         assert!(store.consume_ticket(&unused.token, TARGET, AUDIENCE).is_none());
         assert!(sibling.is_active());
         assert!(matches!(
-            store.mint_ticket(&browser, PUBLIC, TARGET, AUDIENCE, SocketKind::WebTransport),
+            store.mint_ticket(&browser, PUBLIC, TARGET, AUDIENCE, Kind::WebTransport),
             Err(TicketError::NoSession)
         ));
         let (_, cli) = store.issue_cli_grant(&session).unwrap();
         assert!(matches!(
-            store.mint_ticket(&cli, PUBLIC, TARGET, "", SocketKind::WebTransport),
+            store.mint_ticket(&cli, PUBLIC, TARGET, "", Kind::WebTransport),
             Err(TicketError::NoSession)
         ));
     }
@@ -224,14 +214,7 @@ mod tests {
         for _ in 0..8 {
             tokens.push(
                 store
-                    .mint_ticket_at(
-                        &lease,
-                        "https://meter.example",
-                        target,
-                        "",
-                        SocketKind::WebTransport,
-                        now,
-                    )
+                    .mint_ticket_at(&lease, "https://meter.example", target, "", Kind::WebTransport, now)
                     .unwrap(),
             );
         }
@@ -247,7 +230,7 @@ mod tests {
                     "https://meter.example",
                     target,
                     "",
-                    SocketKind::WebTransport,
+                    Kind::WebTransport,
                     now + TICKET_LIFETIME
                 )
                 .is_ok()
@@ -266,7 +249,7 @@ mod tests {
                 "https://meter.example",
                 "https://meter.example/wt/ping",
                 "https://client.example",
-                SocketKind::WebTransport,
+                Kind::WebTransport,
             )
             .unwrap();
         store.create("subject", "name", "local", Some(&old)).unwrap();
@@ -298,7 +281,7 @@ mod tests {
                 "https://meter.example",
                 target,
                 "https://client.example",
-                SocketKind::WebTransport,
+                Kind::WebTransport,
                 now,
             )
             .unwrap();

@@ -1,4 +1,5 @@
-use graphite_meter_server::auth::{AuthLease, SessionStore, SocketKind, TicketError};
+use graphite_meter_core::route::Kind;
+use graphite_meter_server::auth::{AuthLease, SessionStore, TicketError};
 use std::time::{Duration, SystemTime};
 
 const PUBLIC: &str = "https://meter.example";
@@ -12,7 +13,7 @@ fn ticket_retains_cookie_identity_but_becomes_nonambient_and_single_use() {
     let cookie = AuthLease::cookie(session);
     let before = SystemTime::now();
     let ticket = store
-        .mint_ticket(&cookie, PUBLIC, TARGET, PUBLIC, SocketKind::WebTransport)
+        .mint_ticket(&cookie, PUBLIC, TARGET, PUBLIC, Kind::WebTransport)
         .unwrap();
     assert!(ticket.token.starts_with("gmw_"));
     assert_eq!(ticket.token.len(), 47);
@@ -24,7 +25,7 @@ fn ticket_retains_cookie_identity_but_becomes_nonambient_and_single_use() {
     assert_eq!(consumed.owner(), cookie.owner());
     assert!(store.consume_ticket(&ticket.token, TARGET, PUBLIC).is_none());
     assert!(matches!(
-        store.mint_ticket(&consumed, PUBLIC, TARGET, PUBLIC, SocketKind::WebTransport),
+        store.mint_ticket(&consumed, PUBLIC, TARGET, PUBLIC, Kind::WebTransport),
         Err(TicketError::NoSession)
     ));
 }
@@ -40,7 +41,7 @@ fn failed_binding_burns_ticket_and_combined_capacity_is_preserved() {
         (TARGET, AUDIENCE),
     ] {
         let ticket = store
-            .mint_ticket(&cookie, PUBLIC, TARGET, PUBLIC, SocketKind::WebTransport)
+            .mint_ticket(&cookie, PUBLIC, TARGET, PUBLIC, Kind::WebTransport)
             .unwrap();
         assert!(store.consume_ticket(&ticket.token, target, origin).is_none());
         assert!(store.consume_ticket(&ticket.token, TARGET, PUBLIC).is_none());
@@ -48,9 +49,9 @@ fn failed_binding_burns_ticket_and_combined_capacity_is_preserved() {
     let tickets: Vec<_> = (0..8)
         .map(|i| {
             let (target, kind) = if i % 2 == 0 {
-                (TARGET, SocketKind::WebTransport)
+                (TARGET, Kind::WebTransport)
             } else {
-                ("https://meter.example/ws/ping", SocketKind::WebSocket)
+                ("https://meter.example/ws/ping", Kind::WebSocket)
             };
             (
                 store.mint_ticket(&cookie, PUBLIC, target, PUBLIC, kind).unwrap(),
@@ -59,7 +60,7 @@ fn failed_binding_burns_ticket_and_combined_capacity_is_preserved() {
         })
         .collect();
     assert!(matches!(
-        store.mint_ticket(&cookie, PUBLIC, TARGET, PUBLIC, SocketKind::WebTransport),
+        store.mint_ticket(&cookie, PUBLIC, TARGET, PUBLIC, Kind::WebTransport),
         Err(TicketError::Capacity)
     ));
     for (ticket, target) in tickets {
@@ -67,7 +68,7 @@ fn failed_binding_burns_ticket_and_combined_capacity_is_preserved() {
     }
     assert!(
         store
-            .mint_ticket(&cookie, PUBLIC, TARGET, PUBLIC, SocketKind::WebTransport)
+            .mint_ticket(&cookie, PUBLIC, TARGET, PUBLIC, Kind::WebTransport)
             .is_ok()
     );
 }
@@ -78,7 +79,7 @@ fn ticket_mint_rejects_cli_foreign_sessions_and_invalid_targets() {
     let (_, session) = store.create("subject", "Name", "local", None).unwrap();
     let cookie = AuthLease::cookie(session.clone());
     assert!(matches!(
-        SessionStore::new().mint_ticket(&cookie, PUBLIC, TARGET, PUBLIC, SocketKind::WebTransport),
+        SessionStore::new().mint_ticket(&cookie, PUBLIC, TARGET, PUBLIC, Kind::WebTransport),
         Err(TicketError::NoSession)
     ));
     for target in [
@@ -94,7 +95,7 @@ fn ticket_mint_rejects_cli_foreign_sessions_and_invalid_targets() {
     ] {
         assert!(
             matches!(
-                store.mint_ticket(&cookie, PUBLIC, target, PUBLIC, SocketKind::WebTransport),
+                store.mint_ticket(&cookie, PUBLIC, target, PUBLIC, Kind::WebTransport),
                 Err(TicketError::InvalidTarget)
             ),
             "{target}"
@@ -106,7 +107,7 @@ fn ticket_mint_rejects_cli_foreign_sessions_and_invalid_targets() {
             PUBLIC,
             "https://METER.example:443/wt/%70ing",
             PUBLIC,
-            SocketKind::WebTransport,
+            Kind::WebTransport,
         )
         .unwrap();
     assert!(
@@ -115,7 +116,7 @@ fn ticket_mint_rejects_cli_foreign_sessions_and_invalid_targets() {
             .is_some()
     );
     let ticket = store
-        .mint_ticket(&cookie, PUBLIC, TARGET, PUBLIC, SocketKind::WebTransport)
+        .mint_ticket(&cookie, PUBLIC, TARGET, PUBLIC, Kind::WebTransport)
         .unwrap();
     store.revoke(&session);
     assert!(store.consume_ticket(&ticket.token, TARGET, PUBLIC).is_none());

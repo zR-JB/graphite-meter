@@ -18,6 +18,6 @@ pub use session::{SESSION_LIFETIME, Session, SessionError, SessionLease, Session
 
 pub use grant::{AuthLease, secure_browser_origin};
 pub use route::AuthRoute;
-pub use ticket::{SocketKind, Ticket, TicketError};
+pub use ticket::{Ticket, TicketError};
 
 pub use approval::{ApprovalError, ApprovalKind, ApprovalView, Exchange, ExchangeError, valid_challenge};

@@ -1,6 +1,7 @@
+use graphite_meter_core::route::Kind;
 use graphite_meter_server::{
     auth::{
-        ApprovalKind, AuthLease, Exchange, SessionLease, SessionStore, SocketKind,
+        ApprovalKind, AuthLease, Exchange, SessionLease, SessionStore,
         policy::{Authorization, Connection, Listener, Policy, Refusal},
     },
     config::AuthMode,
@@ -282,7 +283,7 @@ fn webtransport_uses_no_cookie_and_burns_tickets_even_with_bearer() {
         Err(Refusal::AuthenticationRequired)
     ));
     let ticket = store
-        .mint_ticket(&lease, PUBLIC, target, PUBLIC, SocketKind::WebTransport)
+        .mint_ticket(&lease, PUBLIC, target, PUBLIC, Kind::WebTransport)
         .unwrap();
     *req.uri_mut() = format!("/wt/ping?token={}", ticket.token).parse().unwrap();
     // A non-WT listener must not consume a CONNECT ticket.
@@ -300,7 +301,7 @@ fn webtransport_uses_no_cookie_and_burns_tickets_even_with_bearer() {
     ));
 
     let ticket = store
-        .mint_ticket(&lease, PUBLIC, target, PUBLIC, SocketKind::WebTransport)
+        .mint_ticket(&lease, PUBLIC, target, PUBLIC, Kind::WebTransport)
         .unwrap();
     *req.uri_mut() = format!("/wt/upload?token={}", ticket.token).parse().unwrap();
     assert!(matches!(
