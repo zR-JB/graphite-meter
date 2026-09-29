@@ -99,7 +99,7 @@ export function stageTip(input: {
   if (settled)
     return [settled, value, failure && reasonLabel(failure)]
       .filter(Boolean)
-      .join(" · ");
+      .join("\n");
   if (locked)
     return ["active", "recovering", "warmup"].includes(state)
       ? "Locked while it runs"

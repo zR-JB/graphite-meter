@@ -5,7 +5,7 @@
   import type { Snippet } from "svelte";
   import { resize } from "../actions/resize";
   import { sheetDrag } from "../actions/sheetDrag";
-  import { tooltip } from "../actions/tooltip";
+  import { keyHint, tooltip } from "../actions/tooltip";
   import { activeModal } from "../actions/focus";
 
   interface Props {
@@ -87,7 +87,7 @@
         <button
           class="btn btn-icon btn-quiet"
           aria-label={`Close ${title}`}
-          {@attach tooltip(() => "Close (Esc)")}
+          {@attach tooltip(() => `Close${keyHint("Esc")}`)}
           onclick={onClose}
         >
           <Icon name="close" />
@@ -262,11 +262,11 @@
       display: flex;
     }
   }
-  /* Short viewports (and 400% zoom) give the flyout the full height; the whole panel scrolls. */
+  /* Short viewports (and 400% zoom) give the flyout the full height, inset as at its side; the whole panel scrolls. */
   @media (max-height: 480px) {
     .panel-layer:not(.docked) > :global(dialog.panel:is(.left, .right)) {
-      top: 0;
-      bottom: 0;
+      top: var(--space-2);
+      bottom: var(--space-2);
       overflow-y: auto;
     }
     .panel-layer:not(.docked) .sheet-head {

@@ -487,18 +487,21 @@
       scrollbar-width: thin;
     }
   }
-  ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
-  }
-  ::-webkit-scrollbar-thumb {
-    border: 3px solid transparent;
-    border-radius: var(--r-full);
-    background: var(--border-strong) padding-box;
-  }
-  ::-webkit-scrollbar-track,
-  ::-webkit-scrollbar-corner {
-    background: transparent;
+  /* A finger keeps the platform's overlay bars; a styled bar would take 10 px of every touch screen's width. */
+  @media (pointer: fine) {
+    ::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+    ::-webkit-scrollbar-thumb {
+      border: 3px solid transparent;
+      border-radius: var(--r-full);
+      background: var(--border-strong) padding-box;
+    }
+    ::-webkit-scrollbar-track,
+    ::-webkit-scrollbar-corner {
+      background: transparent;
+    }
   }
   body {
     background: var(--canvas);
@@ -895,6 +898,7 @@
     background: var(--surface-1);
     box-shadow: var(--elev-tile);
     font: var(--role-row);
+    text-wrap: pretty;
   }
   .kv > * {
     display: flex;
@@ -964,7 +968,8 @@
     outline-offset: -2px;
   }
   @media (pointer: coarse) {
-    .choices > :is(label, button) {
+    .choices > :is(label, button),
+    .kv > .link-row {
       min-height: var(--hit);
     }
   }
@@ -1127,6 +1132,12 @@
     font: var(--role-control);
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* After the base rule's min-width: a finger's segment is never narrower than a hit. */
+  @media (pointer: coarse) {
+    .segmented > button {
+      min-width: var(--hit);
+    }
   }
   .segmented > button:disabled {
     opacity: 0.5;
@@ -1505,6 +1516,10 @@
     forced-color-adjust: none;
     background-color: SelectedItem;
     color: SelectedItemText;
+  }
+  /* A finger's transparent hit border would otherwise be forced to a thick text-coloured frame. */
+  .btn {
+    border-color: Canvas;
   }
 }
 

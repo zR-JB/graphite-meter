@@ -23,7 +23,10 @@ test("another tab's unchanged settings are never written back", async () => {
         handlers.set(type, handler),
       removeEventListener() {},
     },
-    document: { documentElement: { setAttribute() {} } },
+    document: {
+      documentElement: { setAttribute() {} },
+      querySelectorAll: () => [],
+    },
   });
   const { store, mountStoreEffects } = await import("./store.svelte");
   jest.useFakeTimers();

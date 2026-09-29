@@ -777,6 +777,11 @@ export function mountStoreEffects(store: AppStore): () => void {
             : "dark"
           : store.theme;
       document.documentElement.setAttribute("data-theme", resolved);
+      // The browser's own bar takes the chosen theme's canvas, not the system's.
+      for (const meta of document.querySelectorAll<HTMLMetaElement>(
+        "meta[data-scheme]",
+      ))
+        meta.media = meta.dataset.scheme === resolved ? "all" : "not all";
     });
 
     let timer: ReturnType<typeof setTimeout> | undefined;

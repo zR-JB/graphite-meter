@@ -19,6 +19,9 @@ const anchored =
   typeof CSS !== "undefined" && CSS.supports("position-area", "block-start");
 /** A plain label or control; the getter updates the text in place, so an open tip stays open. */
 export const tooltip = (text: () => string) => fromAction(tooltipAction, text);
+/** " (key)" for a tip while the key acts and a keyboard is likely at hand; a finger has no Esc. */
+export const keyHint = (key: string, acts = true) =>
+  acts && matchMedia("(any-hover: hover)").matches ? ` (${key})` : "";
 /** Jargon: a quiet mark, a shorter rest, and a click or tap opens it outright. */
 export const term = (text: () => string) =>
   fromAction(

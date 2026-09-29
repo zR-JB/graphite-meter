@@ -98,16 +98,13 @@
       display: none;
     }
   }
+  /* A phone's strip keeps one time in one place; each card shows what its stage transferred. */
   @container status (max-width: 520px) {
-    .caption {
+    .caption,
+    .transferred {
       display: none;
     }
     .elapsed.secondary {
-      display: none;
-    }
-  }
-  @container status (max-width: 350px) {
-    .transferred {
       display: none;
     }
   }

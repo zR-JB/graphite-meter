@@ -965,6 +965,11 @@
       color: var(--text);
     }
   }
+  @media (pointer: coarse) {
+    .column-head button {
+      min-height: var(--hit);
+    }
+  }
   .column-head [aria-pressed="true"] {
     color: var(--text);
   }
@@ -1010,6 +1015,10 @@
     display: block;
     color: var(--text-soft);
     font: var(--w-normal) var(--type-2xs) / 1.4 var(--font-mono);
+  }
+  /* A day spaces its heading as a .group, but its gap must not open the table's columns. */
+  .day {
+    column-gap: 0;
   }
   .day > h3 {
     grid-column: 1 / -1;
