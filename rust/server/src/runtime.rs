@@ -1,4 +1,4 @@
-//! Process-level ownership of listeners, QUIC shard threads, certificate renewal, and shutdown.
+//! Process-level ownership of listeners, connection threads, certificate renewal, and shutdown.
 
 use crate::{
     ServerError,
@@ -155,12 +155,40 @@ async fn cancelled(mut stopped: watch::Receiver<bool>) {
     let _ = stopped.wait_for(|value| *value).await;
 }
 
-/// HTTP/3 on the caller's runtime, or on shards for half of its workers.
+/// Current-thread runtimes on threads of their own, one for each worker of the multi-thread runtime that makes them,
+/// which QUIC shards and TCP connections run on, so that a connection's tasks stay on one thread. Their threads end
+/// with the pool; a current-thread runtime makes none.
+pub(crate) struct Pool {
+    pub(crate) runtimes: Vec<tokio::runtime::Handle>,
+    _running: watch::Sender<()>,
+}
+
+impl Pool {
+    pub(crate) fn new() -> std::io::Result<Self> {
+        let workers = tokio::runtime::Handle::try_current().map_or(1, |runtime| runtime.metrics().num_workers());
+        let (running, ended) = watch::channel(());
+        let runtimes = (0..if workers > 1 { workers } else { 0 })
+            .map(|index| {
+                let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+                let (handle, mut ended) = (runtime.handle().clone(), ended.clone());
+                std::thread::Builder::new()
+                    .name(format!("gm-worker-{index}"))
+                    .spawn(move || runtime.block_on(ended.changed()))?;
+                Ok(handle)
+            })
+            .collect::<std::io::Result<_>>()?;
+        Ok(Self {
+            runtimes,
+            _running: running,
+        })
+    }
+}
+
+/// HTTP/3 on the caller's runtime, or on shards on half of the pool's runtimes.
 pub(crate) enum Quic {
     Endpoint(QuicEndpoint),
-    /// Each shard serves its endpoint from a current-thread runtime on a thread of its own.
     Shards {
-        shards: Vec<(ShardRuntime, QuicEndpoint)>,
+        shards: Vec<(tokio::runtime::Handle, QuicEndpoint)>,
         /// Tests count the datagrams it forwarded.
         #[cfg(all(test, target_os = "linux"))]
         router: crate::quic_shard::Router,
@@ -170,10 +198,10 @@ pub(crate) enum Quic {
 const MAX_QUIC_SHARDS: usize = 16;
 
 impl Quic {
-    /// Shards for half the workers of a multi-thread runtime, at least two and at most sixteen, as many as the buffer
-    /// budget covers. With four workers, two shards cost less CPU per byte than one or four for both one fast client
-    /// and eight paced ones: each additional shard splits a connection's ACKs over more sockets, and so its sends
-    /// into smaller bursts. Each shard holds its socket buffers, receive batch and forwarding queue for as long as it
+    /// Shards on half of the pool's runtimes, at least two and at most sixteen, as many as the buffer budget covers.
+    /// With four workers, two shards cost less CPU per byte than one or four for both one fast client and eight paced
+    /// ones: each additional shard splits a connection's ACKs over more sockets, and so its sends into smaller
+    /// bursts. Each shard holds its socket buffers, receive batch and forwarding queue for as long as it
     /// runs, and one connection never spreads over several, so sixteen keep those a small part of the default budget
     /// on a host with many cores. The shards split quic-go's 7 MiB socket buffers, each keeping 2 MiB at least, so
     /// the server's own queue stays near quic-go's single socket. Only Linux spreads unicast datagrams over
@@ -183,26 +211,18 @@ impl Quic {
         tls: Arc<rustls::ServerConfig>,
         address: SocketAddr,
     ) -> Result<Self, ServerError> {
-        let workers = if cfg!(target_os = "linux") {
-            tokio::runtime::Handle::current().metrics().num_workers()
-        } else {
-            1
-        };
-        let wanted = (workers / 2).clamp(2, MAX_QUIC_SHARDS);
+        let runtimes = &server.pool.runtimes;
+        let wanted = (runtimes.len() / 2).clamp(2, MAX_QUIC_SHARDS);
         let fewer = |shards: usize| {
             crate::log!("[gm:memory] the buffer budget covers {shards} of {wanted} QUIC endpoints");
         };
-        if workers > 1 {
-            let runtimes = (0..wanted)
-                .map(|_| ShardRuntime::new())
-                .collect::<std::io::Result<Vec<_>>>()?;
-            let handles: Vec<_> = runtimes.iter().map(ShardRuntime::handle).collect();
-            if let Some((endpoints, _router)) = server.quic_shards(tls.clone(), address, &handles)? {
+        if cfg!(target_os = "linux") && runtimes.len() > 1 {
+            if let Some((endpoints, _router)) = server.quic_shards(tls.clone(), address, &runtimes[..wanted])? {
                 if endpoints.len() < wanted {
                     fewer(endpoints.len());
                 }
                 return Ok(Self::Shards {
-                    shards: runtimes.into_iter().zip(endpoints).collect(),
+                    shards: runtimes.iter().cloned().zip(endpoints).collect(),
                     #[cfg(all(test, target_os = "linux"))]
                     router: _router,
                 });
@@ -219,62 +239,18 @@ impl Quic {
         }
     }
 
-    /// Serves until `stopped`. Each shard's thread is a service that ends with the thread.
+    /// Serves until `stopped`, each shard on its runtime.
     pub(crate) fn serve(self, server: &Arc<HttpServer>, stopped: &watch::Receiver<bool>) -> Vec<Service> {
-        let shards = match self {
-            Self::Endpoint(quic) => {
-                let (server, stopped) = (server.clone(), stopped.clone());
-                return vec![Box::pin(
-                    async move { server.serve_quic(quic, cancelled(stopped)).await },
-                )];
-            }
-            Self::Shards { shards, .. } => shards,
-        };
-        let shard = |(index, (runtime, quic)): (usize, (ShardRuntime, QuicEndpoint))| -> Service {
-            let (server, stopped) = (server.clone(), stopped.clone());
-            let (done, finished) = tokio::sync::oneshot::channel();
-            let name = format!("gm-quic-{index}");
-            let spawned = std::thread::Builder::new().name(name.clone()).spawn(move || {
-                let runtime = runtime.into_inner();
-                let result = runtime.block_on(server.serve_quic(quic, cancelled(stopped)));
-                // The shard's tasks and sockets are gone before its service ends.
-                drop(runtime);
-                let _ = done.send(result);
-            });
-            Box::pin(async move {
-                spawned?;
-                finished
-                    .await
-                    .unwrap_or_else(|_| Err(format!("{name} panicked").into()))
-            })
-        };
-        shards.into_iter().enumerate().map(shard).collect()
-    }
-}
-
-/// A shard's current-thread runtime. Until a thread takes it, dropping it shuts it down without blocking.
-pub(crate) struct ShardRuntime(Option<tokio::runtime::Runtime>);
-
-impl ShardRuntime {
-    fn new() -> std::io::Result<Self> {
-        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-        Ok(Self(Some(runtime)))
-    }
-
-    fn handle(&self) -> tokio::runtime::Handle {
-        self.0.as_ref().expect("shard runtime").handle().clone()
-    }
-
-    /// For the shard's own thread, where dropping the runtime may block.
-    fn into_inner(mut self) -> tokio::runtime::Runtime {
-        self.0.take().expect("shard runtime")
-    }
-}
-
-impl Drop for ShardRuntime {
-    fn drop(&mut self) {
-        if let Some(runtime) = self.0.take() {
-            runtime.shutdown_background();
+        let serve = |quic| server.clone().serve_quic(quic, cancelled(stopped.clone()));
+        match self {
+            Self::Endpoint(quic) => vec![Box::pin(serve(quic))],
+            Self::Shards { shards, .. } => shards
+                .into_iter()
+                .map(|(runtime, quic)| -> Service {
+                    let serving = runtime.spawn(serve(quic));
+                    Box::pin(async move { serving.await? })
+                })
+                .collect(),
         }
     }
 }

@@ -646,7 +646,7 @@ mod budget_tests {
         served.stop().await;
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn one_client_holds_at_most_its_share_of_receive_credit() {
         // A client's share is a window on each QUIC connection it may hold. While its other connections hold all of it
         // but three HTTP/2 windows, three more fit it and a fourth does not.

@@ -91,7 +91,7 @@ mod tests {
         answer
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn http_upgrade_retains_admission_and_shutdown_owns_the_socket() {
         let mut config = Config::default();
         config.limits.operations_per_client = 1;

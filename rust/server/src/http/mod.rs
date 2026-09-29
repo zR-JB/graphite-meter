@@ -95,6 +95,7 @@ pub struct HttpServer {
     uploads: UploadStore,
     auth: Option<crate::auth::http::Service>,
     assets: crate::assets::Assets,
+    pub(crate) pool: crate::runtime::Pool,
 }
 
 impl HttpServer {
@@ -213,6 +214,7 @@ impl HttpServer {
             uploads,
             auth,
             assets,
+            pool: crate::runtime::Pool::new()?,
         })
     }
 
@@ -246,6 +248,7 @@ impl HttpServer {
         let mut tasks = JoinSet::new();
         let mut accept_delay = Duration::ZERO;
         let mut accept_at = tokio::time::Instant::now();
+        let mut accepts = 0_usize;
         let result = loop {
             tokio::select! {
                 _ = &mut shutdown => break Ok(()),
@@ -281,11 +284,20 @@ impl HttpServer {
                     let server = self.clone();
                     let tls = tls.clone();
                     let accepted = Accepted { peer, tls: tls.is_some(), topology: spec.topology };
-                    tasks.spawn(async move {
+                    // As on a QUIC shard, a connection and its streams stay on one thread.
+                    let Ok(socket) = socket.into_std() else { continue; };
+                    let serving = async move {
                         let _permit = permit;
                         let _memory = memory;
-                        server.serve_tcp_connection(socket, accepted, tls, h2, bootstrap).await;
-                    });
+                        if let Ok(socket) = TcpStream::from_std(socket) {
+                            server.serve_tcp_connection(socket, accepted, tls, h2, bootstrap).await;
+                        }
+                    };
+                    accepts += 1;
+                    match self.pool.runtimes.get(accepts % self.pool.runtimes.len().max(1)) {
+                        Some(runtime) => tasks.spawn_on(serving, runtime),
+                        None => tasks.spawn(serving),
+                    };
                 }
             }
         };
