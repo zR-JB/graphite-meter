@@ -78,6 +78,15 @@ def expect_array(value: JsonValue, context: str) -> JsonArray:
     return value
 
 
+def page_items(pages: JsonValue, key: str | None = None) -> list[JsonObject]:
+    """The objects of a paginated answer, whose pages are arrays or hold one under `key`."""
+    items: list[JsonObject] = []
+    for page in expect_array(pages, "GitHub pages"):
+        values = page if key is None else expect_object(page, "GitHub page").get(key)
+        items += [expect_object(item, "item") for item in expect_array(values, "page")]
+    return items
+
+
 def object_field(value: Mapping[str, JsonValue], key: str, context: str) -> JsonObject:
     return expect_object(value.get(key), f"{context}.{key}")
 

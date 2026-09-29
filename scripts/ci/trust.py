@@ -60,14 +60,6 @@ def read_record(path: Path, keys: set[str], expected: gh.JsonObject) -> gh.JsonO
     return record
 
 
-def _objects(pages: gh.JsonValue, key: str | None = None) -> list[gh.JsonObject]:
-    items: list[gh.JsonObject] = []
-    for page in gh.expect_array(pages, "GitHub pages"):
-        values = page if key is None else gh.expect_object(page, "GitHub page").get(key)
-        items += [gh.expect_object(item, "item") for item in gh.expect_array(values, "page")]
-    return items
-
-
 def _number(value: gh.JsonValue) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
@@ -160,7 +152,7 @@ def require_dispatch_run(
             gh.fail("request was not initiated by the repository owner")
     pages = gh.api(gh.query(f"repos/{repository}/actions/runs/{run_id}/artifacts", per_page=100),
                    paginate=True)
-    unexpired = [item for item in _objects(pages, "artifacts") if item.get("expired") is False]
+    unexpired = [item for item in gh.page_items(pages, "artifacts") if item.get("expired") is False]
     for name, limit in artifacts.items():
         if len(matches := [item for item in unexpired if item.get("name") == name]) != 1:
             gh.fail(f"expected one unexpired artifact {name}, found {len(matches)}")
@@ -175,7 +167,7 @@ def require_ci_gate(
     pages = gh.api(gh.query(f"repos/{repository}/actions/workflows/ci.yml/runs",
                          event=event, head_sha=sha, per_page=100), paginate=True)
     identity = (sha, branch, event)
-    runs = [run for run in _objects(pages, "workflow_runs") if _bound_to_pr(run, pr_number)
+    runs = [run for run in gh.page_items(pages, "workflow_runs") if _bound_to_pr(run, pr_number)
             and (run.get("head_sha"), run.get("head_branch"), run.get("event")) == identity]
     scope = f"PR #{pr_number}" if pr_number is not None else branch
     if not runs:
@@ -189,7 +181,7 @@ def require_ci_gate(
                f"{run.get('status')}/{run.get('conclusion')}")
     pages = gh.api(gh.query(f"repos/{repository}/actions/runs/{run_id}/jobs", filter="latest",
                          per_page=100), paginate=True)
-    jobs = _objects(pages, "jobs")
+    jobs = gh.page_items(pages, "jobs")
     gates = [job for job in jobs if job.get("name") == "Gate"]
     if [(gate.get("status"), gate.get("conclusion")) for gate in gates] != [DONE]:
         gh.fail(f"Gate in CI run {run_id} did not succeed")
@@ -204,7 +196,7 @@ def require_check_run(
 ) -> int:
     pages = gh.api(gh.query(f"repos/{repository}/commits/{sha}/check-runs", per_page=100,
                          filter="all"), paginate=True)
-    checks = [check for check in _objects(pages, "check_runs")
+    checks = [check for check in gh.page_items(pages, "check_runs")
               if check.get("name") == name and _get(check.get("app"), "slug") == app_slug
               and _bound_to_pr(check, pr_number)]
     scope = f"{name} for PR #{pr_number}" if pr_number is not None else name
@@ -225,7 +217,7 @@ def require_main_codeql(repository: str, sha: str) -> None:
     def order(item: gh.JsonObject) -> tuple[str, int]:
         return _text(item.get("created_at")), _number(item.get("id"))
 
-    matching = [item for item in _objects(pages)
+    matching = [item for item in gh.page_items(pages)
                 if item.get("commit_sha") == sha and _get(item.get("tool"), "name") == "CodeQL"]
     identity = ("category", "analysis_key", "environment")
     newest = {tuple(_text(item.get(key)) for key in identity): item

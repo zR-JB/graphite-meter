@@ -337,9 +337,7 @@ def command_recheck() -> None:
 
 
 def release_assets(repository: str, release_id: int) -> list[gh.JsonObject]:
-    pages = gh.api(f"repos/{repository}/releases/{release_id}/assets?per_page=100", paginate=True)
-    return [gh.expect_object(item, "asset") for page in gh.expect_array(pages, "assets")
-            for item in gh.expect_array(page, "assets")]
+    return gh.page_items(gh.api(f"repos/{repository}/releases/{release_id}/assets?per_page=100", paginate=True))
 
 
 def asset_digests(repository: str, release_id: int) -> dict[str, str]:
@@ -398,10 +396,8 @@ def command_publish() -> None:
             gh.fail(f"{tag} resolves to {sha}, expected {release.sha}")
 
     require_compatible_release_tag(repository, tag, release.sha)
-    pages = gh.expect_array(gh.api(f"{base}/releases?per_page=100", paginate=True), "releases")
-    matches = [gh.expect_object(item, "release") for page in pages
-               for item in gh.expect_array(page, "releases") if isinstance(item, dict)
-               and item.get("tag_name") == tag]
+    matches = [item for item in gh.page_items(gh.api(f"{base}/releases?per_page=100", paginate=True))
+               if item.get("tag_name") == tag]
     if len(matches) > 1:
         gh.fail(f"multiple releases unexpectedly use tag {tag}")
     if matches and matches[0].get("prerelease") is not prerelease:
