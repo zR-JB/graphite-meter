@@ -32,11 +32,8 @@ pub enum Budget {
 
 #[derive(Default)]
 struct State {
-    password: AddressAttempts,
+    addresses: [AddressAttempts; 4],
     failed_passwords: Attempts,
-    exchanges: AddressAttempts,
-    starts: AddressAttempts,
-    approvals: AddressAttempts,
 }
 
 /// Address budgets share one short lock; callers supply an address resolved by proxy policy.
@@ -59,19 +56,17 @@ impl AttemptLimiter {
         let mut state = lock(&self.state);
         // Sample after acquiring the lock to keep stored timestamps ordered.
         let now = Instant::now();
-        let State {
-            password,
-            failed_passwords,
-            exchanges,
-            starts,
-            approvals,
-        } = &mut *state;
-        let (addresses, limit, ceiling) = match budget {
-            Budget::Password | Budget::KnownDevice => (password, PASSWORD_ADDRESS_LIMIT, Ceiling::PasswordAddress),
-            Budget::OidcExchange => (exchanges, EXCHANGE_ADDRESS_LIMIT, Ceiling::ExchangeAddress),
-            Budget::OidcStart => (starts, OIDC_START_ADDRESS_LIMIT, Ceiling::StartAddress),
-            Budget::BrowserApproval => (approvals, APPROVAL_ADDRESS_LIMIT, Ceiling::ApprovalAddress),
+        let (slot, limit, ceiling) = match budget {
+            Budget::Password | Budget::KnownDevice => (0, PASSWORD_ADDRESS_LIMIT, Ceiling::PasswordAddress),
+            Budget::OidcExchange => (1, EXCHANGE_ADDRESS_LIMIT, Ceiling::ExchangeAddress),
+            Budget::OidcStart => (2, OIDC_START_ADDRESS_LIMIT, Ceiling::StartAddress),
+            Budget::BrowserApproval => (3, APPROVAL_ADDRESS_LIMIT, Ceiling::ApprovalAddress),
         };
+        let State {
+            addresses,
+            failed_passwords,
+        } = &mut *state;
+        let addresses = &mut addresses[slot];
         let known = matches!(budget, Budget::KnownDevice);
         addresses.retain(|_, attempts| {
             expire(attempts, now);
@@ -101,7 +96,7 @@ impl AttemptLimiter {
         true
     }
 
-    /// Only a wrong password spends the global ceiling, so a spray cannot lock out the operator.
+    /// Only a wrong password spends the global ceiling, which a known device skips, as Go's.
     pub fn note_failed_password(&self) {
         let mut state = lock(&self.state);
         let now = Instant::now();
