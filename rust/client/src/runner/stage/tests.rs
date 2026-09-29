@@ -842,9 +842,10 @@ async fn a_lane_refused_just_before_the_stage_end_takes_its_server_out() -> Resu
 
 /// A 3 s upload stage whose receiver forgets its upload id 1 s into the window, in fixture mode
 /// `forget`: 20 until the next mint, 21 for good. Each side of the loss holds evidence enough.
+/// Runs on real time: a paused clock races ahead of the real sockets on a busy machine and closes the window
+/// before its evidence arrives.
 async fn forgetful_receiver(forget: u8) -> Result<(Result<Vec<String>, Error>, Snapshot), Error> {
     let _ = crate::crypto::provider().install_default();
-    let heartbeat = heartbeat();
     let (origin, mode, peer) = download_peer().await?;
     let http = Http::new(true)?;
     let servers = vec![prepared_download("peer", &origin, &http).await?];
@@ -871,14 +872,13 @@ async fn forgetful_receiver(forget: u8) -> Result<(Result<Vec<String>, Error>, S
         forget_id
     );
     peer.abort();
-    heartbeat.abort();
     let snapshot = observed.borrow().clone();
     Ok((result, snapshot))
 }
 
 /// As Go's measureUpload (upload.go:23-31), a receiver that forgot its upload id, as a restarted
 /// server does, is replaced; the new id resumes the aggregate's evidence.
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn a_receiver_that_forgets_its_upload_is_replaced() -> Result<(), Error> {
     let (result, snapshot) = forgetful_receiver(20).await?;
     assert!(snapshot.failures.is_empty(), "{:?}", snapshot.failures);
@@ -894,7 +894,7 @@ async fn a_receiver_that_forgets_its_upload_is_replaced() -> Result<(), Error> {
 }
 
 /// One replacement per server and run: forgotten again, the server leaves on the refusal.
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn a_receiver_forgotten_twice_takes_its_server_out() -> Result<(), Error> {
     let (result, snapshot) = forgetful_receiver(21).await?;
     assert!(result.is_err());
