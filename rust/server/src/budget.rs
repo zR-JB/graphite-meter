@@ -279,14 +279,10 @@ impl ClientCredit {
 
     /// Charges `bytes` to every key of an admitted client, or to none if any would pass its share.
     pub(crate) fn claim(self: &Arc<Self>, keys: &[String], bytes: usize) -> Option<CreditClaim> {
-        let keys: Vec<_> = keys
-            .iter()
-            .filter(|&key| Some(key) != self.shared.as_ref())
-            .cloned()
-            .collect();
+        let keys = || keys.iter().filter(|&key| Some(key) != self.shared.as_ref());
         let mut held = lock(&self.held);
         let fits = held.total.saturating_add(bytes) <= self.limit
-            && keys.iter().enumerate().all(|(index, key)| {
+            && keys().enumerate().all(|(index, key)| {
                 let share = self.share.saturating_mul(1 << index.min(usize::BITS as usize - 1));
                 held.keys.get(key).copied().unwrap_or_default().saturating_add(bytes) <= share
             });
@@ -294,12 +290,12 @@ impl ClientCredit {
             return None;
         }
         held.total += bytes;
-        for key in &keys {
+        for key in keys() {
             *held.keys.entry(key.clone()).or_default() += bytes;
         }
         Some(CreditClaim {
             credit: self.clone(),
-            keys,
+            keys: keys().cloned().collect(),
             bytes,
         })
     }

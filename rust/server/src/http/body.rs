@@ -10,8 +10,12 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex},
     task::{Context, Poll},
+    time::Duration,
 };
-use tokio::time::Sleep;
+use tokio::time::{Instant, Sleep};
+
+/// A refused upload asks for its window again after this pause, as a WebTransport session does.
+const FUNDING_RETRY: Duration = Duration::from_millis(100);
 
 /// Direct callers own capacity through this body. A listener additionally holds
 /// the operation until its final bytes flush, or the connection is dropped.
@@ -223,10 +227,13 @@ pub(super) fn holds_permit(operations: &Operations) -> bool {
     operations.iter().any(|operation| lock(operation).permit.is_some())
 }
 
-/// An upload body asks its connection for a wider receive window once its exchange holds a permit, on each read
-/// until the connection grants it.
+/// An upload body asks its connection for a wider receive window once its exchange holds a permit, on a read, until
+/// the connection grants it; after a refusal, only once the pause has passed.
 pub(super) struct UploadFunding {
     operations: Operations,
+    /// The admitted client's keys, read from the permit once.
+    clients: Option<Vec<String>>,
+    retry_at: Option<Instant>,
     pub(super) funded: bool,
 }
 
@@ -234,6 +241,8 @@ impl UploadFunding {
     pub(super) fn new(operations: Operations) -> Self {
         Self {
             operations,
+            clients: None,
+            retry_at: None,
             funded: false,
         }
     }
@@ -241,11 +250,15 @@ impl UploadFunding {
     /// While the upload is unfunded and `ready` holds, `grant` is asked with the keys the exchange's permit holds,
     /// which also bound the client's receive credit.
     pub(super) fn fund(&mut self, ready: impl FnOnce() -> bool, grant: impl FnOnce(&[String]) -> bool) {
-        if !self.funded
-            && ready()
-            && let Some(clients) = self.admitted_clients()
-        {
-            self.funded = grant(&clients);
+        if self.funded || !ready() || self.retry_at.is_some_and(|retry| Instant::now() < retry) {
+            return;
+        }
+        if self.clients.is_none() {
+            self.clients = self.admitted_clients();
+        }
+        if let Some(clients) = &self.clients {
+            self.funded = grant(clients);
+            self.retry_at = (!self.funded).then(|| Instant::now() + FUNDING_RETRY);
         }
     }
 
@@ -255,5 +268,46 @@ impl UploadFunding {
             let operation = lock(operation);
             operation.permit.as_ref().map(|permit| permit.clients().to_vec())
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::admission::{Admission, Limits};
+
+    #[tokio::test(start_paused = true)]
+    async fn a_refused_upload_asks_for_its_window_again_only_after_a_pause() {
+        let admission = Admission::new(Limits::default());
+        let operation = Operation {
+            permit: Some(admission.acquire(false, &["192.0.2.1".into()]).unwrap()),
+            deadline: Box::pin(tokio::time::sleep(Duration::from_secs(60))),
+            body_complete: false,
+            revocation: None,
+            revoked: false,
+        };
+        let mut funding = UploadFunding::new(Arc::new(Mutex::new(vec![Arc::new(Mutex::new(operation))])));
+        let mut asked = 0;
+        for _ in 0..10 {
+            funding.fund(
+                || true,
+                |clients| {
+                    assert_eq!(clients, ["192.0.2.1"]);
+                    asked += 1;
+                    false
+                },
+            );
+        }
+        assert_eq!(asked, 1, "a refused upload asks once per pause, not on every read");
+        tokio::time::advance(Duration::from_millis(100)).await;
+        funding.fund(
+            || true,
+            |_| {
+                asked += 1;
+                true
+            },
+        );
+        assert_eq!(asked, 2);
+        assert!(funding.funded);
     }
 }
