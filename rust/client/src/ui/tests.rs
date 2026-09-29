@@ -300,15 +300,9 @@ fn setup_keys_move_and_change_rows_as_go_does() {
     press(&mut ui, &commands, &["right", "down", "right"]);
     assert!(ui.advanced && ui.config.warmup == Duration::from_millis(900));
     at(&mut ui, Setting::Start);
-    assert!(
-        screen(&mut ui).contains("enter start test"),
-        "the start row offers enter"
-    );
+    assert!(screen(&mut ui).contains("enter start test")); // the start row offers enter
     press(&mut ui, &commands, &["enter"]);
-    assert!(
-        matches!(sent.try_recv(), Ok(Command::Run(_))),
-        "enter on Start test starts"
-    );
+    assert!(matches!(sent.try_recv(), Ok(Command::Run(_)))); // enter on Start test starts
     // Each row from a fresh setup with Advanced shown: its keys, the notice, whether the paths
     // are checked again, and the change. Esc does nothing in setup.
     let stage = Setting::Stage;
@@ -350,12 +344,8 @@ fn setup_keys_move_and_change_rows_as_go_does() {
         ui.advanced = true;
         at(&mut ui, row);
         press(&mut ui, &commands, keys);
-        assert!(changed(&ui) && ui.current() == row, "{row:?} {keys:?}");
-        assert_eq!(
-            (ui.notice.as_str(), ui.recheck.is_some()),
-            (notice, recheck),
-            "{row:?} {keys:?}"
-        );
+        let state = (changed(&ui), ui.current(), ui.notice.as_str(), ui.recheck.is_some());
+        assert_eq!(state, (true, row, notice, recheck), "{keys:?}");
     }
     // A path change is checked once changes settle, and keeps its notice.
     let mut ui = setup();
@@ -373,10 +363,8 @@ fn setup_keys_move_and_change_rows_as_go_does() {
     assert_eq!(ui.row(Setting::Streams).label, "Maximum H1 streams per direction");
     at(&mut ui, Setting::Streams);
     press(&mut ui, &commands, &["right", "up", "space"]);
-    assert_eq!(
-        (ui.config.streams, ui.notice.as_str()),
-        (7, "Stream count: Forced · 7 per direction.")
-    );
+    assert_eq!(ui.config.streams, 7);
+    assert_eq!(ui.notice, "Stream count: Forced · 7 per direction.");
     assert_eq!(ui.row(Setting::Streams).label, "Streams per server and direction");
     press(&mut ui, &commands, &["down"]);
     press(&mut ui, &commands, &["right"; 20]);
@@ -385,10 +373,7 @@ fn setup_keys_move_and_change_rows_as_go_does() {
     ui.config.warmup = Duration::from_secs(1);
     at(&mut ui, Setting::Reset);
     press(&mut ui, &commands, &["enter"]);
-    assert!(
-        ui.config.warmup == Duration::from_secs(1) && ui.reset_prompt,
-        "reset asks first"
-    );
+    assert!(ui.config.warmup == Duration::from_secs(1) && ui.reset_prompt); // reset asks first
     press(&mut ui, &commands, &["x"]);
     assert!(!ui.reset_prompt && ui.notice == "Settings kept.");
     press(&mut ui, &commands, &["enter", "enter"]);
@@ -440,10 +425,8 @@ fn edits_apply_and_refuse_as_go_parses_them() {
         };
         // Go shows the error in the footer's error style and clears it as you type.
         let edit = ui.edit.as_ref().expect("the edit stays open");
-        assert!(
-            edit.error == error && edit.text() == typed && ui.notice == error,
-            "{typed}"
-        );
+        assert_eq!((edit.error.as_str(), edit.text()), (error, typed.into()));
+        assert_eq!(ui.notice, error);
         assert!(screen(&mut ui).contains(error), "{typed}");
         press(&mut ui, &commands, &["backspace"]);
         assert!(ui.edit.as_ref().is_some_and(|edit| edit.error.is_empty()));
@@ -460,20 +443,15 @@ fn edits_apply_and_refuse_as_go_parses_them() {
     ui.config.servers = vec!["near".into()];
     ui.begin_edit(Setting::Catalogue, "HTTP://127.0.0.1:7246/".into());
     press(&mut ui, &commands, &["enter"]);
-    assert_eq!(
-        (ui.config.servers.len(), ui.notice.as_str()),
-        (1, "Catalogue http://127.0.0.1:7246.")
-    );
+    assert_eq!(ui.config.servers.len(), 1);
+    assert_eq!(ui.notice, "Catalogue http://127.0.0.1:7246.");
     ui.begin_edit(Setting::Catalogue, "meter.example".into());
     press(&mut ui, &commands, &["enter"]);
     assert!(ui.config.servers.is_empty() && ui.recheck.is_some());
     // Esc discards an edit, q types, textinput's keys move and cut, and ctrl+c quits.
     ui.begin_edit(Setting::Catalogue, ui.config.url.clone());
     press(&mut ui, &commands, &["x", "esc"]);
-    assert!(
-        ui.edit.is_none() && ui.config.url == "https://meter.example",
-        "esc applied the edit"
-    );
+    assert!(ui.edit.is_none() && ui.config.url == "https://meter.example"); // esc discards the edit
     ui.begin_edit(Setting::Catalogue, String::new());
     assert!(!press(&mut ui, &commands, &["q"]) && ui.edit.as_ref().unwrap().text() == "q");
     let edit = ui.edit.as_mut().unwrap();
@@ -553,18 +531,12 @@ fn setup_rows_and_start_notes_read_as_go_writes_them() {
     // The start note says what the run takes, or what stops it.
     let mut ui = setup();
     let note = |ui: &mut Ui| rows(ui)[4].clone();
-    assert!(
-        note(&mut ui).contains("Start test   3 stages · about 26 s"),
-        "{}",
-        note(&mut ui)
-    );
+    assert!(note(&mut ui).contains("Start test   3 stages · about 26 s"));
     ui.config.stages.clear();
     assert!(note(&mut ui).contains("select at least one stage"));
     press(&mut ui, &commands, &["r"]);
-    assert_eq!(
-        ui.notice,
-        "Test cannot start: select at least one stage: latency, download, upload or bidirectional."
-    );
+    let refused = "Test cannot start: select at least one stage: latency, download, upload or bidirectional.";
+    assert_eq!(ui.notice, refused);
     assert_eq!(ui.current(), Setting::Stage(Stage::Latency), "Go moves to the stages");
     (ui.config, ui.signed_out) = (Config::default(), true);
     assert!(note(&mut ui).contains("sign in first; v requests a new code"));
@@ -611,41 +583,27 @@ fn path_rows_cycle_the_checked_servers_paths() {
         ..ServerSummary::default()
     }];
     let value = |ui: &Ui, setting| crate::report::plain(&ui.row(setting).value);
-    assert_eq!(value(&ui, Setting::Path(false)), "Automatic · → :7246");
-    assert_eq!(
-        ui.row(Setting::Path(false)).help,
-        "How transfers reach the server. ←/→ picks one of 3."
-    );
-    at(&mut ui, Setting::Path(false));
+    let (throughput, latency) = (Setting::Path(false), Setting::Path(true));
+    assert_eq!(value(&ui, throughput), "Automatic · → :7246");
+    let help = ui.row(throughput).help;
+    assert_eq!(help, "How transfers reach the server. ←/→ picks one of 3.");
+    at(&mut ui, throughput);
     press(&mut ui, &commands, &["right"]);
-    assert_eq!(
-        value(&ui, Setting::Path(false)),
-        "Fetch streams · HTTP/1.1 · clear · :7246"
-    );
+    assert_eq!(value(&ui, throughput), "Fetch streams · HTTP/1.1 · clear · :7246");
     assert_eq!(ui.notice, "Throughput path: Fetch streams · HTTP/1.1 · clear.");
     assert!(ui.row(Setting::Protocol).inert && value(&ui, Setting::Protocol) == "HTTP/1.1");
     at(&mut ui, Setting::Protocol);
     press(&mut ui, &commands, &["right"]);
     assert_eq!(ui.notice, "This path serves HTTP/1.1 only.");
-    at(&mut ui, Setting::Path(false));
+    at(&mut ui, throughput);
     press(&mut ui, &commands, &["right"]);
-    assert_eq!(
-        value(&ui, Setting::Path(false)),
-        "WebTransport streams · HTTP/3 · TLS · :7247"
-    );
+    assert_eq!(value(&ui, throughput), "WebTransport streams · HTTP/3 · TLS · :7247");
     press(&mut ui, &commands, &["right"]);
-    assert_eq!(value(&ui, Setting::Path(false)), "Automatic · → :7246");
-    assert_eq!(value(&ui, Setting::Path(true)), "Automatic · → :7246");
+    assert_eq!(value(&ui, throughput), "Automatic · → :7246");
+    assert_eq!(value(&ui, latency), "Automatic · → :7246");
     ui.config.latency_transport = Some(LatencyTransport::WebTransport);
-    assert_eq!(
-        value(&ui, Setting::Path(true)),
-        "WebTransport datagrams · automatic origin"
-    );
-    assert!(
-        ui.row(Setting::Path(true))
-            .help
-            .starts_with("Not offered by the checked server.")
-    );
+    assert_eq!(value(&ui, latency), "WebTransport datagrams · automatic origin");
+    assert!(ui.row(latency).help.starts_with("Not offered by the checked server."));
     // Several servers share each transport, naming those that lack it.
     ui.prepared.push(ServerSummary {
         id: "far".into(),
@@ -654,13 +612,10 @@ fn path_rows_cycle_the_checked_servers_paths() {
         ..ServerSummary::default()
     });
     ui.config.latency_transport = None;
-    assert_eq!(value(&ui, Setting::Path(true)), "Automatic · each server");
-    at(&mut ui, Setting::Path(true));
+    assert_eq!(value(&ui, latency), "Automatic · each server");
+    at(&mut ui, latency);
     press(&mut ui, &commands, &["left"]);
-    assert_eq!(
-        value(&ui, Setting::Path(true)),
-        "WebTransport datagrams · unavailable on Lab, Far"
-    );
+    assert_eq!(value(&ui, latency), "WebTransport datagrams · unavailable on Lab, Far");
 }
 
 #[test]
@@ -684,10 +639,8 @@ fn servers_ready_and_chosen_as_go_shows_them() {
     assert!(ui.can_use_available());
     assert!(crate::report::plain(&ui.row(Setting::Servers).value).contains("1 of 3 ready"));
     press(&mut ui, &commands, &["u"]);
-    assert_eq!(
-        (ui.notice.as_str(), ui.config.servers.as_slice()),
-        ("Using the available servers.", &["a".to_owned()][..])
-    );
+    assert_eq!(ui.notice, "Using the available servers.");
+    assert_eq!(ui.config.servers, ["a"]);
     ui.recheck = None;
     ui.checked_at = Some(Instant::now() - FRESHNESS - Duration::from_secs(1));
     let plan = screen(&mut ui);
@@ -716,10 +669,8 @@ fn servers_ready_and_chosen_as_go_shows_them() {
     assert_eq!(ui.notice, "Choose up to 4. Their speeds are combined.");
     let keys = "space down space down space down space down space up up up up space";
     press(&mut ui, &commands, &keys.split(' ').collect::<Vec<_>>());
-    assert_eq!(
-        (ui.draft.len(), ui.notice.as_str()),
-        (4, "At most four servers share one test.")
-    );
+    assert_eq!(ui.draft.len(), 4);
+    assert_eq!(ui.notice, "At most four servers share one test.");
     let chooser = screen(&mut ui);
     for want in ["Test servers · 4 selected", "○ A · Ready", "https://b.example"] {
         assert!(chooser.contains(want), "{want} in {chooser}");
@@ -741,17 +692,10 @@ fn hints_follow_the_mode_and_fit_the_width() {
     let hints = "r start test • ↑/↓ move • ←/→ change • space on/off • enter edit • ? keys • q quit";
     assert_eq!(last(&mut ui), hints);
     ui.size = (40, 24);
-    assert_eq!(
-        last(&mut ui),
-        "r start test • pgdn more • q quit",
-        "hints drop from the middle"
-    );
+    assert_eq!(last(&mut ui), "r start test • pgdn more • q quit"); // hints drop from the middle
     (ui.help, ui.size) = (true, (120, 24));
     let help = plain(&ui.screen()[20..]);
-    assert!(
-        help.contains("r   start test    space on/off           a    automatic paths    q quit"),
-        "{help}"
-    );
+    assert!(help.contains("r   start test    space on/off           a    automatic paths    q quit"));
     ui.help = false;
     at(&mut ui, Setting::Catalogue);
     press(&mut ui, &commands, &["enter"]);
@@ -778,15 +722,9 @@ fn a_late_background_answer_never_becomes_keys() {
     let answer = "11;rgb:ffff/ffff/ffff".split("").filter(|part| !part.is_empty());
     let answer: Vec<_> = std::iter::once("alt+]").chain(answer).chain(["alt+\\"]).collect();
     assert!(!press(&mut ui, &commands, &answer));
-    assert!(
-        sent.try_recv().is_err() && !ui.live && ui.popup == Popup::None && !ui.help,
-        "the answer ran keys"
-    );
+    assert!(sent.try_recv().is_err() && !ui.live && ui.popup == Popup::None && !ui.help); // the answer runs no keys
     press(&mut ui, &commands, &["alt+]", "1", "1", "ctrl+g", "r"]);
-    assert!(
-        matches!(sent.try_recv(), Ok(Command::Run(_))),
-        "keys after the answer work"
-    );
+    assert!(matches!(sent.try_recv(), Ok(Command::Run(_)))); // keys after the answer work
 }
 
 #[test]
@@ -807,20 +745,14 @@ fn sign_in_opens_cancels_and_expires_as_go_does() {
     for want in ["Sign in to http", "Match this code │ ABCD │", "Waiting for approval…"] {
         assert!(screen.iter().any(|row| row.contains(want)), "{want}: {screen:#?}");
     }
-    assert!(
-        screen.contains(&format!(" {url:<119}")),
-        "the link sits outside a frame: {screen:#?}"
-    );
+    assert!(screen.contains(&format!(" {url:<119}"))); // the link sits outside a frame
     press(&mut ui, &commands, &["esc"]);
     assert!(matches!(sent.try_recv(), Ok(Command::Cancel)));
     step(&mut ui, |snapshot| {
         (snapshot.auth, snapshot.phase) = (None, Phase::Setup)
     });
-    assert!(
-        ui.status_label() == "Sign in" && ui.notice.contains('v'),
-        "{}",
-        ui.notice
-    );
+    assert_eq!(ui.status_label(), "Sign in");
+    assert!(ui.notice.contains('v'), "{}", ui.notice);
     press(&mut ui, &commands, &["r"]);
     assert!(!ui.live && ui.notice == "Test cannot start: sign in first. Press v to request a new code.");
     // An expired approval asks for a new code.
@@ -832,11 +764,8 @@ fn sign_in_opens_cancels_and_expires_as_go_does() {
     step(&mut ui, |snapshot| {
         (snapshot.auth, snapshot.phase, snapshot.error) = (None, Phase::Failed, Some(SIGN_IN_EXPIRED.into()));
     });
-    assert!(
-        ui.status_label() == "Sign in" && ui.notice.contains("expired"),
-        "{}",
-        ui.notice
-    );
+    assert_eq!(ui.status_label(), "Sign in");
+    assert!(ui.notice.contains("expired"), "{}", ui.notice);
     // An approval that succeeds checks the paths again.
     let mut ui = setup();
     step(&mut ui, |snapshot| {
@@ -889,36 +818,23 @@ fn run_keys_stop_quit_and_return_as_go_does() {
     assert_eq!(ui.notice, "");
     assert!(ui.exit().shown.is_some());
     press(&mut ui, &commands, &["esc"]);
-    assert!(
-        !ui.live && ui.prepare() == Prepare::Checking,
-        "esc returns to a freshly checked setup"
-    );
+    assert!(!ui.live && ui.prepare() == Prepare::Checking); // esc returns to a freshly checked setup
     assert!(ui.exit().shown.is_none(), "Go prints no report after a return to setup");
     // Quitting stops the run first and reports it; a second interrupt quits at once.
     for name in ["q", "ctrl+c"] {
         let mut ui = running(&["a"]);
         stage(&mut ui, Stage::Latency, Phase::Measuring);
-        assert!(
-            !press(&mut ui, &commands, &[name]),
-            "{name} quit before the test stopped"
-        );
+        assert!(!press(&mut ui, &commands, &[name])); // no quit before the test stops
         assert!(ui.quitting && matches!(sent.try_recv(), Ok(Command::Cancel)));
         step(&mut ui, |snapshot| snapshot.phase = Phase::Cancelled);
         let exit = ui.exit();
         assert!(!exit.running && exit.interrupted == (name == "ctrl+c"));
-        assert_eq!(
-            exit.shown.map(|shown| shown.phase),
-            Some(Phase::Cancelled),
-            "the stopped run is reported"
-        );
+        assert_eq!(exit.shown.map(|shown| shown.phase), Some(Phase::Cancelled)); // the stopped run is reported
     }
     let mut ui = running(&["a"]);
     step(&mut ui, |snapshot| snapshot.phase = Phase::Measuring);
     assert!(!ui.interrupt(&commands));
-    assert!(
-        press(&mut ui, &commands, &["ctrl+c"]),
-        "a second interrupt quits at once"
-    );
+    assert!(press(&mut ui, &commands, &["ctrl+c"])); // a second interrupt quits at once
     assert!(ui.exit().running && ui.exit().shown.is_none());
     // Run again keeps the last results until the next run starts, and after a failed start.
     let mut ui = running(&["a"]);
@@ -940,10 +856,7 @@ fn run_keys_stop_quit_and_return_as_go_does() {
         error: Some("Test could not start: Server could not be reached".into()),
         ..Snapshot::default()
     });
-    assert!(
-        ui.shown().is_some_and(|(shown, _)| shown.phase == Phase::Complete),
-        "a failed start lost the results"
-    );
+    assert!(ui.shown().is_some_and(|(shown, _)| shown.phase == Phase::Complete)); // a failed start keeps the results
     assert!(ui.notice.starts_with("Test could not start:") && ui.recheck.is_some());
     assert!(!screen(&mut ui).lines().last().unwrap_or_default().is_empty());
 }
@@ -951,10 +864,8 @@ fn run_keys_stop_quit_and_return_as_go_does() {
 #[test]
 fn status_title_and_progress_follow_the_run_like_go() {
     let mut ui = running(&["a"]);
-    assert_eq!(
-        (ui.title().as_str(), ui.progress()),
-        ("Graphite Meter · Checking paths", Some(Progress::Done(0)))
-    );
+    assert_eq!(ui.title(), "Graphite Meter · Checking paths");
+    assert_eq!(ui.progress(), Some(Progress::Done(0)));
     for (stage, phase, want) in [
         (Stage::Latency, Phase::Preparing, "Checking paths"),
         (Stage::Download, Phase::Warmup, "Warmup"),
@@ -967,10 +878,8 @@ fn status_title_and_progress_follow_the_run_like_go() {
     stage(&mut ui, Stage::Download, Phase::Measuring);
     ui.run.since = Some(Instant::now() - Duration::from_secs(5));
     // 4 s of latency and 5 s of download in a 34 s plan.
-    assert_eq!(
-        (ui.title().as_str(), ui.progress()),
-        ("Graphite Meter · Download", Some(Progress::Done(26)))
-    );
+    assert_eq!(ui.title(), "Graphite Meter · Download");
+    assert_eq!(ui.progress(), Some(Progress::Done(26)));
     for (phase, want) in [
         (Phase::Complete, "Complete"),
         (Phase::Partial, "Partial"),
@@ -1024,31 +933,23 @@ fn multi_server_runs_name_their_latency_server() {
         snapshot.stage = Some(Stage::Download);
         snapshot.failures.push(lost("b", Stage::Download));
     });
-    assert_eq!(
-        ui.notice, "B: Connection lost",
-        "the failure names its server and reason"
-    );
+    assert_eq!(ui.notice, "B: Connection lost"); // the failure names its server and reason
     step(&mut ui, |snapshot| snapshot.phase = Phase::Complete);
     let shown = screen(&mut ui);
     assert!(shown.contains("latency to A") && shown.contains("10.0 ms"), "{shown}");
     press(&mut ui, &commands, &["l"]);
     let shown = screen(&mut ui);
-    assert!(
-        ui.latency_server() == Some("b") && shown.contains("latency to B") && shown.contains("90.0 ms"),
-        "{shown}"
-    );
+    assert_eq!(ui.latency_server(), Some("b"));
+    assert!(shown.contains("latency to B") && shown.contains("90.0 ms"), "{shown}");
     let report = crate::report::render(&ui.snapshot, 100, Theme::default()).unwrap();
-    assert!(
-        report.contains("Latency to A") && report.contains("10.0 ms"),
-        "the report follows the run's focus: {report}"
-    );
+    // The report follows the run's focus.
+    assert!(report.contains("Latency to A"), "{report}");
+    assert!(report.contains("10.0 ms"), "{report}");
     press(&mut ui, &commands, &["d"]);
     let details = screen(&mut ui);
     let (all, own) = (details.find("│ All servers "), details.find("│ A "));
-    assert!(
-        ui.popup == Popup::Details && all.is_some_and(|all| own.is_some_and(|own| all < own)),
-        "{details}"
-    );
+    assert_eq!(ui.popup, Popup::Details);
+    assert!(all.is_some_and(|all| own.is_some_and(|own| all < own)), "{details}");
     assert!(details.contains("24.00 Mbit/s"), "{details}");
     press(&mut ui, &commands, &["esc"]);
     assert_eq!(ui.popup, Popup::None);
@@ -1090,10 +991,8 @@ fn remote_errors_cannot_write_terminal_controls() {
     ];
     for (index, view) in views.into_iter().enumerate() {
         assert!(index > 3 || view.contains("closed"), "{view}");
-        assert!(
-            !view.contains(['\x07', '\r', '\u{9b}']) && !view.contains("\x1b]"),
-            "{view:?}"
-        );
+        assert!(!view.contains(['\x07', '\r', '\u{9b}']), "{view:?}");
+        assert!(!view.contains("\x1b]"), "{view:?}");
     }
 }
 
@@ -1112,25 +1011,15 @@ fn the_live_view_follows_the_stage_and_its_samples() {
         }
         let live = ui.live_text(60, 16);
         assert!(want.iter().all(|want| live.contains(want)), "{stage:?}: {live}");
-        assert!(
-            !without.iter().any(|unwanted| live.contains(unwanted)),
-            "{stage:?}: {live}"
-        );
-        assert!(
-            live.chars().any(|c| ('\u{2801}'..='\u{28ff}').contains(&c)),
-            "{stage:?} drew no chart: {live}"
-        );
+        assert!(!without.iter().any(|unwanted| live.contains(unwanted)), "{live}");
+        assert!(live.chars().any(|c| ('\u{2801}'..='\u{28ff}').contains(&c)), "{live}");
     }
     // Rates wait for evidence, and a window that restarts reads as such.
     let mut ui = running(&["a"]);
     stage(&mut ui, Stage::Download, Phase::Measuring);
     assert!(ui.live_text(60, 16).contains("↓ —"), "a rate before the first sample");
     sample(&mut ui, 1, Some(8e6), None, 0);
-    assert!(
-        ui.live_text(60, 16).contains("↓ 8.00 Mbit/s"),
-        "{}",
-        ui.live_text(60, 16)
-    );
+    assert!(ui.live_text(60, 16).contains("↓ 8.00 Mbit/s"));
     step(&mut ui, |snapshot| snapshot.latest.down_bps = None);
     assert!(ui.live_text(60, 16).contains("↓ — window restarting"));
     // Go's TestIdleReadingHoldsTheLastReplyThroughTimeouts: a reply ends the timeout streak.
@@ -1143,10 +1032,8 @@ fn the_live_view_follows_the_stage_and_its_samples() {
     ] {
         sample(&mut ui, quarters, None, latest, timeouts);
         let live = ui.live_text(60, 16);
-        assert!(
-            live.contains(reading) && (timeouts > 0 || !live.contains("probe timeout")),
-            "{live}"
-        );
+        assert!(live.contains(reading), "{live}");
+        assert!(timeouts > 0 || !live.contains("timeout"), "{live}");
     }
     // A stage opens with no samples, as Snapshot::open_stage starts one.
     step(&mut ui, |snapshot| {
@@ -1189,11 +1076,7 @@ fn the_stage_track_follows_the_stages() {
         assert!(track.contains(want), "{want} in {track}");
     }
     step(&mut ui, |snapshot| snapshot.phase = Phase::Cancelled);
-    assert!(
-        ui.track_text(80).contains("Bidirectional — Skipped"),
-        "{}",
-        ui.track_text(80)
-    );
+    assert!(ui.track_text(80).contains("Bidirectional — Skipped"));
 }
 
 #[test]
@@ -1226,10 +1109,8 @@ fn results_show_what_each_stage_measured_or_why_not() {
     {
         assert!(text.contains(want), "{want} in {text}");
     }
-    assert!(
-        !text.to_lowercase().contains("loss") && !text.contains("Idle latency:"),
-        "{text}"
-    );
+    assert!(!text.to_lowercase().contains("loss"), "{text}");
+    assert!(!text.contains("Idle latency:"), "{text}");
     ui.live = false;
     assert!(ui.exit().shown.is_none(), "no report before any run");
     // A failed stage reads its reason, and details keep the facts.
@@ -1279,10 +1160,8 @@ fn results_show_what_each_stage_measured_or_why_not() {
         crate::report::render(&ui.snapshot, 100, Theme::default()).unwrap(),
     );
     for wrong in ["0 B", "·  ·", "Added"] {
-        assert!(
-            !details.contains(wrong) && !report.contains(wrong),
-            "{wrong}:\n{details}\n{report}"
-        );
+        assert!(!details.contains(wrong), "{wrong}: {details}");
+        assert!(!report.contains(wrong), "{wrong}: {report}");
     }
     // A failed run shows no activity.
     let mut ui = running(&["a"]);
@@ -1292,15 +1171,11 @@ fn results_show_what_each_stage_measured_or_why_not() {
         crate::report::render(&ui.snapshot, 100, Theme::default()).unwrap(),
     );
     for stale in ["Checking paths", "○", "Median"] {
-        assert!(
-            !shown.contains(stale) && !report.contains(stale),
-            "{stale}: {shown}\n{report}"
-        );
+        assert!(!shown.contains(stale), "{stale}: {shown}");
+        assert!(!report.contains(stale), "{stale}: {report}");
     }
-    assert!(
-        shown.contains("— Skipped") && report.ends_with("refused"),
-        "{shown}\n{report}"
-    );
+    assert!(shown.contains("— Skipped"), "{shown}");
+    assert!(report.ends_with("refused"), "{report}");
     // A finished run gives the room to the timeline.
     let mut ui = running(&["a"]);
     step(&mut ui, |snapshot| {
@@ -1310,10 +1185,8 @@ fn results_show_what_each_stage_measured_or_why_not() {
     for size in [(80, 24), (120, 40)] {
         ui.size = size;
         let shown = screen(&mut ui);
-        assert!(
-            shown.contains("Timeline") && shown.contains("Results") && !shown.contains('✓'),
-            "{shown}"
-        );
+        assert!(shown.contains("Timeline") && shown.contains("Results"), "{shown}");
+        assert!(!shown.contains('✓'), "{shown}");
     }
 }
 
@@ -1349,14 +1222,9 @@ fn every_view_fits_the_terminal() {
         for (name, frame) in frames {
             let at = format!("{name} at {width}x{height}");
             let lines: Vec<_> = frame.iter().map(crate::report::plain).collect();
-            assert!(
-                lines.len() <= usize::from(height) && lines[0].contains("Graphite Meter"),
-                "{at}"
-            );
-            assert!(
-                lines.last().is_some_and(|last| last.trim_end().ends_with("quit")),
-                "{at}: {lines:#?}"
-            );
+            assert!(lines.len() <= usize::from(height), "{at}");
+            assert!(lines[0].contains("Graphite Meter"), "{at}");
+            assert!(lines.last().unwrap().trim_end().ends_with("quit"), "{at}: {lines:#?}");
             for (line, text) in frame.iter().zip(&lines) {
                 let trimmed = text.trim();
                 assert!(!trimmed.starts_with('│') || trimmed.ends_with('│'), "{at}: {trimmed}");
@@ -1390,10 +1258,8 @@ fn scrolling_reveals_the_whole_body() {
     assert!(layout.body.len() > layout.body_height && plain(&ui.screen()).contains("pgdn more"));
     ui.size = (40, 12);
     let footer = plain(&ui.screen());
-    assert!(
-        footer.contains("pgdn more") && footer.trim_end().ends_with("quit"),
-        "{footer}"
-    );
+    assert!(footer.contains("pgdn more"), "{footer}");
+    assert!(footer.trim_end().ends_with("quit"), "{footer}");
     let text = |lines: &[ratatui::text::Line]| -> Vec<String> {
         lines
             .iter()
