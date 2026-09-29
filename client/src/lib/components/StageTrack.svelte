@@ -32,7 +32,11 @@
         : store.stageResults[key]?.reportedBytesPerSec;
     return bytes == null
       ? null
-      : formatRate(bytes, { base: store.unitBase, kind: store.unitKind });
+      : formatRate(bytes, {
+          base: store.unitBase,
+          kind: store.unitKind,
+          tier: store.scales.unitIndex,
+        });
   }
 
   const model = $derived(

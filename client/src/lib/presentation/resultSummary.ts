@@ -28,7 +28,7 @@ import {
 } from "./vocabulary";
 
 type SummaryStatus = "complete" | "partial" | "failed";
-type LiveStatus = "active" | "pending" | "stopped" | "not-run";
+type LiveStatus = "active" | "recovering" | "pending" | "stopped" | "not-run";
 interface SummaryEvidence extends Pick<
   RunResult,
   "download" | "upload" | "bidirectional" | "latency"
@@ -117,7 +117,7 @@ export const laneShort = (
       : resultRate(
           bytesPerSec,
           units,
-          throughputUnitIndex(combined, units.base, units.kind),
+          units.tier ?? throughputUnitIndex(combined, units.base, units.kind),
         ).num;
 
 const stability = (pct: number | null): SummaryRow[] =>
@@ -257,20 +257,31 @@ export function summaryCards(
 }
 
 // Facts read the same way on every card: what the link peaked at, how steady it was, what moved.
-const TRANSFER_FACTS = ["Peak", "Stability", "No data", "Transferred"];
+const TRANSFER_FACTS = ["Peak", "Stability", "Transferred"];
 const FACTS: Record<TransportRole, string[]> = {
   latency: [],
   download: TRANSFER_FACTS,
   upload: TRANSFER_FACTS,
-  bidirectional: ["Stability", "No data", "Down + up", "Transferred"],
+  bidirectional: ["Stability", "Down + up", "Transferred"],
+};
+const FACT_TIPS: Record<string, string> = {
+  Peak: JARGON.peak,
+  Stability: JARGON.rateStability,
+  Transferred: JARGON.transferred,
 };
 
-/** A card's facts in every state, "—" until known, so a value arriving never moves the instrument; No data only after a stall. */
+/** A card's facts in every state, "—" until known, so a value arriving never moves the instrument. */
 export const cardFacts = (card: SummaryCard): SummaryRow[] =>
-  FACTS[card.key].flatMap((label) => {
-    const row = card.rows.find((row) => row.label === label);
-    return row ? [row] : label === "No data" ? [] : [{ label, value: MISSING }];
-  });
+  FACTS[card.key].map((label) => ({
+    label,
+    value: MISSING,
+    ...card.rows.find((row) => row.label === label),
+    tip: FACT_TIPS[label],
+  }));
+
+/** Time without data after a stall, which the card's line carries so it never adds a row. */
+export const cardNoData = (card: SummaryCard) =>
+  card.rows.find((row) => row.label === "No data") ?? null;
 
 /** A completed run spoken in card order: each headline, then latency's jitter and added latency. */
 export const resultSentence = (cards: SummaryCard[]) =>

@@ -167,14 +167,16 @@ hue, never by a boxed icon.
 - **Server lens** (`ServerLens`, `ServerScope quiet`): with several servers, one quiet field over the instrument
   (All servers or one), as wide as the choice it shows, drives the stage cards and which server's latency is shown
   once the run finishes. History's detail has its own.
-- **Stage card** (`ResultSummary`): a rule and wash in the stage hue; the name and a status word when not complete;
-  the value, one line tall (bidirectional: ↓ and ↑ in their own hues, on the same baseline); the wire rate or a
-  failure's reason; the graph; then facts: Peak, Stability, No data (from 0.5 s), Down + up, Transferred, in columns
-  of at least 84 px, so a phone's card holds three to a row. A card holds the same facts in every state (`cardFacts`):
-  unseen until one is known, "—" while one is not, so it keeps its height from Start to the result and neither the
-  dial nor the run bar moves; only No data, after a stall, adds one. A saved result has no graph row. On a phone the
-  cards stack, and a card that has not run, or is done while the run goes on, folds to its name and value; the running
-  card and every card of a finished run are whole.
+- **Stage card** (`ResultSummary`): a rule and wash in the stage hue; the name and a status word when not complete
+  (a stalled stage is Recovering); the value, one line tall (bidirectional: ↓ and ↑ in their own hues, on the same
+  baseline); the wire rate or a failure's reason, named by server when several ran, and at the line's end, after a
+  stall, No data (from 0.5 s); the graph; then facts: Peak, Stability, Down + up, Transferred, in columns of at least
+  84 px, so a phone's card holds three to a row. A card holds the same facts in every state (`cardFacts`): unseen
+  until one is known, "—" while one is not, so it keeps its height from Start to the result; a taller neighbour
+  leaves its rows in place. Under the dial on a landscape page, its rows sit 4 px apart rather than 6, so the page
+  fits one screen down to 1024 × 768. A saved result has no graph row. On a phone the cards stack, and a card that
+  has not run, or is done while the run goes on, folds to its name and value; the running card and every card of a
+  finished run are whole.
 - **Stage graph** (`StageGraph`): the rate from zero to the shared ceiling (`store.scales.chartBytesPerSec`), a dashed
   second lane for bidirectional upload, and a 20 px latency track below: one dot per reply bucket, height being time
   over the idle median (dashed baseline). A mouse, a tap, a sideways drag or arrow keys show a readout at once: time
