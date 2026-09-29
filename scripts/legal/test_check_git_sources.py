@@ -89,6 +89,14 @@ class ForkTests(unittest.TestCase):
         record['modifiedFiles'] = ['src/lib.rs']
         self.assertEqual(check_fork(record, self.scratch / 'reviewed'), [])
 
+    def test_an_unavailable_branch_or_base_says_why_and_keeps_the_other_errors(self) -> None:
+        record = self.record() | {'branch': 'missing'}
+        self.assertIn("couldn't find remote ref refs/heads/missing", check_fork(record, self.scratch / 'fetch')[0])
+        record = self.record() | {'base': 'b' * 40}
+        self.assertEqual(check_fork(record, self.scratch / 'base'), [
+            f"{self.fork}: upstream v1 is {self.base}, not base {'b' * 40}",
+            f"{self.fork}: cannot establish Git ancestry: fatal: Not a valid commit name {'b' * 40}"])
+
     def test_revision_off_the_fork_branch_fails(self) -> None:
         record = self.record()
         run(self.fork, 'checkout', '-q', '-b', 'scratch')

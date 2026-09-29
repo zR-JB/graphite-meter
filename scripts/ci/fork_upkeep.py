@@ -26,9 +26,9 @@ def gh(*args: str) -> str:
 
 def ancestor(directory: Path, older: str, newer: str) -> bool:
     result = subprocess.run(['git', '-C', str(directory), 'merge-base', '--is-ancestor', older, newer],
-                            check=False, timeout=60)
+                            check=False, text=True, stderr=subprocess.PIPE, timeout=60)
     if result.returncode not in (0, 1):
-        raise RuntimeError('cannot establish Git ancestry')
+        raise RuntimeError(f'cannot establish Git ancestry: {result.stderr.strip()}')
     return result.returncode == 0
 
 

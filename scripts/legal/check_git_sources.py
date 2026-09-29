@@ -62,18 +62,22 @@ def check_fork(fork: dict, directory: Path) -> list[str]:
     try:
         git(directory, 'fetch', '-q', fork['fork'], f'+{branch}:{branch}')
         git(directory, 'fetch', '-q', fork['upstream'], f'+{tag}:{tag}')
-    except subprocess.CalledProcessError:
-        return [f"{name}: branch {fork['branch']} or upstream tag {fork['baseTag']} is unavailable"]
+    except subprocess.CalledProcessError as error:
+        return [f"{name}: branch {fork['branch']} or upstream tag {fork['baseTag']} is unavailable: "
+                + error.stderr.strip()]
     head = git(directory, 'rev-parse', branch)
     tag = git(directory, 'rev-parse', tag + '^{commit}')
     errors = []
     if tag != base:
         errors.append(f"{name}: upstream {fork['baseTag']} is {tag}, not base {base}")
-    if subprocess.run(['git', '-C', str(directory), 'cat-file', '-e', rev + '^{commit}'],
-                      stderr=subprocess.DEVNULL).returncode or not ancestor(directory, rev, head):
-        return errors + [f"{name}: {rev} is not on branch {fork['branch']}"]
-    if not ancestor(directory, base, rev):
-        return errors + [f'{name}: base {base} is not an ancestor of {rev}']
+    try:
+        if subprocess.run(['git', '-C', str(directory), 'cat-file', '-e', rev + '^{commit}'],
+                          stderr=subprocess.DEVNULL).returncode or not ancestor(directory, rev, head):
+            return errors + [f"{name}: {rev} is not on branch {fork['branch']}"]
+        if not ancestor(directory, base, rev):
+            return errors + [f'{name}: base {base} is not an ancestor of {rev}']
+    except RuntimeError as error:  # Git cannot answer, as for a base it does not have.
+        return errors + [f'{name}: {error}']
     # The reviewed digest hashes diff-tree's output with the final line break git() strips.
     changes = git(directory, 'diff-tree', '-r', '--no-renames', '--full-index', base, rev)
     if hashlib.sha256(changes.encode() + b'\n').hexdigest() != fork['diffSha256']:
