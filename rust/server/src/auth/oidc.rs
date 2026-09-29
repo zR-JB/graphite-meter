@@ -598,7 +598,9 @@ impl ProviderHttp {
                 .headers_mut()
                 .insert(header::HOST, HeaderValue::from_str(&host)?);
             *request.uri_mut() = if path.is_empty() { "/".parse()? } else { path.parse()? };
-            let connection = connect(&self.proxy, &origin, Some(&self.tls)).await?;
+            // Its configuration offers no protocol, so it serves an HTTPS proxy's hop as well.
+            let hop = std::future::ready(Ok::<_, std::io::Error>(self.tls.clone()));
+            let connection = connect(&self.proxy, &origin, Some(&self.tls), hop).await?;
             let (mut sender, driver) = hyper::client::conn::http1::handshake(TokioIo::new(connection.stream)).await?;
             let exchange = async move {
                 let (parts, mut body) = sender.send_request(request).await?.into_parts();

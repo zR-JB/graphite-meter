@@ -5,7 +5,6 @@ use rustls::pki_types::ServerName;
 use std::{
     io,
     net::{IpAddr, SocketAddr},
-    sync::Arc,
     time::Duration,
 };
 use tokio::{
@@ -25,7 +24,14 @@ pub struct Connection {
     pub proxy_authorization: Option<http::HeaderValue>,
 }
 
-pub async fn connect(proxy: &Proxy, target: &Origin, tls: Option<&TlsConnector>) -> io::Result<Connection> {
+/// Connects to `target` over `tls` for HTTPS, through its proxy if one applies. An HTTPS proxy's
+/// hop takes the connector `hop` yields, awaited only then: Go's transport verifies the proxy as it
+/// does the target, -insecure included, for cleartext and HTTPS targets alike.
+pub async fn connect<H, E>(proxy: &Proxy, target: &Origin, tls: Option<&TlsConnector>, hop: H) -> io::Result<Connection>
+where
+    H: Future<Output = Result<TlsConnector, E>>,
+    E: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
     if (target.scheme == "https") != tls.is_some() {
         return Err(io::Error::other("TLS configuration does not match the target scheme"));
     }
@@ -47,13 +53,8 @@ pub async fn connect(proxy: &Proxy, target: &Origin, tls: Option<&TlsConnector>)
         Some(Ok(upstream)) => {
             let tcp = tcp(&upstream.origin.host, upstream.origin.port_number()).await?;
             let stream: Box<dyn Stream> = if upstream.origin.scheme == "https" {
-                // Go's transport makes both handshakes with its one TLS configuration, so an HTTPS
-                // target's, which skips verification with -insecure, serves its proxy too.
-                let proxy = match tls {
-                    Some(tls) => tls.clone(),
-                    None => proxy_tls().await?,
-                };
-                Box::new(proxy.connect(server_name(&upstream.origin.host)?, tcp).await?)
+                let hop = hop.await.map_err(io::Error::other)?;
+                Box::new(hop.connect(server_name(&upstream.origin.host)?, tcp).await?)
             } else {
                 Box::new(tcp)
             };
@@ -520,25 +521,6 @@ fn unmapped(network: ipnet::IpNet) -> ipnet::IpNet {
     mapped
         .and_then(|(v4, prefix)| ipnet::Ipv4Net::new(v4, prefix).ok())
         .map_or(network, ipnet::IpNet::V4)
-}
-
-/// Verified TLS to a cleartext target's HTTPS proxy, built once when the first connection needs it.
-static PROXY_TLS: tokio::sync::OnceCell<TlsConnector> = tokio::sync::OnceCell::const_new();
-
-async fn proxy_tls() -> io::Result<TlsConnector> {
-    let tls = PROXY_TLS
-        .get_or_try_init(|| async {
-            let config =
-                rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-                    .with_safe_default_protocol_versions()
-                    .map_err(io::Error::other)?
-                    .dangerous()
-                    .with_custom_certificate_verifier(trust::verifier().await)
-                    .with_no_client_auth();
-            Ok::<_, io::Error>(TlsConnector::from(Arc::new(config)))
-        })
-        .await?;
-    Ok(tls.clone())
 }
 
 pub mod trust;

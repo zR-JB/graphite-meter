@@ -17,6 +17,8 @@ pub(crate) enum Alpn {
     Http1,
     Http2,
     Negotiated,
+    /// None, for an HTTPS proxy's hop, so a proxy that speaks HTTP/2 answers CONNECT in HTTP/1.1.
+    Proxy,
 }
 
 /// TCP takes TLS 1.2 and 1.3, as Go's client does; QUIC requires 1.3.
@@ -24,6 +26,7 @@ struct Configs {
     http1: TlsConnector,
     http2: TlsConnector,
     negotiated: TlsConnector,
+    proxy: TlsConnector,
     quic: Arc<QuicClientConfig>,
 }
 
@@ -44,6 +47,7 @@ impl Configs {
             http1: tcp(&[b"http/1.1"])?,
             http2: tcp(&[b"h2"])?,
             negotiated: tcp(&[b"h2", b"http/1.1"])?,
+            proxy: tcp(&[])?,
             quic: Arc::new(QuicClientConfig::try_from(build(
                 &[&rustls::version::TLS13],
                 &[b"h3"],
@@ -75,6 +79,7 @@ pub(crate) async fn tcp(insecure: bool, alpn: Alpn) -> Result<TlsConnector, Erro
         Alpn::Http1 => &configs.http1,
         Alpn::Http2 => &configs.http2,
         Alpn::Negotiated => &configs.negotiated,
+        Alpn::Proxy => &configs.proxy,
     }
     .clone())
 }
@@ -140,7 +145,7 @@ mod tests {
     async fn configurations_are_built_once_per_mode() -> Result<(), Error> {
         let _ = crate::crypto::provider().install_default();
         for insecure in [false, true] {
-            for alpn in [Alpn::Http1, Alpn::Http2, Alpn::Negotiated] {
+            for alpn in [Alpn::Http1, Alpn::Http2, Alpn::Negotiated, Alpn::Proxy] {
                 let (first, again) = (tcp(insecure, alpn).await?, tcp(insecure, alpn).await?);
                 assert!(Arc::ptr_eq(first.config(), again.config()), "{alpn:?}");
             }

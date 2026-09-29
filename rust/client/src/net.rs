@@ -254,7 +254,8 @@ impl Connections {
             "https" => Some(crate::tls::tcp(self.insecure, alpn).await?),
             _ => None,
         };
-        let connection = connect(&self.proxy, &target, tls.as_ref()).await?;
+        let hop = crate::tls::tcp(self.insecure, Alpn::Proxy);
+        let connection = connect(&self.proxy, &target, tls.as_ref(), hop).await?;
         let h2 = !connection.absolute_form
             && match connection.alpn.as_deref() {
                 Some(alpn) => alpn == b"h2",
@@ -486,7 +487,8 @@ impl Http {
     }
     pub async fn dial(&self, origin: &str, tls: Option<&TlsConnector>) -> Result<graphite_meter_net::Connection> {
         let target = target_origin(origin)?.ok_or("missing origin")?;
-        Ok(connect(&self.connections.proxy, &target, tls).await?)
+        let hop = crate::tls::tcp(self.insecure, Alpn::Proxy);
+        Ok(connect(&self.connections.proxy, &target, tls, hop).await?)
     }
     #[cfg(test)]
     pub(crate) fn set_proxy(&mut self, proxy: Proxy) {
@@ -866,6 +868,56 @@ mod tests {
                 Ok::<_, Error>(())
             })
             .await??;
+        }
+        Ok(())
+    }
+
+    /// An HTTPS proxy that would speak HTTP/2 if offered it: its hop offers no protocol, and under
+    /// -insecure skips verification for cleartext and HTTPS targets alike, as Go's addTLS does.
+    #[tokio::test]
+    async fn https_proxy_hops_offer_no_protocol_and_follow_insecure() -> Result<()> {
+        use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+        async fn head(stream: &mut (impl AsyncRead + Unpin)) -> std::io::Result<String> {
+            let mut head = Vec::new();
+            while !head.ends_with(b"\r\n\r\n") {
+                head.push(stream.read_u8().await?);
+            }
+            Ok(String::from_utf8_lossy(&head).into_owned())
+        }
+        let acceptor = |alpn: &[&[u8]]| {
+            let tls = crate::fixtures::server_tls(rustls::DEFAULT_VERSIONS, alpn)?;
+            Ok::<_, Error>(tokio_rustls::TlsAcceptor::from(Arc::new(tls)))
+        };
+        let (hop, target) = (acceptor(&[b"h2", b"http/1.1"])?, acceptor(&[])?);
+        for url in ["http://meter.test/probe", "https://meter.test/probe"] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+            let proxy = format!("https://localhost:{}", listener.local_addr()?.port());
+            let (hop, target) = (hop.clone(), target.clone());
+            let peer = tokio::spawn(async move {
+                let mut stream = hop.accept(listener.accept().await?.0).await?;
+                // HTTP/2 would take the HTTP/1.1 that follows for a broken preface.
+                if stream.get_ref().1.alpn_protocol().is_some() {
+                    return Ok::<_, Error>(());
+                }
+                let ok = b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok";
+                if head(&mut stream).await?.starts_with("CONNECT meter.test:443 ") {
+                    stream.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n").await?;
+                    let mut inner = target.accept(stream).await?;
+                    head(&mut inner).await?;
+                    inner.write_all(ok).await?;
+                } else {
+                    stream.write_all(ok).await?;
+                }
+                Ok(())
+            });
+            let mut http = http(true);
+            http.set_proxy(Proxy::new(&proxy, &proxy, ""));
+            let response = tokio::time::timeout(
+                Duration::from_secs(5),
+                http.request(Method::GET, url, Protocol::Negotiated),
+            );
+            assert_eq!(bounded_body(response.await??).await?, b"ok", "{url}");
+            peer.await??;
         }
         Ok(())
     }

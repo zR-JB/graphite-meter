@@ -1,8 +1,14 @@
 use super::*;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 fn origin(raw: &str) -> Origin {
     target_origin(raw).unwrap().unwrap()
+}
+
+/// The HTTPS proxy hop's connector, for a proxy that is not HTTPS.
+fn no_hop() -> std::future::Ready<Result<TlsConnector, &'static str>> {
+    std::future::ready(Err("no HTTPS proxy"))
 }
 
 #[test]
@@ -232,7 +238,9 @@ async fn cleartext_proxy_uses_absolute_form_without_connect() {
         String::from_utf8(head).unwrap()
     });
     let proxy = Proxy::new(&format!("http://user:secret@{address}"), "", "");
-    let connection = connect(&proxy, &origin("http://meter.test"), None).await.unwrap();
+    let connection = connect(&proxy, &origin("http://meter.test"), None, no_hop())
+        .await
+        .unwrap();
     assert!(connection.absolute_form);
     let (mut sender, driver) = hyper::client::conn::http1::handshake(TokioIo::new(connection.stream))
         .await
@@ -282,7 +290,9 @@ async fn socks5_logs_in_and_connects_by_name_then_speaks_origin_form() {
         String::from_utf8(head).unwrap()
     });
     let proxy = Proxy::new(&format!("socks5://user:p%40ss@{address}"), "", "");
-    let connection = connect(&proxy, &origin("http://meter.test:8080"), None).await.unwrap();
+    let connection = connect(&proxy, &origin("http://meter.test:8080"), None, no_hop())
+        .await
+        .unwrap();
     assert!(!connection.absolute_form);
     assert!(connection.proxy_authorization.is_none());
     let (mut sender, driver) = hyper::client::conn::http1::handshake(TokioIo::new(connection.stream))
@@ -336,7 +346,7 @@ async fn socks5_sends_addresses_as_go_does_and_fails_closed() {
     ] {
         let (proxy, sent) = socks_peer(0, 0).await;
         let proxy = Proxy::new(&format!("socks5h://{proxy}"), "", "");
-        connect(&proxy, &origin(target), None).await.unwrap();
+        connect(&proxy, &origin(target), None, no_hop()).await.unwrap();
         assert_eq!(
             sent.await.unwrap(),
             [&[5, 1, 0, 5, 1, 0][..], &address[..]].concat(),
@@ -350,7 +360,10 @@ async fn socks5_sends_addresses_as_go_does_and_fails_closed() {
     ] {
         let (proxy, _) = socks_peer(method, status).await;
         let proxy = Proxy::new(&format!("socks5://{proxy}"), "", "");
-        let error = connect(&proxy, &origin("http://meter.test"), None).await.err().unwrap();
+        let error = connect(&proxy, &origin("http://meter.test"), None, no_hop())
+            .await
+            .err()
+            .unwrap();
         assert_eq!(error.to_string(), format!("socks connect: {reason}"));
     }
 }
@@ -500,6 +513,7 @@ async fn https_targets_verify_tls_inside_http_and_https_proxy_tunnels() {
         .with_no_client_auth();
     // Trusting only the test certificate, which no system store holds, it verifies the proxy too.
     let tls = TlsConnector::from(Arc::new(client));
+    let hop = || std::future::ready(Ok::<_, io::Error>(tls.clone()));
     for secure_proxy in [false, true] {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -538,7 +552,7 @@ async fn https_targets_verify_tls_inside_http_and_https_proxy_tunnels() {
         let scheme = if secure_proxy { "https" } else { "http" };
         let proxy = Proxy::new("", &format!("{scheme}://user:secret@localhost:{port}"), "");
         tokio::time::timeout(Duration::from_secs(5), async {
-            let connection = connect(&proxy, &origin("https://localhost."), Some(&tls))
+            let connection = connect(&proxy, &origin("https://localhost."), Some(&tls), hop())
                 .await
                 .unwrap();
             assert!(!connection.absolute_form);
