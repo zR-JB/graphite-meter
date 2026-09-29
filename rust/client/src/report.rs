@@ -89,13 +89,10 @@ pub(crate) fn plain(line: &Line) -> String {
     line.spans.iter().map(|span| span.content.as_ref()).collect()
 }
 
-/// A character the terminal shows as itself, or the replacement for one that could control it.
-pub fn terminal_char(character: char) -> char {
-    if terminal_character(character) {
-        character
-    } else {
-        '�'
-    }
+/// The text with each character that could control the terminal replaced.
+pub fn safe(text: &str) -> String {
+    let shown = |character: char| Some(character).filter(|c| terminal_character(*c)).unwrap_or('�');
+    text.chars().map(shown).collect()
 }
 
 /// Every span with its controls replaced, whatever sent the text; a plain theme also drops
@@ -104,7 +101,7 @@ pub(crate) fn sanitize(lines: &mut [Line<'static>], theme: &Theme) {
     let plain = *theme == Theme::default();
     for span in lines.iter_mut().flat_map(|line| line.spans.iter_mut()) {
         if !span.content.chars().all(terminal_character) {
-            span.content = span.content.chars().map(terminal_char).collect::<String>().into();
+            span.content = safe(&span.content).into();
         }
         if plain {
             span.style = Style::default();
@@ -176,7 +173,7 @@ pub(crate) fn render(snapshot: &Snapshot, width: usize, theme: Theme) -> Option<
     }
     let results = report.results(&heading);
     let mut blocks = vec![vec![report.header()]];
-    if !results.view().is_empty() {
+    if !(results.throughput.is_empty() && results.latency.is_empty() && results.failures.is_empty()) {
         blocks.extend([report.throughput(), results.latency, results.failures]);
         blocks.push(report.notes(results.added));
     }
@@ -265,8 +262,8 @@ pub(crate) struct Results {
 
 impl Results {
     /// Go's results.view: the grids, then the failures.
-    pub fn view(&self) -> Text {
-        [self.throughput.clone(), self.latency.clone(), self.failures.clone()].concat()
+    pub fn view(self) -> Text {
+        [self.throughput, self.latency, self.failures].concat()
     }
 }
 

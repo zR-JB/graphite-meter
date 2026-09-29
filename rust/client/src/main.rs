@@ -8,7 +8,7 @@ use graphite_meter_client::{
     cli::{self, Action},
     controller,
     model::Phase,
-    report,
+    report::{self, safe},
 };
 use std::{
     io::IsTerminal,
@@ -156,10 +156,6 @@ fn interrupts(headless: bool, caught: Arc<AtomicU8>) -> Result<mpsc::Receiver<()
         });
     }
     Ok(receiver)
-}
-
-fn safe(value: &str) -> String {
-    value.chars().map(report::terminal_char).collect()
 }
 
 #[cfg(test)]

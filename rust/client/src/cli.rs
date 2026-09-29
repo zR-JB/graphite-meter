@@ -217,7 +217,8 @@ fn server(servers: &mut Vec<String>, id: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn boolean(value: &str) -> Option<bool> {
+/// Go's strconv.ParseBool.
+pub(crate) fn boolean(value: &str) -> Option<bool> {
     match value {
         "1" | "t" | "T" | "true" | "TRUE" | "True" => Some(true),
         "0" | "f" | "F" | "false" | "FALSE" | "False" => Some(false),

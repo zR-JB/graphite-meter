@@ -149,10 +149,7 @@ impl Theme {
 
 /// Go's strconv.ParseBool of an environment variable.
 fn flag(name: &str) -> bool {
-    matches!(
-        std::env::var(name).as_deref(),
-        Ok("1" | "t" | "T" | "true" | "TRUE" | "True")
-    )
+    std::env::var(name).is_ok_and(|value| crate::cli::boolean(&value) == Some(true))
 }
 
 /// colorprofile.Detect for stdout: TERM, COLORTERM, NO_COLOR, CLICOLOR(_FORCE) and TTY_FORCE.
