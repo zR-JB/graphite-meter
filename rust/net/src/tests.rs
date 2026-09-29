@@ -490,6 +490,41 @@ fn trust_roots_skip_hash_links_and_keep_the_first_failure() {
     assert!(error.is_some());
 }
 
+/// Go takes a trusted leaf that is itself a root as a chain of its own, after checking its name
+/// and validity, and a CA among them, as `openssl req -x509` makes one; an untrusted one is
+/// signed by an unknown authority.
+#[test]
+fn a_trusted_self_signed_ca_is_its_own_chain() {
+    use rustls::{
+        CertificateError::{Expired, ExpiredContext, UnknownIssuer},
+        Error::InvalidCertificate,
+        pki_types::{CertificateDer, ServerName, UnixTime, pem::PemObject},
+    };
+    const CA: &str = "req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1 -subj /CN=localhost \
+                      -keyout /dev/null -addext subjectAltName=DNS:localhost -addext basicConstraints=critical,CA:TRUE";
+    let output = std::process::Command::new("openssl")
+        .args(CA.split_whitespace())
+        .output()
+        .unwrap();
+    let ca = CertificateDer::from_pem_slice(&output.stdout).unwrap();
+    let now = UnixTime::now();
+    let verify = |root: &CertificateDer<'static>, name, now| {
+        let name = ServerName::try_from(name).unwrap();
+        trust::verifying(vec![root.clone()], None).verify_server_cert(&ca, &[], &name, &[], now)
+    };
+    verify(&ca, "localhost", now).unwrap();
+    assert!(verify(&ca, "other.test", now).is_err());
+    let later = UnixTime::since_unix_epoch(Duration::from_secs(now.as_secs() + 10 * 86_400));
+    assert!(matches!(
+        verify(&ca, "localhost", later),
+        Err(InvalidCertificate(Expired | ExpiredContext { .. }))
+    ));
+    assert!(matches!(
+        verify(&certificate().1, "localhost", now),
+        Err(InvalidCertificate(UnknownIssuer))
+    ));
+}
+
 #[tokio::test]
 async fn https_targets_verify_tls_inside_http_and_https_proxy_tunnels() {
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};

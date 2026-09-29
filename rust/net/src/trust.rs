@@ -4,9 +4,11 @@ use rustls::{
     client::{
         WebPkiServerVerifier,
         danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+        verify_server_name,
     },
     crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature},
     pki_types::{CertificateDer, ServerName, UnixTime, pem::PemObject},
+    server::ParsedCertificate,
 };
 use std::{
     ffi::{OsStr, OsString},
@@ -89,15 +91,74 @@ fn system() -> Arc<dyn ServerCertVerifier> {
     }
 }
 
-fn verifying(roots: Vec<CertificateDer<'static>>, error: Option<io::Error>) -> Arc<dyn ServerCertVerifier> {
+pub(crate) fn verifying(roots: Vec<CertificateDer<'static>>, error: Option<io::Error>) -> Arc<dyn ServerCertVerifier> {
     let mut store = RootCertStore::empty();
-    store.add_parsable_certificates(roots);
+    store.add_parsable_certificates(roots.iter().cloned());
     if store.is_empty() {
         return untrusted(error.map(|error| Arc::new(RootsUnavailable(error)) as _));
     }
     match WebPkiServerVerifier::builder_with_provider(Arc::new(store), provider()).build() {
-        Ok(verifier) => verifier,
+        Ok(inner) => Arc::new(RootLeaves { inner, roots }),
         Err(error) => untrusted(Some(Arc::new(error))),
+    }
+}
+
+/// Go's x509 takes a leaf that is itself a trusted root as a chain of its own, as `openssl req -x509` makes one,
+/// where webpki refuses every CA as a leaf. A self-issued CA it does not trust reads as Go reads it: signed by an
+/// unknown authority.
+#[derive(Debug)]
+struct RootLeaves {
+    inner: Arc<WebPkiServerVerifier>,
+    roots: Vec<CertificateDer<'static>>,
+}
+impl ServerCertVerifier for RootLeaves {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        server_name: &ServerName<'_>,
+        ocsp: &[u8],
+        now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        let result = self
+            .inner
+            .verify_server_cert(end_entity, intermediates, server_name, ocsp, now);
+        let Err(rustls::Error::InvalidCertificate(CertificateError::Other(OtherError(error)))) = &result else {
+            return result;
+        };
+        if error.downcast_ref::<webpki::Error>() != Some(&webpki::Error::CaUsedAsEndEntity) {
+            return result;
+        }
+        if self.roots.iter().any(|root| root.as_ref() == end_entity.as_ref()) {
+            // webpki checked the validity period before it refused the CA as a leaf.
+            verify_server_name(&ParsedCertificate::try_from(end_entity)?, server_name)?;
+            return Ok(ServerCertVerified::assertion());
+        }
+        match webpki::EndEntityCert::try_from(end_entity) {
+            Ok(cert) if cert.subject() == cert.issuer() => {
+                Err(rustls::Error::InvalidCertificate(CertificateError::UnknownIssuer))
+            }
+            _ => result,
+        }
+    }
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        certificate: &CertificateDer<'_>,
+        signature: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls12_signature(message, certificate, signature)
+    }
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        certificate: &CertificateDer<'_>,
+        signature: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls13_signature(message, certificate, signature)
+    }
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.inner.supported_verify_schemes()
     }
 }
 

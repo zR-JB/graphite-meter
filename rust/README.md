@@ -212,7 +212,10 @@ both pass host names to the proxy and log in with the URL's user and password.
 The TUI trusts the roots Go 1.27 would: on Linux the first readable file of
 Go's list and every file in its directories, where `SSL_CERT_FILE` replaces only
 the file and `SSL_CERT_DIR` only the directories, and a missing one is skipped;
-on macOS and Windows the platform verifier, unless either variable is set. The
+on macOS and Windows the platform verifier, unless either variable is set. A
+server certificate that is itself a trusted root serves as its own chain, also a
+CA as `openssl req -x509` makes one; a CA certificate that only chains to a
+trusted root is refused, where Go accepts it. The
 store loads once, when the first verified TLS connection needs it; cleartext
 paths never read it, and a store without roots fails each TLS connection as
 not trusted instead of the whole client.
