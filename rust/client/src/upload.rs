@@ -403,13 +403,18 @@ async fn send_lane(
                 limit,
             )
             .await;
-        // A lane the receiver ended as idle ends its attempt normally (upload.go:124-130).
+        // A lane the receiver ended as idle ends its attempt normally; any other answer, busy
+        // included, means the lane made no progress, whatever it sent (upload.go:118-128).
         let idle = |error: &Error| match error.downcast_ref() {
             Some(Failure::Http { status, refusal, .. }) => (*status, *refusal) == (408, Some(UploadRefusal::Idle)),
             _ => false,
         };
         let result = result.or_else(|error| if idle(&error) { Ok(()) } else { Err(error) });
-        retry.ended(result, started, moved.load(Ordering::Relaxed)).await?;
+        let answer = result.as_ref().err().and_then(|error| error.downcast_ref::<Failure>());
+        let answered = matches!(answer, Some(Failure::Http { .. } | Failure::SignIn { .. }));
+        retry
+            .ended(result, started, moved.load(Ordering::Relaxed) && !answered)
+            .await?;
     }
 }
 /// Go's followUploadFeed and attach (upload.go:284-297, 228-259): a feed that fails is reopened
@@ -789,6 +794,101 @@ mod tests {
         lane.abort();
         let requests = requests??;
         assert!(requests[1] - requests[0] < TRANSFER_RETRY_BACKOFF, "{requests:?}");
+        Ok(())
+    }
+
+    /// A lane the server answers busy once part of its body arrived has not progressed, as Go's
+    /// uploadLane counts no answer but 200 and the idle ending (upload.go:118-128): it fails after
+    /// 2 s, so its server leaves as busy rather than retrying for the whole stage.
+    #[tokio::test]
+    async fn a_lane_answered_busy_fails_after_2_s() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let origin = format!("http://{}", listener.local_addr()?);
+        let server = tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let (mut received, mut chunk) = (0, [0_u8; 64 * 1024]);
+                    while received < 128 * 1024 {
+                        match stream.read(&mut chunk).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(count) => received += count,
+                        }
+                    }
+                    let busy = "HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\n\r\n";
+                    let _ = stream.write_all(busy.as_bytes()).await;
+                    while stream.read(&mut chunk).await.is_ok_and(|count| count > 0) {}
+                });
+            }
+        });
+        let transport = transport(&origin, Protocol::Http1).await?;
+        let (block, active) = (Bytes::from(vec![42; 64 * 1024]), Arc::new(AtomicBool::new(false)));
+        let retry = TransferRetry::new(Retrying::default(), 0);
+        let started = Instant::now();
+        let lane = send_lane(&transport, "upload-session", 0, block, active, retry, OPERATION_LIMIT);
+        let ended = tokio::time::timeout(Duration::from_secs(5), lane).await;
+        server.abort();
+        let error = ended?.err().ok_or("the lane ended")?;
+        let reason = crate::failure::reason(error.as_ref(), false);
+        assert_eq!(
+            reason,
+            graphite_meter_core::failure::FailureReason::ServerBusy,
+            "{error}"
+        );
+        assert!(started.elapsed() >= REDIAL_WINDOW);
+        Ok(())
+    }
+
+    /// An HTTP/3 upload the server answers early, then stops reading, returns that answer, read
+    /// once its body can no longer be sent, as Go's round trip returns the response: here busy,
+    /// with its refusal code, where the stopped stream read as a lost connection.
+    #[tokio::test]
+    async fn an_http3_upload_answered_early_returns_the_answer() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        let (endpoint, origin) = crate::fixtures::h3_endpoint()?;
+        let server = tokio::spawn(async move {
+            let quic = endpoint.accept().await.ok_or("endpoint closed")?.await?;
+            let mut connection = graphite_meter_http3::server::Connection::new(quic, None);
+            let (_, stream) = connection.next().await?.ok_or("no request")?.resolve().await?;
+            let (mut send, mut recv) = stream.split();
+            let mut received = 0;
+            while received < 128 * 1024 {
+                received += recv.data().await?.ok_or("body ended")?.len();
+            }
+            let refusal = UploadRefusal::GlobalFull;
+            let busy = http::Response::builder()
+                .status(refusal.status())
+                .header("x-graphite-upload-refusal", refusal.name());
+            send.send_response(busy.body(())?).await?;
+            send.finish().await?;
+            recv.stop(graphite_meter_http3::Code::H3_NO_ERROR);
+            while let Ok(Some(_)) = connection.next().await {}
+            Ok::<_, Error>(())
+        });
+        let transport = Transport::connect(crate::net::Http::new(true)?, &origin, Protocol::Http3).await?;
+        let block = Bytes::from(vec![42_u8; 64 * 1024]);
+        let blocks = futures_util::stream::repeat_with(move || Ok::<_, Error>(block.clone()));
+        let body = futures_util::StreamExt::take(blocks, 1024);
+        let query = [("id", "upload-session"), ("lane", "0")];
+        let sent = tokio::time::timeout(
+            Duration::from_secs(5),
+            transport.send(Route::Upload, &query, body, 64 * 1024 * 1024, OPERATION_LIMIT),
+        )
+        .await?;
+        server.abort();
+        let error = sent.err().ok_or("the upload completed")?;
+        let answer = error.downcast_ref::<Failure>();
+        assert!(
+            matches!(
+                answer,
+                Some(Failure::Http {
+                    status: 503,
+                    refusal: Some(UploadRefusal::GlobalFull),
+                    ..
+                })
+            ),
+            "{error:?}"
+        );
         Ok(())
     }
 

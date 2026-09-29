@@ -159,6 +159,7 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                             while stream.read(&mut [0_u8; 65536]).await.is_ok_and(|count| count > 0) {
                                 let refusal = match flag.load(Ordering::SeqCst) {
                                     15 => "403 Forbidden\r\nX-Graphite-Upload-Refusal: ownerMismatch",
+                                    16 => "429 Too Many Requests\r\nX-Graphite-Upload-Refusal: clientFull",
                                     20 | 21 => "400 Bad Request\r\nX-Graphite-Upload-Refusal: invalid",
                                     _ => "",
                                 };
@@ -844,6 +845,53 @@ async fn a_lane_refused_just_before_the_stage_end_takes_its_server_out() -> Resu
         )
     );
     assert_eq!(snapshot.stage_status(&snapshot.results[0]), StageStatus::Partial);
+    Ok(())
+}
+
+/// A server that refuses its upload lanes as busy leaves as busy, as in Go, where lanes answered
+/// busy while they moved bytes went on retrying and the stage completed without it.
+#[tokio::test]
+async fn a_server_that_refuses_upload_lanes_as_busy_leaves_as_busy() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let (near, near_mode, near_task) = download_peer().await?;
+    let (far, _, far_task) = download_peer().await?;
+    let http = Http::new(true)?;
+    let servers = vec![
+        prepared_download("near", &near, &http).await?,
+        prepared_download("far", &far, &http).await?,
+    ];
+    let config = Config {
+        warmup: Duration::ZERO,
+        upload_duration: Duration::from_secs(3),
+        streams: 1,
+        loaded_latency: false,
+        ..Config::default()
+    };
+    let (snapshots, mut observed) = watch::channel(Snapshot::default());
+    let (_stop, cancelled) = watch::channel(false);
+    let refuse_near = async {
+        observed
+            .wait_for(|snapshot| snapshot.phase == Phase::Measuring)
+            .await
+            .unwrap();
+        near_mode.store(16, Ordering::SeqCst);
+    };
+    let mut ledger = RunLedger::new();
+    let (result, ()) = tokio::join!(
+        measure(Stage::Upload, &config, &servers, &snapshots, cancelled, &mut ledger),
+        refuse_near
+    );
+    near_task.abort();
+    far_task.abort();
+    assert_eq!(result?, ["near"]);
+    let snapshot = observed.borrow();
+    let [failure] = &snapshot.failures[..] else {
+        panic!("{:?}", snapshot.failures);
+    };
+    assert_eq!(
+        (failure.server_id.as_str(), failure.reason),
+        ("near", graphite_meter_core::failure::FailureReason::ServerBusy)
+    );
     Ok(())
 }
 

@@ -227,9 +227,25 @@ impl Transport {
 
     /// Ends an HTTP/3 request's body and checks the server's answer.
     async fn answer_h3(&self, stream: &mut Http3Stream, target: &str) -> Result<(), Error> {
-        stream.finish().await?;
+        if let Err(error) = stream.finish().await {
+            return Err(self.early_answer(stream, target, error).await);
+        }
         let response = stream.response().await?;
         self.http.check_status(target, response.status(), response.headers())
+    }
+
+    /// Why an HTTP/3 request's body could not be sent: a server that answers early stops reading
+    /// it, so its answer, read for a second, names the refusal, as Go's round trip returns it;
+    /// otherwise `error`.
+    async fn early_answer(&self, stream: &mut Http3Stream, target: &str, error: Error) -> Error {
+        match tokio::time::timeout(Duration::from_secs(1), stream.response()).await {
+            Ok(Ok(response)) => self
+                .http
+                .check_status(target, response.status(), response.headers())
+                .err()
+                .unwrap_or(error),
+            _ => error,
+        }
     }
 
     pub async fn receive(
@@ -313,7 +329,9 @@ impl Transport {
                     .checked_add(chunk.len() as u64)
                     .filter(|sent| *sent <= length)
                     .ok_or("request body exceeds content length")?;
-                stream.send_data(chunk).await?;
+                if let Err(error) = stream.send_data(chunk).await {
+                    return Err(self.early_answer(&mut stream, &target, error).await);
+                }
             }
             if sent != length {
                 return Err("request body shorter than content length".into());
