@@ -175,7 +175,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, Error> 
         return Err(format!("unexpected argument {}", quote(&argument)).into());
     }
     let mut config = parsed.config;
-    config.validate()?;
+    config.validate_settings()?;
     let [protocol, throughput, latency] = &parsed.paths;
     let protocols = [Protocol::Http1, Protocol::Http2, Protocol::Http3];
     config.throughput_protocol = choice("throughput protocol", protocol, &protocols)?;
@@ -183,6 +183,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, Error> 
     config.throughput_transport = choice("throughput transport", throughput, &transports)?;
     let transports = [LatencyTransport::WebSocket, LatencyTransport::WebTransport];
     config.latency_transport = choice("latency transport", latency, &transports)?;
+    config.validate_ceiling()?;
     Ok(Action::Run {
         config: Box::new(config),
         report: parsed.report,
@@ -352,6 +353,9 @@ mod tests {
             return Err("empty values did not start a run".into());
         };
         assert_eq!(*config, Config::default());
+        // Go's checkPaths refuses a path choice before the cadence ceiling.
+        let refused = parse(["-ping", "20s", "-throughput-transport", "bogus"].map(OsString::from)).err();
+        assert!(refused.is_some_and(|error| error.to_string().starts_with("invalid throughput transport")));
         Ok(())
     }
 

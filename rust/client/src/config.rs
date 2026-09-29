@@ -99,6 +99,12 @@ impl Config {
     /// Go's `Config.Validate` in its order and words. Like Go's, it leaves origins to the path check,
     /// which refuses a malformed one, and server IDs to the catalogue's selection.
     pub fn validate(&self) -> Result<(), Error> {
+        self.validate_settings()?;
+        self.validate_ceiling()
+    }
+
+    /// Go's Validate before its checkPaths, which refuses a flag's path choice before the cadence ceiling.
+    pub(crate) fn validate_settings(&self) -> Result<(), Error> {
         if self.stages.is_empty() {
             return Err("select at least one stage: latency, download, upload or bidirectional".into());
         }
@@ -133,7 +139,12 @@ impl Config {
         if self.auto_streams == 0 || self.auto_streams > MAX_STREAMS {
             return Err(format!("the automatic stream maximum must be from 1 to {MAX_STREAMS} per direction").into());
         }
-        if cadences.iter().any(|interval| *interval > Duration::from_secs(15)) {
+        Ok(())
+    }
+
+    /// The end of Go's checkPaths.
+    pub(crate) fn validate_ceiling(&self) -> Result<(), Error> {
+        if self.ping_interval.max(self.loaded_ping_interval) > Duration::from_secs(15) {
             return Err("latency interval must be at most 15s, half the server's 30s lane idle bound".into());
         }
         Ok(())
