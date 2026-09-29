@@ -4,16 +4,27 @@ use http::{Method, Request, Response, StatusCode, header};
 
 /// The first value of the query parameter `name`, decoded, as Go's `URL.Query().Get` finds it.
 pub(crate) fn query<B>(request: &Request<B>, name: &str) -> Option<String> {
-    form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
+    query_pairs(request)
+        .into_iter()
         .find(|(key, _)| key == name)
-        .map(|(_, value)| value.into_owned())
+        .map(|(_, value)| value)
 }
 
-/// Every query parameter, decoded, in order.
+/// Every query parameter, decoded, in order, as Go's `url.ParseQuery` keeps them: it drops a pair with a semicolon
+/// or with an escape that is not two hex digits.
 pub(crate) fn query_pairs<B>(request: &Request<B>) -> Vec<(String, String)> {
-    form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
-        .into_owned()
+    let hex = |escape: &str| escape.len() >= 2 && escape.as_bytes()[..2].iter().all(u8::is_ascii_hexdigit);
+    let pairs = request.uri().query().unwrap_or_default().split('&');
+    pairs
+        .filter(|pair| !pair.contains(';') && pair.split('%').skip(1).all(hex))
+        .flat_map(|pair| form_urlencoded::parse(pair.as_bytes()).into_owned())
         .collect()
+}
+
+/// Go's `httpguts.ValidHostHeader`: the bytes a host name, an IP literal with its zone and a port may hold.
+pub(crate) fn valid_host(host: &[u8]) -> bool {
+    host.iter()
+        .all(|&byte| byte.is_ascii_alphanumeric() || b"!$%&'()*+,-.:;=[]_~".contains(&byte))
 }
 
 /// Go's `http.Error` text for a status: NotFound names the page, the others their reason phrase.

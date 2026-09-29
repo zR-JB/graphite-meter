@@ -49,6 +49,7 @@ use hyper::{
 use hyper_util::rt::{TokioIo, TokioTimer};
 use response::{
     clean_path, empty_response, json_response, method_not_allowed, query, redirect, text_body, text_response,
+    valid_host,
 };
 use std::{
     future::Future,
@@ -471,15 +472,31 @@ impl HttpServer {
         if header_bytes > MAX_HEADER_BYTES {
             return Some(text_response(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE));
         }
+        // As Go's server reads HTTP/1 (RFC 9112 section 3.2): one valid host, which HTTP/1.0 may leave out.
+        let http1 = request.version() <= http::Version::HTTP_11;
+        let required = request.version() == http::Version::HTTP_11 && request.method() != Method::CONNECT;
+        let unreadable = match request.headers().get_all(header::HOST).iter().collect::<Vec<_>>()[..] {
+            _ if !http1 => None,
+            [_, _, ..] => Some("400 Bad Request"),
+            [] if required => Some("400 Bad Request: missing required Host header"),
+            [host] if !valid_host(host.as_bytes()) => Some("400 Bad Request: malformed Host header"),
+            _ => None,
+        };
+        // Go's server answers `OPTIONS *` itself, before any handler, except over HTTP/3.
+        let asterisk = request.method() == Method::OPTIONS && request.uri().path() == "*";
+        if unreadable.is_none() && asterisk && request.version() <= http::Version::HTTP_2 {
+            return Some(empty_response(StatusCode::OK));
+        }
         // Like Go: a declared length, or an unknown one outside HTTP/3, is a body only POST may carry.
         let declared = request
             .headers()
             .get(header::CONTENT_LENGTH)
             .and_then(|length| length.to_str().ok()?.parse::<u64>().ok());
         let unknown = declared.is_none() && request.version() != http::Version::HTTP_3 && !body_ended;
-        if request.method() != Method::POST && (declared.is_some_and(|length| length > 0) || unknown) {
-            let mut response = text_body(StatusCode::BAD_REQUEST, "request body not accepted");
-            if request.version() <= http::Version::HTTP_11 {
+        let body = request.method() != Method::POST && (declared.is_some_and(|length| length > 0) || unknown);
+        if let Some(text) = unreadable.or(body.then_some("request body not accepted")) {
+            let mut response = text_body(StatusCode::BAD_REQUEST, text);
+            if http1 {
                 response
                     .headers_mut()
                     .insert(header::CONNECTION, http::HeaderValue::from_static("close"));
@@ -1210,6 +1227,31 @@ mod tests {
         serving.await.unwrap();
     }
 
+    /// As Go's server reads HTTP/1, a request names one valid host, which HTTP/1.0 may leave out, and `OPTIONS *` is
+    /// the server's own.
+    #[tokio::test]
+    async fn http1_requests_name_one_valid_host() {
+        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
+        for (request, refusal) in [
+            ("GET /probe HTTP/1.1\r\n", Some(": missing required Host header")),
+            ("GET /probe HTTP/1.1\r\nHost: a\r\nHost: b\r\n", Some("")),
+            ("GET /probe HTTP/1.1\r\nHost: a/b\r\n", Some(": malformed Host header")),
+            ("GET /probe HTTP/1.0\r\n", None),
+            ("OPTIONS * HTTP/1.1\r\nHost: a\r\n", None),
+        ] {
+            let (mut client, served) = tokio::io::duplex(1 << 16);
+            let serving = tokio::spawn(server.clone().serve_http1_connection(served, h1(), None));
+            let request = format!("{request}Connection: close\r\n\r\n");
+            client.write_all(request.as_bytes()).await.unwrap();
+            let mut answer = String::new();
+            client.read_to_string(&mut answer).await.unwrap();
+            // A refusal's body is Go's text.
+            let expected = refusal.map_or(" 200 OK\r\n".into(), |text| format!("\r\n\r\n400 Bad Request{text}\n"));
+            assert!(answer.contains(&expected), "{request}: {answer}");
+            serving.await.unwrap();
+        }
+    }
+
     /// Password authentication for https://localhost, which advertises no clear listener.
     fn password() -> ValidatedConfig {
         let mut config = Config {
@@ -1297,6 +1339,7 @@ mod tests {
             let request = Request::builder()
                 .method(Method::GET)
                 .uri(format!("/upload?id={id}"))
+                .header(header::HOST, "localhost")
                 .body(UnreadBody)
                 .unwrap();
             let response = server
@@ -1358,6 +1401,8 @@ mod tests {
             ("bytes=9223372036854775807", 64_u64 * 1024 * 1024 * 1024),
             ("bytes=%2B123", 123),
             ("bytes=5&bytes=10", 5),
+            ("bytes=%zz&bytes=5", 5),
+            ("bytes=5;x&bytes=6", 6),
         ] {
             let response = respond(&server, Method::HEAD, &format!("/download?{query}")).await;
             assert_eq!(
@@ -1414,7 +1459,8 @@ mod tests {
         config.limits.operations_per_client = 1;
         config.limits.sessions_per_client = 1;
         let server = HttpServer::new(config.validated().unwrap()).unwrap();
-        let request = Request::get("/download?bytes=1").body(String::new()).unwrap();
+        let request = Request::get("/download?bytes=1").header(header::HOST, "localhost");
+        let request = request.body(String::new()).unwrap();
         let operations = Arc::new(Mutex::new(Vec::new()));
         let mut response = server.respond_incoming(request, h1(), &operations, None).await.unwrap();
         // The connection holds the reply's operation, as it did the moment the reply was answered.
@@ -1448,7 +1494,8 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let request = Request::get("/download?bytes=2").body(String::new()).unwrap();
+        let request = Request::get("/download?bytes=2").header(header::HOST, "localhost");
+        let request = request.body(String::new()).unwrap();
         let operations = Arc::new(Mutex::new(Vec::new()));
         let mut response = server.respond_incoming(request, h1(), &operations, None).await.unwrap();
         let (writer, _non_reading_peer) = tokio::io::duplex(1);

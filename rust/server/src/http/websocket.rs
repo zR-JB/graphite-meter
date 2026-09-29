@@ -150,7 +150,8 @@ mod tests {
             tls: false,
             topology: topology::tcp(NativeKind::H1, false).topology,
         };
-        let request = Request::get("/download?bytes=1").body(String::new()).unwrap();
+        let request = Request::get("/download?bytes=1").header(header::HOST, "localhost");
+        let request = request.body(String::new()).unwrap();
         let operations = Arc::new(Mutex::new(Vec::new()));
         let response = server
             .respond_incoming(request, accepted, &operations, None)
