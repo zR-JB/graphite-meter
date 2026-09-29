@@ -718,22 +718,13 @@ fn form(request: &Request<Bytes>) -> Result<Vec<(String, String)>, ()> {
     // never in URLs retained by browser history, proxies, or access logs.
     // Reject ambiguous fields rather than choosing one parser's precedence.
     let body = std::str::from_utf8(request.body()).map_err(|_| ())?;
-    let values = parse_form_pairs(body)?;
     let mut names = std::collections::BTreeSet::new();
-    if values.iter().any(|(name, _)| !names.insert(name)) {
-        return Err(());
-    }
-    Ok(values)
-}
-fn parse_form_pairs(raw: &str) -> Result<Vec<(String, String)>, ()> {
-    raw.split('&')
+    body.split('&')
         .filter(|field| !field.is_empty())
         .map(|field| {
-            if field.contains(';') {
-                return Err(());
-            }
             let (key, value) = field.split_once('=').unwrap_or((field, ""));
-            Ok((unescape(key, true).ok_or(())?, unescape(value, true).ok_or(())?))
+            let key = unescape(key, true).filter(|key| !field.contains(';') && names.insert(key.clone()));
+            Ok((key.ok_or(())?, unescape(value, true).ok_or(())?))
         })
         .collect()
 }
@@ -784,22 +775,27 @@ mod tests {
 
     #[test]
     fn auth_forms_require_unambiguous_body_fields() {
-        let request = Request::builder()
-            .method(Method::POST)
-            .uri("/auth/password?password=url-secret&csrf=url-proof")
-            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-            .body(Bytes::from_static(b"challenge=example"))
-            .unwrap();
-        let fields = form(&request).unwrap();
+        const FORM: &str = "application/x-www-form-urlencoded";
+        let request = |content_type, body: &'static str| {
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/password?password=url-secret&csrf=url-proof")
+                .header(header::CONTENT_TYPE, content_type)
+                .body(Bytes::from_static(body.as_bytes()))
+                .unwrap()
+        };
+        let fields = form(&request(FORM, "challenge=example")).unwrap();
         assert_eq!(value(&fields, "password"), "");
         assert_eq!(value(&fields, "csrf"), "");
-        let duplicate = request.map(|_| Bytes::from_static(b"password=first&password=second"));
-        assert!(form(&duplicate).is_err());
-        let wrong_type = Request::builder()
-            .header(header::CONTENT_TYPE, "text/plain")
-            .body(Bytes::from_static(b"password=secret"))
-            .unwrap();
-        assert!(form(&wrong_type).is_err());
+        for body in [
+            "password=first&password=second",
+            "p%61ssword=a&password=b",
+            "csrf=a;b",
+            "csrf=%zz",
+        ] {
+            assert!(form(&request(FORM, body)).is_err(), "{body}");
+        }
+        assert!(form(&request("text/plain", "password=secret")).is_err());
     }
 
     fn connection() -> Connection {
