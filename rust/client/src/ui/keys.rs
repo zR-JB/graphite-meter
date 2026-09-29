@@ -5,44 +5,51 @@ use crossterm::event::KeyCode::{
     self, BackTab, Char, Down, End, Enter, Esc, Home, Left, PageDown, PageUp, Right, Tab, Up,
 };
 
-/// A binding: its keys, its footer hint and its help grid entry.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) struct Key(&'static [KeyCode], pub(super) &'static str, &'static str);
+pub(super) struct Key {
+    codes: &'static [KeyCode],
+    pub(super) hint: &'static str,
+    help: &'static str,
+}
 
-pub(super) const ROWS: Key = Key(
+const fn key(codes: &'static [KeyCode], hint: &'static str, help: &'static str) -> Key {
+    Key { codes, hint, help }
+}
+
+pub(super) const ROWS: Key = key(
     &[Up, Down, Char('k'), Char('j'), Tab, BackTab],
     "↓ settings",
     "Tab/Shift-Tab focus",
 );
-pub(super) const CHANGE: Key = Key(&[Left, Right], "", "arrows change");
-pub(super) const ACTIVATE: Key = Key(&[Enter], "", "Enter edit/run");
-pub(super) const TOGGLE: Key = Key(&[Char(' ')], "Space toggle", "Space stage");
-pub(super) const STOP: Key = Key(&[Esc], "Esc stop", "Esc close/stop");
-pub(super) const START: Key = Key(&[Char('r')], "r Start test", "r run");
-pub(super) const RECHECK: Key = Key(&[Char('v')], "v Recheck paths", "v recheck");
-pub(super) const SERVERS: Key = Key(&[Char('s')], "s servers", "s servers");
-pub(super) const AVAILABLE: Key = Key(&[Char('u')], "", "u available");
-pub(super) const AUTOMATIC: Key = Key(&[Char('a')], "", "a auto");
-pub(super) const DETAILS: Key = Key(&[Char('d')], "d Details", "d Details");
-pub(super) const LATENCY: Key = Key(&[Char('l')], "l Latency server", "l latency");
-pub(super) const OPEN: Key = Key(&[Char('o'), Enter, Char(' ')], "Enter/Space/o open", "o sign-in");
-pub(super) const QUIT: Key = Key(&[Char('q')], "q quit", "q quit");
+pub(super) const CHANGE: Key = key(&[Left, Right], "", "arrows change");
+pub(super) const ACTIVATE: Key = key(&[Enter], "", "Enter edit/run");
+pub(super) const TOGGLE: Key = key(&[Char(' ')], "Space toggle", "Space stage");
+pub(super) const STOP: Key = key(&[Esc], "Esc stop", "Esc close/stop");
+pub(super) const START: Key = key(&[Char('r')], "r Start test", "r run");
+pub(super) const RECHECK: Key = key(&[Char('v')], "v Recheck paths", "v recheck");
+pub(super) const SERVERS: Key = key(&[Char('s')], "s servers", "s servers");
+pub(super) const AVAILABLE: Key = key(&[Char('u')], "", "u available");
+pub(super) const AUTOMATIC: Key = key(&[Char('a')], "", "a auto");
+pub(super) const DETAILS: Key = key(&[Char('d')], "d Details", "d Details");
+pub(super) const LATENCY: Key = key(&[Char('l')], "l Latency server", "l latency");
+pub(super) const OPEN: Key = key(&[Char('o'), Enter, Char(' ')], "Enter/Space/o open", "o sign-in");
+pub(super) const QUIT: Key = key(&[Char('q')], "q quit", "q quit");
 /// Ctrl-C, which dispatch reads with its modifier.
-const ABORT: Key = Key(&[], "", "Ctrl-C stop");
-pub(super) const HELP: Key = Key(&[Char('?')], "? keys", "? keys");
-pub(super) const CANCEL: Key = Key(&[Esc], "Esc cancel", "");
-pub(super) const CONFIRM_STOP: Key = Key(&[Esc], "Esc confirm stop", "");
+const ABORT: Key = key(&[], "", "Ctrl-C stop");
+pub(super) const HELP: Key = key(&[Char('?')], "? keys", "? keys");
+pub(super) const CANCEL: Key = key(&[Esc], "Esc cancel", "");
+pub(super) const CONFIRM_STOP: Key = key(&[Esc], "Esc confirm stop", "");
 /// Any key that does not confirm the stop.
-const CONTINUE: Key = Key(&[], "any key continue", "");
-pub(super) const SETUP: Key = Key(&[Esc], "Esc setup", "");
-pub(super) const RUN_AGAIN: Key = Key(&[Enter, Char('r')], "Enter Run again", "");
-const BEGIN: Key = Key(&[Enter], "Enter Start test", "");
-pub(super) const MORE: Key = Key(&[PageUp, PageDown, Home, End], "PgDn more", "");
-pub(super) const SCROLL: Key = Key(&[Up, Down, Char('k'), Char('j')], "↑/↓ scroll", "");
-pub(super) const CLOSE: Key = Key(&[Char('d'), Esc], "d/Esc close", "");
-pub(super) const APPLY: Key = Key(&[Enter], "Enter apply", "");
-pub(super) const DISCARD: Key = Key(&[Esc], "Esc discard", "");
-const CURSOR: Key = Key(&[Left, Right, Home, End], "←/→ Home/End move", "");
+const CONTINUE: Key = key(&[], "any key continue", "");
+pub(super) const SETUP: Key = key(&[Esc], "Esc setup", "");
+pub(super) const RUN_AGAIN: Key = key(&[Enter, Char('r')], "Enter Run again", "");
+const BEGIN: Key = key(&[Enter], "Enter Start test", "");
+pub(super) const MORE: Key = key(&[PageUp, PageDown, Home, End], "PgDn more", "");
+pub(super) const SCROLL: Key = key(&[Up, Down, Char('k'), Char('j')], "↑/↓ scroll", "");
+pub(super) const CLOSE: Key = key(&[Char('d'), Esc], "d/Esc close", "");
+pub(super) const APPLY: Key = key(&[Enter], "Enter apply", "");
+pub(super) const DISCARD: Key = key(&[Esc], "Esc discard", "");
+const CURSOR: Key = key(&[Left, Right, Home, End], "←/→ Home/End move", "");
 
 /// The sign-in popup's keys, which its footer lists.
 pub(super) const SIGN_IN: [Key; 3] = [OPEN, CANCEL, QUIT];
@@ -60,7 +67,7 @@ const FULL_HELP: [&[Key]; 6] = [
 
 impl Key {
     pub(super) fn matches(self, code: KeyCode) -> bool {
-        self.0.contains(&code)
+        self.codes.contains(&code)
     }
 }
 
@@ -70,11 +77,11 @@ pub(super) fn pressed(code: KeyCode, keys: &[Key]) -> Option<Key> {
 }
 
 pub(super) fn hints(keys: &[Key]) -> Vec<&'static str> {
-    keys.iter().map(|key| key.1).collect()
+    keys.iter().map(|key| key.hint).collect()
 }
 
 pub(super) fn full_help() -> impl Iterator<Item = Vec<&'static str>> {
-    FULL_HELP.iter().map(|row| row.iter().map(|key| key.2).collect())
+    FULL_HELP.iter().map(|row| row.iter().map(|key| key.help).collect())
 }
 
 impl Ui {

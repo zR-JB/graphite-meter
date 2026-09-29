@@ -161,7 +161,7 @@ impl Ui {
         }
         let mut hints = self.short_help();
         if self.body_scroll.hidden > 0 && matches!(self.mode(), InputMode::Main | InputMode::Reset) {
-            hints.insert(1, MORE.1);
+            hints.insert(1, MORE.hint);
         }
         let color = if is_error { self.theme.err } else { self.theme.muted };
         let mut lines = Vec::new();
@@ -243,7 +243,7 @@ impl Ui {
             code,
         );
         frame.render_widget(
-            Paragraph::new("Browser URL · ↑/↓ scroll").style(self.theme.muted),
+            Paragraph::new(format!("Browser URL · {}", SCROLL.hint)).style(self.theme.muted),
             label,
         );
         let url = safe_text(&auth.browser_url, MAX_TEXT);
@@ -845,9 +845,10 @@ impl Ui {
             .clamp(lines.len(), usize::from(area.height.saturating_sub(2)));
         frame.render_widget(Clear, area);
         frame.render_widget(
-            Paragraph::new(lines)
-                .scroll(offset)
-                .block(panel("Details · ↑/↓ scroll · d/Esc close", self.theme)),
+            Paragraph::new(lines).scroll(offset).block(panel(
+                &format!("Details · {} · {}", SCROLL.hint, CLOSE.hint),
+                self.theme,
+            )),
             area,
         );
     }
@@ -898,7 +899,10 @@ impl Ui {
         } else {
             frame.render_stateful_widget(
                 List::new(items)
-                    .block(panel("Servers · Space toggle · Enter apply · maximum four", self.theme))
+                    .block(panel(
+                        &format!("Servers · {} · {} · maximum four", TOGGLE.hint, APPLY.hint),
+                        self.theme,
+                    ))
                     .highlight_style(self.value().bg(self.theme.surface)),
                 area,
                 &mut self.servers,
