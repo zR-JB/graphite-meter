@@ -695,6 +695,8 @@ async fn authorization_is_pkce_bound_bounded_and_consumed_before_browser_validat
     let oidc = ready();
     let address = "192.0.2.1".parse().unwrap();
     let started = oidc.start(address, String::new(), None).await.unwrap();
+    let names: Vec<_> = form_urlencoded::parse(started.url.split_once('?').unwrap().1.as_bytes()).collect();
+    assert!(names.is_sorted_by_key(|(name, _)| name.clone()), "{names:?}");
     let fields = query_fields(&started.url);
     assert_eq!(fields["code_challenge_method"], "S256");
     assert_eq!(fields["response_type"], "code");

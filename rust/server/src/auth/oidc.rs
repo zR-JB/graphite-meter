@@ -214,15 +214,16 @@ impl Oidc {
         let (nonce, verifier) = (Zeroizing::new(random()?), Zeroizing::new(random()?));
         let pkce = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(ring::digest::digest(&ring::digest::SHA256, verifier.as_bytes()));
+        // Sorted by name, as x/oauth2's AuthCodeURL encodes them.
         let query = form_urlencoded::Serializer::new(String::new())
-            .append_pair("response_type", "code")
             .append_pair("client_id", &self.config.oidc_client_id)
-            .append_pair("state", &state)
             .append_pair("code_challenge", &pkce)
             .append_pair("code_challenge_method", "S256")
-            .append_pair("redirect_uri", &self.redirect_uri())
-            .append_pair("scope", "openid profile groups")
             .append_pair("nonce", &nonce)
+            .append_pair("redirect_uri", &self.redirect_uri())
+            .append_pair("response_type", "code")
+            .append_pair("scope", "openid profile groups")
+            .append_pair("state", &state)
             .finish();
         let separator = match provider.authorization.split_once('?') {
             None => "?",
