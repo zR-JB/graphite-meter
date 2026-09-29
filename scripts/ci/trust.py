@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 from . import github_api as gh
@@ -127,11 +128,22 @@ def require_control_plane_matches_main(repository: str, pr_sha: str, main_sha: s
         gh.fail(f"PR changes {', '.join(changed)}; prereleases need main's CI control plane")
 
 
+def timestamp(item: gh.JsonObject, key: str) -> datetime:
+    try:
+        return datetime.fromisoformat(gh.str_field(item, key, "GitHub record"))
+    except ValueError as exc:
+        raise gh.ControlPlaneError(f"{key} is not an ISO 8601 time") from exc
+
+
 def require_dispatch_run(
     repository: str, owner: str, main_sha: str, run_id: int, workflow: str, title: str,
-    artifacts: dict[str, int],
+    artifacts: dict[str, tuple[str, int]],
 ) -> None:
-    """Bind a request run to its workflow, inputs, main, one attempt, the owner and artifacts."""
+    """Bind a request run to its workflow, inputs, main, one attempt, the owner and artifacts.
+
+    `artifacts` maps each name to the job that writes it and a size limit. An artifact must have been
+    written while its job ran, so a job that runs the requested source natively cannot replace another's.
+    """
     workflow_id = gh.int_field(gh.expect_object(gh.api(f"repos/{repository}/actions/workflows/{workflow}"),
                                           workflow), "id", workflow)
     run = gh.expect_object(gh.api(f"repos/{repository}/actions/runs/{run_id}"), "request run")
@@ -153,11 +165,19 @@ def require_dispatch_run(
     pages = gh.api(gh.query(f"repos/{repository}/actions/runs/{run_id}/artifacts", per_page=100),
                    paginate=True)
     unexpired = [item for item in gh.page_items(pages, "artifacts") if item.get("expired") is False]
-    for name, limit in artifacts.items():
+    jobs = gh.page_items(gh.api(gh.query(f"repos/{repository}/actions/runs/{run_id}/jobs", filter="latest",
+                                         per_page=100), paginate=True), "jobs")
+    for name, (job, limit) in artifacts.items():
         if len(matches := [item for item in unexpired if item.get("name") == name]) != 1:
             gh.fail(f"expected one unexpired artifact {name}, found {len(matches)}")
         if not 0 <= gh.int_field(matches[0], "size_in_bytes", name) <= limit:
             gh.fail(f"artifact {name} exceeds {limit} bytes")
+        if len(found := [item for item in jobs if item.get("name") == job]) != 1 or (
+                found[0].get("status"), found[0].get("conclusion")) != DONE:
+            gh.fail(f"request run has no single successful job {job!r}")
+        if not (timestamp(found[0], "started_at") <= timestamp(matches[0], "created_at")
+                <= timestamp(matches[0], "updated_at") <= timestamp(found[0], "completed_at")):
+            gh.fail(f"artifact {name} was not written while its job {job!r} ran")
 
 
 def require_ci_gate(

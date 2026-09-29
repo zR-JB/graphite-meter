@@ -18,6 +18,8 @@ from .fixtures import (
     AMD, Answers, engine, git_head, github, outcome, pages, write_oci, write_release_assets,
 )
 from .release import (
+    BUILD_JOB,
+    DARWIN_JOB,
     OCI,
     Release,
     assets_sha256,
@@ -50,6 +52,7 @@ P = f"repos/{REPO}/"
 PULL, MAIN_COMMIT = P + "pulls/101", P + "commits/main"
 REQUEST_WORKFLOW, REQUEST_RUN = P + "actions/workflows/release-request.yml", P + "actions/runs/4242"
 ARTIFACTS = REQUEST_RUN + "/artifacts?per_page=100"
+REQUEST_JOBS = REQUEST_RUN + "/jobs?filter=latest&per_page=100"
 JOBS = P + "actions/runs/5151/jobs?filter=latest&per_page=100"
 CHECKS = P + f"commits/{HEAD}/check-runs?per_page=100&filter=all"
 CODEQL = P + "code-scanning/analyses?ref=refs%2Fheads%2Fmain&tool_name=CodeQL&per_page=100"
@@ -102,9 +105,22 @@ def dispatch_run(workflow_id: int, run_id: int, title: str = "title") -> dict[st
     }
 
 
-def artifacts(*names: str, size: int = 1024, expired: bool = False) -> object:
-    return pages({"artifacts": [{"name": name, "expired": expired, "size_in_bytes": size}
-                                for name in names]})
+def job(name: str, start: str, end: str) -> dict[str, object]:
+    return {"name": name, "status": "completed", "conclusion": "success",
+            "started_at": f"2026-08-15T{start}:00Z", "completed_at": f"2026-08-15T{end}:00Z"}
+
+
+# The request's build job, then its macOS job.
+REQUEST_JOB_RUNS = pages({"jobs": [job(BUILD_JOB, "10:00", "10:20"), job(DARWIN_JOB, "10:21", "10:40")]})
+
+
+def artifacts(*names: str, size: int = 1024, expired: bool = False, written: str = "") -> object:
+    """Each artifact as the job that writes it uploads it, unless it was `written` at another time."""
+    def at(name: str) -> str:
+        return f"2026-08-15T{written or ('10:30' if 'darwin' in name else '10:10')}:00Z"
+
+    return pages({"artifacts": [{"name": name, "expired": expired, "size_in_bytes": size,
+                                 "created_at": at(name), "updated_at": at(name)} for name in names]})
 
 
 def release_of(stable: bool) -> Release:
@@ -117,7 +133,7 @@ def trusted(stable: bool, mode: str = "publish") -> dict[str, object]:
     responses: dict[str, object] = {
         MAIN_COMMIT: {"sha": MAIN}, REQUEST_WORKFLOW: {"id": 31337},
         REQUEST_RUN: dispatch_run(31337, 4242, request_title(mode, release_of(stable), MAIN)),
-        ARTIFACTS: artifacts(*names), JOBS: pages({"jobs": [GATE]}),
+        ARTIFACTS: artifacts(*names), REQUEST_JOBS: REQUEST_JOB_RUNS, JOBS: pages({"jobs": [GATE]}),
     }
     if mode == "publish":
         responses |= {ENVIRONMENT: REVIEWED, POLICIES: MAIN_ONLY}
@@ -284,7 +300,11 @@ class GateTests(unittest.TestCase):
 
 class RequestTests(unittest.TestCase):
     def test_request_run_is_bound_to_main_owner_attempt_and_artifacts(self) -> None:
-        name = "release-request-4242"
+        name, darwin = "release-request-4242", "release-rust-darwin-4242"
+        expected = {name: (BUILD_JOB, 4096), darwin: (DARWIN_JOB, 4096)}
+        only_build = pages({"jobs": [job(BUILD_JOB, "10:00", "10:20")]})
+        failed = pages({"jobs": [job(BUILD_JOB, "10:00", "10:20"),
+                                 job(DARWIN_JOB, "10:21", "10:40") | {"conclusion": "failure"}]})
         for field, value, error in (
             (None, None, None),
             ("id", 4243, "is not a release-request.yml run"),
@@ -298,20 +318,33 @@ class RequestTests(unittest.TestCase):
             ("conclusion", "failure", "request run is completed/failure"),
             ("actor", {"login": "other"}, "repository owner"),
             ("triggering_actor", {"login": "other"}, "repository owner"),
-            ("artifact", artifacts(name, expired=True), "expected one unexpired"),
-            ("artifact", artifacts(name, name), "expected one unexpired"),
-            ("artifact", artifacts(name, size=4097), "exceeds"),
+            ("artifact", artifacts(name, darwin, expired=True), "expected one unexpired"),
+            ("artifact", artifacts(name, name, darwin), "expected one unexpired"),
+            ("artifact", artifacts(name, darwin, size=4097), "exceeds"),
+            # The macOS job runs the requested source natively; it cannot replace the build job's artifacts,
+            # and its own must come from its run.
+            ("artifact", artifacts(name, darwin, written="10:30"), f"{name} was not written while"),
+            ("artifact", artifacts(name, darwin, written="10:10"), f"{darwin} was not written while"),
+            ("artifact", artifacts(name, darwin, written="10:41"), f"{name} was not written while"),
+            ("jobs", only_build, "no single successful job 'Build untrusted Rust macOS TUIs'"),
+            ("jobs", failed, "no single successful job 'Build untrusted Rust macOS TUIs'"),
         ):
-            run = dispatch_run(7001, 4242)
-            files = artifacts(name)
+            run, files, jobs = dispatch_run(7001, 4242), artifacts(name, darwin), REQUEST_JOB_RUNS
             if field == "artifact":
                 files = value
+            elif field == "jobs":
+                jobs = value
             elif field is not None:
                 run[field] = value
             with (self.subTest(field=field, error=error),
-                  github({REQUEST_WORKFLOW: {"id": 7001}, ARTIFACTS: files, REQUEST_RUN: run})):
+                  github({REQUEST_WORKFLOW: {"id": 7001}, ARTIFACTS: files, REQUEST_JOBS: jobs, REQUEST_RUN: run})):
                 outcome(self, error, lambda: require_dispatch_run(
-                    REPO, "zR-JB", MAIN, 4242, "release-request.yml", "title", {name: 4096}))
+                    REPO, "zR-JB", MAIN, 4242, "release-request.yml", "title", expected))
+
+    def test_artifacts_are_bound_to_the_request_workflow_jobs(self) -> None:
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/release-request.yml").read_text()
+        for name in (BUILD_JOB, DARWIN_JOB):
+            self.assertEqual(workflow.count(f"    name: {name}\n"), 1)
 
     def test_handoff_directories_hold_exact_regular_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

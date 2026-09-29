@@ -46,6 +46,9 @@ TAG_RE = re.compile(rf"v{N}\.{N}\.{N}(-(?:alpha|beta|rc)\.{N})?")
 OCI = "graphite-meter.oci.tar"
 OCI_LIMIT = 1024 * 1024 * 1024
 ASSETS_LIMIT = 2 * OCI_LIMIT
+# The release request's jobs, which each artifact must come from: the build runs the requested source
+# only inside BuildKit; the macOS job compiles it natively.
+BUILD_JOB, DARWIN_JOB = "Build untrusted release candidate", "Build untrusted Rust macOS TUIs"
 # Seconds between reads while GitHub's read path catches up with a write.
 DELAYS = (0.25, 0.5, 1, 2, 4, 8)
 T = TypeVar("T")
@@ -226,13 +229,13 @@ def verify_request(request_dir: Path) -> tuple[Release, bool]:
         gh.fail("request mode must be validate or publish")
     if release.stable and release.sha != publisher:
         gh.fail("a stable release must build the trusted main commit")
-    artifacts = {candidate.name: OCI_LIMIT * (2 if release.rust_server else 1) + 1024 * 1024}
+    artifacts = {candidate.name: (BUILD_JOB, OCI_LIMIT * (2 if release.rust_server else 1) + 1024 * 1024)}
     if release.stable:
-        artifacts[f"release-assets-{run_id}"] = ASSETS_LIMIT
+        artifacts[f"release-assets-{run_id}"] = (BUILD_JOB, ASSETS_LIMIT)
     if release.rust != "none":
-        artifacts[f"release-rust-assets-{run_id}"] = ASSETS_LIMIT
+        artifacts[f"release-rust-assets-{run_id}"] = (BUILD_JOB, ASSETS_LIMIT)
     if release.rust_tui:
-        artifacts[f"release-rust-darwin-{run_id}"] = ASSETS_LIMIT
+        artifacts[f"release-rust-darwin-{run_id}"] = (DARWIN_JOB, ASSETS_LIMIT)
     require_dispatch_run(repository, env("REPOSITORY_OWNER"), publisher, run_id,
                          "release-request.yml", request_title(str(request["mode"]), release,
                                                               publisher), artifacts)
