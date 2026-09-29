@@ -38,24 +38,12 @@
   const motion = $derived(seen && !still());
   const target = $derived(sweepTarget(input));
   const visible = $derived(input.showValue && target !== null);
-  const headRadius = $derived.by(() => {
-    const radius = Math.min(7.5, layout.arcWidth * 0.48);
-    const close = result.arcs.some((arc, index, arcs) =>
-      arcs
-        .slice(index + 1)
-        .some(
-          (other) =>
-            Math.abs(arc.fraction - other.fraction) *
-              layout.arcSweep *
-              layout.radius <
-            2 * radius + 5,
-        ),
-    );
-    return close ? Math.min(4, radius) : radius;
-  });
-  const headExtent = $derived(
-    Math.max(headRadius + 1.5, layout.arcWidth / 2 + 0.5),
+  // A head is flat in its hue and a little wider than its arc, so it and its beat read at any size.
+  const headRadius = $derived(
+    layout.arcWidth / 2 + Math.max(2, layout.arcWidth * 0.1),
   );
+  // The beat swells the head by a fifth; its box leaves that room.
+  const headExtent = $derived(Math.ceil(headRadius * 1.2) + 1);
   const placements = $derived(
     resultGaugeHeadPlacements(
       result.arcs.map((arc) => arc.fraction),
@@ -63,7 +51,7 @@
         baseRadius: layout.radius,
         arcSweep: layout.arcSweep,
         headRadius,
-        borderWidth: 1.5,
+        borderWidth: 0,
       },
     ),
   );
@@ -135,6 +123,7 @@
   });
 </script>
 
+<!-- Flat in the stage's hue; a head moved inward off a close neighbour hangs on a stalk of its hue, and a partial one is a ring. -->
 {#snippet head(
   fraction: number,
   radius: number,
@@ -150,29 +139,17 @@
       {#if lane !== 0}
         <path
           d={`M ${layout.radius} 0 H ${radius}`}
-          stroke="var(--surface-inset)"
-          stroke-width="4"
-        />
-        <path
-          d={`M ${layout.radius} 0 H ${radius}`}
           stroke={color}
           stroke-width="2"
         />
       {/if}
-      <g transform={`translate(${radius} 0)`}>
-        <circle
-          r={headRadius + 0.75}
-          fill={hollow ? "var(--surface-inset)" : color}
-          stroke="var(--surface-inset)"
-          stroke-width="1.5"
-        />
-        {#if hollow}<circle
-            r={headRadius * 0.68}
-            fill="none"
-            stroke={color}
-            stroke-width="1"
-          />{/if}
-      </g>
+      <circle
+        cx={radius}
+        r={hollow ? headRadius - 1 : headRadius}
+        fill={hollow ? "none" : color}
+        stroke={hollow ? color : undefined}
+        stroke-width={hollow ? 2 : undefined}
+      />
     </g>
   </g>
 {/snippet}
@@ -282,11 +259,11 @@
       style:height={`${diameter}px`}
     >
       {#each [0, 1] as half (half)}
-        <!-- At rest against its clip edge, the second half would bleed a hairline at the seam. -->
+        <!-- At rest against its clip edge, a half would bleed a hairline at the seam; the head covers the first degree. -->
         <div
           class="half-clip"
           class:second={half === 1}
-          hidden={half === 1 && sweep.current <= 180}
+          hidden={sweep.current <= (half === 1 ? 180 : 1)}
         >
           <div
             class="rotor"
@@ -335,14 +312,11 @@
         height={headExtent * 2}
         viewBox={`${-headExtent} ${-headExtent} ${headExtent * 2} ${headExtent * 2}`}
       >
-        <circle class="sweep-end-cap" r={layout.arcWidth / 2} fill={accent} />
         {#key beat}
           <circle
             class:beat={beat !== null}
-            r={headRadius + 0.75}
+            r={headRadius}
             fill={accent}
-            stroke="var(--surface-inset)"
-            stroke-width="1.5"
             onanimationend={() => (beating = false)}
           />
         {/key}

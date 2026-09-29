@@ -39,6 +39,17 @@ test("a running stage spans its plan and its leading edge carries the glided rat
   expect(graph.area.endsWith("Z")).toBe(true);
 });
 
+test("a live lane ends at its head even when the newest bin is centred past it", () => {
+  const graph = stageGraph({
+    ...base,
+    lanes: [[1000, 2000, 2961].map((t) => ({ t, v: 50 }))],
+    head: { t: 2970, values: [80] },
+  });
+  const [{ x, y }] = graph.heads;
+  expect(graph.bins[0].at(-1)!.t).toBeGreaterThan(2970);
+  expect(graph.lines[0].endsWith(`${x} ${y}`)).toBe(true);
+});
+
 test("a reply below the idle median sits below its line; the track clamps at its top", () => {
   const graph = stageGraph({
     ...base,

@@ -70,6 +70,8 @@ hue uses `--tone-ink`.
 
 A tone gets its variants from one hue. Set `data-tone` (or use `.badge`, `.notice`, `.status-dot`), and then use
 `--tone` for the line, trace or dot, `--tone-wash` for fills, `--tone-line` for edges and `--tone-ink` for small text.
+The ink is the hue mixed into `--text`, 80 % on a dark page and 70 % on a light one, so small type keeps 4.5:1 on a
+running card's wash.
 
 **Dark and OLED.** The page is near-black, never black (`--canvas` L 0.17, `--canvas-deep` L 0.15), above the levels
 where OLED pixels switch off and smear. Sheets and plates lift in lightness steps a dim panel still separates.
@@ -85,8 +87,8 @@ The auth pages keep a pinned copy of the page, ink and text tokens and of the Pl
 app.css's `.notice`, and every page's card starts at one height so a notice grows it downward. `client/index.html`
 repeats `--canvas` and `--text` for the first paint. The terminal client repeats the text, ink, stage and status
 tokens in sRGB (`go/cmd/graphite-meter-client/theme.go`); a terminal draws everything as text, so its light stage
-colours are each hue's `--tone-ink`. A few values sit a unit or three off their token so that 256-colour terminals
-still map ink and selection to grey and keep latency apart from ok.
+colours are each hue mixed 80 % into `--text`. A few values sit a unit or three off their token so that 256-colour
+terminals still map ink and selection to grey and keep latency apart from ok.
 
 ## Type
 
@@ -150,31 +152,37 @@ hue, never by a boxed icon.
   page; History is read without it. A docked sheet slides from its edge while its column
   (`--dock-left`, `--dock-right`) grows, and back out when closed. A changed time rolls like a counter (`Roll`,
   320 ms): up as it grows, down as it shrinks.
-- While the latency stage runs, the dial's head beats on each idle reply, one `--dur-pulse` at a time: it swells a
-  little and settles, and without replies it holds still.
+- The dial's head is a flat bead in its hue, a little wider than the arc. While the latency stage runs, it beats on
+  each idle reply, one `--dur-pulse` at a time: it swells a little and settles, and without replies it holds still.
 - A radio's ring closes in and a check draws in (180 ms); a row that appears in a sheet unfolds from its own height.
 - Reduced motion keeps colour and opacity changes; sheets, rolls and glides jump to their end state.
 
 ## Components
 
 - **Instrument** (`GaugePanel`): the dial and the latency card share the top and take the height left over; the run
-  bar and three stage cards keep theirs. On a portrait screen, where the dial is bound by its width, the two share the
-  width evenly. Narrow, it stacks: dial, run bar, stage cards, latency. A tight screen scrolls rather than
-  overlapping rows. On a phone the dial takes about a third of the screen, so the running stage's card, its value and
-  its graph share the first screen with it. The readout keeps one place: "—" stands where the value arrives, and the
-  result lands on it. The footer under the dial holds the phase's note or a failure, and while no data arrives, for
-  how long.
+  bar and three stage cards keep theirs. The dial's column is one stage card wide, so the latency card starts on the
+  second card's edge. On a portrait screen, where the dial is bound by its width, the two share the width evenly.
+  Narrow, it stacks: dial, run bar, stage cards, latency. A tight screen scrolls rather than overlapping rows. On a
+  phone the dial takes about a third of the screen, so the running stage's card, its value and its graph share the
+  first screen with it. The readout keeps one place: "—" stands where the value arrives, and the result lands on it.
+  Every "—" that waits for a value, on the dial, the latency card and the stage cards, is `--text-soft`; a measured
+  value is full ink. The footer under the dial holds the phase's note or a failure, and while no data or no reply
+  arrives, for how long; on a landscape screen it hangs just under the ring, and the ring and the latency card share
+  one axis. Every rate on the page reads in the dial's unit, zero included. Nothing above the run bar moves from Start
+  to the result.
 - **Server lens** (`ServerLens`, `ServerScope quiet`): with several servers, one quiet field over the instrument
   (All servers or one), as wide as the choice it shows, drives the stage cards and which server's latency is shown
   once the run finishes. History's detail has its own.
-- **Stage card** (`ResultSummary`): a rule and wash in the stage hue; the name and a status word when not complete;
-  the value, one line tall (bidirectional: ↓ and ↑ in their own hues, on the same baseline); the wire rate or a
-  failure's reason; the graph; then facts: Peak, Stability, No data (from 0.5 s), Down + up, Transferred, in columns
-  of at least 84 px, so a phone's card holds three to a row. A card holds the same facts in every state (`cardFacts`):
-  unseen until one is known, "—" while one is not, so it keeps its height from Start to the result and neither the
-  dial nor the run bar moves; only No data, after a stall, adds one. A saved result has no graph row. On a phone the
-  cards stack, and a card that has not run, or is done while the run goes on, folds to its name and value; the running
-  card and every card of a finished run are whole.
+- **Stage card** (`ResultSummary`): a rule and wash in the stage hue; the name and a status word when not complete
+  (a stalled stage is Recovering); the value, one line tall (bidirectional: ↓ and ↑ in their own hues, on the same
+  baseline); the wire rate or a failure's reason, named by server when several ran, and at the line's end, after a
+  stall, No data (from 0.5 s); the graph; then facts: Peak, Stability, Down + up, Transferred, in columns of at least
+  84 px, so a phone's card holds three to a row. A card holds the same facts in every state (`cardFacts`): unseen
+  until one is known, "—" while one is not, so it keeps its height from Start to the result; a taller neighbour
+  leaves its rows in place. Under the dial on a landscape page, its rows sit 4 px apart rather than 6, so the page
+  fits one screen down to 1024 × 768. A card with no data yet keeps its graph's room but draws nothing in it. A
+  saved result has no graph row. On a phone the cards stack, and a card that has not run, or is done while the run
+  goes on, folds to its name and value; the running card and every card of a finished run are whole.
 - **Stage graph** (`StageGraph`): the rate from zero to the shared ceiling (`store.scales.chartBytesPerSec`), a dashed
   second lane for bidirectional upload, and a 20 px latency track below: one dot per reply bucket, height being time
   over the idle median (dashed baseline). A mouse, a tap, a sideways drag or arrow keys show a readout at once: time
@@ -183,10 +191,12 @@ hue, never by a boxed icon.
 - **Latency card** (`LatencyProfileView`): as tall as its content and centred beside the dial, lit like a stage card
   (`.stage-area`). The idle median as the headline; under it the idle replies over the stage, drawn like a stage
   graph's latency track (one dot per reply bucket over the dashed median), growing through the stage and kept as the
-  record (History has no series); then Jitter, Range, Stability and Timeouts. Then a table, one 40 px row per
-  population: name, median, jitter, timeouts (the share of resolved probes that got no reply, which is not packet
-  loss), box plot (P10–P90 box, min–max whisker, median tick, latest reply as a dot while live) and the added latency
-  in its hue, from the medians until the run saves it, "—" without evidence. The rows share one ms axis on the
+  record (History has no series); then Jitter, Range, Stability and Timeouts, each held from Start. A failed stage
+  names its reason under the headline. Then a table, one 40 px row per population: name, median, jitter, timeouts
+  (the share of resolved probes that got no reply, which is not packet loss), box plot (P10–P90 box over its min–max
+  whisker, median tick, latest reply as a dot while live) and the added latency in its hue, from the medians until the
+  run saves it, "—" without evidence. Figures are as wide as their longest value from Start, and a row whose probes
+  timed out or were lost shows a note in its dot's place, so no column moves mid-run. The rows share one ms axis on the
   gauge's ladder over their P90s, so the boxes fill it; a whisker past it runs on to the edge, ends in an arrowhead
   and names its value. The axis sits under the last row and its ticks run up through the rows as gridlines behind the
   plots; the idle median is one line from its tick through the loaded rows, and each loaded row's added-latency span
@@ -196,10 +206,11 @@ hue, never by a boxed icon.
   the run button spans the row under them at 44 px. A chip whose stage can still change is a switch drawn as an ink
   control (`.btn`): a plate and a filled bead when on, its edge alone and a ring bead when off; hover strengthens the
   edge and adds a wash, a press deepens the wash. A stage the run has reached locks its chip, which drops the plate
-  and shows progress instead: a line and a wash while its stage runs; once complete, a check in the stage's ink takes
-  the bead's place. A chip has one glyph and no status word (its tip says why it is locked or skipped), so it keeps
-  its width in every state: from Start to the result neither the chips nor the run button move. The run button is the
-  one ink button, sentence case, with the estimate as a quiet suffix; Stop steps back to an outline.
+  (one locked only while the test starts keeps it) and shows progress instead: a line and a wash while its stage runs;
+  once complete, a check in the stage's ink takes the bead's place. A chip has one glyph and no status word (its tip
+  says why it is locked or skipped), so it keeps its width in every state: from Start to the result neither the chips
+  nor the run button move. The run button is the one ink button, flat, sentence case, with the estimate as a quiet
+  suffix; Stop steps back to an outline.
 - **Sheet** (`SidePanel`, `.sheet`): the title, quiet head actions, grouped plates. **Choice list** (`.choices`): rows
   with a name and a second line saying what the choice does (`PATH_NOTE`) or why it is unavailable, cut with an
   ellipsis; the ring or check alone marks the choice. Unavailable choices fold into one row. While a run locks a list,

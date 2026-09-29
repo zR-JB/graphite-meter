@@ -995,7 +995,7 @@
     padding: 0 var(--space-4) env(safe-area-inset-bottom, 0px);
     border-top: var(--hairline) solid var(--border-subtle);
     color: var(--text-soft);
-    font: var(--type-xs) var(--font-sans);
+    font: var(--w-normal) var(--type-xs) var(--font-sans);
     font-variant-numeric: tabular-nums;
     container: status / inline-size;
   }

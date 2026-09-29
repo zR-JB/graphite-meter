@@ -42,6 +42,8 @@
     source?: string;
     /** The idle stage's replies over its time, while the run's series exists. */
     trace?: { points: LatencyPoint[]; start: number; span: number } | null;
+    /** Why the Latency stage failed; it stands under the idle headline in place of its caption. */
+    failure?: string;
   }
 
   let {
@@ -52,6 +54,7 @@
     stability = null,
     source,
     trace = null,
+    failure,
   }: Props = $props();
   const idle = $derived(lanes.find((lane) => lane.key === "latency") ?? null);
   // Lit like a stage card: dim until something is measured, brightest while the idle stage runs.
@@ -302,7 +305,9 @@
           >
           {#if idle.center != null}<span class="unit">ms</span>{/if}
         </div>
-        <span class="caption">Idle median</span>
+        <span class="caption" class:failure={failure && idle.center == null}
+          >{failure && idle.center == null ? failure : "Idle median"}</span
+        >
         {#if trace}
           <div
             class="trace"
@@ -329,25 +334,30 @@
         <dl class="facts">
           <div>
             <dt {@attach term(() => JARGON.jitter)}>Jitter</dt>
-            <dd>{formatLatency(idle.jitter)}</dd>
+            <dd class:quiet={idle.jitter == null}>
+              {formatLatency(idle.jitter)}
+            </dd>
           </div>
           <div>
             <dt {@attach term(() => JARGON.latencyRange)}>Range</dt>
-            <dd>
+            <dd class:quiet={idle.min == null || idle.max == null}>
               {idle.min == null || idle.max == null
                 ? MISSING
                 : `${fmtMs(idle.min)}–${fmtMs(idle.max)} ms`}
             </dd>
           </div>
-          {#if stability != null}
-            <div>
-              <dt>Stability</dt>
-              <dd>{Math.round(stability)}%</dd>
-            </div>
-          {/if}
+          <!-- Held from Start, so the result lands without moving Timeouts. -->
           <div>
-            <dt>Timeouts</dt>
-            <dd>{formatTimeouts(idle.timeoutRatio)}</dd>
+            <dt {@attach tooltip(() => JARGON.latencyStability)}>Stability</dt>
+            <dd class:quiet={stability == null}>
+              {stability == null ? MISSING : `${Math.round(stability)}%`}
+            </dd>
+          </div>
+          <div>
+            <dt {@attach tooltip(() => timeoutsTip(idle))}>Timeouts</dt>
+            <dd class:quiet={idle.timeoutRatio == null}>
+              {formatTimeouts(idle.timeoutRatio)}
+            </dd>
           </div>
         </dl>
       </div>
@@ -379,26 +389,37 @@
               (lane.center == null || idle?.center == null
                 ? null
                 : lane.center - idle.center))}
+        {@const note = [
+          lane.failure && `${lane.label}: ${lane.failure}`,
+          hasProbeAccountingNotice(lane) && probeOutcomes(lane),
+        ]
+          .filter(Boolean)
+          .join("\n")}
         <div
           class="lane"
           data-tone={lane.key}
           data-active={lane.active === true}
         >
           <span class="lane-name">
-            <span class="dot" aria-hidden="true"></span>
-            <span class="lane-label">{lane.label}</span>
-            {#if hasProbeAccountingNotice(lane)}
+            <!-- A note takes the dot's place, so it never widens the column mid-run. -->
+            {#if note}
               <span
-                class="timing-info"
+                class="mark note"
+                data-tone={lane.failure ? "err" : "warn"}
                 role="note"
-                aria-label={`${lane.label}: ${probeAccountingDetails(lane)}`}
-                {@attach tooltip(() => probeOutcomes(lane))}
-                ><Icon name="info" /></span
+                aria-label={note.replaceAll("\n", ". ")}
+                {@attach tooltip(() => note)}><Icon name="info" /></span
+              >
+            {:else}
+              <span class="mark" aria-hidden="true"
+                ><span class="dot"></span></span
               >
             {/if}
+            <span class="lane-label">{lane.label}</span>
           </span>
           <strong
             class="lane-median"
+            class:quiet={lane.center == null}
             tabindex="-1"
             {@attach tooltip(() =>
               [
@@ -409,9 +430,12 @@
                 .join("\n"),
             )}>{formatLatency(lane.center)}</strong
           >
-          <em class="lane-jitter">{formatLatency(lane.jitter)}</em>
+          <em class="lane-jitter" class:quiet={lane.jitter == null}
+            >{formatLatency(lane.jitter)}</em
+          >
           <em
             class="lane-timeouts"
+            class:quiet={lane.timeoutRatio == null}
             tabindex="-1"
             {@attach tooltip(() => timeoutsTip(lane))}
             >{formatTimeouts(lane.timeoutRatio)}</em
@@ -442,6 +466,23 @@
             onkeydown={(event) => onTrackKey(event, lane)}
           >
             <span class="profile-artwork" aria-hidden="true">
+              {#if lane.min != null && lane.max != null}
+                <i class="range" style={span(at(lane, "min"), at(lane, "max"))}
+                ></i>
+                <!-- At the whisker's own end, so the two glide together across a rescale. -->
+                {#if lane.max > scale}
+                  <i
+                    class="overflow"
+                    style:left={`${at(lane, "max")}%`}
+                    data-max="{fmtMs(lane.max)} ms"
+                  ></i>
+                {/if}
+              {/if}
+              {#if lane.p10 != null && lane.p90 != null}
+                <i class="band" style={span(at(lane, "p10"), at(lane, "p90"))}
+                ></i>
+              {/if}
+              <!-- Over the boxes: the idle median runs through every row, and each load's span starts on it. -->
               {#if idle?.center != null && lanes.length > 1}
                 <i class="baseline" style:left={`${at(idle, "center")}%`}></i>
                 {#if lane.center != null && lane.center > idle.center}
@@ -450,17 +491,6 @@
                     style={span(at(idle, "center"), at(lane, "center"))}
                   ></i>
                 {/if}
-              {/if}
-              {#if lane.min != null && lane.max != null}
-                <i class="range" style={span(at(lane, "min"), at(lane, "max"))}
-                ></i>
-                {#if lane.max > scale}
-                  <i class="overflow" data-max="{fmtMs(lane.max)} ms"></i>
-                {/if}
-              {/if}
-              {#if lane.p10 != null && lane.p90 != null}
-                <i class="band" style={span(at(lane, "p10"), at(lane, "p90"))}
-                ></i>
               {/if}
               {#if lane.center != null}
                 <i class="center-marker" style:left={`${at(lane, "center")}%`}
@@ -489,7 +519,11 @@
               </span>
             {/if}
           </div>
-          <span class="lane-added" class:quiet={plus == null}
+          <span
+            class="lane-added"
+            class:quiet={plus == null}
+            tabindex="-1"
+            {@attach tooltip(() => JARGON.addedLatency)}
             >{lane.key === "latency"
               ? "Baseline"
               : plus == null
@@ -536,8 +570,10 @@
     font: var(--w-strong) var(--type-md) / 20px var(--font-sans);
     white-space: nowrap;
   }
+  /* On the title's baseline (app.css, --role-label). */
   .aside {
     min-width: 0;
+    margin-top: calc(var(--type-md) - var(--type-sm));
     overflow: hidden;
     color: var(--text-soft);
     font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
@@ -578,6 +614,10 @@
     color: var(--text-soft);
     font: var(--w-normal) var(--type-sm) / 1.4 var(--font-sans);
   }
+  .caption.failure {
+    color: var(--err);
+    font-weight: var(--w-strong);
+  }
   .facts {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -615,6 +655,10 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
+  /* "—" for a value not yet measured is soft; a measured value is full ink. */
+  .facts dd.quiet {
+    color: var(--text-soft);
+  }
 
   /* One row per population on one scale: name, median, jitter, timeouts, spread, and what the load added.
      Rows abut, so the scale's gridlines and the idle median run through them as single lines;
@@ -643,6 +687,15 @@
     font: var(--w-normal) var(--type-xs) / 1 var(--font-sans);
     text-align: end;
   }
+  /* Every figure in a row on the median's baseline (app.css, --role-label). */
+  .lane-name,
+  .lane-added {
+    margin-top: calc(var(--type-md) - var(--type-body));
+  }
+  .lane-jitter,
+  .lane-timeouts {
+    margin-top: calc(var(--type-md) - var(--type-sm));
+  }
   .lane-name {
     display: flex;
     align-items: center;
@@ -652,15 +705,35 @@
     font: var(--w-normal) var(--type-body) / 1 var(--font-sans);
     white-space: nowrap;
   }
-  .lane-name .dot {
+  /* One slot per row for its dot or a note, so a note arriving never moves the columns. */
+  .mark {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 12px;
+    height: 12px;
+  }
+  .mark .dot {
     width: 6px;
     height: 6px;
   }
+  .note {
+    color: var(--tone);
+  }
+  .note :global(svg) {
+    width: 12px;
+    height: 12px;
+  }
+  /* Figures take their longest value's width ("9999 ms") from Start, so arriving values never shift the plot. */
   .lane-median {
+    min-width: 7ch;
     font: var(--w-normal) var(--type-md) / 1 var(--font-sans);
     font-variant-numeric: tabular-nums;
     text-align: end;
     white-space: nowrap;
+  }
+  .lane-jitter {
+    min-width: 7ch;
   }
   .lane-jitter,
   .lane-timeouts {
@@ -670,6 +743,11 @@
     font-variant-numeric: tabular-nums;
     text-align: end;
     white-space: nowrap;
+  }
+  .lane-median.quiet,
+  .lane-jitter.quiet,
+  .lane-timeouts.quiet {
+    color: var(--text-soft);
   }
   .lane-added {
     color: var(--tone-ink);
@@ -681,17 +759,6 @@
   .lane-added.quiet {
     color: var(--text-soft);
     font-weight: var(--w-normal);
-  }
-  .timing-info {
-    display: inline-grid;
-    place-items: center;
-    width: 18px;
-    height: 18px;
-    color: var(--warn);
-  }
-  .timing-info :global(svg) {
-    width: 12px;
-    height: 12px;
   }
   .ticks {
     position: relative;
@@ -705,7 +772,7 @@
     top: 4px;
     translate: -50%;
     color: var(--text-soft);
-    font: var(--type-2xs) / 1.2 var(--font-sans);
+    font: var(--w-normal) var(--type-2xs) / 1.2 var(--font-sans);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
@@ -719,6 +786,7 @@
   .track {
     position: relative;
     align-self: stretch;
+    border-radius: var(--r-well);
     cursor: crosshair;
     touch-action: pan-y pinch-zoom;
   }
@@ -776,7 +844,6 @@
   }
   /* A reply past the axis: its whisker runs on to the edge, ends in an arrowhead and names its value. */
   .overflow {
-    left: 100%;
     width: var(--edge);
   }
   .overflow::before,
@@ -790,7 +857,7 @@
     right: calc(var(--edge) + var(--space-1));
     bottom: var(--space-1);
     color: var(--text-soft);
-    font: var(--type-2xs) / 1 var(--font-sans);
+    font: var(--w-normal) var(--type-2xs) / 1 var(--font-sans);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
@@ -800,11 +867,12 @@
     border-left: 5px solid var(--tone);
     border-block: 3.5px solid transparent;
   }
+  /* Opaque, so its whisker and the gridlines stay behind it. */
   .band {
     top: calc(50% - 6px);
     height: 12px;
     border-radius: var(--r-well);
-    background: color-mix(in oklab, var(--tone) 22%, transparent);
+    background: color-mix(in oklab, var(--tone) 22%, var(--canvas));
     box-shadow: inset 0 0 0 1px
       color-mix(in oklab, var(--tone) 34%, transparent);
   }
@@ -928,6 +996,9 @@
     /* On the smallest phones a name wraps before it runs into the figures. */
     .lane-name {
       white-space: normal;
+    }
+    .lane-median {
+      min-width: 0;
     }
     .lane-head > :nth-child(5) {
       display: none;

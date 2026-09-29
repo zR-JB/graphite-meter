@@ -32,7 +32,11 @@
         : store.stageResults[key]?.reportedBytesPerSec;
     return bytes == null
       ? null
-      : formatRate(bytes, { base: store.unitBase, kind: store.unitKind });
+      : formatRate(bytes, {
+          base: store.unitBase,
+          kind: store.unitKind,
+          tier: store.scales.unitIndex,
+        });
   }
 
   const model = $derived(
@@ -90,7 +94,7 @@
     <button
       type="button"
       class="chip chip--{s.state}"
-      class:btn={!s.locked}
+      class:btn={!s.locked || s.state === "pending"}
       class:on={s.selected}
       data-tone={s.key}
       role="switch"
@@ -176,6 +180,10 @@
   }
   .chip:disabled {
     cursor: default;
+  }
+  /* Locked only while the test starts, a chip the run has not reached keeps its plate, undimmed, so nothing blinks. */
+  .chip.btn:disabled {
+    opacity: 1;
   }
   .chip--disabled:disabled {
     opacity: 0.5;

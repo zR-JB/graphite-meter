@@ -11,6 +11,7 @@ const input = (overrides: Partial<GaugeReadoutInput>): GaugeReadoutInput => ({
   latencyTimeout: false,
   latencyMs: 12,
   quietMs: null,
+  unansweredMs: null,
   hasLatencyResult: false,
   unusable: false,
   headline: null,
@@ -32,7 +33,7 @@ test("the display follows phase, evidence and missing data; a warmup shows none"
     [{ phase: "idle" }, "—", ""],
     [{ phase: "warmup" }, "—", ""],
     [{ phase: "latency" }, "12.0", "ms"],
-    [{ phase: "latency", latencyTimeout: true }, "—", "probe timeout"],
+    [{ phase: "latency", latencyTimeout: true }, "—", ""],
     [{ phase: "complete", hasLatencyResult: true }, "12.0", "ms"],
     [{ phase: "complete" }, "—", ""],
     [
@@ -53,6 +54,15 @@ test("a stalled run states how long no data has arrived, in whole seconds", () =
     [65_000, "No data for 1 min 5 s"],
   ] as const)
     expect(gaugeReadout(input({ quietMs })).noData).toBe(note);
+});
+
+test("unanswered latency probes count in the footer like a stall, not in the unit's place", () => {
+  expect(gaugeReadout(input({ phase: "latency" })).noReplies).toBe("");
+  const readout = gaugeReadout(
+    input({ phase: "latency", latencyTimeout: true, unansweredMs: 3_400 }),
+  );
+  expect(readout.noReplies).toBe("No replies for 3 s");
+  expect(readout.display).toEqual({ value: "—", unit: "" });
 });
 
 test("terminal readouts carry the measured direction and status", () => {

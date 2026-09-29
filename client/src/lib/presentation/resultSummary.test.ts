@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   cardFacts,
+  cardNoData,
   summaryCards,
   summaryEvidence,
   type SummaryCard,
@@ -149,7 +150,7 @@ test("time without data is an explained fact from half a second, the longer lane
   expect(noData(8_000, [600, 2_500])).toEqual([fact("8.0 s"), fact("2.5 s")]);
 });
 
-test("a transfer card keeps the same facts in every state, a dash until known, No data only after a stall", () => {
+test("a transfer card keeps the same facts in every state, a dash until known; No data joins its line", () => {
   const facts = (card: SummaryCard) =>
     cardFacts(card).map((row) => `${row.label} ${row.value}`);
   const waiting: SummaryCard = {
@@ -184,9 +185,10 @@ test("a transfer card keeps the same facts in every state, a dash until known, N
   expect(facts(download)).toEqual([
     "Peak 120.0 B/s",
     "Stability 95%",
-    "No data 0.8 s",
     "Transferred 1.0 MB",
   ]);
+  expect(cardNoData(download)?.value).toBe("0.8 s");
+  expect(cardNoData(bidirectional)).toBeNull();
   expect(facts(bidirectional)).toEqual([
     "Stability 95%",
     "Down + up 60.00 B/s",
