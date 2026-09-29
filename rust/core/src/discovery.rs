@@ -69,7 +69,7 @@ pub struct Capabilities {
 }
 
 fn throughput_targets<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<ThroughputTarget>, D::Error> {
-    known_targets(
+    known_targets::<_, _, true>(
         deserializer,
         &[
             ("transport", &["fetch-stream", "webtransport", "webtransport-datagram"]),
@@ -79,29 +79,41 @@ fn throughput_targets<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<
 }
 
 fn latency_targets<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<LatencyTarget>, D::Error> {
-    known_targets(deserializer, &[("transport", &["websocket", "webtransport"])])
+    known_targets::<_, _, false>(deserializer, &[("transport", &["websocket", "webtransport"])])
 }
 
-fn known_targets<'de, D: Deserializer<'de>, T: serde::de::DeserializeOwned>(
+/// A target's members that pick and build it, its protocol only where it has one; serde skips the
+/// others unparsed, as Go does.
+struct Target<const PROTOCOL: bool>(serde_json::Map<String, serde_json::Value>);
+
+impl<'de, const PROTOCOL: bool> Deserialize<'de> for Target<PROTOCOL> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let members = &["baseUrl", "transport", "protocol"][..2 + usize::from(PROTOCOL)];
+        deserializer.deserialize_map(crate::wire::Members(members)).map(Self)
+    }
+}
+
+fn known_targets<'de, D: Deserializer<'de>, T: serde::de::DeserializeOwned, const PROTOCOL: bool>(
     deserializer: D,
     fields: &[(&str, &[&str])],
 ) -> Result<Vec<T>, D::Error> {
-    let targets = Vec::<serde_json::Value>::deserialize(deserializer)?;
+    let targets = Vec::<Target<PROTOCOL>>::deserialize(deserializer)?;
     if targets.len() > 32 {
         return Err(serde::de::Error::custom("too many targets"));
     }
     let mut known = Vec::new();
-    for target in targets {
+    for Target(target) in targets {
         let mut supported = true;
         for (field, values) in fields {
             let value = target
-                .get(field)
+                .get(*field)
                 .and_then(serde_json::Value::as_str)
                 .filter(|value| !value.is_empty())
                 .ok_or_else(|| serde::de::Error::custom(format!("missing target {field}")))?;
             supported &= values.contains(&value);
         }
         if supported {
+            let target = serde_json::Value::Object(target);
             known.push(serde_json::from_value(target).map_err(serde::de::Error::custom)?);
         }
     }

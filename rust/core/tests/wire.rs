@@ -81,6 +81,10 @@ fn progress_requires_exact_counters_and_rejects_duplicate_fields() {
     ] {
         assert!(decode_upload_progress(raw.as_bytes()).is_err(), "{raw}");
     }
+    // Go's json/v2 skips what a record's type does not read, unconverted and nested up to 10000 deep.
+    let nested = "[".repeat(200) + &"]".repeat(200);
+    let ready = format!(r#"{{"type":"ready","extra":1e400,"bytes":1e400,"nested":{nested}}}"#);
+    assert_eq!(decode_upload_progress(ready.as_bytes()), Ok(UploadProgress::Ready));
     let event = decode_upload_progress(br#"{"type":"progress","bytes":1e3,"nanos":0.0}"#).unwrap();
     assert_eq!(event, UploadProgress::Progress { bytes: 1000, nanos: 0 });
     let event = decode_upload_progress(br#"{"type":"complete","bytes":9007199254740991,"nanos":1E+2}"#).unwrap();

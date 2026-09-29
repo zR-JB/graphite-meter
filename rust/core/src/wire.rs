@@ -1,9 +1,9 @@
 //! Text probe frames and upload progress records shared by server and clients.
 
-use serde::de::{self, Error as _, MapAccess, SeqAccess, Visitor};
-use serde::{Deserialize, Deserializer, Serialize};
-use serde_json::{Map, Number, Value};
-use std::{fmt, time::Duration};
+use serde::de::{Error as _, IgnoredAny, MapAccess, Visitor};
+use serde::{Deserializer, Serialize};
+use serde_json::{Map, Value};
+use std::{collections::HashSet, fmt, time::Duration};
 
 pub const MAX_UPLOAD_COUNTER: u64 = (1 << 53) - 1;
 pub const MAX_TRANSFER_BYTES: u64 = 64 << 30;
@@ -125,25 +125,24 @@ pub fn encode_upload_progress(event: &UploadProgress) -> Result<String, WireErro
     serde_json::to_string(&record).map_err(|_| WireError::InvalidUploadProgress)
 }
 
-/// Decodes JSON while rejecting duplicate members at every depth, including unknown fields.
+/// Decodes JSON as Go's json/v2 does: [`strict`] refuses what it refuses, and serde skips unknown
+/// members without converting their numbers or bounding their nesting.
 pub fn decode_json<T: serde::de::DeserializeOwned>(data: &[u8]) -> Result<T, serde_json::Error> {
-    let StrictValue(value) = serde_json::from_slice::<StrictValue>(data)?;
-    serde_json::from_value(value)
+    strict(data)?;
+    serde_json::from_slice(data)
 }
 
+/// As Go's DecodeUploadProgress, only the members a record's type uses are read.
 pub fn decode_upload_progress(data: &[u8]) -> Result<UploadProgress, WireError> {
-    let StrictValue(Value::Object(mut fields)) =
-        serde_json::from_slice::<StrictValue>(data).map_err(|_| WireError::InvalidUploadProgress)?
-    else {
-        return Err(WireError::InvalidUploadProgress);
-    };
-    let kind = match fields.remove("type") {
+    let members = |names: &[&str]| decode_members(data, names).map_err(|_| WireError::InvalidUploadProgress);
+    let kind = match members(&["type"])?.remove("type") {
         Some(Value::String(kind)) => kind,
         _ => return Err(WireError::InvalidUploadProgress),
     };
     let event = match kind.as_str() {
         "ready" => UploadProgress::Ready,
         "error" => {
+            let mut fields = members(&["message", "code"])?;
             let detail = |value: Option<Value>| -> Result<String, WireError> {
                 match value {
                     None => Ok(String::new()),
@@ -157,6 +156,7 @@ pub fn decode_upload_progress(data: &[u8]) -> Result<UploadProgress, WireError> 
             }
         }
         "progress" | "complete" => {
+            let mut fields = members(&["bytes", "nanos"])?;
             let bytes = counter(fields.remove("bytes"))?;
             let nanos = counter(fields.remove("nanos"))?;
             if kind == "progress" {
@@ -181,74 +181,67 @@ fn counter(value: Option<Value>) -> Result<u64, WireError> {
     Ok(number as u64)
 }
 
-/// Deserialize unknown fields too, so duplicate names nested in additive fields
-/// cannot bypass the duplicate-field rejection of Go's JSON decoder.
-struct StrictValue(Value);
-
-impl<'de> Deserialize<'de> for StrictValue {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_any(StrictVisitor)
+/// What Go's json/v2 refuses and serde lets through: a member name twice in one object at any
+/// depth, invalid UTF-8, an escape that is no character, and nesting past Go's bound. The scan is
+/// exact for valid JSON; serde_json refuses the rest after it.
+fn strict(data: &[u8]) -> Result<(), serde_json::Error> {
+    let text = std::str::from_utf8(data).map_err(serde_json::Error::custom)?;
+    // Each open container: an object's member names so far, or `None` for an array.
+    let mut open: Vec<Option<HashSet<String>>> = Vec::new();
+    let (bytes, mut at, mut previous) = (text.as_bytes(), 0, b' ');
+    while let Some(&byte) = bytes.get(at) {
+        match byte {
+            // Go's json/v2 bound on nesting.
+            b'{' | b'[' if open.len() == 10_000 => return Err(serde_json::Error::custom("JSON nested too deep")),
+            b'{' => open.push(Some(HashSet::new())),
+            b'[' => open.push(None),
+            b'}' | b']' => drop(open.pop()),
+            b'"' => {
+                let mut strings = serde_json::Deserializer::from_str(&text[at..]).into_iter::<String>();
+                let string = strings.next().transpose()?.unwrap_or_default();
+                at += strings.byte_offset() - 1;
+                let names = open.last_mut().and_then(Option::as_mut);
+                if matches!(previous, b'{' | b',') && names.is_some_and(|names| !names.insert(string)) {
+                    return Err(serde_json::Error::custom("duplicate JSON member"));
+                }
+            }
+            _ => {}
+        }
+        previous = if byte.is_ascii_whitespace() { previous } else { byte };
+        at += 1;
     }
+    Ok(())
 }
 
-struct StrictVisitor;
+/// The members `names` lists of the object `data` holds, checked as [`decode_json`] checks it.
+fn decode_members(data: &[u8], names: &[&str]) -> Result<Map<String, Value>, serde_json::Error> {
+    strict(data)?;
+    let mut deserializer = serde_json::Deserializer::from_slice(data);
+    let members = (&mut deserializer).deserialize_map(Members(names))?;
+    deserializer.end()?;
+    Ok(members)
+}
 
-impl<'de> Visitor<'de> for StrictVisitor {
-    type Value = StrictValue;
+/// An object's members named here, as values; the others are skipped unparsed, as Go's json/v2
+/// skips unknown members.
+pub(crate) struct Members<'a>(pub(crate) &'a [&'a str]);
+
+impl<'de> Visitor<'de> for Members<'_> {
+    type Value = Map<String, Value>;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("a JSON value without duplicate object fields")
-    }
-
-    fn visit_bool<E: de::Error>(self, value: bool) -> Result<Self::Value, E> {
-        Ok(StrictValue(Value::Bool(value)))
-    }
-
-    fn visit_i64<E: de::Error>(self, value: i64) -> Result<Self::Value, E> {
-        Ok(StrictValue(Value::Number(value.into())))
-    }
-
-    fn visit_u64<E: de::Error>(self, value: u64) -> Result<Self::Value, E> {
-        Ok(StrictValue(Value::Number(value.into())))
-    }
-
-    fn visit_f64<E: de::Error>(self, value: f64) -> Result<Self::Value, E> {
-        Number::from_f64(value)
-            .map(|number| StrictValue(Value::Number(number)))
-            .ok_or_else(|| E::custom("nonfinite JSON number"))
-    }
-
-    fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
-        Ok(StrictValue(Value::String(value.into())))
-    }
-
-    fn visit_string<E: de::Error>(self, value: String) -> Result<Self::Value, E> {
-        Ok(StrictValue(Value::String(value)))
-    }
-
-    fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
-        Ok(StrictValue(Value::Null))
-    }
-
-    fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
-        Ok(StrictValue(Value::Null))
-    }
-
-    fn visit_seq<A: SeqAccess<'de>>(self, mut sequence: A) -> Result<Self::Value, A::Error> {
-        let mut values = Vec::new();
-        while let Some(StrictValue(value)) = sequence.next_element()? {
-            values.push(value);
-        }
-        Ok(StrictValue(Value::Array(values)))
+        formatter.write_str("a JSON object")
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut entries: A) -> Result<Self::Value, A::Error> {
-        let mut fields = Map::new();
-        while let Some((name, StrictValue(value))) = entries.next_entry::<String, StrictValue>()? {
-            if fields.insert(name, value).is_some() {
-                return Err(A::Error::custom("duplicate JSON field"));
+        let mut members = Map::new();
+        while let Some(name) = entries.next_key::<String>()? {
+            if self.0.contains(&name.as_str()) {
+                members.insert(name, entries.next_value()?);
+            } else {
+                entries.next_value::<IgnoredAny>()?;
             }
         }
-        Ok(StrictValue(Value::Object(fields)))
+        Ok(members)
     }
 }

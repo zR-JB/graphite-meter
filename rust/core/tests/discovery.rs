@@ -32,15 +32,21 @@ fn shared_goldens_round_trip_without_local_fields() {
 
 #[test]
 fn rejects_duplicates_even_in_unknown_nested_fields_but_allows_additions() {
-    for suffix in [
-        r#", "future":{"x":1,"x":2}"#,
-        r#", "future":[{"x":1,"x":2}]"#,
-        r#", "generation":"duplicate""#,
+    let fixture = std::str::from_utf8(PREFLIGHT).unwrap();
+    let with = |suffix: &str| format!("{}{suffix}}}", fixture.trim_end().strip_suffix('}').unwrap());
+    let (head, tail) = fixture.rsplit_once(r#""baseUrl""#).unwrap();
+    let deep = "[".repeat(200) + &"]".repeat(200);
+    for (raw, accepted) in [
+        (with(r#", "future":{"x":1,"x":2}"#), false),
+        (with(r#", "future":[{"x":1,"x":2}]"#), false),
+        (with(r#", "generation":"duplicate""#), false),
+        // Go's json/v2 skips unknown members unconverted, nested up to 10000 deep, a target's too.
+        (with(r#", "future":1e400"#), true),
+        (with(&format!(r#", "future":{deep}"#)), true),
+        (fixture.replacen(r#""baseUrl""#, r#""future":1e400,"baseUrl""#, 1), true),
+        (format!(r#"{head}"protocol":1e400,"baseUrl"{tail}"#), true),
     ] {
-        let fixture = std::str::from_utf8(PREFLIGHT).unwrap();
-        let object_prefix = fixture.trim_end().strip_suffix('}').unwrap();
-        let raw = format!("{object_prefix}{suffix}}}");
-        assert!(Preflight::decode(raw.as_bytes()).is_err());
+        assert_eq!(Preflight::decode(raw.as_bytes()).is_ok(), accepted, "{raw}");
     }
     let mut value: Value = serde_json::from_slice(PREFLIGHT).unwrap();
     value["future"] = json!({"nested": [1, 2]});
