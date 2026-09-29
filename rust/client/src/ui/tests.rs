@@ -528,6 +528,12 @@ fn setup_rows_and_start_notes_read_as_go_writes_them() {
     ] {
         assert_eq!(ui.row(row).help, help);
     }
+    // The focused row's highlight covers the padding after its label, as Go pads inside the label's style.
+    (ui.theme, ui.row) = (Theme::new(crate::theme::Profile::Ansi256, true), 3);
+    let (lines, focused) = ui.setup_list(60);
+    let label = &lines[focused].spans[1];
+    assert!(label.content.ends_with("  "));
+    assert_eq!(label.style.bg, ui.theme.selected.bg);
     // The start note says what the run takes, or what stops it.
     let mut ui = setup();
     let note = |ui: &mut Ui| rows(ui)[4].clone();

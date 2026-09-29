@@ -411,8 +411,9 @@ impl Ui {
                 _ if row.inert => under(row.value, theme.muted),
                 _ => under(row.value, theme.value),
             };
-            let label = pad(fit(Line::from(row.label), label_width), label_width);
-            let mut line = under(label, theme.text);
+            // One span, as Go pads inside the label's style: a focused row's highlight covers the padding.
+            let label = plain(&pad(fit(Line::from(row.label), label_width), label_width));
+            let mut line = Line::from(span(label, theme.text));
             line.spans.push(Span::raw("  "));
             line.spans.extend(value.spans);
             if focused {
