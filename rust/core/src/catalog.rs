@@ -91,13 +91,19 @@ impl ServerCatalog {
     }
 
     pub fn validate(&self) -> Result<(), CatalogError> {
-        if self.servers.is_empty() || self.servers.len() > MAX_CATALOG_SERVERS || self.servers[0].id != "self" {
-            return Err(CatalogError::InvalidServers);
-        }
+        self.validate_servers()?;
         for index in 0..self.servers.len() {
             self.validate_entry(index)?;
         }
         self.validate_selection(&self.default_selection)
+    }
+
+    /// Self first, and at most 31 servers after it.
+    fn validate_servers(&self) -> Result<(), CatalogError> {
+        match self.servers.first() {
+            Some(first) if first.id == "self" && self.servers.len() <= MAX_CATALOG_SERVERS => Ok(()),
+            _ => Err(CatalogError::InvalidServers),
+        }
     }
 
     /// One entry, against the entries before it.
@@ -152,9 +158,7 @@ impl ServerCatalog {
     /// is left out alone and returned with its reason, and the default selection drops it, or
     /// falls back to self if nothing else is left. The catalogue as a whole must still hold.
     pub fn received(mut self) -> Result<(Self, Vec<Rejected>), CatalogError> {
-        if self.servers.is_empty() || self.servers.len() > MAX_CATALOG_SERVERS || self.servers[0].id != "self" {
-            return Err(CatalogError::InvalidServers);
-        }
+        self.validate_servers()?;
         let mut rejected = Vec::new();
         let servers = std::mem::take(&mut self.servers);
         for mut entry in servers {
