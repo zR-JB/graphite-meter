@@ -148,12 +148,15 @@ hue, never by a boxed icon.
   Easing is `--ease-out` for anything the user triggered.
 - Live values and the running graph's leading edge move on the single frame clock in
   `presentation/motion.svelte.ts`; a glide smooths only the rendering.
-- The room's light cross-fades 1.1 s between stages: one layer per stage in the stage column, never a repaint of the
-  page; History is read without it. A docked sheet slides from its edge while its column
-  (`--dock-left`, `--dock-right`) grows, and back out when closed. A changed time rolls like a counter (`Roll`,
-  320 ms): up as it grows, down as it shrinks.
+- The room's light cross-fades 1.1 s between stages: one layer per stage across the whole room, never a repaint of
+  the page, its source a fifth of the way across the stage wherever the columns stand, so a docked sheet never cuts
+  it at its column's edge; History is read without it. A docked sheet hugs its column's inner edge, so the column's
+  glide (`--dock-left`, `--dock-right`) is its slide: sheet and page move in one layout pass, in and out, and a
+  dragged handle moves them without the glide. A changed time rolls like a counter (`Roll`, 320 ms): up as it grows,
+  down as it shrinks.
 - The dial's head is a flat bead in its hue, a little wider than the arc. While the latency stage runs, it beats on
-  each idle reply, one `--dur-pulse` at a time: it swells a little and settles, and without replies it holds still.
+  each idle reply, one `--dur-pulse` at a time: it swells a little and settles while a hairline ring in its hue
+  spreads from it and fades, and the footer counts the replies so far; without replies it holds still.
 - A radio's ring closes in and a check draws in (180 ms); a row that appears in a sheet unfolds from its own height.
 - Reduced motion keeps colour and opacity changes; sheets, rolls and glides jump to their end state.
 
@@ -201,7 +204,8 @@ hue, never by a boxed icon.
   gauge's ladder over their P90s, so the boxes fill it; a whisker past it runs on to the edge, ends in an arrowhead
   and names its value. The axis sits under the last row and its ticks run up through the rows as gridlines behind the
   plots; the idle median is one line from its tick through the loaded rows, and each loaded row's added-latency span
-  starts from it. Narrow cards put the idle facts above and drop jitter, never timeouts; a phone gives each
+  starts from it. A pointer anywhere on a row's plot reads the marker nearest it, as a stage graph's readout does, and
+  follows the pointer from marker to marker. Narrow cards put the idle facts above and drop jitter, never timeouts; a phone gives each
   population its figures, then its plot.
 - **Run bar**: the stage chips and the run button on one line; on a phone the chips share one row in equal columns and
   the run button spans the row under them at 44 px. A chip whose stage can still change is a switch drawn as an ink

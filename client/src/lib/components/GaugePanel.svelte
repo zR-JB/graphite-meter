@@ -145,6 +145,18 @@
       )?.endT ?? store.phaseStartedAtMs;
     return newest - answered >= 1000 ? newest - answered : null;
   });
+  // Idle replies so far: what the stage's figures are drawn from, counted as they arrive.
+  const replies = $derived(
+    phase === "latency"
+      ? store.latency.reduce(
+          (count, bucket) =>
+            bucket.phase === "latency"
+              ? count + bucket.pingCount - bucket.timeoutCount
+              : count,
+          0,
+        )
+      : null,
+  );
   const readout = $derived(
     gaugeReadout({
       phase,
@@ -157,6 +169,7 @@
       latencyMs: liveReadout.rtt.current,
       quietMs: store.live?.quietMs ?? null,
       unansweredMs,
+      replies,
       hasLatencyResult: !!store.result?.latency,
       unusable: unusableStage,
       headline: headlineArc,
@@ -234,7 +247,10 @@
       if (noData) return { hint: noData, tip: JARGON.noData };
       if (noReplies) return { hint: noReplies, tip: JARGON.noReplies };
       const known = PHASE_HINT[phase];
-      return hint ? { hint: known?.text ?? hint, tip: known?.tip } : {};
+      // The reply count changes in place under one explainer, never fading per reply.
+      const tip =
+        known?.tip ?? (phase === "latency" ? JARGON.replies : undefined);
+      return hint ? { hint: known?.text ?? hint, tip } : {};
     },
     // A note that counts keys on its explainer, so it updates in place.
     (notes: { status?: string; tone?: string; hint?: string; tip?: string }) =>

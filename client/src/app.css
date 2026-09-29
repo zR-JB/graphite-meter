@@ -795,11 +795,12 @@
     color: var(--tone);
   }
 
-  /* A sticky head over the page repaints the page itself, so it never reads as a slab. */
+  /* A sticky head over the page repaints the page itself, so it never reads as a slab. The grain is noise, so
+     its tile needs no alignment with the page's; a fixed attachment would shimmer against it whenever the
+     column glides or the head slides in. */
   .page-fill {
     background: var(--grain), var(--canvas);
     background-blend-mode: overlay;
-    background-attachment: fixed;
   }
 
   .sheet {

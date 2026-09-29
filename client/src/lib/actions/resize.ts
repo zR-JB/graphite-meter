@@ -9,6 +9,8 @@ interface Resize {
   max: () => number;
   set: (px: number) => void;
   reset: () => void;
+  /** A pointer drag starts and ends; the width then follows the pointer without a glide. */
+  active?: (dragging: boolean) => void;
 }
 
 /** A slider on an element's edge: a drag, the arrows (16 px, 48 with Shift), Home and End set its width within limits; Enter, Space or a double-click resets it. */
@@ -19,6 +21,7 @@ export function resize({
   max,
   set,
   reset,
+  active,
 }: Resize): Attachment<HTMLElement> {
   const clamped = (px: number) => set(Math.max(min, Math.min(max(), px)));
   return (handle) => {
@@ -33,6 +36,7 @@ export function resize({
       handle.setPointerCapture(event.pointerId);
       document.body.style.userSelect = "none";
       document.body.style.cursor = "col-resize";
+      active?.(true);
       const move = (next: PointerEvent) => {
         if (next.pointerId === event.pointerId) {
           const delta = next.clientX - startX;
@@ -52,6 +56,7 @@ export function resize({
           handle.releasePointerCapture(event.pointerId);
         document.body.style.cursor = cursor;
         document.body.style.userSelect = userSelect;
+        active?.(false);
       };
       handle.addEventListener("pointermove", move);
       handle.addEventListener("pointerup", end);

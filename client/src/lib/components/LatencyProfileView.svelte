@@ -146,12 +146,12 @@
     };
   }
 
-  // A card answers the pointer near a marker at once and follows it along the lane; a finger reaches further.
+  // A card answers the pointer anywhere on the lane, like a stage graph's readout: it names the marker
+  // nearest the pointer and follows the pointer from marker to marker, so a hand need not find a 2 px tick.
   function inspect(
     x: number,
     lane: LatencyProfileViewLane,
     track: HTMLElement,
-    reach: number,
   ) {
     const rect = track.getBoundingClientRect();
     const ratio = Math.min(
@@ -159,10 +159,7 @@
       Math.max(0, (x - rect.left - EDGE) / (rect.width - 2 * EDGE)),
     );
     const metric = nearestMetric(lane, ratio * scale);
-    const px =
-      metric && atPct(pos(metricValue(lane, metric), scale), rect.width);
-    if (metric && Math.abs(px! - (x - rect.left)) <= reach)
-      setHover(lane, metric, track);
+    if (metric) setHover(lane, metric, track);
     else if (keyboardLane !== lane.key) hover = null;
   }
   const laneOf = (event: PointerEvent) => {
@@ -173,12 +170,7 @@
     read(event) {
       const lane = laneOf(event);
       if (lane)
-        inspect(
-          event.clientX,
-          lane,
-          event.currentTarget as HTMLElement,
-          event.pointerType === "touch" ? 24 : 12,
-        );
+        inspect(event.clientX, lane, event.currentTarget as HTMLElement);
     },
     clear(event) {
       if (keyboardLane !== laneOf(event)?.key) hover = null;

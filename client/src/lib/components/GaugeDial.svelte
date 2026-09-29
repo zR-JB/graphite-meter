@@ -313,6 +313,10 @@
         viewBox={`${-headExtent} ${-headExtent} ${headExtent * 2} ${headExtent * 2}`}
       >
         {#key beat}
+          <!-- A reply rings out from the head: a hairline ring in its hue widens and fades as the head settles. -->
+          {#if beat !== null}
+            <circle class="ripple" r={headRadius} fill="none" stroke={accent} />
+          {/if}
           <circle
             class:beat={beat !== null}
             r={headRadius}
@@ -403,16 +407,37 @@
   .live-head svg {
     position: absolute;
     max-width: none;
+    /* The ring widens past the head's box; the dial's own clip bounds it. */
+    overflow: visible;
   }
-  /* A reply's beat: the head swells and settles over one live pulse. */
-  .beat {
+  /* A reply's beat: the head swells and settles over one live pulse, and a ring spreads from it and fades,
+     so a steady link is seen to answer even while the needle holds still. */
+  .beat,
+  .ripple {
     transform-box: fill-box;
     transform-origin: center;
+  }
+  .beat {
     animation: beat var(--dur-pulse) var(--ease-out);
+  }
+  .ripple {
+    stroke-width: 1.5;
+    opacity: 0;
+    animation: ripple var(--dur-pulse) cubic-bezier(0.2, 0.6, 0.35, 1);
   }
   @keyframes beat {
     from {
       scale: 1.2;
+    }
+  }
+  @keyframes ripple {
+    from {
+      scale: 1;
+      opacity: 0.6;
+    }
+    to {
+      scale: 3;
+      opacity: 0;
     }
   }
 </style>

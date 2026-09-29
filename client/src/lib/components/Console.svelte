@@ -235,6 +235,8 @@
   );
 
   let resizedDock = false;
+  // While a handle is dragged the columns follow the pointer; the glide is for opening, closing and keys.
+  let resizingDock = $state(false);
   function setDockWidth(side: "left" | "right", px: number) {
     resizedDock = true;
     const other = side === "left" ? "right" : "left";
@@ -556,9 +558,12 @@
   id="console"
   {@attach observeWidth((width) => (consoleWidth = width))}
   data-phase={store.phase}
+  data-resizing={resizingDock ? "" : undefined}
   style="--dock-left: {docks.left}px; --dock-right: {docks.right}px;"
 >
-  <!-- The room takes a little of the running stage's light, from above; History is read in plain light. -->
+  <!-- The room takes a little of the running stage's light, from above; History is read in plain light.
+       The light spans the whole room and falls from over the stage, so a docked sheet never cuts it at
+       its column's edge; each layer glides with the columns, as the shell does. -->
   <div class="amb" aria-hidden="true">
     {#each STAGES as stage (stage)}
       <i
@@ -566,6 +571,7 @@
         class:lit={measurementOpen &&
           store.isRunning &&
           store.phaseStage === stage}
+        style="--dock-left: {docks.left}px; --dock-right: {docks.right}px;"
       ></i>
     {/each}
   </div>
@@ -678,6 +684,7 @@
     dockMaxWidth={dockMaxLeft}
     onResize={(px) => setDockWidth("left", px)}
     onResetWidth={() => resetDockWidth("left")}
+    onResizing={(dragging) => (resizingDock = dragging)}
     onClose={() => dismissPanel("settings")}
     side="left"
     title="Settings"
@@ -748,6 +755,7 @@
     dockMaxWidth={dockMaxRight}
     onResize={(px) => setDockWidth("right", px)}
     onResetWidth={() => resetDockWidth("right")}
+    onResizing={(dragging) => (resizingDock = dragging)}
     onClose={() => dismissPanel("endpoint")}
     title="Details"
   >
@@ -807,24 +815,36 @@
       --dock-right var(--dur-sheet) var(--ease-out);
     timeline-scope: --column;
   }
+  /* A dragged handle moves its column with the pointer, without the glide. */
+  #console[data-resizing],
+  #console[data-resizing] .amb > i {
+    transition: none;
+  }
   /* Each stage's light is its own layer, so a stage change cross-fades on the compositor. */
   .amb {
     position: relative;
     z-index: -1;
-    grid-area: 1 / 2 / 3 / 3;
+    grid-area: 1 / 1 / 3 / 4;
     pointer-events: none;
   }
+  /* The light's source sits a fifth of the way across the stage, however the columns stand. */
   .amb > i {
     --amb-mix: 14%;
     position: absolute;
     inset: 0;
     background: radial-gradient(
-      120% 70% at 20% -14%,
+      120% 70% at
+        calc(
+          var(--dock-left) + (100% - var(--dock-left) - var(--dock-right)) * 0.2
+        ) -14%,
       color-mix(in oklab, var(--tone) var(--amb-mix), transparent),
       transparent 62%
     );
     opacity: 0;
-    transition: opacity 1100ms var(--ease-out);
+    transition:
+      opacity 1100ms var(--ease-out),
+      --dock-left var(--dur-sheet) var(--ease-out),
+      --dock-right var(--dur-sheet) var(--ease-out);
   }
   .amb > :is([data-tone="download"], [data-tone="bidirectional"]) {
     --amb-mix: 16%;
