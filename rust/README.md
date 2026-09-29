@@ -55,7 +55,9 @@ The experimental container uses `container/Dockerfile.rust`, which
 task and `rust-client-package` need an amd64 build host: the reviewed platform
 notices record its toolchain, which also cross-compiles arm64. The builder installs
 its exact cross-compiler versions from snapshot.debian.org at a fixed timestamp, so
-a Debian point release changes neither them nor their dependencies. The port remains
+a Debian point release changes neither them nor their dependencies. Like Go's image,
+the Rust image takes its CA roots and their copyright from the pinned Go builder, and
+its `THIRD_PARTY_NOTICES.txt` lists them after the binary's notices. The port remains
 blocked from merging until a human decides its design.
 
 `mise run rust-server-run` builds the browser UI and runs the experimental server

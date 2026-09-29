@@ -23,8 +23,9 @@ from ..ci.github_api import ControlPlaneError, local_path
 from ..ci.toolchains import rust_channel
 from .artifacts import add_bytes, add_tree, legal_header, notices, release_source
 from .discovery import discover_browser
-from .model import Component, LegalError, Project, Provenance, Review, array, marshal, obj, read_json, sha256, strings, text
-from .review import add_provenance, component_legal_files, validate_review
+from .model import (Component, LegalError, Project, Provenance, Review, array, manual_files, manual_sources, marshal,
+                    obj, read_json, sha256, strings, text)
+from .review import add_provenance, component_key, component_legal_files, validate_review
 from . import rust_platform as platform
 
 PACKAGES = ('graphite-meter-client', 'graphite-meter-server')
@@ -188,6 +189,13 @@ def about(project: Project, version: str, engine_version: str, components: list[
                            for component in components]}
 
 
+def image_additions(repo: Path, browser: list[Component], provenance: list[Provenance]) -> list[Component]:
+    """What the server image ships beyond its binary, such as the CA roots: Go's container scope less its server."""
+    shipped = {component_key(component) for component in browser}
+    return [component for component in add_provenance(repo, browser, provenance, 'container')
+            if component_key(component) not in shipped]
+
+
 def review_candidates(components: list[Component]) -> list[dict]:
     return [Review(ecosystem='cargo', name=item.name, reviewedVersion=item.version,
                    upstream=item.source, declaredLicenseExpression=item.declaredLicenseExpression,
@@ -220,8 +228,7 @@ def main() -> None:
     output.mkdir(parents=True, exist_ok=True)
     # Invalidate before the build too: a failed compilation must not retain an old report.
     (output / 'LEGAL.txt').unlink(missing_ok=True)
-    provenance_path = repo / 'legal/rust-provenance.json'
-    provenance = [Provenance.parse(item) for item in array(read_json(provenance_path))] if provenance_path.exists() else []
+    provenance = manual_sources(repo, args.package)
     link_map = platform.link_map(output, args.target, args.profile)
     metadata, messages = capture(repo, args.package, args.target, args.profile, link_map)
     components, inventory, failures = discover(repo, metadata, messages, args.package, reviews, provenance)
@@ -262,23 +269,24 @@ def main() -> None:
         raise LegalError(f'{error}\nUnreviewed platform record of this build:\n{marshal(candidate).decode()}'
                          'Its inputsSha256 hashes this listing of its inputs:\n' + listing.removesuffix('\n')) from error
     browser_components: list[Component] = []
-    browser_provenance: list[Provenance] = []
     staged_assets = None
     shared_notices = None
     if args.package == 'graphite-meter-server' and os.environ.get('GM_RUST_ASSET_DIR'):
         if browser_scan is None:
             raise LegalError('server with browser assets requires the matching production --browser-scan')
         browser_reviews = [Review.parse(item) for item in array(read_json(repo / 'legal/reviewed-components.json'))]
-        browser_provenance = [entry for item in array(read_json(repo / 'legal/provenance.json'))
-                              if 'server/browser' in (entry := Provenance.parse(item)).artifactScopes]
         browser_components = add_provenance(repo, discover_browser(browser_scan, browser_reviews),
-                                            browser_provenance, 'server/browser')
-        for component in browser_components:
+                                            provenance, 'server/browser')
+        image_components = image_additions(repo, browser_components, provenance)
+        for component in browser_components + image_components:
             validate_review(component, browser_reviews)
             component.selectedLicenseExpression = next(review.selectedLicenseExpression for review in browser_reviews
                                                        if (review.ecosystem, review.name) == (component.ecosystem, component.name))
         manifest['browserComponents'] = [component.json() for component in browser_components]
+        manifest['imageComponents'] = [component.json() for component in image_components]
         (output / 'inventory.json').write_bytes(marshal(manifest))
+        (output / 'IMAGE_NOTICES.txt').write_bytes(legal_report(
+            repo, args.version, notices(components + browser_components + image_components) + '\n' + extra))
         source_assets = os.path.realpath(repo / 'rust/server' / os.environ['GM_RUST_ASSET_DIR'])
         if not source_assets.startswith(str(repo) + os.sep):
             raise LegalError('GM_RUST_ASSET_DIR must name a directory inside the repository')
@@ -307,9 +315,8 @@ def main() -> None:
             if not resolved.is_relative_to(repo):
                 raise LegalError('reviewed release inputs must be stored inside the repository')
             inputs.append(str(resolved.relative_to(repo)))
-    if provenance_path.exists():
-        inputs.append('legal/rust-provenance.json')
-        inputs.extend(file.name for entry in provenance for file in entry.localLegalFiles)
+    inputs += ['legal/rust-provenance.json', *(['legal/provenance.json'] if args.package == 'graphite-meter-server' else [])]
+    inputs += [file.name for entry in provenance for file in entry.localLegalFiles]
     inputs += [str(Path(item['manifest_path']).resolve().relative_to(repo)) for item in metadata['packages']
                if Path(item['manifest_path']).resolve().is_relative_to(repo / 'rust')]
     for relative in sorted(set(inputs)):
@@ -360,10 +367,8 @@ def main() -> None:
                 add_bytes(archive, 'inventory.json', (output / 'inventory.json').read_bytes())
                 add_bytes(archive, 'LEGAL.txt', (output / 'LEGAL.txt').read_bytes())
                 add_bytes(archive, 'legal/rust-forks.json', (repo / 'legal/rust-forks.json').read_bytes())
-                for entry in provenance + browser_provenance:
-                    for file in entry.localLegalFiles:
-                        add_bytes(archive, file.name, (repo / file.name).read_bytes())
-                    for path in entry.localPaths:
+                for entry in provenance:
+                    for path in manual_files(entry):
                         add_tree(archive, repo / path, path, repo / path)
 
 

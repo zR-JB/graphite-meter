@@ -16,8 +16,10 @@ from copy import deepcopy
 
 from scripts.ci.github_api import ControlPlaneError
 from scripts.legal.artifacts import render
-from scripts.legal.model import Component, LegalError, Project, marshal, sha256
-from scripts.legal.rust import about, add_cargo_sources, artifacts, cargo, legal_report
+from scripts.legal.model import (Component, LegalError, Project, Provenance, Review, array, manual_files,
+                                 manual_sources, marshal, read_json, sha256)
+from scripts.legal.review import add_provenance, validate_review
+from scripts.legal.rust import about, add_cargo_sources, artifacts, cargo, image_additions, legal_report
 from scripts.legal.rust_platform import SYSROOT, candidate, imports, link_map, linked, linker_version, notice
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -129,6 +131,27 @@ class RustLegalReportTests(unittest.TestCase):
                 self.assertTrue(report.endswith(b'(including build-time dependencies)\n\n' + sections.encode()))
                 self.assertEqual(about(project, version, 'engine', [])['sourceURL'], project.repository + tag)
                 self.assertEqual(json.loads(go['client/public/legal/about.json'])['sourceURL'], project.repository + tag)
+
+
+class RustImageTests(unittest.TestCase):
+    def test_the_server_image_adds_what_go_image_adds_to_its_server(self) -> None:
+        go = [Provenance.parse(item) for item in array(read_json(ROOT / 'legal/provenance.json'))]
+        expected = {(entry.ecosystem, entry.name) for entry in go if 'container' in entry.artifactScopes
+                    and not {'server', 'server/browser'} & set(entry.artifactScopes)}
+        provenance = manual_sources(ROOT, 'graphite-meter-server')
+        browser = add_provenance(ROOT, [], provenance, 'server/browser')
+        image = image_additions(ROOT, browser, provenance)
+        self.assertEqual({(component.ecosystem, component.name) for component in image}, expected)
+        self.assertIn(('container', 'ca-certificates'), expected)
+        reviews = [Review.parse(item) for item in array(read_json(ROOT / 'legal/reviewed-components.json'))]
+        for component in image:
+            validate_review(component, reviews)
+        # The offer carries each entry's repository files; the bundle it names is image content.
+        for entry in provenance:
+            self.assertTrue(all((ROOT / path).exists() for path in manual_files(entry)))
+            self.assertFalse(any(path.startswith('/') for path in manual_files(entry)))
+        self.assertFalse(any('container' in entry.artifactScopes
+                             for entry in manual_sources(ROOT, 'graphite-meter-client')))
 
 
 class RustPlatformTests(unittest.TestCase):

@@ -13,6 +13,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
+from ..legal.model import manual_files, manual_sources
 from .fixtures import statement
 from .github_api import ControlPlaneError as VerificationError, JsonObject, file_sha256 as sha256_file, write_checksums
 from .toolchains import tui_targets
@@ -23,6 +24,8 @@ from .verify_release_assets import (
 
 # Each shipped platform's Rust target, as the builders read it.
 RUST_TARGETS = tui_targets(TARGETS)
+# What the server image adds to its binary, which its source offer covers.
+CA, = (entry for entry in manual_sources(Path("."), "graphite-meter-server") if entry.name == "ca-certificates")
 REPOSITORY, COMMIT = "example/repo", "f" * 40
 
 
@@ -195,6 +198,9 @@ class RustServerReleaseTests(unittest.TestCase):
             "component_array",
             "component_name",
             "browser_component",
+            "image_component",
+            "image_notice_missing",
+            "image_unreviewed",
         ):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
                 metadata = inventory("graphite-meter-server", target)
@@ -214,15 +220,20 @@ class RustServerReleaseTests(unittest.TestCase):
                     metadata["browserComponents"] = ["not an object"]
                 if mutation == "missing":
                     metadata["components"] = [{"component": {"name": "absent", "version": "1.0"}}]
+                if mutation.startswith("image"):
+                    name = "unreviewed" if mutation == "image_unreviewed" else CA.name
+                    metadata["imageComponents"] = [{"ecosystem": CA.ecosystem, "name": name, "version": CA.version}]
                 extra = {
                     "cargo_fixture": {"third_party/cargo/example-1.0/tests/test_vector.pem": b"public upstream fixture"},
                     "first_party_key": {"rust/.dev-certs/private.key": b"must not ship"},
                     "undeclared_tree": {"third_party/cargo/other-2.0/tests/key.pem": b"not in inventory"},
+                    "image_component": {path: b"reviewed" for path in manual_files(CA)},
+                    "image_unreviewed": {path: b"reviewed" for path in manual_files(CA)},
                 }.get(mutation)
                 path = Path(temporary) / "source.tar.gz"
                 write_source(path, metadata, extra)
                 with patch("subprocess.Popen", side_effect=AssertionError("artifact execution")):
-                    if mutation in {"valid", "cargo_fixture"}:
+                    if mutation in {"valid", "cargo_fixture", "image_component"}:
                         verify_rust_source(path, "graphite-meter-server", target)
                     else:
                         with self.assertRaises(VerificationError):

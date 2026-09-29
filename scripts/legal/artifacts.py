@@ -8,7 +8,7 @@ import re
 import tarfile
 from pathlib import Path
 
-from .model import Component, Json, LegalError, Project, Provenance, Review, marshal
+from .model import Component, Json, LegalError, Project, Provenance, Review, manual_files, marshal
 from .review import component_key, find_review, validate_review
 
 RELEASE_VERSION = re.compile(r"^v?[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)\.[0-9]+)?")
@@ -166,9 +166,7 @@ def third_party_source_bundle(repo: Path, project: Project, version: str,
                              component.source_path)
             for entry in provenance:
                 destination = root + "/" + manual_source_destination(entry)
-                for local in entry.localPaths + [item.name for item in entry.localLegalFiles]:
-                    if Path(local).is_absolute():
-                        continue
+                for local in manual_files(entry):
                     path = repo / local
                     try:
                         path.lstat()

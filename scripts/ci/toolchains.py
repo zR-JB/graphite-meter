@@ -119,6 +119,9 @@ def literal_updates(root: Path = ROOT) -> dict[Path, str]:
              rf"\g<1>{pins['images']['rust']}\g<2>"),
             (r"(?m)^(FROM --platform=\$BUILDPLATFORM )docker\.io/oven/bun:\S+( AS browser)$",
              rf"\g<1>{pins['images']['bun']}\g<2>"),
+            # The CA roots come from Go's builder image.
+            (r"(?m)^FROM docker\.io/library/golang:\S+ AS ca-certificates$",
+             f"FROM {pins['images']['golang']} AS ca-certificates"),
         ],
         ".github/workflows/release-request.yml": [
             (r"(?m)^(\s*image: )docker.io/tonistiigi/binfmt@\S+$", rf"\g<1>{pins['images']['binfmt']}"),

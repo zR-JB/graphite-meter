@@ -18,6 +18,7 @@ from .github_api import (
     TLS_NAME, ControlPlaneError, decode_json, expect_array, expect_object, fail, file_sha256,
     int_field, local_path, object_field, str_field, write_checksums,
 )
+from ..legal.model import manual_files, manual_sources
 from .toolchains import host_platform, tui_targets
 from .verify_oci import BLOB_LIMIT, source_commit
 
@@ -315,7 +316,6 @@ def verify_rust_source(path: Path, package: str, target: str, lock_sha256: str |
     if lock != (lock_sha256 or file_sha256(Path("rust/Cargo.lock"))):
         fail("Rust source inventory does not match release Cargo lock")
     components = expect_array(inventory.get("components"), "Rust components")
-    browser = expect_array(inventory.get("browserComponents", []), "Rust browser components")
     if not components:
         fail(f"{path.name} has no valid dependency inventory")
     trees: set[str] = set()
@@ -324,47 +324,30 @@ def verify_rust_source(path: Path, package: str, target: str, lock_sha256: str |
         name = str_field(component, "name", "Rust dependency")
         version = str_field(component, "version", "Rust dependency")
         trees.add(f"third_party/cargo/{name}-{version}/")
-    browser_manual: list[tuple[str, str, str]] = []
-    for item in browser:
-        component = expect_object(item, "Rust browser component")
-        identity = tuple(str_field(component, key, "Rust browser component")
-                         for key in ("ecosystem", "name", "version"))
-        if identity[0] == "npm":
-            trees.add(f"third_party/npm/{identity[1]}-{identity[2]}/")
-        else:
-            browser_manual.append((identity[0], identity[1], identity[2]))
-    allowed = {"inventory.json", "LEGAL.txt", "legal/rust-forks.json"}
+    manual: list[tuple[str, ...]] = []
+    for key in ("browserComponents", "imageComponents"):
+        for item in expect_array(inventory.get(key, []), f"Rust {key}"):
+            component = expect_object(item, f"Rust {key}")
+            identity = tuple(str_field(component, field, f"Rust {key}") for field in ("ecosystem", "name", "version"))
+            if identity[0] == "npm":
+                trees.add(f"third_party/npm/{identity[1]}-{identity[2]}/")
+            else:
+                manual.append(identity)
     if decode_json(read_archive_text(path, "legal/rust-forks.json"), "Rust forks") != decode_json(
             Path("legal/rust-forks.json").read_text(), "release Rust forks"):
         fail("Rust source fork identities differ from release tooling")
-    manual_sources: dict[tuple[str, str, str], set[str]] = {}
-    for filename, scope in (("legal/rust-provenance.json", "rust"),
-                           ("legal/provenance.json", "server/browser")):
-        if scope == "server/browser" and package != "graphite-meter-server":
-            continue
-        entries = expect_array(decode_json(Path(filename).read_text(), filename), filename)
-        for item in entries:
-            entry = expect_object(item, filename)
-            scopes = expect_array(entry.get("artifactScopes", []), filename)
-            if any(not isinstance(value, str) for value in scopes):
-                fail(f"{filename} artifact scopes must be strings")
-            if scope not in scopes:
-                continue
-            identity = (str_field(entry, "ecosystem", filename), str_field(entry, "name", filename),
-                        str_field(entry, "version", filename))
-            files = {str_field(expect_object(file, filename), "name", filename)
-                     for file in expect_array(entry.get("localLegalFiles", []), filename)}
-            for value in expect_array(entry.get("localPaths", []), filename):
-                if not isinstance(value, str):
-                    fail(f"{filename} local paths must be strings")
-                files.add(value)
-            manual_sources[identity] = files
-            allowed.update(files)
-    for identity in browser_manual:
-        if identity not in manual_sources:
-            fail("Rust browser inventory contains unreviewed manual source")
-        if missing := manual_sources[identity] - names:
-            fail(f"Rust browser source offer is missing reviewed inputs: {sorted(missing)}")
+    try:
+        reviewed: dict[tuple[str, ...], set[str]] = {
+            (entry.ecosystem, entry.name, entry.version): set(manual_files(entry))
+            for entry in manual_sources(Path("."), package)}
+    except ValueError as exc:
+        raise ControlPlaneError(f"invalid reviewed provenance: {exc}") from exc
+    allowed = {"inventory.json", "LEGAL.txt", "legal/rust-forks.json"}.union(*reviewed.values())
+    for identity in manual:
+        if identity not in reviewed:
+            fail("Rust inventory contains unreviewed manual source")
+        if missing := reviewed[identity] - names:
+            fail(f"Rust source offer is missing reviewed inputs: {sorted(missing)}")
     for tree in trees:
         if not any(name.startswith(tree) for name in names):
             fail(f"{path.name} lacks declared dependency source {tree}")
