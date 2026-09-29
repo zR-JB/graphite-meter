@@ -17,7 +17,7 @@
       "ws2_32.dll"
     ],
     "reviewDecision": "approved",
-    "reviewNotes": "Reviewed the mingw-w64 cross toolchain that container/Dockerfile.rust pins in the official amd64 builder: gcc-mingw-w64-x86-64-win32 12.2.0-14+deb12u1+25.2+b1 (win32 thread model) and mingw-w64-x86-64-dev 10.0.0-3, verified with dpkg-query. GNU ld link maps of the release TUI statically link crt2.o, crtbegin.o, crtend.o, mingw-w64 runtime members of libmingw32.a and libmingwex.a, import stubs of libkernel32.a, libmsvcrt.a and libntdll.a, _ctors.o from libgcc.a and unwind-seh.o from libgcc_eh.a; no winpthreads member is linked. Unoptimized builds also take import stubs from libuserenv.a and libws2_32.a, so both are fingerprinted. The executable imports only Windows system DLLs, which are not redistributed, and needs no MinGW runtime DLL. Preserve the full Rust standard-library aggregate, the mingw-w64 attribution including the ZPL-2.1 terms and disclaimer, and the GCC attribution with GPLv3 and the included GCC Runtime Library Exception 3.1, which covers the linked libgcc objects. Other builder revisions or targets require review.",
+    "reviewNotes": "Reviewed the mingw-w64 cross toolchain that container/Dockerfile.rust pins in the official amd64 builder: gcc-mingw-w64-x86-64-win32 12.2.0-14+deb12u1+25.2+b1 (win32 thread model) and mingw-w64-x86-64-dev 10.0.0-3, verified with dpkg-query. GNU ld link maps of the release TUI statically link crt2.o, crtbegin.o, crtend.o, mingw-w64 runtime members of libmingw32.a and libmingwex.a, import stubs of libkernel32.a, libmsvcrt.a and libntdll.a, _ctors.o from libgcc.a and unwind-seh.o from libgcc_eh.a; no winpthreads member is linked. SystemFunction036, the RtlGenRandom fallback of getrandom 0.2 under ring, comes from the libadvapi32.a import stub or from the Rust standard library's raw-dylib import of the same function, as the crates' link order has it; ADVAPI32.dll is imported either way. Unoptimized builds also take import stubs from libuserenv.a and libws2_32.a, so both are fingerprinted. The executable imports only Windows system DLLs, which are not redistributed, and needs no MinGW runtime DLL. Preserve the full Rust standard-library aggregate, the mingw-w64 attribution including the ZPL-2.1 terms and disclaimer, and the GCC attribution with GPLv3 and the included GCC Runtime Library Exception 3.1, which covers the linked libgcc objects. Other builder revisions or targets require review.",
     "description": "Rust 1.98.1 standard-library notices and Debian Bookworm mingw-w64 runtime/startup attribution for Windows. Rust compiler implementation dependencies are excluded. mingw-w64 startup, runtime and import-library objects and GCC runtime objects are statically linked into the executable; Windows system DLLs are not bundled. This record is limited to the fingerprinted x86_64-w64-mingw32 cross inputs installed in the official rust:1.98.1-bookworm image.",
     "nativeInputs": [
       "/usr/lib/gcc/x86_64-w64-mingw32/12-win32/crtbegin.o",
@@ -25,6 +25,7 @@
       "/usr/lib/gcc/x86_64-w64-mingw32/12-win32/libgcc.a",
       "/usr/lib/gcc/x86_64-w64-mingw32/12-win32/libgcc_eh.a",
       "/usr/x86_64-w64-mingw32/lib/crt2.o",
+      "/usr/x86_64-w64-mingw32/lib/libadvapi32.a",
       "/usr/x86_64-w64-mingw32/lib/libkernel32.a",
       "/usr/x86_64-w64-mingw32/lib/libmingw32.a",
       "/usr/x86_64-w64-mingw32/lib/libmingwex.a",
@@ -38,7 +39,7 @@
       "/usr/share/doc/gcc-mingw-w64-base/copyright": "gcc-runtime/copyright",
       "/usr/share/common-licenses/GPL-3": "gcc-runtime/GPL-3"
     },
-    "inputsSha256": "5f2da461e7ff86d15f10398c3214aceff2ebb361e8f958f39566deaf6f11f3ed"
+    "inputsSha256": "9a61c7d2fc70b1e3733d6d334f70bcd68922f8e9641652c69290c1e8be46eebf"
   },
   {
     "target": "x86_64-unknown-linux-musl",
