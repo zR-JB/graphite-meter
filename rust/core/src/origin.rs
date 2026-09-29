@@ -122,15 +122,9 @@ pub fn ascii_origin(raw: &str) -> Result<String, OriginError> {
         return Ok(raw.to_owned());
     }
     let (scheme, authority) = raw.split_once("://").ok_or(OriginError)?;
-    let (host, port) = match authority.rsplit_once(':') {
-        Some((host, port)) => (host, Some(port)),
-        None => (authority, None),
-    };
-    let host = ascii_host(host).ok_or(OriginError)?;
-    Ok(match port {
-        Some(port) => format!("{scheme}://{host}:{port}"),
-        None => format!("{scheme}://{host}"),
-    })
+    // The port, if any, keeps its colon.
+    let (host, port) = authority.split_at(authority.rfind(':').unwrap_or(authority.len()));
+    Ok(format!("{scheme}://{}{port}", ascii_host(host).ok_or(OriginError)?))
 }
 
 /// `host` with each international label in punycode, as [`ascii_origin`] converts them.
