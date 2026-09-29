@@ -1,0 +1,40 @@
+name: Fuzz
+
+on:
+  schedule:
+    - cron: '29 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  MISE_AUTO_INSTALL: '0'
+
+jobs:
+  http3:
+    name: HTTP/3 fuzz targets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up Rust without caches
+        uses: ./.github/actions/setup-project
+        with: {rust: 'true', cache: 'false'}
+      # Three minutes per target; a crash fails the job only after every target ran.
+      - name: Fuzz every HTTP/3 target
+        run: |
+          status=0
+          for source in rust/http3/fuzz/fuzz_targets/*.rs; do
+            mise run rust-fuzz "$(basename "$source" .rs)" 180 || status=1
+          done
+          exit "$status"
+      - name: Upload crash inputs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-crashes
+          path: rust/http3/fuzz/artifacts/
+          if-no-files-found: ignore

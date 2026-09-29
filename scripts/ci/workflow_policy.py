@@ -25,11 +25,13 @@ TRIGGERS = {
     "advisories.yml": {"schedule", "workflow_dispatch"},
     "ci.yml": {"pull_request", "push"},
     "fork-upkeep.yml": {"schedule", "workflow_dispatch"},
+    "fuzz.yml": {"schedule", "workflow_dispatch"},
     "release-request.yml": {"workflow_dispatch"},
     "release.yml": {"workflow_run"},
 }
 ALLOWED_USES = {
     "fork-upkeep.yml": {"actions/checkout", "jdx/mise-action", "actions/create-github-app-token"},
+    "fuzz.yml": {"actions/checkout", "./.github/actions/setup-project", "actions/upload-artifact"},
     "release-request.yml": {
         "actions/checkout", "jdx/mise-action", "./.github/actions/setup-project",
         "docker/setup-qemu-action", "docker/setup-buildx-action", "docker/build-push-action",
@@ -62,6 +64,11 @@ ORDERED = {
         "run: mise run rust-darwin-package 0.0.0-dev\n", "run: python3 -m scripts.ci.release check-darwin\n",
         "cargo test --locked --no-fail-fast -p graphite-meter-client -p graphite-meter-core -p graphite-meter-net \\\n"
         "            -p graphite-meter-http3\n",
+    ),
+    # Every HTTP/3 fuzz target runs, and a failure keeps the crash inputs.
+    "workflows/fuzz.yml": (
+        "for source in rust/http3/fuzz/fuzz_targets/*.rs; do\n", 'mise run rust-fuzz "$(basename "$source" .rs)"',
+        "if: failure()\n        uses: actions/upload-artifact@",
     ),
     "workflows/release.yml": (
         "github.event.workflow_run.conclusion == 'success'\n",
