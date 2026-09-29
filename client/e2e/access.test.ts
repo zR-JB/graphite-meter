@@ -4,6 +4,7 @@ import {
   frankfurt,
   helsinki,
   home,
+  locked,
   open,
   openSettings,
   phase,
@@ -86,11 +87,18 @@ test("failed and hanging unselected peers do not hold a selected pair", async (p
   await expect(choices).toHaveAttribute("aria-busy", "false", {
     timeout: 10_000,
   });
-  const settled = (await network(page)).preflights;
+  // A selected peer without an idle monitor re-reads its preflight on its own clock, Settings or not.
+  const peers = async () => {
+    const { preflights } = await network(page);
+    return [amsterdam, helsinki, locked].map(
+      (server) => preflights[server.url],
+    );
+  };
+  const settled = await peers();
   await closeSettings(page);
   await openSettings(page);
   await expect(choices).toHaveAttribute("aria-busy", "false");
-  expect((await network(page)).preflights).toEqual(settled);
+  expect(await peers()).toEqual(settled);
   expect((await network(page)).catalogs).toEqual([home.url]);
   expect(await selection(page)).toEqual(["self", "server-1"]);
 });
