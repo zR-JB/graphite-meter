@@ -76,18 +76,38 @@
           (id) => store.servers.get(id)?.readiness === "failed",
         )),
   );
-  // Unavailable choices fold into one line; the selected one always shows.
+  // Unavailable choices fold into one line after the available ones; the selected one always shows.
   let unfolded = $state(false);
   const folded = $derived(
     options.filter((option) => option.disabled && option.value !== selected),
   );
-  const shown = $derived(
-    unfolded ? options : options.filter((option) => !folded.includes(option)),
+  const available = $derived(
+    options.filter((option) => !folded.includes(option)),
   );
   function select(value: string) {
     controller.selectConnection(role, value);
   }
 </script>
+
+{#snippet choice(option: PathOption)}
+  <input
+    class="check"
+    type="radio"
+    name={`${role}-target`}
+    value={option.value}
+    checked={selected === option.value}
+    disabled={option.disabled || locked}
+    onchange={() => select(option.value)}
+  />
+  <span class="choice-label"
+    >{option.label}
+    {#if option.disabled || PATH_NOTE[role][option.group ?? option.value]}<small
+        >{option.disabled
+          ? option.detail
+          : PATH_NOTE[role][option.group ?? option.value]}</small
+      >{/if}</span
+  >
+{/snippet}
 
 <div class="picker" role="group" aria-labelledby={labelId}>
   <div class="list-label">
@@ -96,32 +116,29 @@
     >
   </div>
   <div class="kv choices">
-    {#each shown as option (option.value)}
+    <!-- The list follows the servers and their checks, so a swapped set lands at once: rows that unfolded and
+         folded at the same time shrank the sheet under the pointer and grew it back, and the page bobbed. Only the
+         unavailable rows a person unfolds reveal themselves. -->
+    {#each available as option (option.value)}
       <label
-        transition:reveal
         class:unavailable={option.disabled ||
           (locked && option.value !== selected)}
         {@attach tooltip(() => `${option.label}\n${option.detail}`)}
       >
-        <input
-          class="check"
-          type="radio"
-          name={`${role}-target`}
-          value={option.value}
-          checked={selected === option.value}
-          disabled={option.disabled || locked}
-          onchange={() => select(option.value)}
-        />
-        <span class="choice-label"
-          >{option.label}
-          {#if option.disabled || PATH_NOTE[role][option.group ?? option.value]}<small
-              >{option.disabled
-                ? option.detail
-                : PATH_NOTE[role][option.group ?? option.value]}</small
-            >{/if}</span
-        >
+        {@render choice(option)}
       </label>
     {/each}
+    {#if unfolded}
+      {#each folded as option (option.value)}
+        <label
+          transition:reveal
+          class="unavailable"
+          {@attach tooltip(() => `${option.label}\n${option.detail}`)}
+        >
+          {@render choice(option)}
+        </label>
+      {/each}
+    {/if}
     {#if folded.length}
       <button
         class="fold"
@@ -140,10 +157,9 @@
       >
     {/if}
   </div>
-  <!-- Until the server list loads there is nothing to check or retry. -->
-  {#if store.serverCatalog && (unlisted.length || offerAutomatic)}<div
-      class="validation"
-    >
+  <!-- Until the server list loads there is nothing to check or retry. The line keeps a control's height whether or
+       not a check leaves it a button, so a re-check never moves the rows below it. -->
+  {#if store.serverCatalog}<div class="validation">
       {#if unlisted.length}
         <p>
           <span class="status-dot inline" data-tone={status.tone}></span>
@@ -205,7 +221,7 @@
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    min-height: 24px;
+    min-height: var(--control-h);
     padding-inline: var(--row-inset);
     font: var(--role-caption);
   }

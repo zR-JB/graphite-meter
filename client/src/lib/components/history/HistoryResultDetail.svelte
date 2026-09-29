@@ -439,9 +439,10 @@
     gap: var(--space-1) var(--space-3);
     min-width: 0;
   }
+  /* The result's time is what the pane is about, so it takes a sheet title's size; the facts sit beside it. */
   h2 {
     min-width: 0;
-    font: var(--w-strong) var(--type-md) / 1.3 var(--font-display);
+    font: var(--role-panel-title);
     letter-spacing: var(--track-tight);
   }
   /* Pulled out by its padding, so the arrow starts on the title's edge. */
