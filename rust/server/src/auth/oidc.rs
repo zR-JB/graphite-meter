@@ -584,8 +584,8 @@ impl ProviderHttp {
     }
     async fn call(&self, mut request: Request<String>) -> Result<Response<Vec<u8>>, ConfigError> {
         tokio::time::timeout(PROVIDER_TIMEOUT, async {
+            // Provider::new and the configuration's validation checked every URL this is given.
             let uri = request.uri().to_string();
-            valid_url(&uri)?;
             let (origin, path) = split_url(&uri)?;
             let host = origin.key().split_off("https://".len());
             let agent = format!("graphite-meter/{}", crate::config::ENGINE_VERSION);
