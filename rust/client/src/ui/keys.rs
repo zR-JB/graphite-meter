@@ -77,17 +77,14 @@ pub(super) fn name(key: KeyEvent) -> String {
         KeyCode::Char(character) => character.to_lowercase().collect::<String>(),
         _ => return String::new(),
     };
-    let mut name = String::new();
-    if key.modifiers.contains(KeyModifiers::CONTROL) {
-        name.push_str("ctrl+");
-    }
-    if key.modifiers.contains(KeyModifiers::ALT) {
-        name.push_str("alt+");
-    }
+    let held = [(KeyModifiers::CONTROL, "ctrl+"), (KeyModifiers::ALT, "alt+")];
+    let mut name: String = held
+        .iter()
+        .filter(|held| key.modifiers.contains(held.0))
+        .map(|held| held.1)
+        .collect();
     // Bubble Tea names a shifted letter by its capital, which no binding matches.
-    if let KeyCode::Char(character) = key.code
-        && character.is_uppercase()
-    {
+    if key.code.as_char().is_some_and(char::is_uppercase) {
         name.push_str("shift+");
     }
     name + &base
@@ -118,15 +115,11 @@ impl Ui {
             return vec![CONFIRM_STOP, QUIT];
         }
         if self.shown().is_some() || self.running() {
-            let mut bindings = if self.running() {
-                vec![STOP]
-            } else {
-                vec![RUN_AGAIN, SETUP]
+            let mut bindings = match self.running() {
+                true => vec![STOP, DETAILS],
+                false => vec![RUN_AGAIN, SETUP, DETAILS],
             };
-            bindings.push(DETAILS);
-            if self.several() {
-                bindings.push(LATENCY_SERVER);
-            }
+            bindings.extend(self.several().then_some(LATENCY_SERVER));
             return [bindings, vec![HELP, QUIT]].concat();
         }
         if self.snapshot.auth.is_some() {
@@ -137,12 +130,8 @@ impl Ui {
             return vec![CHANGE.hint("start test"), ROWS, HELP, QUIT];
         }
         let mut bindings = vec![START, ROWS];
-        if row.adjusts() {
-            bindings.push(ADJUST);
-        }
-        if matches!(row, Setting::Stage(_)) {
-            bindings.push(TOGGLE);
-        }
+        bindings.extend(row.adjusts().then_some(ADJUST));
+        bindings.extend(matches!(row, Setting::Stage(_)).then_some(TOGGLE));
         bindings.extend([CHANGE.hint(row.enter_verb()), HELP, QUIT]);
         bindings
     }
@@ -153,12 +142,8 @@ impl Ui {
             return self.short_help();
         }
         let mut all = vec![START, ROWS, ADJUST, TOGGLE, CHANGE.hint("start or open"), RECHECK];
-        if self.can_choose_servers() {
-            all.push(SERVERS);
-        }
-        if self.can_use_available() {
-            all.push(AVAILABLE);
-        }
+        all.extend(self.can_choose_servers().then_some(SERVERS));
+        all.extend(self.can_use_available().then_some(AVAILABLE));
         all.extend([AUTOMATIC, PAGE, HELP, QUIT]);
         all
     }
@@ -181,10 +166,9 @@ impl Ui {
 
     /// help.FullHelpView: columns of three, keys beside their descriptions, four spaces apart.
     pub(super) fn full_view(&self, bindings: &[Binding]) -> Vec<Line<'static>> {
-        let columns: Vec<_> = bindings.chunks(3).collect();
-        let height = columns.iter().map(|column| column.len()).max().unwrap_or(0);
-        let mut lines = vec![Line::default(); height];
-        for (index, column) in columns.iter().enumerate() {
+        let mut lines = vec![Line::default(); bindings.len().min(3)];
+        let cell = |text, style, width| pad(Line::from(span(text, style)), width).spans;
+        for (index, column) in bindings.chunks(3).enumerate() {
             let key_width = column.iter().map(|binding| binding.key.width()).max().unwrap_or(0);
             let desc_width = column.iter().map(|binding| binding.desc.width()).max().unwrap_or(0);
             for (row, line) in lines.iter_mut().enumerate() {
@@ -192,11 +176,9 @@ impl Ui {
                     line.spans.push(span("    ", self.theme.border));
                 }
                 let (key, desc) = column.get(row).map_or(("", ""), |binding| (binding.key, binding.desc));
-                line.spans
-                    .extend(pad(Line::from(span(key, self.theme.text)), key_width).spans);
+                line.spans.extend(cell(key, self.theme.text, key_width));
                 line.spans.push(Span::raw(" "));
-                line.spans
-                    .extend(pad(Line::from(span(desc, self.theme.muted)), desc_width).spans);
+                line.spans.extend(cell(desc, self.theme.muted, desc_width));
             }
         }
         lines
