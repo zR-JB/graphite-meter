@@ -1049,6 +1049,10 @@ fn the_live_view_follows_the_stage_and_its_samples() {
     stage(&mut ui, Stage::Latency, Phase::Measuring);
     let live = ui.live_text(60, 16);
     assert!(live.contains("Idle latency —") && !live.contains("12.0 ms"), "{live}");
+    // Finished without a rate, as a latency-only run, it charts the round trips alone, as Go does.
+    step(&mut ui, |snapshot| snapshot.phase = Phase::Complete);
+    let live = ui.live_text(60, 16);
+    assert!(live.contains(" ms") && live.matches('└').count() == 1, "{live}");
 }
 
 #[test]

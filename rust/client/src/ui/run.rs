@@ -110,7 +110,9 @@ impl Run {
             }
             if let (Some(stage), Phase::Measuring) = step {
                 self.marks.push((at, stage));
-                for trace in self.traces.iter_mut().chain(self.rtt.values_mut()) {
+                // Go's history and rtt maps hold a trace from its first point on, and only those take the gap.
+                let traces = self.traces.iter_mut().chain(self.rtt.values_mut());
+                for trace in traces.filter(|trace| !trace.points.is_empty()) {
                     trace.add(at, f64::NAN, 1);
                 }
             }
@@ -649,7 +651,6 @@ impl Ui {
 mod tests {
     use super::*;
 
-    /// Go's TestChartJoinsSamplesAndBreaksOnlyAtGaps, and an empty chart claims no scale.
     /// Go's run.go:369-378: the RTT chart takes each measured reply, as a mean per step, and a gap per timeout.
     #[test]
     fn the_rtt_chart_takes_every_reply_and_timeout() {
@@ -671,6 +672,7 @@ mod tests {
         assert_eq!(format!("{points:?}"), "[(2.0, 3), (NaN, 1), (4.0, 1)]");
     }
 
+    /// Go's TestChartJoinsSamplesAndBreaksOnlyAtGaps, and an empty chart claims no scale.
     #[test]
     fn charts_join_samples_and_break_only_at_gaps() {
         let mut trace = Trace::default();
