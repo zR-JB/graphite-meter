@@ -21,13 +21,14 @@ use crate::{
     admission::{Admission, Permit},
     auth::{
         AuthLease, AuthRoute,
+        password_login::LOCAL_OPERATOR,
         policy::{Authorization, AuthorizedRequest, Connection},
         route as auth_route,
     },
     budget::{self, DOWNLOAD_BLOCK_BYTES, H2_FLOOR_BYTES, QUIC_CREDIT_BYTES},
     client_address,
     config::{AuthMode, ConfigError, NativeKind, ValidatedConfig},
-    connections::Connections,
+    connections::{Connections, QUIC_PER_CLIENT},
     cors::Access,
     discovery::Discovery,
     sync::lock,
@@ -171,11 +172,18 @@ impl HttpServer {
             config.trusted_proxies.clone(),
         );
         let memory = budget::MemoryBudget::new(bytes);
+        // A window on each QUIC connection a client may hold, as Go grants every connection its window.
+        let quic_per_client = config
+            .max_connections_per_client
+            .min(config.max_connections)
+            .min(QUIC_PER_CLIENT);
         let client_credit = budget::ClientCredit::new(
-            bytes,
-            config.max_connections,
-            config.max_connections_per_client,
-            QUIC_CREDIT_BYTES,
+            quic_per_client.saturating_mul(QUIC_CREDIT_BYTES),
+            config
+                .auth
+                .mode
+                .password()
+                .then(|| Owner::principal_key(LOCAL_OPERATOR)),
         );
         let download_memory = memory
             .lease(DOWNLOAD_BLOCK_BYTES)
@@ -1429,5 +1437,38 @@ mod tests {
         assert!(matches!(*lifecycle.lock().unwrap(), Http1Lifecycle::Upgraded));
         tokio::time::advance(Duration::from_secs(61)).await;
         writer.write_all(b"owned WebSocket frame").await.unwrap();
+    }
+
+    /// As Go grants every QUIC connection its window, a client's credit funds one on each QUIC connection it may
+    /// hold. Password logins and grants all share one principal, so each of them is bounded alone.
+    #[test]
+    fn credit_funds_a_window_on_every_quic_connection_a_client_may_hold() {
+        let mut config = Config {
+            advertised_native: Some(Default::default()),
+            ..Config::default()
+        };
+        config.public.both.push("self".into());
+        config.auth.mode = AuthMode::Password;
+        config.auth.public_url = "https://localhost".into();
+        config.auth.password_hash =
+            "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0".into();
+        let server = HttpServer::new(config.validated().unwrap()).unwrap();
+        let fund = |keys: &[String]| {
+            (0..8)
+                .map(|_| server.client_credit.claim(keys, QUIC_CREDIT_BYTES))
+                .collect::<Option<Vec<_>>>()
+        };
+        let address = client_address::client_keys("192.0.2.1".parse().unwrap());
+        let _address = fund(&address).expect("a window on each of an address's QUIC connections");
+        assert!(
+            server.client_credit.claim(&address, QUIC_CREDIT_BYTES).is_none(),
+            "no window past them"
+        );
+        let _logins: Vec<_> = (0..3)
+            .map(|session| {
+                let owner = Owner::login("local-operator", &session.to_string());
+                fund(owner.client_keys()).expect("a window on each QUIC connection of every password login")
+            })
+            .collect();
     }
 }

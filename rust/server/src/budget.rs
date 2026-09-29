@@ -249,32 +249,33 @@ impl Drop for Lease {
     }
 }
 
-/// The receive-window credit each client may hold across its connections. A client's share of the budget is its
-/// share of connection capacity, never less than one HTTP/3 window; as in admission, each wider key (an IPv6 /56
-/// and /48, or a login's principal) may hold twice the one before it.
+/// The receive-window credit each client may hold across its connections, `share` for its narrowest key. As in
+/// admission, each wider key (an IPv6 /56 and /48, or a login's principal) may hold twice the one before it. A key
+/// that many clients share, the password operator's principal, bounds no claim; the budget's hold-back bounds all
+/// clients together.
 #[derive(Debug)]
 pub(crate) struct ClientCredit {
     share: usize,
+    shared: Option<String>,
     held: Mutex<HashMap<String, usize>>,
 }
 
 impl ClientCredit {
-    pub(crate) fn new(
-        limit: usize,
-        max_connections: usize,
-        max_connections_per_client: usize,
-        floor: usize,
-    ) -> Arc<Self> {
-        let clients = max_connections_per_client.min(max_connections) as u128;
-        let share = (limit as u128 * clients / max_connections.max(1) as u128) as usize;
+    pub(crate) fn new(share: usize, shared: Option<String>) -> Arc<Self> {
         Arc::new(Self {
-            share: share.max(floor),
+            share,
+            shared,
             held: Mutex::default(),
         })
     }
 
     /// Charges `bytes` to every key of an admitted client, or to none if any would pass its share.
     pub(crate) fn claim(self: &Arc<Self>, keys: &[String], bytes: usize) -> Option<CreditClaim> {
+        let keys: Vec<_> = keys
+            .iter()
+            .filter(|&key| Some(key) != self.shared.as_ref())
+            .cloned()
+            .collect();
         let mut held = lock(&self.held);
         let fits = keys.iter().enumerate().all(|(index, key)| {
             let share = self.share.saturating_mul(1 << index.min(usize::BITS as usize - 1));
@@ -283,12 +284,12 @@ impl ClientCredit {
         if !fits {
             return None;
         }
-        for key in keys {
+        for key in &keys {
             *held.entry(key.clone()).or_default() += bytes;
         }
         Some(CreditClaim {
             credit: self.clone(),
-            keys: keys.to_vec(),
+            keys,
             bytes,
         })
     }
@@ -320,12 +321,8 @@ mod tests {
     use super::ClientCredit;
 
     #[test]
-    fn a_client_share_follows_connection_capacity_and_doubles_for_wider_keys() {
-        // 64 of 4096 connections: 1/64 of the budget, or the floor when that is more.
-        assert_eq!(ClientCredit::new(64 << 20, 4096, 64, 1).share, 1 << 20);
-        assert_eq!(ClientCredit::new(64 << 20, 4096, 64, 3 << 20).share, 3 << 20);
-        assert_eq!(ClientCredit::new(64 << 20, 4, 64, 1).share, 64 << 20);
-        let credit = ClientCredit::new(64 << 20, 4096, 64, 1);
+    fn a_client_share_doubles_for_wider_keys_and_a_shared_key_bounds_no_claim() {
+        let credit = ClientCredit::new(1 << 20, Some("principal:shared".into()));
         let claim =
             |address: &str| credit.claim(&crate::client_address::client_keys(address.parse().unwrap()), 1 << 20);
         let first = claim("2001:db8:1:1::1").unwrap();
@@ -353,6 +350,14 @@ mod tests {
             credit.claim(&logins[2], 1 << 20).is_none(),
             "a principal holds twice a login's share"
         );
+        for login in ["login:d", "login:e", "login:f"] {
+            let keys = [login, "principal:shared"].map(String::from);
+            held.push(
+                credit
+                    .claim(&keys, 1 << 20)
+                    .expect("the shared principal bounds no login"),
+            );
+        }
         drop(held);
         assert!(credit.held.lock().unwrap().is_empty());
     }

@@ -48,6 +48,9 @@ pub struct PasswordAttempt<'a> {
     pub prior_session: Option<&'a str>,
 }
 
+/// The subject of every password login, and so of their grants.
+pub(crate) const LOCAL_OPERATOR: &str = "local-operator";
+
 pub struct PasswordLogin {
     public_origin: String,
     hash: Hash,
@@ -112,7 +115,7 @@ impl PasswordLogin {
         // No login is issued by an abandoned worker: only this awaiting request
         // may commit the session and rotate its explicitly supplied predecessor.
         self.sessions
-            .create("local-operator", "Local operator", "local", attempt.prior_session)
+            .create(LOCAL_OPERATOR, "Local operator", "local", attempt.prior_session)
             .map_err(|_| Reason::SessionCapacity)
     }
 

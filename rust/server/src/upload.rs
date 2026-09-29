@@ -45,15 +45,19 @@ impl Owner {
 
     pub fn login(subject: &str, session: &str) -> Self {
         Self {
-            client_keys: vec![format!("login:{session}"), format!("principal:{subject}")],
+            client_keys: vec![format!("login:{session}"), Self::principal_key(subject)],
         }
     }
 
-    pub fn delegated(subject: impl Into<String>, grant_id: impl Into<String>) -> Self {
-        let grant_id = grant_id.into();
+    pub fn delegated(subject: &str, grant_id: &str) -> Self {
         Self {
-            client_keys: vec![format!("grant:{grant_id}"), format!("principal:{}", subject.into())],
+            client_keys: vec![format!("grant:{grant_id}"), Self::principal_key(subject)],
         }
+    }
+
+    /// The key every login and grant of `subject` shares.
+    pub(crate) fn principal_key(subject: &str) -> String {
+        format!("principal:{subject}")
     }
 
     pub fn client_keys(&self) -> &[String] {

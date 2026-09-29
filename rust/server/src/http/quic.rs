@@ -1297,14 +1297,18 @@ mod tests {
     #[tokio::test]
     async fn one_client_holds_at_most_its_share_of_receive_credit() {
         use super::*;
-        // A client's share is its share of connection capacity: 8 GiB * 64 / 4096, 128 MiB, here.
+        // A client's share is a window on each QUIC connection it may hold, as Go grants each its window. While its
+        // other connections hold all of it but one window, one more fits it and the next does not.
         let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
+        let keys = crate::client_address::client_keys([127, 0, 0, 1].into());
+        let others = (crate::connections::QUIC_PER_CLIENT - 1) * QUIC_CREDIT_BYTES;
+        let _others = server.client_credit.claim(&keys, others).unwrap();
         let (tls, client_config) = tls();
         let (address, stop, serving) = serve(&server, tls);
         tokio::time::timeout(Duration::from_secs(20), async {
             let mut held = Vec::new();
             let mut charged = Vec::new();
-            for source in [1, 1, 1, 2] {
+            for source in [1, 1, 2] {
                 let client = noq::Endpoint::client(SocketAddr::from(([127, 0, 0, source], 0))).unwrap();
                 let (quic, requests) = h3_client(&client, client_config.clone(), address).await;
                 let id = upload_id(&requests).await;
@@ -1320,9 +1324,10 @@ mod tests {
                 charged.push(before - settled(&server.memory, &[&quic]).await);
                 held.push((client, quic, requests));
             }
-            // Two HTTP/3 windows fit 127.0.0.1's share and a third does not; 127.0.0.2's own share still funds one.
+            // One HTTP/3 window fits the rest of 127.0.0.1's share and a second does not; 127.0.0.2's own share
+            // still funds one.
             let funded: Vec<_> = charged.iter().map(|&bytes| bytes >= QUIC_CREDIT_BYTES).collect();
-            assert_eq!(funded, [true, true, false, true], "{charged:?}");
+            assert_eq!(funded, [true, false, true], "{charged:?}");
             for (_, quic, _) in held {
                 quic.close(0_u32.into(), b"done");
             }

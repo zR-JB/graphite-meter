@@ -648,9 +648,13 @@ mod budget_tests {
 
     #[tokio::test]
     async fn one_client_holds_at_most_its_share_of_receive_credit() {
-        // A client's share never falls below one HTTP/3 window: three HTTP/2 windows fit it, a fourth does not.
+        // A client's share is a window on each QUIC connection it may hold. While its other connections hold all of it
+        // but three HTTP/2 windows, three more fit it and a fourth does not.
         let served = Served::start(2 * 1024 * 1024 * 1024).await;
         let window = (WINDOW_BYTES - DEFAULT_WINDOW_BYTES) as usize;
+        let share = crate::connections::QUIC_PER_CLIENT * crate::budget::QUIC_CREDIT_BYTES;
+        let keys = crate::client_address::client_keys([127, 0, 0, 1].into());
+        let _others = served.server.client_credit.claim(&keys, share - 3 * window).unwrap();
         let mut held = Vec::new();
         let mut funded = Vec::new();
         for source in [1, 1, 1, 1, 2] {

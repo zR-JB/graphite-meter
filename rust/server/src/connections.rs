@@ -6,6 +6,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+/// Go's per-client QUIC share: the QUIC connections one client may hold, past the per-client limit.
+pub(crate) const QUIC_PER_CLIENT: usize = 8;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Stats {
     pub active: usize,
@@ -70,7 +73,7 @@ impl Connections {
         lock(&self.0.counts).quic.holds_any(&keys)
     }
 
-    /// A QUIC connection also takes Go's per-client QUIC share, at most 8.
+    /// A QUIC connection also takes Go's per-client QUIC share.
     pub fn acquire(&self, peer: SocketAddr, quic: bool) -> Result<Permit, Refusal> {
         let keys = self.keys(peer);
         let mut counts = lock(&self.0.counts);
@@ -83,7 +86,7 @@ impl Connections {
             return Err(Refusal::GlobalFull);
         }
         // Checked last and left out of the counters, like Go's QUIC share.
-        if quic && counts.quic.full(&keys, self.0.client_max.min(8)) {
+        if quic && counts.quic.full(&keys, self.0.client_max.min(QUIC_PER_CLIENT)) {
             return Err(Refusal::ClientFull);
         }
         counts.stats.active += 1;

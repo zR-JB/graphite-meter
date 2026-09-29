@@ -15,7 +15,7 @@ impl UploadStore {
 impl Owner {
     fn principal(subject: impl Into<String>) -> Self {
         Self {
-            client_keys: vec![format!("principal:{}", subject.into())],
+            client_keys: vec![Self::principal_key(&subject.into())],
         }
     }
 }
