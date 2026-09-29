@@ -216,12 +216,13 @@ hue, never by a boxed icon.
   handle like a docked sheet's edge: the list keeps its share of the width (40 % by default), never under 360 px,
   and the detail never under 460 px.
 - **Facts** (`dl.kv`): label/value pairs; a qualifier that belongs to a value is an `.aside`, never joined with a dot.
-- **Tooltip and readout** share one glass shell (`.inspect-card`). A tip opens after a short pause on its word
-  (0.4 s, jargon 0.2 s, at once when moving from one tip to the next), on keyboard focus, on a click or tap on jargon
-  or an explained fact, or on a long press on a control; never after a click on a control. It stays while the pointer
-  is on its word, closes a moment after it leaves, and one tip shows at a time. A scroll or a tap elsewhere closes a
-  pointer's tip; a tap on the tip closes it without reaching what lies beneath. A tip the viewport would cut flips
-  below its word, then aligns to the word's edge.
+- **Tooltip and readout** share one glass shell (`.inspect-card`). A tip opens when the pointer rests on its word:
+  within 8 px of where it settled for 0.4 s (jargon 0.25 s, 0.12 s while another tip shows or for 0.6 s after one
+  closes), so a pointer passing by, sweeping across or dragging opens none. It also opens on keyboard focus, on a
+  click or tap on jargon or an explained fact, or on a long press on a control; never after a click on a control. It
+  stays while the pointer is on its word, closes a moment after it leaves, and one tip shows at a time. A scroll or a
+  tap elsewhere closes a pointer's tip; a tap on the tip closes it without reaching what lies beneath. A tip the
+  viewport would cut flips below its word, then aligns to the word's edge.
 
 | Primitive                | Height         | Radius             | Type            | States                                               |
 | ------------------------ | -------------- | ------------------ | --------------- | ---------------------------------------------------- |
