@@ -369,10 +369,7 @@ impl AggregateMeasurements {
     pub fn result(&self, direction: Direction) -> MeasurementResult {
         let total = self.servers.values().map(|server| server.bytes[direction as usize]);
         let mut result = MeasurementResult::unavailable(direction, total.fold(0, u64::saturating_add));
-        for interval in self.stage_intervals() {
-            let Some(window) = interval.window.as_ref().filter(|_| interval.complete) else {
-                continue;
-            };
+        for (interval, window) in self.stage_windows() {
             let (components, rate) = window.direction(direction);
             if interval.end_nanos - interval.start_nanos < MIN_SURVIVOR_NANOS || !evidence(components) {
                 continue;
@@ -401,10 +398,7 @@ impl AggregateMeasurements {
 
     pub fn server_result(&self, id: &str, direction: Direction) -> MeasurementResult {
         let mut result = MeasurementResult::unavailable(direction, self.bytes(id, direction));
-        for interval in self.stage_intervals() {
-            let Some(window) = interval.window.as_ref().filter(|_| interval.complete) else {
-                continue;
-            };
+        for (interval, window) in self.stage_windows() {
             let Some(component) = window
                 .direction(direction)
                 .0
@@ -427,12 +421,12 @@ impl AggregateMeasurements {
         result
     }
 
-    fn stage_intervals(&self) -> impl Iterator<Item = &AggregationInterval> {
+    /// The current stage's complete intervals and their windows, latest first.
+    fn stage_windows(&self) -> impl Iterator<Item = (&AggregationInterval, &AggregateWindow)> {
         let stage = self.intervals.back().map(|interval| interval.stage);
-        self.intervals
-            .iter()
-            .rev()
-            .take_while(move |interval| Some(interval.stage) == stage)
+        let intervals = self.intervals.iter().rev();
+        let intervals = intervals.take_while(move |interval| Some(interval.stage) == stage);
+        intervals.filter_map(|interval| Some((interval, interval.window.as_ref().filter(|_| interval.complete)?)))
     }
 
     fn credit(&mut self, boundary: &Boundary) {
