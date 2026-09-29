@@ -309,12 +309,14 @@ async fn connect_ws(http: &Http, origin: &str) -> Result<Socket, Error> {
         true => Some(crate::tls::tcp(http.insecure, crate::tls::Alpn::Http1).await?),
         false => None,
     };
+    // A message up to Go's default read limit, 32 KiB, is read and one that is not a pong skipped
+    // (latency.go:33-47); a longer one ends the channel, as there.
     let config = WebSocketConfig::default()
         .read_buffer_size(4096)
         .write_buffer_size(0)
         .max_write_buffer_size(4096)
-        .max_message_size(Some(1024))
-        .max_frame_size(Some(1024));
+        .max_message_size(Some(32 * 1024))
+        .max_frame_size(Some(32 * 1024));
     let connection = async {
         let connection = http.dial(&origin, tls.as_ref()).await?;
         let key = tokio_tungstenite::tungstenite::handshake::derive_accept_key(
@@ -860,6 +862,29 @@ mod tests {
             tokio::time::timeout(Duration::from_secs(5), async { tokio::join!(session, end_window) }).await?;
         peer.abort();
         result
+    }
+
+    /// A message longer than a pong is skipped, as Go's wsBus.Recv skips it (latency.go:33-47), up
+    /// to the 32 KiB its WebSocket library reads by default; a longer one ends the channel there too.
+    #[tokio::test]
+    async fn an_over_long_message_is_skipped_up_to_gos_read_limit() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        for (length, skipped) in [(2 * 1024, true), (32 * 1024, true), (32 * 1024 + 1, false)] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+            let origin = format!("http://{}", listener.local_addr()?);
+            let peer = tokio::spawn(async move {
+                let mut socket = tokio_tungstenite::accept_async(listener.accept().await?.0).await?;
+                socket.send(Message::Text("x".repeat(length).into())).await?;
+                echo(socket, Duration::ZERO).await;
+                Ok::<_, Error>(())
+            });
+            let bus = connect(&Http::new(false)?, &origin, LatencyTransport::WebSocket).await?;
+            let measured = outcomes(bus, 50, 300).await;
+            peer.abort();
+            let answered = measured.as_ref().is_ok_and(|(replies, _)| *replies > 0);
+            assert_eq!(answered, skipped, "{length} bytes: {measured:?}");
+        }
+        Ok(())
     }
 
     /// A WebTransport session the server closes with a lane ending's code is dialled again as a
