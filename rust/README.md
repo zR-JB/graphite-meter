@@ -240,7 +240,10 @@ python3 rust/tests/interop.py
 python3 rust/tests/browser_transports.py --server rust/target/debug/graphite-meter-server
 ```
 
-Ring is the TLS/QUIC crypto provider. `rust-check` enforces dependency policy with
+Ring is the TLS/QUIC crypto provider. Unlike Go's server, which prefers AES-128-GCM for clients
+whose first suite is AES, the server deliberately follows the client's TLS 1.3 suite order, so
+OpenSSL-based clients such as curl, which list AES-256-GCM first, get AES-256-GCM, at about 3%
+more CPU per byte. `rust-check` enforces dependency policy with
 `cargo deny --locked check` (cargo-deny pinned in `mise.toml`); a daily workflow rechecks advisories.
 It also limits the crates each static Linux binary compiles, build-time crates and the
 binary’s own included, to 141 for the server and 170 for the TUI.
