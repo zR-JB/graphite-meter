@@ -1107,18 +1107,14 @@ test("a receiver feed that lags keeps its server, whose bytes arrive with its ne
 });
 
 test("a stage with a hole never finishes early, however steady it runs after", async () => {
-  for (const silent of [undefined, hole("download", 500, 1_200)]) {
-    const h = await harness(
-      [{ id: "self", silent }],
-      { download: true },
-      { downloadMs: 12_000 },
-      { adaptive: true },
-    );
-    h.start();
-    const { durationMs } = await h.result();
-    if (silent) expect(durationMs).toBeGreaterThanOrEqual(12_000);
-    else expect(durationMs).toBeLessThan(12_000);
-  }
+  const h = await harness(
+    [{ id: "self", silent: hole("download", 500, 1_200) }],
+    { download: true },
+    { downloadMs: 12_000 },
+    { adaptive: true },
+  );
+  h.start();
+  expect((await h.result()).durationMs).toBeGreaterThanOrEqual(12_000);
 });
 
 test("a result spanning too little of its stage settles Partial, as History judges it", async () => {

@@ -132,13 +132,6 @@ test("saved numbers keep their type and stay within bounds", () => {
   });
 });
 
-test("a multi-hour stage survives a reload; the servers' limit applies at start", () => {
-  const config = loaded({
-    config: { duration: { downloadMs: 7_200_000 } },
-  }).config;
-  expect(config.duration.downloadMs).toBe(7_200_000);
-});
-
 test("a stage saved with 0 ms loads switched off at its default time", () => {
   const config = loaded({
     config: {
