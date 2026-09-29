@@ -365,7 +365,13 @@ impl Oidc {
         })
     }
     async fn exchange(&self, provider: &Provider, code: &str, verifier: &str) -> Result<Tokens, ConfigError> {
-        let encode = |value: &str| form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>();
+        // x/oauth2 applies Go's url.QueryEscape, which keeps '~' and escapes '*' unlike a form encoder.
+        let encode = |value: &str| {
+            form_urlencoded::byte_serialize(value.as_bytes())
+                .collect::<String>()
+                .replace("%7E", "~")
+                .replace('*', "%2A")
+        };
         let credentials = Zeroizing::new(format!(
             "{}:{}",
             encode(&self.config.oidc_client_id),

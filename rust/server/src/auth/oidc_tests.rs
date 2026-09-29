@@ -97,7 +97,7 @@ impl Keys {
             }
             Some("ES256") => self.ec.sign(&self.rng, message.as_bytes()).unwrap().as_ref().to_vec(),
             Some("HS256") => ring::hmac::sign(
-                &ring::hmac::Key::new(ring::hmac::HMAC_SHA256, b"secret"),
+                &ring::hmac::Key::new(ring::hmac::HMAC_SHA256, b"s3cret~*"),
                 message.as_bytes(),
             )
             .as_ref()
@@ -144,7 +144,7 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Provi
             public_url: "https://meter.example".into(),
             oidc_issuer: issuer.clone(),
             oidc_client_id: "meter".into(),
-            oidc_client_secret: "secret".into(),
+            oidc_client_secret: "s3cret~*".into(),
             oidc_allowed_groups: vec!["operators".into()],
             ..AuthConfig::default()
         },
@@ -241,7 +241,7 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Provi
                             assert_eq!(form["redirect_uri"], "https://meter.example/auth/oidc/callback");
                             let challenge = URL_SAFE_NO_PAD.encode(ring::digest::digest(&ring::digest::SHA256, form["code_verifier"].as_bytes()));
                             let nonce = nonces.lock().unwrap().get(&challenge).cloned().expect("PKCE verifier matches a started transaction");
-                            assert!(headers.contains(&format!("authorization: Basic {}\r\n", STANDARD.encode("meter:secret"))), "{headers}");
+                            assert!(headers.contains(&format!("authorization: Basic {}\r\n", STANDARD.encode("meter:s3cret~%2A"))), "{headers}");
                             let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
                             let mut token_claims = json!({"iss": issuer, "aud": "meter", "sub": "operator", "iat": now, "exp": now + 300, "nonce": if claims.wrong_nonce { "invalid" } else { nonce.as_str() }, "at_hash": at_hash("access")});
                             for (key, value) in twist.claims.as_ref().and_then(Value::as_object).into_iter().flatten() {
