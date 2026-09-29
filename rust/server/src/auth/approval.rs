@@ -234,23 +234,23 @@ impl SessionStore {
         if verifier.len() > 128 {
             return Ok(Exchange::Pending);
         }
-        self.exchange_at(verifier, None, Instant::now())
+        self.exchange(verifier, None)
     }
 
     pub fn exchange_browser(&self, verifier: &str, origin: &str) -> Result<Exchange, ExchangeError> {
         if !(32..=128).contains(&verifier.len()) {
             return Err(ExchangeError::InvalidVerifier);
         }
-        self.exchange_at(verifier, Some(origin), Instant::now())
+        self.exchange(verifier, Some(origin))
     }
 
-    fn exchange_at(&self, verifier: &str, origin: Option<&str>, now: Instant) -> Result<Exchange, ExchangeError> {
+    fn exchange(&self, verifier: &str, origin: Option<&str>) -> Result<Exchange, ExchangeError> {
         let challenge = approval::challenge(verifier);
         let mut state = lock(&self.0);
         let Some(approval) = state.approvals.get(&challenge) else {
             return Ok(Exchange::Pending);
         };
-        if !approval.active_at(now) {
+        if !approval.active_at(Instant::now()) {
             state.approvals.remove(&challenge);
             return Ok(Exchange::Pending);
         }
@@ -268,7 +268,7 @@ impl SessionStore {
         if !approval.approved {
             return Ok(Exchange::Pending);
         }
-        match state.issue_grant(&session, origin, now) {
+        match state.issue_grant(&session, origin) {
             Ok((token, lease)) => {
                 state.approvals.remove(&challenge);
                 Ok(Exchange::Issued { token, lease })
@@ -384,8 +384,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn expired_approval_cannot_exchange_and_unknown_verifier_allocates_nothing() {
+    #[tokio::test(start_paused = true)]
+    async fn expired_approval_cannot_exchange_and_unknown_verifier_allocates_nothing() {
         let store = SessionStore::new();
         let (_, session) = store.create("subject", "name", "local", None).unwrap();
         let verifier = "v".repeat(32);
@@ -394,11 +394,8 @@ mod tests {
             .begin_cli_approval(&session, &challenge, "192.0.2.1".parse().unwrap())
             .unwrap();
         store.approve(&session, &challenge, ApprovalKind::Cli).unwrap();
-        let deadline = store.0.lock().unwrap().approvals[&challenge].deadline;
-        assert!(matches!(
-            store.exchange_at(&verifier, None, deadline).unwrap(),
-            Exchange::Pending
-        ));
+        tokio::time::advance(APPROVAL_LIFETIME).await;
+        assert!(matches!(store.exchange_cli(&verifier).unwrap(), Exchange::Pending));
         assert!(matches!(store.exchange_cli("unknown").unwrap(), Exchange::Pending));
         let state = store.0.lock().unwrap();
         assert!(state.approvals.is_empty());

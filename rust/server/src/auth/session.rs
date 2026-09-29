@@ -175,21 +175,10 @@ impl SessionStore {
         provider: &str,
         prior_token: Option<&str>,
     ) -> Result<(String, SessionLease), SessionError> {
-        self.create_at(subject, name, provider, prior_token, SystemTime::now(), Instant::now())
-    }
-
-    pub(super) fn create_at(
-        &self,
-        subject: &str,
-        name: &str,
-        provider: &str,
-        prior_token: Option<&str>,
-        wall: SystemTime,
-        now: Instant,
-    ) -> Result<(String, SessionLease), SessionError> {
         let raw = random_token::<32>()?;
         let hash = token_hash(&raw);
         let (revoked, _) = watch::channel(false);
+        let now = Instant::now();
         let session = Arc::new(Session {
             hash,
             id: random_token::<16>()?,
@@ -197,7 +186,7 @@ impl SessionStore {
             subject: subject.into(),
             name: name.into(),
             provider: provider.into(),
-            expires: wall + SESSION_LIFETIME,
+            expires: SystemTime::now() + SESSION_LIFETIME,
             created: now,
             deadline: now + SESSION_LIFETIME,
             revoked,
@@ -224,14 +213,10 @@ impl SessionStore {
     }
 
     pub fn lookup(&self, token: &str) -> Option<SessionLease> {
-        self.lookup_at(token, Instant::now())
-    }
-
-    fn lookup_at(&self, token: &str, now: Instant) -> Option<SessionLease> {
         let hash = token_hash(token);
         let mut state = lock(&self.0);
         let session = state.sessions.get(&hash)?;
-        if !session.active_at(now) {
+        if !session.active_at(Instant::now()) {
             state.remove(&hash);
             return None;
         }
@@ -258,37 +243,23 @@ pub(super) fn random_token<const N: usize>() -> Result<String, SessionError> {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn expiry_is_absolute_and_lookup_revokes_without_sweep() {
         let store = SessionStore::new();
-        let now = Instant::now();
-        let (token, lease) = store
-            .create_at("subject", "name", "local", None, SystemTime::now(), now)
-            .unwrap();
-        assert!(
-            store
-                .lookup_at(&token, now + SESSION_LIFETIME - Duration::from_nanos(1))
-                .is_some()
-        );
-        assert!(store.lookup_at(&token, now + SESSION_LIFETIME).is_none());
+        let (token, lease) = store.create("subject", "name", "local", None).unwrap();
+        tokio::time::advance(SESSION_LIFETIME - Duration::from_nanos(1)).await;
+        assert!(store.lookup(&token).is_some());
+        tokio::time::advance(Duration::from_nanos(1)).await;
+        assert!(store.lookup(&token).is_none());
         assert!(!lease.is_active());
         lease.ended().await;
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn active_transport_expires_without_lookup_or_sweep() {
         let store = SessionStore::new();
-        let (_, lease) = store
-            .create_at(
-                "subject",
-                "name",
-                "local",
-                None,
-                SystemTime::now() - SESSION_LIFETIME,
-                Instant::now() - SESSION_LIFETIME + Duration::from_millis(10),
-            )
-            .unwrap();
-        tokio::time::timeout(Duration::from_secs(1), lease.ended())
+        let (_, lease) = store.create("subject", "name", "local", None).unwrap();
+        tokio::time::timeout(SESSION_LIFETIME + Duration::from_secs(1), lease.ended())
             .await
             .unwrap();
         assert!(!lease.is_active());

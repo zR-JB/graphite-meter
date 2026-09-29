@@ -49,18 +49,6 @@ impl SessionStore {
         request_origin: &str,
         kind: Kind,
     ) -> Result<Ticket, TicketError> {
-        self.mint_ticket_at(lease, public_origin, target, request_origin, kind, Instant::now())
-    }
-
-    fn mint_ticket_at(
-        &self,
-        lease: &AuthLease,
-        public_origin: &str,
-        target: &str,
-        request_origin: &str,
-        kind: Kind,
-        now: Instant,
-    ) -> Result<Ticket, TicketError> {
         if lease.is_bearer() && lease.browser_origin().is_none() {
             return Err(TicketError::NoSession);
         }
@@ -73,6 +61,7 @@ impl SessionStore {
             return Err(TicketError::InvalidTarget);
         }
         let mut state = lock(&self.0);
+        let now = Instant::now();
         state.sweep(now);
         if !state.contains(&lease.session) || !lease.active_at(now) {
             return Err(TicketError::NoSession);
@@ -107,14 +96,10 @@ impl SessionStore {
     /// A failed redemption also burns the ticket. The caller supplies HTTPS
     /// authority plus request path without query, and the exact Origin header.
     pub fn consume_ticket(&self, raw: &str, target: &str, origin: &str) -> Option<AuthLease> {
-        self.consume_ticket_at(raw, target, origin, Instant::now())
-    }
-
-    fn consume_ticket_at(&self, raw: &str, target: &str, origin: &str, now: Instant) -> Option<AuthLease> {
         let mut state = lock(&self.0);
         let ticket = state.tickets.remove(&token_hash(raw))?;
         let (target, _, _) = socket_target(target)?;
-        if ticket.target != target || ticket.origin != origin || !ticket.active_at(now) {
+        if ticket.target != target || ticket.origin != origin || !ticket.active_at(Instant::now()) {
             return None;
         }
         Some(ticket.lease)
@@ -203,38 +188,16 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn expires_at_thirty_seconds_and_reaps_before_capacity_check() {
+    #[tokio::test(start_paused = true)]
+    async fn expires_at_thirty_seconds_and_reaps_before_capacity_check() {
         let store = SessionStore::new();
         let (_, session) = store.create("subject", "name", "local", None).unwrap();
         let lease = AuthLease::cookie(session);
-        let now = Instant::now();
-        let target = "https://meter.example/wt/ping";
-        let mut tokens = Vec::new();
-        for _ in 0..8 {
-            tokens.push(
-                store
-                    .mint_ticket_at(&lease, "https://meter.example", target, "", Kind::WebTransport, now)
-                    .unwrap(),
-            );
-        }
-        assert!(
-            store
-                .consume_ticket_at(&tokens[0].token, target, "", now + TICKET_LIFETIME)
-                .is_none()
-        );
-        assert!(
-            store
-                .mint_ticket_at(
-                    &lease,
-                    "https://meter.example",
-                    target,
-                    "",
-                    Kind::WebTransport,
-                    now + TICKET_LIFETIME
-                )
-                .is_ok()
-        );
+        let mint = || store.mint_ticket(&lease, PUBLIC, TARGET, "", Kind::WebTransport);
+        let tickets: Vec<_> = (0..MAX_SESSION_TICKETS).map(|_| mint().unwrap()).collect();
+        tokio::time::advance(TICKET_LIFETIME).await;
+        assert!(store.consume_ticket(&tickets[0].token, TARGET, "").is_none());
+        assert!(mint().is_ok());
         assert_eq!(store.0.lock().unwrap().tickets.len(), 1);
     }
 
@@ -259,44 +222,21 @@ mod tests {
         assert!(!lease.is_active());
     }
 
-    #[test]
-    fn parent_deadline_limits_ticket_and_grant_lifetimes() {
+    #[tokio::test(start_paused = true)]
+    async fn parent_deadline_limits_ticket_and_grant_lifetimes() {
         let store = SessionStore::new();
-        let now = Instant::now();
-        let (_, session) = store
-            .create_at(
-                "subject",
-                "name",
-                "local",
-                None,
-                SystemTime::now() - SESSION_LIFETIME + Duration::from_secs(5),
-                now - SESSION_LIFETIME + Duration::from_secs(5),
-            )
-            .unwrap();
-        let (grant, lease) = store.issue_browser_grant(&session, "https://client.example").unwrap();
-        let target = "https://meter.example/wt/ping";
+        let (_, session) = store.create("subject", "name", "local", None).unwrap();
+        let (grant, lease) = store.issue_browser_grant(&session, AUDIENCE).unwrap();
+        let left = Duration::from_secs(5);
+        tokio::time::advance(SESSION_LIFETIME - left).await;
         let ticket = store
-            .mint_ticket_at(
-                &lease,
-                "https://meter.example",
-                target,
-                "https://client.example",
-                Kind::WebTransport,
-                now,
-            )
+            .mint_ticket(&lease, PUBLIC, TARGET, AUDIENCE, Kind::WebTransport)
             .unwrap();
-        assert_eq!(ticket.expires, session.session().expires());
-        assert!(
-            store
-                .consume_ticket_at(
-                    &ticket.token,
-                    target,
-                    "https://client.example",
-                    now + Duration::from_secs(5)
-                )
-                .is_none()
-        );
-        store.0.lock().unwrap().sweep(now + Duration::from_secs(5));
+        // The paused clock leaves wall time behind, so the ticket's expiry follows the parent's time left.
+        assert!(ticket.expires <= SystemTime::now() + left);
+        tokio::time::advance(left).await;
+        assert!(store.consume_ticket(&ticket.token, TARGET, AUDIENCE).is_none());
+        store.0.lock().unwrap().sweep(Instant::now());
         assert!(store.lookup_bearer(&grant).is_none());
     }
 }

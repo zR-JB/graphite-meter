@@ -101,10 +101,6 @@ impl AuthLease {
 
 impl SessionStore {
     pub fn lookup_bearer(&self, token: &str) -> Option<AuthLease> {
-        self.lookup_bearer_at(token, Instant::now())
-    }
-
-    fn lookup_bearer_at(&self, token: &str, now: Instant) -> Option<AuthLease> {
         let mut decoded = [0; 32];
         // This engine rejects padding and nonzero trailing bits, so successful
         // decoding of exactly 32 bytes also establishes canonical encoding.
@@ -114,6 +110,7 @@ impl SessionStore {
         let key = token_hash(token);
         let mut state = lock(&self.0);
         let grant = state.grants.get(&key)?;
+        let now = Instant::now();
         if grant.active_at(now) {
             return Some(grant.clone());
         }
@@ -141,9 +138,8 @@ impl State {
         &mut self,
         session: &SessionLease,
         origin: Option<&str>,
-        now: Instant,
     ) -> Result<(String, AuthLease), GrantError> {
-        if !self.contains(session) || !session.0.active_at(now) {
+        if !self.contains(session) || !session.0.active_at(Instant::now()) {
             return Err(GrantError::NoSession);
         }
         let evict = if self.grant_count(session) >= MAX_SESSION_GRANTS {
@@ -194,19 +190,19 @@ pub fn secure_browser_origin(origin: &str) -> bool {
 mod tests {
     use super::*;
     use crate::auth::SESSION_LIFETIME;
-    use std::time::{Duration, SystemTime};
+    use std::time::Duration;
 
     /// Grants as an approved exchange issues them, and their revocation, for tests.
     impl SessionStore {
         pub(crate) fn issue_cli_grant(&self, session: &SessionLease) -> Result<(String, AuthLease), GrantError> {
-            lock(&self.0).issue_grant(session, None, Instant::now())
+            lock(&self.0).issue_grant(session, None)
         }
         pub(crate) fn issue_browser_grant(
             &self,
             session: &SessionLease,
             origin: &str,
         ) -> Result<(String, AuthLease), GrantError> {
-            lock(&self.0).issue_grant(session, Some(origin), Instant::now())
+            lock(&self.0).issue_grant(session, Some(origin))
         }
         pub(crate) fn revoke_grant(&self, token: &str) -> bool {
             lock(&self.0).remove_grant(&token_hash(token))
@@ -320,23 +316,20 @@ mod tests {
         assert!(secure_browser_origin("https://client.example:8443"));
     }
 
-    #[test]
-    fn lookup_checks_only_the_selected_grant_and_expires_its_parent_without_sweep() {
+    #[tokio::test(start_paused = true)]
+    async fn lookup_checks_only_the_selected_grant_and_expires_its_parent_without_sweep() {
         let store = SessionStore::new();
-        let now = Instant::now();
-        let age = SESSION_LIFETIME - Duration::from_secs(60);
-        let (_, expiring) = store
-            .create_at("old", "name", "local", None, SystemTime::now() - age, now - age)
-            .unwrap();
+        let (_, expiring) = store.create("old", "name", "local", None).unwrap();
         let (expired_token, expired_lease) = store.issue_cli_grant(&expiring).unwrap();
         let (sibling_token, _) = store.issue_browser_grant(&expiring, "https://client.example").unwrap();
+        tokio::time::advance(SESSION_LIFETIME - Duration::from_secs(60)).await;
         let (_, current) = store.create("current", "name", "local", None).unwrap();
         let (valid_token, _) = store.issue_cli_grant(&current).unwrap();
-        let after_expiry = now + Duration::from_secs(60);
+        tokio::time::advance(Duration::from_secs(60)).await;
 
-        assert!(store.lookup_bearer_at(&valid_token, after_expiry).is_some());
+        assert!(store.lookup_bearer(&valid_token).is_some());
         assert!(store.0.lock().unwrap().grants.contains_key(&token_hash(&expired_token)));
-        assert!(store.lookup_bearer_at(&expired_token, after_expiry).is_none());
+        assert!(store.lookup_bearer(&expired_token).is_none());
         assert!(!expired_lease.is_active());
         assert!(store.lookup_bearer(&sibling_token).is_none());
         assert!(store.lookup_bearer(&valid_token).is_some());
