@@ -63,6 +63,10 @@ fn invalid_request_hosts_fall_back_to_localhost() {
         "[fe80::1%eth0]",
         "user@meter.example",
         "",
+        "127.1",
+        "1234",
+        "0x7f.1",
+        "1.2.3.4.5",
     ] {
         for path in ["/servers", "/preflight"] {
             let mut request = Request::builder().uri(path);

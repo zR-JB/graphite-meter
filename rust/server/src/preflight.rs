@@ -170,6 +170,7 @@ pub(super) fn discovery_host(host: &str) -> &str {
         return host;
     }
     let name = host.strip_suffix('.').unwrap_or(host);
+    // A name that ends in a number, such as 127.1, forms no origin a target could name.
     if !name.is_empty()
         && name.len() <= 253
         && name.split('.').all(|label| {
@@ -179,6 +180,7 @@ pub(super) fn discovery_host(host: &str) -> &str {
                 && !label.ends_with('-')
                 && label.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
         })
+        && target_origin(&format!("http://{host}")).is_ok()
     {
         host
     } else {
