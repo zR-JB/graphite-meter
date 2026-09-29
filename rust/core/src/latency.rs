@@ -8,11 +8,9 @@ pub enum ProbeOutcome {
     SendFailure,
 }
 
+/// The percentiles the reports show, as Go's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Distribution {
-    pub min: u64,
-    pub max: u64,
-    pub mean: u64,
     pub p50: u64,
     pub p95: u64,
 }
@@ -74,9 +72,7 @@ impl DeadlineEstimator {
 
 #[derive(Debug, Default)]
 pub struct LatencyAccumulator {
-    rtts: std::cell::RefCell<Vec<u64>>,
-    sorted: std::cell::Cell<bool>,
-    rtt_sum: u128,
+    rtts: Vec<u64>,
     previous: Option<u64>,
     variation_sum: u128,
     jitter_pairs: usize,
@@ -108,9 +104,7 @@ impl LatencyAccumulator {
                     self.jitter_pairs += 1;
                 }
                 self.previous = Some(rtt);
-                self.rtts.get_mut().push(rtt);
-                self.sorted.set(false);
-                self.rtt_sum += u128::from(rtt);
+                self.rtts.push(rtt);
                 if handling_nanos <= i64::MAX as u64 && handling_nanos <= rtt {
                     self.timing_count += 1;
                     self.timing_raw_sum += u128::from(rtt);
@@ -128,9 +122,8 @@ impl LatencyAccumulator {
     }
 
     pub fn snapshot(&self) -> LatencySummary {
-        let mut sorted = self.rtts.borrow_mut();
         let mut out = LatencySummary {
-            count: sorted.len(),
+            count: self.rtts.len(),
             timeouts: self.timeouts,
             unresolved: self.unresolved,
             send_failures: self.send_failures,
@@ -148,10 +141,9 @@ impl LatencyAccumulator {
                 mean_handling: (self.handling_sum / count) as u64,
             });
         }
-        if !sorted.is_empty() {
-            if !self.sorted.replace(true) {
-                sorted.sort_unstable();
-            }
+        if !self.rtts.is_empty() {
+            let mut sorted = self.rtts.clone();
+            sorted.sort_unstable();
             let middle = sorted.len() / 2;
             let p50 = if sorted.len().is_multiple_of(2) {
                 sorted[middle - 1] + (sorted[middle] - sorted[middle - 1]) / 2
@@ -159,9 +151,6 @@ impl LatencyAccumulator {
                 sorted[middle]
             };
             out.distribution = Some(Distribution {
-                min: sorted[0],
-                max: sorted[sorted.len() - 1],
-                mean: (self.rtt_sum / sorted.len() as u128) as u64,
                 p50,
                 p95: nearest_rank(&sorted, 95),
             });

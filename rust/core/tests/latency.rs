@@ -66,7 +66,7 @@ fn reflector_duration_bounds_and_large_sums_are_exact() {
         None
     );
     let snapshot = stats.snapshot();
-    assert_eq!(snapshot.distribution.unwrap().mean, i64::MAX as u64);
+    assert_eq!(snapshot.distribution.unwrap().p50, i64::MAX as u64);
     assert_eq!(snapshot.reflector_timing.unwrap().mean_handling, i64::MAX as u64);
     assert_eq!(snapshot.jitter, Some(0));
 
