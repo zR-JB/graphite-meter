@@ -2,8 +2,8 @@
 //! detailsView), in styled lines the TUI draws and the report prints.
 use crate::{
     model::{
-        Ending, FailureScope, Phase, ServerFailure, ServerLatencyResult, ServerSummary, Snapshot, Stage, StageResult,
-        StageStatus,
+        Ending, FailureScope, Phase, ServerContribution, ServerLatencyResult, ServerSummary, Snapshot, Stage,
+        StageResult, StageStatus,
     },
     theme::Theme,
     vocabulary::{ADDED_NOTE, MISSING, clock, compact_population, compact_stage, population_label},
@@ -15,9 +15,12 @@ use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
 };
+use std::time::Duration;
 use unicode_width::UnicodeWidthChar;
 
 pub const WIDTH: usize = 100;
+/// The arrows of a stage's directions, indexed as its results' down and up.
+const ARROWS: [&str; 2] = ["↓", "↑"];
 
 pub(crate) type Text = Vec<Line<'static>>;
 
@@ -37,10 +40,7 @@ pub(crate) fn cell(character: char) -> usize {
 
 /// Go's pad: spaces up to `to` cells.
 pub(crate) fn pad(mut line: Line<'static>, to: usize) -> Line<'static> {
-    let fill = to.saturating_sub(line.width());
-    if fill > 0 {
-        line.spans.push(Span::raw(" ".repeat(fill)));
-    }
+    line.spans.push(Span::raw(" ".repeat(to.saturating_sub(line.width()))));
     line
 }
 
@@ -60,8 +60,7 @@ pub(crate) fn truncate(line: Line<'static>, limit: usize, tail: &str) -> Line<'s
         let mut kept = String::new();
         for character in span.content.chars() {
             if cell(character) > room {
-                kept.push_str(tail);
-                spans.push(Span::styled(kept, span.style));
+                spans.push(Span::styled(kept + tail, span.style));
                 return Line::from(spans);
             }
             room -= cell(character);
@@ -152,7 +151,7 @@ pub fn print(snapshot: &Snapshot, width: usize) -> Option<String> {
 
 /// Asks the terminal for its background, as Go's runHeadless does before a report. Call it in raw mode.
 pub async fn ask_background() {
-    Theme::ask(std::time::Duration::from_secs(2)).await;
+    Theme::ask(Duration::from_secs(2)).await;
 }
 
 /// Go's finalReport in `theme`.
@@ -168,12 +167,8 @@ pub(crate) fn render(snapshot: &Snapshot, width: usize, theme: Theme) -> Option<
     let results = report.results(&heading);
     let mut blocks = vec![vec![report.header()]];
     if !results.view().is_empty() {
-        blocks.extend([
-            report.throughput(),
-            results.latency,
-            results.failures,
-            report.notes(results.added),
-        ]);
+        blocks.extend([report.throughput(), results.latency, results.failures]);
+        blocks.push(report.notes(results.added));
     }
     if report.several() {
         blocks.push(report.details(false));
@@ -185,22 +180,14 @@ pub(crate) fn render(snapshot: &Snapshot, width: usize, theme: Theme) -> Option<
     Some(ansi(&lines))
 }
 
-/// Go's detailsView in full, as plain text.
-pub fn details(snapshot: &Snapshot, shown: Option<&str>, width: usize) -> String {
-    let lines = Report::new(snapshot, shown, width, Theme::default()).details(true);
-    lines.iter().map(plain).collect::<Vec<_>>().join("\n")
-}
-
 /// The line without trailing spaces.
 fn trim_end(mut line: Line<'static>) -> Line<'static> {
-    while let Some(last) = line.spans.last_mut() {
+    while let Some(last) = line.spans.pop() {
         let trimmed = last.content.trim_end_matches(' ');
         if !trimmed.is_empty() {
-            let trimmed = trimmed.to_owned();
-            last.content = trimmed.into();
+            line.spans.push(Span::styled(trimmed.to_owned(), last.style));
             break;
         }
-        line.spans.pop();
     }
     line
 }
@@ -241,6 +228,20 @@ pub fn outcome(phase: Phase) -> &'static str {
     }
 }
 
+/// The directions a stage transfers, as indexes of `ARROWS`.
+fn directions(stage: Stage) -> impl Iterator<Item = usize> {
+    let moves = [stage.downloads(), stage.uploads()];
+    (0..2).filter(move |direction| moves[*direction])
+}
+
+/// Go's directionLabel.
+fn direction_label(stage: Stage, direction: usize) -> String {
+    match stage {
+        Stage::Bidirectional => format!("Bi-dir {}", ARROWS[direction]),
+        stage => stage.name().to_owned(),
+    }
+}
+
 /// Go's results: each grid, the failures under them, the notes Details shows and whether the
 /// latency grid has an Added column.
 #[derive(Default)]
@@ -255,11 +256,7 @@ pub(crate) struct Results {
 impl Results {
     /// Go's results.view: the grids, then the failures.
     pub fn view(&self) -> Text {
-        [&self.throughput, &self.latency, &self.failures]
-            .into_iter()
-            .flatten()
-            .cloned()
-            .collect()
+        [self.throughput.clone(), self.latency.clone(), self.failures.clone()].concat()
     }
 }
 
@@ -268,39 +265,6 @@ pub(crate) struct Report<'a> {
     shown: Option<&'a str>,
     width: usize,
     theme: Theme,
-}
-
-#[derive(Clone, Copy)]
-enum Direction {
-    Down,
-    Up,
-}
-
-impl Direction {
-    /// The directions a stage transfers.
-    fn of(stage: Stage) -> impl Iterator<Item = Self> {
-        [
-            stage.downloads().then_some(Self::Down),
-            stage.uploads().then_some(Self::Up),
-        ]
-        .into_iter()
-        .flatten()
-    }
-
-    fn arrow(self) -> &'static str {
-        match self {
-            Self::Down => "↓",
-            Self::Up => "↑",
-        }
-    }
-
-    /// Go's directionLabel.
-    fn label(self, stage: Stage) -> String {
-        match stage {
-            Stage::Bidirectional => format!("Bi-dir {}", self.arrow()),
-            stage => stage.name().to_owned(),
-        }
-    }
 }
 
 impl<'a> Report<'a> {
@@ -335,12 +299,9 @@ impl<'a> Report<'a> {
         }
     }
 
-    fn measurement(&self, stage: Stage, direction: Direction) -> Option<&MeasurementResult> {
+    fn measurement(&self, stage: Stage, direction: usize) -> Option<&MeasurementResult> {
         let result = self.result(stage)?;
-        match direction {
-            Direction::Down => result.down.as_ref(),
-            Direction::Up => result.up.as_ref(),
-        }
+        [&result.down, &result.up][direction].as_ref()
     }
 
     /// The shown server's latency in a stage.
@@ -354,11 +315,11 @@ impl<'a> Report<'a> {
 
     /// Go's meanRates: each measured direction's arrow and mean rate.
     pub fn rates(&self, stage: Stage) -> String {
-        let rates = Direction::of(stage).filter_map(|direction| {
+        let rates = directions(stage).filter_map(|direction| {
             let rate = self.measurement(stage, direction)?.mean_bytes_per_sec;
             Some(format!(
                 "{} {}",
-                direction.arrow(),
+                ARROWS[direction],
                 rate.map_or(MISSING.to_owned(), format::rate)
             ))
         });
@@ -367,17 +328,15 @@ impl<'a> Report<'a> {
 
     /// Go's headline: a finished stage's rates, and an idle stage's median.
     pub fn headline(&self, stage: Stage) -> Vec<Span<'static>> {
-        let mut spans = Vec::new();
         let rates = self.rates(stage);
-        if !rates.is_empty() {
-            spans.push(span(rates, self.theme.value));
-        }
+        let mut spans: Vec<_> = (!rates.is_empty())
+            .then(|| span(rates, self.theme.value))
+            .into_iter()
+            .collect();
         if let Some(median) = self.population(stage).and_then(ServerLatencyResult::median)
             && stage == Stage::Latency
         {
-            if !spans.is_empty() {
-                spans.push(Span::raw("  "));
-            }
+            spans.extend((!spans.is_empty()).then(|| Span::raw("  ")));
             spans.extend([span(ms(median), self.theme.value), span(" median", self.theme.muted)]);
         }
         spans
@@ -401,8 +360,8 @@ impl<'a> Report<'a> {
         for stage in &self.snapshot.plan {
             let hue = theme.stage(*stage);
             if stage.downloads() || stage.uploads() {
-                for direction in Direction::of(*stage) {
-                    let label = direction.label(*stage);
+                for direction in directions(*stage) {
+                    let label = direction_label(*stage, direction);
                     if let Some(measurement) = self.measurement(*stage, direction)
                         && (measurement.mean_bytes_per_sec.is_some() || measurement.total_bytes > 0)
                     {
@@ -421,44 +380,35 @@ impl<'a> Report<'a> {
                     throughput.push(vec![line(compact_stage(*stage), hue), rates]);
                 }
             }
-            match self.population(*stage) {
-                Some(population) => {
-                    let mut cells = latency_cells(population, idle);
-                    if *stage == Stage::Latency {
-                        cells[1].clear();
-                    }
-                    out.added |= !cells[1].is_empty();
-                    let mut row = vec![line(compact_population(*stage), hue)];
-                    row.extend(cells.into_iter().map(Line::from));
-                    latency.push(row);
-                    let label = population_label(*stage);
-                    out.notes.extend(self.note(&label, &latency_facts(population)));
-                    if let Some(timing) = population.summary.reflector_timing {
-                        let label = format!("Server timing ({} paired replies, means)", count(timing.count));
-                        let facts = [
-                            format!("raw {}", ms(timing.mean_raw_rtt)),
-                            format!("handling {}", ms(timing.mean_handling)),
-                        ];
-                        out.notes.extend(self.note(&label, &facts));
-                    }
-                    match population.ending {
-                        Some(Ending::Stopped) if self.snapshot.phase == Phase::Cancelled => {
-                            out.failures.push(line(format!("{label} stopped."), theme.warn));
-                        }
-                        Some(Ending::Failed(reason)) => {
-                            out.failures
-                                .push(line(format!("{label}: {}", reason.label()), theme.err));
-                        }
-                        _ => {}
-                    }
+            let name = line(compact_population(*stage), hue);
+            let Some(population) = self.population(*stage) else {
+                if *stage == Stage::Latency && !live {
+                    latency.push(vec![name, Line::from(self.unmeasured(*stage))]);
                 }
-                None if *stage == Stage::Latency && !live => {
-                    latency.push(vec![
-                        line(compact_population(*stage), hue),
-                        Line::from(self.unmeasured(*stage)),
-                    ]);
+                continue;
+            };
+            let mut cells = latency_cells(population, idle);
+            if *stage == Stage::Latency {
+                cells[1].clear();
+            }
+            out.added |= !cells[1].is_empty();
+            latency.push([vec![name], cells.into_iter().map(Line::from).collect()].concat());
+            let label = population_label(*stage);
+            out.notes.extend(self.note(&label, &latency_facts(population)));
+            if let Some(timing) = population.summary.reflector_timing {
+                let label = format!("Server timing ({} paired replies, means)", count(timing.count));
+                let (raw, handling) = (ms(timing.mean_raw_rtt), ms(timing.mean_handling));
+                out.notes
+                    .extend(self.note(&label, &[format!("raw {raw}"), format!("handling {handling}")]));
+            }
+            match population.ending {
+                Some(Ending::Stopped) if self.snapshot.phase == Phase::Cancelled => {
+                    out.failures.push(line(format!("{label} stopped."), theme.warn));
                 }
-                None => {}
+                Some(Ending::Failed(reason)) => out
+                    .failures
+                    .push(line(format!("{label}: {}", reason.label()), theme.err)),
+                _ => {}
             }
         }
         if !self.measured() {
@@ -488,24 +438,19 @@ impl<'a> Report<'a> {
     }
 
     /// Why a direction has no result, or ended early.
-    fn throughput_failure(&self, stage: Stage, direction: Direction, label: &str) -> Option<Line<'static>> {
+    fn throughput_failure(&self, stage: Stage, direction: usize, label: &str) -> Option<Line<'static>> {
         let result = self.result(stage)?;
         let measurement = self.measurement(stage, direction)?;
         if result.stopped {
             return Some(line(format!("{label} stopped."), self.theme.warn));
         }
-        let stage_failures: Vec<_> = self
-            .snapshot
-            .failures
-            .iter()
+        let failures = self.snapshot.failures.iter();
+        let failures: Vec<_> = failures
             .filter(|failure| failure.stage == stage && failure.scope == FailureScope::Throughput)
             .collect();
-        let all_left = !result.server_results.is_empty()
-            && result
-                .server_results
-                .iter()
-                .all(|server| stage_failures.iter().any(|failure| failure.server_id == server.id));
-        let reason = match stage_failures.last() {
+        let left = |server: &ServerContribution| failures.iter().any(|failure| failure.server_id == server.id);
+        let all_left = !result.server_results.is_empty() && result.server_results.iter().all(left);
+        let reason = match failures.last() {
             Some(failure) if all_left => failure.reason,
             _ if measurement.mean_bytes_per_sec.is_none() => FailureReason::InsufficientEvidence,
             _ => return None,
@@ -515,36 +460,28 @@ impl<'a> Report<'a> {
 
     /// Go's reportHeader.
     pub fn header(&self) -> Line<'static> {
-        let servers = run_servers(self.snapshot);
-        let mut facts = Vec::new();
-        match servers.as_slice() {
-            [] => {}
-            [server] => facts.push(server.name.clone()),
-            servers => facts.push(format!("{} servers", servers.len())),
-        }
+        let mut facts = match run_servers(self.snapshot).as_slice() {
+            [] => Vec::new(),
+            [server] => vec![server.name.clone()],
+            servers => vec![format!("{} servers", servers.len())],
+        };
         facts.push(clock(self.snapshot.duration));
-        let total: u64 = self
-            .snapshot
-            .results
-            .iter()
-            .flat_map(|result| [&result.down, &result.up])
-            .flatten()
-            .map(|measurement| measurement.total_bytes)
-            .sum();
+        let results = self.snapshot.results.iter();
+        let total: u64 = results.map(|result| result.down_bytes() + result.up_bytes()).sum();
         if total > 0 {
             facts.push(format::bytes(total));
         }
         let phase = self.snapshot.phase;
-        let tone = Style {
-            fg: self.theme.outcome(phase).bg,
-            ..Style::new().add_modifier(Modifier::BOLD)
-        };
+        let mut tone = Style::new().add_modifier(Modifier::BOLD);
+        tone.fg = self.theme.outcome(phase).bg;
+        let title = span("Graphite Meter", self.theme.heading);
+        let facts = span(facts.join(" · "), self.theme.muted);
         Line::from(vec![
-            span("Graphite Meter", self.theme.heading),
+            title,
             Span::raw("  "),
             span(outcome(phase), tone),
             Span::raw("  "),
-            span(facts.join(" · "), self.theme.muted),
+            facts,
         ])
     }
 
@@ -554,9 +491,9 @@ impl<'a> Report<'a> {
         let mut rows = Vec::new();
         for stage in &self.snapshot.plan {
             let hue = theme.stage(*stage);
-            for direction in Direction::of(*stage) {
+            for direction in directions(*stage) {
                 let label = Line::from(vec![
-                    span(direction.arrow(), hue),
+                    span(ARROWS[direction], hue),
                     Span::raw(" "),
                     span(stage.name(), theme.text),
                 ]);
@@ -564,10 +501,10 @@ impl<'a> Report<'a> {
                     None => (line(self.unmeasured(*stage), theme.muted), Vec::new()),
                     Some(measurement) => match measurement.mean_bytes_per_sec {
                         None => (line(MISSING, theme.muted), Vec::new()),
-                        Some(mean) => (
-                            line(format::rate(mean), hue.add_modifier(Modifier::BOLD)),
-                            throughput_facts(measurement, true),
-                        ),
+                        Some(mean) => {
+                            let bold = hue.add_modifier(Modifier::BOLD);
+                            (line(format::rate(mean), bold), throughput_facts(measurement, true))
+                        }
                     },
                 };
                 let partial = self.status(*stage) == StageStatus::Partial;
@@ -579,21 +516,15 @@ impl<'a> Report<'a> {
         }
         let label_width = rows.iter().map(|row| row.0.width()).max().unwrap_or(0);
         let value_width = rows.iter().map(|row| row.1.width()).max().unwrap_or(0);
-        let indent = label_width + value_width + 2;
+        let indent = Line::from(" ".repeat(label_width + value_width + 2));
         let mut lines = Vec::new();
         for (label, value, facts, partial) in rows {
             let mut first = pad(label, label_width);
             first.spans.push(Span::raw("  "));
             first.spans.extend(pad(value, value_width).spans);
-            for (index, part) in wrap_parts(&facts, self.width.saturating_sub(indent + 3).max(20))
-                .into_iter()
-                .enumerate()
-            {
-                let mut line = if index == 0 {
-                    first.clone()
-                } else {
-                    Line::from(" ".repeat(indent))
-                };
+            let parts = wrap_parts(&facts, self.width.saturating_sub(indent.width() + 3).max(20));
+            for (index, part) in parts.into_iter().enumerate() {
+                let mut line = if index == 0 { first.clone() } else { indent.clone() };
                 if index == 0 && partial {
                     let rest = part.strip_prefix("Partial").unwrap_or(&part).to_owned();
                     line.spans
@@ -609,27 +540,19 @@ impl<'a> Report<'a> {
 
     /// Go's reportNotes: latency issues, the server's share of the round trips, and Added.
     pub fn notes(&self, added: bool) -> Text {
-        let mut notes = Vec::new();
-        let mut timing = Vec::new();
+        let (mut notes, mut timing) = (Vec::new(), Vec::new());
         for stage in &self.snapshot.plan {
             let Some(population) = self.population(*stage) else {
                 continue;
             };
             let summary = population.summary;
-            if population.ending.is_some()
-                || summary.timeouts > 0
-                || summary.unresolved > 0
-                || summary.send_failures > 0
-            {
+            let issues = summary.timeouts > 0 || summary.unresolved > 0 || summary.send_failures > 0;
+            if population.ending.is_some() || issues {
                 notes.extend(self.note(&population_label(*stage), &latency_facts(population)));
             }
             if let Some(reflector) = summary.reflector_timing {
-                let mut part = format!(
-                    "{} {} of {}",
-                    compact_population(*stage),
-                    ms(reflector.mean_handling),
-                    ms(reflector.mean_raw_rtt)
-                );
+                let (handling, raw) = (ms(reflector.mean_handling), ms(reflector.mean_raw_rtt));
+                let mut part = format!("{} {handling} of {raw}", compact_population(*stage));
                 if reflector.count != summary.count {
                     part.push_str(&format!(" ({} pairs)", count(reflector.count)));
                 }
@@ -659,31 +582,88 @@ impl<'a> Report<'a> {
         lines.into_iter().map(|text| line(text, self.theme.muted)).collect()
     }
 
-    /// Go's detailsView: the outcome, the facts in full, the rates and latency medians by server,
-    /// the issues and, in full once the run ends, its aggregation intervals.
+    /// Go's detailsView: the outcome, the facts in full, the mean rates and latency medians of
+    /// the run and each server (✗ for one that left), the issues and, in full once the run ends,
+    /// its aggregation intervals.
     pub fn details(&self, full: bool) -> Text {
-        let theme = &self.theme;
+        let (theme, run) = (&self.theme, self.snapshot);
+        let mut columns = Vec::new();
+        for stage in &run.plan {
+            columns.extend(directions(*stage).map(|at| (*stage, at)));
+        }
+        let mean = |measurement: Option<&MeasurementResult>| {
+            let mean = measurement.and_then(|measurement| measurement.mean_bytes_per_sec);
+            Line::from(mean.map_or_else(|| MISSING.to_owned(), format::rate))
+        };
+        let mut rates = vec![vec![Line::from("All servers")]];
+        rates[0].extend(columns.iter().map(|(stage, at)| mean(self.measurement(*stage, *at))));
+        let mut medians = Vec::new();
+        for server in run_servers(run) {
+            let own = |stage| {
+                self.result(stage)?
+                    .server_results
+                    .iter()
+                    .find(|own| own.id == server.id)
+            };
+            let own =
+                |(stage, at): &(Stage, usize)| mean(own(*stage).and_then(|own| [&own.down, &own.up][*at].as_ref()));
+            let remains = run.participants.contains(&server.id);
+            let name = Line::from(format!("{}{}", server.name, if remains { "" } else { " ✗" }));
+            rates.push(std::iter::once(name).chain(columns.iter().map(own)).collect());
+            let median = |stage: &Stage| {
+                let hosts = self.result(*stage).map_or(&[][..], |result| &result.server_latencies);
+                let median = hosts
+                    .iter()
+                    .find(|host| host.id == server.id)
+                    .and_then(ServerLatencyResult::median);
+                Line::from(median.map_or(MISSING.into(), ms))
+            };
+            let name = Line::from(server.name.clone());
+            medians.push(std::iter::once(name).chain(run.plan.iter().map(median)).collect());
+        }
+        let mut headers = vec!["Server".to_owned()];
+        headers.extend(columns.iter().map(|(stage, at)| direction_label(*stage, *at)));
+        let mut populations = vec!["Server"];
+        populations.extend(run.plan.iter().map(|stage| compact_population(*stage)));
         let mut lines = vec![line(self.outcome_notice(), theme.heading)];
         let notes = self.results("Latency").notes;
         if full && !notes.is_empty() {
             lines.extend(notes);
             lines.push(Line::default());
         }
-        lines.extend(self.server_rates());
+        lines.extend(self.grid(&headers, rates));
         lines.extend([Line::default(), line("Latency median by server", theme.heading)]);
-        lines.extend(self.server_medians());
-        if !self.snapshot.failures.is_empty() {
+        lines.extend(self.grid(&populations, medians));
+        if !run.failures.is_empty() {
             lines.extend([Line::default(), line("Issues", theme.heading)]);
-            lines.extend(
-                self.snapshot
-                    .failures
-                    .iter()
-                    .map(|failure| Line::from(self.issue(failure))),
-            );
         }
-        if full && !self.snapshot.phase.live() && !self.snapshot.intervals.is_empty() {
+        for failure in &run.failures {
+            let throughput = failure.scope == FailureScope::Throughput;
+            let scope = if throughput { "throughput" } else { "latency" };
+            let (name, stage) = (server_name(run, &failure.server_id), compact_stage(failure.stage));
+            let (at, reason) = (clock(failure.at), failure.reason.label());
+            lines.push(Line::from(format!("{name} · {stage} {scope} · at {at} · {reason}")));
+        }
+        if full && !run.phase.live() && !run.intervals.is_empty() {
             lines.extend([Line::default(), line("Aggregation intervals", theme.heading)]);
-            lines.extend(self.intervals().into_iter().map(|text| line(text, theme.muted)));
+            for interval in &run.intervals {
+                let seconds = |nanos| Duration::from_nanos(nanos).as_secs_f64();
+                let (start, end) = (seconds(interval.start_nanos), seconds(interval.end_nanos));
+                let names: Vec<_> = interval.participants.iter().map(|id| server_name(run, id)).collect();
+                let state = match interval.complete && interval.window.is_some() {
+                    true => "measured window",
+                    false => "incomplete evidence",
+                };
+                let stage = compact_stage(interval.stage.into());
+                let mut parts = vec![format!("{stage} {start:.1}–{end:.1} s"), names.join(", "), state.into()];
+                parts.retain(|part| !part.is_empty());
+                lines.push(line(parts.join(" · "), theme.muted));
+            }
+            if run.omitted_intervals > 0 {
+                let omitted = run.omitted_intervals;
+                let text = format!("{omitted} older intervals omitted; byte totals retain the full run");
+                lines.push(line(text, theme.muted));
+            }
         }
         lines.into_iter().map(|line| fit(line, self.width)).collect()
     }
@@ -701,132 +681,13 @@ impl<'a> Report<'a> {
         }
     }
 
-    fn directions(&self) -> Vec<(Stage, Direction)> {
-        let plan = self.snapshot.plan.iter();
-        plan.flat_map(|stage| Direction::of(*stage).map(|direction| (*stage, direction)))
-            .collect()
-    }
-
-    /// Each direction's mean rate for the run, then for each server; one that left is marked ✗.
-    fn server_rates(&self) -> Text {
-        let directions = self.directions();
-        let rate = |measurement: Option<&MeasurementResult>| {
-            let mean = measurement.and_then(|measurement| measurement.mean_bytes_per_sec);
-            Line::from(mean.map_or_else(|| MISSING.to_owned(), format::rate))
-        };
-        let mut headers = vec!["Server".to_owned()];
-        headers.extend(directions.iter().map(|(stage, direction)| direction.label(*stage)));
-        let mut all = vec![Line::from("All servers")];
-        all.extend(
-            directions
-                .iter()
-                .map(|(stage, direction)| rate(self.measurement(*stage, *direction))),
-        );
-        let mut rows = vec![all];
-        for server in run_servers(self.snapshot) {
-            let own = |stage: Stage, direction: Direction| {
-                let contribution = self
-                    .result(stage)?
-                    .server_results
-                    .iter()
-                    .find(|contribution| contribution.id == server.id)?;
-                match direction {
-                    Direction::Down => contribution.down.as_ref(),
-                    Direction::Up => contribution.up.as_ref(),
-                }
-            };
-            let mut name = server.name.clone();
-            if !self.snapshot.participants.contains(&server.id) {
-                name.push_str(" ✗");
-            }
-            let mut row = vec![Line::from(name)];
-            row.extend(
-                directions
-                    .iter()
-                    .map(|(stage, direction)| rate(own(*stage, *direction))),
-            );
-            rows.push(row);
-        }
-        self.grid(&headers.iter().map(String::as_str).collect::<Vec<_>>(), rows)
-    }
-
-    /// Each server's latency median in each planned stage.
-    fn server_medians(&self) -> Text {
-        let mut headers = vec!["Server"];
-        headers.extend(self.snapshot.plan.iter().map(|stage| compact_population(*stage)));
-        let rows: Vec<_> = run_servers(self.snapshot)
-            .into_iter()
-            .map(|server| {
-                let median = |stage: &Stage| {
-                    let text = self
-                        .result(*stage)
-                        .and_then(|result| result.server_latencies.iter().find(|host| host.id == server.id))
-                        .and_then(ServerLatencyResult::median)
-                        .map_or_else(|| MISSING.to_owned(), ms);
-                    Line::from(text)
-                };
-                std::iter::once(Line::from(server.name.clone()))
-                    .chain(self.snapshot.plan.iter().map(median))
-                    .collect()
-            })
-            .collect();
-        self.grid(&headers, rows)
-    }
-
-    fn issue(&self, failure: &ServerFailure) -> String {
-        let scope = match failure.scope {
-            FailureScope::Throughput => "throughput",
-            FailureScope::Latency => "latency",
-        };
-        format!(
-            "{} · {} {scope} · at {} · {}",
-            server_name(self.snapshot, &failure.server_id),
-            compact_stage(failure.stage),
-            clock(failure.at),
-            failure.reason.label()
-        )
-    }
-
-    /// Go's run details: one list of the run's aggregation intervals, timed from its start.
-    fn intervals(&self) -> Vec<String> {
-        let seconds = |nanos| std::time::Duration::from_nanos(nanos).as_secs_f64();
-        let mut lines: Vec<_> = self
-            .snapshot
-            .intervals
-            .iter()
-            .map(|interval| {
-                let names: Vec<_> = interval
-                    .participants
-                    .iter()
-                    .map(|id| server_name(self.snapshot, id))
-                    .collect();
-                let state = if interval.complete && interval.window.is_some() {
-                    "measured window"
-                } else {
-                    "incomplete evidence"
-                };
-                let (start, end) = (seconds(interval.start_nanos), seconds(interval.end_nanos));
-                let span = format!("{} {start:.1}–{end:.1} s", compact_stage(interval.stage.into()));
-                [span, names.join(", "), state.to_owned()]
-                    .into_iter()
-                    .filter(|part| !part.is_empty())
-                    .collect::<Vec<_>>()
-                    .join(" · ")
-            })
-            .collect();
-        let omitted = self.snapshot.omitted_intervals;
-        if omitted > 0 {
-            lines.push(format!(
-                "{omitted} older intervals omitted; byte totals retain the full run"
-            ));
-        }
-        lines
-    }
-
     /// Go's grid: muted headers over text cells, or each row's facts when the columns do not fit.
-    fn grid(&self, headers: &[&str], rows: Vec<Vec<Line<'static>>>) -> Text {
+    fn grid(&self, headers: &[impl AsRef<str>], rows: Vec<Vec<Line<'static>>>) -> Text {
         let (muted, text) = (self.theme.muted, self.theme.text);
-        let headers: Vec<_> = headers.iter().map(|header| Line::from(header.to_string())).collect();
+        let headers: Vec<_> = headers
+            .iter()
+            .map(|header| Line::from(header.as_ref().to_owned()))
+            .collect();
         let mut widths = vec![0; headers.len()];
         for row in std::iter::once(&headers).chain(&rows) {
             for (index, cell) in row.iter().enumerate() {
@@ -835,27 +696,26 @@ impl<'a> Report<'a> {
         }
         if widths.iter().map(|width| width + 2).sum::<usize>().saturating_sub(2) <= self.width {
             let styled = std::iter::once((headers, muted)).chain(rows.into_iter().map(|row| (row, text)));
-            return styled
-                .map(|(cells, base)| {
-                    let cells = cells.into_iter().zip(&widths);
-                    let cells: Vec<_> = cells
-                        .map(|(cell, width)| pad(under(cell, base), *width).spans)
-                        .collect();
-                    trim_end(Line::from(cells.join(&Span::raw("  "))))
-                })
-                .collect();
+            let row = |(cells, base): (Vec<Line<'static>>, Style)| {
+                let cells = cells.into_iter().zip(&widths);
+                let cells: Vec<_> = cells
+                    .map(|(cell, width)| pad(under(cell, base), *width).spans)
+                    .collect();
+                trim_end(Line::from(cells.join(&Span::raw("  "))))
+            };
+            return styled.map(row).collect();
         }
         let mut lines = vec![under(headers[0].clone(), muted)];
         for row in rows {
-            let facts: Vec<_> = row[1..]
-                .iter()
-                .zip(&headers[1..])
-                .filter(|(cell, _)| cell.width() > 0)
-                .map(|(cell, header)| format!("{} {}", plain(header), plain(cell)).trim().to_owned())
+            let facts = row[1..].iter().zip(&headers[1..]).filter(|(cell, _)| cell.width() > 0);
+            let facts: Vec<_> = facts
+                .map(|(cell, header)| format!("{} {}", plain(header), plain(cell)))
                 .collect();
+            let facts: Vec<_> = facts.iter().map(|fact| fact.trim().to_owned()).collect();
             lines.push(under(row[0].clone(), text));
+            let facts = wrap_parts(&facts, self.width.saturating_sub(2));
             lines.extend(
-                wrap_parts(&facts, self.width.saturating_sub(2))
+                facts
                     .into_iter()
                     .map(|fact| Line::from(vec![Span::raw("  "), span(fact, muted)])),
             );
@@ -866,30 +726,27 @@ impl<'a> Report<'a> {
 
 /// Go's latencyCells: median, Added, P95, jitter and probe timeouts.
 fn latency_cells(population: &ServerLatencyResult, idle: Option<u64>) -> Vec<String> {
-    let summary = population.summary;
-    let mut cells = vec![MISSING.to_owned(); 5];
-    if let Some(median) = population.median() {
-        cells[0] = ms(median);
-        if let Some(idle) = idle {
-            cells[1] = format!("{} ms", format::added_ms((median as f64 - idle as f64) / 1e6));
-        }
-    }
-    if let Some(distribution) = summary.distribution {
-        cells[2] = ms(distribution.p95);
-    }
-    if let Some(jitter) = summary.jitter {
-        cells[3] = ms(jitter);
-    }
+    let (summary, median) = (population.summary, population.median());
+    let added = median
+        .zip(idle)
+        .map(|(median, idle)| (median as f64 - idle as f64) / 1e6);
+    let added = added.map(|added| format!("{} ms", format::added_ms(added)));
+    let p95 = summary.distribution.map(|distribution| ms(distribution.p95));
+    let cells = [median.map(ms), added, p95, summary.jitter.map(ms)];
+    let mut cells: Vec<_> = cells
+        .into_iter()
+        .map(|cell| cell.unwrap_or_else(|| MISSING.to_owned()))
+        .collect();
+    cells.push(MISSING.to_owned());
     if let Some(ratio) = summary.timeout_ratio() {
         cells[4] = format!(
             "{} / {}",
             count(summary.timeouts),
             count(summary.count + summary.timeouts)
         );
-        if ratio >= 0.01 {
-            cells[4].push_str(&format!(" ({:.1}%)", ratio * 100.0));
-        } else if ratio > 0.0 {
-            cells[4].push_str(&format!(" ({:.2}%)", ratio * 100.0));
+        if ratio > 0.0 {
+            let precision = if ratio >= 0.01 { 1 } else { 2 };
+            cells[4].push_str(&format!(" ({:.precision$}%)", ratio * 100.0));
         }
     }
     cells
@@ -899,9 +756,7 @@ fn latency_cells(population: &ServerLatencyResult, idle: Option<u64>) -> Vec<Str
 fn latency_facts(population: &ServerLatencyResult) -> Vec<String> {
     let summary = population.summary;
     let mut facts = vec![format!("{} replies", count(summary.count))];
-    if let Some(elapsed) = population.elapsed.filter(|elapsed| !elapsed.is_zero()) {
-        facts.push(clock(elapsed));
-    }
+    facts.extend(population.elapsed.filter(|elapsed| !elapsed.is_zero()).map(clock));
     if summary.unresolved > 0 {
         facts.push(format!("unfinished probes {}", count(summary.unresolved)));
     }
@@ -916,17 +771,14 @@ fn throughput_facts(measurement: &MeasurementResult, brief: bool) -> Vec<String>
     let mut facts = Vec::new();
     if let Some(peak) = measurement.peak_bytes_per_sec.filter(|peak| *peak > 0.0) {
         let peak = format::rate(peak);
-        let unit = measurement
-            .mean_bytes_per_sec
-            .filter(|_| brief)
-            .and_then(|mean| Some(format!(" {}", format::rate(mean).rsplit_once(' ')?.1)));
+        let mean = measurement.mean_bytes_per_sec.filter(|_| brief).map(format::rate);
+        let unit = mean.and_then(|mean| Some(format!(" {}", mean.rsplit_once(' ')?.1)));
         let peak = unit.and_then(|unit| peak.strip_suffix(&unit)).unwrap_or(&peak);
         facts.push(format!("peak {peak}"));
     }
     facts.push(format::bytes(measurement.total_bytes));
-    if let Some(elapsed) = measurement.elapsed_nanos.filter(|elapsed| *elapsed > 0) {
-        facts.push(clock(std::time::Duration::from_nanos(elapsed)));
-    }
+    let elapsed = measurement.elapsed_nanos.filter(|elapsed| *elapsed > 0);
+    facts.extend(elapsed.map(|elapsed| clock(Duration::from_nanos(elapsed))));
     if measurement.samples > 0 && !brief {
         facts.push(format!("{} samples", count(measurement.samples)));
     }
@@ -941,24 +793,22 @@ pub(crate) fn ms(nanos: u64) -> String {
     format!("{} ms", format::latency_ms(nanos as f64 / 1e6))
 }
 
-/// Go's fmtCount.
+/// Go's fmtCount: thousands separated by commas.
 fn count(value: usize) -> String {
     let digits = value.to_string();
-    let mut out = String::new();
-    for (index, digit) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(digit);
-    }
-    out
+    let groups = digits
+        .as_bytes()
+        .rchunks(3)
+        .rev()
+        .map(|group| String::from_utf8_lossy(group));
+    groups.collect::<Vec<_>>().join(",")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        model::ServerContribution,
+        model::ServerFailure,
         theme::Profile,
         ui::tests::{download_measurement, latency_result, probes},
     };

@@ -1212,7 +1212,9 @@ async fn intervals_and_failures_share_the_run_clock() -> Result<(), Error> {
     assert_eq!((failure.server_id.as_str(), failure.stage), ("far", Stage::Upload));
     // Go times both from the run's start: two warmups, the download window and the checkpoint budget.
     assert!(failure.at >= Duration::from_secs(3), "{:?}", failure.at);
-    let details = crate::report::details(&snapshot, None, crate::report::WIDTH);
+    let report = crate::report::Report::new(&snapshot, None, crate::report::WIDTH, Default::default());
+    let details: Vec<_> = report.details(true).iter().map(crate::report::plain).collect();
+    let details = details.join("\n");
     let intervals: Vec<_> = details
         .lines()
         .skip_while(|line| *line != "Aggregation intervals")
