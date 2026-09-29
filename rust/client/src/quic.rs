@@ -258,7 +258,6 @@ impl Origin {
 mod tests {
     use super::*;
     use http3::{Code, WtCode};
-    use rustls::pki_types::CertificateDer;
     #[test]
     fn request_authority_is_fixed_and_never_accepts_credentials() {
         let origin = Origin::from_uri(&"https://METER.example:443/path".parse().unwrap()).unwrap();
@@ -307,17 +306,7 @@ mod tests {
 
     #[tokio::test]
     async fn native_streaming_and_body_limits() -> Result<(), Error> {
-        use rustls::pki_types::{PrivateKeyDer, pem::PemObject};
-        let (certificate, key) = crate::test_identity::generate_identity("localhost")?;
-        let provider = Arc::new(crate::crypto::provider());
-        let mut tls = rustls::ServerConfig::builder_with_provider(provider)
-            .with_protocol_versions(&[&rustls::version::TLS13])?
-            .with_no_client_auth()
-            .with_single_cert(
-                vec![CertificateDer::from_pem_slice(certificate.as_bytes())?],
-                PrivateKeyDer::from_pem_slice(key.as_bytes())?,
-            )?;
-        tls.alpn_protocols = vec![b"h3".to_vec()];
+        let tls = crate::fixtures::server_tls(&[&rustls::version::TLS13], &[b"h3"])?;
         let config =
             quinn::ServerConfig::with_crypto(Arc::new(quinn::crypto::rustls::QuicServerConfig::try_from(tls)?));
         let server = quinn::Endpoint::server(config, "127.0.0.1:0".parse()?)?;

@@ -443,14 +443,8 @@ async fn negotiated_protocol_behind_a_reverse_proxy_is_the_clients_own() -> Resu
     use http_body_util::Full;
     use hyper::{body::Bytes, server::conn::http2, service::service_fn};
     use hyper_util::rt::{TokioExecutor, TokioIo};
-    use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
     let _ = crate::crypto::provider().install_default();
-    let (certificate, key) = crate::test_identity::generate_identity("localhost")?;
-    let mut tls = rustls::ServerConfig::builder().with_no_client_auth().with_single_cert(
-        vec![CertificateDer::from_pem_slice(certificate.as_bytes())?],
-        PrivateKeyDer::from_pem_slice(key.as_bytes())?,
-    )?;
-    tls.alpn_protocols = vec![b"h2".to_vec()];
+    let tls = crate::fixtures::server_tls(rustls::DEFAULT_VERSIONS, &[b"h2"])?;
     let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(tls));
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let origin = format!("https://{}", listener.local_addr()?);

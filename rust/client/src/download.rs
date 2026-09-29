@@ -265,8 +265,9 @@ async fn receive_stream(
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
+    use crate::fixtures::h3_endpoint;
     use crate::transport::TRANSFER_RETRY_BACKOFF;
     use graphite_meter_core::discovery::Protocol;
     use tokio::{
@@ -392,22 +393,6 @@ pub(crate) mod tests {
         let dials = dials.lock().unwrap();
         assert!(dials[1] - dials[0] >= Duration::from_secs(1), "{dials:?}");
         Ok(())
-    }
-
-    /// A local HTTP/3 endpoint whose certificate the client takes only when insecure.
-    pub(crate) fn h3_endpoint() -> Result<(quinn::Endpoint, String), Error> {
-        use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
-        let (certificate, key) = crate::test_identity::generate_identity("localhost")?;
-        let mut tls = rustls::ServerConfig::builder().with_no_client_auth().with_single_cert(
-            vec![CertificateDer::from_pem_slice(certificate.as_bytes())?],
-            PrivateKeyDer::from_pem_slice(key.as_bytes())?,
-        )?;
-        tls.alpn_protocols = vec![b"h3".to_vec()];
-        let tls = quinn::crypto::rustls::QuicServerConfig::try_from(tls)?;
-        let endpoint =
-            quinn::Endpoint::server(quinn::ServerConfig::with_crypto(Arc::new(tls)), "127.0.0.1:0".parse()?)?;
-        let origin = format!("https://{}", endpoint.local_addr()?);
-        Ok((endpoint, origin))
     }
 
     /// Go's TestLanePersistence (transfer_test.go:87-151): only a refusal ends a lane at once; a

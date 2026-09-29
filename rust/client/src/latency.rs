@@ -892,15 +892,8 @@ mod tests {
     /// Latency over WSS takes the TLS 1.2 that throughput takes, as Go's WebSocket client does.
     #[tokio::test]
     async fn secure_websocket_latency_accepts_tls12_like_throughput() -> Result<(), Error> {
-        use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
         let _ = crate::crypto::provider().install_default();
-        let (certificate, key) = crate::test_identity::generate_identity("localhost")?;
-        let tls = rustls::ServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS12])
-            .with_no_client_auth()
-            .with_single_cert(
-                vec![CertificateDer::from_pem_slice(certificate.as_bytes())?],
-                PrivateKeyDer::from_pem_slice(key.as_bytes())?,
-            )?;
+        let tls = crate::fixtures::server_tls(&[&rustls::version::TLS12], &[])?;
         let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(tls));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let origin = format!("https://{}", listener.local_addr()?);

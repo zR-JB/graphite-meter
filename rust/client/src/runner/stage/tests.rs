@@ -15,8 +15,6 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::test_identity;
-
 impl ServerContribution {
     fn down_bps(&self) -> Option<f64> {
         self.down.as_ref()?.mean_bytes_per_sec
@@ -36,15 +34,7 @@ async fn download_peer() -> Result<(String, Arc<AtomicU8>, JoinHandle<()>), Erro
 async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, Arc<AtomicU8>, JoinHandle<()>), Error> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let origin = format!("https://{}", listener.local_addr()?);
-    use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
-    let (certificate, key) = test_identity::generate_identity("localhost")?;
-    let tls = rustls::ServerConfig::builder_with_provider(Arc::new(crate::crypto::provider()))
-        .with_protocol_versions(&[&rustls::version::TLS13])?
-        .with_no_client_auth()
-        .with_single_cert(
-            vec![CertificateDer::from_pem_slice(certificate.as_bytes())?],
-            PrivateKeyDer::from_pem_slice(key.as_bytes())?,
-        )?;
+    let tls = crate::fixtures::server_tls(&[&rustls::version::TLS13], &[])?;
     let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(tls));
     let failed = Arc::new(AtomicU8::new(0));
     let flag = failed.clone();

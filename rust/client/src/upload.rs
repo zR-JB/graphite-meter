@@ -734,7 +734,7 @@ mod tests {
     #[tokio::test]
     async fn a_revoked_record_asks_for_sign_in() -> Result<(), Error> {
         let _ = crate::crypto::provider().install_default();
-        let (endpoint, origin) = crate::download::tests::h3_endpoint()?;
+        let (endpoint, origin) = crate::fixtures::h3_endpoint()?;
         let server = tokio::spawn(async move {
             let quic = endpoint.accept().await.ok_or("endpoint closed")?.await?;
             let mut connection = graphite_meter_http3::server::Connection::new(quic, None);
