@@ -16,7 +16,7 @@ mod ticket;
 
 pub use session::{SESSION_LIFETIME, Session, SessionError, SessionLease, SessionStore};
 
-pub use grant::{AuthLease, GrantError, secure_browser_origin};
+pub use grant::{AuthLease, secure_browser_origin};
 pub use route::AuthRoute;
 pub use ticket::{SocketKind, Ticket, TicketError};
 

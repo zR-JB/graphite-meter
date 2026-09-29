@@ -1,6 +1,6 @@
 //! Browser/CLI approval handshakes. HTTP origin, CSRF and rate checks precede these APIs.
 use super::{
-    grant::{AuthLease, GrantError, MAX_SESSION_GRANTS, secure_browser_origin},
+    grant::{AuthLease, GrantError, MAX_SESSION_GRANTS},
     session::{SessionLease, SessionStore, State},
 };
 use crate::sync::lock;
@@ -21,8 +21,6 @@ pub enum ApprovalKind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApprovalError {
-    InvalidChallenge,
-    InvalidOrigin,
     NoSession,
     InvalidApproval,
     Capacity,
@@ -32,7 +30,6 @@ pub enum ApprovalError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExchangeError {
     InvalidVerifier,
-    InvalidOrigin,
     GrantCapacity,
     RandomUnavailable,
 }
@@ -104,7 +101,6 @@ impl SessionStore {
         challenge: &str,
         client: IpAddr,
     ) -> Result<ApprovalView, ApprovalError> {
-        let code = approval::verification_code(challenge).ok_or(ApprovalError::InvalidChallenge)?;
         let mut state = lock(&self.0);
         let now = Instant::now();
         state.sweep(now);
@@ -132,7 +128,7 @@ impl SessionStore {
             client_keys: crate::client_address::client_keys(client),
             session: Some(session.clone()),
             browser_origin: None,
-            code,
+            code: code(challenge),
             deadline: now + APPROVAL_LIFETIME,
             approved: false,
         };
@@ -150,10 +146,6 @@ impl SessionStore {
         session: Option<&SessionLease>,
         client: IpAddr,
     ) -> Result<ApprovalView, ApprovalError> {
-        let code = approval::verification_code(challenge).ok_or(ApprovalError::InvalidChallenge)?;
-        if !secure_browser_origin(origin) {
-            return Err(ApprovalError::InvalidOrigin);
-        }
         let mut state = lock(&self.0);
         let now = Instant::now();
         state.sweep(now);
@@ -172,7 +164,7 @@ impl SessionStore {
                     client_keys: crate::client_address::client_keys(client),
                     session: None,
                     browser_origin: Some(origin.into()),
-                    code,
+                    code: code(challenge),
                     deadline: now + APPROVAL_LIFETIME,
                     approved: false,
                 },
@@ -246,9 +238,6 @@ impl SessionStore {
     }
 
     pub fn exchange_browser(&self, verifier: &str, origin: &str) -> Result<Exchange, ExchangeError> {
-        if !secure_browser_origin(origin) {
-            return Err(ExchangeError::InvalidOrigin);
-        }
         if !(32..=128).contains(&verifier.len()) {
             return Err(ExchangeError::InvalidVerifier);
         }
@@ -287,7 +276,6 @@ impl SessionStore {
             Err(GrantError::NoSession) => Ok(Exchange::Pending),
             Err(GrantError::Capacity) => Err(ExchangeError::GrantCapacity),
             Err(GrantError::RandomUnavailable) => Err(ExchangeError::RandomUnavailable),
-            Err(GrantError::InvalidOrigin) => Err(ExchangeError::InvalidOrigin),
         }
     }
 }
@@ -296,9 +284,67 @@ pub fn valid_challenge(challenge: &str) -> bool {
     approval::verification_code(challenge).is_some()
 }
 
+/// The code a page shows for a challenge the HTTP handler validated.
+fn code(challenge: &str) -> String {
+    approval::verification_code(challenge).expect("a validated challenge")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browser_capacity_is_reported_without_revoking_or_approving_existing_clients() {
+        let store = SessionStore::new();
+        let (_, session) = store.create("subject", "Name", "local", None).unwrap();
+        let verifier = "v".repeat(32);
+        let challenge = approval::challenge(&verifier);
+        store
+            .begin_browser_approval(
+                &challenge,
+                "https://client.example",
+                Some(&session),
+                "192.0.2.1".parse().unwrap(),
+            )
+            .unwrap();
+        let grants: Vec<_> = (0..8)
+            .map(|_| store.issue_browser_grant(&session, "https://client.example").unwrap().0)
+            .collect();
+        assert!(matches!(
+            store.begin_browser_approval(
+                &challenge,
+                "https://client.example",
+                Some(&session),
+                "192.0.2.1".parse().unwrap()
+            ),
+            Err(ApprovalError::GrantCapacity)
+        ));
+        assert!(matches!(
+            store.approve(&session, &challenge, ApprovalKind::Browser),
+            Err(ApprovalError::GrantCapacity)
+        ));
+        assert!(matches!(
+            store.exchange_browser(&verifier, "https://client.example"),
+            Err(ExchangeError::GrantCapacity)
+        ));
+        assert!(matches!(
+            store.exchange_browser(&verifier, "https://wrong.example").unwrap(),
+            Exchange::Pending
+        ));
+        for grant in &grants {
+            assert!(store.lookup_bearer(grant).is_some());
+        }
+        store.revoke_grant(&grants[0]);
+        assert!(matches!(
+            store.exchange_browser(&verifier, "https://client.example").unwrap(),
+            Exchange::Pending
+        ));
+        store.approve(&session, &challenge, ApprovalKind::Browser).unwrap();
+        assert!(matches!(
+            store.exchange_browser(&verifier, "https://client.example").unwrap(),
+            Exchange::Issued { .. }
+        ));
+    }
 
     #[test]
     fn reentry_keeps_original_deadline_and_revocation_removes_attached_approvals() {

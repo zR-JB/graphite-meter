@@ -1,6 +1,6 @@
 use graphite_meter_server::{
     auth::{
-        AuthLease, SessionStore, SocketKind,
+        ApprovalKind, AuthLease, Exchange, SessionLease, SessionStore, SocketKind,
         policy::{Authorization, Connection, Listener, Policy, Refusal},
     },
     config::AuthMode,
@@ -19,6 +19,30 @@ fn policy(store: &SessionStore) -> Policy {
         store.clone(),
     )
     .unwrap()
+}
+
+/// A grant's bearer token, issued by an approved exchange for the browser `origin`, or a terminal.
+fn grant(store: &SessionStore, session: &SessionLease, origin: Option<&str>) -> String {
+    let verifier = "v".repeat(43);
+    let challenge = graphite_meter_core::approval::challenge(&verifier);
+    let client = "192.0.2.1".parse().unwrap();
+    let kind = match origin {
+        Some(origin) => store
+            .begin_browser_approval(&challenge, origin, Some(session), client)
+            .map(|_| ApprovalKind::Browser),
+        None => store
+            .begin_cli_approval(session, &challenge, client)
+            .map(|_| ApprovalKind::Cli),
+    };
+    store.approve(session, &challenge, kind.unwrap()).unwrap();
+    let exchange = match origin {
+        Some(origin) => store.exchange_browser(&verifier, origin),
+        None => store.exchange_cli(&verifier),
+    };
+    let Ok(Exchange::Issued { token, .. }) = exchange else {
+        panic!("the approved exchange issued no grant")
+    };
+    token
 }
 
 fn peer() -> SocketAddr {
@@ -147,7 +171,7 @@ fn explicit_credentials_never_fall_back_to_ambient_cookies() {
     let store = SessionStore::new();
     let policy = policy(&store);
     let (token, session) = store.create("operator", "Operator", "local", None).unwrap();
-    let (cli, _) = store.issue_cli_grant(&session).unwrap();
+    let cli = grant(&store, &session, None);
     let mut req = request("GET", "/download");
     cookie(&mut req, &token);
     req.headers_mut().insert(header::ORIGIN, PUBLIC.parse().unwrap());
@@ -221,7 +245,7 @@ fn browser_grants_are_audience_and_route_scoped() {
     let store = SessionStore::new();
     let policy = policy(&store);
     let (_, session) = store.create("operator", "Operator", "local", None).unwrap();
-    let (token, _) = store.issue_browser_grant(&session, CLIENT).unwrap();
+    let token = grant(&store, &session, Some(CLIENT));
     let mut req = request("POST", "/upload");
     bearer(&mut req, &token);
     refused(&policy, &req, Refusal::Forbidden);
@@ -242,7 +266,7 @@ fn webtransport_uses_no_cookie_and_burns_tickets_even_with_bearer() {
     let policy = policy(&store);
     let (token, session) = store.create("operator", "Operator", "local", None).unwrap();
     let lease = AuthLease::cookie(session.clone());
-    let (cli, _) = store.issue_cli_grant(&session).unwrap();
+    let cli = grant(&store, &session, None);
     let target = "https://meter.example/wt/ping";
     let listener = Listener {
         ui: false,

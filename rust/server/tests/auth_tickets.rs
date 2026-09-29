@@ -72,43 +72,10 @@ fn failed_binding_burns_ticket_and_combined_capacity_is_preserved() {
     );
 }
 
-#[tokio::test]
-async fn tickets_preserve_browser_child_revocation_and_owner() {
-    let store = SessionStore::new();
-    let (_, session) = store.create("subject", "Name", "local", None).unwrap();
-    let (grant, browser) = store.issue_browser_grant(&session, AUDIENCE).unwrap();
-    let (_, sibling) = store.issue_browser_grant(&session, AUDIENCE).unwrap();
-    let ticket = store
-        .mint_ticket(&browser, PUBLIC, TARGET, AUDIENCE, SocketKind::WebTransport)
-        .unwrap();
-    let unused = store
-        .mint_ticket(&browser, PUBLIC, TARGET, AUDIENCE, SocketKind::WebTransport)
-        .unwrap();
-    let active = store.consume_ticket(&ticket.token, TARGET, AUDIENCE).unwrap();
-    assert_eq!(active.owner(), browser.owner());
-    assert_ne!(active.owner(), sibling.owner());
-    assert_eq!(active.browser_origin(), Some(AUDIENCE));
-    store.revoke_grant(&grant);
-    tokio::time::timeout(Duration::from_secs(1), active.ended())
-        .await
-        .unwrap();
-    assert!(store.consume_ticket(&unused.token, TARGET, AUDIENCE).is_none());
-    assert!(sibling.is_active());
-    assert!(matches!(
-        store.mint_ticket(&browser, PUBLIC, TARGET, AUDIENCE, SocketKind::WebTransport),
-        Err(TicketError::NoSession)
-    ));
-}
-
 #[test]
 fn ticket_mint_rejects_cli_foreign_sessions_and_invalid_targets() {
     let store = SessionStore::new();
     let (_, session) = store.create("subject", "Name", "local", None).unwrap();
-    let (_, cli) = store.issue_cli_grant(&session).unwrap();
-    assert!(matches!(
-        store.mint_ticket(&cli, PUBLIC, TARGET, "", SocketKind::WebTransport),
-        Err(TicketError::NoSession)
-    ));
     let cookie = AuthLease::cookie(session.clone());
     assert!(matches!(
         SessionStore::new().mint_ticket(&cookie, PUBLIC, TARGET, PUBLIC, SocketKind::WebTransport),

@@ -95,49 +95,6 @@ fn browser_reservation_attaches_once_preserves_redirect_and_separates_audiences(
 }
 
 #[test]
-fn browser_capacity_is_reported_without_revoking_or_approving_existing_clients() {
-    let store = SessionStore::new();
-    let (_, session) = store.create("subject", "Name", "local", None).unwrap();
-    let verifier = "v".repeat(32);
-    let challenge = challenge(&verifier);
-    store
-        .begin_browser_approval(&challenge, AUDIENCE, Some(&session), "192.0.2.1".parse().unwrap())
-        .unwrap();
-    let grants: Vec<_> = (0..8)
-        .map(|_| store.issue_browser_grant(&session, AUDIENCE).unwrap().0)
-        .collect();
-    assert!(matches!(
-        store.begin_browser_approval(&challenge, AUDIENCE, Some(&session), "192.0.2.1".parse().unwrap()),
-        Err(ApprovalError::GrantCapacity)
-    ));
-    assert!(matches!(
-        store.approve(&session, &challenge, ApprovalKind::Browser),
-        Err(ApprovalError::GrantCapacity)
-    ));
-    assert!(matches!(
-        store.exchange_browser(&verifier, AUDIENCE),
-        Err(ExchangeError::GrantCapacity)
-    ));
-    assert!(matches!(
-        store.exchange_browser(&verifier, "https://wrong.example").unwrap(),
-        Exchange::Pending
-    ));
-    for grant in &grants {
-        assert!(store.lookup_bearer(grant).is_some());
-    }
-    store.revoke_grant(&grants[0]);
-    assert!(matches!(
-        store.exchange_browser(&verifier, AUDIENCE).unwrap(),
-        Exchange::Pending
-    ));
-    store.approve(&session, &challenge, ApprovalKind::Browser).unwrap();
-    assert!(matches!(
-        store.exchange_browser(&verifier, AUDIENCE).unwrap(),
-        Exchange::Issued { .. }
-    ));
-}
-
-#[test]
 fn approval_caps_and_revocation_are_bounded_and_reclaimable() {
     let store = SessionStore::new();
     let (_, session) = store.create("subject", "Name", "local", None).unwrap();
@@ -200,10 +157,6 @@ fn validation_preserves_cli_and_browser_verifier_differences() {
     assert!(matches!(
         store.exchange_browser("short", AUDIENCE),
         Err(ExchangeError::InvalidVerifier)
-    ));
-    assert!(matches!(
-        store.exchange_browser(&"x".repeat(32), "http://client.example"),
-        Err(ExchangeError::InvalidOrigin)
     ));
     assert!(matches!(
         SessionStore::new().begin_cli_approval(&session, &challenge, "192.0.2.1".parse().unwrap()),

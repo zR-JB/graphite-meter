@@ -176,6 +176,42 @@ pub(super) fn unescape(raw: &str, form: bool) -> Option<String> {
 mod tests {
     use super::*;
     use crate::auth::SESSION_LIFETIME;
+    const PUBLIC: &str = "https://meter.example";
+    const TARGET: &str = "https://meter.example:8443/wt/ping";
+    const AUDIENCE: &str = "https://client.example";
+
+    #[tokio::test]
+    async fn tickets_follow_browser_grant_revocation_and_refuse_cli_grants() {
+        let store = SessionStore::new();
+        let (_, session) = store.create("subject", "Name", "local", None).unwrap();
+        let (grant, browser) = store.issue_browser_grant(&session, AUDIENCE).unwrap();
+        let (_, sibling) = store.issue_browser_grant(&session, AUDIENCE).unwrap();
+        let ticket = store
+            .mint_ticket(&browser, PUBLIC, TARGET, AUDIENCE, SocketKind::WebTransport)
+            .unwrap();
+        let unused = store
+            .mint_ticket(&browser, PUBLIC, TARGET, AUDIENCE, SocketKind::WebTransport)
+            .unwrap();
+        let active = store.consume_ticket(&ticket.token, TARGET, AUDIENCE).unwrap();
+        assert_eq!(active.owner(), browser.owner());
+        assert_ne!(active.owner(), sibling.owner());
+        assert_eq!(active.browser_origin(), Some(AUDIENCE));
+        store.revoke_grant(&grant);
+        tokio::time::timeout(Duration::from_secs(1), active.ended())
+            .await
+            .unwrap();
+        assert!(store.consume_ticket(&unused.token, TARGET, AUDIENCE).is_none());
+        assert!(sibling.is_active());
+        assert!(matches!(
+            store.mint_ticket(&browser, PUBLIC, TARGET, AUDIENCE, SocketKind::WebTransport),
+            Err(TicketError::NoSession)
+        ));
+        let (_, cli) = store.issue_cli_grant(&session).unwrap();
+        assert!(matches!(
+            store.mint_ticket(&cli, PUBLIC, TARGET, "", SocketKind::WebTransport),
+            Err(TicketError::NoSession)
+        ));
+    }
 
     #[test]
     fn expires_at_thirty_seconds_and_reaps_before_capacity_check() {

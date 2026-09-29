@@ -1,4 +1,4 @@
-use super::session::{Session, SessionError, SessionLease, SessionStore, State, random_token, token_hash};
+use super::session::{Session, SessionLease, SessionStore, State, random_token, token_hash};
 use crate::{cors::Access, sync::lock};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use graphite_meter_core::origin::canonical_origin;
@@ -9,9 +9,8 @@ use tokio::{sync::watch, time::Instant};
 pub(super) const MAX_SESSION_GRANTS: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GrantError {
+pub(crate) enum GrantError {
     NoSession,
-    InvalidOrigin,
     Capacity,
     RandomUnavailable,
 }
@@ -101,26 +100,6 @@ impl AuthLease {
 }
 
 impl SessionStore {
-    /// Called only after the CLI approval exchange has authorized this session.
-    pub fn issue_cli_grant(&self, session: &SessionLease) -> Result<(String, AuthLease), GrantError> {
-        self.issue_grant(session, None)
-    }
-
-    /// Called only after browser approval, with its exact canonical HTTPS audience.
-    pub fn issue_browser_grant(&self, session: &SessionLease, origin: &str) -> Result<(String, AuthLease), GrantError> {
-        if !secure_browser_origin(origin) {
-            return Err(GrantError::InvalidOrigin);
-        }
-        self.issue_grant(session, Some(origin))
-    }
-
-    fn issue_grant(&self, session: &SessionLease, origin: Option<&str>) -> Result<(String, AuthLease), GrantError> {
-        let mut state = lock(&self.0);
-        let now = Instant::now();
-        state.sweep(now);
-        state.issue_grant(session, origin, now)
-    }
-
     pub fn lookup_bearer(&self, token: &str) -> Option<AuthLease> {
         self.lookup_bearer_at(token, Instant::now())
     }
@@ -147,10 +126,6 @@ impl SessionStore {
             state.grants.remove(&key);
         }
         None
-    }
-
-    pub fn revoke_grant(&self, token: &str) -> bool {
-        lock(&self.0).remove_grant(&token_hash(token))
     }
 }
 
@@ -188,11 +163,11 @@ impl State {
             None
         };
         // Generate before changing capacity, so RNG failure preserves current grants.
-        let token = random_token::<32>().map_err(grant_random_error)?;
+        let token = random_token::<32>().map_err(|_| GrantError::RandomUnavailable)?;
         let (revoked, _) = watch::channel(false);
         let grant = Some(Arc::new(Grant {
             origin: origin.map(str::to_owned),
-            id: random_token::<16>().map_err(grant_random_error)?,
+            id: random_token::<16>().map_err(|_| GrantError::RandomUnavailable)?,
             revoked,
         }));
         if let Some(key) = evict {
@@ -215,15 +190,135 @@ pub fn secure_browser_origin(origin: &str) -> bool {
     origin.starts_with("https://") && canonical_origin(origin).is_ok_and(|canonical| canonical == origin)
 }
 
-fn grant_random_error(_: SessionError) -> GrantError {
-    GrantError::RandomUnavailable
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::auth::SESSION_LIFETIME;
     use std::time::{Duration, SystemTime};
+
+    /// Grants as an approved exchange issues them, and their revocation, for tests.
+    impl SessionStore {
+        pub(crate) fn issue_cli_grant(&self, session: &SessionLease) -> Result<(String, AuthLease), GrantError> {
+            lock(&self.0).issue_grant(session, None, Instant::now())
+        }
+        pub(crate) fn issue_browser_grant(
+            &self,
+            session: &SessionLease,
+            origin: &str,
+        ) -> Result<(String, AuthLease), GrantError> {
+            lock(&self.0).issue_grant(session, Some(origin), Instant::now())
+        }
+        pub(crate) fn revoke_grant(&self, token: &str) -> bool {
+            lock(&self.0).remove_grant(&token_hash(token))
+        }
+    }
+
+    #[test]
+    fn grant_identity_preserves_parent_budget_but_isolates_browser_uploads() {
+        let store = SessionStore::new();
+        let (_, session) = store.create("subject", "Name", "local", None).unwrap();
+        let cookie = AuthLease::cookie(session.clone());
+        let (cli_token, cli) = store.issue_cli_grant(&session).unwrap();
+        let (first_token, first) = store.issue_browser_grant(&session, "https://client.example").unwrap();
+        let (_, second) = store.issue_browser_grant(&session, "https://client.example").unwrap();
+        assert_eq!(cli.provider(), "cli");
+        assert_eq!(first.provider(), "browser");
+        assert_eq!(cookie.provider(), "local");
+        assert!(cli.is_bearer() && first.is_bearer());
+        assert!(!cookie.is_bearer());
+        assert_ne!(cli.owner(), cookie.owner());
+        assert_eq!(cli.owner().client_keys()[1], cookie.owner().client_keys()[1]);
+        assert_ne!(first.owner(), second.owner());
+        assert_eq!(first.owner().client_keys()[1], cookie.owner().client_keys()[1]);
+        assert_eq!(first.session().id(), second.session().id());
+        assert_eq!(
+            store.lookup_bearer(&first_token).unwrap().browser_origin(),
+            Some("https://client.example")
+        );
+        assert!(store.lookup_bearer(&cli_token).is_some());
+        assert!(store.lookup_bearer(&(cli_token + "=")).is_none());
+    }
+
+    #[test]
+    fn capacity_preserves_browser_grants_and_evicts_only_the_oldest_native_grant() {
+        let store = SessionStore::new();
+        let (_, session) = store.create("subject", "Name", "local", None).unwrap();
+        let (first, lease) = store.issue_cli_grant(&session).unwrap();
+        let (second, _) = store.issue_cli_grant(&session).unwrap();
+        let browsers: Vec<_> = (0..6)
+            .map(|_| store.issue_browser_grant(&session, "https://client.example").unwrap())
+            .collect();
+        assert_eq!(
+            store.issue_browser_grant(&session, "https://client.example").err(),
+            Some(GrantError::Capacity)
+        );
+        let (new, _) = store.issue_cli_grant(&session).unwrap();
+        assert!(store.lookup_bearer(&first).is_none() && !lease.is_active());
+        assert!(store.lookup_bearer(&second).is_some() && store.lookup_bearer(&new).is_some());
+        for (token, lease) in browsers {
+            assert!(store.lookup_bearer(&token).is_some() && lease.is_active());
+        }
+        let (_, only_browsers) = store.create("subject", "Name", "local", None).unwrap();
+        for _ in 0..8 {
+            store
+                .issue_browser_grant(&only_browsers, "https://client.example")
+                .unwrap();
+        }
+        assert_eq!(store.issue_cli_grant(&only_browsers).err(), Some(GrantError::Capacity));
+    }
+
+    #[tokio::test]
+    async fn revocation_wakes_existing_waiters_and_preserves_siblings() {
+        let store = SessionStore::new();
+        let (_, session) = store.create("subject", "Name", "local", None).unwrap();
+        let (token, browser) = store.issue_browser_grant(&session, "https://client.example").unwrap();
+        let (sibling_token, sibling) = store.issue_browser_grant(&session, "https://client.example").unwrap();
+        let active = browser.clone();
+        let waiter = tokio::spawn(async move { active.ended().await });
+        tokio::task::yield_now().await;
+        assert!(store.revoke_grant(&token));
+        tokio::time::timeout(Duration::from_secs(1), waiter)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!browser.is_active() && store.lookup_bearer(&token).is_none());
+        assert!(sibling.is_active() && store.lookup_bearer(&sibling_token).is_some());
+        store.revoke(&session);
+        tokio::time::timeout(Duration::from_secs(1), sibling.ended())
+            .await
+            .unwrap();
+        assert!(store.lookup_bearer(&sibling_token).is_none());
+    }
+
+    #[test]
+    fn foreign_and_revoked_sessions_cannot_issue_grants() {
+        let store = SessionStore::new();
+        let foreign = SessionStore::new();
+        let (_, session) = foreign.create("subject", "Name", "local", None).unwrap();
+        assert_eq!(store.issue_cli_grant(&session).err(), Some(GrantError::NoSession));
+        assert_eq!(
+            store.issue_browser_grant(&session, "https://client.example").err(),
+            Some(GrantError::NoSession)
+        );
+        foreign.revoke(&session);
+        assert_eq!(foreign.issue_cli_grant(&session).err(), Some(GrantError::NoSession));
+    }
+
+    #[test]
+    fn browser_audiences_must_be_exact_canonical_https_origins() {
+        for origin in [
+            "http://client.example",
+            "https://CLIENT.example",
+            "https://client.example:443",
+            "https://client.example/",
+            "https://user@client.example",
+            "https://client.example?",
+            "null",
+        ] {
+            assert!(!secure_browser_origin(origin), "{origin}");
+        }
+        assert!(secure_browser_origin("https://client.example:8443"));
+    }
 
     #[test]
     fn lookup_checks_only_the_selected_grant_and_expires_its_parent_without_sweep() {

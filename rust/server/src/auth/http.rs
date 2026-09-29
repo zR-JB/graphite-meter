@@ -1227,6 +1227,14 @@ mod tests {
         .unwrap();
         let login = call(&service, Method::GET, "/login", &[], String::new()).await;
         assert_eq!(login.status(), StatusCode::OK);
+        let exchange = json!({"verifier": "v".repeat(43)}).to_string();
+        let foreign = [("origin", "http://client.example")];
+        let refused = call(&service, Method::POST, "/auth/browser/token", &foreign, exchange).await;
+        assert_eq!(
+            refused.status(),
+            StatusCode::FORBIDDEN,
+            "a browser token for an insecure origin"
+        );
         let nonce = set_cookie_value(&login, "__Host-gm_login");
         let nonce_cookie = format!("__Host-gm_login={nonce}");
         let rejected = call(
