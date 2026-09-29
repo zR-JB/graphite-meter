@@ -200,29 +200,21 @@ impl Wrapped {
 }
 
 impl Ui {
-    /// Go's size: the terminal, at least 40×12.
-    fn size(&self) -> (usize, usize) {
-        (
-            usize::from(self.size.0).max(MIN_WIDTH),
-            usize::from(self.size.1).max(MIN_HEIGHT),
-        )
-    }
-
     pub(super) fn spinner(&self) -> Span<'static> {
         span(SPINNER[self.spin % SPINNER.len()], self.theme.accent)
     }
 
-    /// Go's layout: the header, the view in the body, and the footer.
+    /// Go's layout in Go's size, the terminal at least 40×12: the header, the view in the body,
+    /// and the footer.
     pub(super) fn layout(&self) -> Layout {
-        let (width, height) = self.size();
-        let inner = width - 2;
+        let height = usize::from(self.size.1).max(MIN_HEIGHT);
+        let inner = usize::from(self.size.0).max(MIN_WIDTH) - 2;
         let mut top = self.header(inner);
         if height > 24 {
             top.push(Line::default());
         }
-        let body_height = height
-            .saturating_sub(top.len() + self.footer(inner, false).len())
-            .max(1);
+        let footer = self.footer(inner, false).len();
+        let body_height = height.saturating_sub(top.len() + footer).max(1);
         let theme = &self.theme;
         let body = if self.popup == Popup::Details {
             let details = match self.shown() {
@@ -296,14 +288,10 @@ impl Ui {
     fn header(&self, width: usize) -> Text {
         let theme = &self.theme;
         let label = self.status_label();
-        let mut pill = theme.pill;
+        let (mut pill, stage) = (theme.pill, self.shown().and_then(|(snapshot, _)| snapshot.stage));
         if let Some((snapshot, _)) = self.shown().filter(|_| !self.running()) {
             pill = theme.outcome(snapshot.phase);
-        } else if let Some(stage) = self
-            .shown()
-            .and_then(|(snapshot, _)| snapshot.stage)
-            .filter(|stage| stage.name() == label)
-        {
+        } else if let Some(stage) = stage.filter(|stage| stage.name() == label) {
             pill.bg = theme.stage(stage).fg;
         }
         let (left, right) = (span(" Graphite Meter ", theme.title), span(format!(" {label} "), pill));
@@ -445,10 +433,9 @@ impl Ui {
     /// Go's startNote: the plan's length, or what keeps the test from starting.
     fn start_note(&self) -> Vec<Span<'static>> {
         let (theme, stages) = (&self.theme, &self.config.stages);
-        let total: Duration = stages
+        let total = stages
             .iter()
-            .map(|stage| self.config.duration(*stage) + self.config.warmup)
-            .sum();
+            .map(|stage| self.config.duration(*stage) + self.config.warmup);
         match self.config.validate() {
             Err(error) => vec![span(error.to_string(), theme.warn)],
             Ok(()) if self.prepare() == Prepare::SignIn => {
@@ -456,7 +443,7 @@ impl Ui {
             }
             Ok(()) if self.prepare() == Prepare::Checking => vec![self.spinner(), span(" checking paths", theme.muted)],
             Ok(()) => {
-                let rounded = Duration::from_secs((total.as_secs_f64() + 0.5) as u64);
+                let rounded = Duration::from_secs((total.sum::<Duration>().as_secs_f64() + 0.5) as u64);
                 let note = format!("{} stages · about {}", stages.len(), words::setting(rounded));
                 vec![span(note, theme.muted)]
             }
@@ -490,21 +477,15 @@ impl Ui {
                 lines.extend(wrapped.into_iter().map(|text| line(format!("  {text}"), theme.warn)));
             }
         }
-        if let Some(error) = self.prepare_error() {
+        // Go's prepareFailed error, when no server shows its own.
+        let failed = self.prepare() == Prepare::Failed && !self.checked().iter().any(|server| server.error.is_some());
+        if let Some(error) = self.check_error.as_deref().filter(|_| failed) {
             lines.extend(wrap(error, width.max(4)).into_iter().map(|text| line(text, theme.warn)));
         }
         if self.can_use_available() && self.snapshot.auth.is_none() {
             lines.push(line("u Use available servers", theme.muted));
         }
-        let (throughput, latency) = self.path_summaries();
-        lines.push(Line::default());
-        lines.push(Line::from(vec![span("Throughput ", theme.text), throughput]));
-        lines.push(Line::from(vec![span("Latency    ", theme.text), latency]));
-        lines
-    }
-
-    /// Go's pathSummaries: each distinct path the check chose, muted once it is no longer fresh.
-    fn path_summaries(&self) -> (Span<'static>, Span<'static>) {
+        // Go's pathSummaries: each distinct path the check chose, muted once it is no longer fresh.
         let (mut throughputs, mut latencies) = (Vec::<String>::new(), Vec::<String>::new());
         for server in self.checked() {
             if !server.checked() || server.error.is_some() {
@@ -519,12 +500,15 @@ impl Ui {
             }
         }
         let fresh = self.checked_key == Some(self.config.preparation_key()) && !self.stale();
-        let style = if fresh { self.theme.value } else { self.theme.muted };
+        let style = if fresh { theme.value } else { theme.muted };
         let value = |summaries: Vec<String>| match summaries.is_empty() {
-            true => span(MISSING, self.theme.muted),
+            true => span(MISSING, theme.muted),
             false => span(summaries.join(" / "), style),
         };
-        (value(throughputs), value(latencies))
+        lines.push(Line::default());
+        lines.push(Line::from(vec![span("Throughput ", theme.text), value(throughputs)]));
+        lines.push(Line::from(vec![span("Latency    ", theme.text), value(latencies)]));
+        lines
     }
 
     /// Go's readiness: each checked server's state and the failure to show under it.
@@ -598,12 +582,8 @@ impl Ui {
 
     /// Go's signInLink: the page's address outside any frame, hard-wrapped, as a link.
     fn sign_in_link(&self, width: usize) -> Text {
-        let url: Vec<char> = self
-            .snapshot
-            .auth
-            .iter()
-            .flat_map(|auth| auth.browser_url.chars())
-            .collect();
+        let auth = self.snapshot.auth.iter();
+        let url: Vec<char> = auth.flat_map(|auth| auth.browser_url.chars()).collect();
         let lines = url.chunks(width.max(1)).map(String::from_iter);
         lines.map(|text| line(text, self.theme.accent)).collect()
     }
@@ -628,10 +608,8 @@ impl Ui {
         let theme = &self.theme;
         let capacity = (height.saturating_sub(4) / 2).max(2);
         let servers = &self.prepared;
-        let start = self
-            .server_row
-            .saturating_sub(capacity / 2)
-            .min(servers.len().saturating_sub(capacity));
+        let last = servers.len().saturating_sub(capacity);
+        let start = self.server_row.saturating_sub(capacity / 2).min(last);
         let states = self.readiness();
         let mut lines = Vec::new();
         for (index, server) in servers.iter().enumerate().skip(start).take(capacity) {
@@ -682,29 +660,15 @@ impl Ui {
         self.row = self.row.saturating_add_signed(super::keys::delta(name)).min(last);
         self.notice.clear();
         let (_, selected) = self.setup_list(usize::from(self.size.0));
-        let layout = self.layout();
+        let (layout, line) = (self.layout(), 1 + selected);
         let bottom = layout.body.len().saturating_sub(layout.body_height);
-        let line = 1 + selected;
         let offset = self.body.min(bottom);
-        if line < offset || line >= offset + layout.body_height {
-            self.body = line.min(bottom);
-        } else {
-            self.body = offset;
-        }
+        let visible = (offset..offset + layout.body_height).contains(&line);
+        self.body = if visible { offset } else { line.min(bottom) };
     }
 
     /// Whether the checked paths are older than Go's preparation freshness.
     pub(super) fn stale(&self) -> bool {
         self.checked_at.is_some_and(|at| at.elapsed() > FRESHNESS)
-    }
-
-    /// The error Go's Servers panel shows under the servers.
-    fn prepare_error(&self) -> Option<&str> {
-        match self.prepare() {
-            Prepare::Failed if !self.checked().iter().any(|server| server.error.is_some()) => {
-                self.check_error.as_deref()
-            }
-            _ => None,
-        }
     }
 }
