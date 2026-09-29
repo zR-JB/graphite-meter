@@ -27,6 +27,9 @@ test("four servers share one run and keep separate receiver windows", async (pag
     config: {
       ...combined,
       stages: { ...baseConfig.stages, bidirectional: true },
+      // Eight transfers start at once, and a receiver's window opens only once every server has reported: in a
+      // 1 s stage the slowest left under the 800 ms evidence floor on a loaded runner.
+      duration: { ...combined.duration, bidirectionalMs: 2000 },
     },
   });
   await ready(page);
