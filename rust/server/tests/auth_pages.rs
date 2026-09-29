@@ -133,7 +133,7 @@ fn oidc_csp_widens_only_form_action_to_validated_origin() {
         "https://*.example",
         "https://identity.example\n",
     ] {
-        assert!(security_headers(Some(origin)).is_err(), "{origin:?}");
+        assert!(security_headers(Some(origin)).is_none(), "{origin:?}");
     }
 }
 

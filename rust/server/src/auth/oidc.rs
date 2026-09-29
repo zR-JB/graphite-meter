@@ -86,7 +86,7 @@ impl Provider {
         // Checked here rather than on every sign-in page: a browser can post only to a canonical origin.
         let origin = split_url(&metadata.authorization_endpoint)?.0.key();
         let page_headers = super::pages::security_headers(Some(&origin))
-            .map_err(|_| format!("OIDC authorization endpoint origin {origin:?} is not a canonical HTTPS origin"))?;
+            .ok_or_else(|| format!("OIDC authorization endpoint origin {origin:?} is not a canonical HTTPS origin"))?;
         Ok(Self {
             page_headers,
             algorithms: Alg::allowed(&metadata.id_token_signing_alg_values_supported),
