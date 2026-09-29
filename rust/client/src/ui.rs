@@ -335,8 +335,9 @@ impl Ui {
             } else {
                 self.notice = snapshot.error.take().unwrap_or_default();
             }
-            // Go checks again after a failed start only; a stopped one leaves a check it replaced spinning.
-            if snapshot.phase != Phase::Cancelled || self.previous.is_none() && self.check_started.is_some() {
+            // Go checks again after a failed start, which the results it keeps hide until esc checks anew, so
+            // only setup checks here; a stopped start leaves a check it replaced spinning.
+            if self.previous.is_none() && (snapshot.phase != Phase::Cancelled || self.check_started.is_some()) {
                 self.recheck_soon();
             }
             match self.previous.take() {

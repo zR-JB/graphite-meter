@@ -833,7 +833,7 @@ fn run_keys_stop_quit_and_return_as_go_does() {
     assert!(!ui.interrupt(&commands));
     assert!(press(&mut ui, &commands, &["ctrl+c"])); // a second interrupt quits at once
     assert!(ui.exit().running && ui.exit().shown.is_none());
-    // Run again keeps the last results until the next run starts, and after a failed start.
+    // Run again keeps the last results until the next run starts, and after a failed start, whose check waits for esc.
     let mut ui = running(&["a"]);
     step(&mut ui, |snapshot| {
         snapshot.results.push(result(Stage::Download, Some(1e6), None));
@@ -854,8 +854,11 @@ fn run_keys_stop_quit_and_return_as_go_does() {
         ..Snapshot::default()
     });
     assert!(ui.shown().is_some_and(|(shown, _)| shown.phase == Phase::Complete)); // a failed start keeps the results
-    assert!(ui.notice.starts_with("Test could not start:") && ui.recheck.is_some());
+    assert!(ui.notice.starts_with("Test could not start:") && ui.status_label() == "Complete");
     assert!(!screen(&mut ui).lines().last().unwrap_or_default().is_empty());
+    ui.recheck = ui.recheck.map(|_| Instant::now()); // a due check's Checking snapshot would bring setup back
+    assert!(!ui.recheck(&commands) && sent.try_recv().is_err() && ui.shown().is_some());
+    assert!(!press(&mut ui, &commands, &["esc"]) && !ui.live && ui.recheck.is_some()); // esc checks anew
     // A start that replaced the first check keeps it checking; stopped, it checks again, where Go's spins on.
     let mut ui = setup();
     step(&mut ui, |snapshot| snapshot.phase = Phase::Checking);
