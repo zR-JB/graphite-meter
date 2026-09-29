@@ -405,6 +405,17 @@ async fn signed_in_head_requests_reach_the_get_pages_as_in_go() {
         assert!(get.starts_with("HTTP/1.1 200"), "{path}: {get}");
         assert!(head.starts_with("HTTP/1.1 200") && body.is_empty(), "{path}: {head}");
     }
+    // Go's http.Redirect gives a HEAD redirect its HTML type but no body.
+    let browser = URL_SAFE_NO_PAD.encode(Sha256::digest(b"head browser verifier"));
+    let page = format!("/auth/browser?challenge={browser}&client_origin=https%3A%2F%2Fclient.example");
+    let (get, _) = h.request("GET", &page, &signed_in, "").await;
+    let cli = format!("/auth/cli?challenge={browser}");
+    let (head, body) = h.request("HEAD", &cli, &signed_in, "").await;
+    assert!(
+        get.starts_with("HTTP/1.1 200") && head.starts_with("HTTP/1.1 303") && body.is_empty(),
+        "{head}"
+    );
+    assert!(head.contains("content-type: text/html; charset=utf-8\r\n"), "{head}");
     // As Go's public routes are GET alone, HEAD opens no page without a session.
     let (head, _) = h.request("HEAD", "/login", "", "").await;
     assert!(head.starts_with("HTTP/1.1 403"), "{head}");

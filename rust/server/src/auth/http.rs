@@ -158,15 +158,11 @@ impl Service {
             },
         };
         // As Go's http.Redirect, a GET's or HEAD's redirect is HTML, and a GET's also links its destination.
-        if result.status() == StatusCode::SEE_OTHER && request.method() == Method::HEAD {
-            result.headers_mut().insert(
-                header::CONTENT_TYPE,
-                HeaderValue::from_static("text/html; charset=utf-8"),
-            );
-        }
-        if result.status() == StatusCode::SEE_OTHER && request.method() == Method::GET {
-            let location = result.headers()[header::LOCATION].to_str().unwrap_or_default();
-            *result.body_mut() = redirect_link(StatusCode::SEE_OTHER, location).into();
+        if result.status() == StatusCode::SEE_OTHER && *method == Method::GET {
+            if request.method() == Method::GET {
+                let location = result.headers()[header::LOCATION].to_str().unwrap_or_default();
+                *result.body_mut() = redirect_link(StatusCode::SEE_OTHER, location).into();
+            }
             result.headers_mut().insert(
                 header::CONTENT_TYPE,
                 HeaderValue::from_static("text/html; charset=utf-8"),
