@@ -485,7 +485,9 @@ fn bypass(entry: &str) -> Option<(Bypass, Option<String>)> {
     if entry == "*" {
         return Some((Bypass::All, None));
     }
-    if let Ok(network) = entry.parse() {
+    // Go's ParseCIDR reads the address as IpAddr does, so one with a leading zero names no network.
+    let address = entry.split_once('/').and_then(|(ip, _)| ip.parse::<IpAddr>().ok());
+    if let Some(network) = address.and_then(|_| entry.parse().ok()) {
         return Some((Bypass::Network(unmapped(network)), None));
     }
     if let Ok(address) = entry.parse::<IpAddr>() {

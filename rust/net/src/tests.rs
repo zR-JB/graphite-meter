@@ -11,7 +11,7 @@ fn bypass_follows_go_no_proxy_rules_and_never_proxies_loopback() {
         "http://proxy.example:3128",
         "http://proxy.example:3128",
         concat!(
-            "corp.example, .sub.example, *.wild.example, pinned.example:8443, 10.0.0.0/8, 192.0.2.7, ",
+            "corp.example, .sub.example, *.wild.example, pinned.example:8443, 10.0.0.0/8, 011.0.0.0/8, 192.0.2.7, ",
             "[2001:db8::1]:443, bad:port, ::ffff:198.51.100.1, ::ffff:203.0.113.0/120, [2001:db8::2], ",
             "[2001:db8::3]:, *star.example, BÜCHER.example, padded.example:080, 192.0.2.8:080, .",
         ),
@@ -27,6 +27,8 @@ fn bypass_follows_go_no_proxy_rules_and_never_proxies_loopback() {
         ("https://pinned.example:8443", true),
         ("https://pinned.example", false),
         ("http://10.1.2.3", true),
+        // Go's ParseCIDR refuses a leading zero, so that entry names no network.
+        ("http://11.1.2.3", false),
         ("http://192.0.2.7:81", true),
         ("https://[2001:db8::1]", true),
         ("https://[2001:db8::1]:8443", false),
