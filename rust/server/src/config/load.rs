@@ -218,9 +218,7 @@ fn trusted_proxies(config: &mut Config, value: &str) -> Result<(), String> {
     config.trusted_proxies = split_list(value)
         .iter()
         .map(|raw| {
-            let prefix = raw
-                .parse::<ipnet::IpNet>()
-                .map_err(|error| format!("{raw:?}: {error}"))?;
+            let prefix = prefix(raw).map_err(|error| format!("{raw:?}: netip.ParsePrefix({raw:?}): {error}"))?;
             if prefix.prefix_len() == 0 {
                 return Err(format!(
                     "{raw:?} trusts every address; list the proxy's actual CIDR instead"
@@ -230,6 +228,22 @@ fn trusted_proxies(config: &mut Config, value: &str) -> Result<(), String> {
         })
         .collect::<Result<_, _>>()?;
     Ok(())
+}
+
+/// Go's netip.ParsePrefix, which refuses a sign or leading zero in the length.
+fn prefix(raw: &str) -> Result<ipnet::IpNet, String> {
+    let (address, bits) = raw.rsplit_once('/').ok_or("no '/'")?;
+    let address = address
+        .parse()
+        .map_err(|_| format!("ParseAddr({address:?}): unable to parse IP"))?;
+    let bits = Some(bits)
+        .filter(|bits| bits.len() == 1 || bits.starts_with(|c: char| matches!(c, '1'..='9')))
+        .and_then(|bits| bits.parse::<i64>().ok())
+        .ok_or_else(|| format!("bad bits after slash: {bits:?}"))?;
+    u8::try_from(bits)
+        .ok()
+        .and_then(|bits| ipnet::IpNet::new(address, bits).ok())
+        .ok_or_else(|| "prefix length out of range".into())
 }
 
 fn auth_mode(config: &mut Config, value: &str) -> Result<(), String> {

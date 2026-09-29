@@ -169,6 +169,8 @@ fn invalid_settings_name_what_failed() {
         ("GM_TRUSTED_PROXIES", "0.0.0.0/0"),
         ("GM_TRUSTED_PROXIES", "10.0.0.0/8,::/0"),
         ("GM_TRUSTED_PROXIES", "127.0.0.1"),
+        ("GM_TRUSTED_PROXIES", "010.0.0.0/8"),
+        ("GM_TRUSTED_PROXIES", "10.0.0.0/08"),
         ("GM_H1_ADDR", ""),
         ("GM_AUTH_MODE", "PASSWORD"),
         ("GM_ADVERTISED_NATIVE_ENDPOINTS", "all,http1-clear"),
@@ -180,6 +182,29 @@ fn invalid_settings_name_what_failed() {
         ("GM_SERVER_CATALOG_FILE", "/nonexistent-catalog.json"),
     ] {
         assert!(failure(&[(name, value)], &[]).contains(name), "{name}={value}");
+    }
+    for (name, value, expected) in [
+        (
+            "GM_TRUSTED_PROXIES",
+            "10.0.0.1",
+            r#""10.0.0.1": netip.ParsePrefix("10.0.0.1"): no '/'"#,
+        ),
+        (
+            "GM_TRUSTED_PROXIES",
+            "10.0.0.0/08",
+            r#""10.0.0.0/08": netip.ParsePrefix("10.0.0.0/08"): bad bits after slash: "08""#,
+        ),
+        (
+            "GM_TRUSTED_PROXIES",
+            "10.0.0.0/33",
+            r#""10.0.0.0/33": netip.ParsePrefix("10.0.0.0/33"): prefix length out of range"#,
+        ),
+    ] {
+        assert_eq!(
+            failure(&[(name, value)], &[]),
+            format!("{name}: {expected}"),
+            "Go's text"
+        );
     }
     assert!(failure(&[("GM_SERVER_CATALOG", ""), ("GM_SERVER_CATALOG_FILE", "")], &[]).contains("only one"));
     assert!(failure(&[("GM_SERVER_CATALOG_FILE", "/nonexistent-catalog.json")], &[]).contains("/nonexistent-catalog"));
