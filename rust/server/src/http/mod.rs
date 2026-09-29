@@ -299,6 +299,8 @@ impl HttpServer {
                 }
             }
         };
+        // As Go's Shutdown, refuse new connections at once rather than leave them unserved in the backlog.
+        drop(listener);
         self.stopping.send_replace(true);
         let _ = tokio::time::timeout(SHUTDOWN_GRACE, async { while tasks.join_next().await.is_some() {} }).await;
         tasks.shutdown().await;
@@ -1433,6 +1435,31 @@ mod tests {
         assert_eq!(server.admission.load().0, 1);
         drop(io);
         assert_eq!(server.admission.load().0, 0);
+    }
+
+    /// As Go's Shutdown closes its listeners, a connection during the drain is refused, not accepted to go unserved.
+    #[tokio::test]
+    async fn a_stopping_listener_refuses_connections_during_its_drain() {
+        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+        let serving = tokio::spawn(server.clone().serve(NativeKind::H1, listener, None, async {
+            let _ = stopped.await;
+        }));
+        // A download its client does not read keeps the drain going.
+        let mut held = TcpStream::connect(address).await.unwrap();
+        held.write_all(b"GET /download?bytes=68719476736 HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        held.read_exact(&mut [0; 12]).await.unwrap();
+        stop.send(()).unwrap();
+        while !*server.stopping.borrow() {
+            tokio::task::yield_now().await;
+        }
+        assert!(TcpStream::connect(address).await.is_err(), "connected while draining");
+        drop(held);
+        serving.await.unwrap().unwrap();
     }
 
     #[tokio::test(start_paused = true)]
