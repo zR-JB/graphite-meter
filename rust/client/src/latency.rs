@@ -4,7 +4,7 @@ use crate::{
     Error,
     failure::Failure,
     net::Http,
-    transport::{REDIAL_WINDOW, restore},
+    transport::{REDIAL_WINDOW, TRANSFER_RETRY_BACKOFF, restore},
 };
 use futures_util::{SinkExt, StreamExt};
 use graphite_meter_core::{
@@ -79,48 +79,74 @@ pub(crate) async fn run(
     if duration.is_zero() || duration.as_nanos() > i64::MAX as u128 {
         return Err("latency interval and bounded duration must be positive".into());
     }
-    let Some(mut socket) = redial(http, target, &mut cancel, Instant::now() + REDIAL_WINDOW).await? else {
-        return Ok(());
+    let first = dial(http, target, Instant::now() + REDIAL_WINDOW);
+    let mut socket = tokio::select! {
+        biased;
+        _ = stopped(&mut cancel, Stop::Drain) => return Ok(()),
+        bus = first => bus?,
     };
     let end = Instant::now()
         .checked_add(duration)
         .ok_or("latency duration exceeds clock range")?;
-    // One estimate per stage, as in Go: a redial must not restart at the 250 ms floor.
-    let mut estimator = DeadlineEstimator::default();
+    let mut ledger = Ledger::default();
     loop {
         observations
             .send(Observation::ConnectionBoundary)
             .await
             .map_err(|_| "latency observation consumer closed")?;
-        let result = measure(
-            socket,
-            interval,
-            window,
-            end,
-            &mut estimator,
-            &observations,
-            &mut cancel,
-        )
-        .await;
+        let opened = Instant::now();
+        let result = measure(socket, interval, window, end, &mut ledger, &observations, &mut cancel).await;
         let Err(error) = result else {
             return Ok(());
         };
         // As Go's measureLatency (latency.go:244-264), a lost channel is dialled again whatever
-        // ended it but a revoked grant; once the window has ended, the loss ends the session.
-        if !lost(&error) {
+        // ended it but a revoked grant, once a probe was ever answered (probeLedger.interrupt);
+        // once the window has ended, the loss ends the session.
+        if !lost(&error) || !ledger.answered {
             return Err(error);
         }
         if *cancel.borrow() >= Stop::Drain {
             return Ok(());
         }
-        // A redial's window is cut short by the stage end (latency.go:256).
-        let window = (Instant::now() + REDIAL_WINDOW).min(end);
-        socket = match redial(http, target, &mut cancel, window).await {
-            Ok(Some(socket)) => socket,
-            Ok(None) => return Ok(()),
-            Err(_) if Instant::now() >= end => return Ok(()),
-            Err(error) => return Err(error),
+        // A redial's window is cut short by the stage end (latency.go:256). A channel lost as
+        // it opened waits as a lane that failed at once does (transfer.go:100-103), so a server
+        // that ends each channel at once is never dialled in a tight loop.
+        let now = Instant::now();
+        let bound = (now + REDIAL_WINDOW).min(end);
+        let pause = if opened.elapsed() < TRANSFER_RETRY_BACKOFF {
+            TRANSFER_RETRY_BACKOFF
+        } else {
+            Duration::ZERO
         };
+        let redial = async {
+            tokio::time::sleep_until((now + pause).min(bound)).await;
+            dial(http, target, bound).await
+        };
+        socket = tokio::select! {
+            biased;
+            _ = stopped(&mut cancel, Stop::Drain) => return Ok(()),
+            bus = redial => match bus {
+                Ok(bus) => bus,
+                Err(_) if Instant::now() >= end => return Ok(()),
+                Err(error) => return Err(error),
+            },
+        };
+    }
+}
+
+/// What a session learns across its channels, as Go's probeLedger keeps it: one deadline
+/// estimate, so a redial does not restart at the 250 ms floor, and whether any probe was answered.
+#[derive(Default)]
+struct Ledger {
+    estimator: DeadlineEstimator,
+    answered: bool,
+}
+
+impl Ledger {
+    /// A probe's reply, in time or late, after `rtt`.
+    fn observe(&mut self, rtt: Duration) {
+        self.estimator.observe(rtt.as_nanos() as u64);
+        self.answered = true;
     }
 }
 
@@ -134,21 +160,12 @@ fn lost(error: &Error) -> bool {
 }
 
 /// Go's redialPingBus (latency.go:124-132): the channel dialled until `deadline`, paced as Go's
-/// restore paces it; `None` once the session is stopped.
-async fn redial(
-    http: &Http,
-    target: &LatencyTarget,
-    cancel: &mut watch::Receiver<Stop>,
-    deadline: Instant,
-) -> Result<Option<Bus>, Error> {
-    let dial = restore("latency channel", deadline, || {
+/// restore paces it.
+async fn dial(http: &Http, target: &LatencyTarget, deadline: Instant) -> Result<Bus, Error> {
+    restore("latency channel", deadline, || {
         connect(http, &target.base_url, target.transport)
-    });
-    tokio::select! {
-        biased;
-        _ = stopped(cancel, Stop::Drain) => Ok(None),
-        bus = dial => bus.map(Some),
-    }
+    })
+    .await
 }
 
 enum Bus {
@@ -356,7 +373,7 @@ async fn measure(
     interval: Duration,
     window: usize,
     end: Instant,
-    estimator: &mut DeadlineEstimator,
+    ledger: &mut Ledger,
     observations: &mpsc::Sender<Observation>,
     cancel: &mut watch::Receiver<Stop>,
 ) -> Result<(), Error> {
@@ -395,7 +412,7 @@ async fn measure(
             }
             () = due(next_send), if sending && next_send < end => {
                 let sent = Instant::now();
-                let timeout = Duration::from_nanos(estimator.deadline_nanos());
+                let timeout = Duration::from_nanos(ledger.estimator.deadline_nanos());
                 next_send = if interval.is_zero() {
                     sent + timeout
                 } else {
@@ -423,12 +440,12 @@ async fn measure(
                         // As Go's reader, every pong sends the next reply-driven probe, late or not.
                         if interval.is_zero() { next_send = received; }
                         if let Some(sent) = late.remove(&pong.id) {
-                            estimator.observe(received.saturating_duration_since(sent).as_nanos() as u64);
+                            ledger.observe(received.saturating_duration_since(sent));
                             continue;
                         }
                         let Some((sent, deadline)) = pending.remove(&pong.id) else { continue };
                         let rtt = received.saturating_duration_since(sent);
-                        estimator.observe(rtt.as_nanos() as u64);
+                        ledger.observe(rtt);
                         let observation = if received >= deadline {
                             Observation::Lost { sent, outcome: ProbeOutcome::Timeout }
                         } else {
@@ -534,9 +551,7 @@ mod tests {
             base_url: origin,
             transport: LatencyTransport::WebSocket,
         };
-        let (_stop, mut cancel) = watch::channel(Stop::Running);
-        let bus = redial(&http, &target, &mut cancel, Instant::now() + REDIAL_WINDOW).await?;
-        assert!(bus.is_some());
+        dial(&http, &target, Instant::now() + REDIAL_WINDOW).await?;
         let (attempts, minimum) = peer.await??;
         assert!(attempts[1] - attempts[0] + Duration::from_millis(20) >= minimum);
         assert!(attempts[2] - attempts[1] >= Duration::from_secs(1));
@@ -587,10 +602,10 @@ mod tests {
         };
         let redials = Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen = redials.clone();
-        // The first channel closes at once; the redials find upgrades refused.
+        // The first channel answers a probe and closes; the redials find upgrades refused.
         let peer = tokio::spawn(async move {
             let (stream, _) = listener.accept().await?;
-            tokio_tungstenite::accept_async(stream).await?.close(None).await?;
+            end_after_an_answer(&mut tokio_tungstenite::accept_async(stream).await?, LaneEnding::Idle).await?;
             for _ in 0..32 {
                 let (mut stream, _) = listener.accept().await?;
                 seen.lock().unwrap().push(Instant::now());
@@ -663,6 +678,91 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// As Go's TestMeasureLatencyFailsPromptlyOnAnUnprovenBus (latency_test.go:134-148): a channel
+    /// that never answered a probe fails when it is lost, dialled once (probeLedger.interrupt).
+    #[tokio::test]
+    async fn a_channel_that_never_answered_fails_when_it_is_lost() -> Result<(), Error> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let _ = crate::crypto::provider().install_default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let target = LatencyTarget {
+            base_url: format!("http://{}", listener.local_addr()?),
+            transport: LatencyTransport::WebSocket,
+        };
+        let dials = Arc::new(AtomicUsize::new(0));
+        let dialled = dials.clone();
+        let peer = tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                dialled.fetch_add(1, Ordering::SeqCst);
+                if let Ok(mut socket) = tokio_tungstenite::accept_async(stream).await {
+                    let _ = socket.close(Some(close_frame(LaneEnding::Finished))).await;
+                }
+            }
+        });
+        let (observations, _observed) = mpsc::channel(64);
+        let (_stop, cancel) = watch::channel(Stop::Running);
+        let timing = (Duration::from_millis(50), Duration::from_secs(1), 16);
+        let (http, started) = (Http::new(false)?, Instant::now());
+        let session = run(&http, &target, timing, observations, cancel);
+        let lost = tokio::time::timeout(Duration::from_secs(5), session).await?;
+        peer.abort();
+        let (lasted, dials) = (started.elapsed(), dials.load(Ordering::SeqCst));
+        assert!(lost.is_err() && dials == 1, "{lost:?} after {dials} dials");
+        assert!(lasted < Duration::from_millis(500), "failed after {lasted:?}");
+        Ok(())
+    }
+
+    /// A channel that answered, then is lost each time it opens, is dialled again at a lane's
+    /// pace, 500 ms after a quick loss (transfer.go:95-104), never in a tight loop.
+    #[tokio::test]
+    async fn a_channel_lost_as_it_opens_is_dialled_again_at_a_lanes_pace() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let target = LatencyTarget {
+            base_url: format!("http://{}", listener.local_addr()?),
+            transport: LatencyTransport::WebSocket,
+        };
+        let dials = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = dials.clone();
+        // Only the first channel answers a probe before it ends.
+        let peer = tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let first = {
+                    let mut dials = seen.lock().unwrap();
+                    dials.push(Instant::now());
+                    dials.len() == 1
+                };
+                let Ok(mut socket) = tokio_tungstenite::accept_async(stream).await else {
+                    continue;
+                };
+                let _ = match first {
+                    true => end_after_an_answer(&mut socket, LaneEnding::Idle).await,
+                    false => socket
+                        .close(Some(close_frame(LaneEnding::Idle)))
+                        .await
+                        .map_err(Into::into),
+                };
+            }
+        });
+        let (observations, _observed) = mpsc::channel(64);
+        let (_stop, cancel) = watch::channel(Stop::Running);
+        let timing = (Duration::from_millis(50), Duration::from_millis(1600), 16);
+        let http = Http::new(false)?;
+        let session = run(&http, &target, timing, observations, cancel);
+        let result = tokio::time::timeout(Duration::from_secs(5), session).await;
+        peer.abort();
+        result??;
+        let dials = dials.lock().unwrap();
+        assert!((3..=5).contains(&dials.len()), "{} dials", dials.len());
+        for pair in dials.windows(2) {
+            assert!(
+                pair[1] - pair[0] >= crate::transport::TRANSFER_RETRY_BACKOFF,
+                "{dials:?}"
+            );
+        }
+        Ok(())
     }
 
     /// As Go's TestLaneEndingsNameTheirReason (latency_test.go:67-110): a channel the server ends
@@ -842,7 +942,7 @@ mod tests {
             Duration::from_millis(interval),
             16,
             Instant::now() + Duration::from_millis(duration),
-            &mut DeadlineEstimator::default(),
+            &mut Ledger::default(),
             &observations,
             &mut cancelled,
         )
@@ -885,7 +985,7 @@ mod tests {
             Duration::ZERO,
             4,
             end,
-            &mut DeadlineEstimator::default(),
+            &mut Ledger::default(),
             &observations,
             &mut cancel,
         )
@@ -913,7 +1013,7 @@ mod tests {
             Duration::from_millis(80),
             16,
             started + Duration::from_secs(10),
-            &mut DeadlineEstimator::default(),
+            &mut Ledger::default(),
             &observations,
             &mut cancel,
         )
@@ -961,7 +1061,7 @@ mod tests {
             Duration::ZERO,
             4,
             started + Duration::from_millis(400),
-            &mut DeadlineEstimator::default(),
+            &mut Ledger::default(),
             &observations,
             &mut cancel,
         )
@@ -1004,15 +1104,15 @@ mod tests {
         let (bus, peer) = linked(|mut socket| async move { while let Some(Ok(_)) = socket.next().await {} }).await;
         let (observations, mut receiver) = mpsc::channel(64);
         let (stop, mut cancel) = watch::channel(Stop::Running);
-        let mut estimator = DeadlineEstimator::default();
-        estimator.observe(9_000_000_000);
+        let mut ledger = Ledger::default();
+        ledger.observe(Duration::from_secs(9));
         let started = Instant::now();
         let session = measure(
             bus,
             Duration::from_millis(100),
             16,
             started + Duration::from_secs(60),
-            &mut estimator,
+            &mut ledger,
             &observations,
             &mut cancel,
         );
