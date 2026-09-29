@@ -75,37 +75,20 @@ impl Plan {
 }
 
 impl Upload {
-    /// Stagger first HTTP requests inside the stage-owned cancellation scope; each request lasts
-    /// up to the stage's operation limit, as Go's lanes last the stage. `replaced` records the
-    /// server's one replacement receiver in its run.
+    /// `lanes` lanes over HTTP with `http`'s stagger and request limit, or over WebTransport
+    /// without: the stage-owned cancellation covers the stagger, and each request lasts up to the
+    /// stage's operation limit, as Go's lanes last the stage. `replaced` records the server's one
+    /// replacement receiver in its run.
     pub async fn start(
-        transport: Arc<Transport>,
-        lanes: usize,
-        stagger: Duration,
-        limit: Duration,
-        replaced: Arc<AtomicBool>,
-        cancel: watch::Receiver<bool>,
-    ) -> Result<Self, Error> {
-        Self::start_inner(transport, lanes, Some((stagger, limit)), replaced, cancel).await
-    }
-    pub async fn start_webtransport(
-        transport: Arc<Transport>,
-        lanes: usize,
-        replaced: Arc<AtomicBool>,
-        cancel: watch::Receiver<bool>,
-    ) -> Result<Self, Error> {
-        if lanes > MAX_WEBTRANSPORT_STREAMS {
-            return Err("WebTransport upload supports at most sixteen streams per session".into());
-        }
-        Self::start_inner(transport, lanes, None, replaced, cancel).await
-    }
-    async fn start_inner(
         transport: Arc<Transport>,
         lanes: usize,
         http: Option<(Duration, Duration)>,
         replaced: Arc<AtomicBool>,
         cancel: watch::Receiver<bool>,
     ) -> Result<Self, Error> {
+        if http.is_none() && lanes > MAX_WEBTRANSPORT_STREAMS {
+            return Err("WebTransport upload supports at most sixteen streams per session".into());
+        }
         if !(1..=128).contains(&lanes) || http.is_some_and(|(stagger, _)| stagger > Duration::from_millis(75)) {
             return Err("invalid upload lane count or stagger".into());
         }
@@ -640,6 +623,8 @@ mod tests {
 
     /// A stage's operation limit, the lifetime a stage gives its lanes' requests.
     const OPERATION_LIMIT: Duration = Duration::from_secs(60);
+    /// HTTP lanes that start together and last the operation limit.
+    const HTTP_LANES: Option<(Duration, Duration)> = Some((Duration::ZERO, OPERATION_LIMIT));
     use crate::transport::TRANSFER_RETRY_BACKOFF;
     use graphite_meter_core::discovery::Protocol;
     use tokio::{
@@ -913,7 +898,7 @@ mod tests {
         let (_stop, cancel) = watch::channel(false);
         let upload = tokio::time::timeout(
             Duration::from_secs(5),
-            Upload::start(transport, 2, Duration::ZERO, OPERATION_LIMIT, Arc::default(), cancel),
+            Upload::start(transport, 2, HTTP_LANES, Arc::default(), cancel),
         )
         .await??;
         armed.store(true, Ordering::SeqCst);
@@ -935,7 +920,7 @@ mod tests {
         let requests = Requests::default();
         let (transport, server) = receiver(1, Default::default(), requests.clone()).await?;
         let (_stop, cancel) = watch::channel(false);
-        let upload = Upload::start(transport, 1, Duration::ZERO, OPERATION_LIMIT, Arc::default(), cancel).await;
+        let upload = Upload::start(transport, 1, HTTP_LANES, Arc::default(), cancel).await;
         server.abort();
         drop(upload?);
         let mints = times(&requests, "/upload/session");
@@ -960,15 +945,8 @@ mod tests {
         let requests = Requests::default();
         let (transport, server) = receiver(0, Default::default(), requests.clone()).await?;
         let (_stop, cancel) = watch::channel(false);
-        let upload = Upload::start(
-            transport,
-            1,
-            Duration::ZERO,
-            Duration::from_secs(300),
-            Arc::default(),
-            cancel,
-        )
-        .await?;
+        let http = Some((Duration::ZERO, Duration::from_secs(300)));
+        let upload = Upload::start(transport, 1, http, Arc::default(), cancel).await?;
         tokio::time::sleep(Duration::from_secs(200)).await;
         drop(upload);
         server.abort();

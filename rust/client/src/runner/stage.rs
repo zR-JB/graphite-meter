@@ -888,12 +888,8 @@ async fn start_transfer(
     }));
     let upload = OptionFuture::from(stage.uploads().then_some(async {
         let (replaced, stopped) = (server.replaced_upload.clone(), stopped.clone());
-        if fetch {
-            let stagger = lane_stagger(config.warmup, server.idle_rtt, up);
-            Upload::start(upload_transport, up, stagger, operation_limit, replaced, stopped).await
-        } else {
-            Upload::start_webtransport(upload_transport, up, replaced, stopped).await
-        }
+        let http = fetch.then(|| (lane_stagger(config.warmup, server.idle_rtt, up), operation_limit));
+        Upload::start(upload_transport, up, http, replaced, stopped).await
     }));
     let (down, up) = tokio::join!(download, upload);
     let (down, up, error) = match (down.transpose(), up.transpose()) {
