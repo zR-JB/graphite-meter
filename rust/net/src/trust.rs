@@ -105,7 +105,7 @@ fn verifying(roots: Vec<CertificateDer<'static>>, error: Option<io::Error>) -> A
 /// file in SSL_CERT_DIR's list, or else in `directories`, except symlinks within their own
 /// directory. What does not exist is skipped; the first other failure is returned beside the
 /// roots, which Go reports only when no root loaded.
-pub fn on_disk_roots(
+pub(crate) fn on_disk_roots(
     file: Option<&OsStr>,
     directories: Option<&OsStr>,
     files: &[&str],

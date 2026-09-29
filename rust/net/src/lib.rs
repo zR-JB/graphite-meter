@@ -351,7 +351,7 @@ impl Proxy {
     /// spelling, and never ALL_PROXY. Under CGI, where a request's Proxy header becomes
     /// HTTP_PROXY, every cleartext request refuses it as Go's do, before NO_PROXY or loopback
     /// apply; HTTPS_PROXY still applies.
-    pub fn from_variables(variable: impl Fn(&str) -> Option<String>) -> Self {
+    fn from_variables(variable: impl Fn(&str) -> Option<String>) -> Self {
         let read = |names: [&'static str; 2]| {
             names.into_iter().find_map(|name| {
                 variable(name)
