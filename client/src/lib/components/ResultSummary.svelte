@@ -214,11 +214,15 @@
     .card {
       grid-template-rows: 20px;
     }
-    /* The running card stays in view: one that waits, or is done while the run goes on, is its name and value. */
+    /* The running card stays in view, first under the run button: one that waits, or is done while the run goes
+       on, is its name and value. */
     .line:empty,
     .card:is(.pending, .not-run) > :is(.line, .graph-slot, .facts),
     .running .card:not(.active, .recovering) > :is(.line, .graph-slot, .facts) {
       display: none;
+    }
+    .running .card:is(.active, .recovering) {
+      order: -1;
     }
   }
   .card-head {
