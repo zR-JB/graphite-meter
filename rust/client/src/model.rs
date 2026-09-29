@@ -66,7 +66,6 @@ pub struct Point {
     pub elapsed: Duration,
     pub down_bps: Option<f64>,
     pub up_bps: Option<f64>,
-    pub latency_ms: Option<f64>,
     pub sample_count: usize,
 }
 
@@ -172,7 +171,6 @@ pub struct ServerLatency {
     pub latest_ms: Option<f64>,
     /// The probes in a row that timed out, as Go's live view counts them.
     pub timeouts: u32,
-    pub history: Trace,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -215,7 +213,6 @@ pub struct Snapshot {
     pub phase: Phase,
     pub stage: Option<Stage>,
     pub latest: Point,
-    pub history: Trace,
     pub results: Vec<StageResult>,
     pub servers: Vec<ServerSummary>,
     pub error: Option<String>,
@@ -346,87 +343,17 @@ impl Snapshot {
         Some(reason)
     }
 
-    pub fn sample(&mut self, mut point: Point) {
-        self.latest = point.clone();
-        point.elapsed += self.offset();
-        self.history.add(point);
+    pub fn sample(&mut self, point: Point) {
+        self.latest = point;
     }
 
-    /// The time the run's recorded stages took, where the current stage's trace points start.
-    pub(crate) fn offset(&self) -> Duration {
-        self.results.iter().map(|result| result.elapsed).sum()
-    }
-
-    /// A stage opens for the servers `ids`: each keeps its latency trace, marked at the stage's start.
+    /// A stage opens for the servers `ids`, with no samples yet.
     pub(crate) fn open_stage(&mut self, stage: Stage, ids: impl Iterator<Item = String>) {
-        let start = Point {
-            elapsed: self.offset(),
-            ..Point::default()
-        };
         (self.phase, self.stage, self.latest) = (Phase::Preparing, Some(stage), Point::default());
-        self.history.add(start.clone());
-        let mut previous = std::mem::take(&mut self.server_latencies);
-        self.server_latencies = ids
-            .map(|id| {
-                let earlier = previous.iter_mut().find(|host| host.id == id);
-                let mut history = earlier
-                    .map(|host| std::mem::take(&mut host.history))
-                    .unwrap_or_default();
-                history.add(start.clone());
-                ServerLatency {
-                    id,
-                    history,
-                    ..ServerLatency::default()
-                }
-            })
-            .collect();
+        let latency = |id| ServerLatency {
+            id,
+            ..ServerLatency::default()
+        };
+        self.server_latencies = ids.map(latency).collect();
     }
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct Trace {
-    pub points: VecDeque<Point>,
-    step: Duration,
-}
-
-impl Trace {
-    pub fn add(&mut self, mut point: Point) {
-        point.sample_count = 1;
-        self.step = self.step.max(Duration::from_millis(50));
-        if let Some(last) = self.points.back_mut()
-            && point.elapsed.saturating_sub(last.elapsed) < self.step
-            && last.down_bps.is_some() == point.down_bps.is_some()
-            && last.up_bps.is_some() == point.up_bps.is_some()
-            && last.latency_ms.is_some() == point.latency_ms.is_some()
-        {
-            merge(last, point);
-            return;
-        }
-        if self.points.len() == 480 {
-            let mut coarsened = VecDeque::with_capacity(240);
-            while let Some(mut first) = self.points.pop_front() {
-                if let Some(second) = self.points.pop_front() {
-                    merge(&mut first, second);
-                }
-                coarsened.push_back(first);
-            }
-            self.points = coarsened;
-            self.step *= 2;
-        }
-        self.points.push_back(point);
-    }
-}
-
-fn merge(first: &mut Point, second: Point) {
-    let total = first.sample_count + second.sample_count;
-    for (a, b) in [
-        (&mut first.down_bps, second.down_bps),
-        (&mut first.up_bps, second.up_bps),
-        (&mut first.latency_ms, second.latency_ms),
-    ] {
-        *a = a
-            .zip(b)
-            .map(|(a, b)| (a * first.sample_count as f64 + b * second.sample_count as f64) / total as f64);
-    }
-    first.sample_count = total;
 }

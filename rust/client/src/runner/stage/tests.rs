@@ -577,12 +577,12 @@ fn host_latency_populations_and_continuity_are_independent() {
         ],
         ..Snapshot::default()
     };
-    sample_hosts(&mut hosts, &mut snapshot, Duration::from_millis(500));
+    sample_hosts(&mut hosts, &mut snapshot);
     assert_eq!(snapshot.server_latencies[0].latest_ms, Some(4.0));
     assert_eq!(snapshot.server_latencies[1].latest_ms, Some(220.0));
     let streaks = snapshot.server_latencies.iter().map(|host| host.timeouts);
     assert_eq!(streaks.collect::<Vec<_>>(), [0, 2]);
-    sample_hosts(&mut hosts, &mut snapshot, Duration::from_secs(1));
+    sample_hosts(&mut hosts, &mut snapshot);
     assert_eq!(snapshot.server_latencies[0].latest_ms, None);
     assert_eq!(snapshot.server_latencies[1].latest_ms, None);
 }

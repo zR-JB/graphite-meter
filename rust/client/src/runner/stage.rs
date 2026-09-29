@@ -715,7 +715,7 @@ impl<'a> StageRun<'a> {
         let elapsed = started.elapsed();
         let hosts = &mut self.hosts;
         self.snapshots.send_modify(|snapshot| {
-            sample_hosts(hosts, snapshot, elapsed);
+            sample_hosts(hosts, snapshot);
             snapshot.sample(Point {
                 elapsed,
                 sample_count: 1,
@@ -723,7 +723,6 @@ impl<'a> StageRun<'a> {
                     .and_then(|window| window.down_bytes_per_sec)
                     .map(|rate| rate * 8.0),
                 up_bps: window.and_then(|window| window.up_bytes_per_sec).map(|rate| rate * 8.0),
-                latency_ms: None,
             });
         });
     }
@@ -797,7 +796,7 @@ impl<'a> StageRun<'a> {
         let (transfer, members, participants) = (self.transfer, &self.members, &self.participants);
         self.snapshots.send_modify(|snapshot| {
             if measuring {
-                sample_hosts(hosts, snapshot, result.elapsed);
+                sample_hosts(hosts, snapshot);
             }
             result.server_latencies = snapshot
                 .server_latencies
@@ -933,16 +932,10 @@ fn observe(
     }
 }
 
-fn sample_hosts(hosts: &mut BTreeMap<String, HostLatency>, snapshot: &mut Snapshot, elapsed: Duration) {
-    let offset = snapshot.offset();
+fn sample_hosts(hosts: &mut BTreeMap<String, HostLatency>, snapshot: &mut Snapshot) {
     for host in &mut snapshot.server_latencies {
         host.timeouts = hosts.get(&host.id).map_or(0, |state| state.timeouts);
         host.latest_ms = hosts.get_mut(&host.id).and_then(|state| state.latest.take());
-        host.history.add(Point {
-            elapsed: offset + elapsed,
-            latency_ms: host.latest_ms,
-            ..Point::default()
-        });
     }
 }
 

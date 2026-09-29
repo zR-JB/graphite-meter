@@ -832,7 +832,6 @@ fn the_idle_reading_holds_the_last_reply_and_a_new_stage_starts_empty() {
                 id: "a".into(),
                 latest_ms: latest,
                 timeouts,
-                ..Default::default()
             }];
         });
         let live = ui.live_text(60, 16);
