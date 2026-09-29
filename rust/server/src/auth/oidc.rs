@@ -15,6 +15,7 @@ use hyper::body::Body as _;
 use hyper_util::rt::TokioIo;
 use rustls_platform_verifier::BuilderVerifierExt;
 use serde::Deserialize;
+use serde_json::Value;
 use std::{
     collections::HashMap,
     net::IpAddr,
@@ -327,14 +328,23 @@ impl Oidc {
             self.user_info(provider, &tokens.access_token),
         )
         .await?;
-        if info.get("sub").and_then(serde_json::Value::as_str) != Some(&claims.subject) {
+        // go-oidc's UserInfo reads these members and refuses a mistyped one; email_verified may be a string.
+        let flag = |value: &Value| value.is_boolean() || matches!(value.as_str(), Some("true" | "false"));
+        if info.text("sub") != Some(&claims.subject)
+            || info.text("profile").is_none()
+            || info.text("email").is_none()
+            || !info.named("email_verified").all(flag)
+        {
             return Err(Reason::UserInfoOrSubject);
         }
-        let info: UserInfo = serde_json::from_value(info).map_err(|_| Reason::UserInfoClaims)?;
-        if !info
-            .groups
+        let (Some(groups), Some(name), Some(username)) =
+            (info.groups(), info.text("name"), info.text("preferred_username"))
+        else {
+            return Err(Reason::UserInfoClaims);
+        };
+        if !groups
             .iter()
-            .any(|group| self.config.oidc_allowed_groups.contains(group))
+            .any(|group| self.config.oidc_allowed_groups.iter().any(|allowed| allowed == group))
         {
             return Err(Reason::GroupDenied);
         }
@@ -346,8 +356,8 @@ impl Oidc {
             return Err(Reason::InvalidSubject);
         }
         let name = [
-            info.name.as_deref(),
-            info.preferred_username.as_deref(),
+            Some(name),
+            Some(username),
             claims.name.as_deref(),
             claims.preferred_username.as_deref(),
             Some(subject),
@@ -398,22 +408,40 @@ impl Oidc {
             return Err("OIDC token endpoint rejected the exchange".into());
         }
         // As golang.org/x/oauth2 reads it: a form for form and text types, JSON otherwise.
-        let tokens: Tokens = match essence(&response).as_deref() {
-            Some("application/x-www-form-urlencoded" | "text/plain") => {
-                let mut fields = HashMap::new();
-                for (key, value) in form_urlencoded::parse(response.body()) {
-                    fields.entry(key).or_insert(value);
-                }
-                serde_json::from_value(serde_json::to_value(fields)?)?
+        let form = matches!(
+            essence(&response).as_deref(),
+            Some("application/x-www-form-urlencoded" | "text/plain")
+        );
+        let mut fields = serde_json::Map::new();
+        if form {
+            for (key, value) in form_urlencoded::parse(response.body()) {
+                fields.entry(key).or_insert(value.into());
             }
-            _ => serde_json::from_slice(response.body())?,
+        } else {
+            fields = serde_json::from_slice(response.body())?;
+        }
+        // tokenJSON's strings, where null is empty, and a JSON expires_in in whole seconds.
+        let text = |name| match fields.get(name) {
+            None | Some(Value::Null) => Some(""),
+            value => value.and_then(Value::as_str),
         };
-        if !tokens.error.is_empty() || tokens.access_token.is_empty() {
+        let expiry = fields.get("expires_in").filter(|expiry| !form && !expiry.is_null());
+        let access_token = text("access_token").unwrap_or_default();
+        if text("error") != Some("")
+            || access_token.is_empty()
+            || ["token_type", "refresh_token", "error_description", "error_uri"]
+                .into_iter()
+                .any(|name| text(name).is_none())
+            || expiry.is_some_and(|expiry| jwt::go_number(expiry).and_then(|seconds| seconds.as_i64()).is_none())
+        {
             return Err("OIDC token endpoint rejected the exchange".into());
         }
-        Ok(tokens)
+        Ok(Tokens {
+            access_token: access_token.to_owned(),
+            id_token: fields.get("id_token").cloned(),
+        })
     }
-    async fn user_info(&self, provider: &Provider, access_token: &str) -> Result<serde_json::Value, ConfigError> {
+    async fn user_info(&self, provider: &Provider, access_token: &str) -> Result<Members, ConfigError> {
         let mut bearer = HeaderValue::from_str(&format!("Bearer {access_token}"))?;
         bearer.set_sensitive(true);
         let mut request = get(&provider.userinfo)?;
@@ -430,27 +458,71 @@ impl Oidc {
             .verify(&self.http, token)
             .await
             .map_err(|_| "OIDC user information signature rejected")?;
-        jwt::audience_and_issuer(&verified.claims, &self.config.oidc_issuer, &self.config.oidc_client_id)
+        let claims = serde_json::from_slice(&verified.payload)?;
+        jwt::audience_and_issuer(&claims, &self.config.oidc_issuer, &self.config.oidc_client_id)
             .map_err(|_| "OIDC user information claims rejected")?;
-        Ok(serde_json::Value::Object(verified.claims))
+        Ok(serde_json::from_slice(&verified.payload)?)
     }
 }
 
-#[derive(Deserialize)]
 struct Tokens {
-    #[serde(default, deserialize_with = "jwt::nullable")]
     access_token: String,
-    #[serde(default, deserialize_with = "jwt::nullable")]
-    error: String,
-    id_token: Option<serde_json::Value>,
+    id_token: Option<Value>,
 }
 
-#[derive(Deserialize)]
-struct UserInfo {
-    #[serde(default)]
-    groups: Vec<String>,
-    name: Option<String>,
-    preferred_username: Option<String>,
+/// An object's members in order, read as Go's decoder fills a struct: a member sets the field whose name it
+/// matches case-insensitively, as by Unicode simple folding, so the last of them wins.
+struct Members(Vec<(String, Value)>);
+
+impl<'de> Deserialize<'de> for Members {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_map(Members(Vec::new()))
+    }
+}
+
+impl<'de> serde::de::Visitor<'de> for Members {
+    type Value = Self;
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a JSON object")
+    }
+    fn visit_map<A: serde::de::MapAccess<'de>>(mut self, mut members: A) -> Result<Self, A::Error> {
+        while let Some(member) = members.next_entry()? {
+            self.0.push(member);
+        }
+        Ok(self)
+    }
+}
+
+impl Members {
+    fn named(&self, name: &'static str) -> impl Iterator<Item = &Value> {
+        let fold = |c: char| match c {
+            'ſ' => 's',
+            '\u{212a}' => 'k',
+            c => c.to_ascii_lowercase(),
+        };
+        self.0
+            .iter()
+            .filter(move |(key, _)| key.chars().map(fold).eq(name.chars()))
+            .map(|(_, value)| value)
+    }
+    /// A string field, which a null leaves as it was; None where a member is another type.
+    fn text(&self, name: &'static str) -> Option<&str> {
+        self.named(name).try_fold(
+            "",
+            |text, value| if value.is_null() { Some(text) } else { value.as_str() },
+        )
+    }
+    /// The application's groups, which a null empties; a null group is empty.
+    fn groups(&self) -> Option<Vec<&str>> {
+        self.named("groups").try_fold(Vec::new(), |_, value| match value {
+            Value::Null => Some(Vec::new()),
+            value => value
+                .as_array()?
+                .iter()
+                .map(|group| if group.is_null() { Some("") } else { group.as_str() })
+                .collect(),
+        })
+    }
 }
 
 /// A step that fails or outlasts the callback's deadline refuses it with `reason`, as Go's context does.

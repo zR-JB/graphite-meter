@@ -5,6 +5,7 @@ use ring::{
 };
 use serde::Deserialize;
 use serde_json::{Map, Value};
+use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Alg {
@@ -184,7 +185,7 @@ fn strip_zeros(mut value: Vec<u8>) -> Vec<u8> {
 
 pub(super) struct Verified {
     pub alg: Alg,
-    pub claims: Map<String, Value>,
+    pub payload: Vec<u8>,
 }
 
 pub(super) fn verify(token: &str, keys: &Jwks, allowed: &[Alg]) -> Result<Verified, Reject> {
@@ -234,8 +235,10 @@ pub(super) fn verify(token: &str, keys: &Jwks, allowed: &[Alg]) -> Result<Verifi
     if !candidates.any(|key| key.verifies(alg, message.as_bytes(), &signature)) {
         return Err(Reject::Signature);
     }
-    let claims = serde_json::from_slice(&decode(payload)?).map_err(|_| Reject::Malformed)?;
-    Ok(Verified { alg, claims })
+    Ok(Verified {
+        alg,
+        payload: decode(payload)?,
+    })
 }
 
 pub(super) struct IdClaims {
@@ -268,13 +271,12 @@ pub(super) fn audience_and_issuer(claims: &Map<String, Value>, issuer: &str, cli
     Ok(())
 }
 
-/// A time as go-oidc reads one: a JSON number, or a string that holds exactly one, in whole seconds.
-fn seconds(time: &Value) -> Option<f64> {
-    let seconds = match time {
+/// A JSON number, or a string that holds exactly one, as Go's json.Number takes it.
+pub(super) fn go_number(value: &Value) -> Option<serde_json::Number> {
+    match value {
         Value::String(text) if text.trim() == text => serde_json::from_str(text).ok(),
-        time => time.as_f64(),
-    };
-    seconds.map(f64::trunc)
+        value => value.as_number().cloned(),
+    }
 }
 
 /// A member as Go's decoder fills a string or slice field: absent or null, it keeps its zero value.
@@ -293,18 +295,33 @@ pub(super) fn id_token(verified: Verified, expected: &Expected<'_>) -> Result<Id
         nonce: String,
         #[serde(default, deserialize_with = "nullable")]
         at_hash: String,
+        #[serde(default, rename = "_claim_names", deserialize_with = "nullable")]
+        names: HashMap<String, Option<String>>,
+        #[serde(default, rename = "_claim_sources", deserialize_with = "nullable")]
+        sources: HashMap<String, Option<Source>>,
+    }
+    /// go-oidc reads a distributed claim's source, and so refuses one whose members are mistyped.
+    #[derive(Deserialize)]
+    #[allow(dead_code)]
+    struct Source {
+        endpoint: Option<String>,
+        access_token: Option<String>,
     }
     #[derive(Deserialize)]
     struct Names {
         name: Option<String>,
         preferred_username: Option<String>,
     }
-    audience_and_issuer(&verified.claims, expected.issuer, expected.client_id)?;
-    // go-oidc's jsonTime; nbf alone is a pointer, which null leaves absent.
-    let time = |name: &str| match verified.claims.get(name) {
+    let claims: Map<String, Value> = serde_json::from_slice(&verified.payload).map_err(|_| Reject::Malformed)?;
+    audience_and_issuer(&claims, expected.issuer, expected.client_id)?;
+    // go-oidc's jsonTime, in whole seconds; nbf alone is a pointer, which null leaves absent.
+    let time = |name: &str| match claims.get(name) {
         None => Ok(None),
         Some(Value::Null) if name == "nbf" => Ok(None),
-        Some(time) => seconds(time).map(Some).ok_or(Reject::Claims),
+        Some(time) => go_number(time)
+            .and_then(|time| time.as_f64())
+            .map(|time| Some(time.trunc()))
+            .ok_or(Reject::Claims),
     };
     let (expiry, not_before) = (time("exp")?.ok_or(Reject::Claims)?, time("nbf")?);
     time("iat")?;
@@ -312,8 +329,17 @@ pub(super) fn id_token(verified: Verified, expected: &Expected<'_>) -> Result<Id
     if now >= expiry || not_before.is_some_and(|nbf| nbf > now + 300.0) {
         return Err(Reject::Claims);
     }
-    let claims = Value::Object(verified.claims);
+    let claims = Value::Object(claims);
     let standard = Standard::deserialize(&claims).map_err(|_| Reject::Claims)?;
+    // go-oidc refuses a distributed claim whose source is empty or not listed.
+    let missing = |source: &str| source.is_empty() || !standard.sources.contains_key(source);
+    if standard
+        .names
+        .values()
+        .any(|source| source.as_deref().is_none_or(missing))
+    {
+        return Err(Reject::Claims);
+    }
     let names = Names::deserialize(&claims).map_err(|_| Reject::Nonce)?;
     let digest = |value: &str| digest::digest(&digest::SHA256, value.as_bytes());
     if standard.nonce.is_empty() || digest(&standard.nonce).as_ref() != digest(expected.nonce).as_ref() {

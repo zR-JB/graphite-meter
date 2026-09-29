@@ -120,7 +120,7 @@ fn every_ring_algorithm_verifies_against_the_matching_key_only() {
     ] {
         let token = signers.sign(json!({"alg": alg, "kid": kid}), &claims);
         assert_eq!(
-            verify(&token, &keys, &ALL).map(|v| v.claims["sub"].clone()),
+            verify(&token, &keys, &ALL).map(|v| serde_json::from_slice::<Value>(&v.payload).unwrap()["sub"].clone()),
             Ok(json!("operator")),
             "{alg}"
         );
@@ -250,6 +250,7 @@ fn id_token_claims_bind_issuer_audience_nonce_time_and_access_token() {
         json!({"iat": now.to_string()}),
         json!({"exp": (now + 300).to_string(), "nbf": format!("{now}.5"), "iat": 1e9}),
         json!({"at_hash": null, "nbf": null, "name": null, "preferred_username": null}),
+        json!({"_claim_names": {"groups": "a"}, "_claim_sources": {"a": {"endpoint": "https://x"}, "b": null}}),
     ] {
         assert!(check("RS256", "rsa", changes.clone()).is_ok(), "{changes}");
     }
@@ -267,6 +268,12 @@ fn id_token_claims_bind_issuer_audience_nonce_time_and_access_token() {
         (json!({"exp": format!(" {}", now + 300)}), Reject::Claims),
         (json!({"exp": now as f64 + 0.5}), Reject::Claims),
         (json!({"nbf": true}), Reject::Claims),
+        (json!({"_claim_names": {"groups": "a"}}), Reject::Claims),
+        (
+            json!({"_claim_names": {"groups": ""}, "_claim_sources": {"": {}}}),
+            Reject::Claims,
+        ),
+        (json!({"_claim_sources": {"a": {"access_token": 7}}}), Reject::Claims),
         (json!({"nbf": now + 301}), Reject::Claims),
         (json!({"sub": 7}), Reject::Claims),
         (json!({"nonce": "other"}), Reject::Nonce),

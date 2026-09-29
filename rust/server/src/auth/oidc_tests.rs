@@ -40,6 +40,8 @@ struct Twist {
     metadata: Option<Value>,
     /// Token response members that replace the double's own.
     tokens: Option<Value>,
+    /// User information members that replace the double's own.
+    userinfo: Option<Value>,
 }
 
 struct Keys {
@@ -260,15 +262,12 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Provi
                         }
                         "/userinfo" => {
                             assert!(headers.contains("authorization: Bearer access\r\n"), "{headers}");
-                            let info = json!({"sub": if claims.wrong_subject { "other" } else { "operator" }, "name": twist.name.as_deref().unwrap_or("Example Operator"), "groups": if claims.denied_group { vec!["outsiders"] } else { vec!["operators"] }});
-                            match &twist.signed_userinfo {
-                                Some(extra) => {
-                                    let mut info = info;
-                                    for (key, value) in extra.as_object().unwrap() {
-                                        info[key] = value.clone();
-                                    }
-                                    ("application/jwt", keys.sign(&json!({"alg": "RS256", "kid": "test-key"}), &info))
-                                }
+                            let mut info = json!({"sub": if claims.wrong_subject { "other" } else { "operator" }, "name": twist.name.as_deref().unwrap_or("Example Operator"), "groups": if claims.denied_group { vec!["outsiders"] } else { vec!["operators"] }});
+                            for (key, value) in twist.userinfo.iter().chain(&twist.signed_userinfo).filter_map(Value::as_object).flatten() {
+                                info[key] = value.clone();
+                            }
+                            match twist.signed_userinfo {
+                                Some(_) => ("application/jwt", keys.sign(&json!({"alg": "RS256", "kid": "test-key"}), &info)),
                                 None => ("application/json", info.to_string()),
                             }
                         }
@@ -481,13 +480,6 @@ async fn forged_or_misbound_tokens_are_refused_and_rotation_refetches_keys_once(
     let identity = provider.login(Claims::default()).await.unwrap();
     assert_eq!(identity.subject, "oidc:operator");
     assert_eq!(identity.name, "München  العربية  👩\u{200d}💻");
-    // As in Go's decoder, a null string is empty.
-    *provider.twist.lock().unwrap() = Twist {
-        claims: Some(json!({"at_hash": null})),
-        tokens: Some(json!({"error": null})),
-        ..Twist::default()
-    };
-    assert!(provider.login(Claims::default()).await.is_ok());
     let before = provider.jwks_requests.load(Ordering::SeqCst);
     assert_eq!(before, 2);
     *provider.twist.lock().unwrap() = Twist {
@@ -563,6 +555,36 @@ async fn rs256_signs_in_only_where_go_oidc_supports_no_advertised_algorithm() {
         );
         provider.stop().await;
     }
+}
+
+/// Token, ID token and user information members as x/oauth2, go-oidc and Go's decoder read them.
+#[tokio::test]
+async fn provider_members_read_as_go_reads_them() {
+    let provider = provider_double("localhost", &["RS256"], Proxy::default()).await;
+    let go_signs_in = json!({"SUB": "operator", "sub": null, "email_verified": "true", "groups": ["operators", null]});
+    for (tokens, claims, userinfo, signs_in) in [
+        (
+            json!({"error": null, "expires_in": "300"}),
+            json!({"at_hash": null}),
+            go_signs_in,
+            true,
+        ),
+        (json!({"expires_in": 300.5}), json!({}), json!({}), false),
+        (json!({"token_type": 7}), json!({}), json!({}), false),
+        (json!({}), json!({"_claim_names": {"groups": "a"}}), json!({}), false),
+        (json!({}), json!({}), json!({"email": 123}), false),
+        (json!({}), json!({}), json!({"email_verified": "yes"}), false),
+    ] {
+        let case = format!("{tokens} {claims} {userinfo}");
+        *provider.twist.lock().unwrap() = Twist {
+            tokens: Some(tokens),
+            claims: Some(claims),
+            userinfo: Some(userinfo),
+            ..Twist::default()
+        };
+        assert_eq!(provider.login(Claims::default()).await.is_ok(), signs_in, "{case}");
+    }
+    provider.stop().await;
 }
 
 #[tokio::test]
