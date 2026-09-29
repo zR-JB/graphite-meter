@@ -406,12 +406,10 @@ fn authority<B>(request: &Request<B>) -> Option<&str> {
     }
 }
 
-fn text<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
-    match unique_header(headers, name) {
-        Some(value) => value.to_str().ok(),
-        None if headers.contains_key(name) => None,
-        None => Some(""),
-    }
+/// A header's first value, as Go's Header.Get reads it: empty where absent, None where not visible ASCII. The policy
+/// reads so only a header it refuses to see repeated.
+pub(super) fn text<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name).map_or(Some(""), |value| value.to_str().ok())
 }
 
 fn single_header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {

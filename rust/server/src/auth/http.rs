@@ -3,10 +3,10 @@ use super::{
     ApprovalError, ApprovalKind, AuthLease, AuthRoute, Exchange, ExchangeError, SESSION_LIFETIME, SessionLease,
     SessionStore, TicketError,
     logging::{Counter, SecurityLog},
-    oidc::Oidc,
+    oidc::{Oidc, media_type},
     pages::{self, LoginPage},
     password_login::{PasswordAttempt, PasswordLogin, check_csrf},
-    policy::{Authorization, AuthorizedRequest, Policy, constant_equal, cookie},
+    policy::{Authorization, AuthorizedRequest, Policy, constant_equal, cookie, text},
     rate::{AttemptLimiter, Budget},
     reason::Reason,
     session::random_token,
@@ -232,7 +232,7 @@ impl Service {
                 client: self
                     .policy
                     .client_address(request.headers(), authorized.connection().peer),
-                origin: text(request, "origin"),
+                origin: text(request.headers(), "origin").unwrap_or_default(),
                 nonce_cookie: cookie(request.headers(), "__Host-gm_login"),
                 device_cookie: cookie(request.headers(), "__Host-gm_device"),
                 csrf: value(&form, "csrf"),
@@ -271,7 +271,7 @@ impl Service {
         let Ok(form) = &form else {
             return self.oidc_rejected(Reason::MalformedForm, "");
         };
-        let origin = text(request, "origin");
+        let origin = text(request.headers(), "origin").unwrap_or_default();
         let nonce = cookie(request.headers(), "__Host-gm_login");
         if let Err(reason) = check_csrf(self.policy.public_origin(), origin, nonce, value(form, "csrf")) {
             return self.oidc_rejected(reason, challenge);
@@ -463,9 +463,9 @@ impl Service {
             Ok(view) => {
                 let Some(session) = session else {
                     if browser
-                        && text(request, "sec-fetch-site") == "cross-site"
-                        && text(request, "sec-fetch-mode") == "navigate"
-                        && text(request, "sec-fetch-dest") == "document"
+                        && text(request.headers(), "sec-fetch-site") == Some("cross-site")
+                        && text(request.headers(), "sec-fetch-mode") == Some("navigate")
+                        && text(request.headers(), "sec-fetch-dest") == Some("document")
                     {
                         return html(StatusCode::OK, pages::continue_page(challenge, true));
                     }
@@ -520,7 +520,7 @@ impl Service {
             #[serde(default)]
             verifier: String,
         }
-        let origin = text(request, "origin");
+        let origin = text(request.headers(), "origin").unwrap_or_default();
         if browser && !super::secure_browser_origin(origin) {
             return response(StatusCode::FORBIDDEN);
         }
@@ -567,7 +567,7 @@ impl Service {
             lease,
             self.policy.public_origin(),
             value(&query, "target"),
-            text(request, "origin"),
+            text(request.headers(), "origin").unwrap_or_default(),
             kind,
         ) {
             Ok(ticket) => json(
@@ -595,7 +595,7 @@ impl Service {
         let lease = principal(authorized)?;
         (lease.is_active()
             && !lease.is_bearer()
-            && text(authorized.request(), "origin") == self.policy.public_origin()
+            && text(authorized.request().headers(), "origin") == Some(self.policy.public_origin())
             && constant_equal(lease.session().csrf(), value(form, "csrf")))
         .then_some(lease)
     }
@@ -661,22 +661,8 @@ fn value<'a>(values: &'a [(String, String)], key: &str) -> &'a str {
         .find(|(name, _)| name == key)
         .map_or("", |(_, value)| value)
 }
-fn text<'a>(request: &'a Request<Bytes>, name: &str) -> &'a str {
-    request
-        .headers()
-        .get(name)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("")
-}
 fn form(request: &Request<Bytes>) -> Result<Vec<(String, String)>, ()> {
-    if request.body().len() > FORM_BYTES
-        || !text(request, "content-type")
-            .split(';')
-            .next()
-            .unwrap_or("")
-            .trim()
-            .eq_ignore_ascii_case("application/x-www-form-urlencoded")
-    {
+    if request.body().len() > FORM_BYTES || media_type(request.headers()) != "application/x-www-form-urlencoded" {
         return Err(());
     }
     // Authentication credentials and CSRF proofs belong in the POST body,

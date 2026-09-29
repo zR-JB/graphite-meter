@@ -396,8 +396,8 @@ impl Oidc {
         // As golang.org/x/oauth2 reads it: a form for form and text types, which url.ParseQuery must accept whole,
         // and JSON otherwise.
         let form = matches!(
-            essence(&response).as_deref(),
-            Some("application/x-www-form-urlencoded" | "text/plain")
+            media_type(response.headers()).as_str(),
+            "application/x-www-form-urlencoded" | "text/plain"
         );
         let mut fields = serde_json::Map::new();
         if form {
@@ -435,7 +435,7 @@ impl Oidc {
         if response.status() != StatusCode::OK {
             return Err("OIDC user information unavailable".into());
         }
-        if essence(&response).as_deref() != Some("application/jwt") {
+        if media_type(response.headers()) != "application/jwt" {
             return Ok(go_json(response.body())?);
         }
         let token = std::str::from_utf8(response.body())?;
@@ -542,13 +542,10 @@ fn escape(value: &str) -> String {
     escaped.replace("%7E", "~").replace('*', "%2A")
 }
 
-fn essence(response: &Response<Vec<u8>>) -> Option<String> {
-    let value = response
-        .headers()
-        .get(header::CONTENT_TYPE)?
-        .to_str()
-        .unwrap_or_default();
-    Some(value.split(';').next().unwrap_or_default().trim().to_ascii_lowercase())
+/// The media type a Content-Type names, in lower case, as Go's mime.ParseMediaType reads it; empty without one.
+pub(super) fn media_type(headers: &HeaderMap) -> String {
+    let value = super::policy::text(headers, header::CONTENT_TYPE.as_str()).unwrap_or_default();
+    value.split(';').next().unwrap_or_default().trim().to_ascii_lowercase()
 }
 
 /// go-oidc reads discovery and key sets whatever their content type.
