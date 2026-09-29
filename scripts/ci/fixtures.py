@@ -16,6 +16,7 @@ from typing import cast
 from unittest.mock import patch
 
 from .github_api import ControlPlaneError, JsonObject, JsonValue, write_checksums
+from .verify_oci import NOTICES
 from .verify_release_assets import TARGETS, TUI_FILES, tui_archives
 
 AMD, ARM = "sha256:" + "a" * 64, "sha256:" + "b" * 64
@@ -112,27 +113,35 @@ def statement(repository: str, revision: str, *, remote: bool, subjects: Mapping
                           "runDetails": {"metadata": {"buildkit_metadata": {} if remote else {"vcs": vcs}}}}}
 
 
-def write_oci(path: Path, repository: str, revision: str, *, remote: bool,
-              tamper: bool = False, predicate: str = SLSA) -> JsonObject:
-    """Write BuildKit-shaped provenance for both images into an OCI archive; return its index."""
+def write_oci(path: Path, repository: str, revision: str, *, remote: bool, tamper: bool = False,
+              predicate: str = SLSA, notices: bytes | None = b"THIRD-PARTY SOFTWARE NOTICES\n") -> JsonObject:
+    """Write BuildKit-shaped images, which ship `notices` unless None, and their provenance into an OCI archive;
+    return its index."""
     blobs: dict[str, bytes] = {}
 
     def add(value: object) -> str:
-        data = json.dumps(value).encode()
+        data = value if isinstance(value, bytes) else json.dumps(value).encode()
         digest = "sha256:" + hashlib.sha256(data).hexdigest()
         blobs[digest] = data + (b" " if tamper else b"")
         return digest
 
+    files = io.BytesIO()
+    with tarfile.open(fileobj=files, mode="w:gz") as layer:
+        name, data = (NOTICES, notices) if notices is not None else ("graphite-meter", b"executable")
+        info = tarfile.TarInfo(name)
+        info.size = len(data)
+        layer.addfile(info, io.BytesIO(data))
+    images = [add({"config": {"architecture": arch}, "layers": [{"digest": add(files.getvalue())}]})
+              for arch in ("amd64", "arm64")]
     layer = {"mediaType": "application/vnd.in-toto+json", "digest": add(statement(repository, revision, remote=remote)),
              "annotations": {"in-toto.io/predicate-type": predicate}}
-    attested = [descriptor("unknown", "unknown", add({"layers": [layer]}), image)
-                for image in (AMD, ARM)]
+    attested = [descriptor("unknown", "unknown", add({"layers": [layer]}), image) for image in images]
     with tarfile.open(path, "w") as archive:
         for digest, data in blobs.items():
             info = tarfile.TarInfo("blobs/sha256/" + digest.removeprefix("sha256:"))
             info.size = len(data)
             archive.addfile(info, io.BytesIO(data))
-    return index(*RUNNABLE, *attested)
+    return index(descriptor("linux", "amd64", images[0]), descriptor("linux", "arm64", images[1]), *attested)
 
 
 def engine(directory: Path, repository: str, version: str, revision: str,

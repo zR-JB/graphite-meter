@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Verify release OCI platforms, provenance and labels with the pinned Skopeo image."""
+"""Verify release OCI platforms, provenance, notices and labels with the pinned Skopeo image."""
 
 from __future__ import annotations
 
 import hashlib
+import io
 import os
 import re
 import shutil
@@ -22,6 +23,7 @@ from .github_api import (
     str_field,
 )
 from .trust import env
+from ..legal.rust import DEVELOPMENT
 
 DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 PLATFORMS = {"amd64", "arm64"}
@@ -29,12 +31,15 @@ INDEX_TYPE = "application/vnd.oci.image.index.v1+json"
 MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
 SLSA = "https://slsa.dev/provenance/v1"
 BLOB_LIMIT = 4 * 1024 * 1024
+LAYER_LIMIT = 256 * 1024 * 1024
+# Where the Go and Rust images keep their third-party notices, which the legal build of their server wrote.
+NOTICES = "usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt"
 ARCHIVE = "oci-archive:/work/image.oci.tar"
 ENGINES = ("docker", "podman")
 
 
-def validate_index_descriptors(index: JsonObject) -> list[str]:
-    """Return the provenance manifest digests, exactly one linked to each runnable image."""
+def validate_index_descriptors(index: JsonObject) -> tuple[list[str], list[str]]:
+    """Return the provenance manifest digests, exactly one linked to each runnable image, and the images'."""
     if index.get("schemaVersion") != 2 or index.get("mediaType") != INDEX_TYPE:
         fail(f"OCI index must be a schemaVersion 2 {INDEX_TYPE}")
     runnable: dict[str, str] = {}
@@ -63,22 +68,38 @@ def validate_index_descriptors(index: JsonObject) -> list[str]:
         fail(f"OCI archive needs linux/amd64 and linux/arm64, got {runnable}")
     if sorted(attested) != sorted(runnable.values()):
         fail("OCI archive needs one provenance attestation per image")
-    return attestations
+    return attestations, list(runnable.values())
 
 
-def blob(archive: tarfile.TarFile, digest: str) -> JsonObject:
-    """Decode a JSON blob of the OCI layout after checking its size and digest."""
+def member(archive: tarfile.TarFile, digest: str, limit: int) -> bytes:
+    """Read a blob of the OCI layout after checking its size and digest."""
     try:
-        member = archive.getmember("blobs/sha256/" + digest.removeprefix("sha256:"))
+        entry = archive.getmember("blobs/sha256/" + digest.removeprefix("sha256:"))
     except KeyError:
         raise ControlPlaneError(f"OCI archive lacks blob {digest}") from None
-    handle = archive.extractfile(member) if member.isfile() and member.size <= BLOB_LIMIT else None
+    handle = archive.extractfile(entry) if entry.isfile() and entry.size <= limit else None
     if handle is None:
         fail(f"OCI blob {digest} is not a bounded regular file")
     data = handle.read()
     if hashlib.sha256(data).hexdigest() != digest.removeprefix("sha256:"):
         fail(f"OCI blob {digest} does not match its digest")
-    return expect_object(decode_json(data.decode(errors="replace"), digest), digest)
+    return data
+
+
+def blob(archive: tarfile.TarFile, digest: str) -> JsonObject:
+    """Decode a JSON blob of the OCI layout after checking its size and digest."""
+    return expect_object(decode_json(member(archive, digest, BLOB_LIMIT).decode(errors="replace"), digest), digest)
+
+
+def image_notices(archive: tarfile.TarFile, image: str) -> list[bytes]:
+    """The start of each copy of the third-party notices in the layers of the image manifest `image`."""
+    texts: list[bytes] = []
+    for item in expect_array(blob(archive, image).get("layers"), image):
+        layer = member(archive, str_field(expect_object(item, image), "digest", image), LAYER_LIMIT)
+        with tarfile.open(fileobj=io.BytesIO(layer)) as files:
+            texts += [text.read(BLOB_LIMIT) for entry in files if entry.name.lstrip("./") == NOTICES
+                      if (text := files.extractfile(entry))]
+    return texts
 
 
 def source_commit(statement: JsonObject, repository: str) -> str:
@@ -153,11 +174,15 @@ def verify(version: str, revision: str, archive: Path) -> str:
         output = skopeo(engine, image, "inspect", *args, ARCHIVE, archive=archive)
         return expect_object(decode_json(output, "skopeo inspect"), "skopeo inspect")
 
-    attestations = validate_index_descriptors(inspect("--raw"))
+    attestations, images = validate_index_descriptors(inspect("--raw"))
     try:
         with tarfile.open(archive, mode="r:") as tar:
             sources = set().union(*(provenance_sources(tar, digest, repository)
                                     for digest in attestations))
+            # The notices of an unreviewed development build open with its marker.
+            for image in images:
+                if not (texts := image_notices(tar, image)) or any(DEVELOPMENT.encode() in text for text in texts):
+                    fail(f"image {image} must ship {NOTICES} without {DEVELOPMENT!r}")
     except tarfile.TarError as exc:
         raise ControlPlaneError(f"cannot read OCI archive layout: {exc}") from exc
     if sources != {revision}:

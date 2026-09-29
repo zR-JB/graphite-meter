@@ -108,8 +108,10 @@ same runner image and Xcode and prints this build's record when the committed on
 The development tasks (`rust-server-run`, `rust-server-build`, `rust-client-run`, `rust-client-build`)
 run `scripts.legal.rust --development` instead: it keeps every dependency review but reads no platform
 record or toolchain facts, so it works on any host, and its notices open with `UNREVIEWED DEVELOPMENT
-BUILD`. The workflow policy refuses the flag in any workflow, image build or task that CI or a release
-runs, and release verification refuses notices that carry the marker.
+BUILD`. The workflow policy refuses the flag in any workflow, image build, task or shell script that CI
+or a release runs. Release verification refuses the marker in each Rust source offer's notices, in each
+Rust TUI archive's `THIRD_PARTY_NOTICES.txt`, which must equal its offer's, and in each image's; it cannot
+read the copy compressed into each executable, which the same legal build wrote.
 
 ## Generated files
 

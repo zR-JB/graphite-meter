@@ -33,6 +33,7 @@ from .verify_oci import (
     verify as verify_oci,
 )
 from .github_api import ControlPlaneError, write_checksums
+from ..legal.rust import DEVELOPMENT_NOTICE
 from .verify_release_assets import (
     archive_names,
     tui_archives,
@@ -184,7 +185,7 @@ class ReleaseAssetTests(unittest.TestCase):
 class OCITests(unittest.TestCase):
     def test_index_requires_linked_provenance_for_each_platform(self) -> None:
         self.assertEqual(validate_index_descriptors(index(*RUNNABLE, *ATTESTED)),
-                         [item["digest"] for item in ATTESTED])
+                         ([item["digest"] for item in ATTESTED], [AMD, ARM]))
         stray = descriptor("unknown", "unknown", "sha256:" + "e" * 64, "sha256:" + "f" * 64)
         mistyped = descriptor("unknown", "unknown", "sha256:" + "d" * 64, ARM)
         mistyped["annotations"] = {"vnd.docker.reference.type": "other",
@@ -262,6 +263,15 @@ class OCITests(unittest.TestCase):
                                 predicate=predicate)
                 env = engine(Path(directory), "example/repo", "1.2.3", "f" * 40, oci)
                 with patch.dict(os.environ, env), patch("scripts.ci.verify_oci.BLOB_LIMIT", limit):
+                    outcome(self, error, lambda: verify_oci("1.2.3", "f" * 40, archive))
+
+    def test_each_image_ships_notices_without_the_development_marker(self) -> None:
+        for notices, error in ((b"THIRD-PARTY SOFTWARE NOTICES\n", None), (None, "must ship"),
+                               (DEVELOPMENT_NOTICE.encode() + b"THIRD-PARTY SOFTWARE NOTICES\n", "UNREVIEWED")):
+            with tempfile.TemporaryDirectory() as directory, self.subTest(error=error):
+                archive = Path(directory) / "image.oci.tar"
+                oci = write_oci(archive, "example/repo", "f" * 40, remote=False, notices=notices)
+                with patch.dict(os.environ, engine(Path(directory), "example/repo", "1.2.3", "f" * 40, oci)):
                     outcome(self, error, lambda: verify_oci("1.2.3", "f" * 40, archive))
 
     def test_engine_is_a_known_name_resolved_on_path(self) -> None:
