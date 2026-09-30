@@ -10,7 +10,7 @@
   } from "../presentation/resultSummary";
   import type { MultiServerResult } from "../runner/measure";
   import type { TransportRole } from "../runner/contract";
-  import { term, tipGroup, tooltip } from "../actions/tooltip";
+  import { termAction, tooltipAction, tipGroup } from "../actions/tooltip";
   import {
     MISSING,
     STAGE,
@@ -59,11 +59,15 @@
       .join(", ");
   // Latency has its own card; this row holds the transfers.
   const transfers = $derived(cards.filter((card) => card.key !== "latency"));
+  const ceiling = $derived(scale?.ceiling ?? 0);
+  const baseline = $derived(scale?.baseline ?? null);
+  const latencyTop = $derived(scale?.latencyTop ?? 0);
 </script>
 
 <div class="result-summary">
   <div class="result-cards" class:running data-tip-group {@attach tipGroup}>
     {#each transfers as card (card.key)}
+      {@const graph = card.graph}
       {@const quiet = card.status === "pending" || card.status === "not-run"}
       {@const tone = STATUS_TONE[card.status as keyof typeof STATUS_TONE]}
       {@const lanes = card.rows.filter(
@@ -79,7 +83,7 @@
       >
         <header class="card-head">
           <span class="dot" aria-hidden="true"></span>
-          <h3 {@attach tooltip(() => cardTip(card))}>
+          <h3 use:tooltipAction={cardTip(card)}>
             {STAGE[card.key].label}
           </h3>
           {#if tone || card.status === "active"}<span class="state"
@@ -119,35 +123,33 @@
           {:else if card.wire}
             {@const wire = card.wire}
             <span class="wire"
-              ><span class="label" {@attach term(() => wire.tip)}>Wire</span>
+              ><span class="label" use:termAction={wire.tip}>Wire</span>
               {wire.value}
               <span class="delta">{wire.overhead}</span></span
             >
           {/if}
           {#if noData && !quiet}
             <span class="no-data"
-              ><span class="label" {@attach term(() => noData.tip!)}
-                >No data</span
-              >
+              ><span class="label" use:termAction={noData.tip!}>No data</span>
               {noData.value}</span
             >
           {/if}
         </div>
-        {#if card.graph && scale}
+        {#if graph && scale}
           <div class="graph-slot">
             <StageGraph
               tone={card.key as "download" | "upload" | "bidirectional"}
-              lanes={card.graph.lanes}
+              lanes={graph.lanes}
               laneNames={card.key === "bidirectional"
                 ? [STAGE.download.short, STAGE.upload.short]
                 : []}
-              latency={card.graph.latency}
-              start={card.graph.start}
-              span={card.graph.span}
+              latency={graph.latency}
+              start={graph.start}
+              span={graph.span}
               head={head?.key === card.key ? head : null}
-              ceiling={scale.ceiling}
-              baseline={scale.baseline}
-              latencyTop={scale.latencyTop}
+              {ceiling}
+              {baseline}
+              {latencyTop}
               rate={scale.rate}
               label="{STAGE[card.key].label} over time"
             />
@@ -159,7 +161,7 @@
         >
           {#each facts as row (row.label)}
             <div>
-              <dt {@attach row.tip ? tooltip(() => row.tip!) : null}>
+              <dt use:tooltipAction={row.tip ?? ""}>
                 {row.label}
               </dt>
               <dd class:quiet={row.value === MISSING}>{row.value}</dd>

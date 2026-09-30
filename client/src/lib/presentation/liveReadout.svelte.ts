@@ -24,6 +24,12 @@ export class LiveReadout {
   #run = -1;
   #stalled = false;
 
+  dispose(): void {
+    this.down.dispose();
+    this.up.dispose();
+    this.rtt.dispose();
+  }
+
   get rates(): RatePair | null {
     return this.phase ? { down: this.down.current, up: this.up.current } : null;
   }
@@ -34,6 +40,8 @@ export class LiveReadout {
       this.#run = run;
       this.phase = null;
       this.#stalled = false;
+      this.down.dispose();
+      this.up.dispose();
     }
     const target = liveTargets(live);
     if (!target || !live || (live.stalled && this.#stalled)) return;

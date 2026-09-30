@@ -74,7 +74,34 @@ export const tipGroup: Attachment<HTMLElement> = (node) => {
   };
 };
 
-function tooltipAction(node: HTMLElement, initial: string, marked = false) {
+/** Live measurement views keep one action per element instead of rebuilding attachment factories on each frame. */
+export const termAction = (node: HTMLElement, text: string) =>
+  tooltipAction(node, text, true);
+
+export function tooltipAction(
+  node: HTMLElement,
+  initial: string,
+  marked = false,
+) {
+  let active: ReturnType<typeof createTooltip> | null = null;
+  function update(text: string) {
+    if (!text) {
+      active?.destroy();
+      active = null;
+    } else if (active) active.update(text);
+    else active = createTooltip(node, text, marked);
+  }
+  update(initial);
+  return {
+    update,
+    destroy() {
+      active?.destroy();
+      active = null;
+    },
+  };
+}
+
+function createTooltip(node: HTMLElement, initial: string, marked: boolean) {
   let text = initial;
   const id = `gm-tt-${++uid}`;
   let bubble: HTMLDivElement | null = null;
@@ -351,6 +378,7 @@ function tooltipAction(node: HTMLElement, initial: string, marked = false) {
     target.addEventListener(type, listener as EventListener);
   return {
     update(next: string) {
+      if (next === text) return;
       text = next;
       if (!bubble) return;
       if (!text) hide();
@@ -362,6 +390,8 @@ function tooltipAction(node: HTMLElement, initial: string, marked = false) {
     },
     destroy() {
       hide();
+      if (anchorNames) node.style.setProperty("anchor-name", anchorNames);
+      else node.style.removeProperty("anchor-name");
       delete node.dataset.tip;
       if (focusable) node.removeAttribute("tabindex");
       for (const [target, type, listener] of listeners)

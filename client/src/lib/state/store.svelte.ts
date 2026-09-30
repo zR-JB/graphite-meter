@@ -143,7 +143,7 @@ type DisplayPreference =
 
 class AppStore {
   serverCatalog = $state<ServerCatalog | null>(null);
-  selectedServers = $state<string[]>(["self"]);
+  selectedServers = $state.raw<string[]>(["self"]);
   unresolvedServers = $state.raw<SavedSelection[]>([]);
   readonly servers = new SvelteMap<string, ServerView>();
   serverMetadataLoading = $derived(
@@ -166,7 +166,7 @@ class AppStore {
         : "stale";
     },
   );
-  serverApproval = $state<{
+  serverApproval = $state.raw<{
     id: string;
     url: string;
     code: string;
@@ -361,7 +361,7 @@ class AppStore {
   showWireEstimates = $state(true);
   keyShortcuts = $state(true);
   resultHistoryPreference = $state<ResultHistoryPreference>("default");
-  historyColumns = $state<HistoryColumn[]>([...DEFAULT_HISTORY_COLUMNS]);
+  historyColumns = $state.raw<HistoryColumn[]>([...DEFAULT_HISTORY_COLUMNS]);
   // Keep the completion snapshot plain because IndexedDB cannot clone proxies.
   historyCandidate = $state.raw<HistoryRecord | null>(null);
   historyWarning = $state("");
@@ -379,7 +379,7 @@ class AppStore {
       this.operatorHistoryDefault,
     ),
   );
-  dockWidth = $state<{ left: number; right: number }>({
+  dockWidth = $state.raw<{ left: number; right: number }>({
     ...DEFAULT_DOCK_WIDTH,
   });
   historySplit = $state(DEFAULT_HISTORY_SPLIT);
@@ -806,6 +806,8 @@ export function mountStoreEffects(store: AppStore): () => void {
   });
   return () => {
     disposeEffects();
+    store.phaseClock.dispose();
+    store.runClock.dispose();
     window.removeEventListener("storage", onStorage);
     media?.removeEventListener("change", onThemeChange);
   };

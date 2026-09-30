@@ -3,7 +3,7 @@
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   const controller = getApplicationController();
-  import { tooltip } from "../actions/tooltip";
+  import { tooltipAction } from "../actions/tooltip";
   import { fmtDuration } from "../format";
   import { handoff } from "../presentation/motion.svelte";
   import { BLOCKED, runActionLabel } from "../presentation/vocabulary";
@@ -39,7 +39,7 @@
   aria-describedby={idle ? "run-duration" : undefined}
   style:--stop={stop}
   onclick={controller.toggleRun}
-  {@attach tooltip(() => blocker)}
+  use:tooltipAction={blocker}
 >
   <span class="skin" aria-hidden="true"></span>
   <span class="skin stop" aria-hidden="true"></span>

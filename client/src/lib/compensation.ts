@@ -1,6 +1,7 @@
 // Counts protocol bytes only, excluding runtime behavior and reverse traffic.
 import type { CompensationTransport, TransportKind } from "./runner/contract";
 import { normalizeHttpProtocol } from "./runner/paths";
+import { fmtCount } from "./format";
 
 type CompensationConfidence = "high" | "medium" | "low";
 type FactorKey =
@@ -260,6 +261,6 @@ export function compensationTooltip(estimate: CompensationBreakdown): string {
       .map(
         (factor) => `${factor.label} +${factor.contributionPct.toFixed(2)}%`,
       ),
-    `MTU ${estimate.mtuBytes.toLocaleString("en-US")} B assumed`,
+    `MTU ${fmtCount(estimate.mtuBytes)} B assumed`,
   ].join("\n");
 }
