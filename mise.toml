@@ -271,6 +271,14 @@ run = [
   "bun run scripts/e2e.ts bun test ./bench/ui.bench.ts --no-orphans --timeout=600000",
 ]
 
+[tasks.bench-session]
+description = "Measure retained browser resources across repeated tests (manual)"
+dir = "client"
+run = [
+  { task = "_e2e-build" },
+  "bun run scripts/e2e.ts bun test ./bench/session.bench.ts --no-orphans --timeout=600000",
+]
+
 [tasks.stress]
 description = "Measure the server saturation envelope (Unix, manual)"
 dir = "go"
