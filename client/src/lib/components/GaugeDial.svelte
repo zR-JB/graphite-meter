@@ -17,7 +17,7 @@
 <script lang="ts">
   import { inView } from "../actions/inView";
   import { tooltip } from "../actions/tooltip";
-  import { untrack } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { Smoothed, still } from "../presentation/motion.svelte";
   import { sweepTarget, angleForFraction } from "./gaugeSweep";
   import type { GaugeLayout } from "./gaugeLayout";
@@ -44,9 +44,11 @@
   );
   // The beat swells the head by a fifth; its box leaves that room.
   const headExtent = $derived(Math.ceil(headRadius * 1.2) + 1);
+  // Readout frames change the handoff object while the result arcs stay put.
+  const arcs = $derived(result.arcs);
   const placements = $derived(
     resultGaugeHeadPlacements(
-      result.arcs.map((arc) => arc.fraction),
+      arcs.map((arc) => arc.fraction),
       {
         baseRadius: layout.radius,
         arcSweep: layout.arcSweep,
@@ -56,7 +58,7 @@
     ),
   );
   const results = $derived(
-    result.arcs.map((arc, index) => ({
+    arcs.map((arc, index) => ({
       ...arc,
       ...placements[index],
       fraction: Math.min(1, Math.max(0, arc.fraction)),
@@ -66,6 +68,7 @@
   const diameter = $derived(extent * 2);
   // The needle follows the readout, glides across a rescale, holds its pose while hidden and is revealed at the value.
   const sweep = new Smoothed();
+  onDestroy(() => sweep.dispose());
   let accent = $state("var(--phase-latency)");
   let course = "";
   let revealed = false;
@@ -245,12 +248,7 @@
       ></span>
     {/each}
   {/if}
-  <div
-    class="live"
-    class:visible
-    style:--sweep={`${sweep.current}deg`}
-    aria-hidden="true"
-  >
+  <div class="live" class:visible aria-hidden="true">
     <div
       class="sweep-ring"
       style:left={`${layout.center.x - extent}px`}
@@ -267,6 +265,7 @@
         >
           <div
             class="rotor"
+            style:transform={`rotate(${half === 0 ? Math.min(180, sweep.current) : Math.max(0, sweep.current - 180)}deg)`}
             style:width={`${diameter}px`}
             style:height={`${diameter}px`}
           >
@@ -302,6 +301,7 @@
     </div>
     <div
       class="live-head"
+      style:transform={`rotate(${sweep.current + 135}deg)`}
       style:left={`${layout.center.x}px`}
       style:top={`${layout.center.y}px`}
     >
@@ -379,12 +379,10 @@
     position: absolute;
     top: 0;
     right: 0;
-    transform: rotate(min(180deg, var(--sweep)));
   }
   .second .rotor {
     right: auto;
     left: 0;
-    transform: rotate(max(0deg, var(--sweep) - 180deg));
   }
   .start-cap {
     position: absolute;
@@ -402,7 +400,6 @@
     position: absolute;
     width: 0;
     height: 0;
-    transform: rotate(calc(var(--sweep) + 135deg));
   }
   .live-head svg {
     position: absolute;

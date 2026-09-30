@@ -1,6 +1,6 @@
 <script lang="ts">
   import { store } from "../state/store.svelte";
-  import { tooltip } from "../actions/tooltip";
+  import { tooltipAction } from "../actions/tooltip";
   import { announceChanges } from "../presentation/announcer.svelte";
   import {
     CONNECTIVITY,
@@ -59,7 +59,7 @@
   );
 </script>
 
-<div class="pulse" {@attach tooltip(() => [label, ...facts].join("\n"))}>
+<div class="pulse" use:tooltipAction={[label, ...facts].join("\n")}>
   <span class="sr-only">{[label, ...facts].join(". ")}</span>
   <span class="status-dot" data-tone={state.tone}></span>
   <svg class="spark" viewBox="0 0 36 16" aria-hidden="true">

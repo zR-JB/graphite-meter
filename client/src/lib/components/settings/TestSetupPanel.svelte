@@ -367,7 +367,7 @@
     <div class="kv">
       <div class="presets">
         <div class="segmented" role="group" aria-label="Duration preset">
-          {#each PRESETS as preset}
+          {#each PRESETS as preset (preset)}
             <button
               type="button"
               aria-pressed={durationMode === preset}

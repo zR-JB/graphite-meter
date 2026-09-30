@@ -2,10 +2,12 @@
   import { untrack } from "svelte";
   import { warmUp } from "../actions/intent";
   import { scrub } from "../actions/scrub";
+  import { inView } from "../actions/inView";
   import { fmtDuration, formatLatency } from "../format";
   import {
     nearestAt,
-    stageGraph,
+    stageGraphGeometry,
+    drawStageGraph,
     type GraphPoint,
     type LatencyPoint,
   } from "../presentation/stageGraph";
@@ -44,9 +46,10 @@
   const TRACK = 20;
   let width = $state(0);
   let plotHeight = $state(0);
-  const graph = $derived(
+  let seen = $state(false);
+  const geometry = $derived(
     width && plotHeight
-      ? stageGraph({
+      ? stageGraphGeometry({
           lanes,
           latency,
           start,
@@ -57,11 +60,13 @@
           width,
           plotHeight,
           trackHeight: TRACK,
-          head,
         })
       : null,
   );
-  const hasData = $derived(!!graph?.bins.some((lane) => lane.length));
+  const graph = $derived(
+    geometry && drawStageGraph(geometry, seen ? head : null),
+  );
+  const hasData = $derived(!!geometry?.bins.some((lane) => lane.length));
 
   let hoverT = $state<number | null>(null);
   let keyboard = false;
@@ -70,7 +75,7 @@
     lanes.map((lane) => lane.filter((point) => point.t >= start)),
   );
   const hover = $derived.by(() => {
-    if (hoverT === null || !graph || !hasData) return null;
+    if (hoverT === null || !geometry || !hasData) return null;
     const rates = samples.map((lane) => nearestAt(lane, hoverT!));
     const at = rates.find(Boolean)!.t;
     const reply = nearestAt(latency, at);
@@ -113,7 +118,7 @@
   });
   // Arrow keys walk the drawn bins from the newest; the readout names the sample nearest where it stops.
   function stepTo(key: string): boolean {
-    const times = graph?.bins.find((lane) => lane.length)?.map((p) => p.t);
+    const times = geometry?.bins.find((lane) => lane.length)?.map((p) => p.t);
     if (!times?.length) return false;
     const index =
       hoverT === null
@@ -146,6 +151,7 @@
 </script>
 
 <div
+  {@attach inView((value) => (seen = value))}
   class="graph"
   data-tone={tone}
   bind:this={box}

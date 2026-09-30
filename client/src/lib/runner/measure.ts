@@ -226,6 +226,7 @@ export class LatencyPopulation {
   #n = 0;
   #sum = 0;
   #final: StageLatencySummary | null | undefined;
+  #summary: StageLatencySummary | null | undefined;
   #timeouts = 0;
   #replies = 0;
   #unresolved = 0;
@@ -246,6 +247,7 @@ export class LatencyPopulation {
   }
 
   observe(sample: LatencyObservation, continuity = 0): void {
+    this.#summary = undefined;
     if (continuity !== this.#continuity) this.#previous = null;
     this.#continuity = continuity;
     const { rttMs, reflectorHandlingMs: handling } = sample;
@@ -278,12 +280,14 @@ export class LatencyPopulation {
 
   interrupt(count: number, reason: "unresolved" | "send-failed"): void {
     if (!Number.isSafeInteger(count) || count <= 0) return;
+    this.#summary = undefined;
     if (reason === "unresolved") this.#unresolved += count;
     else this.#sendFailures += count;
     this.#previous = null;
   }
 
   markIncomplete(): void {
+    this.#summary = undefined;
     this.#complete = false;
     this.#previous = null;
   }
@@ -296,13 +300,14 @@ export class LatencyPopulation {
 
   summary(): StageLatencySummary | null {
     if (this.#final !== undefined) return this.#final;
+    if (this.#summary !== undefined) return this.#summary;
     if (
       !this.count &&
       !this.#unresolved &&
       !this.#sendFailures &&
       this.#complete
     )
-      return null;
+      return (this.#summary = null);
     const keys = this.#merge();
     const cumulative = new Float64Array(keys.length);
     let total = 0;
@@ -321,7 +326,7 @@ export class LatencyPopulation {
       n ? at(Math.min(n - 1, Math.max(0, Math.ceil(p * n) - 1))) : null;
     const mid = n >> 1;
     const { count, raw, handling } = this.#timing;
-    return {
+    return (this.#summary = {
       ...(count
         ? {
             reflectorTiming: {
@@ -345,12 +350,13 @@ export class LatencyPopulation {
       p90Ms: rank(0.9),
       p95Ms: rank(0.95),
       jitterMs: this.#deltaCount ? this.#deltaSum / this.#deltaCount : null,
-    };
+    });
   }
 
   #merge(): Float64Array {
     const n = this.#sorted.length;
     const k = this.#fresh.length;
+    if (!k) return this.#sorted;
     let buffer = new Float64Array(this.#sorted.buffer);
     if (buffer.length < n + k) {
       buffer = new Float64Array(2 * (n + k));

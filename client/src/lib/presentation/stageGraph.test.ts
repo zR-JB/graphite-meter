@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { replies, stageGraph } from "./stageGraph";
+import {
+  replies,
+  stageGraph,
+  stageGraphGeometry,
+  drawStageGraph,
+} from "./stageGraph";
+import { monotoneCurve } from "./smoothPath";
 import { singleLatencyBucket } from "../runner/series";
 
 test("a stage's replies are its measured buckets; a bucket of timeouts has no point", () => {
@@ -26,6 +32,52 @@ const base = {
   plotHeight: 100,
   trackHeight: 20,
 };
+
+test("cached moving tails preserve the complete curve and reuse measured geometry", () => {
+  const geometry = stageGraphGeometry({
+    ...base,
+    lanes: [
+      Array.from({ length: 80 }, (_, i) => ({
+        t: 1000 + i * 50,
+        v: 10 + ((i * 37) % 90),
+      })),
+      Array.from({ length: 40 }, (_, i) => ({
+        t: 1000 + i * 100,
+        v: 90 - ((i * 13) % 80),
+      })),
+    ],
+  });
+  for (let t = 1000; t <= 5000; t += 37) {
+    const values = [20 + (t % 79), 80 - (t % 73)];
+    const graph = drawStageGraph(geometry, { t, values });
+    expect(graph.dots).toBe(geometry.dots);
+    expect(graph.bins).toBe(geometry.bins);
+    for (let lane = 0; lane < 2; lane++) {
+      const tip = { x: geometry.x(t), y: geometry.y(values[lane]) };
+      const points = [
+        ...geometry.points[lane].filter((point) => point.x < tip.x),
+        tip,
+      ];
+      const line =
+        points.length < 2
+          ? ""
+          : `M${points[0].x} ${points[0].y}` +
+            monotoneCurve(points)
+              .map(
+                ({ control1: a, control2: b, end: e }) =>
+                  `C${a.x} ${a.y} ${b.x} ${b.y} ${e.x} ${e.y}`,
+              )
+              .join("");
+      expect(graph.lines[lane]).toBe(line);
+      if (!lane)
+        expect(graph.area).toBe(
+          line
+            ? `${line}L${tip.x} ${geometry.plotHeight}L${points[0].x} ${geometry.plotHeight}Z`
+            : "",
+        );
+    }
+  }
+});
 
 test("a running stage spans its plan and its leading edge carries the glided rate", () => {
   const lane = [0, 1, 2].map((i) => ({ t: 1000 + i * 500, v: 50 }));

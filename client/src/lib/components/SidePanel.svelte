@@ -220,6 +220,7 @@
     background: var(--scrim);
     opacity: 0;
     visibility: hidden;
+    pointer-events: none;
     transition:
       opacity var(--dur-sheet) var(--ease-out),
       visibility var(--dur-sheet) allow-discrete;
@@ -227,6 +228,7 @@
   .scrim.open {
     opacity: calc(1 - var(--sheet-drag, 0));
     visibility: visible;
+    pointer-events: auto;
   }
 
   .resize-handle[data-side="left"] {

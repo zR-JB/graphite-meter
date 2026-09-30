@@ -242,7 +242,7 @@
           true,
         )}{/if}
     </dl>
-    {#each issues as issue}
+    {#each issues as issue (`${issue.reason}\t${issue.stages}`)}
       <p class="notice" data-tone="err">
         <strong>{issue.stages}</strong>
         {issue.reason}
@@ -257,7 +257,7 @@
   <div class="group">
     <h3>Connection</h3>
     <dl class="kv" data-tip-group {@attach tipGroup}>
-      {#each PATH_ROLES as role}
+      {#each PATH_ROLES as role (role)}
         {@const connection = connections[role]}
         {@const status = endpointPathStatus(connection.validation, pathMode)}
         {@const inTest = role === "throughput" || latencyRequested}

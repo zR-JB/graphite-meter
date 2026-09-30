@@ -155,13 +155,21 @@ export class HistoryRepository {
         return tx.abort();
       }
       written = true;
-      const values = results.index(HISTORY_DB.completedAtIndex).getAll();
-      values.onsuccess = () => {
-        const ids = values.result.flatMap(
-          (value) => readHistoryRecord(value)?.id ?? [],
-        );
-        for (const id of ids.slice(0, Math.max(0, ids.length - HISTORY_LIMIT)))
-          results.delete(id);
+      const index = results.index(HISTORY_DB.completedAtIndex);
+      const count = index.count();
+      count.onsuccess = () => {
+        // Below the cap no archive value needs to be cloned or validated just to save one result.
+        if (count.result <= HISTORY_LIMIT) return;
+        let kept = 0;
+        const scan = index.openCursor(null, "prev");
+        scan.onsuccess = () => {
+          const cursor = scan.result;
+          if (!cursor) return;
+          // Unreadable rows stay available for diagnostics and explicit clearing.
+          if (readHistoryRecord(cursor.value) && ++kept > HISTORY_LIMIT)
+            cursor.delete();
+          cursor.continue();
+        };
       };
     };
     await done(tx).catch((error: unknown) => {
@@ -182,21 +190,41 @@ export class HistoryRepository {
     return written;
   }
 
-  async listWithDiagnostics(): Promise<{
+  async listWithDiagnostics(signal?: AbortSignal): Promise<{
     records: HistoryRecord[];
     malformedCount: number;
   }> {
-    const store = (await this.#transaction("readonly")).objectStore(
-      HISTORY_DB.resultsStore,
-    );
-    const values: unknown[] = await request(
-      store.index(HISTORY_DB.completedAtIndex).getAll(),
-    );
-    const total = await request(store.count());
-    const records = values.flatMap((value) => readHistoryRecord(value) ?? []);
+    signal?.throwIfAborted();
+    const tx = await this.#transaction("readonly");
+    signal?.throwIfAborted();
+    const store = tx.objectStore(HISTORY_DB.resultsStore);
+    const total = request(store.count());
+    const records: HistoryRecord[] = [];
+    let readable = 0;
+    // Each cursor delivery yields to the browser: opening an archive never decodes 2,000 results in one task.
+    const scanned = new Promise<void>((resolve, reject) => {
+      const scan = store
+        .index(HISTORY_DB.completedAtIndex)
+        .openCursor(null, "prev");
+      scan.onerror = () => reject(scan.error);
+      scan.onsuccess = () => {
+        // Stop obsolete reads without aborting any result-saving transaction.
+        // Without another continue(), this read-only transaction finishes.
+        if (signal?.aborted) return reject(signal.reason);
+        const cursor = scan.result;
+        if (!cursor) return resolve();
+        const record = readHistoryRecord(cursor.value);
+        if (record) {
+          readable++;
+          if (records.length < HISTORY_LIMIT) records.push(record);
+        }
+        cursor.continue();
+      };
+    });
+    const [count] = await Promise.all([total, scanned]);
     return {
-      records: records.reverse().slice(0, HISTORY_LIMIT),
-      malformedCount: total - records.length,
+      records,
+      malformedCount: count - readable,
     };
   }
 

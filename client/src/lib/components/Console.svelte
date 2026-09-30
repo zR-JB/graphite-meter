@@ -72,7 +72,7 @@
   let historyChunkFailed = $state(false);
   let historyChunk: Promise<unknown> | undefined;
   let historyInvoker: HTMLElement | null = null;
-  let workspaceFocusIntent = $state<
+  let workspaceFocusIntent = $state.raw<
     | {
         kind: "workspace";
         workspace: "history" | "measurement";
@@ -105,9 +105,10 @@
     },
   };
   const resetCopy = $derived(RESET_CONFIRM[resetReason]);
-  let currentRoute = $state<Route>(
-    parseRoute(typeof window === "undefined" ? "#/" : window.location.hash),
+  const initialRoute = parseRoute(
+    typeof window === "undefined" ? "#/" : window.location.hash,
   );
+  let currentRoute = $state.raw<Route>(initialRoute);
   let historyOpen = $derived(
     currentRoute.kind === "app" && currentRoute.workspace.kind === "history",
   );
@@ -197,6 +198,13 @@
     allowMultiplePanels
       ? currentPanels.includes("endpoint")
       : lastPanel === "endpoint",
+  );
+  // Build a panel on first use, then keep its drafts and closing animation intact.
+  let settingsVisited = $state(
+    initialRoute.kind === "app" && initialRoute.panels.includes("settings"),
+  );
+  let telemetryVisited = $state(
+    initialRoute.kind === "app" && initialRoute.panels.includes("endpoint"),
   );
   const legalOpen = $derived(
     currentRoute.kind === "app" && currentRoute.dialog === "legal",
@@ -398,6 +406,10 @@
     const nextHistory =
       next.kind === "app" && next.workspace.kind === "history";
     currentRoute = next;
+    if (next.kind === "app") {
+      if (next.panels.includes("settings")) settingsVisited = true;
+      if (next.panels.includes("endpoint")) telemetryVisited = true;
+    }
     if (nextHistory) loadHistoryWorkspace();
     const workspace = nextHistory ? "history" : "measurement";
     if (workspaceFocusIntent && workspaceFocusIntent.workspace !== workspace)
@@ -689,10 +701,12 @@
     side="left"
     title="Settings"
   >
-    <TestSetupPanel
-      open={settingsOpen}
-      onOpenHistory={(invoker) => historyRoute(null, invoker)}
-    />
+    {#if settingsOpen || settingsVisited}
+      <TestSetupPanel
+        open={settingsOpen}
+        onOpenHistory={(invoker) => historyRoute(null, invoker)}
+      />
+    {/if}
   </SidePanel>
   {#if currentRoute.kind === "not-found"}
     <section class="stage history-stage" inert={flyout}>
@@ -759,7 +773,9 @@
     onClose={() => dismissPanel("endpoint")}
     title="Details"
   >
-    <EndpointInfo onOpenLegal={openLegal} />
+    {#if telemetryOpen || telemetryVisited}
+      <EndpointInfo onOpenLegal={openLegal} />
+    {/if}
   </SidePanel>
 
   <PhaseToast />

@@ -11,7 +11,6 @@
   import type { LiveReadout } from "../presentation/liveReadout.svelte";
   import { announce } from "../presentation/announcer.svelte";
   import { handoff } from "../presentation/motion.svelte";
-  import { replies } from "../presentation/stageGraph";
   import { untrack } from "svelte";
   import {
     CARD_ORDER,
@@ -20,6 +19,7 @@
     summaryCards,
     serverIssues,
     summaryEvidence,
+    buildCardGraphs,
     type CardGraph,
     type CardScale,
     type SummaryCard,
@@ -66,38 +66,23 @@
     CARD_ORDER.filter((key) => status(key) !== "disabled"),
   );
   type Transfer = Exclude<Stage, "latency">;
+  let retainedGraphs: Partial<Record<Transfer, CardGraph>> = {};
   // The run's series per stage, over its plan until settled; a scoped server has no series of its own.
   const graphs = $derived.by(() => {
     if (shown) return {} as Partial<Record<Transfer, CardGraph>>;
     const plan = (store.run?.config ?? store.config).duration;
-    const lane = (key: Transfer, dir: "down" | "up") =>
-      store.throughput
-        .filter((s) => s.phase === key && s.dir === dir)
-        .map((s) => ({ t: s.t, v: s.bytesPerSec }));
-    const graph = (key: Transfer): CardGraph => {
-      const lanes =
-        key === "bidirectional"
-          ? [lane(key, "down"), lane(key, "up")]
-          : [lane(key, key === "download" ? "down" : "up")];
-      const times = lanes.flat().map((point) => point.t);
-      const start = times.length ? Math.min(...times) : 0;
-      const measured = times.length ? Math.max(...times) - start : 0;
-      return {
-        lanes,
-        latency: replies(store.latency, key),
-        start,
-        span:
-          Math.max(
-            measured,
-            running(key) || status(key) === "pending" ? plan[`${key}Ms`] : 0,
-          ) || 1,
-      };
-    };
-    return {
-      download: graph("download"),
-      upload: graph("upload"),
-      bidirectional: graph("bidirectional"),
-    };
+    const span = (key: Transfer) =>
+      running(key) || status(key) === "pending" ? plan[`${key}Ms`] : 0;
+    return (retainedGraphs = buildCardGraphs(
+      store.throughput,
+      store.latency,
+      {
+        download: span("download"),
+        upload: span("upload"),
+        bidirectional: span("bidirectional"),
+      },
+      retainedGraphs,
+    ));
   });
   // The running card's leading edge moves on the frame clock; the other graphs stay put.
   const head = $derived.by(() => {
@@ -120,16 +105,44 @@
     latencyTop: store.latencyScaleMs,
     rate: (bytesPerSec) => formatRate(bytesPerSec, units),
   });
+  // A stage subscribes to its own live value. Animating one must not rebuild
+  // the pending and finished cards, their rows, or their tooltip parameters.
+  const latencyCard = $derived(
+    settled.find((card) => card.key === "latency") ?? liveCard("latency"),
+  );
+  const downloadCard = $derived(
+    settled.find((card) => card.key === "download") ?? liveCard("download"),
+  );
+  const uploadCard = $derived(
+    settled.find((card) => card.key === "upload") ?? liveCard("upload"),
+  );
+  const bidirectionalCard = $derived(
+    settled.find((card) => card.key === "bidirectional") ??
+      liveCard("bidirectional"),
+  );
+  const byStage = $derived({
+    latency: latencyCard,
+    download: downloadCard,
+    upload: uploadCard,
+    bidirectional: bidirectionalCard,
+  });
+  const retainedCards: Partial<
+    Record<Stage, { source: SummaryCard; view: SummaryCard }>
+  > = {};
+  function withGraph(card: SummaryCard): SummaryCard {
+    const graph = graphs[card.key as Transfer] ?? null;
+    const previous = retainedCards[card.key];
+    if (previous?.source === card && previous.view.graph === graph)
+      return previous.view;
+    const view = { ...card, graph };
+    retainedCards[card.key] = { source: card, view };
+    return view;
+  }
   const cards = $derived(
     (store.phase !== "complete" && store.phase !== "error"
-      ? planned.map(
-          (key) => settled.find((card) => card.key === key) ?? liveCard(key),
-        )
+      ? planned.map((key) => byStage[key])
       : settled
-    ).map((card) => ({
-      ...card,
-      graph: graphs[card.key as Transfer] ?? null,
-    })),
+    ).map(withGraph),
   );
 
   const view = handoff(

@@ -1,4 +1,4 @@
-import { afterAll, expect as bunExpect, test as bunTest } from "bun:test";
+import { expect as bunExpect, test as bunTest } from "bun:test";
 import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -142,11 +142,12 @@ function watchDisplay() {
   const sample = () => {
     const app = document.querySelector("#console");
     if (!app) return;
-    const bad = /\b(NaN|Infinity)\b/.exec(app.outerHTML);
+    const markup = app.outerHTML;
+    const bad = /\b(NaN|Infinity)\b/.exec(markup);
     if (bad) {
-      const at = app.outerHTML.indexOf(bad[0]);
+      const at = bad.index;
       report(
-        `page shows ${bad[0]}: ${app.outerHTML.slice(Math.max(0, at - 120), at + 40)}`,
+        `page shows ${bad[0]}: ${markup.slice(Math.max(0, at - 120), at + 40)}`,
       );
     }
     const next = app.getAttribute("data-phase") ?? "";
@@ -334,11 +335,10 @@ function removeProfiles() {
         rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
     } catch {}
 }
+// Chrome is shared across files in this process. File-scoped afterAll cleanup
+// can kill the next file's first view while it starts. Only shut down at exit;
+// the fleet wrapper also owns worker profiles through its temporary directory.
 process.on("exit", removeProfiles);
-// Parallel test workers end without an exit event; outside the test runner afterAll throws.
-try {
-  afterAll(removeProfiles);
-} catch {}
 
 /** Browser work that never answers fails with its name and the page state, before the test timeout hides both. */
 export function within<T>(
@@ -371,7 +371,7 @@ export class Page {
   readonly errors: string[] = [];
   readonly console: string[] = [];
   private ready: Promise<void> | undefined;
-  constructor() {
+  constructor(private readonly options: { monitorDisplay?: boolean } = {}) {
     this.raw = new Bun.WebView({
       width: 1280,
       height: 800,
@@ -403,7 +403,7 @@ export class Page {
         await this.raw.cdp("Runtime.enable");
         for (const guard of [
           reportPolicyViolations,
-          watchDisplay,
+          ...(this.options.monitorDisplay === false ? [] : [watchDisplay]),
           recordStorage,
         ])
           await this.raw.cdp("Page.addScriptToEvaluateOnNewDocument", {
@@ -570,20 +570,30 @@ export const expect: any = Object.assign(
   { poll },
 );
 
-export function test(name: string, fn: (page: Page) => Promise<unknown>) {
-  bunTest(name, async () => {
-    const page = new Page();
-    try {
-      await fn(page);
-      await page.evaluate("window.__gmCheckDisplay?.()").catch(() => undefined);
-      if (page.errors.length) throw new Error(page.errors.join("\n"));
-    } catch (error) {
-      await page.artifact(name).catch(() => {});
-      throw error;
-    } finally {
-      await page.close();
-    }
-  });
+export function test(
+  name: string,
+  fn: (page: Page) => Promise<unknown>,
+  options: { monitorDisplay?: boolean; timeout?: number } = {},
+) {
+  bunTest(
+    name,
+    async () => {
+      const page = new Page(options);
+      try {
+        await fn(page);
+        await page
+          .evaluate("window.__gmCheckDisplay?.()")
+          .catch(() => undefined);
+        if (page.errors.length) throw new Error(page.errors.join("\n"));
+      } catch (error) {
+        await page.artifact(name).catch(() => {});
+        throw error;
+      } finally {
+        await page.close();
+      }
+    },
+    options.timeout,
+  );
 }
 
 const axeSource = resolve(

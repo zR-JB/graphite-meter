@@ -9,7 +9,7 @@
 
   const app = getApplicationController();
 
-  let session = $state<ReturnType<typeof parseAccountSession> | null>(null);
+  let session = $state.raw<ReturnType<typeof parseAccountSession> | null>(null);
   let form = $state<HTMLFormElement>();
   let everywhere = $state<HTMLButtonElement>();
   let confirming = $state(false);

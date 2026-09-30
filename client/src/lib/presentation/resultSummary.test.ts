@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  buildCardGraphs,
   cardFacts,
   cardNoData,
   summaryCards,
@@ -7,6 +8,97 @@ import {
   type SummaryCard,
 } from "./resultSummary";
 import { JARGON } from "./vocabulary";
+
+import type { LatencyBucket, ThroughputSample } from "../runner/contract";
+import {
+  compactThroughputHistory,
+  singleLatencyBucket,
+  upsertLatencyBucket,
+} from "../runner/series";
+import { replies } from "./stageGraph";
+
+test("card graphs match full reconstruction across revisions, compaction, and resets", () => {
+  let throughput: ThroughputSample[] = [];
+  let latency: LatencyBucket[] = [];
+  const spans = { download: 1000, upload: 2000, bidirectional: 3000 };
+  let previous = buildCardGraphs(throughput, latency, spans);
+  const check = () => {
+    const snapshot = structuredClone(previous);
+    const next = buildCardGraphs(throughput, latency, spans, previous);
+    for (const key of ["download", "upload", "bidirectional"] as const) {
+      const lane = (dir: "down" | "up") =>
+        throughput
+          .filter((s) => s.phase === key && s.dir === dir)
+          .map((s) => ({ t: s.t, v: s.bytesPerSec }));
+      const lanes =
+        key === "bidirectional"
+          ? [lane("down"), lane("up")]
+          : [lane(key === "download" ? "down" : "up")];
+      const times = lanes.flat().map((point) => point.t);
+      const start = times.length ? Math.min(...times) : 0;
+      expect(next[key]).toEqual({
+        lanes,
+        latency: replies(latency, key),
+        start,
+        span:
+          Math.max(times.length ? Math.max(...times) - start : 0, spans[key]) ||
+          1,
+      });
+    }
+    expect(previous).toEqual(snapshot);
+    previous = next;
+    return next;
+  };
+  for (let t = 0; t < 24; t++) {
+    for (const phase of ["download", "upload", "bidirectional"] as const)
+      for (const dir of ["down", "up"] as const)
+        throughput.push({
+          t: t * 100,
+          phase,
+          dir,
+          bytesPerSec: (t % 5) * 10,
+          bytesCumulative: t * 1000,
+          continuityId: 0,
+        });
+    upsertLatencyBucket(
+      latency,
+      singleLatencyBucket(t * 100, t, t % 3 === 0, "download"),
+    );
+  }
+  check();
+  const settled = previous.download;
+  expect(check().download).toBe(settled);
+  throughput.push({
+    t: 2500,
+    phase: "upload",
+    dir: "up",
+    bytesPerSec: 90,
+    bytesCumulative: 9000,
+    continuityId: 0,
+  });
+  expect(check().download).toBe(settled);
+  throughput[4] = { ...throughput[4], bytesPerSec: 123 };
+  upsertLatencyBucket(latency, singleLatencyBucket(400, 75, false, "download"));
+  check();
+  compactThroughputHistory(throughput, 3000, 12);
+  upsertLatencyBucket(
+    latency,
+    singleLatencyBucket(2600, 90, false, "download"),
+    5,
+  );
+  check();
+  spans.download = spans.upload = spans.bidirectional = 0;
+  check();
+  throughput = [];
+  latency = [];
+  check();
+  expect(previous.download).toEqual({
+    lanes: [[]],
+    latency: [],
+    start: 0,
+    span: 1,
+  });
+});
 
 test("run evidence keeps only stages with a result", () => {
   const evidence = summaryEvidence(

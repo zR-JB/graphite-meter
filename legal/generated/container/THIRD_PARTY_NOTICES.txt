@@ -1276,7 +1276,7 @@ Component: svelte
 Version: 5.57.1
 Source: https://github.com/sveltejs/svelte
 License: MIT
-Modified by Graphite Meter: no
+Modified by Graphite Meter: yes
 
 --- LICENSE.md ---
 

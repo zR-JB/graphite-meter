@@ -4,7 +4,7 @@
 
   // A changed time rolls like a counter: up as it grows, down as it shrinks.
   let { text, rank }: { text: string; rank: number } = $props();
-  let direction = $state(1);
+  let direction = 1;
   let previous = NaN;
   $effect.pre(() => {
     if (rank !== previous && !Number.isNaN(previous))

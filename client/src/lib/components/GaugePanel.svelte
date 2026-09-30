@@ -1,6 +1,6 @@
 <script lang="ts">
   import { catalogSelection } from "../presentation/serverAppearance";
-  import { untrack } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { store } from "../state/store.svelte";
   import GaugeDial, { type GaugeDialState } from "./GaugeDial.svelte";
   import { GAUGE_LABEL_FRACTIONS, gaugeLayout } from "./gaugeLayout";
@@ -28,7 +28,7 @@
     STATUS_TONE,
   } from "../presentation/vocabulary";
   import { announceChanges } from "../presentation/announcer.svelte";
-  import { tooltip } from "../actions/tooltip";
+  import { tooltipAction } from "../actions/tooltip";
   import { handoff } from "../presentation/motion.svelte";
   import { MediaQuery } from "svelte/reactivity";
 
@@ -67,6 +67,7 @@
   const portrait = new MediaQuery("(orientation: portrait)");
   const hung = $derived(panelWidth >= 760 && !portrait.current);
   const liveReadout = new LiveReadout();
+  onDestroy(() => liveReadout.dispose());
   $effect(() => {
     const live = store.live;
     const run = store.runSeq;
@@ -185,22 +186,26 @@
       ? { value: fmtSpeed(gaugeRate(rates.down + rates.up)), unit: gaugeUnit }
       : { value: MISSING, unit: "" });
   const spoken = $derived(rateDisplay(liveTarget));
+  const arcs = $derived(
+    phase === "complete"
+      ? terminalArcs.map((arc) => ({
+          phase: arc.phase,
+          fraction: throughputGaugeFraction(
+            arc.bytesPerSec,
+            store.scales.gaugeBytesPerSec,
+          ),
+          dashed: arc.dashed,
+          description: `${arc.label}${arc.dashed ? ` · ${OUTCOME.partial}` : ""}\n${fmtSpeed(gaugeRate(arc.bytesPerSec))} ${gaugeUnit}`,
+        }))
+      : [],
+  );
   const hero = handoff(
     () => {
-      const scale = store.scales.gaugeBytesPerSec;
       return {
         terminal: readout.terminal,
         display: rateDisplay(liveRates),
         unit: gaugeUnit,
-        arcs:
-          phase === "complete"
-            ? terminalArcs.map((arc) => ({
-                phase: arc.phase,
-                fraction: throughputGaugeFraction(arc.bytesPerSec, scale),
-                dashed: arc.dashed,
-                description: `${arc.label}${arc.dashed ? ` · ${OUTCOME.partial}` : ""}\n${fmtSpeed(gaugeRate(arc.bytesPerSec))} ${gaugeUnit}`,
-              }))
-            : [],
+        arcs,
       };
     },
     ({ terminal, display }) =>
@@ -346,7 +351,7 @@
               <span class="gauge-status {tone}">{status}</span>
             {/if}
             {#if hint}
-              <span class="gauge-hint" {@attach tip ? tooltip(() => tip) : null}
+              <span class="gauge-hint" use:tooltipAction={tip ?? ""}
                 >{hint}</span
               >
             {/if}

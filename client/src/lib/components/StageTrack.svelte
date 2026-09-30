@@ -3,7 +3,7 @@
   // Editable selection stays separate from the retained run's execution.
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
-  import { tooltip } from "../actions/tooltip";
+  import { tooltipAction } from "../actions/tooltip";
   import {
     lockReason,
     stageShown,
@@ -104,7 +104,7 @@
         : s.state === 'complete'
           ? ` (${STATUS.complete})`
           : ''}"
-      {@attach tooltip(() => s.tip)}
+      use:tooltipAction={s.tip}
       disabled={s.locked}
       onclick={() => controller.toggleStage(s.key)}
     >

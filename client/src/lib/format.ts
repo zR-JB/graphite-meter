@@ -7,7 +7,8 @@ const finite =
   (value: number, ...rest: Rest): string =>
     Number.isFinite(value) ? format(value, ...rest) : MISSING;
 
-export const fmtCount = (count: number) => count.toLocaleString("en-US");
+const countFormat = new Intl.NumberFormat("en-US");
+export const fmtCount = (count: number) => countFormat.format(count);
 export const fmtSpeed = finite((value) => {
   if (Math.abs(Math.round(value * 100) / 100) < 100) return value.toFixed(2);
   return Math.abs(Math.round(value * 10) / 10) < 1000

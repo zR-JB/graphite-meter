@@ -33,7 +33,7 @@
   );
 
   // Only failures and issues: the status bar already names every phase.
-  let toast = $state({ kicker: "", message: "", tone: "" });
+  let toast = $state.raw({ kicker: "", message: "", tone: "" });
   let visible = $state(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
   let seenIssues = 0;
@@ -85,7 +85,7 @@
     right: calc(anchor(--stage right) + var(--space-4));
     bottom: 40px;
     z-index: var(--z-toast);
-    display: grid;
+    display: none;
     grid-template-columns: 24px minmax(0, 1fr);
     align-items: center;
     column-gap: var(--space-2);
@@ -97,11 +97,19 @@
     pointer-events: none;
     transition:
       opacity var(--dur-slide) var(--ease-out),
-      translate var(--dur-slide) var(--ease-out);
+      translate var(--dur-slide) var(--ease-out),
+      display var(--dur-slide) allow-discrete;
   }
   .phase-toast.visible {
+    display: grid;
     opacity: 1;
     translate: none;
+  }
+  @starting-style {
+    .phase-toast.visible {
+      opacity: 0;
+      translate: 0 4px;
+    }
   }
   .notice-icon {
     grid-row: 1 / 3;

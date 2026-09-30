@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import Dialog from "./Dialog.svelte";
   import Icon from "./Icon.svelte";
   import { keyHint, tooltip } from "../actions/tooltip";
@@ -12,7 +13,7 @@
 
   let { open, onClose }: Props = $props();
   let loadState = $state<"loading" | "ready" | "error">("loading");
-  let data = $state<LegalAbout | null>(null);
+  let data = $state.raw<LegalAbout | null>(null);
 
   function load(request = loadLegal) {
     loadState = "loading";
@@ -27,7 +28,10 @@
   }
 
   $effect(() => {
-    if (open) load();
+    if (open)
+      untrack(() => {
+        if (!data) load();
+      });
   });
 
   const ECOSYSTEM: Record<string, string> = {

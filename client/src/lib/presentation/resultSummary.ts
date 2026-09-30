@@ -12,6 +12,8 @@ import {
 } from "../format";
 import type {
   AddedLatency,
+  LatencyBucket,
+  ThroughputSample,
   RunResult,
   TransportRole,
 } from "../runner/contract";
@@ -67,6 +69,100 @@ export interface CardGraph {
   latency: { t: number; ms: number }[];
   start: number;
   span: number;
+}
+type Transfer = ThroughputSample["phase"];
+type CardGraphs = Partial<Record<Transfer, CardGraph>>;
+
+/** Route each bounded series once; unchanged stages allocate no new points or lanes. */
+export function buildCardGraphs(
+  throughput: readonly ThroughputSample[],
+  latency: readonly LatencyBucket[],
+  spans: Record<Transfer, number>,
+  previous: CardGraphs = {},
+): Record<Transfer, CardGraph> {
+  function sequence<T extends { t: number }>(
+    before: T[] = [],
+    value: (point: T) => number,
+    create: (t: number, value: number) => T,
+  ) {
+    let next = before;
+    let length = 0;
+    return {
+      add(t: number, amount: number) {
+        const old = before[length];
+        if (old === undefined || old.t !== t || value(old) !== amount) {
+          if (next === before) next = before.slice(0, length);
+          next.push(create(t, amount));
+        } else if (next !== before) next.push(old);
+        length++;
+      },
+      finish() {
+        return next.length === length ? next : next.slice(0, length);
+      },
+    };
+  }
+  const stage = (key: Transfer) => ({
+    lanes: Array.from({ length: key === "bidirectional" ? 2 : 1 }, (_, i) =>
+      sequence(
+        previous[key]?.lanes[i],
+        (point) => point.v,
+        (t, v) => ({ t, v }),
+      ),
+    ),
+    latency: sequence(
+      previous[key]?.latency,
+      (point) => point.ms,
+      (t, ms) => ({ t, ms }),
+    ),
+    start: Infinity,
+    end: -Infinity,
+  });
+  const stages = {
+    download: stage("download"),
+    upload: stage("upload"),
+    bidirectional: stage("bidirectional"),
+  };
+  for (const sample of throughput) {
+    const key = sample.phase;
+    if (
+      key !== "bidirectional" &&
+      sample.dir !== (key === "download" ? "down" : "up")
+    )
+      continue;
+    const target = stages[key];
+    target.lanes[key === "bidirectional" && sample.dir === "up" ? 1 : 0].add(
+      sample.t,
+      sample.bytesPerSec,
+    );
+    target.start = Math.min(target.start, sample.t);
+    target.end = Math.max(target.end, sample.t);
+  }
+  for (const sample of latency) {
+    if (sample.medianRttMs === null || !(sample.phase in stages)) continue;
+    stages[sample.phase as Transfer].latency.add(sample.t, sample.medianRttMs);
+  }
+  const finish = (key: Transfer): CardGraph => {
+    const target = stages[key];
+    const lanes = target.lanes.map((lane) => lane.finish());
+    const latency = target.latency.finish();
+    const start = target.start === Infinity ? 0 : target.start;
+    const span =
+      Math.max(target.end === -Infinity ? 0 : target.end - start, spans[key]) ||
+      1;
+    const old = previous[key];
+    return old &&
+      old.start === start &&
+      old.span === span &&
+      old.latency === latency &&
+      lanes.every((lane, i) => lane === old.lanes[i])
+      ? old
+      : { lanes, latency, start, span };
+  };
+  return {
+    download: finish("download"),
+    upload: finish("upload"),
+    bidirectional: finish("bidirectional"),
+  };
 }
 /** Shared by every card: rate and latency ceilings, the idle floor, and how a rate reads. */
 export interface CardScale {

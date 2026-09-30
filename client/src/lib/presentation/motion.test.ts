@@ -109,3 +109,26 @@ test("a handoff never shows a key shorter than its fade-out and follows a held k
     view.set({ phase: "download", ms: 2 });
     expect(view.shown.ms).toBe(2);
   }));
+
+test("disposing a view stops its glide and handoff, and a new sample can resume", () =>
+  withFrames((frame) => {
+    const value = new Smoothed();
+    value.set(0, { now: 0 });
+    value.set(100, { now: 100 });
+    frame(150);
+    expect(value.current).toBe(50);
+    value.dispose();
+    frame(250);
+    expect(value.current).toBe(50);
+    value.set(200, { now: 300 });
+    frame(600);
+    expect(value.current).toBe(200);
+    value.dispose();
+
+    const view = new Handoff("old");
+    view.set("new");
+    view.dispose();
+    frame(1_000);
+    expect(view.shown).toBe("old");
+    expect(view.opacity).toBe(1);
+  }));

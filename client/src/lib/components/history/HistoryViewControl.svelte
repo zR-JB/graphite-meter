@@ -90,7 +90,7 @@
       >
     </h3>
     <div class="menu">
-      {#each HISTORY_COLUMNS as column}
+      {#each HISTORY_COLUMNS as column (column)}
         <button
           type="button"
           role="checkbox"
@@ -112,7 +112,7 @@
       >
     </h3>
     <div class="menu" role="radiogroup" aria-label="Sort by">
-      {#each HISTORY_SORTS.filter((option) => option === "date" || columns.includes(option)) as option}
+      {#each HISTORY_SORTS.filter((option) => option === "date" || columns.includes(option)) as option (option)}
         <button
           type="button"
           role="radio"

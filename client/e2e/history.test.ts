@@ -166,6 +166,60 @@ async function history(page: Page, selected = "") {
 
 const OPEN_BOUND = { timeout: 10_000 };
 
+test("closing History stops an unfinished archive scan and preserves its records", async (page) => {
+  await fixturePage(page);
+  await seed(page, {
+    records: Array.from({ length: 2000 }, (_, i) => record(i)),
+  });
+  await page.goto(home.url);
+  await expect(page.locator("#console")).toHaveCount(1);
+  await page.evaluate((db) => {
+    const stats = { deliveries: 0, dismissed: false };
+    const original = IDBCursor.prototype.continue;
+    IDBCursor.prototype.continue = function (...args) {
+      if (
+        this.source instanceof IDBIndex &&
+        this.source.objectStore.name === db.resultsStore &&
+        this.source.objectStore.transaction.mode === "readonly"
+      ) {
+        stats.deliveries++;
+        // Interrupt the actual scan, without slowing cursor deliveries or
+        // relying on the test driver to catch a brief intermediate state.
+        if (stats.deliveries === 20) {
+          const close = document.querySelector<HTMLButtonElement>(
+            'button[aria-label="Close History"]',
+          );
+          if (!close) throw new Error("History scan has no dismiss control");
+          stats.dismissed = true;
+          close.click();
+        }
+      }
+      return original.apply(this, args);
+    };
+    Object.assign(window, {
+      archiveScan: stats,
+      originalCursorContinue: original,
+    });
+  }, HISTORY_DB);
+  await page.getByRole("button", { name: "History", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe("#/");
+  await expect(page.locator(".history-workspace")).toHaveCount(0);
+  const stopped = await page.evaluate(() => (window as any).archiveScan);
+  expect(stopped.dismissed).toBe(true);
+  expect(stopped.deliveries).toBeGreaterThanOrEqual(20);
+  expect(stopped.deliveries).toBeLessThan(250);
+  await Bun.sleep(200);
+  expect(
+    await page.evaluate(() => (window as any).archiveScan.deliveries),
+  ).toBe(stopped.deliveries);
+  await page.evaluate(() => {
+    IDBCursor.prototype.continue = (window as any).originalCursorContinue;
+  });
+  await page.getByRole("button", { name: "History", exact: true }).click();
+  await expect(page.locator(".result-row")).toHaveCount(50, OPEN_BOUND);
+  expect((await stored(page)).records).toHaveLength(2000);
+});
+
 test("a 2,000-result archive sorts in bounded chunks and caps deep links", async (page) => {
   await fixturePage(page);
   const archive = Array.from({ length: 2_001 }, (_, index) => record(index));

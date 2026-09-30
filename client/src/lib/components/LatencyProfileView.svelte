@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { inView } from "../actions/inView";
   import { handoff, Smoothed } from "../presentation/motion.svelte";
   import Icon from "./Icon.svelte";
-  import { term, tooltip } from "../actions/tooltip";
+  import { termAction, tooltipAction } from "../actions/tooltip";
   import { warmUp } from "../actions/intent";
   import { scrub } from "../actions/scrub";
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
@@ -98,7 +98,7 @@
     (ticks) => ticks.map((tick) => tick.text).join(),
   );
 
-  let hover = $state<{
+  let hover = $state.raw<{
     key: LatencyProfileViewLane["key"];
     metric: MetricKey;
     anchorPct: number;
@@ -135,14 +135,23 @@
     lane: LatencyProfileViewLane,
     metric: MetricKey,
     track: HTMLElement,
+    trackWidth = track.getBoundingClientRect().width,
   ) {
     const value = metricValue(lane, metric);
     if (value == null) return;
+    const anchorPct = pos(value, scale);
+    if (
+      hover?.key === lane.key &&
+      hover.metric === metric &&
+      hover.anchorPct === anchorPct &&
+      hover.trackWidth === trackWidth
+    )
+      return;
     hover = {
       key: lane.key,
       metric,
-      anchorPct: pos(value, scale),
-      trackWidth: track.getBoundingClientRect().width,
+      anchorPct,
+      trackWidth,
     };
   }
 
@@ -159,7 +168,7 @@
       Math.max(0, (x - rect.left - EDGE) / (rect.width - 2 * EDGE)),
     );
     const metric = nearestMetric(lane, ratio * scale);
-    if (metric) setHover(lane, metric, track);
+    if (metric) setHover(lane, metric, track, rect.width);
     else if (keyboardLane !== lane.key) hover = null;
   }
   const laneOf = (event: PointerEvent) => {
@@ -244,6 +253,9 @@
   // Markers glide between summaries on the shared frame clock; saved and unseen lanes snap.
   const GLIDED = ["min", "max", "p10", "p90", "center", "current"] as const;
   const glides = new Map<string, Smoothed>();
+  onDestroy(() => {
+    for (const glide of glides.values()) glide.dispose();
+  });
   $effect(() => {
     const snap = !motion;
     const targets = lanes.flatMap((lane) =>
@@ -260,11 +272,14 @@
     );
     untrack(() => {
       for (const key of glides.keys())
-        if (!targets.some(([other]) => other === key)) glides.delete(key);
+        if (!targets.some(([other]) => other === key)) {
+          glides.get(key)?.dispose();
+          glides.delete(key);
+        }
       for (const [key, target] of targets) {
         const glide = glides.get(key) ?? new Smoothed();
         if (!glides.has(key)) glides.set(key, glide);
-        if (glide.target !== target) glide.set(target, { snap });
+        if (snap || glide.target !== target) glide.set(target, { snap });
       }
     });
   });
@@ -283,7 +298,7 @@
 >
   <header class="card-head">
     <span class="dot" aria-hidden="true"></span>
-    <h3 {@attach tooltip(() => JARGON.latency)}>{STAGE.latency.label}</h3>
+    <h3 use:tooltipAction={JARGON.latency}>{STAGE.latency.label}</h3>
     <span class="aside"
       >{source ? `${source}, idle and under load` : "Idle and under load"}</span
     >
@@ -325,13 +340,13 @@
         {/if}
         <dl class="facts">
           <div>
-            <dt {@attach term(() => JARGON.jitter)}>Jitter</dt>
+            <dt use:termAction={JARGON.jitter}>Jitter</dt>
             <dd class:quiet={idle.jitter == null}>
               {formatLatency(idle.jitter)}
             </dd>
           </div>
           <div>
-            <dt {@attach term(() => JARGON.latencyRange)}>Range</dt>
+            <dt use:termAction={JARGON.latencyRange}>Range</dt>
             <dd class:quiet={idle.min == null || idle.max == null}>
               {idle.min == null || idle.max == null
                 ? MISSING
@@ -340,13 +355,13 @@
           </div>
           <!-- Held from Start, so the result lands without moving Timeouts. -->
           <div>
-            <dt {@attach tooltip(() => JARGON.latencyStability)}>Stability</dt>
+            <dt use:tooltipAction={JARGON.latencyStability}>Stability</dt>
             <dd class:quiet={stability == null}>
               {stability == null ? MISSING : `${Math.round(stability)}%`}
             </dd>
           </div>
           <div>
-            <dt {@attach tooltip(() => timeoutsTip(idle))}>Timeouts</dt>
+            <dt use:tooltipAction={timeoutsTip(idle)}>Timeouts</dt>
             <dd class:quiet={idle.timeoutRatio == null}>
               {formatTimeouts(idle.timeoutRatio)}
             </dd>
@@ -400,7 +415,7 @@
                 data-tone={lane.failure ? "err" : "warn"}
                 role="note"
                 aria-label={note.replaceAll("\n", ". ")}
-                {@attach tooltip(() => note)}><Icon name="info" /></span
+                use:tooltipAction={note}><Icon name="info" /></span
               >
             {:else}
               <span class="mark" aria-hidden="true"
@@ -413,14 +428,12 @@
             class="lane-median"
             class:quiet={lane.center == null}
             tabindex="-1"
-            {@attach tooltip(() =>
-              [
-                JARGON.latencyMedian,
-                lane.reflectorTiming && serverHandling(lane.reflectorTiming),
-              ]
-                .filter(Boolean)
-                .join("\n"),
-            )}>{formatLatency(lane.center)}</strong
+            use:tooltipAction={[
+              JARGON.latencyMedian,
+              lane.reflectorTiming && serverHandling(lane.reflectorTiming),
+            ]
+              .filter(Boolean)
+              .join("\n")}>{formatLatency(lane.center)}</strong
           >
           <em class="lane-jitter" class:quiet={lane.jitter == null}
             >{formatLatency(lane.jitter)}</em
@@ -429,7 +442,7 @@
             class="lane-timeouts"
             class:quiet={lane.timeoutRatio == null}
             tabindex="-1"
-            {@attach tooltip(() => timeoutsTip(lane))}
+            use:tooltipAction={timeoutsTip(lane)}
             >{formatTimeouts(lane.timeoutRatio)}</em
           >
           <div
@@ -515,7 +528,7 @@
             class="lane-added"
             class:quiet={plus == null}
             tabindex="-1"
-            {@attach tooltip(() => JARGON.addedLatency)}
+            use:tooltipAction={JARGON.addedLatency}
             >{lane.key === "latency"
               ? "Baseline"
               : plus == null

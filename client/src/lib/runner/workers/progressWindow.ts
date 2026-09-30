@@ -54,18 +54,26 @@ export async function readBytes(
   }
   if (byob) {
     let buf = new ArrayBuffer(READ_BUF_BYTES);
-    for (;;) {
-      const chunk = await byob.read(new Uint8Array(buf));
-      if (chunk.done) return;
-      if (chunk.value.byteLength) count(chunk.value.byteLength);
-      // read() detaches the buffer and hands back the same backing store.
-      buf = chunk.value.buffer as ArrayBuffer;
+    try {
+      for (;;) {
+        const chunk = await byob.read(new Uint8Array(buf));
+        if (chunk.done) return;
+        if (chunk.value.byteLength) count(chunk.value.byteLength);
+        // read() detaches the buffer and hands back the same backing store.
+        buf = chunk.value.buffer as ArrayBuffer;
+      }
+    } finally {
+      byob.releaseLock();
     }
   }
   const reader = body.getReader();
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) return;
-    if (value) count(value.byteLength);
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      if (value) count(value.byteLength);
+    }
+  } finally {
+    reader.releaseLock();
   }
 }

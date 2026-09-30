@@ -199,6 +199,22 @@ class LegalTests(unittest.TestCase):
         self.assertEqual(source_for("anything", "explicit"), "explicit")
         self.assertEqual(source_for("charm.land/lipgloss/v2"), "https://github.com/charmbracelet/lipgloss")
 
+    def test_browser_scan_identifies_exact_patched_packages_in_isolated_installs(self) -> None:
+        self.write("client/package.json", json.dumps({
+            "patchedDependencies": {"svelte@5.57.1": "patches/svelte.patch"}}))
+        modules = []
+        for name, version in (("svelte", "5.57.1"), ("esm-env", "1.2.2")):
+            root = f"client/node_modules/.bun/{name}@{version}/node_modules/{name}"
+            self.write(f"{root}/package.json", json.dumps({"name": name, "version": version, "license": "MIT"}))
+            self.write(f"{root}/LICENSE", "MIT License\n")
+            modules.append(str(self.root / root / "index.js"))
+        scan = self.write("scan.json", json.dumps(modules))
+        components = {item.name: item for item in discover_browser(scan, [])}
+        self.assertTrue(components["svelte"].modified)
+        self.assertFalse(components["esm-env"].modified)
+        self.write("client/package.json", json.dumps({"patchedDependencies": {"svelte@5.57.0": "old.patch"}}))
+        self.assertFalse(next(item for item in discover_browser(scan, []) if item.name == "svelte").modified)
+
     def test_go_targets_and_replacements_preserve_scope(self) -> None:
         targets = go_discovery_targets(ROOT)
         def built(component: str) -> list[str]:
