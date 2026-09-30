@@ -1,6 +1,30 @@
 <script lang="ts" module>
   // Dismissal lasts the page's lifetime and returns when the count changes.
   let dismissedMalformed = $state(0);
+  // Date formatting is shared across the archive's rows and repeated visits.
+  const dates = {
+    exact: new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }),
+    time: new Intl.DateTimeFormat(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
+    short: new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+    }),
+    full: new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    }),
+    month: new Intl.DateTimeFormat(undefined, {
+      month: "long",
+      year: "numeric",
+    }),
+  };
 </script>
 
 <script lang="ts">
@@ -9,7 +33,7 @@
   import { onMount, tick, untrack } from "svelte";
   import { resize } from "../actions/resize";
   import { tooltip } from "../actions/tooltip";
-  import { wallNow } from "../presentation/motion.svelte";
+  import { nextFrame, wallNow } from "../presentation/motion.svelte";
   import { canFocus, hasFocus, activeModal } from "../actions/focus";
   import { createUuid } from "../uuid";
   import {
@@ -99,6 +123,7 @@
   let confirmInvoker = $state<HTMLElement | null>(null);
   let actionError = $state("");
   let loadGeneration = 0;
+  let loadController: AbortController | undefined;
 
   const columns = $derived(store.historyColumns);
   const prepared = $derived(prepareHistorySort(records));
@@ -120,7 +145,7 @@
     if (dateLabel(first) === dateLabel(last)) return dateLabel(first);
     const sameYear =
       new Date(first).getFullYear() === new Date(last).getFullYear();
-    return `${sameYear ? new Date(first).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : dateLabel(first)} – ${dateLabel(last)}`;
+    return `${sameYear ? dates.short.format(first) : dateLabel(first)} – ${dateLabel(last)}`;
   });
 
   // A sorted head's name is its text and its order, with no stray space before the comma.
@@ -172,10 +197,12 @@
 
   async function load(showLoading = true) {
     const generation = ++loadGeneration;
+    loadController?.abort();
+    const controller = (loadController = new AbortController());
     if (showLoading) loadState = "loading";
     actionError = "";
     try {
-      const result = await repository.listWithDiagnostics();
+      const result = await repository.listWithDiagnostics(controller.signal);
       if (generation !== loadGeneration) return;
       records = result.records;
       renderedAt = wallNow();
@@ -203,14 +230,24 @@
   // reading the rows and columns measures again whenever they change.
   function fitTable(node: HTMLElement) {
     void [groups, columns];
-    const fit = () => {
+    let alive = true;
+    let stop: (() => void) | null = null;
+    const measure = () => {
+      stop = null;
       node.classList.remove("compact");
       node.classList.toggle("compact", node.scrollWidth > node.clientWidth);
+    };
+    const fit = () => {
+      if (alive && !stop) stop = nextFrame(measure);
     };
     const observer = new ResizeObserver(fit);
     observer.observe(node);
     void document.fonts.ready.then(fit);
-    return () => observer.disconnect();
+    return () => {
+      alive = false;
+      observer.disconnect();
+      stop?.();
+    };
   }
 
   function loadMore() {
@@ -351,10 +388,7 @@
 
   function historyRow(record: HistoryRecord) {
     const recent = formatRecentCompletion(record.completedAt, renderedAt);
-    const exact = new Date(record.completedAt).toLocaleString(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
+    const exact = dates.exact.format(record.completedAt);
     const { outcome, multiServer } = record.result;
     const metrics = columns.map((column) => metric(record, column));
     const servers = multiServer.selection;
@@ -362,17 +396,11 @@
       servers.length > 1
         ? `${servers.length} servers`
         : (servers[0]?.name ?? "");
-    const time = new Date(record.completedAt).toLocaleTimeString(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    const time = dates.time.format(record.completedAt);
     const recentDay = ["Today", "Yesterday"].includes(
       groupHeading(record.completedAt),
     );
-    const day = new Date(record.completedAt).toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-    });
+    const day = dates.short.format(record.completedAt);
     return {
       record,
       exact,
@@ -426,18 +454,11 @@
     const day = (time: number) => new Date(time).toDateString();
     if (day(value) === day(renderedAt)) return "Today";
     if (day(value) === day(renderedAt - 86_400_000)) return "Yesterday";
-    return new Date(value).toLocaleDateString(undefined, {
-      month: "long",
-      year: "numeric",
-    });
+    return dates.month.format(value);
   }
 
   function dateLabel(value: number): string {
-    return new Date(value).toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
+    return dates.full.format(value);
   }
 
   $effect(() => {
@@ -474,6 +495,7 @@
     const stopChanges = onHistoryChanged(() => void load(false), changeSource);
     return () => {
       loadGeneration++;
+      loadController?.abort();
       stopChanges();
       window.clearInterval(relativeRefresh);
       repository.close();
