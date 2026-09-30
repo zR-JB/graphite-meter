@@ -68,6 +68,24 @@ describe("latency presentation buckets", () => {
     expect(latencyBucketMs(0, 150)).toBe(300);
     expect(latencyBucketMs(600_000)).toBe(600);
   });
+
+  test("a long page suspension skips empty time without inventing observations and preserves recent revisions", () => {
+    const buckets = new LatencyPresentationBuckets();
+    const back = 24 * 60 * 60 * 1000 + 73;
+    buckets.reset(13, "download", true, 7);
+    buckets.observe(50, 11, false);
+    expect(buckets.closeThrough(back)).toHaveLength(1);
+    expect(buckets.nextBoundaryT).toBe(24 * 60 * 60 * 1000 + 213);
+    // An empty recent bucket can still acquire a late reply; observations outside the horizon stay discarded.
+    expect(buckets.observe(back - 10_400, 90, false)).toEqual([]);
+    expect(buckets.observe(back - 800, 23, false)[0]).toMatchObject({
+      pingCount: 1,
+      medianRttMs: 23,
+      continuityId: 7,
+    });
+    expect(buckets.closeThrough(back + 500)).toEqual([]);
+    expect(buckets.flush()).toBeNull();
+  });
 });
 
 describe("latency history", () => {

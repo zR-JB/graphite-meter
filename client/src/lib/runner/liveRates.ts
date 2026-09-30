@@ -13,6 +13,7 @@ interface Span {
   start: number;
   end: number;
   bytes: number;
+  total: number;
 }
 
 /** The growing window covers 85% of the current regime, never less than 800 ms. */
@@ -21,25 +22,11 @@ export function presentationWindowMs(regimeAgeMs: number): number {
   return Math.min(age, Math.max(PRESENTATION_MIN_WINDOW_MS, age * 0.85));
 }
 
-function intervalRate(
-  spans: readonly Span[],
-  start: number,
-  end: number,
-): number {
-  let bytes = 0;
-  let ms = 0;
-  for (const span of spans) {
-    const overlap = Math.min(end, span.end) - Math.max(start, span.start);
-    if (overlap <= 0) continue;
-    bytes += (span.bytes * overlap) / (span.end - span.start);
-    ms += overlap;
-  }
-  return ms > 0 ? (bytes * 1_000) / ms : 0;
-}
-
 /** A regime-restarting growing average: a confirmed 25% drop or 20% rise starts a new window. */
 export class GrowingRateEstimator {
   #spans: Span[] = [];
+  #head = 0;
+  #bytes = 0;
   #evidence = 0;
   #regimeStart = 0;
   #candidate: { up: boolean; start: number; reference: number } | null = null;
@@ -48,6 +35,7 @@ export class GrowingRateEstimator {
 
   reset(): void {
     this.#spans = [];
+    this.#head = this.#bytes = 0;
     this.#evidence = this.#regimeStart = this.presented = this.#fast = 0;
     this.#candidate = null;
   }
@@ -57,10 +45,13 @@ export class GrowingRateEstimator {
     if (!(durationMs > 0) || !Number.isFinite(durationMs)) return false;
     const start = this.#evidence;
     this.#evidence += durationMs;
+    bytes = Math.max(0, bytes) || 0;
+    this.#bytes += bytes;
     this.#spans.push({
       start,
       end: this.#evidence,
-      bytes: Math.max(0, bytes) || 0,
+      bytes,
+      total: this.#bytes,
     });
     this.#recalculate();
     const changed = this.#regime(start);
@@ -70,23 +61,44 @@ export class GrowingRateEstimator {
       Math.max(this.#regimeStart, this.#evidence - FAST_WINDOW_MS),
       this.#candidate?.start ?? Infinity,
     );
-    while (this.#spans.length > 1 && this.#spans[0].end <= keep)
-      this.#spans.shift();
+    while (
+      this.#head < this.#spans.length - 1 &&
+      this.#spans[this.#head].end <= keep
+    )
+      this.#head++;
+    if (this.#head >= 1024 && this.#head * 2 >= this.#spans.length) {
+      this.#spans = this.#spans.slice(this.#head);
+      this.#head = 0;
+    }
     return changed;
   }
 
   #recalculate(): void {
     const window = presentationWindowMs(this.#evidence - this.#regimeStart);
-    this.presented = intervalRate(
-      this.#spans,
-      this.#evidence - window,
-      this.#evidence,
-    );
+    this.presented = this.#rateSince(this.#evidence - window);
     const fastStart = Math.max(
       this.#regimeStart,
       this.#evidence - FAST_WINDOW_MS,
     );
-    this.#fast = intervalRate(this.#spans, fastStart, this.#evidence);
+    this.#fast = this.#rateSince(fastStart);
+  }
+
+  /** Prefix totals locate a fractional window edge without rescanning a long stage. */
+  #rateSince(start: number): number {
+    let lo = this.#head;
+    let hi = this.#spans.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (this.#spans[mid].end <= start) lo = mid + 1;
+      else hi = mid;
+    }
+    const first = this.#spans[lo];
+    const from = Math.max(start, first.start);
+    const ms = this.#evidence - from;
+    if (!(ms > 0)) return 0;
+    const partial =
+      first.bytes * ((first.end - from) / (first.end - first.start));
+    return ((this.#bytes - first.total + partial) * 1000) / ms;
   }
 
   #regime(start: number): boolean {
@@ -221,6 +233,7 @@ export class LiveRates {
     for (const [id, server] of this.#servers) {
       const authority = server.up.presented;
       total += authority;
+      if (server.arrivals.length < 4 || authority <= 0) continue;
       const gaps = server.arrivals
         .slice(1)
         .map((at, i) => at - server.arrivals[i])
@@ -230,8 +243,6 @@ export class LiveRates {
         (hint) => now - hint.at <= LANE_MAX_AGE_MS,
       );
       if (
-        gaps.length < 3 ||
-        authority <= 0 ||
         now - last <= Math.max(300, 3 * gaps[Math.floor(gaps.length / 2)]) ||
         hints.length !== lanes(id) ||
         now - Math.max(...hints.map((hint) => hint.at)) > HINT_MAX_AGE_MS

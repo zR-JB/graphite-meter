@@ -90,6 +90,16 @@ export class LatencyPresentationBuckets {
   closeThrough(t: number): LatencyBucket[] {
     let emitted = NONE;
     while (this.#pending && t >= this.#pending.endT) {
+      // A suspended page may return hours later. Only the revision horizon can still accept late outcomes.
+      if (!this.#pending.pings) {
+        const skipped = Math.floor(
+          (t - this.#pending.startT - REVISION_MS) / this.#bucketMs,
+        );
+        if (skipped > 0)
+          this.#pending = this.#empty(
+            this.#pending.startT + skipped * this.#bucketMs,
+          );
+      }
       const pending = this.#pending;
       if (pending.pings)
         emitted = [...emitted, this.#summarize(pending, pending.endT)];

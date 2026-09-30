@@ -103,6 +103,27 @@ test("summaries between replies match one summary of the whole stage", () => {
   expect(live.summary()).toEqual(once.summary());
 });
 
+test("a reused latency summary invalidates on every accounting change", () => {
+  const stats = new LatencyPopulation();
+  expect(stats.summary()).toBeNull();
+  stats.observe(reply(10));
+  const first = stats.summary();
+  expect(stats.summary()).toBe(first);
+  stats.observe(reply(30));
+  expect(stats.summary()).toMatchObject({ p50Ms: 20, probeCount: 2 });
+  stats.observe(reply(0, true));
+  expect(stats.summary()).toMatchObject({ timeoutCount: 1, probeCount: 3 });
+  stats.interrupt(2, "unresolved");
+  expect(stats.summary()).toMatchObject({ unresolvedCount: 2 });
+  stats.interrupt(1, "send-failed");
+  expect(stats.summary()).toMatchObject({ sendFailureCount: 1 });
+  stats.markIncomplete();
+  expect(stats.summary()).toMatchObject({ accountingComplete: false });
+  const last = stats.summary();
+  stats.close();
+  expect(stats.summary()).toBe(last);
+});
+
 test("timeouts skip jitter pairs, interruptions break them, and late replies resolve without RTT", () => {
   const stats = new LatencyPopulation();
   stats.observe(reply(10));
