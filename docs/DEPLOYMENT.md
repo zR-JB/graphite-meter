@@ -294,7 +294,7 @@ if it leaves the test a surviving one takes over. `l` switches the server shown;
 | esc                       | running            | Stop test; a second esc confirms.                                                                                                                            |
 | enter (r), esc            | finished           | Run again; back to setup.                                                                                                                                    |
 | d, l                      | running / finished | Details (servers, intervals, failures; esc closes); with several servers, the latency server.                                                                |
-| ↑/↓, pgup/pgdn, home/end  | any                | Scroll the body.                                                                                                                                             |
+| pgup/pgdn, home/end, wheel | any                | Scroll the body; ↑/↓ also scroll during a test and in Details.                                                                                                 |
 | ?, q, ctrl+c              | any                | Keys for this screen; quit. While editing, ? and q are typed; ctrl+c quits. A running test stops first and prints its report; a second ctrl+c quits at once. |
 
 ## Upgrading

@@ -165,6 +165,8 @@ type runState struct {
 	pick     string
 	outcome  goclient.Outcome
 	err      error
+	span     float64
+	charts   [2]chartCache
 }
 
 type stageState int
@@ -201,6 +203,7 @@ func newRunState(cfg goclient.Config, started time.Time) *runState {
 	}
 	for _, stage := range r.plan {
 		r.stages = append(r.stages, stageProgress{name: stage.Name, duration: stage.Duration})
+		r.span += stage.Duration.Seconds() + cfg.Warmup.Seconds()
 	}
 	return r
 }
@@ -240,7 +243,7 @@ func (m model) startRun() (tea.Model, tea.Cmd) {
 	m.now = time.Now()
 	m.events = m.controller.Start(m.cfg, m.preparedRun)
 	m.next = newRunState(m.cfg, m.now)
-	m.stopPrompt, m.popup, m.waiting, m.edit = false, popupNone, true, nil
+	m.stopPrompt, m.popup, m.edit = false, popupNone, nil
 	m.notice = "Checking paths before the test. Press esc to stop."
 	return m, tea.Batch(waitEvents(m.runSeq, m.events), m.spin.Tick)
 }
@@ -249,7 +252,6 @@ func (m model) handleEvents(msg eventsMsg) (tea.Model, tea.Cmd) {
 	if msg.seq != m.runSeq || !m.running() {
 		return m, nil
 	}
-	m.waiting = false
 	for _, event := range msg.events {
 		switch {
 		case m.next != nil && event.Kind == goclient.EventDone:
@@ -264,7 +266,7 @@ func (m model) handleEvents(msg eventsMsg) (tea.Model, tea.Cmd) {
 		}
 		m.apply(event)
 	}
-	return m, nil
+	return m, waitEvents(m.runSeq, m.events)
 }
 
 func (m model) startFailed(done goclient.Event) (tea.Model, tea.Cmd) {
@@ -288,6 +290,9 @@ func (m model) startFailed(done goclient.Event) (tea.Model, tea.Cmd) {
 func (m model) finishRun(done goclient.Event) (tea.Model, tea.Cmd) {
 	m.stopPrompt = false
 	r := m.run
+	for dir, sample := range r.rates {
+		r.shown[dir] = sample.BytesPerSec
+	}
 	r.adopt(done.Servers)
 	r.outcome, r.finished = done.Outcome(), done.At
 	m.last = r.outcome
@@ -384,6 +389,9 @@ func (m *model) apply(e goclient.Event) {
 func (r *runState) live() bool { return r.outcome == goclient.OutcomeRunning }
 
 func (r *runState) measuredLatency() bool {
+	if r.details == nil {
+		return false
+	}
 	for _, server := range r.details.Servers {
 		if server.Server.ID == r.details.LatencyFocus {
 			return slices.ContainsFunc(server.Results, func(result goclient.Result) bool {
@@ -475,6 +483,8 @@ func (m model) statusLabel() string {
 		return pathLabels[pathSignIn]
 	case m.prepare == prepareFailed && len(m.readyServers()) == 0:
 		return startFailed
+	case m.prepare == prepareChecking:
+		return "Checking paths"
 	}
 	return notStarted
 }

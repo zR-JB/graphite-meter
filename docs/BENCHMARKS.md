@@ -48,3 +48,13 @@ BUN_CHROME_PATH=/path/to/chrome GM_MULTI_BENCH_OUTPUT=/tmp/graphite-meter-server
 Profiles `server-cap`, `differing-rtt` and `shared-cap` run twice each; narrow them with `GM_MULTI_BENCH_PROFILES`
 and `GM_MULTI_BENCH_REPEATS`. Record each server's contribution when comparing runs: a combined rate alone cannot
 show which path limited it.
+
+## Native terminal
+
+```sh
+cd go && go test ./cmd/graphite-meter-client -run '^$' -bench '^BenchmarkTUI' -benchmem
+```
+
+The frame workload retains four servers and 480 points per trace at 80×24, 120×40 and 160×50. Animation frames reuse
+unchanged samples; sample frames update throughput and latency. The chart workload measures braille rasterization
+separately. These measure Go rendering time and allocations, excluding terminal-emulator drawing and network traffic.

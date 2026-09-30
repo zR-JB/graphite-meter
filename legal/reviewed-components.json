@@ -102,7 +102,7 @@
   {
     "ecosystem": "go",
     "name": "github.com/charmbracelet/ultraviolet",
-    "reviewedVersion": "v0.0.0-20260811164956-006e29f97886",
+    "reviewedVersion": "v0.0.0-20260929091141-666ce5eec9fc",
     "upstream": "https://github.com/charmbracelet/ultraviolet",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",

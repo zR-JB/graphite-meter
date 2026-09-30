@@ -21,23 +21,36 @@ func fit(s string, w int) string {
 	return strings.Join(lines, "\n")
 }
 
-func clip(s string, h int) string {
-	lines := strings.Split(s, "\n")
-	return strings.Join(lines[:min(len(lines), max(h, 1))], "\n")
-}
-
 func (s styles) panel(title, body string, w, h int) string {
 	inner := max(w-4, 1)
-	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder(), false, true, true).
-		BorderForeground(s.border.GetForeground()).Padding(0, 1).Width(w)
+	lines := strings.Split(body, "\n")
+	rows := len(lines)
 	if h > 0 {
-		body = clip(body, h-2)
-		box = box.Height(h - 1)
+		rows = max(h-2, 1)
 	}
 	title = ansi.Truncate(title, max(w-6, 1), "…")
 	fill := max(w-5-lipgloss.Width(title), 0)
 	top := s.border.Render("╭─ ") + s.heading.Render(title) + s.border.Render(" "+strings.Repeat("─", fill)+"╮")
-	return top + "\n" + box.Render(fit(body, inner))
+	edge := s.border.Render("│")
+	var b strings.Builder
+	b.Grow((rows+2)*(w+32) + len(body))
+	b.WriteString(top)
+	for i := range rows {
+		line := ""
+		if i < len(lines) {
+			line = lines[i]
+		}
+		width := ansi.StringWidth(line)
+		if width > inner {
+			line = ansi.Truncate(line, inner, "…")
+			width = ansi.StringWidth(line)
+		}
+		b.WriteString("\n" + edge + " " + line)
+		b.WriteString(strings.Repeat(" ", inner-width+1))
+		b.WriteString(edge)
+	}
+	b.WriteString("\n" + s.border.Render("╰"+strings.Repeat("─", inner+2)+"╯"))
+	return b.String()
 }
 
 func (s styles) grid(headers []string, rows [][]string, w int) string {
@@ -84,30 +97,41 @@ func (s styles) grid(headers []string, rows [][]string, w int) string {
 
 type point struct {
 	t, v float64
+	peak float64
 	n    int
 }
 
 const historyPoints, traceStep = 480, 0.05
 
 type trace struct {
-	points []point
-	step   float64
+	points  []point
+	step    float64
+	version uint64
 }
 
 func (tr trace) add(t, v float64) trace {
+	if math.IsInf(v, 0) || math.IsNaN(t) || math.IsInf(t, 0) {
+		return tr
+	}
+	tr.version++
 	tr.step = max(tr.step, traceStep)
 	if n := len(tr.points); n > 0 {
 		last := &tr.points[n-1]
 		if t-last.t < tr.step && !math.IsNaN(v) && !math.IsNaN(last.v) {
 			last.n++
 			last.v += (v - last.v) / float64(last.n)
+			last.peak = max(last.peak, v)
 			return tr
 		}
 	}
 	if len(tr.points) == historyPoints {
 		tr.points, tr.step = coarsen(tr.points), tr.step*2
 	}
-	tr.points = append(tr.points, point{t, v, 1})
+	peak := 0.0
+	if !math.IsNaN(v) {
+		peak = max(v, 0)
+	}
+	tr.points = append(tr.points, point{t: t, v: v, peak: peak, n: 1})
 	return tr
 }
 
@@ -117,6 +141,7 @@ func coarsen(points []point) []point {
 		p := points[i]
 		if i+1 < len(points) {
 			q := points[i+1]
+			p.peak = max(p.peak, q.peak)
 			switch {
 			case math.IsNaN(q.v):
 				p.v = q.v
@@ -133,6 +158,7 @@ func coarsen(points []point) []point {
 type series struct {
 	style  lipgloss.Style
 	points []point
+	dashed bool
 }
 
 type mark struct {
@@ -140,11 +166,12 @@ type mark struct {
 	stage goclient.Stage
 }
 
-func (s styles) stageSeries(points []point, marks []mark) []series {
+func (s styles) stageSeries(points []point, marks []mark, direction ...goclient.Direction) []series {
 	out := make([]series, len(marks))
 	for i := len(marks) - 1; i >= 0; i-- {
 		at, _ := slices.BinarySearchFunc(points, marks[i].t, func(p point, t float64) int { return cmp.Compare(p.t, t) })
-		out[i], points = series{s.stage[marks[i].stage], points[at:]}, points[:at]
+		dashed := len(direction) > 0 && direction[0] == goclient.Up && marks[i].stage == goclient.StageBidirectional
+		out[i], points = series{style: s.trace[marks[i].stage], points: points[at:], dashed: dashed}, points[:at]
 	}
 	return out
 }
@@ -152,6 +179,29 @@ func (s styles) stageSeries(points []point, marks []mark) []series {
 type axis struct {
 	scale float64
 	label func(float64) string
+}
+
+type chartKey struct {
+	versions    [2]uint64
+	directions  [2]goclient.Direction
+	marks, w, h int
+	span        float64
+	dark        bool
+	server      string
+	stage       goclient.Stage
+	finished    bool
+}
+
+type chartCache struct {
+	key  chartKey
+	view string
+}
+
+func (c *chartCache) render(key chartKey, draw func() string) string {
+	if c.view == "" || c.key != key {
+		c.key, c.view = key, draw()
+	}
+	return c.view
 }
 
 var (
@@ -186,6 +236,7 @@ func (s styles) chart(lines []series, marks []mark, ax axis, span float64, w, h 
 	t0, t1, peak := 0.0, max(span, 1), 0.0
 	for _, l := range lines {
 		for _, p := range l.points {
+			peak = max(peak, p.peak)
 			if !math.IsNaN(p.v) {
 				peak = max(peak, p.v)
 			}
@@ -196,6 +247,9 @@ func (s styles) chart(lines []series, marks []mark, ax axis, span float64, w, h 
 	dots := make([]rune, cols*rows)
 	owner := make([]int, cols*rows)
 	set := func(x, y, i int) {
+		if lines[i].dashed && x%6 >= 4 {
+			return
+		}
 		cell := y/4*cols + x/2
 		dots[cell] |= brailleDots[y%4][x%2]
 		owner[cell] = i
@@ -243,7 +297,12 @@ func (s styles) chart(lines []series, marks []mark, ax axis, span float64, w, h 
 		}
 		plot()
 	}
+	paints := make([][2]string, len(lines))
+	for i, line := range lines {
+		paints[i][0], paints[i][1], _ = strings.Cut(line.style.Render("x"), "x")
+	}
 	var b strings.Builder
+	b.Grow(rows * (cols*3 + 80))
 	for r := range rows {
 		scale := ""
 		switch r {
@@ -253,6 +312,10 @@ func (s styles) chart(lines []series, marks []mark, ax axis, span float64, w, h 
 			}
 		case rows - 1:
 			scale = "0"
+		case rows / 2:
+			if peak > 0 && rows >= 6 {
+				scale = ax.label(top * ax.scale / 2)
+			}
 		}
 		scale = lipgloss.PlaceHorizontal(chartAxis-1, lipgloss.Right, ansi.Truncate(scale, chartAxis-1, ""))
 		b.WriteString(s.muted.Render(scale) + s.border.Render("│"))
@@ -262,13 +325,18 @@ func (s styles) chart(lines []series, marks []mark, ax axis, span float64, w, h 
 				end++
 			}
 			if dots[first] == 0 {
-				b.WriteString(strings.Repeat(" ", end-first))
-			} else {
-				glyphs := make([]rune, end-first)
-				for k := range glyphs {
-					glyphs[k] = 0x2800 + dots[first+k]
+				if r == rows/2 && rows >= 6 {
+					b.WriteString(s.border.Render(strings.Repeat("┄", end-first)))
+				} else {
+					b.WriteString(strings.Repeat(" ", end-first))
 				}
-				b.WriteString(lines[owner[first]].style.Render(string(glyphs)))
+			} else {
+				paint := paints[owner[first]]
+				b.WriteString(paint[0])
+				for k := first; k < end; k++ {
+					b.WriteRune(0x2800 + dots[k])
+				}
+				b.WriteString(paint[1])
 			}
 			c += end - first
 		}

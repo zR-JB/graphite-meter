@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ const twoColumnMin = 100
 func (m model) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	v.WindowTitle = "Graphite Meter · " + m.statusLabel()
 	switch {
 	case m.next != nil:
@@ -86,7 +88,17 @@ func (m model) render() string {
 			lipgloss.NewStyle().Width(m.width).Align(lipgloss.Center).Render(notice))
 	}
 	f := m.layout()
-	return lipgloss.NewStyle().Padding(0, 1).Render(f.top + "\n" + m.bodyViewport(f).View() + "\n" + f.footer)
+	start := min(m.body.YOffset(), max(len(f.body)-f.bodyH, 0))
+	lines := make([]string, f.bodyH)
+	copy(lines, f.body[start:min(start+f.bodyH, len(f.body))])
+	content := f.top + "\n" + strings.Join(lines, "\n") + "\n" + f.footer
+	w, _ := m.size()
+	var b strings.Builder
+	b.Grow(len(content) + len(lines)*2)
+	for line := range strings.SplitSeq(content, "\n") {
+		b.WriteString(" " + pad(line, w-2) + " \n")
+	}
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 func (m *model) scrollBody(msg tea.KeyPressMsg) {
@@ -236,7 +248,9 @@ func (m model) settingLine(s *setting, focused bool, labelWidth, w int) string {
 		value := m.st.value.Render(row.value)
 		switch {
 		case m.edit != nil && m.edit.row == s:
-			value = m.edit.input.View()
+			input := m.edit.input
+			input.SetWidth(max(w-labelWidth-4, 1))
+			value = input.View()
 		case row.inert:
 			value = m.st.muted.Render(row.value)
 		}
@@ -480,7 +494,7 @@ func (m model) stageTrack(w int) []string {
 	for _, s := range m.run.stages {
 		hue := m.st.stage[s.name]
 		name := hue.Render(pad(stageLabels[s.name], 14))
-		elapsed := m.now.Sub(s.since)
+		elapsed := max(m.now.Sub(s.since), 0)
 		switch s.state {
 		case stagePreparing:
 			lines = append(lines, name+m.spin.View()+m.st.muted.Render(" checking paths"))
@@ -499,8 +513,10 @@ func (m model) stageTrack(w int) []string {
 		case stagePartial:
 			value := strings.TrimSpace(m.headline(s.name) + " " + m.st.muted.Render(stageStatusLabels[s.state]))
 			lines = append(lines, name+m.st.warn.Render("! ")+value)
-		case stageFailed, stageStopped:
+		case stageFailed:
 			lines = append(lines, name+m.st.err.Render("✗ ")+m.st.muted.Render(stageStatusLabels[s.state]))
+		case stageStopped:
+			lines = append(lines, name+m.st.muted.Render("○ "+stageStatusLabels[s.state]))
 		case stagePending:
 			if !m.run.live() {
 				lines = append(lines, name+m.st.muted.Render(missing+" "+stageStatusLabels[s.state]))
@@ -542,29 +558,53 @@ func (m model) liveView(w, h int) string {
 		})
 	}
 	loaded := len(dirs) > 0 && m.cfg.LoadedLatency
-	var lines []series
-	for _, dir := range dirs {
-		lines = append(lines, m.st.stageSeries(r.history[dir].points, r.marks)...)
-	}
 	var out []string
 	if r.live() {
-		out = append(out, m.readings(stage))
+		out = append(out, wrapParts(strings.Split(m.readings(stage), "   "), w)...)
+		if stage.Name == goclient.StageBidirectional {
+			out = append(out, m.st.muted.Render("↓ solid · ↑ dashed"))
+		}
 	}
 	if m.multipleRunServers() {
 		out = append(out, m.st.muted.Render("Latency to "+m.serverName(r.latencyServer())+" · l switches server"))
 	}
 	chartH := h - len(out)
-	span := m.now.Sub(r.started).Seconds()
-	rtt := m.st.stageSeries(r.rtt[r.latencyServer()].points, r.marks)
+	span := max(r.span, math.Ceil(max(m.now.Sub(r.started).Seconds(), 0)/10)*10, 1)
+	if !r.live() && !r.finished.IsZero() {
+		span = max(math.Ceil(r.finished.Sub(r.started).Seconds()), 1)
+	}
+	key := chartKey{marks: len(r.marks), w: w, span: span, dark: m.st.dark, stage: r.stage, finished: !r.live()}
+	latencyChart := func(height int) string {
+		k := key
+		k.h, k.server = height, r.latencyServer()
+		k.versions[0] = r.rtt[k.server].version
+		return r.charts[1].render(k, func() string {
+			return m.st.chart(m.st.stageSeries(r.rtt[k.server].points, r.marks), r.marks, msAxis, span, w, height)
+		})
+	}
+	rateChart := func(height int) string {
+		k := key
+		k.h = height
+		for i, dir := range dirs {
+			k.versions[i] = r.history[dir].version
+			k.directions[i] = dir
+		}
+		return r.charts[0].render(k, func() string {
+			var lines []series
+			for _, dir := range dirs {
+				lines = append(lines, m.st.stageSeries(r.history[dir].points, r.marks, dir)...)
+			}
+			return m.st.chart(lines, r.marks, rateAxis, span, w, height)
+		})
+	}
 	switch {
 	case chartH < 5:
 	case len(dirs) == 0:
-		out = append(out, m.st.chart(rtt, r.marks, msAxis, span, w, chartH))
+		out = append(out, latencyChart(chartH))
 	case loaded && chartH >= 12:
-		out = append(out, m.st.chart(lines, r.marks, rateAxis, span, w, chartH-5),
-			m.st.chart(rtt, nil, msAxis, span, w, 5))
+		out = append(out, rateChart(chartH-5), latencyChart(5))
 	default:
-		out = append(out, m.st.chart(lines, r.marks, rateAxis, span, w, chartH))
+		out = append(out, rateChart(chartH))
 	}
 	return strings.Join(out, "\n")
 }
@@ -582,7 +622,7 @@ func (m model) readings(stage goclient.StagePlan) string {
 		case sample.Unavailable:
 			value = m.st.muted.Render(missing + " window restarting")
 		}
-		readings = append(readings, m.st.text.Render(label)+value)
+		readings = append(readings, m.st.stage[stage.Name].Render(label)+value)
 	}
 	if len(stage.Directions) == 0 || m.cfg.LoadedLatency {
 		label := "Loaded latency "
