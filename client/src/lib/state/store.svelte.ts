@@ -21,13 +21,15 @@ import {
   emptyConnectionValidation,
   latencyPathNeeded,
   needsPings,
+  stageLimit,
   validatePlan,
   type ConnectionValidation,
   type ConnectionValidationState,
   type ServerView,
 } from "../runner/paths";
 import { presentConnections } from "../presentation/paths";
-import { rateUnit, rateValueAt, rawRateFrom } from "../format";
+import { fmtDuration, rateUnit, rateValueAt, rawRateFrom } from "../format";
+import { STAGE } from "../presentation/vocabulary";
 import { latencyAxisMs, throughputScales } from "../presentation/scales";
 import { Smoothed } from "../presentation/motion.svelte";
 import type { LatencyProfileViewLane } from "../components/latencyProfile";
@@ -56,6 +58,7 @@ import {
   resolveResultHistoryPreference,
   systemThemeDefault,
   DEFAULT_DOCK_WIDTH,
+  DEFAULT_HISTORY_SPLIT,
   STORAGE_KEY,
   type ThemePref,
   type ResultHistoryPreference,
@@ -135,7 +138,8 @@ type DisplayPreference =
   | "keyShortcuts"
   | "resultHistoryPreference"
   | "historyColumns"
-  | "dockWidth";
+  | "dockWidth"
+  | "historySplit";
 
 class AppStore {
   serverCatalog = $state<ServerCatalog | null>(null);
@@ -148,6 +152,8 @@ class AppStore {
   catalogLoading = $state(true);
   selectionValidation = $derived.by(
     (): "verified" | "checking" | "failed" | "stale" => {
+      // Loading the server list is part of the check, not a stale one.
+      if (this.catalogLoading) return "checking";
       const states = this.selectedServers.map(
         (id) => this.servers.get(id)?.readiness ?? "unchecked",
       );
@@ -219,7 +225,24 @@ class AppStore {
       return views.length > 1
         ? `${blocked.server.name}: ${blocked.blocked}`
         : blocked.blocked!;
-    return this.streamPlanError;
+    return this.stageLimitError || this.streamPlanError;
+  });
+  /** The longest stage the selected servers all admit (GM_MAX_STAGE_DURATION on each), and who sets it. */
+  stageLimit = $derived(
+    stageLimit(
+      this.selectedServers.flatMap((id) => this.servers.get(id) ?? []),
+    ),
+  );
+  /** Planned stages longer than a selected server admits, all named; the start names the server rather than dropping it. */
+  stageLimitError = $derived.by((): string => {
+    const { ms, server } = this.stageLimit;
+    const stages = STAGES.filter(
+      (key) =>
+        planned(this.config, key) && this.config.duration[`${key}Ms`] > ms,
+    ).map((key) => STAGE[key].label);
+    return stages.length && server
+      ? `${server} allows stages up to ${fmtDuration(ms, 0)}; shorten the ${new Intl.ListFormat("en-GB").format(stages)} stage${stages.length > 1 ? "s" : ""}.`
+      : "";
   });
   /** Why the stream settings cannot fit the verified selection; Settings shows it by the setting. */
   streamPlanError = $derived.by((): string => {
@@ -359,6 +382,7 @@ class AppStore {
   dockWidth = $state<{ left: number; right: number }>({
     ...DEFAULT_DOCK_WIDTH,
   });
+  historySplit = $state(DEFAULT_HISTORY_SPLIT);
 
   constructor() {
     Object.assign(this, loadPersisted());
@@ -369,10 +393,11 @@ class AppStore {
     Object.assign(this, patch);
   }
 
-  pulseLatency = $derived.by<LatencyBucket[]>(() => {
+  // A getter, not $derived: the series grow in place, so a derived would return the same array and never notify.
+  get pulseLatency(): LatencyBucket[] {
     if (this.isRunning) return this.latency;
     return this.idleLatency.length ? this.idleLatency : this.latency;
-  });
+  }
 
   liveRtt = $derived(
     this.pulseLatency.at(-1)?.medianRttMs ??
@@ -752,6 +777,11 @@ export function mountStoreEffects(store: AppStore): () => void {
             : "dark"
           : store.theme;
       document.documentElement.setAttribute("data-theme", resolved);
+      // The browser's own bar takes the chosen theme's canvas, not the system's.
+      for (const meta of document.querySelectorAll<HTMLMetaElement>(
+        "meta[data-scheme]",
+      ))
+        meta.media = meta.dataset.scheme === resolved ? "all" : "not all";
     });
 
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -766,6 +796,7 @@ export function mountStoreEffects(store: AppStore): () => void {
         resultHistoryPreference: store.resultHistoryPreference,
         historyColumns: [...store.historyColumns],
         dockWidth: $state.snapshot(store.dockWidth),
+        historySplit: store.historySplit,
       };
       clearTimeout(timer);
       // Not motion: settings save once edits pause.

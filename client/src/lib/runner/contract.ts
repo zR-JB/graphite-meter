@@ -113,6 +113,8 @@ export interface LiveSample {
   bridgedUp: number | null;
   /** Rates read zero while stalled; the display decides how they fade. */
   stalled: boolean;
+  /** How long no server has moved bytes, once that stalls the run. */
+  quietMs: number | null;
 }
 
 export interface ThroughputSample {
@@ -183,6 +185,8 @@ export interface ThroughputResult {
   peakBytesPerSec: number | null;
   /** Fixed-time-bucket coefficient-of-variation descriptor (0..100). */
   stabilityPct: number;
+  /** Time in the headline window when no server moved this direction; absent from older results. */
+  quietMs?: number;
   totalBytes: number;
   /** Headline bytes/second from the selected full or stable measurement window. */
   reportedBytesPerSec: number;
@@ -315,6 +319,8 @@ export type DiscoveredLatency = DiscoveredTarget<LatencyTarget>;
 /* Server-advertised transports classified against the page that uses them. */
 export interface TransportDiscovery {
   uploadCheckpoint?: boolean;
+  /** The longest stage this server admits; absent from servers that predate the limit. */
+  maxStageMs?: number;
   generation: string;
   engineVersion: string;
   server: { name: string; location?: string };

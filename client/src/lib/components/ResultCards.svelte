@@ -11,6 +11,7 @@
   import type { LiveReadout } from "../presentation/liveReadout.svelte";
   import { announce } from "../presentation/announcer.svelte";
   import { handoff } from "../presentation/motion.svelte";
+  import { replies } from "../presentation/stageGraph";
   import { untrack } from "svelte";
   import {
     CARD_ORDER,
@@ -31,7 +32,12 @@
 
   const shown = $derived(store.resultScope);
   const details = $derived(store.result?.multiServer);
-  const units = $derived({ base: store.unitBase, kind: store.unitKind });
+  // One tier for every rate on the page, the dial's, so live and settled figures read in one unit.
+  const units = $derived({
+    base: store.unitBase,
+    kind: store.unitKind,
+    tier: store.scales.unitIndex,
+  });
   const status = (key: Stage) => store.stagePresentation[key].status;
   // A stalled stage is still running: it keeps its plan's width and its leading edge.
   const running = (key: Stage) =>
@@ -78,11 +84,7 @@
       const measured = times.length ? Math.max(...times) - start : 0;
       return {
         lanes,
-        latency: store.latency.flatMap((b) =>
-          b.phase === key && b.medianRttMs !== null
-            ? [{ t: b.t, ms: b.medianRttMs }]
-            : [],
-        ),
+        latency: replies(store.latency, key),
         start,
         span:
           Math.max(
@@ -134,8 +136,11 @@
     () => ({
       run: store.runSeq,
       cards,
+      // Lost latency probes are marked on the latency card's rows; nothing is added under the cards mid-run.
       issues: store.serverDetails
-        ? serverIssues(store.serverDetails, shown)
+        ? serverIssues(store.serverDetails, shown).filter(
+            (issue) => issue.throughput.length,
+          )
         : [],
     }),
     (view) => view.run,
@@ -148,26 +153,31 @@
     announce(untrack(() => resultSentence(settled)));
   });
 
-  // A running stage fills its facts as it goes: bytes so far, and each bidirectional lane's rate.
+  // A running stage fills its facts as it goes: bytes so far, and each bidirectional lane's rate and their sum.
   function liveRows(key: Stage): SummaryRow[] {
     if (key === "latency") return [];
-    if (key !== "bidirectional")
-      return [
-        {
-          label: "Transferred",
-          value: fmtBytes(store.liveStageBytes, units.base),
-        },
-      ];
+    const moved = {
+      label: "Transferred",
+      value: fmtBytes(store.liveStageBytes, units.base),
+    };
+    if (key !== "bidirectional") return [moved];
     const combined = live.rates && live.rates.down + live.rates.up;
-    return (["download", "upload"] as const).map((stage) => {
-      const rate = live.rates?.[stage === "download" ? "down" : "up"];
-      return {
-        label: STAGE[stage].short,
-        value: rate == null ? MISSING : formatRate(rate, units),
-        short: laneShort(rate, combined, units),
-        stage,
-      };
-    });
+    return [
+      ...(["download", "upload"] as const).map((stage) => {
+        const rate = live.rates?.[stage === "download" ? "down" : "up"];
+        return {
+          label: STAGE[stage].short,
+          value: rate == null ? MISSING : formatRate(rate, units),
+          short: laneShort(rate, combined, units),
+          stage,
+        };
+      }),
+      {
+        label: "Down + up",
+        value: combined == null ? MISSING : formatRate(combined, units),
+      },
+      moved,
+    ];
   }
 
   // Animated values are visual only; the accessible value uses receiver accounting.
@@ -203,7 +213,9 @@
       label: STAGE[key].short,
       icon: STAGE[key].icon,
       status: active
-        ? "active"
+        ? status(key) === "recovering"
+          ? "recovering"
+          : "active"
         : stopped
           ? "stopped"
           : store.phase === "aborted"
@@ -230,4 +242,5 @@
   details={details ?? store.serverDetails}
   issues={view.shown.issues}
   scope={details ? shown : ""}
+  running={store.isRunning}
 />

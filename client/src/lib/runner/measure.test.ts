@@ -386,6 +386,42 @@ test("opposite fluctuations use aggregate stability, simultaneous peaks and one 
   expect(windows[0].startNanos).toBe(windows[1].startNanos);
 });
 
+test("stability and quiet time cover the whole headline window, holes included", () => {
+  const m = new ThroughputAggregate();
+  m.begin("download", ["a"], 0);
+  let bytes = 0;
+  m.observe(boundary(0, { a: 0 }));
+  // 1,000 B/s for eight seconds, except nothing from 1 s to 3 s.
+  for (let t = 100; t <= 8_000; t += 100) {
+    if (t <= 1_000 || t > 3_000) bytes += 100;
+    m.observe(boundary(t, { a: bytes }));
+  }
+  // The early-finish score keeps its trailing window, where the tail ran steady.
+  expect(m.confidence().score).toBe(1);
+  m.trackStable(1);
+  for (let t = 8_100; t <= 9_000; t += 100)
+    m.observe(boundary(t, { a: (bytes += 100) }));
+  expect(m.result("download", true).down).toMatchObject({
+    reportedBytesPerSec: 1_000,
+    stabilityPct: 100,
+    quietMs: 0,
+  });
+  const full = m.result("download", false).down!;
+  expect(full.reportedBytesPerSec).toBeCloseTo(7_000 / 9, 6);
+  expect(full.quietMs).toBe(2_000);
+  // Eight of 36 quarter-second rates are zero: the coefficient of variation is √(8/28).
+  expect(full.stabilityPct).toBeCloseTo(100 * (1 - Math.sqrt(8 / 28)), 6);
+
+  // With several servers a step is quiet only when none of them moved.
+  const both = new ThroughputAggregate();
+  both.begin("download", ["a", "b"], 0);
+  both.observe(boundary(0, { a: 0, b: 0 }));
+  both.observe(boundary(1_000, { a: 0, b: 1_000 }));
+  both.observe(boundary(2_000, { a: 0, b: 1_000 }));
+  both.observe(boundary(3_000, { a: 1_000, b: 2_000 }));
+  expect(both.result("download", false).down?.quietMs).toBe(1_000);
+});
+
 test("idle confidence uses only in-window idle replies", () => {
   const server = new ServerLatency();
   for (let t = 0; t < 10; t++) server.observe("latency", reply(10), t * 100, 0);

@@ -51,6 +51,10 @@ func TestLoad(t *testing.T) {
 			return c.MaxActiveSessions == 40 && c.MaxOperationDuration == 90*time.Second &&
 				c.MaxSessionDuration == 3*time.Hour
 		}, false},
+		{"stage limit", map[string]string{"GM_MAX_STAGE_DURATION": "2h"},
+			func(c Config) bool { return c.MaxStageDuration == 2*time.Hour }, false},
+		{"stage limit beyond a day", map[string]string{"GM_MAX_STAGE_DURATION": "25h"},
+			func(c Config) bool { return c.MaxStageDuration == 25*time.Hour }, true},
 		{"explicit off mode", map[string]string{"GM_AUTH_MODE": "off"}, func(c Config) bool {
 			return !c.Auth.Explicit
 		}, false},
@@ -138,6 +142,10 @@ func TestValidate(t *testing.T) {
 		{"session shorter than an operation", "GM_MAX_SESSION_DURATION", func(c *Config) {
 			c.MaxSessionDuration = c.MaxOperationDuration - time.Second
 		}},
+		{"stage limit under a second", "GM_MAX_STAGE_DURATION", func(c *Config) {
+			c.MaxStageDuration = 500 * time.Millisecond
+		}},
+		{"stage limit of a day", "", func(c *Config) { c.MaxStageDuration = 24 * time.Hour }},
 		{"provider name control", "GM_AUTH_OIDC_PROVIDER_NAME", func(c *Config) {
 			passwordAuth(c)
 			c.Auth.OIDCProviderName = "Auth\u009belia"
@@ -172,6 +180,41 @@ func TestValidate(t *testing.T) {
 			err := c.Validate()
 			if tc.want == "" && err != nil || tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
 				t.Fatalf("Validate() = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestCoverStageLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		env                 map[string]string
+		operation, sessions time.Duration
+	}{
+		{"defaults already cover five minutes", nil, 6 * time.Minute, 2 * time.Hour},
+		{"unset lifetimes grow with the stage limit", map[string]string{"GM_MAX_STAGE_DURATION": "3h"},
+			3*time.Hour + time.Minute, 3*time.Hour + time.Minute},
+		{"an operator's lifetimes stay", map[string]string{"GM_MAX_STAGE_DURATION": "3h",
+			"GM_MAX_OPERATION_DURATION": "20s", "GM_MAX_SESSION_DURATION": "1h"}, 20 * time.Second, time.Hour},
+		{"an operator's operation lifetime still bounds unset sessions", map[string]string{
+			"GM_MAX_STAGE_DURATION": "3h", "GM_MAX_OPERATION_DURATION": "4h"}, 4 * time.Hour, 4 * time.Hour},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clearConfigEnv(t)
+			for key, value := range tc.env {
+				t.Setenv(key, value)
+			}
+			c := Default()
+			if err := c.LoadEnv(); err != nil {
+				t.Fatal(err)
+			}
+			c.CoverStageLimit()
+			if c.MaxOperationDuration != tc.operation || c.MaxSessionDuration != tc.sessions {
+				t.Fatalf("lifetimes %v / %v, want %v / %v",
+					c.MaxOperationDuration, c.MaxSessionDuration, tc.operation, tc.sessions)
+			}
+			if err := c.Validate(); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}

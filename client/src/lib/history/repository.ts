@@ -62,14 +62,14 @@ function open(): Promise<IDBDatabase> {
       OPEN_MS,
     );
     const opening = indexedDB.open(HISTORY_DB.name, HISTORY_DB.version);
+    // Refused on the abort's error, once the upgrade has unwound: Chromium can hang a page that opens behind it.
+    let refusal: Error | undefined;
     opening.onupgradeneeded = (event) => {
       if (event.oldVersion !== 0) {
-        opening.transaction!.abort();
-        return fail(
-          new Error(
-            "Unsupported history database version. Saved data has not been changed.",
-          ),
+        refusal = new Error(
+          "Unsupported history database version. Saved data has not been changed.",
         );
+        return opening.transaction!.abort();
       }
       const db = opening.result;
       db.createObjectStore(HISTORY_DB.resultsStore, {
@@ -88,7 +88,7 @@ function open(): Promise<IDBDatabase> {
       resolve(opening.result);
     };
     opening.onerror = () =>
-      fail(opening.error ?? new Error("IndexedDB open failed"));
+      fail(refusal ?? opening.error ?? new Error("IndexedDB open failed"));
     opening.onblocked = () => {
       clearTimeout(timer);
       timer = setTimeout(

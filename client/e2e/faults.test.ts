@@ -95,7 +95,7 @@ const faults: Fault[] = [
 async function editDownload(page: Page, value: number) {
   await page.evaluate((value) => {
     const input = document.querySelector<HTMLInputElement>(
-      'input[aria-label="Download in seconds"]',
+      'input[aria-label="Download stage time"]',
     )!;
     input.value = String(value / 1000);
     input.dispatchEvent(new Event("change", { bubbles: true }));
@@ -125,7 +125,9 @@ for (const fault of faults)
       const startedAt = Date.now();
       await runButton(page, "Start test").click();
       if (fault.editDownloadMs)
-        await page.getByRole("button", { name: "Open settings" }).click();
+        await page
+          .getByRole("button", { name: "Settings", exact: true })
+          .click();
       await expect(phase(page, fault.during)).toHaveCount(1, {
         timeout: 15_000,
       });

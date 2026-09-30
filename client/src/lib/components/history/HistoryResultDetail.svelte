@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from "../Icon.svelte";
   import { httpProtocolLabel } from "../../runner/paths";
-  import { term, tipGroup, tooltip } from "../../actions/tooltip";
+  import { keyHint, term, tipGroup, tooltip } from "../../actions/tooltip";
   import {
     fmtBytes,
     fmtDuration,
@@ -26,6 +26,7 @@
     summaryCards,
     summaryEvidence,
   } from "../../presentation/resultSummary";
+  import { throughputScales } from "../../presentation/scales";
   import {
     LATENCY_LANES,
     savedLatencyHasProbeEvidence,
@@ -36,6 +37,7 @@
   } from "../latencyProfile";
   import ResultSummary from "../ResultSummary.svelte";
   import ServerScope from "../ServerScope.svelte";
+  import { allServersLabel } from "../../presentation/serverAppearance";
   import LatencyProfileView from "../LatencyProfileView.svelte";
 
   interface Props {
@@ -51,7 +53,18 @@
   const run = $derived(result.multiServer);
   const multiple = $derived(run.selection.length > 1);
   const details = $derived(multiple ? run : null);
-  const units = $derived({ base: store.unitBase, kind: store.unitKind });
+  // A saved result reads in one tier, as the page did: the tier its own peaks set.
+  const units = $derived({
+    base: store.unitBase,
+    kind: store.unitKind,
+    tier: throughputScales(
+      [],
+      result,
+      store.config.visualization.throughputMaxBytesPerSec,
+      store.unitBase,
+      store.unitKind,
+    ).unitIndex,
+  });
   const completed = $derived(new Date(record.completedAt));
 
   const cards = $derived.by(() => {
@@ -193,7 +206,7 @@
   aria-labelledby={`result-${record.id}-title`}
   tabindex="-1"
 >
-  <header class="sheet-head detail-head">
+  <header class="sheet-head detail-head page-fill">
     <button
       class="btn btn-quiet back"
       type="button"
@@ -236,24 +249,24 @@
     </dl>
     <div class="head-actions">
       {#if details}
-        <span class="lens">
-          <ServerScope
-            quiet
-            servers={details.selection}
-            value={shown}
-            onchange={(id) => (shown = id)}
-            disabledIds={details.selection
-              .filter(
-                ({ id }) =>
-                  !details.servers.some(({ server }) => server.id === id),
-              )
-              .map(({ id }) => id)}
-            aggregate={details.participants.length < details.selection.length
-              ? `${details.participants.length} of ${details.selection.length} servers`
-              : `All ${details.selection.length} servers`}
-            label="Servers shown in this result"
-          />
-        </span>
+        <ServerScope
+          quiet
+          servers={details.selection}
+          value={shown}
+          onchange={(id) => (shown = id)}
+          disabledIds={details.selection
+            .filter(
+              ({ id }) =>
+                !details.servers.some(({ server }) => server.id === id),
+            )
+            .map(({ id }) => id)}
+          aggregate={allServersLabel(
+            details.selection.length,
+            details.participants.length,
+            details.servers.length,
+          )}
+          label="Servers shown in this result"
+        />
       {/if}
       <button
         class="btn btn-icon btn-quiet"
@@ -268,7 +281,7 @@
         class="btn btn-icon btn-quiet close-detail"
         type="button"
         aria-label="Close result"
-        {@attach tooltip(() => "Close (Esc)")}
+        {@attach tooltip(() => `Close${keyHint("Esc")}`)}
         onclick={onClose}
       >
         <Icon name="close" />
@@ -404,11 +417,6 @@
 </article>
 
 <style>
-  .lens {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
   .result-detail {
     display: flex;
     flex-direction: column;
@@ -423,8 +431,6 @@
     overflow: visible;
     scrollbar-gutter: auto;
     padding-inline-end: calc(var(--panel-pad) - 12px);
-    background: var(--bg);
-    background-attachment: fixed;
   }
   .title {
     display: flex;
@@ -433,14 +439,16 @@
     gap: var(--space-1) var(--space-3);
     min-width: 0;
   }
+  /* The result's time is what the pane is about, so it takes a sheet title's size; the facts sit beside it. */
   h2 {
     min-width: 0;
-    font: var(--w-strong) var(--type-md) / 1.3 var(--font-display);
+    font: var(--role-panel-title);
     letter-spacing: var(--track-tight);
   }
+  /* Pulled out by its padding, so the arrow starts on the title's edge. */
   .back {
     display: none;
-    margin-left: calc(-1 * var(--space-2));
+    margin-left: calc(-1 * (var(--space-3) + var(--hit-pad)));
   }
   .detail-body {
     display: grid;
@@ -449,6 +457,16 @@
   }
   .detail-body > :global(.result-summary) {
     max-width: none;
+  }
+  /* The stage areas' text shares the detail's one edge, a row inset in like its head and groups. */
+  .detail-body :global(.stage-area) {
+    padding-inline: var(--row-inset);
+  }
+  /* A saved result's three cards run three across or one to a row, never two and an orphan (3 × 240 px + 2 gaps). */
+  @container results (width < 768px) {
+    .detail-body :global(.result-cards:has(> :nth-child(3))) {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
   /* Fact groups share the width in columns, so a long server list stays beside the rest. */
   .facts {
@@ -460,9 +478,10 @@
   .latency {
     grid-column: 1 / -1;
   }
+  /* On the reason's first baseline, so its label reads on the same line. */
   .status {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     gap: var(--space-2);
   }
   @container history (max-width: 820px) {
@@ -473,7 +492,12 @@
       display: none;
     }
   }
+  /* A phone keeps the result's reading height: the head scrolls away under History's own. */
   @container detail (max-width: 560px) {
+    .detail-head {
+      position: static;
+      animation: none;
+    }
     .title,
     .head-facts {
       order: 3;

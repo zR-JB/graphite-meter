@@ -158,6 +158,38 @@ test("a result cannot claim more than its stages and evidence support", () => {
   expect(incoherence(testRunResult())).toContain("no stage ran");
 });
 
+test("a long run whose oldest intervals gave way is not held to the evidence it could not keep", () => {
+  const config = {
+    stages: {
+      latency: true,
+      download: true,
+      upload: true,
+      bidirectional: false,
+    },
+    duration: { ...DEFAULT_CONFIG.duration, downloadMs: 2_000 },
+    adaptive: DEFAULT_CONFIG.adaptive,
+  };
+  const long = structuredClone(result);
+  long.multiServer.omittedIntervals = 200;
+  long.multiServer.intervals = [
+    {
+      id: 200,
+      stage: "upload",
+      participants: ["a"],
+      startMs: 9_000,
+      endMs: 9_500,
+      complete: false,
+      reason: "evidence-resumed",
+      full: null,
+      headline: null,
+      components: [],
+    },
+  ] as never;
+  expect(incoherence(long, config)).toEqual([
+    "bidirectional is partial but planned false",
+  ]);
+});
+
 test("records a view could not read or that are not plain data are skipped", () => {
   const valid = saved();
   const run = (multiServer: object) => ({

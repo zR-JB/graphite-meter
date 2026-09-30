@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/apipin"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
@@ -94,6 +95,15 @@ func TestPreflightTargetsAndConnectOrigins(t *testing.T) {
 				t.Fatalf("ConnectOrigins = %v, want %v", connect, tc.connect)
 			}
 		})
+	}
+}
+
+func TestPreflightAdvertisesTheStageLimit(t *testing.T) {
+	cfg := config.Default()
+	cfg.MaxStageDuration = 2 * time.Hour
+	capabilities := NewDiscovery(&cfg).preflightFor("meter.example").Capabilities
+	if capabilities.MaxStageMs != 7_200_000 || capabilities.StageLimit() != 2*time.Hour {
+		t.Fatalf("advertised %d ms", capabilities.MaxStageMs)
 	}
 }
 

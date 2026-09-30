@@ -1,9 +1,10 @@
-// Tips and plot readouts answer a pointer that comes to rest, not one passing by.
-const WARM_MS = 500;
+// Tips answer a hand that rests on them, not one passing by; a tip or readout warms its neighbours.
+const WARM_MS = 600;
 let warm = false;
 let cooling = 0;
+let open: (() => void) | null = null;
 
-/** A tip or readout just closed: the next rest nearby answers almost at once. */
+/** A tip or readout just closed: the next one nearby answers a short rest. */
 export function warmUp() {
   warm = true;
   clearTimeout(cooling);
@@ -11,31 +12,15 @@ export function warmUp() {
   cooling = window.setTimeout(() => (warm = false), WARM_MS);
 }
 
-/** Calls `onRest` once the pointer stays within `radius` px for `ms`; a larger move restarts the wait. */
-export function restDetector(onRest: () => void, radius = 4) {
-  let timer = 0;
-  let x = NaN;
-  let y = NaN;
-  function cancel() {
-    clearTimeout(timer);
-    timer = 0;
-    x = y = NaN;
-  }
-  return {
-    move(event: PointerEvent, ms: number) {
-      if (Math.hypot(event.clientX - x, event.clientY - y) <= radius) return;
-      clearTimeout(timer);
-      x = event.clientX;
-      y = event.clientY;
-      // Not motion: intent is judged by rest time.
-      timer = window.setTimeout(
-        () => {
-          cancel();
-          onRest();
-        },
-        warm && event.pointerType === "mouse" ? Math.min(ms, 100) : ms,
-      );
-    },
-    cancel,
-  };
+/** While a tip is open or one just closed, the next answers a short rest, never a sweep. */
+export const isWarm = () => warm || open !== null;
+
+/** One tip at a time: opening one closes the last at once. */
+export function claim(close: () => void) {
+  if (open !== close) open?.();
+  open = close;
+}
+
+export function release(close: () => void) {
+  if (open === close) open = null;
 }

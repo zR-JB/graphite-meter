@@ -12,6 +12,18 @@ export function serverLabel(
     : `${server.name}, ${server.location}`;
 }
 
+/** The all-servers choice counts who stayed to the end, or, when none did, who measured anything. */
+export function allServersLabel(
+  total: number,
+  stayed: number,
+  measured: number,
+): string {
+  const shown = stayed || measured;
+  return shown < total
+    ? `${shown} of ${total} servers`
+    : `All ${total} servers`;
+}
+
 export function serverName(
   selection: readonly { id: string; name: string }[],
   id: string,

@@ -23,11 +23,16 @@ func nativeBoundary(ms int, down map[string]uint64, up map[string]*ReceiverSnaps
 	return measurementBoundary{at: time.Duration(ms) * time.Millisecond, down: down, up: up}
 }
 
-func testStage(p *participant, plan StagePlan, emit func(Event)) *stageRun {
-	c := &coordinator{servers: []*participant{p}, started: time.Now(), emit: emit}
-	c.aggregate.beginStage(plan.Name, []string{p.id()}, 0)
-	own := &stageServer{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}}
-	return &stageRun{c: c, plan: plan, servers: []*stageServer{own}}
+func testStage(p *participant, plan StagePlan, emit func(Event), others ...*participant) *stageRun {
+	c := &coordinator{prepared: &PreparedRun{}, servers: append([]*participant{p}, others...), started: time.Now(),
+		emit: emit}
+	c.aggregate.beginStage(plan.Name, c.ids(), 0)
+	s := &stageRun{c: c, plan: plan}
+	for _, p := range c.servers {
+		s.servers = append(s.servers,
+			&stageServer{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}})
+	}
+	return s
 }
 
 func nativeReceiver(id string, bytes uint64, ms int) *ReceiverSnapshot {
@@ -76,41 +81,76 @@ func TestCoordinatedIntervalsStayBounded(t *testing.T) {
 	}
 }
 
-func TestCheckpointMissesRemoveServers(t *testing.T) {
+func TestCheckpointMissesRemoveServersOnlyWhileAnotherMoves(t *testing.T) {
 	t.Parallel()
-	s := &stageRun{misses: map[string]int{}}
+	a := &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: "a"}}}
+	b := &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: "b"}}}
+	s := testStage(a, StagePlan{Name: StageUpload, Directions: []Direction{Up}}, func(Event) {}, b)
+	now := time.Now()
+	s.beginSampling(now)
+	own, other := s.servers[0], s.servers[1]
 	refused := errors.New("refused")
 	for i, final := range []bool{false, false, true} {
-		if s.dropsServer("a", refused, final) {
+		if s.dropsServer(own, refused, final, now) {
 			t.Fatalf("miss %d removed the server", i+1)
 		}
 	}
-	if s.dropsServer("a", nil, false) || s.dropsServer("a", refused, false) || s.dropsServer("a", refused, false) {
+	if s.dropsServer(own, nil, false, now) || s.dropsServer(own, refused, false, now) ||
+		s.dropsServer(own, refused, false, now) {
 		t.Fatal("a successful checkpoint did not reset the count")
 	}
-	if !s.dropsServer("a", refused, false) {
-		t.Fatal("the third consecutive miss kept the server")
+	if !s.dropsServer(own, refused, false, now) {
+		t.Fatal("the third consecutive miss kept the server while another moved")
 	}
-	if !s.dropsServer("b", &AuthRequiredError{}, true) {
+	s.lastMovement["b"].set(Up, now.Add(-redialWindow))
+	if s.dropsServer(own, refused, false, now) {
+		t.Fatal("misses while no server moves removed the server")
+	}
+	if !s.dropsServer(other, &AuthRequiredError{}, true, now) {
 		t.Fatal("a refused grant kept the server")
 	}
 }
 
-func TestSilentDirectionsLeaveAfterTheRedialWindow(t *testing.T) {
+func TestSilenceRemovesAServerOnlyWhileAnotherMoves(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
 		name    string
-		moved   uint64
-		removed bool
-	}{{"silent", 0, true}, {"one byte", 1, false}} {
-		p := &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: "a"}}}
-		s := testStage(p, StagePlan{Name: StageDownload, Directions: []Direction{Down}}, func(Event) {})
-		s.c.aggregate.observe(nativeBoundary(0, map[string]uint64{"a": 100}, nil))
-		s.beginSampling(time.Now().Add(-redialWindow))
-		s.observe(sampledBoundary{boundary: nativeBoundary(1000, map[string]uint64{"a": 100 + c.moved}, nil)})
-		if p.removed != c.removed {
-			t.Errorf("%s: removed = %v, want %v", c.name, p.removed, c.removed)
-		}
+		moved   []uint64 // bytes servers a and b move over the redial window
+		final   bool
+		removed []bool
+	}{
+		{"a sole silent server stays", []uint64{0}, false, []bool{false}},
+		{"a byte keeps it", []uint64{1}, false, []bool{false}},
+		{"the stage end removes it", []uint64{0}, true, []bool{true}},
+		{"silence both servers share removes neither", []uint64{0, 0}, false, []bool{false, false}},
+		{"silence beside a moving server removes it", []uint64{0, 1}, false, []bool{true, false}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			var servers []*participant
+			start, end := map[string]uint64{}, map[string]uint64{}
+			for i, moved := range c.moved {
+				id := string(rune('a' + i))
+				servers = append(servers, &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: id}},
+					transport: &runner{coordinated: &participantCounters{}}})
+				start[id], end[id] = 100, 100+moved
+			}
+			s := testStage(servers[0], StagePlan{Name: StageDownload, Directions: []Direction{Down}}, func(Event) {},
+				servers[1:]...)
+			s.ctx, s.sampler = t.Context(), &sampler{cancel: func() {}}
+			s.c.aggregate.observe(nativeBoundary(0, start, nil))
+			s.beginSampling(time.Now().Add(-redialWindow))
+			boundary := nativeBoundary(1000, end, nil)
+			boundary.final = c.final
+			s.observe(sampledBoundary{boundary: boundary})
+			s.sampler.cancel()
+			s.sampling.Wait()
+			for i, p := range servers {
+				if p.removed != c.removed[i] {
+					t.Errorf("%s removed = %v, want %v", p.id(), p.removed, c.removed[i])
+				}
+			}
+		})
 	}
 }
 

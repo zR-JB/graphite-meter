@@ -1,8 +1,8 @@
 // Pure geometry, formatting, and hover-selection logic behind LatencyProfile.svelte.
 import { fmtCount, fmtMs } from "../format";
-import { latencyCeiling, latencyScale } from "../presentation/scales";
+import { latencyScale } from "../presentation/scales";
 import type { ReflectorTimingSummary, TransportRole } from "../runner/contract";
-import { LATENCY_POPULATION } from "../presentation/vocabulary";
+import { LATENCY_POPULATION, MISSING } from "../presentation/vocabulary";
 import { STAGES } from "../runner/schedule";
 
 export const LATENCY_LANES = STAGES.map((key) => ({
@@ -55,17 +55,13 @@ export interface LatencyProfileViewLane extends LatencyProfileLaneLike {
   sendFailureCount: number | null;
   count: number;
   active?: boolean;
+  /** Why this population's probes stopped, by server when several ran. */
+  failure?: string;
 }
 
-/** The lanes' axis runs from zero to the latency ceiling above their slowest reply, like the gauge's. */
-export function profileDomain(
-  lanes: readonly LatencyProfileLaneLike[],
-): number {
-  const slowest = lanes.flatMap((lane) => lane.max ?? lane.min ?? []);
-  return slowest.length
-    ? latencyCeiling(Math.max(...slowest))
-    : latencyScale([]);
-}
+/** The lanes' axis follows the gauge's rule over their P90s, so the boxes fill it; a slower reply runs off its end. */
+export const profileDomain = (lanes: readonly LatencyProfileLaneLike[]) =>
+  latencyScale(lanes.map((lane) => lane.p90 ?? lane.center));
 
 // Position of a value as a 0 to 100% offset along the track, clamped at both ends.
 export function pos(value: number | null, maxMs: number): number {
@@ -73,11 +69,11 @@ export function pos(value: number | null, maxMs: number): number {
   return Math.min(100, Math.max(0, (value / maxMs) * 100));
 }
 
-// Sub-1% timeouts keeps a second decimal so a rare drop is still legible.
-export function timeoutLabel(ratio: number): string {
-  if (ratio <= 0) return "";
-  return `${(ratio * 100).toFixed(ratio < 0.01 ? 2 : 1)}% probe timeouts`;
-}
+// The share of resolved probes that timed out; sub-1% keeps a second decimal so a rare timeout is still legible.
+export const formatTimeouts = (ratio: number | null) =>
+  ratio == null
+    ? MISSING
+    : `${(ratio * 100).toFixed(ratio > 0 && ratio < 0.01 ? 2 : 1)}%`;
 
 /** Both supported latency transports provide application probe timeout evidence. */
 export function savedLatencyHasProbeEvidence(kind: string | null): boolean {
@@ -195,11 +191,20 @@ export function probeAccountingSummary(
   };
 }
 
+const NOT_LOSS = "A timeout is a missing reply, not packet loss";
+
 export const probeOutcomes = (
   lane: Parameters<typeof probeAccountingDetails>[0] & { label: string },
 ) =>
-  `${lane.label} probe outcomes\n${probeAccountingDetails(lane)}\n` +
-  "A timeout is a missing reply, not packet loss";
+  `${lane.label} probe outcomes\n${probeAccountingDetails(lane)}\n${NOT_LOSS}`;
+
+/** What a timeouts share counts; nothing to explain before any probe resolved. */
+export const timeoutsTip = (
+  lane: Pick<LatencyProfileViewLane, "count" | "timeoutCount">,
+) =>
+  lane.count
+    ? `Timeouts\n${fmtCount(lane.timeoutCount ?? 0)} of ${fmtCount(lane.count)} probes had no reply before the deadline\n${NOT_LOSS}`
+    : "";
 
 export const serverHandling = (timing: ReflectorTimingSummary) =>
   `Server handling ${fmtMs(timing.meanHandlingMs)} ms of a ${fmtMs(timing.meanRawRttMs)} ms ` +

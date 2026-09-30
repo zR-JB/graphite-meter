@@ -1,7 +1,7 @@
 <script lang="ts">
   import Dialog from "./Dialog.svelte";
   import Icon from "./Icon.svelte";
-  import { tooltip } from "../actions/tooltip";
+  import { keyHint, tooltip } from "../actions/tooltip";
   import { loadLegal, retryLegal } from "../legal/loader";
   import type { LegalAbout } from "../legal/types";
 
@@ -55,8 +55,8 @@
       <button
         class="btn btn-icon btn-quiet"
         type="button"
-        aria-label="Close"
-        {@attach tooltip(() => "Close (Esc)")}
+        aria-label="Close About & legal"
+        {@attach tooltip(() => `Close${keyHint("Esc")}`)}
         onclick={onClose}><Icon name="close" /></button
       >
     </div>

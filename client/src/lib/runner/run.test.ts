@@ -13,7 +13,11 @@ import type {
 } from "./contract";
 import type { ParticipantHost, StageTransport } from "./transport";
 import type { DroppedServer } from "./run";
-import { buildHistoryRecord, readHistoryRecord } from "../history/types";
+import {
+  buildHistoryRecord,
+  incoherence,
+  readHistoryRecord,
+} from "../history/types";
 import { ServerAuthenticationRequired } from "../servers/credentials";
 import { STAGES } from "./schedule";
 
@@ -1020,6 +1024,115 @@ test("a stall report while evidence still flows keeps the server at its stage en
   expect(result.outcome).toBe("complete");
   expect(result.multiServer.failures).toEqual([]);
   expect(result.multiServer.participants).toEqual(["a", "b"]);
+});
+
+/** Every direction of the named stage moves nothing from `from` to `to` ms into its measurement. */
+const hole =
+  (stage: PhaseActivity["stage"], from: number, to: number) =>
+  (activity: PhaseActivity, ms: number) =>
+    activity.stage === stage && ms >= from && ms < to;
+
+test("a quiet link keeps its stage to the planned end, and its silence counts in the result", async () => {
+  const h = await harness(
+    [{ id: "self", silent: hole("download", 1_000, 3_000) }],
+    { download: true },
+    { downloadMs: 4_000 },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.durationMs).toBeGreaterThanOrEqual(4_000);
+  expect(result.stages.download).toBe("complete");
+  expect(result.multiServer.failures).toEqual([]);
+  // Two of the four seconds carried nothing: the headline averages them in and the result says how long.
+  near(result.download?.reportedBytesPerSec, 500);
+  expect(result.download!.quietMs).toBeGreaterThan(1_800);
+  expect(result.download!.quietMs).toBeLessThanOrEqual(2_000);
+  expect(
+    h.events.flatMap((event) => (event.type === "stall" ? [event.info] : [])),
+  ).toEqual([{ reason: "timeout" }]);
+  expect(h.events.filter((event) => event.type === "resume")).toHaveLength(1);
+  const quiet = h.events.flatMap((event) =>
+    event.type === "live" && event.sample.quietMs !== null
+      ? [event.sample]
+      : [],
+  );
+  expect(quiet.every((sample) => sample.stalled && sample.down === 0)).toBe(
+    true,
+  );
+  expect(Math.max(...quiet.map((sample) => sample.quietMs!))).toBeGreaterThan(
+    1_800,
+  );
+});
+
+test("silence the servers share removes none; silence one has alone while another moves removes it", async () => {
+  const quiet = hole("download", 1_000, 3_000);
+  const shared = await harness(
+    two({ silent: quiet }, { silent: quiet }),
+    { download: true },
+    { downloadMs: 4_000 },
+  );
+  shared.start();
+  const kept = await shared.result();
+  expect(kept.multiServer.failures).toEqual([]);
+  expect(kept.multiServer.participants).toEqual(["a", "b"]);
+  near(kept.download?.reportedBytesPerSec, 2_000);
+
+  const own = await harness(
+    two({ silent: quiet }),
+    { download: true },
+    { downloadMs: 4_000 },
+  );
+  own.start();
+  const dropped = await own.result();
+  expect(dropped.multiServer.failures).toMatchObject([
+    { serverId: "a", reason: "timeout" },
+  ]);
+  expect(dropped.multiServer.participants).toEqual(["b"]);
+  near(dropped.download?.reportedBytesPerSec, 3_000);
+});
+
+test("a receiver feed that lags keeps its server, whose bytes arrive with its next record", async () => {
+  // a's receiver sends no record for 2 s while b moves, then reports every byte it received meanwhile.
+  const h = await harness(
+    two({ silent: hole("upload", 1_000, 3_000) }),
+    { upload: true },
+    { uploadMs: 4_000 },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.multiServer.failures).toEqual([]);
+  expect(result.multiServer.participants).toEqual(["a", "b"]);
+  near(result.upload?.reportedBytesPerSec, 4_000);
+  expect(result.upload?.quietMs).toBe(0);
+});
+
+test("a stage with a hole never finishes early, however steady it runs after", async () => {
+  const h = await harness(
+    [{ id: "self", silent: hole("download", 500, 1_200) }],
+    { download: true },
+    { downloadMs: 12_000 },
+    { adaptive: true },
+  );
+  h.start();
+  expect((await h.result()).durationMs).toBeGreaterThanOrEqual(12_000);
+});
+
+test("a result spanning too little of its stage settles Partial, as History judges it", async () => {
+  // The receiver's first record arrives 3 s into a 4 s upload, so its result spans one second.
+  const h = await harness(
+    [{ id: "self", silent: hole("upload", 0, 3_000) }],
+    { upload: true },
+    { uploadMs: 4_000 },
+  );
+  h.start();
+  const result = await h.result();
+  near(result.upload?.reportedBytesPerSec, 1_000);
+  expect(result.stages.upload).toBe("partial");
+  expect(result.multiServer.failures).toMatchObject([
+    { serverId: "self", stage: "upload", reason: "insufficient-evidence" },
+  ]);
+  expect(result.outcome).toBe("partial");
+  expect(incoherence(result, h.config)).toEqual([]);
 });
 
 test("one long page suspension still enters every segment in order", async () => {

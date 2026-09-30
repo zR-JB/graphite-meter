@@ -10,7 +10,7 @@ export interface SweepTargetInput {
   valueBytesPerSec: number;
   /** Absolute throughput scale (bytes/sec); <=0 is treated as 1 (no scale yet). */
   scaleBytesPerSec: number;
-  /** True once the run's transfer rates have evidence; a warmup holds the last stage's. */
+  /** True once the running stage's transfer rates have evidence. */
   throughputEvidence: boolean;
   /** Full-scale ms for the latency phase; <=0 is treated as 1. */
   latencyScaleMs: number;
@@ -26,7 +26,6 @@ export function sweepTarget(s: SweepTargetInput): number | null {
   switch (s.phase) {
     case "latency":
       return latency();
-    case "warmup":
     case "download":
     case "upload":
     case "bidirectional":

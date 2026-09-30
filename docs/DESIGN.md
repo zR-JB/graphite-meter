@@ -54,11 +54,11 @@ All colours are OKLCH `light-dark()` pairs, so a theme switch changes only `colo
 
 | Role     | Tokens                                                                           | Rule                                                                                                          |
 | -------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Page     | `--canvas`, `--canvas-deep`, `--grain`                                           | The shell paints grain, the running stage's light (`--amb`, from above) and a deeper floor over `--canvas`.   |
+| Page     | `--canvas`, `--canvas-deep`, `--grain`                                           | The shell paints a deeper floor over `--canvas`, dithered by grain; the running stage's light falls on it.    |
 | Floating | `--sheet`, `--surface-1`, `--surface-2`                                          | Sheets are `--sheet` (frosted); their grouped lists are `--surface-1` plates; controls use `--surface-2`.     |
 | Washes   | `--track`, `--hover-wash`, `--selected-wash`                                     | Translucent ink, so they read on any layer.                                                                   |
 | Text     | `--text`, `--text-muted`, `--text-soft`                                          | ≥ 4.5:1 on every layer in both themes. `--text-soft` is the floor for any text.                               |
-| Edges    | `--border-subtle`, `--border`, `--border-strong`, `--field-edge`                 | Hairlines for structure; a field's identifying edge uses `--field-edge` (3:1).                                |
+| Edges    | `--border-subtle`, `--border`, `--border-strong`, `--field-edge`, `--check-edge` | Hairlines for structure; a field's identifying edge uses `--field-edge` (3:1).                                |
 | Ink      | `--brand`, `--brand-strong`, `--brand-soft`                                      | Graphite: near-white in dark, near-black in light. The run button, checked marks, switches, selection, focus. |
 | Stages   | `--phase-latency`, `--phase-download`, `--phase-upload`, `--phase-bidirectional` | Teal, blue, amber, magenta: four families a quarter turn apart.                                               |
 | Status   | `--ok`, `--warn`, `--err`, each with `-soft`                                     | Only for states (failed, reachable, stale), never for how good a value is.                                    |
@@ -70,18 +70,25 @@ hue uses `--tone-ink`.
 
 A tone gets its variants from one hue. Set `data-tone` (or use `.badge`, `.notice`, `.status-dot`), and then use
 `--tone` for the line, trace or dot, `--tone-wash` for fills, `--tone-line` for edges and `--tone-ink` for small text.
+The ink is the hue mixed into `--text`, 80 % on a dark page and 70 % on a light one, so small type keeps 4.5:1 on a
+running card's wash.
 
-**Dark and OLED.** The page is near-black, never black (`--canvas` L 0.17, `--canvas-deep` L 0.125), above the levels
+**Dark and OLED.** The page is near-black, never black (`--canvas` L 0.17, `--canvas-deep` L 0.15), above the levels
 where OLED pixels switch off and smear. Sheets and plates lift in lightness steps a dim panel still separates.
+**Smooth shading.** The grain is zero-mean: mid-grey noise blended with `overlay` dithers every gradient by about one
+8-bit level without moving the page off its token, so a 6-bit panel shows no steps. Marks are flat in their hue: no
+gloss, no knockout rings in the page colour, and 1 px lines sit on whole pixels.
 **Light.** A cool grey page, white plates, ink controls. **Gamut.** Base values fit sRGB; `@media (color-gamut: p3)`
 raises stage and status chroma only, so contrast holds on both. **Contrast modes.** `prefers-contrast: more`
 strengthens subtle edges and `--text-soft`; it and `prefers-reduced-transparency` make glass opaque.
 
-The auth pages keep a pinned copy of the page, ink and text tokens (`go/internal/auth/assets/auth.css`), and
-`client/index.html` repeats `--canvas` and `--text` for the first paint. The terminal client repeats the text, ink,
-stage and status tokens in sRGB (`go/cmd/graphite-meter-client/theme.go`); a terminal draws everything as text, so
-its light stage colours are each hue's `--tone-ink`. A few values sit a unit or three off their token so that
-256-colour terminals still map ink and selection to grey and keep latency apart from ok.
+The auth pages keep a pinned copy of the page, ink and text tokens and of the Plex Sans and Plex Mono 600 faces
+(`go/internal/auth/assets/auth.css`; those two font files are the only ones served before sign-in), notices are
+app.css's `.notice`, and every page's card starts at one height so a notice grows it downward. `client/index.html`
+repeats `--canvas` and `--text` for the first paint. The terminal client repeats the text, ink, stage and status
+tokens in sRGB (`go/cmd/graphite-meter-client/theme.go`); a terminal draws everything as text, so its light stage
+colours are each hue mixed 80 % into `--text`. A few values sit a unit or three off their token so that 256-colour
+terminals still map ink and selection to grey and keep latency apart from ok.
 
 ## Type
 
@@ -101,13 +108,16 @@ emphasised values, 600 titles and controls.
 ## Space, grid and radii
 
 - A 4 px grid: `--space-1` to `--space-6` = 4, 8, 12, 16, 24, 32 px.
+- A hairline (`--hairline`) is one device pixel: 1 px, 0.5 px from 2x and a third of a pixel from 3x screens.
 - Rows are `--row-h` 42 px, controls `--control-h` 32 px, checks `--check` 18 px; coarse pointers grow targets to
   `--hit` 44 px.
 - Radii: `--r-well` 4 px (tags, check boxes, box plots), `--r-chrome` 8 px (controls, plates, the run button, chips),
   `--r-surface` 12 px (sheets, dialogs, popovers), `--r-full` for dots and switches.
 - **Panels** are 420 px by default (360–720, resizable). They dock from 1200 px, two side by side from 1520 px, and
   below that the last one opened stays. Docked, a sheet floats 12 px inside its column; below 1200 px it is a
-  flyout of the same width, and on a portrait phone a bottom sheet.
+  flyout of the same width, and on a portrait phone a bottom sheet. A docked sheet's inner edge is a handle
+  (`.resize-handle`): drag it or step it 16 px with the arrows (48 with Shift), Home and End reach its limits, Enter
+  or a double-click resets it, and a 2 px ink line lights the edge on hover or focus.
 - **One text edge per sheet.** Plates sit on `--panel-pad` (16 px); text sits `--row-inset` (12 px) inside a plate,
   and every free line starts on that same edge.
 
@@ -118,8 +128,11 @@ emphasised values, 600 titles and controls.
 | Page     | The instrument: dial, latency card, run bar, stage cards; History's list and detail | Grain and the stage light on `--canvas`. Areas are marked by a 2 px rule and a wash in their hue, fading out downward: `--wash` 9 % once measured, 16 % while running, none while pending. |
 | Floating | Side sheets, dialogs, popovers, menus, tooltips, readouts                           | `--sheet` or glass with blur, a `--border-subtle` hairline, `--elev-float` or `--elev-tooltip`. Grouped lists inside are `--surface-1` plates without shadow.                              |
 
-Hairlines mark structure only: a plate's edge, row separators inside plates, a head once content scrolls under it,
-the axis under a graph and the facts' top edge in a card. Spacing separates everything else.
+Hairlines mark structure only: a plate's edge, row separators inside plates and History's list, a head once content
+scrolls under it, the axis under a graph, the latency card's gridlines and the facts' top edge in a card. Spacing
+separates everything else. A sheet, and a dialog built as one (About & legal, opaque `--sheet-solid`), takes the
+`--border-subtle` edge; glass over the instrument (menus, popovers, toasts, tips) and a confirm dialog's opaque
+`--surface-1` take `--border-strong`.
 
 ## Icons
 
@@ -130,62 +143,123 @@ hue, never by a boxed icon.
 
 ## Motion
 
-- Tokens: `--dur-hover` 120 ms, `--dur-slide` 180 ms (popovers), `--dur-sheet` 420 ms (sheets and their column),
-  `--dur-graph` 280 ms (washes, chips, scale changes), `--dur-pulse` 1.1 s (a live indicator only). Easing is
-  `--ease-out` for anything the user triggered.
+- Tokens: `--dur-hover` 120 ms, `--dur-slide` 180 ms (popovers, dialogs, tips), `--dur-sheet` 420 ms (sheets and
+  their column), `--dur-graph` 280 ms (washes, chips, scale changes), `--dur-pulse` 1.1 s (a live indicator only).
+  Easing is `--ease-out` for anything the user triggered.
 - Live values and the running graph's leading edge move on the single frame clock in
   `presentation/motion.svelte.ts`; a glide smooths only the rendering.
-- The room's light (`--amb`) glides 1.1 s between stages. A docked sheet slides from its edge while its column
-  (`--dock-left`, `--dock-right`) grows, and back out when closed. A changed stage time rolls (320 ms).
+- The room's light cross-fades 1.1 s between stages: one layer per stage across the whole room, never a repaint of
+  the page, its source a fifth of the way across the stage wherever the columns stand, so a docked sheet never cuts
+  it at its column's edge; History is read without it. A docked sheet hugs its column's inner edge, so the column's
+  glide (`--dock-left`, `--dock-right`) is its slide: sheet and page move in one layout pass, in and out, and a
+  dragged handle moves them without the glide. A changed time rolls like a counter (`Roll`, 320 ms): up as it grows,
+  down as it shrinks.
+- The dial's head is a flat bead in its hue, a little wider than the arc. While the latency stage runs, it beats on
+  each idle reply, one `--dur-pulse` at a time: it swells a little and settles while a hairline ring in its hue
+  spreads from it and fades, and the footer counts the replies so far; without replies it holds still.
+- A radio's ring closes in and a check draws in (180 ms); a row that appears in a sheet unfolds from its own height.
 - Reduced motion keeps colour and opacity changes; sheets, rolls and glides jump to their end state.
 
 ## Components
 
 - **Instrument** (`GaugePanel`): the dial and the latency card share the top and take the height left over; the run
-  bar and three stage cards keep theirs. Narrow, it stacks: dial, run bar, stage cards, latency. A tight screen
-  scrolls rather than overlapping rows.
+  bar and three stage cards keep theirs. The dial's column is one stage card wide, so the latency card starts on the
+  second card's edge. On a portrait screen, where the dial is bound by its width, the two share the width evenly.
+  Narrow, it stacks: dial, run bar, stage cards, latency. A tight screen scrolls rather than overlapping rows. On a
+  phone the dial takes about a third of the screen, so the running stage's card, its value and its graph share the
+  first screen with it: the running card is the first under the run button, and while the latency stage runs its
+  card is. The readout keeps one place: "—" stands where the value arrives, and the result lands on it.
+  Every "—" that waits for a value, on the dial, the latency card and the stage cards, is `--text-soft`; a measured
+  value is full ink. The footer under the dial holds the phase's note or a failure, and while no data or no reply
+  arrives, for how long; on a landscape screen it hangs just under the ring, and the ring and the latency card share
+  one axis. Every rate on the page reads in the dial's unit, zero included. Nothing above the run bar moves from Start
+  to the result.
 - **Server lens** (`ServerLens`, `ServerScope quiet`): with several servers, one quiet field over the instrument
-  (All servers or one) drives the stage cards and which server's latency is shown once the run finishes. History's
-  detail has its own.
-- **Stage card** (`ResultSummary`): a rule and wash in the stage hue; the name and a status word when not complete;
-  the value (bidirectional: ↓ and ↑ in their own hues); the wire rate or a failure's reason; the graph; then facts:
-  Peak, Stability, Down + up, Transferred, wrapping to the card's width. A saved result has no graph row.
+  (All servers or one), as wide as the choice it shows, drives the stage cards and which server's latency is shown
+  once the run finishes. History's detail has its own.
+- **Stage card** (`ResultSummary`): a rule and wash in the stage hue; the name and a status word when not complete
+  (a stalled stage is Recovering); the value, one line tall (bidirectional: ↓ and ↑ in their own hues, on the same
+  baseline); the wire rate or a failure's reason, named by server when several ran, and at the line's end, after a
+  stall, No data (from 0.5 s); the graph; then facts: Peak, Stability, Down + up, Transferred, in columns of at least
+  84 px, so a phone's card holds three to a row. A card holds the same facts in every state (`cardFacts`): unseen
+  until one is known, "—" while one is not, so it keeps its height from Start to the result; a taller neighbour
+  leaves its rows in place. Under the dial on a landscape page, its rows sit 4 px apart rather than 6, so the page
+  fits one screen down to 1024 × 768. A card with no data yet keeps its graph's room but draws nothing in it. A
+  saved result has no graph row. On a phone the cards stack, and a card that has not run, or is done while the run
+  goes on, folds to its name and value; the running card and every card of a finished run are whole.
 - **Stage graph** (`StageGraph`): the rate from zero to the shared ceiling (`store.scales.chartBytesPerSec`), a dashed
   second lane for bidirectional upload, and a 20 px latency track below: one dot per reply bucket, height being time
-  over the idle median (dashed baseline). The pointer, a press or arrow keys show a readout at once: time into the
-  stage, the rate, and the latency replies measured then.
-- **Latency card** (`LatencyProfileView`): the idle median as the headline with Jitter, Range, Stability and Timeouts;
-  then one row per population on one scale: name, median, jitter, box plot (P10–P90 box, min–max whiskers, median
-  tick, latest reply while live) and the added latency in its hue. Loaded rows carry the idle baseline and a span
-  from it to their median. Rows share the card's height; narrow cards put the idle facts in one line above.
-- **Run bar**: the stage chips and the run button on one line. A chip is a switch before a run (filled bead on,
-  ring off), shows progress as a line and a wash while its stage runs, and a check once complete. The run button is
-  the one ink button, sentence case, with the estimate as a quiet suffix; Stop steps back to an outline.
+  over the idle median (dashed baseline). A mouse, a tap, a sideways drag or arrow keys show a readout at once: time
+  into the stage, the rate, and the latency replies measured then. A vertical swipe scrolls past; a drag's readout
+  leaves with the finger.
+- **Latency card** (`LatencyProfileView`): as tall as its content and centred beside the dial, lit like a stage card
+  (`.stage-area`). The idle median as the headline; under it the idle replies over the stage, drawn like a stage
+  graph's latency track (one dot per reply bucket over the dashed median), growing through the stage and kept as the
+  record (History has no series); then Jitter, Range, Stability and Timeouts, each held from Start. A failed stage
+  names its reason under the headline. Then a table, one 40 px row per population: name, median, jitter, timeouts
+  (the share of resolved probes that got no reply, which is not packet loss), box plot (P10–P90 box over its min–max
+  whisker, median tick, latest reply as a dot while live) and the added latency in its hue, from the medians until the
+  run saves it, "—" without evidence. Figures are as wide as their longest value from Start, and a row whose probes
+  timed out or were lost shows a note in its dot's place, so no column moves mid-run. The rows share one ms axis on the
+  gauge's ladder over their P90s, so the boxes fill it; a whisker past it runs on to the edge, ends in an arrowhead
+  and names its value. The axis sits under the last row and its ticks run up through the rows as gridlines behind the
+  plots; the idle median is one line from its tick through the loaded rows, and each loaded row's added-latency span
+  starts from it. A pointer anywhere on a row's plot reads the marker nearest it, as a stage graph's readout does, and
+  follows the pointer from marker to marker. Narrow cards put the idle facts above and drop jitter, never timeouts; a phone gives each
+  population its figures, then its plot.
+- **Run bar**: the stage chips and the run button on one line; on a phone the chips share one row in equal columns and
+  the run button spans the row under them at 44 px. A chip whose stage can still change is a switch drawn as an ink
+  control (`.btn`): a plate and a filled bead when on, its edge alone and a ring bead when off; hover strengthens the
+  edge and adds a wash, a press deepens the wash. A stage the run has reached locks its chip, which drops the plate
+  (one locked only while the test starts keeps it) and shows progress instead: a line and a wash while its stage runs;
+  once complete, a check in the stage's ink takes the bead's place. A chip has one glyph and no status word (its tip
+  says why it is locked or skipped), so it keeps its width in every state: from Start to the result neither the chips
+  nor the run button move. The run button is the one ink button, flat, sentence case, with the estimate as a quiet
+  suffix; Stop steps back to an outline.
 - **Sheet** (`SidePanel`, `.sheet`): the title, quiet head actions, grouped plates. **Choice list** (`.choices`): rows
-  with a name and a second line saying what the choice does (`PATH_NOTE`) or why it is unavailable; the ring or check
-  alone marks the choice. Unavailable choices fold into one row.
-- **Duration** (`DurationStrip`): presets over a bar of the enabled stages, each segment as wide as its time, with the
-  time and name under it; Custom adds a − value + stepper per stage and for warmup.
-- **Switch**: an empty track when off, an ink track with an inverse knob when on. **Check**: 18 px, ink when checked.
-- **History**: rows show the time with the server and recency, then per column a value over a note: added latency
-  under each rate in its hue, jitter under idle, the stage under loaded. The detail repeats the stage cards and the
-  latency card, then each server's facts.
+  with a name and a second line saying what the choice does (`PATH_NOTE`) or why it is unavailable, cut with an
+  ellipsis; the ring or check alone marks the choice. Unavailable choices fold into one row. While a run locks a list,
+  every row but the chosen one dims.
+- **Duration** (`DurationStrip`): presets over a bar of the enabled stages, each segment as wide as its time but never
+  narrower than its words, with the time and name under it; Custom adds a − time + stepper (`TimeStepper`) per stage
+  and for warmup. Steps grow with the time (0.5 s, 1 s, 10 s, 1 min, 5 min) and land on their grid; a click edits the
+  time as text (`90`, `2h`, `1 h 30 min`, `1:30:00`), which rounds to the time shown, and Escape drops the edit. The
+  field takes the keyboard like a spin button; − and + serve pointers and stay put at a limit. The servers' stage
+  limit bounds every time, and its notice names each stage over it.
+- **Switch**: a plate row with the link row's wash and ring; off is an empty track with the check box's edge
+  (`--check-edge`), on an ink track with an inverse knob. **Check**: 18 px, ink when checked.
+- **History**: the list is page, not plate: a day's rows sit between two rules, with hairlines between them. A row
+  shows the time over its server and recency (a long name is cut), then per column a value over a note on the same two
+  baselines: added latency under each rate in its hue, jitter under idle, the stage under loaded; bars share a zero
+  end per column and run on a track that shows the column's scale. The time takes the row's slack and each value
+  column is as wide as its content, so the figures sit together at the right; the table stops at 1120 px, and the
+  column heads' rule comes in as rows scroll under them. Columns never shrink below their content: once they no
+  longer fit, each row folds, its time on one line and its values under it. Sort by lists only the shown columns. The detail repeats the stage cards (three across
+  or one to a row, never two and an orphan) and the latency card on the same 12 px text edge as its head, then each
+  server's facts. From 821 px it sits beside the list, and the hairline between them is a handle like a docked sheet's
+  edge: the list keeps its share of the width (40 % by default), never under 360 px, and the detail never under
+  460 px.
 - **Facts** (`dl.kv`): label/value pairs; a qualifier that belongs to a value is an `.aside`, never joined with a dot.
-- **Tooltip and readout** share one glass shell (`.inspect-card`). A tip opens on hover intent, keyboard focus or long
-  press, never after a click on a control.
+- **Tooltip and readout** share one glass shell (`.inspect-card`). A tip opens when the pointer rests on its word:
+  within 8 px of where it settled for 0.4 s (jargon 0.25 s, 0.12 s while another tip shows or for 0.6 s after one
+  closes), so a pointer passing by, sweeping across or dragging opens none. It also opens on keyboard focus, on a
+  click or tap on jargon or an explained fact, or on a long press on a control; never after a click on a control. It
+  stays while the pointer is on its word, closes a moment after it leaves, and one tip shows at a time. A scroll or a
+  tap elsewhere closes a pointer's tip; a tap on the tip closes it without reaching what lies beneath. A tip the
+  viewport would cut flips below its word, then aligns to the word's edge.
 
-| Primitive                | Height         | Radius             | Type            | States                                               |
-| ------------------------ | -------------- | ------------------ | --------------- | ---------------------------------------------------- |
-| `.kv` row                | 42             | plate 8            | row             | separators `--border-subtle`                         |
-| Choice row               | 42 (two lines) | 6                  | row + `small`   | hover `--hover-wash`; chosen by its mark             |
-| `.btn`                   | 32             | 8                  | control         | quiet: no ring, hover wash; disabled 0.5             |
-| Run button               | 40             | 8                  | 14 px 600       | ink fill, `--text-inverse`; running: outline         |
-| Stage chip               | 36 (32 narrow) | 8                  | 13 px, name 600 | on: filled bead; running: hue wash and progress line |
-| `.segmented`             | 32             | 8 track, 6 segment | control         | selected `--selected-wash`                           |
-| Switch                   | 22 × 38        | full               | row label       | on: ink track                                        |
-| Check, radio             | 18             | 4, full            | —               | ink fill or ring                                     |
-| `.inspect-card`, tooltip | content        | 8                  | 12 px / 1.4     | glass, `--elev-tooltip`                              |
-| Sheet, dialog            | content        | 12                 | panel title     | `--sheet`, frosted, `--elev-float`                   |
+| Primitive                | Height         | Radius             | Type            | States                                             |
+| ------------------------ | -------------- | ------------------ | --------------- | -------------------------------------------------- |
+| `.kv` row                | 42             | plate 8            | row             | separators `--border-subtle`                       |
+| Choice row               | 42 (two lines) | 5, concentric      | row + `small`   | hover `--hover-wash`; chosen by its mark           |
+| `.btn`                   | 32             | 8                  | control         | quiet: hover, press and open washes; disabled 0.5  |
+| Run button               | 40 (44 phone)  | 8                  | 14 px 600       | ink fill, `--text-inverse`; running: outline       |
+| Stage chip               | 36             | 8                  | 13 px, name 600 | on: plate, bead; off: ring; running: wash; done: ✓ |
+| `.segmented`             | 32             | 8 track, 6 segment | control         | selected `--selected-wash`                         |
+| Switch                   | 22 × 38        | full               | row label       | off: check edge; on: ink track                     |
+| Check, radio             | 18             | 4, full            | —               | ink fill or ring                                   |
+| `.inspect-card`, tooltip | content        | 8                  | 12 px / 1.4     | glass, `--elev-tooltip`                            |
+| Sheet, dialog            | content        | 12                 | panel title     | `--sheet`, frosted, `--elev-float`                 |
 
 ## Do and don't
 

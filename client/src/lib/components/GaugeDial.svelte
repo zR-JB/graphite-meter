@@ -3,6 +3,8 @@
   import type { ResultArcPhase } from "./resultGauge";
   export interface GaugeDialState extends SweepTargetInput {
     showValue: boolean;
+    /** The latest idle reply's time while the latency stage runs; the head beats on each new one. */
+    reply?: number | null;
   }
   interface ResultArc {
     phase: ResultArcPhase;
@@ -36,24 +38,12 @@
   const motion = $derived(seen && !still());
   const target = $derived(sweepTarget(input));
   const visible = $derived(input.showValue && target !== null);
-  const headRadius = $derived.by(() => {
-    const radius = Math.min(7.5, layout.arcWidth * 0.48);
-    const close = result.arcs.some((arc, index, arcs) =>
-      arcs
-        .slice(index + 1)
-        .some(
-          (other) =>
-            Math.abs(arc.fraction - other.fraction) *
-              layout.arcSweep *
-              layout.radius <
-            2 * radius + 5,
-        ),
-    );
-    return close ? Math.min(4, radius) : radius;
-  });
-  const headExtent = $derived(
-    Math.max(headRadius + 1.5, layout.arcWidth / 2 + 0.5),
+  // A head is flat in its hue and a little wider than its arc, so it and its beat read at any size.
+  const headRadius = $derived(
+    layout.arcWidth / 2 + Math.max(2, layout.arcWidth * 0.1),
   );
+  // The beat swells the head by a fifth; its box leaves that room.
+  const headExtent = $derived(Math.ceil(headRadius * 1.2) + 1);
   const placements = $derived(
     resultGaugeHeadPlacements(
       result.arcs.map((arc) => arc.fraction),
@@ -61,7 +51,7 @@
         baseRadius: layout.radius,
         arcSweep: layout.arcSweep,
         headRadius,
-        borderWidth: 1.5,
+        borderWidth: 0,
       },
     ),
   );
@@ -99,6 +89,17 @@
         course = current;
       });
   });
+  // One pulse at a time, each started by a reply: a steady link beats, a stalled one holds still.
+  let beat = $state<number | null>(null);
+  let beating = false;
+  $effect(() => {
+    const reply = input.reply;
+    untrack(() => {
+      if (reply == null || reply === beat || beating || !motion) return;
+      beat = reply;
+      beating = true;
+    });
+  });
   const capUnderHead = $derived(
     (sweep.current * Math.PI * layout.radius) / 180 <
       headRadius + layout.arcWidth / 2,
@@ -122,6 +123,7 @@
   });
 </script>
 
+<!-- Flat in the stage's hue; a head moved inward off a close neighbour hangs on a stalk of its hue, and a partial one is a ring. -->
 {#snippet head(
   fraction: number,
   radius: number,
@@ -137,29 +139,17 @@
       {#if lane !== 0}
         <path
           d={`M ${layout.radius} 0 H ${radius}`}
-          stroke="var(--surface-inset)"
-          stroke-width="4"
-        />
-        <path
-          d={`M ${layout.radius} 0 H ${radius}`}
           stroke={color}
           stroke-width="2"
         />
       {/if}
-      <g transform={`translate(${radius} 0)`}>
-        <circle
-          r={headRadius + 0.75}
-          fill={hollow ? "var(--surface-inset)" : color}
-          stroke="var(--surface-inset)"
-          stroke-width="1.5"
-        />
-        {#if hollow}<circle
-            r={headRadius * 0.68}
-            fill="none"
-            stroke={color}
-            stroke-width="1"
-          />{/if}
-      </g>
+      <circle
+        cx={radius}
+        r={hollow ? headRadius - 1 : headRadius}
+        fill={hollow ? "none" : color}
+        stroke={hollow ? color : undefined}
+        stroke-width={hollow ? 2 : undefined}
+      />
     </g>
   </g>
 {/snippet}
@@ -176,37 +166,9 @@
     height={layout.height}
     viewBox={`0 0 ${layout.width} ${layout.height}`}
   >
-    <defs>
-      <radialGradient
-        id={shadeId}
-        gradientUnits="userSpaceOnUse"
-        cx={layout.center.x}
-        cy={layout.center.y}
-        r={layout.radius + layout.arcWidth / 2}
-        fr={layout.radius - layout.arcWidth / 2}
-      >
-        <stop offset="0" stop-color="var(--edge-highlight)" />
-        <stop
-          offset=".38"
-          stop-color="color-mix(in srgb, var(--edge-highlight) 40%, transparent)"
-        />
-        <stop
-          offset=".5"
-          stop-color="color-mix(in srgb, var(--edge-highlight) 80%, transparent)"
-        />
-        <stop
-          offset=".64"
-          stop-color="color-mix(in srgb, var(--shade) 3%, transparent)"
-        />
-        <stop
-          offset="1"
-          stop-color="color-mix(in srgb, var(--shade) 8%, transparent)"
-        />
-      </radialGradient>
-    </defs>
     <g fill="none" stroke-linecap="round">
       <path d={track} stroke="var(--border)" stroke-width={layout.arcWidth} />
-      <g stroke="var(--border-strong)" stroke-width="1" opacity=".7">
+      <g stroke="var(--border-strong)" stroke-width="1" stroke-opacity=".7">
         {#each layout.majorTicks as tick (tick.angle)}
           <path
             d={`M ${tick.from.x} ${tick.from.y} L ${tick.to.x} ${tick.to.y}`}
@@ -243,16 +205,16 @@
                 stroke-width={layout.arcWidth + 2}
               />
             </mask>
-            <g
+            <!-- Round caps add an arc width to every dash, so a partial arc's gap stays open. -->
+            <path
+              d={track}
               mask={`url(#${shadeId}-${result.phase})`}
+              stroke={`var(--phase-${result.phase})`}
               stroke-width={layout.arcWidth}
               stroke-dasharray={result.dashed
-                ? `${layout.arcWidth * 1.5} ${layout.arcWidth}`
+                ? `${layout.arcWidth * 0.5} ${layout.arcWidth * 2}`
                 : undefined}
-            >
-              <path d={track} stroke={`var(--phase-${result.phase})`} />
-              <path d={track} stroke={`url(#${shadeId})`} />
-            </g>
+            />
           {/each}
         </g>
         {#each results.toReversed() as result (result.phase)}
@@ -297,11 +259,11 @@
       style:height={`${diameter}px`}
     >
       {#each [0, 1] as half (half)}
-        <!-- At rest against its clip edge, the second half would bleed a hairline at the seam. -->
+        <!-- At rest against its clip edge, a half would bleed a hairline at the seam; the head covers the first degree. -->
         <div
           class="half-clip"
           class:second={half === 1}
-          hidden={half === 1 && sweep.current <= 180}
+          hidden={sweep.current <= (half === 1 ? 180 : 1)}
         >
           <div
             class="rotor"
@@ -350,13 +312,18 @@
         height={headExtent * 2}
         viewBox={`${-headExtent} ${-headExtent} ${headExtent * 2} ${headExtent * 2}`}
       >
-        <circle class="sweep-end-cap" r={layout.arcWidth / 2} fill={accent} />
-        <circle
-          r={headRadius + 0.75}
-          fill={accent}
-          stroke="var(--surface-inset)"
-          stroke-width="1.5"
-        />
+        {#key beat}
+          <!-- A reply rings out from the head: a hairline ring in its hue widens and fades as the head settles. -->
+          {#if beat !== null}
+            <circle class="ripple" r={headRadius} fill="none" stroke={accent} />
+          {/if}
+          <circle
+            class:beat={beat !== null}
+            r={headRadius}
+            fill={accent}
+            onanimationend={() => (beating = false)}
+          />
+        {/key}
       </svg>
     </div>
   </div>
@@ -402,9 +369,11 @@
     height: 100%;
     overflow: hidden;
   }
+  /* One pixel of overlap, so the two halves never meet on an antialiased crack. */
   .half-clip.second {
     right: auto;
     left: 0;
+    width: calc(50% + 1px);
   }
   .rotor {
     position: absolute;
@@ -438,5 +407,37 @@
   .live-head svg {
     position: absolute;
     max-width: none;
+    /* The ring widens past the head's box; the dial's own clip bounds it. */
+    overflow: visible;
+  }
+  /* A reply's beat: the head swells and settles over one live pulse, and a ring spreads from it and fades,
+     so a steady link is seen to answer even while the needle holds still. */
+  .beat,
+  .ripple {
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+  .beat {
+    animation: beat var(--dur-pulse) var(--ease-out);
+  }
+  .ripple {
+    stroke-width: 1.5;
+    opacity: 0;
+    animation: ripple var(--dur-pulse) cubic-bezier(0.2, 0.6, 0.35, 1);
+  }
+  @keyframes beat {
+    from {
+      scale: 1.2;
+    }
+  }
+  @keyframes ripple {
+    from {
+      scale: 1;
+      opacity: 0.6;
+    }
+    to {
+      scale: 3;
+      opacity: 0;
+    }
   }
 </style>

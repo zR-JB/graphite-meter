@@ -9,8 +9,11 @@ export const ESTABLISH_MARGIN_MS = 500;
 /** Pause before reopening a dropped lane, so a failing one cannot spin. */
 export const LANE_RESTART_BACKOFF_MS = 300;
 
-/* Measured evidence silent this long stalls a direction; a server that stays silent leaves the stage. */
+/* Evidence silent this long stalls a direction; a server silent while others move leaves the stage. */
 export const DIRECTION_PROGRESS_WINDOW_MS = 1500;
+
+/* A receiver's feed can lag a busy uplink, so one that sends no record at all counts as silent only after this. */
+export const RECEIVER_SILENCE_MS = 4000;
 
 /** A busy lane's doubling restart delay stops here, so its retry still lands inside the silence window. */
 export const BUSY_RESTART_CAP_MS =

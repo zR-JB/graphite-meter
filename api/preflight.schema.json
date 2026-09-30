@@ -24,6 +24,10 @@
       "required": ["throughput", "latency"],
       "properties": {
         "uploadCheckpoint": { "type": "boolean", "description": "Fresh owner-checked receiver windows are available." },
+        "maxStageMs": {
+          "type": "integer", "minimum": 1000, "maximum": 86400000,
+          "description": "Longest stage a client may plan against this server; absent means 300000."
+        },
         "throughput": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/throughputEndpoint" } },
         "latency": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/latencyEndpoint" } }
       }

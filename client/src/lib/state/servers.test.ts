@@ -122,6 +122,7 @@ test("selection readiness follows each prototype-named server's view", async () 
   const restore = stubGlobals(TEST_BUILD_TOKENS);
   const { store } = await import("./store.svelte");
   const previousSelection = [...store.selectedServers];
+  const previousLoading = store.catalogLoading;
   const view = (
     id: string,
     readiness: ServerView["readiness"],
@@ -136,6 +137,9 @@ test("selection readiness follows each prototype-named server's view", async () 
   try {
     store.selectedServers = ids;
     store.servers.clear();
+    store.catalogLoading = true;
+    expect(store.selectionValidation).toBe("checking");
+    store.catalogLoading = false;
     expect(store.selectionValidation).toBe("stale");
     for (const id of ids) store.servers.set(id, view(id, "verified"));
     expect(store.selectionValidation).toBe("verified");
@@ -147,6 +151,7 @@ test("selection readiness follows each prototype-named server's view", async () 
   } finally {
     store.servers.clear();
     store.selectedServers = previousSelection;
+    store.catalogLoading = previousLoading;
     restore();
   }
 });
@@ -168,6 +173,30 @@ test("focusing another server leaves the headline latency result alone", async (
   } finally {
     store.reset();
     store.latencyFocus = "self";
+    restore();
+  }
+});
+
+test("the connection pulse follows latency buckets that grow in place", async () => {
+  const restore = stubGlobals(TEST_BUILD_TOKENS);
+  const { store } = await import("./store.svelte");
+  const idle = (t: number, rttMs: number, timedOut = false) =>
+    store.ingest({
+      type: "serverLatency",
+      serverId: "self",
+      sample: singleLatencyBucket(t, rttMs, timedOut),
+    });
+  try {
+    store.reset();
+    idle(0, 5);
+    expect(store.liveRtt).toBe(5);
+    idle(250, 9);
+    expect(store.pulseLatency).toHaveLength(2);
+    expect(store.liveRtt).toBe(9);
+    idle(500, 0, true);
+    expect(store.liveLatencyLost).toBe(true);
+  } finally {
+    store.reset();
     restore();
   }
 });

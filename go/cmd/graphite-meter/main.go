@@ -59,6 +59,7 @@ func parseConfig(name string, args []string, usage io.Writer) (config.Config, er
 	if envErr != nil {
 		return config.Config{}, envErr
 	}
+	cfg.CoverStageLimit()
 	if err := cfg.Validate(); err != nil {
 		return config.Config{}, err
 	}

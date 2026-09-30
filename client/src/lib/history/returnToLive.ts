@@ -28,7 +28,7 @@ export function returnToLiveIndicator(
     return null;
   return {
     icon: phase === "latency" ? "ping" : phase,
-    label: `${phaseLabel(phase)}${recovering ? " · recovering" : ""}`,
+    label: `${phaseLabel(phase)}${recovering ? ", recovering" : ""}`,
     tone: phase,
   };
 }

@@ -8,7 +8,7 @@ import type {
 } from "../runner/contract";
 import { httpProtocolLabel } from "../runner/paths";
 import type { ConnectionValidationState } from "../runner/paths";
-import { READINESS } from "../presentation/vocabulary";
+import { IN_USE, READINESS } from "../presentation/vocabulary";
 
 type EndpointPathMode = "live" | "running" | "result";
 
@@ -18,9 +18,7 @@ export function endpointPathStatus(
 ): { label: string; tone: string } {
   if (validation !== "verified" || mode === "live")
     return READINESS[validation];
-  return mode === "running"
-    ? { label: "In use", tone: "brand" }
-    : { label: "Used", tone: "neutral" };
+  return mode === "running" ? IN_USE : { label: "Used", tone: "neutral" };
 }
 
 /** Measurement occupancy as the server reported it at probe time. */
@@ -82,11 +80,12 @@ export function advertisedServerHttpPaths(
   ];
 }
 
-/* Protocol evidence has distinct observation points. */
+/* Protocol evidence has distinct observation points; `empty` stands in until either side reports. */
 export function pathEvidence(
   role: "throughput" | "latency",
   browserProtocol?: string,
   serverProtocol?: string,
+  empty = "Pending",
 ): string {
   const evidence = [
     role === "throughput" && browserProtocol
@@ -95,5 +94,5 @@ export function pathEvidence(
     serverProtocol ? `server ${httpProtocolLabel(serverProtocol)}` : null,
   ].filter((value): value is string => value != null);
   const text = evidence.join(", ");
-  return text ? text[0].toUpperCase() + text.slice(1) : "Pending";
+  return text ? text[0].toUpperCase() + text.slice(1) : empty;
 }

@@ -3,8 +3,9 @@
   import Dialog from "./Dialog.svelte";
   import { MIN_DOCK_WIDTH, MAX_DOCK_WIDTH } from "./dockWidths";
   import type { Snippet } from "svelte";
+  import { resize } from "../actions/resize";
   import { sheetDrag } from "../actions/sheetDrag";
-  import { tooltip } from "../actions/tooltip";
+  import { keyHint, tooltip } from "../actions/tooltip";
   import { activeModal } from "../actions/focus";
 
   interface Props {
@@ -17,6 +18,8 @@
     dockMaxWidth?: number;
     onResize?: (px: number) => void;
     onResetWidth?: () => void;
+    /** A pointer drag on the handle starts or ends. */
+    onResizing?: (dragging: boolean) => void;
     onClose: () => void;
     children: Snippet;
   }
@@ -30,87 +33,27 @@
     dockMaxWidth = MAX_DOCK_WIDTH,
     onResize,
     onResetWidth,
+    onResizing,
     onClose,
     children,
   }: Props = $props();
 
-  let panelEl: HTMLElement | undefined;
   const flyoutWidth = $derived(
     Math.max(MIN_DOCK_WIDTH, Math.min(MAX_DOCK_WIDTH, preferredWidth)),
   );
-
-  function setWidth(px: number) {
-    onResize?.(Math.max(MIN_DOCK_WIDTH, Math.min(dockMaxWidth, px)));
-  }
-
-  function resizeHandle(handle: HTMLElement) {
-    if (!open) return;
-    let finish: (() => void) | undefined;
-    const start = (event: PointerEvent) => {
-      if (!event.isPrimary || event.button !== 0 || !panelEl) return;
-      finish?.();
-      event.preventDefault();
-      const startX = event.clientX;
-      const startWidth = panelEl.getBoundingClientRect().width;
-      const { cursor, userSelect } = document.body.style;
-      handle.setPointerCapture(event.pointerId);
-      document.body.style.userSelect = "none";
-      document.body.style.cursor = "col-resize";
-      const move = (next: PointerEvent) => {
-        if (next.pointerId === event.pointerId) {
-          const delta = next.clientX - startX;
-          setWidth(startWidth + (side === "left" ? delta : -delta));
-        }
-      };
-      const end = (next: PointerEvent) => {
-        if (next.pointerId === event.pointerId) finish?.();
-      };
-      finish = () => {
-        finish = undefined;
-        handle.removeEventListener("pointermove", move);
-        handle.removeEventListener("pointerup", end);
-        handle.removeEventListener("pointercancel", end);
-        handle.removeEventListener("lostpointercapture", end);
-        if (handle.hasPointerCapture(event.pointerId))
-          handle.releasePointerCapture(event.pointerId);
-        document.body.style.cursor = cursor;
-        document.body.style.userSelect = userSelect;
-      };
-      handle.addEventListener("pointermove", move);
-      handle.addEventListener("pointerup", end);
-      handle.addEventListener("pointercancel", end);
-      handle.addEventListener("lostpointercapture", end);
-    };
-    handle.addEventListener("pointerdown", start);
-    return () => {
-      finish?.();
-      handle.removeEventListener("pointerdown", start);
-    };
-  }
-
-  function onHandleKey(e: KeyboardEvent) {
-    const width = panelEl?.offsetWidth ?? MIN_DOCK_WIDTH;
-    const step = e.shiftKey ? 48 : 16;
-    const next: Record<string, number> = {
-      ArrowRight: width + step,
-      ArrowUp: width + step,
-      ArrowLeft: width - step,
-      ArrowDown: width - step,
-      Home: MIN_DOCK_WIDTH,
-      End: dockMaxWidth,
-    };
-    if (e.key === "Enter" || e.key === " ") onResetWidth?.();
-    else if (e.key in next) setWidth(next[e.key]);
-    else return;
-    e.preventDefault();
-  }
+  // A closing sheet keeps the width its column gave it, so it leaves as it stood rather than at its preferred width.
+  let settledDockWidth = $state(0);
+  $effect(() => {
+    if (dockWidth) settledDockWidth = dockWidth;
+  });
+  const sheetWidth = $derived(dockWidth || settledDockWidth || flyoutWidth);
 </script>
 
 <div
   class="panel-layer"
   class:docked
   style:--panel-w="{flyoutWidth}px"
-  style:--dock-w="{dockWidth || flyoutWidth}px"
+  style:--dock-w="{sheetWidth}px"
 >
   {#if !docked}<button
       class="scrim"
@@ -127,7 +70,6 @@
     class="panel sheet {side}"
     label={title}
     attach={(node) => {
-      panelEl = node;
       // Escape closes the panel holding focus; a modal on top or an open popover keeps it.
       const escape = (event: KeyboardEvent) => {
         if (event.key !== "Escape" || event.defaultPrevented || activeModal())
@@ -154,7 +96,7 @@
         <button
           class="btn btn-icon btn-quiet"
           aria-label={`Close ${title}`}
-          {@attach tooltip(() => "Close (Esc)")}
+          {@attach tooltip(() => `Close${keyHint("Esc")}`)}
           onclick={onClose}
         >
           <Icon name="close" />
@@ -176,9 +118,16 @@
         aria-valuenow={dockWidth}
         aria-valuetext={`${dockWidth} pixels wide`}
         tabindex="0"
-        {@attach resizeHandle}
-        onkeydown={onHandleKey}
-        ondblclick={() => onResetWidth?.()}
+        {@attach open &&
+          resize({
+            side,
+            width: () => dockWidth ?? MIN_DOCK_WIDTH,
+            min: MIN_DOCK_WIDTH,
+            max: () => dockMaxWidth,
+            set: (px) => onResize?.(px),
+            reset: () => onResetWidth?.(),
+            active: (dragging) => onResizing?.(dragging),
+          })}
       ></div>
     {/if}
   </Dialog>
@@ -198,44 +147,44 @@
     border: var(--hairline) solid var(--border-subtle);
     border-radius: var(--r-surface);
     background: var(--sheet);
-    -webkit-backdrop-filter: blur(28px) saturate(1.4);
-    backdrop-filter: blur(28px) saturate(1.4);
+    -webkit-backdrop-filter: var(--sheet-blur);
+    backdrop-filter: var(--sheet-blur);
     box-shadow: var(--elev-float);
     color: var(--text);
   }
   .panel-layer > :global(dialog.panel[open]) {
     display: flex;
   }
-  /* Docked, the sheet keeps its width and slides in with its column, from its own edge. */
+  /* Docked, nothing clips the resize handle that straddles the edge; the body clips its own corners. */
   .docked > :global(dialog.panel) {
-    --closed: translateX(calc(100% + var(--space-3)));
+    overflow: visible;
+  }
+  .docked .panel-body {
+    border-radius: 0 0 calc(var(--r-surface) - var(--hairline))
+      calc(var(--r-surface) - var(--hairline));
+  }
+  /* Docked, the sheet keeps its width and hugs its column's inner edge, so the column's glide is its slide:
+     the sheet and the page it makes room in move in the same layout pass, with no second animation to
+     fall behind on a slow machine. Closed, the column is 0 wide and the sheet hangs off the viewport's
+     edge; it stays displayed for the glide out, then closes. */
+  .docked > :global(dialog.panel) {
     grid-area: rightdock;
-    justify-self: end;
+    justify-self: start;
     position: relative;
     width: calc(var(--dock-w) - var(--space-3));
     height: auto;
     margin: 0 var(--space-3) var(--space-3) 0;
-    transform: var(--closed);
+    /* Docked, only the plain page lies behind it: a blur would cost every frame and change nothing. */
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
     transition:
-      transform var(--dur-sheet) var(--ease-out),
       overlay var(--dur-sheet) allow-discrete,
       display var(--dur-sheet) allow-discrete;
   }
   .docked > :global(dialog.panel.left) {
-    --closed: translateX(calc(-100% - var(--space-3)));
-    justify-self: start;
-    margin: 0 0 var(--space-3) var(--space-3);
-  }
-  .docked > :global(dialog.panel[open]) {
-    transform: none;
-  }
-  @starting-style {
-    .docked > :global(dialog.panel[open]) {
-      transform: var(--closed);
-    }
-  }
-  .docked > :global(dialog.panel.left) {
     grid-area: leftdock;
+    justify-self: end;
+    margin: 0 0 var(--space-3) var(--space-3);
   }
   .panel-layer:not(.docked) > :global(dialog.panel) {
     --closed: translateX(calc(100% + var(--space-4)));
@@ -263,6 +212,7 @@
       transform: var(--closed);
     }
   }
+  /* The scrim comes and goes with the flyout it shades, on the sheet's own clock. */
   .scrim {
     position: fixed;
     z-index: var(--z-scrim);
@@ -271,42 +221,19 @@
     opacity: 0;
     visibility: hidden;
     transition:
-      opacity var(--dur-slide) var(--ease-out),
-      visibility var(--dur-slide) allow-discrete;
+      opacity var(--dur-sheet) var(--ease-out),
+      visibility var(--dur-sheet) allow-discrete;
   }
   .scrim.open {
     opacity: calc(1 - var(--sheet-drag, 0));
     visibility: visible;
   }
 
-  .resize-handle {
-    position: absolute;
-    inset-block: 0;
-    z-index: 3;
-    width: 11px;
-    cursor: col-resize;
-    touch-action: none;
-  }
   .resize-handle[data-side="left"] {
     right: -6px;
   }
   .resize-handle[data-side="right"] {
     left: -6px;
-  }
-  .resize-handle::after {
-    content: "";
-    position: absolute;
-    inset-block: 0;
-    left: 50%;
-    width: 2px;
-    translate: -50%;
-    transition: background-color var(--dur-hover) var(--ease-out);
-  }
-  .resize-handle:is(:hover, :focus-visible)::after {
-    background: var(--brand);
-  }
-  .resize-handle:focus-visible {
-    outline: none;
   }
 
   .sheet-handle {
@@ -335,18 +262,18 @@
       display: flex;
     }
   }
-  /* Short viewports (and 400% zoom) give the flyout the full height; the whole panel scrolls. */
+  /* Short viewports (and 400% zoom) give the flyout the full height, inset as at its side; the whole panel scrolls. */
   @media (max-height: 480px) {
     .panel-layer:not(.docked) > :global(dialog.panel:is(.left, .right)) {
-      top: 0;
-      bottom: 0;
+      top: var(--space-2);
+      bottom: var(--space-2);
       overflow-y: auto;
     }
     .panel-layer:not(.docked) .sheet-head {
       position: sticky;
       z-index: 1;
       top: 0;
-      background: var(--canvas);
+      background: var(--sheet-solid);
     }
     .panel-layer:not(.docked) .panel-body {
       flex: none;

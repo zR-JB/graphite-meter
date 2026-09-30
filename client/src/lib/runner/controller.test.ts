@@ -329,6 +329,15 @@ test("signing out mid-run saves the run before leaving for sign-in", async () =>
   });
 });
 
+test("a deliberate sign-out keeps its own landing, not the expired one", async () => {
+  await withController({}, async ({ controller, ...page }) => {
+    controller.signOut();
+    page.emit(AUTHENTICATION_REQUIRED_EVENT);
+    await settle();
+    expect(page.navigated).toEqual([]);
+  });
+});
+
 test("idle latency stops before the run starts and resumes after abort", async () => {
   await withController({}, async ({ controller, runner, idle }) => {
     expect(idle()).toBe(true);

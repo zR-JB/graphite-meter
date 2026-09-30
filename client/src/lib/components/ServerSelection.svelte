@@ -10,6 +10,7 @@
   import { JARGON, preflightNote, READINESS } from "../presentation/vocabulary";
   const controller = getApplicationController();
   const descriptionId = $props.id();
+  const labelId = `${descriptionId}-label`;
   let retrying = $state<string[]>([]);
   const choices = new Map<string, HTMLLabelElement>();
   async function retry(serverId: string, button: HTMLButtonElement) {
@@ -52,14 +53,16 @@
 {#if (store.serverCatalog?.servers.length ?? 0) > 1}
   <div class="servers">
     <div class="list-label">
-      <span {@attach tooltip(() => JARGON.testServers)}>Test servers</span>
+      <span id={labelId} {@attach tooltip(() => JARGON.testServers)}
+        >Test servers</span
+      >
       <small>{selected.length} selected, up to 4</small>
     </div>
     <div class="kv">
       <div
         class="choices"
         role="group"
-        aria-label="Servers to test"
+        aria-labelledby={labelId}
         aria-busy={store.serverMetadataLoading}
       >
         {#each store.serverCatalog!.servers as server (server.id)}
@@ -100,13 +103,6 @@
               type="checkbox"
               {checked}
               disabled={unavailable}
-              aria-label={[
-                server.name,
-                server.location,
-                new URL(server.url).host,
-              ]
-                .filter(Boolean)
-                .join(", ")}
               aria-describedby={preflightMs == null ? undefined : descriptionId}
               onchange={() =>
                 controller.applyServers(
@@ -141,7 +137,7 @@
 {/if}
 {#if store.unresolvedServers.length}
   <div class="selection-notice" role="status">
-    <p>The saved selection has changed.</p>
+    <p>The saved selection has changed</p>
     <button
       class="btn"
       type="button"
@@ -156,7 +152,7 @@
 {#if !store.serverCatalog}
   <div class="selection-notice" role="status">
     <p>
-      {store.catalogLoading ? "Loading servers…" : "Could not load servers."}
+      {store.catalogLoading ? "Loading servers…" : "Could not load servers"}
     </p>
     <button
       class="btn"
@@ -178,7 +174,9 @@
       {#key pending}<span class="enter"
           >{pending
             ? `Checking ${server.name}…`
-            : store.servers.get(server.id)?.message}</span
+            : store.servers.get(server.id)?.readiness === "sign-in"
+              ? "Admits signed-in clients only"
+              : store.servers.get(server.id)?.message}</span
         >{/key}
     </p>
     {#if store.servers.get(server.id)?.readiness === "sign-in"}
@@ -193,7 +191,7 @@
         >{store.serverApproval?.id === server.id &&
         !store.serverApproval.message
           ? "Waiting for approval…"
-          : `Sign in to ${server.name}`}</button
+          : "Sign in"}</button
       >
     {:else}
       <button
@@ -202,8 +200,9 @@
         disabled={locked}
         aria-disabled={pending}
         aria-busy={pending}
+        aria-label={`Retry ${server.name}`}
         onclick={(event) => void retry(server.id, event.currentTarget)}
-        >{pending ? READINESS.checking.label : `Retry ${server.name}`}</button
+        >{pending ? READINESS.checking.label : "Retry"}</button
       >
     {/if}
     {#if store.serverApproval?.id === server.id}
@@ -237,9 +236,7 @@
             target="_blank"
             rel="noopener noreferrer">Open sign-in page</a
           >
-          if the sign-in window did not open. Return here after approval. Canceling
-          stops this interface's approval; you can close any remaining sign-in window
-          yourself.
+          if no window opened, then return here.
           {store.serverApproval.message ?? ""}
         </p>
       {/if}
@@ -259,7 +256,8 @@
     gap: var(--space-3);
     padding-inline: var(--row-inset);
   }
-  small {
+  :is(.list-label, .server-feedback) small,
+  .server-status {
     color: var(--text-soft);
     font: var(--role-caption);
   }
@@ -267,13 +265,9 @@
     --ring-offset: -2px;
     display: grid;
     grid-template-columns: var(--check) minmax(0, 1fr) auto 7ch;
-    color: var(--text-muted);
-  }
-  .choices label.checked {
-    color: var(--text);
   }
   .choices label:not(.checked):has(input:disabled) {
-    opacity: 0.55;
+    opacity: 0.5;
   }
   /* Name over its place, like every two-line choice. */
   .server-name {
@@ -282,20 +276,11 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .server-name small {
-    display: block;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
   .server-status {
     display: inline-flex;
     align-items: center;
     gap: 6px;
     white-space: nowrap;
-  }
-  .server-status[data-state="failed"],
-  .server-status[data-state="sign-in"] {
-    color: var(--warn);
   }
   .server-preflight {
     grid-column: 4;
@@ -322,6 +307,7 @@
     gap: var(--space-1);
     padding-inline: var(--row-inset);
     font: var(--role-caption);
+    text-wrap: pretty;
   }
   .server-feedback {
     grid-template-columns: minmax(0, 1fr) auto;

@@ -41,7 +41,8 @@ func (s *latencyStats) add(rtt time.Duration, timeout bool, handlingNanos uint64
 	if s.counts == nil {
 		s.counts = map[time.Duration]int{}
 	}
-	s.counts[rtt]++
+	// Percentiles count whole microseconds, so a stage of hours holds thousands of keys, not a key per reply.
+	s.counts[rtt.Round(time.Microsecond)]++
 	s.count++
 	// A diagnostic cannot turn an otherwise valid raw reply into a missing outcome.
 	if handlingNanos <= math.MaxInt64 && time.Duration(handlingNanos) <= rtt {

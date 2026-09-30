@@ -86,6 +86,8 @@ export const READINESS: Record<Readiness, { label: string; tone: Tone }> = {
   "sign-in": { label: "Sign in", tone: "warn" },
   blocked: { label: BLOCKED, tone: "warn" },
 };
+/** A verified path while a run holds it, in Settings and Details alike. */
+export const IN_USE = { label: "In use", tone: "brand" } as const;
 export const READINESS_TIP: Record<Exclude<Readiness, "blocked">, string> = {
   verified:
     "Ready\nThe selected servers and paths passed their check\n" +
@@ -172,8 +174,17 @@ export const JARGON = {
     "Peak\nHighest mean of the headline window and of consecutive windows " +
     "of at least 0.5 s across its interval\nNever below the headline",
   rateStability:
-    "Stability\n100% minus the coefficient of variation of 250 ms rates over the last 4 s\n" +
+    "Stability\n100% minus the coefficient of variation of the result's 250 ms rates\n" +
     "Coefficient of variation: standard deviation divided by the mean",
+  noData:
+    "No data\nTime in the result's window when no bytes arrived\n" +
+    "It counts in the average: a stall is part of the link",
+  noReplies:
+    "No replies\nProbes sent in this time got no reply before the deadline\n" +
+    "Each counts as a timeout, not as packet loss",
+  replies:
+    "Replies\nIdle probes answered so far in this stage\n" +
+    "The median, jitter and range are drawn from them",
   latencyStability: "Stability\n100% minus jitter as a share of the median",
   addedLatency:
     "Added latency\nLoaded median minus idle median, same server\nNegative: faster under load",
@@ -229,14 +240,16 @@ export const JARGON = {
     "Warmup\nRuns before each stage to open its connections and ramp up\n" +
     "At least 10 round trips, at most 4 s; never counted",
   stageTime:
-    "Stage time\nPlanned length; early finish can end a stage sooner\n1 s to 5 min; 0 skips the stage",
+    "Duration\nEach stage's planned length; early finish can end one sooner\n" +
+    "From 1 s up to the servers' stage limit, 5 min unless their operator raises it",
   bidirectionalStage:
     "Bidirectional stage\nDownload and upload at the same time, after the other stages\n" +
-    "The stage track can skip it; turn it back on here",
+    "Its chip beside Start test can skip it; turn it back on here",
   earlyFinish:
-    "Early finish\nEnds a steady stage after 52% of its time\n" +
-    "Steady: score ≥ 0.86 over 4 s, held for 1.1 s\n" +
-    "Needs 12 rate or 8 latency samples\nRate score: 1 − 2.2 × spread − 1.4 × drift",
+    "Early finish\nEnds a stable stage after 52% of its time\n" +
+    "Stable: score ≥ 0.86 over 4 s, held for 1.1 s\n" +
+    "Needs 12 rate or 8 latency samples\nRate score: 1 − 2.2 × spread − 1.4 × drift\n" +
+    "A stage with a stall, gap or lost server runs its full time",
   saveResults:
     "Save results\nKeeps complete, partial and incomplete runs in this browser\n" +
     "The newest 2,000 stay; nothing is uploaded",
@@ -262,7 +275,7 @@ export const JARGON = {
     "Streams\nParallel connections per server and direction\n" +
     "Automatic: chosen per protocol\nForced: the exact count, even past the browser's connection limit",
   autoStreamCount:
-    "Maximum H1 streams\nCaps parallel HTTP/1.1 requests per direction\n" +
+    "HTTP/1.1 stream limit\nCaps parallel HTTP/1.1 requests per direction\n" +
     "HTTP/2 and HTTP/3 choose their own count",
   forcedStreamCount:
     "Streams per server and direction\nOpens exactly this many requests\n" +
@@ -324,7 +337,7 @@ export const PATH_NOTE: Record<
   Record<string, string>
 > = {
   throughput: {
-    auto: "Best offered path; verifies the others",
+    auto: "HTTP/1.1, else HTTP/2, HTTP/3 or WebTransport",
     "protocol:http1": "Parallel connections, one stream each",
     "protocol:http2": "One connection, several streams",
     "protocol:http3": "One QUIC connection, several streams",
@@ -334,7 +347,7 @@ export const PATH_NOTE: Record<
   latency: {
     auto: "WebTransport datagrams, else WebSocket",
     "transport:websocket": "Reliable messages over one connection",
-    "transport:webtransport": "Datagrams in one HTTP/3 session",
+    "transport:webtransport": "Unreliable messages in one HTTP/3 session",
   },
 };
 
