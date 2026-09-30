@@ -11,12 +11,15 @@
         "axe-core": "^4.13.0",
         "prettier": "^3.9.9",
         "prettier-plugin-svelte": "^4.1.1",
-        "svelte": "^5.57.1",
+        "svelte": "5.57.1",
         "svelte-check": "^4.7.6",
         "typescript": "^6.0.3",
         "vite": "^8.3.1",
       },
     },
+  },
+  "patchedDependencies": {
+    "svelte@5.57.1": "patches/svelte@5.57.1.patch",
   },
   "packages": {
     "@jridgewell/gen-mapping": ["@jridgewell/gen-mapping@0.3.13", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.0", "@jridgewell/trace-mapping": "^0.3.24" } }, "sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA=="],
