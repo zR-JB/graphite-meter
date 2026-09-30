@@ -137,10 +137,14 @@ for (const width of [1600, 1000, 390]) {
       const started = Date.now();
       await runButton(page, "Run again").click();
       await expect(phase(page, "download")).toHaveCount(1);
-      await page.evaluate(churnSurfaces, 10);
+      // Each cycle must answer within the harness deadline; the complete batch
+      // can exceed it on a CPU-throttled CI runner without a stalled page.
+      for (let cycle = 0; cycle < 10; cycle++)
+        await page.evaluate(churnSurfaces, 1);
       const saved = await savedResult(page, started, 30_000);
       expect(saved.result.outcome).toBe("complete");
-      await page.evaluate(churnSurfaces, 10);
+      for (let cycle = 0; cycle < 10; cycle++)
+        await page.evaluate(churnSurfaces, 1);
       await page.evaluate(settled);
       await page.cdp("HeapProfiler.collectGarbage");
       const after = await page.cdp("Memory.getDOMCounters");
