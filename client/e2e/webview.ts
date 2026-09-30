@@ -573,21 +573,27 @@ export const expect: any = Object.assign(
 export function test(
   name: string,
   fn: (page: Page) => Promise<unknown>,
-  options: { monitorDisplay?: boolean } = {},
+  options: { monitorDisplay?: boolean; timeout?: number } = {},
 ) {
-  bunTest(name, async () => {
-    const page = new Page(options);
-    try {
-      await fn(page);
-      await page.evaluate("window.__gmCheckDisplay?.()").catch(() => undefined);
-      if (page.errors.length) throw new Error(page.errors.join("\n"));
-    } catch (error) {
-      await page.artifact(name).catch(() => {});
-      throw error;
-    } finally {
-      await page.close();
-    }
-  });
+  bunTest(
+    name,
+    async () => {
+      const page = new Page(options);
+      try {
+        await fn(page);
+        await page
+          .evaluate("window.__gmCheckDisplay?.()")
+          .catch(() => undefined);
+        if (page.errors.length) throw new Error(page.errors.join("\n"));
+      } catch (error) {
+        await page.artifact(name).catch(() => {});
+        throw error;
+      } finally {
+        await page.close();
+      }
+    },
+    options.timeout,
+  );
 }
 
 const axeSource = resolve(

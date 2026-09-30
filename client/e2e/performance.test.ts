@@ -169,7 +169,9 @@ for (const width of [1600, 1000, 390]) {
         ),
       ).toBe(true);
     },
-    { monitorDisplay: false },
+    // Twenty complete surface cycles under CPU throttling can exceed the
+    // ordinary test timeout when CI runs other browser files concurrently.
+    { monitorDisplay: false, timeout: 180_000 },
   );
 }
 
