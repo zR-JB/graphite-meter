@@ -1,6 +1,6 @@
 //! One settings table drives the environment, flags and usage, as Go's `config.settings()` does.
 use super::{AuthMode, Config, ConfigError, NativeKind, ValidatedConfig};
-use graphite_meter_core::duration::parse_go_duration;
+use graphite_meter_core::duration::{go_duration, parse_go_duration};
 use std::{collections::BTreeSet, ffi::OsString, io::Write, time::Duration};
 
 type Field<T> = fn(&mut Config) -> &mut T;
@@ -78,6 +78,8 @@ const SETTINGS: &[Setting] = &[
         Span(|c| &mut c.max_operation_duration)),
     Setting("GM_MAX_SESSION_DURATION", "max-session-duration", "maximum WebTransport session `duration`",
         Span(|c| &mut c.max_session_duration)),
+    Setting("GM_MAX_STAGE_DURATION", "max-stage-duration", "longest stage `duration` clients may plan, 1s to 24h",
+        Span(|c| &mut c.max_stage_duration)),
     Setting("GM_TRUSTED_PROXIES", "", "", Parsed { parse: trusted_proxies, default: "" }),
     Setting("GM_AUTH_MODE", "auth-mode", "authentication `mode`: off, password, oidc, or hybrid",
         Parsed { parse: auth_mode, default: "off" }),
@@ -104,7 +106,8 @@ pub fn load(
     usage: &mut dyn Write,
 ) -> Result<Option<ValidatedConfig>, ConfigError> {
     let mut config = Config::default();
-    let from_env = load_env(&mut config, &env);
+    let mut lifetime_set = [false; 2];
+    let from_env = load_env(&mut config, &env, &mut lifetime_set);
     let mut args = args.iter();
     while let Some(argument) = args.next() {
         // As Go's flag package, parsing stops before the first non-flag, or after "--"; nothing reads the rest.
@@ -133,7 +136,7 @@ pub fn load(
         };
         let applied = if let Setting(_, _, _, Bool(_)) = setting {
             let value = value.unwrap_or("true");
-            apply(&mut config, setting, value)
+            apply(&mut config, setting, value, &mut lifetime_set)
                 .map_err(|error| format!("invalid boolean value {value:?} for -{name}: {error}"))
         } else {
             let value = match value {
@@ -143,16 +146,28 @@ pub fn load(
                     None => return Err(failed(usage, format!("flag needs an argument: -{name}"))),
                 },
             };
-            apply(&mut config, setting, value)
+            apply(&mut config, setting, value, &mut lifetime_set)
                 .map_err(|error| format!("invalid value {value:?} for flag -{name}: {error}"))
         };
         applied.map_err(|message| failed(usage, message))?;
     }
     from_env?;
+    if !lifetime_set[0] {
+        config.max_operation_duration = config
+            .max_operation_duration
+            .max(config.max_stage_duration + Duration::from_secs(60));
+    }
+    if !lifetime_set[1] {
+        config.max_session_duration = config.max_session_duration.max(config.max_operation_duration);
+    }
     Ok(Some(config.validated()?))
 }
 
-fn load_env(config: &mut Config, env: &impl Fn(&str) -> Option<OsString>) -> Result<(), ConfigError> {
+fn load_env(
+    config: &mut Config,
+    env: &impl Fn(&str) -> Option<OsString>,
+    lifetime_set: &mut [bool; 2],
+) -> Result<(), ConfigError> {
     let text = |name: &str| {
         env(name)
             .map(|value| value.into_string().map_err(|_| format!("{name}: must be UTF-8")))
@@ -160,7 +175,7 @@ fn load_env(config: &mut Config, env: &impl Fn(&str) -> Option<OsString>) -> Res
     };
     for setting in SETTINGS {
         if let Some(value) = text(setting.0)? {
-            apply(config, setting, &value).map_err(|error| format!("{}: {error}", setting.0))?;
+            apply(config, setting, &value, lifetime_set).map_err(|error| format!("{}: {error}", setting.0))?;
         }
     }
     config.server_catalog = crate::catalog::load(
@@ -170,9 +185,19 @@ fn load_env(config: &mut Config, env: &impl Fn(&str) -> Option<OsString>) -> Res
     Ok(())
 }
 
-fn apply(config: &mut Config, Setting(env, _, _, kind): &Setting, raw: &str) -> Result<(), String> {
+fn apply(
+    config: &mut Config,
+    Setting(env, _, _, kind): &Setting,
+    raw: &str,
+    lifetime_set: &mut [bool; 2],
+) -> Result<(), String> {
     if env.starts_with("GM_AUTH_") && *env != "GM_AUTH_MODE" {
         config.auth.explicit = true;
+    }
+    match *env {
+        "GM_MAX_OPERATION_DURATION" => lifetime_set[0] = true,
+        "GM_MAX_SESSION_DURATION" => lifetime_set[1] = true,
+        _ => {}
     }
     let value = raw.trim();
     match kind {
@@ -301,12 +326,4 @@ fn write_usage(usage: &mut dyn Write) -> std::io::Result<()> {
         writeln!(usage)?;
     }
     Ok(())
-}
-
-pub(crate) fn go_duration(duration: Duration) -> String {
-    match duration.as_secs() {
-        seconds @ 0..60 => format!("{seconds}s"),
-        seconds @ 60..3600 => format!("{}m{}s", seconds / 60, seconds % 60),
-        seconds => format!("{}h{}m{}s", seconds / 3600, seconds / 60 % 60, seconds % 60),
-    }
 }

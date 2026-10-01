@@ -39,6 +39,22 @@ fn reflector_diagnostic_never_changes_raw_reply_population() {
     let captured = timed.snapshot();
     reply(&mut timed, 100, 20 * MS as u64);
     assert_eq!(captured.reflector_timing.unwrap().count, 2);
+    let mut rounded = LatencyAccumulator::default();
+    for _ in 0..10_000 {
+        for rtt_nanos in [0, 499, 500, 1_001, 1_499, 1_500] {
+            rounded.record(ProbeOutcome::Reply {
+                rtt_nanos,
+                handling_nanos: 0,
+            });
+        }
+    }
+    let summary = rounded.snapshot();
+    assert_eq!(summary.count, 60_000);
+    assert_eq!(
+        summary.distribution.unwrap(),
+        graphite_meter_core::latency::Distribution { p50: 1_000, p95: 2_000 }
+    );
+    assert_eq!(summary.jitter, Some(499));
 }
 
 #[test]

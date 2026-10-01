@@ -3,12 +3,18 @@
 use crate::{origin::target_origin, wire::decode_json};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
+use std::time::Duration;
+
+pub const MIN_STAGE_LIMIT: Duration = Duration::from_secs(1);
+pub const DEFAULT_STAGE_LIMIT: Duration = Duration::from_secs(300);
+pub const MAX_STAGE_LIMIT: Duration = Duration::from_secs(24 * 60 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiscoveryError {
     InvalidJson,
     InvalidMetadata,
     InvalidTargets,
+    InvalidStageLimit,
     InvalidOrigin,
     InvalidProbe,
     InvalidLoad,
@@ -20,6 +26,7 @@ impl fmt::Display for DiscoveryError {
             Self::InvalidJson => "invalid discovery JSON",
             Self::InvalidMetadata => "invalid discovery metadata",
             Self::InvalidTargets => "invalid discovery target lists",
+            Self::InvalidStageLimit => "invalid stage limit",
             Self::InvalidOrigin => "invalid discovery target origin",
             Self::InvalidProbe => "invalid probe evidence",
             Self::InvalidLoad => "invalid probe occupancy",
@@ -62,10 +69,26 @@ pub struct Preflight {
 pub struct Capabilities {
     #[serde(default, deserialize_with = "null_default", skip_serializing_if = "is_false")]
     pub upload_checkpoint: bool,
+    #[serde(default, deserialize_with = "null_default", skip_serializing_if = "is_zero")]
+    pub max_stage_ms: i64,
     #[serde(deserialize_with = "throughput_targets")]
     pub throughput: Vec<ThroughputTarget>,
     #[serde(deserialize_with = "latency_targets")]
     pub latency: Vec<LatencyTarget>,
+}
+
+fn is_zero(value: &i64) -> bool {
+    *value == 0
+}
+
+impl Capabilities {
+    pub fn stage_limit(&self) -> Duration {
+        if self.max_stage_ms == 0 {
+            DEFAULT_STAGE_LIMIT
+        } else {
+            Duration::from_millis(self.max_stage_ms as u64)
+        }
+    }
 }
 
 fn throughput_targets<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<ThroughputTarget>, D::Error> {
@@ -198,6 +221,10 @@ impl Preflight {
         }
         if self.capabilities.throughput.len() > 32 || self.capabilities.latency.len() > 32 {
             return Err(DiscoveryError::InvalidTargets);
+        }
+        let limit = self.capabilities.max_stage_ms;
+        if limit != 0 && !(MIN_STAGE_LIMIT.as_millis() as i64..=MAX_STAGE_LIMIT.as_millis() as i64).contains(&limit) {
+            return Err(DiscoveryError::InvalidStageLimit);
         }
         for origin in self.base_urls() {
             target_origin(origin).map_err(|_| DiscoveryError::InvalidOrigin)?;

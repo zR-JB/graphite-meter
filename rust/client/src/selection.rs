@@ -158,6 +158,7 @@ mod tests {
             engine_version: String::new(),
             generation: "one".into(),
             capabilities: Capabilities {
+                max_stage_ms: 0,
                 upload_checkpoint: true,
                 latency: vec![],
                 throughput: vec![ThroughputTarget {

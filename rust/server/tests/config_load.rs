@@ -26,6 +26,42 @@ fn defaults_and_presence_are_distinct() {
     assert!(c.advertised_native.is_none());
     assert!(!c.auth.explicit);
     assert_eq!(c.auth.mode, AuthMode::Off);
+    assert_eq!(c.max_operation_duration, Duration::from_secs(360));
+    for (env, operation, session) in [
+        (vec![("GM_MAX_STAGE_DURATION", "3h")], 10_860, 10_860),
+        (
+            vec![
+                ("GM_MAX_STAGE_DURATION", "3h"),
+                ("GM_MAX_OPERATION_DURATION", "20s"),
+                ("GM_MAX_SESSION_DURATION", "1h"),
+            ],
+            20,
+            3600,
+        ),
+        (
+            vec![("GM_MAX_STAGE_DURATION", "3h"), ("GM_MAX_OPERATION_DURATION", "4h")],
+            14_400,
+            14_400,
+        ),
+    ] {
+        let c = load(&env, &[]).unwrap();
+        assert_eq!(
+            (c.max_operation_duration.as_secs(), c.max_session_duration.as_secs()),
+            (operation, session)
+        );
+    }
+    assert_eq!(
+        load(&[("GM_MAX_STAGE_DURATION", "2h")], &["-max-stage-duration=24h"])
+            .unwrap()
+            .max_stage_duration,
+        Duration::from_secs(86_400)
+    );
+    for duration in ["999ms", "25h"] {
+        assert_eq!(
+            failure(&[], &[&format!("-max-stage-duration={duration}")]),
+            "GM_MAX_STAGE_DURATION must be from 1s to 24h"
+        );
+    }
     assert!(load(&[("GM_AUTH_MODE", " off "), ("GM_AUTH_UNKNOWN", "ignored")], &[]).is_ok());
     for name in [
         "GM_AUTH_PUBLIC_URL",

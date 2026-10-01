@@ -1309,6 +1309,7 @@ mod tests {
             engine_version: String::new(),
             generation: "fixture".into(),
             capabilities: Capabilities {
+                max_stage_ms: 0,
                 upload_checkpoint: false,
                 throughput: vec![ThroughputTarget {
                     base_url: target.into(),

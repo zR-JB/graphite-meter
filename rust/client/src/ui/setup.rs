@@ -13,7 +13,7 @@ use graphite_meter_core::{
         Protocol::{self, Http1, Http2, Http3},
         ThroughputTarget, ThroughputTransport,
     },
-    duration::parse_go_duration,
+    duration::{go_duration, parse_go_duration, short_duration},
     origin::{canonical_origin, catalog_origin, target_origin},
     text::terminal_character,
 };
@@ -21,7 +21,8 @@ use ratatui::text::{Line, Span};
 use std::{ops::RangeInclusive, time::Duration};
 use tokio::sync::mpsc;
 
-const STAGE_BOUND: RangeInclusive<Duration> = Duration::from_secs(1)..=Duration::from_secs(300);
+const STAGE_BOUND: RangeInclusive<Duration> =
+    graphite_meter_core::discovery::MIN_STAGE_LIMIT..=graphite_meter_core::discovery::MAX_STAGE_LIMIT;
 const WARMUP_BOUND: RangeInclusive<Duration> = Duration::ZERO..=Duration::from_secs(4);
 
 /// A setup row. `Path(true)` and `Cadence(true)` are the latency path and the loaded cadence.
@@ -54,12 +55,12 @@ pub(super) const ROWS: [(Option<&str>, Setting, &str, &str); 19] = [
     (None, Setting::Protocol, "HTTP version", "Where the path negotiates. ←/→ Automatic, HTTP/1.1, HTTP/2, HTTP/3."),
     (None, Setting::Path(true), "Latency path", "How probes travel"),
     (Some("Stages"), Setting::Stage(Stage::Latency), "Latency",
-        "Idle round trips. ←/→ ±1 s (1 s–300 s), space on/off."),
-    (None, Setting::Stage(Stage::Download), "Download", "Server to client. ←/→ ±1 s (1 s–300 s), space on/off."),
+        "Idle round trips. ←/→ step it (1 s–24 h; a server may allow less), space on/off."),
+    (None, Setting::Stage(Stage::Download), "Download", "Server to client. ←/→ step it (1 s–24 h; a server may allow less), space on/off."),
     (None, Setting::Stage(Stage::Upload), "Upload",
-        "Client to server, receiver-timed. ←/→ ±1 s (1 s–300 s), space on/off."),
+        "Client to server, receiver-timed. ←/→ step it (1 s–24 h; a server may allow less), space on/off."),
     (None, Setting::Stage(Stage::Bidirectional), "Bidirectional",
-        "Download and upload at once. ←/→ ±1 s (1 s–300 s), space on/off."),
+        "Download and upload at once. ←/→ step it (1 s–24 h; a server may allow less), space on/off."),
     (None, Setting::LoadedLatency, "Loaded latency",
         "Round trips during transfers: the latency load adds. space on/off."),
     (Some(""), Setting::Advanced, "Advanced", "Warmup, probe cadence, streams and TLS. ←/→ shows or hides."),
@@ -402,8 +403,17 @@ impl Ui {
     /// Go's adjust: ←/→ steps a duration or a choice and switches a flag on or off.
     pub(super) fn adjust(&mut self, setting: Setting, step: isize) {
         let before = self.config.clone();
-        if let Some((bound, unit)) = setting.bound() {
+        if let Some((bound, mut unit)) = setting.bound() {
             let value = duration(&mut self.config, setting);
+            if matches!(setting, Setting::Stage(_)) {
+                let at = value.saturating_sub(Duration::from_nanos(u64::from(step < 0)));
+                unit = Duration::from_secs(match at.as_secs() {
+                    0..60 => 1,
+                    60..600 => 10,
+                    600..3600 => 60,
+                    _ => 300,
+                });
+            }
             let moved = if step > 0 {
                 *value + unit
             } else {
@@ -547,8 +557,7 @@ impl Ui {
         // A negative duration is out of range, as Go's DurationBound.Check reads it.
         let value = u64::try_from(nanos?).map_or(Duration::MAX, Duration::from_nanos);
         if !bound.contains(&value) {
-            let seconds = |bound: &Duration| format!("{} s", bound.as_secs_f64());
-            let (min, max) = (seconds(bound.start()), seconds(bound.end()));
+            let (min, max) = (short_duration(*bound.start()), short_duration(*bound.end()));
             return Err(format!("{} must be from {min} to {max}", setting.label()));
         }
         *duration(&mut self.config, setting) = value;
@@ -637,28 +646,6 @@ fn default_scheme(raw: &str) -> &'static str {
     match loopback || host.eq_ignore_ascii_case("localhost") {
         true => "http://",
         false => "https://",
-    }
-}
-
-/// Go's time.Duration.String for the durations setup holds, which stay under an hour.
-pub(super) fn go_duration(duration: Duration) -> String {
-    let nanos = duration.as_nanos();
-    let decimal = |value: u128, scale: u128| {
-        let fraction = format!("{:0width$}", value % scale, width = scale.ilog10() as usize);
-        let number = format!("{}.{fraction}", value / scale);
-        number.trim_end_matches('0').trim_end_matches('.').to_owned()
-    };
-    match nanos {
-        0 => "0s".into(),
-        1..1_000 => format!("{nanos}ns"),
-        1_000..1_000_000 => format!("{}µs", decimal(nanos, 1_000)),
-        1_000_000..1_000_000_000 => format!("{}ms", decimal(nanos, 1_000_000)),
-        60_000_000_000.. => format!(
-            "{}m{}s",
-            nanos / 60_000_000_000,
-            decimal(nanos % 60_000_000_000, 1_000_000_000)
-        ),
-        _ => format!("{}s", decimal(nanos, 1_000_000_000)),
     }
 }
 

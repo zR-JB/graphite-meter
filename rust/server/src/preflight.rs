@@ -27,6 +27,7 @@ impl Preflight {
         let config = &self.config;
         let mut capabilities = Capabilities {
             upload_checkpoint: true,
+            max_stage_ms: config.max_stage_duration.as_millis() as i64,
             throughput: Vec::new(),
             latency: Vec::new(),
         };

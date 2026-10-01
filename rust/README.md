@@ -43,6 +43,12 @@ RGB) gets 16 or 256 colours where Go's TUI draws 24-bit. In the 16-colour profil
 writes Go's SGR codes (30–37 and 90–97), but the TUI's frames give those colours as
 `38;5;0`–`15`, the only form crossterm writes, which a terminal limited to 16 colours may ignore.
 The TUI can connect to either implementation's server.
+Both servers advertise their stage limit in `maxStageMs`. `GM_MAX_STAGE_DURATION` or
+`--max-stage-duration` sets it from 1s to 24h (default 5m); the shared browser and native
+clients use the lowest selected server's limit, with 5m for older servers. Unless the
+operator sets the operation or session lifetime explicitly, those lifetimes grow to
+cover the stage and its preparation/finalization margin. The Rust TUI's duration
+editor and arrow steps cover the same range as Go's.
 
 `mise run rust-client-package VERSION` builds the experimental Linux and Windows
 TUI archives in the pinned builder image, with reviewed dependency notices and

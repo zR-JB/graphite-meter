@@ -1,4 +1,5 @@
 //! Pure probe accounting. All times are integer nanoseconds on the client's monotonic clock.
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProbeOutcome {
@@ -72,7 +73,8 @@ impl DeadlineEstimator {
 
 #[derive(Debug, Default)]
 pub struct LatencyAccumulator {
-    rtts: Vec<u64>,
+    rtts: BTreeMap<u64, usize>,
+    count: usize,
     previous: Option<u64>,
     variation_sum: u128,
     jitter_pairs: usize,
@@ -104,7 +106,11 @@ impl LatencyAccumulator {
                     self.jitter_pairs += 1;
                 }
                 self.previous = Some(rtt);
-                self.rtts.push(rtt);
+                // Go's percentiles round to microseconds; raw RTT still drives jitter and diagnostics.
+                let rounded = (rtt + 500) / 1_000 * 1_000;
+                let rounded = if rounded > i64::MAX as u64 { rtt } else { rounded };
+                *self.rtts.entry(rounded).or_default() += 1;
+                self.count += 1;
                 if handling_nanos <= i64::MAX as u64 && handling_nanos <= rtt {
                     self.timing_count += 1;
                     self.timing_raw_sum += u128::from(rtt);
@@ -123,7 +129,7 @@ impl LatencyAccumulator {
 
     pub fn snapshot(&self) -> LatencySummary {
         let mut out = LatencySummary {
-            count: self.rtts.len(),
+            count: self.count,
             timeouts: self.timeouts,
             unresolved: self.unresolved,
             send_failures: self.send_failures,
@@ -141,26 +147,26 @@ impl LatencyAccumulator {
                 mean_handling: (self.handling_sum / count) as u64,
             });
         }
-        if !self.rtts.is_empty() {
-            let mut sorted = self.rtts.clone();
-            sorted.sort_unstable();
-            let middle = sorted.len() / 2;
-            let p50 = if sorted.len().is_multiple_of(2) {
-                sorted[middle - 1] + (sorted[middle] - sorted[middle - 1]) / 2
-            } else {
-                sorted[middle]
-            };
+        if self.count > 0 {
+            let mut p50 = self.nth(self.count.div_ceil(2));
+            if self.count.is_multiple_of(2) {
+                p50 += (self.nth(self.count / 2 + 1) - p50) / 2;
+            }
             out.distribution = Some(Distribution {
                 p50,
-                p95: nearest_rank(&sorted, 95),
+                p95: self.nth((95 * self.count).div_ceil(100)),
             });
         }
         out
     }
-}
 
-fn nearest_rank(sorted: &[u64], percentile: usize) -> u64 {
-    // ceil(percentile * n / 100), written without floating-point rounding.
-    let rank = (percentile * sorted.len()).div_ceil(100).max(1);
-    sorted[rank - 1]
+    fn nth(&self, mut rank: usize) -> u64 {
+        for (&rtt, &count) in &self.rtts {
+            if rank <= count {
+                return rtt;
+            }
+            rank -= count;
+        }
+        unreachable!("rank is within the reply population")
+    }
 }

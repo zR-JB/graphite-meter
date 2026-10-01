@@ -109,7 +109,7 @@ impl Config {
             return Err("select at least one stage: latency, download, upload or bidirectional".into());
         }
         if self.warmup > Duration::from_secs(4) {
-            return Err("warmup must be from 0 s to 4 s".into());
+            return Err("warmup must be from 0s to 4s".into());
         }
         // Go checks every stage's duration, including stages that are off.
         let durations = [
@@ -119,8 +119,10 @@ impl Config {
             ("bidirectional", self.bidirectional_duration),
         ];
         for (stage, duration) in durations {
-            if !(Duration::from_secs(1)..=Duration::from_secs(300)).contains(&duration) {
-                return Err(format!("{stage} duration must be from 1 s to 300 s").into());
+            if !(graphite_meter_core::discovery::MIN_STAGE_LIMIT..=graphite_meter_core::discovery::MAX_STAGE_LIMIT)
+                .contains(&duration)
+            {
+                return Err(format!("{stage} duration must be from 1s to 24h").into());
             }
         }
         let cadences = [self.ping_interval, self.loaded_ping_interval];

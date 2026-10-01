@@ -29,12 +29,25 @@ pub fn cadence(interval: Duration) -> String {
     }
 }
 
-/// Go's fmtSetting: milliseconds below a second, else seconds as short as they print.
+/// Go's fmtSetting: milliseconds, seconds, then compact minute and hour labels.
 pub fn setting(duration: Duration) -> String {
     if duration < Duration::from_secs(1) {
         format!("{} ms", duration.as_millis())
-    } else {
+    } else if duration < Duration::from_secs(60) {
         format!("{} s", duration.as_secs_f64())
+    } else {
+        let (large, small, unit, rest) = if duration < Duration::from_secs(3600) {
+            let seconds = (duration.as_nanos() + 500_000_000) / 1_000_000_000;
+            (seconds / 60, seconds % 60, "min", "s")
+        } else {
+            let minutes = (duration.as_nanos() + 30_000_000_000) / 60_000_000_000;
+            (minutes / 60, minutes % 60, "h", "min")
+        };
+        if small == 0 {
+            format!("{large} {unit}")
+        } else {
+            format!("{large} {unit} {small} {rest}")
+        }
     }
 }
 

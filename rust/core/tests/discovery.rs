@@ -109,6 +109,32 @@ fn metadata_and_target_lists_are_bounded_in_bytes() {
 #[test]
 fn validates_origins_and_transport_strings() {
     let base: Value = serde_json::from_slice(PREFLIGHT).unwrap();
+    for (limit, valid) in [
+        (0, true),
+        (999, false),
+        (1000, true),
+        (7_200_000, true),
+        (86_400_000, true),
+        (86_400_001, false),
+        (-1, false),
+    ] {
+        let mut value = base.clone();
+        value["capabilities"]["maxStageMs"] = json!(limit);
+        let decoded = decode_preflight_value(&value);
+        assert_eq!(decoded.is_ok(), valid, "{limit}");
+        if let Ok(decoded) = decoded {
+            assert_eq!(
+                decoded.capabilities.stage_limit().as_millis(),
+                if limit == 0 { 300_000 } else { limit as u128 }
+            );
+        }
+    }
+    let mut legacy = base.clone();
+    legacy["capabilities"].as_object_mut().unwrap().remove("maxStageMs");
+    assert_eq!(
+        decode_preflight_value(&legacy).unwrap().capabilities.stage_limit(),
+        DEFAULT_STAGE_LIMIT
+    );
     for raw in [
         "https://user@host",
         "https://host/path",

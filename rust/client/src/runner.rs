@@ -34,6 +34,7 @@ struct PreparedServer {
     http: Option<Arc<Transport>>,
     latency: Option<LatencyTarget>,
     idle_rtt: Duration,
+    stage_limit: Duration,
     /// Go's replacedUpload (upload.go:23-31): the run's one replacement upload receiver here.
     replaced_upload: Arc<AtomicBool>,
 }
@@ -280,6 +281,7 @@ async fn prepare_server(
         http: transport,
         latency,
         idle_rtt,
+        stage_limit: preflight.capabilities.stage_limit(),
         replaced_upload: Arc::default(),
     })
 }
@@ -319,6 +321,19 @@ pub async fn run(
             (preparation.servers, preparation.failures.len())
         }
     };
+    if let Some(server) = prepared.iter().min_by_key(|server| server.stage_limit) {
+        for stage in &config.stages {
+            if config.duration(*stage) > server.stage_limit {
+                return Err(format!(
+                    "{} allows stages up to {}; shorten the {} stage",
+                    server.entry.name,
+                    graphite_meter_core::duration::short_duration(server.stage_limit),
+                    stage.name().to_ascii_lowercase(),
+                )
+                .into());
+            }
+        }
+    }
     // Go's coordinator starts its clock once the servers are prepared.
     let mut ledger = RunLedger::new();
     snapshots.send_modify(|snapshot| {

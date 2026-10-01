@@ -72,6 +72,11 @@ impl Config {
         if self.max_session_duration < self.max_operation_duration {
             return Err("GM_MAX_SESSION_DURATION must be at least GM_MAX_OPERATION_DURATION".into());
         }
+        if !(graphite_meter_core::discovery::MIN_STAGE_LIMIT..=graphite_meter_core::discovery::MAX_STAGE_LIMIT)
+            .contains(&self.max_stage_duration)
+        {
+            return Err("GM_MAX_STAGE_DURATION must be from 1s to 24h".into());
+        }
         Ok(())
     }
 

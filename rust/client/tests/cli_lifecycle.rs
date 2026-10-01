@@ -56,6 +56,13 @@ fn client(origin: &str) -> Command {
 }
 
 async fn latency_peer(revoked_download: bool) -> Result<(String, tokio::task::JoinHandle<()>), Error> {
+    latency_peer_with_limit(revoked_download, 0).await
+}
+
+async fn latency_peer_with_limit(
+    revoked_download: bool,
+    max_stage_ms: i64,
+) -> Result<(String, tokio::task::JoinHandle<()>), Error> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let twin = TcpListener::bind("127.0.0.1:0").await?;
     let origin = format!("http://{}", listener.local_addr()?);
@@ -106,7 +113,7 @@ async fn latency_peer(revoked_download: bool) -> Result<(String, tokio::task::Jo
                 let body = match path.as_str() {
                     "/servers" if revoked_download => serde_json::json!({"defaultSelection":["self","twin"],"servers":[{"id":"self","url":".","name":"local peer"},{"id":"twin","url":twin_origin,"name":"twin peer"}]}),
                     "/servers" => serde_json::json!({"defaultSelection":["self"],"servers":[{"id":"self","url":".","name":"local peer"}]}),
-                    "/preflight" => serde_json::json!({"generation":"cli-fixture","capabilities":{"throughput":throughput,"latency":[{"baseUrl":".","transport":"websocket"}]}}),
+                    "/preflight" => serde_json::json!({"generation":"cli-fixture","capabilities":{"maxStageMs":max_stage_ms,"throughput":throughput,"latency":[{"baseUrl":".","transport":"websocket"}]}}),
                     "/probe" => serde_json::json!({"clientIp":"127.0.0.1","clientIpVersion":4,"clientIpSource":"socket","protocolNegotiated":"http/1.1"}),
                     _ => return Err("unexpected route".into()),
                 }.to_string();
@@ -124,6 +131,28 @@ async fn latency_peer(revoked_download: bool) -> Result<(String, tokio::task::Jo
         }
     });
     Ok((origin, peer))
+}
+
+#[tokio::test]
+async fn report_refuses_a_stage_longer_than_its_server_admits() -> Result<(), Error> {
+    for (limit, duration, message) in [(1000, "2s", "1s"), (0, "1h", "5m")] {
+        let (origin, peer) = latency_peer_with_limit(false, limit).await?;
+        let output = tokio::time::timeout(
+            Duration::from_secs(5),
+            client(&origin).args(["-latency-duration", duration]).output(),
+        )
+        .await??;
+        peer.abort();
+        assert_eq!(output.status.code(), Some(1));
+        let report = String::from_utf8(output.stderr)?;
+        assert!(
+            report.contains(&format!(
+                "local peer allows stages up to {message}; shorten the latency stage"
+            )),
+            "{report}"
+        );
+    }
+    Ok(())
 }
 
 #[tokio::test]
@@ -549,16 +578,16 @@ async fn invalid_settings_are_refused_in_go_order_and_words() -> Result<(), Erro
         ),
         (
             &["-warmup", "5s", "-latency-duration", "0"],
-            "warmup must be from 0 s to 4 s",
+            "warmup must be from 0s to 4s",
         ),
         (
             &["-latency-duration", "0", "-ping", "40ms"],
-            "latency duration must be from 1 s to 300 s",
+            "latency duration must be from 1s to 24h",
         ),
         // Go checks the duration of a stage that is off.
         (
-            &["-bidirectional-duration", "301s"],
-            "bidirectional duration must be from 1 s to 300 s",
+            &["-bidirectional-duration", "25h"],
+            "bidirectional duration must be from 1s to 24h",
         ),
         (
             &["-loaded-ping", "40ms", "-streams", "15"],
@@ -711,11 +740,8 @@ async fn arguments_and_checks_after_parsing_fail_like_go() -> Result<(), Error> 
             &["-latency-transport", "x"],
             r#"invalid latency transport "x": use auto, websocket, or webtransport"#,
         ),
-        (&["-warmup", "-1s"], "warmup must be from 0 s to 4 s"),
-        (
-            &["-upload-duration", "-1s"],
-            "upload duration must be from 1 s to 300 s",
-        ),
+        (&["-warmup", "-1s"], "warmup must be from 0s to 4s"),
+        (&["-upload-duration", "-1s"], "upload duration must be from 1s to 24h"),
         (
             &["-streams", "-1"],
             "forced streams must be from 1 to 14 per server and direction, or 0 for automatic",

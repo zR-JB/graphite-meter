@@ -165,6 +165,7 @@ pub struct Config {
     pub max_connections_per_client: usize,
     pub max_operation_duration: Duration,
     pub max_session_duration: Duration,
+    pub max_stage_duration: Duration,
     pub auth: AuthConfig,
 }
 impl Default for Config {
@@ -190,6 +191,7 @@ impl Default for Config {
             max_connections_per_client: 64,
             max_operation_duration: Duration::from_secs(300),
             max_session_duration: Duration::from_secs(7200),
+            max_stage_duration: graphite_meter_core::discovery::DEFAULT_STAGE_LIMIT,
             auth: AuthConfig::default(),
         }
     }

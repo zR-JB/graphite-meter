@@ -213,6 +213,10 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                         }
                         let bytes = [0_u8; 65536];
                         while !matches!(flag.load(Ordering::SeqCst), 3 | 14) && stream.write_all(&bytes).await.is_ok() {
+                            // Hold the connection open while its download stops moving.
+                            while flag.load(Ordering::SeqCst) == 23 {
+                                tokio::time::sleep(Duration::from_millis(5)).await;
+                            }
                             tokio::time::sleep(Duration::from_millis(5)).await;
                         }
                     });
@@ -306,6 +310,7 @@ async fn prepared_download(id: &str, origin: &str, http: &Http) -> Result<Prepar
         )),
         latency: None,
         idle_rtt: Duration::ZERO,
+        stage_limit: graphite_meter_core::discovery::DEFAULT_STAGE_LIMIT,
         replaced_upload: Arc::default(),
     })
 }
@@ -750,6 +755,54 @@ async fn silent_direction_removes_its_server_but_a_silent_lane_does_not() -> Res
     Ok(())
 }
 
+#[tokio::test(start_paused = true)]
+async fn shared_download_silence_keeps_a_sole_server_and_multiple_servers_until_the_stage_end() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let heartbeat = heartbeat();
+    for count in [1, 2] {
+        let http = Http::new(true)?;
+        let mut servers = Vec::new();
+        let mut peers = Vec::new();
+        for index in 0..count {
+            let (origin, mode, peer) = download_peer().await?;
+            servers.push(prepared_download(&format!("peer-{index}"), &origin, &http).await?);
+            peers.push((mode, peer));
+        }
+        let config = Config {
+            warmup: Duration::ZERO,
+            download_duration: Duration::from_secs(4),
+            streams: 1,
+            loaded_latency: false,
+            ..Config::default()
+        };
+        let (snapshots, mut observed) = watch::channel(listing(&servers));
+        let (_stop, cancelled) = watch::channel(false);
+        let quiet = async {
+            observed
+                .wait_for(|snapshot| snapshot.phase == Phase::Measuring)
+                .await
+                .unwrap();
+            for (mode, _) in &peers {
+                mode.store(23, Ordering::SeqCst);
+            }
+            tokio::time::sleep(REDIAL_WINDOW + STALL_QUIET).await;
+            let snapshot = observed.borrow();
+            assert!(
+                snapshot.phase == Phase::Measuring && snapshot.failures.is_empty(),
+                "shared silence ended the stage early: {snapshot:?}"
+            );
+        };
+        let mut ledger = RunLedger::new();
+        let measured = measure(Stage::Download, &config, &servers, &snapshots, cancelled, &mut ledger);
+        let _ = joined(measured, quiet).await?;
+        for (_, peer) in peers {
+            peer.abort();
+        }
+    }
+    heartbeat.abort();
+    Ok(())
+}
+
 /// A lane still retrying at the final boundary removes its quiet server: a busy download, and
 /// upload lanes answered busy as they send, which made no progress as Go's uploadLane counts it
 /// (upload.go:118-128), where they once went on retrying and the stage completed with the server.
@@ -1080,18 +1133,19 @@ fn checkpoints_skip_two_misses_reset_on_success_and_keep_final_misses() {
     };
     let refused = || -> Option<Error> { Some("refused".into()) };
     for final_boundary in [false, false, true] {
-        assert!(member.missed(refused(), final_boundary).is_none());
+        assert!(member.missed(refused(), final_boundary, true).is_none());
     }
-    assert!(member.missed(None, false).is_none());
-    assert!(member.missed(refused(), false).is_none());
-    assert!(member.missed(refused(), false).is_none());
-    assert!(member.missed(refused(), false).is_some());
+    assert!(member.missed(None, false, true).is_none());
+    assert!(member.missed(refused(), false, true).is_none());
+    assert!(member.missed(refused(), false, true).is_none());
+    assert!(member.missed(refused(), false, true).is_some());
+    assert!(member.missed(refused(), false, false).is_none());
     let revoked = Failure::SignIn {
         origin: "https://meter.test".into(),
         login_url: "https://meter.test/login".into(),
     };
     member.checkpoint_misses = 0;
-    assert!(member.missed(Some(Box::new(revoked)), true).is_some());
+    assert!(member.missed(Some(Box::new(revoked)), true, false).is_some());
 }
 
 #[tokio::test(start_paused = true)]

@@ -111,14 +111,15 @@ impl Member {
         Ok(())
     }
 
-    /// A refused grant leaves at once; three missed checkpoints in a row leave, except at the final boundary.
-    fn missed(&mut self, error: Option<Error>, final_boundary: bool) -> Option<Error> {
+    /// A refused grant leaves at once; repeated misses leave only while another server moves.
+    fn missed(&mut self, error: Option<Error>, final_boundary: bool, other_moving: bool) -> Option<Error> {
         let Some(error) = error else {
             self.checkpoint_misses = 0;
             return None;
         };
-        self.checkpoint_misses += 1;
-        (crate::failure::sign_in(error.as_ref()).is_some() || self.checkpoint_misses >= 3 && !final_boundary)
+        self.checkpoint_misses = self.checkpoint_misses.saturating_add(1);
+        (crate::failure::sign_in(error.as_ref()).is_some()
+            || self.checkpoint_misses >= 3 && !final_boundary && other_moving)
             .then_some(error)
     }
 }
@@ -679,7 +680,7 @@ impl<'a> StageRun<'a> {
         Some((boundary, misses))
     }
 
-    /// A member leaves when a direction's measured bytes stop growing for the silence limit, at every boundary.
+    /// Shared silence belongs to the link; a quiet member leaves while another moves, or at the stage end.
     fn observe_boundary(
         &mut self,
         boundary: Boundary,
@@ -693,32 +694,38 @@ impl<'a> StageRun<'a> {
             _ => &[Direction::Down, Direction::Up],
         };
         let accounting = &mut self.ledger.accounting;
-        let before: Vec<Vec<u64>> = self
+        let before: Vec<[u64; 2]> = self
             .members
             .iter()
-            .map(|member| {
-                directions
-                    .iter()
-                    .map(|direction| accounting.bytes(&member.id, *direction))
-                    .collect()
-            })
+            .map(|member| [Direction::Down, Direction::Up].map(|direction| accounting.bytes(&member.id, direction)))
             .collect();
         let window = accounting.observe(boundary);
-        let mut departures = Vec::new();
         for (member, before) in self.members.iter_mut().zip(before) {
-            if let Some(error) = member.missed(misses.remove(&member.id), final_boundary) {
-                departures.push((member.id.clone(), error));
-                continue;
-            }
-            for (direction, before) in directions.iter().zip(before) {
-                let moved = &mut member.moved[*direction as usize];
-                if accounting.bytes(&member.id, *direction) > before {
-                    *moved = collected;
-                } else if collected.saturating_duration_since(*moved) >= REDIAL_WINDOW {
-                    let stalled: Error = Box::new(Failure::Measurement(FailureReason::Timeout));
-                    departures.push((member.id.clone(), stalled));
-                    break;
+            for direction in directions {
+                if accounting.bytes(&member.id, *direction) > before[*direction as usize] {
+                    member.moved[*direction as usize] = collected;
                 }
+            }
+        }
+        let mut departures = Vec::new();
+        for index in 0..self.members.len() {
+            let moving = |direction: Direction| {
+                self.members.iter().enumerate().any(|(other, member)| {
+                    other != index
+                        && collected.saturating_duration_since(member.moved[direction as usize]) < STALL_QUIET
+                })
+            };
+            let up_moving = moving(Direction::Up);
+            let stalled = directions.iter().any(|direction| {
+                collected.saturating_duration_since(self.members[index].moved[*direction as usize]) >= REDIAL_WINDOW
+                    && (final_boundary || moving(*direction))
+            });
+            let member = &mut self.members[index];
+            if let Some(error) = member.missed(misses.remove(&member.id), final_boundary, up_moving) {
+                departures.push((member.id.clone(), error));
+            } else if stalled {
+                let stalled: Error = Box::new(Failure::Measurement(FailureReason::Timeout));
+                departures.push((member.id.clone(), stalled));
             }
         }
         self.depart(departures)?;

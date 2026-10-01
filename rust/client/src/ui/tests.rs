@@ -388,7 +388,7 @@ fn edits_apply_and_refuse_as_go_parses_them() {
     let (commands, _sent) = mpsc::channel(32);
     let (download, upload) = (Setting::Stage(Stage::Download), Setting::Stage(Stage::Upload));
     let origin = "use an http:// or https:// origin, for example https://meter.example";
-    let (upload_bound, warmup) = ("Upload must be from 1 s to 300 s", "Warmup must be from 0 s to 4 s");
+    let (upload_bound, warmup) = ("Upload must be from 1s to 24h", "Warmup must be from 0s to 4s");
     let duration = "use a duration like 800ms, 4s, or 1m; a bare number is seconds";
     let streams = "streams must be a whole number from 1 to 14";
     #[rustfmt::skip]
@@ -401,8 +401,9 @@ fn edits_apply_and_refuse_as_go_parses_them() {
         (Setting::Warmup, "5s", Err(warmup)),
         (download, "12", Ok("12s")),
         (download, "1.5m", Ok("1m30s")),
+        (download, "2h", Ok("2h0m0s")),
         (upload, "0", Err(upload_bound)),
-        (upload, "6m", Err(upload_bound)), (upload, "-2", Err(upload_bound)), (Setting::Warmup, "-1", Err(warmup)),
+        (upload, "25h", Err(upload_bound)), (upload, "-2", Err(upload_bound)), (Setting::Warmup, "-1", Err(warmup)),
         (upload, "soon", Err(duration)),
         (Setting::Streams, "8", Ok("8 0")),
         (Setting::Streams, "15", Err(streams)),
@@ -418,8 +419,8 @@ fn edits_apply_and_refuse_as_go_parses_them() {
         let config = &ui.config;
         let got = match row {
             Setting::Catalogue => config.url.clone(),
-            Setting::Warmup => setup::go_duration(config.warmup),
-            Setting::Stage(_) => setup::go_duration(config.download_duration),
+            Setting::Warmup => graphite_meter_core::duration::go_duration(config.warmup),
+            Setting::Stage(_) => graphite_meter_core::duration::go_duration(config.download_duration),
             _ => format!("{} {}", config.auto_streams, config.streams),
         };
         let Err(error) = expected else {
@@ -516,7 +517,7 @@ fn setup_rows_and_start_notes_read_as_go_writes_them() {
     for (row, help) in [
         (
             Setting::Stage(Stage::Upload),
-            "Client to server, receiver-timed. ←/→ ±1 s (1 s–300 s), space on/off.",
+            "Client to server, receiver-timed. ←/→ step it (1 s–24 h; a server may allow less), space on/off.",
         ),
         (
             Setting::Cadence(true),
@@ -568,6 +569,7 @@ fn path_rows_cycle_the_checked_servers_paths() {
     let (_, mut latency) = target("");
     latency.base_url.clone_from(&ui.config.url);
     let offered = Capabilities {
+        max_stage_ms: 0,
         upload_checkpoint: true,
         throughput: vec![fetch.clone(), tls(WebTransport), tls(WebTransportDatagram)],
         latency: vec![latency.clone()],
