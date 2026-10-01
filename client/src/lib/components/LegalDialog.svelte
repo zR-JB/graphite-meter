@@ -183,9 +183,23 @@
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
-    width: fit-content;
-    color: var(--brand-strong);
+    flex: none;
+    width: max-content;
+    white-space: nowrap;
+    color: var(--text-muted);
+    text-decoration-color: transparent;
     text-underline-offset: 0.2em;
+  }
+  .components a :global(svg) {
+    flex: none;
+    width: var(--icon);
+    height: var(--icon);
+  }
+  @media (hover: hover) {
+    .components a:hover {
+      color: var(--brand-strong);
+      text-decoration-color: currentColor;
+    }
   }
   .component-links {
     display: flex;

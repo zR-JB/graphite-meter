@@ -160,6 +160,20 @@ test("legal notices recover through Retry and keep focus in the dialog", async (
   await dialog.getByRole("button", { name: "Retry" }).click();
   await expect(dialog).toContainText("Third-party software");
 
+  for (const width of [1280, 600, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    const wrapped = await dialog.locator(".component-links a").all((links) =>
+      links
+        .filter((link) => {
+          const label = document.createRange();
+          label.selectNode(link.firstChild!);
+          return label.getClientRects().length !== 1;
+        })
+        .map((link) => link.getAttribute("aria-label")),
+    );
+    expect(wrapped).toEqual([]);
+  }
+
   const link = dialog.locator(
     ".group:last-child .component:last-child .component-links a:last-child",
   );
