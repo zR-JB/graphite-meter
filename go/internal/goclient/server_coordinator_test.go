@@ -32,6 +32,7 @@ type serverFixture struct {
 	catalogReads         atomic.Int32
 	dropLatency          func()
 	upload               atomic.Pointer[endpoint.Upload]
+	stageLimitMs         atomic.Int64
 }
 
 func (f *serverFixture) kill() {
@@ -65,6 +66,7 @@ func coordinatedFixture(t *testing.T, name string) *serverFixture {
 			Generation:    name,
 			Capabilities: wire.Capabilities{
 				UploadCheckpoint: true,
+				MaxStageMs:       f.stageLimitMs.Load(),
 				ThroughputTargets: []wire.ThroughputTarget{
 					{Origin: ".", Transport: wire.TransportFetchStream, Protocol: "http1"},
 				},
@@ -175,6 +177,23 @@ func fixtureConfig(a *serverFixture) Config {
 	cfg.LoadedLatency = false
 	return cfg
 }
+func TestAPlanLongerThanAServerAdmitsIsRefusedByName(t *testing.T) {
+	t.Parallel()
+	a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
+	b.stageLimitMs.Store(2_000)
+	cfg := fixtureConfig(a)
+	cfg.Stages = StageSet{Download: true}
+	cfg.DownloadDuration = 3 * time.Second
+	prepared := prepareFixtureRun(t, cfg, a, b)
+	if limit, server := prepared.StageLimit(); limit != 2*time.Second || server.Name != "b" {
+		t.Fatalf("stage limit %v from %q", limit, server.Name)
+	}
+	err := runSelected(t.Context(), cfg, prepared, func(Event) {})
+	if err == nil || err.Error() != "b allows stages up to 2s; shorten the download stage" {
+		t.Fatalf("run = %v", err)
+	}
+}
+
 func TestNativeCoordinatorRealBidirectional(t *testing.T) {
 	t.Parallel()
 	a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")

@@ -35,7 +35,10 @@ read only this catalogue and then each selected server's `/preflight`.
 IDs and canonical discovery origins are unique; saved choices bind both, so a changed binding needs the user. A `.`
 origin is the origin serving the catalogue. Discovery may use other ports on the entry's hostname; other hosts need
 an exact `additionalOrigins` entry, which discovery cannot extend. Mixed-content and secure-context rules still
-apply. `uploadCheckpoint: true` in preflight advertises [receiver checkpoints](upload.md), which coordinated uploads
+apply. `maxStageMs` in preflight capabilities is the longest stage a client may plan against that server (1000 to
+86400000; absent means 300000, the limit before servers advertised one); a run uses the smallest among its servers
+and refuses a longer plan by naming the server. `uploadCheckpoint: true` in preflight advertises
+[receiver checkpoints](upload.md), which coordinated uploads
 require.
 
 ## Browser measurement authorization

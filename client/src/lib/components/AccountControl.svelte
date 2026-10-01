@@ -1,11 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import Icon from "./Icon.svelte";
   import { authenticatedFetch } from "../auth";
   import { readJSONResponse, parseAccountSession } from "../api/decode";
   import { tooltip } from "../actions/tooltip";
+  import { getApplicationController } from "../runner/controllerContext";
   import ConfirmDialog from "./ConfirmDialog.svelte";
 
-  let session = $state<ReturnType<typeof parseAccountSession> | null>(null);
+  const app = getApplicationController();
+
+  let session = $state.raw<ReturnType<typeof parseAccountSession> | null>(null);
   let form = $state<HTMLFormElement>();
   let everywhere = $state<HTMLButtonElement>();
   let confirming = $state(false);
@@ -53,15 +57,11 @@
     method="post"
     action="/auth/logout"
     aria-label={`${label}, ${provider}`}
+    onsubmit={app.signOut}
   >
     <input type="hidden" name="csrf" value={session.csrf} />
     <div class="identity" {@attach tooltip(() => `${label}\n${provider}`)}>
-      <span class="avatar" aria-hidden="true">
-        <svg viewBox="0 0 20 20">
-          <circle cx="10" cy="7" r="3" />
-          <path d="M4.5 16c.5-3 2.3-4.5 5.5-4.5s5 1.5 5.5 4.5" />
-        </svg>
-      </span>
+      <span class="avatar" aria-hidden="true"><Icon name="person" /></span>
       <strong class="name">{label}</strong>
     </div>
     <button
@@ -77,10 +77,7 @@
       {@attach tooltip(() => "End all sessions for this account")}
       aria-label={`Sign out ${label} everywhere`}
     >
-      <svg viewBox="0 0 20 20" aria-hidden="true">
-        <path d="M10 3v7" />
-        <path d="M6 5.5a6 6 0 1 0 8 0" />
-      </svg>
+      <Icon name="power" />
     </button>
     <button
       class="btn btn-icon btn-quiet signout"
@@ -88,11 +85,7 @@
       {@attach tooltip(() => "Sign out")}
       aria-label={`Sign out ${label}`}
     >
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path
-          d="M9 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M16 7l5 5-5 5M9 12h12"
-        />
-      </svg>
+      <Icon name="exit" />
     </button>
   </form>
   <ConfirmDialog
@@ -139,27 +132,17 @@
     background: var(--track);
     color: var(--text-muted);
   }
-  svg {
-    fill: none;
-    stroke: currentColor;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    stroke-width: 1.6;
-  }
-  .avatar svg {
-    width: 13px;
+  .avatar :global(svg) {
+    width: var(--icon-sm);
+    height: var(--icon-sm);
   }
   .name {
     overflow: hidden;
     min-width: 0;
     color: var(--text-muted);
-    font: var(--w-normal) var(--type-body) / 1 var(--font-sans);
+    font: var(--w-normal) var(--type-body) / 1.3 var(--font-sans);
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .signout svg {
-    width: var(--icon);
-    height: var(--icon);
   }
   @media (hover: hover) {
     .signout:hover {

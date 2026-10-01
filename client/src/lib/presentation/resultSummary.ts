@@ -2,6 +2,7 @@ import { compensationTooltip, type WireModel } from "../compensation";
 import {
   fmtAddedMs,
   fmtBytes,
+  fmtDuration,
   fmtMs,
   formatLatency,
   formatRate,
@@ -11,6 +12,8 @@ import {
 } from "../format";
 import type {
   AddedLatency,
+  LatencyBucket,
+  ThroughputSample,
   RunResult,
   TransportRole,
 } from "../runner/contract";
@@ -18,10 +21,16 @@ import type { MultiServerResult } from "../runner/measure";
 import { bidirectionalResultPresentation } from "./bidirectionalResult";
 import type { IconName } from "./icons";
 import { serverName } from "./serverAppearance";
-import { JARGON, MISSING, STAGE, reasonLabel } from "./vocabulary";
+import {
+  JARGON,
+  LATENCY_POPULATION,
+  MISSING,
+  STAGE,
+  reasonLabel,
+} from "./vocabulary";
 
 type SummaryStatus = "complete" | "partial" | "failed";
-type LiveStatus = "active" | "pending" | "stopped" | "not-run";
+type LiveStatus = "active" | "recovering" | "pending" | "stopped" | "not-run";
 interface SummaryEvidence extends Pick<
   RunResult,
   "download" | "upload" | "bidirectional" | "latency"
@@ -34,6 +43,7 @@ export interface SummaryRow {
   value: string;
   stage?: TransportRole;
   short?: string;
+  tip?: string;
 }
 interface WireRate {
   value: string;
@@ -59,6 +69,100 @@ export interface CardGraph {
   latency: { t: number; ms: number }[];
   start: number;
   span: number;
+}
+type Transfer = ThroughputSample["phase"];
+type CardGraphs = Partial<Record<Transfer, CardGraph>>;
+
+/** Route each bounded series once; unchanged stages allocate no new points or lanes. */
+export function buildCardGraphs(
+  throughput: readonly ThroughputSample[],
+  latency: readonly LatencyBucket[],
+  spans: Record<Transfer, number>,
+  previous: CardGraphs = {},
+): Record<Transfer, CardGraph> {
+  function sequence<T extends { t: number }>(
+    before: T[] = [],
+    value: (point: T) => number,
+    create: (t: number, value: number) => T,
+  ) {
+    let next = before;
+    let length = 0;
+    return {
+      add(t: number, amount: number) {
+        const old = before[length];
+        if (old === undefined || old.t !== t || value(old) !== amount) {
+          if (next === before) next = before.slice(0, length);
+          next.push(create(t, amount));
+        } else if (next !== before) next.push(old);
+        length++;
+      },
+      finish() {
+        return next.length === length ? next : next.slice(0, length);
+      },
+    };
+  }
+  const stage = (key: Transfer) => ({
+    lanes: Array.from({ length: key === "bidirectional" ? 2 : 1 }, (_, i) =>
+      sequence(
+        previous[key]?.lanes[i],
+        (point) => point.v,
+        (t, v) => ({ t, v }),
+      ),
+    ),
+    latency: sequence(
+      previous[key]?.latency,
+      (point) => point.ms,
+      (t, ms) => ({ t, ms }),
+    ),
+    start: Infinity,
+    end: -Infinity,
+  });
+  const stages = {
+    download: stage("download"),
+    upload: stage("upload"),
+    bidirectional: stage("bidirectional"),
+  };
+  for (const sample of throughput) {
+    const key = sample.phase;
+    if (
+      key !== "bidirectional" &&
+      sample.dir !== (key === "download" ? "down" : "up")
+    )
+      continue;
+    const target = stages[key];
+    target.lanes[key === "bidirectional" && sample.dir === "up" ? 1 : 0].add(
+      sample.t,
+      sample.bytesPerSec,
+    );
+    target.start = Math.min(target.start, sample.t);
+    target.end = Math.max(target.end, sample.t);
+  }
+  for (const sample of latency) {
+    if (sample.medianRttMs === null || !(sample.phase in stages)) continue;
+    stages[sample.phase as Transfer].latency.add(sample.t, sample.medianRttMs);
+  }
+  const finish = (key: Transfer): CardGraph => {
+    const target = stages[key];
+    const lanes = target.lanes.map((lane) => lane.finish());
+    const latency = target.latency.finish();
+    const start = target.start === Infinity ? 0 : target.start;
+    const span =
+      Math.max(target.end === -Infinity ? 0 : target.end - start, spans[key]) ||
+      1;
+    const old = previous[key];
+    return old &&
+      old.start === start &&
+      old.span === span &&
+      old.latency === latency &&
+      lanes.every((lane, i) => lane === old.lanes[i])
+      ? old
+      : { lanes, latency, start, span };
+  };
+  return {
+    download: finish("download"),
+    upload: finish("upload"),
+    bidirectional: finish("bidirectional"),
+  };
 }
 /** Shared by every card: rate and latency ceilings, the idle floor, and how a rate reads. */
 export interface CardScale {
@@ -109,11 +213,17 @@ export const laneShort = (
       : resultRate(
           bytesPerSec,
           units,
-          throughputUnitIndex(combined, units.base, units.kind),
+          units.tier ?? throughputUnitIndex(combined, units.base, units.kind),
         ).num;
 
 const stability = (pct: number | null): SummaryRow[] =>
   pct === null ? [] : [{ label: "Stability", value: `${Math.round(pct)}%` }];
+
+/** Time without data shows from half a second. */
+const noData = (ms = 0): SummaryRow[] =>
+  ms < 500
+    ? []
+    : [{ label: "No data", value: fmtDuration(ms), tip: JARGON.noData }];
 
 /** From half a percent of overhead the wire estimate sits under the headline. */
 function wire(
@@ -189,6 +299,7 @@ function bidirectionalCard(
           ? Math.min(lanes.down.stabilityPct, lanes.up.stabilityPct)
           : null,
       ),
+      ...noData(Math.max(lanes?.down?.quietMs ?? 0, lanes?.up?.quietMs ?? 0)),
     ],
   };
 }
@@ -234,11 +345,39 @@ export function summaryCards(
             ? []
             : [{ label: "Peak", value: formatRate(peak, units) }]),
           ...stability(complete ? result.stabilityPct : null),
+          ...noData(result.quietMs),
         ],
       },
     ];
   });
 }
+
+// Facts read the same way on every card: what the link peaked at, how steady it was, what moved.
+const TRANSFER_FACTS = ["Peak", "Stability", "Transferred"];
+const FACTS: Record<TransportRole, string[]> = {
+  latency: [],
+  download: TRANSFER_FACTS,
+  upload: TRANSFER_FACTS,
+  bidirectional: ["Stability", "Down + up", "Transferred"],
+};
+const FACT_TIPS: Record<string, string> = {
+  Peak: JARGON.peak,
+  Stability: JARGON.rateStability,
+  Transferred: JARGON.transferred,
+};
+
+/** A card's facts in every state, "—" until known, so a value arriving never moves the instrument. */
+export const cardFacts = (card: SummaryCard): SummaryRow[] =>
+  FACTS[card.key].map((label) => ({
+    label,
+    value: MISSING,
+    ...card.rows.find((row) => row.label === label),
+    tip: FACT_TIPS[label],
+  }));
+
+/** Time without data after a stall, which the card's line carries so it never adds a row. */
+export const cardNoData = (card: SummaryCard) =>
+  card.rows.find((row) => row.label === "No data") ?? null;
 
 /** A completed run spoken in card order: each headline, then latency's jitter and added latency. */
 export const resultSentence = (cards: SummaryCard[]) =>
@@ -299,8 +438,11 @@ export function serverIssues(details: MultiServerResult, scope = "") {
       });
     const line = lines.get(key)!;
     const latency = failure.scope === "latency";
+    // A transfer's latency is named as the latency card names it; the Latency stage by its own name.
     line.stages.push(
-      `${STAGE[failure.stage].label}${latency ? " latency" : ""}`,
+      latency && failure.stage !== "latency"
+        ? LATENCY_POPULATION[failure.stage].short
+        : STAGE[failure.stage].label,
     );
     if (!latency) line.throughput.push(failure.stage);
   }

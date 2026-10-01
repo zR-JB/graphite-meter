@@ -72,8 +72,15 @@ type Config struct {
 	MaxConnectionsPerClient        int
 	MaxOperationDuration           time.Duration
 	MaxSessionDuration             time.Duration
-	Auth                           AuthConfig
+	// MaxStageDuration is the longest stage clients may plan; preflight advertises it.
+	MaxStageDuration time.Duration
+	Auth             AuthConfig
+	// lifetimeSet records lifetimes the operator chose; the others grow to cover the stage limit.
+	lifetimeSet struct{ operation, session bool }
 }
+
+// stageMargin covers a stage's warmup, readiness, probe drain and finalization within one lifetime.
+const stageMargin = time.Minute
 
 func Default() Config {
 	return Config{
@@ -85,6 +92,7 @@ func Default() Config {
 		MaxConnections: 4096, MaxConnectionsPerClient: 64,
 		MaxOperationDuration: 5 * time.Minute,
 		MaxSessionDuration:   2 * time.Hour,
+		MaxStageDuration:     wire.DefaultStageLimit,
 		Auth:                 AuthConfig{Mode: "off", OIDCProviderName: "Authelia"},
 	}
 }
@@ -240,6 +248,8 @@ func (c *Config) settings() []setting {
 			"maximum measurement operation `duration`", &c.MaxOperationDuration),
 		duration("GM_MAX_SESSION_DURATION", "max-session-duration",
 			"maximum WebTransport session `duration`", &c.MaxSessionDuration),
+		duration("GM_MAX_STAGE_DURATION", "max-stage-duration",
+			"longest stage `duration` clients may plan, 1s to 24h", &c.MaxStageDuration),
 		{env: "GM_TRUSTED_PROXIES", set: c.parseTrustedProxies},
 		text("GM_AUTH_MODE", "auth-mode", "authentication `mode`: off, password, oidc, or hybrid", &a.Mode),
 		text("GM_AUTH_PUBLIC_URL", "auth-public-url", "canonical HTTPS UI `origin`", &a.PublicURL),
@@ -262,7 +272,24 @@ func (c *Config) apply(s setting, value string) error {
 	if strings.HasPrefix(s.env, "GM_AUTH_") && s.env != "GM_AUTH_MODE" {
 		c.Auth.Explicit = true
 	}
+	switch s.env {
+	case "GM_MAX_OPERATION_DURATION":
+		c.lifetimeSet.operation = true
+	case "GM_MAX_SESSION_DURATION":
+		c.lifetimeSet.session = true
+	}
 	return s.set(value)
+}
+
+// CoverStageLimit grows the lifetimes the operator left unset to cover the stage limit, so a long stage's
+// lanes are not cut every few minutes by defaults meant for short tests. Call it once every source is applied.
+func (c *Config) CoverStageLimit() {
+	if !c.lifetimeSet.operation {
+		c.MaxOperationDuration = max(c.MaxOperationDuration, c.MaxStageDuration+stageMargin)
+	}
+	if !c.lifetimeSet.session {
+		c.MaxSessionDuration = max(c.MaxSessionDuration, c.MaxOperationDuration)
+	}
 }
 
 func (c *Config) LoadEnv() error {
@@ -417,6 +444,9 @@ func (c Config) validateLimits() error {
 	}
 	if c.MaxSessionDuration < c.MaxOperationDuration {
 		return errors.New("GM_MAX_SESSION_DURATION must be at least GM_MAX_OPERATION_DURATION")
+	}
+	if c.MaxStageDuration < wire.MinStageLimit || c.MaxStageDuration > wire.MaxStageLimit {
+		return errors.New("GM_MAX_STAGE_DURATION must be from 1s to 24h")
 	}
 	return nil
 }

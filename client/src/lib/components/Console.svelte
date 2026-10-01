@@ -19,7 +19,7 @@
   import TopbarMore from "./TopbarMore.svelte";
   import { statusLabel, THEME } from "../presentation/vocabulary";
   import { handoff } from "../presentation/motion.svelte";
-  import { tooltip } from "../actions/tooltip";
+  import { keyHint as tipKey, tooltip } from "../actions/tooltip";
   import { canFocus, activeModal } from "../actions/focus";
   import { MediaQuery } from "svelte/reactivity";
   import {
@@ -34,6 +34,7 @@
     loadPersisted,
     savePersisted,
   } from "../state/persistence";
+  import { STAGES } from "../runner/schedule";
   import { authEnabled as pageAuthEnabled } from "../auth";
   const authEnabled = pageAuthEnabled();
   const status = handoff(
@@ -71,7 +72,7 @@
   let historyChunkFailed = $state(false);
   let historyChunk: Promise<unknown> | undefined;
   let historyInvoker: HTMLElement | null = null;
-  let workspaceFocusIntent = $state<
+  let workspaceFocusIntent = $state.raw<
     | {
         kind: "workspace";
         workspace: "history" | "measurement";
@@ -85,10 +86,29 @@
   >(null);
   const panelInvokers: Partial<Record<PanelSurface, HTMLElement>> = {};
 
+  // Starting over asks first while a run is live or its unsaved result is on screen.
   let resetConfirmOpen = $state(false);
-  let currentRoute = $state<Route>(
-    parseRoute(typeof window === "undefined" ? "#/" : window.location.hash),
+  let resetReason = $state<"running" | "unsaved">("running");
+  const RESET_CONFIRM = {
+    running: {
+      title: "Stop the running test?",
+      description:
+        "The measurement in progress stops and its results are cleared.",
+      cancelLabel: "Keep running",
+      confirmLabel: "Stop test",
+    },
+    unsaved: {
+      title: "Clear this result?",
+      description: "It is not saved; starting over removes it.",
+      cancelLabel: "Keep result",
+      confirmLabel: "Clear result",
+    },
+  };
+  const resetCopy = $derived(RESET_CONFIRM[resetReason]);
+  const initialRoute = parseRoute(
+    typeof window === "undefined" ? "#/" : window.location.hash,
   );
+  let currentRoute = $state.raw<Route>(initialRoute);
   let historyOpen = $derived(
     currentRoute.kind === "app" && currentRoute.workspace.kind === "history",
   );
@@ -179,11 +199,20 @@
       ? currentPanels.includes("endpoint")
       : lastPanel === "endpoint",
   );
+  // Build a panel on first use, then keep its drafts and closing animation intact.
+  let settingsVisited = $state(
+    initialRoute.kind === "app" && initialRoute.panels.includes("settings"),
+  );
+  let telemetryVisited = $state(
+    initialRoute.kind === "app" && initialRoute.panels.includes("endpoint"),
+  );
   const legalOpen = $derived(
     currentRoute.kind === "app" && currentRoute.dialog === "legal",
   );
 
   const THEME_CYCLE = ["light", "dark", "auto"] as const;
+  // Tips name a key only while the page shortcuts act on it.
+  const keyHint = (key: string) => tipKey(key, store.keyShortcuts);
 
   function toggleTheme() {
     const next =
@@ -214,6 +243,8 @@
   );
 
   let resizedDock = false;
+  // While a handle is dragged the columns follow the pointer; the glide is for opening, closing and keys.
+  let resizingDock = $state(false);
   function setDockWidth(side: "left" | "right", px: number) {
     resizedDock = true;
     const other = side === "left" ? "right" : "left";
@@ -238,7 +269,8 @@
       routeTo(withWorkspace(currentRoute, { kind: "measurement" }));
       return;
     }
-    if (store.isRunning) {
+    if (store.isRunning || (store.result && !store.savingResults)) {
+      resetReason = store.isRunning ? "running" : "unsaved";
       resetConfirmOpen = true;
       return;
     }
@@ -374,6 +406,10 @@
     const nextHistory =
       next.kind === "app" && next.workspace.kind === "history";
     currentRoute = next;
+    if (next.kind === "app") {
+      if (next.panels.includes("settings")) settingsVisited = true;
+      if (next.panels.includes("endpoint")) telemetryVisited = true;
+    }
     if (nextHistory) loadHistoryWorkspace();
     const workspace = nextHistory ? "history" : "measurement";
     if (workspaceFocusIntent && workspaceFocusIntent.workspace !== workspace)
@@ -534,21 +570,33 @@
   id="console"
   {@attach observeWidth((width) => (consoleWidth = width))}
   data-phase={store.phase}
-  data-lit={store.isRunning ? store.phaseStage : undefined}
+  data-resizing={resizingDock ? "" : undefined}
   style="--dock-left: {docks.left}px; --dock-right: {docks.right}px;"
 >
+  <!-- The room takes a little of the running stage's light, from above; History is read in plain light.
+       The light spans the whole room and falls from over the stage, so a docked sheet never cuts it at
+       its column's edge; each layer glides with the columns, as the shell does. -->
+  <div class="amb" aria-hidden="true">
+    {#each STAGES as stage (stage)}
+      <i
+        data-tone={stage}
+        class:lit={measurementOpen &&
+          store.isRunning &&
+          store.phaseStage === stage}
+        style="--dock-left: {docks.left}px; --dock-right: {docks.right}px;"
+      ></i>
+    {/each}
+  </div>
   <!-- Container queries move direct actions into More as the bar narrows. -->
   <header class="topbar" class:saving={store.savingResults}>
     <button
       type="button"
       class="brand-btn"
       aria-label={measurementOpen
-        ? "Graphite Meter — return to a fresh, blank test"
-        : "Graphite Meter — return to live meter"}
+        ? "Graphite Meter — start over"
+        : "Graphite Meter — return to measurement"}
       {@attach tooltip(() =>
-        measurementOpen
-          ? "Return to a fresh, blank test"
-          : "Return to live meter",
+        measurementOpen ? "Start over" : "Return to measurement",
       )}
       onclick={requestReturnToStart}
       ><svg class="brand-glyph" viewBox="0 0 24 24" aria-hidden="true"
@@ -568,9 +616,9 @@
     >
     <button
       class="btn btn-icon btn-quiet"
-      aria-label="Open settings"
+      aria-label="Settings"
       aria-expanded={settingsOpen}
-      {@attach tooltip(() => "Settings — test and display (S)")}
+      {@attach tooltip(() => `Settings — test and display${keyHint("S")}`)}
       onclick={(event) =>
         togglePanel("settings", event.currentTarget as HTMLElement)}
       ><Icon name="settings" /></button
@@ -581,9 +629,9 @@
         class="btn return-live"
         data-tone={awayRunIndicator.tone}
         type="button"
-        aria-label={`${awayRunIndicator.label}. Return to live meter.`}
+        aria-label={`Live ${awayRunIndicator.label}. Return to measurement.`}
         {@attach tooltip(
-          () => `${awayRunIndicator.label} — return to live meter`,
+          () => `${awayRunIndicator.label} — return to measurement`,
         )}
         onclick={() => {
           focusWorkspace("measurement");
@@ -600,12 +648,10 @@
     {#if store.savingResults}<button
         class="btn btn-icon btn-quiet direct-history"
         type="button"
-        aria-label={historyOpen ? "Close History" : "Open History"}
+        aria-label="History"
         aria-current={historyOpen ? "page" : undefined}
         aria-pressed={historyOpen}
-        {@attach tooltip(() =>
-          historyOpen ? "Close History" : "History — saved results (H)",
-        )}
+        {@attach tooltip(() => `History — saved results${keyHint("H")}`)}
         onclick={(event) =>
           toggleHistoryFromPointer(event.currentTarget as HTMLElement)}
         ><Icon name="history" /></button
@@ -615,7 +661,7 @@
       aria-label={`Theme: ${THEME[store.theme].label}`}
       {@attach tooltip(
         () =>
-          `Theme: ${THEME[store.theme].label} (T) — cycles light / dark / auto`,
+          `Theme: ${THEME[store.theme].label}${keyHint("T")} — cycles light, dark and auto`,
       )}
       onclick={toggleTheme}><Icon name={THEME[store.theme].icon} /></button
     >
@@ -623,7 +669,7 @@
       class="btn btn-icon btn-quiet direct-endpoint"
       aria-label="Details"
       aria-expanded={telemetryOpen}
-      {@attach tooltip(() => "Details — server and connection (D)")}
+      {@attach tooltip(() => `Details — server and connection${keyHint("D")}`)}
       onclick={(event) =>
         togglePanel("endpoint", event.currentTarget as HTMLElement)}
       ><Icon name="info" /></button
@@ -650,14 +696,17 @@
     dockMaxWidth={dockMaxLeft}
     onResize={(px) => setDockWidth("left", px)}
     onResetWidth={() => resetDockWidth("left")}
+    onResizing={(dragging) => (resizingDock = dragging)}
     onClose={() => dismissPanel("settings")}
     side="left"
     title="Settings"
   >
-    <TestSetupPanel
-      open={settingsOpen}
-      onOpenHistory={(invoker) => historyRoute(null, invoker)}
-    />
+    {#if settingsOpen || settingsVisited}
+      <TestSetupPanel
+        open={settingsOpen}
+        onOpenHistory={(invoker) => historyRoute(null, invoker)}
+      />
+    {/if}
   </SidePanel>
   {#if currentRoute.kind === "not-found"}
     <section class="stage history-stage" inert={flyout}>
@@ -720,10 +769,13 @@
     dockMaxWidth={dockMaxRight}
     onResize={(px) => setDockWidth("right", px)}
     onResetWidth={() => resetDockWidth("right")}
+    onResizing={(dragging) => (resizingDock = dragging)}
     onClose={() => dismissPanel("endpoint")}
     title="Details"
   >
-    <EndpointInfo onOpenLegal={openLegal} />
+    {#if telemetryOpen || telemetryVisited}
+      <EndpointInfo onOpenLegal={openLegal} />
+    {/if}
   </SidePanel>
 
   <PhaseToast />
@@ -734,10 +786,10 @@
   <ConfirmDialog
     open={resetConfirmOpen}
     id="reset-confirm"
-    title="Stop the running test?"
-    description="Returning to a fresh test will abort the measurement in progress."
-    cancelLabel="Keep running"
-    confirmLabel="Stop test"
+    title={resetCopy.title}
+    description={resetCopy.description}
+    cancelLabel={resetCopy.cancelLabel}
+    confirmLabel={resetCopy.confirmLabel}
     onCancel={() => (resetConfirmOpen = false)}
     onConfirm={confirmReturnToStart}
   />
@@ -748,6 +800,8 @@
 <style>
   /* Dock columns stay 0 until a docked panel fills them via display: contents. */
   #console {
+    position: relative;
+    isolation: isolate;
     display: grid;
     grid-template-columns: var(--dock-left, 0px) minmax(0, 1fr) var(
         --dock-right,
@@ -761,43 +815,80 @@
       "leftdock stage   rightdock"
       "status   status  status";
     height: 100dvh;
-    /* The room takes a little of the running stage's light, from above. */
-    --amb: transparent;
+    /* The grain is zero-mean dither: it breaks gradients into noise without moving the page's level. */
     background:
       var(--grain),
-      radial-gradient(120% 70% at 20% -14%, var(--amb), transparent 62%),
       radial-gradient(
         140% 90% at 50% 125%,
         var(--canvas-deep),
         transparent 70%
       ),
       var(--canvas);
+    background-blend-mode: overlay, normal;
     color: var(--text);
     transition:
-      --amb 1100ms var(--ease-out),
+      --dock-left var(--dur-sheet) var(--ease-out),
+      --dock-right var(--dur-sheet) var(--ease-out);
+    timeline-scope: --column;
+  }
+  /* A dragged handle moves its column with the pointer, without the glide. */
+  #console[data-resizing],
+  #console[data-resizing] .amb > i {
+    transition: none;
+  }
+  /* Each stage's light is its own layer, so a stage change cross-fades on the compositor. */
+  .amb {
+    position: relative;
+    z-index: -1;
+    grid-area: 1 / 1 / 3 / 4;
+    pointer-events: none;
+  }
+  /* The light's source sits a fifth of the way across the stage, however the columns stand. */
+  .amb > i {
+    --amb-mix: 14%;
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(
+      120% 70% at
+        calc(
+          var(--dock-left) + (100% - var(--dock-left) - var(--dock-right)) * 0.2
+        ) -14%,
+      color-mix(in oklab, var(--tone) var(--amb-mix), transparent),
+      transparent 62%
+    );
+    opacity: 0;
+    transition:
+      opacity 1100ms var(--ease-out),
       --dock-left var(--dur-sheet) var(--ease-out),
       --dock-right var(--dur-sheet) var(--ease-out);
   }
-  #console[data-lit="latency"] {
-    --amb: color-mix(in oklab, var(--phase-latency) 14%, transparent);
+  .amb > :is([data-tone="download"], [data-tone="bidirectional"]) {
+    --amb-mix: 16%;
   }
-  #console[data-lit="download"] {
-    --amb: color-mix(in oklab, var(--phase-download) 16%, transparent);
-  }
-  #console[data-lit="upload"] {
-    --amb: color-mix(in oklab, var(--phase-upload) 14%, transparent);
-  }
-  #console[data-lit="bidirectional"] {
-    --amb: color-mix(in oklab, var(--phase-bidirectional) 16%, transparent);
+  .amb > .lit {
+    opacity: 1;
   }
 
+  /* The last icon's own 8 px padding completes the right inset, so the bar's ink sits 16 px in at both ends. */
   .topbar {
     grid-area: topbar;
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    padding-inline: var(--space-4);
+    padding-inline: var(--space-4) var(--space-2);
+    border-bottom: var(--hairline) solid transparent;
     container: topbar / inline-size;
+  }
+  /* The measurement column scrolls under the bar, so its rule comes in as content passes beneath, as a sheet's head's does. */
+  @supports (animation-timeline: scroll()) {
+    .measurement-stage {
+      scroll-timeline: --column block;
+    }
+    .topbar {
+      animation: sheet-rule linear both;
+      animation-timeline: --column;
+      animation-range: 0 var(--space-3);
+    }
   }
   .topbar > :global(*) {
     flex-shrink: 0;
@@ -810,17 +901,22 @@
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    padding: var(--space-1) 6px;
+    min-height: var(--control-h);
+    padding: 0 6px;
     margin-left: -6px;
     border-radius: var(--r-chrome);
     font: var(--w-strong) var(--type-md) / 1.4 var(--font-sans);
     letter-spacing: -0.01em;
-    transition: color var(--dur-hover) var(--ease-out);
+    transition: var(--transition-control);
   }
+  /* Washed like the quiet buttons beside it. */
   @media (hover: hover) {
     .brand-btn:hover {
-      color: var(--brand-strong);
+      background: var(--hover-wash);
     }
+  }
+  .brand-btn:active {
+    background: var(--selected-wash);
   }
   /* Hexagon in the brand accent, needle in the text colour (favicon.svg). */
   .brand-glyph {
@@ -833,8 +929,7 @@
   }
   .return-live {
     --btn-line: var(--tone-line);
-    padding-inline: var(--space-2) 10px;
-    background-color: color-mix(in srgb, var(--tone) 9%, var(--surface-2));
+    padding-inline: var(--space-2) var(--space-3);
   }
   @media (hover: hover) {
     .return-live:hover {
@@ -850,9 +945,10 @@
     align-items: baseline;
     gap: 6px;
   }
+  /* Small text in a hue takes its ink, so it clears 4.5:1 in every stage. */
   .live-copy strong {
-    color: var(--tone);
-    font-weight: var(--w-heavy);
+    color: var(--tone-ink);
+    font-weight: var(--w-strong);
   }
   /* 44px coarse targets fit three direct actions to ~320px, one to ~260px. */
   .topbar-more,
@@ -884,7 +980,9 @@
     }
   }
 
+  /* The stage is the anchor the phase toast keeps to, clear of docked sheets. */
   .stage {
+    anchor-name: --stage;
     grid-area: stage;
     display: flex;
     flex-direction: column;
@@ -933,18 +1031,24 @@
     padding: 0 var(--space-4) env(safe-area-inset-bottom, 0px);
     border-top: var(--hairline) solid var(--border-subtle);
     color: var(--text-soft);
-    font: var(--type-xs) var(--font-sans);
+    font: var(--w-normal) var(--type-xs) var(--font-sans);
     font-variant-numeric: tabular-nums;
     container: status / inline-size;
   }
+  /* Space and R act on the measurement only, so History drops their hint. */
+  .history-stage ~ .status :global(.command-hints > :first-child) {
+    display: none;
+  }
 
   @media (max-width: 759px) {
-    .stage {
+    /* History brings its own 16 px gutter. */
+    .stage:not(.history-stage) {
       padding-inline: var(--space-4);
     }
+    /* 44 px targets put their 16 px icons on the page's 16 px gutter. */
     .topbar {
       gap: var(--space-1);
-      padding-inline: 6px;
+      padding-inline: calc(var(--space-4) - (var(--hit) - var(--icon)) / 2);
     }
     .brand-label,
     .live-copy {
@@ -962,7 +1066,11 @@
       padding: 0;
     }
     .connectivity {
-      width: 24px;
+      width: var(--hit);
+    }
+    /* The menu ends on the page's 16 px gutter, as its trigger's icon does. */
+    .topbar-more :global(.more-menu) {
+      margin-inline-end: calc((var(--hit) - var(--icon)) / 2);
     }
     .connectivity :global(.spark) {
       display: none;

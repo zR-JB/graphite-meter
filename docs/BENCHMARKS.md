@@ -82,3 +82,12 @@ cat /tmp/a/matrix.ndjson /tmp/b/matrix.ndjson | python3 client/bench/server-matr
 ```
 
 The full matrix (1,440 cells, 3 repeats, 4,320 runs of 13–18 s) takes about 18 hours.
+## Native terminal
+
+```sh
+cd go && go test ./cmd/graphite-meter-client -run '^$' -bench '^BenchmarkTUI' -benchmem
+```
+
+The frame workload retains four servers and 480 points per trace at 80×24, 120×40 and 160×50. Animation frames reuse
+unchanged samples; sample frames update throughput and latency. The chart workload measures braille rasterization
+separately. These measure Go rendering time and allocations, excluding terminal-emulator drawing and network traffic.

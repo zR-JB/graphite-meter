@@ -19,6 +19,7 @@
     summaryCards,
     serverIssues,
     summaryEvidence,
+    buildCardGraphs,
     type CardGraph,
     type CardScale,
     type SummaryCard,
@@ -31,7 +32,12 @@
 
   const shown = $derived(store.resultScope);
   const details = $derived(store.result?.multiServer);
-  const units = $derived({ base: store.unitBase, kind: store.unitKind });
+  // One tier for every rate on the page, the dial's, so live and settled figures read in one unit.
+  const units = $derived({
+    base: store.unitBase,
+    kind: store.unitKind,
+    tier: store.scales.unitIndex,
+  });
   const status = (key: Stage) => store.stagePresentation[key].status;
   // A stalled stage is still running: it keeps its plan's width and its leading edge.
   const running = (key: Stage) =>
@@ -60,42 +66,23 @@
     CARD_ORDER.filter((key) => status(key) !== "disabled"),
   );
   type Transfer = Exclude<Stage, "latency">;
+  let retainedGraphs: Partial<Record<Transfer, CardGraph>> = {};
   // The run's series per stage, over its plan until settled; a scoped server has no series of its own.
   const graphs = $derived.by(() => {
     if (shown) return {} as Partial<Record<Transfer, CardGraph>>;
     const plan = (store.run?.config ?? store.config).duration;
-    const lane = (key: Transfer, dir: "down" | "up") =>
-      store.throughput
-        .filter((s) => s.phase === key && s.dir === dir)
-        .map((s) => ({ t: s.t, v: s.bytesPerSec }));
-    const graph = (key: Transfer): CardGraph => {
-      const lanes =
-        key === "bidirectional"
-          ? [lane(key, "down"), lane(key, "up")]
-          : [lane(key, key === "download" ? "down" : "up")];
-      const times = lanes.flat().map((point) => point.t);
-      const start = times.length ? Math.min(...times) : 0;
-      const measured = times.length ? Math.max(...times) - start : 0;
-      return {
-        lanes,
-        latency: store.latency.flatMap((b) =>
-          b.phase === key && b.medianRttMs !== null
-            ? [{ t: b.t, ms: b.medianRttMs }]
-            : [],
-        ),
-        start,
-        span:
-          Math.max(
-            measured,
-            running(key) || status(key) === "pending" ? plan[`${key}Ms`] : 0,
-          ) || 1,
-      };
-    };
-    return {
-      download: graph("download"),
-      upload: graph("upload"),
-      bidirectional: graph("bidirectional"),
-    };
+    const span = (key: Transfer) =>
+      running(key) || status(key) === "pending" ? plan[`${key}Ms`] : 0;
+    return (retainedGraphs = buildCardGraphs(
+      store.throughput,
+      store.latency,
+      {
+        download: span("download"),
+        upload: span("upload"),
+        bidirectional: span("bidirectional"),
+      },
+      retainedGraphs,
+    ));
   });
   // The running card's leading edge moves on the frame clock; the other graphs stay put.
   const head = $derived.by(() => {
@@ -118,24 +105,55 @@
     latencyTop: store.latencyScaleMs,
     rate: (bytesPerSec) => formatRate(bytesPerSec, units),
   });
+  // A stage subscribes to its own live value. Animating one must not rebuild
+  // the pending and finished cards, their rows, or their tooltip parameters.
+  const latencyCard = $derived(
+    settled.find((card) => card.key === "latency") ?? liveCard("latency"),
+  );
+  const downloadCard = $derived(
+    settled.find((card) => card.key === "download") ?? liveCard("download"),
+  );
+  const uploadCard = $derived(
+    settled.find((card) => card.key === "upload") ?? liveCard("upload"),
+  );
+  const bidirectionalCard = $derived(
+    settled.find((card) => card.key === "bidirectional") ??
+      liveCard("bidirectional"),
+  );
+  const byStage = $derived({
+    latency: latencyCard,
+    download: downloadCard,
+    upload: uploadCard,
+    bidirectional: bidirectionalCard,
+  });
+  const retainedCards: Partial<
+    Record<Stage, { source: SummaryCard; view: SummaryCard }>
+  > = {};
+  function withGraph(card: SummaryCard): SummaryCard {
+    const graph = graphs[card.key as Transfer] ?? null;
+    const previous = retainedCards[card.key];
+    if (previous?.source === card && previous.view.graph === graph)
+      return previous.view;
+    const view = { ...card, graph };
+    retainedCards[card.key] = { source: card, view };
+    return view;
+  }
   const cards = $derived(
     (store.phase !== "complete" && store.phase !== "error"
-      ? planned.map(
-          (key) => settled.find((card) => card.key === key) ?? liveCard(key),
-        )
+      ? planned.map((key) => byStage[key])
       : settled
-    ).map((card) => ({
-      ...card,
-      graph: graphs[card.key as Transfer] ?? null,
-    })),
+    ).map(withGraph),
   );
 
   const view = handoff(
     () => ({
       run: store.runSeq,
       cards,
+      // Lost latency probes are marked on the latency card's rows; nothing is added under the cards mid-run.
       issues: store.serverDetails
-        ? serverIssues(store.serverDetails, shown)
+        ? serverIssues(store.serverDetails, shown).filter(
+            (issue) => issue.throughput.length,
+          )
         : [],
     }),
     (view) => view.run,
@@ -148,26 +166,31 @@
     announce(untrack(() => resultSentence(settled)));
   });
 
-  // A running stage fills its facts as it goes: bytes so far, and each bidirectional lane's rate.
+  // A running stage fills its facts as it goes: bytes so far, and each bidirectional lane's rate and their sum.
   function liveRows(key: Stage): SummaryRow[] {
     if (key === "latency") return [];
-    if (key !== "bidirectional")
-      return [
-        {
-          label: "Transferred",
-          value: fmtBytes(store.liveStageBytes, units.base),
-        },
-      ];
+    const moved = {
+      label: "Transferred",
+      value: fmtBytes(store.liveStageBytes, units.base),
+    };
+    if (key !== "bidirectional") return [moved];
     const combined = live.rates && live.rates.down + live.rates.up;
-    return (["download", "upload"] as const).map((stage) => {
-      const rate = live.rates?.[stage === "download" ? "down" : "up"];
-      return {
-        label: STAGE[stage].short,
-        value: rate == null ? MISSING : formatRate(rate, units),
-        short: laneShort(rate, combined, units),
-        stage,
-      };
-    });
+    return [
+      ...(["download", "upload"] as const).map((stage) => {
+        const rate = live.rates?.[stage === "download" ? "down" : "up"];
+        return {
+          label: STAGE[stage].short,
+          value: rate == null ? MISSING : formatRate(rate, units),
+          short: laneShort(rate, combined, units),
+          stage,
+        };
+      }),
+      {
+        label: "Down + up",
+        value: combined == null ? MISSING : formatRate(combined, units),
+      },
+      moved,
+    ];
   }
 
   // Animated values are visual only; the accessible value uses receiver accounting.
@@ -203,7 +226,9 @@
       label: STAGE[key].short,
       icon: STAGE[key].icon,
       status: active
-        ? "active"
+        ? status(key) === "recovering"
+          ? "recovering"
+          : "active"
         : stopped
           ? "stopped"
           : store.phase === "aborted"
@@ -230,4 +255,5 @@
   details={details ?? store.serverDetails}
   issues={view.shown.issues}
   scope={details ? shown : ""}
+  running={store.isRunning}
 />

@@ -56,6 +56,36 @@ test("noise, bursts, dips, ramps and transient drops keep one regime", () => {
   expect(boundaries(ramp)).toBeLessThanOrEqual(1);
 });
 
+test("long irregular traces preserve fractional window accounting after pruning and reset", () => {
+  const estimator = new GrowingRateEstimator();
+  const spans: { start: number; end: number; bytes: number }[] = [];
+  let elapsed = 0;
+  for (let i = 0; i < 5_000; i++) {
+    const ms = [20, 137, 60, 43, 240][i % 5];
+    const bytes = (75_000_000 * (1 + ((i % 7) - 3) / 100) * ms) / 1000;
+    spans.push({ start: elapsed, end: elapsed + ms, bytes });
+    elapsed += ms;
+    expect(estimator.observe(bytes, ms)).toBe(false);
+    if (i % 137 !== 0) continue;
+    const from = elapsed - presentationWindowMs(elapsed);
+    let total = 0;
+    for (const span of spans)
+      if (span.end > from)
+        total +=
+          span.bytes *
+          ((span.end - Math.max(from, span.start)) / (span.end - span.start));
+    expect(
+      estimator.presented / ((total * 1000) / (elapsed - from)),
+    ).toBeCloseTo(1, 10);
+  }
+  // A downshift discards most old evidence and compacts the retained window.
+  for (let i = 0; i < 40; i++) push(estimator, 1_000);
+  expect(estimator.presented).toBeCloseTo(1_000, 5);
+  estimator.reset();
+  push(estimator, 2_000, 137);
+  expect(estimator.presented).toBeCloseTo(2_000, 8);
+});
+
 test.each([
   [1_000, 400],
   [400, 1_000],

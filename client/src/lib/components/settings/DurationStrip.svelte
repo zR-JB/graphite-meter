@@ -1,37 +1,26 @@
 <script lang="ts">
-  import { fly } from "svelte/transition";
-  import { still } from "../../presentation/motion.svelte";
+  import Roll from "../Roll.svelte";
+  import { fmtStageTime } from "../../format";
 
   let {
     stages,
   }: {
     stages: readonly { key: string; label: string; tone: string; ms: number }[];
   } = $props();
-  // Seconds, like the steppers that set them; whole ones from a minute on, so every segment keeps its width.
-  const seconds = (ms: number) =>
-    ms < 59_950 ? (ms / 1000).toFixed(1) : `${Math.round(ms / 1000)}`;
-  // A new time rolls in from below as the old one leaves upward, like a counter.
-  const roll = (node: Element, { y }: { y: number }) =>
-    fly(node, { y, duration: still() ? 0 : 320, opacity: 0 });
 </script>
 
 <div class="strip" role="list" aria-label="Stage times">
   {#each stages as stage (stage.key)}
-    {@const value = seconds(stage.ms)}
     <div
       class="segment"
       role="listitem"
       data-tone={stage.tone}
-      style:flex-grow={stage.ms}
+      style:--ms={stage.ms}
     >
       <span class="bar" aria-hidden="true"></span>
-      <span class="time">
-        {#key value}
-          <span class="value" in:roll={{ y: 10 }} out:roll={{ y: -10 }}
-            >{value}<span class="unit">s</span></span
-          >
-        {/key}
-      </span>
+      <span class="time"
+        ><Roll text={fmtStageTime(stage.ms)} rank={stage.ms} /></span
+      >
       <span class="name">{stage.label}</span>
     </div>
   {/each}
@@ -40,43 +29,41 @@
 <style>
   .strip {
     display: flex;
-    gap: 3px;
-    padding-block: var(--space-3) 10px;
+    gap: 2px;
+    padding-block: var(--space-4) var(--space-3);
   }
+  /* Widths follow the times, but never below a segment's own label. */
   .segment {
     display: grid;
-    flex-basis: 0;
-    min-width: 52px;
+    flex: var(--ms) 1 0;
     gap: 2px;
-    transition: flex-grow 420ms var(--ease-out);
+    transition: flex-grow var(--dur-graph) var(--ease-out);
   }
+  /* A stage that joins grows from its label's width instead of popping in at its share. */
+  @starting-style {
+    .segment {
+      flex-grow: 0;
+    }
+  }
+  /* The hues are data, so forced colours keep them. */
   .bar {
     height: 4px;
     margin-bottom: 6px;
     border-radius: var(--r-full);
     background: var(--tone);
+    forced-color-adjust: none;
   }
-  /* Old and new values share one cell while they roll. */
-  .time {
-    display: grid;
-    overflow: hidden;
-  }
-  .value {
-    grid-area: 1 / 1;
-    font: var(--w-normal) var(--type-md) / 1.2 var(--font-sans);
-    font-variant-numeric: tabular-nums;
+  /* A segment's words keep a space before the next segment's. */
+  .time,
+  .name {
+    padding-inline-end: var(--space-2);
     white-space: nowrap;
   }
-  .unit {
-    margin-left: 2px;
-    color: var(--text-soft);
-    font-size: var(--type-sm);
+  .time {
+    font: var(--w-normal) var(--type-md) / 16px var(--font-sans);
   }
   .name {
-    overflow: hidden;
     color: var(--text-soft);
-    font: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    font: var(--w-normal) var(--type-sm) / 16px var(--font-sans);
   }
 </style>

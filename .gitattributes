@@ -2,3 +2,5 @@
 legal/manual/rust/enum-assoc/Cargo.toml.upstream -text whitespace=cr-at-eol
 # Go-rendered pages keep html/template's whitespace byte for byte.
 go/internal/auth/testdata/pages/*.golden -whitespace
+# Patch context preserves upstream indentation and blank lines.
+client/patches/*.patch -whitespace

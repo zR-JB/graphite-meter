@@ -31,6 +31,7 @@ WORKDIR /app/client
 # Install deps first for layer caching. Every official build uses the
 # repository's exact Bun release and the committed lockfile.
 COPY client/package.json client/bun.lock client/bunfig.toml ./
+COPY client/patches/ ./patches/
 RUN bun --bun install --frozen-lockfile
 # Then the source, then build.
 COPY client/ ./

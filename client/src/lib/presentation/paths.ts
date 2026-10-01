@@ -22,7 +22,7 @@ import {
 import { isLoopbackHostname, type ServerIdentity } from "../servers/catalog";
 import { TRANSPORT } from "./vocabulary";
 
-const NOT_ADVERTISED = "Not offered in /preflight.";
+const NOT_ADVERTISED = "Not offered by this server";
 const H3 = httpProtocolLabel("http3");
 
 /** Compact label, connection-row summary, the carrier beneath the mechanism and settings detail. */
@@ -59,13 +59,13 @@ export function describeTarget(
       ? describe(
           TRANSPORT.webtransport,
           secured(H3),
-          `WebTransport over ${secured(H3)}`,
+          secured(TRANSPORT.webtransport),
           `QUIC stream session over ${H3} at ${at}`,
         )
       : describe(
-          "WebTransport",
-          secured(`${H3} datagrams`),
-          `WebTransport over ${secured(H3)}`,
+          TRANSPORT["webtransport-datagram"],
+          secured(H3),
+          secured(TRANSPORT["webtransport-datagram"]),
           `Datagram bus over ${H3} at ${at}`,
         );
   if (target.transport === "websocket") {
@@ -108,8 +108,8 @@ export interface PathOption {
 
 const noWebTransport = () =>
   webTransportGap() === "insecure-page"
-    ? "Needs a secure page: browsers offer WebTransport over HTTPS only — reopen this page on its https:// address."
-    : "WebTransport is unavailable in this browser.";
+    ? "Needs a secure page: browsers offer WebTransport over HTTPS only — reopen this page on its https:// address"
+    : "WebTransport is unavailable in this browser";
 
 /** Why one server's discovery can or cannot drive a selection, as a run would resolve it. */
 function availability(
@@ -153,8 +153,8 @@ function availability(
       disabled: true,
       detail:
         role === "throughput"
-          ? "No advertised throughput path is usable in this browser."
-          : `${discovery.pageSecure ? "Secure" : "Clear"} WebSocket target is not offered in /preflight.`,
+          ? "No offered throughput path works in this browser"
+          : `No ${discovery.pageSecure ? "secure" : "clear"} WebSocket offered by this server`,
     };
   const blocked = entry?.state === "browser-blocked";
   return {
@@ -203,7 +203,7 @@ export function pathOptions(
       : [
           ["auto", "Automatic"],
           ["transport:websocket", "WebSocket"],
-          ["transport:webtransport", "WebTransport"],
+          ["transport:webtransport", TRANSPORT["webtransport-datagram"]],
         ];
   const discovery = (id: string) => views.get(id)?.discovery ?? null;
   if (!simultaneous) {

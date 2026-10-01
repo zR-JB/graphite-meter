@@ -1,11 +1,7 @@
 <script lang="ts">
   import { catalogSelection } from "../../presentation/serverAppearance";
   import { store } from "../../state/store.svelte";
-  import {
-    clampDuration,
-    DURATION_LIMITS,
-    DURATION_PRESETS,
-  } from "../../state/defaults";
+  import { DURATION_LIMITS, DURATION_PRESETS } from "../../state/defaults";
   import type { PingCadence, RunnerConfig } from "../../runner/contract";
   import { getApplicationController } from "../../runner/controllerContext";
   const controller = getApplicationController();
@@ -15,11 +11,14 @@
     normalizeStreamCount,
   } from "../../runner/paths";
   import { term, tooltip } from "../../actions/tooltip";
+  import { reveal } from "../../presentation/motion.svelte";
   import Icon from "../Icon.svelte";
   import Switch from "../Switch.svelte";
   import ServerSelection from "../ServerSelection.svelte";
   import ConnectionPicker from "./ConnectionPicker.svelte";
   import DurationStrip from "./DurationStrip.svelte";
+  import TimeStepper from "./TimeStepper.svelte";
+  import Roll from "../Roll.svelte";
   import {
     BLOCKED,
     JARGON,
@@ -31,6 +30,7 @@
   } from "../../presentation/vocabulary";
   import {
     fmtDuration,
+    fmtStageTime,
     rateUnit,
     rateValueAt,
     rawRateFrom,
@@ -122,7 +122,7 @@
   ] as const;
   type DurationKey = (typeof DURATION_FIELDS)[number][0];
   const WARMUP_LABEL = DURATION_FIELDS[0][1];
-  const STAGE_FIELDS = DURATION_FIELDS.slice(1);
+  const [, ...STAGE_FIELDS] = DURATION_FIELDS;
   function sameDuration(
     a: RunnerConfig["duration"],
     b: RunnerConfig["duration"],
@@ -159,17 +159,17 @@
     rejected = accepted ? null : field;
     if (!accepted) announce(rejection);
   }
+  // Escape drops a typed number; the sheet closes on the next one. Bound as a
+  // capture listener on the field, so it runs before the sheet's own.
+  function keepOnEscape(event: KeyboardEvent, current: number) {
+    const input = event.currentTarget as HTMLInputElement;
+    if (event.key !== "Escape" || input.value === String(current)) return;
+    input.value = String(current);
+    event.preventDefault();
+  }
   const rejection = $derived(
     store.startError || "This change cannot apply to the current run.",
   );
-  // Stage times move in half seconds; warmup, a fraction of a second, in tenths.
-  const STEP_MS: Record<DurationKey, number> = {
-    warmupMs: 100,
-    latencyMs: 500,
-    downloadMs: 500,
-    uploadMs: 500,
-    bidirectionalMs: 500,
-  };
   function applyDuration(key: DurationKey, value: number): boolean {
     const current = store.config.duration[key];
     const accepted =
@@ -181,20 +181,19 @@
     if (!accepted) announce(rejection);
     return accepted;
   }
-  function nudge(key: DurationKey, delta: number) {
-    applyDuration(key, clampDuration(key, store.config.duration[key] + delta));
-  }
-  function setSeconds(key: DurationKey, event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    const step = STEP_MS[key];
-    const raw = input.valueAsNumber;
-    const value = Number.isFinite(raw)
-      ? clampDuration(key, Math.round((raw * 1000) / step) * step)
-      : store.config.duration[key];
-    const accepted = applyDuration(key, value);
-    input.value = String(
-      (accepted ? value : store.config.duration[key]) / 1000,
-    );
+  // A stage stays within what every selected server admits.
+  const maxMs = (key: DurationKey) =>
+    key === "warmupMs"
+      ? DURATION_LIMITS.warmupMs[1]
+      : Math.min(DURATION_LIMITS[key][1], store.stageLimit.ms);
+  // Warmup moves in tenths; a stage's step grows with it, so the buttons reach an hour as readily as a second.
+  function stepMs(key: DurationKey, ms: number, direction: 1 | -1) {
+    if (key === "warmupMs") return 100;
+    const from = direction < 0 ? ms - 1 : ms;
+    if (from < 10_000) return 500;
+    if (from < 60_000) return 1_000;
+    if (from < 600_000) return 10_000;
+    return from < 3_600_000 ? 60_000 : 300_000;
   }
   function setBidirectional(enabled: boolean) {
     controller.configureRun({
@@ -206,14 +205,16 @@
       ? DURATION_FIELDS
       : DURATION_FIELDS.filter(([key]) => key !== "bidirectionalMs"),
   );
+  const presetName = (preset: Preset) =>
+    preset[0].toUpperCase() + preset.slice(1);
   function presetTip(preset: Preset) {
-    const name = preset[0].toUpperCase() + preset.slice(1);
+    const name = presetName(preset);
     if (preset === "custom") return `${name}\nSet each stage's time`;
     const times = DURATION_PRESETS[preset];
     return [
       name,
       ...activeDurationFields.map(
-        ([key, label]) => `${label} ${fmtDuration(times[key])}`,
+        ([key, label]) => `${label} ${fmtStageTime(times[key])}`,
       ),
     ].join("\n");
   }
@@ -290,7 +291,7 @@
   // Settings stays mounted: only a path problem is worth interrupting for.
   announceChanges(() =>
     READINESS[readiness].tone === "err" || readiness === "blocked"
-      ? `Connection paths: ${READINESS[readiness].label}`
+      ? `Connection: ${READINESS[readiness].label}`
       : "",
   );
 </script>
@@ -302,35 +303,15 @@
 {/snippet}
 
 {#snippet stepper(key: DurationKey, label: string)}
-  {@const [min, max] = DURATION_LIMITS[key]}
-  {@const ms = store.config.duration[key]}
-  <span class="stepper" role="group" aria-label="{label} time">
-    <button
-      type="button"
-      class="btn btn-icon btn-quiet"
-      aria-label="Shorter {label}"
-      disabled={store.preparing || ms <= min}
-      onclick={() => nudge(key, -STEP_MS[key])}>−</button
-    >
-    <input
-      type="number"
-      min={min / 1000}
-      max={max / 1000}
-      step={STEP_MS[key] / 1000}
-      disabled={store.preparing}
-      value={ms / 1000}
-      aria-label="{label} in seconds"
-      onchange={(event) => setSeconds(key, event)}
-    />
-    <span class="unit">s</span>
-    <button
-      type="button"
-      class="btn btn-icon btn-quiet"
-      aria-label="Longer {label}"
-      disabled={store.preparing || ms >= max}
-      onclick={() => nudge(key, STEP_MS[key])}>+</button
-    >
-  </span>
+  <TimeStepper
+    {label}
+    ms={store.config.duration[key]}
+    min={DURATION_LIMITS[key][0]}
+    max={maxMs(key)}
+    step={(ms, direction) => stepMs(key, ms, direction)}
+    disabled={store.preparing}
+    onChange={(ms) => applyDuration(key, ms)}
+  />
 {/snippet}
 
 {#snippet toggle(
@@ -376,18 +357,23 @@
   <section class="group">
     <div class="group-head">
       <h3><span {@attach tooltip(() => JARGON.stageTime)}>Duration</span></h3>
-      <span class="aside">{fmtDuration(store.totalEtaMs, 0)} in total</span>
+      <span class="aside"
+        ><Roll
+          text={fmtDuration(store.totalEtaMs, 0)}
+          rank={store.totalEtaMs}
+        /> in total</span
+      >
     </div>
     <div class="kv">
       <div class="presets">
         <div class="segmented" role="group" aria-label="Duration preset">
-          {#each PRESETS as preset}
+          {#each PRESETS as preset (preset)}
             <button
               type="button"
               aria-pressed={durationMode === preset}
               disabled={store.preparing}
               {@attach tooltip(() => presetTip(preset))}
-              onclick={() => setPreset(preset)}>{preset}</button
+              onclick={() => setPreset(preset)}>{presetName(preset)}</button
             >
           {/each}
         </div>
@@ -406,23 +392,30 @@
         />
       </div>
       {#if durationMode === "custom"}
-        {#each STAGE_FIELDS as [key, label, tone] (key)}
+        {#each STAGE_FIELDS as [key, , tone] (key)}
           {#if key !== "bidirectionalMs" || store.config.stages.bidirectional}
-            <div class="stage-row">
-              <span class="stage-name" data-tone={tone}>{label}</span>
-              {@render stepper(key, label)}
+            <div class="stage-row" transition:reveal|global>
+              <span class="stage-name" data-tone={tone}
+                >{STAGE[tone].label}</span
+              >
+              {@render stepper(key, `${STAGE[tone].label} stage`)}
             </div>
           {/if}
         {/each}
       {/if}
       <div class="stage-row">
-        <span {@attach term(() => JARGON.warmup)}>{WARMUP_LABEL}</span>
+        <span
+          class="stage-name"
+          data-tone="warmup"
+          {@attach term(() => JARGON.warmup)}>{WARMUP_LABEL}</span
+        >
         {#if durationMode === "custom"}
-          {@render stepper("warmupMs", WARMUP_LABEL)}
+          {@render stepper("warmupMs", "warmup")}
         {:else}
-          <span class="value"
-            >{fmtDuration(store.config.duration.warmupMs)}</span
-          >
+          <Roll
+            text={fmtStageTime(store.config.duration.warmupMs)}
+            rank={store.config.duration.warmupMs}
+          />
         {/if}
       </div>
       {@render toggle(
@@ -440,9 +433,12 @@
         store.preparing,
       )}
     </div>
+    {#if store.stageLimitError}<p class="notice" data-tone="warn" role="status">
+        {store.stageLimitError}
+      </p>{/if}
     {@render rejectedHint("duration")}
     {#if running}
-      <p class="hint">Changes apply to the current and unstarted stages.</p>
+      <p class="hint">Changes apply to the current and upcoming stages.</p>
     {/if}
   </section>
 
@@ -495,7 +491,7 @@
         setVizAuto,
       )}
       {#if !vizAuto}
-        <label>
+        <label transition:reveal>
           <span {@attach tooltip(() => JARGON.gaugeMax)}>Maximum</span>
           <span class="field-unit">
             <input
@@ -503,6 +499,7 @@
               min="1"
               value={vizDisplay}
               onchange={setVizMax}
+              onkeydowncapture={(event) => keepOnEscape(event, vizDisplay)}
             />
             <span class="unit">{vizUnit}</span>
           </span>
@@ -516,7 +513,7 @@
     <h3>History</h3>
     <div class="kv">
       {@render toggle(
-        "Save completed results on this device",
+        "Save results in this browser",
         JARGON.saveResults,
         store.savingResults,
         (enabled) =>
@@ -556,7 +553,7 @@
         </label>
       {/each}
       {@render toggle(
-        "Skip loaded latency when latency is off",
+        "Skip loaded latency if the Latency stage is off",
         JARGON.skipLoadedLatency,
         store.config.skipLoadedLatencyWhenStageOff,
         (skipLoadedLatencyWhenStageOff) =>
@@ -583,7 +580,7 @@
           )}
           >{forced
             ? "Streams per server and direction"
-            : "Maximum H1 streams per direction"}</span
+            : "HTTP/1.1 stream limit per direction"}</span
         >
         <input
           type="number"
@@ -592,6 +589,8 @@
           step="1"
           disabled={running || store.preparing}
           value={store.config.transferStreams.count}
+          onkeydowncapture={(event) =>
+            keepOnEscape(event, store.config.transferStreams.count)}
           onchange={(event) =>
             commitNumber(
               event,
@@ -645,7 +644,7 @@
   open={resetConfirmOpen}
   id="settings-reset-confirm"
   title="Reset settings?"
-  description="Restore test, display and history-saving settings to their defaults? Your theme, panel layout and saved results are kept."
+  description="Test, display and history-saving settings return to their defaults. Your theme, panel layout and saved results are kept."
   cancelLabel="Keep settings"
   confirmLabel="Reset settings"
   onCancel={() => (resetConfirmOpen = false)}
@@ -656,6 +655,12 @@
   .settings {
     display: grid;
     gap: var(--space-5);
+    container: settings / inline-size;
+  }
+  .group-head > .aside {
+    color: var(--text-soft);
+    font: var(--role-label);
+    font-variant-numeric: tabular-nums;
   }
   .presets {
     padding-block: var(--space-3) 0;
@@ -665,55 +670,18 @@
   }
   .presets button {
     flex: 1 1 0;
-    text-transform: capitalize;
+    min-width: max-content;
   }
   .kv > .presets + .strip-row {
     border-top: 0;
   }
+  /* The strip keeps its own spacing. */
   .strip-row {
     display: block;
-  }
-  .stage-name {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .stage-name::before {
-    content: "";
-    width: 7px;
-    height: 7px;
-    border-radius: var(--r-full);
-    background: var(--tone);
+    padding-block: 0;
   }
   .stage-row {
     align-items: center;
-  }
-  .stage-row .value {
-    font-variant-numeric: tabular-nums;
-  }
-  /* − time + : the field keeps its value editable, the buttons step it. */
-  .stepper {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    padding: 2px;
-    border-radius: var(--r-chrome);
-    background: var(--track);
-  }
-  .stepper .btn {
-    --control-h: 28px;
-    width: 28px;
-    font: var(--w-normal) var(--type-lg) / 1 var(--font-sans);
-  }
-  .kv .stepper input {
-    width: 3.5rem;
-    height: 28px;
-    padding: 0;
-    border: 0;
-    background: none;
-    box-shadow: none;
-    font-variant-numeric: tabular-nums;
-    text-align: end;
   }
   .unit {
     margin-inline: 2px 4px;
@@ -745,9 +713,6 @@
     border-color: var(--brand-line);
     box-shadow: var(--ring-halo);
   }
-  .field-unit:has(input:disabled) {
-    opacity: 0.5;
-  }
   .kv .field-unit input {
     flex: 1;
     width: 0;
@@ -767,6 +732,16 @@
   }
   .units > span {
     margin-inline-end: auto;
+  }
+  /* A narrow sheet stacks every stepper row and the units row alike, so no row wraps where its neighbour does not. */
+  @container settings (max-width: 320px) {
+    .stage-row:has(:global(.stepper)) {
+      flex-flow: column nowrap;
+      align-items: flex-start;
+    }
+    .units > span {
+      flex-basis: 100%;
+    }
   }
   .kv select {
     width: auto;

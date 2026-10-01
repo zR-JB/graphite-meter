@@ -1,9 +1,13 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { warmUp } from "../actions/intent";
+  import { scrub } from "../actions/scrub";
+  import { inView } from "../actions/inView";
   import { fmtDuration, formatLatency } from "../format";
   import {
     nearestAt,
-    stageGraph,
+    stageGraphGeometry,
+    drawStageGraph,
     type GraphPoint,
     type LatencyPoint,
   } from "../presentation/stageGraph";
@@ -42,9 +46,10 @@
   const TRACK = 20;
   let width = $state(0);
   let plotHeight = $state(0);
-  const graph = $derived(
+  let seen = $state(false);
+  const geometry = $derived(
     width && plotHeight
-      ? stageGraph({
+      ? stageGraphGeometry({
           lanes,
           latency,
           start,
@@ -55,11 +60,13 @@
           width,
           plotHeight,
           trackHeight: TRACK,
-          head,
         })
       : null,
   );
-  const hasData = $derived(!!graph?.bins.some((lane) => lane.length));
+  const graph = $derived(
+    geometry && drawStageGraph(geometry, seen ? head : null),
+  );
+  const hasData = $derived(!!geometry?.bins.some((lane) => lane.length));
 
   let hoverT = $state<number | null>(null);
   let keyboard = false;
@@ -68,7 +75,7 @@
     lanes.map((lane) => lane.filter((point) => point.t >= start)),
   );
   const hover = $derived.by(() => {
-    if (hoverT === null || !graph || !hasData) return null;
+    if (hoverT === null || !geometry || !hasData) return null;
     const rates = samples.map((lane) => nearestAt(lane, hoverT!));
     const at = rates.find(Boolean)!.t;
     const reply = nearestAt(latency, at);
@@ -85,33 +92,33 @@
     };
   });
 
-  let pointerX = 0;
   let box: HTMLElement | undefined = $state();
-  function track() {
-    if (!box) return;
-    const rect = box.getBoundingClientRect();
-    const ratio = Math.min(1, Math.max(0, (pointerX - rect.left) / rect.width));
-    hoverT = start + ratio * span;
-  }
-  // A readout answers the pointer at once; only explainers wait for a resting pointer.
-  function onMove(event: PointerEvent) {
-    if (event.pointerType !== "mouse") return;
-    pointerX = event.clientX;
-    track();
-  }
-  function onDown(event: PointerEvent) {
-    pointerX = event.clientX;
-    track();
-  }
-  // A tap keeps its readout until focus moves on; touch always leaves as the finger lifts.
-  function onLeave(event: PointerEvent) {
-    if (event.pointerType !== "mouse") return;
-    if (hoverT !== null) warmUp();
+  function clear() {
     if (!keyboard) hoverT = null;
   }
+  // A readout answers the pointer at once; only explainers wait for a pause.
+  const pointer = scrub({
+    read(event) {
+      if (!box) return;
+      const rect = box.getBoundingClientRect();
+      const ratio = (event.clientX - rect.left) / rect.width;
+      hoverT = start + Math.min(1, Math.max(0, ratio)) * span;
+    },
+    clear,
+  });
+  function onLeave(event: PointerEvent) {
+    if (event.pointerType === "touch") return;
+    if (hoverT !== null) warmUp();
+    clear();
+  }
+  // A new run's graph starts without the last one's reading.
+  $effect(() => {
+    void start;
+    untrack(clear);
+  });
   // Arrow keys walk the drawn bins from the newest; the readout names the sample nearest where it stops.
   function stepTo(key: string): boolean {
-    const times = graph?.bins.find((lane) => lane.length)?.map((p) => p.t);
+    const times = geometry?.bins.find((lane) => lane.length)?.map((p) => p.t);
     if (!times?.length) return false;
     const index =
       hoverT === null
@@ -144,6 +151,7 @@
 </script>
 
 <div
+  {@attach inView((value) => (seen = value))}
   class="graph"
   data-tone={tone}
   bind:this={box}
@@ -157,8 +165,10 @@
   aria-valuetext={hover
     ? `${hover.time}: ${hover.rows.map((row) => `${row.label} ${row.value}`).join(", ")}`
     : undefined}
-  onpointermove={onMove}
-  onpointerdown={onDown}
+  onpointerdown={pointer.down}
+  onpointermove={pointer.move}
+  onpointerup={pointer.up}
+  onpointercancel={pointer.cancel}
   onpointerleave={onLeave}
   onfocus={(event) => {
     if (!(event.currentTarget as HTMLElement).matches(":focus-visible")) return;
@@ -196,7 +206,7 @@
           <path class="line" class:second={index > 0} d={line} />
         {/each}
         {#each graph.heads as dot, index (index)}
-          <circle class="head" cx={dot.x} cy={dot.y} r="3" />
+          <circle class="head" cx={dot.x} cy={dot.y} r="3.5" />
         {/each}
         {#if hover}<line
             class="cursor"
@@ -212,14 +222,14 @@
     {#if graph}
       <svg {width} height={TRACK} aria-hidden="true">
         {#if graph.baselineY !== null}<line
-            class="baseline"
+            class="reply-median"
             x1="0"
             x2={width}
             y1={graph.baselineY}
             y2={graph.baselineY}
           />{/if}
         {#each graph.dots as dot, index (index)}
-          <circle class="dot" cx={dot.x} cy={dot.y} r="1.6" />
+          <circle class="reply" cx={dot.x} cy={dot.y} r="1.6" />
         {/each}
         {#if hover}<line
             class="cursor"
@@ -255,8 +265,10 @@
     gap: 6px;
     height: 100%;
     min-height: 0;
+    border-radius: var(--r-well);
     cursor: crosshair;
     outline-offset: 4px;
+    touch-action: pan-y pinch-zoom;
   }
   .graph[tabindex="-1"] {
     cursor: default;
@@ -274,6 +286,11 @@
     inset: 0;
     overflow: visible;
   }
+  /* Hairlines snap to device pixels instead of splitting across two rows. */
+  .axis,
+  .cursor {
+    shape-rendering: crispEdges;
+  }
   .axis {
     stroke: var(--border);
     stroke-width: 1;
@@ -290,16 +307,6 @@
   }
   .head {
     fill: var(--tone);
-    stroke: var(--canvas);
-    stroke-width: 2;
-  }
-  .baseline {
-    stroke: color-mix(in oklab, var(--phase-latency) 55%, transparent);
-    stroke-dasharray: 2 3;
-  }
-  .dot {
-    fill: var(--tone);
-    opacity: 0.7;
   }
   .cursor {
     stroke: color-mix(in oklab, var(--text) 45%, transparent);
@@ -312,8 +319,9 @@
     white-space: nowrap;
     translate: 10px 0;
   }
+  /* Whole pixels, so the card's hairlines stay crisp wherever it flips. */
   .readout.flip {
-    translate: calc(-100% - 10px) 0;
+    translate: round(calc(-100% - 10px), 1px) 0;
   }
   .readout-time {
     color: var(--text-soft);

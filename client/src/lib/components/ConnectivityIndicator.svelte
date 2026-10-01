@@ -1,6 +1,6 @@
 <script lang="ts">
   import { store } from "../state/store.svelte";
-  import { tooltip } from "../actions/tooltip";
+  import { tooltipAction } from "../actions/tooltip";
   import { announceChanges } from "../presentation/announcer.svelte";
   import {
     CONNECTIVITY,
@@ -59,11 +59,7 @@
   );
 </script>
 
-<div
-  class="pulse"
-  tabindex="-1"
-  {@attach tooltip(() => [label, ...facts].join("\n"))}
->
+<div class="pulse" use:tooltipAction={[label, ...facts].join("\n")}>
   <span class="sr-only">{[label, ...facts].join(". ")}</span>
   <span class="status-dot" data-tone={state.tone}></span>
   <svg class="spark" viewBox="0 0 36 16" aria-hidden="true">
@@ -77,6 +73,14 @@
     align-items: center;
     gap: var(--space-2);
     padding: 0 6px;
+  }
+  /* A finger gets a full hit target for the facts. */
+  @media (pointer: coarse) {
+    .pulse {
+      justify-content: center;
+      min-width: var(--hit);
+      min-height: var(--hit);
+    }
   }
   .spark {
     width: 36px;

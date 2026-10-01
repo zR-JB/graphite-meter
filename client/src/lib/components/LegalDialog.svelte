@@ -1,7 +1,8 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import Dialog from "./Dialog.svelte";
   import Icon from "./Icon.svelte";
-  import { tooltip } from "../actions/tooltip";
+  import { keyHint, tooltip } from "../actions/tooltip";
   import { loadLegal, retryLegal } from "../legal/loader";
   import type { LegalAbout } from "../legal/types";
 
@@ -12,7 +13,7 @@
 
   let { open, onClose }: Props = $props();
   let loadState = $state<"loading" | "ready" | "error">("loading");
-  let data = $state<LegalAbout | null>(null);
+  let data = $state.raw<LegalAbout | null>(null);
 
   function load(request = loadLegal) {
     loadState = "loading";
@@ -27,7 +28,10 @@
   }
 
   $effect(() => {
-    if (open) load();
+    if (open)
+      untrack(() => {
+        if (!data) load();
+      });
   });
 
   const ECOSYSTEM: Record<string, string> = {
@@ -56,8 +60,8 @@
       <button
         class="btn btn-icon btn-quiet"
         type="button"
-        aria-label="Close"
-        {@attach tooltip(() => "Close (Esc)")}
+        aria-label="Close About & legal"
+        {@attach tooltip(() => `Close${keyHint("Esc")}`)}
         onclick={onClose}><Icon name="close" /></button
       >
     </div>

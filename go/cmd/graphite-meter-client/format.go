@@ -99,11 +99,24 @@ func fmtAdded(d time.Duration) string {
 	return "+" + fixedMs(d.Abs())
 }
 
+// fmtSetting reads like the browser's times: ms, then seconds, then minutes, then hours in whole minutes.
 func fmtSetting(d time.Duration) string {
-	if d < time.Second {
+	switch {
+	case d < time.Second:
 		return fmt.Sprintf("%d ms", d.Milliseconds())
+	case d < time.Minute:
+		return strconv.FormatFloat(d.Seconds(), 'f', -1, 64) + " s"
 	}
-	return strconv.FormatFloat(d.Seconds(), 'f', -1, 64) + " s"
+	whole := d.Round(time.Second)
+	large, small, unit, rest := whole/time.Minute, whole%time.Minute/time.Second, "min", "s"
+	if d >= time.Hour {
+		minutes := d.Round(time.Minute) / time.Minute
+		large, small, unit, rest = minutes/60, minutes%60, "h", "min"
+	}
+	if small == 0 {
+		return fmt.Sprintf("%d %s", large, unit)
+	}
+	return fmt.Sprintf("%d %s %d %s", large, unit, small, rest)
 }
 
 func fmtClock(d time.Duration) string {
@@ -181,7 +194,7 @@ func wrapParts(parts []string, w int) []string {
 		switch {
 		case line == "":
 			line = part
-		case len([]rune(line))+3+len([]rune(part)) <= w:
+		case lipgloss.Width(line)+3+lipgloss.Width(part) <= w:
 			line += " · " + part
 		default:
 			lines = append(lines, line)

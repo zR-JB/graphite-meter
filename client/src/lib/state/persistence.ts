@@ -37,6 +37,8 @@ export const DEFAULT_HISTORY_COLUMNS: readonly HistoryColumn[] = [
 ];
 
 export const DEFAULT_DOCK_WIDTH = { left: 420, right: 420 };
+/** History's list takes this share of the width beside a result. */
+export const DEFAULT_HISTORY_SPLIT = 0.4;
 
 interface PersistedState {
   config: RunnerConfig;
@@ -48,6 +50,7 @@ interface PersistedState {
   resultHistoryPreference: ResultHistoryPreference;
   historyColumns: HistoryColumn[];
   dockWidth: { left: number; right: number };
+  historySplit: number;
 }
 
 export function systemThemeDefault(): "dark" | "light" {
@@ -68,6 +71,7 @@ export function defaultPersisted(): PersistedState {
     resultHistoryPreference: "default",
     historyColumns: [...DEFAULT_HISTORY_COLUMNS],
     dockWidth: { ...DEFAULT_DOCK_WIDTH },
+    historySplit: DEFAULT_HISTORY_SPLIT,
   };
 }
 
@@ -107,6 +111,8 @@ const positive = <T>(value: unknown, fallback: T): number | T =>
   typeof value === "number" && Number.isFinite(value) && value >= 1
     ? value
     : fallback;
+const share = (value: unknown, fallback: number) =>
+  typeof value === "number" && value >= 0 && value <= 1 ? value : fallback;
 const CADENCES = ["reply-driven", "fast", "medium", "slow"] as const;
 
 export function loadPersisted(): PersistedState {
@@ -207,6 +213,7 @@ export function loadPersisted(): PersistedState {
       left: positive(dock.left, DEFAULT_DOCK_WIDTH.left),
       right: positive(dock.right, DEFAULT_DOCK_WIDTH.right),
     },
+    historySplit: share(saved.historySplit, DEFAULT_HISTORY_SPLIT),
   };
 }
 

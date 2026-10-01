@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"charm.land/bubbles/v2/help"
@@ -95,7 +96,6 @@ type model struct {
 
 	runSeq      int
 	events      <-chan goclient.Event
-	waiting     bool
 	run         *runState
 	next        *runState
 	stopPrompt  bool
@@ -144,6 +144,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.help.Styles, m.spin.Style = m.st.helpStyles(), m.st.accent
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.help.SetWidth(max(msg.Width-2, 1))
+	case tea.MouseWheelMsg:
+		if m.edit == nil && m.auth == nil && !m.stopPrompt {
+			m.body = m.bodyViewport(m.layout())
+			m.body, _ = m.body.Update(msg)
+		}
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case spinner.TickMsg:
@@ -292,7 +298,8 @@ func delta(msg tea.KeyPressMsg) int {
 
 func (m *model) navigate(msg tea.KeyPressMsg) {
 	m.row, m.notice = min(max(m.row+delta(msg), 0), len(m.rows())-1), ""
-	_, line := m.setupList(m.width)
+	lw, _, _ := columns(max(m.width, minWidth) - 2)
+	_, line := m.setupList(lw - 4)
 	m.body = m.bodyViewport(m.layout())
 	m.body.EnsureVisible(1+line, 0, 0)
 }
@@ -301,17 +308,18 @@ func (m model) handleTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
 	if !m.animating() {
 		return m, nil
 	}
-	m.now = msg.Time
-	if m.run != nil {
-		for dir, sample := range m.run.rates {
-			m.run.shown[dir] += (sample.BytesPerSec - m.run.shown[dir]) * 0.35
-		}
-	}
 	var cmd tea.Cmd
 	m.spin, cmd = m.spin.Update(msg)
-	if m.running() && !m.waiting {
-		m.waiting = true
-		cmd = tea.Batch(cmd, waitEvents(m.runSeq, m.events))
+	if cmd == nil {
+		return m, nil
+	}
+	dt := max(msg.Time.Sub(m.now).Seconds(), 0)
+	m.now = msg.Time
+	weight := 1 - math.Exp(-dt/0.12)
+	if m.run != nil {
+		for dir, sample := range m.run.rates {
+			m.run.shown[dir] += (sample.BytesPerSec - m.run.shown[dir]) * weight
+		}
 	}
 	return m, cmd
 }

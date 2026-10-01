@@ -1,3 +1,4 @@
+import type { LatencyBucket, Phase } from "../runner/contract";
 import { monotoneCurve } from "./smoothPath";
 
 export interface GraphPoint {
@@ -8,6 +9,17 @@ export interface LatencyPoint {
   t: number;
   ms: number;
 }
+
+/** A stage's reply buckets as points; a bucket of timeouts has none. */
+export const replies = (
+  history: readonly LatencyBucket[],
+  phase: Phase,
+): LatencyPoint[] =>
+  history.flatMap((b) =>
+    b.phase === phase && b.medianRttMs !== null
+      ? [{ t: b.t, ms: b.medianRttMs }]
+      : [],
+  );
 
 export interface StageGraphInput {
   /** One lane per direction, `t` in ms on the run's timeline; bidirectional has two. */
@@ -42,19 +54,32 @@ export interface StageGraph {
 const BIN_PX = 4;
 const TOP_PAD = 3;
 
-const path = (points: { x: number; y: number }[]) =>
-  points.length < 2
-    ? ""
-    : `M${points[0].x} ${points[0].y}` +
-      monotoneCurve(points)
-        .map(
-          ({ control1: a, control2: b, end: e }) =>
-            `C${a.x} ${a.y} ${b.x} ${b.y} ${e.x} ${e.y}`,
-        )
-        .join("");
+interface PlotPoint {
+  x: number;
+  y: number;
+}
+const curves = (points: PlotPoint[]) =>
+  monotoneCurve(points).map(
+    ({ control1: a, control2: b, end: e }) =>
+      `C${a.x} ${a.y} ${b.x} ${b.y} ${e.x} ${e.y}`,
+  );
+const move = (point: PlotPoint) => `M${point.x} ${point.y}`;
+const areaOf = (line: string, points: PlotPoint[], height: number) =>
+  line ? `${line}L${points.at(-1)!.x} ${height}L${points[0].x} ${height}Z` : "";
+
+export interface StageGraphGeometry extends StageGraph {
+  points: PlotPoint[][];
+  segments: string[][];
+  prefixes: { count: number; line: string }[];
+  x: (t: number) => number;
+  y: (v: number) => number;
+  plotHeight: number;
+}
 
 /** Lanes binned to the plot's width over a zero baseline; latency replies as dots around the idle median. */
-export function stageGraph(input: StageGraphInput): StageGraph {
+export function stageGraphGeometry(
+  input: Omit<StageGraphInput, "head">,
+): StageGraphGeometry {
   const { start, span, width, plotHeight, trackHeight } = input;
   const columns = Math.max(8, Math.floor(width / BIN_PX));
   const x = (t: number) =>
@@ -81,24 +106,13 @@ export function stageGraph(input: StageGraphInput): StageGraph {
         v: sums[i] / counts[i],
       }));
   });
-  const heads = input.head
-    ? input.head.values.flatMap((value, lane) =>
-        value == null || !bins[lane]?.length
-          ? []
-          : [{ lane, x: x(input.head!.t), y: y(value) }],
-      )
-    : [];
-  const drawn = bins.map((lane, index) => {
-    const points = lane.map((point) => ({ x: x(point.t), y: y(point.v) }));
-    const head = heads.find((h) => h.lane === index);
-    if (head && head.x > (points.at(-1)?.x ?? -1)) points.push(head);
-    return points;
-  });
-  const first = drawn[0] ?? [];
-  const area =
-    first.length < 2
-      ? ""
-      : `${path(first)}L${first.at(-1)!.x} ${plotHeight}L${first[0].x} ${plotHeight}Z`;
+  const points = bins.map((lane) =>
+    lane.map((p) => ({ x: x(p.t), y: y(p.v) })),
+  );
+  const segments = points.map(curves);
+  const lines = points.map((lane, i) =>
+    lane.length < 2 ? "" : move(lane[0]) + segments[i].join(""),
+  );
   // One scale from 0 ms, so a reply below the idle median sits below its line.
   const trackY = (ms: number) =>
     trackHeight -
@@ -108,13 +122,70 @@ export function stageGraph(input: StageGraphInput): StageGraph {
     .filter((point) => point.t >= start && point.t <= start + span)
     .map((point) => ({ ...point, x: x(point.t), y: trackY(point.ms) }));
   return {
-    lines: drawn.map(path),
-    area,
-    heads: heads.map(({ x, y }) => ({ x, y })),
+    lines,
+    area: areaOf(lines[0] ?? "", points[0] ?? [], plotHeight),
+    heads: [],
     dots,
     baselineY: input.baseline === null ? null : trackY(input.baseline),
     bins,
+    points,
+    segments,
+    prefixes: points.map(() => ({ count: -1, line: "" })),
+    x,
+    y,
+    plotHeight,
   };
+}
+
+/** Only the final two curve segments depend on the moving head; bins and latency dots stay cached. */
+export function drawStageGraph(
+  geometry: StageGraphGeometry,
+  head: StageGraphInput["head"],
+): StageGraph {
+  if (!head) return geometry;
+  const heads: PlotPoint[] = [];
+  let area = geometry.area;
+  const lines = geometry.points.map((points, lane) => {
+    const value = head.values[lane];
+    if (value == null || !points.length) return geometry.lines[lane];
+    const tip = { x: geometry.x(head.t), y: geometry.y(value) };
+    heads.push(tip);
+    let n = points.length;
+    while (n && points[n - 1].x >= tip.x) n--;
+    const prefix = geometry.prefixes[lane];
+    if (prefix.count !== n) {
+      prefix.count = n;
+      prefix.line = n
+        ? move(points[0]) +
+          geometry.segments[lane].slice(0, Math.max(0, n - 2)).join("")
+        : "";
+    }
+    const tail = [...points.slice(Math.max(0, n - 3), n), tip];
+    const line =
+      n === 0
+        ? ""
+        : prefix.line +
+          curves(tail)
+            .slice(n >= 3 ? 1 : 0)
+            .join("");
+    if (lane === 0)
+      area = line
+        ? `${line}L${tip.x} ${geometry.plotHeight}L${points[0].x} ${geometry.plotHeight}Z`
+        : "";
+    return line;
+  });
+  return {
+    lines,
+    area,
+    heads,
+    dots: geometry.dots,
+    baselineY: geometry.baselineY,
+    bins: geometry.bins,
+  };
+}
+
+export function stageGraph(input: StageGraphInput): StageGraph {
+  return drawStageGraph(stageGraphGeometry(input), input.head);
 }
 
 /** The bin and reply nearest a time, for the readout under the pointer. */

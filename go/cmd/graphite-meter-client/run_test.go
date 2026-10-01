@@ -297,7 +297,7 @@ func TestStatusLabelsFollowTheLifecycle(t *testing.T) {
 	}
 	setup := testModel(t)
 	for state, want := range map[prepareState]string{
-		prepareChecking: "Not started",
+		prepareChecking: "Checking paths",
 		prepareSignIn:   "Sign in",
 		prepareFailed:   "Test could not start",
 		prepareReady:    "Not started",
@@ -856,7 +856,7 @@ func TestChartJoinsSamplesAndBreaksOnlyAtGaps(t *testing.T) {
 	st := newStyles(true)
 	marks := []mark{{0, goclient.StageLatency}, {4, goclient.StageDownload}, {19.5, goclient.StageUpload}}
 	for _, w := range []int{36, 76, 116} {
-		chart := ansi.Strip(st.chart([]series{{st.stage[goclient.StageDownload], tr.points}}, marks, rateAxis, 20, w, 12))
+		chart := ansi.Strip(st.chart([]series{{style: st.stage[goclient.StageDownload], points: tr.points}}, marks, rateAxis, 20, w, 12))
 		lines := strings.Split(chart, "\n")
 		inked := map[int]bool{}
 		for _, line := range lines[:len(lines)-2] {

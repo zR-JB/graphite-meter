@@ -90,21 +90,16 @@
     U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF;
 }
 
-/* The room's light glides between stages as a registered colour. */
-@property --amb {
-  syntax: "<color>";
-  inherits: true;
-  initial-value: transparent;
-}
-/* Docked sheets open and close by gliding their column, so the page makes room instead of jumping. */
+/* Docked sheets open and close by gliding their column, so the page makes room instead of jumping.
+   Only the shell reads them, so a glide never restyles what it contains. */
 @property --dock-left {
   syntax: "<length>";
-  inherits: true;
+  inherits: false;
   initial-value: 0px;
 }
 @property --dock-right {
   syntax: "<length>";
-  inherits: true;
+  inherits: false;
   initial-value: 0px;
 }
 /* A stage's wash brightens while it runs and settles once measured. */
@@ -163,6 +158,8 @@
   --r-chrome: 8px;
   --r-surface: 12px;
   --r-full: 999px;
+  /* A row's wash sits 2 px inside its plate, on a radius concentric with the plate's. */
+  --r-row: calc(var(--r-chrome) - var(--hairline) - 2px);
   /* One device pixel on dense screens; field edges stay 1px for their 3:1 floor. */
   --hairline: 1px;
 
@@ -182,6 +179,8 @@
   --role-caption: var(--w-normal) var(--type-xs) / 1.5 var(--font-sans);
   --role-panel-title: var(--w-strong) var(--type-lg) / 1.25 var(--font-display);
   --role-label: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
+  /* Centred beside a larger word, a smaller one sits half their size gap high; that gap as its top margin sets it
+     on the larger word's baseline, e.g. margin-top: calc(var(--type-md) - var(--type-sm)). */
   --track-tight: -0.02em;
   --track-wide: 0.1em;
 
@@ -208,15 +207,17 @@
        for the terminal client (see DESIGN.md). */
   /* Dark fills stay above the levels where OLED pixels switch off and smear. */
   --canvas: light-dark(oklch(0.962 0.004 258), oklch(0.17 0.008 258));
-  --canvas-deep: light-dark(oklch(0.93 0.006 258), oklch(0.125 0.008 258));
+  --canvas-deep: light-dark(oklch(0.93 0.006 258), oklch(0.15 0.008 258));
   --surface-1: light-dark(oklch(0.995 0.002 258), oklch(0.215 0.009 258));
   --surface-2: light-dark(oklch(0.975 0.003 258), oklch(0.25 0.01 258));
   --surface-inset: light-dark(oklch(0.948 0.005 258), oklch(0.15 0.008 258));
   /* What floats over the instrument: sheets, popovers and menus. */
+  --sheet-solid: light-dark(oklch(0.985 0.003 258), oklch(0.195 0.009 258));
   --sheet: light-dark(
     oklch(0.985 0.003 258 / 0.88),
     oklch(0.195 0.009 258 / 0.88)
   );
+  --sheet-blur: blur(28px) saturate(1.4);
 
   --border-subtle: light-dark(
     oklch(0.3 0.02 255 / 0.08),
@@ -262,16 +263,20 @@
     oklch(0.48 0.014 255 / 0.7),
     oklch(0.7 0.014 255 / 0.62)
   );
+  /* An empty check box and an off switch share one edge. */
+  --check-edge: 1.5px solid var(--field-edge);
   --track: color-mix(in oklab, var(--text) 8%, transparent);
   --hover-wash: color-mix(in oklab, var(--text) 6%, transparent);
   --selected-wash: color-mix(in oklab, var(--text) 10%, transparent);
 
   /* Material. Shadows are one ink whose depth differs per theme: a dark canvas
-     needs a denser shadow to read at all. The grain is a cached tile. */
+     needs a denser shadow to read at all. The grain is a cached tile of
+     mid-grey noise: blended with overlay it dithers gradients by about one
+     8-bit level without lifting or darkening the page. */
   --shade: light-dark(oklch(0.25 0.02 255), oklch(0.08 0.01 255));
   --edge-light: light-dark(oklch(1 0 0 / 0.8), oklch(1 0 0 / 0.075));
   --edge-highlight: rgb(255 255 255 / 0.22);
-  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 0 0 0 0 .035'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='.3 0 0 0 .35 .3 0 0 0 .35 .3 0 0 0 .35 0 0 0 0 1'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
   --bg:
     var(--grain),
     radial-gradient(
@@ -307,7 +312,7 @@
 @media (color-gamut: p3) {
   :root {
     --phase-latency: light-dark(oklch(0.6 0.125 182), oklch(0.82 0.125 178));
-    --phase-download: light-dark(oklch(0.5 0.2 263), oklch(0.72 0.165 262));
+    --phase-download: light-dark(oklch(0.5 0.2 263), oklch(0.72 0.155 262));
     --phase-upload: light-dark(oklch(0.63 0.17 58), oklch(0.83 0.145 66));
     --phase-bidirectional: light-dark(
       oklch(0.47 0.19 352),
@@ -321,6 +326,12 @@
 @media (min-resolution: 2dppx) {
   :root {
     --hairline: 0.5px;
+  }
+}
+/* Rings and borders stay one device pixel on 3x phones, where a border snaps but a half-pixel ring would blur. */
+@media (min-resolution: 3dppx) {
+  :root {
+    --hairline: calc(1px / 3);
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -338,6 +349,14 @@
   :root {
     --glass: var(--surface-2);
     --glass-blur: none;
+    --sheet: var(--sheet-solid);
+    --sheet-blur: none;
+  }
+}
+/* Forced colours drop gradients but keep images; the grain would paint over the system canvas. */
+@media (forced-colors: active) {
+  :root {
+    --grain: none;
   }
 }
 
@@ -347,7 +366,11 @@
 .status-dot {
   --tone-line: color-mix(in oklab, var(--tone) 38%, var(--border));
   --tone-wash: color-mix(in oklab, var(--tone) 14%, transparent);
-  --tone-ink: color-mix(in oklab, var(--tone) 80%, var(--text));
+  /* A light page needs more text in the mix for small type to keep 4.5:1 on a running card's wash. */
+  --tone-ink: light-dark(
+    color-mix(in oklab, var(--tone) 70%, var(--text)),
+    color-mix(in oklab, var(--tone) 80%, var(--text))
+  );
 }
 [data-tone="warmup"] {
   --tone: var(--phase-warmup);
@@ -470,18 +493,21 @@
       scrollbar-width: thin;
     }
   }
-  ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
-  }
-  ::-webkit-scrollbar-thumb {
-    border: 3px solid transparent;
-    border-radius: var(--r-full);
-    background: var(--border-strong) padding-box;
-  }
-  ::-webkit-scrollbar-track,
-  ::-webkit-scrollbar-corner {
-    background: transparent;
+  /* A finger keeps the platform's overlay bars; a styled bar would take 10 px of every touch screen's width. */
+  @media (pointer: fine) {
+    ::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+    ::-webkit-scrollbar-thumb {
+      border: 3px solid transparent;
+      border-radius: var(--r-full);
+      background: var(--border-strong) padding-box;
+    }
+    ::-webkit-scrollbar-track,
+    ::-webkit-scrollbar-corner {
+      background: transparent;
+    }
   }
   body {
     background: var(--canvas);
@@ -545,7 +571,7 @@
     background: var(--surface-2);
     box-shadow: var(--elev-tile);
     color: var(--text-muted);
-    font: var(--w-strong) var(--type-2xs) / 1 var(--font-mono);
+    font: 500 var(--type-2xs) / 1 var(--font-mono);
   }
   ::selection {
     background: color-mix(in oklab, var(--brand) 32%, transparent);
@@ -604,6 +630,11 @@
     --btn-line: var(--border-strong);
     color: var(--text);
   }
+  /* A switch drawn as a button is off as its edge alone, like a switch's empty track. */
+  .btn[aria-checked="false"] {
+    background-color: transparent;
+    box-shadow: inset 0 0 0 var(--hairline) var(--btn-line);
+  }
   @media (hover: hover) {
     .btn:hover:not(:disabled, [aria-disabled="true"]) {
       --btn-line: var(--border-strong);
@@ -644,24 +675,26 @@
     background: transparent;
     box-shadow: none;
   }
-  .head-actions .btn[aria-expanded="true"] {
-    background: var(--hover-wash) padding-box;
-  }
   @media (hover: hover) {
-    :is(.btn-quiet, .head-actions .btn):hover:not(:disabled) {
+    :is(.btn-quiet, .head-actions .btn):hover:not(
+        :disabled,
+        [aria-disabled="true"]
+      ) {
       --btn-line: transparent;
       background: var(--hover-wash) padding-box;
     }
   }
+  /* A press, or a toggle whose surface is open, takes the selected wash; after hover, so it wins there. */
+  :is(.btn-quiet, .head-actions .btn):is(
+      :active,
+      [aria-expanded="true"],
+      [aria-pressed="true"]
+    ):not(:disabled, [aria-disabled="true"]) {
+    background: var(--selected-wash) padding-box;
+  }
   @media (pointer: coarse) {
     .btn {
       --hit-pad: 6px;
-    }
-    .menu > button {
-      min-height: var(--hit);
-    }
-    .segmented {
-      min-height: var(--hit);
     }
   }
 
@@ -688,6 +721,8 @@
     border-radius: var(--r-full);
     background: var(--tone);
     box-shadow: 0 0 0 3px var(--tone-wash);
+    /* The dot is the state itself; forced colours would paint it the canvas. */
+    forced-color-adjust: none;
   }
   .status-dot.inline {
     display: inline-block;
@@ -695,6 +730,53 @@
     height: 0.5em;
     vertical-align: middle;
     box-shadow: none;
+  }
+  /* A stage or phase named in a row leads with a dot in its tone (data-tone). */
+  .stage-name {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .stage-name::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: var(--r-full);
+    background: var(--tone);
+    forced-color-adjust: none;
+  }
+  /* A stage's area is its light on the page: a rule in its hue and a wash that fades out, no box. */
+  .stage-area {
+    --wash: 0%;
+    border-top: 2px solid
+      color-mix(in oklab, var(--tone) var(--rule, 100%), transparent);
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--tone) var(--wash), transparent),
+      transparent 78%
+    );
+    transition:
+      --wash var(--dur-graph) var(--ease-out),
+      border-color var(--dur-graph) var(--ease-out);
+  }
+  .stage-area:is(.complete, .partial, .failed, .stopped) {
+    --wash: 9%;
+  }
+  .stage-area:is(.active, .recovering) {
+    --wash: 16%;
+  }
+  .stage-area:is(.pending, .not-run) {
+    --rule: 30%;
+  }
+  /* A latency track: each reply bucket a dot in its stage's hue over the dashed idle median. */
+  .reply {
+    fill: var(--tone);
+    opacity: 0.7;
+  }
+  .reply-median {
+    stroke: color-mix(in oklab, var(--phase-latency) 55%, transparent);
+    stroke-dasharray: 2 3;
+    shape-rendering: crispEdges;
   }
 
   .notice {
@@ -711,6 +793,14 @@
   }
   .notice :where(strong) {
     color: var(--tone);
+  }
+
+  /* A sticky head over the page repaints the page itself, so it never reads as a slab. The grain is noise, so
+     its tile needs no alignment with the page's; a fixed attachment would shimmer against it whenever the
+     column glides or the head slides in. */
+  .page-fill {
+    background: var(--grain), var(--canvas);
+    background-blend-mode: overlay;
   }
 
   .sheet {
@@ -781,6 +871,31 @@
     }
   }
 
+  /* A slider straddling an edge (actions/resize.ts); its ink line lights the edge on hover or focus. */
+  .resize-handle {
+    position: absolute;
+    inset-block: 0;
+    z-index: 3;
+    width: 12px;
+    cursor: col-resize;
+    touch-action: none;
+  }
+  .resize-handle::after {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    left: 50%;
+    width: 2px;
+    translate: -50%;
+    transition: background-color var(--dur-hover) var(--ease-out);
+  }
+  .resize-handle:is(:hover, :focus-visible)::after {
+    background: var(--brand);
+  }
+  .resize-handle:focus-visible {
+    outline: none;
+  }
+
   /* A plate whose direct children are rows; a control sets its row's height. */
   .kv {
     display: grid;
@@ -790,6 +905,7 @@
     background: var(--surface-1);
     box-shadow: var(--elev-tile);
     font: var(--role-row);
+    text-wrap: pretty;
   }
   .kv > * {
     display: flex;
@@ -812,6 +928,13 @@
   .kv:not(.choices) > * + * {
     border-top: var(--hairline) solid var(--border-subtle);
   }
+  /* A locked row dims as one, like a disabled button; a select's own fade would compound it. */
+  .kv:not(.choices) > label:has(:disabled) {
+    opacity: 0.5;
+  }
+  .kv:not(.choices) > label select:disabled {
+    opacity: 1;
+  }
   .kv dt {
     flex: 0 0 var(--kv-label);
     color: var(--text-soft);
@@ -820,6 +943,7 @@
     flex: 1 1 10rem;
     min-width: 0;
     overflow-wrap: anywhere;
+    text-wrap: pretty;
   }
   .kv dd .aside {
     margin-inline-start: var(--space-2);
@@ -840,15 +964,19 @@
     gap: var(--space-2) var(--space-3);
     min-width: 0;
     min-height: var(--row-h);
-    padding-block: 5px;
     margin-inline: calc(2px - var(--row-inset));
-    padding: 0 calc(var(--row-inset) - 2px);
-    border-radius: calc(var(--r-chrome) - 2px);
+    padding: 2px calc(var(--row-inset) - 2px);
+    border-radius: var(--r-row);
     text-align: start;
     transition: var(--transition-control);
+    --ring-offset: -2px;
+  }
+  .choices > button:focus-visible {
+    outline-offset: -2px;
   }
   @media (pointer: coarse) {
-    .choices > :is(label, button) {
+    .choices > :is(label, button),
+    .kv > .link-row {
       min-height: var(--hit);
     }
   }
@@ -856,27 +984,49 @@
     display: flex;
   }
   @media (hover: hover) {
-    :is(.choices > :is(label, button), .link-row):hover:not(
-        :has(> :disabled),
-        :disabled
-      ) {
+    .choices > :is(label, button):hover:not(:has(> :disabled), :disabled) {
       background-image: linear-gradient(var(--hover-wash) 0 0);
     }
   }
-  /* A choice's second line says what it does; the ring alone marks the chosen one. */
-  .choices small {
+  /* A choice's or a menu item's second line says what it does; the ring alone marks the chosen one. */
+  :is(.choices, .menu > button) small {
     display: block;
     margin-top: 1px;
+    overflow: hidden;
     color: var(--text-soft);
     font: var(--w-normal) var(--type-sm) / 1.35 var(--font-sans);
+    text-overflow: ellipsis;
   }
+  /* An ordinary plate row whose wash and focus ring are an inset layer, like a choice's. */
   .link-row {
+    position: relative;
+    isolation: isolate;
     align-items: center;
-    margin-inline: calc(2px - var(--row-inset));
-    padding-inline: calc(var(--row-inset) - 2px);
-    border-radius: calc(var(--r-chrome) - 2px);
     color: var(--text);
-    transition: var(--transition-control);
+  }
+  .link-row::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 2px calc(2px - var(--row-inset));
+    border-radius: var(--r-row);
+    transition: background-color var(--dur-hover) var(--ease-out);
+  }
+  @media (hover: hover) {
+    .link-row:hover:not(:has(:disabled))::before {
+      background-color: var(--hover-wash);
+    }
+  }
+  /* After hover, so the current row keeps its wash under the pointer. */
+  .link-row[aria-current]:not([aria-current="false"])::before {
+    background-color: var(--selected-wash);
+  }
+  /* The row or its own control (a switch's checkbox) may hold focus; the ring is the row's. */
+  .link-row:is(:focus-visible, :has(> :focus-visible)) {
+    outline: none;
+  }
+  .link-row:is(:focus-visible, :has(> :focus-visible))::before {
+    outline: var(--focus-ring);
   }
   .link-row :where(svg) {
     width: var(--icon);
@@ -891,12 +1041,14 @@
     place-content: center;
     width: var(--check);
     height: var(--check);
-    border: 1.5px solid var(--field-edge);
+    border: var(--check-edge);
     border-radius: var(--r-well);
     background: var(--surface-1);
     color: var(--brand-strong);
     cursor: inherit;
-    transition: var(--transition-control);
+    transition:
+      var(--transition-control),
+      border-width var(--dur-slide) var(--ease-out);
   }
   input.check[type="radio"] {
     border-radius: var(--r-full);
@@ -906,16 +1058,26 @@
     background: var(--brand);
     color: var(--text-inverse);
   }
-  input.check[type="checkbox"]:checked::after {
+  /* The check is drawn in as the box fills, and out as it empties. Individual transforms only:
+     the minifier folds a `scale` beside `transform` into it, where `:checked` cannot undo it. */
+  input.check[type="checkbox"]::after {
     content: "";
     width: 9px;
     height: 5px;
     border-left: 2px solid currentColor;
     border-bottom: 2px solid currentColor;
-    transform: translateY(-1px) rotate(-45deg);
+    translate: 0 -1px;
+    rotate: -45deg;
+    scale: 0;
+    transition: scale var(--dur-slide) var(--ease-out);
   }
+  input.check[type="checkbox"]:checked::after {
+    scale: 1;
+  }
+  /* A chosen radio's ring closes in on its centre instead of snapping. */
   input.check[type="radio"]:checked {
-    border: 5.5px solid var(--brand);
+    border-width: 5.5px;
+    border-color: var(--brand);
   }
 
   .group {
@@ -923,7 +1085,7 @@
     gap: 6px;
     min-width: 0;
   }
-  .group > :is(h3, .group-head),
+  .group > :is(h3, .group-head, .hint),
   .list-label {
     padding-inline: var(--row-inset);
   }
@@ -943,6 +1105,10 @@
     color: var(--text);
     font: var(--role-title);
   }
+  /* A head's line is 20 px with or without an action, so every plate sits as far below its head. */
+  :is(.group, .group-head) > h3 {
+    line-height: 20px;
+  }
   .list-label {
     color: var(--text-muted);
     font: var(--role-label);
@@ -956,6 +1122,12 @@
     border-radius: var(--r-chrome);
     background: var(--track);
   }
+  /* After the base rule, which would otherwise keep it at control height. */
+  @media (pointer: coarse) {
+    .segmented {
+      min-height: var(--hit);
+    }
+  }
   /* Segments share spare width but never shrink below their word. */
   .segmented > button {
     flex: 1 0 auto;
@@ -968,32 +1140,41 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* After the base rule's min-width: a finger's segment is never narrower than a hit. */
+  @media (pointer: coarse) {
+    .segmented > button {
+      min-width: var(--hit);
+    }
+  }
   .segmented > button:disabled {
     opacity: 0.5;
   }
-  .tile,
+  .segmented > button:focus-visible {
+    outline-offset: -2px;
+  }
   .segmented > button {
     transition: var(--transition-control);
   }
   /* The hover wash is an image layer, so it adds to a selected fill instead of replacing it. */
   @media (hover: hover) {
-    :is(.tile, .segmented > button):hover:not(
-        :disabled,
-        [aria-disabled="true"]
-      ) {
+    .segmented > button:hover:not(:disabled, [aria-disabled="true"]) {
       background-image: linear-gradient(var(--hover-wash) 0 0);
     }
   }
-  :is(.tile, .segmented > button):is(
-    [aria-pressed="true"],
-    [aria-checked="true"],
-    [aria-selected="true"],
-    [aria-current]:not([aria-current="false"]),
-    :has(> input:checked)
-  ) {
+  .segmented
+    > button:is(
+      [aria-pressed="true"],
+      [aria-checked="true"],
+      [aria-selected="true"],
+      [aria-current]:not([aria-current="false"]),
+      :has(> input:checked)
+    ) {
     background-color: var(--selected-wash);
-    box-shadow: var(--elev-tile);
     color: var(--brand-strong);
+  }
+  /* A pressed segment is raised like a key. */
+  .segmented > button[aria-pressed="true"] {
+    box-shadow: var(--elev-tile);
   }
 
   .empty-state {
@@ -1056,8 +1237,10 @@
     background: var(--surface-1);
     backdrop-filter: none;
   }
+  /* Built like a side sheet, it takes a sheet's material and edge, opaque. */
   dialog.float.sheet {
-    background: var(--bg);
+    border-color: var(--border-subtle);
+    background: var(--sheet-solid);
   }
 
   .tooltip,
@@ -1151,14 +1334,13 @@
   .menu > button :where(strong) {
     font-weight: var(--w-strong);
   }
-  .menu > button :where(small) {
-    margin-top: 2px;
-    color: var(--text-muted);
-    font: var(--role-caption);
-  }
   /* Focus keeps the global ring, inset; the wash marks only the current choice. */
   .menu > button:focus-visible {
     outline-offset: -2px;
+  }
+  /* A menu that is the floating surface itself rounds its items concentric with it. */
+  .float.menu > button {
+    border-radius: calc(var(--r-surface) - var(--hairline) - var(--space-1));
   }
   .menu
     > button:is(
@@ -1182,15 +1364,32 @@
   .menu > button:disabled {
     opacity: 0.55;
   }
+  /* A two-line item is a row, like a choice; coarse pointers grow every item to a hit. */
+  .menu > :has(small) {
+    min-height: var(--row-h);
+    padding-block: 2px;
+  }
+  @media (pointer: coarse) {
+    .menu > button {
+      min-height: var(--hit);
+    }
+  }
 
   .tooltip {
     position: fixed;
     inset: auto;
+    width: max-content;
     max-width: min(300px, calc(100vw - 16px));
     margin: 8px;
     overflow: visible;
     position-area: block-start;
-    position-try-fallbacks: flip-block;
+    /* Cut by the viewport, a tip flips below, then aligns to its word's edge; max-content keeps it from squeezing. */
+    position-try-fallbacks:
+      flip-block,
+      block-end span-inline-start,
+      block-end span-inline-end,
+      block-start span-inline-start,
+      block-start span-inline-end;
     position-visibility: anchors-visible;
     white-space: pre-line;
     overflow-wrap: anywhere;
@@ -1200,6 +1399,12 @@
     transition:
       opacity var(--dur-slide) var(--ease-out),
       scale var(--dur-slide) var(--ease-out);
+  }
+  /* Without anchor positioning, tooltip.ts places the bubble itself. */
+  @supports not (position-area: block-start) {
+    .tooltip {
+      margin: 0;
+    }
   }
   .tooltip[data-titled]::first-line {
     font-weight: var(--w-strong);
@@ -1211,22 +1416,25 @@
     opacity: 1;
     scale: none;
   }
+  /* The arrow is the bubble's own glass, so it never reads as a second material. */
   .tooltip::before {
     position: absolute;
-    top: calc(100% - 1px);
+    top: calc(100% - var(--hairline));
     left: var(--arrow-x, 50%);
     width: 8px;
     height: 8px;
     border: inherit;
     border-width: 0 var(--hairline) var(--hairline) 0;
     background: inherit;
+    -webkit-backdrop-filter: inherit;
+    backdrop-filter: inherit;
     content: "";
     clip-path: polygon(100% 0, 100% 100%, 0 100%);
     translate: -50% -50%;
     rotate: 45deg;
   }
   .tooltip[data-side="below"]::before {
-    top: 1px;
+    top: var(--hairline);
     border-width: var(--hairline) 0 0 var(--hairline);
     clip-path: polygon(0 0, 100% 0, 0 100%);
   }
@@ -1235,10 +1443,10 @@
   .popover,
   dialog.float {
     transition:
-      opacity var(--dur-hover) var(--ease-out),
-      translate var(--dur-hover) var(--ease-out),
-      overlay var(--dur-hover) allow-discrete,
-      display var(--dur-hover) allow-discrete;
+      opacity var(--dur-slide) var(--ease-out),
+      translate var(--dur-slide) var(--ease-out),
+      overlay var(--dur-slide) allow-discrete,
+      display var(--dur-slide) allow-discrete;
   }
   /* Important, so no component display can keep a closed popover hit-testable. */
   [popover]:not(:popover-open),
@@ -1258,9 +1466,9 @@
   dialog.float::backdrop {
     background: var(--scrim);
     transition:
-      opacity var(--dur-hover) var(--ease-out),
-      overlay var(--dur-hover) allow-discrete,
-      display var(--dur-hover) allow-discrete;
+      opacity var(--dur-slide) var(--ease-out),
+      overlay var(--dur-slide) allow-discrete,
+      display var(--dur-slide) allow-discrete;
   }
   @starting-style {
     dialog.float[open]::backdrop {
@@ -1277,6 +1485,15 @@
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+  }
+}
+
+/* A finger pressing an explained word asks for its tip, not a text selection or callout. */
+@media (pointer: coarse) {
+  [data-tip] {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
 }
 
@@ -1299,7 +1516,23 @@
   }
 }
 
+/* Forced colours drop the selected wash; the system's selection colours mark a pressed
+   segment, as set (no text backplate). Unlayered to outrank the selected state. */
+@media (forced-colors: active) {
+  .segmented > button[aria-pressed="true"] {
+    forced-color-adjust: none;
+    background-color: SelectedItem;
+    color: SelectedItemText;
+  }
+  /* A finger's transparent hit border would otherwise be forced to a thick text-coloured frame. */
+  .btn {
+    border-color: Canvas;
+  }
+}
+
 /* Unlayered, so it outranks every layered ring; main.ts sets data-pointer. */
-:root[data-pointer] :is(:focus-visible, :has(> :focus-visible)) {
+:root[data-pointer] :focus-visible,
+:root[data-pointer]
+  label:has(> :is([type="radio"], [type="checkbox"]):focus-visible) {
   outline: none;
 }

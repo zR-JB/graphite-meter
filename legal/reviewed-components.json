@@ -87,7 +87,7 @@
   {
     "ecosystem": "go",
     "name": "github.com/charmbracelet/ultraviolet",
-    "reviewedVersion": "v0.0.0-20260811164956-006e29f97886",
+    "reviewedVersion": "v0.0.0-20260929091141-666ce5eec9fc",
     "upstream": "https://github.com/charmbracelet/ultraviolet",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
@@ -592,13 +592,13 @@
       {"name": "LICENSE.md", "sha256": "06257f4847b13a49a039efb17b944c141e71b12fd8d231b362d86919067d77a3"},
       {"name": "node_modules/magic-string/LICENSE", "sha256": "1cbe51b907662f6cb1492b16c359384a595180bf0e4d101603ed525e75c4e484"}
     ],
-    "modified": false,
+    "modified": true,
     "artifactScopes": [
       "server/browser",
       "container"
     ],
     "reviewDecision": "approved",
-    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+    "reviewNotes": "Runtime patched locally to avoid orphan derived connections and duplicate subscriptions on reconnect; see client/patches/svelte@5.57.1.patch and the signals/browser teardown regressions. Upstream MIT license and legal bytes are unchanged. Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
   },
   {
     "ecosystem": "font",

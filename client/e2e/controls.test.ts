@@ -18,8 +18,8 @@ const checked = (locator: Locator) =>
 test("reset settings confirms, preserves on cancel and restores defaults", async (page) => {
   await open(page);
   const settings = await openSettings(page);
-  await settings.getByRole("button", { name: "custom", exact: true }).click();
-  const warmup = settings.getByRole("textbox", { name: "Warmup in seconds" });
+  await settings.getByRole("button", { name: "Custom", exact: true }).click();
+  const warmup = settings.getByRole("spinbutton", { name: "Warmup time" });
   await warmup.fill("1.2");
   await settings.getByRole("button", { name: "Bytes", exact: true }).click();
   const wireLabel = "Show estimated wire rate";
@@ -35,7 +35,7 @@ test("reset settings confirms, preserves on cancel and restores defaults", async
   await keep.click();
   await expect(dialog).toHaveCount(0);
   await expect(reset).toBeFocused();
-  await expect(warmup).toHaveValue("1.2");
+  await expect(warmup).toHaveValue("1.2 s");
 
   await reset.click();
   await dialog.getByRole("button", { name: "Reset settings" }).click();
@@ -45,7 +45,7 @@ test("reset settings confirms, preserves on cancel and restores defaults", async
       "aria-pressed",
       "true",
     );
-  await pressed("medium");
+  await pressed("Medium");
   await pressed("Bits");
   await pressed("Decimal");
   expect(await checked(wire)).toBe(true);
@@ -72,7 +72,7 @@ test("Escape closes a settings confirmation; Back closes it with its panel", asy
     )
     .toBe(true);
   await expect(
-    page.getByRole("button", { name: "Open settings" }),
+    page.getByRole("button", { name: "Settings", exact: true }),
   ).toBeFocused();
 });
 
@@ -111,6 +111,25 @@ test("Escape closes the docked panel holding focus and never stops a running tes
   await expect(phase(page, "aborted")).toHaveCount(1);
 });
 
+test("a docked panel's edge steps 16 px from the keyboard, within its limits", async (page) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await open(page);
+  const settings = await openSettings(page);
+  const handle = settings.getByRole("slider", {
+    name: /^Resize Settings panel/,
+  });
+  await handle.evaluate((el: HTMLElement) => el.focus());
+  for (const [key, width] of [
+    ["ArrowRight", "436"],
+    ["Home", "360"],
+    ["End", "720"],
+    ["Enter", "420"],
+  ] as const) {
+    await page.raw.press(key);
+    await expect(handle).toHaveAttribute("aria-valuenow", width);
+  }
+});
+
 test("Space and R run the test from page load; a focused control keeps Space", async (page) => {
   await open(page, undefined, {
     config: { duration: { ...baseConfig.duration, downloadMs: 20_000 } },
@@ -142,7 +161,7 @@ test("legal notices recover through Retry and keep focus in the dialog", async (
   await expect(dialog).toContainText("Third-party software");
 
   const link = dialog.locator(".group:last-child .component:last-child a");
-  const close = dialog.getByRole("button", { name: "Close", exact: true });
+  const close = dialog.getByRole("button", { name: "Close About & legal" });
   await link.evaluate((el: HTMLElement) => el.focus());
   // Past the last control a modal hands focus to the browser, never the page.
   await page.raw.press("Tab");
@@ -156,7 +175,7 @@ test("legal notices recover through Retry and keep focus in the dialog", async (
 test("a History chunk that fails to load settles and recovers through Retry", async (page) => {
   await open(page);
   await page.blockRequests(["*HistoryWorkspace*"]);
-  await page.getByRole("button", { name: "Open History" }).click();
+  await page.getByRole("button", { name: "History", exact: true }).click();
   const stage = page.locator(".history-stage");
   await expect(stage).toContainText("History could not be opened.");
   const mutations = await page.evaluate(

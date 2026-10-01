@@ -45,6 +45,20 @@ func (p *PreparedRun) runnable() bool {
 		!slices.ContainsFunc(p.Servers, func(s PreparedServer) bool { return !s.ready() && s.Err == nil })
 }
 
+// StageLimit is the longest stage every ready server admits (GM_MAX_STAGE_DURATION on each), and the server that
+// sets it; the zero entry when none lowers the absolute bound.
+func (p *PreparedRun) StageLimit() (time.Duration, wire.ServerEntry) {
+	limit, by := StageBound.Max, wire.ServerEntry{}
+	for _, server := range p.Servers {
+		if server.ready() {
+			if own := server.Connection.Preflight.Capabilities.StageLimit(); own < limit {
+				limit, by = own, server.Server
+			}
+		}
+	}
+	return limit, by
+}
+
 func (p *PreparedRun) SelectedIDs() []string {
 	ids := make([]string, len(p.Servers))
 	for i, s := range p.Servers {

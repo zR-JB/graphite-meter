@@ -80,7 +80,7 @@ own origin and the native client accept literals.
 
 ## Browser controls
 
-**Settings → Connection paths → Test servers** is a checklist shown when the catalogue has more than one server.
+**Settings → Connection → Test servers** is a checklist shown when the catalogue has more than one server.
 Select one to four; the last one cannot be cleared. Each entry shows its status (Checking, Ready, Recheck needed,
 Failed, Sign in) and its **preflight request time**: the HTTP discovery request including connection setup, not a
 latency measurement. Hover or focus shows name, location and host. Inline **Retry** and **Sign in** resolve
@@ -96,8 +96,8 @@ back off (5 s doubling to 1 min, reset when the page or network returns), sign-i
 Retry. A selected server without idle latency pings quietly re-reads its `/preflight` every 5 s and whenever the
 page returns, so a server that stopped answering shows Failed; an offline device blocks remote servers until it is
 back. Start re-reads every selected server's `/preflight` and rechecks paths older than two minutes; a failed run
-invalidates its paths. A known blocker (offline, sign-in, missing capability, a stream plan that cannot fit) is shown
-before Start. Server, path, stream and probe settings lock during a run; durations of unstarted stages, early finish
+invalidates its paths. A known blocker (offline, sign-in, missing capability, a stream plan that cannot fit, a stage
+longer than a selected server's `GM_MAX_STAGE_DURATION`) is shown before Start; the smallest limit applies. Server, path, stream and probe settings lock during a run; durations of unstarted stages, early finish
 and display settings stay live.
 
 There is one throughput and one latency path preference. Automatic checks each server independently: throughput

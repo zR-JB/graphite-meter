@@ -164,7 +164,7 @@
       "source": "https://github.com/sveltejs/svelte",
       "declaredLicenseExpression": "MIT",
       "selectedLicenseExpression": "MIT",
-      "modified": false
+      "modified": true
     }
   ]
 }

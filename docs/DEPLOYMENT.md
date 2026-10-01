@@ -280,7 +280,7 @@ Linux and macOS (amd64/arm64) and Windows (amd64); the server ships as the conta
 | `--latency-transport`                            | `auto`                    | `websocket` or `webtransport`.                                                                  |
 | `--stages`                                       | `latency,download,upload` | Comma-separated; add `bidirectional` (aliases `ping`, `down`, `up`, `bidi`).                    |
 | `--warmup`                                       | `800ms`                   | Before every stage, 0–4 s; stretched to ten idle RTTs, at most 4 s.                             |
-| `--latency-duration`                             | `4s`                      | Measured window, 1 s–5 min, checked even for a stage that is off.                               |
+| `--latency-duration`                             | `4s`                      | Measured window, 1 s–24 h and within every selected server's limit (5 min unless raised).       |
 | `--download-/--upload-/--bidirectional-duration` | `10s`                     | Same bounds.                                                                                    |
 | `--auto-streams`                                 | `6`                       | Maximum HTTP/1.1 streams per direction, 1–14.                                                   |
 | `--streams`                                      | `0`                       | Exact streams per server and direction, at most 14; `0` keeps automatic.                        |
@@ -318,7 +318,7 @@ if it leaves the test a surviving one takes over. `l` switches the server shown;
 | esc                       | running            | Stop test; a second esc confirms.                                                                                                                            |
 | enter (r), esc            | finished           | Run again; back to setup.                                                                                                                                    |
 | d, l                      | running / finished | Details (servers, intervals, failures; esc closes); with several servers, the latency server.                                                                |
-| ↑/↓, pgup/pgdn, home/end  | any                | Scroll the body.                                                                                                                                             |
+| pgup/pgdn, home/end, wheel | any                | Scroll the body; ↑/↓ also scroll during a test and in Details.                                                                                                 |
 | ?, q, ctrl+c              | any                | Keys for this screen; quit. While editing, ? and q are typed; ctrl+c quits. A running test stops first and prints its report; a second ctrl+c quits at once. |
 
 ## Upgrading
@@ -376,8 +376,9 @@ _env only_ have no flag, so secrets stay out of process arguments.
 | `GM_MAX_SESSIONS_PER_CLIENT`            | `--max-sessions-per-client`            | `8`              | WebTransport sessions per client identity.                                             |
 | `GM_MAX_CONNECTIONS`                    | `--max-connections`                    | `4096`           | Concurrent TCP and QUIC connections.                                                   |
 | `GM_MAX_CONNECTIONS_PER_CLIENT`         | `--max-connections-per-client`         | `64`             | Connections per direct client.                                                         |
-| `GM_MAX_OPERATION_DURATION`             | `--max-operation-duration`             | `5m`             | Request-shaped measurement lifetime.                                                   |
-| `GM_MAX_SESSION_DURATION`               | `--max-session-duration`               | `2h`             | WebTransport transfer session lifetime.                                                |
+| `GM_MAX_OPERATION_DURATION`             | `--max-operation-duration`             | stage + 1m       | Request-shaped measurement lifetime; unset, at least `5m`.                             |
+| `GM_MAX_SESSION_DURATION`               | `--max-session-duration`               | `2h`             | WebTransport session lifetime; unset, at least the operation's.                        |
+| `GM_MAX_STAGE_DURATION`                 | `--max-stage-duration`                 | `5m`             | Longest stage clients may plan, `1s`–`24h`; sent in `/preflight`.                      |
 | `GM_TRUSTED_PROXIES`                    | _env only_                             | empty            | Proxy CIDRs allowed to supply `X-Real-IP`, `X-Forwarded-Proto` and `X-Forwarded-Host`. |
 | `GM_AUTH_MODE`                          | `--auth-mode`                          | `off`            | `off`, `password`, `oidc` or `hybrid`.                                                 |
 | `GM_AUTH_PUBLIC_URL`                    | `--auth-public-url`                    | empty            | Canonical HTTPS UI origin, no path or `:443`.                                          |
@@ -393,7 +394,9 @@ _env only_ have no flag, so secrets stay out of process arguments.
 | `GM_SERVER_CATALOG_FILE`                | _env only_                             | empty            | Absolute catalogue file path without `..`; exclusive with the inline form.             |
 
 - Listener addresses must differ. Numeric limits are positive, per-client limits ≤ their global limit, sessions ≤
-  handlers, and session duration ≥ operation duration. Something must carry throughput: with no native endpoint
+  handlers, and session duration ≥ operation duration. Lifetimes left unset cover the stage limit plus a minute, so a
+  server allowing multi-hour stages never cuts their lanes on a short default; set them to keep lanes shorter, and
+  clients reconnect across each cut. Something must carry throughput: with no native endpoint
   advertised, set `GM_PUBLIC_ORIGINS` or `GM_PUBLIC_THROUGHPUT_ORIGINS`, or startup fails with "configuration
   advertises no throughput endpoint".
 - A client identity is a login or measurement grant, whose subject shares twice its limit (every password login is

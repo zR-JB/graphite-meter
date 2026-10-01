@@ -3,7 +3,7 @@
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   const controller = getApplicationController();
-  import { tooltip } from "../actions/tooltip";
+  import { tooltipAction } from "../actions/tooltip";
   import { fmtDuration } from "../format";
   import { handoff } from "../presentation/motion.svelte";
   import { BLOCKED, runActionLabel } from "../presentation/vocabulary";
@@ -39,7 +39,7 @@
   aria-describedby={idle ? "run-duration" : undefined}
   style:--stop={stop}
   onclick={controller.toggleRun}
-  {@attach tooltip(() => blocker)}
+  use:tooltipAction={blocker}
 >
   <span class="skin" aria-hidden="true"></span>
   <span class="skin stop" aria-hidden="true"></span>
@@ -83,17 +83,26 @@
       var(--text)
     );
     font: var(--w-strong) var(--type-md) / 1 var(--font-display);
-    transition:
-      transform var(--dur-hover) var(--ease-out),
-      filter var(--dur-hover) var(--ease-out);
+    transition: transform var(--dur-hover) var(--ease-out);
   }
+  /* Hover strengthens the skin itself; a filter would re-rasterize the label. */
   @media (hover: hover) {
-    .run-button:hover:not(.pending, [aria-disabled="true"]) {
-      filter: brightness(1.08);
+    .run-button:hover:not(.pending, [aria-disabled="true"]) .skin {
+      background: var(--brand-strong);
+    }
+    .run-button:hover:not(.pending, [aria-disabled="true"]) .skin.stop {
+      background: none;
+      box-shadow: inset 0 0 0 1px var(--field-edge);
     }
   }
   .run-button:active {
     transform: scale(0.985);
+  }
+  /* On a phone it spans the run bar at a thumb's height. */
+  @container viz (max-width: 520px) {
+    .run-button {
+      height: var(--hit);
+    }
   }
   .skin {
     position: absolute;
@@ -101,17 +110,15 @@
     z-index: -1;
     border-radius: inherit;
     background: var(--brand);
-    box-shadow: inset 0 1px 0 var(--edge-highlight);
     opacity: calc(1 - var(--stop));
+    transition:
+      background-color var(--dur-hover) var(--ease-out),
+      box-shadow var(--dur-hover) var(--ease-out);
   }
   .skin.stop {
     background: none;
     box-shadow: inset 0 0 0 1px var(--border-strong);
     opacity: var(--stop);
-  }
-  .run-button.pending,
-  .run-button[aria-disabled="true"] {
-    filter: saturate(0.7);
   }
   .run-button[aria-disabled="true"] {
     opacity: 0.6;
@@ -128,7 +135,9 @@
     border-radius: 2px;
     background: currentColor;
   }
+  /* On the label's baseline (app.css, --role-label). */
   .duration {
+    margin-top: calc(var(--type-md) - var(--type-sm));
     color: color-mix(in oklab, currentColor 62%, transparent);
     font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
     font-variant-numeric: tabular-nums;

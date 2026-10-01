@@ -1,17 +1,36 @@
 // One frame clock moves every animated value; it runs only while something moves.
 import { untrack } from "svelte";
+import { expoOut } from "svelte/easing";
 import { prefersReducedMotion } from "svelte/motion";
+import type { TransitionConfig } from "svelte/transition";
 
 type Task = (now: number) => boolean;
 const tasks = new Set<Task>();
 let frame = 0;
 let lastFrame = 0;
+let watching = false;
+
+function visibilityChanged(): void {
+  if (globalThis.document?.hidden) {
+    if (frame) globalThis.cancelAnimationFrame?.(frame);
+    frame = 0;
+  } else request();
+}
+
+function releaseClock(): void {
+  if (tasks.size) return;
+  if (frame) globalThis.cancelAnimationFrame?.(frame);
+  frame = 0;
+  if (watching)
+    document.removeEventListener("visibilitychange", visibilityChanged);
+  watching = false;
+}
 
 /** Reduced motion: every value still updates, in one frame rather than an animation. */
 export const still = () => prefersReducedMotion.current;
 
 function request(): void {
-  if (!frame && tasks.size)
+  if (!frame && tasks.size && !globalThis.document?.hidden)
     frame = globalThis.requestAnimationFrame?.(run) ?? 0;
 }
 
@@ -19,6 +38,7 @@ function run(now: number): void {
   frame = 0;
   lastFrame = now;
   for (const task of tasks) if (!task(now)) tasks.delete(task);
+  releaseClock();
   request();
 }
 
@@ -28,8 +48,15 @@ export const frameTime = () => lastFrame;
 /** Runs `task` on every frame until it returns false or the returned stop is called. */
 export function animate(task: Task): () => void {
   tasks.add(task);
+  if (!watching && globalThis.document) {
+    document.addEventListener("visibilitychange", visibilityChanged);
+    watching = true;
+  }
   request();
-  return () => void tasks.delete(task);
+  return () => {
+    tasks.delete(task);
+    releaseClock();
+  };
 }
 
 /** Wall time for labels such as "5 min ago"; frames use the frame clock. */
@@ -113,7 +140,15 @@ export class Smoothed {
     this.#max = max;
     this.#at = now;
     this.#publish(this.at(now));
-    if (!unseen(this.#from, value) || rate) this.#stop ??= animate(this.#frame);
+    if (!unseen(this.#from, value) || (rate && this.current < max))
+      this.#stop ??= animate(this.#frame);
+    else this.dispose();
+  }
+
+  /** Releases the frame task when its view leaves; a later sample can start it again. */
+  dispose(): void {
+    this.#stop?.();
+    this.#stop = null;
   }
 
   #publish(value: number): void {
@@ -203,6 +238,12 @@ export class Handoff<T> {
     this.#swap();
     return false;
   };
+
+  dispose(): void {
+    this.#stop?.();
+    this.#stop = null;
+    this.#fade.dispose();
+  }
 }
 
 export function handoff<T>(
@@ -214,5 +255,26 @@ export function handoff<T>(
     const value = get();
     untrack(() => view.set(value));
   });
+  $effect(() => () => view.dispose());
   return view;
+}
+
+const REVEAL_MS = 180;
+
+/** A row that appears in a panel unfolds from its own height, row floor included, and fades in as it opens. */
+export function reveal(node: Element): TransitionConfig {
+  const style = getComputedStyle(node);
+  const px = (value: string) => parseFloat(value) || 0;
+  const height = px(style.height);
+  const floor = px(style.minHeight);
+  const [top, bottom] = [px(style.paddingTop), px(style.paddingBottom)];
+  const edge = px(style.borderTopWidth);
+  return {
+    duration: still() ? 0 : REVEAL_MS,
+    easing: expoOut,
+    css: (t) =>
+      `overflow: hidden; opacity: ${Math.min(1, t * 2)};` +
+      `height: ${t * height}px; min-height: ${t * floor}px;` +
+      `padding-block: ${t * top}px ${t * bottom}px; border-top-width: ${t * edge}px;`,
+  };
 }

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { catalogSelection } from "../presentation/serverAppearance";
-  import { untrack } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { store } from "../state/store.svelte";
   import GaugeDial, { type GaugeDialState } from "./GaugeDial.svelte";
   import { GAUGE_LABEL_FRACTIONS, gaugeLayout } from "./gaugeLayout";
@@ -20,6 +20,7 @@
   import { primaryResultGaugeArc, resultGaugeArcs } from "./resultGauge";
   import { gaugeReadout } from "./gaugeReadout";
   import {
+    JARGON,
     MISSING,
     OUTCOME,
     PHASE_HINT,
@@ -27,8 +28,9 @@
     STATUS_TONE,
   } from "../presentation/vocabulary";
   import { announceChanges } from "../presentation/announcer.svelte";
-  import { tooltip } from "../actions/tooltip";
+  import { tooltipAction } from "../actions/tooltip";
   import { handoff } from "../presentation/motion.svelte";
+  import { MediaQuery } from "svelte/reactivity";
 
   const indicatedServers = $derived(
     store.serverDetails?.selection ??
@@ -58,7 +60,14 @@
 
   let gaugeWidth = $state(0);
   let gaugeHeight = $state(0);
+  let panelWidth = $state(0);
+  let noteHeight = $state(0);
+  // Beside the latency card (landscape, from the 760 px container), the ring centres on the card's axis and its
+  // note hangs just under it; portrait and phones keep the note in the column's flow.
+  const portrait = new MediaQuery("(orientation: portrait)");
+  const hung = $derived(panelWidth >= 760 && !portrait.current);
   const liveReadout = new LiveReadout();
+  onDestroy(() => liveReadout.dispose());
   $effect(() => {
     const live = store.live;
     const run = store.runSeq;
@@ -82,8 +91,10 @@
     });
   });
 
+  // The latency stage's own warmup already reads in milliseconds, so the scale changes kind once.
   const msTicksActive = $derived(
     phase === "latency" ||
+      (phase === "warmup" && store.phaseStage === "latency") ||
       (phase === "complete" && completedKind === "latency"),
   );
   $effect(() => {
@@ -107,7 +118,9 @@
       ),
     }));
   });
-  const layout = $derived(gaugeLayout(gaugeWidth, gaugeHeight));
+  const layout = $derived(
+    gaugeLayout(gaugeWidth, gaugeHeight, hung ? noteHeight : 0),
+  );
   const liveTarget = $derived(liveTargets(store.live));
   const ticks = handoff(
     () =>
@@ -123,6 +136,28 @@
     (labels) => labels.join(),
   );
 
+  // While the latency stage's probes go unanswered, for how long: from the last reply to the newest bucket.
+  const unansweredMs = $derived.by(() => {
+    if (phase !== "latency" || !store.liveLatencyLost) return null;
+    const newest = store.latency.at(-1)?.endT ?? 0;
+    const answered =
+      store.latency.findLast(
+        (bucket) => bucket.phase === "latency" && bucket.medianRttMs !== null,
+      )?.endT ?? store.phaseStartedAtMs;
+    return newest - answered >= 1000 ? newest - answered : null;
+  });
+  // Idle replies so far: what the stage's figures are drawn from, counted as they arrive.
+  const replies = $derived(
+    phase === "latency"
+      ? store.latency.reduce(
+          (count, bucket) =>
+            bucket.phase === "latency"
+              ? count + bucket.pingCount - bucket.timeoutCount
+              : count,
+          0,
+        )
+      : null,
+  );
   const readout = $derived(
     gaugeReadout({
       phase,
@@ -133,6 +168,9 @@
       error: store.error,
       latencyTimeout: store.liveLatencyLost,
       latencyMs: liveReadout.rtt.current,
+      quietMs: store.live?.quietMs ?? null,
+      unansweredMs,
+      replies,
       hasLatencyResult: !!store.result?.latency,
       unusable: unusableStage,
       headline: headlineArc,
@@ -148,22 +186,26 @@
       ? { value: fmtSpeed(gaugeRate(rates.down + rates.up)), unit: gaugeUnit }
       : { value: MISSING, unit: "" });
   const spoken = $derived(rateDisplay(liveTarget));
+  const arcs = $derived(
+    phase === "complete"
+      ? terminalArcs.map((arc) => ({
+          phase: arc.phase,
+          fraction: throughputGaugeFraction(
+            arc.bytesPerSec,
+            store.scales.gaugeBytesPerSec,
+          ),
+          dashed: arc.dashed,
+          description: `${arc.label}${arc.dashed ? ` · ${OUTCOME.partial}` : ""}\n${fmtSpeed(gaugeRate(arc.bytesPerSec))} ${gaugeUnit}`,
+        }))
+      : [],
+  );
   const hero = handoff(
     () => {
-      const scale = store.scales.gaugeBytesPerSec;
       return {
         terminal: readout.terminal,
         display: rateDisplay(liveRates),
         unit: gaugeUnit,
-        arcs:
-          phase === "complete"
-            ? terminalArcs.map((arc) => ({
-                phase: arc.phase,
-                fraction: throughputGaugeFraction(arc.bytesPerSec, scale),
-                dashed: arc.dashed,
-                description: `${arc.label}${arc.dashed ? ` · ${OUTCOME.partial}` : ""}\n${fmtSpeed(gaugeRate(arc.bytesPerSec))} ${gaugeUnit}`,
-              }))
-            : [],
+        arcs,
       };
     },
     ({ terminal, display }) =>
@@ -172,8 +214,16 @@
         : `${display.value === MISSING}:${display.unit}`,
   );
   const { terminal, display } = $derived(hero.shown);
+  // The dial beats only on idle replies, so a stall shows as stillness.
+  const reply = $derived(
+    phase === "latency"
+      ? (store.latency.findLast((bucket) => bucket.medianRttMs !== null)?.t ??
+          null)
+      : null,
+  );
   const dialState = $derived<GaugeDialState>({
     phase,
+    reply,
     showValue: !unusableStage,
     valueBytesPerSec: liveRates ? liveRates.down + liveRates.up : 0,
     scaleBytesPerSec: store.scales.gaugeBytesPerSec,
@@ -184,7 +234,7 @@
   });
   const footer = handoff(
     () => {
-      const { hint, status, failure } = readout;
+      const { hint, status, failure, noData, noReplies } = readout;
       if (store.preparing)
         return { status: readout.preparationLabel, tone: "preparation" };
       if (failure)
@@ -199,17 +249,28 @@
           tone: status.error ? "error" : "",
           hint: status.action,
         };
+      if (noData) return { hint: noData, tip: JARGON.noData };
+      if (noReplies) return { hint: noReplies, tip: JARGON.noReplies };
       const known = PHASE_HINT[phase];
-      return hint ? { hint: known?.text ?? hint, tip: known?.tip } : {};
+      // The reply count changes in place under one explainer, never fading per reply.
+      const tip =
+        known?.tip ?? (phase === "latency" ? JARGON.replies : undefined);
+      return hint ? { hint: known?.text ?? hint, tip } : {};
     },
+    // A note that counts keys on its explainer, so it updates in place.
     (notes: { status?: string; tone?: string; hint?: string; tip?: string }) =>
-      `${notes.status}|${notes.hint}`,
+      `${notes.status}|${notes.tip ?? notes.hint}`,
   );
 </script>
 
-<section class="gauge-panel" data-phase={store.phase}>
+<section
+  class="gauge-panel"
+  data-phase={store.phase}
+  data-stage={store.isRunning ? store.phaseStage : null}
+  bind:clientWidth={panelWidth}
+>
   <div class="instrument">
-    <div class="dial">
+    <div class="dial" class:hung>
       {#if indicatedServers.length > 1}
         <div class="server-indicator">
           <ServerLens servers={indicatedServers} {participants} />
@@ -264,17 +325,25 @@
                 {/if}
               </div>
             {:else}
-              <span class="gauge-value" aria-hidden="true">{display.value}</span
+              <span
+                class="gauge-value"
+                class:quiet={display.value === MISSING}
+                aria-hidden="true">{display.value}</span
               >
-              {#if display.unit}<span class="gauge-unit" aria-hidden="true"
-                  >{display.unit}</span
-                >{/if}
+              <span class="gauge-unit" aria-hidden="true">{display.unit}</span>
             {/if}
             <span class="sr-only">{spoken.value} {spoken.unit}</span>
           </div>
         </div>
       </div>
-      <div class="gauge-footer" style:opacity={footer.opacity}>
+      <div
+        class="gauge-footer"
+        bind:clientHeight={noteHeight}
+        style:top={hung
+          ? `calc(100% - ${layout.height - layout.noteTop}px)`
+          : null}
+        style:opacity={footer.opacity}
+      >
         {#if footer.shown.status || footer.shown.hint}
           {@const { status, tone, hint, tip } = footer.shown}
           <div class="gauge-notes">
@@ -282,7 +351,7 @@
               <span class="gauge-status {tone}">{status}</span>
             {/if}
             {#if hint}
-              <span class="gauge-hint" {@attach tip ? tooltip(() => tip) : null}
+              <span class="gauge-hint" use:tooltipAction={tip ?? ""}
                 >{hint}</span
               >
             {/if}
@@ -327,7 +396,7 @@
         "dial latency" minmax(min-content, 1fr)
         "run run" auto
         "results results" auto
-        / minmax(240px, 4fr) minmax(0, 8fr);
+        / max(240px, (100% - 2 * var(--space-5)) / 3) minmax(0, 1fr);
     }
     .instrument:not(:has(.latency-slot)) {
       grid-template:
@@ -335,6 +404,25 @@
         "run" auto
         "results" auto
         / minmax(0, 1fr);
+    }
+  }
+  /* Portrait, the dial is bound by its width, so it and the latency card share the width evenly. */
+  @media (orientation: portrait) {
+    @container viz (min-width: 760px) {
+      .instrument:has(.latency-slot) {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+  }
+  /* A phone keeps the dial compact, so the running stage's card shares the first screen with it; while the
+     latency stage runs, its card is the one under the run button. */
+  @container viz (max-width: 520px) {
+    .instrument {
+      grid-template-rows: clamp(232px, 32svh, 300px) repeat(3, auto);
+      row-gap: var(--space-3);
+    }
+    .gauge-panel[data-stage="latency"] .instrument {
+      grid-template-areas: "dial" "run" "latency" "results";
     }
   }
   .dial {
@@ -345,9 +433,10 @@
     min-width: 0;
     min-height: 0;
   }
-  /* Never shorter than its content: a tight screen scrolls rather than overlapping the run bar. */
+  /* As tall as its content and centred beside the dial; a tight screen scrolls rather than overlapping the run bar. */
   .latency-slot {
     grid-area: latency;
+    align-self: center;
     display: grid;
     min-width: 0;
   }
@@ -364,6 +453,14 @@
     align-items: center;
     justify-content: center;
     gap: var(--space-3) var(--space-4);
+  }
+  /* A phone stacks them: the chips' row, then the run button across it. */
+  @container viz (max-width: 520px) {
+    .run-bar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-2);
+    }
   }
   .server-indicator {
     display: flex;
@@ -428,14 +525,18 @@
     font-family: var(--font-display);
     font-weight: 300;
     font-variant-numeric: lining-nums tabular-nums;
-    letter-spacing: -0.03em;
+    line-height: 1;
+    letter-spacing: -0.025em;
     white-space: nowrap;
   }
   .gauge-value {
     min-width: 5ch;
     font-size: clamp(24px, 17cqmin, 76px);
-    line-height: 0.95;
     text-align: center;
+  }
+  /* "—" waits quietly where the value arrives, like the cards'. */
+  .gauge-value.quiet {
+    color: var(--text-soft);
   }
   .hero {
     display: flex;
@@ -480,34 +581,40 @@
   }
   .terminal-number {
     font-size: clamp(30px, 17cqmin, 76px);
-    line-height: 1;
   }
-  /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. */
+  /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. One size and line height for both, so the result
+     lands where the live value stood. */
   .terminal-unit,
   .gauge-unit {
     color: var(--text-muted);
-    font-family: var(--font-sans);
-    line-height: 1;
+    font: var(--w-normal) clamp(var(--type-sm), 4cqmin, var(--type-lg)) /
+      var(--type-md) var(--font-sans);
   }
-  .terminal-unit {
-    font-size: clamp(var(--type-sm), 4cqmin, var(--type-lg));
-    font-weight: var(--w-normal);
-  }
+  /* Empty, it keeps its line, so "—" sits where the value arrives. */
   .gauge-unit {
+    min-height: 1lh;
     margin-top: var(--space-1);
-    font-size: var(--type-md);
-    font-weight: var(--w-normal);
   }
+  /* Under the readout, out of its flow, so the value stays where it landed. */
   .terminal-partial {
-    color: var(--tone);
+    position: absolute;
+    top: calc(100% + var(--space-1));
+    color: var(--tone-ink);
     font-size: var(--type-xs);
   }
   /* A separate footer keeps notes off the dial; it holds two lines, so a longer note never shrinks the ring. */
   .gauge-footer {
     display: grid;
     align-items: center;
-    min-height: calc(var(--space-2) + 2.7 * var(--type-sm));
+    min-height: calc(var(--space-2) + 2.7 * var(--type-body));
     padding-top: var(--space-1);
+  }
+  /* Hung under the ring's tick ends, out of the column's flow, in a band gaugeLayout keeps free; one line sits up top. */
+  .hung .gauge-footer {
+    position: absolute;
+    inset-inline: 0;
+    align-items: start;
+    height: calc(var(--space-2) + 2.7 * var(--type-body));
   }
   .gauge-notes {
     display: grid;

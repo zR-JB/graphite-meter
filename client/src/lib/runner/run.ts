@@ -20,10 +20,13 @@ import { safeDetail } from "../api/decode";
 import { identity, type ServerIdentity } from "../servers/catalog";
 import { ServerAuthenticationRequired } from "../servers/credentials";
 import { planServerStreams, validatePlan } from "./paths";
+import { after } from "./pageTimer";
 import { combineCompensationEstimates, wireModel } from "../compensation";
 import { headlineWire } from "../servers/wireEstimates";
 import {
+  coveredMs,
   EARLY_FINISH,
+  minCoverage,
   pathEvidence,
   ServerLatency,
   shouldExitPhase,
@@ -56,6 +59,7 @@ import {
   ESTABLISH_BUDGET_MS,
   ESTABLISH_MARGIN_MS,
   LANE_RESTART_BACKOFF_MS,
+  RECEIVER_SILENCE_MS,
 } from "./real/budgets";
 import {
   ServerBusyError,
@@ -97,6 +101,9 @@ interface Participant extends PreparedServer {
   anchor: ReceiverCheckpoint | null;
   /** Run-clock active time of the last measured progress in each direction. */
   progressAt: Record<FlowDirection, number>;
+  /** Run-clock active time of the last receiver record with advancing time, and the receiver time its bytes last grew. */
+  heardAt: number;
+  grewNanos: number;
   recovery: { abort: AbortController; info: StallInfo } | null;
   latencyStall: { at: number; detail: string } | null;
   /** Ping interruptions of this server break its RTT variation pairs. */
@@ -143,7 +150,8 @@ export class Run {
 
   #segments: Segment[] = [];
   #active: Segment | null = null;
-  #timer: ReturnType<typeof setTimeout> | null = null;
+  /** Cancels the pending tick. */
+  #timer: (() => void) | null = null;
   #running = false;
   #clock = new RunClock();
   #elapsed = 0;
@@ -155,6 +163,8 @@ export class Run {
   /** Invalidates in-flight stage outcomes after release or a newer stage; a removal leaves the others' outcomes valid. */
   #epoch = 0;
   #early = { index: -1, at: 0 };
+  /** The measured stage had a hole, stall, dropout or gap, so it never finishes early. */
+  #disturbed = false;
   #completedEarly = new Set<TransportRole>();
   #entered = new Set<TransportRole>();
   #progressKey = "";
@@ -204,6 +214,8 @@ export class Run {
       up: null,
       anchor: null,
       progressAt: { down: 0, up: 0 },
+      heardAt: 0,
+      grewNanos: 0,
       recovery: null,
       latencyStall: null,
       gaps: 0,
@@ -319,7 +331,7 @@ export class Run {
     if (!this.#running) return;
     this.#endRequested = true;
     if (this.#ending) return;
-    if (this.#timer) clearTimeout(this.#timer);
+    this.#timer?.();
     this.#timer = null;
     this.#generation++;
     if (this.#active)
@@ -357,7 +369,7 @@ export class Run {
     this.#epoch++;
     this.#generation++;
     this.#measuring = this.#latencyOpen = false;
-    if (this.#timer) clearTimeout(this.#timer);
+    this.#timer?.();
     this.#timer = null;
     this.#boundaryAbort.abort();
     this.#boundaryAbort = new AbortController();
@@ -385,15 +397,12 @@ export class Run {
       const boundary = server.buckets.nextBoundaryT;
       if (boundary != null) deadlines.push(boundary - this.#elapsed);
     }
-    this.#timer = setTimeout(
-      () => {
-        this.#timer = null;
-        if (!this.#running) return;
-        this.#tick();
-        this.#arm();
-      },
-      Math.max(1, Math.min(...deadlines)),
-    );
+    this.#timer = after(Math.max(1, Math.min(...deadlines)), () => {
+      this.#timer = null;
+      if (!this.#running) return;
+      this.#tick();
+      this.#arm();
+    });
   }
 
   #tick(): void {
@@ -419,7 +428,7 @@ export class Run {
         });
     if (this.#measuring && now - this.#sampledAt >= TICK_MS - 1)
       this.#sample(now);
-    if (this.#elapsed >= (this.#segments.at(-1)?.end ?? 0) && !this.#stalled)
+    if (this.#elapsed >= (this.#segments.at(-1)?.end ?? 0))
       return this.finish();
     const segment = segmentAt(this.#segments, this.#elapsed);
     if (!segment) return;
@@ -589,6 +598,7 @@ export class Run {
     const cfg = this.#cfg!;
     if (!this.#participants().length) return;
     this.#hasMeasured = this.#measuring = this.#latencyOpen = true;
+    this.#disturbed = false;
     const cadence =
       activity.stage === "latency" ? cfg.pingCadence : cfg.loadedPingCadence;
     for (const server of this.#stageParticipants(activity)) {
@@ -604,6 +614,7 @@ export class Run {
       if (activity.stage === "latency") server.latency.resetStability();
       const now = this.#clock.active();
       server.progressAt = { down: now, up: now };
+      server.heardAt = now;
       server.stage?.measure();
     }
     if (!isTransfer(activity.stage)) return;
@@ -642,7 +653,7 @@ export class Run {
   #observe(boundary: Boundary, final = false): boolean {
     const interval = this.#aggregate.current?.id;
     const sample = this.#aggregate.observe(boundary, final);
-    if (interval !== this.#aggregate.current?.id) this.#resetStability();
+    if (interval !== this.#aggregate.current?.id) this.#disturb();
     if (!sample) return false;
     for (const dir of ["down", "up"] as const) {
       const total = this.#servers.reduce(
@@ -674,6 +685,13 @@ export class Run {
         : 1;
     };
     const elapsed = this.#position();
+    const quietMs =
+      this.#clock.active() -
+      Math.max(
+        ...this.#participants().flatMap((server) =>
+          transfer.map((dir) => server.progressAt[dir]),
+        ),
+      );
     this.#emit({
       type: "live",
       sample: {
@@ -688,6 +706,7 @@ export class Run {
             ? null
             : this.#live.bridgedUpload(now, lanes),
         stalled: this.#stalled,
+        quietMs: this.#stalled && quietMs >= STALL_QUIET_MS ? quietMs : null,
       },
     });
   }
@@ -744,6 +763,7 @@ export class Run {
     const participants = this.#participants();
     const upload = this.#activity!.transfer.includes("up");
     const boundary = this.#snapshot();
+    const at = this.#clock.active();
     const recovering = participants.filter((server) =>
       this.#recovering(server),
     );
@@ -761,8 +781,7 @@ export class Run {
       participants.forEach((server, index) => {
         const result = results[index];
         const checkpoint = result.status === "fulfilled" ? result.value : null;
-        if (checkpoint && checkpoint.bytes > (server.up?.bytes ?? -1))
-          server.progressAt.up = this.#clock.active();
+        if (checkpoint) this.#hear(server, checkpoint);
         boundary.up[server.server.id] = checkpoint;
       });
     this.#observe(boundary, true);
@@ -776,15 +795,12 @@ export class Run {
           "sign-in-required",
           result.reason.message,
         );
-    for (const server of recovering)
-      if (this.#recovering(server)) {
-        const { reason, detail, direction } = server.recovery!.info;
-        this.#remove(
-          server,
-          reason,
-          detail ?? `${direction} direction carried no data`,
-        );
-      }
+    // Whoever is still silent, or still retrying a failure, leaves here as it would have mid-stage.
+    for (const server of participants) {
+      const silent = this.#silent(server, at);
+      if (silent || (recovering.includes(server) && this.#recovering(server)))
+        this.#leave(server, silent);
+    }
     this.#aggregate.dropout(this.#ids(), this.#now());
     this.#aggregate.close();
   }
@@ -814,9 +830,7 @@ export class Run {
       },
       receiver(checkpoint) {
         if (!run.#measuring || !live()) return;
-        if (checkpoint.bytes > (server.up?.bytes ?? -1))
-          server.progressAt.up = run.#clock.active();
-        server.up = checkpoint;
+        run.#hear(server, checkpoint);
         if (!run.#stalled)
           run.#live.receiver(id, checkpoint, run.#clock.read());
         if (run.#boundary()) run.#tick();
@@ -935,8 +949,7 @@ export class Run {
     if (!server.recovery) {
       server.recovery = { abort: new AbortController(), info };
       this.#live.restart(server.server.id, server.down, this.#clock.read());
-      this.#cancelEarly();
-      this.#resetStability();
+      this.#disturb();
       this.#updateStalled();
     }
     // An unknown upload id grants one replacement receiver per server and run, even mid-recovery.
@@ -982,18 +995,70 @@ export class Run {
       if (stall && active - stall.at >= LATENCY_RECOVERY_BUDGET_MS)
         this.#failLatency(server, activity.stage, stall.detail);
       if (!this.#measuring) continue;
-      const silent = activity.transfer.find(
-        (dir) =>
-          active - server.progressAt[dir] >= DIRECTION_PROGRESS_WINDOW_MS,
-      );
-      if (silent)
-        this.#remove(
-          server,
-          server.recovery?.info.reason ?? "timeout",
-          server.recovery?.info.detail ?? `${silent} direction carried no data`,
-        );
+      if (
+        activity.transfer.some(
+          (dir) => active - server.progressAt[dir] >= STALL_QUIET_MS,
+        )
+      )
+        this.#disturbed = true;
+      // Silence the others share is the link's: everyone stays, and the stage end judges who is still silent.
+      const silent = this.#silent(server, active);
+      if (silent && this.#moving(server, silent, active))
+        this.#leave(server, silent);
     }
     this.#updateStalled();
+  }
+
+  /** A direction silent past the limit; a receiver that sends no record is given longer, as its feed may lag. */
+  #silent(server: Participant, at: number): FlowDirection | undefined {
+    return this.#activity?.transfer.find((dir) =>
+      dir === "down"
+        ? at - server.progressAt.down >= DIRECTION_PROGRESS_WINDOW_MS
+        : ((server.up?.nanos ?? 0) - server.grewNanos) / 1e6 >=
+            DIRECTION_PROGRESS_WINDOW_MS ||
+          at - server.heardAt >= RECEIVER_SILENCE_MS,
+    );
+  }
+
+  /** Another participant moved `dir` a moment ago, so a silent one's problem is its own. */
+  #moving(silent: Participant, dir: FlowDirection, at: number): boolean {
+    return this.#participants().some(
+      (server) =>
+        server !== silent && at - server.progressAt[dir] < STALL_QUIET_MS,
+    );
+  }
+
+  /** No direction of the measured transfer has moved for a moment. */
+  #quiet(server: Participant): boolean {
+    const transfer = (this.#measuring && this.#activity?.transfer) || [];
+    const at = this.#clock.active();
+    return (
+      transfer.length > 0 &&
+      transfer.every((dir) => at - server.progressAt[dir] >= STALL_QUIET_MS)
+    );
+  }
+
+  /** Grown receiver bytes are progress; any record with advancing receiver time shows the feed is alive. */
+  #hear(server: Participant, checkpoint: ReceiverCheckpoint): void {
+    const last = server.up;
+    const fresh = !last || last.id !== checkpoint.id;
+    const at = this.#clock.active();
+    if (fresh || checkpoint.nanos > last.nanos) server.heardAt = at;
+    if (fresh || checkpoint.bytes > last.bytes) {
+      server.progressAt.up = at;
+      server.grewNanos = checkpoint.nanos;
+    }
+    server.up = checkpoint;
+  }
+
+  /** A server leaves with the failure it last reported, else as silent in `dir`. */
+  #leave(server: Participant, dir?: FlowDirection): void {
+    const info = server.recovery?.info;
+    this.#remove(
+      server,
+      info?.reason ?? "timeout",
+      info?.detail ?? `${info?.direction ?? dir} direction carried no data`,
+    );
   }
 
   /** A reported stall counts once its direction's evidence is quiet on the run clock too. */
@@ -1013,14 +1078,17 @@ export class Run {
     server.recovery = null;
   }
 
-  /** The run is stalled while every participant is recovering its measured evidence. */
+  /** The run is stalled while every participant is recovering or has moved nothing for a moment. */
   #updateStalled(): void {
     const latencyStage = this.#activity?.stage === "latency";
     const servers = latencyStage
       ? this.#latencyParticipants()
       : this.#participants();
     const stalled =
-      servers.length > 0 && servers.every((server) => this.#recovering(server));
+      servers.length > 0 &&
+      servers.every(
+        (server) => this.#recovering(server) || this.#quiet(server),
+      );
     if (stalled === this.#stalled || !this.#running) return;
     this.#stalled = stalled;
     this.#breakContinuity();
@@ -1028,13 +1096,15 @@ export class Run {
       this.#live.reset(this.#counts(), this.#clock.read());
       return this.#emit({ type: "resume" });
     }
+    this.#disturbed = true;
     const info = servers.find((server) => server.recovery)?.recovery?.info;
     this.#emit({
       type: "stall",
-      info: info ?? {
-        reason: "connection-lost",
-        detail: "Latency interrupted",
-      },
+      info:
+        info ??
+        (latencyStage
+          ? { reason: "connection-lost", detail: "Latency interrupted" }
+          : { reason: "timeout" }),
     });
   }
 
@@ -1083,6 +1153,7 @@ export class Run {
   #remove(server: Participant, reason: FailureReason, message: string): void {
     if (server.removed || this.#completed || !this.#running) return;
     const activity = this.#activity;
+    this.#disturb();
     if (activity?.stage === "latency") {
       server.latency.failed.add("latency");
       server.latency.stages.latency.markIncomplete();
@@ -1127,8 +1198,6 @@ export class Run {
       );
     if (activity && this.#measuring && isTransfer(activity.stage))
       this.#aggregate.dropout(survivors, this.#now());
-    this.#cancelEarly();
-    this.#resetStability();
     if (this.#boundary()) this.#tick();
   }
 
@@ -1153,8 +1222,7 @@ export class Run {
 
   /** A timer gap starts a new interval, so no headline, early finish or live rate spans it. */
   #resetInterval(): void {
-    this.#cancelEarly();
-    this.#resetStability();
+    this.#disturb();
     this.#live.reset(this.#counts(), this.#clock.read());
     this.#breakContinuity();
     const stage = this.#activity?.stage;
@@ -1168,6 +1236,13 @@ export class Run {
     this.#aggregate.resetStability();
     if (this.#activity?.stage === "latency")
       for (const server of this.#servers) server.latency.resetStability();
+  }
+
+  /** A stall, dropout or gap restarts the stability window and rules out finishing this stage early. */
+  #disturb(): void {
+    this.#disturbed = true;
+    this.#cancelEarly();
+    this.#resetStability();
   }
 
   #breakContinuity(): void {
@@ -1241,7 +1316,7 @@ export class Run {
     const cfg = this.#cfg!;
     const eligible =
       cfg.adaptive &&
-      !this.#stalled &&
+      !this.#disturbed &&
       this.#canComplete(phase) &&
       shouldExitPhase({
         kind: phase === "latency" ? "latency" : "transfer",
@@ -1324,8 +1399,15 @@ export class Run {
       return (this.#settled[stage] = "not-run");
     if (entered) this.#reduce(stage);
     const lanes = stageLanes(this.#results, stage);
-    const failed = this.#failed(stage);
-    if (entered && !failed && !lanes.every(Boolean)) {
+    const measured = lanes.every(Boolean);
+    // A result that spans too little of its planned time is kept, never complete: the rule History checks.
+    const short =
+      measured &&
+      isTransfer(stage) &&
+      coveredMs(this.#aggregate.intervals, stage) <
+        this.#cfg!.duration[`${stage}Ms`] *
+          minCoverage(this.#completedEarly.has(stage));
+    if (entered && !this.#failed(stage) && (short || !measured)) {
       const ids =
         stage === "latency"
           ? [this.#focus().server.id]
@@ -1338,11 +1420,13 @@ export class Run {
           id,
           scope,
           "insufficient-evidence",
-          "Too little measured evidence for a result",
+          short
+            ? "Measured too little of the planned time"
+            : "Too little measured evidence for a result",
           stage,
         );
     }
-    return (this.#settled[stage] = stageStatus(lanes, failed));
+    return (this.#settled[stage] = stageStatus(lanes, this.#failed(stage)));
   }
 
   #complete(): void {

@@ -23,7 +23,7 @@
   );
   const issue = $derived(
     issues.length > 1
-      ? `${issues.length} measurement issues — details under the results`
+      ? `${issues.length} measurement issues, each marked on its card`
       : issues.map(({ stages, reason }) => `${stages}: ${reason}`).join(""),
   );
   const kicker = $derived(
@@ -33,7 +33,7 @@
   );
 
   // Only failures and issues: the status bar already names every phase.
-  let toast = $state({ kicker: "", message: "", tone: "" });
+  let toast = $state.raw({ kicker: "", message: "", tone: "" });
   let visible = $state(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
   let seenIssues = 0;
@@ -67,8 +67,10 @@
 <div
   class="float phase-toast"
   class:visible={visible || stalled}
+  class:stall={stalled}
   data-tone={shown.tone}
   aria-hidden="true"
+  style:--linger="{LINGER_MS}ms"
 >
   <span class="notice-icon"><Icon name="info" /></span>
   <span class="kicker">{shown.kicker}</span>
@@ -78,13 +80,15 @@
 <style>
   .phase-toast {
     position: fixed;
-    right: 18px;
+    right: var(--space-4);
+    /* Kept to the stage's edge, so it never lands on a docked sheet. */
+    right: calc(anchor(--stage right) + var(--space-4));
     bottom: 40px;
     z-index: var(--z-toast);
-    display: grid;
+    display: none;
     grid-template-columns: 24px minmax(0, 1fr);
     align-items: center;
-    column-gap: 9px;
+    column-gap: var(--space-2);
     min-width: 220px;
     max-width: min(360px, calc(100vw - 24px));
     padding: var(--space-2) var(--space-3);
@@ -93,11 +97,19 @@
     pointer-events: none;
     transition:
       opacity var(--dur-slide) var(--ease-out),
-      translate var(--dur-slide) var(--ease-out);
+      translate var(--dur-slide) var(--ease-out),
+      display var(--dur-slide) allow-discrete;
   }
   .phase-toast.visible {
+    display: grid;
     opacity: 1;
     translate: none;
+  }
+  @starting-style {
+    .phase-toast.visible {
+      opacity: 0;
+      translate: 0 4px;
+    }
   }
   .notice-icon {
     grid-row: 1 / 3;
@@ -106,13 +118,13 @@
     color: var(--tone);
   }
   .notice-icon :global(svg) {
-    width: 18px;
-    height: 18px;
+    width: var(--icon);
+    height: var(--icon);
   }
   .kicker {
     color: var(--text-muted);
     font-size: var(--type-2xs);
-    font-weight: var(--w-heavy);
+    font-weight: var(--w-strong);
   }
   strong {
     margin-top: 2px;
@@ -123,8 +135,19 @@
   }
   @media (max-width: 759px) {
     .phase-toast {
-      inset-inline: 12px;
+      inset-inline: var(--space-4);
       min-width: 0;
+      max-width: none;
+    }
+    /* A phone keeps the running card in view: a stall shows for its reading time, then the status bar holds it. */
+    .phase-toast.stall {
+      animation: linger var(--dur-slide) var(--ease-out) var(--linger) forwards;
+    }
+  }
+  @keyframes linger {
+    to {
+      opacity: 0;
+      translate: 0 4px;
     }
   }
 </style>

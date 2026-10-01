@@ -101,6 +101,9 @@ const suite = Bun.spawn(
     stdio: ["inherit", "inherit", "inherit"],
     env: {
       ...process.env,
+      // Bun's Chrome profiles belong to this suite, including parallel workers
+      // that exit without running process-level cleanup callbacks.
+      TMPDIR: dir,
       GM_E2E: JSON.stringify({ fleet, password, harness: harness.url.origin }),
       GM_E2E_LAUNCH: JSON.stringify(launched),
       BUN_CHROME_ARGS: [

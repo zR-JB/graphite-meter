@@ -19,12 +19,8 @@
     serverLoadSummary,
     endpointPathStatus,
   } from "./endpointInfo";
-  import {
-    JARGON,
-    MISSING,
-    reasonLabel,
-    transportLabel,
-  } from "../presentation/vocabulary";
+  import { JARGON, MISSING, transportLabel } from "../presentation/vocabulary";
+  import { serverIssues } from "../presentation/resultSummary";
   import { term, tipGroup, tooltip } from "../actions/tooltip";
   import ServerScope from "./ServerScope.svelte";
   import Icon from "./Icon.svelte";
@@ -74,6 +70,12 @@
       (failure) => failure.serverId === selectedServer?.id,
     ) ?? [],
   );
+  // One note per reason, naming the stages it ended, as the results row does.
+  const issues = $derived(
+    store.serverDetails && selectedServer
+      ? serverIssues(store.serverDetails, selectedServer.id)
+      : [],
+  );
   let copied = $state(false);
 
   const pathMode = $derived(
@@ -83,7 +85,7 @@
   const client = $derived.by(() => {
     const { clientIp, clientIpVersion, clientIpSource } =
       connections.throughput;
-    if (!clientIp) return { value: "Pending" };
+    if (!clientIp) return { value: pending };
     return {
       value: clientIp,
       aside: `IPv${clientIpVersion}, ${clientIpSource === "forwarded" ? "trusted proxy" : "socket peer"}`,
@@ -106,11 +108,13 @@
       ? store.servers.get(selectedServer.id)?.readiness === "failed"
       : false,
   );
+  // A failed server's missing facts will not arrive.
+  const pending = $derived(unreachable ? MISSING : "Pending");
 
   // The feed rides the session carrying the bytes, or its own fetch.
   const uploadProgressPath = $derived.by(() => {
     const target = connections.throughput.target;
-    if (!target) return "Pending";
+    if (!target) return pending;
     const carrier =
       target.transport === "fetch-stream" ? "Fetch stream" : "Session stream";
     return `${carrier} over ${connections.throughput.carrier}`;
@@ -143,11 +147,6 @@
       throughputTransport,
     ),
   );
-
-  const streams = $derived.by(() => {
-    const [value, aside] = transferStreams.split(" · ");
-    return { value, aside };
-  });
 
   function diagnosticReport() {
     return JSON.stringify(
@@ -218,13 +217,6 @@
 <section class="infra">
   <div class="group server-card">
     <h3>{pathMode === "live" ? "Selected server" : "Tested server"}</h3>
-    {#each failures as failure}
-      <p class="notice" data-tone="err">{reasonLabel(failure.reason)}</p>
-    {:else}
-      {#if unreachable}<p class="notice" data-tone="err">
-          {validation.throughput.message ?? "Server could not be reached"}
-        </p>{/if}
-    {/each}
     <dl class="kv" data-tip-group {@attach tipGroup}>
       {#if availableServers.length > 1}
         <div>
@@ -250,12 +242,22 @@
           true,
         )}{/if}
     </dl>
+    {#each issues as issue (`${issue.reason}\t${issue.stages}`)}
+      <p class="notice" data-tone="err">
+        <strong>{issue.stages}</strong>
+        {issue.reason}
+      </p>
+    {:else}
+      {#if unreachable}<p class="notice" data-tone="err">
+          {validation.throughput.message ?? "Server could not be reached"}
+        </p>{/if}
+    {/each}
   </div>
 
   <div class="group">
     <h3>Connection</h3>
     <dl class="kv" data-tip-group {@attach tipGroup}>
-      {#each PATH_ROLES as role}
+      {#each PATH_ROLES as role (role)}
         {@const connection = connections[role]}
         {@const status = endpointPathStatus(connection.validation, pathMode)}
         {@const inTest = role === "throughput" || latencyRequested}
@@ -287,18 +289,19 @@
           "throughput",
           connections.throughput.browserProtocol,
           connections.throughput.serverProtocol,
+          pending,
         ),
         JARGON.pathEvidence,
         true,
       )}
-      {@render row("Streams", streams, JARGON.forcedStreams)}
+      {@render row("Streams", transferStreams, JARGON.forcedStreams)}
       {@render row("Upload feed", uploadProgressPath, JARGON.uploadFeed)}
       {#if latencyRequested}
         {@render row(
           "Pre-test latency",
           connections.latency.preTestPingMs !== undefined
             ? formatLatency(connections.latency.preTestPingMs)
-            : "Pending",
+            : pending,
           JARGON.pretestLatency,
         )}
       {/if}

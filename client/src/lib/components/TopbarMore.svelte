@@ -50,10 +50,7 @@
         onclick={() => select(chooseHistory)}
       >
         <span><Icon name="history" /></span>
-        <span
-          ><strong>{historyActive ? "Close History" : "Open History"}</strong
-          ><small>Saved results</small></span
-        >
+        <span><strong>History</strong><small>Saved results</small></span>
       </button>
     {/if}
     <button
@@ -65,11 +62,7 @@
       onclick={() => select(onEndpoint)}
     >
       <span><Icon name="info" /></span>
-      <span
-        ><strong>{endpointActive ? "Close Details" : "Details"}</strong><small
-          >Server and connection</small
-        ></span
-      >
+      <span><strong>Details</strong><small>Server and connection</small></span>
     </button>
     <button
       type="button"
@@ -81,7 +74,7 @@
       <span><Icon name={THEME[theme].icon} /></span>
       <span
         ><strong>Theme: {THEME[theme].label}</strong><small
-          >Cycle appearance</small
+          >Cycles light, dark and auto</small
         ></span
       >
     </button>

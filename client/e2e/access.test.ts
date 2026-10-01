@@ -4,6 +4,7 @@ import {
   frankfurt,
   helsinki,
   home,
+  locked,
   open,
   openSettings,
   phase,
@@ -80,24 +81,24 @@ test("failed and hanging unselected peers do not hold a selected pair", async (p
   expect(saved.result.multiServer.participants).toEqual(["self", "server-1"]);
 
   const settings = await openSettings(page);
-  const choices = settings.getByRole("group", { name: "Servers to test" });
+  const choices = settings.getByRole("group", { name: "Test servers" });
   await expect(choices.getByRole("checkbox")).toHaveCount(5);
   await expect(choices).toHaveAttribute("aria-busy", "true");
   await expect(choices).toHaveAttribute("aria-busy", "false", {
     timeout: 10_000,
   });
-  // Frankfurt is selected without an idle monitor, so it re-reads its discovery
-  // every 5 s on its own; reopening must not start any other preflight.
-  const preflights = async () => {
-    const counts = (await network(page)).preflights;
-    for (const origin of origins(frankfurt)) delete counts[origin];
-    return counts;
+  // A selected peer without an idle monitor re-reads its preflight on its own clock, Settings or not.
+  const peers = async () => {
+    const { preflights } = await network(page);
+    return [amsterdam, helsinki, locked].map(
+      (server) => preflights[server.url],
+    );
   };
-  const settled = await preflights();
+  const settled = await peers();
   await closeSettings(page);
   await openSettings(page);
   await expect(choices).toHaveAttribute("aria-busy", "false");
-  expect(await preflights()).toEqual(settled);
+  expect(await peers()).toEqual(settled);
   expect((await network(page)).catalogs).toEqual([home.url]);
   expect(await selection(page)).toEqual(["self", "server-1"]);
 });

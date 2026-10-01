@@ -18,9 +18,7 @@ import { Locator, Page, expect, test } from "./webview";
 
 async function signIn(page: Page) {
   await page.getByRole("textbox", { name: "Operator password" }).fill(password);
-  await page
-    .getByRole("button", { name: "Sign in with operator password" })
-    .click();
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
 }
 
 test("a signed-in protected home runs automatic, HTTP/3 and WebTransport paths", async (page) => {
@@ -52,6 +50,18 @@ test("a signed-in protected home runs automatic, HTTP/3 and WebTransport paths",
 
 const feedback = (page: Page, name: string) =>
   page.locator('[aria-label="Settings"] .server-feedback', { hasText: name });
+
+test("signing out lands on the signed-out notice", async (page) => {
+  await open(page, `${locked.url}/login`, {
+    servers: [{ id: "self", url: locked.url }],
+  });
+  await signIn(page);
+  await page
+    .getByRole("button", { name: "Sign out Local operator", exact: true })
+    .click();
+  await expect(page.getByRole("status")).toHaveText("You're signed out.");
+  expect(await page.evaluate(() => location.search)).toBe("?reason=signed_out");
+});
 
 test("signing out everywhere waits for confirmation", async (page) => {
   await open(page, `${locked.url}/login`, {

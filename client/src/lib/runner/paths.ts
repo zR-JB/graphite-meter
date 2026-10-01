@@ -18,7 +18,12 @@ import type {
   LatencyTarget,
   WebTransportThroughputTarget,
 } from "../api/endpoints";
-import type { LatencyEndpoint, ThroughputEndpoint } from "../api/decode";
+import {
+  DEFAULT_STAGE_LIMIT_MS,
+  MAX_STAGE_LIMIT_MS,
+  type LatencyEndpoint,
+  type ThroughputEndpoint,
+} from "../api/decode";
 import { planned, plannedActivities } from "./schedule";
 import {
   browserOriginRestriction,
@@ -219,6 +224,15 @@ export const selectionOrigin = (selection: string): string | null =>
   selection === "auto" || isGroup(selection)
     ? null
     : selection.replace(/::(?:wt|wtdg)$/, "");
+
+/** A choice in words, for a server that does not offer it: an HTTP version, a transport or an origin. */
+export function selectionName(selection: string): string {
+  if (selection.startsWith("protocol:"))
+    return httpProtocolLabel(selection.slice("protocol:".length));
+  if (selection.startsWith("transport:"))
+    return selection === "transport:websocket" ? "WebSocket" : "WebTransport";
+  return selectionOrigin(selection) ?? selection;
+}
 
 /** A known browser policy restriction, only when it excludes every matching target. */
 export function blockedSelectionReason(
@@ -519,6 +533,23 @@ export function planServerStreams(
 }
 
 /** Rejects a plan with no stage, or whose streams cannot fit, before any connection opens. */
+/** The longest stage every selected server admits, and the server that sets it; an undiscovered one does not limit it. */
+export function stageLimit(
+  views: readonly {
+    server: { name: string };
+    discovery: TransportDiscovery | null;
+  }[],
+): { ms: number; server: string | null } {
+  let limit = { ms: MAX_STAGE_LIMIT_MS, server: null as string | null };
+  for (const { server, discovery } of views) {
+    const ms = discovery
+      ? (discovery.maxStageMs ?? DEFAULT_STAGE_LIMIT_MS)
+      : limit.ms;
+    if (ms < limit.ms) limit = { ms, server: server.name };
+  }
+  return limit;
+}
+
 export function validatePlan(
   config: RunnerConfig,
   servers: readonly PlanServer[],
@@ -529,25 +560,34 @@ export function validatePlan(
     if (activity.transfer.length) planServerStreams(config, servers, activity);
 }
 
-/** The lane policy in words; `activities` are the stages the run will execute. */
+/** The lane policy in words, a value and its qualifier; `activities` are the stages the run will execute. */
 export function describeTransferStreams(
   policy: TransferStreamPolicy,
   activities: readonly PhaseActivity[],
   protocol?: ProtocolTarget,
   transport?: TransportKind,
-): string {
-  if (transport === "webtransport-datagram") return "Datagram flood · no lanes";
+): { value: string; aside: string } {
+  if (transport === "webtransport-datagram")
+    return { value: "Datagram flood", aside: "no streams" };
   const forced = normalizeStreamCount(policy.count);
   if (policy.mode === "forced") {
     const session = transport === "webtransport";
-    return session && forced > WT_MAX_LANES
-      ? `Forced · ${WT_MAX_LANES} per direction (capped from ${forced} by the session)`
-      : `Forced · ${forced} per direction`;
+    return {
+      value: "Forced",
+      aside:
+        session && forced > WT_MAX_LANES
+          ? `${WT_MAX_LANES} per direction (capped from ${forced} by the session)`
+          : `${forced} per direction`,
+    };
   }
   if (transport === "webtransport")
-    return "Automatic · 1 continuous stream per direction";
+    return { value: "Automatic", aside: "1 continuous stream per direction" };
   const lanes = protocol && MULTIPLEXED[protocol];
-  if (lanes) return `Automatic · ${lanes.down} download / ${lanes.up} upload`;
+  if (lanes)
+    return {
+      value: "Automatic",
+      aside: `${lanes.down} download / ${lanes.up} upload`,
+    };
   const most = Math.max(
     0,
     ...activities.flatMap((activity) =>
@@ -562,7 +602,7 @@ export function describeTransferStreams(
       ),
     ),
   );
-  return `Automatic · up to ${most || forced} per direction`;
+  return { value: "Automatic", aside: `up to ${most || forced} per direction` };
 }
 
 export type ConnectionValidationState =

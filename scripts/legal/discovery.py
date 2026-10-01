@@ -193,6 +193,14 @@ def npm_component(root: Path, reviews: list[Review]) -> Component:
     source = repository_url(metadata.get("repository"), name)
     component = component_from_files("npm", name, text(metadata, "version"), source, files)
     component.source_path = root
+    # Bun patches are package-manager provenance even when emitted modules resolve through an isolated store.
+    for parent in root.parents:
+        manifest = parent / "package.json"
+        if "node_modules" in parent.parts or not manifest.is_file():
+            continue
+        patches = obj(read_json(manifest)).get("patchedDependencies", {})
+        component.modified = f"{name}@{component.version}" in obj(patches)
+        break
     component.declaredLicenseExpression = package_license(
         metadata.get("license"), metadata.get("licenses", []), component.declaredLicenseExpression)
     component.selectedLicenseExpression = component.declaredLicenseExpression

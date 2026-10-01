@@ -166,6 +166,60 @@ async function history(page: Page, selected = "") {
 
 const OPEN_BOUND = { timeout: 10_000 };
 
+test("closing History stops an unfinished archive scan and preserves its records", async (page) => {
+  await fixturePage(page);
+  await seed(page, {
+    records: Array.from({ length: 2000 }, (_, i) => record(i)),
+  });
+  await page.goto(home.url);
+  await expect(page.locator("#console")).toHaveCount(1);
+  await page.evaluate((db) => {
+    const stats = { deliveries: 0, dismissed: false };
+    const original = IDBCursor.prototype.continue;
+    IDBCursor.prototype.continue = function (...args) {
+      if (
+        this.source instanceof IDBIndex &&
+        this.source.objectStore.name === db.resultsStore &&
+        this.source.objectStore.transaction.mode === "readonly"
+      ) {
+        stats.deliveries++;
+        // Interrupt the actual scan, without slowing cursor deliveries or
+        // relying on the test driver to catch a brief intermediate state.
+        if (stats.deliveries === 20) {
+          const close = document.querySelector<HTMLButtonElement>(
+            'button[aria-label="Close History"]',
+          );
+          if (!close) throw new Error("History scan has no dismiss control");
+          stats.dismissed = true;
+          close.click();
+        }
+      }
+      return original.apply(this, args);
+    };
+    Object.assign(window, {
+      archiveScan: stats,
+      originalCursorContinue: original,
+    });
+  }, HISTORY_DB);
+  await page.getByRole("button", { name: "History", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe("#/");
+  await expect(page.locator(".history-workspace")).toHaveCount(0);
+  const stopped = await page.evaluate(() => (window as any).archiveScan);
+  expect(stopped.dismissed).toBe(true);
+  expect(stopped.deliveries).toBeGreaterThanOrEqual(20);
+  expect(stopped.deliveries).toBeLessThan(250);
+  await Bun.sleep(200);
+  expect(
+    await page.evaluate(() => (window as any).archiveScan.deliveries),
+  ).toBe(stopped.deliveries);
+  await page.evaluate(() => {
+    IDBCursor.prototype.continue = (window as any).originalCursorContinue;
+  });
+  await page.getByRole("button", { name: "History", exact: true }).click();
+  await expect(page.locator(".result-row")).toHaveCount(50, OPEN_BOUND);
+  expect((await stored(page)).records).toHaveLength(2000);
+});
+
 test("a 2,000-result archive sorts in bounded chunks and caps deep links", async (page) => {
   await fixturePage(page);
   const archive = Array.from({ length: 2_001 }, (_, index) => record(index));
@@ -209,6 +263,45 @@ test("a closed Columns popover never takes a tap meant for a result", async (pag
   await expect(page.locator(".result-detail")).toBeVisible();
 });
 
+test("the keyboard moves the list's split within both panes' limits, and it survives a reload", async (page) => {
+  await fixturePage(page);
+  await seed(page, { records: [record(1)] });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await history(page, id(1));
+  const handle = page.getByRole("slider", { name: /^Resize results list/ });
+  const list = () =>
+    page.locator(".history-list").evaluate((el: HTMLElement) => el.offsetWidth);
+  await expect(handle).toHaveAttribute("aria-valuenow", "512");
+  await handle.evaluate((el: HTMLElement) => el.focus());
+  // The list never narrows past 360 px, nor leaves the detail under 460 px.
+  for (const [key, width] of [
+    ["ArrowRight", 528],
+    ["Home", 360],
+    ["End", 820],
+    ["Enter", 512],
+    ["ArrowLeft", 496],
+  ] as const) {
+    await page.raw.press(key);
+    await expect.poll(list).toBe(width);
+  }
+  await expect(handle).toHaveAttribute("aria-valuenow", "496");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          JSON.parse(localStorage.getItem("graphite-meter:v1")!).historySplit,
+      ),
+    )
+    .toBe(496 / 1280);
+  await page.reload();
+  await expect.poll(list).toBe(496);
+  // A narrower window keeps the share within the limits, then shows one pane.
+  await page.setViewportSize({ width: 900, height: 800 });
+  await expect.poll(list).toBe(360);
+  await page.setViewportSize({ width: 800, height: 800 });
+  await expect(handle).toHaveCount(0);
+});
+
 test("unsupported and malformed rows are skipped, kept and clearable", async (page) => {
   await fixturePage(page);
   const current = record(1);
@@ -239,9 +332,9 @@ test("unsupported and malformed rows are skipped, kept and clearable", async (pa
 
   const management = page.getByRole("button", { name: "History actions" });
   await management.click();
-  await page.getByRole("menuitem", { name: /Clear all saved results/ }).click();
+  await page.getByRole("menuitem", { name: "Clear history" }).click();
   await page
-    .getByRole("alertdialog", { name: "Clear result history?" })
+    .getByRole("alertdialog", { name: "Clear history?" })
     .getByRole("button", { name: "Clear history" })
     .click();
   await expect(

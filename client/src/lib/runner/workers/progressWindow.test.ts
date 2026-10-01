@@ -1,5 +1,38 @@
 import { expect, test } from "bun:test";
-import { progressWindow } from "./progressWindow";
+import { progressWindow, readBytes } from "./progressWindow";
+
+test("download readers release their stream lock after success and failure", async () => {
+  for (const type of [undefined, "bytes"] as const) {
+    let consumed = 0;
+    const body = new ReadableStream<Uint8Array>({
+      type,
+      start(
+        controller:
+          | ReadableStreamDefaultController<Uint8Array>
+          | ReadableByteStreamController,
+      ) {
+        (controller as ReadableStreamDefaultController<Uint8Array>).enqueue(
+          new Uint8Array(37),
+        );
+        controller.close();
+      },
+    });
+    await readBytes(body, (n) => {
+      consumed += n;
+    });
+    expect(consumed).toBe(37);
+    expect(body.locked).toBe(false);
+    const failure = new Error("connection lost");
+    const broken = new ReadableStream<Uint8Array>({
+      type,
+      start(controller) {
+        controller.error(failure);
+      },
+    });
+    await expect(readBytes(broken, () => {})).rejects.toBe(failure);
+    expect(broken.locked).toBe(false);
+  }
+});
 
 test("batches bytes until the reporting cadence", () => {
   const progress = progressWindow(100);

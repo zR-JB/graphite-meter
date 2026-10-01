@@ -40,7 +40,7 @@
   span {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: var(--space-1);
   }
   /* Every run action shares one cell, so a label change never moves the strip. */
   .stack {
@@ -52,8 +52,13 @@
   .stack > :not(.current) {
     visibility: hidden;
   }
-  /* The status strip has no room for keycaps on narrow screens. */
+  /* The status strip has no room for keycaps on narrow screens, and a touch screen has no keys to name. */
   @container status (max-width: 1100px) {
+    .command-hints {
+      display: none;
+    }
+  }
+  @media (any-hover: none) {
     .command-hints {
       display: none;
     }
