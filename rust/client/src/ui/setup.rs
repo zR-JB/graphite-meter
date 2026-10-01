@@ -3,7 +3,7 @@ use super::{Command, MAX_TEXT, Popup, Prepare, Ui};
 use crate::{
     config::{Config, MAX_STREAMS},
     model::{ServerSummary, Stage},
-    report::{plain, span},
+    report::{cell, plain, span},
     vocabulary::{self as words, CADENCES, MISSING, wire},
 };
 use graphite_meter_core::{
@@ -730,10 +730,29 @@ impl Edit {
     }
 
     /// textinput.View: the value, the cursor reversed over the character under it.
-    pub(super) fn view(&self, ui: &Ui) -> Line<'static> {
+    pub(super) fn view(&self, ui: &Ui, width: usize) -> Line<'static> {
+        let width = width.max(1);
         let (before, rest) = self.chars.split_at(self.cursor);
-        let under = rest.first().map_or(" ".into(), char::to_string);
-        let (after, before): (String, String) = (rest.iter().skip(1).collect(), before.iter().collect());
+        let under = rest.first().copied().filter(|ch| cell(*ch) <= width).unwrap_or(' ');
+        let (mut start, mut room) = (before.len(), width - cell(under));
+        while start > 0 && cell(before[start - 1]) <= room {
+            start -= 1;
+            room -= cell(before[start]);
+        }
+        let before: String = before[start..].iter().collect();
+        let after: String = rest
+            .iter()
+            .skip(1)
+            .scan(room, |room, ch| {
+                let cells = cell(*ch);
+                if cells > *room {
+                    return None;
+                }
+                *room -= cells;
+                Some(*ch)
+            })
+            .collect();
+        let under = under.to_string();
         let theme = &ui.theme;
         let spans = [(before, theme.value), (under, theme.cursor), (after, theme.value)];
         let spans = spans.into_iter().filter(|(text, _)| !text.is_empty());

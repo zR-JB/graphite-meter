@@ -1191,7 +1191,7 @@ mod tests {
         // No notice from a pair url.ParseQuery leaves out, and the provider's name in every mode, as Go renders them.
         assert!(!page("error=stale%zz").await.contains("role=\"alert\""));
         let provider = page("error=provider").await;
-        assert!(provider.contains(">Authelia is unreachable right now. Sign in with the operator password.<"));
+        assert!(provider.contains(">Authelia is unavailable right now. Sign in with the operator password.<"));
         let exchange = json!({"verifier": "v".repeat(43)}).to_string();
         let foreign = [("origin", "http://client.example")];
         let refused = call(&service, Method::POST, "/auth/browser/token", &foreign, exchange).await;

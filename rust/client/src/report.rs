@@ -14,7 +14,7 @@ use ratatui::{
     text::{Line, Span},
 };
 use std::time::Duration;
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub const WIDTH: usize = 100;
 /// The arrows of a stage's directions, indexed as its results' down and up.
@@ -109,14 +109,14 @@ pub(crate) fn sanitize(lines: &mut [Line<'static>], theme: &Theme) {
     }
 }
 
-/// Go's wrapParts: parts joined by " · " while a line holds `limit` characters.
+/// Go's wrapParts: parts joined by " · " while a line holds `limit` terminal cells.
 pub(crate) fn wrap_parts(parts: &[String], limit: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut line = String::new();
     for part in parts {
         if line.is_empty() {
             line.clone_from(part);
-        } else if line.chars().count() + 3 + part.chars().count() <= limit {
+        } else if line.width() + 3 + part.width() <= limit {
             line.push_str(" · ");
             line.push_str(part);
         } else {
@@ -917,6 +917,7 @@ mod tests {
         );
         assert_eq!(fit(styled.clone(), 6), styled);
         assert_eq!(pad(Line::from("ab"), 4).width(), 4);
+        assert_eq!(wrap_parts(&["界界".into(), "abc".into()], 8), ["界界", "abc"]);
         let mut lines = vec![Line::from(span("name\x1b]52;c;secret\x07\u{202e}", bold))];
         sanitize(&mut lines, &Theme::default());
         assert_eq!(lines[0].spans[0].style, Style::default());

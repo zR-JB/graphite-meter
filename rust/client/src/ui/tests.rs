@@ -476,6 +476,26 @@ fn edits_apply_and_refuse_as_go_parses_them() {
     edit.key("alt+b", None);
     edit.key("alt+d", None);
     assert_eq!(edit.text(), " ");
+    // A long edit keeps its cursor visible in terminal cells at both ends, also after resizing.
+    ui.theme = Theme::new(crate::theme::Profile::TrueColor, true);
+    ui.begin_edit(Setting::Catalogue, format!("https://{}meter.example", "界".repeat(30)));
+    for width in [40, 80, 120] {
+        ui.size.0 = width;
+        for key in ["end", "home", "right"] {
+            press(&mut ui, &commands, &[key]);
+            let edit = ui.edit.as_ref().unwrap();
+            let line = edit.view(&ui, 12);
+            assert!(line.width() <= 12);
+            assert!(
+                line.spans
+                    .iter()
+                    .any(|span| span.style.add_modifier.contains(ratatui::style::Modifier::REVERSED)),
+                "cursor hidden"
+            );
+            let lines = rows(&mut ui);
+            assert!(lines.iter().any(|line| line.contains("Catalogue")));
+        }
+    }
     assert!(press(&mut ui, &commands, &["ctrl+c"]), "ctrl+c quits from the editor");
 }
 

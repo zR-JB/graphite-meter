@@ -407,7 +407,7 @@ impl Ui {
         } else {
             let row = self.row(setting);
             let value = match &self.edit {
-                Some(edit) if edit.setting == setting => edit.view(self),
+                Some(edit) if edit.setting == setting => edit.view(self, width.saturating_sub(label_width + 4)),
                 _ if row.inert => under(row.value, theme.muted),
                 _ => under(row.value, theme.value),
             };
