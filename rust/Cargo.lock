@@ -492,7 +492,7 @@ dependencies = [
 
 [[package]]
 name = "graphite-meter-client"
-version = "0.8.6"
+version = "0.0.0"
 dependencies = [
  "base64",
  "bytes",
@@ -525,7 +525,7 @@ dependencies = [
 
 [[package]]
 name = "graphite-meter-core"
-version = "0.8.6"
+version = "0.0.0"
 dependencies = [
  "base64",
  "rustix",
@@ -537,7 +537,7 @@ dependencies = [
 
 [[package]]
 name = "graphite-meter-http3"
-version = "0.8.6"
+version = "0.0.0"
 dependencies = [
  "bytes",
  "http",
@@ -548,7 +548,7 @@ dependencies = [
 
 [[package]]
 name = "graphite-meter-net"
-version = "0.8.6"
+version = "0.0.0"
 dependencies = [
  "base64",
  "graphite-meter-core",
@@ -567,7 +567,7 @@ dependencies = [
 
 [[package]]
 name = "graphite-meter-server"
-version = "0.8.6"
+version = "0.0.0"
 dependencies = [
  "argon2",
  "base64",
