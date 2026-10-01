@@ -150,10 +150,8 @@ impl UploadStore {
         if encoded.len() != 75 {
             return false;
         }
-        let Ok(raw) = URL_SAFE_NO_PAD.decode(encoded) else {
-            return false;
-        };
-        if raw.len() != 56 {
+        let mut raw = [0; 56];
+        if URL_SAFE_NO_PAD.decode_slice(encoded, &mut raw) != Ok(raw.len()) {
             return false;
         }
         let mut mac = token_mac(&self.inner.key);
@@ -196,10 +194,11 @@ impl UploadStore {
                     .iter()
                     .filter_map(|(id, aggregate)| {
                         let state = lock(aggregate);
-                        (state.lanes == 0 && state.bytes == 0 && !state.finished).then(|| (id.clone(), state.touched))
+                        (state.lanes == 0 && state.bytes == 0 && !state.finished).then_some((id, state.touched))
                     })
-                    .min_by_key(|(_, touched)| *touched);
-                let Some((victim, _)) = victim else {
+                    .min_by_key(|(_, touched)| *touched)
+                    .map(|(id, _)| id.clone());
+                let Some(victim) = victim else {
                     return Err(UploadRefusal::GlobalFull);
                 };
                 let aggregate = entries.by_id.remove(&victim).expect("selected receiver exists");

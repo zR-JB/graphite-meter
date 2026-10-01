@@ -68,12 +68,22 @@ impl AttemptLimiter {
         } = &mut *state;
         let addresses = &mut addresses[slot];
         let known = matches!(budget, Budget::KnownDevice);
-        addresses.retain(|_, attempts| {
-            expire(attempts, now);
-            !attempts.is_empty()
-        });
-        let missing = keys.iter().filter(|key| !addresses.contains_key(*key)).count();
-        let full = addresses.len() + missing > MAX_KEYS;
+        for key in &keys {
+            if let Some(attempts) = addresses.get_mut(key) {
+                expire(attempts, now);
+            }
+        }
+        // Refresh this client's counts; reclaim other addresses only when new keys need space.
+        let full = |addresses: &AddressAttempts| {
+            addresses.len() + keys.iter().filter(|key| !addresses.contains_key(*key)).count() > MAX_KEYS
+        };
+        if full(addresses) {
+            addresses.retain(|_, attempts| {
+                expire(attempts, now);
+                !attempts.is_empty()
+            });
+        }
+        let full = full(addresses);
         if full && !known {
             self.log.ceiling(ceiling);
             return false;
