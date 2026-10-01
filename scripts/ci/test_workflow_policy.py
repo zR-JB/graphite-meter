@@ -147,6 +147,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "            VERSION=${{ steps.request.outputs.version }}\n            GM_RUST_RELEASE_LTO=false\n",
      "GM_RUST_RELEASE_LTO"),
     (W + "ci.yml", "          github-token: ''\n", "          github-token: ${{ github.token }}\n", "github-token"),
+    (W + "ci.yml", "provenance: 'false'", "provenance: mode=max", "provenance"),
     (REQUEST, "github-token: ''", "github-token: ${{ github.token }}", "github-token"),
     (REQUEST, "            GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}\n", "",
      "GM_CLIENT_REVISION"),

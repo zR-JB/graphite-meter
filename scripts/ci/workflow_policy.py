@@ -171,8 +171,10 @@ def check_actions(root: Path) -> None:
                 if missing := [item for item in required if item not in step]:
                     fail(f"{name}: mise setup must declare {missing[0].strip()}")
             if "uses: docker/build-push-action@" in step:
+                # Local smoke images use Docker's loader, which cannot load an attestation manifest.
+                provenance = "provenance: 'false'\n" if "load: true\n" in step else "provenance: mode=max\n"
                 required = IMAGE_BUILD if name == "workflows/release-request.yml" else (
-                    "context: .\n", "github-token: ''\n", "provenance: mode=max\n")
+                    "context: .\n", "github-token: ''\n", provenance)
                 if missing := [item for item in required if item not in step]:
                     fail(f"{name}: every image build must declare {missing[0].strip()}")
             for marker, bindings in CONTEXT.items():

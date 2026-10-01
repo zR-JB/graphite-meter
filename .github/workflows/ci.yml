@@ -305,7 +305,8 @@ jobs:
           tags: graphite-meter-rust:smoke
           labels: org.opencontainers.image.licenses=AGPL-3.0-or-later
           github-token: ''
-          provenance: mode=max
+          # Docker's local image loader cannot load the extra attestation manifest.
+          provenance: 'false'
           cache-from: type=gha,scope=rust-ci-browser
           cache-to: type=gha,scope=rust-ci-browser,mode=max,ignore-error=true,timeout=2m
           build-args: |
