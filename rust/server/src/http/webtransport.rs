@@ -322,13 +322,24 @@ async fn datagram_flood(
     block: Bytes,
     meter: &crate::meter::Meter,
 ) -> Result<(), Failure> {
+    let full_size = count.min(DATAGRAM_BYTES).min(block.len() as u64) as usize;
+    let tail_size = (count % full_size as u64) as usize;
+    let mut full = session.prepare_datagram(&block[..full_size])?;
+    let mut tail = (tail_size > 0)
+        .then(|| session.prepare_datagram(&block[..tail_size]))
+        .transpose()?;
     let transfer = meter.open();
     let mut since_yield = 0;
     loop {
         let mut remaining = count;
         while remaining > 0 {
-            let size = remaining.min(DATAGRAM_BYTES).min(block.len() as u64) as usize;
-            session.send_datagram_wait(&block[..size]).await?;
+            let size = remaining.min(full_size as u64) as usize;
+            let datagram = if size == full_size {
+                &mut full
+            } else {
+                tail.as_mut().expect("partial datagram")
+            };
+            datagram.send_wait().await?;
             if let Some(transfer) = &transfer {
                 transfer.record(size);
             }

@@ -869,8 +869,10 @@ fn connect_request() -> http::Request<()> {
 async fn sessions_carry_streams_and_datagrams_both_ways() -> Result<(), TestError> {
     let peers = peers(usize::MAX).await?;
     let (serving, _) = serve_sessions(&peers, |session| async move {
-        let reply = session.read_datagram().await.unwrap();
-        session.send_datagram(&[&b"echo "[..], &reply].concat()).unwrap();
+        for _ in 0..3 {
+            let reply = session.read_datagram().await.unwrap();
+            session.send_datagram(&[&b"echo "[..], &reply].concat()).unwrap();
+        }
         let mut upload = session.accept_uni().await.unwrap();
         let mut received = Vec::new();
         while let Some(chunk) = upload.read_chunk().await.unwrap() {
@@ -885,6 +887,13 @@ async fn sessions_carry_streams_and_datagrams_both_ways() -> Result<(), TestErro
     let (session, _) = Session::connect(&requests, connect_request()).await?.expect("accepted");
     session.send_datagram_wait(b"PING,1").await?;
     assert_eq!(session.read_datagram().await.as_deref(), Some(&b"echo PING,1"[..]));
+    {
+        let mut repeated = session.prepare_datagram(b"PING,2")?;
+        for _ in 0..2 {
+            repeated.send_wait().await?;
+            assert_eq!(session.read_datagram().await.as_deref(), Some(&b"echo PING,2"[..]));
+        }
+    }
     let mut upload = session.open_uni().await?;
     upload.write_all(b"upload").await?;
     upload.finish()?;
@@ -1110,6 +1119,7 @@ async fn an_ended_session_ends_its_streams_and_datagrams() -> Result<(), TestErr
         let outcomes = outcomes.clone();
         async move {
             let (mut lane, mut own) = (session.accept_uni().await.unwrap(), session.open_uni().await.unwrap());
+            let mut datagram = session.prepare_datagram(b"late").unwrap();
             let waiting = tokio::join!(lane.read_chunk(), own.write_chunk(Bytes::from_static(&[0; 64])));
             let _ = outcomes.send(vec![
                 waiting.0.err(),
@@ -1117,6 +1127,7 @@ async fn an_ended_session_ends_its_streams_and_datagrams() -> Result<(), TestErr
                 lane.read_chunk().await.err(),
                 own.write_all(b"late").await.err(),
                 session.send_datagram(b"late").err(),
+                datagram.send_wait().await.err(),
                 session.open_uni().await.err(),
             ]);
         }
@@ -1135,7 +1146,7 @@ async fn an_ended_session_ends_its_streams_and_datagrams() -> Result<(), TestErr
     own.read_exact(&mut [0; 4]).await?;
     connect.write_all(&close_capsule(2, "lifetime")).await?;
     let ended = tokio::time::timeout(Duration::from_secs(5), outcome.recv()).await?;
-    assert_eq!(ended, Some(vec![Some(Error::Refused); 6]));
+    assert_eq!(ended, Some(vec![Some(Error::Refused); 7]));
     assert_eq!(stopped(&lane).await, Some(Code::WT_SESSION_GONE));
     assert_eq!(raw_stream(&mut own).await.1, Err(Code::WT_SESSION_GONE));
     drop(serving);

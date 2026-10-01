@@ -508,6 +508,25 @@ pub struct Session {
     _charge: Charge,
 }
 
+/// A payload encoded for one session, reusable without copying it for every send.
+pub struct PreparedDatagram<'a> {
+    session: &'a Session,
+    bytes: Bytes,
+    ended: Ended,
+}
+
+impl PreparedDatagram<'_> {
+    /// Sends the payload once the queue has room, refused if the session ends while waiting.
+    pub async fn send_wait(&mut self) -> Result<(), Error> {
+        unless_ended(
+            Some(&mut self.ended),
+            self.session.shared.quic.send_datagram_wait(self.bytes.clone()),
+        )
+        .await??;
+        Ok(())
+    }
+}
+
 /// State a session keeps apart from its CONNECT stream's halves: channel slots, the capsule reader
 /// and both sides' close reasons.
 const SESSION_BYTES: usize = size_of::<Session>()
@@ -667,9 +686,18 @@ impl Session {
         Ok(self.shared.quic.send_datagram(self.datagram(payload)?)?)
     }
 
+    /// Encodes a datagram for repeated sends in this session; each send obeys the queue's limits.
+    pub fn prepare_datagram(&self, payload: &[u8]) -> Result<PreparedDatagram<'_>, Error> {
+        Ok(PreparedDatagram {
+            session: self,
+            bytes: self.datagram(payload)?,
+            ended: self.ended.clone(),
+        })
+    }
+
     /// Sends a datagram once the queue has room.
     pub async fn send_datagram_wait(&self, payload: &[u8]) -> Result<(), Error> {
-        Ok(self.shared.quic.send_datagram_wait(self.datagram(payload)?).await?)
+        self.prepare_datagram(payload)?.send_wait().await
     }
 
     /// Resolves once the session ends: with the peer's CLOSE code and reason, code 0 when the peer
