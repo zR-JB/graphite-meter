@@ -73,6 +73,10 @@ pub fn approval_page(code: &str, csrf: &str, challenge: &str, browser_origin: &s
     )
 }
 
+pub fn refusal_page(busy: bool) -> String {
+    render(&CLI, &[("Refused", if busy { "busy" } else { "link" })])
+}
+
 pub fn capacity_page() -> String {
     let limit = super::grant::MAX_SESSION_GRANTS.to_string();
     render(&CLI, &[("BrowserCapacity", "true"), ("ClientLimit", &limit)])
@@ -91,7 +95,7 @@ fn flag(on: bool) -> &'static str {
 }
 
 /// Go's html/template for what these templates use: fields; `template`; and `if`, `else if` and `else` on a
-/// field, on `not` or `and` of fields, or on `eq` with a string. A field is escaped for HTML, or for a URL query
+/// field, nested `not` and `and`, or `eq`/`ne` with a string. A field is escaped for HTML, or for a URL query
 /// within an href.
 fn render(template: &Parts, fields: &[(&str, &str)]) -> String {
     let field = |name: &str| {
@@ -101,18 +105,41 @@ fn render(template: &Parts, fields: &[(&str, &str)]) -> String {
             .find(|(key, _)| *key == name)
             .map_or("", |(_, value)| value)
     };
-    let test = |condition: &str| match condition.split(' ').collect::<Vec<_>>()[..] {
-        ["not", name] => field(name).is_empty(),
-        ["and", first, second] => !field(first).is_empty() && !field(second).is_empty(),
-        ["eq", name, text] => field(name) == text.trim_matches('"'),
-        [name] => !field(name).is_empty(),
-        _ => unreachable!("template condition {condition}"),
+    let test = |condition: &str| {
+        // The shared templates use prefix boolean operators and parentheses; consume both operands
+        // even when the first decides the result so a nested expression stays aligned.
+        fn value<'a>(words: &mut impl Iterator<Item = &'a str>, fields: &'a [(&'a str, &'a str)]) -> &'a str {
+            let word = words.next().expect("template operand");
+            match word {
+                "not" => flag(value(words, fields).is_empty()),
+                "and" | "eq" | "ne" => {
+                    let first = value(words, fields);
+                    let second = value(words, fields);
+                    flag(match word {
+                        "and" => !first.is_empty() && !second.is_empty(),
+                        "eq" => first == second,
+                        _ => first != second,
+                    })
+                }
+                quoted if quoted.starts_with('"') => quoted.trim_matches('"'),
+                name => fields
+                    .iter()
+                    .find(|(key, _)| *key == name.trim_start_matches('.'))
+                    .map_or("", |(_, value)| *value),
+            }
+        }
+        // These template operators have fixed arity, so their prefix order also defines the grouping.
+        let mut words = condition.split(['(', ')', ' ']).filter(|word| !word.is_empty());
+        let matched = !value(&mut words, fields).is_empty();
+        assert!(words.next().is_none(), "complete template expression");
+        matched
     };
     let (mut out, mut branches) = (String::new(), Vec::<(bool, bool)>::new());
     for (action, text) in template {
         let shown = |branches: &[(bool, bool)]| branches.iter().all(|&(_, on)| on);
         if let Some(condition) = action.strip_prefix("if ") {
-            branches.push((test(condition), test(condition)));
+            let matched = test(condition);
+            branches.push((matched, matched));
         } else if let Some((taken, on)) = branches.last_mut().filter(|_| action.starts_with("else")) {
             *on = !*taken && action.strip_prefix("else if ").is_none_or(test);
             *taken |= *on;
@@ -121,7 +148,16 @@ fn render(template: &Parts, fields: &[(&str, &str)]) -> String {
         } else if shown(&branches) {
             match action.as_str() {
                 "" => {}
-                "template \"theme\"" => write!(out, "<script>{THEME_SCRIPT}</script>").expect("string writer"),
+                "template \"theme\"" => write!(
+                    out,
+                    concat!(
+                        "<meta name=\"theme-color\" media=\"(prefers-color-scheme: dark)\" content=\"#0d1013\">",
+                        "<meta name=\"theme-color\" media=\"(prefers-color-scheme: light)\" content=\"#f0f3f6\">",
+                        "<script>{}</script>"
+                    ),
+                    THEME_SCRIPT
+                )
+                .expect("string writer"),
                 "template \"pending\"" => write!(out, "<script>{PENDING_SCRIPT}</script>").expect("string writer"),
                 ".Styles" => out.push_str(STYLES),
                 name if out.rfind("href=\"").is_some_and(|at| !out[at + 6..].contains('"')) => {

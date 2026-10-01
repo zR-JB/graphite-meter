@@ -116,7 +116,10 @@ impl Harness {
         )
     }
     async fn login(&self) -> (String, String) {
-        let (headers, _) = self.request("GET", "/login", "", "").await;
+        self.login_from("").await
+    }
+    async fn login_from(&self, client: &str) -> (String, String) {
+        let (headers, _) = self.request("GET", "/login", client, "").await;
         assert!(headers.starts_with("HTTP/1.1 200"), "{headers}");
         assert!(headers.contains("x-frame-options: DENY\r\n"), "{headers}");
         let nonce = cookie(&headers, "__Host-gm_login");
@@ -124,7 +127,7 @@ impl Harness {
             .append_pair("csrf", &nonce)
             .append_pair("password", "correct horse battery staple")
             .finish();
-        let (headers,_)=self.request("POST","/auth/password",&format!("Cookie: __Host-gm_login={nonce}\r\nOrigin: https://localhost\r\nContent-Type: application/x-www-form-urlencoded\r\n"),&body).await;
+        let (headers,_)=self.request("POST","/auth/password",&format!("{client}Cookie: __Host-gm_login={nonce}\r\nOrigin: https://localhost\r\nContent-Type: application/x-www-form-urlencoded\r\n"),&body).await;
         assert!(headers.starts_with("HTTP/1.1 303"), "{headers}");
         (
             cookie(&headers, "__Host-gm_session"),
@@ -378,10 +381,64 @@ async fn approval_pages_require_client_evidence_behind_a_trusted_proxy() {
             "HTTP/1.1 403",
         ),
     ] {
-        let (unresolved, _) = h.request("GET", &path, "", "").await;
+        let (unresolved, body) = h.request("GET", &path, "", "").await;
         assert!(unresolved.starts_with(without_evidence), "{unresolved}");
+        if without_evidence.ends_with("403") {
+            assert!(
+                String::from_utf8(body)
+                    .unwrap()
+                    .contains("Too many approvals are open.")
+            );
+        }
         let (allowed, _) = h.request("GET", &path, "X-Real-IP: 192.0.2.1\r\n", "").await;
         assert!(allowed.starts_with("HTTP/1.1 303"), "{allowed}");
+    }
+    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(b"signed-in approval verifier"));
+    let client = "X-Real-IP: 192.0.2.1\r\n";
+    let (session, csrf) = h.login_from(client).await;
+    let signed_in = credentials(&session, &csrf);
+    for path in [
+        format!("/auth/cli?challenge={challenge}"),
+        format!("/auth/browser?challenge={challenge}&client_origin=https://client.example"),
+    ] {
+        let (denied, body) = h.request("GET", &path, &signed_in, "").await;
+        let body = String::from_utf8(body).unwrap();
+        assert!(
+            denied.starts_with("HTTP/1.1 403") && denied.contains("content-type: text/html"),
+            "{path}: {denied}"
+        );
+        assert!(body.contains("Too many approvals are open.") && !body.contains(&challenge));
+        assert!(!body.contains("client.example") && !body.contains(&csrf));
+    }
+    for path in [
+        "/auth/cli?challenge=invalid".to_owned(),
+        format!("/auth/browser?challenge={challenge}&client_origin=http://client.example"),
+    ] {
+        let (denied, body) = h.request("GET", &path, &format!("{client}{signed_in}"), "").await;
+        let body = String::from_utf8(body).unwrap();
+        assert!(denied.starts_with("HTTP/1.1 403"));
+        assert!(body.contains("This approval link is not valid.") && !body.contains(&challenge));
+        assert!(!body.contains("client.example") && !body.contains(&csrf));
+    }
+    // Use a fresh address: the earlier anonymous browser approval still holds its original client's slot.
+    let client = "X-Real-IP: 198.51.100.1\r\n";
+    // One login may open eight approvals; its ninth gets a generic card without request values or counts.
+    for index in 0..9 {
+        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(format!("bounded-{index}")));
+        let (headers, body) = h
+            .request(
+                "GET",
+                &format!("/auth/cli?challenge={challenge}"),
+                &format!("{client}{signed_in}"),
+                "",
+            )
+            .await;
+        assert!(headers.starts_with(if index < 8 { "HTTP/1.1 200" } else { "HTTP/1.1 403" }));
+        if index == 8 {
+            let body = String::from_utf8(body).unwrap();
+            assert!(body.contains("Too many approvals are open.") && !body.contains(&challenge));
+            assert!(!body.contains(&csrf));
+        }
     }
     h.stop().await;
 }

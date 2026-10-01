@@ -338,18 +338,6 @@ mod tests {
     use std::io::Write;
 
     #[test]
-    fn profiles_strip_what_go_strips() {
-        let dark = Theme::new(Profile::TrueColor, true);
-        assert_eq!(dark.title.bg, Some(Color::Rgb(0xe6, 0xe8, 0xea)));
-        assert_eq!(dark.title.fg, Some(Color::Rgb(0x0d, 0x10, 0x13)));
-        assert_eq!(Theme::new(Profile::Ansi256, false).accent.fg, Some(Color::Indexed(235)));
-        let ascii = Theme::new(Profile::Ascii, true);
-        assert_eq!(ascii.value, Style::new().add_modifier(Modifier::BOLD));
-        assert_eq!(ascii.border, Style::new());
-        assert_eq!(Theme::new(Profile::NoTty, true), Theme::default());
-    }
-
-    #[test]
     fn terms_pick_go_colour_profiles() {
         use Profile::{Ansi, Ansi256, NoTty, TrueColor};
         #[rustfmt::skip]

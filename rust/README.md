@@ -30,7 +30,10 @@ Enter opens or edits a row, Space switches a stage on or off, and `r` starts the
 from any row; `v` checks the paths again, `s` chooses servers, `a` makes every path
 automatic and `u` keeps the servers that are ready. During a run `d` shows Details,
 `l` changes the displayed latency server and Esc asks to stop it; afterwards Enter
-runs again and Esc returns to setup. `?` lists every key, and `q` quits.
+runs again and Esc returns to setup. Mouse-wheel scrolling follows the body viewport;
+editing and confirmation prompts hold its position. Rate readings ease on elapsed time,
+and charts keep their planned span until the run ends, retain peaks while coarsening
+history in place, and distinguish bidirectional upload with a dashed trace. `?` lists every key, and `q` quits.
 A test stopped before it starts finishes the path check it replaced, which Go's TUI leaves spinning.
 Pass `--report` for a single run without the TUI; redirected output also uses
 report mode. Completion exits 0, a failed or incomplete run exits 1, and signals

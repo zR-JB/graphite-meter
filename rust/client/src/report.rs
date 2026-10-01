@@ -889,7 +889,8 @@ mod tests {
         // Painted as lipgloss writes each profile: 16 colours as 30–37 and 90–97.
         #[rustfmt::skip]
         let paints = [(Profile::Ansi256, ["1;38;5;254mGraphite Meter", "1;38;5;186mPartial", "1;38;5;75m12.00 Mbit/s"]),
-            (Profile::Ansi, ["\x1b[1;97mGraphite Meter\x1b[m  \x1b[1;93mPartial\x1b[m", "1;94m12.00", "1;91mStopped"])];
+            (Profile::Ansi, ["\x1b[1;97mGraphite Meter\x1b[m  \x1b[1;93mPartial\x1b[m", "1;94m12.00", "1;91mStopped"]),
+            (Profile::Ascii, ["\x1b[1mGraphite Meter", "\x1b[1mPartial", "\x1b[1m12.00 Mbit/s"])];
         for (profile, parts) in paints {
             let painted = render(&pair, WIDTH, Theme::new(profile, true)).unwrap();
             assert!(parts.iter().all(|part| painted.contains(part)), "{painted:?}");

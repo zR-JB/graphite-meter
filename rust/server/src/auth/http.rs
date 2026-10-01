@@ -408,7 +408,7 @@ impl Service {
         let query = query_pairs(request);
         let challenge = value(&query, "challenge");
         let Some(valid) = valid_challenge(challenge) else {
-            return response(StatusCode::FORBIDDEN);
+            return refusal_page(false);
         };
         // As in Go, the CLI page redirects before it reads the client's address.
         if !browser && let Some(destination) = self.sessions.browser_approval_redirect(challenge) {
@@ -430,13 +430,16 @@ impl Service {
         };
         let origin = value(&query, "client_origin");
         let approval = if browser {
-            let Some(client) = client.filter(|_| super::secure_browser_origin(origin)) else {
-                return response(StatusCode::FORBIDDEN);
+            if !super::secure_browser_origin(origin) {
+                return refusal_page(false);
+            }
+            let Some(client) = client else {
+                return refusal_page(true);
             };
             if self.sessions.browser_approval_redirect(challenge).is_none()
                 && !self.attempts.allow(Budget::BrowserApproval, client)
             {
-                return response(StatusCode::FORBIDDEN);
+                return refusal_page(true);
             }
             self.sessions
                 .begin_browser_approval(&valid, origin, session.as_ref(), client)
@@ -448,7 +451,7 @@ impl Service {
                 );
             };
             let Some(client) = client else {
-                return response(StatusCode::FORBIDDEN);
+                return refusal_page(true);
             };
             self.sessions.begin_cli_approval(session, &valid, client)
         };
@@ -478,9 +481,9 @@ impl Service {
                 if !browser {
                     self.log.count(Counter::Capacity);
                 }
-                response(StatusCode::FORBIDDEN)
+                refusal_page(true)
             }
-            Err(_) => response(StatusCode::FORBIDDEN),
+            Err(_) => refusal_page(false),
         }
     }
 
@@ -639,6 +642,10 @@ fn redirect(method: &Method, destination: &str) -> Response<Bytes> {
         go_redirect(method, StatusCode::SEE_OTHER, destination),
     )
 }
+fn refusal_page(busy: bool) -> Response<Bytes> {
+    html(StatusCode::FORBIDDEN, pages::refusal_page(busy))
+}
+
 fn capacity_page() -> Response<Bytes> {
     html(StatusCode::TOO_MANY_REQUESTS, pages::capacity_page())
 }
@@ -1316,33 +1323,5 @@ mod tests {
             assert!(!current.is_active() && other.is_active());
             assert_eq!(sibling.is_active(), scope.is_empty(), "scope {scope:?}");
         }
-    }
-
-    #[tokio::test]
-    async fn the_cli_page_sends_a_signed_out_caller_to_sign_in_before_reading_its_address() {
-        let config = AuthConfig {
-            mode: AuthMode::Password,
-            public_url: "https://meter.example".into(),
-            password_hash:
-                "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0"
-                    .into(),
-            ..AuthConfig::default()
-        };
-        // The peer is a trusted proxy whose forwarding names no usable client, as in Go's cliPage.
-        let service = Service::new(&config, vec!["192.0.2.1/32".parse().unwrap()]).unwrap();
-        let challenge = "A".repeat(43);
-        let page = query_url("/auth/cli", &[("challenge", &challenge)]);
-        let forwarded = [("x-forwarded-for", "unknown")];
-        let response = call(&service, Method::GET, &page, &forwarded, String::new()).await;
-        assert_eq!(response.status(), StatusCode::SEE_OTHER);
-        assert_eq!(
-            response.headers()[header::LOCATION],
-            format!("/login?challenge={challenge}")
-        );
-        let (token, _) = service.sessions().create("subject", "name", "local", None).unwrap();
-        let cookie = format!("__Host-gm_session={token}");
-        let signed_in = [forwarded[0], ("cookie", cookie.as_str())];
-        let response = call(&service, Method::GET, &page, &signed_in, String::new()).await;
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }
