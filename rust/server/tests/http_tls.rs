@@ -1,3 +1,6 @@
+#[path = "support/native.rs"]
+mod native;
+
 mod support;
 
 use graphite_meter_server::config::{Config, NativeKind};
@@ -9,8 +12,7 @@ use rustls::{
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
-    sync::oneshot,
+    net::TcpStream,
 };
 use tokio_rustls::{TlsConnector, client::TlsStream};
 
@@ -90,12 +92,7 @@ async fn validated_tls13_serves_discovery_download_and_upload_after_rejected_tls
         let good = connector(roots.clone(), &rustls::version::TLS13);
         let old = connector(roots, &rustls::version::TLS12);
         let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let (stop, stopped) = oneshot::channel();
-        let serving = tokio::spawn(server.serve(NativeKind::H1Tls, listener, Some(tls), async {
-            let _ = stopped.await;
-        }));
+        let (address, stop, serving) = native::serve(server, NativeKind::H1Tls, Some(tls)).await;
         assert!(
             old.connect(
                 ServerName::try_from("localhost").unwrap(),
@@ -161,12 +158,7 @@ async fn tls_stalled_download_keeps_deadline_through_encrypted_writes() {
             ..Config::default()
         };
         let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let (stop, stopped) = oneshot::channel();
-        let serving = tokio::spawn(server.serve(NativeKind::H1Tls, listener, Some(tls), async {
-            let _ = stopped.await;
-        }));
+        let (address, stop, serving) = native::serve(server, NativeKind::H1Tls, Some(tls)).await;
         let mut stalled = connect(address, &connector).await;
         stalled
             .write_all(b"GET /download?bytes=68719476736 HTTP/1.1\r\nHost: localhost\r\n\r\n")
@@ -208,12 +200,7 @@ async fn shutdown_joins_incomplete_tls_handshake_and_releases_connection() {
             ..Config::default()
         };
         let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let (stop, stopped) = oneshot::channel();
-        let serving = tokio::spawn(server.serve(NativeKind::H1Tls, listener, Some(tls), async {
-            let _ = stopped.await;
-        }));
+        let (address, stop, serving) = native::serve(server, NativeKind::H1Tls, Some(tls)).await;
         let mut pending = TcpStream::connect(address).await.unwrap();
         pending.write_all(b"\x16\x03\x01").await.unwrap();
         // Exhaustion proves the first socket acquired its permit before TLS.
@@ -246,12 +233,7 @@ async fn h3_tcp_companion_serves_probe_and_control_routes_and_advertises_the_eff
             let mut config = Config::default();
             config.native[NativeKind::H3 as usize].public_origin = origin.into();
             let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let address = listener.local_addr().unwrap();
-            let (stop, stopped) = oneshot::channel();
-            let serving = tokio::spawn(server.serve(NativeKind::H3, listener, Some(tls.clone()), async {
-                let _ = stopped.await;
-            }));
+            let (address, stop, serving) = native::serve(server, NativeKind::H3, Some(tls.clone())).await;
             let (headers, body) = request(address, &connector, "GET", "/probe", b"").await;
             assert!(headers.starts_with("HTTP/1.1 200"));
             assert!(headers.contains(&format!("alt-svc: h3=\":{}\"", port.unwrap_or(address.port()))));

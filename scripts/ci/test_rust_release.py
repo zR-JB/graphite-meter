@@ -35,9 +35,6 @@ def executable(target: str) -> bytes:
     if "-windows-" in target:
         data[:2], data[0x3C:0x40], data[0x80:0x84] = b"MZ", (0x80).to_bytes(4, "little"), b"PE\0\0"
         data[0x84:0x86] = {"x86_64": 0x8664, "aarch64": 0xAA64}[arch].to_bytes(2, "little")
-    elif "-apple-" in target:
-        data[:4] = (0xFEEDFACF).to_bytes(4, "little")
-        data[4:8] = {"x86_64": 0x01000007, "aarch64": 0x0100000C}[arch].to_bytes(4, "little")
     else:
         data[:7], data[16:18], data[20:24], data[52:54] = (
             b"\x7fELF\x02\x01\x01", (3).to_bytes(2, "little"), (1).to_bytes(4, "little"), (64).to_bytes(2, "little"))
@@ -59,17 +56,20 @@ def inventory(package: str, target: str) -> JsonObject:
             "components": [{"component": {"name": "example", "version": "1.0"}}]}
 
 
-def write_build(dist: Path, package: str, platform: str) -> None:
+def write_build(dist: Path, package: str, platform: str) -> dict[str, bytes]:
     """Write one Rust build's archive and source offer as the release verifier accepts them."""
     target = RUST_TARGETS[platform]
+    files = {}
     if package == "graphite-meter-client":
         archive, base, binary = tui_archive("1.2.3", platform, "_rust")
-        write_archive(dist / archive, {
+        files = {
             f"{base}/{binary}": executable(target), f"{base}/THIRD_PARTY_NOTICES.txt": b"fixture notices\n",
             f"{base}/LICENSE": Path("LICENSE").read_bytes(), f"{base}/COPYRIGHT": Path("COPYRIGHT").read_bytes(),
-            f"{base}/SOURCE.txt": f"{base}_third-party-source.tar.gz".encode()}, base)
+            f"{base}/SOURCE.txt": f"{base}_third-party-source.tar.gz".encode()}
+        write_archive(dist / archive, files, base)
     source, = (name for name in rust_files("1.2.3", package, platform) if name.endswith("_third-party-source.tar.gz"))
     write_source(dist / source, inventory(package, target))
+    return files
 
 
 def write_exports(root: Path, server: list[str], tui: list[str], revision: str = COMMIT) -> None:
@@ -101,15 +101,9 @@ class RustArchiveBoundaryTests(unittest.TestCase):
             with self.subTest(platform=platform), tempfile.TemporaryDirectory() as temporary:
                 dist = Path(temporary)
                 marker = dist / "executed"
-                files = {
-                    f"{base}/{binary}": executable(target) + f"touch '{marker}'\n".encode(),
-                    f"{base}/THIRD_PARTY_NOTICES.txt": b"fixture notices\n",
-                    f"{base}/LICENSE": Path("LICENSE").read_bytes(),
-                    f"{base}/COPYRIGHT": Path("COPYRIGHT").read_bytes(),
-                    f"{base}/SOURCE.txt": f"{base}_third-party-source.tar.gz".encode(),
-                }
+                files = write_build(dist, "graphite-meter-client", platform)
+                files[f"{base}/{binary}"] += f"touch '{marker}'\n".encode()
                 write_archive(dist / archive, files, base)
-                write_source(dist / f"{base}_third-party-source.tar.gz", inventory("graphite-meter-client", target))
                 arch, rest = target.split("-", 1)
                 other = {"x86_64": "aarch64", "aarch64": "x86_64"}[arch] + "-" + rest
                 with patch("subprocess.Popen", side_effect=AssertionError("artifact execution")):
@@ -187,22 +181,17 @@ class RustServerReleaseTests(unittest.TestCase):
         ):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
                 metadata = inventory("graphite-meter-server", target)
-                if mutation == "package":
-                    metadata["package"] = "graphite-meter-client"
-                if mutation == "target":
-                    metadata["target"] = RUST_TARGETS["linux/amd64"]
-                if mutation == "lock":
-                    metadata["cargoLockSha256"] = "0" * 64
-                if mutation == "schema_boolean":
-                    metadata["schemaVersion"] = True
-                if mutation == "component_array":
-                    metadata["components"] = {"component": "not an array"}
-                if mutation == "component_name":
-                    metadata["components"] = [{"component": {"name": [], "version": "1.0"}}]
-                if mutation == "browser_component":
-                    metadata["browserComponents"] = ["not an object"]
-                if mutation == "missing":
-                    metadata["components"] = [{"component": {"name": "absent", "version": "1.0"}}]
+                mutations: dict[str, dict] = {
+                    "package": {"package": "graphite-meter-client"},
+                    "target": {"target": RUST_TARGETS["linux/amd64"]},
+                    "lock": {"cargoLockSha256": "0" * 64},
+                    "schema_boolean": {"schemaVersion": True},
+                    "component_array": {"components": {"component": "not an array"}},
+                    "component_name": {"components": [{"component": {"name": [], "version": "1.0"}}]},
+                    "browser_component": {"browserComponents": ["not an object"]},
+                    "missing": {"components": [{"component": {"name": "absent", "version": "1.0"}}]},
+                }
+                metadata.update(mutations.get(mutation, {}))
                 if mutation.startswith("image"):
                     name = "unreviewed" if mutation == "image_unreviewed" else CA.name
                     metadata["imageComponents"] = [{"ecosystem": CA.ecosystem, "name": name, "version": CA.version}]

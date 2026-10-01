@@ -816,19 +816,32 @@ mod tests {
         (Bus::WebSocket(Box::new(socket)), peer)
     }
 
-    async fn outcomes(bus: Bus, interval: u64, duration: u64) -> Result<(usize, usize), Error> {
-        let (observations, mut receiver) = mpsc::channel(16);
-        let (_stop, mut cancelled) = watch::channel(Stop::Running);
+    /// Keep the outcome queue undrained until measurement ends, including its backpressure.
+    async fn collect(
+        bus: Bus,
+        interval: u64,
+        duration: u64,
+        capacity: usize,
+        window: usize,
+    ) -> Result<(Instant, mpsc::Receiver<Observation>), Error> {
+        let (observations, receiver) = mpsc::channel(capacity);
+        let (_stop, mut cancel) = watch::channel(Stop::Running);
+        let started = Instant::now();
         measure(
             bus,
             Duration::from_millis(interval),
-            16,
-            Instant::now() + Duration::from_millis(duration),
+            window,
+            started + Duration::from_millis(duration),
             &mut Ledger::default(),
             &observations,
-            &mut cancelled,
+            &mut cancel,
         )
         .await?;
+        Ok((started, receiver))
+    }
+
+    async fn outcomes(bus: Bus, interval: u64, duration: u64) -> Result<(usize, usize), Error> {
+        let (_, mut receiver) = collect(bus, interval, duration, 16, 16).await?;
         let (mut replies, mut timeouts) = (0, 0);
         while let Ok(event) = receiver.try_recv() {
             match event {
@@ -856,22 +869,9 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn reply_driven_probes_follow_replies_until_the_queue_is_full() -> Result<(), Error> {
         let (bus, peer) = linked(|server| echo(server, Duration::ZERO)).await;
-        let (observations, mut receiver) = mpsc::channel(64);
-        let (_stop, mut cancel) = watch::channel(Stop::Running);
-        // Off a millisecond boundary, where tokio's timer rounds a wait up.
+        // Off a millisecond boundary, where Tokio rounds a timer wait up.
         tokio::time::advance(Duration::from_micros(500)).await;
-        let started = Instant::now();
-        let end = started + Duration::from_millis(10);
-        measure(
-            bus,
-            Duration::ZERO,
-            4,
-            end,
-            &mut Ledger::default(),
-            &observations,
-            &mut cancel,
-        )
-        .await?;
+        let (started, mut receiver) = collect(bus, 0, 10, 64, 4).await?;
         let mut samples = 0;
         while let Ok(Observation::Sample { sent, .. }) = receiver.try_recv() {
             assert_eq!(sent, started, "a probe waited for a timer");
@@ -885,21 +885,9 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_fixed_cadence_keeps_its_schedule_like_gos_ticker() -> Result<(), Error> {
         let (bus, peer) = linked(|server| echo(server, Duration::ZERO)).await;
-        let (observations, mut receiver) = mpsc::channel(256);
-        let (_stop, mut cancel) = watch::channel(Stop::Running);
-        // Off a millisecond boundary, where tokio's timer rounds each wait up.
+        // Off a millisecond boundary, where Tokio rounds a timer wait up.
         tokio::time::advance(Duration::from_micros(500)).await;
-        let started = Instant::now();
-        measure(
-            bus,
-            Duration::from_millis(80),
-            16,
-            started + Duration::from_secs(10),
-            &mut Ledger::default(),
-            &observations,
-            &mut cancel,
-        )
-        .await?;
+        let (started, mut receiver) = collect(bus, 80, 10_000, 256, 16).await?;
         let mut sent = Vec::new();
         while let Ok(Observation::Sample { sent: at, .. }) = receiver.try_recv() {
             sent.push(at - started);
@@ -935,19 +923,7 @@ mod tests {
             }
         })
         .await;
-        let (observations, mut receiver) = mpsc::channel(64);
-        let (_stop, mut cancel) = watch::channel(Stop::Running);
-        let started = Instant::now();
-        measure(
-            bus,
-            Duration::ZERO,
-            4,
-            started + Duration::from_millis(400),
-            &mut Ledger::default(),
-            &observations,
-            &mut cancel,
-        )
-        .await?;
+        let (started, mut receiver) = collect(bus, 0, 400, 64, 4).await?;
         let mut sent = Vec::new();
         while let Ok(observation) = receiver.try_recv() {
             if let Observation::Sample { sent: at, .. } | Observation::Lost { sent: at, .. } = observation {

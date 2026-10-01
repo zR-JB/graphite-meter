@@ -1,6 +1,6 @@
 // Checks the Go<->Rust QPACK contract with the repository's unchanged quic-go/qpack: each block's
 // "go:" line must be Go's encoding of its fields, and Go must decode the "rust:" line to exactly
-// those fields.
+// those fields. Vectors are read from standard input.
 package main
 
 import (
@@ -17,25 +17,21 @@ import (
 )
 
 func main() {
-	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: qpack_vectors VECTORS")
-		os.Exit(2)
-	}
-	if err := run(os.Args[1]); err != nil {
+	if err := run(os.Stdin); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(path string) error {
-	text, err := os.ReadFile(path)
+func run(input io.Reader) error {
+	text, err := io.ReadAll(input)
 	if err != nil {
 		return err
 	}
 	var fields []qpack.HeaderField
 	var problems []string
 	for number, line := range strings.Split(string(text), "\n") {
-		where := fmt.Sprintf("%s:%d", path, number+1)
+		where := fmt.Sprintf("vectors:%d", number+1)
 		switch {
 		case strings.HasPrefix(line, "go: "):
 			if encoded := encode(fields); line != "go: "+encoded {

@@ -319,17 +319,6 @@ run = [
   "bash client/bench/server-collection.sh",
 ]
 
-[tasks.bench-matrix]
-description = "Compare Go and Rust servers and clients on shaped paths in isolated Linux network namespaces (manual)"
-env = { GM_MULTI_BENCH_PROFILES = "matrix", GM_MULTI_BENCH_REPEATS = "{{ get_env(name='GM_MULTI_BENCH_REPEATS', default='3') }}" }
-run = [
-  { task = "server-build-prod" },
-  { task = "goclient-build" },
-  'cd rust && GM_RUST_ASSET_DIR="$PWD/../client/dist" cargo build --release --locked --target-dir target -p graphite-meter-server',
-  "cd rust && cargo build --release --locked --target-dir target -p graphite-meter-client",
-  "bash client/bench/server-collection.sh",
-]
-
 [tasks.release-check]
 description = "Validate release packages and third-party source without publishing"
 usage = 'arg "[version]" default="development"'

@@ -2,8 +2,6 @@
 import { test } from "bun:test";
 import { ready, run } from "../e2e/fleet";
 import { Page } from "../e2e/webview";
-import type { ThroughputResult } from "../src/lib/runner/contract";
-import { DEFAULT_CONFIG } from "../src/lib/state/defaults";
 
 const servers: { id: string; url: string; name: string }[] = JSON.parse(
   process.env.GM_MULTI_BENCH_SERVERS!,
@@ -11,37 +9,29 @@ const servers: { id: string; url: string; name: string }[] = JSON.parse(
 const count = Number(process.env.GM_MULTI_BENCH_COUNT);
 if (![1, 2, 4].includes(count))
   throw new Error("Select a 1-, 2-, or 4-server cell");
-// Matrix cells measure the product defaults with the rig's overrides.
-const matrix = process.env.GM_MULTI_BENCH_CONFIG;
-const config = matrix
-  ? { ...DEFAULT_CONFIG, ...JSON.parse(matrix) }
-  : {
-      transports: {
-        throughputTarget: "protocol:http1",
-        latencyTarget: "transport:websocket",
-      },
-      stages: {
-        latency: true,
-        download: true,
-        upload: false,
-        bidirectional: false,
-      },
-      duration: {
-        warmupMs: 750,
-        latencyMs: 1500,
-        downloadMs: 4000,
-        uploadMs: 0,
-        bidirectionalMs: 0,
-      },
-      pingCadence: "medium",
-      loadedPingCadence: "medium",
-      adaptive: { enabled: false },
-      transferStreams: { mode: "forced", count: 1 },
-    };
-const TRANSFERS = ["download", "upload", "bidirectional"] as const;
-const mbps = (result: ThroughputResult | null | undefined) =>
-  result ? (result.reportedBytesPerSec * 8) / 1e6 : null;
-
+const config = {
+  transports: {
+    throughputTarget: "protocol:http1",
+    latencyTarget: "transport:websocket",
+  },
+  stages: {
+    latency: true,
+    download: true,
+    upload: false,
+    bidirectional: false,
+  },
+  duration: {
+    warmupMs: 750,
+    latencyMs: 1500,
+    downloadMs: 4000,
+    uploadMs: 0,
+    bidirectionalMs: 0,
+  },
+  pingCadence: "medium",
+  loadedPingCadence: "medium",
+  adaptive: { enabled: false },
+  transferStreams: { mode: "forced", count: 1 },
+};
 test("coordinated server collection cell", async () => {
   const page = new Page();
   try {
@@ -97,35 +87,18 @@ test("coordinated server collection cell", async () => {
     if (
       details.failures.length ||
       details.participants.length !== count ||
-      TRANSFERS.some(
-        (stage) => config.stages[stage] && result.stages[stage] !== "complete",
-      )
+      result.stages.download !== "complete"
     )
       throw new Error(
         `Invalid measurement cell: ${JSON.stringify(details.failures)}`,
       );
-    const stage = (
-      name: (typeof TRANSFERS)[number],
-      down: ThroughputResult | null | undefined,
-      up: ThroughputResult | null | undefined,
-    ) => {
-      const latency = result.latencyByStage[name];
-      return {
-        outcome:
-          result.stages[name] === "complete" ? "Complete" : result.stages[name],
-        downMbps: mbps(down),
-        upMbps: mbps(up),
-        latencyP50Ms: latency?.p50Ms ?? null,
-        latencyP95Ms: latency?.p95Ms ?? null,
-        replies: latency ? latency.probeCount - latency.timeoutCount : null,
-        timeouts: latency?.timeoutCount ?? null,
-      };
-    };
     console.log(
       "GM_BENCH_END " +
         JSON.stringify({
           count,
-          downloadMbps: mbps(result.download),
+          downloadMbps: result.download
+            ? (result.download.reportedBytesPerSec * 8) / 1e6
+            : null,
           receiverWindows: details.intervals.filter(
             (interval) => interval.stage === "download",
           ),
@@ -138,15 +111,6 @@ test("coordinated server collection cell", async () => {
           durationMs: result.durationMs,
           browser: (await page.cdp("Browser.getVersion")).product,
           paths: details.servers.map((server) => server.throughput),
-          stages: {
-            download: stage("download", result.download, null),
-            upload: stage("upload", null, result.upload),
-            bidirectional: stage(
-              "bidirectional",
-              result.bidirectional?.down,
-              result.bidirectional?.up,
-            ),
-          },
         }),
     );
     // Give the external process sampler time to capture the final live browser tree.

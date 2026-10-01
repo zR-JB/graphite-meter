@@ -345,16 +345,17 @@ async fn report_signal_exit_codes_and_failure_keep_the_final_outcome() -> Result
 
 #[cfg(target_os = "linux")]
 async fn terminal(origin: &str, mode: &str, answer: &str, stdin: &str) -> Result<serde_json::Value, Error> {
+    let port = origin
+        .strip_prefix("http://127.0.0.1:")
+        .ok_or("expected a loopback origin")?
+        .parse::<u16>()?;
     let output = Command::new("python3")
-        .args([
-            "-c",
-            include_str!("pty.py"),
-            env!("CARGO_BIN_EXE_graphite-meter-client"),
-            origin,
-            mode,
-            answer,
-            stdin,
-        ])
+        .current_dir(
+            std::path::Path::new(env!("CARGO_BIN_EXE_graphite-meter-client"))
+                .parent()
+                .ok_or("missing binary directory")?,
+        )
+        .args(["-c", include_str!("pty.py"), &port.to_string(), mode, answer, stdin])
         .output()
         .await?;
     assert!(

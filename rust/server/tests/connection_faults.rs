@@ -1,4 +1,8 @@
-mod support;
+#[path = "support/native.rs"]
+mod native;
+
+#[path = "../test_tls.rs"]
+mod test_tls;
 
 use bytes::Bytes;
 use graphite_meter_http3::{self as http3, Code, client, webtransport::Session};
@@ -6,8 +10,8 @@ use graphite_meter_server::config::{Config, NativeKind};
 use graphite_meter_server::http::HttpServer;
 use http::{Request, Version};
 use rustls::{
-    ClientConfig, RootCertStore, ServerConfig,
-    pki_types::{CertificateDer, PrivateKeyDer, ServerName, pem::PemObject},
+    ClientConfig, ServerConfig,
+    pki_types::ServerName,
     server::{ClientHello, ResolvesServerCert},
     sign::CertifiedKey,
 };
@@ -20,65 +24,38 @@ use std::{
     },
     time::Duration,
 };
-use tokio::{
-    net::{TcpListener, TcpStream},
-    sync::oneshot,
-};
+use tokio::{net::TcpStream, sync::oneshot};
 use tokio_rustls::TlsConnector;
 
 type TestError = Box<dyn Error + Send + Sync>;
 
 struct Tls {
-    _identity: support::Identity,
-    certificate: CertificateDer<'static>,
-    key: Arc<CertifiedKey>,
+    server: ServerConfig,
+    client: ClientConfig,
 }
-
 impl Tls {
     fn new() -> Self {
-        let identity = support::Identity::generate();
-        let certificate = CertificateDer::from_pem_file(identity.directory().join("identity.pem")).unwrap();
-        let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key")).unwrap();
-        let provider = rustls::crypto::ring::default_provider();
-        let key = Arc::new(CertifiedKey::from_der(vec![certificate.clone()], key, &provider).unwrap());
-        Self {
-            _identity: identity,
-            certificate,
-            key,
-        }
+        let (server, client) = test_tls::configs(b"h2");
+        Self { server, client }
     }
-
     fn server(&self, resolver: Arc<dyn ResolvesServerCert>) -> ServerConfig {
-        let provider = Arc::new(rustls::crypto::ring::default_provider());
-        ServerConfig::builder_with_provider(provider)
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap()
-            .with_no_client_auth()
-            .with_cert_resolver(resolver)
+        let mut server = self.server.clone();
+        server.cert_resolver = resolver;
+        server
     }
-
     fn client(&self) -> TlsConnector {
-        let provider = Arc::new(rustls::crypto::ring::default_provider());
-        let mut roots = RootCertStore::empty();
-        roots.add(self.certificate.clone()).unwrap();
-        let mut tls = ClientConfig::builder_with_provider(provider)
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap()
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-        tls.alpn_protocols = vec![b"h2".to_vec()];
-        TlsConnector::from(Arc::new(tls))
+        TlsConnector::from(Arc::new(self.client.clone()))
     }
 }
 
 #[derive(Debug)]
-struct PanicOnce(AtomicBool, Arc<CertifiedKey>);
+struct PanicOnce(AtomicBool, Arc<dyn ResolvesServerCert>);
 impl ResolvesServerCert for PanicOnce {
-    fn resolve(&self, _: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+    fn resolve(&self, hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
         if !self.0.swap(true, Ordering::SeqCst) {
             panic!("injected connection fault");
         }
-        Some(self.1.clone())
+        self.1.resolve(hello)
     }
 }
 
@@ -106,24 +83,25 @@ async fn serve_h2(
     config: Config,
 ) -> (
     SocketAddr,
-    tokio::task::JoinHandle<Result<(), graphite_meter_server::ServerError>>,
     oneshot::Sender<()>,
+    tokio::task::JoinHandle<Result<(), graphite_meter_server::ServerError>>,
 ) {
-    let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let (stop, stopped) = oneshot::channel();
-    let task = tokio::spawn(server.serve(NativeKind::H2, listener, Some(Arc::new(tls)), async {
-        let _ = stopped.await;
-    }));
-    (address, task, stop)
+    native::serve(
+        Arc::new(HttpServer::new(config.validated().unwrap()).unwrap()),
+        NativeKind::H2,
+        Some(Arc::new(tls)),
+    )
+    .await
 }
 
 #[tokio::test]
 async fn one_connection_panic_leaves_the_listener_serving() -> Result<(), TestError> {
     let tls = Tls::new();
-    let (address, server, stop) = serve_h2(
-        tls.server(Arc::new(PanicOnce(AtomicBool::new(false), tls.key.clone()))),
+    let (address, stop, server) = serve_h2(
+        tls.server(Arc::new(PanicOnce(
+            AtomicBool::new(false),
+            tls.server.cert_resolver.clone(),
+        ))),
         Config {
             max_connections_per_client: 1,
             ..Config::default()
@@ -166,8 +144,8 @@ async fn body(response: http::Response<h2::RecvStream>) -> Result<Vec<u8>, TestE
 #[tokio::test]
 async fn h2_upload_is_not_window_bound_on_a_delayed_link() -> Result<(), TestError> {
     let tls = Tls::new();
-    let (address, server, stop) = serve_h2(
-        tls.server(Arc::new(Fixed(tls.key.clone()))),
+    let (address, stop, server) = serve_h2(
+        tls.server(tls.server.cert_resolver.clone()),
         Config {
             max_operation_duration: Duration::from_secs(10),
             ..Config::default()
@@ -269,22 +247,11 @@ async fn h3_body(requests: &client::SendRequest, request: Request<()>, upload: B
     Ok(body)
 }
 
-#[derive(Debug)]
-struct Fixed(Arc<CertifiedKey>);
-impl ResolvesServerCert for Fixed {
-    fn resolve(&self, _: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
-        Some(self.0.clone())
-    }
-}
 async fn quic_server(
     tls: &Tls,
     config: Config,
 ) -> Result<(SocketAddr, tokio::task::JoinHandle<()>, oneshot::Sender<()>), TestError> {
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let server_tls = ServerConfig::builder_with_provider(provider)
-        .with_protocol_versions(&[&rustls::version::TLS13])?
-        .with_no_client_auth()
-        .with_cert_resolver(Arc::new(Fixed(tls.key.clone())));
+    let server_tls = tls.server.clone();
     let server = Arc::new(HttpServer::new(config.validated().unwrap())?);
     let endpoint = server.quic_endpoint(Arc::new(server_tls), "127.0.0.1:0".parse()?)?;
     let address = endpoint.local_addr()?;
@@ -300,13 +267,7 @@ async fn quic_server(
 }
 
 fn quic_client_config(tls: &Tls) -> Result<noq::ClientConfig, TestError> {
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let mut roots = RootCertStore::empty();
-    roots.add(tls.certificate.clone())?;
-    let mut client_tls = ClientConfig::builder_with_provider(provider)
-        .with_protocol_versions(&[&rustls::version::TLS13])?
-        .with_root_certificates(roots)
-        .with_no_client_auth();
+    let mut client_tls = tls.client.clone();
     client_tls.alpn_protocols = vec![b"h3".to_vec()];
     Ok(noq::ClientConfig::new(Arc::new(
         noq::crypto::rustls::QuicClientConfig::try_from(client_tls)?,

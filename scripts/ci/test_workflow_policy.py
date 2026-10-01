@@ -18,13 +18,6 @@ PREPARE = "        run: python3 -m scripts.ci.release prepare\n"
 RELEASE = W + "release.yml"
 PUBLISH = "  extra:\n    if: needs.verify.outputs.publish == 'true'\n    environment: other\n"
 MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
-    (W + "fork-upkeep.yml", "secrets.FORK_UPKEEP_APP_PRIVATE_KEY", "secrets.OTHER_KEY", "upkeep App"),
-    (W + "fork-upkeep.yml", "permission-pull-requests: write\n",
-     "permission-pull-requests: write\n          permission-workflows: write\n", "never its workflows"),
-    (W + "fork-upkeep.yml", "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)",
-     "true", "only from the default branch"),
-    (W + "fork-upkeep.yml", "repositories: ${{ steps.inventory.outputs.repositories }}",
-     "repositories: all", "fork inventory"),
     (SETUP, None, "# ${{ secrets.TOKEN }}\n", r"secrets\."),
     (W + "ci.yml", "runs-on: ubuntu-24.04", "runs-on: ubuntu-latest", "ubuntu-latest"),
     (W + "release.yml", "run: python3 -m scripts.ci.release recheck",

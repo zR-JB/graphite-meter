@@ -268,6 +268,7 @@ class RustPlatformRecordTests(unittest.TestCase):
     MIT = SYSROOT + 'share/doc/rust/licenses/MIT.txt'
 
     def setUp(self) -> None:
+        self.enterContext(patch('scripts.legal.rust_platform.linker_version', return_value='cc 1'))
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
         self.root = Path(scratch.name).resolve()
@@ -302,8 +303,7 @@ class RustPlatformRecordTests(unittest.TestCase):
                 'inputs': {self.NATIVE, self.STD}, 'libraries': {'libc.so.6'}} | changes
 
     def notice(self, entry: dict | None = None, **changes: object) -> str:
-        with patch('scripts.legal.rust_platform.linker_version', return_value='cc 1'):
-            return notice(self.entry if entry is None else entry, **self.facts(**changes))
+        return notice(self.entry if entry is None else entry, **self.facts(**changes))
 
     def test_notices_are_the_standard_library_texts_then_the_records_in_its_order(self) -> None:
         self.assertEqual(self.notice(), 'Platform notices.\n'
@@ -347,25 +347,21 @@ class RustPlatformRecordTests(unittest.TestCase):
         for change, facts, message in cases:
             with self.subTest(change=change, facts=facts), self.assertRaisesRegex(LegalError, message):
                 entry: dict | None = None if change is None else self.entry | change
-                with patch('scripts.legal.rust_platform.linker_version', return_value='cc 1'):
-                    notice(entry, **self.facts(**facts))
+                notice(entry, **self.facts(**facts))
 
     def test_the_candidate_is_the_complete_record_of_this_build_and_its_listing(self) -> None:
-        with patch('scripts.legal.rust_platform.linker_version', return_value='cc 1'):
-            record, listing = candidate(self.entry, **self.facts())
+        record, listing = candidate(self.entry, **self.facts())
         self.assertEqual(listing, self.listing)
         # Byte equality also compares the order of the fields and of the notices.
         self.assertEqual(marshal(record), marshal(self.entry | {'reviewDecision': 'pending', 'reviewNotes': ''}))
         # A build that does not link a reviewed native input keeps it while it exists, so the same record returns.
         gone = SYSROOT + 'lib/rustlib/t/lib/self-contained/gone.o'
-        with patch('scripts.legal.rust_platform.linker_version', return_value='cc 1'):
-            record, listing = candidate(self.entry | {'nativeInputs': [self.NATIVE, gone]}, **self.facts(inputs={self.STD}))
+        record, listing = candidate(self.entry | {'nativeInputs': [self.NATIVE, gone]}, **self.facts(inputs={self.STD}))
         self.assertEqual(listing, self.listing)
         self.assertEqual(marshal(record), marshal(self.entry | {'reviewDecision': 'pending', 'reviewNotes': ''}))
         # A build that links a new native input: the candidate lists it, and approving it passes.
         self.write(self.CRT1, 'crt1')
-        with patch('scripts.legal.rust_platform.linker_version', return_value='cc 1'):
-            record, listing = candidate(None, **self.facts(inputs={self.STD, self.NATIVE, self.CRT1}))
+        record, listing = candidate(None, **self.facts(inputs={self.STD, self.NATIVE, self.CRT1}))
         self.assertEqual((record['nativeInputs'], record['notices']), ([self.CRT1, self.NATIVE], {}))
         self.assertIn(f"{self.CRT1}\t{sha256(b'crt1')}\n", listing)
         self.assertEqual(record['inputsSha256'], sha256(listing.encode()))

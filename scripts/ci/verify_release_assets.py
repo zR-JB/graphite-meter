@@ -146,13 +146,9 @@ def verify_third_party_source_archive(dist: Path, version: str) -> None:
         fail(
             f"{source.name} contains certificate/key material outside upstream dependency source: "
             f"{keys[:5]}")
-    try:
-        with tarfile.open(source, mode="r:gz") as archive:
-            inventory = decode_json(member(archive, f"{root}/LEGAL_INVENTORY.json").decode(), root)
-            provenance = decode_json(member(archive, f"{root}/PROVENANCE.json").decode(), root)
-            readme = member(archive, f"{root}/README.txt").decode()
-    except (OSError, UnicodeDecodeError, tarfile.TarError) as exc:
-        raise ControlPlaneError(f"cannot read {source.name} metadata: {exc}") from exc
+    inventory = decode_json(read_archive_text(source, f"{root}/LEGAL_INVENTORY.json"), root)
+    provenance = decode_json(read_archive_text(source, f"{root}/PROVENANCE.json"), root)
+    readme = read_archive_text(source, f"{root}/README.txt")
     components = ("server", "tui", "container")
     if not isinstance(inventory, dict) or set(inventory) != set(components) or not all(
             isinstance(inventory[key], list) for key in components):
@@ -184,12 +180,7 @@ def verify_tui_version(version: str, dist: Path) -> None:
     name, binary = archives[0]
     with tempfile.TemporaryDirectory() as directory:
         executable = Path(directory) / binary
-        if name.endswith(".zip"):
-            with zipfile.ZipFile(dist / name) as archive:
-                executable.write_bytes(archive.read(f"{host}/{binary}"))
-        else:
-            with tarfile.open(dist / name, mode="r:gz") as tar:
-                executable.write_bytes(member(tar, f"{host}/{binary}"))
+        executable.write_bytes(read_archive(dist / name, f"{host}/{binary}", 128 * 1024 * 1024))
         executable.chmod(0o755)
         result = subprocess.run([executable, "--version"], capture_output=True, text=True,
                                 check=False)
@@ -197,11 +188,11 @@ def verify_tui_version(version: str, dist: Path) -> None:
         fail(f"{name} reports {result.stdout.strip()!r} {result.stderr.strip()}")
 
 
-MACHINES = {"x86_64": (62, 0x8664, 0x01000007), "aarch64": (183, 0xAA64, 0x0100000C)}
+MACHINES = {"x86_64": (62, 0x8664), "aarch64": (183, 0xAA64)}
 
 
 def native_executable(data: bytes, target: str) -> bool:
-    elf, pe, macho = MACHINES.get(target.split("-")[0], (0, 0, 0))
+    elf, pe = MACHINES.get(target.split("-")[0], (0, 0))
 
     def field(offset: int, size: int) -> int:
         return int.from_bytes(data[offset:offset + size], "little")
@@ -209,8 +200,6 @@ def native_executable(data: bytes, target: str) -> bool:
     if "-windows-" in target:
         start = field(0x3C, 4)
         return data[:2] == b"MZ" and data[start:start + 4] == b"PE\0\0" and field(start + 4, 2) == pe
-    if "-apple-" in target:
-        return field(0, 4) == 0xFEEDFACF and field(4, 4) == macho
     return (data[:7] == b"\x7fELF\x02\x01\x01" and field(16, 2) in (2, 3) and field(18, 2) == elf
             and field(20, 4) == 1 and field(52, 2) == 64)
 

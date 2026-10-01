@@ -1,3 +1,6 @@
+#[path = "support/native.rs"]
+mod native;
+
 #[path = "../test_tls.rs"]
 mod test_tls;
 
@@ -10,7 +13,7 @@ use rustls::pki_types::ServerName;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
+    net::TcpStream,
     sync::oneshot,
     task::JoinHandle,
 };
@@ -37,12 +40,7 @@ impl Harness {
     async fn start_config(config: Config) -> Self {
         let (tls, client_tls) = test_tls::configs(b"h2");
         let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let (stop, stopped) = oneshot::channel();
-        let server = tokio::spawn(server.serve(NativeKind::H2, listener, Some(Arc::new(tls)), async {
-            let _ = stopped.await;
-        }));
+        let (address, stop, server) = native::serve(server, NativeKind::H2, Some(Arc::new(tls))).await;
         let connector = TlsConnector::from(Arc::new(client_tls));
         let stream = connect(&connector, TcpStream::connect(address).await.unwrap()).await;
         let (client, connection) = h2::client::Builder::new()

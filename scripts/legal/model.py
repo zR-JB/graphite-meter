@@ -74,20 +74,8 @@ def marshal(value: object) -> bytes:
 
 
 def marshal_reviews(reviews: list[dict]) -> bytes:
-    """Group review fields without dropping evidence or changing shipped JSON layouts."""
-    groups = ("ecosystem name reviewedVersion upstream", "declaredLicenseExpression selectedLicenseExpression",
-              "legalFiles", "modified reviewDecision", "reviewNotes")
-    records = []
-    for review in reviews:
-        remaining = dict(review)
-        lines = []
-        for group in groups:
-            fields = [f"{compact(key)}: {compact(remaining.pop(key))}" for key in group.split() if key in remaining]
-            if fields:
-                lines.append("    " + ", ".join(fields))
-        lines += [f"    {compact(key)}: {compact(value)}" for key, value in remaining.items()]
-        records.append("  {\n" + ",\n".join(lines) + "\n  }")
-    return ("[\n" + ",\n".join(records) + "\n]\n").encode()
+    """One complete review per line; shipped inventory layouts keep their existing format."""
+    return ("[\n" + ",\n".join("  " + compact(review) for review in reviews) + "\n]\n").encode()
 
 
 def layout(value: object, indent: str) -> str:

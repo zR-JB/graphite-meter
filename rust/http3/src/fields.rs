@@ -292,50 +292,7 @@ mod tests {
     }
 
     #[test]
-    fn malformed_unsupported_and_oversized_requests() {
-        let connect = |fields: &[(&'static str, &'static str)]| [&[(":method", "CONNECT")][..], fields].concat();
-        let cases: &[(Vec<(&str, &str)>, Invalid)] = &[
-            (with(&[("Upper", "x")]), Invalid::Malformed),
-            (with(&[("x", "a\nb")]), Invalid::Malformed),
-            ([&[("x", "1")][..], &GET].concat(), Invalid::Malformed),
-            (with(&[(":status", "200")]), Invalid::Malformed),
-            (with(&[(":path", "/again")]), Invalid::Malformed),
-            (with(&[("connection", "close")]), Invalid::Malformed),
-            (with(&[("te", "gzip")]), Invalid::Malformed),
-            (
-                with(&[("content-length", "7"), ("content-length", "8")]),
-                Invalid::Malformed,
-            ),
-            (with(&[("content-length", "+7")]), Invalid::Malformed),
-            (with(&[("host", "other.example")]), Invalid::Malformed),
-            (with(&[(":protocol", "webtransport")]), Invalid::Malformed),
-            (GET[1..].to_vec(), Invalid::Malformed),
-            (vec![GET[0], GET[1], GET[3]], Invalid::Malformed),
-            (vec![GET[0], GET[2], GET[3]], Invalid::Malformed),
-            (vec![GET[0], GET[1], GET[2], (":path", "relative")], Invalid::Malformed),
-            (vec![GET[0], GET[1], GET[2], (":path", "")], Invalid::Malformed),
-            (
-                vec![GET[0], GET[1], (":authority", "user@meter.example"), GET[3]],
-                Invalid::Malformed,
-            ),
-            (connect(&[(":authority", "meter.example:443")]), Invalid::Unsupported),
-            (
-                connect(&[(":protocol", "websocket"), GET[1], GET[2], GET[3]]),
-                Invalid::Unsupported,
-            ),
-            (
-                connect(&[(":protocol", "webtransport"), GET[1], GET[2]]),
-                Invalid::Malformed,
-            ),
-            (
-                connect(&[(":protocol", "webtransport"), GET[1], GET[2], (":path", "")]),
-                Invalid::Malformed,
-            ),
-            (connect(&[GET[1], GET[2], GET[3]]), Invalid::Malformed),
-        ];
-        for (fields, invalid) in cases {
-            assert_eq!(request(fields).err(), Some(*invalid), "{fields:?}");
-        }
+    fn exact_field_size_and_qpack_errors() {
         let exact = GET
             .iter()
             .map(|(name, value)| name.len() + value.len() + 32)

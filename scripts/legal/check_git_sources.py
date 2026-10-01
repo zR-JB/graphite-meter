@@ -21,12 +21,24 @@ import tomllib
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from ..ci.fork_upkeep import ancestor, git
 
 REPO = Path(__file__).resolve().parents[2]
 SHA = re.compile(r'[0-9a-f]{40}')
 REGISTRY = 'registry+https://github.com/rust-lang/crates.io-index'
 WORKSPACE_FILES = {'Cargo.toml', 'Cargo.lock'}
+
+
+def git(directory: Path, *args: str) -> str:
+    return subprocess.run(['git', '-C', str(directory), *args], check=True, text=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600).stdout.strip()
+
+
+def ancestor(directory: Path, older: str, newer: str) -> bool:
+    result = subprocess.run(['git', '-C', str(directory), 'merge-base', '--is-ancestor', older, newer],
+                            check=False, text=True, stderr=subprocess.PIPE, timeout=60)
+    if result.returncode not in (0, 1):
+        raise RuntimeError(f'cannot establish Git ancestry: {result.stderr.strip()}')
+    return result.returncode == 0
 
 
 def check_lock(forks: list[dict], lock: dict) -> list[str]:

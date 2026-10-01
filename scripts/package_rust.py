@@ -10,9 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
-import zipfile
 from pathlib import Path
 
 from .ci.github_api import ControlPlaneError, confined_path, local_path, write_checksums
@@ -66,14 +64,8 @@ def build(version: str, platform: str, output: Path, supplement: Path) -> None:
         )
         # Finish both staged files before replacing either destination.
         archive_path = confined_path(stage / (f"{base}.zip" if goos == "windows" else f"{base}.tar.gz"), stage)
-        if goos == "windows":
-            with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
-                archive.write(package, base)
-                for path in sorted(package.iterdir()):
-                    archive.write(path, f"{base}/{path.name}")
-        else:
-            with tarfile.open(archive_path, "w:gz") as archive:
-                archive.add(package, arcname=base)
+        shutil.make_archive(str(stage / base), "zip" if goos == "windows" else "gztar",
+                            root_dir=stage, base_dir=base)
         shutil.copyfile(legal / "THIRD_PARTY_SOURCE.tar.gz", confined_path(stage / source_name, stage))
         for filename in (archive_path.name, source_name):
             os.replace(confined_path(stage / filename, stage), confined_path(output / filename, output))

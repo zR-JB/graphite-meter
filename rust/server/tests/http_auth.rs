@@ -1,3 +1,6 @@
+#[path = "support/native.rs"]
+mod native;
+
 #[path = "../test_tls.rs"]
 mod test_tls;
 
@@ -12,7 +15,7 @@ use rustls::pki_types::ServerName;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
+    net::TcpStream,
     sync::oneshot,
 };
 use tokio_rustls::{TlsConnector, client::TlsStream};
@@ -52,21 +55,8 @@ impl Harness {
             ..Config::default()
         };
         let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let l1 = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let h1 = l1.local_addr().unwrap();
-        let l2 = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let h2 = l2.local_addr().unwrap();
-        let (s1, r1) = oneshot::channel();
-        let (s2, r2) = oneshot::channel();
-        let serving = server
-            .clone()
-            .serve(NativeKind::H1Tls, l1, Some(Arc::new(tls.clone())), async {
-                let _ = r1.await;
-            });
-        let t1 = tokio::spawn(serving);
-        let t2 = tokio::spawn(server.serve(NativeKind::H2, l2, Some(Arc::new(tls)), async {
-            let _ = r2.await;
-        }));
+        let (h1, s1, t1) = native::serve(server.clone(), NativeKind::H1Tls, Some(Arc::new(tls.clone()))).await;
+        let (h2, s2, t2) = native::serve(server, NativeKind::H2, Some(Arc::new(tls))).await;
         Self {
             h1,
             h2,

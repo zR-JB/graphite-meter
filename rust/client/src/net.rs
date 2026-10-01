@@ -956,13 +956,16 @@ mod tests {
     #[tokio::test]
     async fn discovery_takes_go_catalogue_origins_and_leaves_out_only_a_broken_entry() -> Result<()> {
         let catalog = serde_json::json!({
-            "defaultSelection": ["self", "slashed"],
+            "defaultSelection": ["self", "broken", "international"],
             "servers": [
                 {"id": "self", "url": ".", "name": "self"},
                 {"id": "slashed", "url": "https://remote.example:8443/", "name": "slashed"},
                 {"id": "international", "url": "https://BÜCHER.example", "name": "international",
                  "additionalOrigins": ["https://münchen.example/"]},
-                {"id": "broken", "url": "https://two words.example", "name": "broken"}
+                {"id": "broken", "url": "https://two words.example", "name": "broken"},
+                {"id": "duplicate", "url": "https://REMOTE.example:8443", "name": "duplicate"},
+                {"id": "slashed", "url": "https://other.example", "name": "duplicate ID"},
+                {"id": "bad id", "url": "https://named.example", "name": "invalid ID"}
             ]
         });
         let preflight = serde_json::json!({
@@ -997,7 +1000,22 @@ mod tests {
             discovery.catalog.servers[2].additional_origins,
             ["https://xn--mnchen-3ya.example"]
         );
-        assert_eq!(discovery.catalog.default_selection, ["self", "slashed"]);
+        assert_eq!(discovery.catalog.default_selection, ["self", "international"]);
+        use graphite_meter_core::catalog::CatalogError;
+        let rejected: Vec<_> = discovery
+            .rejected
+            .iter()
+            .map(|left| (left.id.as_str(), left.error))
+            .collect();
+        assert_eq!(
+            rejected,
+            [
+                ("broken", CatalogError::InvalidOrigin),
+                ("duplicate", CatalogError::DuplicateServer),
+                ("slashed", CatalogError::DuplicateServer),
+                ("bad id", CatalogError::InvalidIdentity),
+            ]
+        );
         let mut entry = discovery.catalog.servers[0].clone();
         entry.additional_origins = discovery.catalog.servers[2].additional_origins.clone();
         let preflight = http.preflight(&entry).await?;

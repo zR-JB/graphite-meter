@@ -10,7 +10,11 @@ import sys
 import termios
 import time
 
-binary, origin, mode, answer, stdin = sys.argv[1:]
+port, mode, answer, stdin = sys.argv[1:]
+port = int(port)
+if not 0 < port <= 65535:
+    raise ValueError("expected a loopback TCP port")
+origin = f"http://127.0.0.1:{port}"
 theme = mode == "theme"
 master, slave = pty.openpty()
 fcntl.fcntl(master, fcntl.F_SETFL, os.O_NONBLOCK)
@@ -24,7 +28,7 @@ env = {k: v for k, v in os.environ.items() if k not in ("NO_COLOR", "GM_TUI_THEM
 env["TERM"] = "xterm-256color"
 if theme:
     env["COLORTERM"] = "truecolor"
-args = [binary, "-url", origin]
+args = ["./graphite-meter-client", "-url", origin]
 if not theme:
     args += ["-stages", "latency", "-latency-duration", "5s", "-warmup", "0", "-ping", "80ms"]
 p = subprocess.Popen(args, stdin=subprocess.DEVNULL if stdin == "redirected" else slave,

@@ -361,7 +361,7 @@ shipped target, also those only release builds compile, and rejects reviews of c
 shipped binary compiles (`python3 -m scripts.legal.check_rust_reviews --prune` drops them)
 or in another layout than the legal tools write (`--format` rewrites them);
 `python3 -m scripts.legal.check_git_sources --verify`, which CI's Rust job runs, checks fork
-branches, upstream tags and diffs. [Fork upkeep](../legal/README.md#pinned-fork-upkeep) covers updates.
+branches, upstream tags and diffs. [Updating pinned forks](../legal/README.md#updating-pinned-forks) covers updates.
 The workspace's `http3` crate, shared by the server and the client, keeps a
 cancelled stream's association header, with plain RESET fallback when peers do
 not support reliable reset. The forks remain experimental; current-codepoint

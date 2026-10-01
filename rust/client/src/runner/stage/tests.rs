@@ -513,32 +513,19 @@ async fn a_stopped_bidirectional_start_drains_its_started_download() -> Result<(
 
 #[tokio::test]
 async fn first_stage_setup_failure_keeps_survivors_and_its_sign_in_cause() -> Result<(), Error> {
-    let (near, near_failed, near_task) = download_peer().await?;
-    let (far, far_failed, far_task) = download_peer().await?;
-    let http = Http::new(true)?;
-    let servers = vec![
-        prepared_download("near", &near, &http).await?,
-        prepared_download("far", &far, &http).await?,
-    ];
-    let config = Config {
-        url: near,
-        servers: vec!["near".into(), "far".into()],
-        stages: vec![Stage::Download],
-        warmup: Duration::from_millis(10),
-        download_duration: Duration::from_millis(1400),
-        streams: 1,
-        loaded_latency: false,
-        ..Config::default()
-    };
-    let (snapshots, observed) = watch::channel(listing(&servers));
-    let (_stop, cancelled) = watch::channel(false);
-    near_failed.store(3, Ordering::SeqCst);
+    let mut fixture = Fixture::new(&["near", "far"], 1400).await?;
+    fixture.config.warmup = Duration::from_millis(10);
+    fixture.snapshots.send_replace(listing(&fixture.servers));
+    let (servers, config, snapshots) = (&fixture.servers, &fixture.config, &fixture.snapshots);
+    let observed = snapshots.subscribe();
+    let cancelled = fixture.stop.subscribe();
+    fixture.modes[0].store(3, Ordering::SeqCst);
     let mut ledger = RunLedger::new();
     let first = measure(
         Stage::Download,
-        &config,
-        &servers,
-        &snapshots,
+        config,
+        servers,
+        snapshots,
         cancelled.clone(),
         &mut ledger,
     )
@@ -554,12 +541,12 @@ async fn first_stage_setup_failure_keeps_survivors_and_its_sign_in_cause() -> Re
     assert!(first_bytes > 0);
 
     // A stalled first peer must not consume the next peer's startup budget.
-    near_failed.store(2, Ordering::SeqCst);
+    fixture.modes[0].store(2, Ordering::SeqCst);
     let second = measure(
         Stage::Download,
-        &config,
-        &servers,
-        &snapshots,
+        config,
+        servers,
+        snapshots,
         cancelled.clone(),
         &mut ledger,
     )
@@ -580,12 +567,12 @@ async fn first_stage_setup_failure_keeps_survivors_and_its_sign_in_cause() -> Re
     assert!(contributions[1].down_bps().is_some());
     drop(snapshot);
 
-    far_failed.store(1, Ordering::SeqCst);
+    fixture.modes[1].store(1, Ordering::SeqCst);
     let third = measure(
         Stage::Download,
-        &config,
+        config,
         &servers[1..],
-        &snapshots,
+        snapshots,
         cancelled,
         &mut ledger,
     )
@@ -596,45 +583,24 @@ async fn first_stage_setup_failure_keeps_survivors_and_its_sign_in_cause() -> Re
     assert_eq!(snapshot.results[0].down_bytes(), first_bytes);
     assert!(snapshot.results[2].down_bps().is_none());
     assert!(snapshot.failures.iter().any(|failure| failure.server_id == "far"));
-    near_task.abort();
-    far_task.abort();
     Ok(())
 }
 
 #[test]
-fn replies_sent_before_stage_end_count_during_drain() {
+fn only_probes_sent_inside_the_stage_count_including_drained_replies() {
     let start = Instant::now();
     let end = start + Duration::from_secs(1);
-    let mut accumulator = LatencyAccumulator::default();
-    let mut latest = None;
-    observe_latency(
-        Observation::Sample {
-            sent: end - Duration::from_millis(10),
-            rtt: Duration::from_millis(20),
-            handling_nanos: 0,
-        },
-        start,
-        end,
-        &mut accumulator,
-        &mut latest,
-    );
-    let summary = accumulator.snapshot();
-    assert_eq!(summary.count, 1);
-    assert_eq!(summary.unresolved, 0);
-    assert_eq!(latest, Some(20.0));
-}
-
-#[test]
-fn warmup_and_poststage_probes_do_not_enter_measurement() {
-    let start = Instant::now();
-    let end = start + Duration::from_secs(1);
-    let mut accumulator = LatencyAccumulator::default();
-    let mut latest = None;
-    for sent in [start - Duration::from_millis(10), end] {
+    for (sent, count, latest_ms) in [
+        (start - Duration::from_millis(10), 0, None),
+        (end, 0, None),
+        (end - Duration::from_millis(10), 1, Some(20.0)),
+    ] {
+        let mut accumulator = LatencyAccumulator::default();
+        let mut latest = None;
         observe_latency(
             Observation::Sample {
                 sent,
-                rtt: Duration::from_millis(1),
+                rtt: Duration::from_millis(20),
                 handling_nanos: 0,
             },
             start,
@@ -642,8 +608,12 @@ fn warmup_and_poststage_probes_do_not_enter_measurement() {
             &mut accumulator,
             &mut latest,
         );
+        let summary = accumulator.snapshot();
+        assert_eq!((summary.count, summary.unresolved, latest), (count, 0, latest_ms));
+        if count == 0 {
+            assert_eq!(summary, Default::default());
+        }
     }
-    assert_eq!(accumulator.snapshot(), Default::default());
 }
 
 #[test]

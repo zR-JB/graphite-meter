@@ -489,31 +489,13 @@ async fn refusals_stay_on_their_stream() -> Result<(), TestError> {
     let status_400 = frame(0x01, &[0x00, 0x00, 0xff, 0x04]);
     let many: Vec<(&str, &str)> = std::iter::repeat_n(("a", ""), 130).collect();
     let wt = Code(0x52e4a40fa8db);
-    let cases = [
+    let mut cases = vec![
         (
             frame(0x01, &[0; 5000])[..100].to_vec(),
             Ok(status_431.clone()),
             Some(Code::H3_EXCESSIVE_LOAD),
         ),
         (request_head(&many), Ok(status_431), Some(Code::H3_EXCESSIVE_LOAD)),
-        (
-            request_head(&[("Upper", "x")]),
-            Err(Code::H3_MESSAGE_ERROR),
-            Some(Code::H3_MESSAGE_ERROR),
-        ),
-        (
-            frame(
-                0x01,
-                &section(&[(":method", "CONNECT"), (":authority", "localhost:443")]),
-            ),
-            Ok(status_400.clone()),
-            None,
-        ),
-        (
-            request_head(&[(":method", "CONNECT"), (":protocol", "websocket")]),
-            Ok(status_400),
-            None,
-        ),
         ([varint(0x41), varint(0)].concat(), Err(wt), Some(wt)),
         (
             [
@@ -525,6 +507,52 @@ async fn refusals_stay_on_their_stream() -> Result<(), TestError> {
             Some(Code::H3_MESSAGE_ERROR),
         ),
     ];
+    let get = [
+        (":method", "GET"),
+        (":scheme", "https"),
+        (":authority", "meter.example"),
+        (":path", "/"),
+    ];
+    let with = |extra: &[(&'static str, &'static str)]| [&get[..], extra].concat();
+    let connect = |fields: &[(&'static str, &'static str)]| [&[(":method", "CONNECT")][..], fields].concat();
+    let malformed = [
+        (with(&[("Upper", "x")]), false),
+        (with(&[("x", "a\nb")]), false),
+        ([&[("x", "1")][..], &get].concat(), false),
+        (with(&[(":status", "200")]), false),
+        (with(&[(":path", "/again")]), false),
+        (with(&[("connection", "close")]), false),
+        (with(&[("te", "gzip")]), false),
+        (with(&[("content-length", "7"), ("content-length", "8")]), false),
+        (with(&[("content-length", "+7")]), false),
+        (with(&[("host", "other.example")]), false),
+        (with(&[(":protocol", "webtransport")]), false),
+        (get[1..].to_vec(), false),
+        (vec![get[0], get[1], get[3]], false),
+        (vec![get[0], get[2], get[3]], false),
+        (vec![get[0], get[1], get[2], (":path", "relative")], false),
+        (vec![get[0], get[1], get[2], (":path", "")], false),
+        (
+            vec![get[0], get[1], (":authority", "user@meter.example"), get[3]],
+            false,
+        ),
+        (connect(&[(":authority", "meter.example:443")]), true),
+        (connect(&[(":protocol", "websocket"), get[1], get[2], get[3]]), true),
+        (connect(&[(":protocol", "webtransport"), get[1], get[2]]), false),
+        (
+            connect(&[(":protocol", "webtransport"), get[1], get[2], (":path", "")]),
+            false,
+        ),
+        (connect(&[get[1], get[2], get[3]]), false),
+    ];
+    cases.extend(malformed.into_iter().map(|(fields, unsupported)| {
+        let (response, stop) = if unsupported {
+            (Ok(status_400.clone()), None)
+        } else {
+            (Err(Code::H3_MESSAGE_ERROR), Some(Code::H3_MESSAGE_ERROR))
+        };
+        (frame(0x01, &section(&fields)), response, stop)
+    }));
     let peers = peers(usize::MAX).await?;
     let (serving, _) = serve(&peers, |_, stream| async move {
         let _ = stream.split().1.data().await;

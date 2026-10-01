@@ -56,6 +56,8 @@ RUSTC = 'rustc 1.98.1 (48a229cea 2026-09-01)\nhost: x86_64-pc-windows-gnu\nrelea
 
 class PlatformRecordTests(unittest.TestCase):
     TARGETS = 'linux/amd64 x86_64-unknown-linux-musl\nwindows/amd64 x86_64-pc-windows-gnu\n'
+    APPROVED = {'rustc': RUSTC, 'reviewDecision': 'approved', 'reviewNotes': 'reviewed'}
+    WINDOWS = {'target': 'x86_64-pc-windows-gnu', **APPROVED}
 
     def repo(self, windows_records: list[dict] | None) -> Path:
         root = Path(self.enterContext(tempfile.TemporaryDirectory()))
@@ -67,22 +69,12 @@ class PlatformRecordTests(unittest.TestCase):
             "run = 'python3 -m scripts.legal.rust --host'\n")
         (root / 'container/Dockerfile.rust').write_text(
             'RUN a --supplement legal/linux.json\nRUN b --supplement legal/linux.json\n')
-        approved = {'rustc': RUSTC, 'reviewDecision': 'approved', 'reviewNotes': 'reviewed'}
-        (root / 'legal/linux.json').write_text(json.dumps([{'target': 'x86_64-unknown-linux-musl', **approved}]))
-        if windows_records is not None:
-            (root / 'legal/linux.json').write_text(json.dumps([{'target': 'x86_64-unknown-linux-musl', **approved},
-                                                             *windows_records]))
+        (root / 'legal/linux.json').write_text(json.dumps([
+            {'target': 'x86_64-unknown-linux-musl', **self.APPROVED}, *(windows_records or [])]))
         return root
 
-    def test_every_shipped_target_has_an_approved_record_where_it_is_built(self) -> None:
-        records = [{'target': 'x86_64-pc-windows-gnu', 'rustc': RUSTC, 'reviewDecision': 'approved',
-                    'reviewNotes': 'reviewed'}]
-        self.assertEqual(unreviewed_platforms(self.repo(records), self.TARGETS), [])
-
     def test_a_record_file_no_builder_reads_is_reported(self) -> None:
-        records = [{'target': 'x86_64-pc-windows-gnu', 'rustc': RUSTC, 'reviewDecision': 'approved',
-                    'reviewNotes': 'reviewed'}]
-        root = self.repo(records)
+        root = self.repo([self.WINDOWS])
         (root / 'legal/rust-platform-host.json').write_text('[]')
         self.assertEqual(unreviewed_platforms(root, self.TARGETS), ['legal/rust-platform-host.json is read by no builder'])
         with (root / 'mise.toml').open('a') as mise:
@@ -94,15 +86,14 @@ class PlatformRecordTests(unittest.TestCase):
         (root / 'legal/rust-platform-host.json').write_text(json.dumps([host]))
         self.assertEqual(unreviewed_platforms(root, self.TARGETS), [])
 
-    def test_a_missing_pending_or_stale_record_is_reported_against_its_builder(self) -> None:
+    def test_shipped_records_must_be_present_approved_and_current(self) -> None:
         missing = ['legal/linux.json has no approved record for x86_64-pc-windows-gnu on Rust 1.98.1, '
                    'which container/Dockerfile.rust builds']
-        self.assertEqual(unreviewed_platforms(self.repo(None), self.TARGETS), missing)
-        pending = [{'target': 'x86_64-pc-windows-gnu', 'rustc': RUSTC, 'reviewDecision': 'pending', 'reviewNotes': ''}]
-        self.assertEqual(unreviewed_platforms(self.repo(pending), self.TARGETS), missing)
-        stale = [{'target': 'x86_64-pc-windows-gnu', 'rustc': RUSTC.replace('1.98.1', '1.97.0'),
-                  'reviewDecision': 'approved', 'reviewNotes': 'reviewed'}]
-        self.assertEqual(unreviewed_platforms(self.repo(stale), self.TARGETS), missing)
+        for record, errors in ((self.WINDOWS, []), (None, missing),
+                               (self.WINDOWS | {'reviewDecision': 'pending', 'reviewNotes': ''}, missing),
+                               (self.WINDOWS | {'rustc': RUSTC.replace('1.98.1', '1.97.0')}, missing)):
+            with self.subTest(record=record):
+                self.assertEqual(unreviewed_platforms(self.repo([record] if record else None), self.TARGETS), errors)
 
 
 if __name__ == '__main__':

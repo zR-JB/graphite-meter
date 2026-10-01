@@ -1,6 +1,6 @@
 # Go<->Rust QPACK contract with the unchanged quic-go/qpack v0.6.0. Each block lists field lines as
 # "name value" with \xNN escapes, then "go:" and "rust:" with each side's encoding. From go/, the gate is:
-#   go run ../rust/tests/qpack_vectors.go ../rust/http3/src/qpack/vectors.txt
+#   go run ../rust/tests/qpack_vectors.go < ../rust/http3/src/qpack/vectors.txt
 
 :method CONNECT
 :protocol webtransport
