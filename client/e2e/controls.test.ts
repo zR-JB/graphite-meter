@@ -160,7 +160,9 @@ test("legal notices recover through Retry and keep focus in the dialog", async (
   await dialog.getByRole("button", { name: "Retry" }).click();
   await expect(dialog).toContainText("Third-party software");
 
-  const link = dialog.locator(".group:last-child .component:last-child a");
+  const link = dialog.locator(
+    ".group:last-child .component:last-child .component-links a:last-child",
+  );
   const close = dialog.getByRole("button", { name: "Close About & legal" });
   await link.evaluate((el: HTMLElement) => el.focus());
   // Past the last control a modal hands focus to the browser, never the page.

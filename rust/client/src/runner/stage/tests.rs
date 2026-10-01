@@ -1410,13 +1410,15 @@ async fn latency_stage_losses_drop_one_server_and_the_run_continues() -> Result<
     // Far answers no probe, and loses its channel once near, never dialled, has left: as in Go,
     // near tries for 2 s first (latency.go:141).
     far_mode.store(8, Ordering::SeqCst);
-    let refused = format!("http://{}", TcpListener::bind("127.0.0.1:0").await?.local_addr()?);
+    // Keep the unresponsive endpoint bound so parallel fixtures cannot reuse its port.
+    let unresponsive = TcpListener::bind("127.0.0.1:0").await?;
+    let unresponsive_url = format!("http://{}", unresponsive.local_addr()?);
     let http = Http::new(true)?;
     let mut servers = vec![
         prepared_download("near", &near, &http).await?,
         prepared_download("far", &far, &http).await?,
     ];
-    for (server, latency) in servers.iter_mut().zip([&refused, &far]) {
+    for (server, latency) in servers.iter_mut().zip([&unresponsive_url, &far]) {
         server.latency = Some(graphite_meter_core::discovery::LatencyTarget {
             base_url: latency.clone(),
             transport: LatencyTransport::WebSocket,
