@@ -14,7 +14,6 @@ miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-a
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
 
 [profile.release]
 opt-level = 3

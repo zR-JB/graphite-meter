@@ -1,0 +1,17 @@
+[
+  {"name":"cli-browser","page":"cli","csrf":"csrf-token","challenge":"challenge","code":"A&B <i>\"x\"</i> 'y'+z\u0000","origin":"A&B <i>\"x\"</i> 'y'+z\u0000","sha256":"2af21dcf2b2598fe8bd78cebe75a108b1b18f96dbc5a9e2d8d8d45a83470a49d"},
+  {"name":"cli-capacity","page":"cli","origin":"https://client.example","capacity":true,"sha256":"c2938386aba32a60702e96dcd807ab5c138d170cc94e18bd6b1dde34333b58fa"},
+  {"name":"cli-terminal","page":"cli","csrf":"A&B <i>\"x\"</i> 'y'+z\u0000","challenge":"A&B <i>\"x\"</i> 'y'+z\u0000","code":"ABCD2345","sha256":"eba330bf56fc962a44578de851dffb07ed13694ef5c45fdba6a45ae88bcdc291"},
+  {"name":"continue-opening","page":"continue","challenge":"a b&c+d/é\"<>'\n","opening":true,"sha256":"389b3aa8a01e378d24f809043c2c119682249bb41c7113496ce3d47ebd273418"},
+  {"name":"continue-signed-in","page":"continue","sha256":"3b1b97f25f5a5553b9661d7242896fdae56deadc82553214c8cffec6689406ca"},
+  {"name":"done-browser","page":"cli-done","browser":true,"sha256":"879165068a3e6d9bdf83b1f1c5684f12fbccd7d80ef68c487d4b546ec79d0e38"},
+  {"name":"done-terminal","page":"cli-done","sha256":"bc5975eb69f58bb7f0db9000eea49554a6bce09891f8a198e217a03230a1015d"},
+  {"name":"login-busy","page":"login","csrf":"csrf-token","notice":"busy","password":true,"sha256":"0f11c8e1690f5f1de1d518b023b4b53401377859d9dadf202e3c4adff143bce4"},
+  {"name":"login-failed","page":"login","csrf":"csrf-token","notice":"failed","password":true,"sha256":"c3ef8ff3a58ab7880062597be5b7cf1ba57b96d5fa3c12330d740144e558c6c8"},
+  {"name":"login-hybrid-provider-renew","page":"login","csrf":"csrf-token","provider":"Authelia","notice":"provider","status":"renew","password":true,"oidc":true,"sha256":"8b235ad3dd388e7c3a315251bf58f8d79ac7be61b513416a820afae6cad470b4"},
+  {"name":"login-hybrid-signed-out","page":"login","csrf":"A&B <i>\"x\"</i> 'y'+z\u0000","provider":"A&B <i>\"x\"</i> 'y'+z\u0000","challenge":"A&B <i>\"x\"</i> 'y'+z\u0000","notice":"password","status":"signed_out","password":true,"oidc":true,"oidcReady":true,"sha256":"30d590ee15175af32931aca2dfae7e925f9239e30c008cdc8eb1f930d042b0a9"},
+  {"name":"login-oidc-unready-expired","page":"login","csrf":"csrf-token","provider":"A&B <i>\"x\"</i> 'y'+z\u0000","notice":"provider","status":"expired","oidc":true,"sha256":"e9f02e9823d07aa3a974ff61dd0e76851439b72cabdbcde8c96f7c131f4e45ed"},
+  {"name":"login-password","page":"login","csrf":"csrf-token","password":true,"sha256":"946610455e2ef0a8cb08c69f7be1296c710271ee4cf7e342fc4e583c19b84a23"},
+  {"name":"login-stale","page":"login","csrf":"csrf-token","notice":"stale","password":true,"sha256":"cfbda135f4a48efe7d43b9c288203c24d52ee19a64197a3b2719734453e5e710"},
+  {"name":"login-throttled","page":"login","csrf":"csrf-token","notice":"throttled","password":true,"sha256":"dfac3d310d36a73bbc0d6755a4255807f69832383974f814ff972b75652be107"}
+]

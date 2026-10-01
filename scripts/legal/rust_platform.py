@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import urllib.request
 from pathlib import Path
 
 from ..ci.github_api import confined_path
@@ -82,6 +83,27 @@ def rlibs(sysroot: Path, target: str) -> set[str]:
 
 def own_notices(entry: dict[str, Json] | None) -> dict[str, str]:
     return {path: string(name) for path, name in obj((entry or {}).get('notices', {})).items()}
+
+
+def fetch_notices(repo: Path, entry: dict[str, Json]) -> None:
+    """Materialize only this platform's notices, checking downloaded and cached bytes."""
+    resources = obj(read_json(repo / 'legal/rust-notice-sources.json'))
+    for relative in own_notices(entry).keys() & resources.keys():
+        resource = obj(resources[relative])
+        path = confined_path(repo / relative, repo)
+        if path.exists():
+            data = path.read_bytes()
+        else:
+            url = text(resource, 'url')
+            if not url.startswith('https://'):
+                raise LegalError(f'notice source must use HTTPS: {relative}')
+            with urllib.request.urlopen(url, timeout=30) as response:
+                data = response.read(1_000_001)
+        if len(data) > 1_000_000 or sha256(data) != text(resource, 'sha256'):
+            raise LegalError(f'runtime notice bytes differ from reviewed source: {relative}')
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
 
 
 def notice_names(entry: dict[str, Json] | None, sysroot: Path) -> dict[str, str]:

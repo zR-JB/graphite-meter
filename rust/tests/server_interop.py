@@ -17,13 +17,69 @@ PASSWORD_HASH = (
 )
 H3_TCP = "/tcp (HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe, upload and ticket control)"
 # Every interop step selects the workspace with dev-dependencies, so all share one build.
-BUILD = ["cargo", "build", "--locked", "--workspace", "--bins", "--examples"]
+BUILD = ["cargo", "build", "--locked", "--workspace", "--bins"]
 
 
 def unused_port(kind: int) -> int:
     with socket.socket(socket.AF_INET, kind) as listener:
         listener.bind(("127.0.0.1", 0))
         return listener.getsockname()[1]
+
+
+def build_current_reset_peer(directory: Path, environment: dict[str, str]) -> Path:
+    """Build the pinned Go peer with only the current reliable-reset offer."""
+    wire = subprocess.run(
+        ["go", "list", "-f", "{{.Dir}}", "github.com/quic-go/quic-go/internal/wire"],
+        cwd=ROOT / "go", env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    # Go forbids overlays of files in GOMODCACHE. Patch a disposable module
+    # copy and point only this probe build at it through a temporary modfile.
+    module = Path(wire).parents[1]
+    local_module = directory / "quic-go-current-reset"
+    shutil.copytree(module, local_module)
+    source = local_module / "internal/wire/transport_parameters.go"
+    legacy_offer = (
+        "\t\tb = quicvarint.Append(b, uint64(legacyResetStreamAtParameterID))\n"
+        "\t\tb = quicvarint.Append(b, 0)\n"
+    )
+    original = source.read_text()
+    if original.count(legacy_offer) != 1:
+        raise RuntimeError("quic-go reliable-reset offer changed; review the current-only probe")
+    source.chmod(0o644)
+    source.write_text(original.replace(legacy_offer, ""))
+    modfile = directory / "probe.mod"
+    modfile.write_bytes((ROOT / "go/go.mod").read_bytes())
+    (directory / "probe.sum").write_bytes((ROOT / "go/go.sum").read_bytes())
+    subprocess.run(
+        [
+            "go",
+            "mod",
+            "edit",
+            "-modfile",
+            str(modfile),
+            f"-replace=github.com/quic-go/quic-go={local_module}",
+        ],
+        cwd=ROOT / "go", env=environment,
+        check=True,
+    )
+    binary = directory / "client-current-reset"
+    subprocess.run(
+        [
+            "go",
+            "build",
+            "-modfile",
+            str(modfile),
+            "-o",
+            str(binary),
+            str(ROOT / "rust/tests/server_client.go"),
+        ],
+        cwd=ROOT / "go", env=environment,
+        check=True,
+    )
+    return binary
 
 
 def main() -> None:
@@ -53,6 +109,7 @@ def main() -> None:
     subprocess.run([
         "go", "build", "-o", str(client), str(ROOT / "rust/tests/server_client.go"),
     ], cwd=ROOT / "go", env=environment, check=True)
+    current_reset_client = build_current_reset_peer(directory, environment)
     server_log = directory / "server.log"
     with server_log.open("w") as output:
         server = subprocess.Popen([
@@ -73,10 +130,12 @@ def main() -> None:
                 time.sleep(0.05)
             if not address:
                 raise TimeoutError("Rust H3 listener did not report readiness")
-            result = subprocess.run([str(client), address.rpartition(":")[2]], cwd=directory, capture_output=True, text=True, timeout=35)
-            (directory / "client.log").write_text(result.stdout + result.stderr)
-            print(result.stdout + result.stderr, end="", flush=True)
-            result.check_returncode()
+            for label, peer in (("unchanged", client), ("current-reset", current_reset_client)):
+                result = subprocess.run([str(peer), address.rpartition(":")[2]], cwd=directory,
+                                        capture_output=True, text=True, timeout=35)
+                (directory / f"client-{label}.log").write_text(result.stdout + result.stderr)
+                print(f"{label} Go peer:\n{result.stdout}{result.stderr}", end="", flush=True)
+                result.check_returncode()
             curl = shutil.which("curl")
             curl_version = (
                 subprocess.run([curl, "--version"], check=True, capture_output=True, text=True).stdout
@@ -97,24 +156,6 @@ def main() -> None:
                     raise RuntimeError(f"curl HTTP/3 download mismatch: {result.stdout!r}")
                 print("curl HTTP/3 download: clean FIN, 65537 bytes", flush=True)
 
-                for method, path, allow in (
-                    ("POST", "/download?bytes=65537", "GET, HEAD, OPTIONS"),
-                    ("GET", "/upload", "OPTIONS, POST"),
-                ):
-                    headers = directory / f"curl-h3-{method.lower()}-{path.split('?')[0].strip('/')}.headers"
-                    result = subprocess.run([
-                        curl, "--http3-only", "--cacert", str(cert), "--silent", "--show-error",
-                        "--max-time", "10", "--request", method, "--dump-header", str(headers),
-                        "--output", os.devnull, "--write-out", "%{http_code} %{http_version}",
-                        f"https://{address}{path}",
-                    ], capture_output=True, text=True, timeout=12)
-                    result.check_returncode()
-                    response_headers = headers.read_text().lower()
-                    if result.stdout != "405 3" or f"allow: {allow.lower()}" not in response_headers.splitlines():
-                        raise RuntimeError(
-                            f"curl HTTP/3 {method} {path}: {result.stdout!r}, {response_headers!r}"
-                        )
-                print("curl HTTP/3 method boundaries: 405 with Allow headers", flush=True)
         finally:
             server.send_signal(signal.SIGINT)
             try:

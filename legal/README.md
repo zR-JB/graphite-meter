@@ -100,7 +100,10 @@ record keeps the reviewed native inputs this build did not link while they exist
 libraries only unoptimized builds take, so re-approving it drops no fingerprinted input. Review
 both, add each package text that covers the native files to `notices`, rerun with that record
 for its digest, then approve it and commit it to the environment's file. Texts the environment
-lacks, such as musl's and LLVM's for the static musl targets, are committed under `legal/manual`
+lacks, such as musl's and LLVM's for the static musl targets, are fetched from immutable
+upstream revisions in `rust-notice-sources.json`. Downloaded and cached bytes must match
+the pinned SHA-256 before entering the notices; cached files stay out of Git and Docker
+contexts. Other missing package notices remain under `legal/manual`
 and named by repository path. Each actual distributed build checks its linked inputs and prints
 its facts if the review is stale. Rust releases support Linux and Windows; Go keeps its macOS targets.
 PR checks use the pinned Debian release builder for Linux/Windows, with fat LTO disabled to reduce

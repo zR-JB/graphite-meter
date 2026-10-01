@@ -16,12 +16,12 @@ from copy import deepcopy
 
 from scripts.ci.github_api import ControlPlaneError
 from scripts.legal.artifacts import render
-from scripts.legal.model import (Component, LegalError, Project, Provenance, Review, array, manual_files,
+from scripts.legal.model import (Component, Json, LegalError, Project, Provenance, Review, array, manual_files,
                                  manual_sources, marshal, read_json, sha256)
 from scripts.legal.review import add_provenance, validate_review
 from scripts.legal.rust import (DEVELOPMENT, DEVELOPMENT_NOTICE, about, add_cargo_sources, artifacts, capture, cargo,
                                 image_additions, legal_report)
-from scripts.legal.rust_platform import SYSROOT, candidate, imports, link_map, linked, linker_version, notice
+from scripts.legal.rust_platform import SYSROOT, candidate, fetch_notices, imports, link_map, linked, linker_version, notice
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -157,20 +157,6 @@ class RustDevelopmentTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn(error, result.stderr)
 
-    def test_a_development_capture_is_cargo_plain_host_build_without_a_link_map(self) -> None:
-        link_map = Path('/notices/x86_64-unknown-linux-musl-release.map')
-        commands = []
-        for target, mapped in ((None, None), ('x86_64-unknown-linux-musl', link_map), (None, link_map)):
-            with patch('subprocess.run', return_value=subprocess.CompletedProcess([], 0, '')) as run, \
-                    patch('subprocess.check_output', return_value='{}'):
-                capture(ROOT, 'graphite-meter-client', target, 'release', mapped,
-                        link_target='x86_64-unknown-linux-musl')
-            commands.append(run.call_args.args[0][2:])
-        head = ['rustc', '--locked', '--package', 'graphite-meter-client', '--bin', 'graphite-meter-client']
-        tail = ['--profile', 'release', '--message-format=json']
-        self.assertEqual(commands, [head + tail, head + ['--target', 'x86_64-unknown-linux-musl'] + tail
-                                    + ['--', f'-Clink-arg=-Wl,-Map={link_map}'],
-                                    head + tail + ['--', f'-Clink-arg=-Wl,-Map={link_map}']])
 
 
 class RustImageTests(unittest.TestCase):
@@ -195,6 +181,27 @@ class RustImageTests(unittest.TestCase):
 
 
 class RustPlatformTests(unittest.TestCase):
+    def test_downloaded_and_cached_runtime_notices_require_the_reviewed_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            (root / 'legal').mkdir()
+            relative = 'legal/manual/runtime/LICENSE'
+            resource = {'url': 'https://example.invalid/immutable/LICENSE', 'sha256': sha256(b'reviewed license')}
+            (root / 'legal/rust-notice-sources.json').write_text(json.dumps({relative: resource}))
+            entry: dict[str, Json] = {'notices': {relative: 'runtime/LICENSE'}}
+            with patch('urllib.request.urlopen', return_value=io.BytesIO(b'changed license')):
+                with self.assertRaisesRegex(LegalError, 'bytes differ'):
+                    fetch_notices(root, entry)
+            self.assertFalse((root / relative).exists())
+            with patch('urllib.request.urlopen', return_value=io.BytesIO(b'reviewed license')):
+                fetch_notices(root, entry)
+            self.assertEqual((root / relative).read_bytes(), b'reviewed license')
+            with patch('urllib.request.urlopen', side_effect=AssertionError('cache must work offline')):
+                fetch_notices(root, entry)
+            (root / relative).write_bytes(b'changed cache')
+            with self.assertRaisesRegex(LegalError, 'bytes differ'):
+                fetch_notices(root, entry)
+
     def test_each_linker_map_names_the_native_inputs_that_contributed_code(self) -> None:
         maps = {
             'GNU ld': 'Archive member included to satisfy reference by file (symbol)\n\n'
@@ -400,21 +407,6 @@ class RustBuildTests(unittest.TestCase):
             self.assertFalse(str(root).encode() in binary, 'the binary names a build path')
 
 
-    def test_only_a_target_build_remaps_paths(self) -> None:
-        from scripts.legal import rust
-
-        class Built(Exception):
-            pass
-
-        def run(command, **kwargs):
-            raise Built(kwargs['env'].get('CARGO_ENCODED_RUSTFLAGS'))
-
-        with patch.object(rust.subprocess, 'run', run), patch.dict(os.environ, {'CARGO_ENCODED_RUSTFLAGS': ''}):
-            for target, remapped in ((None, False), ('x86_64-unknown-linux-musl', True)):
-                with self.assertRaises(Built) as built:
-                    rust.capture(ROOT, 'graphite-meter-client', target, 'dev', None)
-                # The development tasks build again with plain cargo, whose flags the build identity compares.
-                self.assertEqual('--remap-path-prefix' in str(built.exception), remapped, target)
 
     def test_only_development_notices_leave_their_marker_in_the_executable(self) -> None:
         from scripts.ci.toolchains import rust_channel

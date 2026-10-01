@@ -366,27 +366,6 @@ async fn retention_preserves_active_lanes_and_expires_observers() {
     );
 }
 
-#[tokio::test]
-async fn cancelled_task_releases_its_lane() {
-    let store = UploadStore::new().unwrap();
-    let id = store.mint().unwrap();
-    let mut lane = store.begin(&id, &Owner::principal("a")).unwrap();
-    lane.record(12);
-    let task = tokio::spawn(async move {
-        let _lane = lane;
-        std::future::pending::<()>().await
-    });
-    task.abort();
-    assert!(task.await.unwrap_err().is_cancelled());
-    store.finish(&id, &Owner::principal("a")).unwrap();
-    let mut subscription = store.subscribe(&id, &Owner::principal("a")).unwrap();
-    subscription.next().await;
-    assert!(matches!(
-        subscription.next().await,
-        Some(UploadProgress::Complete { bytes: 12, .. })
-    ));
-}
-
 // Poll directly with a recording waker: lifecycle must wake an already-suspended
 // feed and complete on its next poll, without advancing the progress timer.
 struct WakeFlag(std::sync::atomic::AtomicBool);

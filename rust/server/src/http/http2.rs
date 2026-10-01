@@ -507,7 +507,7 @@ mod exchange_tests {
 mod budget_tests {
     use super::*;
     use crate::config::Config;
-    use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, pem::PemObject};
+    use rustls::pki_types::ServerName;
 
     struct Served {
         server: Arc<HttpServer>,
@@ -519,24 +519,7 @@ mod budget_tests {
 
     impl Served {
         async fn start(memory: usize) -> Self {
-            let (certificate, key) = crate::test_identity::generate_identity("localhost").unwrap();
-            let certificate = CertificateDer::from_pem_slice(certificate.as_bytes()).unwrap();
-            let key = PrivateKeyDer::from_pem_slice(key.as_bytes()).unwrap();
-            let provider = Arc::new(rustls::crypto::ring::default_provider());
-            let tls = rustls::ServerConfig::builder_with_provider(provider.clone())
-                .with_protocol_versions(&[&rustls::version::TLS13])
-                .unwrap()
-                .with_no_client_auth()
-                .with_single_cert(vec![certificate.clone()], key)
-                .unwrap();
-            let mut roots = rustls::RootCertStore::empty();
-            roots.add(certificate).unwrap();
-            let mut client = rustls::ClientConfig::builder_with_provider(provider)
-                .with_protocol_versions(&[&rustls::version::TLS13])
-                .unwrap()
-                .with_root_certificates(roots)
-                .with_no_client_auth();
-            client.alpn_protocols = vec![b"h2".to_vec()];
+            let (tls, client) = crate::test_tls::configs(b"h2");
             let server = Arc::new(HttpServer::with_memory(Config::default().validated().unwrap(), memory).unwrap());
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = listener.local_addr().unwrap();

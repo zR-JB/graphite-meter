@@ -751,6 +751,18 @@ mod tests {
         assert!(form(&request("text/plain", "password=secret")).is_err());
     }
 
+    fn oidc_config() -> AuthConfig {
+        AuthConfig {
+            mode: AuthMode::Oidc,
+            public_url: "https://meter.example".into(),
+            oidc_issuer: "https://identity.example".into(),
+            oidc_client_id: "meter".into(),
+            oidc_client_secret: "secret".into(),
+            oidc_allowed_groups: vec!["operators".into()],
+            ..AuthConfig::default()
+        }
+    }
+
     fn connection() -> Connection {
         Connection {
             peer: "192.0.2.1:1234".parse().unwrap(),
@@ -873,19 +885,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn concurrent_logins_always_see_the_discovered_provider() {
-        let mut service = Service::new(
-            &AuthConfig {
-                mode: AuthMode::Oidc,
-                public_url: "https://meter.example".into(),
-                oidc_issuer: "https://identity.example".into(),
-                oidc_client_id: "meter".into(),
-                oidc_client_secret: "secret".into(),
-                oidc_allowed_groups: vec!["operators".into()],
-                ..AuthConfig::default()
-            },
-            vec![],
-        )
-        .unwrap();
+        let mut service = Service::new(&oidc_config(), vec![]).unwrap();
         service.oidc = Some(super::super::oidc::tests::ready());
         let service = Arc::new(service);
         let provider_csp = |response: &Response<Bytes>| {
@@ -937,19 +937,7 @@ mod tests {
 
     #[tokio::test]
     async fn sign_in_pages_render_when_the_provider_names_no_usable_authorization_origin() {
-        let mut service = Service::new(
-            &AuthConfig {
-                mode: AuthMode::Oidc,
-                public_url: "https://meter.example".into(),
-                oidc_issuer: "https://identity.example".into(),
-                oidc_client_id: "meter".into(),
-                oidc_client_secret: "secret".into(),
-                oidc_allowed_groups: vec!["operators".into()],
-                ..AuthConfig::default()
-            },
-            vec![],
-        )
-        .unwrap();
+        let mut service = Service::new(&oidc_config(), vec![]).unwrap();
         // No browser can post a sign-in form to port 0, so no page may name it in its form-action.
         service.oidc = Some(super::super::oidc::tests::discovered(
             "https://identity.example:0/authorize",
@@ -981,19 +969,7 @@ mod tests {
 
     #[tokio::test]
     async fn oidc_refusals_show_go_notices_and_keep_a_found_challenge() {
-        let mut service = Service::new(
-            &AuthConfig {
-                mode: AuthMode::Oidc,
-                public_url: "https://meter.example".into(),
-                oidc_issuer: "https://identity.example".into(),
-                oidc_client_id: "meter".into(),
-                oidc_client_secret: "secret".into(),
-                oidc_allowed_groups: vec!["operators".into()],
-                ..AuthConfig::default()
-            },
-            vec![],
-        )
-        .unwrap();
+        let mut service = Service::new(&oidc_config(), vec![]).unwrap();
         service.oidc = Some(super::super::oidc::tests::ready());
         let location = |response: &Response<Bytes>| response.headers()[header::LOCATION].to_str().unwrap().to_owned();
         let challenge = URL_SAFE_NO_PAD.encode([7; 32]);

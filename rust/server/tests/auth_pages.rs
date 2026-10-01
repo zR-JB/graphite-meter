@@ -17,6 +17,8 @@ fn inline_blocks<'a>(html: &'a str, tag: &str) -> Vec<&'a str> {
 #[derive(Default, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct Case {
+    name: String,
+    sha256: String,
     page: String,
     csrf: String,
     provider: String,
@@ -56,21 +58,19 @@ fn render(case: &Case) -> String {
 
 #[test]
 fn pages_render_as_go_renders_the_shared_goldens() {
-    let directory = concat!(env!("CARGO_MANIFEST_DIR"), "/../../go/internal/auth/testdata/pages");
-    let mut pages = 0;
-    for entry in std::fs::read_dir(directory).unwrap() {
-        let path = entry.unwrap().path();
-        let golden = std::fs::read_to_string(&path).unwrap();
-        let (header, expected) = golden.split_once('\n').unwrap();
-        let case: Case = serde_json::from_str(header).unwrap();
+    let cases: Vec<Case> = serde_json::from_str(include_str!("../../../go/internal/auth/testdata/pages.json")).unwrap();
+    assert!(!cases.is_empty());
+    for case in cases {
         let html = render(&case)
             .replace(STYLES, "/* auth.css */")
             .replace(THEME_SCRIPT, "/* theme.js */")
             .replace(PENDING_SCRIPT, "/* pending.js */");
-        assert_eq!(html, expected, "{}", path.display());
-        pages += 1;
+        let digest: String = Sha256::digest(html.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        assert_eq!(digest, case.sha256, "{}", case.name);
     }
-    assert!(pages >= 15, "{pages} golden pages");
 }
 
 #[test]

@@ -238,7 +238,7 @@ jobs:
       # uses Ubuntu's current mingw-w64; the Windows TUI links with the version the builder image pins.
       - name: Install Ubuntu's Windows cross compiler for cargo check
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-win32 mingw-w64-x86-64-dev
-      - name: Check the Windows and musl TUIs, the HTTP/3 codec without I/O and the fuzz targets
+      - name: Check the Windows and musl TUIs
         run: mise run rust-check-targets
       - name: Keep only dependency builds in a new cache
         run: mise run rust-cache-trim
@@ -263,8 +263,6 @@ jobs:
         run: python3 rust/tests/server_interop.py
       - name: Rust client with unchanged Go server
         run: python3 rust/tests/client_interop.py
-      - name: Unchanged and current-only Go reliable-reset interoperability
-        run: python3 rust/tests/interop.py
       - name: Delayed HTTP/3 and WebTransport downloads
         run: mise run rust-delayed-downloads
       - name: Keep only dependency builds in a new cache

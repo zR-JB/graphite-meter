@@ -21,3 +21,6 @@ pub use route::AuthRoute;
 pub use ticket::{Ticket, TicketError};
 
 pub use approval::{ApprovalError, ApprovalKind, ApprovalView, Challenge, Exchange, ExchangeError, valid_challenge};
+
+#[cfg(test)]
+mod test_keys;

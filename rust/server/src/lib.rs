@@ -5,11 +5,14 @@
 pub type ServerError = Box<dyn std::error::Error + Send + Sync>;
 
 #[cfg(test)]
-#[path = "../../test_identity.rs"]
-mod test_identity;
+use test_tls::test_identity;
 #[cfg(test)]
 #[path = "../../test_link.rs"]
 mod test_link;
+
+#[cfg(test)]
+#[path = "../test_tls.rs"]
+mod test_tls;
 
 pub mod admission;
 pub mod assets;

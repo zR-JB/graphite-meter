@@ -197,6 +197,13 @@ fn invalid_settings_name_what_failed() {
         ("GM_MAX_CONNECTIONS", "9223372036854775808"),
         ("GM_MAX_CONNECTIONS", "-1"),
         ("GM_MAX_ACTIVE_MEASUREMENTS", "0"),
+        ("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", "257"),
+        ("GM_MAX_ACTIVE_SESSIONS", "257"),
+        ("GM_MAX_ACTIVE_SESSIONS", "7"),
+        ("GM_MAX_CONNECTIONS_PER_CLIENT", "4097"),
+        ("GM_MAX_CONNECTIONS", "0"),
+        ("GM_MAX_SESSION_DURATION", "359999999999ns"),
+        ("GM_PUBLIC_ORIGINS", "https://meter.example:0"),
         ("GM_MAX_SESSIONS_PER_CLIENT", "33"),
         ("GM_MAX_OPERATION_DURATION", "1"),
         ("GM_MAX_OPERATION_DURATION", "0"),
@@ -260,6 +267,14 @@ fn invalid_settings_name_what_failed() {
         (
             format!("{auth} GM_AUTH_OIDC_PROVIDER_NAME=a\tb"),
             "64 bytes of UTF-8 without control characters",
+        ),
+        (
+            format!("{auth} GM_AUTH_PUBLIC_URL=https://meter.example:0"),
+            "GM_AUTH_PUBLIC_URL must be an HTTPS origin with no path, query, or fragment",
+        ),
+        (
+            "GM_H2_ADDR=:7443 GM_TLS_CERT=test-cert.pem GM_TLS_KEY=test-key.pem GM_H2_PUBLIC_ORIGIN=https://meter.example:0".into(),
+            "GM_H2_PUBLIC_ORIGIN must be an origin with https scheme",
         ),
     ] {
         let env: Vec<_> = env.split(' ').map(|pair: &str| pair.split_once('=').unwrap()).collect();

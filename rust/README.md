@@ -299,7 +299,6 @@ mise run rust-check-targets  # needs gcc-mingw-w64-x86-64-win32 and mingw-w64-x8
 mise run rust-format
 python3 rust/tests/server_interop.py
 python3 rust/tests/client_interop.py
-python3 rust/tests/interop.py
 python3 rust/tests/browser_transports.py --server rust/target/debug/graphite-meter-server
 ```
 
@@ -326,11 +325,10 @@ replay checks cookie-authenticated HTTP/3, one-use WebTransport tickets, and
 logout revocation. The same harness simulates the browser approval forms and
 runs all four stages through the actual Go native measurement engine over
 WebTransport. It does not exercise the Bubble Tea interface or an external
-authenticated deployment. `interop.py` separately probes low-level transport
-behavior against both unchanged quic-go and a disposable build that offers
-only the current reliable-reset transport parameter. The latter checks QUIC
-negotiation, WebTransport transfers, and immediate reset without modifying the
-shipped Go implementation.
+authenticated deployment. It also runs the assembled server against a disposable Go
+peer that offers only the current reliable-reset transport parameter, without
+modifying the shipped Go implementation. Raw HTTP/3 layer tests own the wire
+assertions for session close codes and reliable stream reset.
 
 `browser_transports.py` drives Chromium 153 and Playwright's Firefox 153 build
 through HTTP/3 downloads and uploads and WebTransport datagrams, streams and the

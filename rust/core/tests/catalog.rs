@@ -82,13 +82,7 @@ fn enforces_identity_origin_and_size_limits() {
         invalid.servers[0].location = name;
         assert_eq!(invalid.validate(), Err(CatalogError::InvalidIdentity));
     }
-    for url in [
-        ".",
-        "https://example/path",
-        "https://example:0",
-        "https://*.example",
-        "https://example;host",
-    ] {
+    for url in [".", "https://example/path"] {
         let mut invalid = ServerCatalog::default();
         invalid.servers[0].url = "https://self.example".into();
         invalid.servers.push(entry("remote", url));

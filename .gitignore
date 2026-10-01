@@ -61,3 +61,7 @@ letsencrypt/
 
 # Populated Tailscale-sidecar Quadlet environment files may contain auth keys.
 container/quadlet/tailscale-sidecar/*.env
+
+# Runtime notices fetched from immutable upstream revisions and checked by SHA-256.
+legal/manual/llvm/
+legal/manual/musl/

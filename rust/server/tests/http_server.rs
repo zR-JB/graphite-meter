@@ -7,17 +7,28 @@ use tokio::{
     sync::oneshot,
 };
 
+async fn serve(
+    server: Arc<HttpServer>,
+) -> (
+    SocketAddr,
+    oneshot::Sender<()>,
+    tokio::task::JoinHandle<Result<(), graphite_meter_server::ServerError>>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (stop, stopped) = oneshot::channel();
+    let serving = tokio::spawn(server.serve(NativeKind::H1, listener, None, async {
+        let _ = stopped.await;
+    }));
+    (address, stop, serving)
+}
+
 #[tokio::test]
 async fn real_http1_serves_discovery_and_streams_exact_download_then_joins_shutdown() {
     tokio::time::timeout(Duration::from_secs(10), async {
         let config = Config { server_name: "Local meter".into(), server_location: "Berlin".into(), ..Config::default() };
         let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let (stop, stopped) = oneshot::channel();
-        let serving = tokio::spawn(server.serve(NativeKind::H1, listener, None, async {
-            let _ = stopped.await;
-        }));
+        let (address, stop, serving) = serve(server).await;
 
         let mut generation = None;
         for (method, path, status) in [
@@ -89,12 +100,7 @@ async fn stalled_download_releases_capacity_at_request_deadline() {
         config.limits.operations_per_client = 1;
         config.limits.sessions_per_client = 1;
         let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let (stop, stopped) = oneshot::channel();
-        let serving = tokio::spawn(server.clone().serve(NativeKind::H1, listener, None, async {
-            let _ = stopped.await;
-        }));
+        let (address, stop, serving) = serve(server.clone()).await;
         let mut stalled = TcpStream::connect(address).await.unwrap();
         stalled
             .write_all(b"GET /download?bytes=68719476736 HTTP/1.1\r\nHost: localhost\r\n\r\n")
@@ -142,12 +148,7 @@ async fn stalled_download_releases_capacity_at_request_deadline() {
 async fn oversized_http1_headers_are_rejected() {
     tokio::time::timeout(Duration::from_secs(5), async {
         let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let (stop, stopped) = oneshot::channel();
-        let serving = tokio::spawn(server.serve(NativeKind::H1, listener, None, async {
-            let _ = stopped.await;
-        }));
+        let (address, stop, serving) = serve(server).await;
         let mut socket = TcpStream::connect(address).await.unwrap();
         let request = format!(
             "GET /probe HTTP/1.1\r\nHost: localhost\r\nX-Large: {}\r\nConnection: close\r\n\r\n",
@@ -188,12 +189,7 @@ async fn real_upload_lifecycle_uses_receiver_totals_and_owner_refusals() {
             ..Config::default()
         };
         let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let (stop, stopped) = oneshot::channel();
-        let serving = tokio::spawn(server.serve(NativeKind::H1, listener, None, async {
-            let _ = stopped.await;
-        }));
+        let (address, stop, serving) = serve(server).await;
         let (headers, session) = upload_request(address, "POST", "/upload/session", "192.0.2.1", b"").await;
         assert!(headers.starts_with("HTTP/1.1 200"));
         assert!(headers.contains("access-control-allow-origin: *"));
@@ -277,12 +273,7 @@ async fn ambiguous_proxy_evidence_owns_no_upload() {
             ..Config::default()
         };
         let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let (stop, stopped) = oneshot::channel();
-        let serving = tokio::spawn(server.serve(NativeKind::H1, listener, None, async {
-            let _ = stopped.await;
-        }));
+        let (address, stop, serving) = serve(server).await;
         // The proxy forwards a client on its own address, such as a local health check.
         let (_, session) = upload_request(address, "POST", "/upload/session", "127.0.0.1", b"").await;
         let session: serde_json::Value = serde_json::from_slice(&session).unwrap();
@@ -315,12 +306,7 @@ async fn stalled_upload_read_releases_capacity_and_keeps_received_bytes() {
             ..Config::default()
         };
         let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let (stop, stopped) = oneshot::channel();
-        let serving = tokio::spawn(server.serve(NativeKind::H1, listener, None, async {
-            let _ = stopped.await;
-        }));
+        let (address, stop, serving) = serve(server).await;
         let (_, session) = upload_request(address, "POST", "/upload/session", "", b"").await;
         let session: serde_json::Value = serde_json::from_slice(&session).unwrap();
         let id = session["uploadId"].as_str().unwrap();
@@ -435,12 +421,7 @@ async fn keepalive_idle_uses_fifteen_seconds_and_releases_connection_capacity() 
         )
         .unwrap(),
     );
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let (stop, stopped) = oneshot::channel();
-    let serving = tokio::spawn(server.serve(NativeKind::H1, listener, None, async {
-        let _ = stopped.await;
-    }));
+    let (address, stop, serving) = serve(server).await;
     let mut socket = TcpStream::connect(address).await.unwrap();
     socket
         .write_all(b"GET /download?bytes=0 HTTP/1.1\r\nHost: localhost\r\n\r\n")
@@ -484,12 +465,7 @@ async fn active_http1_progress_survives_an_idle_interval() {
         )
         .unwrap(),
     );
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let (stop, stopped) = oneshot::channel();
-    let serving = tokio::spawn(server.serve(NativeKind::H1, listener, None, async {
-        let _ = stopped.await;
-    }));
+    let (address, stop, serving) = serve(server).await;
     let (_, session) = upload_request(address, "POST", "/upload/session", "", b"").await;
     let session: serde_json::Value = serde_json::from_slice(&session).unwrap();
     let id = session["uploadId"].as_str().unwrap();
@@ -513,12 +489,7 @@ async fn active_http1_progress_survives_an_idle_interval() {
 #[tokio::test]
 async fn prefetched_partial_pipeline_still_has_a_finite_idle_bound() {
     let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let (stop, stopped) = oneshot::channel();
-    let serving = tokio::spawn(server.serve(NativeKind::H1, listener, None, async {
-        let _ = stopped.await;
-    }));
+    let (address, stop, serving) = serve(server).await;
     let mut socket = TcpStream::connect(address).await.unwrap();
     socket
         .write_all(b"GET /download?bytes=0 HTTP/1.1\r\nHost: localhost\r\n\r\nGET /probe HTTP/1.1\r\nHost:")
@@ -544,12 +515,7 @@ async fn prefetched_partial_pipeline_still_has_a_finite_idle_bound() {
 #[tokio::test]
 async fn upload_idle_returns_refusal_and_preserves_receiver_bytes() {
     let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let (stop, stopped) = oneshot::channel();
-    let serving = tokio::spawn(server.serve(NativeKind::H1, listener, None, async {
-        let _ = stopped.await;
-    }));
+    let (address, stop, serving) = serve(server).await;
     let (_, session) = upload_request(address, "POST", "/upload/session", "", b"").await;
     let session: serde_json::Value = serde_json::from_slice(&session).unwrap();
     let id = session["uploadId"].as_str().unwrap();

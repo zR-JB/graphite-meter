@@ -1,94 +1,6 @@
+use super::super::test_keys::Signers;
 use super::*;
-use ring::{
-    rand::SystemRandom,
-    signature::{EcdsaKeyPair, Ed25519KeyPair, KeyPair, RsaKeyPair},
-};
-use rustls::pki_types::{PrivateKeyDer, pem::PemObject};
 use serde_json::json;
-
-fn rsa(bits: &str) -> RsaKeyPair {
-    let pem = std::process::Command::new("openssl")
-        .args(["genrsa", "-traditional", bits])
-        .output()
-        .unwrap();
-    let PrivateKeyDer::Pkcs1(der) = PrivateKeyDer::from_pem_slice(&pem.stdout).unwrap() else {
-        panic!("openssl did not emit PKCS#1");
-    };
-    RsaKeyPair::from_der(der.secret_pkcs1_der()).unwrap()
-}
-
-struct Signers {
-    rsa: RsaKeyPair,
-    p256: EcdsaKeyPair,
-    p384: EcdsaKeyPair,
-    ed: Ed25519KeyPair,
-    rng: SystemRandom,
-}
-
-impl Signers {
-    fn new() -> Self {
-        let rng = SystemRandom::new();
-        let ec = |alg| {
-            EcdsaKeyPair::from_pkcs8(alg, EcdsaKeyPair::generate_pkcs8(alg, &rng).unwrap().as_ref(), &rng).unwrap()
-        };
-        Self {
-            rsa: rsa("2048"),
-            p256: ec(&signature::ECDSA_P256_SHA256_FIXED_SIGNING),
-            p384: ec(&signature::ECDSA_P384_SHA384_FIXED_SIGNING),
-            ed: Ed25519KeyPair::from_pkcs8(Ed25519KeyPair::generate_pkcs8(&rng).unwrap().as_ref()).unwrap(),
-            rng,
-        }
-    }
-    fn jwks(&self, extra: &[Value]) -> Jwks {
-        let rsa = |key: &RsaKeyPair, kid: &str| {
-            let public: signature::RsaPublicKeyComponents<Vec<u8>> = key.public().into();
-            let n = [&[0][..], &public.n].concat();
-            json!({"kty": "RSA", "kid": kid, "n": B64.encode(n), "e": B64.encode(public.e)})
-        };
-        let point = |key: &EcdsaKeyPair, crv: &str, kid: &str| {
-            let point = key.public_key().as_ref();
-            let half = (point.len() - 1) / 2;
-            json!({"kty": "EC", "crv": crv, "kid": kid, "x": B64.encode(&point[1..=half]), "y": B64.encode(&point[half + 1..])})
-        };
-        let mut keys = vec![
-            rsa(&self.rsa, "rsa"),
-            point(&self.p256, "P-256", "p256"),
-            point(&self.p384, "P-384", "p384"),
-            json!({"kty": "OKP", "crv": "Ed25519", "kid": "ed", "x": B64.encode(self.ed.public_key().as_ref())}),
-            json!({"kty": "RSA", "kid": "enc", "use": "enc", "n": "AQAB", "e": "AQAB"}),
-            json!({"kty": "oct", "kid": "mac", "k": "c2VjcmV0"}),
-        ];
-        keys.extend_from_slice(extra);
-        Jwks::parse(json!({"keys": keys}).to_string().as_bytes()).unwrap()
-    }
-    fn sign(&self, header: Value, claims: &Value) -> String {
-        let message = format!("{}.{}", B64.encode(header.to_string()), B64.encode(claims.to_string()));
-        let rsa = |key: &RsaKeyPair, padding: &'static dyn signature::RsaEncoding| {
-            let mut out = vec![0; key.public().modulus_len()];
-            key.sign(padding, &self.rng, message.as_bytes(), &mut out).unwrap();
-            out
-        };
-        let signature = match header["alg"].as_str().unwrap_or_default() {
-            "RS256" => rsa(&self.rsa, &signature::RSA_PKCS1_SHA256),
-            "RS384" => rsa(&self.rsa, &signature::RSA_PKCS1_SHA384),
-            "PS384" => rsa(&self.rsa, &signature::RSA_PSS_SHA384),
-            "PS512" => rsa(&self.rsa, &signature::RSA_PSS_SHA512),
-            "RS512" => rsa(&self.rsa, &signature::RSA_PKCS1_SHA512),
-            "PS256" => rsa(&self.rsa, &signature::RSA_PSS_SHA256),
-            "ES256" => self.p256.sign(&self.rng, message.as_bytes()).unwrap().as_ref().to_vec(),
-            "ES384" => self.p384.sign(&self.rng, message.as_bytes()).unwrap().as_ref().to_vec(),
-            "EdDSA" => self.ed.sign(message.as_bytes()).as_ref().to_vec(),
-            "HS256" => ring::hmac::sign(
-                &ring::hmac::Key::new(ring::hmac::HMAC_SHA256, b"c2VjcmV0"),
-                message.as_bytes(),
-            )
-            .as_ref()
-            .to_vec(),
-            _ => Vec::new(),
-        };
-        format!("{message}.{}", B64.encode(signature))
-    }
-}
 
 const ALL: [Alg; 9] = [
     Alg::RS256,
@@ -104,8 +16,8 @@ const ALL: [Alg; 9] = [
 
 #[test]
 fn every_ring_algorithm_verifies_against_the_matching_key_only() {
-    let signers = Signers::new();
-    let keys = signers.jwks(&[]);
+    let signers = Signers::new(b"c2VjcmV0");
+    let keys = Jwks::parse(signers.jwks().to_string().as_bytes()).unwrap();
     let claims = json!({"sub": "operator"});
     for (alg, kid) in [
         ("RS256", "rsa"),
@@ -200,8 +112,8 @@ fn every_ring_algorithm_verifies_against_the_matching_key_only() {
 
 #[test]
 fn id_token_claims_bind_issuer_audience_nonce_time_and_access_token() {
-    let signers = Signers::new();
-    let keys = signers.jwks(&[]);
+    let signers = Signers::new(b"c2VjcmV0");
+    let keys = Jwks::parse(signers.jwks().to_string().as_bytes()).unwrap();
     let now = 1_800_000_000u64;
     let expected = Expected {
         issuer: "https://id.example",

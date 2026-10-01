@@ -20,9 +20,6 @@
 # A crate manifest names its build script.
 /rust/*/Cargo.toml           @zR-JB
 /rust/*/build.rs             @zR-JB
-/rust/http3/fuzz/Cargo.toml  @zR-JB
-/rust/http3/fuzz/Cargo.lock  @zR-JB
-/rust/http3/fuzz/deny.toml   @zR-JB
 # Cargo and rustup read .cargo/config.toml and rust-toolchain in the directory they run in and its parents.
 .cargo/                      @zR-JB
 rust-toolchain               @zR-JB

@@ -389,22 +389,4 @@ mod tests {
         let expected = "\"x@x01y@u202e@\"é@u00a0@t@x7f@u0085😀 @u200b\"".replace('@', "\\");
         assert_eq!(quote(text), expected);
     }
-
-    /// flag.PrintDefaults: each flag, the type it names, then its usage on a tab-indented line.
-    #[test]
-    fn usage_lists_the_flags_as_go_prints_them() {
-        let usage = usage("./graphite-meter-client");
-        assert!(usage.starts_with(
-            "Usage of ./graphite-meter-client:\n  -auto-streams int\n    \tmaximum H1 streams per direction (default 6)\n"
-        ));
-        assert!(
-            usage.contains("\n  -insecure\n    \tskip TLS certificate verification\n  -latency-duration duration\n")
-        );
-        assert!(usage.contains(
-            "  -ping value\n    \tidle latency cadence (default reply-driven): reply-driven, fast, medium, slow, or a \
-             duration from 80ms to 15s\n"
-        ));
-        assert!(usage.ends_with("  -warmup duration\n    \tper-stage warmup duration (default 800ms)\n"));
-        assert_eq!(usage.lines().count(), 1 + 2 * FLAGS.len());
-    }
 }

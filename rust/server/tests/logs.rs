@@ -28,26 +28,18 @@ impl Drop for Server {
     }
 }
 
-#[test]
-fn log_lines_match_go_and_peer_failures_are_limited() {
-    let identity = support::Identity::generate();
+fn command(identity: &support::Identity) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_graphite-meter-server"));
+    command
+        .env_clear()
+        .env("GM_TLS_CERT", identity.directory().join("identity.pem"))
+        .env("GM_TLS_KEY", identity.directory().join("identity.key"));
+    command
+}
+
+fn start(mut command: Command) -> (Server, mpsc::Receiver<String>, std::thread::JoinHandle<()>) {
     let mut server = Server(
-        Command::new(env!("CARGO_BIN_EXE_graphite-meter-server"))
-            .env_clear()
-            .envs([
-                ("GM_H1_ADDR", "127.0.0.1:0"),
-                ("GM_H1_TLS_ADDR", "127.0.0.2:0"),
-                ("GM_H1_PUBLIC_ORIGIN", "http://localhost:7246"),
-                ("GM_H1_TLS_PUBLIC_ORIGIN", "https://localhost:7247"),
-                (
-                    "GM_TLS_CERT",
-                    identity.directory().join("identity.pem").to_str().unwrap(),
-                ),
-                (
-                    "GM_TLS_KEY",
-                    identity.directory().join("identity.key").to_str().unwrap(),
-                ),
-            ])
+        command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -61,6 +53,20 @@ fn log_lines_match_go_and_peer_failures_are_limited() {
             let _ = lines.send(line);
         }
     });
+    (server, received, reader)
+}
+
+#[test]
+fn log_lines_match_go_and_peer_failures_are_limited() {
+    let identity = support::Identity::generate();
+    let mut command = command(&identity);
+    command.envs([
+        ("GM_H1_ADDR", "127.0.0.1:0"),
+        ("GM_H1_TLS_ADDR", "127.0.0.2:0"),
+        ("GM_H1_PUBLIC_ORIGIN", "http://localhost:7246"),
+        ("GM_H1_TLS_PUBLIC_ORIGIN", "https://localhost:7247"),
+    ]);
+    let (server, received, reader) = start(command);
     let listening = |role: &str| loop {
         let line = received
             .recv_timeout(Duration::from_secs(10))
@@ -110,20 +116,8 @@ fn failed_accepts_are_logged_and_retried() {
         "ulimit -n 64 && exec \"$0\"",
         env!("CARGO_BIN_EXE_graphite-meter-server"),
     ]);
-    command
-        .env_clear()
-        .env("GM_H1_ADDR", "127.0.0.1:0")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null());
-    let mut server = Server(command.stderr(Stdio::piped()).spawn().unwrap());
-    let (lines, received) = mpsc::channel();
-    let stderr = BufReader::new(server.0.stderr.take().unwrap());
-    std::thread::spawn(move || {
-        stderr
-            .lines()
-            .map_while(Result::ok)
-            .try_for_each(|line| lines.send(line))
-    });
+    command.env_clear().env("GM_H1_ADDR", "127.0.0.1:0");
+    let (server, received, reader) = start(command);
     let mut lines = std::iter::from_fn(|| received.recv_timeout(Duration::from_secs(10)).ok());
     let listening = lines
         .find(|line| line.contains(" listening on "))
@@ -140,6 +134,8 @@ fn failed_accepts_are_logged_and_retried() {
         failure.starts_with(&expected) && failure.ends_with("; retrying in 5ms"),
         "{failure}"
     );
+    drop(server);
+    reader.join().unwrap();
 }
 
 /// A close reason that would add a whole forged log line and clear the operator's terminal.
@@ -180,34 +176,9 @@ fn closing_initial(reason: &[u8]) -> Vec<u8> {
 #[test]
 fn a_peers_handshake_close_reason_cannot_forge_log_lines() {
     let identity = support::Identity::generate();
-    let mut server = Server(
-        Command::new(env!("CARGO_BIN_EXE_graphite-meter-server"))
-            .env_clear()
-            .envs([
-                ("GM_H1_ADDR", "127.0.0.2:0"),
-                ("GM_H3_ADDR", "127.0.0.1:0"),
-                (
-                    "GM_TLS_CERT",
-                    identity.directory().join("identity.pem").to_str().unwrap(),
-                ),
-                (
-                    "GM_TLS_KEY",
-                    identity.directory().join("identity.key").to_str().unwrap(),
-                ),
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap(),
-    );
-    let (lines, received) = mpsc::channel();
-    let stderr = BufReader::new(server.0.stderr.take().unwrap());
-    let reader = std::thread::spawn(move || {
-        for line in stderr.lines().map_while(Result::ok) {
-            let _ = lines.send(line);
-        }
-    });
+    let mut command = command(&identity);
+    command.envs([("GM_H1_ADDR", "127.0.0.2:0"), ("GM_H3_ADDR", "127.0.0.1:0")]);
+    let (server, received, reader) = start(command);
     let next = || received.recv_timeout(Duration::from_secs(10)).expect("a log line");
     let quic: SocketAddr = loop {
         let line = next();

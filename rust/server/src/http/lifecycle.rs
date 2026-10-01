@@ -163,38 +163,16 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn credit_left_unused_through_the_control_bound_sends_the_connection_away() {
-        let work = AdmittedWork::new();
-        let mut lifecycle = ConnectionLifecycle::new(work.clone(), true);
-        // An idle connection that holds no credit has nothing to reclaim.
-        assert!(poll(&mut lifecycle, false).await.is_pending());
-        advance(CONTROL * 2).await;
-        assert!(poll(&mut lifecycle, false).await.is_pending());
-
-        drop(work.admit());
-        assert!(poll(&mut lifecycle, true).await.is_pending());
-        advance(CONTROL - Duration::from_millis(1)).await;
-        assert!(poll(&mut lifecycle, true).await.is_pending());
-        // New work before the bound starts the idle period over.
-        drop(work.admit());
-        advance(Duration::from_millis(1)).await;
-        assert!(poll(&mut lifecycle, true).await.is_pending());
-        advance(CONTROL - Duration::from_millis(2)).await;
-        assert!(poll(&mut lifecycle, true).await.is_pending());
-        advance(Duration::from_millis(1)).await;
-        assert_eq!(poll(&mut lifecycle, true).await, Poll::Ready(Event::GoAway));
-        // The connection closes once the grace has passed, and only then.
-        advance(SHUTDOWN_GRACE - Duration::from_millis(1)).await;
-        assert!(poll(&mut lifecycle, true).await.is_pending());
-        advance(Duration::from_millis(1)).await;
-        assert_eq!(poll(&mut lifecycle, true).await, Poll::Ready(Event::Close));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn work_that_raced_the_goaway_runs_on_and_then_closes_with_or_without_a_fresh_grace() {
+    async fn idle_credit_and_racing_work_obey_connection_and_shutdown_grace() {
         for fresh_grace in [true, false] {
             let work = AdmittedWork::new();
             let mut lifecycle = ConnectionLifecycle::new(work.clone(), fresh_grace);
+            assert!(poll(&mut lifecycle, false).await.is_pending());
+            advance(CONTROL * 2).await;
+            assert!(
+                poll(&mut lifecycle, false).await.is_pending(),
+                "uncredited idle connection closed"
+            );
             drop(work.admit());
             assert!(poll(&mut lifecycle, true).await.is_pending());
             advance(CONTROL).await;
@@ -210,20 +188,18 @@ mod tests {
                 advance(Duration::from_millis(1)).await;
             }
             assert_eq!(poll(&mut lifecycle, true).await, Poll::Ready(Event::Close));
-        }
-    }
 
-    #[tokio::test(start_paused = true)]
-    async fn a_stopping_connection_closes_after_the_grace_while_its_work_runs() {
-        let work = AdmittedWork::new();
-        let mut lifecycle = ConnectionLifecycle::new(work.clone(), true);
-        let _running = work.admit();
-        assert!(poll(&mut lifecycle, true).await.is_pending());
-        lifecycle.stop();
-        assert!(lifecycle.go_away() && !lifecycle.go_away());
-        advance(SHUTDOWN_GRACE - Duration::from_millis(1)).await;
-        assert!(poll(&mut lifecycle, true).await.is_pending());
-        advance(Duration::from_millis(1)).await;
-        assert_eq!(poll(&mut lifecycle, true).await, Poll::Ready(Event::Close));
+            let mut lifecycle = ConnectionLifecycle::new(work.clone(), fresh_grace);
+            let _running = work.admit();
+            lifecycle.stop();
+            assert!(lifecycle.go_away());
+            advance(SHUTDOWN_GRACE - Duration::from_millis(1)).await;
+            assert!(
+                poll(&mut lifecycle, false).await.is_pending(),
+                "shutdown cut active work before its grace"
+            );
+            advance(Duration::from_millis(1)).await;
+            assert_eq!(poll(&mut lifecycle, false).await, Poll::Ready(Event::Close));
+        }
     }
 }

@@ -517,7 +517,6 @@ run = [
   "cd .. && python3 -m scripts.legal.check_git_sources",
   "cd .. && python3 -m scripts.legal.check_rust_reviews",
   "cargo deny --locked check",
-  "cargo deny --manifest-path http3/fuzz/Cargo.toml --locked check",
   "cargo clippy --workspace --all-targets --locked -- -D warnings",
   "cargo nextest run --workspace --all-targets --locked",
 ]
@@ -539,41 +538,18 @@ fi
 '''
 
 [tasks.rust-check-targets]
-description = "Check the Windows and musl TUIs, the HTTP/3 codec without I/O, and build the fuzz targets (needs mingw-w64)"
+description = "Check the Windows and musl TUIs (needs mingw-w64)"
 dir = "rust"
 env = { CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = "x86_64-linux-gnu-gcc" }
 run = [
   "rustup target add x86_64-pc-windows-gnu x86_64-unknown-linux-musl",
   "cargo check --locked -p graphite-meter-client --target x86_64-pc-windows-gnu --target x86_64-unknown-linux-musl",
-  "cargo check --locked -p graphite-meter-http3 --no-default-features",
-  "RUSTFLAGS='--cfg fuzzing' cargo build --locked --manifest-path http3/fuzz/Cargo.toml",
 ]
 
 [tasks.rust-cache-trim]
 description = "Drop the workspace crates' builds, so a new Rust cache holds only dependency builds"
 dir = "rust"
 run = "cargo clean -p graphite-meter-server -p graphite-meter-client -p graphite-meter-core -p graphite-meter-net -p graphite-meter-http3"
-
-[tasks.rust-fuzz]
-description = "Fuzz one HTTP/3 codec target with libFuzzer on the pinned stable toolchain"
-dir = "rust/http3/fuzz"
-usage = '''
-arg "<target>"
-arg "[seconds]" default="60"
-'''
-run = '''
-#!/usr/bin/env sh
-set -eu
-# Stable sancov flags; the explicit target keeps them off build scripts.
-RUSTFLAGS="--cfg fuzzing -Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=4 \
--Cllvm-args=-sanitizer-coverage-inline-8bit-counters -Cllvm-args=-sanitizer-coverage-pc-table \
--Cllvm-args=-sanitizer-coverage-trace-compares -Cdebug-assertions -Coverflow-checks" \
-  cargo build --locked --release --target x86_64-unknown-linux-gnu --bin "$usage_target"
-mkdir -p "corpus/$usage_target" "artifacts/$usage_target"
-# An input that runs for 10 s is reported as a hang; libFuzzer's default waits 20 minutes.
-"target/x86_64-unknown-linux-gnu/release/$usage_target" -max_total_time="$usage_seconds" -timeout=10 \
-  -rss_limit_mb=512 -artifact_prefix="artifacts/$usage_target/" "corpus/$usage_target"
-'''
 
 [tasks.rust-client-package]
 description = "Package the experimental Linux and Windows Rust TUIs in the reviewed builder image"

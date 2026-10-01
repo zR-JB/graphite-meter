@@ -230,15 +230,6 @@ class RustStagingTests(unittest.TestCase):
     SERVER, TUI = rust_builds("both")
     DOCKER = TUI
 
-    def test_a_staged_request_passes_the_release_verification(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            write_exports(root / "export", self.SERVER, self.TUI)
-            stage_rust(root / "export", root / "staged", "1.2.3", self.SERVER, self.TUI)
-            self.assertEqual({path.name for path in (root / "staged").iterdir()},
-                             expected_rust_artifacts("1.2.3", self.SERVER, self.TUI) | {"checksums.txt"})
-            verify_rust([root / "staged"], root / "assets", "1.2.3", self.SERVER, self.TUI, COMMIT, REPOSITORY)
-
     def test_ci_checks_its_exports_with_the_release_commands(self) -> None:
         from .release import COMMANDS
 
@@ -252,6 +243,8 @@ class RustStagingTests(unittest.TestCase):
             }
             with patch.dict(os.environ, environment), contextlib.redirect_stdout(io.StringIO()):
                 COMMANDS["stage-rust"]()
+                self.assertEqual({path.name for path in (root / "staged").iterdir()},
+                                 expected_rust_artifacts("1.2.3", self.SERVER, self.TUI) | {"checksums.txt"})
                 COMMANDS["check-rust"]()
 
     def test_rust_excludes_macos_while_go_keeps_both_mac_architectures(self) -> None:

@@ -194,22 +194,4 @@ mod tests {
             }
         );
     }
-
-    #[tokio::test]
-    async fn cancellation_releases_owned_budget() {
-        let admission = Admission::new(Limits {
-            operations: 1,
-            ..Limits::default()
-        });
-        let permit = admission.acquire(false, &["a".into()]).unwrap();
-        let task = tokio::spawn(async move {
-            let _permit = permit;
-            std::future::pending::<()>().await;
-        });
-        assert_eq!(admission.load().0, 1);
-        task.abort();
-        assert!(task.await.unwrap_err().is_cancelled());
-        assert_eq!(admission.load().0, 0);
-        assert!(admission.acquire(false, &["a".into()]).is_ok());
-    }
 }

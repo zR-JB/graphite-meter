@@ -1,11 +1,11 @@
 //! Real QUIC coverage for the shared HTTP/3 measurement adapter.
-mod support;
+#[path = "../test_tls.rs"]
+mod test_tls;
 
 use bytes::Bytes;
 use graphite_meter_http3::{RecvHalf, client};
 use graphite_meter_server::{config::Config, http::HttpServer};
 use http::Request;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use std::{error::Error, sync::Arc, time::Duration};
 use tokio::sync::oneshot;
 
@@ -75,14 +75,7 @@ type Served = (
 );
 
 async fn serve_quic(config: Config, client: noq::TransportConfig) -> Result<Served, TestError> {
-    let identity = support::Identity::generate();
-    let certificate = CertificateDer::from_pem_file(identity.directory().join("identity.pem"))?;
-    let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key"))?;
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let tls = rustls::ServerConfig::builder_with_provider(provider.clone())
-        .with_protocol_versions(&[&rustls::version::TLS13])?
-        .with_no_client_auth()
-        .with_single_cert(vec![certificate.clone()], key)?;
+    let (tls, client_tls) = test_tls::configs(b"h3");
     let server = Arc::new(HttpServer::new(config.validated().unwrap())?);
     let endpoint = server.quic_endpoint(Arc::new(tls), "127.0.0.1:0".parse()?)?;
     let address = endpoint.local_addr()?;
@@ -90,14 +83,7 @@ async fn serve_quic(config: Config, client: noq::TransportConfig) -> Result<Serv
     let task = tokio::spawn(server.serve_quic(endpoint, async {
         let _ = stopped.await;
     }));
-    let mut roots = rustls::RootCertStore::empty();
-    roots.add(certificate)?;
-    let mut tls = rustls::ClientConfig::builder_with_provider(provider)
-        .with_protocol_versions(&[&rustls::version::TLS13])?
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-    tls.alpn_protocols = vec![b"h3".to_vec()];
-    let mut config = noq::ClientConfig::new(Arc::new(noq::crypto::rustls::QuicClientConfig::try_from(tls)?));
+    let mut config = noq::ClientConfig::new(Arc::new(noq::crypto::rustls::QuicClientConfig::try_from(client_tls)?));
     config.transport_config(Arc::new(client));
     let client = noq::Endpoint::client("127.0.0.1:0".parse()?)?;
     let connection = client.connect_with(config, address, "localhost")?.await?;

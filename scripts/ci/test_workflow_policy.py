@@ -84,9 +84,6 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (W + "release.yml", "on:\n", "on:\n  workflow_dispatch:\n", "triggered only by"),
     (W + "release.yml", "head_branch == 'main'", "head_branch != ''", "head_branch == 'main'"),
     (W + "extra.yml", None, "on:\n  push:\n", "unreviewed workflow set"),
-    (W + "fuzz.yml", "  workflow_dispatch:\n", "  workflow_dispatch:\n  pull_request_target:\n", "triggered only by"),
-    (W + "fuzz.yml", "    steps:\n", "    steps:" + PINNED_STEP.format("actions/cache"), "repository code"),
-    (W + "fuzz.yml", "        if: failure() || cancelled()\n", "        if: failure()\n", "misorders invariant"),
     (W + "ci.yml", "permissions:\n  contents: read\n\nenv:", "env:", "top-level permissions"),
     (REQUEST, "  contents: read", "  contents: write", "write permission"),
     (W + "release.yml", "    steps:\n", "    steps:" + PINNED_STEP.format("actions/cache"),
@@ -167,7 +164,6 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (".github/ci-paths.yml", "  - 'container/Dockerfile.rust'\n  - '.dockerignore'\n", "  - 'container/Dockerfile.rust'\n",
      r"rust misses \['.dockerignore'\]"),
     ("container/Dockerfile.rust", None, "COPY docs/ docs/\n", r"rust misses \['docs/x'\]"),
-    (".dockerignore", "rust/http3/fuzz/corpus\n", "", r"misses Rust build output \['rust/http3/fuzz/corpus'\]"),
     # Development notices stay out of CI and releases, directly or through a task a job runs.
     (W + "ci.yml", None, "      - run: python3 -m scripts.legal.rust --development\n", "unreviewed --development notices"),
     ("mise.toml", '  "cargo fmt --all --check",\n',
@@ -196,7 +192,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         shutil.copytree(ROOT / ".github", root / ".github")
         shutil.copytree(ROOT / "scripts", root / "scripts", ignore=shutil.ignore_patterns("__pycache__"))
         for name in ("mise.toml", "mise.lock", "go/go.mod", "container/Dockerfile", "container/Dockerfile.rust",
-                     ".dockerignore", "rust/rust-toolchain.toml", "rust/.gitignore", "rust/http3/fuzz/.gitignore"):
+                     ".dockerignore", "rust/rust-toolchain.toml", "rust/.gitignore"):
             (root / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, root / name)
         return root

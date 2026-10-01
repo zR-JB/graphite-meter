@@ -24,7 +24,7 @@ import tomllib
 from pathlib import Path
 
 from ..ci.toolchains import rust_channel
-from .model import marshal
+from .model import marshal_reviews
 
 REPO = Path(__file__).resolve().parents[2]
 REVIEWS = REPO / 'legal/rust-reviewed-components.json'
@@ -121,8 +121,8 @@ def main() -> None:
     args = parser.parse_args()
     reviews = json.loads(REVIEWS.read_text())
     if args.format:
-        REVIEWS.write_bytes(marshal(reviews))
-    elif REVIEWS.read_bytes() != marshal(reviews):
+        REVIEWS.write_bytes(marshal_reviews(reviews))
+    elif REVIEWS.read_bytes() != marshal_reviews(reviews):
         sys.exit('legal/rust-reviewed-components.json is not in the layout the legal tools write (run with --format)')
     sources: dict[tuple[str, str], set[str]] = {}
     for package in tomllib.loads((REPO / 'rust/Cargo.lock').read_text())['package']:
@@ -139,7 +139,7 @@ def main() -> None:
                 for name, version, source in unreviewed(reviews, used)] + over_budget(trees)
     if stale := unused(reviews, used):
         if args.prune:
-            REVIEWS.write_bytes(marshal([review for review in reviews if review not in stale]))
+            REVIEWS.write_bytes(marshal_reviews([review for review in reviews if review not in stale]))
             print(f'pruned {len(stale)} of {len(reviews)} Rust legal reviews')
         else:
             problems += [f"{review['name']} {review['reviewedVersion']} {review['upstream']} is reviewed but no "

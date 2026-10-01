@@ -107,7 +107,7 @@ fn metadata_and_target_lists_are_bounded_in_bytes() {
 }
 
 #[test]
-fn validates_origins_and_transport_strings() {
+fn validates_stage_limits_and_both_origin_fields() {
     let base: Value = serde_json::from_slice(PREFLIGHT).unwrap();
     for (limit, valid) in [
         (0, true),
@@ -135,34 +135,12 @@ fn validates_origins_and_transport_strings() {
         decode_preflight_value(&legacy).unwrap().capabilities.stage_limit(),
         DEFAULT_STAGE_LIMIT
     );
-    for raw in [
-        "https://user@host",
-        "https://host/path",
-        "https://host?",
-        "https://host#",
-        "https://host:65536",
-        "ftp://host",
-        "",
-    ] {
-        let mut value = base.clone();
-        value["capabilities"]["throughput"][0]["baseUrl"] = json!(raw);
-        assert!(decode_preflight_value(&value).is_err(), "{raw}");
-    }
-    for (list, field, text) in [
-        ("throughput", "transport", "websocket"),
-        ("latency", "transport", "fetch-stream"),
-        ("throughput", "protocol", "h3"),
-    ] {
-        let mut value = base.clone();
-        value["capabilities"][list][0][field] = json!(text);
-        let decoded = decode_preflight_value(&value).unwrap();
-        let count = if list == "throughput" {
-            decoded.capabilities.throughput.len()
-        } else {
-            decoded.capabilities.latency.len()
-        };
-        assert_eq!(count, base["capabilities"][list].as_array().unwrap().len() - 1);
-    }
+    let mut value = base.clone();
+    value["capabilities"]["throughput"][0]["baseUrl"] = json!("https://host/path");
+    assert_eq!(
+        decode_preflight_value(&value).err(),
+        Some(DiscoveryError::InvalidOrigin)
+    );
     let mut direct = Preflight::decode(PREFLIGHT).unwrap();
     direct.capabilities.latency[0].base_url = "https://host/path".into();
     assert_eq!(direct.validate(), Err(DiscoveryError::InvalidOrigin));

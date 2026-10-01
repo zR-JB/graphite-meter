@@ -1,32 +1,35 @@
 package auth
 
 import (
+	"crypto/sha256"
 	"encoding/json/v2"
 	"flag"
+	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
-var updatePages = flag.Bool("update-pages", false, "rewrite testdata/pages from the templates")
+var updatePages = flag.Bool("update-pages", false, "rewrite shared page hashes from the Go templates")
 
-// pageCase is the first line of a golden page the Rust server renders too; inline assets are elided.
+// Both servers render these inputs. Go owns the expected hashes; inline assets are elided.
 type pageCase struct {
+	Name      string `json:"name"`
 	Page      string `json:"page"`
-	CSRF      string `json:"csrf"`
-	Provider  string `json:"provider"`
-	Challenge string `json:"challenge"`
-	Notice    string `json:"notice"`
-	Status    string `json:"status"`
-	Code      string `json:"code"`
-	Origin    string `json:"origin"`
-	Password  bool   `json:"password"`
-	OIDC      bool   `json:"oidc"`
-	OIDCReady bool   `json:"oidcReady"`
-	Browser   bool   `json:"browser"`
-	Capacity  bool   `json:"capacity"`
-	Opening   bool   `json:"opening"`
+	CSRF      string `json:"csrf,omitempty"`
+	Provider  string `json:"provider,omitempty"`
+	Challenge string `json:"challenge,omitempty"`
+	Notice    string `json:"notice,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Code      string `json:"code,omitempty"`
+	Origin    string `json:"origin,omitempty"`
+	Password  bool   `json:"password,omitzero"`
+	OIDC      bool   `json:"oidc,omitzero"`
+	OIDCReady bool   `json:"oidcReady,omitzero"`
+	Browser   bool   `json:"browser,omitzero"`
+	Capacity  bool   `json:"capacity,omitzero"`
+	Opening   bool   `json:"opening,omitzero"`
+	SHA256    string `json:"sha256"`
 }
 
 func (c pageCase) render(t *testing.T) string {
@@ -56,27 +59,37 @@ func (c pageCase) render(t *testing.T) string {
 }
 
 func TestPagesMatchSharedGoldens(t *testing.T) {
-	paths, err := filepath.Glob("testdata/pages/*.golden")
-	if err != nil || len(paths) == 0 {
-		t.Fatalf("golden pages: %v", err)
+	const path = "testdata/pages.json"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, path := range paths {
-		data, err := os.ReadFile(path)
+	var cases []pageCase
+	if err := json.Unmarshal(data, &cases); err != nil || len(cases) == 0 {
+		t.Fatalf("page fixtures: %v", err)
+	}
+	var output strings.Builder
+	output.WriteString("[\n")
+	for i := range cases {
+		c := &cases[i]
+		got := fmt.Sprintf("%x", sha256.Sum256([]byte(c.render(t))))
+		if *updatePages {
+			c.SHA256 = got
+		} else if got != c.SHA256 {
+			t.Errorf("%s is stale; run go test ./internal/auth -run TestPagesMatchSharedGoldens -update-pages", c.Name)
+		}
+		row, err := json.Marshal(c)
 		if err != nil {
 			t.Fatal(err)
 		}
-		header, want, _ := strings.Cut(string(data), "\n")
-		var c pageCase
-		if err := json.Unmarshal([]byte(header), &c); err != nil {
-			t.Fatalf("%s: %v", path, err)
+		if i > 0 {
+			output.WriteString(",\n")
 		}
-		got := c.render(t)
-		if *updatePages {
-			if err := os.WriteFile(path, []byte(header+"\n"+got), 0o644); err != nil {
-				t.Fatal(err)
-			}
-		} else if got != want {
-			t.Errorf("%s is stale; run go test ./internal/auth -run TestPagesMatchSharedGoldens -update-pages", path)
+		output.WriteString("  " + string(row))
+	}
+	if *updatePages {
+		if err := os.WriteFile(path, []byte(output.String()+"\n]\n"), 0o644); err != nil {
+			t.Fatal(err)
 		}
 	}
 }

@@ -1,4 +1,5 @@
-mod support;
+#[path = "../test_tls.rs"]
+mod test_tls;
 
 use bytes::Bytes;
 use futures_util::StreamExt;
@@ -7,10 +8,7 @@ use graphite_meter_server::{
     http::HttpServer,
 };
 use http::Request;
-use rustls::{
-    ClientConfig, RootCertStore, ServerConfig,
-    pki_types::{CertificateDer, PrivateKeyDer, ServerName, pem::PemObject},
-};
+use rustls::pki_types::ServerName;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -34,24 +32,7 @@ impl Harness {
         Self::start_with_proxies(Vec::new()).await
     }
     async fn start_with_proxies(trusted_proxies: Vec<ipnet::IpNet>) -> Self {
-        let identity = support::Identity::generate();
-        let cert = CertificateDer::from_pem_file(identity.directory().join("identity.pem")).unwrap();
-        let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key")).unwrap();
-        let provider = Arc::new(rustls::crypto::ring::default_provider());
-        let tls = ServerConfig::builder_with_provider(provider.clone())
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap()
-            .with_no_client_auth()
-            .with_single_cert(vec![cert.clone()], key)
-            .unwrap();
-        let mut roots = RootCertStore::empty();
-        roots.add(cert).unwrap();
-        let mut client = ClientConfig::builder_with_provider(provider)
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap()
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-        client.alpn_protocols = vec![b"http/1.1".to_vec()];
+        let (tls, mut client) = test_tls::configs(b"http/1.1");
         let connector = TlsConnector::from(Arc::new(client.clone()));
         client.alpn_protocols = vec![b"h2".to_vec()];
         let h2_connector = TlsConnector::from(Arc::new(client));

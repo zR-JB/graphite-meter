@@ -24,10 +24,7 @@ its steps has no CI job. The Rust jobs are not part of it: they run `rust-check`
 `container/Dockerfile.rust`.
 `Gate` is the only required status and needs every job. Path filters (`.github/ci-paths.yml`)
 narrow PR runs only; every push to main runs every job. `advisories.yml`
-rechecks Rust dependencies against the live RustSec database daily, and
-`fuzz.yml` runs every HTTP/3 fuzz target for two minutes weekly, reports an
-input that runs for 10 seconds as a hang, and keeps the crash inputs of a
-failed or cancelled run as an artifact. The Rust
+rechecks Rust dependencies against the live RustSec database daily. The Rust
 release job exports what a release request's Docker builds export, then stages
 and verifies it with `release.py stage-rust` and `check-rust`, the code a
 release request and the release run. Rust distributes Linux/Windows artifacts;

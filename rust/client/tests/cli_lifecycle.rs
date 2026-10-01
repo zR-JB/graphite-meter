@@ -344,69 +344,32 @@ async fn report_signal_exit_codes_and_failure_keep_the_final_outcome() -> Result
 }
 
 #[cfg(target_os = "linux")]
+async fn terminal(origin: &str, mode: &str, answer: &str, stdin: &str) -> Result<serde_json::Value, Error> {
+    let output = Command::new("python3")
+        .args([
+            "-c",
+            include_str!("pty.py"),
+            env!("CARGO_BIN_EXE_graphite-meter-client"),
+            origin,
+            mode,
+            answer,
+            stdin,
+        ])
+        .output()
+        .await?;
+    assert!(
+        output.status.success(),
+        "{mode}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(serde_json::from_slice(&output.stdout)?)
+}
+
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn tui_quit_and_interrupt_exit_like_the_go_client() -> Result<(), Error> {
     let (origin, peer) = latency_peer(false).await?;
-    let script = r#"
-import fcntl, json, os, pty, select, struct, subprocess, sys, termios, time
-master, slave = pty.openpty()
-fcntl.fcntl(master, fcntl.F_SETFL, os.O_NONBLOCK)
-fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 100, 0, 0))
-def session():
-    os.setsid()
-    fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
-p = subprocess.Popen([sys.argv[1], '-url', sys.argv[2], '-stages', 'latency', '-latency-duration', '5s', '-warmup', '0', '-ping', '80ms'], stdin=subprocess.DEVNULL if sys.argv[3] == 'redirected-quit' else slave, stdout=slave, stderr=slave, preexec_fn=session, env={**os.environ, 'TERM':'xterm-256color'})
-os.close(slave)
-output = b''
-step = 0
-mark = 0
-mode = sys.argv[3]
-measuring = '░'.encode()
-# As in Go's view, the start note reads "checking paths" during the check and the plan once it ends.
-checked = b'about '
-keys = {'check-quit': [(b'checking paths', b'q')],
-        'redirected-quit': [(checked, b'q')],
-        'setup-interrupt': [(checked, b'\x03')],
-        'run-interrupt': [(checked, b'r'), (measuring, b'\x03')],
-        'run-quit': [(checked, b'r'), (measuring, b'q')],
-        'run-abort': [(checked, b'r'), (measuring, b'\x03\x03')],
-        'confirmed-stop': [(checked, b'r'), (measuring, b'\x1b'), (b'confirm', b'\x1b'), (b'Stopped', b'q')]}[mode]
-deadline = time.monotonic() + 8
-answered = False
-try:
-    while time.monotonic() < deadline:
-        if select.select([master], [], [], 0.2)[0]:
-            try:
-                data = os.read(master, 65536)
-            except OSError:
-                break
-            output += data
-            # Answer the device-attributes query like a terminal, so the background query ends at once.
-            if not answered and b'\x1b[c' in output:
-                os.write(master, b'\x1b[?62c')
-                answered = True
-            if step < len(keys) and keys[step][0] in output[mark:]:
-                os.write(master, keys[step][1])
-                step += 1
-                mark = len(output)
-        if p.poll() is not None:
-            while select.select([master], [], [], 0)[0]:
-                try:
-                    output += os.read(master, 65536)
-                except OSError:
-                    break
-            break
-    try:
-        code = p.wait(timeout=max(0, deadline - time.monotonic()))
-    except subprocess.TimeoutExpired:
-        raise RuntimeError(f'TUI stop did not finish at step {step}: {output[-1000:]!r}')
-    print(json.dumps({'code':code, 'step':step, 'text':output.decode('utf-8', 'replace')}))
-finally:
-    if p.poll() is None:
-        p.kill()
-        p.wait()
-    os.close(master)
-"#;
+
     let silent = TcpListener::bind("127.0.0.1:0").await?;
     let silent_origin = format!("http://{}", silent.local_addr()?);
     for (mode, step, code, report) in [
@@ -419,18 +382,13 @@ finally:
         ("run-abort", 2, 130, false),
         ("confirmed-stop", 4, 1, true),
     ] {
-        let output = Command::new("python3")
-            .args([
-                "-c",
-                script,
-                env!("CARGO_BIN_EXE_graphite-meter-client"),
-                if mode == "check-quit" { &silent_origin } else { &origin },
-                mode,
-            ])
-            .output()
-            .await?;
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-        let result: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        let target = if mode == "check-quit" { &silent_origin } else { &origin };
+        let stdin = if mode == "redirected-quit" {
+            "redirected"
+        } else {
+            "terminal"
+        };
+        let result = terminal(target, mode, "\x1b[?62c", stdin).await?;
         assert_eq!(result["step"], step);
         assert_eq!(result["code"], code);
         let text = result["text"].as_str().unwrap();
@@ -457,43 +415,6 @@ finally:
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn tui_asks_the_terminal_for_its_background_like_the_go_client() -> Result<(), Error> {
-    let script = r#"
-import fcntl, json, os, pty, select, struct, subprocess, sys, termios, time
-master, slave = pty.openpty()
-fcntl.fcntl(master, fcntl.F_SETFL, os.O_NONBLOCK)
-fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 100, 0, 0))
-def session():
-    os.setsid()
-    fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
-env = {k: v for k, v in os.environ.items() if k not in ('NO_COLOR', 'GM_TUI_THEME', 'COLORFGBG')}
-env.update(TERM='xterm-256color', COLORTERM='truecolor')
-p = subprocess.Popen([sys.argv[1], '-url', sys.argv[2]], stdin=subprocess.DEVNULL if sys.argv[4] == 'redirected' else slave, stdout=slave, stderr=slave, preexec_fn=session, env=env)
-os.close(slave)
-answer = sys.argv[3].encode()
-output, drawn, alive, started = b'', None, None, time.monotonic()
-try:
-    while time.monotonic() < started + 8 and p.poll() is None:
-        if select.select([master], [], [], 0.1)[0]:
-            try:
-                output += os.read(master, 65536)
-            except OSError:
-                break
-            if answer and b'\x1b[c' in output:
-                os.write(master, answer)
-                answer = b''
-            if drawn is None and b'Graphite Meter' in output:
-                drawn = time.monotonic() - started
-                time.sleep(0.3)
-                alive = p.poll() is None
-                os.write(master, b'q')
-    code = p.wait(timeout=5)
-    print(json.dumps({'code':code, 'drawn':drawn, 'alive':alive, 'text':output.decode('utf-8', 'replace')}))
-finally:
-    if p.poll() is None:
-        p.kill()
-        p.wait()
-    os.close(master)
-"#;
     let silent = TcpListener::bind("127.0.0.1:0").await?;
     let silent_origin = format!("http://{}", silent.local_addr()?);
     // The q in the unknown OSC would quit the TUI if the answers reached its keys. With stdin
@@ -511,52 +432,13 @@ finally:
             "redirected",
         ),
     ] {
-        let output = Command::new("python3")
-            .args([
-                "-c",
-                script,
-                env!("CARGO_BIN_EXE_graphite-meter-client"),
-                &silent_origin,
-                answer,
-                stdin,
-            ])
-            .output()
-            .await?;
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-        let result: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        let result = terminal(&silent_origin, "theme", answer, stdin).await?;
         let text = result["text"].as_str().unwrap();
         assert!(text.contains("\x1b]11;?\x1b\\\x1b[c"), "{text:?}");
         assert!(text.contains(ink), "{answer:?} with {stdin} stdin: {text:?}");
         assert_eq!(result["code"], 0);
         assert_eq!(result["alive"], true);
         assert!(result["drawn"].as_f64().is_some_and(|drawn| drawn < 3.0), "{result}");
-    }
-    Ok(())
-}
-
-#[tokio::test]
-async fn invalid_measurement_inputs_fail_before_connecting() -> Result<(), Error> {
-    for args in [
-        vec!["--throughput-transport=webtransport-datagram"],
-        vec!["--stages=typo"],
-        vec!["--ping=typo"],
-        vec!["--loaded-ping=40ms"],
-        vec!["--warmup=-1s"],
-        vec!["--download-duration=0"],
-        vec!["--server=a", "--server=a"],
-        vec!["--latency-transport=webtransport", "--ping=16s"],
-    ] {
-        let output = tokio::time::timeout(
-            Duration::from_secs(2),
-            Command::new(env!("CARGO_BIN_EXE_graphite-meter-client"))
-                .args(&args)
-                .kill_on_drop(true)
-                .output(),
-        )
-        .await??;
-        assert_eq!(output.status.code(), Some(2), "{args:?}");
-        assert!(!output.stderr.is_empty(), "{args:?}");
-        assert!(output.stdout.is_empty(), "{args:?}");
     }
     Ok(())
 }
@@ -571,6 +453,14 @@ async fn flags(args: &[&str]) -> Result<std::process::Output, Error> {
             .output(),
     )
     .await??)
+}
+
+async fn refused(args: &[&str], stderr: String) -> Result<(), Error> {
+    let output = flags(args).await?;
+    assert_eq!(output.status.code(), Some(2), "{args:?}");
+    assert!(output.stdout.is_empty(), "{args:?}");
+    assert_eq!(String::from_utf8(output.stderr)?, stderr, "{args:?}");
+    Ok(())
 }
 
 #[tokio::test]
@@ -588,6 +478,7 @@ async fn invalid_settings_are_refused_in_go_order_and_words() -> Result<(), Erro
             &["-latency-duration", "0", "-ping", "40ms"],
             "latency duration must be from 1s to 24h",
         ),
+        (&["--download-duration=0"], "download duration must be from 1s to 24h"),
         // Go checks the duration of a stage that is off.
         (
             &["-bidirectional-duration", "25h"],
@@ -616,14 +507,7 @@ async fn invalid_settings_are_refused_in_go_order_and_words() -> Result<(), Erro
             "latency interval must be at most 15s, half the server's 30s lane idle bound",
         ),
     ] {
-        let output = flags(args).await?;
-        assert_eq!(output.status.code(), Some(2), "{args:?}");
-        assert!(output.stdout.is_empty(), "{args:?}");
-        assert_eq!(
-            String::from_utf8(output.stderr)?,
-            format!("graphite-meter-client: {message}\n"),
-            "{args:?}"
-        );
+        refused(args, format!("graphite-meter-client: {message}\n")).await?;
     }
     Ok(())
 }
@@ -656,7 +540,16 @@ async fn help_goes_to_stderr_like_go() -> Result<(), Error> {
         let output = flags(&[flag]).await?;
         assert_eq!(output.status.code(), Some(0), "{flag}");
         assert!(output.stdout.is_empty(), "{flag}");
-        assert_eq!(String::from_utf8(output.stderr)?, usage(), "{flag}");
+        let shown = String::from_utf8(output.stderr)?;
+        assert!(shown.starts_with(&format!(
+            "Usage of {}:\n  -auto-streams int\n    \tmaximum H1 streams per direction (default 6)\n",
+            env!("CARGO_BIN_EXE_graphite-meter-client")
+        )));
+        assert!(
+            shown.contains("\n  -insecure\n    \tskip TLS certificate verification\n  -latency-duration duration\n")
+        );
+        assert!(shown.contains("  -ping value\n    \tidle latency cadence (default reply-driven): reply-driven, fast, medium, slow, or a duration from 80ms to 15s\n"));
+        assert!(shown.ends_with("  -warmup duration\n    \tper-stage warmup duration (default 800ms)\n"));
     }
     Ok(())
 }
@@ -710,14 +603,7 @@ async fn flag_errors_print_go_messages_then_the_usage() -> Result<(), Error> {
             r#"invalid value "a" for flag -server: select one to 4 different server IDs"#,
         ),
     ] {
-        let output = flags(args).await?;
-        assert_eq!(output.status.code(), Some(2), "{args:?}");
-        assert!(output.stdout.is_empty(), "{args:?}");
-        assert_eq!(
-            String::from_utf8(output.stderr)?,
-            format!("{message}\n{}", usage()),
-            "{args:?}"
-        );
+        refused(args, format!("{message}\n{}", usage())).await?;
     }
     Ok(())
 }
@@ -755,14 +641,7 @@ async fn arguments_and_checks_after_parsing_fail_like_go() -> Result<(), Error> 
             "latency cadence must be reply-driven or at least 80ms",
         ),
     ] {
-        let output = flags(args).await?;
-        assert_eq!(output.status.code(), Some(2), "{args:?}");
-        assert!(output.stdout.is_empty(), "{args:?}");
-        assert_eq!(
-            String::from_utf8(output.stderr)?,
-            format!("graphite-meter-client: {message}\n"),
-            "{args:?}"
-        );
+        refused(args, format!("graphite-meter-client: {message}\n")).await?;
     }
     Ok(())
 }

@@ -1,14 +1,10 @@
+use super::super::test_keys::Signers;
 use super::*;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use hyper::{body::Incoming, server::conn::http1, service::service_fn};
-use ring::{
-    rand::SystemRandom,
-    signature::{self, EcdsaKeyPair, KeyPair, RsaKeyPair},
-};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use serde_json::{Value, json};
 use std::{
-    process::Command,
     sync::atomic::{AtomicUsize, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -47,72 +43,6 @@ struct Twist {
     userinfo: Option<Value>,
 }
 
-struct Keys {
-    rsa: RsaKeyPair,
-    ec: EcdsaKeyPair,
-    rng: SystemRandom,
-}
-
-impl Keys {
-    fn new() -> Self {
-        let generated = Command::new("openssl")
-            .args(["genrsa", "-traditional", "2048"])
-            .output()
-            .unwrap();
-        assert!(generated.status.success());
-        let PrivateKeyDer::Pkcs1(der) = PrivateKeyDer::from_pem_slice(&generated.stdout).unwrap() else {
-            panic!("openssl did not emit PKCS#1");
-        };
-        let rng = SystemRandom::new();
-        let pkcs8 = EcdsaKeyPair::generate_pkcs8(&signature::ECDSA_P256_SHA256_FIXED_SIGNING, &rng).unwrap();
-        Self {
-            rsa: RsaKeyPair::from_der(der.secret_pkcs1_der()).unwrap(),
-            ec: EcdsaKeyPair::from_pkcs8(&signature::ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &rng).unwrap(),
-            rng,
-        }
-    }
-    fn jwks(&self, rotated: bool) -> Value {
-        if rotated {
-            let point = self.ec.public_key().as_ref();
-            return json!({"keys": [{"kty": "EC", "crv": "P-256", "kid": "rotated", "use": "sig",
-                "x": URL_SAFE_NO_PAD.encode(&point[1..33]), "y": URL_SAFE_NO_PAD.encode(&point[33..])}]});
-        }
-        let public: signature::RsaPublicKeyComponents<Vec<u8>> = self.rsa.public().into();
-        json!({"keys": [{"kty": "RSA", "kid": "test-key", "use": "sig", "alg": "RS256",
-            "n": URL_SAFE_NO_PAD.encode(&public.n), "e": URL_SAFE_NO_PAD.encode(&public.e)}]})
-    }
-    fn sign(&self, header: &Value, claims: &Value) -> String {
-        let message = format!(
-            "{}.{}",
-            URL_SAFE_NO_PAD.encode(header.to_string()),
-            URL_SAFE_NO_PAD.encode(claims.to_string())
-        );
-        let signature = match header["alg"].as_str() {
-            Some("RS256") => {
-                let mut signature = vec![0; self.rsa.public().modulus_len()];
-                self.rsa
-                    .sign(
-                        &signature::RSA_PKCS1_SHA256,
-                        &self.rng,
-                        message.as_bytes(),
-                        &mut signature,
-                    )
-                    .unwrap();
-                signature
-            }
-            Some("ES256") => self.ec.sign(&self.rng, message.as_bytes()).unwrap().as_ref().to_vec(),
-            Some("HS256") => ring::hmac::sign(
-                &ring::hmac::Key::new(ring::hmac::HMAC_SHA256, b"s3cret~*"),
-                message.as_bytes(),
-            )
-            .as_ref()
-            .to_vec(),
-            _ => Vec::new(),
-        };
-        format!("{message}.{}", URL_SAFE_NO_PAD.encode(signature))
-    }
-}
-
 fn at_hash(token: &str) -> String {
     let digest = ring::digest::digest(&ring::digest::SHA256, token.as_bytes());
     URL_SAFE_NO_PAD.encode(&digest.as_ref()[..16])
@@ -123,7 +53,7 @@ struct Double {
     oidc: Oidc,
     issuer: String,
     algorithms: Vec<String>,
-    keys: Keys,
+    keys: Signers,
     claims: Mutex<Claims>,
     nonces: Mutex<HashMap<String, String>>,
     twist: Mutex<Twist>,
@@ -166,7 +96,13 @@ impl Double {
             "/jwks" => {
                 assert_eq!(headers[header::CACHE_CONTROL], "no-cache");
                 self.jwks_requests.fetch_add(1, Ordering::SeqCst);
-                ("application/json", self.keys.jwks(twist.rotated).to_string())
+                let mut key = self.keys.jwks()["keys"][usize::from(twist.rotated)].clone();
+                key["kid"] = json!(if twist.rotated { "rotated" } else { "test-key" });
+                key["use"] = json!("sig");
+                if !twist.rotated {
+                    key["alg"] = json!("RS256");
+                }
+                ("application/json", json!({"keys": [key]}).to_string())
             }
             "/token" => {
                 // Sorted, and escaped as Go's url.Values.Encode escapes them.
@@ -189,7 +125,7 @@ impl Double {
                     (_, true, _) => json!({"alg": "ES256", "kid": "rotated", "typ": "JWT"}),
                     _ => json!({"alg": "RS256", "kid": "test-key"}),
                 };
-                let id_token = self.keys.sign(&header, &with(token_claims, &twist.claims));
+                let id_token = self.keys.sign(header, &with(token_claims, &twist.claims));
                 let tokens = json!({"access_token": "access", "token_type": "Bearer", "id_token": id_token});
                 match twist.form {
                     Some(end) => ("text/plain", format!("access_token=access&id_token={id_token}{end}")),
@@ -205,7 +141,7 @@ impl Double {
                 let info = with(with(info, &twist.userinfo), &twist.signed_userinfo);
                 let header = json!({"alg": "RS256", "kid": "test-key"});
                 match twist.signed_userinfo {
-                    Some(_) => ("application/jwt", self.keys.sign(&header, &info)),
+                    Some(_) => ("application/jwt", self.keys.sign(header, &info)),
                     None => ("application/json", info.to_string()),
                 }
             }
@@ -289,7 +225,7 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Arc<D
         oidc,
         issuer,
         algorithms: algorithms.iter().map(|alg| (*alg).to_owned()).collect(),
-        keys: Keys::new(),
+        keys: Signers::new(b"s3cret~*"),
         claims: Mutex::default(),
         nonces: Mutex::default(),
         twist: Mutex::default(),
@@ -396,74 +332,40 @@ async fn callbacks_past_the_concurrent_exchanges_wait_within_gos_deadline() {
 async fn forged_or_misbound_tokens_are_refused_and_rotation_refetches_keys_once() {
     let provider = provider_double("localhost", &["RS256", "ES256", "HS256", "none"], Proxy::default()).await;
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    let refused: [(&str, Twist); 9] = [
-        (
-            "foreign audience",
-            Twist {
-                claims: Some(json!({"aud": "other"})),
+    let changes = [
+        ("claims", json!({"aud": "other"})),
+        ("claims", json!({"iss": "https://evil.example"})),
+        ("claims", json!({"exp": now - 1})),
+        ("claims", json!({"nbf": now + 3600})),
+        ("claims", json!({"at_hash": at_hash("other")})),
+        ("header", json!({"alg": "none"})),
+        ("header", json!({"alg": "HS256", "kid": "test-key"})),
+        ("unknown_kid", json!(true)),
+        ("signed_userinfo", json!({"iss": provider.issuer, "aud": "other"})),
+    ];
+    for (field, value) in changes {
+        *provider.twist.lock().unwrap() = match field {
+            "claims" => Twist {
+                claims: Some(value.clone()),
                 ..Twist::default()
             },
-        ),
-        (
-            "foreign issuer",
-            Twist {
-                claims: Some(json!({"iss": "https://evil.example"})),
+            "header" => Twist {
+                header: Some(value.clone()),
                 ..Twist::default()
             },
-        ),
-        (
-            "expired",
-            Twist {
-                claims: Some(json!({"exp": now - 1})),
-                ..Twist::default()
-            },
-        ),
-        (
-            "not yet valid",
-            Twist {
-                claims: Some(json!({"nbf": now + 3600})),
-                ..Twist::default()
-            },
-        ),
-        (
-            "access token binding",
-            Twist {
-                claims: Some(json!({"at_hash": at_hash("other")})),
-                ..Twist::default()
-            },
-        ),
-        (
-            "unsigned",
-            Twist {
-                header: Some(json!({"alg": "none"})),
-                ..Twist::default()
-            },
-        ),
-        (
-            "client-secret MAC",
-            Twist {
-                header: Some(json!({"alg": "HS256", "kid": "test-key"})),
-                ..Twist::default()
-            },
-        ),
-        (
-            "unknown kid after refetch",
-            Twist {
+            "unknown_kid" => Twist {
                 unknown_kid: true,
                 ..Twist::default()
             },
-        ),
-        (
-            "signed user information for another client",
-            Twist {
-                signed_userinfo: Some(json!({"iss": provider.issuer, "aud": "other"})),
+            _ => Twist {
+                signed_userinfo: Some(value.clone()),
                 ..Twist::default()
             },
-        ),
-    ];
-    for (name, twist) in refused {
-        *provider.twist.lock().unwrap() = twist;
-        assert!(provider.login(Claims::default()).await.is_err(), "{name} authenticated");
+        };
+        assert!(
+            provider.login(Claims::default()).await.is_err(),
+            "{field}={value} authenticated"
+        );
     }
     *provider.twist.lock().unwrap() = Twist {
         signed_userinfo: Some(

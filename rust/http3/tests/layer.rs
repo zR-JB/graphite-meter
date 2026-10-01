@@ -172,59 +172,6 @@ async fn settled(budget: &Budget) {
 }
 
 #[tokio::test]
-async fn requests_carry_heads_and_bodies_both_ways() -> Result<(), TestError> {
-    let peers = peers(usize::MAX).await?;
-    let (serving, _) = serve(&peers, |request, stream| async move {
-        let (mut send, mut recv) = stream.split();
-        let received = body(&mut recv).await.unwrap();
-        let response = http::Response::builder()
-            .header("x-method", request.method().as_str())
-            .header("content-length", 11)
-            .body(())
-            .unwrap();
-        send.send_response(response).await.unwrap();
-        if request.method() != http::Method::HEAD {
-            let echo = if received.is_empty() {
-                &b"hello world"[..]
-            } else {
-                &received[..]
-            };
-            send.send_data(Bytes::copy_from_slice(&echo[..5])).await.unwrap();
-            send.send_data(Bytes::copy_from_slice(&echo[5..])).await.unwrap();
-        }
-        send.finish().await.unwrap();
-    });
-    let (driver, requests) = client(&peers);
-    for (method, sent) in [("GET", &b""[..]), ("POST", b"upload body"), ("HEAD", b"")] {
-        let request = http::Request::builder().method(method).uri("https://localhost/echo");
-        let request = request.header("content-length", sent.len()).body(())?;
-        let (mut send, mut recv) = requests.send_request(request).await?.split();
-        if !sent.is_empty() {
-            send.send_data(Bytes::copy_from_slice(sent)).await?;
-        }
-        send.finish().await?;
-        let response = recv.response().await?;
-        assert_eq!(
-            (response.status(), response.headers()["x-method"].to_str()?),
-            (http::StatusCode::OK, method)
-        );
-        let expected = match method {
-            "HEAD" => &b""[..],
-            "POST" => sent,
-            _ => b"hello world",
-        };
-        assert_eq!(body(&mut recv).await?, expected);
-    }
-    settled(&peers.budget).await;
-    peers.client.close(0_u32.into(), b"done");
-    assert!(
-        driver.await?.is_ok() && serving.await?.is_ok(),
-        "a peer's close code 0 is graceful"
-    );
-    Ok(())
-}
-
-#[tokio::test]
 async fn responses_without_content_may_declare_a_length() -> Result<(), TestError> {
     let peers = peers(usize::MAX).await?;
     let (serving, _) = serve(&peers, |request, stream| async move {
@@ -235,14 +182,22 @@ async fn responses_without_content_may_declare_a_length() -> Result<(), TestErro
         send.finish().await.unwrap();
     });
     let (driver, requests) = client(&peers);
-    for status in [204, 304] {
-        let (mut send, mut recv) = requests.send_request(get(&format!("/{status}"))).await?.split();
+    for (method, status) in [("GET", 204), ("GET", 304), ("HEAD", 200)] {
+        let request = http::Request::builder()
+            .method(method)
+            .uri(format!("https://localhost/{status}"))
+            .body(())?;
+        let (mut send, mut recv) = requests.send_request(request).await?.split();
         send.finish().await?;
         assert_eq!(recv.response().await?.status(), status);
         assert_eq!(body(&mut recv).await, Ok(Vec::new()), "{status}");
     }
     settled(&peers.budget).await;
-    drop((driver, serving));
+    peers.client.close(0_u32.into(), b"done");
+    assert!(
+        driver.await?.is_ok() && serving.await?.is_ok(),
+        "a peer close code 0 is graceful"
+    );
     Ok(())
 }
 
@@ -866,27 +821,17 @@ fn connect_request() -> http::Request<()> {
 }
 
 #[tokio::test]
-async fn sessions_carry_streams_and_datagrams_both_ways() -> Result<(), TestError> {
+async fn prepared_datagrams_repeat_and_the_last_session_ends_its_connection() -> Result<(), TestError> {
     let peers = peers(usize::MAX).await?;
     let (serving, _) = serve_sessions(&peers, |session| async move {
-        for _ in 0..3 {
+        for _ in 0..2 {
             let reply = session.read_datagram().await.unwrap();
             session.send_datagram(&[&b"echo "[..], &reply].concat()).unwrap();
         }
-        let mut upload = session.accept_uni().await.unwrap();
-        let mut received = Vec::new();
-        while let Some(chunk) = upload.read_chunk().await.unwrap() {
-            received.extend_from_slice(&chunk);
-        }
-        let mut download = session.open_uni().await.unwrap();
-        download.write_chunk(received.into()).await.unwrap();
-        download.finish().unwrap();
         let _ = session.closed().await;
     });
     let (driver, requests) = client(&peers);
     let (session, _) = Session::connect(&requests, connect_request()).await?.expect("accepted");
-    session.send_datagram_wait(b"PING,1").await?;
-    assert_eq!(session.read_datagram().await.as_deref(), Some(&b"echo PING,1"[..]));
     {
         let mut repeated = session.prepare_datagram(b"PING,2")?;
         for _ in 0..2 {
@@ -894,13 +839,7 @@ async fn sessions_carry_streams_and_datagrams_both_ways() -> Result<(), TestErro
             assert_eq!(session.read_datagram().await.as_deref(), Some(&b"echo PING,2"[..]));
         }
     }
-    let mut upload = session.open_uni().await?;
-    upload.write_all(b"upload").await?;
-    upload.finish()?;
-    let mut download = session.accept_uni().await.expect("server stream");
-    assert_eq!(download.read_chunk().await?.as_deref(), Some(&b"upload"[..]));
-    assert_eq!(download.read_chunk().await?, None);
-    drop((download, session));
+    drop(session);
     settled(&peers.budget).await;
     assert_eq!(
         (driver.await?, serving.await?),

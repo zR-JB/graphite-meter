@@ -613,27 +613,7 @@ mod tests {
 
     /// An identity for localhost, and a client that trusts it and offers `alpn`.
     fn tls_offering(alpn: Vec<Vec<u8>>) -> (Arc<rustls::ServerConfig>, noq::ClientConfig) {
-        use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
-        let (certificate, key) = crate::test_identity::generate_identity("localhost").unwrap();
-        let certificate = CertificateDer::from_pem_slice(certificate.as_bytes()).unwrap();
-        let provider = Arc::new(rustls::crypto::ring::default_provider());
-        let mut tls = rustls::ServerConfig::builder_with_provider(provider.clone())
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap()
-            .with_no_client_auth()
-            .with_single_cert(
-                vec![certificate.clone()],
-                PrivateKeyDer::from_pem_slice(key.as_bytes()).unwrap(),
-            )
-            .unwrap();
-        tls.alpn_protocols = vec![b"h3".to_vec()];
-        let mut roots = rustls::RootCertStore::empty();
-        roots.add(certificate).unwrap();
-        let mut client = rustls::ClientConfig::builder_with_provider(provider)
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap()
-            .with_root_certificates(roots)
-            .with_no_client_auth();
+        let (tls, mut client) = crate::test_tls::configs(b"h3");
         client.alpn_protocols = alpn;
         let client = noq::ClientConfig::new(Arc::new(
             noq::crypto::rustls::QuicClientConfig::try_from(client).unwrap(),
@@ -891,20 +871,6 @@ mod tests {
             desired_send_window(sent, Duration::from_millis(100), Duration::ZERO),
             QUIC_MIN_SEND_WINDOW
         );
-    }
-
-    #[test]
-    fn the_readme_states_the_transmit_window_bounds() {
-        let readme = include_str!("../../../README.md")
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
-        let bounds = format!(
-            "Transmit windows adapt between {} MiB and {} MiB.",
-            QUIC_MIN_SEND_WINDOW >> 20,
-            MAX_SEND_WINDOW >> 20
-        );
-        assert!(readme.contains(&bounds), "rust/README.md must say: {bounds}");
     }
 
     #[tokio::test]
@@ -1449,40 +1415,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_source_that_already_holds_a_quic_connection_must_answer_retry() {
-        use super::*;
-        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-        let (tls, mut client_config) = tls();
-        // A validation token from the first connection would prove the address without a Retry.
-        client_config.token_store(Arc::new(noq::NoneTokenStore));
-        let (address, stop, serving) = serve(&server, tls);
-        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
-        client.set_default_client_config(client_config);
-        tokio::time::timeout(Duration::from_secs(10), async {
-            // Both links relay from 127.0.0.1, so the second Initial comes from a source holding the first connection.
-            let first = crate::test_link::Link::udp(address, Duration::ZERO).await.unwrap();
-            let held = client.connect(first.address, "localhost").unwrap().await.unwrap();
-            assert_eq!(
-                first.retries(),
-                0,
-                "a source's first connection needs no Retry below load"
-            );
-            let second = crate::test_link::Link::udp(address, Duration::ZERO).await.unwrap();
-            let again = client.connect(second.address, "localhost").unwrap().await.unwrap();
-            assert!(
-                second.retries() > 0,
-                "an unvalidated Initial from a source holding a QUIC connection skipped Retry"
-            );
-            held.close(0_u32.into(), b"done");
-            again.close(0_u32.into(), b"done");
-        })
-        .await
-        .unwrap();
-        stop.send(()).unwrap();
-        serving.await.unwrap().unwrap();
-    }
-
-    #[tokio::test]
     async fn silent_connections_from_few_sources_leave_budget_for_new_clients() {
         use super::*;
         let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
@@ -1685,22 +1617,12 @@ mod tests {
     #[tokio::test]
     async fn mixed_transport_exhaustion_preserves_existing_connections() {
         use super::*;
-        use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, pem::PemObject};
+        use rustls::pki_types::ServerName;
         use tokio::net::TcpStream;
         use tokio_rustls::TlsConnector;
 
         tokio::time::timeout(Duration::from_secs(10), async {
-            let (certificate, key) = crate::test_identity::generate_identity("localhost").unwrap();
-            let certificate = CertificateDer::from_pem_slice(certificate.as_bytes()).unwrap();
-            let key = PrivateKeyDer::from_pem_slice(key.as_bytes()).unwrap();
-            let provider = Arc::new(rustls::crypto::ring::default_provider());
-            let mut tls = rustls::ServerConfig::builder_with_provider(provider.clone())
-                .with_protocol_versions(&[&rustls::version::TLS13])
-                .unwrap()
-                .with_no_client_auth()
-                .with_single_cert(vec![certificate.clone()], key)
-                .unwrap();
-            tls.alpn_protocols = vec![b"h2".to_vec()];
+            let (mut tls, mut client_tls) = crate::test_tls::configs(b"h2");
             let config = Config {
                 max_connections_per_client: 128,
                 ..Config::default()
@@ -1746,14 +1668,6 @@ mod tests {
             let h3_server = tokio::spawn(server.clone().serve_quic(endpoint, async {
                 let _ = stopped_h3.await;
             }));
-            let mut roots = rustls::RootCertStore::empty();
-            roots.add(certificate).unwrap();
-            let mut client_tls = rustls::ClientConfig::builder_with_provider(provider)
-                .with_protocol_versions(&[&rustls::version::TLS13])
-                .unwrap()
-                .with_root_certificates(roots)
-                .with_no_client_auth();
-            client_tls.alpn_protocols = vec![b"h2".to_vec()];
             let connector = TlsConnector::from(Arc::new(client_tls.clone()));
             let stream = connector
                 .connect(

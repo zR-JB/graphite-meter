@@ -504,52 +504,6 @@ fn setup_rows_and_start_notes_read_as_go_writes_them() {
     let (commands, _sent) = mpsc::channel(32);
     let mut ui = setup();
     ui.advanced = true;
-    ui.config.ping_interval = Duration::from_millis(1500);
-    let listed: Vec<_> = ui.rows().into_iter().map(|row| ui.row(row)).collect();
-    let listed: Vec<_> = listed
-        .iter()
-        .map(|row| format!("{} | {}", row.label, crate::report::plain(&row.value)))
-        .collect();
-    assert_eq!(
-        listed,
-        [
-            "Start test | ",
-            "Catalogue URL | http://127.0.0.1:7246",
-            "Test servers | —",
-            "Throughput path | Automatic · each server",
-            "HTTP version | Automatic",
-            "Latency path | Automatic · each server",
-            "Latency | ● 4 s",
-            "Download | ● 10 s",
-            "Upload | ● 10 s",
-            "Bidirectional | ○ 10 s",
-            "Loaded latency | ●",
-            "Advanced | ▾ shown",
-            "Warmup | 800 ms",
-            "Idle latency cadence | Custom (1.5 s)",
-            "Loaded latency cadence | Medium (250 ms)",
-            "Force exact stream count | ○",
-            "Maximum H1 streams per direction | 6",
-            "Skip TLS verify | ○",
-            "Reset settings | ",
-        ]
-    );
-    for (row, help) in [
-        (
-            Setting::Stage(Stage::Upload),
-            "Client to server, receiver-timed. ←/→ step it (1 s–24 h; a server may allow less), space on/off.",
-        ),
-        (
-            Setting::Cadence(true),
-            "Probe spacing during transfers. ←/→ reply-driven, 80, 250, 600 ms.",
-        ),
-        (
-            Setting::Warmup,
-            "Ramp-up before each window, at least ten round trips. ←/→ ±100 ms (0 ms–4 s).",
-        ),
-    ] {
-        assert_eq!(ui.row(row).help, help);
-    }
     // The focused row's highlight covers the padding after its label, as Go pads inside the label's style.
     (ui.theme, ui.row) = (Theme::new(crate::theme::Profile::Ansi256, true), 3);
     let (lines, focused) = ui.setup_list(60);
@@ -701,39 +655,6 @@ fn servers_ready_and_chosen_as_go_shows_them() {
 }
 
 #[test]
-fn hints_follow_the_mode_and_fit_the_width() {
-    let (commands, _sent) = mpsc::channel(32);
-    let last = |ui: &mut Ui| crate::report::plain(ui.screen().last().unwrap()).trim().to_owned();
-    let mut ui = setup();
-    ui.size = (120, 24);
-    at(&mut ui, Setting::Stage(Stage::Download));
-    let hints = "r start test • ↑/↓ move • ←/→ change • space on/off • enter edit • ? keys • q quit";
-    assert_eq!(last(&mut ui), hints);
-    ui.size = (40, 24);
-    assert_eq!(last(&mut ui), "r start test • pgdn more • q quit"); // hints drop from the middle
-    (ui.help, ui.size) = (true, (120, 24));
-    let help = plain(&ui.screen()[20..]);
-    assert!(help.contains("r   start test    space on/off           a    automatic paths    q quit"));
-    ui.help = false;
-    at(&mut ui, Setting::Catalogue);
-    press(&mut ui, &commands, &["enter"]);
-    assert_eq!(last(&mut ui), "←/→ move • enter apply • esc cancel • ctrl+c quit");
-    let mut run = running(&["a", "b"]);
-    step(&mut run, |snapshot| snapshot.phase = Phase::Measuring);
-    for (keys, want) in [
-        (
-            &[][..],
-            "esc stop test • d details • l latency server • ? keys • q quit",
-        ),
-        (&["d"], "↑/↓ scroll • esc close • q quit"),
-        (&["esc", "esc"], "esc confirm stop • q quit"),
-    ] {
-        press(&mut run, &commands, keys);
-        assert_eq!(last(&mut run), want);
-    }
-}
-
-#[test]
 fn a_late_background_answer_never_becomes_keys() {
     let (commands, mut sent) = mpsc::channel(32);
     let mut ui = setup();
@@ -839,22 +760,6 @@ fn run_keys_stop_quit_and_return_as_go_does() {
     press(&mut ui, &commands, &["esc"]);
     assert!(!ui.live && ui.prepare() == Prepare::Checking); // esc returns to a freshly checked setup
     assert!(ui.exit().shown.is_none(), "Go prints no report after a return to setup");
-    // Quitting stops the run first and reports it; a second interrupt quits at once.
-    for name in ["q", "ctrl+c"] {
-        let mut ui = running(&["a"]);
-        stage(&mut ui, Stage::Latency, Phase::Measuring);
-        assert!(!press(&mut ui, &commands, &[name])); // no quit before the test stops
-        assert!(ui.quitting && matches!(sent.try_recv(), Ok(Command::Cancel)));
-        step(&mut ui, |snapshot| snapshot.phase = Phase::Cancelled);
-        let exit = ui.exit();
-        assert!(!exit.running && exit.interrupted == (name == "ctrl+c"));
-        assert_eq!(exit.shown.map(|shown| shown.phase), Some(Phase::Cancelled)); // the stopped run is reported
-    }
-    let mut ui = running(&["a"]);
-    step(&mut ui, |snapshot| snapshot.phase = Phase::Measuring);
-    assert!(!ui.interrupt(&commands));
-    assert!(press(&mut ui, &commands, &["ctrl+c"])); // a second interrupt quits at once
-    assert!(ui.exit().running && ui.exit().shown.is_none());
     // Run again keeps the last results until the next run starts, and after a failed start, whose check waits for esc.
     let mut ui = running(&["a"]);
     step(&mut ui, |snapshot| {
@@ -1224,6 +1129,11 @@ fn every_view_fits_the_terminal() {
             snapshot.results = vec![result(Stage::Download, Some(1e9), None)]
         });
         let mut frames = vec![("run", run.screen()), ("setup", setup.screen())];
+        let (commands, _) = mpsc::channel(1);
+        press(&mut setup, &commands, &["?"]);
+        assert!(setup.help);
+        frames.push(("help", setup.screen()));
+        press(&mut setup, &commands, &["?"]);
         setup.advanced = true;
         setup.row = setup.rows().len() - 1;
         frames.push(("advanced", setup.screen()));
@@ -1241,7 +1151,9 @@ fn every_view_fits_the_terminal() {
             let lines: Vec<_> = frame.iter().map(crate::report::plain).collect();
             assert!(lines.len() <= usize::from(height), "{at}");
             assert!(lines[0].contains("Graphite Meter"), "{at}");
-            assert!(lines.last().unwrap().trim_end().ends_with("quit"), "{at}: {lines:#?}");
+            if name != "help" {
+                assert!(lines.last().unwrap().trim_end().ends_with("quit"), "{at}: {lines:#?}");
+            }
             for (line, text) in frame.iter().zip(&lines) {
                 let trimmed = text.trim();
                 assert!(!trimmed.starts_with('│') || trimmed.ends_with('│'), "{at}: {trimmed}");

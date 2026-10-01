@@ -23,13 +23,11 @@ TRIGGERS = {
     "advisories.yml": {"schedule", "workflow_dispatch"},
     "ci.yml": {"pull_request", "push"},
     "fork-upkeep.yml": {"schedule", "workflow_dispatch"},
-    "fuzz.yml": {"schedule", "workflow_dispatch"},
     "release-request.yml": {"workflow_dispatch"},
     "release.yml": {"workflow_run"},
 }
 ALLOWED_USES = {
     "fork-upkeep.yml": {"actions/checkout", "jdx/mise-action", "actions/create-github-app-token"},
-    "fuzz.yml": {"actions/checkout", "./.github/actions/setup-project", "actions/upload-artifact"},
     "release-request.yml": {
         "actions/checkout", "jdx/mise-action", "./.github/actions/setup-project",
         "docker/setup-qemu-action", "./.github/actions/setup-buildx", "docker/build-push-action",
@@ -61,11 +59,6 @@ ORDERED = {
         "run: mise run rust-check-targets\n", "run: mise run rust-delayed-downloads\n",
         "target: tui-artifacts\n", "target: server-artifacts\n",
         "python3 -m scripts.ci.release stage-rust\n", "python3 -m scripts.ci.release check-rust\n",
-    ),
-    # Every HTTP/3 fuzz target runs, and a failed or cancelled run keeps the crash inputs.
-    "workflows/fuzz.yml": (
-        "for source in rust/http3/fuzz/fuzz_targets/*.rs; do\n", 'mise run rust-fuzz "$(basename "$source" .rs)"',
-        "if: failure() || cancelled()\n        uses: actions/upload-artifact@",
     ),
     "workflows/release.yml": (
         "github.event.workflow_run.conclusion == 'success'\n",

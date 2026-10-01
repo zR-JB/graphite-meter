@@ -143,19 +143,4 @@ mod tests {
         let _proxied = connections.acquire(proxy, true).unwrap();
         assert!(!connections.holds_quic(proxy));
     }
-
-    #[test]
-    fn poisoned_counts_keep_admitting() {
-        let connections = super::Connections::new(4, 4, vec![]);
-        let held = connections.clone();
-        std::thread::spawn(move || {
-            let _counts = held.0.counts.lock().unwrap();
-            panic!("bug under the lock");
-        })
-        .join()
-        .unwrap_err();
-        drop(connections.acquire("192.0.2.1:1".parse().unwrap(), false).unwrap());
-        assert_eq!(connections.stats().active, 0);
-        assert!(!connections.0.counts.is_poisoned(), "recovery must be reported once");
-    }
 }

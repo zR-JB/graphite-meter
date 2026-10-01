@@ -306,6 +306,8 @@ def main() -> None:
              'inputs': set() if args.development else platform.linked(link_map, sysroot, cargo_outputs),
              'libraries': set() if args.development else platform.imports(executable, target)}
     record = platform.record(supplement, target) if supplement else None
+    if record is not None:
+        platform.fetch_notices(repo, record)
     if args.review_template:
         (output / 'review-candidates.json').write_bytes(marshal(review_candidates(components)))
         (output / 'review-errors.json').write_bytes(marshal(failures))
@@ -372,7 +374,7 @@ def main() -> None:
                                                     args.development))
     # Snapshot dependency-selection inputs; build.rs rejects stale supplied reports.
     inputs = ['rust/legal_build.rs', 'rust/client/build.rs', 'rust/server/build.rs', 'rust/Cargo.lock', 'rust/Cargo.toml',
-              'rust/rust-toolchain.toml', 'legal/rust-forks.json']
+              'rust/rust-toolchain.toml', 'legal/rust-forks.json', 'legal/rust-notice-sources.json']
     for reviewed_input in (args.reviews, args.supplement):
         if reviewed_input is not None:
             resolved = reviewed_input.resolve()

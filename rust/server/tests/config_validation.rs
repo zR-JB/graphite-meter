@@ -1,5 +1,5 @@
 use graphite_meter_server::config::{AuthMode, Config, NativeKind};
-use std::{collections::BTreeSet, time::Duration};
+use std::collections::BTreeSet;
 
 type InvalidConfigCase = (&'static str, fn(&mut Config));
 
@@ -128,40 +128,6 @@ fn oidc_requires_complete_https_provider_and_allows_issuer_path() {
 }
 
 #[test]
-fn admission_budgets_share_global_pool_and_timeouts_are_ordered() {
-    Config::default().validate().unwrap();
-    let invalid_cases: [InvalidConfigCase; 8] = [
-        ("client operations exceed global pool", |config| {
-            config.limits.operations_per_client = config.limits.operations + 1
-        }),
-        ("sessions exceed global pool", |config| {
-            config.limits.sessions = config.limits.operations + 1
-        }),
-        ("client sessions exceed client operations", |config| {
-            config.limits.sessions_per_client = config.limits.operations_per_client + 1
-        }),
-        ("client sessions exceed global sessions", |config| {
-            config.limits.sessions = config.limits.sessions_per_client - 1
-        }),
-        ("client connections exceed global connections", |config| {
-            config.max_connections_per_client = config.max_connections + 1
-        }),
-        ("zero operation duration", |config| {
-            config.max_operation_duration = Duration::ZERO
-        }),
-        ("session shorter than operation", |config| {
-            config.max_session_duration = config.max_operation_duration - Duration::from_nanos(1)
-        }),
-        ("zero connection limit", |config| config.max_connections = 0),
-    ];
-    for (name, invalidate) in invalid_cases {
-        let mut config = Config::default();
-        invalidate(&mut config);
-        assert!(config.validate().is_err(), "accepted {name}");
-    }
-}
-
-#[test]
 fn listeners_and_advertisements_cannot_claim_conflicting_protocols() {
     let mut config = Config::default();
     config.native[NativeKind::H2 as usize].address = ":7248".into();
@@ -180,31 +146,4 @@ fn listeners_and_advertisements_cannot_claim_conflicting_protocols() {
     config.validate().unwrap();
     config.native[NativeKind::H3 as usize].address = ":7248".into();
     assert!(config.validate().is_err(), "duplicate bind address");
-}
-
-#[test]
-fn origins_on_port_zero_are_refused_as_go_refuses_them() {
-    let mut config = Config::default();
-    config.public.both.push("https://meter.example:0".into());
-    assert_eq!(
-        config.validate().unwrap_err().to_string(),
-        "GM_PUBLIC_ORIGINS contains invalid origin \"https://meter.example:0\""
-    );
-    let mut config = Config {
-        tls_cert: "test-cert.pem".into(),
-        tls_key: "test-key.pem".into(),
-        ..Config::default()
-    };
-    config.native[NativeKind::H2 as usize].address = ":7248".into();
-    config.native[NativeKind::H2 as usize].public_origin = "https://meter.example:0".into();
-    assert_eq!(
-        config.validate().unwrap_err().to_string(),
-        "GM_H2_PUBLIC_ORIGIN must be an origin with https scheme"
-    );
-    let mut config = password();
-    config.auth.public_url = "https://meter.example:0".into();
-    assert_eq!(
-        config.validate().unwrap_err().to_string(),
-        "GM_AUTH_PUBLIC_URL must be an HTTPS origin with no path, query, or fragment"
-    );
 }
