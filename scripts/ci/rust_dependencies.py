@@ -32,7 +32,9 @@ def main() -> None:
         subprocess.run(['cargo', 'build', '--locked', '--package', args.package, '--bin', args.package,
                         '--target', target, '--profile', args.profile], cwd=root, env=environment, check=True)
     # Real source and build scripts are copied next; none of these placeholders may enter the cache.
-    subprocess.run(['cargo', 'clean', *[f'--package=graphite-meter-{member}' for member in MEMBERS]],
+    subprocess.run(['cargo', 'clean', '--profile', args.profile,
+                    *[f'--target={target}' for target in args.target],
+                    *[f'--package=graphite-meter-{member}' for member in MEMBERS]],
                    cwd=root, check=True)
 
 
