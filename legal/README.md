@@ -105,14 +105,28 @@ and named by repository path. macOS records come from a macOS runner, the only e
 Apple's SDK: CI's `rust-darwin` job runs the release request's `rust-darwin-package` task on the
 same runner image and Xcode and prints this build's record when the committed one goes stale.
 
-The development tasks (`rust-server-run`, `rust-server-build`, `rust-client-run`, `rust-client-build`)
-run `scripts.legal.rust --development` instead: it keeps every dependency review but reads no platform
-record or toolchain facts, so it works on any host, and its notices open with `UNREVIEWED DEVELOPMENT
-BUILD`, which its executables also carry in plain text beside their compressed notices. The workflow
+The local tasks (`rust-server-run`, `rust-server-build`, `rust-client-run`, `rust-client-build`)
+run `scripts.legal.rust --host`: they keep Cargo's ordinary host output paths and flags, read its
+linker map, and select the host's `rust-platform-*.json` record by target and native compiler.
+The same compiler, native-input, import and notice fingerprints used for release builds must match.
+Fedora 44 x86-64 and the recorded macOS builders have host records. A different host or changed
+toolchain needs review; run the pipeline with `--host --review-template` to collect its candidate
+and input listing, then review it as above. These tasks fail if the platform review is missing or stale.
+
+Explicit `scripts.legal.rust --development` builds remain available on unreviewed hosts: they keep
+every dependency review but omit the platform, and their notices open with `UNREVIEWED DEVELOPMENT
+BUILD`, which their executables carry in plain text beside the compressed notices. The workflow
 policy refuses the flag in any workflow, image build, task or shell script that CI or a release runs.
 Release verification refuses the marker in each Rust source offer's notices, in each Rust TUI archive's
 executable and `THIRD_PARTY_NOTICES.txt`, which must equal its offer's, and in each image's server and
 notices.
+
+About uses browser URLs separately from Cargo's package-source identities, which remain in the
+inventories for review. Crates link to their published version; Git dependencies link to their
+pinned revision. Forks also link to the reviewed upstream revision and comparison. Patched npm
+packages link to the local patch at the build's release tag or Git revision, or HEAD for an
+unstamped development build. A Rust engine stamped with its Git revision uses that revision
+for its notices and source links too. Go and Rust use the same link labels and generator.
 
 ## Generated files
 

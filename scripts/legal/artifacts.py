@@ -7,8 +7,9 @@ import os
 import re
 import tarfile
 from pathlib import Path
+from urllib.parse import parse_qs, quote, urlsplit, urlunsplit
 
-from .model import Component, Json, LegalError, Project, Provenance, Review, manual_files, marshal
+from .model import Component, Json, LegalError, Project, Provenance, Review, array, manual_files, marshal, obj, read_json, text
 from .review import component_key, find_review, validate_review
 
 RELEASE_VERSION = re.compile(r"^v?[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)\.[0-9]+)?")
@@ -30,7 +31,45 @@ def release_source(project: Project, version: str) -> tuple[str, str]:
     if RELEASE_VERSION.fullmatch(version):
         version = version.removeprefix("v")
         return version, f"{project.repository}/tree/v{version}"
+    if re.fullmatch(r"[0-9a-f]{7,40}", version):
+        return version, f"{project.repository}/tree/{version}"
     return version, project.repository
+
+
+def about_components(repo: Path, source_url: str, components: list[Component]) -> list[dict[str, Json]]:
+    """Browser links from source identities and the build's fork/patch records; review identities stay intact."""
+    fork_file, package_file = repo / 'legal/rust-forks.json', repo / 'client/package.json'
+    forks = [obj(item) for item in array(read_json(fork_file))] if fork_file.exists() else []
+    patches = obj(obj(read_json(package_file)).get('patchedDependencies', {})) if package_file.exists() else {}
+    result = []
+    for component in components:
+        source = component.source
+        upstream, changes = '', ''
+        if component.ecosystem == 'cargo' and source.startswith('registry+'):
+            source = f'https://crates.io/crates/{quote(component.name)}/{quote(component.version)}'
+        elif source.startswith('git+'):
+            location = urlsplit(source.removeprefix('git+'))
+            repository = urlunsplit((location.scheme, location.netloc, location.path.removesuffix('.git'), '', ''))
+            revision = location.fragment or parse_qs(location.query).get('rev', [''])[0]
+            source = repository + (f'/tree/{quote(revision)}' if revision else '')
+            for fork in forks:
+                if (text(fork, 'fork'), text(fork, 'rev')) == (repository, revision):
+                    upstream = f"{text(fork, 'upstream')}/tree/{text(fork, 'base')}"
+                    if component.modified:
+                        changes = f"{repository}/compare/{text(fork, 'base')}...{revision}"
+                    break
+        if component.modified and component.ecosystem == 'npm':
+            if patch := text(patches, f'{component.name}@{component.version}'):
+                base = source_url.replace('/tree/', '/blob/', 1) if '/tree/' in source_url else source_url + '/blob/HEAD'
+                changes = base + '/client/' + quote(patch)
+        links: list[Json] = [{'label': label, 'url': url} for label, url in
+                 (('Source', source), ('Upstream', upstream), ('Changes', changes))
+                 if url.startswith(('https://', 'http://'))]
+        value = component.json()
+        del value['legalTexts'], value['notices']
+        value['links'] = links
+        result.append(value)
+    return result
 
 
 def copyright_notice(project: Project) -> str:
@@ -56,15 +95,10 @@ def render(repo: Path, project: Project, version: str, scopes: dict[str, list[Co
         files[base + "/inventory.json"] = marshal(inventory)
         files[base + "/THIRD_PARTY_NOTICES.txt"] = notices(components).encode()
         files[base + "/SOURCE.txt"] = (source_url + "\n").encode()
-    about_components: list[dict[str, Json]] = []
-    for component in scopes["server/browser"]:
-        value = component.json()
-        del value["legalTexts"], value["notices"]
-        about_components.append(value)
     files["client/public/legal/about.json"] = marshal({
         "schemaVersion": 2, "project": project.json(), "sourceVersion": version, "sourceURL": source_url,
         "licenseURL": "legal/LICENSE.txt", "noticesURL": "legal/THIRD_PARTY_NOTICES.txt",
-        "components": about_components,
+        "components": about_components(repo, source_url, scopes["server/browser"]),
     })
     files["client/public/legal/LICENSE.txt"] = license_text
     files["client/public/legal/THIRD_PARTY_NOTICES.txt"] = notices(scopes["server/browser"]).encode()

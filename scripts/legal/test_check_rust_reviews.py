@@ -85,6 +85,14 @@ class PlatformRecordTests(unittest.TestCase):
         root = self.repo(records)
         (root / 'legal/rust-platform-host.json').write_text('[]')
         self.assertEqual(unreviewed_platforms(root, self.TARGETS), ['legal/rust-platform-host.json is read by no builder'])
+        with (root / 'mise.toml').open('a') as mise:
+            mise.write("host = 'python3 -m scripts.legal.rust --host'\n")
+        self.assertEqual(unreviewed_platforms(root, self.TARGETS), ['legal/rust-platform-host.json is read by no builder'])
+        host = {'target': 'x86_64-unknown-linux-gnu',
+                'rustc': RUSTC.replace('aarch64-apple-darwin', 'x86_64-unknown-linux-gnu'),
+                'reviewDecision': 'approved', 'reviewNotes': 'reviewed'}
+        (root / 'legal/rust-platform-host.json').write_text(json.dumps([host]))
+        self.assertEqual(unreviewed_platforms(root, self.TARGETS), [])
 
     def test_a_missing_pending_or_stale_record_is_reported_against_its_builder(self) -> None:
         missing = ['legal/macos.json has no approved record for aarch64-apple-darwin on Rust 1.98.1, '

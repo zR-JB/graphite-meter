@@ -10,7 +10,7 @@ none. The file keeps the layout the legal tools write, so hand edits cannot drif
 rewrites it in that layout. The static Linux binaries may compile at most BUDGET crates.
 
 Every shipped target also needs an approved platform record in the --supplement file its builder
-reads, so a release request cannot reach a target nobody reviewed, and a builder must read every
+reads, so a release request cannot reach a target nobody reviewed, and a release or host builder must read every
 legal/rust-platform-*.json file.
 """
 from __future__ import annotations
@@ -82,8 +82,18 @@ def unreviewed_platforms(repo: Path, targets: str) -> list[str]:
             platform, target = line.split()
             if builds(platform) and target not in approved:
                 problems.append(f'{name} has no approved record for {target} on Rust {channel}, which {builder} builds')
-    return problems + [f'{name} is read by no builder' for path in sorted((repo / 'legal').glob('rust-platform-*.json'))
-                       if (name := path.relative_to(repo).as_posix()) not in read]
+    host_builds = '--host' in (mise := (repo / 'mise.toml').read_text()) and 'python3 -m scripts.legal.rust' in mise
+    for path in sorted((repo / 'legal').glob('rust-platform-*.json')):
+        name = path.relative_to(repo).as_posix()
+        if name in read:
+            continue
+        records = json.loads(path.read_text())
+        if not (host_builds and records and all(
+                record.get('reviewDecision') == 'approved' and record.get('reviewNotes')
+                and f"\nhost: {record.get('target')}\n" in record.get('rustc', '')
+                and f'\nrelease: {channel}\n' in record.get('rustc', '') for record in records)):
+            problems.append(f'{name} is read by no builder')
+    return problems
 
 
 def unused(reviews: list[dict], used: set[Crate]) -> list[dict]:

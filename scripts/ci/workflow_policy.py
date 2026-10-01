@@ -371,8 +371,11 @@ def check_build_context(root: Path) -> None:
 
 
 def check_certificates(root: Path) -> None:
+    repository = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=root,
+                                capture_output=True, text=True, check=False)
     listed = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True, check=False)
-    if listed.returncode == 0:
+    if (repository.returncode == 0 and Path(repository.stdout.rstrip('\n')).resolve() == root.resolve()
+            and listed.returncode == 0):
         names = [entry.decode() for entry in listed.stdout.split(b"\0") if entry]
     else:
         names = [str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()]

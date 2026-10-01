@@ -1,0 +1,31 @@
+[
+  {
+    "target": "x86_64-unknown-linux-gnu",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8\n",
+    "nativeCompiler": "cc (GCC) 16.2.1 20260819 (Red Hat 16.2.1-2)",
+    "systemLibraries": [
+      "ld-linux-x86-64.so.2",
+      "libc.so.6",
+      "libgcc_s.so.1",
+      "libm.so.6"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Reviewed the Rust 1.98.1 x86_64-unknown-linux-gnu standard-library aggregate and all sysroot license texts, including its LLVM/compiler-builtins notices; compiler implementation dependencies are excluded. Real server and TUI linker maps bind the five startup objects below. RPM ownership is glibc-devel-2.43-8.fc44.x86_64 for Scrt1.o/crti.o/crtn.o and gcc-16.2.1-2.fc44.x86_64 for crtbeginS.o/crtendS.o. The glibc SRPM fetched from https://kojipkgs.fedoraproject.org/packages/glibc/2.43/8.fc44/src/glibc-2.43-8.fc44.src.rpm contains glibc-2.43-47-gbc95068f5f.tar.xz, matching its RPM changelog (SRPM SHA-256 9a4dde3afc3d11906684d529d086cb2c060bd9c3bcf0e04f186117153dbb50f1). Its start.S, crti.S and crtn.S license headers grant unrestricted linking of their compiled versions; their exact headers are retained in legal/manual/glibc/x86_64-startup-notices.txt, with glibc LICENSES and LGPL-2.1. The Fedora patches cover localedata, CS_PATH, Python and an s390 test Makefile adjustment; none changes these startup files. GCC startup/runtime objects use GPLv3 with the supplied GCC Runtime Library Exception 3.1. The ELF executable dynamically imports the GNU loader, libc, libm and libgcc_s; these system shared libraries are not bundled and remain replaceable. Preserve the complete Rust standard-library aggregate, glibc notices and linking permission, and GCC notices/exception. This review covers only the fingerprinted Fedora 44 inputs; other toolchains or native files need review.",
+    "description": "Rust 1.98.1 standard-library and Fedora 44 glibc 2.43/GCC 16.2.1 startup/runtime notices for x86_64 GNU/Linux host builds. The five listed startup objects are linked into the executable; the GNU loader, C/math runtime and GCC support shared libraries are system imports, not bundled. glibc startup files retain their linking exception and GCC runtime files retain GCC Runtime Library Exception 3.1.",
+    "nativeInputs": [
+      "/usr/lib/gcc/x86_64-redhat-linux/16/crtbeginS.o",
+      "/usr/lib/gcc/x86_64-redhat-linux/16/crtendS.o",
+      "/usr/lib64/Scrt1.o",
+      "/usr/lib64/crti.o",
+      "/usr/lib64/crtn.o"
+    ],
+    "notices": {
+      "/usr/share/licenses/glibc/LICENSES": "glibc/LICENSES",
+      "/usr/share/licenses/glibc/COPYING.LESSERv2": "glibc/LGPL-2.1",
+      "legal/manual/glibc/x86_64-startup-notices.txt": "glibc/x86_64-startup-notices.txt",
+      "/usr/share/licenses/gcc/COPYING3": "gcc-runtime/GPL-3",
+      "/usr/share/licenses/gcc/COPYING.RUNTIME": "gcc-runtime/GCC-exception-3.1"
+    },
+    "inputsSha256": "7058e854234a6f9644aa8b25ee2086e893ef29315b050e0e48a443cdd13e8cf0"
+  }
+]

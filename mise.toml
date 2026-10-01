@@ -458,8 +458,7 @@ description = "Format the experimental Rust workspace"
 dir = "rust"
 run = "cargo fmt --all"
 
-# Development builds embed the notices that the legal pipeline generates for them on any host
-# (legal/README.md); the executable it builds with them in rust/target is the one the tasks leave or run.
+# Host builds verify native inputs against their reviewed platform record (legal/README.md).
 [tasks._rust-dev-legal]
 hide = true
 usage = '''
@@ -470,7 +469,7 @@ arg "[client]" help="the browser build task whose assets and module scan the ser
 run = '''
 #!/usr/bin/env sh
 set -eu
-set -- --development --package "$usage_package" --profile "$usage_profile" \
+set -- --host --package "$usage_package" --profile "$usage_profile" \
   --out "rust/target/dev-legal/$usage_package-$usage_profile" --reviews legal/rust-reviewed-components.json
 if [ -n "${usage_client:-}" ]; then
   scan=$(mktemp)
@@ -484,13 +483,13 @@ CARGO_TARGET_DIR="$PWD/rust/target" python3 -m scripts.legal.rust "$@"
 '''
 
 [tasks.rust-server-build]
-description = "Build the experimental Rust server, rust/target/release/graphite-meter-server, with the production browser UI and development notices"
+description = "Build the experimental Rust server, rust/target/release/graphite-meter-server, with the production browser UI and reviewed host notices"
 # prod stamps only the server, through GM_ENGINE_VERSION: a VERSION would stamp the browser client too.
 env = { GM_ENGINE_VERSION = "{{ get_env(name='GM_ENGINE_VERSION', default=get_env(name='VERSION', default='development') ~ '-rust') }}" }
 run = [{ task = "_rust-dev-legal", args = ["graphite-meter-server", "release", "client-build-prod"] }]
 
 [tasks.rust-server-run]
-description = "Run the experimental Rust server with development notices and GM_* configuration; arguments after -- go to the server"
+description = "Run the experimental Rust server with reviewed host notices and GM_* configuration; arguments after -- go to the server"
 raw = true
 env = { GM_ENGINE_VERSION = "development-rust" }
 run = [
@@ -499,7 +498,7 @@ run = [
 ]
 
 [tasks.rust-client-run]
-description = "Run the experimental Rust TUI, with development notices, against a server"
+description = "Run the experimental Rust TUI, with reviewed host notices, against a server"
 raw = true
 run = [
   { task = "_rust-dev-legal", args = ["graphite-meter-client", "dev"] },
@@ -507,7 +506,7 @@ run = [
 ]
 
 [tasks.rust-client-build]
-description = "Build the experimental Rust TUI, rust/target/release/graphite-meter-client, without browser assets, with development notices"
+description = "Build the experimental Rust TUI, rust/target/release/graphite-meter-client, without browser assets, with reviewed host notices"
 run = [{ task = "_rust-dev-legal", args = ["graphite-meter-client", "release"] }]
 
 [tasks.rust-check]

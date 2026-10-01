@@ -12,6 +12,7 @@ import argparse
 import gzip
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -23,7 +24,7 @@ from pathlib import Path
 
 from ..ci.github_api import ControlPlaneError, local_path
 from ..ci.toolchains import rust_channel
-from .artifacts import add_bytes, add_tree, legal_header, notices, release_source
+from .artifacts import about_components, add_bytes, add_tree, legal_header, notices, release_source
 from .discovery import discover_browser
 from .model import (Component, LegalError, Project, Provenance, Review, array, manual_files, manual_sources, marshal,
                     obj, read_json, sha256, strings, text)
@@ -45,7 +46,8 @@ def cargo(repo: Path, *args: str) -> list[str]:
 
 
 def capture(repo: Path, package: str, target: str | None, profile: str, link_map: Path | None,
-            legal_directory: Path | None = None, asset_directory: Path | None = None) -> tuple[dict, list[dict]]:
+            legal_directory: Path | None = None, asset_directory: Path | None = None,
+            *, link_target: str | None = None) -> tuple[dict, list[dict]]:
     """Own the invocation so test/workspace artifacts cannot contaminate the scan.
 
     Without a target it is Cargo's plain build for this host, and without a link map it maps no native inputs.
@@ -66,7 +68,7 @@ def capture(repo: Path, package: str, target: str | None, profile: str, link_map
     # Only the executable's link gets the map request; a fresh executable keeps the map of its last link.
     command = cargo(repo, 'rustc', '--locked', '--package', package, '--bin', package,
                     *(['--target', target] if target else []), '--profile', profile, '--message-format=json',
-                    *(['--', platform.link_map_argument(target, link_map)] if target and link_map else []))
+                    *(['--', platform.link_map_argument(link_target or target or '', link_map)] if link_map else []))
     result = subprocess.run(command, cwd=repo / 'rust', env=environment,
                             stdout=subprocess.PIPE, check=True, text=True)
     messages = []
@@ -209,13 +211,13 @@ def legal_report(repo: Path, version: str, sections: str, development: bool = Fa
             + f'Cargo compilation-input notices (including build-time dependencies)\n\n{sections}'.encode())
 
 
-def about(project: Project, version: str, engine_version: str, components: list[Component]) -> dict[str, object]:
+def about(project: Project, version: str, engine_version: str, components: list[Component],
+          repo: Path = Path(__file__).resolve().parents[2]) -> dict[str, object]:
     """The browser's about.json, whose source is a release version's tag as in Go's."""
     return {'schemaVersion': 2, 'project': project.json(), 'sourceVersion': engine_version,
             'sourceURL': release_source(project, version)[1], 'licenseURL': 'legal/LICENSE.txt',
             'noticesURL': 'legal/THIRD_PARTY_NOTICES.txt',
-            'components': [{key: value for key, value in component.json().items() if key not in ('legalTexts', 'notices')}
-                           for component in components]}
+            'components': about_components(repo, release_source(project, version)[1], components)}
 
 
 def image_additions(repo: Path, browser: list[Component], provenance: list[Provenance]) -> list[Component]:
@@ -238,7 +240,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument('--repo', type=Path, default=Path(__file__).resolve().parents[2])
     parser.add_argument('--package', choices=PACKAGES, required=True)
-    parser.add_argument('--target', help='required, except that a --development build defaults to Cargo\'s host build')
+    builds = parser.add_mutually_exclusive_group()
+    builds.add_argument('--target', help='the reviewed cross-build target')
+    builds.add_argument('--host', action='store_true', help='review Cargo\'s plain host build against its platform record')
     parser.add_argument('--profile', choices=('dev', 'ci', 'release'), default='release')
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--reviews', type=Path)
@@ -248,14 +252,17 @@ def main() -> None:
     parser.add_argument('--version', default=os.environ.get('VERSION') or 'development',
                         help='the release version, whose tag the notices name as the source')
     parser.add_argument('--review-template', action='store_true')
-    parser.add_argument('--development', action='store_true',
+    builds.add_argument('--development', action='store_true',
                         help='notices of an unreviewed development build on any host: they omit the platform record '
                              'and the toolchain facts it reviews, say so, and never pass release verification')
     args = parser.parse_args()
+    revision = os.environ.get('GM_ENGINE_VERSION', '').removesuffix('-rust')
+    if args.version == 'development' and re.fullmatch(r'[0-9a-f]{7,40}', revision):
+        args.version = revision
     if args.development and (args.supplement or args.review_template):
         parser.error('--development reviews no platform')
-    if not (args.target or args.development):
-        parser.error('--target is required')
+    if not (args.target or args.host or args.development):
+        parser.error('--target is required unless --host or --development selects the host')
     repo = args.repo.resolve()
     reviews_path = local_path(args.reviews, repo) if args.reviews else None
     supplement = local_path(args.supplement, repo) if args.supplement else None
@@ -271,10 +278,18 @@ def main() -> None:
     toolchain = subprocess.check_output(['rustc', f'+{channel}', '-vV'], text=True)
     target = args.target or next(line.removeprefix('host: ') for line in toolchain.splitlines()
                                  if line.startswith('host: '))
+    if args.host and supplement is None:
+        native_compiler = platform.linker_version(target)
+        matches = [path for path in sorted((repo / 'legal').glob('rust-platform-*.json'))
+                   if (entry := platform.record(path, target)) is not None
+                   and entry.get('nativeCompiler') == native_compiler]
+        if len(matches) > 1:
+            raise LegalError(f'duplicate host platform reviews for {target}: {matches}')
+        supplement = matches[0] if matches else None
     link_map = platform.link_map(output, target, args.profile)
     # A development build reads no native inputs or imports: only a platform record, which it lacks, reviews them.
     mapped = None if args.development else link_map
-    metadata, messages = capture(repo, args.package, args.target, args.profile, mapped)
+    metadata, messages = capture(repo, args.package, args.target, args.profile, mapped, link_target=target)
     components, inventory, failures, root = discover(repo, metadata, messages, args.package, reviews, provenance)
     manifest = {'schemaVersion': 1, 'package': args.package, 'target': target,
                 'profile': args.profile, 'rustc': toolchain,
@@ -302,7 +317,7 @@ def main() -> None:
         raise LegalError('Rust dependency notices need review:\n' + '\n'.join(failures))
     if args.development:
         extra = DEVELOPMENT_PLATFORM
-    elif supplement is None:
+    elif supplement is None and not args.host:
         raise LegalError('reviewed Rust sysroot and platform-library notice supplement is required')
     else:
         try:
@@ -351,7 +366,7 @@ def main() -> None:
         (legal_assets / 'THIRD_PARTY_NOTICES.txt').write_bytes(shared_notices.encode())
         (legal_assets / 'about.json').write_bytes(marshal(about(
             Project.read(repo), args.version, os.environ.get('GM_ENGINE_VERSION', 'rust-experimental'),
-            components + browser_components)))
+            components + browser_components, repo)))
     (output / 'LEGAL.txt').write_bytes(legal_report(repo, args.version, shared_notices if shared_notices is not None
                                                     else notices(components) + '\n\nRust sysroot and platform notices\n\n' + extra,
                                                     args.development))
@@ -364,6 +379,8 @@ def main() -> None:
             if not resolved.is_relative_to(repo):
                 raise LegalError('reviewed release inputs must be stored inside the repository')
             inputs.append(str(resolved.relative_to(repo)))
+    inputs += [str(resolved.relative_to(repo)) for name in platform.own_notices(record)
+               if (resolved := platform.source(name, sysroot).resolve()).is_relative_to(repo)]
     inputs += ['legal/rust-provenance.json', *(['legal/provenance.json'] if args.package == 'graphite-meter-server' else [])]
     inputs += [file.name for entry in provenance for file in entry.localLegalFiles]
     inputs += [str(Path(item['manifest_path']).resolve().relative_to(repo)) for item in metadata['packages']
@@ -381,7 +398,7 @@ def main() -> None:
     (output / 'build-identity.txt').write_bytes((script_output(messages, root) / 'legal-build-identity.txt').read_bytes())
     try:
         rebuilt_metadata, rebuilt_messages = capture(repo, args.package, args.target, args.profile, mapped,
-                                                     output, staged_assets)
+                                                     output, staged_assets, link_target=target)
         _, rebuilt_inventory, rebuilt_failures, _ = discover(repo, rebuilt_metadata, rebuilt_messages, args.package,
                                                              reviews, provenance)
         if rebuilt_failures or rebuilt_inventory != inventory or not args.development and (

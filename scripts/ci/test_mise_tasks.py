@@ -69,12 +69,12 @@ class MiseTaskTests(unittest.TestCase):
             self.assertEqual(built["env"], {"VERSION": payload, "GM_CLIENT_REVISION": payload})
             run("goclient-build", VERSION=payload, status=2)
 
-            def development(package: str, profile: str, *browser: str) -> list[str]:
-                return ["-m", "scripts.legal.rust", "--development", "--package", package, "--profile", profile,
+            def host_build(package: str, profile: str, *browser: str) -> list[str]:
+                return ["-m", "scripts.legal.rust", "--host", "--package", package, "--profile", profile,
                         "--out", f"rust/target/dev-legal/{package}-{profile}",
                         "--reviews", "legal/rust-reviewed-components.json", *browser]
 
-            # Development builds embed the notices the legal pipeline generates for them on any host: the
+            # Host builds embed the notices the legal pipeline verifies against their platform: the
             # browser build hands the server's its module scan, and the pipeline's build in rust/target is the
             # executable the tasks leave or run.
             for name in ("debug/graphite-meter-server", "debug/graphite-meter-client", "release/graphite-meter-server"):
@@ -83,7 +83,7 @@ class MiseTaskTests(unittest.TestCase):
             pipeline = run("rust-server-build", VERSION=payload)
             client = json.loads(trace.read_text().splitlines()[0])
             scan = client["env"].pop("GM_LEGAL_SCAN_OUT")
-            self.assertEqual(pipeline["args"], development("graphite-meter-server", "release", "--browser-scan", scan))
+            self.assertEqual(pipeline["args"], host_build("graphite-meter-server", "release", "--browser-scan", scan))
             for key, path in (("GM_RUST_ASSET_DIR", "client/dist"), ("CARGO_TARGET_DIR", "rust/target")):
                 self.assertEqual(Path(pipeline["env"].pop(key)).resolve(), (root / path).resolve())
             self.assertEqual(pipeline["env"], {"VERSION": payload, "GM_ENGINE_VERSION": f"{payload}-rust"})
@@ -96,7 +96,7 @@ class MiseTaskTests(unittest.TestCase):
             tui = run("tui", "-legal", GM_IMPLEMENTATION="rust", GM_CLIENT_REVISION="abc123")
             pipeline = json.loads(trace.read_text().splitlines()[0])
             self.assertEqual((pipeline["args"], pipeline["env"]["GM_ENGINE_VERSION"]),
-                             (development("graphite-meter-client", "dev"), "abc123-rust"))
+                             (host_build("graphite-meter-client", "dev"), "abc123-rust"))
             self.assertEqual(tui["args"], ["-legal"])
             # Release requests and CI package the macOS TUIs with one task, on the reviewed Xcode.
             darwin = run("rust-darwin-package", payload, RELEASE_DIST=str(root / "dist"))

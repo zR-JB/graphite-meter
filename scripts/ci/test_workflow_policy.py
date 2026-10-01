@@ -174,12 +174,14 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     ("scripts/legal/rust_platform.py", None, "from ..ci import trust\n", r"darwin misses \['scripts/ci/trust.py'\]"),
     (".dockerignore", "rust/http3/fuzz/corpus\n", "", r"misses Rust build output \['rust/http3/fuzz/corpus'\]"),
     # Development notices stay out of CI and releases, directly or through a task a job runs.
-    (W + "ci.yml", None, "      - run: mise run rust-server-run\n", "unreviewed --development notices"),
-    ("mise.toml", '  "cargo fmt --all --check",\n', '  { task = "rust-client-build" },\n  "cargo fmt --all --check",\n',
+    (W + "ci.yml", None, "      - run: python3 -m scripts.legal.rust --development\n", "unreviewed --development notices"),
+    ("mise.toml", '  "cargo fmt --all --check",\n',
+     '  "python3 -m scripts.legal.rust --development",\n  "cargo fmt --all --check",\n',
      "unreviewed --development notices"),
-    ("mise.toml", "[tasks.rust-check]\n", '[tasks.rust-check]\ndepends = ["rust-client-build"]\n',
+    ("mise.toml", "[tasks.rust-check]\n", '[tasks.unreviewed-fixture]\nrun = "python3 -m scripts.legal.rust --development"\n'
+     '[tasks.rust-check]\ndepends = ["unreviewed-fixture"]\n',
      "unreviewed --development notices"),
-    ("scripts/release-artifacts.sh", "set -eu\n", "set -eu\nmise run rust-client-build\n",
+    ("scripts/release-artifacts.sh", "set -eu\n", "set -eu\npython3 -m scripts.legal.rust --development\n",
      "unreviewed --development notices"),
     ("container/Dockerfile.rust", '--profile "$PROFILE"', '--profile "$PROFILE" --development',
      "unreviewed --development notices"),

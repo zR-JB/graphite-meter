@@ -58,7 +58,7 @@ fn fail(error: &Error, code: i32) -> i32 {
     code
 }
 fn legal() -> Result<i32, Error> {
-    let (compressed, length) = LEGAL.ok_or("this build embeds no notices; mise run rust-client-run -- --legal builds the TUI with development notices and prints them")?;
+    let (compressed, length) = LEGAL.ok_or("this build embeds no notices; mise run rust-client-run -- --legal builds the TUI with reviewed host notices and prints them")?;
     let report = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(compressed, length)
         .map_err(|_| "embedded Rust legal notices are corrupt")?;
     if report.len() != length {

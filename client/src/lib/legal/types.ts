@@ -6,6 +6,7 @@ export interface LegalComponent {
   declaredLicenseExpression: string;
   selectedLicenseExpression: string;
   modified: boolean;
+  links: { label: string; url: string }[];
 }
 
 interface LegalProject {

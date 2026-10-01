@@ -121,7 +121,8 @@ class RustLegalReportTests(unittest.TestCase):
     def test_the_report_opens_as_go_tui_report_of_the_same_version_and_keeps_its_notices(self) -> None:
         project = Project.read(ROOT)
         sections = 'THIRD-PARTY SOFTWARE NOTICES\n\nnotices shared with the browser\n'
-        for version, tag in (('1.2.3', '/tree/v1.2.3'), ('v1.2.3-rc.1', '/tree/v1.2.3-rc.1'), ('development', '')):
+        for version, tag in (('1.2.3', '/tree/v1.2.3'), ('v1.2.3-rc.1', '/tree/v1.2.3-rc.1'),
+                             ('22aa4cf2', '/tree/22aa4cf2'), ('development', '')):
             with self.subTest(version=version):
                 go = render(ROOT, project, version, {'server/browser': [], 'tui': [], 'container': []})
                 tui = go['go/internal/legal/assets/TUI_LEGAL.txt']
@@ -157,15 +158,17 @@ class RustDevelopmentTests(unittest.TestCase):
     def test_a_development_capture_is_cargo_plain_host_build_without_a_link_map(self) -> None:
         link_map = Path('/notices/x86_64-unknown-linux-musl-release.map')
         commands = []
-        for target, mapped in ((None, None), ('x86_64-unknown-linux-musl', link_map)):
+        for target, mapped in ((None, None), ('x86_64-unknown-linux-musl', link_map), (None, link_map)):
             with patch('subprocess.run', return_value=subprocess.CompletedProcess([], 0, '')) as run, \
                     patch('subprocess.check_output', return_value='{}'):
-                capture(ROOT, 'graphite-meter-client', target, 'release', mapped)
+                capture(ROOT, 'graphite-meter-client', target, 'release', mapped,
+                        link_target='x86_64-unknown-linux-musl')
             commands.append(run.call_args.args[0][2:])
         head = ['rustc', '--locked', '--package', 'graphite-meter-client', '--bin', 'graphite-meter-client']
         tail = ['--profile', 'release', '--message-format=json']
         self.assertEqual(commands, [head + tail, head + ['--target', 'x86_64-unknown-linux-musl'] + tail
-                                    + ['--', f'-Clink-arg=-Wl,-Map={link_map}']])
+                                    + ['--', f'-Clink-arg=-Wl,-Map={link_map}'],
+                                    head + tail + ['--', f'-Clink-arg=-Wl,-Map={link_map}']])
 
 
 class RustImageTests(unittest.TestCase):
