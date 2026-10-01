@@ -98,12 +98,6 @@ class MiseTaskTests(unittest.TestCase):
             self.assertEqual((pipeline["args"], pipeline["env"]["GM_ENGINE_VERSION"]),
                              (host_build("graphite-meter-client", "dev"), "abc123-rust"))
             self.assertEqual(tui["args"], ["-legal"])
-            # Release requests and CI package the macOS TUIs with one task, on the reviewed Xcode.
-            darwin = run("rust-darwin-package", payload, RELEASE_DIST=str(root / "dist"))
-            self.assertEqual(darwin["args"], [
-                "-m", "scripts.package_rust", payload, "--os", "darwin", "--output", str(root / "dist"),
-                "--supplement", "legal/rust-platform-macos.json", "--checksums"])
-            self.assertEqual(darwin["env"], {"DEVELOPER_DIR": "/Applications/Xcode_16.4.app/Contents/Developer"})
             self.assertFalse(canary.exists())
 
             # The delayed-download gate runs exactly its one ignored test, fails when that matches

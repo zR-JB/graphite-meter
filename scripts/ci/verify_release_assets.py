@@ -20,7 +20,7 @@ from .github_api import (
 )
 from ..legal.model import manual_files, manual_sources
 from ..legal.rust import DEVELOPMENT
-from .toolchains import host_platform, tui_targets
+from .toolchains import host_platform, rust_tui_targets, tui_targets
 from .verify_oci import BLOB_LIMIT, source_commit
 
 CHECKSUM_LINE = re.compile(r"([0-9a-fA-F]{64})[ \t]+[* ]?(.+)")
@@ -219,7 +219,7 @@ def rust_builds(selection: str) -> tuple[list[str], list[str]]:
     """The platforms a Rust selection builds the server for, and those it builds the TUI for."""
     if selection not in ("none", "server", "tui", "both"):
         fail("invalid Rust artifact selection")
-    platforms = list(tui_targets(TARGETS))
+    platforms = list(rust_tui_targets(TARGETS))
     server = [platform for platform in platforms if platform.startswith("linux/")]
     return (server if selection in ("server", "both") else []), (platforms if selection in ("tui", "both") else [])
 
@@ -236,13 +236,13 @@ def rust_files(version: str, package: str, platform: str) -> set[str]:
 def rust_statements(version: str, server: list[str], tui: list[str]) -> dict[str, set[str]]:
     """BuildKit's provenance statement of each Docker export, named as released, and the files it attests.
 
-    Each server platform is its own export; one export holds every TUI but the natively built macOS ones.
+    Each server platform is its own export; one export holds every TUI.
     """
     statements = {f"graphite-meter-server_{version}_{platform.replace('/', '_')}_rust.provenance.json":
                   rust_files(version, "graphite-meter-server", platform) for platform in server}
-    if docker := [platform for platform in tui if not platform.startswith("darwin/")]:
+    if tui:
         statements[f"graphite-meter-client_{version}_rust.provenance.json"] = set().union(
-            *(rust_files(version, "graphite-meter-client", platform) for platform in docker))
+            *(rust_files(version, "graphite-meter-client", platform) for platform in tui))
     return statements
 
 
@@ -407,7 +407,7 @@ def verify_rust_provenance(dist: Path, name: str, files: set[str], commit: str, 
 
 def verify_rust_artifacts(dist: Path, version: str, server: list[str], tui: list[str],
                           root: Path = Path(".")) -> None:
-    targets = tui_targets(TARGETS)
+    targets = rust_tui_targets(TARGETS)
     for platform in server:
         source, = rust_files(version, "graphite-meter-server", platform)
         verify_rust_source(dist / source, "graphite-meter-server", targets[platform], root)

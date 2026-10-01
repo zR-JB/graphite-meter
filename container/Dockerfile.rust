@@ -9,6 +9,16 @@ ENV LD_LIBRARY_PATH=/usr/local/lib \
     CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-gnu-gcc \
     CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc
 WORKDIR /src
+COPY rust/Cargo.toml rust/Cargo.lock rust/rust-toolchain.toml rust/
+COPY rust/server/Cargo.toml rust/server/
+COPY rust/client/Cargo.toml rust/client/
+COPY rust/core/Cargo.toml rust/core/
+COPY rust/net/Cargo.toml rust/net/
+COPY rust/http3/Cargo.toml rust/http3/
+COPY scripts/ci/rust_dependencies.py /usr/local/bin/gm-rust-dependencies
+COPY scripts/tui-targets.txt scripts/tui-targets.txt
+
+FROM scratch AS source
 COPY LICENSE COPYRIGHT mise.toml ./
 COPY scripts/ scripts/
 COPY legal/ legal/
@@ -28,13 +38,21 @@ RUN printf 'Types: deb\nURIs: https://snapshot.debian.org/archive/%s/20260927T18
         gcc-aarch64-linux-gnu=4:12.2.0-3 libc6-dev-arm64-cross=2.36-8cross1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Apple's SDK is licensed for Apple hardware only; the release workflow builds macOS natively.
+# Rust TUI releases support Linux and Windows.
 FROM rust-arm64 AS tui-build
-ARG VERSION
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc-mingw-w64-x86-64-win32=12.2.0-14+deb12u1+25.2+b1 mingw-w64-x86-64-dev=10.0.0-3 \
     && rm -rf /var/lib/apt/lists/*
 ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
+ARG GM_RUST_DEPENDENCY_CACHE=0
+ARG GM_RUST_RELEASE_LTO=fat
+ARG GM_RUST_RELEASE_CODEGEN_UNITS=1
+ENV CARGO_PROFILE_RELEASE_LTO=$GM_RUST_RELEASE_LTO \
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$GM_RUST_RELEASE_CODEGEN_UNITS
+RUN if [ "$GM_RUST_DEPENDENCY_CACHE" = "1" ]; then python3 /usr/local/bin/gm-rust-dependencies \
+    --package graphite-meter-client --target x86_64-unknown-linux-musl aarch64-unknown-linux-musl x86_64-pc-windows-gnu; fi
+COPY --from=source / /src/
+ARG VERSION
 RUN python3 -m scripts.package_rust "$VERSION" --os linux windows --output /src/dist \
     --supplement legal/rust-platform-debian-bookworm.json
 
@@ -59,9 +77,18 @@ COPY go/internal/auth/assets/ /src/go/internal/auth/assets/
 RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:bundle; fi
 
 FROM rust-${TARGETARCH} AS server-build
-ARG VERSION
 ARG TARGETARCH
 ARG PROFILE=release
+ARG GM_RUST_DEPENDENCY_CACHE=0
+ARG GM_RUST_RELEASE_LTO=fat
+ARG GM_RUST_RELEASE_CODEGEN_UNITS=1
+ENV CARGO_PROFILE_RELEASE_LTO=$GM_RUST_RELEASE_LTO \
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$GM_RUST_RELEASE_CODEGEN_UNITS
+RUN if [ "$GM_RUST_DEPENDENCY_CACHE" = "1" ]; then \
+    target=$(awk -v platform="linux/$TARGETARCH" '$1 == platform { print $2 }' scripts/tui-targets.txt) \
+    && python3 /usr/local/bin/gm-rust-dependencies --package graphite-meter-server --target "$target" --profile "$PROFILE"; fi
+COPY --from=source / /src/
+ARG VERSION
 ENV GM_ENGINE_VERSION=${VERSION}-rust \
     GM_RUST_ASSET_DIR=/src/client/dist
 COPY --from=browser /src/client/ /src/client/

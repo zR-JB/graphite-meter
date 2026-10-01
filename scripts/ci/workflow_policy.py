@@ -3,14 +3,13 @@
 
 from __future__ import annotations
 
-import ast
 import re
 import subprocess
 import tomllib
 from pathlib import Path, PurePosixPath
 
 from .github_api import PEM, TLS_NAME, ControlPlaneError, fail
-from .release import BUILD_JOB, DARWIN_JOB
+from .release import BUILD_JOB
 from .toolchains import check as check_toolchain_literals, pin
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -19,8 +18,6 @@ WRITE = re.compile(r"(?<![\w-])(?!permission-)([a-z-]+):\s*write\b")
 STEP = re.compile(r"(?m)^(?=\s*- )")
 JOB = re.compile(r"(?m)^  (?=[a-z-]+:$)")
 RELEASE_SECRETS = {"GHCR_TOKEN", "RELEASE_APP_PRIVATE_KEY"}
-# The macOS TUIs are packaged by these scripts and every module they import or run with -m.
-DARWIN_SCRIPTS = ("scripts/package_rust.py",)
 
 TRIGGERS = {
     "advisories.yml": {"schedule", "workflow_dispatch"},
@@ -52,21 +49,18 @@ ORDERED = {
         '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', "uses: docker/build-push-action@",
         'python3 -m scripts.ci.verify_release_assets "$VERSION"',
         # Only the expected source offer and Rust artifacts leave the exports, with a listing that cannot
-        # list itself; the macOS job packages with the task CI runs.
+        # list itself.
         "run: python3 -m scripts.ci.release stage-source\n",
-        "run: python3 -m scripts.ci.release stage-rust\n", 'run: mise run rust-darwin-package "$VERSION"\n',
+        "run: python3 -m scripts.ci.release stage-rust\n",
     ),
     # CI builds, stages and verifies the prerelease source offer and the Rust exports as a release request
-    # and the release do, and packages the macOS TUIs with the release request's task and verifies them.
+    # and the release do.
     "workflows/ci.yml": (
         "--target third-party-source", "run: python3 -m scripts.ci.release stage-source\n",
         "run: mise run rust-check\n", "run: python3 -m scripts.legal.check_git_sources --verify\n",
         "run: mise run rust-check-targets\n", "run: mise run rust-delayed-downloads\n",
-        "--target tui-artifacts", "--target server-artifacts",
+        "target: tui-artifacts\n", "target: server-artifacts\n",
         "python3 -m scripts.ci.release stage-rust\n", "python3 -m scripts.ci.release check-rust\n",
-        "run: mise run rust-darwin-package 0.0.0-dev\n", "run: python3 -m scripts.ci.release check-darwin\n",
-        "cargo test --locked --no-fail-fast -p graphite-meter-client -p graphite-meter-core -p graphite-meter-net \\\n"
-        "            -p graphite-meter-http3\n",
     ),
     # Every HTTP/3 fuzz target runs, and a failed or cancelled run keeps the crash inputs.
     "workflows/fuzz.yml": (
@@ -123,6 +117,7 @@ FORBIDDEN = {
     "workflows/release.yml": ("head_sha", "pull_request.head", "mise run", "secrets["),
     "workflows/release-request.yml": (
         "allow-insecure-entitlement", "cache-from:", "cache-to:", "GIT_AUTH_TOKEN",
+        "GM_RUST_DEPENDENCY_CACHE", "GM_RUST_RELEASE_LTO", "GM_RUST_RELEASE_CODEGEN_UNITS",
     ),
 }
 
@@ -176,7 +171,9 @@ def check_actions(root: Path) -> None:
                 if missing := [item for item in required if item not in step]:
                     fail(f"{name}: mise setup must declare {missing[0].strip()}")
             if "uses: docker/build-push-action@" in step:
-                if missing := [item for item in IMAGE_BUILD if item not in step]:
+                required = IMAGE_BUILD if name == "workflows/release-request.yml" else (
+                    "context: .\n", "github-token: ''\n", "provenance: mode=max\n")
+                if missing := [item for item in required if item not in step]:
                     fail(f"{name}: every image build must declare {missing[0].strip()}")
             for marker, bindings in CONTEXT.items():
                 env = re.findall(r"(?m)^ +([A-Z][A-Z0-9_]*): (.*)$", step) if marker in step else []
@@ -237,8 +234,8 @@ def check_workflows(root: Path) -> None:
             fail("release.yml: only publish mode may hand off verified artifacts")
     request = (workflows / "release-request.yml").read_text(encoding="utf-8")
     # release.py takes each artifact only from the request job of its name.
-    if re.findall(r"(?m)^    name: (.*)$", request) != [BUILD_JOB, DARWIN_JOB]:
-        fail(f"release-request.yml: its jobs must be named {BUILD_JOB!r} and {DARWIN_JOB!r}, as release.py expects")
+    if re.findall(r"(?m)^    name: (.*)$", request) != [BUILD_JOB]:
+        fail(f"release-request.yml: its job must be named {BUILD_JOB!r}, as release.py expects")
     scopes = re.findall(r"(?m)^ *permissions:.*(?:\n +\S.*)*", request)
     if scopes != ["permissions:\n  contents: read"]:
         fail("release-request.yml: the untrusted build may only read contents")
@@ -281,7 +278,7 @@ def check_run_commands(root: Path) -> None:
     defines the flag, and package_rust.py, the one that runs it, is read."""
     tasks = tomllib.loads(read(root, "mise.toml"))["tasks"]
     texts = [path.read_text(encoding="utf-8") for path in sorted((root / ".github").rglob("*.y*ml"))]
-    texts += [read(root, name) for name in ("container/Dockerfile", "container/Dockerfile.rust", *DARWIN_SCRIPTS)]
+    texts += [read(root, name) for name in ("container/Dockerfile", "container/Dockerfile.rust", "scripts/package_rust.py")]
     reached: set[str] = set()
     while texts:
         text = texts.pop()
@@ -318,41 +315,12 @@ def path_filters(text: str) -> dict[str, list[str]]:
     return filters
 
 
-def script_modules(root: Path, scripts: tuple[str, ...]) -> set[str]:
-    """The repository files `scripts` load: modules they import or run with -m, and their packages."""
-    found: set[str] = set()
-    pending = [root / script for script in scripts]
-    while pending:
-        path = pending.pop()
-        if (relative := path.relative_to(root).as_posix()) in found:
-            continue
-        found.add(relative)
-        package = list(path.relative_to(root).parent.parts)
-        modules: list[list[str]] = []
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if isinstance(node, ast.ImportFrom):
-                base = package[:len(package) + 1 - node.level] if node.level else []
-                base = base + (node.module.split(".") if node.module else [])
-                modules += [base, *(base + [alias.name] for alias in node.names)]
-            elif isinstance(node, ast.Import):
-                modules += [alias.name.split(".") for alias in node.names]
-            elif isinstance(node, ast.Constant) and isinstance(node.value, str) and re.fullmatch(
-                    r"scripts(?:\.\w+)+", node.value):
-                modules.append(node.value.split("."))
-        for parts in modules:
-            for depth in range(1, len(parts) + 1):
-                prefix = root.joinpath(*parts[:depth])
-                pending += [file for file in (prefix / "__init__.py", prefix.with_suffix(".py"))
-                            if file.is_file() and (depth == len(parts) or file.name == "__init__.py")]
-    return found
-
-
 def check_paths(root: Path) -> None:
-    """PRs that change an input of the Rust image or of the macOS TUIs select the jobs that build them."""
+    """PRs that change a Rust image input select the jobs that build it."""
     filters = path_filters(read(root, ".github/ci-paths.yml"))
     image = [source + "x" if source.endswith("/") else source for line in re.findall(
         r"(?m)^COPY (?!--)(.+)$", read(root, "container/Dockerfile.rust")) for source in line.split()[:-1]]
-    for name, inputs in (("rust", [".dockerignore", *image]), ("darwin", sorted(script_modules(root, DARWIN_SCRIPTS)))):
+    for name, inputs in (("rust", [".dockerignore", *image]),):
         if missing := [path for path in inputs
                        if not any(PurePosixPath(path).full_match(glob) for glob in filters.get(name, []))]:
             fail(f".github/ci-paths.yml {name} misses {missing}")

@@ -59,6 +59,12 @@ def tui_targets(path: Path) -> dict[str, str]:
     return platforms
 
 
+def rust_tui_targets(path: Path) -> dict[str, str]:
+    """Rust distributes Linux and Windows TUIs; Go retains every listed platform."""
+    return {platform: target for platform, target in tui_targets(path).items()
+            if platform.startswith(('linux/', 'windows/'))}
+
+
 def load_pins(root: Path = ROOT) -> dict[str, dict[str, str]]:
     data = tomllib.loads((root / "mise.toml").read_text(encoding="utf-8"))
     tools = data.get("tools", {})

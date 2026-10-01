@@ -66,10 +66,12 @@ class RustPackageTests(unittest.TestCase):
     def test_packaging_takes_listed_platforms_and_writes_only_inside_its_roots(self) -> None:
         from scripts.package_rust import build
 
-        supplement = ROOT / 'legal/rust-platform-macos.json'
+        supplement = ROOT / 'legal/rust-platform-debian-bookworm.json'
         with patch('subprocess.run', side_effect=AssertionError('built')), tempfile.TemporaryDirectory() as scratch:
             with self.assertRaisesRegex(ValueError, 'no TUI target for plan9/amd64'):
                 build('1.2.3', 'plan9/amd64', Path(scratch), supplement)
+            with self.assertRaisesRegex(ValueError, 'no TUI target for darwin/arm64'):
+                build('1.2.3', 'darwin/arm64', Path(scratch), supplement)
             with self.assertRaisesRegex(ControlPlaneError, 'is outside'):
                 build('1.2.3', 'linux/amd64', Path('/'), supplement)
             with self.assertRaisesRegex(ValueError, 'invalid release version'):
@@ -78,9 +80,9 @@ class RustPackageTests(unittest.TestCase):
     @unittest.skipUnless(os.name == 'posix', 'the fake executable is a shell script')
     def test_a_build_for_this_system_and_architecture_reports_its_version(self) -> None:
         import scripts.package_rust as package
-        from scripts.ci.toolchains import host_platform, tui_targets
+        from scripts.ci.toolchains import host_platform, rust_tui_targets
 
-        platforms = tui_targets(ROOT / 'scripts/tui-targets.txt')
+        platforms = rust_tui_targets(ROOT / 'scripts/tui-targets.txt')
         if host_platform() not in platforms:
             self.skipTest(f'no TUI ships for {host_platform()}')
         # The builder links musl or MinGW, whose executables run wherever their system and machine match.
@@ -108,13 +110,13 @@ class RustPackageTests(unittest.TestCase):
                 return None
 
             with patch.object(package, 'REPO', repo), patch('subprocess.run', side_effect=legal_build):
-                package.build('1.2.3', other, repo / 'dist', ROOT / 'legal/rust-platform-macos.json')
+                package.build('1.2.3', other, repo / 'dist', ROOT / 'legal/rust-platform-debian-bookworm.json')
                 self.assertFalse(ran.exists())
-                package.build('1.2.3', host_platform(), repo / 'dist', ROOT / 'legal/rust-platform-macos.json')
+                package.build('1.2.3', host_platform(), repo / 'dist', ROOT / 'legal/rust-platform-debian-bookworm.json')
                 self.assertTrue(ran.exists())
                 reported['version'] = '1.2.2-rust'
                 with self.assertRaisesRegex(ValueError, "reports 'graphite-meter-client 1.2.2-rust'"):
-                    package.build('1.2.3', host_platform(), repo / 'dist', ROOT / 'legal/rust-platform-macos.json')
+                    package.build('1.2.3', host_platform(), repo / 'dist', ROOT / 'legal/rust-platform-debian-bookworm.json')
 
 
 class RustLegalReportTests(unittest.TestCase):
@@ -144,10 +146,10 @@ class RustLegalReportTests(unittest.TestCase):
 class RustDevelopmentTests(unittest.TestCase):
     def test_only_a_development_build_goes_without_a_target_and_a_platform_record(self) -> None:
         for args, error in ((['--out', 'x'], '--target is required'),
-                            (['--development', '--supplement', 'legal/rust-platform-macos.json', '--out', 'x'],
+                            (['--development', '--supplement', 'legal/rust-platform-debian-bookworm.json', '--out', 'x'],
                              '--development reviews no platform'),
                             (['--development', '--review-template', '--out', 'x'], '--development reviews no platform'),
-                            (['--dev', '--supplement', 'legal/rust-platform-macos.json', '--out', 'x'],
+                            (['--dev', '--supplement', 'legal/rust-platform-debian-bookworm.json', '--out', 'x'],
                              'unrecognized arguments: --dev')):
             with self.subTest(args=args):
                 result = subprocess.run([sys.executable, '-m', 'scripts.legal.rust', '--package', 'graphite-meter-client',

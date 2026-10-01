@@ -104,8 +104,8 @@ jobs:
           VERSION= mise run legal-check
           mise run legal-generate
 
-      # This job never checks PR files out: BuildKit fetches that exact commit remotely,
-      # and the macOS job builds it, both without a GitHub credential.
+      # This job never checks PR files out: BuildKit fetches that exact commit remotely
+      # without a GitHub credential.
       - id: source
         name: Resolve the OCI build context
         env:
@@ -305,41 +305,3 @@ jobs:
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
-
-  darwin:
-    name: Build untrusted Rust macOS TUIs
-    needs: build
-    if: needs.build.outputs.rust_tui == 'true'
-    runs-on: macos-15
-    timeout-minutes: 60
-    steps:
-      - name: Checkout the exact release source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.build.outputs.sha }}
-          persist-credentials: false
-
-      - name: Set up pinned mise and Python
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
-        env:
-          MISE_AUTO_INSTALL: '0'
-        with:
-          version: 2026.9.14
-          install_args: --locked python
-          cache: false
-
-      # CI runs the same task on every change to the macOS TUIs' inputs.
-      - name: Build the macOS TUIs with reviewed notices and matching source
-        env:
-          MISE_AUTO_INSTALL: '0'
-          VERSION: ${{ needs.build.outputs.version }}
-          RELEASE_DIST: ${{ runner.temp }}/rust-darwin
-        run: mise run rust-darwin-package "$VERSION"
-
-      - name: Upload untrusted macOS TUIs
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: release-rust-darwin-${{ github.run_id }}
-          path: ${{ runner.temp }}/rust-darwin/
-          if-no-files-found: error
-          retention-days: 1

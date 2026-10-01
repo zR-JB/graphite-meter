@@ -21,7 +21,7 @@ mise run pipeline-test     # ty type check, control-plane and legal tests
 of the Go, browser, release and container CI jobs locally, and the policy fails if one of
 its steps has no CI job. The Rust jobs are not part of it: they run `rust-check`,
 `rust-check-targets`, the interop scripts with `rust-delayed-downloads`, Docker builds of
-`container/Dockerfile.rust` and `rust-darwin-package`.
+`container/Dockerfile.rust`.
 `Gate` is the only required status and needs every job. Path filters (`.github/ci-paths.yml`)
 narrow PR runs only; every push to main runs every job. `advisories.yml`
 rechecks Rust dependencies against the live RustSec database daily, and
@@ -30,8 +30,9 @@ input that runs for 10 seconds as a hang, and keeps the crash inputs of a
 failed or cancelled run as an artifact. The Rust
 release job exports what a release request's Docker builds export, then stages
 and verifies it with `release.py stage-rust` and `check-rust`, the code a
-release request and the release run; the macOS job verifies its TUIs with
-`check-darwin`.
+release request and the release run. Rust distributes Linux/Windows artifacts;
+Go retains its macOS targets. CI caches third-party Cargo layers and disables fat LTO
+for Rust package checks; distributed builds use full release settings without those caches.
 
 ## Releases
 
@@ -51,14 +52,12 @@ deployment when the Release run asks.
    image from main; a prerelease builds the image and the source archive of its
    third-party components, which BuildKit fetches as the exact remote commit
    without a token. The `rust` input adds the
-   experimental Rust image and archives, built the same way, and a macOS job
-   that builds the macOS archives from the validated commit without a token.
+   experimental Rust Linux image and Linux/Windows archives, built the same way.
 2. **Trusted verification.** `release.yml` runs main's tooling on
    `workflow_run` for main dispatches only and never executes the requested
    source. It binds `request.json` to the run title, the owner, the first
    attempt and bounded artifacts, each written while the job that builds it
-   ran, so the macOS job, which compiles the requested source natively, cannot
-   replace the build job's. It verifies the image and archives as data, and
+   ran. It verifies the image and archives as data, and
    requires either every main CI job and CodeQL for a stable release or, for a
    prerelease, an open PR containing current main with identical `.github`,
    `.githooks`, `scripts` and mise trees, its newest CI Gate and CodeQL check.
@@ -93,7 +92,7 @@ release it as `graphite-meter-server_VERSION_linux_ARCH_rust.provenance.json` or
 `graphite-meter-client_VERSION_rust.provenance.json`; `release.py stage-rust`
 stages only those and the expected archives. Verification requires each
 statement to attest exactly its export's files as released and to name the
-release commit, as for the images. The natively built macOS archives have none.
+release commit, as for the images.
 A prerelease's Rust archives must match its PR head's `Cargo.lock`, fork and
 provenance records, `LICENSE` and `COPYRIGHT`, which the PR's CI checked.
 Rust release builds refuse a toolchain that rustup installed from any channel

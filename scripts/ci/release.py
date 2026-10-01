@@ -47,8 +47,8 @@ OCI = "graphite-meter.oci.tar"
 OCI_LIMIT = 1024 * 1024 * 1024
 ASSETS_LIMIT = 2 * OCI_LIMIT
 # The release request's jobs, which each artifact must come from: the build runs the requested source
-# only inside BuildKit; the macOS job compiles it natively.
-BUILD_JOB, DARWIN_JOB = "Build untrusted release candidate", "Build untrusted Rust macOS TUIs"
+# only inside BuildKit.
+BUILD_JOB = "Build untrusted release candidate"
 RUST_SOURCE_FILES = ("LICENSE", "COPYRIGHT", "rust/Cargo.lock", "legal/rust-forks.json", "legal/rust-provenance.json",
                      "legal/provenance.json")
 # Seconds between reads while GitHub's read path catches up with a write.
@@ -235,8 +235,6 @@ def verify_request(request_dir: Path) -> tuple[Release, bool]:
                  f"release-assets-{run_id}": (BUILD_JOB, ASSETS_LIMIT)}
     if release.rust != "none":
         artifacts[f"release-rust-assets-{run_id}"] = (BUILD_JOB, ASSETS_LIMIT)
-    if release.rust_tui:
-        artifacts[f"release-rust-darwin-{run_id}"] = (DARWIN_JOB, ASSETS_LIMIT)
     require_dispatch_run(repository, env("REPOSITORY_OWNER"), publisher, run_id,
                          "release-request.yml", request_title(str(request["mode"]), release,
                                                               publisher), artifacts)
@@ -294,7 +292,7 @@ def command_verify() -> None:
         verify_release_assets.verify_third_party_source_archive(offer, release.version)
     verify_release_assets.merge(offer, assets)
     if release.rust != "none":
-        parts = [request_dir / f"release-rust-{part}-{run_id}" for part in ("assets", "darwin")[:1 + release.rust_tui]]
+        parts = [request_dir / f"release-rust-assets-{run_id}"]
         with tempfile.TemporaryDirectory() as fetched:
             # A stable release builds this checkout; a prerelease the PR head, whose own CI checked its files.
             root = Path(".") if release.stable else fetch_files(env("REPOSITORY"), release.sha, Path(fetched))
@@ -482,7 +480,7 @@ def command_publish() -> None:
 
 
 def command_stage_rust() -> None:
-    """Stage a request's Docker-built Rust artifacts for upload; the macOS job stages its own."""
+    """Stage a request's Docker-built Rust artifacts for upload."""
     verify_release_assets.stage_rust(gh.runner_path("RUST_EXPORT"), gh.runner_path("RUST_ASSETS"), env("VERSION"),
                                      *verify_release_assets.rust_builds(env("RUST")))
 
@@ -497,14 +495,14 @@ def command_stage_source() -> None:
     gh.write_checksums(dist)
 
 
-def command_check_rust(darwin: bool = False) -> None:
-    """Verify CI's staged Docker exports, or its macOS TUIs, as the release verifies a request's."""
-    server, tui = verify_release_assets.rust_builds("tui" if darwin else env("RUST"))
+def command_check_rust() -> None:
+    """Verify CI's staged Docker exports as the release verifies a request's."""
+    server, tui = verify_release_assets.rust_builds(env("RUST"))
     staged = gh.runner_path("RUST_ASSETS")
     with tempfile.TemporaryDirectory(dir=staged.parent) as merged:
         verify_release_assets.verify_rust(
             [staged], Path(merged) / "assets", env("VERSION"), server,
-            [platform for platform in tui if platform.startswith("darwin/") == darwin], env_sha("GITHUB_SHA"),
+            tui, env_sha("GITHUB_SHA"),
             env("GITHUB_REPOSITORY"))
     print(f"Rust release artifacts verified: {sorted(path.name for path in staged.iterdir())}")
 
@@ -512,7 +510,7 @@ def command_check_rust(darwin: bool = False) -> None:
 COMMANDS = {
     "prepare": command_prepare, "verify": command_verify, "recheck": command_recheck,
     "publish": command_publish, "stage-source": command_stage_source, "stage-rust": command_stage_rust,
-    "check-rust": command_check_rust, "check-darwin": lambda: command_check_rust(darwin=True),
+    "check-rust": command_check_rust,
 }
 
 

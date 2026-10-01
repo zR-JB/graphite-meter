@@ -56,14 +56,18 @@ editor and arrow steps cover the same range as Go's.
 `mise run rust-client-package VERSION` builds the experimental Linux and Windows
 TUI archives in the pinned builder image, with reviewed dependency notices and
 matching source; the Linux TUIs and the server image's binary are static musl executables, like Go's. Release requests can
-opt into Rust TUI archives for every platform the Go TUI ships, named like Go's
+opt into Rust TUI archives for Linux amd64/arm64 and Windows amd64, named like Go's
 with a `_rust` marker, and into a linux/amd64 + linux/arm64 server image tagged
 `VERSION-rust`; stable releases move `X.Y-rust` and `latest-rust` with it. These
 tags share `ghcr.io/zr-jb/graphite-meter` with Go's, so semver-range updaters
 such as Flux, Argo CD Image Updater or WUD read `X.Y.Z-rust` as a prerelease of
 Go's `X.Y.Z` and may skip it or move a Rust pin to Go; follow `latest-rust`, or
 match tags on `-rust$` and compare the version before that suffix. Every
-binary has a matching source offer. Go remains the release default; Rust
+binary has a matching source offer. Routine CI checks Linux/Windows package layouts and the
+shared browser suite, using cached Cargo dependency layers and disabling fat LTO for package
+checks. Rust releases omit macOS artifacts; Go retains its macOS targets.
+Distributed builds keep full release settings, build without CI caches, and verify their actual
+linked inputs against the release builder's platform record. Go remains the release default; Rust
 prerelease integration remains gated.
 The experimental container uses `container/Dockerfile.rust`, which
 `mise run rust-container-build` builds as `graphite-meter:latest-rust`. That

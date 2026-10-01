@@ -16,7 +16,7 @@ import zipfile
 from pathlib import Path
 
 from .ci.github_api import ControlPlaneError, confined_path, local_path, write_checksums
-from .ci.toolchains import host_platform, rust_channel, tui_targets, verify_rust_toolchain
+from .ci.toolchains import host_platform, rust_channel, rust_tui_targets, verify_rust_toolchain
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -24,7 +24,7 @@ REPO = Path(__file__).resolve().parents[1]
 def build(version: str, platform: str, output: Path, supplement: Path) -> None:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+-]*", version):
         raise ValueError("invalid release version")
-    if (target := tui_targets(REPO / "scripts/tui-targets.txt").get(platform)) is None:
+    if (target := rust_tui_targets(REPO / "scripts/tui-targets.txt").get(platform)) is None:
         raise ValueError(f"no TUI target for {platform}")
     goos, goarch = platform.split("/")
     # The archives go to the checkout or a temporary directory, and never leave it.
@@ -82,13 +82,14 @@ def build(version: str, platform: str, output: Path, supplement: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("version")
-    parser.add_argument("--os", nargs="+", required=True, help="build each scripts/tui-targets.txt platform of these GOOS")
+    parser.add_argument("--os", nargs="+", required=True, choices=('linux', 'windows'),
+                        help="build each supported Rust platform of these GOOS")
     parser.add_argument("--output", type=Path, default=REPO / "go/dist")
     parser.add_argument("--supplement", type=Path, required=True,
                         help="reviewed platform records of this build environment")
     parser.add_argument("--checksums", action="store_true", help="then list every file of --output in checksums.txt")
     args = parser.parse_args()
-    targets = {platform: target for platform, target in tui_targets(REPO / "scripts/tui-targets.txt").items()
+    targets = {platform: target for platform, target in rust_tui_targets(REPO / "scripts/tui-targets.txt").items()
                if platform.split("/")[0] in args.os}
     if not targets:
         parser.error(f"scripts/tui-targets.txt lists no platform of {args.os}")

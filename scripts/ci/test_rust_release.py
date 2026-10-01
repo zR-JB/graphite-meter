@@ -16,14 +16,14 @@ from ..legal.model import manual_files, manual_sources
 from ..legal.rust import DEVELOPMENT, DEVELOPMENT_NOTICE
 from .fixtures import statement, write_archive
 from .github_api import ControlPlaneError as VerificationError, JsonObject, file_sha256 as sha256_file, write_checksums
-from .toolchains import tui_targets
+from .toolchains import rust_tui_targets, tui_targets
 from .verify_release_assets import (
     TARGETS, expected_rust_artifacts, merge, read_archive, require_same, rust_builds, rust_files, stage_rust,
     tui_archive, verify_rust, verify_rust_artifacts, verify_rust_client_archive, verify_rust_source,
 )
 
 # Each shipped platform's Rust target, as the builders read it.
-RUST_TARGETS = tui_targets(TARGETS)
+RUST_TARGETS = rust_tui_targets(TARGETS)
 # What the server image adds to its binary, which its source offer covers.
 CA, = (entry for entry in manual_sources(Path("."), "graphite-meter-server") if entry.name == "ca-certificates")
 REPOSITORY, COMMIT = "example/repo", "f" * 40
@@ -70,15 +70,6 @@ def write_build(dist: Path, package: str, platform: str) -> None:
             f"{base}/SOURCE.txt": f"{base}_third-party-source.tar.gz".encode()}, base)
     source, = (name for name in rust_files("1.2.3", package, platform) if name.endswith("_third-party-source.tar.gz"))
     write_source(dist / source, inventory(package, target))
-
-
-def write_darwin(dist: Path) -> None:
-    """Write the macOS TUIs as a release request's macOS job packages them."""
-    dist.mkdir()
-    for platform in RUST_TARGETS:
-        if platform.startswith("darwin/"):
-            write_build(dist, "graphite-meter-client", platform)
-    write_checksums(dist)
 
 
 def write_exports(root: Path, server: list[str], tui: list[str], revision: str = COMMIT) -> None:
@@ -141,10 +132,10 @@ class RustArchiveBoundaryTests(unittest.TestCase):
 
     def test_artifacts_arrive_once_in_exactly_the_selection(self) -> None:
         names = expected_rust_artifacts("1.2.3", *rust_builds("both"))
-        darwin = {name for name in names if "_darwin_" in name}
+        windows = {name for name in names if "_windows_" in name}
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            for part, files in (("linux", names - darwin), ("darwin", darwin)):
+            for part, files in (("linux", names - windows), ("windows", windows)):
                 (root / part).mkdir()
                 for name in files:
                     (root / part / name).write_text(name)
@@ -152,9 +143,9 @@ class RustArchiveBoundaryTests(unittest.TestCase):
             merged = merge(root / "linux", root / "handoff")
             with self.assertRaisesRegex(VerificationError, "missing="):
                 require_same("Rust artifacts", names, merged)
-            require_same("Rust artifacts", names, merged | merge(root / "darwin", root / "handoff"))
+            require_same("Rust artifacts", names, merged | merge(root / "windows", root / "handoff"))
             with self.assertRaisesRegex(VerificationError, "more than one artifact"):
-                merge(root / "darwin", root / "handoff")
+                merge(root / "windows", root / "handoff")
 
 
 class RustServerReleaseTests(unittest.TestCase):
@@ -237,29 +228,23 @@ class RustStagingTests(unittest.TestCase):
     """A request's exports are staged as release-request.yml does and verified as release.py does."""
 
     SERVER, TUI = rust_builds("both")
-    DOCKER = [platform for platform in TUI if not platform.startswith("darwin/")]
+    DOCKER = TUI
 
     def test_a_staged_request_passes_the_release_verification(self) -> None:
-        for macos in (True, False):
-            with self.subTest(macos=macos), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
-                write_exports(root / "export", self.SERVER, self.DOCKER)
-                stage_rust(root / "export", root / "staged", "1.2.3", self.SERVER, self.TUI)
-                self.assertEqual({path.name for path in (root / "staged").iterdir()},
-                                 expected_rust_artifacts("1.2.3", self.SERVER, self.DOCKER) | {"checksums.txt"})
-                parts, tui = [root / "staged"], self.DOCKER
-                if macos:
-                    write_darwin(root / "darwin")
-                    parts, tui = parts + [root / "darwin"], self.TUI
-                verify_rust(parts, root / "assets", "1.2.3", self.SERVER, tui, COMMIT, REPOSITORY)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_exports(root / "export", self.SERVER, self.TUI)
+            stage_rust(root / "export", root / "staged", "1.2.3", self.SERVER, self.TUI)
+            self.assertEqual({path.name for path in (root / "staged").iterdir()},
+                             expected_rust_artifacts("1.2.3", self.SERVER, self.TUI) | {"checksums.txt"})
+            verify_rust([root / "staged"], root / "assets", "1.2.3", self.SERVER, self.TUI, COMMIT, REPOSITORY)
 
-    def test_ci_checks_its_exports_and_macos_tuis_with_the_release_commands(self) -> None:
+    def test_ci_checks_its_exports_with_the_release_commands(self) -> None:
         from .release import COMMANDS
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
-            write_exports(root / "export", self.SERVER, self.DOCKER)
-            write_darwin(root / "darwin")
+            write_exports(root / "export", self.SERVER, self.TUI)
             environment = {
                 "RUNNER_TEMP": str(root), "RUST": "both", "VERSION": "1.2.3",
                 "RUST_EXPORT": str(root / "export"), "RUST_ASSETS": str(root / "staged"),
@@ -268,11 +253,11 @@ class RustStagingTests(unittest.TestCase):
             with patch.dict(os.environ, environment), contextlib.redirect_stdout(io.StringIO()):
                 COMMANDS["stage-rust"]()
                 COMMANDS["check-rust"]()
-                with patch.dict(os.environ, {"RUST_ASSETS": str(root / "darwin")}):
-                    COMMANDS["check-darwin"]()
-                    # Each check takes exactly its part.
-                    with self.assertRaisesRegex(VerificationError, "missing="):
-                        COMMANDS["check-rust"]()
+
+    def test_rust_excludes_macos_while_go_keeps_both_mac_architectures(self) -> None:
+        self.assertEqual(set(self.TUI), {"linux/amd64", "linux/arm64", "windows/amd64"})
+        self.assertTrue({"darwin/amd64", "darwin/arm64"} <= tui_targets(TARGETS).keys())
+        self.assertFalse(any("_darwin_" in name for name in expected_rust_artifacts("1.2.3", self.SERVER, self.TUI)))
 
     def test_staging_refuses_an_export_it_cannot_account_for(self) -> None:
         arm64 = Path("server") / self.SERVER[1].replace("/", "_")
@@ -385,7 +370,6 @@ class RustRequestBoundaryTests(unittest.TestCase):
                         }))
                         names = [candidate.name, "release-assets-4242"]
                         names += ["release-rust-assets-4242"] * (selection != "none")
-                        names += ["release-rust-darwin-4242"] * release.rust_tui
                         for name in names[1:]:
                             (request / name).mkdir()
                         dispatched = Release(release.tag, release.sha, release.pr,

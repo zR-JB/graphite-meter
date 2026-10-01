@@ -2,7 +2,7 @@
 
     python3 -m scripts.legal.check_rust_reviews [--prune] [--format]
 
-Each shipped package and target is resolved as its release build is (cargo tree over normal and
+Each supported Linux/Windows package and target is resolved as its release build is (cargo tree over normal and
 build edges, with that target's features), so crates only a release build compiles, such as the
 Windows TUI's, count as well. Every such crate needs an approved review of its exact name,
 version and source, and every review must name one of them; --prune drops the reviews that name
@@ -35,10 +35,12 @@ BUDGET = {('graphite-meter-server', 'x86_64-unknown-linux-musl'): 141,
 
 
 def shipped(targets: str) -> list[tuple[str, str]]:
-    """The TUI ships every listed target; the server image ships the static Linux ones too."""
+    """Rust ships Linux/Windows TUIs and Linux servers; Go retains the macOS targets."""
     pairs = []
     for line in targets.splitlines():
         platform, target = line.split()
+        if not platform.startswith(('linux/', 'windows/')):
+            continue
         pairs.append(('graphite-meter-client', target))
         if platform.startswith('linux/'):
             pairs.append(('graphite-meter-server', target))
@@ -55,10 +57,9 @@ def compiled(package: str, target: str) -> set[tuple[str, str]]:
     return {(name, version.removeprefix('v')) for name, version, *_ in map(str.split, tree.splitlines())}
 
 
-# The macOS TUIs are packaged natively by a mise task; the builder image builds every other target.
+# The pinned builder image packages every distributed Rust target.
 BUILDERS = {
-    'mise.toml': lambda platform: platform.startswith('darwin/'),
-    'container/Dockerfile.rust': lambda platform: not platform.startswith('darwin/'),
+    'container/Dockerfile.rust': lambda platform: platform.startswith(('linux/', 'windows/')),
 }
 
 

@@ -101,15 +101,17 @@ libraries only unoptimized builds take, so re-approving it drops no fingerprinte
 both, add each package text that covers the native files to `notices`, rerun with that record
 for its digest, then approve it and commit it to the environment's file. Texts the environment
 lacks, such as musl's and LLVM's for the static musl targets, are committed under `legal/manual`
-and named by repository path. macOS records come from a macOS runner, the only environment with
-Apple's SDK: CI's `rust-darwin` job runs the release request's `rust-darwin-package` task on the
-same runner image and Xcode and prints this build's record when the committed one goes stale.
+and named by repository path. Each actual distributed build checks its linked inputs and prints
+its facts if the review is stale. Rust releases support Linux and Windows; Go keeps its macOS targets.
+PR checks use the pinned Debian release builder for Linux/Windows, with fat LTO disabled to reduce
+compile time. Release requests use full release settings and no CI caches. The Fedora host record
+covers local builds only; distributed artifacts always use their own builder's record.
 
 The local tasks (`rust-server-run`, `rust-server-build`, `rust-client-run`, `rust-client-build`)
 run `scripts.legal.rust --host`: they keep Cargo's ordinary host output paths and flags, read its
 linker map, and select the host's `rust-platform-*.json` record by target and native compiler.
 The same compiler, native-input, import and notice fingerprints used for release builds must match.
-Fedora 44 x86-64 and the recorded macOS builders have host records. A different host or changed
+Fedora 44 x86-64 has a host record. A different host or changed
 toolchain needs review; run the pipeline with `--host --review-template` to collect its candidate
 and input listing, then review it as above. These tasks fail if the platform review is missing or stale.
 

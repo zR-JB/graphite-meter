@@ -31,7 +31,6 @@ jobs:
       deps: ${{ github.event_name == 'push' || steps.filter.outputs.deps == 'true' }}
       rust: ${{ github.event_name == 'push' || steps.filter.outputs.rust == 'true' }}
       rust-release: ${{ github.event_name == 'push' || steps.filter.outputs.rust-release == 'true' }}
-      darwin: ${{ github.event_name == 'push' || steps.filter.outputs.darwin == 'true' }}
     steps:
       - name: Checkout exact CI source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -294,10 +293,25 @@ jobs:
       - name: Set up pinned Buildx
         uses: ./.github/actions/setup-buildx
       - name: Build the Rust server image with reviewed browser and runtime notices
-        run: >-
-          docker buildx build --platform linux/amd64 --file container/Dockerfile.rust --target server
-          --build-arg VERSION=0.0.0-dev --build-arg PROFILE=ci --label org.opencontainers.image.licenses=AGPL-3.0-or-later
-          --load --tag graphite-meter-rust:smoke .
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: 'false'
+        with:
+          context: .
+          file: container/Dockerfile.rust
+          target: server
+          platforms: linux/amd64
+          load: true
+          tags: graphite-meter-rust:smoke
+          labels: org.opencontainers.image.licenses=AGPL-3.0-or-later
+          github-token: ''
+          provenance: mode=max
+          cache-from: type=gha,scope=rust-ci-browser
+          cache-to: type=gha,scope=rust-ci-browser,mode=max,ignore-error=true,timeout=2m
+          build-args: |
+            VERSION=0.0.0-dev
+            PROFILE=ci
+            GM_RUST_DEPENDENCY_CACHE=1
       - name: Smoke-test the Rust server image like the Go image
         env:
           VERSION: 0.0.0-dev
@@ -335,7 +349,7 @@ jobs:
   rust-release:
     name: Experimental Rust release artifacts
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 20
     needs: plan
     if: needs.plan.outputs.rust-release == 'true'
     steps:
@@ -346,16 +360,47 @@ jobs:
         uses: ./.github/actions/setup-project
       - name: Set up pinned Buildx
         uses: ./.github/actions/setup-buildx
-      # A release request's exports with their provenance; the arm64 server is cross-compiled.
-      - name: Export the Linux and Windows TUIs as a release request does
-        run: >-
-          docker buildx build --platform linux/amd64 --file container/Dockerfile.rust --target tui-artifacts
-          --build-arg VERSION=0.0.0-ci --provenance mode=max --output "type=local,dest=$RUNNER_TEMP/rust-export/tui" .
-      - name: Export the amd64 and arm64 server sources as a release request does
-        run: >-
-          docker buildx build --platform linux/amd64,linux/arm64 --file container/Dockerfile.rust
-          --target server-artifacts --build-arg VERSION=0.0.0-ci --build-arg GM_CLIENT_VALIDATE=0 --provenance mode=max
-          --output "type=local,dest=$RUNNER_TEMP/rust-export/server" .
+      # Exercise the same package layouts, notices and verification without release-only fat LTO.
+      # Distributed artifacts are built separately, without CI caches or these compiler overrides.
+      - name: Export the Linux and Windows TUIs with reviewed notices
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: 'false'
+        with:
+          context: .
+          file: container/Dockerfile.rust
+          target: tui-artifacts
+          platforms: linux/amd64
+          outputs: type=local,dest=${{ runner.temp }}/rust-export/tui
+          github-token: ''
+          provenance: mode=max
+          cache-from: type=gha,scope=rust-ci-tui
+          cache-to: type=gha,scope=rust-ci-tui,mode=max,ignore-error=true,timeout=2m
+          build-args: |
+            VERSION=0.0.0-ci
+            GM_RUST_DEPENDENCY_CACHE=1
+            GM_RUST_RELEASE_LTO=false
+            GM_RUST_RELEASE_CODEGEN_UNITS=16
+      - name: Export the amd64 and arm64 server sources with reviewed notices
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: 'false'
+        with:
+          context: .
+          file: container/Dockerfile.rust
+          target: server-artifacts
+          platforms: linux/amd64,linux/arm64
+          outputs: type=local,dest=${{ runner.temp }}/rust-export/server
+          github-token: ''
+          provenance: mode=max
+          cache-from: type=gha,scope=rust-ci-server
+          cache-to: type=gha,scope=rust-ci-server,mode=max,ignore-error=true,timeout=2m
+          build-args: |
+            VERSION=0.0.0-ci
+            GM_CLIENT_VALIDATE=0
+            GM_RUST_DEPENDENCY_CACHE=1
+            GM_RUST_RELEASE_LTO=false
+            GM_RUST_RELEASE_CODEGEN_UNITS=16
       - name: Stage them as a release request does and verify them as the release does
         env:
           RUST: both
@@ -366,54 +411,11 @@ jobs:
           python3 -m scripts.ci.release stage-rust
           python3 -m scripts.ci.release check-rust
 
-  rust-darwin:
-    name: Experimental Rust macOS TUIs
-    runs-on: macos-15
-    timeout-minutes: 40
-    needs: plan
-    if: needs.plan.outputs.darwin == 'true'
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false}
-      - name: Set up pinned mise and Python
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
-        env:
-          MISE_AUTO_INSTALL: '0'
-        with:
-          version: 2026.9.14
-          install_args: --locked python
-          cache: false
-      # Release requests run the same task on the same runner, Xcode and platform record.
-      - name: Build the macOS TUIs as a release request does
-        env:
-          RELEASE_DIST: ${{ runner.temp }}/rust-darwin
-        run: mise run rust-darwin-package 0.0.0-dev
-      - name: Verify them as the release does
-        env:
-          VERSION: 0.0.0-dev
-          RUST_ASSETS: ${{ runner.temp }}/rust-darwin
-        run: python3 -m scripts.ci.release check-darwin
-      - name: Test the TUI's crates on macOS
-        working-directory: rust
-        env:
-          CARGO_INCREMENTAL: '0'
-          CARGO_PROFILE_DEV_DEBUG: line-tables-only
-          CARGO_PROFILE_TEST_DEBUG: line-tables-only
-        # The tests' disposable identities come from the openssl CLI; macOS ships LibreSSL, whose certificates
-        # rustls rejects, so the runner's Homebrew OpenSSL makes them as on Linux.
-        run: |
-          PATH="$(brew --prefix openssl@3)/bin:$PATH"
-          openssl version | grep '^OpenSSL 3'
-          cargo test --locked --no-fail-fast -p graphite-meter-client -p graphite-meter-core -p graphite-meter-net \
-            -p graphite-meter-http3
-
   gate:
     name: Gate
     runs-on: ubuntu-24.04
     if: always()
-    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-e2e, rust-release,
-            rust-darwin]
+    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-e2e, rust-release]
     steps:
       - name: Require every selected job
         env:

@@ -20,7 +20,6 @@ from .fixtures import (
 from .release import (
     BUILD_JOB,
     COMMANDS,
-    DARWIN_JOB,
     OCI,
     Release,
     assets_sha256,
@@ -111,14 +110,15 @@ def job(name: str, start: str, end: str) -> dict[str, object]:
             "started_at": f"2026-08-15T{start}:00Z", "completed_at": f"2026-08-15T{end}:00Z"}
 
 
-# The request's build job, then its macOS job.
-REQUEST_JOB_RUNS = pages({"jobs": [job(BUILD_JOB, "10:00", "10:20"), job(DARWIN_JOB, "10:21", "10:40")]})
+# An unrelated job cannot impersonate the expected artifact-producing job.
+OTHER_JOB = "Unrelated job"
+REQUEST_JOB_RUNS = pages({"jobs": [job(BUILD_JOB, "10:00", "10:20"), job(OTHER_JOB, "10:21", "10:40")]})
 
 
 def artifacts(*names: str, size: int = 1024, expired: bool = False, written: str = "") -> object:
     """Each artifact as the job that writes it uploads it, unless it was `written` at another time."""
     def at(name: str) -> str:
-        return f"2026-08-15T{written or ('10:30' if 'darwin' in name else '10:10')}:00Z"
+        return f"2026-08-15T{written or ('10:30' if 'other' in name else '10:10')}:00Z"
 
     return pages({"artifacts": [{"name": name, "expired": expired, "size_in_bytes": size,
                                  "created_at": at(name), "updated_at": at(name)} for name in names]})
@@ -301,11 +301,11 @@ class GateTests(unittest.TestCase):
 
 class RequestTests(unittest.TestCase):
     def test_request_run_is_bound_to_main_owner_attempt_and_artifacts(self) -> None:
-        name, darwin = "release-request-4242", "release-rust-darwin-4242"
-        expected = {name: (BUILD_JOB, 4096), darwin: (DARWIN_JOB, 4096)}
+        name, other = "release-request-4242", "other-asset-4242"
+        expected = {name: (BUILD_JOB, 4096), other: (OTHER_JOB, 4096)}
         only_build = pages({"jobs": [job(BUILD_JOB, "10:00", "10:20")]})
         failed = pages({"jobs": [job(BUILD_JOB, "10:00", "10:20"),
-                                 job(DARWIN_JOB, "10:21", "10:40") | {"conclusion": "failure"}]})
+                                 job(OTHER_JOB, "10:21", "10:40") | {"conclusion": "failure"}]})
         for field, value, error in (
             (None, None, None),
             ("id", 4243, "is not a release-request.yml run"),
@@ -319,18 +319,18 @@ class RequestTests(unittest.TestCase):
             ("conclusion", "failure", "request run is completed/failure"),
             ("actor", {"login": "other"}, "repository owner"),
             ("triggering_actor", {"login": "other"}, "repository owner"),
-            ("artifact", artifacts(name, darwin, expired=True), "expected one unexpired"),
-            ("artifact", artifacts(name, name, darwin), "expected one unexpired"),
-            ("artifact", artifacts(name, darwin, size=4097), "exceeds"),
-            # The macOS job runs the requested source natively; it cannot replace the build job's artifacts,
+            ("artifact", artifacts(name, other, expired=True), "expected one unexpired"),
+            ("artifact", artifacts(name, name, other), "expected one unexpired"),
+            ("artifact", artifacts(name, other, size=4097), "exceeds"),
+            # Another job cannot replace the build job's artifacts,
             # and its own must come from its run.
-            ("artifact", artifacts(name, darwin, written="10:30"), f"{name} was not written while"),
-            ("artifact", artifacts(name, darwin, written="10:10"), f"{darwin} was not written while"),
-            ("artifact", artifacts(name, darwin, written="10:41"), f"{name} was not written while"),
-            ("jobs", only_build, "no single successful job 'Build untrusted Rust macOS TUIs'"),
-            ("jobs", failed, "no single successful job 'Build untrusted Rust macOS TUIs'"),
+            ("artifact", artifacts(name, other, written="10:30"), f"{name} was not written while"),
+            ("artifact", artifacts(name, other, written="10:10"), f"{other} was not written while"),
+            ("artifact", artifacts(name, other, written="10:41"), f"{name} was not written while"),
+            ("jobs", only_build, "no single successful job 'Unrelated job'"),
+            ("jobs", failed, "no single successful job 'Unrelated job'"),
         ):
-            run, files, jobs = dispatch_run(7001, 4242), artifacts(name, darwin), REQUEST_JOB_RUNS
+            run, files, jobs = dispatch_run(7001, 4242), artifacts(name, other), REQUEST_JOB_RUNS
             if field == "artifact":
                 files = value
             elif field == "jobs":
@@ -344,7 +344,7 @@ class RequestTests(unittest.TestCase):
 
     def test_artifacts_are_bound_to_the_request_workflow_jobs(self) -> None:
         workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/release-request.yml").read_text()
-        for name in (BUILD_JOB, DARWIN_JOB):
+        for name in (BUILD_JOB,):
             self.assertEqual(workflow.count(f"    name: {name}\n"), 1)
 
     def test_handoff_directories_hold_exact_regular_files(self) -> None:
