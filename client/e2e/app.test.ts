@@ -1,4 +1,5 @@
 import { readHistoryRecord } from "../src/lib/history/types";
+import type { LegalAbout } from "../src/lib/legal/types";
 import {
   baseConfig,
   home,
@@ -202,6 +203,23 @@ test("a completed run fits every layout and theme without serious violations", a
   const dialog = page.getByRole("dialog", { name: "About & legal" });
   expect(await dialog.evaluate((el) => el.matches(":modal"))).toBe(true);
   await expect(dialog).toContainText("AGPL-3.0-or-later");
+  const identity = await (await fetch(`${home.http}/preflight`)).json();
+  const legal: LegalAbout = await (
+    await fetch(`${home.http}/legal/about.json`)
+  ).json();
+  const rust = identity.engineVersion.endsWith("-rust");
+  expect(
+    legal.components.some(
+      (component) => component.ecosystem === (rust ? "cargo" : "go"),
+    ),
+  ).toBe(true);
+  if (rust) {
+    expect(legal.sourceVersion).toBe(identity.engineVersion);
+    expect(
+      legal.components.some((component) => component.ecosystem === "go"),
+    ).toBe(false);
+  }
+  await expect(dialog).toContainText(rust ? "Rust crates" : "Go modules");
   expect(await seriousViolations(page, '[role="dialog"]')).toEqual([]);
   await page.raw.press("Escape");
   await expect(dialog).toHaveCount(0);
