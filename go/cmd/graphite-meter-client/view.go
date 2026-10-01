@@ -249,7 +249,10 @@ func (m model) settingLine(s *setting, focused bool, labelWidth, w int) string {
 		switch {
 		case m.edit != nil && m.edit.row == s:
 			input := m.edit.input
-			input.SetWidth(max(w-labelWidth-4, 1))
+			input.SetWidth(max(w-labelWidth-5, 1))
+			position := input.Position()
+			input.CursorEnd()
+			input.SetCursor(position)
 			value = input.View()
 		case row.inert:
 			value = m.st.muted.Render(row.value)
@@ -561,9 +564,11 @@ func (m model) liveView(w, h int) string {
 	var out []string
 	if r.live() {
 		out = append(out, wrapParts(strings.Split(m.readings(stage), "   "), w)...)
-		if stage.Name == goclient.StageBidirectional {
-			out = append(out, m.st.muted.Render("↓ solid · ↑ dashed"))
-		}
+	}
+	if stage.Name == goclient.StageBidirectional || !r.live() && slices.ContainsFunc(r.marks, func(m mark) bool {
+		return m.stage == goclient.StageBidirectional
+	}) {
+		out = append(out, m.st.muted.Render("↓ solid · ↑ dashed"))
 	}
 	if m.multipleRunServers() {
 		out = append(out, m.st.muted.Render("Latency to "+m.serverName(r.latencyServer())+" · l switches server"))
