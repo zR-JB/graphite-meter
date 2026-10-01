@@ -2,7 +2,7 @@
 mod load;
 mod validate;
 
-pub(crate) use load::go_duration;
+pub(crate) use graphite_meter_core::duration::go_duration;
 pub use load::load;
 
 use crate::admission::Limits;

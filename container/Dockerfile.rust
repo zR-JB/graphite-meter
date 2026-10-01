@@ -51,6 +51,7 @@ ENV VERSION=$VERSION \
     GM_LEGAL_SCAN_OUT=/tmp/browser-modules.json
 WORKDIR /src/client
 COPY client/package.json client/bun.lock client/bunfig.toml ./
+COPY client/patches/ ./patches/
 RUN bun --bun install --frozen-lockfile
 COPY client/ ./
 COPY api/ /src/api/

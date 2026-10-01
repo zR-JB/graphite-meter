@@ -2,11 +2,11 @@
   {
     "fork": "https://github.com/zR-JB/noq",
     "branch": "graphite-meter/noq-v1.3.0",
-    "rev": "07c756620fc0eafce00f0f0a47fb19f48a17c99d",
+    "rev": "b34035dcfc96789f8269a5e080a6513e981f4904",
     "upstream": "https://github.com/n0-computer/noq",
     "baseTag": "noq-v1.3.0",
     "base": "c1f411562e6078852749b8bcf1190523096a107f",
-    "diffSha256": "d04597dd7375e6cc96ea670e4094be398439d6955ccd5495a2b555ac849695e3",
+    "diffSha256": "4db2f8ff03d438ddd22b5d358dac512207fa88148f82ab6cf72e6c3ee9dc4e0f",
     "modifiedPackages": [
       "noq",
       "noq-proto"
@@ -184,7 +184,7 @@
       },
       {
         "subject": "Send due ACKs while the congestion window is full",
-        "purpose": "Sends an untracked ACK-only packet when congestion-blocked with ACKs due (RFC 9002 §7, RFC 9000 §13.2.1); the hold also exists upstream.",
+        "purpose": "Sends an untracked ACK-only packet when congestion-blocked with ACKs due (RFC 9002 \u00a77, RFC 9000 \u00a713.2.1); the hold also exists upstream.",
         "origin": "graphite-meter"
       },
       {
@@ -260,6 +260,16 @@
       {
         "subject": "Keep leased send chunks uncopied until acknowledged",
         "purpose": "Adds write_leased_chunks: a stream keeps the Bytes it is handed instead of copying them into 16 KiB blocks, charged by length like a copied block until the segment is released.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Drain old lost-packet records when packet tracking is exhausted",
+        "purpose": "Retires lost-packet records older than two PTOs when tracking cannot reserve a packet, then retries once to restore send progress.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Batch up to 32 datagrams per QUIC transmit",
+        "purpose": "Bounds GSO batches at 32 datagrams and each drive at 64 before yielding to receive work.",
         "origin": "graphite-meter"
       }
     ],

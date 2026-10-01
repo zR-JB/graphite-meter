@@ -112,6 +112,46 @@ pub fn parse_go_duration(input: &str) -> Result<i64, DurationError> {
     }
 }
 
+/// Go's time.Duration.String for nonnegative durations.
+pub fn go_duration(duration: Duration) -> String {
+    let nanos = duration.as_nanos();
+    let decimal = |value: u128, scale: u128| {
+        let fraction = format!("{:0width$}", value % scale, width = scale.ilog10() as usize);
+        let number = format!("{}.{fraction}", value / scale);
+        number.trim_end_matches('0').trim_end_matches('.').to_owned()
+    };
+    match nanos {
+        0 => "0s".into(),
+        1..1_000 => format!("{nanos}ns"),
+        1_000..1_000_000 => format!("{}µs", decimal(nanos, 1_000)),
+        1_000_000..1_000_000_000 => format!("{}ms", decimal(nanos, 1_000_000)),
+        3_600_000_000_000.. => format!(
+            "{}h{}m{}s",
+            nanos / 3_600_000_000_000,
+            nanos / 60_000_000_000 % 60,
+            decimal(nanos % 60_000_000_000, 1_000_000_000)
+        ),
+        60_000_000_000.. => format!(
+            "{}m{}s",
+            nanos / 60_000_000_000,
+            decimal(nanos % 60_000_000_000, 1_000_000_000)
+        ),
+        _ => format!("{}s", decimal(nanos, 1_000_000_000)),
+    }
+}
+
+/// A duration without trailing zero units, as Go's native configuration messages.
+pub fn short_duration(duration: Duration) -> String {
+    let mut text = go_duration(duration);
+    if text.ends_with("m0s") {
+        text.truncate(text.len() - 2);
+    }
+    if text.ends_with("h0m") {
+        text.truncate(text.len() - 2);
+    }
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,44 +215,4 @@ mod tests {
             assert!(parse_go_duration(text).is_err(), "{text}");
         }
     }
-}
-
-/// Go's time.Duration.String for nonnegative durations.
-pub fn go_duration(duration: Duration) -> String {
-    let nanos = duration.as_nanos();
-    let decimal = |value: u128, scale: u128| {
-        let fraction = format!("{:0width$}", value % scale, width = scale.ilog10() as usize);
-        let number = format!("{}.{fraction}", value / scale);
-        number.trim_end_matches('0').trim_end_matches('.').to_owned()
-    };
-    match nanos {
-        0 => "0s".into(),
-        1..1_000 => format!("{nanos}ns"),
-        1_000..1_000_000 => format!("{}µs", decimal(nanos, 1_000)),
-        1_000_000..1_000_000_000 => format!("{}ms", decimal(nanos, 1_000_000)),
-        3_600_000_000_000.. => format!(
-            "{}h{}m{}s",
-            nanos / 3_600_000_000_000,
-            nanos / 60_000_000_000 % 60,
-            decimal(nanos % 60_000_000_000, 1_000_000_000)
-        ),
-        60_000_000_000.. => format!(
-            "{}m{}s",
-            nanos / 60_000_000_000,
-            decimal(nanos % 60_000_000_000, 1_000_000_000)
-        ),
-        _ => format!("{}s", decimal(nanos, 1_000_000_000)),
-    }
-}
-
-/// A duration without trailing zero units, as Go's native configuration messages.
-pub fn short_duration(duration: Duration) -> String {
-    let mut text = go_duration(duration);
-    if text.ends_with("m0s") {
-        text.truncate(text.len() - 2);
-    }
-    if text.ends_with("h0m") {
-        text.truncate(text.len() - 2);
-    }
-    text
 }
