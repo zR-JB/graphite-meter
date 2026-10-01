@@ -31,7 +31,7 @@ const EIGHTHS: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"]
 /// Go's trace: samples averaged within a step, which doubles as the history coarsens; NaN is a gap.
 #[derive(Clone, Debug, Default)]
 pub(super) struct Trace {
-    points: Vec<(f64, f64, usize)>,
+    points: Vec<(f64, f64, usize, f64)>,
     step: f64,
 }
 
@@ -39,6 +39,9 @@ impl Trace {
     /// Adds the mean of `count` samples; one from before the last point, such as replies ahead of a
     /// stage's mark, joins that point.
     pub(super) fn add(&mut self, at: f64, value: f64, count: usize) {
+        if !at.is_finite() || value.is_infinite() || count == 0 {
+            return;
+        }
         self.step = self.step.max(TRACE_STEP);
         let at = self.points.last().map_or(at, |last| at.max(last.0));
         if let Some(last) = self.points.last_mut()
@@ -46,15 +49,18 @@ impl Trace {
             && !value.is_nan()
             && !last.1.is_nan()
         {
+            last.3 = last.3.max(value);
             last.2 += count;
             last.1 += (value - last.1) * count as f64 / last.2 as f64;
             return;
         }
         if self.points.len() == HISTORY_POINTS {
             // Go's coarsen: pairs merge, and a gap in either keeps the pair a gap.
-            let pairs = self.points.chunks(2).map(|pair| {
-                let mut point = pair[0];
-                if let Some(next) = pair.get(1) {
+            let len = self.points.len().div_ceil(2);
+            for index in 0..len {
+                let mut point = self.points[index * 2];
+                if let Some(next) = self.points.get(index * 2 + 1) {
+                    point.3 = point.3.max(next.3);
                     if next.1.is_nan() {
                         point.1 = next.1;
                     } else if !point.1.is_nan() {
@@ -62,11 +68,12 @@ impl Trace {
                         point.2 += next.2;
                     }
                 }
-                point
-            });
-            (self.points, self.step) = (pairs.collect(), self.step * 2.0);
+                self.points[index] = point;
+            }
+            self.points.truncate(len);
+            self.step *= 2.0;
         }
-        self.points.push((at, value, count));
+        self.points.push((at, value, count, value.max(0.0)));
     }
 }
 
@@ -77,6 +84,8 @@ pub(super) struct Run {
     pub config: Config,
     started: Option<Instant>,
     ended: Option<Instant>,
+    eased: Option<Instant>,
+    planned_span: f64,
     marks: Vec<(f64, Stage)>,
     /// The download and upload rates.
     traces: [Trace; 2],
@@ -91,9 +100,17 @@ pub(super) struct Run {
 
 impl Run {
     pub(super) fn new(config: Config) -> Self {
+        let now = Instant::now();
+        let planned_span = config
+            .stages
+            .iter()
+            .map(|stage| (config.duration(*stage) + config.warmup).as_secs_f64())
+            .sum();
         Self {
             config,
-            started: Some(Instant::now()),
+            started: Some(now),
+            eased: Some(now),
+            planned_span,
             ..Self::default()
         }
     }
@@ -139,14 +156,21 @@ impl Run {
         }
         if !snapshot.phase.live() {
             self.ended.get_or_insert(now);
+            self.shown = [latest.down_bps, latest.up_bps];
         }
     }
 
     /// Go's frame tick: the shown rates ease towards the latest.
     pub(super) fn ease(&mut self, snapshot: &Snapshot) {
+        let now = Instant::now();
+        let dt = self
+            .eased
+            .replace(now)
+            .map_or(0.0, |previous| now.saturating_duration_since(previous).as_secs_f64());
+        let weight = 1.0 - (-dt / 0.12).exp();
         let targets = [snapshot.latest.down_bps, snapshot.latest.up_bps];
         for (shown, target) in self.shown.iter_mut().zip(targets) {
-            *shown = target.map(|target| shown.map_or(target, |value| value + (target - value) * 0.35));
+            *shown = target.map(|target| shown.map_or(target, |value| value + (target - value) * weight));
         }
     }
 
@@ -157,7 +181,13 @@ impl Run {
 
     /// Go's span: the run's time so far, or until it ended.
     fn span(&self) -> f64 {
-        clock(self.started, self.ended.unwrap_or_else(Instant::now))
+        match self.ended {
+            Some(ended) => clock(self.started, ended).ceil().max(1.0),
+            None => self
+                .planned_span
+                .max((clock(self.started, Instant::now()) / 10.0).ceil() * 10.0)
+                .max(1.0),
+        }
     }
 
     /// Go's progress: the planned stage time done, where a partial or failed stage counts nothing.
@@ -220,14 +250,23 @@ fn nice_ceil(value: f64) -> f64 {
 }
 
 /// A chart line: its stage's style and its points.
-type Series<'a> = (Style, &'a [(f64, f64, usize)]);
+type Series<'a> = (Style, &'a [(f64, f64, usize, f64)], bool);
 
 /// Go's stageSeries: the points after each mark, in its stage's style.
-fn stage_series<'a>(mut points: &'a [(f64, f64, usize)], marks: &[(f64, Stage)], theme: &Theme) -> Vec<Series<'a>> {
-    let mut out = vec![(Style::new(), &points[..0]); marks.len()];
+fn stage_series<'a>(
+    mut points: &'a [(f64, f64, usize, f64)],
+    marks: &[(f64, Stage)],
+    theme: &Theme,
+    upload: bool,
+) -> Vec<Series<'a>> {
+    let mut out = vec![(Style::new(), &points[..0], false); marks.len()];
     for (index, (at, stage)) in marks.iter().enumerate().rev() {
         let start = points.partition_point(|point| point.0 < *at);
-        out[index] = (theme.stage(*stage), &points[start..]);
+        out[index] = (
+            theme.trace(*stage),
+            &points[start..],
+            upload && *stage == Stage::Bidirectional,
+        );
         points = &points[..start];
     }
     out
@@ -246,13 +285,18 @@ fn chart(
     let (cols, rows) = (width.saturating_sub(CHART_AXIS).max(4), height.saturating_sub(2).max(2));
     let (t0, t1) = (0.0, span_.max(1.0));
     // f64::max passes over the gaps.
-    let peak = lines.iter().flat_map(|(_, points)| points.iter().map(|point| point.1));
+    let peak = lines
+        .iter()
+        .flat_map(|(_, points, _)| points.iter().map(|point| point.3));
     let peak = peak.fold(0.0_f64, f64::max);
     let top = nice_ceil(peak * axis.scale * 1.05) / axis.scale;
     let (dot_width, dot_height) = (cols * 2, rows * 4);
     let (mut dots, mut owner) = (vec![0u8; cols * rows], vec![0usize; cols * rows]);
     let mut set = |x: isize, y: isize, series: usize| {
         let (x, y) = (x as usize, y as usize);
+        if lines[series].2 && x % 6 >= 4 {
+            return;
+        }
         let cell = y / 4 * cols + x / 2;
         dots[cell] |= BRAILLE[y % 4][x % 2];
         owner[cell] = series;
@@ -275,7 +319,7 @@ fn chart(
             }
         }
     };
-    for (index, (_, points)) in lines.iter().enumerate() {
+    for (index, (_, points, _)) in lines.iter().enumerate() {
         // Each dot column's weighted sum and count, where None is a gap that breaks the line.
         let mut columns: Vec<Option<(isize, f64, usize)>> = Vec::new();
         for point in points.iter() {
@@ -305,6 +349,7 @@ fn chart(
         let scale = match row {
             0 if peak > 0.0 => (axis.label)(top * axis.scale),
             row if row == rows - 1 => "0".into(),
+            row if row == rows / 2 && rows >= 6 && peak > 0.0 => (axis.label)(top * axis.scale / 2.0),
             _ => String::new(),
         };
         let scale: String = scale.chars().take(CHART_AXIS - 1).collect();
@@ -320,7 +365,11 @@ fn chart(
                 end += 1;
             }
             if dots[first] == 0 {
-                spans.push(Span::raw(" ".repeat(end - first)));
+                spans.push(if row == rows / 2 && rows >= 6 {
+                    span("┄".repeat(end - first), theme.border)
+                } else {
+                    Span::raw(" ".repeat(end - first))
+                });
             } else {
                 let glyphs: String = dots[first..end]
                     .iter()
@@ -537,6 +586,9 @@ impl Ui {
                     line.push(span("! ", theme.warn));
                     line.extend(headline.into_iter().chain(gap).chain([span("Partial", theme.muted)]));
                 }
+                Some(StageStatus::Stopped) => {
+                    line.extend([span("○ ", theme.muted), span(StageStatus::Stopped.label(), theme.muted)])
+                }
                 Some(status) => line.extend([span("✗ ", theme.err), span(status.label(), theme.muted)]),
                 None if current && live => match snapshot.phase {
                     Phase::Warmup => line.extend([
@@ -556,7 +608,7 @@ impl Ui {
                     _ => line.extend([self.spinner(), span(" checking paths", theme.muted)]),
                 },
                 None if current => {
-                    line.extend([span("✗ ", theme.err), span(StageStatus::Stopped.label(), theme.muted)])
+                    line.extend([span("○ ", theme.muted), span(StageStatus::Stopped.label(), theme.muted)])
                 }
                 None if !live => line.push(span(format!("{MISSING} {}", StageStatus::Skipped.label()), theme.muted)),
                 None => line.push(span(format!("○ {}", words::setting(duration)), theme.muted)),
@@ -578,19 +630,26 @@ impl Ui {
             return vec![Line::from(vec![self.spinner(), span(" Checking paths…", theme.muted)])];
         };
         let mut directions = Vec::new();
-        for (moves, trace) in [stage.downloads(), stage.uploads()].into_iter().zip(&run.traces) {
+        for (index, (moves, trace)) in [stage.downloads(), stage.uploads()]
+            .into_iter()
+            .zip(&run.traces)
+            .enumerate()
+        {
             if if live { moves } else { !trace.points.is_empty() } {
-                directions.push(trace);
+                directions.push((index, trace));
             }
         }
         let loaded = !directions.is_empty() && run.config.loaded_latency;
         let series: Vec<_> = directions
             .iter()
-            .flat_map(|trace| stage_series(&trace.points, &run.marks, theme))
+            .flat_map(|(index, trace)| stage_series(&trace.points, &run.marks, theme, *index == 1))
             .collect();
         let mut out = Vec::new();
         if live {
-            out.push(self.readings(snapshot, run, stage));
+            out.extend(self.readings(snapshot, run, stage, width));
+        }
+        if stage == Stage::Bidirectional || !live && run.marks.iter().any(|(_, stage)| *stage == Stage::Bidirectional) {
+            out.push(line("↓ solid · ↑ dashed", theme.muted));
         }
         if self.several() {
             let name = self.latency_server().map_or("", |id| server_name(snapshot, id));
@@ -598,14 +657,14 @@ impl Ui {
         }
         let (chart_height, time) = (height.saturating_sub(out.len()), run.span());
         let rtt = self.latency_server().and_then(|id| run.rtt.get(id));
-        let rtt = stage_series(rtt.map_or(&[], |trace| &trace.points), &run.marks, theme);
+        let rtt = stage_series(rtt.map_or(&[], |trace| &trace.points), &run.marks, theme, false);
         let rates = |height| chart(&series, &run.marks, RATE_AXIS, time, width, height, theme);
         let rtts = |marks: &[(f64, Stage)], height| chart(&rtt, marks, MS_AXIS, time, width, height, theme);
         if chart_height < 5 {
         } else if directions.is_empty() {
             out.extend(rtts(&run.marks, chart_height));
         } else if loaded && chart_height >= 12 {
-            out.extend([rates(chart_height - 5), rtts(&[], 5)].concat());
+            out.extend([rates(chart_height - 5), rtts(&run.marks, 5)].concat());
         } else {
             out.extend(rates(chart_height));
         }
@@ -613,7 +672,7 @@ impl Ui {
     }
 
     /// Go's readings: each direction's rate, then the latency the stage measures.
-    fn readings(&self, snapshot: &Snapshot, run: &Run, stage: Stage) -> Line<'static> {
+    fn readings(&self, snapshot: &Snapshot, run: &Run, stage: Stage, width: usize) -> Text {
         let theme = &self.theme;
         let mut readings = Vec::new();
         let latest = &snapshot.latest;
@@ -624,7 +683,7 @@ impl Ui {
                 (true, None, _) => span(format!("{MISSING} window restarting"), theme.muted),
                 (true, Some(rate), shown) => span(format::rate(shown.unwrap_or(rate) / 8.0), theme.value),
             };
-            readings.push(vec![span(format!("{} ", ARROWS[index]), theme.text), value]);
+            readings.push(vec![span(format!("{} ", ARROWS[index]), theme.stage(stage)), value]);
         }
         let transfers = stage.downloads() || stage.uploads();
         if !transfers || run.config.loaded_latency {
@@ -643,7 +702,21 @@ impl Ui {
             }
             readings.push(reading);
         }
-        Line::from(readings.join(&Span::raw("   ")))
+        let mut lines = Vec::new();
+        let mut current = Line::default();
+        for reading in readings {
+            let reading = Line::from(reading);
+            if !current.spans.is_empty() {
+                if current.width() + 3 + reading.width() > width {
+                    lines.push(std::mem::take(&mut current));
+                } else {
+                    current.spans.push(Span::raw("   "));
+                }
+            }
+            current.spans.extend(reading.spans);
+        }
+        lines.push(current);
+        lines
     }
 }
 
@@ -652,8 +725,8 @@ mod tests {
     use super::*;
 
     /// Go's run.go:369-378: the RTT chart takes each measured reply, as a mean per step, and a gap per timeout.
-    #[test]
-    fn the_rtt_chart_takes_every_reply_and_timeout() {
+    #[tokio::test(start_paused = true)]
+    async fn the_rtt_chart_takes_every_reply_and_timeout() {
         let (mut run, at, ms) = (Run::new(Config::default()), Instant::now(), Duration::from_millis);
         let steps = vec![(at, 2.0, 3), (at + ms(60), f64::NAN, 1), (at + ms(80), 4.0, 1)];
         #[rustfmt::skip]
@@ -670,6 +743,28 @@ mod tests {
             .map(|point| (point.1 / 1e6, point.2))
             .collect();
         assert_eq!(format!("{points:?}"), "[(2.0, 3), (NaN, 1), (4.0, 1)]");
+        let span = run.span();
+        let mut snapshot = Snapshot {
+            phase: Phase::Measuring,
+            latest: crate::model::Point {
+                down_bps: Some(8e6),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        run.shown[0] = Some(0.0);
+        let mut slower = run.clone();
+        for _ in 0..4 {
+            tokio::time::advance(Duration::from_millis(30)).await;
+            run.ease(&snapshot);
+        }
+        slower.ease(&snapshot);
+        assert!((run.shown[0].unwrap() - slower.shown[0].unwrap()).abs() < 1e-8);
+        assert_eq!(run.span(), span, "the live axis changes between samples");
+        snapshot.phase = Phase::Complete;
+        run.observe(&snapshot);
+        assert_eq!(run.shown[0], Some(8e6));
+        assert_eq!(run.span(), 1.0, "a finished run uses its actual duration");
     }
 
     /// Go's TestChartJoinsSamplesAndBreaksOnlyAtGaps, and an empty chart claims no scale.
@@ -687,7 +782,7 @@ mod tests {
         let theme = Theme::new(crate::theme::Profile::TrueColor, true);
         let marks = [(0.0, Stage::Latency), (4.0, Stage::Download), (19.5, Stage::Upload)];
         for width in [36, 76, 116] {
-            let series = [(theme.stage(Stage::Download), &trace.points[..])];
+            let series = [(theme.stage(Stage::Download), &trace.points[..], false)];
             let lines = chart(&series, &marks, RATE_AXIS, 20.0, width, 12, &theme);
             let mut inked = vec![false; 2 * width];
             for line in &lines[..lines.len() - 2] {
@@ -706,6 +801,31 @@ mod tests {
             }
             assert!(lines.iter().all(|line| line.width() <= width), "width {width}");
         }
+        let mut peak = Trace::default();
+        for index in 0..1000 {
+            peak.add(index as f64 * 0.1, if index == 0 { 1e6 } else { 0.0 }, 1);
+        }
+        peak.add(f64::INFINITY, 1e12, 1);
+        peak.add(100.0, f64::INFINITY, 1);
+        let series = [(theme.trace(Stage::Bidirectional), &peak.points[..], true)];
+        let drawing = chart(
+            &series,
+            &[(0.0, Stage::Bidirectional)],
+            RATE_AXIS,
+            100.0,
+            80,
+            12,
+            &theme,
+        );
+        assert!(
+            drawing.iter().any(|line| plain(line).contains("10 Mbit/s")),
+            "coarsening lost the peak"
+        );
+        assert!(
+            drawing.iter().any(|line| plain(line).contains("5 Mbit/s")),
+            "no half-scale label"
+        );
+        assert!(drawing.iter().any(|line| plain(line).contains('┄')));
         let empty = chart(&[], &[], RATE_AXIS, 1.0, 40, 6, &theme);
         assert!(
             !empty.iter().any(|line| plain(line).contains("bit/s")),

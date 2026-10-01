@@ -34,6 +34,7 @@ pub(crate) struct Theme {
     /// textinput's static cursor: ANSI 7, reversed.
     pub cursor: Style,
     stages: [Style; 4],
+    traces: [Style; 4],
     /// The complete, caution and failed badges.
     outcomes: [Style; 3],
 }
@@ -41,7 +42,7 @@ pub(crate) struct Theme {
 /// A tone's light and dark shades: 24-bit, then the 256- and 16-colour indexes colorprofile converts them to.
 type Tone = [(u32, u8, u8); 2];
 
-const INK: Tone = [(0x20242a, 235, 0), (0xe6e8ea, 254, 15)];
+const INK: Tone = [(0x20242a, 235, 0), (0xe6e8eb, 254, 15)];
 const TEXT: Tone = [(0x171b20, 234, 0), (0xeef0f3, 255, 15)];
 const SOFT: Tone = [(0x5f646a, 241, 8), (0x8e9299, 246, 7)];
 const GOOD: Tone = [(0x2e734b, 29, 2), (0x88d1a2, 115, 10)];
@@ -113,6 +114,11 @@ impl Theme {
                 ..Style::new().add_modifier(Modifier::REVERSED)
             },
             stages: STAGES.map(fg),
+            traces: std::array::from_fn(|index| {
+                let mut tone = STAGES[index];
+                tone[0].0 = [0x0f9485, 0x275ac8, 0xca6e03, 0x9b2065][index];
+                fg(tone)
+            }),
             outcomes: [on(GOOD), on(CAUTION), on(BAD)],
         }
     }
@@ -136,12 +142,19 @@ impl Theme {
         self.stages[stage as usize]
     }
 
+    pub fn trace(&self, stage: Stage) -> Style {
+        self.traces[stage as usize]
+    }
+
     /// The badge of a run's outcome.
     pub fn outcome(&self, phase: crate::model::Phase) -> Style {
         use crate::model::Phase;
+        if phase == Phase::Cancelled {
+            return self.pill;
+        }
         self.outcomes[match phase {
             Phase::Complete => 0,
-            Phase::Partial | Phase::Incomplete | Phase::Cancelled => 1,
+            Phase::Partial | Phase::Incomplete => 1,
             _ => 2,
         }]
     }

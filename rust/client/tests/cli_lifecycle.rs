@@ -435,6 +435,10 @@ finally:
         assert_eq!(result["code"], code);
         let text = result["text"].as_str().unwrap();
         assert!(text.contains("\x1b[?25h"));
+        assert!(
+            text.contains("\x1b[?1000h") && text.contains("\x1b[?1000l"),
+            "mouse capture was not restored"
+        );
         let (_, printed) = text
             .rsplit_once("\x1b[?1049l")
             .ok_or("the alternate screen stayed open")?;
@@ -500,7 +504,7 @@ finally:
             "48;2;32;36;42m",
             "terminal",
         ),
-        ("", "48;2;230;232;234m", "terminal"),
+        ("", "48;2;230;232;235m", "terminal"),
         (
             "\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?62;22c",
             "48;2;32;36;42m",

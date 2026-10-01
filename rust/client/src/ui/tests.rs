@@ -1024,6 +1024,9 @@ fn the_live_view_follows_the_stage_and_its_samples() {
         assert!(!without.iter().any(|unwanted| live.contains(unwanted)), "{live}");
         assert!(live.chars().any(|c| ('\u{2801}'..='\u{28ff}').contains(&c)), "{live}");
     }
+    assert!(ui.live_text(60, 16).contains("↓ solid · ↑ dashed"));
+    let narrow = ui.live_view(&ui.snapshot, &ui.run, 30, 20);
+    assert!(narrow.iter().all(|line| line.width() <= 30), "readings were clipped");
     // Rates wait for evidence, and a window that restarts reads as such.
     let mut ui = running(&["a"]);
     stage(&mut ui, Stage::Download, Phase::Measuring);
@@ -1268,5 +1271,12 @@ fn scrolling_reveals_the_whole_body() {
     }
     assert!(body.iter().all(|line| seen.contains(line)), "a line was never shown");
     press(&mut ui, &commands, &["home"]);
+    assert_eq!(ui.body, 0);
+    assert!(ui.mouse(MouseEventKind::ScrollDown));
+    assert_eq!(ui.body, 1);
+    assert!(ui.mouse(MouseEventKind::ScrollUp));
+    assert_eq!(ui.body, 0);
+    ui.stop_prompt = true;
+    assert!(!ui.mouse(MouseEventKind::ScrollDown));
     assert_eq!(ui.body, 0);
 }

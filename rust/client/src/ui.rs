@@ -14,7 +14,8 @@ use crate::{
 };
 use crossterm::{
     event::{
-        DisableBracketedPaste, EnableBracketedPaste, Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event, EventStream,
+        KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind,
     },
     execute,
     terminal::{Clear, ClearType},
@@ -143,7 +144,7 @@ impl Drop for Chrome {
 struct Restore;
 impl Drop for Restore {
     fn drop(&mut self) {
-        let _ = execute!(io::stdout(), DisableBracketedPaste);
+        let _ = execute!(io::stdout(), DisableBracketedPaste, DisableMouseCapture);
         ratatui::restore();
     }
 }
@@ -164,7 +165,12 @@ pub async fn run(
     // keys whenever it comes. The clear wipes whatever a terminal that ignores the query printed.
     #[cfg(unix)]
     io::stdout().write_all(crate::theme::QUERY)?;
-    execute!(io::stdout(), EnableBracketedPaste, Clear(ClearType::All))?;
+    execute!(
+        io::stdout(),
+        EnableBracketedPaste,
+        EnableMouseCapture,
+        Clear(ClearType::All)
+    )?;
     let mut chrome = Chrome::default();
     let mut ui = Ui::new(config, snapshots.borrow_and_update().clone());
     let mut events = EventStream::new();
@@ -217,6 +223,7 @@ pub async fn run(
                         ui.paste(&text);
                         dirty = true;
                     }
+                    Event::Mouse(mouse) => dirty |= ui.mouse(mouse.kind),
                     Event::Resize(_, _) => dirty = true,
                     _ => {}
                 }
@@ -453,6 +460,19 @@ impl Ui {
     fn animating(&self) -> bool {
         self.running()
             || self.shown().is_none() && (self.prepare() == Prepare::Checking || self.snapshot.auth.is_some())
+    }
+
+    fn mouse(&mut self, kind: MouseEventKind) -> bool {
+        if self.edit.is_some() || self.snapshot.auth.is_some() || self.stop_prompt {
+            return false;
+        }
+        let key = match kind {
+            MouseEventKind::ScrollUp => "up",
+            MouseEventKind::ScrollDown => "down",
+            _ => return false,
+        };
+        self.scroll(key);
+        true
     }
 
     fn frame(&mut self) {
