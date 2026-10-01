@@ -168,8 +168,11 @@ pub(super) async fn write_reply(sink: &mut impl DataSink, reply: Response<Respon
     if !head {
         loop {
             let frame = tokio::select! {
-                error = sink.cancelled() => return Err(error),
+                // A ready body writes immediately; sinks detect cancellation on the write itself.
+                // Watch cancellation while a progress body is idle without polling it on every download frame.
+                biased;
                 frame = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)) => frame,
+                error = sink.cancelled() => return Err(error),
             };
             let Some(frame) = frame else { break };
             if let Ok(mut data) = frame?.into_data() {

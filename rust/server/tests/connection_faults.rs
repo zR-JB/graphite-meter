@@ -519,6 +519,52 @@ async fn cancelled_download_without_reliable_reset_preserves_http3_connection() 
     .await?
 }
 
+#[tokio::test]
+async fn cancelling_idle_http3_progress_releases_admission_and_preserves_the_connection() -> Result<(), TestError> {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let tls = Tls::new();
+        let (address, server, stop) = quic_server(&tls, Config::default()).await?;
+        for reliable_reset in [false, true] {
+            let endpoint = quic_client(&tls, reliable_reset)?;
+            let quic = endpoint.connect(address, "localhost")?.await?;
+            let (driving, requests) = h3_client(quic.clone());
+            let request = Request::post("https://localhost/upload/session").body(())?;
+            let minted: serde_json::Value = serde_json::from_slice(&h3_body(&requests, request, Bytes::new()).await?)?;
+            let id = minted["uploadId"].as_str().ok_or("missing upload ID")?;
+            let request = Request::get(format!("https://localhost/upload/progress?id={id}")).body(())?;
+            let (mut send, mut recv) = requests.send_request(request).await?.split();
+            send.finish().await?;
+            assert_eq!(recv.response().await?.status(), 200);
+            assert!(recv.data().await?.is_some(), "missing progress ready record");
+            let probe = || async {
+                let request = Request::get("https://localhost/probe").body(())?;
+                let body = h3_body(&requests, request, Bytes::new()).await?;
+                let probe: serde_json::Value = serde_json::from_slice(&body)?;
+                Ok::<_, TestError>(probe["load"]["active"].as_u64().ok_or("missing admission count")?)
+            };
+            assert_eq!(probe().await?, 1);
+            recv.stop(Code::H3_REQUEST_CANCELLED);
+            tokio::time::timeout(Duration::from_millis(500), async {
+                while probe().await? != 0 {
+                    tokio::task::yield_now().await;
+                }
+                Ok::<_, TestError>(())
+            })
+            .await
+            .map_err(|_| "cancelled progress retained admission until its heartbeat")??;
+            let request = Request::get("https://localhost/download?bytes=1").body(())?;
+            assert_eq!(h3_body(&requests, request, Bytes::new()).await?.len(), 1);
+            assert!(quic.close_reason().is_none());
+            quic.close(0_u32.into(), b"done");
+            driving.abort();
+        }
+        stop.send(()).ok();
+        server.await?;
+        Ok::<_, TestError>(())
+    })
+    .await?
+}
+
 async fn assert_closed_without_error(quic: &noq::Connection) {
     match quic.closed().await {
         noq::ConnectionError::ApplicationClosed(close) => assert_eq!(close.error_code, Code::H3_NO_ERROR.into()),

@@ -141,6 +141,14 @@ impl DataSink for H3Reply<'_> {
     async fn finish(&mut self) -> io::Result<()> {
         self.send.finish().await.map_err(io::Error::other)
     }
+
+    async fn cancelled(&mut self) -> io::Error {
+        let error = match self.send.stopped().await {
+            Ok(code) => http3::Error::Stopped(code.unwrap_or(http3::Code::H3_REQUEST_CANCELLED)),
+            Err(error) => error,
+        };
+        io::Error::other(error)
+    }
 }
 
 fn written(result: Result<Result<(), http3::Error>, tokio::time::error::Elapsed>) -> io::Result<()> {

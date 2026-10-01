@@ -305,6 +305,12 @@ impl SendHalf {
         poll_fn(|cx| self.poll_finish(cx)).await
     }
 
+    /// Waits for the peer to stop the response, or acknowledge all of its data and FIN.
+    pub async fn stopped(&self) -> Result<Option<Code>, Error> {
+        let code = self.stream.stopped().await.map_err(noq::WriteError::from)?;
+        Ok(code.map(|code| Code(code.into_inner())))
+    }
+
     pub fn reset(&mut self, code: Code) {
         if !std::mem::replace(&mut self.finished, true) {
             let _ = self.stream.reset(code.into());
