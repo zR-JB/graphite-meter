@@ -86,9 +86,9 @@ The auth pages keep a pinned copy of the page, ink and text tokens and of the Pl
 (`go/internal/auth/assets/auth.css`; those two font files are the only ones served before sign-in), notices are
 app.css's `.notice`, and every page's card starts at one height so a notice grows it downward. `client/index.html`
 repeats `--canvas` and `--text` for the first paint. The terminal client repeats the text, ink, stage and status
-tokens in sRGB (`go/cmd/graphite-meter-client/theme.go`); a terminal draws everything as text, so its light stage
-colours are each hue mixed 80 % into `--text`. A few values sit a unit or three off their token so that 256-colour
-terminals still map ink and selection to grey and keep latency apart from ok.
+tokens in sRGB (`go/cmd/graphite-meter-client/theme.go`). Its light stage text colours are each hue mixed 80 % into
+`--text`; graph strokes use the unmixed stage tokens. A few values sit a unit or three off their token so that
+256-colour terminals still map ink and selection to grey and keep latency apart from ok.
 
 ## Type
 

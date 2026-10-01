@@ -194,7 +194,7 @@ func wrapParts(parts []string, w int) []string {
 		switch {
 		case line == "":
 			line = part
-		case len([]rune(line))+3+len([]rune(part)) <= w:
+		case lipgloss.Width(line)+3+lipgloss.Width(part) <= w:
 			line += " · " + part
 		default:
 			lines = append(lines, line)

@@ -841,7 +841,7 @@ SOFTWARE.
 ============================================================
 
 Component: github.com/charmbracelet/ultraviolet
-Version: v0.0.0-20260811164956-006e29f97886
+Version: v0.0.0-20260929091141-666ce5eec9fc
 Source: https://github.com/charmbracelet/ultraviolet
 License: MIT
 Modified by Graphite Meter: no
