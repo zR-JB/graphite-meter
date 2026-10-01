@@ -74,9 +74,10 @@ pub(super) fn panel(title: &str, mut body: Text, width: usize, height: usize, th
 }
 
 /// Go's join: side by side with a space between, or one above the other.
-pub(super) fn join(left: Text, right: Text, side: bool) -> Text {
+pub(super) fn join(mut left: Text, right: Text, side: bool) -> Text {
     if !side {
-        return [left, right].concat();
+        left.extend(right);
+        return left;
     }
     let width = left.iter().map(Line::width).max().unwrap_or(0);
     let height = left.len().max(right.len());

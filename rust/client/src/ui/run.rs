@@ -319,25 +319,22 @@ fn chart(
             }
         }
     };
+    let column = |at: f64| (((at - t0) / (t1 - t0) * dot_width as f64) as isize).clamp(0, dot_width as isize - 1);
     for (index, (_, points, _)) in lines.iter().enumerate() {
-        // Each dot column's weighted sum and count, where None is a gap that breaks the line.
-        let mut columns: Vec<Option<(isize, f64, usize)>> = Vec::new();
-        for point in points.iter() {
-            let x = (((point.0 - t0) / (t1 - t0) * dot_width as f64) as isize).clamp(0, dot_width as isize - 1);
-            match columns.last_mut() {
-                _ if point.1.is_nan() => columns.push(None),
-                Some(Some((column, sum, count))) if *column == x => {
-                    (*sum, *count) = (*sum + point.1 * point.2 as f64, *count + point.2);
-                }
-                _ => columns.push(Some((x, point.1 * point.2 as f64, point.2))),
-            }
-        }
+        // Average adjacent samples in a dot column; a gap breaks the line, even within that column.
+        let mut points = points.iter().peekable();
         let mut last = None;
-        for column in columns {
-            let Some((x, sum, count)) = column else {
+        while let Some(point) = points.next() {
+            if point.1.is_nan() {
                 last = None;
                 continue;
-            };
+            }
+            let x = column(point.0);
+            let (mut sum, mut count) = (point.1 * point.2 as f64, point.2);
+            while let Some(next) = points.next_if(|point| !point.1.is_nan() && column(point.0) == x) {
+                sum += next.1 * next.2 as f64;
+                count += next.2;
+            }
             let share = (sum / count as f64 / top).clamp(0.0, 1.0);
             let y = dot_height as isize - 1 - (share * (dot_height - 1) as f64).round() as isize;
             segment(last.unwrap_or((x, y)), (x, y), index);
@@ -445,17 +442,18 @@ impl Ui {
         if let Some(id) = self.latency_server().filter(|_| self.several()) {
             title = format!("{title} · latency to {}", server_name(snapshot, id));
         }
-        let mut bottom = panel(&title, results.clone(), width, 0, theme);
         let widest = results.iter().map(Line::width).max().unwrap_or(0);
         let results_width = widest.max(title.width() + 2) + 4;
-        if width >= TWO_COLUMN_MIN && width.saturating_sub(1 + results_width) >= 30 {
+        let bottom = if width >= TWO_COLUMN_MIN && width.saturating_sub(1 + results_width) >= 30 {
             let fields = self.test_fields(snapshot, run, width - 1 - results_width - 4);
             let height = results.len().max(fields.len()) + 2;
             let fields = panel("Test", fields, width - 1 - results_width, height, theme);
-            bottom = join(panel(&title, results, results_width, height, theme), fields, true);
-        }
+            join(panel(&title, results, results_width, height, theme), fields, true)
+        } else {
+            panel(&title, results, width, 0, theme)
+        };
         match height.saturating_sub(bottom.len()) {
-            timeline if timeline >= 8 => [self.timeline_panel(snapshot, run, width, timeline), bottom].concat(),
+            timeline if timeline >= 8 => join(self.timeline_panel(snapshot, run, width, timeline), bottom, false),
             _ => bottom,
         }
     }
@@ -481,7 +479,7 @@ impl Ui {
         }
         if live || live_height >= 9 {
             let timeline = self.timeline_panel(snapshot, run, right, live_height.max(7));
-            return [panel("Test", test, left, 0, theme), timeline].concat();
+            return join(panel("Test", test, left, 0, theme), timeline, false);
         }
         panel("Test", self.test_view(snapshot, run, width - 4, !side), width, 0, theme)
     }
@@ -502,7 +500,10 @@ impl Ui {
         if compact {
             return track;
         }
-        [self.test_fields(snapshot, run, width), vec![Line::default()], track].concat()
+        let mut out = self.test_fields(snapshot, run, width);
+        out.push(Line::default());
+        out.extend(track);
+        out
     }
 
     /// Go's testFields: the run's servers and paths, then its stream and timing settings.
@@ -664,7 +665,8 @@ impl Ui {
         } else if directions.is_empty() {
             out.extend(rtts(&run.marks, chart_height));
         } else if loaded && chart_height >= 12 {
-            out.extend([rates(chart_height - 5), rtts(&run.marks, 5)].concat());
+            out.extend(rates(chart_height - 5));
+            out.extend(rtts(&run.marks, 5));
         } else {
             out.extend(rates(chart_height));
         }
@@ -800,6 +802,30 @@ mod tests {
                 assert_ne!(*inked, gap, "width {width}: dot column {x}");
             }
             assert!(lines.iter().all(|line| line.width() <= width), "width {width}");
+            let samples = [
+                (0.0, 1e6, 3, 1e6),
+                (0.001, 3e6, 1, 3e6),
+                (10.0, f64::NAN, 1, 0.0),
+                (10.001, 2e6, 1, 2e6),
+                (19.0, 3e6, 2, 3e6),
+            ];
+            let averaged = [(0.0, 1.5e6, 4, 3e6), samples[2], samples[3], samples[4]];
+            let draw = |points: &[_]| {
+                chart(
+                    &[(theme.trace(Stage::Download), points, false)],
+                    &[],
+                    RATE_AXIS,
+                    20.0,
+                    width,
+                    12,
+                    &theme,
+                )
+            };
+            assert_eq!(
+                draw(&samples),
+                draw(&averaged),
+                "width {width}: samples in one column lost their weights or their gap"
+            );
         }
         let mut peak = Trace::default();
         for index in 0..1000 {
