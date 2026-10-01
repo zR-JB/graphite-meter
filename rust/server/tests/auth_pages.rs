@@ -118,6 +118,7 @@ fn every_inline_asset_matches_csp_hash_of_actual_rendered_bytes() {
         "camera=(), microphone=(), geolocation=()"
     );
     assert!(!csp.contains("unsafe-inline"));
+    assert_eq!(csp.matches("font-src 'self'").count(), 1);
 }
 
 #[test]

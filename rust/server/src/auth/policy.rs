@@ -239,7 +239,14 @@ impl Policy {
         if auth_route::claims(path) && (!listener.ui || !trust.canonical) {
             return Err(Refusal::Forbidden);
         }
-        if listener.ui && AuthRoute::lookup(request.method(), path).is_some_and(|route| route.public(self.mode)) {
+        let sign_in_font = matches!(request.method(), &Method::GET | &Method::HEAD)
+            && matches!(
+                path,
+                "/fonts/ibm-plex-sans-var-latin1.woff2" | "/fonts/ibm-plex-mono-600-latin1.woff2"
+            );
+        if listener.ui
+            && (sign_in_font || AuthRoute::lookup(request.method(), path).is_some_and(|route| route.public(self.mode)))
+        {
             return if trust.secure && trust.canonical {
                 Ok(Authorization::PublicAuth)
             } else {

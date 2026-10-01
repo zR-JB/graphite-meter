@@ -199,7 +199,7 @@ fn escape(text: &str) -> String {
 
 static CSP: LazyLock<String> = LazyLock::new(|| {
     format!(
-        "default-src 'none'; style-src 'sha256-{}'; script-src 'sha256-{}' 'sha256-{}'; connect-src 'self'; img-src data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+        "default-src 'none'; style-src 'sha256-{}'; font-src 'self'; script-src 'sha256-{}' 'sha256-{}'; connect-src 'self'; img-src data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
         asset_hash(STYLES),
         asset_hash(THEME_SCRIPT),
         asset_hash(PENDING_SCRIPT),

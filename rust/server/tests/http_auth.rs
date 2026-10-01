@@ -175,6 +175,40 @@ async fn password_tls_upload_h2_and_websocket_are_bound_to_login_lifetime() {
 
 async fn password_flow() {
     let h = Harness::start().await;
+    // Sign-in needs only these two bundled faces. This debug build may have no assets,
+    // but the authorization gate must let GET/HEAD reach their file handler.
+    for path in [
+        "/fonts/ibm-plex-sans-var-latin1.woff2",
+        "/fonts/ibm-plex-mono-600-latin1.woff2",
+    ] {
+        for method in ["GET", "HEAD"] {
+            let (headers, body) = h.request(method, path, "", "").await;
+            assert!(
+                !headers.contains("graphite-meter-auth: required"),
+                "{method} {path}: {headers}"
+            );
+            assert!(!headers.starts_with("HTTP/1.1 403"));
+            if method == "HEAD" {
+                assert!(body.is_empty());
+            }
+        }
+        for method in ["POST", "OPTIONS", "DELETE"] {
+            let (headers, _) = h.request(method, path, "", "").await;
+            assert!(
+                headers.contains("graphite-meter-auth: required"),
+                "{method} {path}: {headers}"
+            );
+        }
+    }
+    for path in [
+        "/fonts/ibm-plex-sans-var-latin2.woff2",
+        "/fonts/ibm-plex-mono-500-latin1.woff2",
+        "/fonts/ibm-plex-sans-var-latin1.woff2/",
+        "/fonts/",
+    ] {
+        let (headers, _) = h.request("GET", path, "", "").await;
+        assert!(headers.contains("graphite-meter-auth: required"), "{path}: {headers}");
+    }
     let (denied, _) = h.request("GET", "/download?bytes=1", "", "").await;
     assert!(denied.starts_with("HTTP/1.1 403"));
     assert!(denied.contains("graphite-meter-auth: required"));
