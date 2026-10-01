@@ -154,7 +154,7 @@ async fn run_case_with_http(url: &str, case: Case, http: Http) -> Result<(), Err
     drop(cancel_tx);
 
     let snapshot = snapshots.borrow();
-    assert_eq!(snapshot.phase, Phase::Complete, "{}", case.name);
+    assert_eq!(snapshot.phase, Phase::Complete, "{}: {snapshot:#?}", case.name);
     assert!(snapshot.error.is_none(), "{}: {:?}", case.name, snapshot.error);
     assert!(snapshot.servers.iter().any(|server| {
         server
