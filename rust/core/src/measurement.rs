@@ -453,32 +453,37 @@ impl AggregateMeasurements {
                 .get(id)
                 .is_none_or(|snapshot| snapshot.id != observed.id || snapshot.bytes < observed.maximum)
             {
-                self.credit_upload(id, observed.clone());
+                self.credit_upload(id, &observed.id, observed.maximum);
             }
         }
         for (id, snapshot) in &boundary.up {
-            self.credit_upload(
-                id,
-                ObservedUpload {
-                    id: snapshot.id.clone(),
-                    maximum: snapshot.bytes,
-                },
-            );
+            self.credit_upload(id, &snapshot.id, snapshot.bytes);
         }
     }
 
-    fn credit_upload(&mut self, id: &str, next: ObservedUpload) {
+    fn credit_upload(&mut self, id: &str, receiver_id: &str, maximum: u64) {
         let Some(server) = self.servers.get_mut(id) else {
             return;
         };
-        let credit = match &server.upload {
-            None => 0,
-            Some(previous) if previous.id != next.id => next.maximum,
-            Some(previous) if next.maximum <= previous.maximum => return,
-            Some(previous) => next.maximum - previous.maximum,
+        let credit = match &mut server.upload {
+            Some(previous) if previous.id == receiver_id => {
+                if maximum <= previous.maximum {
+                    return;
+                }
+                let credit = maximum - previous.maximum;
+                previous.maximum = maximum;
+                credit
+            }
+            slot => {
+                let credit = if slot.is_some() { maximum } else { 0 };
+                *slot = Some(ObservedUpload {
+                    id: receiver_id.into(),
+                    maximum,
+                });
+                credit
+            }
         };
         server.bytes[1] = server.bytes[1].saturating_add(credit);
-        server.upload = Some(next);
     }
 }
 
