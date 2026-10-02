@@ -87,7 +87,7 @@
   {
     "ecosystem": "go",
     "name": "github.com/charmbracelet/ultraviolet",
-    "reviewedVersion": "v0.0.0-20260929091141-666ce5eec9fc",
+    "reviewedVersion": "v0.0.0-20261001125412-878653296cfd",
     "upstream": "https://github.com/charmbracelet/ultraviolet",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
@@ -99,7 +99,7 @@
       "tui"
     ],
     "reviewDecision": "approved",
-    "reviewNotes": "Audited 2026-09-26 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+    "reviewNotes": "Audited 2026-10-02 at revision 878653296cfdcb92c4b15721eedfcadfb6fd7406; complete legal-file fingerprint matches the existing MIT review, and the three upstream renderer fixes introduce no licensing changes."
   },
   {
     "ecosystem": "go",
