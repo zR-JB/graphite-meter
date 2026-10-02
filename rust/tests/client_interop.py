@@ -1,25 +1,10 @@
 """Run the native Rust measurement engine against the unchanged Go server."""
 
-import os
-from pathlib import Path
-import socket
 import ssl
 import subprocess
-import tempfile
-
-from process_fixture import running
 import urllib.request
 
-from server_interop import PASSWORD_HASH
-
-
-ROOT = Path(__file__).resolve().parents[2]
-
-
-def unused_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        listener.bind(("127.0.0.1", 0))
-        return listener.getsockname()[1]
+from process_fixture import Fixture, PASSWORD_HASH, ROOT, running, unused_port
 
 
 def probe(opener, url: str) -> bool:
@@ -28,58 +13,15 @@ def probe(opener, url: str) -> bool:
 
 
 def main() -> None:
-    target = ROOT / "rust/target"
-    target.mkdir(exist_ok=True)
-    directory = Path(tempfile.mkdtemp(prefix="client-interop-", dir=target))
-    print(f"Evidence: {directory}", flush=True)
+    fixture = Fixture("client-interop-")
+    directory = fixture.directory
     subprocess.run(
         ["cargo", "test", "--locked", "--workspace",
          "--test", "go_server_interop", "--no-run"],
         cwd=ROOT / "rust", check=True, timeout=600,
     )
-    cert, key = directory / "cert.pem", directory / "key.pem"
-    ca, ca_key, request = directory / "ca.pem", directory / "ca.key", directory / "server.csr"
-    subprocess.run(
-        [
-            "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
-            "-days", "1", "-keyout", str(ca_key), "-out", str(ca),
-            "-subj", "/CN=Graphite Meter loopback test CA",
-            "-addext", "basicConstraints=critical,CA:TRUE",
-            "-addext", "keyUsage=critical,keyCertSign,cRLSign",
-        ],
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        [
-            "openssl", "req", "-new", "-newkey", "rsa:2048", "-nodes",
-            "-keyout", str(key), "-out", str(request), "-subj", "/CN=localhost",
-        ],
-        check=True,
-        capture_output=True,
-    )
-    extensions = directory / "server.ext"
-    extensions.write_text(
-        "basicConstraints=critical,CA:FALSE\n"
-        "keyUsage=critical,digitalSignature,keyEncipherment\n"
-        "extendedKeyUsage=serverAuth\n"
-        "subjectAltName=IP:127.0.0.1,DNS:localhost\n"
-    )
-    subprocess.run(
-        [
-            "openssl", "x509", "-req", "-in", str(request),
-            "-CA", str(ca), "-CAkey", str(ca_key), "-set_serial", "1",
-            "-days", "1", "-out", str(cert), "-extfile", str(extensions),
-        ],
-        check=True,
-        capture_output=True,
-    )
-    environment = {key: value for key, value in os.environ.items() if not key.startswith("GM_")}
-    cache = target / "interop-go-cache"
-    cache.mkdir(exist_ok=True)
-    work = directory / "go-tmp"
-    work.mkdir()
-    environment.update({"GOCACHE": str(cache), "GOTMPDIR": str(work)})
+    ca, cert, key = fixture.identity()
+    environment = fixture.go_environment()
     binary = directory / "go-server"
     subprocess.run(
         ["go", "build", "-o", str(binary), "./cmd/graphite-meter"],

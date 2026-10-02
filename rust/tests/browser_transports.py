@@ -24,7 +24,8 @@ import tempfile
 import threading
 import time
 
-ROOT = Path(__file__).resolve().parents[2]
+from process_fixture import Fixture
+
 PAGE, H3, H2 = 17246, 17247, 17248
 CHROMIUM = "/usr/bin/chromium"
 FIREFOX = str(Path.home() / ".cache/ms-playwright/firefox-1538/firefox/firefox")
@@ -161,22 +162,6 @@ def run(command: list[str], **kwargs) -> str:
     return subprocess.run(command, check=True, capture_output=True, text=True, **kwargs).stdout
 
 
-def identity(directory: Path) -> tuple[Path, Path, Path]:
-    """A test CA and a 10-day P-256 leaf, short enough for serverCertificateHashes."""
-    ca, leaf, key = directory / "ca.pem", directory / "leaf.pem", directory / "leaf.key"
-    ec = ["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes"]
-    run(["openssl", "req", "-x509", *ec, "-days", "10", "-subj", "/CN=gm browser transports CA",
-         "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign",
-         "-keyout", str(directory / "ca.key"), "-out", str(ca)])
-    run(["openssl", "req", *ec, "-subj", "/CN=127.0.0.1", "-keyout", str(key), "-out", str(directory / "leaf.csr")])
-    (directory / "leaf.ext").write_text(
-        "subjectAltName=IP:127.0.0.1,IP:127.0.0.2\nextendedKeyUsage=serverAuth\nbasicConstraints=critical,CA:FALSE\n")
-    run(["openssl", "x509", "-req", "-in", str(directory / "leaf.csr"), "-CA", str(ca),
-         "-CAkey", str(directory / "ca.key"), "-set_serial", "1", "-days", "10",
-         "-extfile", str(directory / "leaf.ext"), "-out", str(leaf)])
-    return ca, leaf, key
-
-
 class Pages(http.server.ThreadingHTTPServer):
     """Serves the page on 127.0.0.2: Firefox's h3 mapping for 127.0.0.1 ignores ports."""
 
@@ -311,11 +296,9 @@ def main() -> None:
     parser.add_argument("--browsers", default="chromium,firefox,webkit")
     parser.add_argument("--chromium", default=CHROMIUM, help="the Chromium or Chrome for Testing binary")
     args = parser.parse_args()
-    target = ROOT / "rust/target"
-    target.mkdir(exist_ok=True)
-    directory = Path(tempfile.mkdtemp(prefix="browser-transports-", dir=target))
-    print(f"Evidence: {directory}", flush=True)
-    ca, leaf, key = identity(directory)
+    fixture = Fixture("browser-transports-")
+    directory = fixture.directory
+    ca, leaf, key = fixture.identity()
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(leaf, key)
     pages = Pages(context)

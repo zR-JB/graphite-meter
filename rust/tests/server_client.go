@@ -22,6 +22,76 @@ import (
 	"time"
 )
 
+func dialPeer(ctx context.Context, host string, config *tls.Config, transport *webtransport.Transport) (*quic.Conn, *webtransport.ClientConn, error) {
+	connection, err := quic.DialAddr(ctx, host, config, &quic.Config{EnableDatagrams: true, EnableStreamResetPartialDelivery: true})
+	if err != nil {
+		return nil, nil, err
+	}
+	peer, err := transport.NewClientConn(connection)
+	if err != nil {
+		connection.CloseWithError(0, "initialization failed")
+		return nil, nil, err
+	}
+	return connection, peer, nil
+}
+
+func uploadProgress(ctx context.Context, session *webtransport.Session) (*bufio.Scanner, error) {
+	stream, err := session.AcceptUniStream(ctx)
+	if err != nil {
+		return nil, err
+	}
+	deadline, _ := ctx.Deadline()
+	stream.SetReadDeadline(deadline)
+	scanner := bufio.NewScanner(stream)
+	kind, _, err := readProgress(scanner)
+	if err != nil {
+		return nil, err
+	}
+	if kind != "ready" {
+		return nil, fmt.Errorf("expected upload ready, got %q", kind)
+	}
+	return scanner, nil
+}
+
+func readProgress(scanner *bufio.Scanner) (string, uint64, error) {
+	for scanner.Scan() {
+		if scanner.Text() == "" {
+			continue
+		}
+		var event struct {
+			Type    string `json:"type"`
+			Bytes   uint64 `json:"bytes"`
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			return "", 0, err
+		}
+		if event.Type == "error" {
+			return "", 0, fmt.Errorf("upload: %s", event.Message)
+		}
+		return event.Type, event.Bytes, nil
+	}
+	if err := scanner.Err(); err != nil {
+		return "", 0, err
+	}
+	return "", 0, io.ErrUnexpectedEOF
+}
+
+func finishUpload(scanner *bufio.Scanner, request func(string, string, io.Reader) ([]byte, error), id string) (uint64, error) {
+	if _, err := request("DELETE", "/upload/progress?id="+url.QueryEscape(id), nil); err != nil {
+		return 0, err
+	}
+	for {
+		kind, count, err := readProgress(scanner)
+		if err != nil {
+			return 0, err
+		}
+		if kind == "complete" {
+			return count, nil
+		}
+	}
+}
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -38,9 +108,9 @@ func loopback(port string) (string, error) {
 
 func run() error {
 	if len(os.Args) != 2 && len(os.Args) != 3 {
-		return fmt.Errorf("usage: server_client H3_PORT [AUTH_TLS_PORT] (reads cert.pem from the working directory)")
+		return fmt.Errorf("usage: server_client H3_PORT [AUTH_TLS_PORT] (reads ca.pem from the working directory)")
 	}
-	cert, err := os.ReadFile("cert.pem")
+	cert, err := os.ReadFile("ca.pem")
 	if err != nil {
 		return err
 	}
@@ -81,17 +151,13 @@ func run() error {
 	}
 	config = config.Clone()
 	config.NextProtos = []string{http3.NextProtoH3}
-	conn, err := quic.DialAddr(ctx, target.Host, config, &quic.Config{EnableDatagrams: true, EnableStreamResetPartialDelivery: true})
+	transport := &webtransport.Transport{TLSClientConfig: config}
+	conn, client, err := dialPeer(ctx, target.Host, config, transport)
 	if err != nil {
 		return err
 	}
 	defer conn.CloseWithError(0, "probe finished")
-	transport := &webtransport.Transport{TLSClientConfig: config}
 	defer transport.Close()
-	client, err := transport.NewClientConn(conn)
-	if err != nil {
-		return err
-	}
 	request := func(method, path string, body io.Reader) ([]byte, error) {
 		req, err := http.NewRequestWithContext(ctx, method, base+path, body)
 		if err != nil {
@@ -153,13 +219,8 @@ func run() error {
 	dial := func(path string) (*webtransport.Session, error) {
 		// Per-session flow control is not negotiated: each concurrent session
 		// needs its own QUIC connection. Ordinary H3 requests may still share it.
-		connection, err := quic.DialAddr(ctx, target.Host, config, &quic.Config{EnableDatagrams: true, EnableStreamResetPartialDelivery: true})
+		connection, peer, err := dialPeer(ctx, target.Host, config, transport)
 		if err != nil {
-			return nil, err
-		}
-		peer, err := transport.NewClientConn(connection)
-		if err != nil {
-			connection.CloseWithError(0, "initialization failed")
 			return nil, err
 		}
 		_, session, err := peer.Dial(ctx, base+path, nil)
@@ -237,43 +298,11 @@ func run() error {
 		return err
 	}
 	defer session.CloseWithError(0, "")
-	progress, err := session.AcceptUniStream(ctx)
+	progress, err := uploadProgress(ctx, session)
 	if err != nil {
 		return err
 	}
 	deadline, _ := ctx.Deadline()
-	progress.SetReadDeadline(deadline)
-	scanner := bufio.NewScanner(progress)
-	record := func(scanner *bufio.Scanner) (string, uint64, error) {
-		for scanner.Scan() {
-			if scanner.Text() == "" {
-				continue
-			}
-			var event struct {
-				Type    string `json:"type"`
-				Bytes   uint64 `json:"bytes"`
-				Message string `json:"message"`
-			}
-			if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-				return "", 0, err
-			}
-			if event.Type == "error" {
-				return "", 0, fmt.Errorf("upload: %s", event.Message)
-			}
-			return event.Type, event.Bytes, nil
-		}
-		if err := scanner.Err(); err != nil {
-			return "", 0, err
-		}
-		return "", 0, io.ErrUnexpectedEOF
-	}
-	kind, _, err := record(scanner)
-	if err != nil {
-		return err
-	}
-	if kind != "ready" {
-		return fmt.Errorf("expected ready, got %q", kind)
-	}
 	lane, err := session.OpenUniStreamSync(ctx)
 	if err != nil {
 		return err
@@ -286,7 +315,7 @@ func run() error {
 		return err
 	}
 	for {
-		kind, count, err := record(scanner)
+		kind, count, err := readProgress(progress)
 		if err != nil {
 			return err
 		}
@@ -294,20 +323,12 @@ func run() error {
 			break
 		}
 	}
-	if _, err = request("DELETE", "/upload/progress?id="+url.QueryEscape(id), nil); err != nil {
+	count, err := finishUpload(progress, request, id)
+	if err != nil {
 		return err
 	}
-	for {
-		kind, count, err := record(scanner)
-		if err != nil {
-			return err
-		}
-		if kind == "complete" {
-			if count != 131073 {
-				return fmt.Errorf("WT complete bytes=%d", count)
-			}
-			break
-		}
+	if count != 131073 {
+		return fmt.Errorf("WT complete bytes=%d", count)
 	}
 	if err = pong(ping, "43"); err != nil {
 		return err
@@ -366,18 +387,9 @@ func run() error {
 		return err
 	}
 	defer datagramUpload.CloseWithError(0, "")
-	datagramProgress, err := datagramUpload.AcceptUniStream(ctx)
+	datagramProgress, err := uploadProgress(ctx, datagramUpload)
 	if err != nil {
 		return err
-	}
-	datagramProgress.SetReadDeadline(deadline)
-	datagramScanner := bufio.NewScanner(datagramProgress)
-	kind, _, err = record(datagramScanner)
-	if err != nil {
-		return err
-	}
-	if kind != "ready" {
-		return fmt.Errorf("expected datagram upload ready, got %q", kind)
 	}
 	const offered = 16 * 1000
 	payload := bytes.Repeat([]byte("d"), 1000)
@@ -388,7 +400,8 @@ func run() error {
 	}
 	var observed uint64
 	for observed == 0 {
-		kind, observed, err = record(datagramScanner)
+		kind, count, err := readProgress(datagramProgress)
+		observed = count
 		if err != nil {
 			return err
 		}
@@ -396,20 +409,12 @@ func run() error {
 			return fmt.Errorf("WT datagram progress kind=%q bytes=%d", kind, observed)
 		}
 	}
-	if _, err = request("DELETE", "/upload/progress?id="+url.QueryEscape(id), nil); err != nil {
+	count, err = finishUpload(datagramProgress, request, id)
+	if err != nil {
 		return err
 	}
-	for {
-		kind, count, err := record(datagramScanner)
-		if err != nil {
-			return err
-		}
-		if kind == "complete" {
-			if count < observed || count > offered {
-				return fmt.Errorf("WT datagram complete bytes=%d, observed=%d", count, observed)
-			}
-			break
-		}
+	if count < observed || count > offered {
+		return fmt.Errorf("WT datagram complete bytes=%d, observed=%d", count, observed)
 	}
 	fmt.Println("WT datagram upload: ready, receiver progress, HTTP finish, bounded completion")
 	return nil
@@ -483,15 +488,11 @@ func runAuthenticated(ctx context.Context, base, public string, tlsConfig *tls.C
 	quicTLS.NextProtos = []string{http3.NextProtoH3}
 	transport := &webtransport.Transport{TLSClientConfig: quicTLS}
 	defer transport.Close()
-	connection, err := quic.DialAddr(ctx, target.Host, quicTLS, &quic.Config{EnableDatagrams: true, EnableStreamResetPartialDelivery: true})
+	connection, client, err := dialPeer(ctx, target.Host, quicTLS, transport)
 	if err != nil {
 		return err
 	}
 	defer connection.CloseWithError(0, "probe finished")
-	client, err := transport.NewClientConn(connection)
-	if err != nil {
-		return err
-	}
 	unauthorized, err := request("GET", base+"/download?bytes=1", nil)
 	if err != nil {
 		return err
@@ -574,15 +575,11 @@ func runAuthenticated(ctx context.Context, base, public string, tlsConfig *tls.C
 		return err
 	}
 	rejectTicket := func(token string) error {
-		connection, err := quic.DialAddr(ctx, target.Host, quicTLS, &quic.Config{EnableDatagrams: true, EnableStreamResetPartialDelivery: true})
+		connection, peer, err := dialPeer(ctx, target.Host, quicTLS, transport)
 		if err != nil {
 			return err
 		}
 		defer connection.CloseWithError(0, "probe finished")
-		peer, err := transport.NewClientConn(connection)
-		if err != nil {
-			return err
-		}
 		response, session, err := connect(peer, token)
 		if err == nil {
 			session.CloseWithError(0, "unexpected admission")
