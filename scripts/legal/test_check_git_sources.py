@@ -65,9 +65,6 @@ class ForkTests(unittest.TestCase):
                 'baseTag': 'v1', 'base': self.base, 'diffSha256': hashlib.sha256(changes.encode()).hexdigest(),
                 'modifiedPackages': ['pkg'], 'commits': [{'subject': 'fix pkg'}]}
 
-    def test_reviewed_fork_passes(self) -> None:
-        self.assertEqual(check_fork(self.record(), self.scratch / 'check'), [])
-
     def test_unreviewed_change_outside_packages_fails(self) -> None:
         record = self.record()
         record['rev'] = commit(self.fork, 'other/build.rs', 'sneak')

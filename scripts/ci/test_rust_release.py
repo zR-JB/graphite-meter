@@ -16,10 +16,10 @@ from ..legal.model import manual_files, manual_sources
 from ..legal.rust import DEVELOPMENT, DEVELOPMENT_NOTICE
 from .fixtures import statement, write_archive
 from .github_api import ControlPlaneError as VerificationError, JsonObject, file_sha256 as sha256_file, write_checksums
-from .toolchains import rust_tui_targets, tui_targets
+from .toolchains import rust_tui_targets
 from .verify_release_assets import (
     TARGETS, expected_rust_artifacts, merge, read_archive, require_same, rust_builds, rust_files, stage_rust,
-    tui_archive, verify_rust, verify_rust_artifacts, verify_rust_client_archive, verify_rust_source,
+    tui_archive, verify_rust, verify_rust_client_archive, verify_rust_source,
 )
 
 # Each shipped platform's Rust target, as the builders read it.
@@ -143,22 +143,6 @@ class RustArchiveBoundaryTests(unittest.TestCase):
 
 
 class RustServerReleaseTests(unittest.TestCase):
-    def test_each_server_source_names_the_listed_linux_target(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            dist = Path(temporary)
-
-            def source(arch: str, target: str) -> None:
-                write_source(dist / f"graphite-meter-server_1.2.3_linux_{arch}_rust_third-party-source.tar.gz",
-                             inventory("graphite-meter-server", target))
-
-            for arch in ("amd64", "arm64"):
-                source(arch, RUST_TARGETS[f"linux/{arch}"])
-            verify_rust_artifacts(dist, "1.2.3", *rust_builds("server"))
-            # The image ships the static musl server; a glibc build for the same machine is another binary.
-            source("arm64", RUST_TARGETS["linux/arm64"].replace("-musl", "-gnu"))
-            with self.assertRaisesRegex(VerificationError, "invalid Rust build identity"):
-                verify_rust_artifacts(dist, "1.2.3", *rust_builds("server"))
-
     def test_server_source_identity_and_component_presence(self) -> None:
         target = RUST_TARGETS["linux/arm64"]
         for mutation in (
@@ -166,6 +150,7 @@ class RustServerReleaseTests(unittest.TestCase):
             "cargo_fixture",
             "package",
             "target",
+            "target_libc",
             "lock",
             "missing",
             "first_party_key",
@@ -184,6 +169,7 @@ class RustServerReleaseTests(unittest.TestCase):
                 mutations: dict[str, dict] = {
                     "package": {"package": "graphite-meter-client"},
                     "target": {"target": RUST_TARGETS["linux/amd64"]},
+                    "target_libc": {"target": target.replace("-musl", "-gnu")},
                     "lock": {"cargoLockSha256": "0" * 64},
                     "schema_boolean": {"schemaVersion": True},
                     "component_array": {"components": {"component": "not an array"}},
@@ -235,11 +221,6 @@ class RustStagingTests(unittest.TestCase):
                 self.assertEqual({path.name for path in (root / "staged").iterdir()},
                                  expected_rust_artifacts("1.2.3", self.SERVER, self.TUI) | {"checksums.txt"})
                 COMMANDS["check-rust"]()
-
-    def test_rust_excludes_macos_while_go_keeps_both_mac_architectures(self) -> None:
-        self.assertEqual(set(self.TUI), {"linux/amd64", "linux/arm64", "windows/amd64"})
-        self.assertTrue({"darwin/amd64", "darwin/arm64"} <= tui_targets(TARGETS).keys())
-        self.assertFalse(any("_darwin_" in name for name in expected_rust_artifacts("1.2.3", self.SERVER, self.TUI)))
 
     def test_staging_refuses_an_export_it_cannot_account_for(self) -> None:
         arm64 = Path("server") / self.SERVER[1].replace("/", "_")

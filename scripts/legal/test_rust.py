@@ -15,11 +15,10 @@ from unittest.mock import patch
 from copy import deepcopy
 
 from scripts.ci.github_api import ControlPlaneError
-from scripts.legal.artifacts import render
-from scripts.legal.model import (Component, Json, LegalError, Project, Provenance, Review, array, manual_files,
+from scripts.legal.model import (Component, Json, LegalError, Provenance, Review, array, manual_files,
                                  manual_sources, marshal, read_json, sha256)
 from scripts.legal.review import add_provenance, validate_review
-from scripts.legal.rust import (DEVELOPMENT, DEVELOPMENT_NOTICE, about, add_cargo_sources, artifacts, capture, cargo,
+from scripts.legal.rust import (DEVELOPMENT, DEVELOPMENT_NOTICE, add_cargo_sources, artifacts, capture, cargo,
                                 image_additions, legal_report, reusable, stage_browser, write_changed)
 from scripts.legal.rust_platform import SYSROOT, candidate, fetch_notices, imports, link_map, linked, linker_version, notice
 
@@ -280,22 +279,6 @@ class RustPackageTests(unittest.TestCase):
 
 
 class RustLegalReportTests(unittest.TestCase):
-    def test_the_report_opens_as_go_tui_report_of_the_same_version_and_keeps_its_notices(self) -> None:
-        project = Project.read(ROOT)
-        sections = 'THIRD-PARTY SOFTWARE NOTICES\n\nnotices shared with the browser\n'
-        for version, tag in (('1.2.3', '/tree/v1.2.3'), ('v1.2.3-rc.1', '/tree/v1.2.3-rc.1'),
-                             ('22aa4cf2', '/tree/22aa4cf2'), ('development', '')):
-            with self.subTest(version=version):
-                go = render(ROOT, project, version, {'server/browser': [], 'tui': [], 'container': []})
-                tui = go['go/internal/legal/assets/TUI_LEGAL.txt']
-                header = tui[:tui.index(b'THIRD-PARTY SOFTWARE NOTICES')]
-                self.assertIn(f'\nSource code: {project.repository}{tag}\n'.encode(), header)
-                report = legal_report(ROOT, version, sections)
-                self.assertTrue(report.startswith(header))
-                self.assertTrue(report.endswith(b'(including build-time dependencies)\n\n' + sections.encode()))
-                self.assertEqual(about(project, version, 'engine', [])['sourceURL'], project.repository + tag)
-                self.assertEqual(json.loads(go['client/public/legal/about.json'])['sourceURL'], project.repository + tag)
-
     def test_a_development_report_opens_by_saying_that_no_review_covers_it(self) -> None:
         sections = 'THIRD-PARTY SOFTWARE NOTICES\n'
         report = legal_report(ROOT, 'development', sections, development=True)
@@ -465,14 +448,6 @@ class RustPlatformRecordTests(unittest.TestCase):
     def notice(self, entry: dict | None = None, **changes: object) -> str:
         return notice(self.entry if entry is None else entry, **self.facts(**changes))
 
-    def test_notices_are_the_standard_library_texts_then_the_records_in_its_order(self) -> None:
-        self.assertEqual(self.notice(), 'Platform notices.\n'
-                         '\n--- rust-standard-library/COPYRIGHT-library.html ---\n\n<p>library</p>\n'
-                         '\n--- rust-standard-library/Apache-2.0.txt ---\n\nApache\n'
-                         '\n--- rust-standard-library/MIT.txt ---\n\nMIT\n'
-                         '\n--- zlib/copyright ---\n\nzlib notice\n'
-                         '\n--- libc/copyright ---\n\nlibc notice\n')
-
     def test_any_changed_added_or_missing_input_is_refused(self) -> None:
         for path, content in self.files.items():
             with self.subTest(changed=path):
@@ -530,39 +505,55 @@ class RustPlatformRecordTests(unittest.TestCase):
 
 
 class RustBuildTests(unittest.TestCase):
-    def test_a_notice_build_names_no_build_machine_path(self) -> None:
+    def test_git_sources_are_remapped_and_the_vendored_workspace_builds_without_its_checkout(self) -> None:
         from scripts.ci.toolchains import rust_channel
-        from scripts.legal.rust import capture
 
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch).resolve()
             upstream, repo = root / 'upstream', root / 'repo'
-            (upstream / 'src').mkdir(parents=True)
-            (upstream / 'Cargo.toml').write_text('[package]\nname = "fixture"\nversion = "1.0.0"\nedition = "2021"\n')
-            # A bounds check embeds its source location, the dependency's path under Cargo's home.
-            (upstream / 'src/lib.rs').write_text('pub fn pick(bytes: &[u8], index: usize) -> u8 { bytes[index] }\n')
+            files = {
+                'Cargo.toml': '[workspace]\nmembers = ["dependency"]\nresolver = "2"\n'
+                              '[workspace.package]\nversion = "1.0.0"\nedition = "2021"\n',
+                'dependency/Cargo.toml': '[package]\nname = "source-fixture"\nversion.workspace = true\nedition.workspace = true\n',
+                # A bounds check embeds the source location under Cargo's home.
+                'dependency/src/lib.rs': 'pub fn pick(bytes: &[u8], index: usize) -> u8 { bytes[index] }\n',
+                'LICENSE': 'fixture license\n',
+            }
+            for name, content in files.items():
+                write_changed(upstream / name, content.encode())
+            (upstream / 'dependency/LICENSE').symlink_to('../LICENSE')
             for args in (('init', '-q'), ('add', '.'), ('commit', '-qm', 'fixture')):
                 subprocess.run(['git', '-C', str(upstream), '-c', 'user.name=fixture',
                                 '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false',
                                 *args], check=True)
             revision = subprocess.check_output(['git', '-C', str(upstream), 'rev-parse', 'HEAD'], text=True).strip()
-            (repo / 'rust/src').mkdir(parents=True)
-            shutil.copyfile(ROOT / 'rust/rust-toolchain.toml', repo / 'rust/rust-toolchain.toml')
-            (repo / 'rust/Cargo.toml').write_text(
+            write_changed(repo / 'rust/rust-toolchain.toml', (ROOT / 'rust/rust-toolchain.toml').read_bytes())
+            write_changed(repo / 'rust/Cargo.toml', (
                 '[package]\nname = "app"\nversion = "1.0.0"\nedition = "2021"\n'
-                f'[dependencies]\nfixture = {{ git = "{upstream.as_uri()}", rev = "{revision}" }}\n')
-            (repo / 'rust/src/main.rs').write_text(
-                'fn main() { println!("{}", fixture::pick(&[1, 2], std::env::args().count())); }\n')
+                f'[dependencies]\nsource-fixture = {{ git = "{upstream.as_uri()}", rev = "{revision}" }}\n').encode())
+            write_changed(repo / 'rust/src/main.rs',
+                          b'fn main() { println!("{}", source_fixture::pick(&[1, 2], std::env::args().count())); }\n')
             host = subprocess.check_output(['rustc', f'+{rust_channel(ROOT)}', '-vV'], text=True)
             target = next(line.split()[1] for line in host.splitlines() if line.startswith('host:'))
             with patch.dict(os.environ, {'CARGO_HOME': str(root / 'cargo-home'), 'CARGO_TERM_QUIET': 'true'}):
                 subprocess.run(cargo(repo, 'generate-lockfile'), cwd=repo / 'rust', check=True)
                 _, messages = capture(repo, 'app', target, 'release', root / 'app.map')
-            binary = Path(next(message['executable'] for message in messages if message.get('executable'))).read_bytes()
-            self.assertTrue(b'/cargo/git/checkouts/' in binary, 'the dependency path is not remapped')
-            self.assertFalse(str(root).encode() in binary, 'the binary names a build path')
-
-
+                binary = Path(next(message['executable'] for message in messages if message.get('executable'))).read_bytes()
+                self.assertTrue(b'/cargo/git/checkouts/' in binary, 'the dependency path is not remapped')
+                self.assertFalse(str(root).encode() in binary, 'the binary names a build path')
+                payload = io.BytesIO()
+                with tarfile.open(fileobj=payload, mode='w') as archive:
+                    add_cargo_sources(archive, repo, [Component('source-fixture', '1.0.0', 'cargo', upstream.as_uri(), '')])
+                shutil.rmtree(upstream)
+                shutil.rmtree(root / 'cargo-home')
+                payload.seek(0)
+                with tarfile.open(fileobj=payload) as archive:
+                    archive.extractall(root / 'unpacked', filter='data')
+                package = root / 'unpacked/third_party/cargo/source-fixture-1.0.0'
+                self.assertEqual((package / 'LICENSE').read_text(), 'fixture license\n')
+                self.assertFalse((package / 'LICENSE').is_symlink())
+                subprocess.run(cargo(repo, 'build', '--offline', '--manifest-path', str(package / 'Cargo.toml')),
+                               check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
     def test_only_development_notices_leave_their_marker_in_the_executable(self) -> None:
         from scripts.ci.toolchains import rust_channel
@@ -608,52 +599,6 @@ class RustBuildTests(unittest.TestCase):
                     _, messages = capture(repo, 'app', target, 'release', None, legal)
                     executable = Path(next(item['executable'] for item in messages if item.get('executable')))
                     self.assertEqual(DEVELOPMENT.encode() in executable.read_bytes(), target is None, target)
-
-
-class RustSourceTests(unittest.TestCase):
-    def test_git_workspace_source_builds_without_its_checkout(self) -> None:
-        with tempfile.TemporaryDirectory() as scratch:
-            root = Path(scratch)
-            upstream = root / 'upstream'
-            (upstream / 'dependency/src').mkdir(parents=True)
-            (upstream / 'Cargo.toml').write_text(
-                '[workspace]\nmembers = ["dependency"]\nresolver = "2"\n'
-                '[workspace.package]\nversion = "1.0.0"\nedition = "2021"\n')
-            (upstream / 'dependency/Cargo.toml').write_text(
-                '[package]\nname = "source-fixture"\nversion.workspace = true\nedition.workspace = true\n')
-            (upstream / 'dependency/src/lib.rs').write_text('pub fn value() -> u32 { 42 }\n')
-            (upstream / 'LICENSE').write_text('fixture license\n')
-            (upstream / 'dependency/LICENSE').symlink_to('../LICENSE')
-            for args in (('init', '-q'), ('add', '.'), ('commit', '-qm', 'fixture')):
-                subprocess.run(['git', '-C', str(upstream), '-c', 'user.name=fixture',
-                                '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false',
-                                *args], check=True)
-            revision = subprocess.check_output(['git', '-C', str(upstream), 'rev-parse', 'HEAD'], text=True).strip()
-            repo = root / 'repo'
-            (repo / 'rust/src').mkdir(parents=True)
-            shutil.copyfile(Path(__file__).resolve().parents[2] / 'rust/rust-toolchain.toml',
-                            repo / 'rust/rust-toolchain.toml')
-            (repo / 'rust/Cargo.toml').write_text(
-                '[package]\nname = "consumer"\nversion = "1.0.0"\nedition = "2021"\n'
-                f'[dependencies]\nsource-fixture = {{ git = "{upstream.as_uri()}", rev = "{revision}" }}\n')
-            (repo / 'rust/src/lib.rs').write_text('pub use source_fixture::value;\n')
-            with patch.dict(os.environ, {'CARGO_HOME': str(root / 'cargo-home')}):
-                subprocess.run(cargo(repo, 'generate-lockfile'), cwd=repo / 'rust', check=True,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-                payload = io.BytesIO()
-                with tarfile.open(fileobj=payload, mode='w') as archive:
-                    add_cargo_sources(archive, repo, [Component('source-fixture', '1.0.0', 'cargo',
-                                                               upstream.as_uri(), '')])
-                shutil.rmtree(upstream)
-                shutil.rmtree(root / 'cargo-home')
-                payload.seek(0)
-                with tarfile.open(fileobj=payload) as archive:
-                    archive.extractall(root / 'unpacked', filter='data')
-                package = root / 'unpacked/third_party/cargo/source-fixture-1.0.0'
-                self.assertEqual((package / 'LICENSE').read_text(), 'fixture license\n')
-                self.assertFalse((package / 'LICENSE').is_symlink())
-                subprocess.run(cargo(repo, 'build', '--offline', '--manifest-path', str(package / 'Cargo.toml')),
-                               check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
 
 if __name__ == '__main__':

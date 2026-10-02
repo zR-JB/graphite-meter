@@ -36,10 +36,7 @@ func dialPeer(ctx context.Context, host string, config *tls.Config, transport *w
 }
 
 func uploadProgress(ctx context.Context, session *webtransport.Session) (*bufio.Scanner, error) {
-	stream, err := session.AcceptUniStream(ctx)
-	if err != nil {
-		return nil, err
-	}
+	stream := must(session.AcceptUniStream(ctx))
 	deadline, _ := ctx.Deadline()
 	stream.SetReadDeadline(deadline)
 	scanner := bufio.NewScanner(stream)
@@ -92,6 +89,18 @@ func finishUpload(scanner *bufio.Scanner, request func(string, string, io.Reader
 	}
 }
 
+// Prerequisite failures stop the probe while its deferred connection cleanup still runs.
+func check(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
+func must[T any](value T, err error) T {
+	check(err)
+	return value
+}
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -110,10 +119,7 @@ func run() error {
 	if len(os.Args) != 2 && len(os.Args) != 3 {
 		return fmt.Errorf("usage: server_client H3_PORT [AUTH_TLS_PORT] (reads ca.pem from the working directory)")
 	}
-	cert, err := os.ReadFile("ca.pem")
-	if err != nil {
-		return err
-	}
+	cert := must(os.ReadFile("ca.pem"))
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(cert) {
 		return fmt.Errorf("invalid certificate")
@@ -121,97 +127,60 @@ func run() error {
 	config := &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS13}
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
-	base, err := loopback(os.Args[1])
-	if err != nil {
-		return err
-	}
+	base := must(loopback(os.Args[1]))
 	if len(os.Args) == 3 {
-		public, err := loopback(os.Args[2])
-		if err != nil {
-			return err
-		}
+		public := must(loopback(os.Args[2]))
 		return runAuthenticated(ctx, base, public, config)
 	}
 	tcp := &http.Transport{TLSClientConfig: config}
 	defer tcp.CloseIdleConnections()
 	req, _ := http.NewRequestWithContext(ctx, "GET", base+"/probe", nil)
-	response, err := tcp.RoundTrip(req)
-	if err != nil {
-		return err
-	}
+	response := must(tcp.RoundTrip(req))
 	io.Copy(io.Discard, response.Body)
 	response.Body.Close()
 	if response.StatusCode != 200 || !strings.Contains(response.Header.Get("Alt-Svc"), "h3=") {
 		return fmt.Errorf("bootstrap status=%d alt-svc=%q", response.StatusCode, response.Header.Get("Alt-Svc"))
 	}
 	fmt.Println("TCP HTTPS bootstrap: 200 and H3 Alt-Svc")
-	target, err := url.Parse(base)
-	if err != nil {
-		return err
-	}
+	target := must(url.Parse(base))
 	config = config.Clone()
 	config.NextProtos = []string{http3.NextProtoH3}
 	transport := &webtransport.Transport{TLSClientConfig: config}
 	conn, client, err := dialPeer(ctx, target.Host, config, transport)
-	if err != nil {
-		return err
-	}
+	check(err)
 	defer conn.CloseWithError(0, "probe finished")
 	defer transport.Close()
 	request := func(method, path string, body io.Reader) ([]byte, error) {
-		req, err := http.NewRequestWithContext(ctx, method, base+path, body)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := client.RoundTrip(req)
-		if err != nil {
-			return nil, err
-		}
+		req := must(http.NewRequestWithContext(ctx, method, base+path, body))
+		resp := must(client.RoundTrip(req))
 		defer resp.Body.Close()
-		data, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
-		if err != nil {
-			return nil, err
-		}
+		data := must(io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024)))
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return nil, fmt.Errorf("%s %s: %d %q", method, path, resp.StatusCode, data)
 		}
 		return data, nil
 	}
 	mint := func() (string, error) {
-		data, err := request("POST", "/upload/session", nil)
-		if err != nil {
-			return "", err
-		}
+		data := must(request("POST", "/upload/session", nil))
 		var value struct {
 			ID string `json:"uploadId"`
 		}
-		err = json.Unmarshal(data, &value)
-		if err == nil && value.ID == "" {
-			err = fmt.Errorf("empty upload ID")
+		check(json.Unmarshal(data, &value))
+		if value.ID == "" {
+			return "", fmt.Errorf("empty upload ID")
 		}
-		return value.ID, err
+		return value.ID, nil
 	}
-	data, err := request("GET", "/download?bytes=65537", nil)
-	if err != nil {
-		return err
-	}
+	data := must(request("GET", "/download?bytes=65537", nil))
 	if len(data) != 65537 {
 		return fmt.Errorf("H3 download length %d", len(data))
 	}
-	id, err := mint()
-	if err != nil {
-		return err
-	}
-	data, err = request("POST", "/upload?id="+url.QueryEscape(id), bytes.NewReader(bytes.Repeat([]byte("u"), 65537)))
-	if err != nil {
-		return err
-	}
+	id := must(mint())
+	data = must(request("POST", "/upload?id="+url.QueryEscape(id), bytes.NewReader(bytes.Repeat([]byte("u"), 65537))))
 	var uploaded struct {
 		Bytes uint64 `json:"bytes"`
 	}
-	if err = json.Unmarshal(data, &uploaded); err != nil {
-		return err
-	}
+	check(json.Unmarshal(data, &uploaded))
 	if uploaded.Bytes != 65537 {
 		return fmt.Errorf("H3 upload bytes %d", uploaded.Bytes)
 	}
@@ -230,26 +199,17 @@ func run() error {
 		return session, err
 	}
 	_, ping, err := client.Dial(ctx, base+"/wt/ping", nil)
-	if err != nil {
-		return err
-	}
+	check(err)
 	defer ping.CloseWithError(0, "")
 	pong := func(session *webtransport.Session, id string) error {
-		if err := session.SendDatagram([]byte("PING," + id)); err != nil {
-			return err
-		}
-		data, err := session.ReceiveDatagram(ctx)
-		if err != nil {
-			return err
-		}
+		check(session.SendDatagram([]byte("PING," + id)))
+		data := must(session.ReceiveDatagram(ctx))
 		if !strings.HasPrefix(string(data), "PONG,"+id+",") {
 			return fmt.Errorf("unexpected pong %q", data)
 		}
 		return nil
 	}
-	if err = pong(ping, "41"); err != nil {
-		return err
-	}
+	check(pong(ping, "41"))
 	_, extra, err := client.Dial(ctx, base+"/wt/ping", nil)
 	if err == nil {
 		extra.CloseWithError(0, "unexpected second session")
@@ -260,15 +220,9 @@ func run() error {
 		return fmt.Errorf("expected remote H3_REQUEST_REJECTED for second WT session: %w", err)
 	}
 	fmt.Println("Second WT session without session flow control: rejected; connection remains usable")
-	download, err := dial("/wt/download?bytes=65537&streams=2")
-	if err != nil {
-		return err
-	}
+	download := must(dial("/wt/download?bytes=65537&streams=2"))
 	for range 2 {
-		stream, err := download.AcceptUniStream(ctx)
-		if err != nil {
-			return err
-		}
+		stream := must(download.AcceptUniStream(ctx))
 		deadline, _ := ctx.Deadline()
 		stream.SetReadDeadline(deadline)
 		data, err := io.ReadAll(io.LimitReader(stream, 65538))
@@ -279,9 +233,7 @@ func run() error {
 			return fmt.Errorf("WT download length %d", len(data))
 		}
 	}
-	if err = download.CloseWithError(7, "download finished"); err != nil {
-		return err
-	}
+	check(download.CloseWithError(7, "download finished"))
 	if err = pong(ping, "42"); err != nil {
 		return fmt.Errorf("close isolation: %w", err)
 	}
@@ -289,62 +241,36 @@ func run() error {
 		return fmt.Errorf("H3 request sharing ping connection: %w", err)
 	}
 	fmt.Println("WT ping and two download streams: exact lengths; independent ping connection survives close; H3 shares ping connection")
-	id, err = mint()
-	if err != nil {
-		return err
-	}
-	session, err := dial("/wt/upload?id=" + url.QueryEscape(id))
-	if err != nil {
-		return err
-	}
+	id = must(mint())
+	session := must(dial("/wt/upload?id=" + url.QueryEscape(id)))
 	defer session.CloseWithError(0, "")
-	progress, err := uploadProgress(ctx, session)
-	if err != nil {
-		return err
-	}
+	progress := must(uploadProgress(ctx, session))
 	deadline, _ := ctx.Deadline()
-	lane, err := session.OpenUniStreamSync(ctx)
-	if err != nil {
-		return err
-	}
+	lane := must(session.OpenUniStreamSync(ctx))
 	lane.SetWriteDeadline(deadline)
 	if _, err = lane.Write(bytes.Repeat([]byte("w"), 131073)); err != nil {
 		return err
 	}
-	if err = lane.Close(); err != nil {
-		return err
-	}
+	check(lane.Close())
 	for {
 		kind, count, err := readProgress(progress)
-		if err != nil {
-			return err
-		}
+		check(err)
 		if kind == "progress" && count == 131073 {
 			break
 		}
 	}
-	count, err := finishUpload(progress, request, id)
-	if err != nil {
-		return err
-	}
+	count := must(finishUpload(progress, request, id))
 	if count != 131073 {
 		return fmt.Errorf("WT complete bytes=%d", count)
 	}
-	if err = pong(ping, "43"); err != nil {
-		return err
-	}
-	if err = ping.CloseWithError(0, "ping finished"); err != nil {
-		return err
-	}
+	check(pong(ping, "43"))
+	check(ping.CloseWithError(0, "ping finished"))
 	if _, err = request("GET", "/download?bytes=1", nil); err != nil {
 		return fmt.Errorf("H3 request after sibling WT close: %w", err)
 	}
 	fmt.Println("WT upload: ready, measured progress, HTTP finish, complete=131073; H3 survives sibling WT close")
 
-	datagramDownload, err := dial("/wt/download?bytes=65537&datagrams=1")
-	if err != nil {
-		return err
-	}
+	datagramDownload := must(dial("/wt/download?bytes=65537&datagrams=1"))
 	var received uint64
 	for received < 65537 {
 		payload, err := datagramDownload.ReceiveDatagram(ctx)
@@ -361,9 +287,7 @@ func run() error {
 		return fmt.Errorf("WT ping during datagram download: %w", err)
 	}
 	defer concurrentPing.CloseWithError(0, "")
-	if err := concurrentPing.SendDatagram([]byte("PING,44")); err != nil {
-		return err
-	}
+	check(concurrentPing.SendDatagram([]byte("PING,44")))
 	pingCtx, stopPing := context.WithTimeout(ctx, 2*time.Second)
 	answer, err := concurrentPing.ReceiveDatagram(pingCtx)
 	stopPing()
@@ -373,46 +297,28 @@ func run() error {
 	if !strings.HasPrefix(string(answer), "PONG,44,") {
 		return fmt.Errorf("WT ping during datagram download: unexpected reply %q", answer)
 	}
-	if err := datagramDownload.CloseWithError(0, "download finished"); err != nil {
-		return err
-	}
+	check(datagramDownload.CloseWithError(0, "download finished"))
 	fmt.Println("WT datagram download: received at least 65537 payload bytes; concurrent ping replied")
 
-	id, err = mint()
-	if err != nil {
-		return err
-	}
-	datagramUpload, err := dial("/wt/upload?datagrams=1&id=" + url.QueryEscape(id))
-	if err != nil {
-		return err
-	}
+	id = must(mint())
+	datagramUpload := must(dial("/wt/upload?datagrams=1&id=" + url.QueryEscape(id)))
 	defer datagramUpload.CloseWithError(0, "")
-	datagramProgress, err := uploadProgress(ctx, datagramUpload)
-	if err != nil {
-		return err
-	}
+	datagramProgress := must(uploadProgress(ctx, datagramUpload))
 	const offered = 16 * 1000
 	payload := bytes.Repeat([]byte("d"), 1000)
 	for range 16 {
-		if err := datagramUpload.SendDatagram(payload); err != nil {
-			return err
-		}
+		check(datagramUpload.SendDatagram(payload))
 	}
 	var observed uint64
 	for observed == 0 {
 		kind, count, err := readProgress(datagramProgress)
 		observed = count
-		if err != nil {
-			return err
-		}
+		check(err)
 		if kind != "progress" || observed > offered {
 			return fmt.Errorf("WT datagram progress kind=%q bytes=%d", kind, observed)
 		}
 	}
-	count, err = finishUpload(datagramProgress, request, id)
-	if err != nil {
-		return err
-	}
+	count = must(finishUpload(datagramProgress, request, id))
 	if count < observed || count > offered {
 		return fmt.Errorf("WT datagram complete bytes=%d, observed=%d", count, observed)
 	}
@@ -430,14 +336,8 @@ func runAuthenticated(ctx context.Context, base, public string, tlsConfig *tls.C
 	request := func(method, target string, body io.Reader) (*http.Request, error) {
 		return http.NewRequestWithContext(ctx, method, target, body)
 	}
-	login, err := request("GET", public+"/login", nil)
-	if err != nil {
-		return err
-	}
-	loginResponse, err := https.Do(login)
-	if err != nil {
-		return err
-	}
+	login := must(request("GET", public+"/login", nil))
+	loginResponse := must(https.Do(login))
 	loginResponse.Body.Close()
 	if loginResponse.StatusCode != http.StatusOK {
 		return fmt.Errorf("login page status=%d", loginResponse.StatusCode)
@@ -447,17 +347,11 @@ func runAuthenticated(ctx context.Context, base, public string, tlsConfig *tls.C
 		return fmt.Errorf("login page omitted nonce cookie")
 	}
 	form := url.Values{"csrf": {loginNonce.Value}, "password": {"correct horse battery staple"}}
-	password, err := request("POST", public+"/auth/password", strings.NewReader(form.Encode()))
-	if err != nil {
-		return err
-	}
+	password := must(request("POST", public+"/auth/password", strings.NewReader(form.Encode())))
 	password.Header.Set("Origin", public)
 	password.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	password.AddCookie(loginNonce)
-	signedIn, err := https.Do(password)
-	if err != nil {
-		return err
-	}
+	signedIn := must(https.Do(password))
 	signedIn.Body.Close()
 	if signedIn.StatusCode != http.StatusSeeOther {
 		return fmt.Errorf("password sign-in status=%d", signedIn.StatusCode)
@@ -470,49 +364,29 @@ func runAuthenticated(ctx context.Context, base, public string, tlsConfig *tls.C
 	fmt.Println("Password login: canonical HTTPS origin and session cookies")
 
 	protected := func(method, target string, body io.Reader) (*http.Request, error) {
-		req, err := request(method, target, body)
-		if err != nil {
-			return nil, err
-		}
+		req := must(request(method, target, body))
 		req.Header.Set("Origin", public)
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		req.Header.Set("X-CSRF-Token", csrf.Value)
 		req.AddCookie(session)
 		return req, nil
 	}
-	target, err := url.Parse(base)
-	if err != nil {
-		return err
-	}
+	target := must(url.Parse(base))
 	quicTLS := tlsConfig.Clone()
 	quicTLS.NextProtos = []string{http3.NextProtoH3}
 	transport := &webtransport.Transport{TLSClientConfig: quicTLS}
 	defer transport.Close()
 	connection, client, err := dialPeer(ctx, target.Host, quicTLS, transport)
-	if err != nil {
-		return err
-	}
+	check(err)
 	defer connection.CloseWithError(0, "probe finished")
-	unauthorized, err := request("GET", base+"/download?bytes=1", nil)
-	if err != nil {
-		return err
-	}
-	denied, err := client.RoundTrip(unauthorized)
-	if err != nil {
-		return err
-	}
+	unauthorized := must(request("GET", base+"/download?bytes=1", nil))
+	denied := must(client.RoundTrip(unauthorized))
 	denied.Body.Close()
 	if denied.StatusCode != http.StatusForbidden || denied.Header.Get("Graphite-Meter-Auth") != "required" {
 		return fmt.Errorf("unauthenticated H3 download status=%d auth=%q", denied.StatusCode, denied.Header.Get("Graphite-Meter-Auth"))
 	}
-	allowed, err := protected("GET", base+"/download?bytes=65537", nil)
-	if err != nil {
-		return err
-	}
-	download, err := client.RoundTrip(allowed)
-	if err != nil {
-		return err
-	}
+	allowed := must(protected("GET", base+"/download?bytes=65537", nil))
+	download := must(client.RoundTrip(allowed))
 	data, readErr := io.ReadAll(io.LimitReader(download.Body, 65538))
 	download.Body.Close()
 	if readErr != nil || download.StatusCode != http.StatusOK || len(data) != 65537 {
@@ -522,14 +396,8 @@ func runAuthenticated(ctx context.Context, base, public string, tlsConfig *tls.C
 
 	mint := func() (string, error) {
 		query := url.Values{"target": {base + "/wt/ping"}}
-		req, err := protected("POST", public+"/wt/session?"+query.Encode(), nil)
-		if err != nil {
-			return "", err
-		}
-		response, err := https.Do(req)
-		if err != nil {
-			return "", err
-		}
+		req := must(protected("POST", public+"/wt/session?"+query.Encode(), nil))
+		response := must(https.Do(req))
 		defer response.Body.Close()
 		if response.StatusCode != http.StatusOK {
 			return "", fmt.Errorf("WT ticket status=%d", response.StatusCode)
@@ -537,18 +405,13 @@ func runAuthenticated(ctx context.Context, base, public string, tlsConfig *tls.C
 		var ticket struct {
 			Token string `json:"token"`
 		}
-		if err := json.UnmarshalRead(response.Body, &ticket); err != nil {
-			return "", err
-		}
+		check(json.UnmarshalRead(response.Body, &ticket))
 		if ticket.Token == "" {
 			return "", fmt.Errorf("empty WT ticket")
 		}
 		return ticket.Token, nil
 	}
-	ticket, err := mint()
-	if err != nil {
-		return err
-	}
+	ticket := must(mint())
 	connect := func(peer *webtransport.ClientConn, token string) (*http.Response, *webtransport.Session, error) {
 		return peer.Dial(ctx, base+"/wt/ping?token="+url.QueryEscape(token), http.Header{"Origin": {public}})
 	}
@@ -564,21 +427,15 @@ func runAuthenticated(ctx context.Context, base, public string, tlsConfig *tls.C
 	if err != nil {
 		return fmt.Errorf("valid WT ticket after denied CONNECT: %w", err)
 	}
-	if err := ping.SendDatagram([]byte("PING,77")); err != nil {
-		return err
-	}
+	check(ping.SendDatagram([]byte("PING,77")))
 	pong, err := ping.ReceiveDatagram(ctx)
 	if err != nil || !strings.HasPrefix(string(pong), "PONG,77,") {
 		return fmt.Errorf("authenticated WT ping reply=%q: %v", pong, err)
 	}
-	if err := ping.CloseWithError(0, "ping finished"); err != nil {
-		return err
-	}
+	check(ping.CloseWithError(0, "ping finished"))
 	rejectTicket := func(token string) error {
 		connection, peer, err := dialPeer(ctx, target.Host, quicTLS, transport)
-		if err != nil {
-			return err
-		}
+		check(err)
 		defer connection.CloseWithError(0, "probe finished")
 		response, session, err := connect(peer, token)
 		if err == nil {
@@ -595,32 +452,17 @@ func runAuthenticated(ctx context.Context, base, public string, tlsConfig *tls.C
 	}
 	fmt.Println("Authenticated WT: denied CONNECT preserved same connection; one-use ticket admitted datagram ping, then replay was denied")
 
-	unused, err := mint()
-	if err != nil {
-		return err
-	}
+	unused := must(mint())
 	logoutForm := url.Values{"csrf": {csrf.Value}}
-	logout, err := protected("POST", public+"/auth/logout", strings.NewReader(logoutForm.Encode()))
-	if err != nil {
-		return err
-	}
+	logout := must(protected("POST", public+"/auth/logout", strings.NewReader(logoutForm.Encode())))
 	logout.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	loggedOut, err := https.Do(logout)
-	if err != nil {
-		return err
-	}
+	loggedOut := must(https.Do(logout))
 	loggedOut.Body.Close()
 	if loggedOut.StatusCode != http.StatusSeeOther {
 		return fmt.Errorf("logout status=%d", loggedOut.StatusCode)
 	}
-	before, err := protected("GET", base+"/download?bytes=1", nil)
-	if err != nil {
-		return err
-	}
-	denied, err = client.RoundTrip(before)
-	if err != nil {
-		return err
-	}
+	before := must(protected("GET", base+"/download?bytes=1", nil))
+	denied = must(client.RoundTrip(before))
 	denied.Body.Close()
 	if denied.StatusCode != http.StatusForbidden {
 		return fmt.Errorf("revoked H3 session status=%d", denied.StatusCode)
