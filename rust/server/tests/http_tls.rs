@@ -1,3 +1,6 @@
+#[path = "support/http1.rs"]
+mod http1;
+
 #[path = "support/native.rs"]
 mod native;
 
@@ -63,25 +66,7 @@ async fn request(
     path: &str,
     body: &[u8],
 ) -> (String, Vec<u8>) {
-    let mut socket = connect(address, connector).await;
-    socket
-        .write_all(
-            format!(
-                "{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                body.len()
-            )
-            .as_bytes(),
-        )
-        .await
-        .unwrap();
-    socket.write_all(body).await.unwrap();
-    let mut response = Vec::new();
-    socket.read_to_end(&mut response).await.unwrap();
-    let boundary = response.windows(4).position(|part| part == b"\r\n\r\n").unwrap();
-    (
-        String::from_utf8(response[..boundary].to_vec()).unwrap(),
-        response[boundary + 4..].to_vec(),
-    )
+    http1::exchange(connect(address, connector).await, method, path, "localhost", "", body).await
 }
 
 #[tokio::test]
@@ -92,17 +77,17 @@ async fn validated_tls13_serves_discovery_download_and_upload_after_rejected_tls
         let good = connector(roots.clone(), &rustls::version::TLS13);
         let old = connector(roots, &rustls::version::TLS12);
         let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-        let (address, stop, serving) = native::serve(server, NativeKind::H1Tls, Some(tls)).await;
+        let listener = native::serve(server, NativeKind::H1Tls, Some(tls)).await;
         assert!(
             old.connect(
                 ServerName::try_from("localhost").unwrap(),
-                TcpStream::connect(address).await.unwrap()
+                TcpStream::connect(listener.address).await.unwrap()
             )
             .await
             .is_err()
         );
         for path in ["/probe", "/preflight", "/servers"] {
-            let (headers, body) = request(address, &good, "GET", path, b"").await;
+            let (headers, body) = request(listener.address, &good, "GET", path, b"").await;
             assert!(headers.starts_with("HTTP/1.1 200"));
             assert!(headers.contains("access-control-allow-origin: *"));
             let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -111,7 +96,7 @@ async fn validated_tls13_serves_discovery_download_and_upload_after_rejected_tls
             }
         }
         for path in ["/wt/session", "/ws/session"] {
-            let (headers, body) = request(address, &good, "POST", path, b"").await;
+            let (headers, body) = request(listener.address, &good, "POST", path, b"").await;
             assert!(headers.starts_with("HTTP/1.1 200"));
             assert!(headers.contains("cache-control: no-store"));
             assert_eq!(
@@ -119,29 +104,28 @@ async fn validated_tls13_serves_discovery_download_and_upload_after_rejected_tls
                 serde_json::json!({"token":"","expires":0})
             );
             // As Go's "/" pattern on a listener that serves the app, the app answers GET.
-            let (headers, _) = request(address, &good, "GET", path, b"").await;
+            let (headers, _) = request(listener.address, &good, "GET", path, b"").await;
             assert!(headers.starts_with("HTTP/1.1 404"), "{headers}");
         }
-        let (headers, download) = request(address, &good, "GET", "/download?bytes=300000", b"").await;
+        let (headers, download) = request(listener.address, &good, "GET", "/download?bytes=300000", b"").await;
         assert!(headers.starts_with("HTTP/1.1 200"));
         assert_eq!(download.len(), 300000);
         assert_eq!(&download[..37856], &download[262144..]);
-        let (_, session) = request(address, &good, "POST", "/upload/session", b"").await;
+        let (_, session) = request(listener.address, &good, "POST", "/upload/session", b"").await;
         let session: serde_json::Value = serde_json::from_slice(&session).unwrap();
         let id = session["uploadId"].as_str().unwrap();
-        let (headers, upload) = request(address, &good, "POST", &format!("/upload?id={id}"), &download).await;
+        let (headers, upload) = request(listener.address, &good, "POST", &format!("/upload?id={id}"), &download).await;
         assert!(headers.starts_with("HTTP/1.1 200"));
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&upload).unwrap()["bytes"],
             300000
         );
-        let (_, checkpoint) = request(address, &good, "POST", &format!("/upload/checkpoint?id={id}"), b"").await;
+        let (_, checkpoint) = request(listener.address, &good, "POST", &format!("/upload/checkpoint?id={id}"), b"").await;
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&checkpoint).unwrap()["bytes"],
             300000
         );
-        stop.send(()).unwrap();
-        serving.await.unwrap().unwrap();
+        listener.shutdown().await;
     })
     .await
     .expect("HTTPS lifecycle stalled");
@@ -158,8 +142,8 @@ async fn tls_stalled_download_keeps_deadline_through_encrypted_writes() {
             ..Config::default()
         };
         let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let (address, stop, serving) = native::serve(server, NativeKind::H1Tls, Some(tls)).await;
-        let mut stalled = connect(address, &connector).await;
+        let listener = native::serve(server, NativeKind::H1Tls, Some(tls)).await;
+        let mut stalled = connect(listener.address, &connector).await;
         stalled
             .write_all(b"GET /download?bytes=68719476736 HTTP/1.1\r\nHost: localhost\r\n\r\n")
             .await
@@ -169,21 +153,20 @@ async fn tls_stalled_download_keeps_deadline_through_encrypted_writes() {
             headers.push(stalled.read_u8().await.unwrap());
         }
         assert!(headers.starts_with(b"HTTP/1.1 200"));
-        let (_, probe) = request(address, &connector, "GET", "/probe", b"").await;
+        let (_, probe) = request(listener.address, &connector, "GET", "/probe", b"").await;
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&probe).unwrap()["load"]["active"],
             1
         );
         loop {
-            let (_, probe) = request(address, &connector, "GET", "/probe", b"").await;
+            let (_, probe) = request(listener.address, &connector, "GET", "/probe", b"").await;
             if serde_json::from_slice::<serde_json::Value>(&probe).unwrap()["load"]["active"] == 0 {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         drop(stalled);
-        stop.send(()).unwrap();
-        serving.await.unwrap().unwrap();
+        listener.shutdown().await;
     })
     .await
     .expect("stalled TLS write kept its admission permit");
@@ -200,18 +183,14 @@ async fn shutdown_joins_incomplete_tls_handshake_and_releases_connection() {
             ..Config::default()
         };
         let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let (address, stop, serving) = native::serve(server, NativeKind::H1Tls, Some(tls)).await;
-        let mut pending = TcpStream::connect(address).await.unwrap();
+        let mut listener = native::serve(server, NativeKind::H1Tls, Some(tls)).await;
+        let mut pending = TcpStream::connect(listener.address).await.unwrap();
         pending.write_all(b"\x16\x03\x01").await.unwrap();
         // Exhaustion proves the first socket acquired its permit before TLS.
-        let mut rejected = TcpStream::connect(address).await.unwrap();
+        let mut rejected = TcpStream::connect(listener.address).await.unwrap();
         assert_eq!(rejected.read(&mut [0; 1]).await.unwrap(), 0);
-        stop.send(()).unwrap();
-        tokio::time::timeout(Duration::from_secs(1), serving)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
+        listener.stop();
+        tokio::time::timeout(Duration::from_secs(1), listener.shutdown()).await.unwrap();
         let result = pending.read(&mut [0; 1]).await;
         assert!(matches!(result, Ok(0) | Err(_)));
     })
@@ -233,14 +212,14 @@ async fn h3_tcp_companion_serves_probe_and_control_routes_and_advertises_the_eff
             let mut config = Config::default();
             config.native[NativeKind::H3 as usize].public_origin = origin.into();
             let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-            let (address, stop, serving) = native::serve(server, NativeKind::H3, Some(tls.clone())).await;
-            let (headers, body) = request(address, &connector, "GET", "/probe", b"").await;
+            let listener = native::serve(server, NativeKind::H3, Some(tls.clone())).await;
+            let (headers, body) = request(listener.address, &connector, "GET", "/probe", b"").await;
             assert!(headers.starts_with("HTTP/1.1 200"));
-            assert!(headers.contains(&format!("alt-svc: h3=\":{}\"", port.unwrap_or(address.port()))));
+            assert!(headers.contains(&format!("alt-svc: h3=\":{}\"", port.unwrap_or(listener.address.port()))));
             assert!(headers.contains("connection: close"));
             let probe: serde_json::Value = serde_json::from_slice(&body).unwrap();
             assert_eq!(probe["protocolNegotiated"], "http/1.1");
-            let (headers, body) = request(address, &connector, "POST", "/upload/session", b"").await;
+            let (headers, body) = request(listener.address, &connector, "POST", "/upload/session", b"").await;
             assert!(
                 headers.starts_with("HTTP/1.1 200") && !headers.contains("alt-svc:"),
                 "{headers}"
@@ -253,7 +232,7 @@ async fn h3_tcp_companion_serves_probe_and_control_routes_and_advertises_the_eff
                 ("POST", "/wt/session".into(), "200"),
                 ("GET", "/upload/session".into(), "405"),
             ] {
-                let (headers, _) = request(address, &connector, method, &path, b"").await;
+                let (headers, _) = request(listener.address, &connector, method, &path, b"").await;
                 assert!(
                     headers.starts_with(&format!("HTTP/1.1 {status}")),
                     "{method} {path}: {headers}"
@@ -269,14 +248,13 @@ async fn h3_tcp_companion_serves_probe_and_control_routes_and_advertises_the_eff
                 "/upload",
                 "/ws/ping",
             ] {
-                let (headers, _) = request(address, &connector, "GET", path, b"").await;
+                let (headers, _) = request(listener.address, &connector, "GET", path, b"").await;
                 assert!(headers.starts_with("HTTP/1.1 404"), "{path}: {headers}");
                 assert!(!headers.contains("alt-svc:"));
             }
-            let (headers, _) = request(address, &connector, "OPTIONS", "/probe", b"").await;
+            let (headers, _) = request(listener.address, &connector, "OPTIONS", "/probe", b"").await;
             assert!(headers.starts_with("HTTP/1.1 204") && !headers.contains("alt-svc:"));
-            stop.send(()).unwrap();
-            serving.await.unwrap().unwrap();
+            listener.shutdown().await;
         }
     })
     .await

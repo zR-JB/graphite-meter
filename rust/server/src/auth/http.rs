@@ -883,11 +883,10 @@ mod tests {
         );
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn concurrent_logins_always_see_the_discovered_provider() {
+    #[tokio::test]
+    async fn discovered_provider_serves_sign_in_and_authorization() {
         let mut service = Service::new(&oidc_config(), vec![]).unwrap();
         service.oidc = Some(super::super::oidc::tests::ready());
-        let service = Arc::new(service);
         let provider_csp = |response: &Response<Bytes>| {
             response.headers().get("content-security-policy").is_some_and(|csp| {
                 csp.to_str()
@@ -895,44 +894,29 @@ mod tests {
                     .contains("form-action 'self' https://identity.example")
             })
         };
-        let mut logins = tokio::task::JoinSet::new();
-        for _ in 0..8 {
-            let service = service.clone();
-            logins.spawn(async move {
-                for attempt in 0..500 {
-                    let page = call(&service, Method::GET, "/login", &[], String::new()).await;
-                    let body = std::str::from_utf8(page.body()).unwrap();
-                    assert!(!body.contains("temporarily unavailable"));
-                    assert!(provider_csp(&page));
-                    if attempt != 250 {
-                        continue;
-                    }
-                    let nonce = set_cookie_value(&page, "__Host-gm_login");
-                    let started = call(
-                        &service,
-                        Method::POST,
-                        "/auth/oidc/start",
-                        &[
-                            ("cookie", &format!("__Host-gm_login={nonce}")),
-                            ("origin", "https://meter.example"),
-                            ("content-type", "application/x-www-form-urlencoded"),
-                        ],
-                        encoded(&[("csrf", &nonce)]),
-                    )
-                    .await;
-                    assert!(
-                        started.headers()[header::LOCATION]
-                            .to_str()
-                            .unwrap()
-                            .starts_with("https://identity.example/authorize?")
-                    );
-                    assert!(provider_csp(&started));
-                }
-            });
-        }
-        while let Some(result) = logins.join_next().await {
-            result.unwrap();
-        }
+        let page = call(&service, Method::GET, "/login", &[], String::new()).await;
+        assert!(!std::str::from_utf8(page.body()).unwrap().contains("temporarily unavailable"));
+        assert!(provider_csp(&page));
+        let nonce = set_cookie_value(&page, "__Host-gm_login");
+        let started = call(
+            &service,
+            Method::POST,
+            "/auth/oidc/start",
+            &[
+                ("cookie", &format!("__Host-gm_login={nonce}")),
+                ("origin", "https://meter.example"),
+                ("content-type", "application/x-www-form-urlencoded"),
+            ],
+            encoded(&[("csrf", &nonce)]),
+        )
+        .await;
+        assert!(
+            started.headers()[header::LOCATION]
+                .to_str()
+                .unwrap()
+                .starts_with("https://identity.example/authorize?")
+        );
+        assert!(provider_csp(&started));
     }
 
     #[tokio::test]

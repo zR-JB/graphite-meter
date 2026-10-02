@@ -78,14 +78,7 @@ fn request(method: &str, path: &str) -> Request<()> {
         .unwrap()
 }
 
-async fn serve_h2(
-    tls: ServerConfig,
-    config: Config,
-) -> (
-    SocketAddr,
-    oneshot::Sender<()>,
-    tokio::task::JoinHandle<Result<(), graphite_meter_server::ServerError>>,
-) {
+async fn serve_h2(tls: ServerConfig, config: Config) -> native::NativeServer {
     native::serve(
         Arc::new(HttpServer::new(config.validated().unwrap()).unwrap()),
         NativeKind::H2,
@@ -97,7 +90,7 @@ async fn serve_h2(
 #[tokio::test]
 async fn one_connection_panic_leaves_the_listener_serving() -> Result<(), TestError> {
     let tls = Tls::new();
-    let (address, stop, server) = serve_h2(
+    let server = serve_h2(
         tls.server(Arc::new(PanicOnce(
             AtomicBool::new(false),
             tls.server.cert_resolver.clone(),
@@ -108,6 +101,7 @@ async fn one_connection_panic_leaves_the_listener_serving() -> Result<(), TestEr
         },
     )
     .await;
+    let address = server.address;
     assert!(h2_client(&tls, address).await.is_err(), "first handshake must fail");
     let mut client = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
@@ -122,9 +116,8 @@ async fn one_connection_panic_leaves_the_listener_serving() -> Result<(), TestEr
     client = client.ready().await?;
     let (response, _) = client.send_request(request("GET", "/probe"), true)?;
     assert_eq!(response.await?.status(), 200);
-    assert!(!server.is_finished(), "listener ended");
-    stop.send(()).ok();
-    server.await??;
+    assert!(!server.task.is_finished(), "listener ended");
+    server.shutdown().await;
     Ok(())
 }
 
@@ -144,7 +137,7 @@ async fn body(response: http::Response<h2::RecvStream>) -> Result<Vec<u8>, TestE
 #[tokio::test]
 async fn h2_upload_is_not_window_bound_on_a_delayed_link() -> Result<(), TestError> {
     let tls = Tls::new();
-    let (address, stop, server) = serve_h2(
+    let server = serve_h2(
         tls.server(tls.server.cert_resolver.clone()),
         Config {
             max_operation_duration: Duration::from_secs(10),
@@ -152,6 +145,7 @@ async fn h2_upload_is_not_window_bound_on_a_delayed_link() -> Result<(), TestErr
         },
     )
     .await;
+    let address = server.address;
     let one_way = Duration::from_millis(20);
     let link = test_link::Link::tcp(address, one_way).await?;
     let mut client = h2_client(&tls, link.address).await?;
@@ -180,8 +174,7 @@ async fn h2_upload_is_not_window_bound_on_a_delayed_link() -> Result<(), TestErr
     eprintln!("h2 2 MiB upload: {elapsed:?} = {round_trips:.1} RTT");
     assert!(round_trips >= 1.0, "the link did not delay the upload");
     assert!(round_trips < 10.0, "window-bound upload: {round_trips:.1} RTT");
-    stop.send(()).ok();
-    server.await??;
+    server.shutdown().await;
     Ok(())
 }
 

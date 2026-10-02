@@ -14,7 +14,6 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
-    sync::oneshot,
     task::JoinHandle,
 };
 use tokio_rustls::TlsConnector;
@@ -24,8 +23,7 @@ struct Harness {
     connector: TlsConnector,
     client: SendRequest<Bytes>,
     driver: JoinHandle<Result<(), h2::Error>>,
-    stop: oneshot::Sender<()>,
-    server: JoinHandle<Result<(), graphite_meter_server::ServerError>>,
+    server: native::NativeServer,
 }
 
 impl Harness {
@@ -40,7 +38,8 @@ impl Harness {
     async fn start_config(config: Config) -> Self {
         let (tls, client_tls) = test_tls::configs(b"h2");
         let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let (address, stop, server) = native::serve(server, NativeKind::H2, Some(Arc::new(tls))).await;
+        let server = native::serve(server, NativeKind::H2, Some(Arc::new(tls))).await;
+        let address = server.address;
         let connector = TlsConnector::from(Arc::new(client_tls));
         let stream = connect(&connector, TcpStream::connect(address).await.unwrap()).await;
         let (client, connection) = h2::client::Builder::new()
@@ -55,7 +54,6 @@ impl Harness {
             connector,
             client,
             driver,
-            stop,
             server,
         }
     }
@@ -70,8 +68,7 @@ impl Harness {
     }
 
     async fn close(self) {
-        self.stop.send(()).unwrap();
-        self.server.await.unwrap().unwrap();
+        self.server.shutdown().await;
         self.driver.abort();
         let _ = self.driver.await;
     }
@@ -287,8 +284,7 @@ async fn fifteen_seconds_idle_closes_h2_and_releases_connection_capacity() {
         "idle connection retained the sole connection permit"
     );
     drop(replacement);
-    harness.stop.send(()).unwrap();
-    harness.server.await.unwrap().unwrap();
+    harness.server.shutdown().await;
 }
 
 #[tokio::test]
@@ -330,8 +326,7 @@ async fn active_progress_is_not_idle_and_gets_a_fresh_idle_period_when_finished(
         .expect("connection did not become idle after progress completed")
         .unwrap()
         .unwrap();
-    harness.stop.send(()).unwrap();
-    harness.server.await.unwrap().unwrap();
+    harness.server.shutdown().await;
 }
 
 #[tokio::test]

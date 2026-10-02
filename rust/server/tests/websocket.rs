@@ -1,3 +1,6 @@
+#[path = "support/native.rs"]
+mod native;
+
 use futures_util::{SinkExt, StreamExt};
 use graphite_meter_core::wire::decode_pong;
 use graphite_meter_server::websocket::{CloseReason, handshake, serve_ping};
@@ -211,7 +214,7 @@ async fn websocket_upgrade_works_over_validated_tls() -> Result<(), TestError> {
         pki_types::{CertificateDer, ServerName, pem::PemObject},
     };
     use std::{sync::Arc, time::SystemTime};
-    use tokio::net::{TcpListener, TcpStream};
+    use tokio::net::TcpStream;
     use tokio_rustls::TlsConnector;
 
     let identity = support::Identity::generate();
@@ -228,12 +231,8 @@ async fn websocket_upgrade_works_over_validated_tls() -> Result<(), TestError> {
         .with_no_client_auth();
     client_tls.alpn_protocols = vec![b"http/1.1".to_vec()];
     let server = Arc::new(HttpServer::new(config.validated().unwrap())?);
-    let listener = TcpListener::bind("127.0.0.1:0").await?;
-    let address = listener.local_addr()?;
-    let (stop, stopped) = oneshot::channel();
-    let task = tokio::spawn(server.serve(NativeKind::H1Tls, listener, Some(tls), async {
-        let _ = stopped.await;
-    }));
+    let server = native::serve(server, NativeKind::H1Tls, Some(tls)).await;
+    let address = server.address;
     let stream = TlsConnector::from(Arc::new(client_tls))
         .connect(ServerName::try_from("localhost")?, TcpStream::connect(address).await?)
         .await?;
@@ -245,8 +244,7 @@ async fn websocket_upgrade_works_over_validated_tls() -> Result<(), TestError> {
         .unwrap()?;
     assert_eq!(decode_pong(pong.to_text()?)?.id, 42);
     socket.close(None).await?;
-    stop.send(()).unwrap();
-    tokio::time::timeout(Duration::from_secs(2), task).await???;
+    tokio::time::timeout(Duration::from_secs(2), server.shutdown()).await?;
     Ok(())
 }
 
@@ -255,7 +253,7 @@ async fn quiet_upgraded_websocket_ends_with_idle_code() -> Result<(), TestError>
     use graphite_meter_server::config::{Config, NativeKind};
     use graphite_meter_server::http::HttpServer;
     use std::sync::Arc;
-    use tokio::net::{TcpListener, TcpStream};
+    use tokio::net::TcpStream;
     let server = Arc::new(HttpServer::new(
         Config {
             max_operation_duration: Duration::from_secs(180),
@@ -264,12 +262,8 @@ async fn quiet_upgraded_websocket_ends_with_idle_code() -> Result<(), TestError>
         .validated()
         .unwrap(),
     )?);
-    let listener = TcpListener::bind("127.0.0.1:0").await?;
-    let address = listener.local_addr()?;
-    let (stop, stopped) = oneshot::channel();
-    let task = tokio::spawn(server.serve(NativeKind::H1, listener, None, async {
-        let _ = stopped.await;
-    }));
+    let server = native::serve(server, NativeKind::H1, None).await;
+    let address = server.address;
     let (mut socket, _) =
         tokio_tungstenite::client_async(format!("ws://{address}/ws/ping"), TcpStream::connect(address).await?).await?;
     tokio::time::pause();
@@ -284,8 +278,7 @@ async fn quiet_upgraded_websocket_ends_with_idle_code() -> Result<(), TestError>
     };
     assert_eq!(u16::from(close.code), 4001);
     assert_eq!(close.reason, "idle");
-    stop.send(()).unwrap();
-    task.await??;
+    server.shutdown().await;
     Ok(())
 }
 

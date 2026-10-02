@@ -1,3 +1,6 @@
+#[path = "support/http1.rs"]
+mod http1;
+
 #[path = "support/native.rs"]
 mod native;
 
@@ -16,7 +19,6 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
-    sync::oneshot,
 };
 use tokio_rustls::{TlsConnector, client::TlsStream};
 use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
@@ -27,8 +29,7 @@ struct Harness {
     h2: SocketAddr,
     connector: TlsConnector,
     h2_connector: TlsConnector,
-    stop: Vec<oneshot::Sender<()>>,
-    tasks: Vec<tokio::task::JoinHandle<Result<(), graphite_meter_server::ServerError>>>,
+    listeners: [native::NativeServer; 2],
 }
 impl Harness {
     async fn start() -> Self {
@@ -55,15 +56,14 @@ impl Harness {
             ..Config::default()
         };
         let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let (h1, s1, t1) = native::serve(server.clone(), NativeKind::H1Tls, Some(Arc::new(tls.clone()))).await;
-        let (h2, s2, t2) = native::serve(server, NativeKind::H2, Some(Arc::new(tls))).await;
+        let h1 = native::serve(server.clone(), NativeKind::H1Tls, Some(Arc::new(tls.clone()))).await;
+        let h2 = native::serve(server, NativeKind::H2, Some(Arc::new(tls))).await;
         Self {
-            h1,
-            h2,
+            h1: h1.address,
+            h2: h2.address,
             connector,
             h2_connector,
-            stop: vec![s1, s2],
-            tasks: vec![t1, t2],
+            listeners: [h1, h2],
         }
     }
     async fn connect(&self) -> TlsStream<TcpStream> {
@@ -76,16 +76,9 @@ impl Harness {
             .unwrap()
     }
     async fn request(&self, method: &str, path: &str, headers: &str, body: &str) -> (String, Vec<u8>) {
-        let mut stream = self.connect().await;
-        stream.write_all(format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: {}\r\n{headers}\r\n{body}",body.len()).as_bytes()).await.unwrap();
-        let mut output = Vec::new();
-        stream.read_to_end(&mut output).await.unwrap();
-        let end = output.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
-        (
-            String::from_utf8(output[..end].to_vec()).unwrap(),
-            output[end..].to_vec(),
-        )
+        http1::exchange(self.connect().await, method, path, "localhost", headers, body.as_bytes()).await
     }
+
     async fn login(&self) -> (String, String) {
         self.login_from("").await
     }
@@ -105,12 +98,12 @@ impl Harness {
             cookie(&headers, "__Host-gm_csrf"),
         )
     }
-    async fn stop(self) {
-        for stop in self.stop {
-            let _ = stop.send(());
+    async fn stop(mut self) {
+        for listener in &mut self.listeners {
+            listener.stop();
         }
-        for task in self.tasks {
-            task.await.unwrap().unwrap();
+        for listener in self.listeners {
+            listener.shutdown().await;
         }
     }
 }

@@ -1,3 +1,6 @@
+#[path = "support/http1.rs"]
+mod http1;
+
 #[path = "support/native.rs"]
 mod native;
 
@@ -14,7 +17,7 @@ async fn real_http1_serves_discovery_and_streams_exact_download_then_joins_shutd
     tokio::time::timeout(Duration::from_secs(10), async {
         let config = Config { server_name: "Local meter".into(), server_location: "Berlin".into(), ..Config::default() };
         let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let (address, stop, serving) = native::serve(server, NativeKind::H1, None).await;
+        let listener = native::serve(server, NativeKind::H1, None).await;
 
         let mut generation = None;
         for (method, path, status) in [
@@ -26,23 +29,9 @@ async fn real_http1_serves_discovery_and_streams_exact_download_then_joins_shutd
             ("GET", "/unknown", 404), ("POST", "/login", 404), ("GET", "/auth/session", 404),
             ("GET", "/download?bytes=300000", 200),
         ] {
-            let mut socket = TcpStream::connect(address).await.unwrap();
-            socket
-                .write_all(
-                    format!("{method} {path} HTTP/1.1\r\nHost: meter.example:80\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
-                        .as_bytes(),
-                )
-                .await
-                .unwrap();
-            let mut response = Vec::new();
-            socket.read_to_end(&mut response).await.unwrap();
-            let boundary = response
-                .windows(4)
-                .position(|part| part == b"\r\n\r\n")
-                .unwrap();
-            let headers = std::str::from_utf8(&response[..boundary]).unwrap();
+            let socket = TcpStream::connect(listener.address).await.unwrap();
+            let (headers, body) = http1::exchange(socket, method, path, "meter.example:80", "", b"").await;
             assert!(headers.starts_with(&format!("HTTP/1.1 {status}")), "{method} {path}: {headers}");
-            let body = &response[boundary + 4..];
             if status == 405 {
                 // As Go's "/" pattern, the app answers a method no route on this listener allows.
                 assert!(headers.contains("allow: GET, HEAD\r\n"), "{headers}");
@@ -55,7 +44,7 @@ async fn real_http1_serves_discovery_and_streams_exact_download_then_joins_shutd
             } else {
                 assert!(headers.contains("content-type: application/json"));
                 assert!(headers.contains("cache-control: no-store"));
-                let value: serde_json::Value = serde_json::from_slice(body).unwrap();
+                let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
                 if path.ends_with("/servers") {
                     let origin = if path.starts_with("http:") { "http://[2001:db8::1]:7246" } else { "http://meter.example:7246" };
                     assert_eq!(value["defaultSelection"], serde_json::json!(["self"]));
@@ -69,8 +58,7 @@ async fn real_http1_serves_discovery_and_streams_exact_download_then_joins_shutd
                 }
             }
         }
-        stop.send(()).unwrap();
-        serving.await.unwrap().unwrap();
+        listener.shutdown().await;
     })
     .await
     .expect("HTTP listener or shutdown stalled");
@@ -86,8 +74,8 @@ async fn stalled_download_releases_capacity_at_request_deadline() {
         config.limits.operations_per_client = 1;
         config.limits.sessions_per_client = 1;
         let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let (address, stop, serving) = native::serve(server.clone(), NativeKind::H1, None).await;
-        let mut stalled = TcpStream::connect(address).await.unwrap();
+        let listener = native::serve(server.clone(), NativeKind::H1, None).await;
+        let mut stalled = TcpStream::connect(listener.address).await.unwrap();
         stalled
             .write_all(b"GET /download?bytes=68719476736 HTTP/1.1\r\nHost: localhost\r\n\r\n")
             .await
@@ -99,7 +87,7 @@ async fn stalled_download_releases_capacity_at_request_deadline() {
         }
         assert!(headers.starts_with(b"HTTP/1.1 200"));
         // The stalled download holds this client's only permit.
-        let download = fetch(address, "/download?bytes=1").await;
+        let download = fetch(listener.address, "/download?bytes=1").await;
         assert!(
             download.starts_with(b"HTTP/1.1 429"),
             "{}",
@@ -107,7 +95,7 @@ async fn stalled_download_releases_capacity_at_request_deadline() {
         );
         advance_http1_clock(Duration::from_millis(550)).await;
         loop {
-            let probe = fetch(address, "/probe").await;
+            let probe = fetch(listener.address, "/probe").await;
             let boundary = probe.windows(4).position(|part| part == b"\r\n\r\n").unwrap();
             let document: serde_json::Value = serde_json::from_slice(&probe[boundary + 4..]).unwrap();
             if document["load"]["active"] == 0 {
@@ -115,7 +103,7 @@ async fn stalled_download_releases_capacity_at_request_deadline() {
             }
             tokio::task::yield_now().await;
         }
-        let download = fetch(address, "/download?bytes=1").await;
+        let download = fetch(listener.address, "/download?bytes=1").await;
         assert!(
             download.starts_with(b"HTTP/1.1 200"),
             "{}",
@@ -123,8 +111,7 @@ async fn stalled_download_releases_capacity_at_request_deadline() {
         );
         // Keep the non-reading peer alive until after recovery is observed.
         drop(stalled);
-        stop.send(()).unwrap();
-        serving.await.unwrap().unwrap();
+        listener.shutdown().await;
     })
     .await
     .expect("stalled download retained its admission slot");
@@ -134,8 +121,8 @@ async fn stalled_download_releases_capacity_at_request_deadline() {
 async fn oversized_http1_headers_are_rejected() {
     tokio::time::timeout(Duration::from_secs(5), async {
         let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-        let (address, stop, serving) = native::serve(server, NativeKind::H1, None).await;
-        let mut socket = TcpStream::connect(address).await.unwrap();
+        let listener = native::serve(server, NativeKind::H1, None).await;
+        let mut socket = TcpStream::connect(listener.address).await.unwrap();
         let request = format!(
             "GET /probe HTTP/1.1\r\nHost: localhost\r\nX-Large: {}\r\nConnection: close\r\n\r\n",
             "a".repeat(40 * 1024)
@@ -149,8 +136,7 @@ async fn oversized_http1_headers_are_rejected() {
             "{}",
             String::from_utf8_lossy(&response)
         );
-        stop.send(()).unwrap();
-        serving.await.unwrap().unwrap();
+        listener.shutdown().await;
     })
     .await
     .expect("oversized header request stalled");
@@ -175,13 +161,13 @@ async fn real_upload_lifecycle_uses_receiver_totals_and_owner_refusals() {
             ..Config::default()
         };
         let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let (address, stop, serving) = native::serve(server, NativeKind::H1, None).await;
-        let (headers, session) = upload_request(address, "POST", "/upload/session", "192.0.2.1", b"").await;
+        let listener = native::serve(server, NativeKind::H1, None).await;
+        let (headers, session) = upload_request(listener.address, "POST", "/upload/session", "192.0.2.1", b"").await;
         assert!(headers.starts_with("HTTP/1.1 200"));
         assert!(headers.contains("access-control-allow-origin: *"));
         let session: serde_json::Value = serde_json::from_slice(&session).unwrap();
         let id = session["uploadId"].as_str().unwrap();
-        let mut socket = TcpStream::connect(address).await.unwrap();
+        let mut socket = TcpStream::connect(listener.address).await.unwrap();
         socket
             .write_all(
                 format!("GET /upload/progress?id={id} HTTP/1.1\r\nHost: localhost\r\nX-Real-IP: 192.0.2.1\r\n\r\n")
@@ -199,12 +185,12 @@ async fn real_upload_lifecycle_uses_receiver_totals_and_owner_refusals() {
         let path = format!("/upload?id={id}");
         let first = vec![1; 1234];
         let second = vec![2; 5678];
-        let (rejected, body) = upload_request(address, "PUT", &path, "192.0.2.1", &second).await;
+        let (rejected, body) = upload_request(listener.address, "PUT", &path, "192.0.2.1", &second).await;
         assert!(rejected.starts_with("HTTP/1.1 400") && rejected.contains("connection: close"));
         assert_eq!(body, b"request body not accepted\n");
         let (first, second) = tokio::join!(
-            upload_request(address, "POST", &path, "192.0.2.1", &first),
-            upload_request(address, "POST", &path, "192.0.2.1", &second),
+            upload_request(listener.address, "POST", &path, "192.0.2.1", &first),
+            upload_request(listener.address, "POST", &path, "192.0.2.1", &second),
         );
         for (reply, expected) in [(first, 1234), (second, 5678)] {
             assert!(reply.0.starts_with("HTTP/1.1 200"));
@@ -212,22 +198,22 @@ async fn real_upload_lifecycle_uses_receiver_totals_and_owner_refusals() {
             assert_eq!(value["bytes"], expected);
         }
         let checkpoint = format!("/upload/checkpoint?id={id}");
-        let (headers, bytes) = upload_request(address, "POST", &checkpoint, "192.0.2.1", b"").await;
+        let (headers, bytes) = upload_request(listener.address, "POST", &checkpoint, "192.0.2.1", b"").await;
         assert!(headers.starts_with("HTTP/1.1 200"));
         let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(value["bytes"], 6912);
         assert!(value["nanos"].as_u64().unwrap() > 0);
-        let (headers, _) = upload_request(address, "POST", &checkpoint, "192.0.2.2", b"").await;
+        let (headers, _) = upload_request(listener.address, "POST", &checkpoint, "192.0.2.2", b"").await;
         assert!(headers.starts_with("HTTP/1.1 403"));
         assert!(headers.contains("x-graphite-upload-refusal: ownerMismatch"));
-        let (headers, _) = upload_request(address, "POST", "/upload?id=invalid", "192.0.2.1", b"bad").await;
+        let (headers, _) = upload_request(listener.address, "POST", "/upload?id=invalid", "192.0.2.1", b"bad").await;
         assert!(headers.starts_with("HTTP/1.1 400"));
         assert!(headers.contains("x-graphite-upload-refusal: invalid"));
-        let (headers, _) = upload_request(address, "GET", "/upload/session", "192.0.2.1", b"").await;
+        let (headers, _) = upload_request(listener.address, "GET", "/upload/session", "192.0.2.1", b"").await;
         assert!(headers.starts_with("HTTP/1.1 404"), "{headers}");
 
         let (headers, body) = upload_request(
-            address,
+            listener.address,
             "DELETE",
             &format!("/upload/progress?id={id}"),
             "192.0.2.1",
@@ -244,8 +230,7 @@ async fn real_upload_lifecycle_uses_receiver_totals_and_owner_refusals() {
             }
         }
         drop(progress);
-        stop.send(()).unwrap();
-        serving.await.unwrap().unwrap();
+        listener.shutdown().await;
     })
     .await
     .expect("upload lifecycle stalled");
@@ -259,26 +244,25 @@ async fn ambiguous_proxy_evidence_owns_no_upload() {
             ..Config::default()
         };
         let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let (address, stop, serving) = native::serve(server, NativeKind::H1, None).await;
+        let listener = native::serve(server, NativeKind::H1, None).await;
         // The proxy forwards a client on its own address, such as a local health check.
-        let (_, session) = upload_request(address, "POST", "/upload/session", "127.0.0.1", b"").await;
+        let (_, session) = upload_request(listener.address, "POST", "/upload/session", "127.0.0.1", b"").await;
         let session: serde_json::Value = serde_json::from_slice(&session).unwrap();
         let id = session["uploadId"].as_str().unwrap();
-        let (headers, _) = upload_request(address, "POST", &format!("/upload?id={id}"), "127.0.0.1", b"proxied").await;
+        let (headers, _) = upload_request(listener.address, "POST", &format!("/upload?id={id}"), "127.0.0.1", b"proxied").await;
         assert!(headers.starts_with("HTTP/1.1 200"), "{headers}");
         // Without X-Real-IP the proxy names no client: as in Go, that owns nothing, not the proxy's own address.
         let checkpoint = format!("/upload/checkpoint?id={id}");
-        let (headers, body) = upload_request(address, "POST", &checkpoint, "", b"").await;
+        let (headers, body) = upload_request(listener.address, "POST", &checkpoint, "", b"").await;
         assert!(headers.starts_with("HTTP/1.1 403"), "{headers}");
         assert!(
             headers.contains("x-graphite-upload-refusal: ownerMismatch"),
             "{headers}"
         );
         assert_eq!(body, b"upload id belongs to another client\n");
-        let (headers, _) = upload_request(address, "POST", &checkpoint, "127.0.0.1", b"").await;
+        let (headers, _) = upload_request(listener.address, "POST", &checkpoint, "127.0.0.1", b"").await;
         assert!(headers.starts_with("HTTP/1.1 200"), "{headers}");
-        stop.send(()).unwrap();
-        serving.await.unwrap().unwrap();
+        listener.shutdown().await;
     })
     .await
     .expect("upload ownership check stalled");
@@ -292,11 +276,11 @@ async fn stalled_upload_read_releases_capacity_and_keeps_received_bytes() {
             ..Config::default()
         };
         let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let (address, stop, serving) = native::serve(server, NativeKind::H1, None).await;
-        let (_, session) = upload_request(address, "POST", "/upload/session", "", b"").await;
+        let listener = native::serve(server, NativeKind::H1, None).await;
+        let (_, session) = upload_request(listener.address, "POST", "/upload/session", "", b"").await;
         let session: serde_json::Value = serde_json::from_slice(&session).unwrap();
         let id = session["uploadId"].as_str().unwrap();
-        let mut stalled = TcpStream::connect(address).await.unwrap();
+        let mut stalled = TcpStream::connect(listener.address).await.unwrap();
         stalled
             .write_all(
                 format!("POST /upload?id={id} HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100000\r\n\r\nabc")
@@ -306,7 +290,7 @@ async fn stalled_upload_read_releases_capacity_and_keeps_received_bytes() {
             .unwrap();
         loop {
             let (_, checkpoint) =
-                upload_request(address, "POST", &format!("/upload/checkpoint?id={id}"), "", b"").await;
+                upload_request(listener.address, "POST", &format!("/upload/checkpoint?id={id}"), "", b"").await;
             if serde_json::from_slice::<serde_json::Value>(&checkpoint).is_ok_and(|value| value["bytes"] == 3) {
                 break;
             }
@@ -314,21 +298,20 @@ async fn stalled_upload_read_releases_capacity_and_keeps_received_bytes() {
         }
         advance_http1_clock(Duration::from_millis(250)).await;
         loop {
-            let (_, probe) = upload_request(address, "GET", "/probe", "", b"").await;
+            let (_, probe) = upload_request(listener.address, "GET", "/probe", "", b"").await;
             let probe: serde_json::Value = serde_json::from_slice(&probe).unwrap();
             if probe["load"]["active"] == 0 {
                 break;
             }
             tokio::task::yield_now().await;
         }
-        let (_, checkpoint) = upload_request(address, "POST", &format!("/upload/checkpoint?id={id}"), "", b"").await;
+        let (_, checkpoint) = upload_request(listener.address, "POST", &format!("/upload/checkpoint?id={id}"), "", b"").await;
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&checkpoint).unwrap()["bytes"],
             3
         );
         drop(stalled);
-        stop.send(()).unwrap();
-        serving.await.unwrap().unwrap();
+        listener.shutdown().await;
     })
     .await
     .expect("upload read deadline failed to release capacity");
@@ -341,24 +324,7 @@ async fn upload_request(address: SocketAddr, method: &str, path: &str, owner: &s
     } else {
         format!("X-Real-IP: {owner}\r\n")
     };
-    socket
-        .write_all(
-            format!(
-                "{method} {path} HTTP/1.1\r\nHost: localhost\r\n{owner}Content-Length: {}\r\nConnection: close\r\n\r\n",
-                body.len()
-            )
-            .as_bytes(),
-        )
-        .await
-        .unwrap();
-    socket.write_all(body).await.unwrap();
-    let mut response = Vec::new();
-    socket.read_to_end(&mut response).await.unwrap();
-    let boundary = response.windows(4).position(|part| part == b"\r\n\r\n").unwrap();
-    (
-        String::from_utf8(response[..boundary].to_vec()).unwrap(),
-        response[boundary + 4..].to_vec(),
-    )
+    http1::exchange(&mut socket, method, path, "localhost", &owner, body).await
 }
 
 async fn read_headers(reader: &mut tokio::io::BufReader<TcpStream>) -> String {
@@ -407,8 +373,8 @@ async fn keepalive_idle_uses_fifteen_seconds_and_releases_connection_capacity() 
         )
         .unwrap(),
     );
-    let (address, stop, serving) = native::serve(server, NativeKind::H1, None).await;
-    let mut socket = TcpStream::connect(address).await.unwrap();
+    let listener = native::serve(server, NativeKind::H1, None).await;
+    let mut socket = TcpStream::connect(listener.address).await.unwrap();
     socket
         .write_all(b"GET /download?bytes=0 HTTP/1.1\r\nHost: localhost\r\n\r\n")
         .await
@@ -422,7 +388,7 @@ async fn keepalive_idle_uses_fifteen_seconds_and_releases_connection_capacity() 
             .is_err(),
         "keepalive closed before 15 seconds"
     );
-    let mut rejected = TcpStream::connect(address).await.unwrap();
+    let mut rejected = TcpStream::connect(listener.address).await.unwrap();
     assert_eq!(rejected.read(&mut [0; 1]).await.unwrap(), 0);
     advance_http1_clock(Duration::from_secs(2)).await;
     assert_eq!(
@@ -432,10 +398,9 @@ async fn keepalive_idle_uses_fifteen_seconds_and_releases_connection_capacity() 
             .unwrap(),
         0
     );
-    let reply = fetch(address, "/probe").await;
+    let reply = fetch(listener.address, "/probe").await;
     assert!(reply.starts_with(b"HTTP/1.1 200"));
-    stop.send(()).unwrap();
-    serving.await.unwrap().unwrap();
+    listener.shutdown().await;
 }
 
 #[tokio::test]
@@ -451,11 +416,11 @@ async fn active_http1_progress_survives_an_idle_interval() {
         )
         .unwrap(),
     );
-    let (address, stop, serving) = native::serve(server, NativeKind::H1, None).await;
-    let (_, session) = upload_request(address, "POST", "/upload/session", "", b"").await;
+    let listener = native::serve(server, NativeKind::H1, None).await;
+    let (_, session) = upload_request(listener.address, "POST", "/upload/session", "", b"").await;
     let session: serde_json::Value = serde_json::from_slice(&session).unwrap();
     let id = session["uploadId"].as_str().unwrap();
-    let mut socket = TcpStream::connect(address).await.unwrap();
+    let mut socket = TcpStream::connect(listener.address).await.unwrap();
     socket
         .write_all(format!("GET /upload/progress?id={id} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes())
         .await
@@ -464,19 +429,18 @@ async fn active_http1_progress_survives_an_idle_interval() {
     read_headers(&mut progress).await;
     assert_eq!(progress_event(&mut progress).await["type"], "ready");
     advance_http1_clock(Duration::from_secs(61)).await;
-    let (headers, _) = upload_request(address, "DELETE", &format!("/upload/progress?id={id}"), "", b"").await;
+    let (headers, _) = upload_request(listener.address, "DELETE", &format!("/upload/progress?id={id}"), "", b"").await;
     assert!(headers.starts_with("HTTP/1.1 204"));
     assert_eq!(progress_event(&mut progress).await["type"], "complete");
     drop(progress);
-    stop.send(()).unwrap();
-    serving.await.unwrap().unwrap();
+    listener.shutdown().await;
 }
 
 #[tokio::test]
 async fn prefetched_partial_pipeline_still_has_a_finite_idle_bound() {
     let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-    let (address, stop, serving) = native::serve(server, NativeKind::H1, None).await;
-    let mut socket = TcpStream::connect(address).await.unwrap();
+    let listener = native::serve(server, NativeKind::H1, None).await;
+    let mut socket = TcpStream::connect(listener.address).await.unwrap();
     socket
         .write_all(b"GET /download?bytes=0 HTTP/1.1\r\nHost: localhost\r\n\r\nGET /probe HTTP/1.1\r\nHost:")
         .await
@@ -494,18 +458,17 @@ async fn prefetched_partial_pipeline_still_has_a_finite_idle_bound() {
             .unwrap(),
         0
     );
-    stop.send(()).unwrap();
-    serving.await.unwrap().unwrap();
+    listener.shutdown().await;
 }
 
 #[tokio::test]
 async fn upload_idle_returns_refusal_and_preserves_receiver_bytes() {
     let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-    let (address, stop, serving) = native::serve(server, NativeKind::H1, None).await;
-    let (_, session) = upload_request(address, "POST", "/upload/session", "", b"").await;
+    let listener = native::serve(server, NativeKind::H1, None).await;
+    let (_, session) = upload_request(listener.address, "POST", "/upload/session", "", b"").await;
     let session: serde_json::Value = serde_json::from_slice(&session).unwrap();
     let id = session["uploadId"].as_str().unwrap();
-    let mut socket = TcpStream::connect(address).await.unwrap();
+    let mut socket = TcpStream::connect(listener.address).await.unwrap();
     socket
         .write_all(
             format!(
@@ -518,7 +481,7 @@ async fn upload_idle_returns_refusal_and_preserves_receiver_bytes() {
     tokio::time::timeout(Duration::from_secs(1), async {
         loop {
             let (_, checkpoint) =
-                upload_request(address, "POST", &format!("/upload/checkpoint?id={id}"), "", b"").await;
+                upload_request(listener.address, "POST", &format!("/upload/checkpoint?id={id}"), "", b"").await;
             let checkpoint: serde_json::Value = serde_json::from_slice(&checkpoint).unwrap();
             if checkpoint["bytes"] == 1 {
                 break;
@@ -538,9 +501,8 @@ async fn upload_idle_returns_refusal_and_preserves_receiver_bytes() {
     let response = String::from_utf8(response).unwrap();
     assert!(response.starts_with("HTTP/1.1 408"), "{response}");
     assert!(response.contains("x-graphite-upload-refusal: idle"));
-    let (_, checkpoint) = upload_request(address, "POST", &format!("/upload/checkpoint?id={id}"), "", b"").await;
+    let (_, checkpoint) = upload_request(listener.address, "POST", &format!("/upload/checkpoint?id={id}"), "", b"").await;
     let checkpoint: serde_json::Value = serde_json::from_slice(&checkpoint).unwrap();
     assert_eq!(checkpoint["bytes"], 1);
-    stop.send(()).unwrap();
-    serving.await.unwrap().unwrap();
+    listener.shutdown().await;
 }
