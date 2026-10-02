@@ -19,7 +19,6 @@ const WINDOW_BYTES: u32 = 16 * 1024 * 1024;
 const STREAM_WINDOW_BYTES: u32 = 8 * 1024 * 1024;
 const MAX_STREAMS: u32 = 250;
 const FRAME_BYTES: usize = 16 * 1024;
-type StreamFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
 impl HttpServer {
     pub(super) async fn serve_http2_connection<T>(self: Arc<Self>, stream: T, accepted: Accepted)
@@ -43,7 +42,7 @@ impl HttpServer {
         };
         // Poll stream futures in their connection's scope rather than spawning
         // detached tasks. Dropping this scope synchronously drops every stream.
-        let mut streams = FuturesUnordered::<StreamFuture>::new();
+        let mut streams = FuturesUnordered::new();
         let window = Arc::new(UploadWindow {
             memory: self.memory.clone(),
             clients: self.client_credit.clone(),
@@ -72,9 +71,9 @@ impl HttpServer {
                     } else {
                         let server = self.clone();
                         let window = window.clone();
-                        streams.push(Box::pin(async move {
+                        streams.push(async move {
                             server.serve_http2_stream(request, reply, accepted, window).await;
-                        }));
+                        });
                     }
                     cx.waker().wake_by_ref();
                     Poll::Pending

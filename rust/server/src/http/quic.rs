@@ -278,7 +278,7 @@ impl HttpServer {
         let credit = ReceiveCredit::new(quic.clone(), budget.clone());
         let mut window = SendWindow::new();
         let mut http = http3::server::Connection::new(quic, Some(budget));
-        let mut requests = FuturesUnordered::<Pin<Box<dyn Future<Output = ()> + Send>>>::new();
+        let mut requests = FuturesUnordered::new();
         let active_responses = Arc::new(AtomicUsize::new(0));
         let stopping = stopped(self.stopping.clone());
         tokio::pin!(stopping);
@@ -295,14 +295,14 @@ impl HttpServer {
                         continue;
                     }
                     let (server, credit, active_responses) = (self.clone(), credit.clone(), active_responses.clone());
-                    requests.push(Box::pin(async move {
+                    requests.push(async move {
                         let Ok((request, stream)) = request.resolve().await else { return };
                         if request.method() == Method::CONNECT {
                             let _ = server.serve_webtransport(request, stream, credit, peer).await;
                         } else {
                             let _ = server.serve_http3_request(request, stream, peer, credit, active_responses).await;
                         }
-                    }));
+                    });
                 }
                 Some(()) = requests.next() => {}
                 // Level-triggered, so a connection accepted while stopping shuts down too.
