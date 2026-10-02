@@ -12,7 +12,7 @@ use std::{collections::HashSet, process::Stdio, time::Duration};
 use tokio::{
     process::Child,
     sync::{mpsc, watch},
-    task::JoinSet,
+    task::JoinHandle,
     time::Instant,
 };
 
@@ -32,6 +32,45 @@ impl Work {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Purpose {
+    Check,
+    Run,
+    /// The cancelled check is preparing the queued run until that run can launch.
+    PreparingRun,
+}
+
+struct Operation {
+    task: JoinHandle<Result<Option<runner::PreparedRun>, Error>>,
+    cancel: watch::Sender<bool>,
+    purpose: Purpose,
+    pending: Option<Work>,
+    started: Instant,
+    stopping: Option<Instant>,
+}
+
+impl Operation {
+    fn cancel(&mut self) {
+        self.cancel.send_replace(true);
+        self.stopping.get_or_insert(Instant::now() + CANCEL_GRACE);
+    }
+}
+
+impl Drop for Operation {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+async fn completed(
+    operation: &mut Option<Operation>,
+) -> Result<Result<Option<runner::PreparedRun>, Error>, tokio::task::JoinError> {
+    match operation {
+        Some(operation) => (&mut operation.task).await,
+        None => std::future::pending().await,
+    }
+}
+
 pub async fn run(config: Config, interrupts: mpsc::Receiver<()>) -> Result<(Option<Snapshot>, ui::Exit), Error> {
     let (snapshots, receiver) = watch::channel(Snapshot::default());
     let (commands, mut incoming) = mpsc::channel(8);
@@ -41,6 +80,7 @@ pub async fn run(config: Config, interrupts: mpsc::Receiver<()>) -> Result<(Opti
         let terminal = ui::run(config, receiver, commands, interrupts);
         tokio::pin!(terminal);
         loop {
+            let stopping = controller.stopping();
             tokio::select! {
                 result = &mut terminal => break result,
                 Some(command) = incoming.recv() => {
@@ -60,14 +100,13 @@ pub async fn run(config: Config, interrupts: mpsc::Receiver<()>) -> Result<(Opti
                         break Err(error);
                     }
                 }
-                Some(result) = controller.operations.join_next() => {
+                result = completed(&mut controller.operation) => {
                     if let Err(error) = controller.finished(result) {
                         break Err(error);
                     }
                 }
-                _ = deadline(controller.cancel_deadline) => {
-                    controller.operations.abort_all();
-                    controller.cancel_deadline = None;
+                _ = deadline(stopping) => {
+                    controller.abort();
                 }
             }
         }
@@ -109,17 +148,9 @@ pub async fn run_once(config: Config, mut interrupts: mpsc::Receiver<()>) -> Res
 
 struct Controller {
     snapshots: watch::Sender<Snapshot>,
-    operations: JoinSet<Result<Option<runner::PreparedRun>, Error>>,
+    operation: Option<Operation>,
     prepared: Option<runner::PreparedRun>,
-    cancel: Option<watch::Sender<bool>>,
-    pending: Option<Work>,
-    running: bool,
-    /// A run replaced the path check that is ending: that check's end is the run's preparation.
-    replaced_check: bool,
     finished: Option<Snapshot>,
-    cancelling: bool,
-    cancel_deadline: Option<Instant>,
-    started: Instant,
     http: Http,
     config: Config,
     interactive: bool,
@@ -131,10 +162,11 @@ impl Controller {
     }
 
     async fn wait(&mut self) -> Result<(), Error> {
-        while !self.operations.is_empty() {
+        while self.operation.is_some() {
+            let stopping = self.stopping();
             tokio::select! {
-                Some(result) = self.operations.join_next() => self.finished(result)?,
-                _ = deadline(self.cancel_deadline) => { self.operations.abort_all(); self.cancel_deadline = None; },
+                result = completed(&mut self.operation) => self.finished(result)?,
+                _ = deadline(stopping) => self.abort(),
             }
         }
         Ok(())
@@ -143,30 +175,22 @@ impl Controller {
     fn new(config: &Config, snapshots: watch::Sender<Snapshot>, interactive: bool) -> Result<Self, Error> {
         Ok(Self {
             snapshots,
-            operations: JoinSet::new(),
+            operation: None,
             prepared: None,
-            cancel: None,
-            pending: None,
-            running: false,
-            replaced_check: false,
             finished: None,
-            cancelling: false,
-            cancel_deadline: None,
-            started: Instant::now(),
             http: Http::new(config.insecure)?,
             config: config.clone(),
             interactive,
         })
     }
     fn launch(&mut self, work: Work) -> Result<(), Error> {
-        assert!(self.operations.is_empty());
+        assert!(self.operation.is_none());
         if self.config.insecure != work.config().insecure {
             self.http = Http::new(work.config().insecure)?;
         }
         self.config = work.config().clone();
-        self.running = matches!(work, Work::Run(_));
-        self.started = Instant::now();
-        if !self.running {
+        let running = matches!(work, Work::Run(_));
+        if !running {
             self.prepared = None;
         }
         let servers = if self
@@ -180,7 +204,7 @@ impl Controller {
         };
         self.snapshots.send_replace(Snapshot {
             servers,
-            phase: if self.running {
+            phase: if running {
                 Phase::Preparing
             } else {
                 Phase::Checking
@@ -188,62 +212,74 @@ impl Controller {
             ..Snapshot::default()
         });
         let (cancel, cancelled) = watch::channel(false);
-        self.cancel = Some(cancel);
-        self.cancelling = false;
-        self.cancel_deadline = None;
         // Grants carry over; connections belong to this check or run alone.
         let http = self.http.fresh();
         let snapshots = self.snapshots.clone();
         let prepared = self.prepared.take();
         let interactive = self.interactive;
-        self.operations
-            .spawn(async move { execute(work, http, snapshots, cancelled, prepared, interactive).await });
+        let started = Instant::now();
+        self.operation = Some(Operation {
+            task: tokio::spawn(async move { execute(work, http, snapshots, cancelled, prepared, interactive).await }),
+            cancel,
+            purpose: if running { Purpose::Run } else { Purpose::Check },
+            pending: None,
+            started,
+            stopping: None,
+        });
         Ok(())
     }
     fn replace(&mut self, work: Work) -> Result<(), Error> {
-        if self.operations.is_empty() {
+        if self.operation.is_none() {
             self.launch(work)
         } else {
-            if matches!(work, Work::Run(_)) && !self.running {
+            let operation = self.operation.as_mut().unwrap();
+            if matches!(work, Work::Run(_)) && operation.purpose == Purpose::Check {
                 // As in Go, the run starts at once: stopping the replaced check is its
                 // preparation, and stopping the run before launch reads as stopped.
-                self.running = true;
-                self.replaced_check = true;
-                self.started = Instant::now();
+                operation.purpose = Purpose::PreparingRun;
+                operation.started = Instant::now();
                 self.snapshots.send_replace(Snapshot {
                     phase: Phase::Preparing,
                     ..Snapshot::default()
                 });
             }
-            self.pending = Some(work);
+            operation.pending = Some(work);
             self.request_cancel();
             Ok(())
         }
     }
     fn cancel(&mut self) {
-        self.pending = None;
+        if let Some(operation) = &mut self.operation {
+            operation.pending = None;
+        }
         self.request_cancel();
     }
     fn request_cancel(&mut self) {
-        if let Some(cancel) = &self.cancel {
-            let _ = cancel.send(true);
-        }
-        if !self.operations.is_empty() {
-            self.cancelling = true;
-            self.cancel_deadline.get_or_insert(Instant::now() + CANCEL_GRACE);
+        if let Some(operation) = &mut self.operation {
+            operation.cancel();
             self.snapshots.send_modify(|snapshot| snapshot.auth = None);
+        }
+    }
+
+    fn stopping(&self) -> Option<Instant> {
+        self.operation.as_ref().and_then(|operation| operation.stopping)
+    }
+
+    fn abort(&mut self) {
+        if let Some(operation) = &mut self.operation {
+            operation.task.abort();
+            operation.stopping = None;
         }
     }
     fn finished(
         &mut self,
         result: Result<Result<Option<runner::PreparedRun>, Error>, tokio::task::JoinError>,
     ) -> Result<(), Error> {
-        self.cancel = None;
-        self.cancel_deadline = None;
-        let running = self.running;
+        let mut operation = self.operation.take().expect("completion belongs to the owned operation");
+        let running = operation.purpose != Purpose::Check;
         // Unless it was stopped before launch, the run that replaced the check goes on.
-        let preparing = std::mem::take(&mut self.replaced_check) && self.pending.is_some();
-        if self.cancelling {
+        let preparing = operation.purpose == Purpose::PreparingRun && operation.pending.is_some();
+        if *operation.cancel.borrow() {
             self.snapshots.send_modify(|snapshot| {
                 if snapshot.phase.busy() && !preparing {
                     snapshot.phase = if running { Phase::Cancelled } else { Phase::Setup };
@@ -276,18 +312,19 @@ impl Controller {
                         snapshot.auth = None;
                     });
                     if running && signed_out && self.interactive {
-                        self.pending.get_or_insert_with(|| Work::Verify(self.config.clone()));
+                        operation.pending.get_or_insert_with(|| Work::Verify(self.config.clone()));
                     }
                 }
             }
         }
-        self.cancelling = false;
         if running && !preparing {
-            let duration = self.started.elapsed();
+            let duration = operation.started.elapsed();
             self.snapshots.send_modify(|snapshot| snapshot.duration = duration);
             self.finished = Some(self.snapshots.borrow().clone());
         }
-        if let Some(work) = self.pending.take() {
+        let pending = operation.pending.take();
+        drop(operation);
+        if let Some(work) = pending {
             self.launch(work)?;
         }
         Ok(())
@@ -409,6 +446,34 @@ fn browser(url: &str) -> Result<Child, Error> {
 mod tests {
     use super::*;
 
+    fn operation<F>(controller: &mut Controller, purpose: Purpose, run: impl FnOnce(watch::Receiver<bool>) -> F)
+    where
+        F: std::future::Future<Output = Result<Option<runner::PreparedRun>, Error>> + Send + 'static,
+    {
+        let (cancel, cancelled) = watch::channel(false);
+        controller.operation = Some(Operation {
+            task: tokio::spawn(run(cancelled)),
+            cancel,
+            purpose,
+            pending: None,
+            started: Instant::now(),
+            stopping: None,
+        });
+    }
+
+    #[tokio::test]
+    async fn dropping_the_controller_aborts_its_owned_task() {
+        let mut controller = checking();
+        controller.stop().await;
+        let (held, released) = tokio::sync::oneshot::channel::<()>();
+        operation(&mut controller, Purpose::Check, |_| async move {
+            let _held = held;
+            std::future::pending().await
+        });
+        drop(controller);
+        assert!(tokio::time::timeout(Duration::from_secs(1), released).await.unwrap().is_err());
+    }
+
     #[tokio::test]
     async fn shutdown_joins_operation_before_returning_its_partial_result() {
         let _ = crate::crypto::provider().install_default();
@@ -418,11 +483,8 @@ mod tests {
                 ..Snapshot::default()
             });
             let mut controller = Controller::new(&Config::default(), snapshots.clone(), true).unwrap();
-            controller.running = true;
-            let (cancel, mut cancelled_signal) = watch::channel(false);
-            controller.cancel = Some(cancel);
             let (joined, completed) = tokio::sync::oneshot::channel();
-            controller.operations.spawn(async move {
+            operation(&mut controller, Purpose::Run, |mut cancelled_signal| async move {
                 let _ = cancelled_signal.wait_for(|cancelled| *cancelled).await;
                 snapshots.send_modify(|snapshot| snapshot.latest.up_bps = Some(42.0));
                 let _ = joined.send(());
@@ -430,7 +492,7 @@ mod tests {
             });
             controller.stop().await;
             completed.await.unwrap();
-            assert!(controller.operations.is_empty());
+            assert!(controller.operation.is_none());
             let expected = if phase == Phase::Complete {
                 Phase::Complete
             } else {
@@ -449,9 +511,7 @@ mod tests {
             ..Snapshot::default()
         });
         let mut controller = Controller::new(&Config::default(), snapshots, true).unwrap();
-        let (cancel, mut cancelled) = watch::channel(false);
-        controller.cancel = Some(cancel);
-        controller.operations.spawn(async move {
+        operation(&mut controller, Purpose::Check, |mut cancelled| async move {
             let _ = cancelled.wait_for(|cancelled| *cancelled).await;
             Ok(None)
         });
@@ -464,10 +524,10 @@ mod tests {
         controller.replace(Work::Run(Config::default())).unwrap();
         assert_eq!(controller.snapshots.borrow().phase, Phase::Preparing);
         // The check ending is the run's preparation, not a stopped run.
-        let check = controller.operations.join_next().await.unwrap();
+        let check = completed(&mut controller.operation).await;
         controller.finished(check).unwrap();
         assert!(controller.finished.is_none());
-        assert_eq!(controller.operations.len(), 1, "the run launched");
+        assert!(controller.operation.is_some(), "the run launched");
         controller.stop().await;
 
         let mut controller = checking();
@@ -490,8 +550,7 @@ mod tests {
         };
         let (snapshots, _) = watch::channel(Snapshot::default());
         let mut controller = Controller::new(&config, snapshots.clone(), true).unwrap();
-        controller.running = true;
-        controller.operations.spawn(async move {
+        operation(&mut controller, Purpose::Run, |_| async move {
             snapshots.send_modify(|snapshot| {
                 snapshot.results.push(crate::model::StageResult {
                     elapsed: Duration::from_secs(1),
@@ -503,7 +562,7 @@ mod tests {
                 login_url: "https://meter.test/login".into(),
             }) as Error)
         });
-        let result = controller.operations.join_next().await.unwrap();
+        let result = completed(&mut controller.operation).await;
         controller.finished(result).unwrap();
         assert_eq!(
             controller.finished.as_ref().map(|run| run.phase),
@@ -543,7 +602,7 @@ mod tests {
         let (snapshots, _) = watch::channel(Snapshot::default());
         let mut controller = Controller::new(&config, snapshots, true)?;
         controller.launch(Work::Run(config))?;
-        let result = controller.operations.join_next().await.ok_or("no run")?;
+        let result = completed(&mut controller.operation).await;
         controller.finished(result)?;
         let phase = controller.snapshots.borrow().phase;
         controller.stop().await;
@@ -558,11 +617,12 @@ mod tests {
         for running in [false, true] {
             let (snapshots, _) = watch::channel(Snapshot::default());
             let mut controller = Controller::new(&Config::default(), snapshots, true).unwrap();
-            controller.running = running;
-            controller
-                .operations
-                .spawn(async { Err(Box::new(Failure::ApprovalExpired) as Error) });
-            let result = controller.operations.join_next().await.unwrap();
+            operation(
+                &mut controller,
+                if running { Purpose::Run } else { Purpose::Check },
+                |_| async { Err(Box::new(Failure::ApprovalExpired) as Error) },
+            );
+            let result = completed(&mut controller.operation).await;
             controller.finished(result).unwrap();
             assert_eq!(controller.snapshots.borrow().error.as_deref(), Some(SIGN_IN_EXPIRED));
         }

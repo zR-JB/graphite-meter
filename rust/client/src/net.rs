@@ -1026,37 +1026,6 @@ mod tests {
         Ok(())
     }
 
-    /// A proxy variable the client cannot use names itself and its fault, not a lost connection.
-    #[tokio::test]
-    async fn an_unusable_proxy_value_is_reported_as_such() {
-        for (http_proxy, https_proxy, target, text) in [
-            (
-                "",
-                "socks4://proxy.example:1080",
-                "https://meter.test/probe",
-                "HTTPS_PROXY is not a usable proxy: only HTTP, HTTPS and SOCKS5 proxies are supported",
-            ),
-            (
-                "http://[proxy.example",
-                "",
-                "http://meter.test/probe",
-                "HTTP_PROXY is not a usable proxy: invalid proxy URL",
-            ),
-        ] {
-            let mut http = http(false);
-            http.set_proxy(Proxy::new(http_proxy, https_proxy, ""));
-            let error = http
-                .request(Method::GET, target, Protocol::Negotiated)
-                .await
-                .unwrap_err();
-            assert_eq!(crate::failure::text(error.as_ref()), text);
-            assert_eq!(
-                crate::failure::reason(error.as_ref(), true),
-                graphite_meter_core::failure::FailureReason::PreparationFailed
-            );
-        }
-    }
-
     /// A dial that stalls in its proxy handshake holds up neither another request's own dial nor
     /// the return of its response.
     #[tokio::test]

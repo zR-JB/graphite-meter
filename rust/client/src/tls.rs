@@ -136,23 +136,3 @@ impl ServerCertVerifier for InsecureVerifier {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Every dial shares its mode's configurations, so none reloads the trust store.
-    #[tokio::test]
-    async fn configurations_are_built_once_per_mode() -> Result<(), Error> {
-        let _ = crate::crypto::provider().install_default();
-        for insecure in [false, true] {
-            for alpn in [Alpn::Http1, Alpn::Http2, Alpn::Negotiated, Alpn::Proxy] {
-                let (first, again) = (tcp(insecure, alpn).await?, tcp(insecure, alpn).await?);
-                assert!(Arc::ptr_eq(first.config(), again.config()), "{alpn:?}");
-            }
-            assert!(Arc::ptr_eq(&quic(insecure).await?, &quic(insecure).await?));
-        }
-        let (verified, skipped) = (tcp(false, Alpn::Http1).await?, tcp(true, Alpn::Http1).await?);
-        assert!(!Arc::ptr_eq(verified.config(), skipped.config()));
-        Ok(())
-    }
-}

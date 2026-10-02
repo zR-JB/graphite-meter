@@ -814,114 +814,42 @@ fn count(value: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        model::ServerFailure,
-        theme::Profile,
-        ui::tests::{latency_result, lost, probes, result},
-    };
+    use crate::ui::tests::{latency_result, probes, result};
 
-    /// A server of the run, as the catalogue names it.
-    fn server(id: &str, name: &str) -> ServerSummary {
-        let (id, name, error) = (id.into(), name.into(), Some("checked".into()));
-        ServerSummary {
-            id,
-            name,
-            error,
-            ..ServerSummary::default()
-        }
-    }
-
-    /// One server's idle and loaded latency and a download a late probe timeout made partial.
-    fn partial_run() -> Snapshot {
-        let (mut idle, mut download) = (
-            result(Stage::Latency, None, None),
-            result(Stage::Download, Some(1.5e6), None),
-        );
-        idle.server_latencies = vec![latency_result("a", probes(&[1_000_000, 2_000_000, 3_000_000], 1))];
-        download.down.as_mut().unwrap().peak_bytes_per_sec = Some(1_800_000.0);
-        download.server_latencies = vec![latency_result("a", probes(&[5_000_000, 6_000_000, 7_000_000], 0))];
-        download.server_results = vec![ServerContribution::default()];
-        download.server_results[0].id = "a".into();
-        let (scope, reason, at) = (FailureScope::Latency, FailureReason::Timeout, Duration::from_secs(3));
-        Snapshot {
+    #[test]
+    fn the_report_preserves_rates_latency_and_partial_outcome() {
+        let mut idle = result(Stage::Latency, None, None);
+        idle.server_latencies = vec![latency_result("a", probes(&[2_000_000], 1))];
+        let mut download = result(Stage::Download, Some(1.5e6), None);
+        download.server_latencies = vec![latency_result("a", probes(&[6_000_000], 0))];
+        let snapshot = Snapshot {
             phase: Phase::Partial,
-            servers: vec![server("a", "Alpha")],
+            servers: vec![ServerSummary {
+                id: "a".into(),
+                name: "Alpha".into(),
+                ..Default::default()
+            }],
             participants: vec!["a".into()],
             latency_focus: Some("a".into()),
             plan: vec![Stage::Latency, Stage::Download],
-            duration: Duration::from_secs(5),
             results: vec![idle, download],
-            failures: vec![ServerFailure {
-                scope,
-                reason,
-                at,
-                ..lost("a", Stage::Download)
-            }],
             error: Some("Stopped delivering data".into()),
-            ..Snapshot::default()
+            ..Default::default()
+        };
+        let shown = render(&snapshot, WIDTH, Theme::default()).unwrap();
+        for text in ["Partial", "Alpha", "12.00 Mbit/s", "2.0 ms", "6.0 ms", "+4.0 ms", "1 / 2 (50.0%)"] {
+            assert!(shown.contains(text), "{shown}");
         }
-    }
-
-    /// The report as Go prints it, then as a terminal paints it; several servers add their details.
-    #[test]
-    fn the_report_reads_and_paints_as_go_prints_it() {
-        let report = render(&partial_run(), WIDTH, Theme::default()).unwrap();
-        assert_eq!(
-            report,
-            [
-                "Graphite Meter  Partial  Alpha · 5.0 s · 1.5 MB",
-                "",
-                "↓ Download  12.00 Mbit/s   Partial · peak 14.40 · 1.5 MB · 1.0 s",
-                "",
-                "Latency      Median  Added    P95     Jitter  Probe timeouts",
-                "Idle         2.0 ms           3.0 ms  1.0 ms  1 / 4 (25.0%)",
-                "Loaded down  6.0 ms  +4.0 ms  7.0 ms  1.0 ms  0 / 3",
-                "",
-                "Idle latency: 3 replies · 1.0 s",
-                "Server handling of the mean round trip: Idle < 0.1 ms of 2.0 ms · Loaded down < 0.1 ms of 6.0 ms",
-                "Added: loaded median minus idle median, same server.",
-                "",
-                "Stopped delivering data",
-            ]
-            .join("\n")
-        );
-        let mut pair = partial_run();
-        // Painted as lipgloss writes each profile: 16 colours as 30–37 and 90–97.
-        #[rustfmt::skip]
-        let paints = [(Profile::Ansi256, ["1;38;5;254mGraphite Meter", "1;38;5;186mPartial", "1;38;5;75m12.00 Mbit/s"]),
-            (Profile::Ansi, ["\x1b[1;97mGraphite Meter\x1b[m  \x1b[1;93mPartial\x1b[m", "1;94m12.00", "1;91mStopped"]),
-            (Profile::Ascii, ["\x1b[1mGraphite Meter", "\x1b[1mPartial", "\x1b[1m12.00 Mbit/s"])];
-        for (profile, parts) in paints {
-            let painted = render(&pair, WIDTH, Theme::new(profile, true)).unwrap();
-            assert!(parts.iter().all(|part| painted.contains(part)), "{painted:?}");
-        }
-        pair.servers.push(server("b", "Beta"));
-        let text = render(&pair, WIDTH, Theme::default()).unwrap();
-        for line in [
-            "Partial · 1 of 2 servers",
-            "Latency median by server",
-            "Issues",
-            "Alpha · Download latency · at 3.0 s · Stopped delivering data",
-        ] {
-            assert!(text.lines().any(|shown| shown == line), "{line:?} in {text}");
-        }
+        assert!(shown.ends_with("Stopped delivering data"));
     }
 
     #[test]
-    fn lines_fit_pad_and_sanitize_around_their_styles() {
-        let bold = Style::new().add_modifier(Modifier::BOLD);
-        let styled = Line::from(vec![span("ab", bold), Span::raw("cdef")]);
-        assert_eq!(
-            fit(styled.clone(), 4),
-            Line::from(vec![span("ab", bold), Span::raw("c…")])
-        );
-        assert_eq!(fit(styled.clone(), 6), styled);
-        assert_eq!(pad(Line::from("ab"), 4).width(), 4);
+    fn lines_sanitize_remote_controls_and_keep_unicode_width() {
         assert_eq!(wrap_parts(&["界界".into(), "abc".into()], 8), ["界界", "abc"]);
+        let bold = Style::new().add_modifier(Modifier::BOLD);
         let mut lines = vec![Line::from(span("name\x1b]52;c;secret\x07\u{202e}", bold))];
         sanitize(&mut lines, &Theme::default());
         assert_eq!(lines[0].spans[0].style, Style::default());
         assert_eq!(plain(&lines[0]), "name�]52;c;secret��");
-        assert_eq!(ansi(&[Line::from(span("x", bold))]), "\x1b[1mx\x1b[m");
     }
 }

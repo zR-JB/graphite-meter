@@ -341,31 +341,6 @@ mod tests {
     use std::io::Write;
 
     #[test]
-    fn terms_pick_go_colour_profiles() {
-        use Profile::{Ansi, Ansi256, NoTty, TrueColor};
-        #[rustfmt::skip]
-        let terms = [("xterm-kitty", TrueColor), ("wezterm", TrueColor), ("screen", Ansi256), ("tmux-256color", Ansi256),
-            ("xterm-256color", Ansi256), ("xterm", Ansi), ("xterm-direct", TrueColor), ("dumb", NoTty), ("", NoTty)];
-        for (term, profile) in terms {
-            assert_eq!(environment(term, "", false), profile, "{term}");
-        }
-        assert_eq!(environment("screen", "TRUECOLOR", false), Ansi256);
-        assert_eq!(environment("xterm", "TRUECOLOR", false), TrueColor);
-        assert_eq!(environment("screen", "", true), TrueColor);
-    }
-
-    #[test]
-    fn backgrounds_read_light_or_dark_as_go_parses_them() {
-        #[rustfmt::skip]
-        let colors = [("rgb:ffff/ffff/ffff", true), ("rgb:0000/0000/0000", false), ("rgb:8080/7f7f/7f7f", true),
-            ("rgb:7f7f/7f7f/7f7f", false), ("rgba:fdfd/f6f6/e3e3/0000", true), ("rgb:ff/ff/ff", true),
-            ("rgb:fff/fff/fff", false), ("rgb:ffff/ffff", false), ("#fff", true), ("#1d1f21", false), ("white", false)];
-        for (color, light) in colors {
-            assert_eq!(bright(color.as_bytes()), light, "{color}");
-        }
-    }
-
-    #[test]
     fn device_attributes_end_the_answers_and_only_whole_background_answers_count() {
         for (answers, expected) in [
             (

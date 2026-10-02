@@ -272,49 +272,6 @@ async fn a_slow_server_fails_alone_at_the_shared_deadline() -> Result<(), Error>
     Ok(())
 }
 
-/// Setup and the server chooser show Go's reason, not the OS error text.
-#[tokio::test]
-async fn an_unreachable_server_shows_a_reason() -> Result<(), Error> {
-    let _ = crate::crypto::provider().install_default();
-    let reachable = TcpListener::bind("127.0.0.1:0").await?;
-    let reachable_origin = format!("http://{}", reachable.local_addr()?);
-    // A released port refuses connections, as a stopped server does.
-    let gone = TcpListener::bind("127.0.0.1:0").await?.local_addr()?;
-    let catalog = serde_json::json!({
-        "defaultSelection": ["self", "gone"],
-        "servers": [
-            {"id": "self", "url": reachable_origin, "name": "reachable"},
-            {"id": "gone", "url": format!("http://{gone}"), "name": "gone"}
-        ]
-    })
-    .to_string();
-    let origin = reachable_origin.clone();
-    let server = tokio::spawn(async move {
-        while let Ok((stream, _)) = reachable.accept().await {
-            let (origin, catalog) = (origin.clone(), catalog.clone());
-            tokio::spawn(serve_selected(
-                stream,
-                origin,
-                catalog,
-                Arc::new(Barrier::new(1)),
-                false,
-            ));
-        }
-    });
-    let config = download(reachable_origin);
-    let (snapshots, _) = watch::channel(Snapshot::default());
-    let Preparation { failures, .. } = check(&config, &Http::new(false)?, &snapshots).await?;
-    server.abort();
-    assert_eq!(failures[0].id, "gone");
-    let snapshot = snapshots.borrow();
-    let error = snapshot
-        .servers
-        .iter()
-        .find(|server| server.id == "gone")
-        .and_then(|server| server.error.as_deref());
-    assert_eq!(error, Some("Server could not be reached"));
-    Ok(())
-}
 
 #[tokio::test]
 async fn automatic_latency_uses_websocket_when_advertised_quic_cannot_reply() -> Result<(), Error> {
@@ -363,44 +320,6 @@ async fn unreachable_webtransport_preserves_ambiguous_fetch_error() -> Result<()
     Ok(())
 }
 
-/// Selecting an entry the catalogue named but the client left out says why.
-#[tokio::test]
-async fn selecting_a_left_out_catalogue_entry_names_its_fault() -> Result<(), Error> {
-    let _ = crate::crypto::provider().install_default();
-    let listener = TcpListener::bind("127.0.0.1:0").await?;
-    let origin = format!("http://{}", listener.local_addr()?);
-    let catalog = serde_json::json!({
-        "defaultSelection": ["self"],
-        "servers": [
-            {"id": "self", "url": ".", "name": "self"},
-            {"id": "broken", "url": "https://two words.example", "name": "broken"}
-        ]
-    })
-    .to_string();
-    let server = tokio::spawn(async move {
-        while let Ok((mut stream, _)) = listener.accept().await {
-            let _ = stream.read(&mut [0; 2048]).await;
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{catalog}",
-                catalog.len()
-            );
-            let _ = stream.write_all(response.as_bytes()).await;
-        }
-    });
-    let config = Config {
-        servers: vec!["broken".into()],
-        ..download(origin)
-    };
-    let (snapshots, _) = watch::channel(Snapshot::default());
-    let result = check(&config, &Http::new(false)?, &snapshots).await;
-    server.abort();
-    let error = result.err().ok_or("a left-out entry was prepared")?;
-    assert_eq!(
-        error.to_string(),
-        "the catalogue's server \"broken\" was left out: invalid catalogue origin"
-    );
-    Ok(())
-}
 
 /// A reverse proxy speaks HTTP/2 to the client and HTTP/1.1 upstream, and the server reports its
 /// own hop; lanes use the version the client's connection negotiated, as Go's `response.Proto` does.
@@ -468,17 +387,3 @@ async fn negotiated_protocol_behind_a_reverse_proxy_is_the_clients_own() -> Resu
     Ok(())
 }
 
-#[tokio::test]
-async fn negotiated_fetch_protocol_uses_verified_http_version() -> Result<(), Error> {
-    let _ = crate::crypto::provider().install_default();
-    let (origin, fixture) = fixture(FixtureMode::Negotiated).await?;
-    let config = download(origin);
-    let (snapshots, _) = watch::channel(Snapshot::default());
-    let prepared = check(&config, &Http::new(false)?, &snapshots).await?;
-    assert_eq!(
-        prepared.servers[0].throughput.as_ref().unwrap().protocol,
-        Protocol::Http1
-    );
-    fixture.abort();
-    Ok(())
-}

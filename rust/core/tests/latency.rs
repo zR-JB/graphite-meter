@@ -81,7 +81,10 @@ fn reflector_duration_bounds_and_large_sums_are_exact() {
 
     for (rtt_nanos, expected) in [(0, Some(0)), (-1, None)] {
         assert_eq!(
-            stats.record(ProbeOutcome::Reply { rtt_nanos, handling_nanos: 0 }),
+            stats.record(ProbeOutcome::Reply {
+                rtt_nanos,
+                handling_nanos: 0
+            }),
             expected,
             "RTT {rtt_nanos}"
         );

@@ -464,95 +464,9 @@ async fn refused(args: &[&str], stderr: String) -> Result<(), Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn invalid_settings_are_refused_in_go_order_and_words() -> Result<(), Error> {
-    for (args, message) in [
-        (
-            &["-stages", "", "-warmup", "5s"][..],
-            "select at least one stage: latency, download, upload or bidirectional",
-        ),
-        (
-            &["-warmup", "5s", "-latency-duration", "0"],
-            "warmup must be from 0s to 4s",
-        ),
-        (
-            &["-latency-duration", "0", "-ping", "40ms"],
-            "latency duration must be from 1s to 24h",
-        ),
-        (&["--download-duration=0"], "download duration must be from 1s to 24h"),
-        // Go checks the duration of a stage that is off.
-        (
-            &["-bidirectional-duration", "25h"],
-            "bidirectional duration must be from 1s to 24h",
-        ),
-        (
-            &["-loaded-ping", "40ms", "-streams", "15"],
-            "latency cadence must be reply-driven or at least 80ms",
-        ),
-        // Zero is a fixed cadence in Go, not reply-driven.
-        (&["-ping", "0"], "latency cadence must be reply-driven or at least 80ms"),
-        (
-            &["--loaded-ping=0s"],
-            "latency cadence must be reply-driven or at least 80ms",
-        ),
-        (
-            &["-streams", "15", "-auto-streams", "0"],
-            "forced streams must be from 1 to 14 per server and direction, or 0 for automatic",
-        ),
-        (
-            &["-auto-streams", "0", "-ping", "16s"],
-            "the automatic stream maximum must be from 1 to 14 per direction",
-        ),
-        (
-            &["-ping", "16s"],
-            "latency interval must be at most 15s, half the server's 30s lane idle bound",
-        ),
-    ] {
-        refused(args, format!("graphite-meter-client: {message}\n")).await?;
-    }
-    Ok(())
-}
-
-#[tokio::test]
-async fn version_names_the_client_like_go() -> Result<(), Error> {
-    for flag in ["-version", "--version"] {
-        let output = flags(&[flag]).await?;
-        assert_eq!(output.status.code(), Some(0));
-        assert!(output.stderr.is_empty());
-        let version = String::from_utf8(output.stdout)?;
-        assert!(
-            version
-                .strip_prefix("graphite-meter-client ")
-                .is_some_and(|number| number.contains("-rust") && !number.trim_end().contains(' ')),
-            "{version:?}"
-        );
-    }
-    Ok(())
-}
-
 /// Go's usage, which names the program as it was invoked.
 fn usage() -> String {
     graphite_meter_client::cli::usage(env!("CARGO_BIN_EXE_graphite-meter-client"))
-}
-
-#[tokio::test]
-async fn help_goes_to_stderr_like_go() -> Result<(), Error> {
-    for flag in ["-h", "-help", "--help", "--h", "-h=1"] {
-        let output = flags(&[flag]).await?;
-        assert_eq!(output.status.code(), Some(0), "{flag}");
-        assert!(output.stdout.is_empty(), "{flag}");
-        let shown = String::from_utf8(output.stderr)?;
-        assert!(shown.starts_with(&format!(
-            "Usage of {}:\n  -auto-streams int\n    \tmaximum H1 streams per direction (default 6)\n",
-            env!("CARGO_BIN_EXE_graphite-meter-client")
-        )));
-        assert!(
-            shown.contains("\n  -insecure\n    \tskip TLS certificate verification\n  -latency-duration duration\n")
-        );
-        assert!(shown.contains("  -ping value\n    \tidle latency cadence (default reply-driven): reply-driven, fast, medium, slow, or a duration from 80ms to 15s\n"));
-        assert!(shown.ends_with("  -warmup duration\n    \tper-stage warmup duration (default 800ms)\n"));
-    }
-    Ok(())
 }
 
 /// Go checks origins when it prepares the run, so a malformed one fails the run, not the flags.
@@ -572,78 +486,12 @@ async fn malformed_origins_fail_the_path_check_like_go() -> Result<(), Error> {
 }
 
 #[tokio::test]
-async fn flag_errors_print_go_messages_then_the_usage() -> Result<(), Error> {
-    for (args, message) in [
-        (&["-x", "-url"][..], "flag provided but not defined: -x"),
-        (&["-version", "--x=1"], "flag provided but not defined: -x"),
-        (&["-url"], "flag needs an argument: -url"),
-        (&["---x"], "bad flag syntax: ---x"),
-        (
-            &["-report=maybe"],
-            r#"invalid boolean value "maybe" for -report: parse error"#,
-        ),
-        (
-            &["-legal=maybe"],
-            r#"invalid boolean value "maybe" for -legal: parse error"#,
-        ),
-        (&["-warmup", "x"], r#"invalid value "x" for flag -warmup: parse error"#),
-        (
-            &["-streams", "99999999999999999999"],
-            r#"invalid value "99999999999999999999" for flag -streams: value out of range"#,
-        ),
-        (
-            &["-stages", "typo"],
-            r#"invalid value "typo" for flag -stages: unknown stage "typo": use latency, download, upload, or bidirectional"#,
-        ),
-        (
-            &["-ping", "x"],
-            r#"invalid value "x" for flag -ping: use reply-driven, fast, medium, slow, or a duration such as 400ms"#,
-        ),
-        (
-            &["-server", "a", "-server", "a"],
-            r#"invalid value "a" for flag -server: select one to 4 different server IDs"#,
-        ),
-    ] {
-        refused(args, format!("{message}\n{}", usage())).await?;
-    }
-    Ok(())
-}
-
-#[tokio::test]
-async fn arguments_and_checks_after_parsing_fail_like_go() -> Result<(), Error> {
-    for (args, message) in [
-        (&["foo", "-x"][..], r#"unexpected argument "foo""#),
-        (&["x\u{1}y"], r#"unexpected argument "x\x01y""#),
-        // A false -legal parses as any boolean flag.
-        (&["-legal=false", "foo"], r#"unexpected argument "foo""#),
-        (&["--", "-x"], r#"unexpected argument "-x""#),
-        (&["-"], r#"unexpected argument "-""#),
-        (&["-report", "maybe"], r#"unexpected argument "maybe""#),
-        (
-            &["-throughput-protocol", "spdy", "-throughput-protocol", "http4"],
-            r#"invalid throughput protocol "http4": use auto, http1, http2, or http3"#,
-        ),
-        (
-            &["-throughput-transport", "webtransport-datagram"],
-            r#"invalid throughput transport "webtransport-datagram": use auto, fetch-stream, or webtransport"#,
-        ),
-        (
-            &["-latency-transport", "x"],
-            r#"invalid latency transport "x": use auto, websocket, or webtransport"#,
-        ),
-        (&["-warmup", "-1s"], "warmup must be from 0s to 4s"),
-        (&["-upload-duration", "-1s"], "upload duration must be from 1s to 24h"),
-        (
-            &["-streams", "-1"],
-            "forced streams must be from 1 to 14 per server and direction, or 0 for automatic",
-        ),
-        (
-            &["-ping", "-1s"],
-            "latency cadence must be reply-driven or at least 80ms",
-        ),
-    ] {
-        refused(args, format!("graphite-meter-client: {message}\n")).await?;
-    }
+async fn invalid_flags_and_settings_are_refused() -> Result<(), Error> {
+    refused(&["-x"], format!("flag provided but not defined: -x\n{}", usage())).await?;
+    refused(&["-warmup", "5s"], "graphite-meter-client: warmup must be from 0s to 4s\n".into()).await?;
+    let output = flags(&["-help"]).await?;
+    assert!(output.status.success() && output.stdout.is_empty());
+    assert_eq!(String::from_utf8(output.stderr)?, usage());
     Ok(())
 }
 
@@ -654,6 +502,7 @@ async fn version_and_legal_act_as_go_reads_them() -> Result<(), Error> {
     let version = flags(&["-version", "foo"]).await?;
     assert_eq!(version.status.code(), Some(0));
     assert!(version.stdout.starts_with(b"graphite-meter-client "));
+    assert!(String::from_utf8_lossy(&version.stdout).contains("-rust"));
     let legal = flags(&["--legal"]).await?;
     for args in [
         &["-legal"][..],

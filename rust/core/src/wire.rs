@@ -77,8 +77,14 @@ pub enum UploadProgress {
         #[serde(skip_serializing_if = "String::is_empty")]
         code: String,
     },
-    Progress { bytes: u64, nanos: u64 },
-    Complete { bytes: u64, nanos: u64 },
+    Progress {
+        bytes: u64,
+        nanos: u64,
+    },
+    Complete {
+        bytes: u64,
+        nanos: u64,
+    },
 }
 
 pub fn encode_upload_progress(event: &UploadProgress) -> Result<String, WireError> {

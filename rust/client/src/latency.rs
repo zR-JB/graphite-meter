@@ -509,13 +509,24 @@ async fn stopped(cancel: &mut watch::Receiver<Stop>, at_least: Stop) -> Stop {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+
+    async fn websocket_listener() -> Result<(TcpListener, LatencyTarget), Error> {
+        let _ = crate::crypto::provider().install_default();
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let target = LatencyTarget {
+            base_url: format!("http://{}", listener.local_addr()?),
+            transport: LatencyTransport::WebSocket,
+        };
+        Ok((listener, target))
+    }
 
     #[tokio::test]
     async fn busy_upgrade_waits_for_backoff_and_retry_after_before_redial() -> Result<(), Error> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let _ = crate::crypto::provider().install_default();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-        let origin = format!("http://{}", listener.local_addr()?);
+        let (listener, target) = websocket_listener().await?;
         let http = Http::new(false)?;
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
         let date_lead = Duration::from_millis(500);
@@ -560,10 +571,6 @@ mod tests {
             }
             Ok::<_, Error>((attempts, minimum))
         });
-        let target = LatencyTarget {
-            base_url: origin,
-            transport: LatencyTransport::WebSocket,
-        };
         dial(&http, &target, Instant::now() + REDIAL_WINDOW).await?;
         let (attempts, minimum) = peer.await??;
         assert!(attempts[1] - attempts[0] + Duration::from_millis(20) >= minimum);
@@ -575,13 +582,7 @@ mod tests {
     /// the failure: here the server refuses its first upgrade outright.
     #[tokio::test]
     async fn the_first_dial_is_tried_again_after_any_failure() -> Result<(), Error> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let _ = crate::crypto::provider().install_default();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-        let target = LatencyTarget {
-            base_url: format!("http://{}", listener.local_addr()?),
-            transport: LatencyTransport::WebSocket,
-        };
+        let (listener, target) = websocket_listener().await?;
         let peer = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await?;
             let _ = stream.read(&mut [0; 4096]).await?;
@@ -612,13 +613,7 @@ mod tests {
     /// latency.go:256), and the stage draining meanwhile does not end it: only a stop does.
     #[tokio::test]
     async fn a_lost_channel_redials_at_gos_pace() -> Result<(), Error> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let _ = crate::crypto::provider().install_default();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-        let target = LatencyTarget {
-            base_url: format!("http://{}", listener.local_addr()?),
-            transport: LatencyTransport::WebSocket,
-        };
+        let (listener, target) = websocket_listener().await?;
         let (stop, cancel) = watch::channel(Stop::Window(Instant::now() + Duration::from_millis(1500)));
         let dials = Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen = dials.clone();
@@ -680,7 +675,6 @@ mod tests {
     #[tokio::test]
     async fn a_lost_channel_is_dialled_again_as_go_dials_it() -> Result<(), Error> {
         use std::sync::atomic::{AtomicUsize, Ordering};
-        let _ = crate::crypto::provider().install_default();
         // The first channel answers a probe if `answered`, holds the next and ends with `ending`,
         // as the stage drains if `drained`; later ones echo. The window ends `window` ms in.
         for (ending, answered, drained, window, dials, outcome) in [
@@ -692,11 +686,7 @@ mod tests {
             (LaneEnding::Lifetime, true, true, None, 1, "Ok(())"),
             (LaneEnding::Idle, true, false, Some(450), 2, "Ok(())"),
         ] {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-            let target = LatencyTarget {
-                base_url: format!("http://{}", listener.local_addr()?),
-                transport: LatencyTransport::WebSocket,
-            };
+            let (listener, target) = websocket_listener().await?;
             let window = window.map(|ms| Stop::Window(Instant::now() + Duration::from_millis(ms)));
             let (stop, cancel) = watch::channel(window.unwrap_or_default());
             let dialled = Arc::new(AtomicUsize::new(0));
@@ -944,16 +934,14 @@ mod tests {
     /// by default, where one over 1 KiB once ended the channel.
     #[tokio::test]
     async fn a_late_reply_over_a_real_socket_extends_later_deadlines() -> Result<(), Error> {
-        let _ = crate::crypto::provider().install_default();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-        let origin = format!("http://{}", listener.local_addr()?);
+        let (listener, target) = websocket_listener().await?;
         let peer = tokio::spawn(async move {
             let mut socket = tokio_tungstenite::accept_async(listener.accept().await?.0).await?;
             socket.send(Message::Text("x".repeat(32 * 1024).into())).await?;
             echo(socket, Duration::from_millis(400)).await;
             Ok::<_, Error>(())
         });
-        let bus = connect(&Http::new(false)?, &origin, LatencyTransport::WebSocket).await?;
+        let bus = connect(&Http::new(false)?, &target.base_url, target.transport).await?;
         // Probes at 0 and 900 ms: the first's reply, 400 ms on, passes the 250 ms floor but comes
         // 500 ms before the second, whose 1.2 s deadline its own reply then meets.
         assert_eq!(outcomes(bus, 900, 1000).await?, (1, 1));
@@ -1031,7 +1019,6 @@ mod tests {
 
     #[tokio::test]
     async fn websocket_proxy_uses_absolute_form_and_validates_upgrade() -> Result<(), Error> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let _ = crate::crypto::provider().install_default();
         for valid in [false, true] {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;

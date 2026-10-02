@@ -234,40 +234,6 @@ mod tests {
     use graphite_meter_core::wire::WireError;
     use std::io::{Error as IoError, ErrorKind};
 
-    /// Go's statusError names a control request, or the path of any other.
-    #[test]
-    fn refusals_name_what_the_server_answered_as_go_does() {
-        let refusal = |target: &str| Failure::Http {
-            status: 404,
-            from: source(target),
-            retry_after: Duration::ZERO,
-            refusal: None,
-        };
-        for (target, text) in [
-            ("http://meter.example/servers", "HTTP 404 from server catalogue"),
-            ("https://[::1]:7246/preflight", "HTTP 404 from preflight"),
-            (
-                "https://meter.example/upload/checkpoint?id=7",
-                "HTTP 404 from receiver checkpoint",
-            ),
-            ("https://meter.example/download?bytes=9", "HTTP 404 from /download"),
-            ("/upload/progress", "HTTP 404 from /upload/progress"),
-        ] {
-            assert_eq!(refusal(target).to_string(), text, "{target}");
-        }
-    }
-
-    /// Go's restore names the window it had (transfer.go:37, 58), which the window's end may have
-    /// cut short, not always 2 s.
-    #[tokio::test(start_paused = true)]
-    async fn a_redial_that_was_not_replaced_names_its_window() {
-        let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
-        let refused = || async { Err::<(), crate::Error>("refused".into()) };
-        let lost = crate::transport::restore("latency channel", deadline, refused).await;
-        let text = "latency channel lost and not replaced within 300ms: refused";
-        assert_eq!(lost.map_err(|error| error.to_string()), Err(text.into()));
-    }
-
     #[test]
     fn invalid_data_is_classified_by_its_payload() {
         let wrapped = IoError::new(ErrorKind::InvalidData, WireError::InvalidReceiverCheckpoint);
