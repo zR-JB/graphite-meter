@@ -273,6 +273,9 @@ func TestLoginCSPAllowsOnlyDiscoveredAuthorizationOrigin(t *testing.T) {
 var inlineScript = regexp.MustCompile(`(?s)<script[^>]*>(.*?)</script>`)
 
 func TestAuthPagesCarryTheScriptPinnedByCSP(t *testing.T) {
+	const hostile = "A&B <i>\"x\"</i> 'y'+z\x00"
+	const escaped = "A&amp;B &lt;i&gt;&#34;x&#34;&lt;/i&gt; &#39;y&#39;&#43;z\ufffd"
+	const approvalURL = "/auth/cli?challenge=a%20b%26c%2bd%2f%c3%a9%22%3c%3e%27%0a"
 	digest := func(asset string) string {
 		sum := sha256.Sum256([]byte(asset))
 		return "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
@@ -284,17 +287,30 @@ func TestAuthPagesCarryTheScriptPinnedByCSP(t *testing.T) {
 	pages := map[string]struct {
 		tmpl *template.Template
 		data any
+		want []string
 	}{
-		"login": {loginTemplate, loginView{Styles: authStyles, Password: true, OIDC: true, Provider: "Provider"}},
+		"login": {loginTemplate, loginView{Styles: authStyles, Password: true, OIDC: true,
+			Provider: hostile, CSRF: hostile, Challenge: hostile},
+			[]string{"Continue with " + escaped, `name="csrf" value="` + escaped + `"`,
+				`name="challenge" value="` + escaped + `"`}},
 		"cli": {cliTemplate,
-			map[string]any{"Styles": authStyles, "Code": "ABCD-1234", "Challenge": "c", "CSRF": "t"}},
-		"cli-done": {cliDoneTemplate, map[string]any{"Styles": authStyles}},
-		"continue": {continueTemplate, map[string]any{"Styles": authStyles, "Challenge": "c"}},
+			map[string]any{"Styles": authStyles, "Code": hostile, "BrowserOrigin": hostile,
+				"Challenge": hostile, "CSRF": hostile},
+			[]string{`<code class="code">` + escaped + `</code>`, "<strong>" + escaped + "</strong>",
+				`name="csrf" value="` + escaped + `"`, `name="challenge" value="` + escaped + `"`}},
+		"cli-done": {cliDoneTemplate, map[string]any{"Styles": authStyles}, nil},
+		"continue": {continueTemplate, map[string]any{"Styles": authStyles, "Challenge": "a b&c+d/é\"<>'\n"},
+			[]string{`content="0; url=` + approvalURL + `"`, `href="` + approvalURL + `"`}},
 	}
 	for name, page := range pages {
 		var rendered bytes.Buffer
 		if err := page.tmpl.Execute(&rendered, page.data); err != nil {
 			t.Fatalf("%s: %v", name, err)
+		}
+		for _, fragment := range page.want {
+			if !strings.Contains(rendered.String(), fragment) {
+				t.Errorf("%s does not escape its input as %q", name, fragment)
+			}
 		}
 		if (name == "login" || name == "cli") && !strings.Contains(rendered.String(), authPendingJS) {
 			t.Errorf("%s submits a form without the pending-state script", name)
