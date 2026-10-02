@@ -66,7 +66,7 @@ RUN set -eux; test -f /usr/share/doc/ca-certificates/copyright; mkdir -p /legal/
 # prerelease exports (--target third-party-source) and attaches as a stable
 # release attaches the one scripts/release-artifacts.sh builds.
 # ---------------------------------------------------------------------------
-FROM docker.io/library/python:3.14.7-slim-bookworm@sha256:82bc3c539b8813ada9d68c63b40158fa002f7f33de9bf3312a3dfdc0620dff56 AS source-offer
+FROM docker.io/library/python:3.14.8-slim-bookworm@sha256:c8137f4c460908c8763f281c8f22c431eb5c538514ba9553fc3a89c06b7cfb88 AS source-offer
 ARG VERSION
 ENV GOPATH=/go GOTOOLCHAIN=local PATH=/usr/local/go/bin:$PATH
 COPY --from=server /usr/local/go /usr/local/go

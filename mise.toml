@@ -5,7 +5,7 @@ locked = true
 
 [tools]
 bun = "1.4.2"
-python = "3.14.7"
+python = "3.14.8"
 go = "1.27.1"
 "aqua:gitleaks/gitleaks" = "8.30.1"
 "aqua:dominikh/go-tools/staticcheck" = "2026.2.1"
@@ -13,13 +13,13 @@ go = "1.27.1"
 "aqua:rhysd/actionlint" = "1.7.12"
 "aqua:zizmorcore/zizmor" = "1.30.1"
 "aqua:EmbarkStudios/cargo-deny" = "0.20.2"
-"aqua:nextest-rs/nextest/cargo-nextest" = "0.9.145"
+"aqua:nextest-rs/nextest/cargo-nextest" = "0.9.146"
 "go:golang.org/x/vuln/cmd/govulncheck" = "1.8.0"
 
 [vars]
 mise_version = "2026.9.16"
 
-browser_chrome = "153.0.8010.52"
+browser_chrome = "154.0.8037.92"
 
 codeql = "2.27.1"
 
@@ -30,7 +30,7 @@ image_bun = "docker.io/oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe947
 image_golang = "docker.io/library/golang:1.27.1@sha256:3680233e3204827fbdc66088528ae6d4b3d034f51d03a99d454f6de034888244"
 image_binfmt = "docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
 # The experimental Rust image (container/Dockerfile.rust).
-image_python = "docker.io/library/python:3.14.7-slim-bookworm@sha256:82bc3c539b8813ada9d68c63b40158fa002f7f33de9bf3312a3dfdc0620dff56"
+image_python = "docker.io/library/python:3.14.8-slim-bookworm@sha256:c8137f4c460908c8763f281c8f22c431eb5c538514ba9553fc3a89c06b7cfb88"
 image_rust = "docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e"
 # SHA-256 of static.rust-lang.org's dist/channel-rust-<rust/rust-toolchain.toml channel>.toml, the manifest
 # rustup installs that toolchain from (scripts/ci/README.md).
