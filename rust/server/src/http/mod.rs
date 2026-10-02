@@ -1603,9 +1603,9 @@ mod tests {
         let mut reader = BoundedIo::new(reader, IDLE_BOUND);
         reader.http1 = Some(Http1Deadlines {
             operations: Arc::new(Mutex::new(Vec::new())),
-            lifecycle: Arc::new(Mutex::new(Http1Lifecycle::Idle(Box::pin(
-                tokio::time::sleep(Duration::from_secs(15)),
-            )))),
+            lifecycle: Arc::new(Mutex::new(Http1Lifecycle::Idle(Box::pin(tokio::time::sleep(
+                Duration::from_secs(15),
+            ))))),
         });
         tokio::time::advance(Duration::from_secs(14)).await;
         let partial = b"GET /probe HTTP/1.1\r\nHost:";
