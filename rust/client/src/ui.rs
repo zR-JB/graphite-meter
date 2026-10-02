@@ -449,9 +449,7 @@ impl Ui {
 
     /// Go's preparedRun.Servers: the selected servers the last check reached.
     fn checked(&self) -> impl Iterator<Item = &ServerSummary> + Clone {
-        self.prepared
-            .iter()
-            .filter(|server| server.has_check_result())
+        self.prepared.iter().filter(|server| server.has_check_result())
     }
 
     /// Go's canChooseServers.

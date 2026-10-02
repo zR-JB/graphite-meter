@@ -300,7 +300,8 @@ func TestAuthPagesCarryTheScriptPinnedByCSP(t *testing.T) {
 				`name="csrf" value="` + escaped + `"`, `name="challenge" value="` + escaped + `"`}},
 		"cli-done": {cliDoneTemplate, map[string]any{"Styles": authStyles}, nil},
 		"continue": {continueTemplate, map[string]any{"Styles": authStyles, "Challenge": "a b&c+d/é\"<>'\n"},
-			[]string{`content="0; url=` + approvalURL + `"`, `href="` + approvalURL + `"`}},
+			[]string{"content=\"0; url=/auth/cli?challenge=a b&amp;c&#43;d/é&#34;&lt;&gt;&#39;\n\"",
+				`href="` + approvalURL + `"`}},
 	}
 	for name, page := range pages {
 		var rendered bytes.Buffer

@@ -1,8 +1,9 @@
 //! Go's view.go: the header, the scrolled body and the footer, and the setup, sign-in, chooser
 //! and details views.
 use super::{
-    FRESHNESS, Popup, Prepare, Ui, path_summary,
+    FRESHNESS, Popup, Prepare, Ui,
     keys::PAGE,
+    path_summary,
     setup::{ROWS, Setting},
 };
 use crate::{
@@ -528,7 +529,9 @@ impl Ui {
     /// Go's canUseAvailable: some, not all, servers are ready after a check.
     pub(super) fn can_use_available(&self) -> bool {
         self.ready_servers().next().is_some()
-            && self.readiness().any(|(_, state)| !matches!(state, PathState::Ready | PathState::Stale))
+            && self
+                .readiness()
+                .any(|(_, state)| !matches!(state, PathState::Ready | PathState::Stale))
     }
 
     /// Go's signInView: the code to match and how long the approval waits.

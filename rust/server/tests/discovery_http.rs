@@ -48,4 +48,3 @@ fn oversized_published_catalogue_is_withheld_while_preflight_answers() {
         StatusCode::OK
     );
 }
-

@@ -152,12 +152,7 @@ async fn expired_flow_controlled_stream_does_not_cancel_healthy_sibling() {
             .send_request(request("POST", &format!("/upload?id={id}")), false)
             .unwrap();
         healthy_upload.send_data(Bytes::from_static(b"abc"), false).unwrap();
-        let checkpoint = response(
-            &mut harness.client,
-            "POST",
-            &format!("/upload/checkpoint?id={id}"),
-        )
-        .await;
+        let checkpoint = response(&mut harness.client, "POST", &format!("/upload/checkpoint?id={id}")).await;
         let checkpoint: serde_json::Value = serde_json::from_slice(&collect(checkpoint.into_body()).await).unwrap();
         assert_eq!(checkpoint["bytes"], 3);
         advance_clock(Duration::from_millis(250)).await;

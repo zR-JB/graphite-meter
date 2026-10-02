@@ -75,10 +75,19 @@ impl Harness {
             .await
             .unwrap()
     }
-    async fn h2(&self, window: u32) -> (h2::client::SendRequest<Bytes>, tokio::task::JoinHandle<Result<(), h2::Error>>) {
+    async fn h2(
+        &self,
+        window: u32,
+    ) -> (
+        h2::client::SendRequest<Bytes>,
+        tokio::task::JoinHandle<Result<(), h2::Error>>,
+    ) {
         let stream = self
             .h2_connector
-            .connect(ServerName::try_from("localhost").unwrap(), TcpStream::connect(self.h2).await.unwrap())
+            .connect(
+                ServerName::try_from("localhost").unwrap(),
+                TcpStream::connect(self.h2).await.unwrap(),
+            )
             .await
             .unwrap();
         let (client, connection) = h2::client::Builder::new()
@@ -403,7 +412,12 @@ async fn socket_tickets_are_minted_only_where_mounted_and_only_for_post() {
     // The UI listener mounts both, for POST alone; as Go's "/" pattern, its app answers GET.
     for (route, target) in targets {
         let (minted, body) = h
-            .request("POST", &format!("{route}?target={target}"), &credentials(&session, &csrf), "")
+            .request(
+                "POST",
+                &format!("{route}?target={target}"),
+                &credentials(&session, &csrf),
+                "",
+            )
             .await;
         assert!(minted.starts_with("HTTP/1.1 200"));
         assert!(minted.contains("access-control-allow-origin: https://localhost\r\n"));
