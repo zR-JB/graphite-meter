@@ -272,7 +272,6 @@ async fn a_slow_server_fails_alone_at_the_shared_deadline() -> Result<(), Error>
     Ok(())
 }
 
-
 #[tokio::test]
 async fn automatic_latency_uses_websocket_when_advertised_quic_cannot_reply() -> Result<(), Error> {
     let _ = crate::crypto::provider().install_default();
@@ -319,7 +318,6 @@ async fn unreachable_webtransport_preserves_ambiguous_fetch_error() -> Result<()
     fixture.abort();
     Ok(())
 }
-
 
 /// A reverse proxy speaks HTTP/2 to the client and HTTP/1.1 upstream, and the server reports its
 /// own hop; lanes use the version the client's connection negotiated, as Go's `response.Proto` does.
@@ -386,4 +384,3 @@ async fn negotiated_protocol_behind_a_reverse_proxy_is_the_clients_own() -> Resu
     );
     Ok(())
 }
-

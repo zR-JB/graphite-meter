@@ -1,7 +1,7 @@
 //! Go's run view (view.go and ui.go): the stage track, the timeline's charts over the run's time,
 //! and the results with the test's settings.
 use super::{
-    Ui,
+    Ui, path_summary,
     view::{TWO_COLUMN_MIN, columns, join, panel},
 };
 use crate::{
@@ -520,13 +520,7 @@ impl Ui {
             return vec![Line::from(line)];
         }
         let servers = run_servers(snapshot);
-        let mut throughputs: Vec<String> = Vec::new();
-        for server in &servers {
-            let path = server.throughput.as_ref().map(words::throughput_path);
-            if let Some(path) = path.filter(|path| !throughputs.contains(path)) {
-                throughputs.push(path);
-            }
-        }
+        let throughputs = path_summary(servers.iter().copied(), false);
         let shown = self.latency_server();
         let latency = servers.iter().find(|server| Some(server.id.as_str()) == shown);
         let latency = latency.and_then(|server| server.latency.as_ref().map(words::latency_path));
@@ -547,7 +541,7 @@ impl Ui {
         let mut lines = Vec::new();
         for (name, value) in [
             ("Servers", names),
-            ("Throughput", throughputs.join(" / ")),
+            ("Throughput", throughputs),
             ("Latency", latency.unwrap_or_else(|| MISSING.to_owned())),
             ("Streams", streams),
             ("Timing", timing),
@@ -721,4 +715,3 @@ impl Ui {
         lines
     }
 }
-

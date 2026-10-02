@@ -135,4 +135,3 @@ impl ServerCertVerifier for InsecureVerifier {
         self.provider.signature_verification_algorithms.supported_schemes()
     }
 }
-

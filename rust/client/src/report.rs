@@ -837,7 +837,15 @@ mod tests {
             ..Default::default()
         };
         let shown = render(&snapshot, WIDTH, Theme::default()).unwrap();
-        for text in ["Partial", "Alpha", "12.00 Mbit/s", "2.0 ms", "6.0 ms", "+4.0 ms", "1 / 2 (50.0%)"] {
+        for text in [
+            "Partial",
+            "Alpha",
+            "12.00 Mbit/s",
+            "2.0 ms",
+            "6.0 ms",
+            "+4.0 ms",
+            "1 / 2 (50.0%)",
+        ] {
             assert!(shown.contains(text), "{shown}");
         }
         assert!(shown.ends_with("Stopped delivering data"));

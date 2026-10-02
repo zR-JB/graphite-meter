@@ -298,6 +298,22 @@ struct Ui {
     answer: Option<String>,
 }
 
+/// Distinct prepared path labels, in catalogue order, shared by setup and run details.
+fn path_summary<'a>(servers: impl Iterator<Item = &'a ServerSummary>, latency: bool) -> String {
+    let mut paths = Vec::new();
+    for server in servers {
+        let path = if latency {
+            server.latency.as_ref().map(crate::vocabulary::latency_path)
+        } else {
+            server.throughput.as_ref().map(crate::vocabulary::throughput_path)
+        };
+        if let Some(path) = path.filter(|path| !paths.contains(path)) {
+            paths.push(path);
+        }
+    }
+    paths.join(" / ")
+}
+
 impl Ui {
     /// Setup whose first snapshot settles as any later one does, however early its check ended.
     fn new(config: Config, snapshot: Snapshot) -> Self {
@@ -432,11 +448,10 @@ impl Ui {
     }
 
     /// Go's preparedRun.Servers: the selected servers the last check reached.
-    fn checked(&self) -> Vec<&ServerSummary> {
+    fn checked(&self) -> impl Iterator<Item = &ServerSummary> + Clone {
         self.prepared
             .iter()
             .filter(|server| server.has_check_result())
-            .collect()
     }
 
     /// Go's canChooseServers.
@@ -733,7 +748,7 @@ impl Ui {
         } else if SERVERS.matches(name) {
             self.open_servers();
         } else if AVAILABLE.matches(name) && self.can_use_available() {
-            self.config.servers = self.ready_servers();
+            self.config.servers = self.ready_servers().map(str::to_owned).collect();
             self.notice = "Using the available servers.".into();
             self.recheck_soon();
         } else if AUTOMATIC.matches(name) {

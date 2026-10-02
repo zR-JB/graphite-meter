@@ -240,9 +240,9 @@ impl Ui {
             Setting::Catalogue => (Line::from(config.url.clone()), false),
             Setting::Servers => {
                 // Go's selectedServerNames and readinessSummary.
-                let names: Vec<_> = self.checked().iter().map(|server| server.name.as_str()).collect();
+                let names: Vec<_> = self.checked().map(|server| server.name.as_str()).collect();
                 let names = names.join(", ");
-                let (rows, ready) = (self.readiness().len(), self.ready_servers().len());
+                let (rows, ready) = (self.checked().count(), self.ready_servers().count());
                 let summary = match () {
                     _ if rows == 0 => String::new(),
                     _ if self.prepare() == Prepare::Checking => " · checking".into(),
@@ -303,8 +303,9 @@ impl Ui {
 
     /// Go's singleDiscovery: the one checked server and the paths it advertised.
     fn single_discovery(&self) -> Option<(&ServerSummary, &Capabilities)> {
-        match self.checked().as_slice() {
-            [server] => Some((*server, server.offered.as_ref()?)),
+        let mut checked = self.checked();
+        match (checked.next(), checked.next()) {
+            (Some(server), None) => Some((server, server.offered.as_ref()?)),
             _ => None,
         }
     }
@@ -344,7 +345,7 @@ impl Ui {
             "each server".into(),
         )];
         for kind in kinds {
-            let lacking = self.checked().into_iter().filter(|server| {
+            let lacking = self.checked().filter(|server| {
                 let paths = server.offered.as_ref().map(|offered| discovered(offered, latency));
                 !paths.is_some_and(|paths| paths.iter().any(|path| path.transport == kind))
             });
@@ -595,7 +596,7 @@ impl Ui {
         } else {
             (self.popup, self.server_row) = (Popup::Servers, 0);
             let ids: Vec<_> = match self.config.servers.is_empty() {
-                true => self.checked().iter().map(|server| server.id.clone()).collect(),
+                true => self.checked().map(|server| server.id.clone()).collect(),
                 false => self.config.servers.clone(),
             };
             let prepared = self.prepared.iter().map(|server| &server.id);

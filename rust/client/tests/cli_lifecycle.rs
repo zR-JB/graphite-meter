@@ -488,7 +488,11 @@ async fn malformed_origins_fail_the_path_check_like_go() -> Result<(), Error> {
 #[tokio::test]
 async fn invalid_flags_and_settings_are_refused() -> Result<(), Error> {
     refused(&["-x"], format!("flag provided but not defined: -x\n{}", usage())).await?;
-    refused(&["-warmup", "5s"], "graphite-meter-client: warmup must be from 0s to 4s\n".into()).await?;
+    refused(
+        &["-warmup", "5s"],
+        "graphite-meter-client: warmup must be from 0s to 4s\n".into(),
+    )
+    .await?;
     let output = flags(&["-help"]).await?;
     assert!(output.status.success() && output.stdout.is_empty());
     assert_eq!(String::from_utf8(output.stderr)?, usage());

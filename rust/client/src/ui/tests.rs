@@ -1,8 +1,6 @@
 //! Go's TUI tests (main_test.go and run_test.go) over the controller's snapshots.
 use super::*;
-use crate::model::{
-    AuthPrompt, FailureScope, Point, ServerFailure, ServerLatency, ServerLatencyResult, StageResult,
-};
+use crate::model::{AuthPrompt, FailureScope, Point, ServerFailure, ServerLatency, ServerLatencyResult, StageResult};
 use graphite_meter_core::{
     discovery::{LatencyTarget, LatencyTransport, Protocol, ThroughputTarget, ThroughputTransport},
     failure::FailureReason,
@@ -292,10 +290,11 @@ fn edits_apply_refuse_and_discard() {
     ui.begin_edit(Setting::Catalogue, "界".repeat(30));
     let edit = ui.edit.as_ref().unwrap().view(&ui, 12);
     assert!(edit.width() <= 12);
-    assert!(edit.spans.iter().any(|span| span
-        .style
-        .add_modifier
-        .contains(ratatui_core::style::Modifier::REVERSED)));
+    assert!(edit.spans.iter().any(|span| {
+        span.style
+            .add_modifier
+            .contains(ratatui_core::style::Modifier::REVERSED)
+    }));
     assert!(press(&mut ui, &commands, &["ctrl+c"]));
 }
 

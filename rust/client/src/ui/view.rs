@@ -1,7 +1,7 @@
 //! Go's view.go: the header, the scrolled body and the footer, and the setup, sign-in, chooser
 //! and details views.
 use super::{
-    FRESHNESS, Popup, Prepare, Ui,
+    FRESHNESS, Popup, Prepare, Ui, path_summary,
     keys::PAGE,
     setup::{ROWS, Setting},
 };
@@ -318,7 +318,7 @@ impl Ui {
             CHECKING_SIGN_IN
         } else if self.prepare() == Prepare::SignIn {
             PathState::SignIn.label()
-        } else if self.prepare() == Prepare::Failed && self.ready_servers().is_empty() {
+        } else if self.prepare() == Prepare::Failed && self.ready_servers().next().is_none() {
             START_FAILED
         } else {
             NOT_STARTED
@@ -453,9 +453,9 @@ impl Ui {
             lines.push(Line::from(vec![self.spinner(), span(" Checking paths…", theme.muted)]));
         }
         let rows = self.readiness();
-        let name_width = rows.iter().map(|(server, ..)| label_of(server).chars().count()).max();
+        let name_width = rows.clone().map(|(server, ..)| label_of(server).chars().count()).max();
         let name_width = name_width.unwrap_or(0);
-        for (server, state, detail) in rows {
+        for (server, state) in rows {
             let glyph = match state {
                 PathState::Ready => span("●", theme.ok),
                 PathState::Checking => self.spinner(),
@@ -467,13 +467,13 @@ impl Ui {
             row.extend(name.spans);
             row.extend([Span::raw("  "), span(state.label(), theme.text)]);
             lines.push(Line::from(row));
-            if let Some(detail) = detail {
-                let wrapped = wrap(&detail, width.max(4).saturating_sub(2));
+            if let Some(detail) = server.error.as_deref().filter(|_| state == PathState::Failed) {
+                let wrapped = wrap(detail, width.max(4).saturating_sub(2));
                 lines.extend(wrapped.into_iter().map(|text| line(format!("  {text}"), theme.warn)));
             }
         }
         // Go's prepareFailed error, when no server shows its own.
-        let failed = self.prepare() == Prepare::Failed && !self.checked().iter().any(|server| server.error.is_some());
+        let failed = self.prepare() == Prepare::Failed && !self.checked().any(|server| server.error.is_some());
         if let Some(error) = self.check_error.as_deref().filter(|_| failed) {
             lines.extend(wrap(error, width.max(4)).into_iter().map(|text| line(text, theme.warn)));
         }
@@ -482,25 +482,16 @@ impl Ui {
         }
         // Go's pathSummaries: each distinct path the check chose, muted once it is no longer fresh,
         // which as Go's FreshFor needs these settings checked lately and every server ready.
-        let (mut throughputs, mut latencies) = (Vec::<String>::new(), Vec::<String>::new());
-        let mut fresh = self.checked_key == Some(self.config.preparation_key()) && !self.stale();
-        for server in self.checked() {
-            if !server.checked() || server.error.is_some() {
-                fresh = false;
-                continue;
-            }
-            let throughput = server.throughput.as_ref().map(words::throughput_path);
-            let latency = server.latency.as_ref().map(words::latency_path);
-            for (list, summary) in [(&mut throughputs, throughput), (&mut latencies, latency)] {
-                if let Some(summary) = summary.filter(|summary| !list.contains(summary)) {
-                    list.push(summary);
-                }
-            }
-        }
+        let fresh = self.checked_key == Some(self.config.preparation_key())
+            && !self.stale()
+            && self.checked().all(|server| server.error.is_none());
+        let paths = self.checked().filter(|server| server.error.is_none());
+        let throughputs = path_summary(paths.clone(), false);
+        let latencies = path_summary(paths, true);
         let style = if fresh { theme.value } else { theme.muted };
-        let value = |summaries: Vec<String>| match summaries.is_empty() {
+        let value = |summaries: String| match summaries.is_empty() {
             true => span(MISSING, theme.muted),
-            false => span(summaries.join(" / "), style),
+            false => span(summaries, style),
         };
         lines.push(Line::default());
         lines.push(Line::from(vec![span("Throughput ", theme.text), value(throughputs)]));
@@ -508,41 +499,36 @@ impl Ui {
         lines
     }
 
-    /// Go's readiness: each checked server's state and the failure to show under it.
-    pub(super) fn readiness(&self) -> Vec<(&ServerSummary, PathState, Option<String>)> {
-        let checking = self.prepare() == Prepare::Checking;
-        self.checked()
-            .into_iter()
-            .map(|server| {
-                let (state, detail) = if checking {
-                    (PathState::Checking, None)
-                } else if server.sign_in {
-                    (PathState::SignIn, None)
-                } else if server.error.is_some() || !server.checked() {
-                    (PathState::Failed, server.error.clone())
-                } else if self.stale() {
-                    (PathState::Stale, None)
-                } else {
-                    (PathState::Ready, None)
-                };
-                (server, state, detail)
-            })
-            .collect()
+    /// Go's readiness, borrowed from the last settled check without materializing rows.
+    pub(super) fn readiness(&self) -> impl Iterator<Item = (&ServerSummary, PathState)> + Clone {
+        let (checking, stale) = (self.prepare() == Prepare::Checking, self.stale());
+        self.checked().map(move |server| {
+            let state = if checking {
+                PathState::Checking
+            } else if server.sign_in {
+                PathState::SignIn
+            } else if server.error.is_some() {
+                PathState::Failed
+            } else if stale {
+                PathState::Stale
+            } else {
+                PathState::Ready
+            };
+            (server, state)
+        })
     }
 
     /// Go's readyServers: those whose paths serve a run, if rechecked.
-    pub(super) fn ready_servers(&self) -> Vec<String> {
-        let ready = self.readiness().into_iter();
-        ready
-            .filter(|(_, state, _)| matches!(state, PathState::Ready | PathState::Stale))
-            .map(|(server, ..)| server.id.clone())
-            .collect()
+    pub(super) fn ready_servers(&self) -> impl Iterator<Item = &str> {
+        self.readiness()
+            .filter(|(_, state)| matches!(state, PathState::Ready | PathState::Stale))
+            .map(|(server, _)| server.id.as_str())
     }
 
     /// Go's canUseAvailable: some, not all, servers are ready after a check.
     pub(super) fn can_use_available(&self) -> bool {
-        let ready = self.ready_servers().len();
-        self.prepare() != Prepare::Checking && ready > 0 && ready < self.readiness().len()
+        self.ready_servers().next().is_some()
+            && self.readiness().any(|(_, state)| !matches!(state, PathState::Ready | PathState::Stale))
     }
 
     /// Go's signInView: the code to match and how long the approval waits.
@@ -596,7 +582,7 @@ impl Ui {
         let mut lines = Vec::new();
         for (index, server) in servers.iter().enumerate().skip(start).take(capacity) {
             let mut label = format!(" {}", label_of(server));
-            if let Some((_, state, _)) = states.iter().find(|(checked, ..)| checked.id == server.id) {
+            if let Some((_, state)) = states.clone().find(|(checked, _)| checked.id == server.id) {
                 label = format!("{label} · {}", state.label());
             }
             let (focused, chosen) = (index == self.server_row, self.draft.contains(&server.id));

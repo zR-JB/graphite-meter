@@ -204,11 +204,7 @@ impl Controller {
         };
         self.snapshots.send_replace(Snapshot {
             servers,
-            phase: if running {
-                Phase::Preparing
-            } else {
-                Phase::Checking
-            },
+            phase: if running { Phase::Preparing } else { Phase::Checking },
             ..Snapshot::default()
         });
         let (cancel, cancelled) = watch::channel(false);
@@ -275,7 +271,10 @@ impl Controller {
         &mut self,
         result: Result<Result<Option<runner::PreparedRun>, Error>, tokio::task::JoinError>,
     ) -> Result<(), Error> {
-        let mut operation = self.operation.take().expect("completion belongs to the owned operation");
+        let mut operation = self
+            .operation
+            .take()
+            .expect("completion belongs to the owned operation");
         let running = operation.purpose != Purpose::Check;
         // Unless it was stopped before launch, the run that replaced the check goes on.
         let preparing = operation.purpose == Purpose::PreparingRun && operation.pending.is_some();
@@ -312,7 +311,9 @@ impl Controller {
                         snapshot.auth = None;
                     });
                     if running && signed_out && self.interactive {
-                        operation.pending.get_or_insert_with(|| Work::Verify(self.config.clone()));
+                        operation
+                            .pending
+                            .get_or_insert_with(|| Work::Verify(self.config.clone()));
                     }
                 }
             }
@@ -471,7 +472,12 @@ mod tests {
             std::future::pending().await
         });
         drop(controller);
-        assert!(tokio::time::timeout(Duration::from_secs(1), released).await.unwrap().is_err());
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), released)
+                .await
+                .unwrap()
+                .is_err()
+        );
     }
 
     #[tokio::test]
