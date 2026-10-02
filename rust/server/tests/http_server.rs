@@ -152,9 +152,12 @@ async fn http1_upload_refusals_preserve_owner_and_unread_body_boundaries() {
         let (rejected, body) = upload_request(listener.address, "PUT", &path, "192.0.2.1", b"unread").await;
         assert!(rejected.starts_with("HTTP/1.1 400") && rejected.contains("connection: close"));
         assert_eq!(body, b"request body not accepted\n");
+        // Minting and refusing an unread body do not establish upload ownership.
+        let (headers, _) = upload_request(listener.address, "POST", &path, "192.0.2.1", b"").await;
+        assert!(headers.starts_with("HTTP/1.1 200"), "{headers}");
         let checkpoint = format!("/upload/checkpoint?id={id}");
         let (headers, _) = upload_request(listener.address, "POST", &checkpoint, "192.0.2.1", b"").await;
-        assert!(headers.starts_with("HTTP/1.1 200"));
+        assert!(headers.starts_with("HTTP/1.1 200"), "{headers}");
         let (headers, _) = upload_request(listener.address, "POST", &checkpoint, "192.0.2.2", b"").await;
         assert!(headers.starts_with("HTTP/1.1 403"));
         assert!(headers.contains("x-graphite-upload-refusal: ownerMismatch"));

@@ -298,6 +298,7 @@ fn edits_apply_refuse_and_discard() {
     assert!(ui.edit.as_ref().unwrap().error.is_empty());
     press(&mut ui, &commands, &["esc"]);
     assert!(ui.edit.is_none());
+    ui.theme = Theme::new(crate::theme::Profile::TrueColor, true);
     ui.begin_edit(Setting::Catalogue, "界".repeat(30));
     let edit = ui.edit.as_ref().unwrap().view(&ui, 12);
     assert!(edit.width() <= 12);
