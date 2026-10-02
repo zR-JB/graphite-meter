@@ -7,7 +7,6 @@ import shutil
 import subprocess
 import sys
 import tarfile
-import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -15,6 +14,7 @@ from unittest.mock import patch
 from copy import deepcopy
 
 from scripts.ci.github_api import ControlPlaneError
+from scripts.legal.fixtures import CheckoutTests
 from scripts.legal.model import (Component, Json, LegalError, Provenance, Review, array, manual_files,
                                  manual_sources, marshal, read_json, sha256)
 from scripts.legal.review import add_provenance, validate_review
@@ -25,164 +25,155 @@ from scripts.legal.rust_platform import SYSROOT, candidate, fetch_notices, impor
 ROOT = Path(__file__).resolve().parents[2]
 
 
-class RustFreshnessTests(unittest.TestCase):
+class RustFreshnessTests(CheckoutTests):
     def test_reuse_requires_successful_validation_and_identical_dependency_inputs(self) -> None:
-        with tempfile.TemporaryDirectory() as scratch:
-            repo = Path(scratch)
-            output = repo / 'output'
-            for name, data in {'rust/Cargo.lock': b'locked', 'output/inputs/rust/Cargo.lock': b'locked',
-                               'output/inputs.txt': b'rust/Cargo.lock\n', 'output/LEGAL.txt': b'notices',
-                               'output/invocation.json': b'configuration'}.items():
-                write_changed(repo / name, data)
-            self.assertTrue(reusable(output, repo, b'configuration'))
-            self.assertFalse(reusable(output, repo, b'changed compiler flags'))
-            write_changed(repo / 'rust/Cargo.lock', b'new dependency')
-            self.assertFalse(reusable(output, repo, b'configuration'))
-            write_changed(repo / 'rust/Cargo.lock', b'locked')
-            (output / 'invocation.json').unlink()
-            self.assertFalse(reusable(output, repo, b'configuration'))
+        output = self.root / 'output'
+        for name, data in {'rust/Cargo.lock': b'locked', 'output/inputs/rust/Cargo.lock': b'locked',
+                           'output/inputs.txt': b'rust/Cargo.lock\n', 'output/LEGAL.txt': b'notices',
+                           'output/invocation.json': b'configuration'}.items():
+            write_changed(self.root / name, data)
+        self.assertTrue(reusable(output, self.root, b'configuration'))
+        self.assertFalse(reusable(output, self.root, b'changed compiler flags'))
+        write_changed(self.root / 'rust/Cargo.lock', b'new dependency')
+        self.assertFalse(reusable(output, self.root, b'configuration'))
+        write_changed(self.root / 'rust/Cargo.lock', b'locked')
+        (output / 'invocation.json').unlink()
+        self.assertFalse(reusable(output, self.root, b'configuration'))
 
     def test_staging_preserves_identical_assets_and_rust_notices_but_removes_deleted_assets(self) -> None:
-        with tempfile.TemporaryDirectory() as scratch:
-            source, target = Path(scratch) / 'source', Path(scratch) / 'target'
-            for path, data in ((source / 'index.html', b'page'), (source / 'obsolete.js', b'old'),
-                               (source / 'legal/about.json', b'Go'), (target / 'legal/about.json', b'Rust')):
-                write_changed(path, data)
-            self.assertTrue(stage_browser(source, target))
-            original = (target / 'index.html').stat().st_mtime_ns
-            self.assertFalse(stage_browser(source, target))
-            self.assertEqual((target / 'index.html').stat().st_mtime_ns, original)
-            self.assertEqual((target / 'legal/about.json').read_bytes(), b'Rust')
-            (source / 'obsolete.js').unlink()
-            self.assertTrue(stage_browser(source, target))
-            self.assertFalse((target / 'obsolete.js').exists())
-            (source / 'escape').symlink_to(target, target_is_directory=True)
-            with self.assertRaisesRegex(LegalError, 'symbolic links'):
-                stage_browser(source, target)
+        source, target = self.root / 'source', self.root / 'target'
+        for path, data in ((source / 'index.html', b'page'), (source / 'obsolete.js', b'old'),
+                           (source / 'legal/about.json', b'Go'), (target / 'legal/about.json', b'Rust')):
+            write_changed(path, data)
+        self.assertTrue(stage_browser(source, target))
+        original = (target / 'index.html').stat().st_mtime_ns
+        self.assertFalse(stage_browser(source, target))
+        self.assertEqual((target / 'index.html').stat().st_mtime_ns, original)
+        self.assertEqual((target / 'legal/about.json').read_bytes(), b'Rust')
+        (source / 'obsolete.js').unlink()
+        self.assertTrue(stage_browser(source, target))
+        self.assertFalse((target / 'obsolete.js').exists())
+        (source / 'escape').symlink_to(target, target_is_directory=True)
+        with self.assertRaisesRegex(LegalError, 'symbolic links'):
+            stage_browser(source, target)
 
     def test_failed_regeneration_invalidates_the_old_notice_and_reuse_marker(self) -> None:
         from scripts.legal.rust import main
-        with tempfile.TemporaryDirectory() as scratch:
-            output = Path(scratch) / 'output'
-            for name in ('LEGAL.txt', 'invocation.json'):
-                write_changed(output / name, b'previous success')
-            with patch.object(sys, 'argv', ['rust', '--host', '--local', '--package', 'graphite-meter-client',
-                                            '--out', str(output)]), \
-                    patch('scripts.legal.rust.build', side_effect=LegalError('unreviewed dependency')):
-                with self.assertRaisesRegex(LegalError, 'unreviewed dependency'):
-                    main()
-            self.assertFalse((output / 'LEGAL.txt').exists())
-            self.assertFalse((output / 'invocation.json').exists())
+        output = self.root / 'output'
+        for name in ('LEGAL.txt', 'invocation.json'):
+            write_changed(output / name, b'previous success')
+        with patch.object(sys, 'argv', ['rust', '--host', '--local', '--package', 'graphite-meter-client',
+                                        '--out', str(output)]), \
+                patch('scripts.legal.rust.build', side_effect=LegalError('unreviewed dependency')):
+            with self.assertRaisesRegex(LegalError, 'unreviewed dependency'):
+                main()
+        self.assertFalse((output / 'LEGAL.txt').exists())
+        self.assertFalse((output / 'invocation.json').exists())
 
     def test_staging_allows_assets_to_change_between_files_and_directories(self) -> None:
-        with tempfile.TemporaryDirectory() as scratch:
-            source, target = Path(scratch) / 'source', Path(scratch) / 'target'
-            write_changed(source / 'index.html', b'page')
-            write_changed(source / 'asset', b'file')
-            stage_browser(source, target)
-            (source / 'asset').unlink()
-            write_changed(source / 'asset/nested/data', b'nested')
-            self.assertTrue(stage_browser(source, target))
-            self.assertEqual((target / 'asset/nested/data').read_bytes(), b'nested')
-            shutil.rmtree(source / 'asset')
-            write_changed(source / 'asset', b'file again')
-            self.assertTrue(stage_browser(source, target))
-            self.assertEqual((target / 'asset').read_bytes(), b'file again')
-            self.assertFalse(stage_browser(source, target))
+        source, target = self.root / 'source', self.root / 'target'
+        write_changed(source / 'index.html', b'page')
+        write_changed(source / 'asset', b'file')
+        stage_browser(source, target)
+        (source / 'asset').unlink()
+        write_changed(source / 'asset/nested/data', b'nested')
+        self.assertTrue(stage_browser(source, target))
+        self.assertEqual((target / 'asset/nested/data').read_bytes(), b'nested')
+        shutil.rmtree(source / 'asset')
+        write_changed(source / 'asset', b'file again')
+        self.assertTrue(stage_browser(source, target))
+        self.assertEqual((target / 'asset').read_bytes(), b'file again')
+        self.assertFalse(stage_browser(source, target))
 
     def test_review_template_cannot_retain_an_earlier_successful_report(self) -> None:
         from scripts.legal.rust import main
 
-        with tempfile.TemporaryDirectory() as scratch:
-            repo = Path(scratch)
-            output = repo / 'output'
-            write_changed(output / 'LEGAL.txt', b'previously approved')
-            write_changed(output / 'invocation.json', b'previous success')
-            write_changed(repo / 'rust/Cargo.lock', b'locked')
-            metadata = {'target_directory': str(repo / 'target'), 'packages': []}
-            messages = [{'reason': 'compiler-artifact', 'executable': str(repo / 'binary'),
-                         'target': {'name': 'graphite-meter-client'}}]
-            with patch.object(sys, 'argv', ['rust', '--repo', str(repo), '--target', 'target',
-                                            '--review-template', '--package', 'graphite-meter-client',
-                                            '--out', str(output)]), \
-                    patch('scripts.legal.rust.manual_sources', return_value=[]), \
-                    patch('scripts.legal.rust.rust_channel', return_value='pinned'), \
-                    patch('scripts.legal.rust.subprocess.check_output', side_effect=['host: target\n', str(repo / 'sysroot')]), \
-                    patch('scripts.legal.rust.capture', return_value=(metadata, messages)), \
-                    patch('scripts.legal.rust.discover', return_value=([], [], ['unreviewed dependency'], 'root')), \
-                    patch('scripts.legal.rust.platform.linked', return_value=set()), \
-                    patch('scripts.legal.rust.platform.imports', return_value=set()), \
-                    patch('scripts.legal.rust.platform.candidate', return_value=({'reviewDecision': 'pending'}, 'listing\n')):
-                main()
-            self.assertTrue((output / 'platform-candidate.json').is_file())
-            self.assertEqual(json.loads((output / 'review-errors.json').read_text()), ['unreviewed dependency'])
-            self.assertFalse((output / 'LEGAL.txt').exists())
-            self.assertFalse((output / 'invocation.json').exists())
+        output = self.root / 'output'
+        write_changed(output / 'LEGAL.txt', b'previously approved')
+        write_changed(output / 'invocation.json', b'previous success')
+        write_changed(self.root / 'rust/Cargo.lock', b'locked')
+        metadata = {'target_directory': str(self.root / 'target'), 'packages': []}
+        messages = [{'reason': 'compiler-artifact', 'executable': str(self.root / 'binary'),
+                     'target': {'name': 'graphite-meter-client'}}]
+        with patch.object(sys, 'argv', ['rust', '--repo', str(self.root), '--target', 'target',
+                                        '--review-template', '--package', 'graphite-meter-client',
+                                        '--out', str(output)]), \
+                patch('scripts.legal.rust.manual_sources', return_value=[]), \
+                patch('scripts.legal.rust.rust_channel', return_value='pinned'), \
+                patch('scripts.legal.rust.subprocess.check_output', side_effect=['host: target\n', str(self.root / 'sysroot')]), \
+                patch('scripts.legal.rust.capture', return_value=(metadata, messages)), \
+                patch('scripts.legal.rust.discover', return_value=([], [], ['unreviewed dependency'], 'root')), \
+                patch('scripts.legal.rust.platform.linked', return_value=set()), \
+                patch('scripts.legal.rust.platform.imports', return_value=set()), \
+                patch('scripts.legal.rust.platform.candidate', return_value=({'reviewDecision': 'pending'}, 'listing\n')):
+            main()
+        self.assertTrue((output / 'platform-candidate.json').is_file())
+        self.assertEqual(json.loads((output / 'review-errors.json').read_text()), ['unreviewed dependency'])
+        self.assertFalse((output / 'LEGAL.txt').exists())
+        self.assertFalse((output / 'invocation.json').exists())
 
 
-class RustBrowserFreshnessTests(unittest.TestCase):
+class RustBrowserFreshnessTests(CheckoutTests):
     def test_browser_reuse_tracks_external_check_inputs_and_validated_outputs(self) -> None:
         from scripts import rust_build
 
         run = subprocess.run
-        with tempfile.TemporaryDirectory() as scratch:
-            repo = Path(scratch)
-            run(['git', 'init', '--quiet', str(repo)], check=True)
-            for name, data in {'client/src/app.ts': b'export {}', 'api/golden.json': b'{}',
-                               'go/internal/auth/assets/auth.js': b'auth', '.gitignore': b'*.local\n',
-                               'client/.env.local': b'VITE_VALUE=one', 'client/public/obsolete.js': b'old',
-                               'scripts/rust_build.py': b'build instructions'}.items():
-                write_changed(repo / name, data)
-            built = 0
+        run(['git', 'init', '--quiet', str(self.root)], check=True)
+        for name, data in {'client/src/app.ts': b'export {}', 'api/golden.json': b'{}',
+                           'go/internal/auth/assets/auth.js': b'auth', '.gitignore': b'*.local\n',
+                           'client/.env.local': b'VITE_VALUE=one', 'client/public/obsolete.js': b'old',
+                           'scripts/rust_build.py': b'build instructions'}.items():
+            write_changed(self.root / name, data)
+        built = 0
+        fail = False
+
+        def tool(command: list[str], **options: Any) -> subprocess.CompletedProcess:
+            nonlocal built
+            if command == ['bun', '--version']:
+                return subprocess.CompletedProcess(command, 0, stdout='test-bun\n')
+            if command == ['bun', 'run', 'build']:
+                built += 1
+                if fail:
+                    raise subprocess.CalledProcessError(1, command)
+                environment = options['env']
+                write_changed(Path(environment['GM_LEGAL_SCAN_DIR']) / 'index.html', b'page')
+                for path in (self.root / 'client/public').rglob('*'):
+                    if path.is_file():
+                        write_changed(Path(environment['GM_LEGAL_SCAN_DIR']) / path.name, path.read_bytes())
+                write_changed(Path(environment['GM_LEGAL_SCAN_OUT']), b'[]')
+                return subprocess.CompletedProcess(command, 0)
+            return run(command, **options)
+
+        with patch.object(rust_build, 'ROOT', self.root), patch('subprocess.run', side_effect=tool):
+            environment = {'GM_CLIENT_REVISION': 'source'}
+            assets, _ = rust_build.browser('prod', environment)
+            rust_build.browser('prod', environment)
+            write_changed(self.root / 'rust/server/src/main.rs', b'fn main() {}')
+            rust_build.browser('prod', environment | {'GM_H1_ADDR': '127.0.0.1:12345'})
+            self.assertEqual(built, 1)
+            self.assertTrue((assets / 'obsolete.js').is_file())
+            (self.root / 'client/public/obsolete.js').unlink()
+            write_changed(self.root / 'go/internal/auth/assets/auth.js', b'changed auth')
+            rust_build.browser('prod', environment)
+            self.assertEqual(built, 2)
+            self.assertFalse((assets / 'obsolete.js').exists())
+            (self.root / 'api/golden.json').unlink()
+            rust_build.browser('prod', environment)
+            self.assertEqual(built, 3)
+            write_changed(self.root / 'client/.env.local', b'VITE_VALUE=two')
+            rust_build.browser('prod', environment)
+            self.assertEqual(built, 4)
+            write_changed(assets / 'index.html', b'corrupt')
+            fail = True
+            with self.assertRaises(subprocess.CalledProcessError):
+                rust_build.browser('prod', environment)
+            self.assertFalse((assets.parent / 'build.json').exists())
             fail = False
-
-            def tool(command: list[str], **options: Any) -> subprocess.CompletedProcess:
-                nonlocal built
-                if command == ['bun', '--version']:
-                    return subprocess.CompletedProcess(command, 0, stdout='test-bun\n')
-                if command == ['bun', 'run', 'build']:
-                    built += 1
-                    if fail:
-                        raise subprocess.CalledProcessError(1, command)
-                    environment = options['env']
-                    write_changed(Path(environment['GM_LEGAL_SCAN_DIR']) / 'index.html', b'page')
-                    for path in (repo / 'client/public').rglob('*'):
-                        if path.is_file():
-                            write_changed(Path(environment['GM_LEGAL_SCAN_DIR']) / path.name, path.read_bytes())
-                    write_changed(Path(environment['GM_LEGAL_SCAN_OUT']), b'[]')
-                    return subprocess.CompletedProcess(command, 0)
-                return run(command, **options)
-
-            with patch.object(rust_build, 'ROOT', repo), patch('subprocess.run', side_effect=tool):
-                environment = {'GM_CLIENT_REVISION': 'source'}
-                assets, _ = rust_build.browser('prod', environment)
-                rust_build.browser('prod', environment)
-                write_changed(repo / 'rust/server/src/main.rs', b'fn main() {}')
-                rust_build.browser('prod', environment | {'GM_H1_ADDR': '127.0.0.1:12345'})
-                self.assertEqual(built, 1)
-                self.assertTrue((assets / 'obsolete.js').is_file())
-                (repo / 'client/public/obsolete.js').unlink()
-                write_changed(repo / 'go/internal/auth/assets/auth.js', b'changed auth')
-                rust_build.browser('prod', environment)
-                self.assertEqual(built, 2)
-                self.assertFalse((assets / 'obsolete.js').exists())
-                (repo / 'api/golden.json').unlink()
-                rust_build.browser('prod', environment)
-                self.assertEqual(built, 3)
-                write_changed(repo / 'client/.env.local', b'VITE_VALUE=two')
-                rust_build.browser('prod', environment)
-                self.assertEqual(built, 4)
-                write_changed(assets / 'index.html', b'corrupt')
-                fail = True
-                with self.assertRaises(subprocess.CalledProcessError):
-                    rust_build.browser('prod', environment)
-                self.assertFalse((assets.parent / 'build.json').exists())
-                fail = False
-                rust_build.browser('prod', environment)
-                self.assertEqual(built, 6)
-                write_changed(repo / 'scripts/rust_build.py', b'changed build instructions')
-                rust_build.browser('prod', environment)
-                self.assertEqual(built, 7)
+            rust_build.browser('prod', environment)
+            self.assertEqual(built, 6)
+            write_changed(self.root / 'scripts/rust_build.py', b'changed build instructions')
+            rust_build.browser('prod', environment)
+            self.assertEqual(built, 7)
 
 
 class RustArtifactTests(unittest.TestCase):
@@ -221,20 +212,20 @@ class RustArtifactTests(unittest.TestCase):
                 artifacts(messages, 'application', 'application')
 
 
-class RustPackageTests(unittest.TestCase):
+class RustPackageTests(CheckoutTests):
     def test_packaging_takes_listed_platforms_and_writes_only_inside_its_roots(self) -> None:
         from scripts.package_rust import build
 
         supplement = ROOT / 'legal/rust-platform-debian-bookworm.json'
-        with patch('subprocess.run', side_effect=AssertionError('built')), tempfile.TemporaryDirectory() as scratch:
+        with patch('subprocess.run', side_effect=AssertionError('built')):
             with self.assertRaisesRegex(ValueError, 'no TUI target for plan9/amd64'):
-                build('1.2.3', 'plan9/amd64', Path(scratch), supplement)
+                build('1.2.3', 'plan9/amd64', self.root, supplement)
             with self.assertRaisesRegex(ValueError, 'no TUI target for darwin/arm64'):
-                build('1.2.3', 'darwin/arm64', Path(scratch), supplement)
+                build('1.2.3', 'darwin/arm64', self.root, supplement)
             with self.assertRaisesRegex(ControlPlaneError, 'is outside'):
                 build('1.2.3', 'linux/amd64', Path('/'), supplement)
             with self.assertRaisesRegex(ValueError, 'invalid release version'):
-                build('1.2.3;id', 'linux/amd64', Path(scratch), supplement)
+                build('1.2.3;id', 'linux/amd64', self.root, supplement)
 
     @unittest.skipUnless(os.name == 'posix', 'the fake executable is a shell script')
     def test_a_build_for_this_system_and_architecture_reports_its_version(self) -> None:
@@ -247,35 +238,33 @@ class RustPackageTests(unittest.TestCase):
         # The builder links musl or MinGW, whose executables run wherever their system and machine match.
         other = next(platform for platform in platforms if platform.split('/')[0] != host_platform().split('/')[0])
         run = subprocess.run
-        with tempfile.TemporaryDirectory() as scratch:
-            repo = Path(scratch).resolve()
-            for name in ('LICENSE', 'COPYRIGHT', 'scripts/tui-targets.txt'):
-                (repo / name).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(ROOT / name, repo / name)
-            ran, reported = repo / 'ran', {'version': '1.2.3-rust'}
+        for name in ('LICENSE', 'COPYRIGHT', 'scripts/tui-targets.txt'):
+            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / name, self.root / name)
+        ran, reported = self.root / 'ran', {'version': '1.2.3-rust'}
 
-            def legal_build(command: list[str], **options: Any) -> object:
-                if command[0] != sys.executable:
-                    return run(command, **options)
-                out, target = (Path(command[command.index(flag) + 1]) for flag in ('--out', '--target'))
-                out.mkdir(parents=True)
-                (out / 'LEGAL.txt').write_text('notices\n')
-                (out / 'THIRD_PARTY_SOURCE.tar.gz').write_bytes(b'source')
-                binary = repo / 'rust/target' / target.name / 'release' / (
-                    'graphite-meter-client.exe' if '-windows-' in target.name else 'graphite-meter-client')
-                binary.parent.mkdir(parents=True, exist_ok=True)
-                binary.write_text(f"#!/bin/sh\ntouch '{ran}'\necho graphite-meter-client {reported['version']}\n")
-                binary.chmod(0o755)
-                return None
+        def legal_build(command: list[str], **options: Any) -> object:
+            if command[0] != sys.executable:
+                return run(command, **options)
+            out, target = (Path(command[command.index(flag) + 1]) for flag in ('--out', '--target'))
+            out.mkdir(parents=True)
+            (out / 'LEGAL.txt').write_text('notices\n')
+            (out / 'THIRD_PARTY_SOURCE.tar.gz').write_bytes(b'source')
+            binary = self.root / 'rust/target' / target.name / 'release' / (
+                'graphite-meter-client.exe' if '-windows-' in target.name else 'graphite-meter-client')
+            binary.parent.mkdir(parents=True, exist_ok=True)
+            binary.write_text(f"#!/bin/sh\ntouch '{ran}'\necho graphite-meter-client {reported['version']}\n")
+            binary.chmod(0o755)
+            return None
 
-            with patch.object(package, 'REPO', repo), patch('subprocess.run', side_effect=legal_build):
-                package.build('1.2.3', other, repo / 'dist', ROOT / 'legal/rust-platform-debian-bookworm.json')
-                self.assertFalse(ran.exists())
-                package.build('1.2.3', host_platform(), repo / 'dist', ROOT / 'legal/rust-platform-debian-bookworm.json')
-                self.assertTrue(ran.exists())
-                reported['version'] = '1.2.2-rust'
-                with self.assertRaisesRegex(ValueError, "reports 'graphite-meter-client 1.2.2-rust'"):
-                    package.build('1.2.3', host_platform(), repo / 'dist', ROOT / 'legal/rust-platform-debian-bookworm.json')
+        with patch.object(package, 'REPO', self.root), patch('subprocess.run', side_effect=legal_build):
+            package.build('1.2.3', other, self.root / 'dist', ROOT / 'legal/rust-platform-debian-bookworm.json')
+            self.assertFalse(ran.exists())
+            package.build('1.2.3', host_platform(), self.root / 'dist', ROOT / 'legal/rust-platform-debian-bookworm.json')
+            self.assertTrue(ran.exists())
+            reported['version'] = '1.2.2-rust'
+            with self.assertRaisesRegex(ValueError, "reports 'graphite-meter-client 1.2.2-rust'"):
+                package.build('1.2.3', host_platform(), self.root / 'dist', ROOT / 'legal/rust-platform-debian-bookworm.json')
 
 
 class RustLegalReportTests(unittest.TestCase):
@@ -323,27 +312,25 @@ class RustImageTests(unittest.TestCase):
                              for entry in manual_sources(ROOT, 'graphite-meter-client')))
 
 
-class RustPlatformTests(unittest.TestCase):
+class RustPlatformTests(CheckoutTests):
     def test_downloaded_and_cached_runtime_notices_require_the_reviewed_bytes(self) -> None:
-        with tempfile.TemporaryDirectory() as scratch:
-            root = Path(scratch)
-            (root / 'legal').mkdir()
-            relative = 'legal/manual/runtime/LICENSE'
-            resource = {'url': 'https://example.invalid/immutable/LICENSE', 'sha256': sha256(b'reviewed license')}
-            (root / 'legal/rust-notice-sources.json').write_text(json.dumps({relative: resource}))
-            entry: dict[str, Json] = {'notices': {relative: 'runtime/LICENSE'}}
-            with patch('urllib.request.urlopen', return_value=io.BytesIO(b'changed license')):
-                with self.assertRaisesRegex(LegalError, 'bytes differ'):
-                    fetch_notices(root, entry)
-            self.assertFalse((root / relative).exists())
-            with patch('urllib.request.urlopen', return_value=io.BytesIO(b'reviewed license')):
-                fetch_notices(root, entry)
-            self.assertEqual((root / relative).read_bytes(), b'reviewed license')
-            with patch('urllib.request.urlopen', side_effect=AssertionError('cache must work offline')):
-                fetch_notices(root, entry)
-            (root / relative).write_bytes(b'changed cache')
+        (self.root / 'legal').mkdir()
+        relative = 'legal/manual/runtime/LICENSE'
+        resource = {'url': 'https://example.invalid/immutable/LICENSE', 'sha256': sha256(b'reviewed license')}
+        (self.root / 'legal/rust-notice-sources.json').write_text(json.dumps({relative: resource}))
+        entry: dict[str, Json] = {'notices': {relative: 'runtime/LICENSE'}}
+        with patch('urllib.request.urlopen', return_value=io.BytesIO(b'changed license')):
             with self.assertRaisesRegex(LegalError, 'bytes differ'):
-                fetch_notices(root, entry)
+                fetch_notices(self.root, entry)
+        self.assertFalse((self.root / relative).exists())
+        with patch('urllib.request.urlopen', return_value=io.BytesIO(b'reviewed license')):
+            fetch_notices(self.root, entry)
+        self.assertEqual((self.root / relative).read_bytes(), b'reviewed license')
+        with patch('urllib.request.urlopen', side_effect=AssertionError('cache must work offline')):
+            fetch_notices(self.root, entry)
+        (self.root / relative).write_bytes(b'changed cache')
+        with self.assertRaisesRegex(LegalError, 'bytes differ'):
+            fetch_notices(self.root, entry)
 
     def test_each_linker_map_names_the_native_inputs_that_contributed_code(self) -> None:
         maps = {
@@ -362,21 +349,19 @@ class RustPlatformTests(unittest.TestCase):
                     '[  2] /usr/lib/libgcc.a(_ctors.o)\n[  3] /SDK/usr/lib/libSystem.tbd\n'
                     '[  4] /rust/lib/rustlib/t/lib/libstd.rlib(std.o)\n[  5] /build/app.o\n',
         }
-        with tempfile.TemporaryDirectory() as scratch:
-            for linker, listing in maps.items():
-                path = Path(scratch) / 'link.map'
-                path.write_text(listing)
-                with self.subTest(linker=linker):
-                    self.assertEqual(linked(path, Path('/rust'), {Path('/build'), Path('/registry/crate')}),
-                                     {'/usr/lib/crt1.o', '/usr/lib/libgcc.a', '$RUST_SYSROOT/lib/rustlib/t/lib/libstd.rlib'})
+        for linker, listing in maps.items():
+            path = self.root / 'link.map'
+            path.write_text(listing)
+            with self.subTest(linker=linker):
+                self.assertEqual(linked(path, Path('/rust'), {Path('/build'), Path('/registry/crate')}),
+                                 {'/usr/lib/crt1.o', '/usr/lib/libgcc.a', '$RUST_SYSROOT/lib/rustlib/t/lib/libstd.rlib'})
 
     def test_the_link_map_stays_in_the_notice_directory(self) -> None:
-        with tempfile.TemporaryDirectory() as scratch:
-            output = Path(scratch).resolve()
-            self.assertEqual(link_map(output, 'x86_64-unknown-linux-gnu', 'ci'),
-                             output / 'x86_64-unknown-linux-gnu-ci.map')
-            with self.assertRaises(ControlPlaneError):
-                link_map(output, '../escape', 'ci')
+        output = self.root
+        self.assertEqual(link_map(output, 'x86_64-unknown-linux-gnu', 'ci'),
+                         output / 'x86_64-unknown-linux-gnu-ci.map')
+        with self.assertRaises(ControlPlaneError):
+            link_map(output, '../escape', 'ci')
 
     def test_every_macos_install_name_is_an_import_that_needs_review(self) -> None:
         listing = ('/build/graphite-meter-client:\n'
@@ -395,16 +380,15 @@ class RustPlatformTests(unittest.TestCase):
             with self.assertRaisesRegex(LegalError, 'unreviewed linker'):
                 linker_version('x86_64-unknown-linux-gnu')
         # A Cargo configuration file can name a linker too.
-        with tempfile.TemporaryDirectory() as scratch:
-            for config in ('.cargo/config.toml', 'rust/.cargo/config'):
-                (Path(scratch) / config).parent.mkdir(parents=True)
-                (Path(scratch) / config).write_text('[target.x86_64-unknown-linux-gnu]\nlinker = "./linker"\n')
-                with self.subTest(config=config), self.assertRaisesRegex(LegalError, 'no Cargo configuration'):
-                    linker_version('x86_64-unknown-linux-gnu', Path(scratch))
-                (Path(scratch) / config).unlink()
+        for config in ('.cargo/config.toml', 'rust/.cargo/config'):
+            (self.root / config).parent.mkdir(parents=True)
+            (self.root / config).write_text('[target.x86_64-unknown-linux-gnu]\nlinker = "./linker"\n')
+            with self.subTest(config=config), self.assertRaisesRegex(LegalError, 'no Cargo configuration'):
+                linker_version('x86_64-unknown-linux-gnu', self.root)
+            (self.root / config).unlink()
 
 
-class RustPlatformRecordTests(unittest.TestCase):
+class RustPlatformRecordTests(CheckoutTests):
     NATIVE = SYSROOT + 'lib/rustlib/t/lib/self-contained/libc.a'
     CRT1 = SYSROOT + 'lib/rustlib/t/lib/self-contained/crt1.o'
     STD = SYSROOT + 'lib/rustlib/t/lib/libstd-1.rlib'
@@ -412,9 +396,7 @@ class RustPlatformRecordTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.enterContext(patch('scripts.legal.rust_platform.linker_version', return_value='cc 1'))
-        scratch = tempfile.TemporaryDirectory()
-        self.addCleanup(scratch.cleanup)
-        self.root = Path(scratch.name).resolve()
+        super().setUp()
         self.sysroot = self.root / 'sysroot'
         zlib, libc = str(self.root / 'zlib/copyright'), str(self.root / 'libc/copyright')
         self.files = {
@@ -504,101 +486,97 @@ class RustPlatformRecordTests(unittest.TestCase):
         self.assertIn('--- rust-standard-library/MIT.txt ---', self.notice(approved, inputs={self.STD, self.CRT1}))
 
 
-class RustBuildTests(unittest.TestCase):
+class RustBuildTests(CheckoutTests):
     def test_git_sources_are_remapped_and_the_vendored_workspace_builds_without_its_checkout(self) -> None:
         from scripts.ci.toolchains import rust_channel
 
-        with tempfile.TemporaryDirectory() as scratch:
-            root = Path(scratch).resolve()
-            upstream, repo = root / 'upstream', root / 'repo'
-            files = {
-                'Cargo.toml': '[workspace]\nmembers = ["dependency"]\nresolver = "2"\n'
-                              '[workspace.package]\nversion = "1.0.0"\nedition = "2021"\n',
-                'dependency/Cargo.toml': '[package]\nname = "source-fixture"\nversion.workspace = true\nedition.workspace = true\n',
-                # A bounds check embeds the source location under Cargo's home.
-                'dependency/src/lib.rs': 'pub fn pick(bytes: &[u8], index: usize) -> u8 { bytes[index] }\n',
-                'LICENSE': 'fixture license\n',
-            }
-            for name, content in files.items():
-                write_changed(upstream / name, content.encode())
-            (upstream / 'dependency/LICENSE').symlink_to('../LICENSE')
-            for args in (('init', '-q'), ('add', '.'), ('commit', '-qm', 'fixture')):
-                subprocess.run(['git', '-C', str(upstream), '-c', 'user.name=fixture',
-                                '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false',
-                                *args], check=True)
-            revision = subprocess.check_output(['git', '-C', str(upstream), 'rev-parse', 'HEAD'], text=True).strip()
-            write_changed(repo / 'rust/rust-toolchain.toml', (ROOT / 'rust/rust-toolchain.toml').read_bytes())
-            write_changed(repo / 'rust/Cargo.toml', (
-                '[package]\nname = "app"\nversion = "1.0.0"\nedition = "2021"\n'
-                f'[dependencies]\nsource-fixture = {{ git = "{upstream.as_uri()}", rev = "{revision}" }}\n').encode())
-            write_changed(repo / 'rust/src/main.rs',
-                          b'fn main() { println!("{}", source_fixture::pick(&[1, 2], std::env::args().count())); }\n')
-            host = subprocess.check_output(['rustc', f'+{rust_channel(ROOT)}', '-vV'], text=True)
-            target = next(line.split()[1] for line in host.splitlines() if line.startswith('host:'))
-            with patch.dict(os.environ, {'CARGO_HOME': str(root / 'cargo-home'), 'CARGO_TERM_QUIET': 'true'}):
-                subprocess.run(cargo(repo, 'generate-lockfile'), cwd=repo / 'rust', check=True)
-                _, messages = capture(repo, 'app', target, 'release', root / 'app.map')
-                binary = Path(next(message['executable'] for message in messages if message.get('executable'))).read_bytes()
-                self.assertTrue(b'/cargo/git/checkouts/' in binary, 'the dependency path is not remapped')
-                self.assertFalse(str(root).encode() in binary, 'the binary names a build path')
-                payload = io.BytesIO()
-                with tarfile.open(fileobj=payload, mode='w') as archive:
-                    add_cargo_sources(archive, repo, [Component('source-fixture', '1.0.0', 'cargo', upstream.as_uri(), '')])
-                shutil.rmtree(upstream)
-                shutil.rmtree(root / 'cargo-home')
-                payload.seek(0)
-                with tarfile.open(fileobj=payload) as archive:
-                    archive.extractall(root / 'unpacked', filter='data')
-                package = root / 'unpacked/third_party/cargo/source-fixture-1.0.0'
-                self.assertEqual((package / 'LICENSE').read_text(), 'fixture license\n')
-                self.assertFalse((package / 'LICENSE').is_symlink())
-                subprocess.run(cargo(repo, 'build', '--offline', '--manifest-path', str(package / 'Cargo.toml')),
-                               check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        upstream, repo = self.root / 'upstream', self.root / 'repo'
+        files = {
+            'Cargo.toml': '[workspace]\nmembers = ["dependency"]\nresolver = "2"\n'
+                          '[workspace.package]\nversion = "1.0.0"\nedition = "2021"\n',
+            'dependency/Cargo.toml': '[package]\nname = "source-fixture"\nversion.workspace = true\nedition.workspace = true\n',
+            # A bounds check embeds the source location under Cargo's home.
+            'dependency/src/lib.rs': 'pub fn pick(bytes: &[u8], index: usize) -> u8 { bytes[index] }\n',
+            'LICENSE': 'fixture license\n',
+        }
+        for name, content in files.items():
+            write_changed(upstream / name, content.encode())
+        (upstream / 'dependency/LICENSE').symlink_to('../LICENSE')
+        for args in (('init', '-q'), ('add', '.'), ('commit', '-qm', 'fixture')):
+            subprocess.run(['git', '-C', str(upstream), '-c', 'user.name=fixture',
+                            '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false',
+                            *args], check=True)
+        revision = subprocess.check_output(['git', '-C', str(upstream), 'rev-parse', 'HEAD'], text=True).strip()
+        write_changed(repo / 'rust/rust-toolchain.toml', (ROOT / 'rust/rust-toolchain.toml').read_bytes())
+        write_changed(repo / 'rust/Cargo.toml', (
+            '[package]\nname = "app"\nversion = "1.0.0"\nedition = "2021"\n'
+            f'[dependencies]\nsource-fixture = {{ git = "{upstream.as_uri()}", rev = "{revision}" }}\n').encode())
+        write_changed(repo / 'rust/src/main.rs',
+                      b'fn main() { println!("{}", source_fixture::pick(&[1, 2], std::env::args().count())); }\n')
+        host = subprocess.check_output(['rustc', f'+{rust_channel(ROOT)}', '-vV'], text=True)
+        target = next(line.split()[1] for line in host.splitlines() if line.startswith('host:'))
+        with patch.dict(os.environ, {'CARGO_HOME': str(self.root / 'cargo-home'), 'CARGO_TERM_QUIET': 'true'}):
+            subprocess.run(cargo(repo, 'generate-lockfile'), cwd=repo / 'rust', check=True)
+            _, messages = capture(repo, 'app', target, 'release', self.root / 'app.map')
+            binary = Path(next(message['executable'] for message in messages if message.get('executable'))).read_bytes()
+            self.assertTrue(b'/cargo/git/checkouts/' in binary, 'the dependency path is not remapped')
+            self.assertFalse(str(self.root).encode() in binary, 'the binary names a build path')
+            payload = io.BytesIO()
+            with tarfile.open(fileobj=payload, mode='w') as archive:
+                add_cargo_sources(archive, repo, [Component('source-fixture', '1.0.0', 'cargo', upstream.as_uri(), '')])
+            shutil.rmtree(upstream)
+            shutil.rmtree(self.root / 'cargo-home')
+            payload.seek(0)
+            with tarfile.open(fileobj=payload) as archive:
+                archive.extractall(self.root / 'unpacked', filter='data')
+            package = self.root / 'unpacked/third_party/cargo/source-fixture-1.0.0'
+            self.assertEqual((package / 'LICENSE').read_text(), 'fixture license\n')
+            self.assertFalse((package / 'LICENSE').is_symlink())
+            subprocess.run(cargo(repo, 'build', '--offline', '--manifest-path', str(package / 'Cargo.toml')),
+                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
     def test_only_development_notices_leave_their_marker_in_the_executable(self) -> None:
         from scripts.ci.toolchains import rust_channel
 
-        with tempfile.TemporaryDirectory() as scratch:
-            repo = Path(scratch).resolve()
-            # The real build script and release profile, and a compressor that keeps the notices unreadable.
-            files = {
-                'rust/Cargo.toml': '[workspace]\nmembers = ["app"]\nresolver = "2"\n'
-                                   '[profile.release]\nlto = "fat"\ncodegen-units = 1\nstrip = "symbols"\n',
-                'rust/app/Cargo.toml': '[package]\nname = "app"\nversion = "1.0.0"\nedition = "2021"\n'
-                                       '[build-dependencies]\nminiz_oxide = { path = "../miniz" }\n',
-                'rust/app/build.rs': '#[path = "../legal_build.rs"]\nmod legal;\nfn main() { legal::embed(false).unwrap() }\n',
-                'rust/app/src/main.rs': 'include!(concat!(env!("OUT_DIR"), "/legal.rs"));\n'
-                                        'fn main() { std::hint::black_box((LEGAL, DEVELOPMENT_NOTICES)); }\n',
-                'rust/miniz/Cargo.toml': '[package]\nname = "miniz_oxide"\nversion = "0.9.1"\nedition = "2021"\n',
-                'rust/miniz/src/lib.rs': 'pub mod deflate {\n    pub fn compress_to_vec_zlib(data: &[u8], _: u8) -> Vec<u8> '
-                                         '{ data.iter().map(|byte| !byte).collect() }\n}\n',
-                'rust/legal_build.rs': (ROOT / 'rust/legal_build.rs').read_text(),
-                'rust/rust-toolchain.toml': (ROOT / 'rust/rust-toolchain.toml').read_text(),
-            }
-            for name, content in files.items():
-                (repo / name).parent.mkdir(parents=True, exist_ok=True)
-                (repo / name).write_text(content)
-            channel = rust_channel(ROOT)
-            rustc = subprocess.check_output(['rustup', 'which', '--toolchain', channel, 'rustc'], text=True).strip()
-            host = next(line.split()[1] for line in subprocess.check_output([rustc, '-vV'], text=True).splitlines()
-                        if line.startswith('host:'))
-            with patch.dict(os.environ, {'CARGO_TERM_QUIET': 'true'}):
-                subprocess.run(cargo(repo, 'generate-lockfile', '--offline'), cwd=repo / 'rust', check=True)
-                # A development build is Cargo's host build; a release build names its --target.
-                for target, notices in ((None, DEVELOPMENT_NOTICE + 'notices\n'), (host, 'Reviewed notices\n')):
-                    # The notices must match the identity of the build that embeds them, which a first build writes.
-                    _, messages = capture(repo, 'app', target, 'release', None)
-                    output = Path(next(item['out_dir'] for item in messages if item.get('out_dir')))
-                    legal = repo / 'rust/target/notices' / (target or 'host')
-                    (legal / 'inputs/rust').mkdir(parents=True)
-                    for name, content in (('LEGAL.txt', notices), ('package.txt', 'app'), ('target.txt', host),
-                                          ('rustc-path.txt', rustc), ('inputs.txt', 'rust/Cargo.lock\n'),
-                                          ('inputs/rust/Cargo.lock', (repo / 'rust/Cargo.lock').read_text()),
-                                          ('build-identity.txt', (output / 'legal-build-identity.txt').read_text())):
-                        (legal / name).write_text(content)
-                    _, messages = capture(repo, 'app', target, 'release', None, legal)
-                    executable = Path(next(item['executable'] for item in messages if item.get('executable')))
-                    self.assertEqual(DEVELOPMENT.encode() in executable.read_bytes(), target is None, target)
+        # The real build script and release profile, and a compressor that keeps the notices unreadable.
+        files = {
+            'rust/Cargo.toml': '[workspace]\nmembers = ["app"]\nresolver = "2"\n'
+                               '[profile.release]\nlto = "fat"\ncodegen-units = 1\nstrip = "symbols"\n',
+            'rust/app/Cargo.toml': '[package]\nname = "app"\nversion = "1.0.0"\nedition = "2021"\n'
+                                   '[build-dependencies]\nminiz_oxide = { path = "../miniz" }\n',
+            'rust/app/build.rs': '#[path = "../legal_build.rs"]\nmod legal;\nfn main() { legal::embed(false).unwrap() }\n',
+            'rust/app/src/main.rs': 'include!(concat!(env!("OUT_DIR"), "/legal.rs"));\n'
+                                    'fn main() { std::hint::black_box((LEGAL, DEVELOPMENT_NOTICES)); }\n',
+            'rust/miniz/Cargo.toml': '[package]\nname = "miniz_oxide"\nversion = "0.9.1"\nedition = "2021"\n',
+            'rust/miniz/src/lib.rs': 'pub mod deflate {\n    pub fn compress_to_vec_zlib(data: &[u8], _: u8) -> Vec<u8> '
+                                     '{ data.iter().map(|byte| !byte).collect() }\n}\n',
+            'rust/legal_build.rs': (ROOT / 'rust/legal_build.rs').read_text(),
+            'rust/rust-toolchain.toml': (ROOT / 'rust/rust-toolchain.toml').read_text(),
+        }
+        for name, content in files.items():
+            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / name).write_text(content)
+        channel = rust_channel(ROOT)
+        rustc = subprocess.check_output(['rustup', 'which', '--toolchain', channel, 'rustc'], text=True).strip()
+        host = next(line.split()[1] for line in subprocess.check_output([rustc, '-vV'], text=True).splitlines()
+                    if line.startswith('host:'))
+        with patch.dict(os.environ, {'CARGO_TERM_QUIET': 'true'}):
+            subprocess.run(cargo(self.root, 'generate-lockfile', '--offline'), cwd=self.root / 'rust', check=True)
+            # A development build is Cargo's host build; a release build names its --target.
+            for target, notices in ((None, DEVELOPMENT_NOTICE + 'notices\n'), (host, 'Reviewed notices\n')):
+                # The notices must match the identity of the build that embeds them, which a first build writes.
+                _, messages = capture(self.root, 'app', target, 'release', None)
+                output = Path(next(item['out_dir'] for item in messages if item.get('out_dir')))
+                legal = self.root / 'rust/target/notices' / (target or 'host')
+                (legal / 'inputs/rust').mkdir(parents=True)
+                for name, content in (('LEGAL.txt', notices), ('package.txt', 'app'), ('target.txt', host),
+                                      ('rustc-path.txt', rustc), ('inputs.txt', 'rust/Cargo.lock\n'),
+                                      ('inputs/rust/Cargo.lock', (self.root / 'rust/Cargo.lock').read_text()),
+                                      ('build-identity.txt', (output / 'legal-build-identity.txt').read_text())):
+                    (legal / name).write_text(content)
+                _, messages = capture(self.root, 'app', target, 'release', None, legal)
+                executable = Path(next(item['executable'] for item in messages if item.get('executable')))
+                self.assertEqual(DEVELOPMENT.encode() in executable.read_bytes(), target is None, target)
 
 
 if __name__ == '__main__':
