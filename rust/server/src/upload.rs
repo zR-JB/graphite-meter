@@ -312,7 +312,7 @@ pub struct UploadLane {
 impl UploadLane {
     /// Datagram lanes have no stream FIN. Observe the explicit finish request
     /// without retaining a borrow of the lane while it records incoming bytes.
-    pub fn finished(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
+    pub fn finished(&self) -> impl std::future::Future<Output = ()> + Send + 'static + use<> {
         let aggregate = self.aggregate.clone();
         async move {
             let changed = lock(&aggregate).changed.clone();

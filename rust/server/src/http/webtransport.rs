@@ -4,7 +4,7 @@
 use super::{body::write_reply, http3::H3Reply, quic::ReceiveCredit, *};
 use crate::{
     timeouts::{PROGRESS_HEARTBEAT, WT_ANSWER, WT_REFUSAL_LINGER, WT_VERIFY_LINGER},
-    upload::{UploadLane, UploadStore, UploadSubscription},
+    upload::{UploadLane, UploadSubscription},
 };
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_core::{
@@ -28,7 +28,6 @@ const DATAGRAM_BYTES: u64 = 1000;
 /// A download stream lane writes at most this much at a time.
 const LANE_WRITE_BYTES: u64 = 16 * 1024;
 type Failure = Box<dyn std::error::Error + Send + Sync>;
-type Lane<'a> = Pin<Box<dyn Future<Output = Result<(), Failure>> + Send + 'a>>;
 type Activity = Arc<Mutex<Instant>>;
 
 fn touch(activity: &Activity) {
@@ -86,215 +85,166 @@ impl HttpServer {
             _ = lease_ended(lease.clone()) => return Ok(()),
             session = Session::accept(stream, headers) => session.map_err(io::Error::other)?,
         };
-        let mut lanes = match route {
-            Route::WtDownload => Lanes::download(&self, &session, &request),
-            Route::WtUpload => Lanes::upload(&self, &session, &request, owner, credit),
-            _ => Lanes::new(route, &request),
+        let activity = Arc::new(Mutex::new(Instant::now()));
+        // This scope owns every route future, so its lanes drop before the session's close is sent.
+        let ending = {
+            let serving = async {
+                match route {
+                    Route::WtDownload => serve_download(&self, &session, &request, &activity).await,
+                    Route::WtUpload => serve_upload(&self, &session, &request, owner, credit, &activity).await,
+                    _ => serve_ping(&session, &activity).await,
+                }
+            };
+            tokio::pin!(serving);
+            let mut tick = tokio::time::interval(SESSION_TICK);
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = session.closed() => break LaneEnding::Finished,
+                    _ = lease_ended(lease.clone()) => break LaneEnding::Revoked,
+                    _ = tick.tick() => {
+                        if Instant::now().duration_since(*lock(&activity)) >= IDLE_BOUND {
+                            break LaneEnding::Idle;
+                        }
+                    }
+                    _ = tokio::time::sleep_until(deadline) => break LaneEnding::Lifetime,
+                    ending = &mut serving => break ending,
+                }
+            }
         };
-        let ending = lanes.run(&session, lease, deadline).await;
-        drop(lanes);
         session.close(ending.webtransport_code(), ending.reason()).await;
         Ok(())
     }
 }
 
-/// A session's lanes and what its route does with the peer's datagrams and streams: Go's WTPing, WTDownload and
-/// WTUpload over one event loop.
-struct Lanes<'a> {
-    route: Route,
-    /// Download or upload lanes.
-    streams: FuturesUnordered<Lane<'a>>,
-    /// Upload progress, and the error records of refused lanes.
-    controls: FuturesUnordered<Lane<'a>>,
-    /// When the session's lanes last moved.
-    activity: Activity,
-    /// A download floods datagrams, or an upload receives them as one more lane.
-    datagrams: bool,
-    /// When an establish-only download, or an upload refused at connect, closes.
-    settle: Option<Instant>,
-    upload: Option<Upload>,
-    /// The upload was refused at connect.
-    refused: bool,
-    /// The upload's receive window waits for its client's credit.
-    awaiting_credit: bool,
-    datagram_lane: Option<UploadLane>,
-    /// Resolves once the datagram lane's upload is finished.
-    datagram_finished: Pin<Box<dyn Future<Output = ()> + Send>>,
-}
-
-/// An upload session's aggregate, for the lanes its peer opens and the credit its window waits for.
-struct Upload {
-    store: UploadStore,
-    id: String,
-    owner: Owner,
-    credit: ReceiveCredit,
-}
-
-impl<'a> Lanes<'a> {
-    /// Go's WTPing: the peer's datagrams are echoed probes.
-    fn new(route: Route, request: &Request<()>) -> Self {
-        Self {
-            route,
-            streams: FuturesUnordered::new(),
-            controls: FuturesUnordered::new(),
-            activity: Arc::new(Mutex::new(Instant::now())),
-            datagrams: query(request, "datagrams").is_some_and(|value| datagram_mode(&value)),
-            settle: None,
-            upload: None,
-            refused: false,
-            awaiting_credit: false,
-            datagram_lane: None,
-            datagram_finished: Box::pin(std::future::pending()),
+/// Go's WTPing: peer datagrams count as activity, even when they name no valid probe.
+async fn serve_ping(session: &Session, activity: &Activity) -> LaneEnding {
+    loop {
+        tokio::select! {
+            biased;
+            payload = session.read_datagram() => {
+                let Some(payload) = payload else { return LaneEnding::Finished };
+                touch(activity);
+                if let Some(reply) = crate::ping::reply(&payload) {
+                    let _ = session.send_datagram(reply.as_bytes());
+                }
+            }
+            incoming = session.accept_uni() => {
+                let Some(_incoming) = incoming else { return LaneEnding::Finished };
+            }
         }
     }
+}
 
-    /// Go's WTDownload: `streams` stream lanes, or one datagram flood, each of `bytes`; `bytes=0` only establishes.
-    fn download(server: &'a HttpServer, session: &'a Session, request: &Request<()>) -> Self {
-        let mut lanes = Self::new(Route::WtDownload, request);
-        let count = download_bytes(request);
+/// Go's WTDownload: outgoing stream lanes or a datagram flood, with peer-opened streams refused by dropping them.
+async fn serve_download(
+    server: &HttpServer,
+    session: &Session,
+    request: &Request<()>,
+    activity: &Activity,
+) -> LaneEnding {
+    let datagrams = query(request, "datagrams").is_some_and(|value| datagram_mode(&value));
+    let count = download_bytes(request);
+    let transfer = async {
         if count == 0 {
-            lanes.settle = Some(Instant::now() + WT_VERIFY_LINGER);
-        } else if lanes.datagrams {
-            let block = server.download_block.clone();
-            lanes
-                .streams
-                .push(Box::pin(datagram_flood(session, count, block, &server.download_meter)));
+            tokio::time::sleep(WT_VERIFY_LINGER).await;
+        } else if datagrams {
+            let _ = datagram_flood(session, count, server.download_block.clone(), &server.download_meter).await;
         } else {
             let streams = query(request, "streams")
                 .and_then(|v| v.parse::<i64>().ok())
                 .filter(|n| *n > 0)
                 .unwrap_or(1)
                 .min(wire::MAX_WEBTRANSPORT_STREAMS as i64);
+            let mut lanes = FuturesUnordered::new();
             for _ in 0..streams {
-                lanes.streams.push(Box::pin(download_lane(
+                lanes.push(download_lane(
                     session,
                     count,
                     server.download_block.clone(),
-                    lanes.activity.clone(),
+                    activity.clone(),
                     &server.download_meter,
-                )));
+                ));
             }
+            while lanes.next().await.is_some() {}
         }
-        lanes
-    }
-
-    /// Go's WTUpload: progress on a server stream, each peer stream a lane, and its datagrams one more.
-    fn upload(
-        server: &'a HttpServer,
-        session: &'a Session,
-        request: &Request<()>,
-        owner: Owner,
-        credit: ReceiveCredit,
-    ) -> Self {
-        let mut lanes = Self::new(Route::WtUpload, request);
-        let id = query(request, "id").unwrap_or_default();
-        let subscription = server.uploads.subscribe(&id, &owner);
-        lanes.refused = subscription.is_err();
-        lanes.awaiting_credit = !lanes.refused && !credit.fund(owner.client_keys());
-        lanes.controls.push(Box::pin(progress(session, subscription)));
-        if lanes.datagrams {
-            lanes.datagram_lane = server.uploads.begin(&id, &owner).ok();
-        }
-        if let Some(lane) = &lanes.datagram_lane {
-            lanes.datagram_finished = Box::pin(lane.finished());
-        }
-        lanes.upload = Some(Upload {
-            store: server.uploads.clone(),
-            id,
-            owner,
-            credit,
-        });
-        lanes
-    }
-
-    /// Runs the session until the peer, the lease, idleness, the lifetime or the route ends it.
-    async fn run(&mut self, session: &'a Session, lease: Option<AuthLease>, deadline: Instant) -> LaneEnding {
-        let mut tick = tokio::time::interval(SESSION_TICK);
-        loop {
-            tokio::select! {
-                biased;
-                // The peer ended the session, or the connection's shutdown did.
-                _ = session.closed() => return LaneEnding::Finished,
-                _ = lease_ended(lease.clone()) => return LaneEnding::Revoked,
-                _ = tick.tick() => {
-                    self.fund();
-                    let last = *lock(&self.activity);
-                    if Instant::now().duration_since(last) >= IDLE_BOUND {
-                        return LaneEnding::Idle;
-                    }
+        LaneEnding::Finished
+    };
+    tokio::pin!(transfer);
+    loop {
+        tokio::select! {
+            biased;
+            ending = &mut transfer => return ending,
+            payload = session.read_datagram() => {
+                let Some(_) = payload else { return LaneEnding::Finished };
+                if datagrams {
+                    touch(activity);
                 }
-                _ = tokio::time::sleep_until(deadline) => return LaneEnding::Lifetime,
-                _ = tokio::time::sleep_until(self.settle.unwrap_or(deadline)), if self.settle.is_some() => {
-                    return LaneEnding::Finished;
-                }
-                _ = &mut self.datagram_finished, if self.datagram_lane.is_some() => self.datagram_lane = None,
-                Some(_) = self.streams.next(), if !self.streams.is_empty() => {
-                    // A download ends with its last lane; later client
-                    // streams may replace finished upload lanes.
-                    if self.route == Route::WtDownload && self.streams.is_empty() {
-                        return LaneEnding::Finished;
-                    }
-                }
-                Some(_) = self.controls.next(), if !self.controls.is_empty() => {
-                    if self.refused && self.settle.is_none() {
-                        self.settle = Some(Instant::now() + WT_REFUSAL_LINGER);
-                    }
-                }
-                payload = session.read_datagram() => {
-                    let Some(payload) = payload else { return LaneEnding::Finished };
-                    self.datagram(session, &payload);
-                }
-                incoming = session.accept_uni() => {
-                    // A dropped stream is refused as a cancelled lane.
-                    let Some(incoming) = incoming else { return LaneEnding::Finished };
-                    self.stream(session, incoming);
-                }
+            }
+            incoming = session.accept_uni() => {
+                let Some(_incoming) = incoming else { return LaneEnding::Finished };
             }
         }
     }
+}
 
-    /// An upload whose window waited for its client's credit asks again.
-    fn fund(&mut self) {
-        if self.awaiting_credit
-            && let Some(upload) = &self.upload
-        {
-            self.awaiting_credit = !upload.credit.fund(upload.owner.client_keys());
-        }
-    }
-
-    /// A datagram from the peer. A route without a datagram lane gets no idle credit for it.
-    fn datagram(&mut self, session: &Session, payload: &[u8]) {
-        match self.route {
-            Route::WtPing => {
-                touch(&self.activity);
-                if let Some(reply) = crate::ping::reply(payload) {
-                    let _ = session.send_datagram(reply.as_bytes());
+/// Go's WTUpload: bounded incoming lanes and progress writers, with receiver-owned counts and client credit.
+async fn serve_upload(
+    server: &HttpServer,
+    session: &Session,
+    request: &Request<()>,
+    owner: Owner,
+    credit: ReceiveCredit,
+    activity: &Activity,
+) -> LaneEnding {
+    let id = query(request, "id").unwrap_or_default();
+    let subscription = server.uploads.subscribe(&id, &owner);
+    let refused = subscription.is_err();
+    let mut awaiting_credit = !refused && !credit.fund(owner.client_keys());
+    let mut controls = FuturesUnordered::new();
+    controls.push(progress(session, subscription));
+    let mut streams = FuturesUnordered::new();
+    let mut datagram_lane = query(request, "datagrams")
+        .is_some_and(|value| datagram_mode(&value))
+        .then(|| server.uploads.begin(&id, &owner).ok())
+        .flatten();
+    let datagram_finished = datagram_lane.as_ref().map(UploadLane::finished);
+    tokio::pin!(datagram_finished);
+    let mut settle = None;
+    let mut tick = tokio::time::interval(SESSION_TICK);
+    loop {
+        tokio::select! {
+            biased;
+            _ = tick.tick(), if awaiting_credit => awaiting_credit = !credit.fund(owner.client_keys()),
+            _ = tokio::time::sleep_until(settle.unwrap_or_else(Instant::now)), if settle.is_some() => {
+                return LaneEnding::Finished;
+            }
+            _ = async { datagram_finished.as_mut().as_pin_mut().expect("active datagram lane").await }, if datagram_lane.is_some() => {
+                datagram_lane = None;
+            }
+            Some(_) = streams.next(), if !streams.is_empty() => {}
+            Some(_) = controls.next(), if !controls.is_empty() => {
+                if refused && settle.is_none() {
+                    settle = Some(Instant::now() + WT_REFUSAL_LINGER);
                 }
             }
-            Route::WtDownload if self.datagrams => touch(&self.activity),
-            Route::WtUpload => {
-                if let Some(lane) = &mut self.datagram_lane {
+            payload = session.read_datagram() => {
+                let Some(payload) = payload else { return LaneEnding::Finished };
+                if let Some(lane) = &mut datagram_lane {
                     lane.record(payload.len());
-                    touch(&self.activity);
+                    touch(activity);
                 }
             }
-            _ => {}
-        }
-    }
-
-    /// A stream the peer opened: an upload's lane within the lane cap. A lane the aggregate refuses gets an error
-    /// record, while at most one other is being written.
-    fn stream(&mut self, session: &'a Session, incoming: RecvStream) {
-        let Some(upload) = &self.upload else { return };
-        if self.streams.len() >= wire::MAX_WEBTRANSPORT_STREAMS {
-            return;
-        }
-        match upload.store.begin(&upload.id, &upload.owner) {
-            Ok(lane) => self
-                .streams
-                .push(Box::pin(upload_lane(incoming, lane, self.activity.clone()))),
-            Err(error) if self.controls.len() < 2 => self.controls.push(Box::pin(progress(session, Err(error)))),
-            Err(_) => {}
+            incoming = session.accept_uni() => {
+                let Some(incoming) = incoming else { return LaneEnding::Finished };
+                if streams.len() < wire::MAX_WEBTRANSPORT_STREAMS {
+                    match server.uploads.begin(&id, &owner) {
+                        Ok(lane) => streams.push(upload_lane(incoming, lane, activity.clone())),
+                        Err(error) if controls.len() < 2 => controls.push(progress(session, Err(error))),
+                        Err(_) => {}
+                    }
+                }
+            }
         }
     }
 }
