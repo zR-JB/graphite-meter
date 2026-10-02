@@ -824,11 +824,18 @@ mod tests {
         download.server_latencies = vec![latency_result("a", probes(&[6_000_000], 0))];
         let snapshot = Snapshot {
             phase: Phase::Partial,
-            servers: vec![ServerSummary {
-                id: "a".into(),
-                name: "Alpha".into(),
-                ..Default::default()
-            }],
+            servers: [("a", "Alpha"), ("b", "Beta")]
+                .into_iter()
+                .map(|(id, name)| ServerSummary {
+                    id: id.into(),
+                    name: name.into(),
+                    latency: Some(graphite_meter_core::discovery::LatencyTarget {
+                        base_url: format!("https://{id}.example"),
+                        transport: graphite_meter_core::discovery::LatencyTransport::WebSocket,
+                    }),
+                    ..Default::default()
+                })
+                .collect(),
             participants: vec!["a".into()],
             latency_focus: Some("a".into()),
             plan: vec![Stage::Latency, Stage::Download],
