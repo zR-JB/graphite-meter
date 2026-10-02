@@ -17,7 +17,7 @@ go = "1.27.1"
 "go:golang.org/x/vuln/cmd/govulncheck" = "1.8.0"
 
 [vars]
-mise_version = "2026.9.14"
+mise_version = "2026.9.16"
 
 browser_chrome = "153.0.8010.52"
 
