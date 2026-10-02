@@ -13,6 +13,8 @@ from .legal.rust import PACKAGES, write_changed
 from .legal.model import marshal, sha256
 
 ROOT = Path(__file__).resolve().parents[1]
+PROFILES = ('dev', 'ci', 'release')
+BROWSER_PROFILES = ('dev', 'prod')
 
 
 def fingerprint(paths: list[Path], root: Path) -> dict[str, str]:
@@ -65,15 +67,18 @@ def browser(profile: str, environment: dict[str, str]) -> tuple[Path, Path]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--package', choices=PACKAGES, required=True)
-    parser.add_argument('--profile', choices=('dev', 'ci', 'release'), required=True)
-    parser.add_argument('--browser', choices=('dev', 'prod'))
+    parser.add_argument('--profile', choices=PROFILES, required=True)
+    parser.add_argument('--browser', choices=BROWSER_PROFILES)
     args = parser.parse_args()
+    # Construct commands from the allowlisted constants, not the supplied argument strings.
+    package = PACKAGES[PACKAGES.index(args.package)]
+    profile = PROFILES[PROFILES.index(args.profile)]
     environment = dict(os.environ, CARGO_TARGET_DIR=str(ROOT / 'rust/target'))
-    command = [sys.executable, '-m', 'scripts.legal.rust', '--host', '--local', '--package', args.package,
-               '--profile', args.profile, '--out', f'rust/target/dev-legal/{args.package}-{args.profile}',
+    command = [sys.executable, '-m', 'scripts.legal.rust', '--host', '--local', '--package', package,
+               '--profile', profile, '--out', f'rust/target/dev-legal/{package}-{profile}',
                '--reviews', 'legal/rust-reviewed-components.json']
     if args.browser:
-        assets, scan = browser(args.browser, environment)
+        assets, scan = browser(BROWSER_PROFILES[BROWSER_PROFILES.index(args.browser)], environment)
         environment['GM_RUST_ASSET_DIR'] = str(assets)
         command += ['--browser-scan', str(scan)]
     subprocess.run(command, cwd=ROOT, env=environment, check=True)
