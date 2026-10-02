@@ -7,7 +7,7 @@ use http::{Request, Response, Uri};
 use tokio::{
     sync::{OwnedSemaphorePermit, Semaphore},
     task::JoinSet,
-    time::{Instant, timeout, timeout_at},
+    time::timeout,
 };
 
 use crate::Error;
@@ -18,13 +18,6 @@ const STREAM_RECEIVE_BYTES: u32 = 32 * 1024 * 1024;
 const CONNECTION_RECEIVE_BYTES: u32 = 48 * 1024 * 1024;
 const SEND_BYTES: u64 = 16 * 1024 * 1024;
 const DATAGRAM_BYTES: usize = 256 * 1024;
-
-#[derive(Clone, Copy, Debug)]
-pub struct RequestLimits {
-    pub timeout: Duration,
-    pub max_send_bytes: u64,
-    pub max_receive_bytes: u64,
-}
 
 /// Close even when cancellation occurs before QUIC or HTTP/3 setup finishes.
 struct Endpoint(quinn::Endpoint);
@@ -149,24 +142,15 @@ impl Http3Client {
         self.connection.close_reason().is_some() || self.requests.going_away()
     }
 
-    pub async fn open(self: &Arc<Self>, request: Request<()>, limits: RequestLimits) -> Result<Http3Stream, Error> {
+    pub async fn open(self: &Arc<Self>, request: Request<()>) -> Result<Http3Stream, Error> {
         if Origin::from_uri(request.uri())? != self.origin {
             return Err("HTTP/3 request authority differs from its connection".into());
         }
-        let deadline = Instant::now()
-            .checked_add(limits.timeout)
-            .ok_or("HTTP/3 timeout is too large")?;
-        let permit = timeout_at(deadline, self.permits.clone().acquire_owned()).await??;
-        let (send, recv) = timeout_at(deadline, self.requests.send_request(request))
-            .await??
-            .split();
+        let permit = self.permits.clone().acquire_owned().await?;
+        let (send, recv) = self.requests.send_request(request).await?.split();
         Ok(Http3Stream {
             send,
             recv,
-            deadline,
-            limits,
-            sent: 0,
-            received: 0,
             _permit: permit,
             _owner: self.clone(),
         })
@@ -176,51 +160,25 @@ impl Http3Client {
 pub struct Http3Stream {
     send: SendHalf,
     recv: RecvHalf,
-    deadline: Instant,
-    limits: RequestLimits,
-    sent: u64,
-    received: u64,
     _permit: OwnedSemaphorePermit,
     _owner: Arc<Http3Client>,
 }
 
 impl Http3Stream {
     pub async fn send_data(&mut self, bytes: Bytes) -> Result<(), Error> {
-        self.sent = self
-            .sent
-            .checked_add(bytes.len() as u64)
-            .filter(|&size| size <= self.limits.max_send_bytes)
-            .ok_or("HTTP/3 request body exceeds limit")?;
-        Ok(timeout_at(self.deadline, self.send.send_data(bytes)).await??)
+        Ok(self.send.send_data(bytes).await?)
     }
 
     pub async fn finish(&mut self) -> Result<(), Error> {
-        Ok(timeout_at(self.deadline, self.send.finish()).await??)
+        Ok(self.send.finish().await?)
     }
 
     pub async fn response(&mut self) -> Result<Response<()>, Error> {
-        Ok(timeout_at(self.deadline, self.recv.response()).await??)
+        Ok(self.recv.response().await?)
     }
 
     pub async fn recv_data(&mut self) -> Result<Option<Bytes>, Error> {
-        let Some(data) = timeout_at(self.deadline, self.recv.data()).await?? else {
-            return Ok(None);
-        };
-        self.received = self
-            .received
-            .checked_add(data.len() as u64)
-            .filter(|&size| size <= self.limits.max_receive_bytes)
-            .ok_or("HTTP/3 response body exceeds limit")?;
-        Ok(Some(data))
-    }
-
-    pub async fn recv_body(&mut self) -> Result<Bytes, Error> {
-        let mut body = Vec::new();
-        while let Some(chunk) = self.recv_data().await? {
-            body.try_reserve(chunk.len())?;
-            body.extend_from_slice(&chunk);
-        }
-        Ok(body.into())
+        Ok(self.recv.data().await?)
     }
 }
 
@@ -313,72 +271,5 @@ mod tests {
         for error in violations {
             assert!(violation(error.as_ref()), "{error}");
         }
-    }
-
-    #[tokio::test]
-    async fn native_streaming_and_body_limits() -> Result<(), Error> {
-        let tls = crate::fixtures::server_tls(&[&rustls::version::TLS13], &[b"h3"])?;
-        let config =
-            quinn::ServerConfig::with_crypto(Arc::new(quinn::crypto::rustls::QuicServerConfig::try_from(tls)?));
-        let server = quinn::Endpoint::server(config, "127.0.0.1:0".parse()?)?;
-        let uri: Uri = format!("https://{}/echo", server.local_addr()?).parse()?;
-        let mut tasks = JoinSet::new();
-        tasks.spawn(async move {
-            // First connection rejects this untrusted certificate; the second opts in.
-            let mut rejected = JoinSet::new();
-            let incoming = server.accept().await.unwrap();
-            rejected.spawn(async move { incoming.await });
-            let connection = server.accept().await.unwrap().await?;
-            let mut h3 = http3::server::Connection::new(connection, None);
-            for _ in 0..2 {
-                let (request, stream) = h3.next().await?.ok_or("missing request")?.resolve().await?;
-                assert_eq!(request.method(), http::Method::POST);
-                let (mut send, mut recv) = stream.split();
-                let mut body = Vec::new();
-                while let Some(chunk) = recv.data().await? {
-                    body.extend_from_slice(&chunk);
-                }
-                assert_eq!(body, b"native upload");
-                send.send_response(Response::builder().status(200).body(())?).await?;
-                send.send_data(Bytes::from(body)).await?;
-                send.finish().await?;
-            }
-            // Keep driving HTTP/3 until the client drops its owner, which closes the connection.
-            let _ = h3.next().await;
-            Ok::<_, Error>(())
-        });
-        // Go's wording for a certificate the QUIC handshake refused.
-        let refused = Http3Client::connect(&uri, false, Duration::from_secs(5)).await;
-        let text = crate::failure::text(refused.map(drop).unwrap_err().as_ref());
-        assert!(text.starts_with("Certificate not trusted: "), "{text}");
-        let client = Arc::new(Http3Client::connect(&uri, true, Duration::from_secs(5)).await?);
-        for max_receive_bytes in [100, 3] {
-            let request = Request::post(uri.clone()).body(())?;
-            let mut stream = client
-                .open(
-                    request,
-                    RequestLimits {
-                        timeout: Duration::from_secs(10),
-                        max_send_bytes: 1024 * 1024,
-                        max_receive_bytes,
-                    },
-                )
-                .await?;
-            stream.send_data(Bytes::from_static(b"native ")).await?;
-            stream.send_data(Bytes::from_static(b"upload")).await?;
-            stream.finish().await?;
-            assert_eq!(stream.response().await?.status(), 200);
-            let result = stream.recv_body().await;
-            if max_receive_bytes == 100 {
-                assert_eq!(result?, b"native upload"[..]);
-            } else {
-                assert!(result.unwrap_err().to_string().contains("exceeds limit"));
-            }
-        }
-        drop(Arc::try_unwrap(client).map_err(|_| "request stream retained its HTTP/3 owner")?);
-        timeout(Duration::from_secs(5), tasks.join_next())
-            .await?
-            .ok_or("missing server task")???;
-        Ok(())
     }
 }

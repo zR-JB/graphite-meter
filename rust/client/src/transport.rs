@@ -4,7 +4,7 @@ use crate::{
     Error,
     failure::Failure,
     net::{Http, url},
-    quic::{Http3Client, Http3Stream, RequestLimits},
+    quic::{Http3Client, Http3Stream},
 };
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt};
@@ -212,12 +212,7 @@ impl Transport {
 
     /// `request` to `target` on this target's HTTP/3 connection, dialled again once it closed or
     /// went away; None over HTTP/1.1 and HTTP/2, whose requests the client's pool carries.
-    async fn open_h3(
-        &self,
-        request: http::request::Builder,
-        target: &str,
-        limits: RequestLimits,
-    ) -> Result<Option<Http3Stream>, Error> {
+    async fn open_h3(&self, request: http::request::Builder, target: &str) -> Result<Option<Http3Stream>, Error> {
         let Some(slot) = &self.h3 else {
             return Ok(None);
         };
@@ -230,7 +225,7 @@ impl Transport {
         };
         let mut request = request.uri(target).header(CACHE_CONTROL, "no-store").body(())?;
         self.http.authorize(target, request.headers_mut())?;
-        Ok(Some(client.open(request, limits).await?))
+        Ok(Some(client.open(request).await?))
     }
 
     /// Ends an HTTP/3 request's body and checks the server's answer.
@@ -264,14 +259,9 @@ impl Transport {
         let deadline = Instant::now()
             .checked_add(duration)
             .ok_or("request duration is too large")?;
-        let limits = RequestLimits {
-            timeout: duration,
-            max_send_bytes: 0,
-            max_receive_bytes: limit,
-        };
         let inner = timeout_at(deadline, async {
             let request = Request::builder().method(method.clone());
-            Ok::<_, Error>(match self.open_h3(request, &target, limits).await? {
+            Ok::<_, Error>(match self.open_h3(request, &target).await? {
                 Some(mut stream) => {
                     self.answer_h3(&mut stream, &target).await?;
                     BodyInner::H3(Box::new(stream))
@@ -304,17 +294,12 @@ impl Transport {
         let deadline = Instant::now()
             .checked_add(duration)
             .ok_or("request duration is too large")?;
-        let limits = RequestLimits {
-            timeout: duration,
-            max_send_bytes: length,
-            max_receive_bytes: 64 * 1024,
-        };
         timeout_at(deadline, async {
             let request = Request::builder()
                 .method(Method::POST)
                 .header(http::header::CONTENT_TYPE, "application/octet-stream")
                 .header(http::header::CONTENT_LENGTH, length);
-            let Some(mut stream) = self.open_h3(request, &target, limits).await? else {
+            let Some(mut stream) = self.open_h3(request, &target).await? else {
                 let request = self
                     .http
                     .builder(Method::POST, &target)?
@@ -340,7 +325,12 @@ impl Transport {
                 return Err("request body shorter than content length".into());
             }
             self.answer_h3(&mut stream, &target).await?;
-            stream.recv_body().await?;
+            let mut response = Body {
+                inner: BodyInner::H3(Box::new(stream)),
+                deadline,
+                remaining: 64 * 1024,
+            };
+            while response.raw_chunk().await?.is_some() {}
             Ok(())
         })
         .await?
@@ -376,6 +366,15 @@ pub struct Body {
 
 impl Body {
     pub async fn chunk(&mut self) -> Result<Option<Bytes>, Error> {
+        // quic-go reads a body cut short of its length as EOF, ending the download attempt.
+        match self.raw_chunk().await {
+            Err(error) if error.downcast_ref() == Some(&http3::Error::Protocol(Code::H3_MESSAGE_ERROR)) => Ok(None),
+            chunk => chunk,
+        }
+    }
+
+    /// Control replies remain strict; neither draining nor bounds require collecting their bytes.
+    async fn raw_chunk(&mut self) -> Result<Option<Bytes>, Error> {
         let chunk = timeout_at(self.deadline, async {
             match &mut self.inner {
                 BodyInner::Http(response) => loop {
@@ -388,14 +387,7 @@ impl Body {
                         }
                     }
                 },
-                // quic-go reads a body cut short of its length as EOF (http3/body.go), which ends a
-                // download attempt in Go (download.go:74) rather than the lane.
-                BodyInner::H3(stream) => match stream.recv_data().await {
-                    Err(error) if error.downcast_ref() == Some(&http3::Error::Protocol(Code::H3_MESSAGE_ERROR)) => {
-                        Ok(None)
-                    }
-                    data => data,
-                },
+                BodyInner::H3(stream) => stream.recv_data().await,
             }
         })
         .await??;
@@ -450,5 +442,114 @@ mod tests {
         let next = receive(Route::Probe).await;
         server.abort();
         next.map(drop)
+    }
+
+    /// Request bounds live at the common HTTP boundary; an owned body keeps its H3 driver alive.
+    #[tokio::test]
+    async fn native_streaming_and_body_limits() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        let (endpoint, origin) = crate::fixtures::h3_endpoint()?;
+        let server = tokio::spawn(async move {
+            let mut rejected = tokio::task::JoinSet::new();
+            let incoming = endpoint.accept().await.ok_or("endpoint closed")?;
+            rejected.spawn(async move { incoming.await });
+            let connection = endpoint.accept().await.ok_or("endpoint closed")?.await?;
+            let mut h3 = http3::server::Connection::new(connection, None);
+            // Echo, bounded echo, upload reply, oversized reply, truncated upload and download.
+            for (method, bytes, declared) in [
+                (Method::GET, 12, None),
+                (Method::GET, 12, None),
+                (Method::POST, 12, None),
+                (Method::POST, 65537, None),
+                (Method::POST, 1, Some(2)),
+                (Method::GET, 1, Some(2)),
+            ] {
+                let (request, stream) = h3.next().await?.ok_or("missing request")?.resolve().await?;
+                assert_eq!(request.method(), method);
+                let (mut send, mut recv) = stream.split();
+                let mut payload = Vec::new();
+                while let Some(chunk) = recv.data().await? {
+                    payload.extend_from_slice(&chunk);
+                }
+                assert_eq!(
+                    payload,
+                    if method == Method::POST {
+                        &b"native upload"[..]
+                    } else {
+                        &[]
+                    }
+                );
+                let mut response = http::Response::builder().status(200);
+                if let Some(length) = declared {
+                    response = response.header(http::header::CONTENT_LENGTH, length);
+                }
+                send.send_response(response.body(())?).await?;
+                send.send_data(Bytes::from(vec![42; bytes])).await?;
+                send.finish().await?;
+            }
+            let (_, stream) = h3.next().await?.ok_or("missing hanging request")?.resolve().await?;
+            let (mut send, _) = stream.split();
+            send.send_response(http::Response::new(())).await?;
+            // Keep the response open until its retained owner closes the connection.
+            let _ = h3.next().await;
+            drop(send);
+            Ok::<_, Error>(())
+        });
+        let refused = Transport::connect(Http::new(false)?, &origin, Protocol::Http3).await;
+        let text = crate::failure::text(refused.map(drop).unwrap_err().as_ref());
+        assert!(text.starts_with("Certificate not trusted: "), "{text}");
+        let transport = Transport::connect(Http::new(true)?, &origin, Protocol::Http3).await?;
+        for limit in [100, 3] {
+            let mut body = transport
+                .receive(Method::GET, Route::Download, &[], limit, Duration::from_secs(5))
+                .await?;
+            let result = body.chunk().await;
+            if limit == 100 {
+                assert_eq!(result?.ok_or("missing echo")?.len(), 12);
+            } else {
+                assert!(result.unwrap_err().to_string().contains("exceeds byte limit"));
+            }
+        }
+        for expected in [None, Some("exceeds byte limit"), Some("truncated")] {
+            let body =
+                futures_util::stream::iter([Ok(Bytes::from_static(b"native ")), Ok(Bytes::from_static(b"upload"))]);
+            let result = transport
+                .send(Route::Upload, &[], body, 13, Duration::from_secs(5))
+                .await;
+            match expected {
+                None => result?,
+                Some("truncated") => assert_eq!(
+                    result.unwrap_err().downcast_ref(),
+                    Some(&http3::Error::Protocol(Code::H3_MESSAGE_ERROR))
+                ),
+                Some(text) => assert!(result.unwrap_err().to_string().contains(text)),
+            }
+        }
+        let mut short = transport
+            .receive(Method::GET, Route::Download, &[], 100, Duration::from_secs(5))
+            .await?;
+        assert_eq!(short.chunk().await?.ok_or("missing partial download")?.len(), 1);
+        assert!(short.chunk().await?.is_none());
+        drop(short);
+        // Waiting for the connection slot spends the same request budget as reading its body.
+        let slot = transport.h3.as_ref().ok_or("not HTTP/3")?.lock().await;
+        let locked = transport
+            .receive(Method::GET, Route::Download, &[], 100, Duration::from_millis(20))
+            .await;
+        assert!(
+            locked
+                .err()
+                .ok_or("lock escaped deadline")?
+                .is::<tokio::time::error::Elapsed>()
+        );
+        drop(slot);
+        let mut hanging = transport
+            .receive(Method::GET, Route::Download, &[], 100, Duration::from_millis(100))
+            .await?;
+        drop(transport);
+        assert!(hanging.chunk().await.unwrap_err().is::<tokio::time::error::Elapsed>());
+        drop(hanging);
+        tokio::time::timeout(Duration::from_secs(5), server).await???;
+        Ok(())
     }
 }

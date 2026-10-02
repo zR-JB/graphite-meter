@@ -4,6 +4,7 @@ use crate::{
     timeouts::PROGRESS_HEARTBEAT,
     upload::{Owner, UploadSubscription},
 };
+use futures_util::{Stream, stream};
 use graphite_meter_core::{
     failure::UploadRefusal,
     wire::{UploadProgress, encode_upload_progress},
@@ -144,10 +145,10 @@ fn attach_operation(response: &mut Response<ResponseBody>, operation: Arc<Mutex<
     response.body_mut().operation = Some(operation);
 }
 
-type NextProgress = Pin<Box<dyn Future<Output = (UploadSubscription, Option<UploadProgress>)> + Send>>;
+type ProgressStream = Pin<Box<dyn Stream<Item = UploadProgress> + Send>>;
 
 pub(super) struct ProgressBody {
-    next: Option<NextProgress>,
+    subscription: Option<ProgressStream>,
     heartbeat: Pin<Box<Sleep>>,
     pub(super) done: bool,
 }
@@ -155,7 +156,9 @@ pub(super) struct ProgressBody {
 impl ProgressBody {
     fn new(subscription: UploadSubscription) -> Self {
         Self {
-            next: Some(next_progress(subscription)),
+            subscription: Some(Box::pin(stream::unfold(subscription, |mut subscription| async move {
+                subscription.next().await.map(|event| (event, subscription))
+            }))),
             heartbeat: Box::pin(tokio::time::sleep(PROGRESS_HEARTBEAT)),
             done: false,
         }
@@ -165,17 +168,21 @@ impl ProgressBody {
         if self.done {
             return Poll::Ready(None);
         }
-        if let Poll::Ready((subscription, event)) =
-            self.next.as_mut().expect("active progress future").as_mut().poll(cx)
+        if let Poll::Ready(event) = self
+            .subscription
+            .as_mut()
+            .expect("active subscription")
+            .as_mut()
+            .poll_next(cx)
         {
-            self.next = None;
             let Some(event) = event else {
+                self.subscription = None;
                 self.done = true;
                 return Poll::Ready(None);
             };
             self.done = matches!(event, UploadProgress::Complete { .. });
-            if !self.done {
-                self.next = Some(next_progress(subscription));
+            if self.done {
+                self.subscription = None;
             }
             let record = encode_upload_progress(&event)
                 .map(|record| Frame::data(Bytes::from(format!("{record}\n"))))
@@ -190,13 +197,6 @@ impl ProgressBody {
         }
         Poll::Pending
     }
-}
-
-fn next_progress(mut subscription: UploadSubscription) -> NextProgress {
-    Box::pin(async move {
-        let event = subscription.next().await;
-        (subscription, event)
-    })
 }
 
 pub(super) fn refusal(refusal: UploadRefusal) -> Response<ResponseBody> {
