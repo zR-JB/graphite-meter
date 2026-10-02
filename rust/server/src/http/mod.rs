@@ -919,9 +919,9 @@ impl HttpServer {
     }
 }
 
-/// A request as the gate checked it; under authentication it keeps its authorization for the controller.
 type GateResult<B> = Result<(Checked<B>, Option<Route>), Box<Response<ResponseBody>>>;
 
+/// A request as the gate checked it; under authentication it keeps its authorization for the controller.
 enum Checked<B> {
     Public(Request<B>),
     Authorized(AuthorizedRequest<B>),

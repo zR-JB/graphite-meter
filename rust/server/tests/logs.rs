@@ -1,7 +1,7 @@
 mod support;
 
 use std::{
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader},
     net::{SocketAddr, TcpStream, UdpSocket},
     process::{Child, Command, Stdio},
     sync::mpsc,
