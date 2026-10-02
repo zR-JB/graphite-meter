@@ -551,12 +551,7 @@ impl HttpServer {
     /// Go's `Enforce` and its mux's refusals, in their order, for every listener and WebTransport: the header and
     /// body limits, the policy and its preflights, then the route's methods and client evidence. `Err` is the gate's
     /// own answer; a request that passes keeps its authorization, lease and Origin.
-    fn gate<B>(
-        &self,
-        request: Request<B>,
-        accepted: Accepted,
-        body_ended: bool,
-    ) -> Result<(Checked<B>, Option<Route>), Box<Response<ResponseBody>>> {
+    fn gate<B>(&self, request: Request<B>, accepted: Accepted, body_ended: bool) -> GateResult<B> {
         if let Some(response) = self.validate_request(&request, body_ended) {
             return Err(Box::new(response));
         }
@@ -925,6 +920,8 @@ impl HttpServer {
 }
 
 /// A request as the gate checked it; under authentication it keeps its authorization for the controller.
+type GateResult<B> = Result<(Checked<B>, Option<Route>), Box<Response<ResponseBody>>>;
+
 enum Checked<B> {
     Public(Request<B>),
     Authorized(AuthorizedRequest<B>),

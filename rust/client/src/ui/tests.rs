@@ -225,6 +225,17 @@ pub(crate) fn result(stage: Stage, down: Option<f64>, up: Option<f64>) -> StageR
     }
 }
 
+/// A server's lost connection in a stage's throughput.
+fn lost(id: &str, stage: Stage) -> ServerFailure {
+    ServerFailure {
+        server_id: id.into(),
+        stage,
+        scope: FailureScope::Throughput,
+        reason: FailureReason::ConnectionLost,
+        at: Duration::ZERO,
+    }
+}
+
 fn report(ui: &Ui) -> String {
     crate::report::render(&ui.snapshot, 100, Theme::default()).unwrap()
 }
