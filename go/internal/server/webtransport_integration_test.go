@@ -890,10 +890,11 @@ func TestGoClientRunsMultipleLanesOverWebTransport(t *testing.T) {
 		if err != nil {
 			t.Fatalf("prepare at %d lanes: %v", streams, err)
 		}
+		clientCfg.ServerIDs = prepared.SelectedIDs()
 		// Stage events are queued, so their callbacks cannot fence preparation from the run.
 		countSessionsFromNow(t, e.admission)
 		if !prepared.FreshFor(clientCfg) {
-			t.Fatal("preparation expired before its sessions closed")
+			t.Fatal("preparation is no longer reusable after its sessions closed")
 		}
 		results := map[string]goclient.Result{}
 		for ev := range controller.Start(clientCfg, prepared) {
