@@ -22,7 +22,7 @@ ratatui-core = { version = "0.1.2", features = ["std"] }
 ratatui-crossterm = { version = "0.1.2", default-features = false, features = ["crossterm_0_29"] }
 crossterm = { version = "0.29.0", features = ["event-stream"] }
 rustls = { version = "0.23.45", default-features = false, features = ["std", "tls12", "ring"] }
-tokio-rustls = { version = "0.26.5", default-features = false, features = ["ring"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "signal", "io-util", "time", "sync", "process"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }

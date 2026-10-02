@@ -35,7 +35,7 @@ sha2 = { version = "0.11.0", default-features = false }
 hmac = { version = "0.13.0", features = ["zeroize"] }
 noq = { version = "1.3.0", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 rustls = { version = "0.23.45", default-features = false, features = ["std", "tls12", "ring"] }
-tokio-rustls = { version = "0.26.5", default-features = false, features = ["ring"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 miniz_oxide.workspace = true
