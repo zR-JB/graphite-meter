@@ -13,7 +13,6 @@ import gzip
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tarfile
@@ -39,6 +38,57 @@ DEVELOPMENT_NOTICE = (f'{DEVELOPMENT}\n\nThis build\'s host generated these noti
                       'reviewed platform records of the release builders cover. Do not distribute this build.\n\n')
 DEVELOPMENT_PLATFORM = ('This development build\'s Rust standard library, C runtime and system libraries are not '
                         'reviewed, so their notices are not included.\n')
+
+
+def write_changed(path: Path, data: bytes) -> bool:
+    """Keep Cargo's input mtimes when the checked bytes did not change."""
+    if path.is_file() and path.read_bytes() == data:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return True
+
+
+def stage_browser(source: Path, destination: Path) -> bool:
+    """Synchronize assets without replacing the Rust-owned legal directory."""
+    if not (source / 'index.html').is_file():
+        raise LegalError('browser asset directory has no index.html')
+    changed = False
+    files = {}
+    for path in source.rglob('*'):
+        if path.is_symlink():
+            raise LegalError('browser legal staging does not accept symbolic links')
+        relative = path.relative_to(source)
+        if relative.parts[0] != 'legal' and path.is_file():
+            files[relative] = path
+    # Remove stale paths first: an asset may change from a file to a directory or back.
+    for path in sorted(destination.rglob('*'), reverse=True):
+        relative = path.relative_to(destination)
+        if relative.parts[0] == 'legal':
+            continue
+        if path.is_symlink():
+            raise LegalError('browser legal staging does not accept symbolic links')
+        if path.is_file() and relative not in files:
+            path.unlink()
+            changed = True
+        elif path.is_dir() and not any(path.iterdir()):
+            path.rmdir()
+            changed = True
+    for relative, path in files.items():
+        changed |= write_changed(destination / relative, path.read_bytes())
+    return changed
+
+
+def reusable(output: Path, repo: Path, invocation: bytes) -> bool:
+    try:
+        inputs = (output / 'inputs.txt').read_text().splitlines()
+        return ((output / 'invocation.json').read_bytes() == invocation
+                and bool((output / 'LEGAL.txt').read_bytes())
+                and 'rust/Cargo.lock' in inputs
+                and all((repo / name).read_bytes() == (output / 'inputs' / name).read_bytes()
+                        for name in inputs))
+    except OSError:
+        return False
 
 
 def cargo(repo: Path, *args: str) -> list[str]:
@@ -252,6 +302,7 @@ def main() -> None:
     parser.add_argument('--version', default=os.environ.get('VERSION') or 'development',
                         help='the release version, whose tag the notices name as the source')
     parser.add_argument('--review-template', action='store_true')
+    parser.add_argument('--local', action='store_true', help='reuse validated inputs; omit distribution source archives')
     builds.add_argument('--development', action='store_true',
                         help='notices of an unreviewed development build on any host: they omit the platform record '
                              'and the toolchain facts it reviews, say so, and never pass release verification')
@@ -263,6 +314,16 @@ def main() -> None:
         parser.error('--development reviews no platform')
     if not (args.target or args.host or args.development):
         parser.error('--target is required unless --host or --development selects the host')
+    try:
+        build(args)
+    except (LegalError, OSError, ValueError, subprocess.CalledProcessError):
+        output = local_path(args.out, args.repo.resolve())
+        (output / 'LEGAL.txt').unlink(missing_ok=True)
+        (output / 'invocation.json').unlink(missing_ok=True)
+        raise
+
+
+def build(args: argparse.Namespace) -> None:
     repo = args.repo.resolve()
     reviews_path = local_path(args.reviews, repo) if args.reviews else None
     supplement = local_path(args.supplement, repo) if args.supplement else None
@@ -270,8 +331,6 @@ def main() -> None:
     reviews = ([Review.parse(item) for item in array(read_json(reviews_path))] if reviews_path else [])
     output = local_path(args.out, repo)
     output.mkdir(parents=True, exist_ok=True)
-    # Invalidate before the build too: a failed compilation must not retain an old report.
-    (output / 'LEGAL.txt').unlink(missing_ok=True)
     provenance = manual_sources(repo, args.package)
     # rustup selects exactly the pinned workspace toolchain.
     channel = rust_channel(repo)
@@ -289,7 +348,30 @@ def main() -> None:
     link_map = platform.link_map(output, target, args.profile)
     # A development build reads no native inputs or imports: only a platform record, which it lacks, reviews them.
     mapped = None if args.development else link_map
-    metadata, messages = capture(repo, args.package, args.target, args.profile, mapped, link_target=target)
+    cargo_home = Path(os.environ.get('CARGO_HOME', Path.home() / '.cargo'))
+    config_directories = [cargo_home, *((path / '.cargo') for path in (repo / 'rust', repo, *repo.parents))]
+    # Runtime GM_* settings are deliberately absent. Cargo still checks the real build;
+    # this identity only decides whether it can start with the previous notices embedded.
+    invocation = marshal({'package': args.package, 'profile': args.profile, 'target': args.target,
+                          'development': args.development, 'version': args.version, 'rustc': toolchain,
+                          'supplement': str(supplement), 'reviews': str(reviews_path),
+                          'configuration': {str(path): sha256(path.read_bytes()) for directory in config_directories
+                                            for name in ('config', 'config.toml') if (path := directory / name).is_file()},
+                          'environment': {key: value for key, value in sorted(os.environ.items())
+                                          if key.startswith(('CARGO_', 'RUST', 'CC', 'CXX', 'AR', 'LD', 'PKG_CONFIG'))
+                                          or key in ('PATH', 'GM_ENGINE_VERSION', 'GM_RUST_ASSET_DIR')}})
+    reuse = args.local and (mapped is None or mapped.is_file()) and reusable(output, repo, invocation)
+    (output / 'invocation.json').unlink(missing_ok=True)
+    staged_assets = None
+    if args.package == 'graphite-meter-server' and os.environ.get('GM_RUST_ASSET_DIR'):
+        source_assets = (repo / 'rust/server' / os.environ['GM_RUST_ASSET_DIR']).resolve()
+        if not source_assets.is_relative_to(repo):
+            raise LegalError('GM_RUST_ASSET_DIR must name a directory inside the repository')
+        staged_assets = output / 'browser-assets'
+        stage_browser(source_assets, staged_assets)
+    print(f'Rust {args.package} [{args.profile}]: {"reuse notices" if reuse else "inspect build inputs"}', flush=True)
+    metadata, messages = capture(repo, args.package, args.target, args.profile, mapped,
+                                 output if reuse else None, staged_assets if reuse else None, link_target=target)
     components, inventory, failures, root = discover(repo, metadata, messages, args.package, reviews, provenance)
     manifest = {'schemaVersion': 1, 'package': args.package, 'target': target,
                 'profile': args.profile, 'rustc': toolchain,
@@ -309,6 +391,7 @@ def main() -> None:
     if record is not None:
         platform.fetch_notices(repo, record)
     if args.review_template:
+        (output / 'LEGAL.txt').unlink(missing_ok=True)
         (output / 'review-candidates.json').write_bytes(marshal(review_candidates(components)))
         (output / 'review-errors.json').write_bytes(marshal(failures))
         candidate, listing = platform.candidate(record, **facts)
@@ -330,8 +413,8 @@ def main() -> None:
             raise LegalError(f'{error}\nUnreviewed platform record of this build:\n{marshal(candidate).decode()}'
                              'Its inputsSha256 hashes this listing of its inputs:\n'
                              + listing.removesuffix('\n')) from error
+    embedding_changed = not reuse
     browser_components: list[Component] = []
-    staged_assets = None
     shared_notices = None
     if args.package == 'graphite-meter-server' and os.environ.get('GM_RUST_ASSET_DIR'):
         if browser_scan is None:
@@ -347,35 +430,28 @@ def main() -> None:
         manifest['browserComponents'] = [component.json() for component in browser_components]
         manifest['imageComponents'] = [component.json() for component in image_components]
         (output / 'inventory.json').write_bytes(marshal(manifest))
-        (output / 'IMAGE_NOTICES.txt').write_bytes(legal_report(
-            repo, args.version, notices(components + browser_components + image_components) + '\n' + extra,
-            args.development))
-        source_assets = os.path.realpath(repo / 'rust/server' / os.environ['GM_RUST_ASSET_DIR'])
-        if not source_assets.startswith(str(repo) + os.sep):
-            raise LegalError('GM_RUST_ASSET_DIR must name a directory inside the repository')
-        staged_assets = output / 'browser-assets'
-        if staged_assets.exists():
-            shutil.rmtree(staged_assets)
-        shutil.copytree(source_assets, staged_assets, symlinks=True)
-        if any(path.is_symlink() for path in staged_assets.rglob('*')):
-            raise LegalError('browser legal staging does not accept symbolic links')
+        if not args.local:
+            (output / 'IMAGE_NOTICES.txt').write_bytes(legal_report(
+                repo, args.version, notices(components + browser_components + image_components) + '\n' + extra,
+                args.development))
+        assert staged_assets is not None
         legal_assets = staged_assets / 'legal'
         legal_assets.mkdir(exist_ok=True)
-        (legal_assets / 'LICENSE.txt').write_bytes((repo / 'LICENSE').read_bytes())
+        embedding_changed |= write_changed(legal_assets / 'LICENSE.txt', (repo / 'LICENSE').read_bytes())
         # The browser's notices open with the development notice too; they end the report either way.
         shared_notices = ((DEVELOPMENT_NOTICE if args.development else '')
                           + notices(components + browser_components) + '\n' + extra)
-        (legal_assets / 'THIRD_PARTY_NOTICES.txt').write_bytes(shared_notices.encode())
-        (legal_assets / 'about.json').write_bytes(marshal(about(
+        embedding_changed |= write_changed(legal_assets / 'THIRD_PARTY_NOTICES.txt', shared_notices.encode())
+        embedding_changed |= write_changed(legal_assets / 'about.json', marshal(about(
             Project.read(repo), args.version, os.environ.get('GM_ENGINE_VERSION', 'rust-experimental'),
             components + browser_components, repo)))
-    (output / 'LEGAL.txt').write_bytes(legal_report(repo, args.version, shared_notices if shared_notices is not None
+    embedding_changed |= write_changed(output / 'LEGAL.txt', legal_report(repo, args.version, shared_notices if shared_notices is not None
                                                     else notices(components) + '\n\nRust sysroot and platform notices\n\n' + extra,
                                                     args.development))
     # Snapshot dependency-selection inputs; build.rs rejects stale supplied reports.
     inputs = ['rust/legal_build.rs', 'rust/client/build.rs', 'rust/server/build.rs', 'rust/Cargo.lock', 'rust/Cargo.toml',
               'rust/rust-toolchain.toml', 'legal/rust-forks.json', 'legal/rust-notice-sources.json']
-    for reviewed_input in (args.reviews, args.supplement):
+    for reviewed_input in (reviews_path, supplement):
         if reviewed_input is not None:
             resolved = reviewed_input.resolve()
             if not resolved.is_relative_to(repo):
@@ -390,23 +466,25 @@ def main() -> None:
     for relative in sorted(set(inputs)):
         destination = output / 'inputs' / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes((repo / relative).read_bytes())
-    (output / 'inputs.txt').write_text('\n'.join(sorted(set(inputs))) + '\n')
-    (output / 'package.txt').write_text(args.package)
-    (output / 'target.txt').write_text(target)
+        embedding_changed |= write_changed(destination, (repo / relative).read_bytes())
+    embedding_changed |= write_changed(output / 'inputs.txt', ('\n'.join(sorted(set(inputs))) + '\n').encode())
+    embedding_changed |= write_changed(output / 'package.txt', args.package.encode())
+    embedding_changed |= write_changed(output / 'target.txt', target.encode())
     # build.rs requires Cargo to compile with exactly this compiler.
-    (output / 'rustc-path.txt').write_text(subprocess.check_output(
-        ['rustup', 'which', '--toolchain', channel, 'rustc'], text=True).strip())
-    (output / 'build-identity.txt').write_bytes((script_output(messages, root) / 'legal-build-identity.txt').read_bytes())
+    embedding_changed |= write_changed(output / 'rustc-path.txt', subprocess.check_output(
+        ['rustup', 'which', '--toolchain', channel, 'rustc'], text=True).strip().encode())
+    embedding_changed |= write_changed(output / 'build-identity.txt', (script_output(messages, root) / 'legal-build-identity.txt').read_bytes())
     try:
-        rebuilt_metadata, rebuilt_messages = capture(repo, args.package, args.target, args.profile, mapped,
-                                                     output, staged_assets, link_target=target)
-        _, rebuilt_inventory, rebuilt_failures, _ = discover(repo, rebuilt_metadata, rebuilt_messages, args.package,
-                                                             reviews, provenance)
-        if rebuilt_failures or rebuilt_inventory != inventory or not args.development and (
-                platform.linked(link_map, sysroot, cargo_outputs) != facts['inputs']
-                or platform.imports(executable, target) != facts['libraries']):
-            raise LegalError('embedded-notice rebuild changed the compiled dependency or native closure')
+        rebuilt_messages = messages
+        if embedding_changed:
+            rebuilt_metadata, rebuilt_messages = capture(repo, args.package, args.target, args.profile, mapped,
+                                                         output, staged_assets, link_target=target)
+            _, rebuilt_inventory, rebuilt_failures, _ = discover(repo, rebuilt_metadata, rebuilt_messages, args.package,
+                                                                 reviews, provenance)
+            if rebuilt_failures or rebuilt_inventory != inventory or not args.development and (
+                    platform.linked(link_map, sysroot, cargo_outputs) != facts['inputs']
+                    or platform.imports(executable, target) != facts['libraries']):
+                raise LegalError('embedded-notice rebuild changed the compiled dependency or native closure')
         payload = (script_output(rebuilt_messages, root) / 'LEGAL.zlib').read_bytes()
         if payload not in executable.read_bytes() or zlib.decompress(payload) != (output / 'LEGAL.txt').read_bytes():
             raise LegalError('executable does not embed the generated notices')
@@ -415,7 +493,9 @@ def main() -> None:
         raise
     # Only shipped (reviewed release) builds bundle their compilation input sources, including native
     # code nested in crates, with unchanged license files and explicit local-patch provenance.
-    if args.profile != 'release' or args.development:
+    if args.local:
+        write_changed(output / 'invocation.json', invocation)
+    if args.local or args.profile != 'release' or args.development:
         return
     with (output / 'THIRD_PARTY_SOURCE.tar.gz').open('wb') as destination:
         with gzip.GzipFile(filename='', mode='wb', fileobj=destination, mtime=0) as compressed:

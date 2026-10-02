@@ -64,9 +64,11 @@ class PlatformRecordTests(unittest.TestCase):
         (root / 'container').mkdir()
         (root / 'legal').mkdir()
         (root / 'rust').mkdir()
+        (root / 'scripts').mkdir()
         (root / 'rust/rust-toolchain.toml').write_text('[toolchain]\nchannel = "1.98.1"\n')
         (root / 'mise.toml').write_text(
-            "run = 'python3 -m scripts.legal.rust --host'\n")
+            "run = 'python3 -m scripts.rust_build'\n")
+        (root / 'scripts/rust_build.py').write_text("command = ['--host']\n")
         (root / 'container/Dockerfile.rust').write_text(
             'RUN a --supplement legal/linux.json\nRUN b --supplement legal/linux.json\n')
         (root / 'legal/linux.json').write_text(json.dumps([

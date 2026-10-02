@@ -111,12 +111,16 @@ compile time. Release requests use full release settings and no CI caches. The F
 covers local builds only; distributed artifacts always use their own builder's record.
 
 The local tasks (`rust-server-run`, `rust-server-build`, `rust-client-run`, `rust-client-build`)
-run `scripts.legal.rust --host`: they keep Cargo's ordinary host output paths and flags, read its
+run `scripts.rust_build`, which calls `scripts.legal.rust --host --local`: they keep Cargo's ordinary host output paths and flags, read its
 linker map, and select the host's `rust-platform-*.json` record by target and native compiler.
 The same compiler, native-input, import and notice fingerprints used for release builds must match.
 Fedora 44 x86-64 has a host record. A different host or changed
 toolchain needs review; run the pipeline with `--host --review-template` to collect its candidate
 and input listing, then review it as above. These tasks fail if the platform review is missing or stale.
+The local path retains validated notices and identical input snapshots so Cargo can reuse its
+artifact or link an application edit once. Every invocation still checks the compiled/native
+closure and embedded report; failures invalidate the report and reuse marker. It omits source
+archives, which the distribution path continues to build and verify.
 
 Explicit `scripts.legal.rust --development` builds remain available on unreviewed hosts: they keep
 every dependency review but omit the platform, and their notices open with `UNREVIEWED DEVELOPMENT

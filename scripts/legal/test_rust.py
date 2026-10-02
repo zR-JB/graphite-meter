@@ -20,10 +20,170 @@ from scripts.legal.model import (Component, Json, LegalError, Project, Provenanc
                                  manual_sources, marshal, read_json, sha256)
 from scripts.legal.review import add_provenance, validate_review
 from scripts.legal.rust import (DEVELOPMENT, DEVELOPMENT_NOTICE, about, add_cargo_sources, artifacts, capture, cargo,
-                                image_additions, legal_report)
+                                image_additions, legal_report, reusable, stage_browser, write_changed)
 from scripts.legal.rust_platform import SYSROOT, candidate, fetch_notices, imports, link_map, linked, linker_version, notice
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+class RustFreshnessTests(unittest.TestCase):
+    def test_reuse_requires_successful_validation_and_identical_dependency_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            repo = Path(scratch)
+            output = repo / 'output'
+            for name, data in {'rust/Cargo.lock': b'locked', 'output/inputs/rust/Cargo.lock': b'locked',
+                               'output/inputs.txt': b'rust/Cargo.lock\n', 'output/LEGAL.txt': b'notices',
+                               'output/invocation.json': b'configuration'}.items():
+                write_changed(repo / name, data)
+            self.assertTrue(reusable(output, repo, b'configuration'))
+            self.assertFalse(reusable(output, repo, b'changed compiler flags'))
+            write_changed(repo / 'rust/Cargo.lock', b'new dependency')
+            self.assertFalse(reusable(output, repo, b'configuration'))
+            write_changed(repo / 'rust/Cargo.lock', b'locked')
+            (output / 'invocation.json').unlink()
+            self.assertFalse(reusable(output, repo, b'configuration'))
+
+    def test_staging_preserves_identical_assets_and_rust_notices_but_removes_deleted_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            source, target = Path(scratch) / 'source', Path(scratch) / 'target'
+            for path, data in ((source / 'index.html', b'page'), (source / 'obsolete.js', b'old'),
+                               (source / 'legal/about.json', b'Go'), (target / 'legal/about.json', b'Rust')):
+                write_changed(path, data)
+            self.assertTrue(stage_browser(source, target))
+            original = (target / 'index.html').stat().st_mtime_ns
+            self.assertFalse(stage_browser(source, target))
+            self.assertEqual((target / 'index.html').stat().st_mtime_ns, original)
+            self.assertEqual((target / 'legal/about.json').read_bytes(), b'Rust')
+            (source / 'obsolete.js').unlink()
+            self.assertTrue(stage_browser(source, target))
+            self.assertFalse((target / 'obsolete.js').exists())
+            (source / 'escape').symlink_to(target, target_is_directory=True)
+            with self.assertRaisesRegex(LegalError, 'symbolic links'):
+                stage_browser(source, target)
+
+    def test_failed_regeneration_invalidates_the_old_notice_and_reuse_marker(self) -> None:
+        from scripts.legal.rust import main
+        with tempfile.TemporaryDirectory() as scratch:
+            output = Path(scratch) / 'output'
+            for name in ('LEGAL.txt', 'invocation.json'):
+                write_changed(output / name, b'previous success')
+            with patch.object(sys, 'argv', ['rust', '--host', '--local', '--package', 'graphite-meter-client',
+                                            '--out', str(output)]), \
+                    patch('scripts.legal.rust.build', side_effect=LegalError('unreviewed dependency')):
+                with self.assertRaisesRegex(LegalError, 'unreviewed dependency'):
+                    main()
+            self.assertFalse((output / 'LEGAL.txt').exists())
+            self.assertFalse((output / 'invocation.json').exists())
+
+    def test_staging_allows_assets_to_change_between_files_and_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            source, target = Path(scratch) / 'source', Path(scratch) / 'target'
+            write_changed(source / 'index.html', b'page')
+            write_changed(source / 'asset', b'file')
+            stage_browser(source, target)
+            (source / 'asset').unlink()
+            write_changed(source / 'asset/nested/data', b'nested')
+            self.assertTrue(stage_browser(source, target))
+            self.assertEqual((target / 'asset/nested/data').read_bytes(), b'nested')
+            shutil.rmtree(source / 'asset')
+            write_changed(source / 'asset', b'file again')
+            self.assertTrue(stage_browser(source, target))
+            self.assertEqual((target / 'asset').read_bytes(), b'file again')
+            self.assertFalse(stage_browser(source, target))
+
+    def test_review_template_cannot_retain_an_earlier_successful_report(self) -> None:
+        from scripts.legal.rust import main
+
+        with tempfile.TemporaryDirectory() as scratch:
+            repo = Path(scratch)
+            output = repo / 'output'
+            write_changed(output / 'LEGAL.txt', b'previously approved')
+            write_changed(output / 'invocation.json', b'previous success')
+            write_changed(repo / 'rust/Cargo.lock', b'locked')
+            metadata = {'target_directory': str(repo / 'target'), 'packages': []}
+            messages = [{'reason': 'compiler-artifact', 'executable': str(repo / 'binary'),
+                         'target': {'name': 'graphite-meter-client'}}]
+            with patch.object(sys, 'argv', ['rust', '--repo', str(repo), '--target', 'target',
+                                            '--review-template', '--package', 'graphite-meter-client',
+                                            '--out', str(output)]), \
+                    patch('scripts.legal.rust.manual_sources', return_value=[]), \
+                    patch('scripts.legal.rust.rust_channel', return_value='pinned'), \
+                    patch('scripts.legal.rust.subprocess.check_output', side_effect=['host: target\n', str(repo / 'sysroot')]), \
+                    patch('scripts.legal.rust.capture', return_value=(metadata, messages)), \
+                    patch('scripts.legal.rust.discover', return_value=([], [], ['unreviewed dependency'], 'root')), \
+                    patch('scripts.legal.rust.platform.linked', return_value=set()), \
+                    patch('scripts.legal.rust.platform.imports', return_value=set()), \
+                    patch('scripts.legal.rust.platform.candidate', return_value=({'reviewDecision': 'pending'}, 'listing\n')):
+                main()
+            self.assertTrue((output / 'platform-candidate.json').is_file())
+            self.assertEqual(json.loads((output / 'review-errors.json').read_text()), ['unreviewed dependency'])
+            self.assertFalse((output / 'LEGAL.txt').exists())
+            self.assertFalse((output / 'invocation.json').exists())
+
+
+class RustBrowserFreshnessTests(unittest.TestCase):
+    def test_browser_reuse_tracks_external_check_inputs_and_validated_outputs(self) -> None:
+        from scripts import rust_build
+
+        run = subprocess.run
+        with tempfile.TemporaryDirectory() as scratch:
+            repo = Path(scratch)
+            run(['git', 'init', '--quiet', str(repo)], check=True)
+            for name, data in {'client/src/app.ts': b'export {}', 'api/golden.json': b'{}',
+                               'go/internal/auth/assets/auth.js': b'auth', '.gitignore': b'*.local\n',
+                               'client/.env.local': b'VITE_VALUE=one', 'client/public/obsolete.js': b'old',
+                               'scripts/rust_build.py': b'build instructions'}.items():
+                write_changed(repo / name, data)
+            built = 0
+            fail = False
+
+            def tool(command: list[str], **options: Any) -> subprocess.CompletedProcess:
+                nonlocal built
+                if command == ['bun', '--version']:
+                    return subprocess.CompletedProcess(command, 0, stdout='test-bun\n')
+                if command == ['bun', 'run', 'build']:
+                    built += 1
+                    if fail:
+                        raise subprocess.CalledProcessError(1, command)
+                    environment = options['env']
+                    write_changed(Path(environment['GM_LEGAL_SCAN_DIR']) / 'index.html', b'page')
+                    for path in (repo / 'client/public').rglob('*'):
+                        if path.is_file():
+                            write_changed(Path(environment['GM_LEGAL_SCAN_DIR']) / path.name, path.read_bytes())
+                    write_changed(Path(environment['GM_LEGAL_SCAN_OUT']), b'[]')
+                    return subprocess.CompletedProcess(command, 0)
+                return run(command, **options)
+
+            with patch.object(rust_build, 'ROOT', repo), patch('subprocess.run', side_effect=tool):
+                environment = {'GM_CLIENT_REVISION': 'source'}
+                assets, _ = rust_build.browser('prod', environment)
+                rust_build.browser('prod', environment)
+                write_changed(repo / 'rust/server/src/main.rs', b'fn main() {}')
+                rust_build.browser('prod', environment | {'GM_H1_ADDR': '127.0.0.1:12345'})
+                self.assertEqual(built, 1)
+                self.assertTrue((assets / 'obsolete.js').is_file())
+                (repo / 'client/public/obsolete.js').unlink()
+                write_changed(repo / 'go/internal/auth/assets/auth.js', b'changed auth')
+                rust_build.browser('prod', environment)
+                self.assertEqual(built, 2)
+                self.assertFalse((assets / 'obsolete.js').exists())
+                (repo / 'api/golden.json').unlink()
+                rust_build.browser('prod', environment)
+                self.assertEqual(built, 3)
+                write_changed(repo / 'client/.env.local', b'VITE_VALUE=two')
+                rust_build.browser('prod', environment)
+                self.assertEqual(built, 4)
+                write_changed(assets / 'index.html', b'corrupt')
+                fail = True
+                with self.assertRaises(subprocess.CalledProcessError):
+                    rust_build.browser('prod', environment)
+                self.assertFalse((assets.parent / 'build.json').exists())
+                fail = False
+                rust_build.browser('prod', environment)
+                self.assertEqual(built, 6)
+                write_changed(repo / 'scripts/rust_build.py', b'changed build instructions')
+                rust_build.browser('prod', environment)
+                self.assertEqual(built, 7)
 
 
 class RustArtifactTests(unittest.TestCase):

@@ -31,7 +31,7 @@ REVIEWS = REPO / 'legal/rust-reviewed-components.json'
 Crate = tuple[str, str, str]
 # Crates each static Linux binary compiles, its own and build-time crates included.
 BUDGET = {('graphite-meter-server', 'x86_64-unknown-linux-musl'): 141,
-          ('graphite-meter-client', 'x86_64-unknown-linux-musl'): 170}
+          ('graphite-meter-client', 'x86_64-unknown-linux-musl'): 149}
 
 
 def shipped(targets: str) -> list[tuple[str, str]]:
@@ -83,7 +83,10 @@ def unreviewed_platforms(repo: Path, targets: str) -> list[str]:
             platform, target = line.split()
             if builds(platform) and target not in approved:
                 problems.append(f'{name} has no approved record for {target} on Rust {channel}, which {builder} builds')
-    host_builds = '--host' in (mise := (repo / 'mise.toml').read_text()) and 'python3 -m scripts.legal.rust' in mise
+    mise = (repo / 'mise.toml').read_text()
+    wrapper = repo / 'scripts/rust_build.py'
+    host_builds = ('python3 -m scripts.rust_build' in mise and wrapper.is_file()
+                   and "'--host'" in wrapper.read_text())
     for path in sorted((repo / 'legal').glob('rust-platform-*.json')):
         name = path.relative_to(repo).as_posix()
         if name in read:

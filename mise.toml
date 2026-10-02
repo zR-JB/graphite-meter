@@ -453,45 +453,39 @@ hide = true
 usage = '''
 arg "<package>"
 arg "<profile>"
-arg "[client]" help="the browser build task whose assets and module scan the server embeds"
+arg "[client]" help="browser profile: dev or prod"
 '''
 run = '''
 #!/usr/bin/env sh
 set -eu
-set -- --host --package "$usage_package" --profile "$usage_profile" \
-  --out "rust/target/dev-legal/$usage_package-$usage_profile" --reviews legal/rust-reviewed-components.json
+set -- --package "$usage_package" --profile "$usage_profile"
 if [ -n "${usage_client:-}" ]; then
-  scan=$(mktemp)
-  trap 'rm -f "$scan"' EXIT
-  GM_LEGAL_SCAN_OUT="$scan" mise run "$usage_client"
-  GM_RUST_ASSET_DIR="$PWD/client/dist"
-  export GM_RUST_ASSET_DIR
-  set -- "$@" --browser-scan "$scan"
+  set -- "$@" --browser "$usage_client"
 fi
-CARGO_TARGET_DIR="$PWD/rust/target" python3 -m scripts.legal.rust "$@"
+exec python3 -m scripts.rust_build "$@"
 '''
 
 [tasks.rust-server-build]
 description = "Build the experimental Rust server, rust/target/release/graphite-meter-server, with the production browser UI and reviewed host notices"
 # prod stamps only the server, through GM_ENGINE_VERSION: a VERSION would stamp the browser client too.
 env = { GM_ENGINE_VERSION = "{{ get_env(name='GM_ENGINE_VERSION', default=get_env(name='VERSION', default='development') ~ '-rust') }}" }
-run = [{ task = "_rust-dev-legal", args = ["graphite-meter-server", "release", "client-build-prod"] }]
+run = [{ task = "_rust-dev-legal", args = ["graphite-meter-server", "release", "prod"] }]
 
 [tasks.rust-server-run]
-description = "Run the experimental Rust server with reviewed host notices and GM_* configuration; arguments after -- go to the server"
+description = "Run the optimized (ci profile) experimental Rust server with reviewed host notices and GM_* configuration; arguments after -- go to the server"
 raw = true
 env = { GM_ENGINE_VERSION = "development-rust" }
 run = [
-  { task = "_rust-dev-legal", args = ["graphite-meter-server", "dev", "client-build-dev"] },
-  "cd rust && exec target/debug/graphite-meter-server",
+  { task = "_rust-dev-legal", args = ["graphite-meter-server", "ci", "dev"] },
+  "cd rust && exec target/ci/graphite-meter-server",
 ]
 
 [tasks.rust-client-run]
-description = "Run the experimental Rust TUI, with reviewed host notices, against a server"
+description = "Run the optimized (ci profile) experimental Rust TUI, with reviewed host notices, against a server"
 raw = true
 run = [
-  { task = "_rust-dev-legal", args = ["graphite-meter-client", "dev"] },
-  "cd rust && exec target/debug/graphite-meter-client",
+  { task = "_rust-dev-legal", args = ["graphite-meter-client", "ci"] },
+  "cd rust && exec target/ci/graphite-meter-client",
 ]
 
 [tasks.rust-client-build]

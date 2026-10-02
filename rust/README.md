@@ -80,9 +80,29 @@ its `THIRD_PARTY_NOTICES.txt` lists them after the binary's notices. The port re
 blocked from merging until a human decides its design.
 
 `GM_IMPLEMENTATION=rust` switches `mise run dev`, `prod` and `tui` from Go to the
-experimental server or TUI. `mise run rust-server-run` builds the browser UI and runs
-the experimental server using `GM_*` configuration or server flags after `--`;
-`rust-server-build` builds a release binary with the production UI. They, `rust-client-run` and
+experimental server or TUI. `dev`, `tui`, `rust-server-run` and `rust-client-run` use
+the optimized `ci` profile (no LTO, 16 code-generation units). Plain `cargo build`
+still uses the unoptimized debug profile; do not use it for Go/Rust performance
+comparisons. `prod`, `rust-server-build` and `rust-client-build` retain the full
+release profile (fat LTO, one code-generation unit).
+
+Local builds retain the browser bundle and its matching module scan separately
+from Go's `client/dist`. Rust edits reuse them; browser inputs and build stamps
+invalidate them. Cargo checks every invocation, and the legal pipeline verifies
+the actual compiled dependencies, native link inputs and embedded notices.
+Unchanged inputs retain their timestamps. Application edits normally link once;
+changed dependency/build inputs require a fresh inventory and notice embedding.
+Local builds omit dependency-source archives; distribution builds still create
+and verify them. Changing runtime listener or certificate settings does not
+invalidate the build.
+
+To repeat measurements without any build work, run the already-built
+`rust/target/release/graphite-meter-server` directly with the desired `GM_*`
+configuration and flags. `rust/target/ci/graphite-meter-server` and
+`rust/target/ci/graphite-meter-client` are the optimized local executables.
+The build output identifies the selected profile and browser/notices reuse.
+
+`rust-server-build`, `rust-server-run`, `rust-client-run` and
 `rust-client-build` verify [reviewed host notices](../legal/README.md#rust-platform-records);
 an unrecorded host needs a platform review. The builder image produces the reviewed release binaries. HTTP/1, HTTPS/WSS, HTTP/2, and
 HTTP/3/WebTransport listeners share authentication and measurement state.
