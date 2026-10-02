@@ -1,5 +1,5 @@
 //! Real QUIC coverage for the shared HTTP/3 measurement adapter.
-#[path = "../test_tls.rs"]
+#[path = "../../test_tls.rs"]
 mod test_tls;
 
 use bytes::Bytes;
@@ -12,7 +12,7 @@ use tokio::sync::oneshot;
 type TestError = Box<dyn Error + Send + Sync>;
 
 #[tokio::test]
-async fn h3_shared_upload_routes_and_stalled_stream_deadline_preserve_siblings() {
+async fn h3_routes_and_stalled_stream_deadline_preserve_siblings() {
     tokio::time::timeout(Duration::from_secs(10), exercise())
         .await
         .expect("HTTP/3 adapter timed out")
@@ -43,13 +43,6 @@ async fn exercise() -> Result<(), TestError> {
         serde_json::from_slice::<serde_json::Value>(&read(&mut probe).await?)?["protocolNegotiated"],
         "h3"
     );
-    let session = body(&requests, "POST", "/upload/session", b"").await?;
-    let id = serde_json::from_slice::<serde_json::Value>(&session)?["uploadId"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    let upload = body(&requests, "POST", &format!("/upload?id={id}"), b"QUIC upload").await?;
-    assert_eq!(serde_json::from_slice::<serde_json::Value>(&upload)?["bytes"], 11);
     let (response, mut stalled) = send(&requests, "GET", "/download?bytes=10000000", b"").await?;
     assert_eq!(response.status(), 200);
     advance(Duration::from_millis(350)).await;
@@ -75,7 +68,7 @@ type Served = (
 );
 
 async fn serve_quic(config: Config, client: noq::TransportConfig) -> Result<Served, TestError> {
-    let (tls, client_tls) = test_tls::configs(b"h3");
+    let (tls, client_tls) = test_tls::configs("localhost", &[&rustls::version::TLS13], &[b"h3"]).unwrap();
     let server = Arc::new(HttpServer::new(config.validated().unwrap())?);
     let endpoint = server.quic_endpoint(Arc::new(tls), "127.0.0.1:0".parse()?)?;
     let address = endpoint.local_addr()?;

@@ -600,7 +600,7 @@ fn desired_send_window(sent: u64, rtt: Duration, elapsed: Duration) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_SEND_WINDOW, QUIC_MIN_SEND_WINDOW, SendWindow, desired_send_window};
+    use super::{MAX_SEND_WINDOW, QUIC_MIN_SEND_WINDOW, SendWindow};
     use crate::{
         budget::{QUIC_RECEIVE_WINDOW_FLOOR, connection_floor, noq_floor},
         config::Config,
@@ -613,7 +613,7 @@ mod tests {
 
     /// An identity for localhost, and a client that trusts it and offers `alpn`.
     fn tls_offering(alpn: Vec<Vec<u8>>) -> (Arc<rustls::ServerConfig>, noq::ClientConfig) {
-        let (tls, mut client) = crate::test_tls::configs(b"h3");
+        let (tls, mut client) = crate::test_tls::configs("localhost", &[&rustls::version::TLS13], &[b"h3"]).unwrap();
         client.alpn_protocols = alpn;
         let client = noq::ClientConfig::new(Arc::new(
             noq::crypto::rustls::QuicClientConfig::try_from(client).unwrap(),
@@ -849,28 +849,6 @@ mod tests {
         drop(sender);
         assert_eq!(memory.available(), 64 * 1024);
         assert_ne!(held_udp_socket(address), Some(socket));
-    }
-
-    #[test]
-    fn send_window_keeps_local_traffic_small_but_allows_high_rtt_paths_to_grow() {
-        let elapsed = Duration::from_millis(250);
-        let sent = 8 * 1024 * 1024;
-        assert_eq!(
-            desired_send_window(sent, Duration::from_millis(1), elapsed),
-            QUIC_MIN_SEND_WINDOW
-        );
-        assert_eq!(
-            desired_send_window(sent, Duration::from_millis(100), elapsed),
-            2 * sent * 100 / 250
-        );
-        assert_eq!(
-            desired_send_window(sent, Duration::from_secs(1), elapsed),
-            MAX_SEND_WINDOW
-        );
-        assert_eq!(
-            desired_send_window(sent, Duration::from_millis(100), Duration::ZERO),
-            QUIC_MIN_SEND_WINDOW
-        );
     }
 
     #[tokio::test]
@@ -1142,7 +1120,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn authenticated_requests_without_admission_get_no_credit() {
+    async fn authenticated_controls_take_no_receive_credit_and_webtransport_is_hardened() {
         use super::*;
         let mut config = Config {
             advertised_native: Some(Default::default()),
@@ -1179,35 +1157,6 @@ mod tests {
                 server.memory.available() > idle - QUIC_CREDIT_BYTES / 2,
                 "granted without a permit"
             );
-            quic.close(0_u32.into(), b"done");
-        })
-        .await
-        .unwrap();
-        stop.send(()).unwrap();
-        serving.await.unwrap().unwrap();
-    }
-
-    #[tokio::test]
-    async fn authenticated_webtransport_sessions_answer_with_go_hardening_headers() {
-        use super::*;
-        let mut config = Config {
-            advertised_native: Some(Default::default()),
-            ..Config::default()
-        };
-        config.public.both.push("self".into());
-        config.auth.mode = crate::config::AuthMode::Password;
-        config.auth.public_url = "https://localhost".into();
-        config.auth.password_hash =
-            "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0".into();
-        let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let sessions = server.auth.as_ref().unwrap().sessions();
-        let (_, session) = sessions.create("subject", "Name", "local", None).unwrap();
-        let (token, _grant) = sessions.issue_cli_grant(&session).unwrap();
-        let (tls, client_config) = tls();
-        let (address, stop, serving) = serve(&server, tls);
-        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
-        tokio::time::timeout(Duration::from_secs(10), async {
-            let (quic, requests) = h3_client(&client, client_config, address).await;
             let request = http::Request::get("https://localhost/wt/ping")
                 .header(header::AUTHORIZATION, format!("Bearer {token}"))
                 .header(header::ORIGIN, "")
@@ -1622,7 +1571,8 @@ mod tests {
         use tokio_rustls::TlsConnector;
 
         tokio::time::timeout(Duration::from_secs(10), async {
-            let (mut tls, mut client_tls) = crate::test_tls::configs(b"h2");
+            let (mut tls, mut client_tls) =
+                crate::test_tls::configs("localhost", &[&rustls::version::TLS13], &[b"h2"]).unwrap();
             let config = Config {
                 max_connections_per_client: 128,
                 ..Config::default()

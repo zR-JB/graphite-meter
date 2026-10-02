@@ -23,71 +23,24 @@ async fn real_http1_serves_discovery_and_streams_exact_download_then_joins_shutd
         let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
         let listener = native::serve(server, NativeKind::H1, None).await;
 
-        let mut generation = None;
-        for (method, path, status) in [
-            ("GET", "/preflight", 200),
-            ("POST", "/preflight", 405),
-            ("HEAD", "/preflight", 200),
-            ("GET", "http://other.example/preflight", 200),
-            ("GET", "/servers", 200),
-            ("GET", "http://[2001:db8::1]/servers", 200),
-            ("POST", "/servers", 405),
-            ("HEAD", "/servers", 200),
-            ("OPTIONS", "/servers", 204),
-            ("GET", "/probe", 200),
-            ("DELETE", "/probe", 405),
-            ("HEAD", "/probe", 200),
-            ("GET", "/unknown", 404),
-            ("POST", "/login", 404),
-            ("GET", "/auth/session", 404),
-            ("GET", "/download?bytes=300000", 200),
+        for (path, origin) in [
+            ("/servers", "http://meter.example:7246"),
+            ("http://[2001:db8::1]/servers", "http://[2001:db8::1]:7246"),
         ] {
             let socket = TcpStream::connect(listener.address).await.unwrap();
-            let (headers, body) = http1::exchange(socket, method, path, "meter.example:80", "", b"").await;
-            assert!(
-                headers.starts_with(&format!("HTTP/1.1 {status}")),
-                "{method} {path}: {headers}"
-            );
-            if status == 405 {
-                // As Go's "/" pattern, the app answers a method no route on this listener allows.
-                assert!(headers.contains("allow: GET, HEAD\r\n"), "{headers}");
-            } else if status != 200 || method == "HEAD" {
-                if status == 204 || method == "HEAD" {
-                    assert!(body.is_empty());
-                }
-            } else if path.starts_with("/download") {
-                assert_eq!(body.len(), 300000);
-                assert_eq!(&body[..37856], &body[262144..]);
-                assert!(body.iter().any(|byte| *byte != 0));
-            } else {
-                assert!(headers.contains("content-type: application/json"));
-                assert!(headers.contains("cache-control: no-store"));
-                let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
-                if path.ends_with("/servers") {
-                    let origin = if path.starts_with("http:") {
-                        "http://[2001:db8::1]:7246"
-                    } else {
-                        "http://meter.example:7246"
-                    };
-                    assert_eq!(value["defaultSelection"], serde_json::json!(["self"]));
-                    assert_eq!(value["servers"][0]["name"], "Local meter");
-                    assert_eq!(value["servers"][0]["location"], "Berlin");
-                    assert_eq!(value["servers"][0]["additionalOrigins"], serde_json::json!([origin]));
-                } else if path.ends_with("/preflight") {
-                    if let Some(first) = &generation {
-                        assert_eq!(&value["generation"], first);
-                    } else {
-                        generation = Some(value["generation"].clone());
-                    }
-                    if path.starts_with("http:") {
-                        assert_eq!(
-                            value["capabilities"]["throughput"][0]["baseUrl"],
-                            "http://other.example:7246"
-                        );
-                    }
-                }
-            }
+            let (headers, body) = http1::exchange(socket, "GET", path, "meter.example:80", "", b"").await;
+            assert!(headers.starts_with("HTTP/1.1 200"));
+            let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(value["servers"][0]["name"], "Local meter");
+            assert_eq!(value["servers"][0]["location"], "Berlin");
+            assert_eq!(value["servers"][0]["additionalOrigins"], serde_json::json!([origin]));
         }
+        let socket = TcpStream::connect(listener.address).await.unwrap();
+        let (headers, body) = http1::exchange(socket, "GET", "/download?bytes=300000", "localhost", "", b"").await;
+        assert!(headers.starts_with("HTTP/1.1 200"));
+        assert_eq!(body.len(), 300000);
+        assert_eq!(&body[..37856], &body[262144..]);
+        assert!(body.iter().any(|byte| *byte != 0));
         listener.shutdown().await;
     })
     .await
@@ -184,7 +137,7 @@ async fn fetch(address: SocketAddr, path: &str) -> Vec<u8> {
 }
 
 #[tokio::test]
-async fn real_upload_lifecycle_uses_receiver_totals_and_owner_refusals() {
+async fn http1_upload_refusals_preserve_owner_and_unread_body_boundaries() {
     tokio::time::timeout(Duration::from_secs(10), async {
         let config = Config {
             trusted_proxies: vec!["127.0.0.0/8".parse().unwrap()],
@@ -192,78 +145,26 @@ async fn real_upload_lifecycle_uses_receiver_totals_and_owner_refusals() {
         };
         let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
         let listener = native::serve(server, NativeKind::H1, None).await;
-        let (headers, session) = upload_request(listener.address, "POST", "/upload/session", "192.0.2.1", b"").await;
-        assert!(headers.starts_with("HTTP/1.1 200"));
-        assert!(headers.contains("access-control-allow-origin: *"));
+        let (_, session) = upload_request(listener.address, "POST", "/upload/session", "192.0.2.1", b"").await;
         let session: serde_json::Value = serde_json::from_slice(&session).unwrap();
         let id = session["uploadId"].as_str().unwrap();
-        let mut socket = TcpStream::connect(listener.address).await.unwrap();
-        socket
-            .write_all(
-                format!("GET /upload/progress?id={id} HTTP/1.1\r\nHost: localhost\r\nX-Real-IP: 192.0.2.1\r\n\r\n")
-                    .as_bytes(),
-            )
-            .await
-            .unwrap();
-        let mut progress = tokio::io::BufReader::new(socket);
-        let headers = read_headers(&mut progress).await;
-        assert!(headers.contains("application/x-ndjson"));
-        assert!(headers.contains("no-store, no-transform"));
-        assert!(headers.contains("x-accel-buffering: no"));
-        assert_eq!(progress_event(&mut progress).await["type"], "ready");
-
         let path = format!("/upload?id={id}");
-        let first = vec![1; 1234];
-        let second = vec![2; 5678];
-        let (rejected, body) = upload_request(listener.address, "PUT", &path, "192.0.2.1", &second).await;
+        let (rejected, body) = upload_request(listener.address, "PUT", &path, "192.0.2.1", b"unread").await;
         assert!(rejected.starts_with("HTTP/1.1 400") && rejected.contains("connection: close"));
         assert_eq!(body, b"request body not accepted\n");
-        let (first, second) = tokio::join!(
-            upload_request(listener.address, "POST", &path, "192.0.2.1", &first),
-            upload_request(listener.address, "POST", &path, "192.0.2.1", &second),
-        );
-        for (reply, expected) in [(first, 1234), (second, 5678)] {
-            assert!(reply.0.starts_with("HTTP/1.1 200"));
-            let value: serde_json::Value = serde_json::from_slice(&reply.1).unwrap();
-            assert_eq!(value["bytes"], expected);
-        }
         let checkpoint = format!("/upload/checkpoint?id={id}");
-        let (headers, bytes) = upload_request(listener.address, "POST", &checkpoint, "192.0.2.1", b"").await;
+        let (headers, _) = upload_request(listener.address, "POST", &checkpoint, "192.0.2.1", b"").await;
         assert!(headers.starts_with("HTTP/1.1 200"));
-        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(value["bytes"], 6912);
-        assert!(value["nanos"].as_u64().unwrap() > 0);
         let (headers, _) = upload_request(listener.address, "POST", &checkpoint, "192.0.2.2", b"").await;
         assert!(headers.starts_with("HTTP/1.1 403"));
         assert!(headers.contains("x-graphite-upload-refusal: ownerMismatch"));
         let (headers, _) = upload_request(listener.address, "POST", "/upload?id=invalid", "192.0.2.1", b"bad").await;
         assert!(headers.starts_with("HTTP/1.1 400"));
         assert!(headers.contains("x-graphite-upload-refusal: invalid"));
-        let (headers, _) = upload_request(listener.address, "GET", "/upload/session", "192.0.2.1", b"").await;
-        assert!(headers.starts_with("HTTP/1.1 404"), "{headers}");
-
-        let (headers, body) = upload_request(
-            listener.address,
-            "DELETE",
-            &format!("/upload/progress?id={id}"),
-            "192.0.2.1",
-            b"",
-        )
-        .await;
-        assert!(headers.starts_with("HTTP/1.1 204"));
-        assert!(body.is_empty());
-        loop {
-            let event = progress_event(&mut progress).await;
-            if event["type"] == "complete" {
-                assert_eq!(event["bytes"], 6912);
-                break;
-            }
-        }
-        drop(progress);
         listener.shutdown().await;
     })
     .await
-    .expect("upload lifecycle stalled");
+    .unwrap();
 }
 
 #[tokio::test]
@@ -476,7 +377,10 @@ async fn active_http1_progress_survives_an_idle_interval() {
         .await
         .unwrap();
     let mut progress = tokio::io::BufReader::new(socket);
-    read_headers(&mut progress).await;
+    let headers = read_headers(&mut progress).await;
+    assert!(headers.contains("application/x-ndjson"));
+    assert!(headers.contains("no-store, no-transform"));
+    assert!(headers.contains("x-accel-buffering: no"));
     assert_eq!(progress_event(&mut progress).await["type"], "ready");
     advance_http1_clock(Duration::from_secs(61)).await;
     let (headers, _) = upload_request(

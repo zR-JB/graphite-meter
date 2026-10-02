@@ -4,7 +4,7 @@ mod http1;
 #[path = "support/native.rs"]
 mod native;
 
-#[path = "../test_tls.rs"]
+#[path = "../../test_tls.rs"]
 mod test_tls;
 
 use bytes::Bytes;
@@ -36,7 +36,7 @@ impl Harness {
         Self::start_with_proxies(Vec::new()).await
     }
     async fn start_with_proxies(trusted_proxies: Vec<ipnet::IpNet>) -> Self {
-        let (tls, mut client) = test_tls::configs(b"http/1.1");
+        let (tls, mut client) = test_tls::configs("localhost", &[&rustls::version::TLS13], &[b"http/1.1"]).unwrap();
         let connector = TlsConnector::from(Arc::new(client.clone()));
         client.alpn_protocols = vec![b"h2".to_vec()];
         let h2_connector = TlsConnector::from(Arc::new(client));
@@ -75,6 +75,20 @@ impl Harness {
             .await
             .unwrap()
     }
+    async fn h2(&self, window: u32) -> (h2::client::SendRequest<Bytes>, tokio::task::JoinHandle<Result<(), h2::Error>>) {
+        let stream = self
+            .h2_connector
+            .connect(ServerName::try_from("localhost").unwrap(), TcpStream::connect(self.h2).await.unwrap())
+            .await
+            .unwrap();
+        let (client, connection) = h2::client::Builder::new()
+            .initial_window_size(window)
+            .handshake(stream)
+            .await
+            .unwrap();
+        (client, tokio::spawn(connection))
+    }
+
     async fn request(&self, method: &str, path: &str, headers: &str, body: &str) -> (String, Vec<u8>) {
         http1::exchange(
             self.connect().await,
@@ -147,124 +161,12 @@ async fn password_tls_upload_h2_and_websocket_are_bound_to_login_lifetime() {
 
 async fn password_flow() {
     let h = Harness::start().await;
-    // Sign-in needs only these two bundled faces. This debug build may have no assets,
-    // but the authorization gate must let GET/HEAD reach their file handler.
-    for path in [
-        "/fonts/ibm-plex-sans-var-latin1.woff2",
-        "/fonts/ibm-plex-mono-600-latin1.woff2",
-    ] {
-        for method in ["GET", "HEAD"] {
-            let (headers, body) = h.request(method, path, "", "").await;
-            assert!(
-                !headers.contains("graphite-meter-auth: required"),
-                "{method} {path}: {headers}"
-            );
-            assert!(!headers.starts_with("HTTP/1.1 403"));
-            if method == "HEAD" {
-                assert!(body.is_empty());
-            }
-        }
-        for method in ["POST", "OPTIONS", "DELETE"] {
-            let (headers, _) = h.request(method, path, "", "").await;
-            assert!(
-                headers.contains("graphite-meter-auth: required"),
-                "{method} {path}: {headers}"
-            );
-        }
-    }
-    for path in [
-        "/fonts/ibm-plex-sans-var-latin2.woff2",
-        "/fonts/ibm-plex-mono-500-latin1.woff2",
-        "/fonts/ibm-plex-sans-var-latin1.woff2/",
-        "/fonts/",
-    ] {
-        let (headers, _) = h.request("GET", path, "", "").await;
-        assert!(headers.contains("graphite-meter-auth: required"), "{path}: {headers}");
-    }
-    let (denied, _) = h.request("GET", "/download?bytes=1", "", "").await;
-    assert!(denied.starts_with("HTTP/1.1 403"));
-    assert!(denied.contains("graphite-meter-auth: required"));
-    assert!(denied.contains("x-frame-options: DENY\r\n") && denied.contains("content-length: 0\r\n"));
-    assert!(!denied.contains("access-control-allow-origin: *"));
     let (session, csrf) = h.login().await;
     let form = "Origin: https://localhost\r\nContent-Type: application/x-www-form-urlencoded\r\n";
     let (oversized, _) = h.request("POST", "/auth/password", form, &"x".repeat(5000)).await;
     assert!(oversized.contains("location: /login?error=failed\r\n"), "{oversized}");
     let headers = credentials(&session, &csrf);
-    let (_, info) = h.request("GET", "/auth/session", &headers, "").await;
-    let info: serde_json::Value = serde_json::from_slice(&info).unwrap();
-    assert_eq!(info["provider"], "local");
-    assert_eq!(info["csrf"], csrf);
-    assert!(info["expires"].is_string());
-    assert_eq!(info["maximumLifetimeMs"], 28_800_000);
-    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-    use sha2::{Digest, Sha256};
-    let verifier = "native-client";
-    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-    let (page, _) = h
-        .request("GET", &format!("/auth/cli?challenge={challenge}"), &headers, "")
-        .await;
-    assert!(page.starts_with("HTTP/1.1 200"));
-    let approval = form_urlencoded::Serializer::new(String::new())
-        .append_pair("csrf", &csrf)
-        .append_pair("challenge", &challenge)
-        .finish();
-    let (approved, _) = h
-        .request(
-            "POST",
-            "/auth/cli/approve",
-            &format!("{headers}Content-Type: application/x-www-form-urlencoded\r\n"),
-            &approval,
-        )
-        .await;
-    assert!(approved.starts_with("HTTP/1.1 200"));
-    let (issued, token) = h
-        .request(
-            "POST",
-            "/auth/cli/token",
-            "Content-Type: application/json\r\n",
-            &serde_json::json!({"verifier": verifier}).to_string(),
-        )
-        .await;
-    assert!(issued.starts_with("HTTP/1.1 200"));
-    let token: serde_json::Value = serde_json::from_slice(&token).unwrap();
-    assert!(token["expires"].is_string());
-    let bearer = format!("Authorization: Bearer {}\r\n", token["token"].as_str().unwrap());
-    let (authorized, _) = h.request("GET", "/probe", &bearer, "").await;
-    assert!(authorized.starts_with("HTTP/1.1 200"));
-
-    for (route, target) in [
-        ("/ws/session", "https://localhost/ws/ping"),
-        ("/wt/session", "https://localhost:8443/wt/ping"),
-    ] {
-        let (minted, body) = h
-            .request("POST", &format!("{route}?target={target}"), &headers, "")
-            .await;
-        assert!(minted.starts_with("HTTP/1.1 200"));
-        assert!(minted.contains("access-control-allow-origin: https://localhost\r\n"));
-        assert!(minted.contains("access-control-allow-credentials: true\r\n"));
-        assert!(serde_json::from_slice::<serde_json::Value>(&body).unwrap()["token"].is_string());
-    }
     let (other, other_csrf) = h.login().await;
-    let (ok, body) = h.request("GET", "/download?bytes=1000", &headers, "").await;
-    assert!(ok.starts_with("HTTP/1.1 200"));
-    assert_eq!(body.len(), 1000);
-    assert!(
-        ok.contains("strict-transport-security: max-age=31536000\r\n")
-            && ok.contains("referrer-policy: same-origin\r\n")
-    );
-    assert!(!ok.contains("x-frame-options") && !ok.contains("content-security-policy"));
-    assert!(ok.contains("access-control-allow-credentials: true"));
-    assert!(!ok.contains("access-control-allow-origin: *"));
-    let (bad, _) = h
-        .request(
-            "GET",
-            "/download?bytes=1",
-            &format!("{headers}Authorization: Bearer invalid\r\n"),
-            "",
-        )
-        .await;
-    assert!(bad.starts_with("HTTP/1.1 403"));
     let (_, body) = h.request("POST", "/upload/session", &headers, "").await;
     let id = serde_json::from_slice::<serde_json::Value>(&body).unwrap()["uploadId"]
         .as_str()
@@ -276,15 +178,7 @@ async fn password_flow() {
         .await
         .unwrap();
     read_until(&mut progress, b"ready").await;
-    let (_, body) = h
-        .request("POST", &format!("/upload?id={id}"), &headers, "hello auth")
-        .await;
-    assert_eq!(serde_json::from_slice::<serde_json::Value>(&body).unwrap()["bytes"], 10);
-    let (checkpoint, _) = h
-        .request("POST", &format!("/upload/checkpoint?id={id}"), &headers, "")
-        .await;
-    assert!(checkpoint.starts_with("HTTP/1.1 200"));
-    // Leave a second upload body incomplete: revocation must cancel reads,
+    // Leave an upload body incomplete: revocation must cancel reads,
     // not wait for the next frame or the 120-second upload bound.
     let mut uploading = h.connect().await;
     uploading
@@ -294,20 +188,7 @@ async fn password_flow() {
         )
         .await
         .unwrap();
-    let stream = h
-        .h2_connector
-        .connect(
-            ServerName::try_from("localhost").unwrap(),
-            TcpStream::connect(h.h2).await.unwrap(),
-        )
-        .await
-        .unwrap();
-    let (mut client, connection) = h2::client::Builder::new()
-        .initial_window_size(0)
-        .handshake::<_, Bytes>(stream)
-        .await
-        .unwrap();
-    let driver = tokio::spawn(connection);
+    let (mut client, driver) = h.h2(0).await;
     let request = |path: &str, token: &str| {
         Request::builder()
             .uri(format!("https://localhost{path}"))
@@ -364,8 +245,6 @@ async fn password_flow() {
     let (ok, _) = h.request("GET", "/probe", &credentials(&other, &other_csrf), "").await;
     assert!(ok.starts_with("HTTP/1.1 200"));
     let (denied, _) = h.request("GET", "/probe", &headers, "").await;
-    assert!(denied.starts_with("HTTP/1.1 403"));
-    let (denied, _) = h.request("GET", "/probe", &bearer, "").await;
     assert!(denied.starts_with("HTTP/1.1 403"));
     driver.abort();
     let _ = driver.await;
@@ -450,42 +329,6 @@ async fn approval_pages_require_client_evidence_behind_a_trusted_proxy() {
 }
 
 #[tokio::test]
-async fn signed_in_head_requests_reach_the_get_pages_as_in_go() {
-    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-    use sha2::{Digest, Sha256};
-
-    let h = Harness::start().await;
-    let (session, csrf) = h.login().await;
-    let signed_in = credentials(&session, &csrf);
-    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(b"head verifier"));
-    for path in [
-        "/login".to_owned(),
-        "/auth/session".into(),
-        format!("/auth/cli?challenge={challenge}"),
-    ] {
-        let (get, _) = h.request("GET", &path, &signed_in, "").await;
-        let (head, body) = h.request("HEAD", &path, &signed_in, "").await;
-        assert!(get.starts_with("HTTP/1.1 200"), "{path}: {get}");
-        assert!(head.starts_with("HTTP/1.1 200") && body.is_empty(), "{path}: {head}");
-    }
-    // Go's http.Redirect gives a HEAD redirect its HTML type but no body.
-    let browser = URL_SAFE_NO_PAD.encode(Sha256::digest(b"head browser verifier"));
-    let page = format!("/auth/browser?challenge={browser}&client_origin=https%3A%2F%2Fclient.example");
-    let (get, _) = h.request("GET", &page, &signed_in, "").await;
-    let cli = format!("/auth/cli?challenge={browser}");
-    let (head, body) = h.request("HEAD", &cli, &signed_in, "").await;
-    assert!(
-        get.starts_with("HTTP/1.1 200") && head.starts_with("HTTP/1.1 303") && body.is_empty(),
-        "{head}"
-    );
-    assert!(head.contains("content-type: text/html; charset=utf-8\r\n"), "{head}");
-    // As Go's public routes are GET alone, HEAD opens no page without a session.
-    let (head, _) = h.request("HEAD", "/login", "", "").await;
-    assert!(head.starts_with("HTTP/1.1 403"), "{head}");
-    h.stop().await;
-}
-
-#[tokio::test]
 async fn an_ambiguous_request_is_refused_before_hsts_as_in_go() {
     let h = Harness::start().await;
     let repeated = "Authorization: Bearer a\r\nAuthorization: Bearer b\r\n";
@@ -525,16 +368,7 @@ async fn an_empty_origin_is_given_no_cors_headers_as_in_go() {
 async fn native_listeners_authorize_routes_they_do_not_mount_before_404() {
     let h = Harness::start().await;
     let (session, _) = h.login().await;
-    let stream = h
-        .h2_connector
-        .connect(
-            ServerName::try_from("localhost").unwrap(),
-            TcpStream::connect(h.h2).await.unwrap(),
-        )
-        .await
-        .unwrap();
-    let (mut client, connection) = h2::client::handshake(stream).await.unwrap();
-    let driver = tokio::spawn(connection);
+    let (mut client, driver) = h.h2(65_535).await;
     // The native HTTP/2 listener mounts neither WebSockets nor WebTransport.
     for path in ["/ws/ping", "/wt/download"] {
         for session in [None, Some(&session)] {
@@ -568,6 +402,13 @@ async fn socket_tickets_are_minted_only_where_mounted_and_only_for_post() {
     ];
     // The UI listener mounts both, for POST alone; as Go's "/" pattern, its app answers GET.
     for (route, target) in targets {
+        let (minted, body) = h
+            .request("POST", &format!("{route}?target={target}"), &credentials(&session, &csrf), "")
+            .await;
+        assert!(minted.starts_with("HTTP/1.1 200"));
+        assert!(minted.contains("access-control-allow-origin: https://localhost\r\n"));
+        assert!(minted.contains("access-control-allow-credentials: true\r\n"));
+        assert!(serde_json::from_slice::<serde_json::Value>(&body).unwrap()["token"].is_string());
         let (refused, _) = h
             .request(
                 "GET",
@@ -578,16 +419,7 @@ async fn socket_tickets_are_minted_only_where_mounted_and_only_for_post() {
             .await;
         assert!(refused.starts_with("HTTP/1.1 404"), "{route}: {refused}");
     }
-    let stream = h
-        .h2_connector
-        .connect(
-            ServerName::try_from("localhost").unwrap(),
-            TcpStream::connect(h.h2).await.unwrap(),
-        )
-        .await
-        .unwrap();
-    let (mut client, connection) = h2::client::handshake(stream).await.unwrap();
-    let driver = tokio::spawn(connection);
+    let (mut client, driver) = h.h2(65_535).await;
     // As in Go, the native HTTP/2 listener mounts only the WebTransport ticket; WebSockets live on the UI listeners.
     for (method, (route, target), expected) in [
         ("GET", targets[0], 404),

@@ -2,7 +2,6 @@
 //! that send what a conforming client never would. Deadlines run on tokio's paused clock.
 use bytes::Bytes;
 use graphite_meter_http3::{Code, Error, RequestStream, WtCode, client, server, webtransport::Session};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use std::{
     future::Future,
     sync::{
@@ -14,8 +13,8 @@ use std::{
 };
 use tokio::sync::Notify;
 
-#[path = "../../test_identity.rs"]
-mod test_identity;
+#[path = "../../test_tls.rs"]
+mod test_tls;
 
 type TestError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -59,30 +58,14 @@ async fn peers_with(
     reliable_reset: bool,
     datagrams: bool,
 ) -> Result<Peers, TestError> {
-    let (certificate, key) = test_identity::generate_identity("localhost")?;
-    let certificate = CertificateDer::from_pem_slice(certificate.as_bytes())?;
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let mut tls = rustls::ServerConfig::builder_with_provider(provider.clone())
-        .with_protocol_versions(&[&rustls::version::TLS13])?
-        .with_no_client_auth()
-        .with_single_cert(
-            vec![certificate.clone()],
-            PrivateKeyDer::from_pem_slice(key.as_bytes())?,
-        )?;
-    tls.alpn_protocols = vec![b"h3".to_vec()];
+    let (server_tls, client_tls) = test_tls::configs("localhost", &[&rustls::version::TLS13], &[b"h3"])?;
     let mut transport = noq::TransportConfig::default();
     // Fake-clock jumps stay inside the idle timeout.
     transport.max_idle_timeout(Some(Duration::from_secs(120).try_into()?));
-    let mut server = noq::ServerConfig::with_crypto(Arc::new(noq::crypto::rustls::QuicServerConfig::try_from(tls)?));
+    let mut server =
+        noq::ServerConfig::with_crypto(Arc::new(noq::crypto::rustls::QuicServerConfig::try_from(server_tls)?));
     server.transport_config(Arc::new(transport));
-    let mut roots = rustls::RootCertStore::empty();
-    roots.add(certificate)?;
-    let mut tls = rustls::ClientConfig::builder_with_provider(provider)
-        .with_protocol_versions(&[&rustls::version::TLS13])?
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-    tls.alpn_protocols = vec![b"h3".to_vec()];
-    let mut client = noq::ClientConfig::new(Arc::new(noq::crypto::rustls::QuicClientConfig::try_from(tls)?));
+    let mut client = noq::ClientConfig::new(Arc::new(noq::crypto::rustls::QuicClientConfig::try_from(client_tls)?));
     let mut client_transport = noq::TransportConfig::default();
     client_transport.max_idle_timeout(Some(Duration::from_secs(120).try_into()?));
     if let Some(window) = window {

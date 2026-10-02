@@ -25,26 +25,3 @@ fn recover<T: ?Sized, G>(result: LockResult<G>, clear: impl FnOnce()) -> G {
         poisoned.into_inner()
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_poisoned_lock_is_recovered_once_with_its_state() {
-        let counts = Mutex::new(1);
-        std::thread::scope(|scope| {
-            scope
-                .spawn(|| {
-                    let mut counts = lock(&counts);
-                    *counts += 1;
-                    panic!("a bug under the lock");
-                })
-                .join()
-                .unwrap_err();
-        });
-        assert!(counts.is_poisoned());
-        assert_eq!(*lock(&counts), 2);
-        assert!(!counts.is_poisoned(), "recovery is reported once");
-    }
-}

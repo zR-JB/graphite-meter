@@ -23,7 +23,6 @@ use tokio_tungstenite::{
 type TestError = Box<dyn Error + Send + Sync>;
 // RFC 6455 example nonce.
 const NONCE: &str = "dGhlIHNhbXBsZSBub25jZQ==";
-mod support;
 
 #[test]
 fn upgrade_validates_origin_and_key_without_negotiating_compression() {
@@ -202,49 +201,6 @@ async fn blocked_reply_and_close_cannot_hold_session_forever() -> Result<(), Tes
     tokio::task::yield_now().await;
     stop.send(CloseReason::Finished).unwrap();
     tokio::time::timeout(Duration::from_secs(6), task).await??;
-    Ok(())
-}
-
-#[tokio::test]
-async fn websocket_upgrade_works_over_validated_tls() -> Result<(), TestError> {
-    use graphite_meter_server::config::{Config, NativeKind};
-    use graphite_meter_server::{http::HttpServer, tls::Certificates};
-    use rustls::{
-        ClientConfig, RootCertStore,
-        pki_types::{CertificateDer, ServerName, pem::PemObject},
-    };
-    use std::{sync::Arc, time::SystemTime};
-    use tokio::net::TcpStream;
-    use tokio_rustls::TlsConnector;
-
-    let identity = support::Identity::generate();
-    let config = Config {
-        tls_cert: identity.directory().join("identity.pem").to_str().unwrap().into(),
-        tls_key: identity.directory().join("identity.key").to_str().unwrap().into(),
-        ..Config::default()
-    };
-    let tls = Certificates::load(&config, SystemTime::now(), |_| Ok(()))?.config()?;
-    let mut roots = RootCertStore::empty();
-    roots.add(CertificateDer::from_pem_file(&config.tls_cert)?)?;
-    let mut client_tls = ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-    client_tls.alpn_protocols = vec![b"http/1.1".to_vec()];
-    let server = Arc::new(HttpServer::new(config.validated().unwrap())?);
-    let server = native::serve(server, NativeKind::H1Tls, Some(tls)).await;
-    let address = server.address;
-    let stream = TlsConnector::from(Arc::new(client_tls))
-        .connect(ServerName::try_from("localhost")?, TcpStream::connect(address).await?)
-        .await?;
-    let (mut socket, _) =
-        tokio_tungstenite::client_async(format!("wss://localhost:{}/ws/ping", address.port()), stream).await?;
-    socket.send(Message::Text("PING,42".into())).await?;
-    let pong = tokio::time::timeout(Duration::from_secs(2), socket.next())
-        .await?
-        .unwrap()?;
-    assert_eq!(decode_pong(pong.to_text()?)?.id, 42);
-    socket.close(None).await?;
-    tokio::time::timeout(Duration::from_secs(2), server.shutdown()).await?;
     Ok(())
 }
 

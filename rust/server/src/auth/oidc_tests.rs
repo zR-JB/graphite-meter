@@ -2,7 +2,6 @@ use super::super::test_keys::Signers;
 use super::*;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use hyper::{body::Incoming, server::conn::http1, service::service_fn};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use serde_json::{Value, json};
 use std::{
     sync::atomic::{AtomicUsize, Ordering},
@@ -15,7 +14,7 @@ use tokio::{
 };
 use tokio_rustls::TlsAcceptor;
 
-use crate::{config::AuthMode, test_identity};
+use crate::{config::AuthMode, test_tls};
 
 #[derive(Clone, Copy, Default)]
 struct Claims {
@@ -184,17 +183,7 @@ impl Double {
 }
 
 async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Arc<Double> {
-    let (certificate, key) = test_identity::generate_identity(host).unwrap();
-    let certificates = CertificateDer::pem_slice_iter(certificate.as_bytes())
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    let key = PrivateKeyDer::from_pem_slice(key.as_bytes()).unwrap();
-    let tls = rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-        .with_safe_default_protocol_versions()
-        .unwrap()
-        .with_no_client_auth()
-        .with_single_cert(certificates.clone(), key)
-        .unwrap();
+    let (tls, client_tls) = test_tls::configs(host, rustls::DEFAULT_VERSIONS, &[]).unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let issuer = format!("https://{host}:{}", listener.local_addr().unwrap().port());
     let mut oidc = Oidc::new(
@@ -210,13 +199,6 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Arc<D
         Arc::new(crate::auth::logging::SecurityLog::default()),
     )
     .unwrap();
-    let mut roots = rustls::RootCertStore::empty();
-    roots.add_parsable_certificates(certificates);
-    let client_tls = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-        .with_safe_default_protocol_versions()
-        .unwrap()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
     oidc.http = ProviderHttp {
         tls: TlsConnector::from(Arc::new(client_tls)),
         proxy,

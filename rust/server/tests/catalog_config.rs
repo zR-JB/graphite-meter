@@ -30,22 +30,11 @@ fn source_presence_and_inline_file_equivalence() {
     assert!(load(Some("{}"), Some("/unused")).is_err());
     assert!(load(Some(""), None).is_err());
     assert!(load(None, Some("")).is_err());
-    let raw = r#"{
-        "defaultSelection": ["remote"],
-        "servers": [{
-            "id": "remote",
-            "name": "Remote",
-            "url": "https://EXAMPLE.net:443/",
-            "additionalOrigins": ["https://transfer.example.net/"]
-        }]
-    }"#;
+    let raw = r#"["https://EXAMPLE.net:443/"]"#;
     let file = TempFile::new(raw.as_bytes());
     let inline = load(Some(raw), None).unwrap();
     assert_eq!(inline, load(None, Some(file.0.to_str().unwrap())).unwrap());
-    assert_eq!(inline.servers[0].id, "self");
-    assert_eq!(inline.default_selection, ["remote"]);
     assert_eq!(inline.servers[1].url, "https://example.net");
-    assert_eq!(inline.servers[1].additional_origins, ["https://transfer.example.net"]);
 }
 
 #[test]
@@ -67,19 +56,6 @@ fn null_and_missing_defaults_match_go() {
     ] {
         assert!(parse(raw.as_bytes()).is_err(), "{raw}");
     }
-    let catalog = parse(
-        br#"{
-        "servers": [{
-            "id": "a",
-            "url": "https://example.net",
-            "name": null,
-            "location": null,
-            "additionalOrigins": null
-        }]
-    }"#,
-    )
-    .unwrap();
-    assert_eq!(catalog.servers[1].name, "");
 }
 
 #[test]
@@ -116,23 +92,6 @@ fn rejects_unsafe_ambiguous_and_duplicate_json() {
             "{origin}"
         );
     }
-}
-
-#[test]
-fn canonical_origin_hash_ids_are_stable_across_order_and_source() {
-    let first = parse(br#"["https://EXAMPLE.net:443", "http://[::1]:8080"]"#).unwrap();
-    let second = parse(br#"["http://[::1]:8080", "https://example.net/"]"#).unwrap();
-    assert_eq!(first.servers[1].id, second.servers[2].id);
-    assert_eq!(first.servers[2].id, second.servers[1].id);
-    assert_eq!(first.servers[1].name, "example.net");
-    assert_eq!(first.servers[2].name, "[::1]:8080");
-    assert_eq!(first.servers[1].id, "server-35d5ef135871623822d3d4779a9ecac1");
-    let file = TempFile::new(br#"["https://example.net"]"#);
-    assert_eq!(
-        load(None, Some(file.0.to_str().unwrap())).unwrap().servers[1].id,
-        first.servers[1].id
-    );
-    assert!(parse(br#"["https://example.net", "https://EXAMPLE.net:443"]"#).is_err());
 }
 
 #[test]

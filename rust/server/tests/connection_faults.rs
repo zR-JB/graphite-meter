@@ -1,7 +1,7 @@
 #[path = "support/native.rs"]
 mod native;
 
-#[path = "../test_tls.rs"]
+#[path = "../../test_tls.rs"]
 mod test_tls;
 
 use bytes::Bytes;
@@ -35,7 +35,7 @@ struct Tls {
 }
 impl Tls {
     fn new() -> Self {
-        let (server, client) = test_tls::configs(b"h2");
+        let (server, client) = test_tls::configs("localhost", &[&rustls::version::TLS13], &[b"h2"]).unwrap();
         Self { server, client }
     }
     fn server(&self, resolver: Arc<dyn ResolvesServerCert>) -> ServerConfig {

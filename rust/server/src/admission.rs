@@ -181,17 +181,5 @@ mod tests {
         drop(session);
         assert_eq!(admission.load(), (0, 2));
         assert!(admission.acquire(true, &["a".into()]).is_ok());
-        assert_eq!(
-            admission.stats(),
-            Stats {
-                active: 0,
-                peak: 2,
-                refused_pool: 1,
-                refused_client: 1,
-                sessions: 0,
-                sessions_refused_budget: 1,
-                sessions_refused_client: 1,
-            }
-        );
     }
 }

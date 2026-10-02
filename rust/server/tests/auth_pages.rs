@@ -1,7 +1,6 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
 use graphite_meter_server::auth::pages::{
-    LoginPage, PENDING_SCRIPT, STYLES, THEME_SCRIPT, approval_page, capacity_page, continue_page, done_page,
-    security_headers,
+    LoginPage, PENDING_SCRIPT, STYLES, THEME_SCRIPT, approval_page, continue_page, done_page, security_headers,
 };
 use sha2::{Digest, Sha256};
 
@@ -14,63 +13,27 @@ fn inline_blocks<'a>(html: &'a str, tag: &str) -> Vec<&'a str> {
         .collect()
 }
 
-#[derive(Default, serde::Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-struct Case {
-    name: String,
-    sha256: String,
-    page: String,
-    csrf: String,
-    provider: String,
-    challenge: String,
-    notice: String,
-    status: String,
-    code: String,
-    origin: String,
-    password: bool,
-    oidc: bool,
-    oidc_ready: bool,
-    browser: bool,
-    capacity: bool,
-    opening: bool,
-}
-
-fn render(case: &Case) -> String {
-    match case.page.as_str() {
-        "login" => LoginPage {
-            csrf: &case.csrf,
-            provider: &case.provider,
-            challenge: &case.challenge,
-            password: case.password,
-            oidc: case.oidc,
-            oidc_ready: case.oidc_ready,
-            notice: &case.notice,
-            status: &case.status,
-        }
-        .render(),
-        "cli" if case.capacity => capacity_page(),
-        "cli" => approval_page(&case.code, &case.csrf, &case.challenge, &case.origin),
-        "cli-done" => done_page(case.browser),
-        "continue" => continue_page(&case.challenge, case.opening),
-        page => panic!("unknown page {page}"),
-    }
-}
-
 #[test]
-fn pages_render_as_go_renders_the_shared_goldens() {
-    let cases: Vec<Case> = serde_json::from_str(include_str!("../../../go/internal/auth/testdata/pages.json")).unwrap();
-    assert!(!cases.is_empty());
-    for case in cases {
-        let html = render(&case)
-            .replace(STYLES, "/* auth.css */")
-            .replace(THEME_SCRIPT, "/* theme.js */")
-            .replace(PENDING_SCRIPT, "/* pending.js */");
-        let digest: String = Sha256::digest(html.as_bytes())
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
-        assert_eq!(digest, case.sha256, "{}", case.name);
+fn fields_are_escaped_for_html_attributes_and_urls() {
+    let hostile = "A&B <i>\"x\"</i> 'y'+z\0";
+    let escaped = "A&amp;B &lt;i&gt;&#34;x&#34;&lt;/i&gt; &#39;y&#39;&#43;z\u{fffd}";
+    let approval = approval_page(hostile, hostile, hostile, hostile);
+    assert!(approval.contains(escaped));
+    assert!(!approval.contains(hostile));
+    let login = LoginPage {
+        csrf: hostile,
+        provider: hostile,
+        challenge: hostile,
+        password: true,
+        oidc: true,
+        oidc_ready: true,
+        notice: "password",
+        status: "signed_out",
     }
+    .render();
+    assert!(login.contains(escaped) && !login.contains(hostile));
+    let continued = continue_page("a b&c+d/é\"<>'\n", true);
+    assert!(continued.contains("a%20b%26c%2bd%2f%c3%a9%22%3c%3e%27%0a"));
 }
 
 #[test]

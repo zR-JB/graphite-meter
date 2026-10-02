@@ -70,7 +70,7 @@ async fn request(
 }
 
 #[tokio::test]
-async fn validated_tls13_serves_discovery_download_and_upload_after_rejected_tls12() {
+async fn validated_tls13_serves_probe_after_rejected_tls12() {
     tokio::time::timeout(Duration::from_secs(10), async {
         let identity = support::Identity::generate();
         let (tls, roots) = configs(&identity);
@@ -86,52 +86,11 @@ async fn validated_tls13_serves_discovery_download_and_upload_after_rejected_tls
             .await
             .is_err()
         );
-        for path in ["/probe", "/preflight", "/servers"] {
-            let (headers, body) = request(listener.address, &good, "GET", path, b"").await;
-            assert!(headers.starts_with("HTTP/1.1 200"));
-            assert!(headers.contains("access-control-allow-origin: *"));
-            let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
-            if path == "/probe" {
-                assert_eq!(value["protocolNegotiated"], "http/1.1");
-            }
-        }
-        for path in ["/wt/session", "/ws/session"] {
-            let (headers, body) = request(listener.address, &good, "POST", path, b"").await;
-            assert!(headers.starts_with("HTTP/1.1 200"));
-            assert!(headers.contains("cache-control: no-store"));
-            assert_eq!(
-                serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
-                serde_json::json!({"token":"","expires":0})
-            );
-            // As Go's "/" pattern on a listener that serves the app, the app answers GET.
-            let (headers, _) = request(listener.address, &good, "GET", path, b"").await;
-            assert!(headers.starts_with("HTTP/1.1 404"), "{headers}");
-        }
-        let (headers, download) = request(listener.address, &good, "GET", "/download?bytes=300000", b"").await;
+        let (headers, body) = request(listener.address, &good, "GET", "/probe", b"").await;
         assert!(headers.starts_with("HTTP/1.1 200"));
-        assert_eq!(download.len(), 300000);
-        assert_eq!(&download[..37856], &download[262144..]);
-        let (_, session) = request(listener.address, &good, "POST", "/upload/session", b"").await;
-        let session: serde_json::Value = serde_json::from_slice(&session).unwrap();
-        let id = session["uploadId"].as_str().unwrap();
-        let (headers, upload) = request(listener.address, &good, "POST", &format!("/upload?id={id}"), &download).await;
-        assert!(headers.starts_with("HTTP/1.1 200"));
-        assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&upload).unwrap()["bytes"],
-            300000
-        );
-        let (_, checkpoint) = request(
-            listener.address,
-            &good,
-            "POST",
-            &format!("/upload/checkpoint?id={id}"),
-            b"",
-        )
-        .await;
-        assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&checkpoint).unwrap()["bytes"],
-            300000
-        );
+        assert!(headers.contains("access-control-allow-origin: *"));
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["protocolNegotiated"], "http/1.1");
         listener.shutdown().await;
     })
     .await

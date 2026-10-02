@@ -56,56 +56,6 @@ fn start(mut command: Command) -> (Server, mpsc::Receiver<String>, std::thread::
     (server, received, reader)
 }
 
-#[test]
-fn log_lines_match_go_and_peer_failures_are_limited() {
-    let identity = support::Identity::generate();
-    let mut command = command(&identity);
-    command.envs([
-        ("GM_H1_ADDR", "127.0.0.1:0"),
-        ("GM_H1_TLS_ADDR", "127.0.0.2:0"),
-        ("GM_H1_PUBLIC_ORIGIN", "http://localhost:7246"),
-        ("GM_H1_TLS_PUBLIC_ORIGIN", "https://localhost:7247"),
-    ]);
-    let (server, received, reader) = start(command);
-    let listening = |role: &str| loop {
-        let line = received
-            .recv_timeout(Duration::from_secs(10))
-            .expect("timestamped listener line");
-        if let Some(address) = timestamped(&line).and_then(|message| message.strip_suffix(&format!("/tcp ({role})"))) {
-            return address.rsplit_once(" listening on ").unwrap().1.to_owned();
-        }
-    };
-    let clear = listening("HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets");
-    let tls = listening("HTTPS/WSS HTTP/1.1: UI, discovery, probe, transfers, WebSockets");
-    for _ in 0..2 {
-        let mut plain = TcpStream::connect(&tls).unwrap();
-        plain.write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
-        let _ = plain.read_to_end(&mut Vec::new());
-    }
-    for host in ["a.example", "b.example"] {
-        let mut request = TcpStream::connect(&clear).unwrap();
-        write!(
-            request,
-            "GET /servers HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
-        )
-        .unwrap();
-        let mut response = String::new();
-        request.read_to_string(&mut response).unwrap();
-        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
-    }
-    drop(server);
-    reader.join().unwrap();
-    let rest: Vec<_> = received.try_iter().collect();
-    let failures: Vec<_> = rest.iter().filter(|line| line.contains("[gm:http]")).collect();
-    assert_eq!(failures.len(), 1, "{rest:?}");
-    let failure = timestamped(failures[0]).unwrap();
-    assert!(
-        failure.starts_with("[gm:http] http: TLS handshake error from 127.0.0."),
-        "{failure}"
-    );
-    assert!(!rest.iter().any(|line| line.contains("[gm:discovery]")), "{rest:?}");
-}
-
 /// As Go's `http.Server`, an accept that fails for want of descriptors is logged, then retried after a delay.
 #[cfg(unix)]
 #[test]

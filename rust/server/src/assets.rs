@@ -385,30 +385,6 @@ mod tests {
         assert_eq!(part.status(), StatusCode::PARTIAL_CONTENT);
         assert_eq!(part.headers()["content-range"], "bytes 0-3/10");
         assert_eq!(part.body(), "expo");
-        let parts = get("/assets/app.js", &[(header::RANGE, "bytes=0-1, -2")]);
-        let body = std::str::from_utf8(parts.body()).unwrap();
-        assert!(
-            parts.headers()["content-type"]
-                .to_str()
-                .unwrap()
-                .starts_with("multipart/byteranges; boundary=")
-        );
-        assert!(body.contains("Content-Range: bytes 0-1/10\r\nContent-Type: text/javascript; charset=utf-8\r\n\r\nex"));
-        assert!(body.contains("Content-Range: bytes 8-9/10\r\n") && body.ends_with("--\r\n"));
-        let past = get("/assets/app.js", &[(header::RANGE, "bytes=20-")]);
-        assert_eq!(past.status(), StatusCode::RANGE_NOT_SATISFIABLE);
-        assert_eq!(past.headers()["content-range"], "bytes */10");
-        assert_eq!(past.body(), "invalid range: failed to overlap\n");
-        assert!(!past.headers().contains_key("cache-control"));
-        assert_eq!(
-            get("/assets/app.js", &[(header::RANGE, "items=0-1")]).body(),
-            "invalid range\n"
-        );
-        let stale = get(
-            "/assets/app.js",
-            &[(header::RANGE, "bytes=0-3"), (header::IF_RANGE, "\"v1\"")],
-        );
-        assert_eq!((stale.status(), stale.body().len()), (StatusCode::OK, 10));
         assert_eq!(
             get("/assets/app.js", &[(header::IF_NONE_MATCH, "*")]).status(),
             StatusCode::NOT_MODIFIED

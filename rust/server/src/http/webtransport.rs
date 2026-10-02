@@ -48,20 +48,17 @@ impl HttpServer {
             topology: topology::QUIC.topology,
         };
         // A CONNECT has no body to end.
-        let (request, Passed { route, lease, .. }) = match self.gate(request, accepted, true) {
+        let (request, route) = match self.gate(request, accepted, true) {
             Ok(passed) => passed,
             Err(response) => return answer(stream, *response).await,
         };
+        let (request, lease) = request.into_parts();
         // Under authentication a session lives only as long as its lease.
         if self.auth.is_some() && lease.is_none() {
             return answer(stream, self.harden(text_response(StatusCode::FORBIDDEN))).await;
         }
         let Some(route) = route else {
             return answer(stream, self.harden(text_response(StatusCode::NOT_FOUND))).await;
-        };
-        let request = match request {
-            Checked::Public(request) => request,
-            Checked::Authorized(authorized) => authorized.into_parts().0,
         };
         let owner = self.owner(&request, lease.as_ref(), peer);
         let _permit = match self.admit(route, &owner) {

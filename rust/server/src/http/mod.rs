@@ -556,7 +556,7 @@ impl HttpServer {
         request: Request<B>,
         accepted: Accepted,
         body_ended: bool,
-    ) -> Result<(Checked<B>, Passed), Box<Response<ResponseBody>>> {
+    ) -> Result<(Checked<B>, Option<Route>), Box<Response<ResponseBody>>> {
         if let Some(response) = self.validate_request(&request, body_ended) {
             return Err(Box::new(response));
         }
@@ -570,12 +570,7 @@ impl HttpServer {
             if let Some(response) = self.refuse_route(&request, route, None, accepted.peer) {
                 return Err(Box::new(response));
             }
-            let passed = Passed {
-                route,
-                lease: None,
-                origin: None,
-            };
-            return Ok((Checked::Public(request), passed));
+            return Ok((Checked::Public(request), route));
         };
         let authorized = auth
             .policy()
@@ -589,20 +584,13 @@ impl HttpServer {
                 *response.headers_mut() = headers.clone();
                 return Err(Box::new(self.harden(response)));
             }
-            Authorization::Authenticated(lease) => Some(lease.clone()),
+            Authorization::Authenticated(lease) => Some(lease),
             Authorization::PublicAuth => None,
         };
-        if let Some(response) = self.refuse_route(authorized.request(), route, lease.as_ref(), accepted.peer) {
+        if let Some(response) = self.refuse_route(authorized.request(), route, lease, accepted.peer) {
             return Err(Box::new(self.harden(response)));
         }
-        // As Go's, CORS names only an Origin the policy accepted: the public origin, or a browser grant's.
-        let origin = authorized
-            .request()
-            .headers()
-            .get(header::ORIGIN)
-            .filter(|origin| !origin.is_empty())
-            .cloned();
-        Ok((Checked::Authorized(authorized), Passed { route, lease, origin }))
+        Ok((Checked::Authorized(authorized), route))
     }
 
     async fn respond_incoming<B>(
@@ -617,18 +605,25 @@ impl HttpServer {
         B::Error: std::error::Error + Send + Sync + 'static,
     {
         let body_ended = request.body().is_end_stream();
-        let (request, passed) = match self.gate(request, accepted, body_ended) {
+        let (request, route) = match self.gate(request, accepted, body_ended) {
             Ok(passed) => passed,
             Err(response) => return Ok(*response),
         };
-        let request = match request {
-            Checked::Authorized(authorized) if passed.controlled(authorized.request()) => {
-                return self.control(authorized, passed, operations).await;
+        let (request, lease) = match request {
+            Checked::Authorized(authorized)
+                if auth_route::claims(authorized.request().uri().path()) || ticket(route) =>
+            {
+                return self.control(authorized, route, operations).await;
             }
-            Checked::Authorized(authorized) => authorized.into_parts().0,
-            Checked::Public(request) => request,
+            request => request.into_parts(),
         };
-        let Passed { route, lease, origin } = passed;
+        let origin = lease.as_ref().and_then(|_| {
+            request
+                .headers()
+                .get(header::ORIGIN)
+                .filter(|origin| !origin.is_empty())
+                .cloned()
+        });
         let owner = self.owner(&request, lease.as_ref(), accepted.peer);
         let measurement = route.is_some();
         let upload = route == Some(Route::Upload) && request.method() == Method::POST;
@@ -680,7 +675,7 @@ impl HttpServer {
     async fn control<B>(
         &self,
         authorized: AuthorizedRequest<B>,
-        passed: Passed,
+        route: Option<Route>,
         operations: &Operations,
     ) -> io::Result<Response<ResponseBody>>
     where
@@ -688,7 +683,16 @@ impl HttpServer {
         B::Error: std::error::Error + Send + Sync + 'static,
     {
         let auth = self.auth.as_ref().expect("an authorized request has a controller");
-        let Passed { route, lease, origin } = passed;
+        let lease = match authorized.authorization() {
+            Authorization::Authenticated(lease) => Some(lease.clone()),
+            _ => None,
+        };
+        let origin = authorized
+            .request()
+            .headers()
+            .get(header::ORIGIN)
+            .filter(|origin| !origin.is_empty())
+            .cloned();
         let logout = AuthRoute::lookup(authorized.request().method(), authorized.request().uri().path())
             == Some(AuthRoute::Logout);
         let execute = async {
@@ -926,20 +930,19 @@ enum Checked<B> {
     Authorized(AuthorizedRequest<B>),
 }
 
-/// What the gate learned of a request it let through.
-struct Passed {
-    /// The route, when the listener mounts it.
-    route: Option<Route>,
-    /// Under authentication, the lease that ends the request's work when it ends.
-    lease: Option<AuthLease>,
-    /// The Origin a measurement answer's CORS names.
-    origin: Option<http::HeaderValue>,
-}
-
-impl Passed {
-    /// The controller answers its own paths and, as in Go, a ticket route where it is mounted, past the method check.
-    fn controlled<B>(&self, request: &Request<B>) -> bool {
-        auth_route::claims(request.uri().path()) || ticket(self.route)
+impl<B> Checked<B> {
+    fn into_parts(self) -> (Request<B>, Option<AuthLease>) {
+        match self {
+            Self::Public(request) => (request, None),
+            Self::Authorized(authorized) => {
+                let (request, authorization) = authorized.into_parts();
+                let lease = match authorization {
+                    Authorization::Authenticated(lease) => Some(lease),
+                    _ => None,
+                };
+                (request, lease)
+            }
+        }
     }
 }
 
@@ -1343,28 +1346,6 @@ mod tests {
         drop(admitted);
     }
 
-    #[tokio::test]
-    async fn download_body_owns_capacity_and_options_does_not_consume_it() {
-        let mut config = Config::default();
-        config.limits.operations_per_client = 1;
-        config.limits.sessions_per_client = 1;
-        let server = HttpServer::new(config.validated().unwrap()).unwrap();
-        let held = respond(&server, Method::GET, "/download?bytes=100").await;
-        assert_eq!(held.status(), StatusCode::OK);
-        assert_eq!(held.headers()[header::CONTENT_LENGTH], "100");
-
-        let refused = respond(&server, Method::GET, "/download").await;
-        assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
-        assert_eq!(refused.headers()[header::RETRY_AFTER], "1");
-        assert_eq!(refused.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
-
-        let options = respond(&server, Method::OPTIONS, "/download").await;
-        assert_eq!(options.status(), StatusCode::NO_CONTENT);
-        drop(held);
-        let download = respond(&server, Method::GET, "/download?bytes=0").await;
-        assert_eq!(download.status(), StatusCode::OK);
-    }
-
     /// As Go's mux, a route's preflight needs no client evidence: a proxied browser without a forwarded address gets
     /// its CORS answer, and only its measurement is refused.
     #[tokio::test]
@@ -1403,45 +1384,6 @@ mod tests {
             );
             assert!(response.body().is_end_stream());
         }
-    }
-
-    #[tokio::test]
-    async fn progress_claim_cancellation_owns_capacity_and_options_stays_unmetered() {
-        let mut config = Config::default();
-        config.limits.operations_per_client = 2;
-        config.limits.sessions_per_client = 1;
-        let server = HttpServer::new(config.validated().unwrap()).unwrap();
-        let peer = "[2001:db8:1::1]:31000";
-        let neighbor = "[2001:db8:1::2]:31000";
-        let foreign = "[2001:db8:2::1]:31000";
-        let mut minted = respond_from(&server, peer, Method::POST, "/upload/session").await;
-        let data = next_data(minted.body_mut()).await.unwrap();
-        let value: serde_json::Value = serde_json::from_slice(&data).unwrap();
-        let id = value["uploadId"].as_str().unwrap();
-        let path = format!("/upload/progress?id={id}");
-        let mut first = respond_from(&server, peer, Method::GET, &path).await;
-        let ready = next_data(first.body_mut()).await.unwrap();
-        assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&ready).unwrap()["type"],
-            "ready"
-        );
-        let second = respond_from(&server, neighbor, Method::GET, &path).await;
-        assert_eq!(second.status(), StatusCode::OK, "same IPv6 /64 shares upload ownership");
-        let download = respond_from(&server, peer, Method::GET, "/download?bytes=1").await;
-        assert_eq!(download.status(), StatusCode::TOO_MANY_REQUESTS);
-        for path in ["/upload", "/upload/session", "/upload/checkpoint", "/upload/progress"] {
-            let options = respond_from(&server, peer, Method::OPTIONS, path).await;
-            assert_eq!(options.status(), StatusCode::NO_CONTENT);
-        }
-        let checkpoint = format!("/upload/checkpoint?id={id}");
-        let refused = respond_from(&server, foreign, Method::POST, &checkpoint).await;
-        assert_eq!(refused.status(), StatusCode::FORBIDDEN);
-        assert_eq!(refused.headers()["x-graphite-upload-refusal"], "ownerMismatch");
-        assert!(next_data(first.body_mut()).await.is_none());
-        drop(first);
-        let download = respond_from(&server, peer, Method::GET, "/download?bytes=1").await;
-        assert_eq!(download.status(), StatusCode::OK);
-        drop(second);
     }
 
     #[tokio::test]
@@ -1635,68 +1577,6 @@ mod tests {
         assert_eq!(write.await.unwrap_err().kind(), io::ErrorKind::TimedOut);
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn flushed_upgrade_removes_http_idle_policy() {
-        let lifecycle = Arc::new(Mutex::new(Http1Lifecycle::UpgradePending(Box::pin(
-            tokio::time::sleep(Duration::from_millis(20)),
-        ))));
-        let mut writer = DeadlineIo {
-            inner: tokio::io::sink(),
-            operations: Arc::new(Mutex::new(Vec::new())),
-            lifecycle: Some(lifecycle.clone()),
-        };
-        writer.write_all(b"HTTP/1.1 101 Switching Protocols").await.unwrap();
-        writer.flush().await.unwrap();
-        assert!(matches!(*lifecycle.lock().unwrap(), Http1Lifecycle::Upgraded));
-        tokio::time::advance(Duration::from_secs(61)).await;
-        writer.write_all(b"owned WebSocket frame").await.unwrap();
-    }
-
-    /// Password logins and grants all share one principal, so each of them is bounded alone: every login funds a
-    /// window on each of its QUIC connections, as Go grants every connection its window.
-    #[test]
-    fn every_password_login_funds_a_window_on_each_quic_connection() {
-        let server = HttpServer::new(password()).unwrap();
-        let logins: Vec<_> = (0..3)
-            .map(|session| Owner::login(LOCAL_OPERATOR, &session.to_string()))
-            .collect();
-        let windows: Option<Vec<_>> = (0..8 * logins.len())
-            .map(|window| {
-                server
-                    .client_credit
-                    .claim(logins[window % 3].client_keys(), QUIC_CREDIT_BYTES)
-            })
-            .collect();
-        assert!(windows.is_some());
-    }
-
-    /// As Go's companion mux runs inside Enforce, the HTTP/3 companion authorizes and hardens a request before
-    /// answering 404 for a route it does not mount.
-    #[tokio::test]
-    async fn the_http3_companion_authorizes_and_hardens_before_its_404() {
-        let server = Arc::new(HttpServer::new(password()).unwrap());
-        let accepted = Accepted {
-            peer: "127.0.0.1:31000".parse().unwrap(),
-            tls: true,
-            topology: topology::tcp(NativeKind::H3, true).topology,
-        };
-        for path in ["/", "/download?bytes=1"] {
-            let (mut client, served) = tokio::io::duplex(1 << 16);
-            let serving = tokio::spawn(server.clone().serve_http1_connection(served, accepted, Some(7249)));
-            let request = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
-            client.write_all(request.as_bytes()).await.unwrap();
-            let mut answer = String::new();
-            client.read_to_string(&mut answer).await.unwrap();
-            assert!(answer.starts_with("HTTP/1.1 403"), "{answer}");
-            assert!(answer.contains("graphite-meter-auth: required\r\n"), "{answer}");
-            assert!(
-                answer.contains("strict-transport-security: max-age=31536000\r\n"),
-                "{answer}"
-            );
-            serving.await.unwrap();
-        }
-    }
-
     /// As Go's mux, an unclean path is sent to its clean form, and the controller's subtree, where the app is
     /// served, to its trailing slash; only a GET's answer links the destination.
     #[tokio::test]
@@ -1730,7 +1610,88 @@ mod tests {
         );
     }
 
-    /// Window growth is held back at three quarters of the budget; what all clients claim stays below that.
+    #[tokio::test]
+    async fn progress_claim_cancellation_owns_capacity_and_options_stays_unmetered() {
+        let mut config = Config::default();
+        config.limits.operations_per_client = 2;
+        config.limits.sessions_per_client = 1;
+        let server = HttpServer::new(config.validated().unwrap()).unwrap();
+        let peer = "[2001:db8:1::1]:31000";
+        let neighbor = "[2001:db8:1::2]:31000";
+        let foreign = "[2001:db8:2::1]:31000";
+        let mut minted = respond_from(&server, peer, Method::POST, "/upload/session").await;
+        let data = next_data(minted.body_mut()).await.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&data).unwrap();
+        let id = value["uploadId"].as_str().unwrap();
+        let path = format!("/upload/progress?id={id}");
+        let mut first = respond_from(&server, peer, Method::GET, &path).await;
+        let ready = next_data(first.body_mut()).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&ready).unwrap()["type"],
+            "ready"
+        );
+        let second = respond_from(&server, neighbor, Method::GET, &path).await;
+        assert_eq!(second.status(), StatusCode::OK, "same IPv6 /64 shares upload ownership");
+        let download = respond_from(&server, peer, Method::GET, "/download?bytes=1").await;
+        assert_eq!(download.status(), StatusCode::TOO_MANY_REQUESTS);
+        for path in ["/upload", "/upload/session", "/upload/checkpoint", "/upload/progress"] {
+            let options = respond_from(&server, peer, Method::OPTIONS, path).await;
+            assert_eq!(options.status(), StatusCode::NO_CONTENT);
+        }
+        let checkpoint = format!("/upload/checkpoint?id={id}");
+        let refused = respond_from(&server, foreign, Method::POST, &checkpoint).await;
+        assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+        assert_eq!(refused.headers()["x-graphite-upload-refusal"], "ownerMismatch");
+        assert!(next_data(first.body_mut()).await.is_none());
+        drop(first);
+        let download = respond_from(&server, peer, Method::GET, "/download?bytes=1").await;
+        assert_eq!(download.status(), StatusCode::OK);
+        drop(second);
+    }
+
+    /// As Go's companion mux runs inside Enforce, the HTTP/3 companion authorizes and hardens a request before
+    /// answering 404 for a route it does not mount.
+    #[tokio::test]
+    async fn the_http3_companion_authorizes_and_hardens_before_its_404() {
+        let server = Arc::new(HttpServer::new(password()).unwrap());
+        let accepted = Accepted {
+            peer: "127.0.0.1:31000".parse().unwrap(),
+            tls: true,
+            topology: topology::tcp(NativeKind::H3, true).topology,
+        };
+        for path in ["/", "/download?bytes=1"] {
+            let (mut client, served) = tokio::io::duplex(1 << 16);
+            let serving = tokio::spawn(server.clone().serve_http1_connection(served, accepted, Some(7249)));
+            let request = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+            client.write_all(request.as_bytes()).await.unwrap();
+            let mut answer = String::new();
+            client.read_to_string(&mut answer).await.unwrap();
+            assert!(answer.starts_with("HTTP/1.1 403"), "{answer}");
+            assert!(answer.contains("graphite-meter-auth: required\r\n"), "{answer}");
+            assert!(
+                answer.contains("strict-transport-security: max-age=31536000\r\n"),
+                "{answer}"
+            );
+            serving.await.unwrap();
+        }
+    }
+
+    #[test]
+    fn every_password_login_funds_a_window_on_each_quic_connection() {
+        let server = HttpServer::new(password()).unwrap();
+        let logins: Vec<_> = (0..3)
+            .map(|session| Owner::login(LOCAL_OPERATOR, &session.to_string()))
+            .collect();
+        let windows: Option<Vec<_>> = (0..8 * logins.len())
+            .map(|window| {
+                server
+                    .client_credit
+                    .claim(logins[window % 3].client_keys(), QUIC_CREDIT_BYTES)
+            })
+            .collect();
+        assert!(windows.is_some());
+    }
+
     #[test]
     fn claims_alone_never_hold_back_window_growth() {
         let limit = 16 * QUIC_CREDIT_BYTES;

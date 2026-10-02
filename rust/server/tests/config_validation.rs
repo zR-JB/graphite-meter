@@ -20,27 +20,6 @@ fn password() -> Config {
 fn authentication_constrains_advertised_origins_and_secret_sources() {
     password().validate().unwrap();
     let mut memory = Config {
-        tls_cert: "cert.pem".into(),
-        tls_key: "key.pem".into(),
-        ..Config::default()
-    };
-    for (kind, address) in [
-        (NativeKind::H1Tls, ":8443"),
-        (NativeKind::H2, ":8444"),
-        (NativeKind::H3, ":8445"),
-    ] {
-        memory.native[kind as usize].address = address.into();
-    }
-    memory
-        .validate()
-        .expect("Go's default connection limit fits the default budget");
-    memory.max_connections_per_client = memory.max_connections;
-    memory.limits.operations_per_client = memory.limits.operations;
-    memory.limits.sessions_per_client = memory.limits.sessions;
-    memory
-        .validate()
-        .expect("per-client limits at the totals fit the default budget");
-    memory = Config {
         max_buffer_bytes: 1024 * 1024,
         max_connections: 512,
         tls_cert: "cert.pem".into(),

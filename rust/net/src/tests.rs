@@ -303,8 +303,9 @@ async fn dialled_connections_probe_idle_peers_like_go() {
     }
 }
 
-#[path = "../../test_identity.rs"]
-mod test_identity;
+#[path = "../../test_tls.rs"]
+mod test_tls;
+use test_tls::test_identity;
 
 /// A directory of its own under the system's temporary directory, removed on drop.
 struct Scratch(std::path::PathBuf);
@@ -447,25 +448,8 @@ fn a_trusted_self_signed_ca_is_its_own_chain() {
 
 #[tokio::test]
 async fn https_targets_verify_tls_inside_http_and_https_proxy_tunnels() {
-    use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
-    let (certificate, key) = test_identity::generate_identity("localhost").unwrap();
-    let certificate = CertificateDer::from_pem_slice(certificate.as_bytes()).unwrap();
-    let key = PrivateKeyDer::from_pem_slice(key.as_bytes()).unwrap();
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let server = rustls::ServerConfig::builder_with_provider(provider.clone())
-        .with_safe_default_protocol_versions()
-        .unwrap()
-        .with_no_client_auth()
-        .with_single_cert(vec![certificate.clone()], key)
-        .unwrap();
+    let (server, client) = test_tls::configs("localhost", rustls::DEFAULT_VERSIONS, &[]).unwrap();
     let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server));
-    let mut roots = rustls::RootCertStore::empty();
-    roots.add(certificate).unwrap();
-    let client = rustls::ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .unwrap()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
     // Trusting only the test certificate, which no system store holds, it verifies the proxy too.
     let tls = TlsConnector::from(Arc::new(client));
     let hop = || std::future::ready(Ok::<_, io::Error>(tls.clone()));

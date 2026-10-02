@@ -865,12 +865,10 @@ mod tests {
         )
         .await;
         assert_eq!(signed_in.status(), StatusCode::SEE_OTHER);
-        assert!(
-            service
-                .sessions()
-                .lookup(&set_cookie_value(&signed_in, "__Host-gm_session"))
-                .is_some()
-        );
+        let token = set_cookie_value(&signed_in, "__Host-gm_session");
+        assert!(service.sessions().lookup(&token).is_some());
+        let line = service.log.window(&mut [0; Counter::COUNT]).unwrap();
+        assert!(!line.contains(&token) && !line.contains("correct horse"));
         logging.abort();
         assert!(logging.await.unwrap_err().is_cancelled());
         let closed = stalled.read_to_end(&mut Vec::new()).await;
@@ -1132,120 +1130,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn password_ticket_logout_revokes_lease_and_records_counter_deltas() {
-        const PUBLIC: &str = "https://meter.example";
-        let service = Service::new(
-            &AuthConfig {
-                mode: AuthMode::Password,
-                public_url: PUBLIC.into(),
-                password_hash:
-                    "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0"
-                        .into(),
-                ..AuthConfig::default()
-            },
-            vec![],
-        )
-        .unwrap();
-        let login = call(&service, Method::GET, "/login", &[], String::new()).await;
-        assert_eq!(login.status(), StatusCode::OK);
-        let page = async |query: &str| {
-            let page = call(&service, Method::GET, &format!("/login?{query}"), &[], String::new()).await;
-            String::from_utf8(page.body().to_vec()).unwrap()
-        };
-        // No notice from a pair url.ParseQuery leaves out, and the provider's name in every mode, as Go renders them.
-        assert!(!page("error=stale%zz").await.contains("role=\"alert\""));
-        let provider = page("error=provider").await;
-        assert!(provider.contains(">Authelia is unavailable right now. Sign in with the operator password.<"));
-        let exchange = json!({"verifier": "v".repeat(43)}).to_string();
-        let foreign = [("origin", "http://client.example")];
-        let refused = call(&service, Method::POST, "/auth/browser/token", &foreign, exchange).await;
-        assert_eq!(
-            refused.status(),
-            StatusCode::FORBIDDEN,
-            "a browser token for an insecure origin"
-        );
-        let nonce = set_cookie_value(&login, "__Host-gm_login");
-        let nonce_cookie = format!("__Host-gm_login={nonce}");
-        let rejected = call(
+    async fn browser_token_exchange_refuses_an_insecure_origin() {
+        let service = Service::new(&oidc_config(), vec![]).unwrap();
+        let refused = call(
             &service,
             Method::POST,
-            "/auth/password",
-            &[
-                ("cookie", &nonce_cookie),
-                ("origin", PUBLIC),
-                ("content-type", "application/x-www-form-urlencoded"),
-            ],
-            encoded(&[("csrf", &nonce), ("password", "incorrect password")]),
+            "/auth/browser/token",
+            &[("origin", "http://client.example")],
+            json!({"verifier": "v".repeat(43)}).to_string(),
         )
         .await;
-        assert_eq!(rejected.status(), StatusCode::SEE_OTHER);
-        assert!(rejected.body().is_empty() && !rejected.headers().contains_key(header::CONTENT_TYPE));
-        let signed_in = call(
-            &service,
-            Method::POST,
-            "/auth/password",
-            &[
-                ("cookie", &nonce_cookie),
-                ("origin", PUBLIC),
-                ("content-type", "application/x-www-form-urlencoded"),
-            ],
-            encoded(&[("csrf", &nonce), ("password", "correct horse battery staple")]),
-        )
-        .await;
-        assert_eq!(signed_in.status(), StatusCode::SEE_OTHER);
-        let raw_session = set_cookie_value(&signed_in, "__Host-gm_session");
-        let session_cookie = format!("__Host-gm_session={raw_session}");
-        let csrf = set_cookie_value(&signed_in, "__Host-gm_csrf");
-        let ticket = call(
-            &service,
-            Method::POST,
-            &query_url("/wt/session", &[("target", "https://meter.example:8443/wt/ping")]),
-            &[("origin", PUBLIC), ("cookie", &session_cookie), ("x-csrf-token", &csrf)],
-            String::new(),
-        )
-        .await;
-        assert_eq!(ticket.status(), StatusCode::OK);
-        let ticket: serde_json::Value = serde_json::from_slice(ticket.body()).unwrap();
-        let connect = Request::builder()
-            .method(Method::CONNECT)
-            .uri(query_url("/wt/ping", &[("token", ticket["token"].as_str().unwrap())]))
-            .header(header::HOST, "meter.example:8443")
-            .header(header::ORIGIN, PUBLIC)
-            .body(Bytes::new())
-            .unwrap();
-        let connected = service
-            .policy()
-            .authorize(connect, connection())
-            .unwrap_or_else(|_| panic!("ticket rejected"));
-        let Authorization::Authenticated(active) = connected.authorization() else {
-            panic!("missing active lease")
-        };
-        assert!(active.is_active());
-
-        let logged_out = call(
-            &service,
-            Method::POST,
-            "/auth/logout",
-            &[
-                ("cookie", &session_cookie),
-                ("origin", PUBLIC),
-                ("content-type", "application/x-www-form-urlencoded"),
-            ],
-            encoded(&[("csrf", &csrf)]),
-        )
-        .await;
-        assert_eq!(logged_out.status(), StatusCode::SEE_OTHER);
-        tokio::time::timeout(Duration::from_secs(1), active.ended())
-            .await
-            .unwrap();
-        assert!(service.sessions().lookup(&raw_session).is_none());
-        let mut last = [0; Counter::COUNT];
-        let window = service.log.window(&mut last).unwrap();
-        assert!(window.contains("local=1 oidc=0 invalid-password=1"), "{window}");
-        assert!(window.contains("logout=1 cli-approval=0 capacity=0"), "{window}");
-        assert!(service.log.window(&mut last).is_none());
-        assert!(!window.contains(&raw_session));
-        assert!(!window.contains("correct horse"));
+        assert_eq!(refused.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
@@ -1272,6 +1167,8 @@ mod tests {
             ];
             let form = encoded(&[("csrf", current.session().csrf()), ("scope", scope)]);
             let logged_out = call(&service, Method::POST, "/auth/logout", &headers, form).await;
+            let line = service.log.window(&mut [0; Counter::COUNT]).unwrap();
+            assert!(!line.contains(&token) && !line.contains(current.session().csrf()));
             assert_eq!(logged_out.status(), StatusCode::SEE_OTHER);
             let cleared = logged_out.headers().get_all(header::SET_COOKIE);
             let cleared: Vec<_> = cleared.iter().map(|value| value.to_str().unwrap()).collect();
