@@ -35,7 +35,7 @@ impl HttpServer {
             .max_send_buffer_size(FRAME_BYTES)
             .data_frame_budget(H2_STATE_BYTES)
             .shared_budget(self.memory.clone(), H2_STATE_BYTES);
-        let stream = WriteProgressIo::new(stream, IDLE_BOUND);
+        let stream = BoundedIo::new(stream, IDLE_BOUND);
         let Ok(Ok(mut connection)) = tokio::time::timeout(H2_HANDSHAKE, builder.handshake::<_, Bytes>(stream)).await
         else {
             return;
@@ -270,112 +270,6 @@ impl Drop for H2Body {
     }
 }
 
-/// A stream window can stall independently of its siblings, but a blocked TLS
-/// writer stalls the entire connection. Bound only actual pending IO, including
-/// queued END_STREAM output whose endpoint future has already completed.
-pub(super) struct WriteProgressIo<T> {
-    inner: T,
-    timeout: Duration,
-    stalled: Option<Pin<Box<Sleep>>>,
-}
-
-impl<T> WriteProgressIo<T> {
-    pub(super) fn new(inner: T, timeout: Duration) -> Self {
-        Self {
-            inner,
-            timeout,
-            stalled: None,
-        }
-    }
-
-    fn check_stall(&mut self, cx: &mut Context<'_>) -> io::Result<()> {
-        if self
-            .stalled
-            .as_mut()
-            .is_some_and(|timer| timer.as_mut().poll(cx).is_ready())
-        {
-            return Err(io::ErrorKind::TimedOut.into());
-        }
-        Ok(())
-    }
-
-    fn pending_write(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let timeout = self.timeout;
-        let timer = self
-            .stalled
-            .get_or_insert_with(|| Box::pin(tokio::time::sleep(timeout)));
-        if timer.as_mut().poll(cx).is_ready() {
-            Poll::Ready(Err(io::ErrorKind::TimedOut.into()))
-        } else {
-            Poll::Pending
-        }
-    }
-}
-
-impl<T: AsyncRead + Unpin> AsyncRead for WriteProgressIo<T> {
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buffer: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
-        self.check_stall(cx)?;
-        Pin::new(&mut self.inner).poll_read(cx, buffer)
-    }
-}
-
-impl<T: AsyncWrite + Unpin> AsyncWrite for WriteProgressIo<T> {
-    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, bytes: &[u8]) -> Poll<io::Result<usize>> {
-        self.check_stall(cx)?;
-        match Pin::new(&mut self.inner).poll_write(cx, bytes) {
-            Poll::Ready(result) => {
-                if matches!(result, Ok(count) if count > 0) {
-                    self.stalled = None;
-                }
-                Poll::Ready(result)
-            }
-            Poll::Pending => self.pending_write(cx).map_ok(|()| 0),
-        }
-    }
-
-    fn poll_write_vectored(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bytes: &[io::IoSlice<'_>],
-    ) -> Poll<io::Result<usize>> {
-        self.check_stall(cx)?;
-        match Pin::new(&mut self.inner).poll_write_vectored(cx, bytes) {
-            Poll::Ready(result) => {
-                if matches!(result, Ok(count) if count > 0) {
-                    self.stalled = None;
-                }
-                Poll::Ready(result)
-            }
-            Poll::Pending => self.pending_write(cx).map_ok(|()| 0),
-        }
-    }
-
-    fn is_write_vectored(&self) -> bool {
-        self.inner.is_write_vectored()
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.check_stall(cx)?;
-        match Pin::new(&mut self.inner).poll_flush(cx) {
-            Poll::Ready(result) => {
-                if result.is_ok() {
-                    self.stalled = None;
-                }
-                Poll::Ready(result)
-            }
-            Poll::Pending => self.pending_write(cx),
-        }
-    }
-
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.check_stall(cx)?;
-        match Pin::new(&mut self.inner).poll_shutdown(cx) {
-            Poll::Ready(result) => Poll::Ready(result),
-            Poll::Pending => self.pending_write(cx),
-        }
-    }
-}
-
 #[cfg(test)]
 mod write_stall_tests {
     use super::*;
@@ -388,7 +282,7 @@ mod write_stall_tests {
     #[tokio::test(start_paused = true)]
     async fn repeated_pending_writes_do_not_extend_stall_deadline() {
         let (writer, _non_reading_peer) = tokio::io::duplex(1);
-        let mut writer = WriteProgressIo::new(writer, Duration::from_millis(20));
+        let mut writer = BoundedIo::new(writer, Duration::from_millis(20));
         let write = writer.write_all(b"ab");
         tokio::pin!(write);
         assert!(poll_once(write.as_mut()).await.is_pending());
@@ -406,7 +300,7 @@ mod write_stall_tests {
     #[tokio::test(start_paused = true)]
     async fn real_write_progress_starts_a_fresh_stall_period() {
         let (writer, mut reader) = tokio::io::duplex(1);
-        let mut writer = WriteProgressIo::new(writer, Duration::from_millis(20));
+        let mut writer = BoundedIo::new(writer, Duration::from_millis(20));
         let write = writer.write_all(b"abc");
         tokio::pin!(write);
         assert!(poll_once(write.as_mut()).await.is_pending());
@@ -440,7 +334,7 @@ mod write_stall_tests {
 
     #[tokio::test(start_paused = true)]
     async fn final_buffered_output_remains_bounded_until_transport_flush() {
-        let mut writer = WriteProgressIo::new(BufferedWriter { accepted: 0 }, Duration::from_millis(20));
+        let mut writer = BoundedIo::new(BufferedWriter { accepted: 0 }, Duration::from_millis(20));
         // Model a completed response whose final frame was accepted into TLS's
         // buffer, while its encrypted output can no longer reach the socket.
         writer.write_all(b"final END_STREAM frame").await.unwrap();

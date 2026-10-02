@@ -365,11 +365,11 @@ impl HttpServer {
         )))));
         // Wrap the TLS stream, not its raw socket: a successful flush must also
         // drain encrypted records before releasing the response's capacity.
-        let io = DeadlineIo {
-            inner: http2::WriteProgressIo::new(stream, IDLE_BOUND),
+        let mut io = BoundedIo::new(stream, IDLE_BOUND);
+        io.http1 = Some(Http1Deadlines {
             operations: operations.clone(),
-            lifecycle: Some(lifecycle.clone()),
-        };
+            lifecycle: lifecycle.clone(),
+        });
         let service = service_fn(move |request: Request<hyper::body::Incoming>| {
             let server = self.clone();
             let operations = operations.clone();
@@ -991,10 +991,133 @@ fn allowed(route: Route) -> impl Iterator<Item = &'static str> {
         .chain((route.kind() == Kind::Http).then_some("OPTIONS"))
 }
 
-struct DeadlineIo<T> {
+/// A stream window can stall independently of its siblings, but a blocked TLS
+/// writer stalls the entire connection. Bound actual pending IO, including queued
+/// END_STREAM output, and the HTTP/1 exchange when its concrete state is present.
+struct BoundedIo<T> {
     inner: T,
+    timeout: Duration,
+    stalled: Option<Pin<Box<Sleep>>>,
+    http1: Option<Http1Deadlines>,
+}
+
+impl<T> BoundedIo<T> {
+    fn new(inner: T, timeout: Duration) -> Self {
+        Self {
+            inner,
+            timeout,
+            stalled: None,
+            http1: None,
+        }
+    }
+
+    fn check_deadlines(&mut self, cx: &mut Context<'_>) -> io::Result<()> {
+        if let Some(http1) = &self.http1 {
+            http1.check_deadlines(cx)?;
+        }
+        if self
+            .stalled
+            .as_mut()
+            .is_some_and(|timer| timer.as_mut().poll(cx).is_ready())
+        {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        Ok(())
+    }
+
+    fn pending_write(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let timeout = self.timeout;
+        let timer = self
+            .stalled
+            .get_or_insert_with(|| Box::pin(tokio::time::sleep(timeout)));
+        if timer.as_mut().poll(cx).is_ready() {
+            Poll::Ready(Err(io::ErrorKind::TimedOut.into()))
+        } else {
+            Poll::Pending
+        }
+    }
+}
+
+impl<T: AsyncRead + Unpin> AsyncRead for BoundedIo<T> {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buffer: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+        self.check_deadlines(cx)?;
+        let before = buffer.filled().len();
+        let result = Pin::new(&mut self.inner).poll_read(cx, buffer);
+        if buffer.filled().len() > before
+            && let Some(http1) = &self.http1
+        {
+            let mut lifecycle = lock(&http1.lifecycle);
+            if matches!(*lifecycle, Http1Lifecycle::Idle(_)) {
+                *lifecycle = Http1Lifecycle::Headers(Box::pin(tokio::time::sleep(CONTROL)));
+            }
+        }
+        result
+    }
+}
+
+impl<T: AsyncWrite + Unpin> AsyncWrite for BoundedIo<T> {
+    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, bytes: &[u8]) -> Poll<io::Result<usize>> {
+        self.check_deadlines(cx)?;
+        match Pin::new(&mut self.inner).poll_write(cx, bytes) {
+            Poll::Ready(result) => {
+                if matches!(result, Ok(count) if count > 0) {
+                    self.stalled = None;
+                }
+                Poll::Ready(result)
+            }
+            Poll::Pending => self.pending_write(cx).map_ok(|()| 0),
+        }
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bytes: &[io::IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        self.check_deadlines(cx)?;
+        match Pin::new(&mut self.inner).poll_write_vectored(cx, bytes) {
+            Poll::Ready(result) => {
+                if matches!(result, Ok(count) if count > 0) {
+                    self.stalled = None;
+                }
+                Poll::Ready(result)
+            }
+            Poll::Pending => self.pending_write(cx).map_ok(|()| 0),
+        }
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.check_deadlines(cx)?;
+        match Pin::new(&mut self.inner).poll_flush(cx) {
+            Poll::Ready(result) => {
+                if result.is_ok() {
+                    self.stalled = None;
+                    if let Some(http1) = &self.http1 {
+                        http1.flushed(cx);
+                    }
+                }
+                Poll::Ready(result)
+            }
+            Poll::Pending => self.pending_write(cx),
+        }
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.check_deadlines(cx)?;
+        match Pin::new(&mut self.inner).poll_shutdown(cx) {
+            Poll::Ready(result) => Poll::Ready(result),
+            Poll::Pending => self.pending_write(cx),
+        }
+    }
+}
+
+struct Http1Deadlines {
     operations: Operations,
-    lifecycle: Option<Arc<Mutex<Http1Lifecycle>>>,
+    lifecycle: Arc<Mutex<Http1Lifecycle>>,
 }
 
 enum Http1Lifecycle {
@@ -1037,45 +1160,42 @@ impl Body for Http1Body {
     }
 }
 
-impl<T> DeadlineIo<T> {
+impl Http1Deadlines {
     fn check_deadlines(&self, cx: &mut Context<'_>) -> io::Result<()> {
-        if let Some(lifecycle) = &self.lifecycle {
-            let mut lifecycle = lock(lifecycle);
-            let control = match &mut *lifecycle {
-                Http1Lifecycle::Headers(deadline)
-                | Http1Lifecycle::Idle(deadline)
-                | Http1Lifecycle::UpgradePending(deadline) => {
-                    if deadline.as_mut().poll(cx).is_ready() {
-                        return Err(io::ErrorKind::TimedOut.into());
-                    }
-                    false
+        let mut lifecycle = lock(&self.lifecycle);
+        let control = match &mut *lifecycle {
+            Http1Lifecycle::Headers(deadline)
+            | Http1Lifecycle::Idle(deadline)
+            | Http1Lifecycle::UpgradePending(deadline) => {
+                if deadline.as_mut().poll(cx).is_ready() {
+                    return Err(io::ErrorKind::TimedOut.into());
                 }
-                Http1Lifecycle::Active {
-                    control: Some(deadline),
-                    ..
-                } => deadline.as_mut().poll(cx).is_ready(),
-                _ => false,
-            };
-            drop(lifecycle);
-            if control && !holds_permit(&self.operations) {
-                return Err(io::ErrorKind::TimedOut.into());
+                false
             }
+            Http1Lifecycle::Active {
+                control: Some(deadline),
+                ..
+            } => deadline.as_mut().poll(cx).is_ready(),
+            _ => false,
+        };
+        drop(lifecycle);
+        if control && !holds_permit(&self.operations) {
+            return Err(io::ErrorKind::TimedOut.into());
         }
         check_operations(&self.operations, cx)
     }
 
     fn flushed(&self, cx: &mut Context<'_>) {
-        if let Some(lifecycle) = &self.lifecycle {
-            let mut lifecycle = lock(lifecycle);
-            if matches!(*lifecycle, Http1Lifecycle::Active { complete: true, .. }) {
-                *lifecycle = Http1Lifecycle::Idle(Box::pin(tokio::time::sleep(CONTROL)));
-            } else if matches!(*lifecycle, Http1Lifecycle::UpgradePending(_)) {
-                *lifecycle = Http1Lifecycle::Upgraded;
-            }
-            if let Http1Lifecycle::Idle(deadline) = &mut *lifecycle {
-                let _ = deadline.as_mut().poll(cx);
-            }
+        let mut lifecycle = lock(&self.lifecycle);
+        if matches!(*lifecycle, Http1Lifecycle::Active { complete: true, .. }) {
+            *lifecycle = Http1Lifecycle::Idle(Box::pin(tokio::time::sleep(CONTROL)));
+        } else if matches!(*lifecycle, Http1Lifecycle::UpgradePending(_)) {
+            *lifecycle = Http1Lifecycle::Upgraded;
         }
+        if let Http1Lifecycle::Idle(deadline) = &mut *lifecycle {
+            let _ = deadline.as_mut().poll(cx);
+        }
+        drop(lifecycle);
         lock(&self.operations).retain(|operation| {
             let mut operation = lock(operation);
             if operation.body_complete {
@@ -1085,55 +1205,6 @@ impl<T> DeadlineIo<T> {
                 true
             }
         });
-    }
-}
-
-impl<T: AsyncRead + Unpin> AsyncRead for DeadlineIo<T> {
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buffer: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
-        self.check_deadlines(cx)?;
-        let before = buffer.filled().len();
-        let result = Pin::new(&mut self.inner).poll_read(cx, buffer);
-        if buffer.filled().len() > before
-            && let Some(lifecycle) = &self.lifecycle
-        {
-            let mut lifecycle = lock(lifecycle);
-            if matches!(*lifecycle, Http1Lifecycle::Idle(_)) {
-                *lifecycle = Http1Lifecycle::Headers(Box::pin(tokio::time::sleep(CONTROL)));
-            }
-        }
-        result
-    }
-}
-
-impl<T: AsyncWrite + Unpin> AsyncWrite for DeadlineIo<T> {
-    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, data: &[u8]) -> Poll<io::Result<usize>> {
-        self.check_deadlines(cx)?;
-        Pin::new(&mut self.inner).poll_write(cx, data)
-    }
-
-    fn poll_write_vectored(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        data: &[io::IoSlice<'_>],
-    ) -> Poll<io::Result<usize>> {
-        self.check_deadlines(cx)?;
-        Pin::new(&mut self.inner).poll_write_vectored(cx, data)
-    }
-
-    fn is_write_vectored(&self) -> bool {
-        self.inner.is_write_vectored()
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.check_deadlines(cx)?;
-        ready!(Pin::new(&mut self.inner).poll_flush(cx))?;
-        self.flushed(cx);
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.check_deadlines(cx)?;
-        Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
 
@@ -1397,11 +1468,11 @@ mod tests {
         let operations = Arc::new(Mutex::new(Vec::new()));
         let mut response = server.respond_incoming(request, h1(), &operations, None).await.unwrap();
         // The connection holds the reply's operation, as it did the moment the reply was answered.
-        let mut io = DeadlineIo {
-            inner: tokio::io::sink(),
+        let mut io = BoundedIo::new(tokio::io::sink(), IDLE_BOUND);
+        io.http1 = Some(Http1Deadlines {
             operations,
-            lifecycle: None,
-        };
+            lifecycle: Arc::new(Mutex::new(Http1Lifecycle::Upgraded)),
+        });
         let frame = std::future::poll_fn(|cx| Pin::new(response.body_mut()).poll_frame(cx))
             .await
             .unwrap()
@@ -1432,11 +1503,11 @@ mod tests {
         let operations = Arc::new(Mutex::new(Vec::new()));
         let mut response = server.respond_incoming(request, h1(), &operations, None).await.unwrap();
         let (writer, _non_reading_peer) = tokio::io::duplex(1);
-        let mut io = DeadlineIo {
-            inner: writer,
+        let mut io = BoundedIo::new(writer, IDLE_BOUND);
+        io.http1 = Some(Http1Deadlines {
             operations,
-            lifecycle: None,
-        };
+            lifecycle: Arc::new(Mutex::new(Http1Lifecycle::Upgraded)),
+        });
         let frame = std::future::poll_fn(|cx| Pin::new(response.body_mut()).poll_frame(cx))
             .await
             .unwrap()
@@ -1529,13 +1600,13 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn partial_headers_receive_a_fresh_fifteen_second_deadline() {
         let (reader, mut peer) = tokio::io::duplex(64);
-        let mut reader = DeadlineIo {
-            inner: reader,
+        let mut reader = BoundedIo::new(reader, IDLE_BOUND);
+        reader.http1 = Some(Http1Deadlines {
             operations: Arc::new(Mutex::new(Vec::new())),
-            lifecycle: Some(Arc::new(Mutex::new(Http1Lifecycle::Idle(Box::pin(
+            lifecycle: Arc::new(Mutex::new(Http1Lifecycle::Idle(Box::pin(
                 tokio::time::sleep(Duration::from_secs(15)),
-            ))))),
-        };
+            )))),
+        });
         tokio::time::advance(Duration::from_secs(14)).await;
         let partial = b"GET /probe HTTP/1.1\r\nHost:";
         peer.write_all(partial).await.unwrap();
@@ -1561,11 +1632,11 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(20)),
         ))));
         let (writer, _stopped_reader) = tokio::io::duplex(1);
-        let mut writer = DeadlineIo {
-            inner: writer,
+        let mut writer = BoundedIo::new(writer, IDLE_BOUND);
+        writer.http1 = Some(Http1Deadlines {
             operations: Arc::new(Mutex::new(Vec::new())),
-            lifecycle: Some(lifecycle),
-        };
+            lifecycle,
+        });
         let write = writer.write_all(b"HTTP/1.1 101 Switching Protocols");
         tokio::pin!(write);
         std::future::poll_fn(|cx| {
