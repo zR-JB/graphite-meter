@@ -120,7 +120,14 @@ async fn validated_tls13_serves_discovery_download_and_upload_after_rejected_tls
             serde_json::from_slice::<serde_json::Value>(&upload).unwrap()["bytes"],
             300000
         );
-        let (_, checkpoint) = request(listener.address, &good, "POST", &format!("/upload/checkpoint?id={id}"), b"").await;
+        let (_, checkpoint) = request(
+            listener.address,
+            &good,
+            "POST",
+            &format!("/upload/checkpoint?id={id}"),
+            b"",
+        )
+        .await;
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&checkpoint).unwrap()["bytes"],
             300000
@@ -190,7 +197,9 @@ async fn shutdown_joins_incomplete_tls_handshake_and_releases_connection() {
         let mut rejected = TcpStream::connect(listener.address).await.unwrap();
         assert_eq!(rejected.read(&mut [0; 1]).await.unwrap(), 0);
         listener.stop();
-        tokio::time::timeout(Duration::from_secs(1), listener.shutdown()).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), listener.shutdown())
+            .await
+            .unwrap();
         let result = pending.read(&mut [0; 1]).await;
         assert!(matches!(result, Ok(0) | Err(_)));
     })

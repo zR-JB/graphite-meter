@@ -15,28 +15,46 @@ use tokio::{
 #[tokio::test]
 async fn real_http1_serves_discovery_and_streams_exact_download_then_joins_shutdown() {
     tokio::time::timeout(Duration::from_secs(10), async {
-        let config = Config { server_name: "Local meter".into(), server_location: "Berlin".into(), ..Config::default() };
+        let config = Config {
+            server_name: "Local meter".into(),
+            server_location: "Berlin".into(),
+            ..Config::default()
+        };
         let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
         let listener = native::serve(server, NativeKind::H1, None).await;
 
         let mut generation = None;
         for (method, path, status) in [
-            ("GET", "/preflight", 200), ("POST", "/preflight", 405), ("HEAD", "/preflight", 200),
+            ("GET", "/preflight", 200),
+            ("POST", "/preflight", 405),
+            ("HEAD", "/preflight", 200),
             ("GET", "http://other.example/preflight", 200),
-            ("GET", "/servers", 200), ("GET", "http://[2001:db8::1]/servers", 200),
-            ("POST", "/servers", 405), ("HEAD", "/servers", 200), ("OPTIONS", "/servers", 204),
-            ("GET", "/probe", 200), ("DELETE", "/probe", 405), ("HEAD", "/probe", 200),
-            ("GET", "/unknown", 404), ("POST", "/login", 404), ("GET", "/auth/session", 404),
+            ("GET", "/servers", 200),
+            ("GET", "http://[2001:db8::1]/servers", 200),
+            ("POST", "/servers", 405),
+            ("HEAD", "/servers", 200),
+            ("OPTIONS", "/servers", 204),
+            ("GET", "/probe", 200),
+            ("DELETE", "/probe", 405),
+            ("HEAD", "/probe", 200),
+            ("GET", "/unknown", 404),
+            ("POST", "/login", 404),
+            ("GET", "/auth/session", 404),
             ("GET", "/download?bytes=300000", 200),
         ] {
             let socket = TcpStream::connect(listener.address).await.unwrap();
             let (headers, body) = http1::exchange(socket, method, path, "meter.example:80", "", b"").await;
-            assert!(headers.starts_with(&format!("HTTP/1.1 {status}")), "{method} {path}: {headers}");
+            assert!(
+                headers.starts_with(&format!("HTTP/1.1 {status}")),
+                "{method} {path}: {headers}"
+            );
             if status == 405 {
                 // As Go's "/" pattern, the app answers a method no route on this listener allows.
                 assert!(headers.contains("allow: GET, HEAD\r\n"), "{headers}");
             } else if status != 200 || method == "HEAD" {
-                if status == 204 || method == "HEAD" { assert!(body.is_empty()); }
+                if status == 204 || method == "HEAD" {
+                    assert!(body.is_empty());
+                }
             } else if path.starts_with("/download") {
                 assert_eq!(body.len(), 300000);
                 assert_eq!(&body[..37856], &body[262144..]);
@@ -46,15 +64,27 @@ async fn real_http1_serves_discovery_and_streams_exact_download_then_joins_shutd
                 assert!(headers.contains("cache-control: no-store"));
                 let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
                 if path.ends_with("/servers") {
-                    let origin = if path.starts_with("http:") { "http://[2001:db8::1]:7246" } else { "http://meter.example:7246" };
+                    let origin = if path.starts_with("http:") {
+                        "http://[2001:db8::1]:7246"
+                    } else {
+                        "http://meter.example:7246"
+                    };
                     assert_eq!(value["defaultSelection"], serde_json::json!(["self"]));
                     assert_eq!(value["servers"][0]["name"], "Local meter");
                     assert_eq!(value["servers"][0]["location"], "Berlin");
                     assert_eq!(value["servers"][0]["additionalOrigins"], serde_json::json!([origin]));
                 } else if path.ends_with("/preflight") {
-                    if let Some(first) = &generation { assert_eq!(&value["generation"], first); }
-                    else { generation = Some(value["generation"].clone()); }
-                    if path.starts_with("http:") { assert_eq!(value["capabilities"]["throughput"][0]["baseUrl"], "http://other.example:7246"); }
+                    if let Some(first) = &generation {
+                        assert_eq!(&value["generation"], first);
+                    } else {
+                        generation = Some(value["generation"].clone());
+                    }
+                    if path.starts_with("http:") {
+                        assert_eq!(
+                            value["capabilities"]["throughput"][0]["baseUrl"],
+                            "http://other.example:7246"
+                        );
+                    }
                 }
             }
         }
@@ -249,7 +279,14 @@ async fn ambiguous_proxy_evidence_owns_no_upload() {
         let (_, session) = upload_request(listener.address, "POST", "/upload/session", "127.0.0.1", b"").await;
         let session: serde_json::Value = serde_json::from_slice(&session).unwrap();
         let id = session["uploadId"].as_str().unwrap();
-        let (headers, _) = upload_request(listener.address, "POST", &format!("/upload?id={id}"), "127.0.0.1", b"proxied").await;
+        let (headers, _) = upload_request(
+            listener.address,
+            "POST",
+            &format!("/upload?id={id}"),
+            "127.0.0.1",
+            b"proxied",
+        )
+        .await;
         assert!(headers.starts_with("HTTP/1.1 200"), "{headers}");
         // Without X-Real-IP the proxy names no client: as in Go, that owns nothing, not the proxy's own address.
         let checkpoint = format!("/upload/checkpoint?id={id}");
@@ -289,8 +326,14 @@ async fn stalled_upload_read_releases_capacity_and_keeps_received_bytes() {
             .await
             .unwrap();
         loop {
-            let (_, checkpoint) =
-                upload_request(listener.address, "POST", &format!("/upload/checkpoint?id={id}"), "", b"").await;
+            let (_, checkpoint) = upload_request(
+                listener.address,
+                "POST",
+                &format!("/upload/checkpoint?id={id}"),
+                "",
+                b"",
+            )
+            .await;
             if serde_json::from_slice::<serde_json::Value>(&checkpoint).is_ok_and(|value| value["bytes"] == 3) {
                 break;
             }
@@ -305,7 +348,14 @@ async fn stalled_upload_read_releases_capacity_and_keeps_received_bytes() {
             }
             tokio::task::yield_now().await;
         }
-        let (_, checkpoint) = upload_request(listener.address, "POST", &format!("/upload/checkpoint?id={id}"), "", b"").await;
+        let (_, checkpoint) = upload_request(
+            listener.address,
+            "POST",
+            &format!("/upload/checkpoint?id={id}"),
+            "",
+            b"",
+        )
+        .await;
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&checkpoint).unwrap()["bytes"],
             3
@@ -429,7 +479,14 @@ async fn active_http1_progress_survives_an_idle_interval() {
     read_headers(&mut progress).await;
     assert_eq!(progress_event(&mut progress).await["type"], "ready");
     advance_http1_clock(Duration::from_secs(61)).await;
-    let (headers, _) = upload_request(listener.address, "DELETE", &format!("/upload/progress?id={id}"), "", b"").await;
+    let (headers, _) = upload_request(
+        listener.address,
+        "DELETE",
+        &format!("/upload/progress?id={id}"),
+        "",
+        b"",
+    )
+    .await;
     assert!(headers.starts_with("HTTP/1.1 204"));
     assert_eq!(progress_event(&mut progress).await["type"], "complete");
     drop(progress);
@@ -480,8 +537,14 @@ async fn upload_idle_returns_refusal_and_preserves_receiver_bytes() {
         .unwrap();
     tokio::time::timeout(Duration::from_secs(1), async {
         loop {
-            let (_, checkpoint) =
-                upload_request(listener.address, "POST", &format!("/upload/checkpoint?id={id}"), "", b"").await;
+            let (_, checkpoint) = upload_request(
+                listener.address,
+                "POST",
+                &format!("/upload/checkpoint?id={id}"),
+                "",
+                b"",
+            )
+            .await;
             let checkpoint: serde_json::Value = serde_json::from_slice(&checkpoint).unwrap();
             if checkpoint["bytes"] == 1 {
                 break;
@@ -501,7 +564,14 @@ async fn upload_idle_returns_refusal_and_preserves_receiver_bytes() {
     let response = String::from_utf8(response).unwrap();
     assert!(response.starts_with("HTTP/1.1 408"), "{response}");
     assert!(response.contains("x-graphite-upload-refusal: idle"));
-    let (_, checkpoint) = upload_request(listener.address, "POST", &format!("/upload/checkpoint?id={id}"), "", b"").await;
+    let (_, checkpoint) = upload_request(
+        listener.address,
+        "POST",
+        &format!("/upload/checkpoint?id={id}"),
+        "",
+        b"",
+    )
+    .await;
     let checkpoint: serde_json::Value = serde_json::from_slice(&checkpoint).unwrap();
     assert_eq!(checkpoint["bytes"], 1);
     listener.shutdown().await;

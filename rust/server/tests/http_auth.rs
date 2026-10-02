@@ -76,7 +76,15 @@ impl Harness {
             .unwrap()
     }
     async fn request(&self, method: &str, path: &str, headers: &str, body: &str) -> (String, Vec<u8>) {
-        http1::exchange(self.connect().await, method, path, "localhost", headers, body.as_bytes()).await
+        http1::exchange(
+            self.connect().await,
+            method,
+            path,
+            "localhost",
+            headers,
+            body.as_bytes(),
+        )
+        .await
     }
 
     async fn login(&self) -> (String, String) {

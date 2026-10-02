@@ -895,7 +895,11 @@ mod tests {
             })
         };
         let page = call(&service, Method::GET, "/login", &[], String::new()).await;
-        assert!(!std::str::from_utf8(page.body()).unwrap().contains("temporarily unavailable"));
+        assert!(
+            !std::str::from_utf8(page.body())
+                .unwrap()
+                .contains("temporarily unavailable")
+        );
         assert!(provider_csp(&page));
         let nonce = set_cookie_value(&page, "__Host-gm_login");
         let started = call(

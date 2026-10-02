@@ -28,11 +28,7 @@ impl Drop for NativeServer {
     }
 }
 
-pub async fn serve(
-    server: Arc<HttpServer>,
-    kind: NativeKind,
-    tls: Option<Arc<rustls::ServerConfig>>,
-) -> NativeServer {
+pub async fn serve(server: Arc<HttpServer>, kind: NativeKind, tls: Option<Arc<rustls::ServerConfig>>) -> NativeServer {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (stop, stopped) = oneshot::channel();
