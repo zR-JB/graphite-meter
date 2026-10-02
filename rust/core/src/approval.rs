@@ -2,7 +2,7 @@ use base64::{
     Engine as _, alphabet,
     engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig, general_purpose::URL_SAFE_NO_PAD},
 };
-use sha2::{Digest, Sha256};
+use ring::digest::{SHA256, digest};
 
 const RAW_URL: GeneralPurpose = GeneralPurpose::new(
     &alphabet::URL_SAFE,
@@ -12,7 +12,7 @@ const RAW_URL: GeneralPurpose = GeneralPurpose::new(
 );
 
 pub fn challenge(verifier: &str) -> String {
-    URL_SAFE_NO_PAD.encode(Sha256::digest(verifier))
+    URL_SAFE_NO_PAD.encode(digest(&SHA256, verifier.as_bytes()))
 }
 
 pub fn verification_code(challenge: &str) -> Option<String> {

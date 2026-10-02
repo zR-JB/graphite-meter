@@ -17,7 +17,7 @@ use graphite_meter_core::{
     origin::{canonical_origin, catalog_origin, target_origin},
     text::terminal_character,
 };
-use ratatui::text::{Line, Span};
+use ratatui_core::text::{Line, Span};
 use std::{ops::RangeInclusive, time::Duration};
 use tokio::sync::mpsc;
 

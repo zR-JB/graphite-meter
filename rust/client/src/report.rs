@@ -9,7 +9,7 @@ use crate::{
     vocabulary::{ADDED_NOTE, MISSING, clock, compact_population, compact_stage, population_label},
 };
 use graphite_meter_core::{failure::FailureReason, format, measurement::MeasurementResult, text::terminal_character};
-use ratatui::{
+use ratatui_core::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
 };

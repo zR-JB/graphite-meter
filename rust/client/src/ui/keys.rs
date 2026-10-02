@@ -2,7 +2,7 @@
 use super::{Popup, Ui, setup::Setting};
 use crate::report::{pad, span};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::text::{Line, Span};
+use ratatui_core::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
 /// A key.Binding: the key names it matches, and its help key and description.

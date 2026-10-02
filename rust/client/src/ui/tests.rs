@@ -9,7 +9,7 @@ use graphite_meter_core::{
     latency::{LatencyAccumulator, LatencySummary, ProbeOutcome},
     measurement::{Direction, MeasurementResult},
 };
-use ratatui::{Terminal, backend::TestBackend};
+use ratatui_core::{backend::TestBackend, terminal::Terminal};
 
 /// 1.5 MB received in a second.
 pub(crate) fn download_measurement() -> MeasurementResult {
@@ -91,7 +91,7 @@ fn screen(ui: &mut Ui) -> String {
     rows(ui).join("\n")
 }
 
-fn plain(lines: &[ratatui::text::Line]) -> String {
+fn plain(lines: &[ratatui_core::text::Line]) -> String {
     lines.iter().map(crate::report::plain).collect::<Vec<_>>().join("\n")
 }
 
@@ -487,9 +487,10 @@ fn edits_apply_and_refuse_as_go_parses_them() {
             let line = edit.view(&ui, 12);
             assert!(line.width() <= 12);
             assert!(
-                line.spans
-                    .iter()
-                    .any(|span| span.style.add_modifier.contains(ratatui::style::Modifier::REVERSED)),
+                line.spans.iter().any(|span| span
+                    .style
+                    .add_modifier
+                    .contains(ratatui_core::style::Modifier::REVERSED)),
                 "cursor hidden"
             );
             let lines = rows(&mut ui);
@@ -1189,7 +1190,7 @@ fn scrolling_reveals_the_whole_body() {
     let footer = plain(&ui.screen());
     assert!(footer.contains("pgdn more"), "{footer}");
     assert!(footer.trim_end().ends_with("quit"), "{footer}");
-    let text = |lines: &[ratatui::text::Line]| -> Vec<String> {
+    let text = |lines: &[ratatui_core::text::Line]| -> Vec<String> {
         lines
             .iter()
             .map(|line| crate::report::plain(line).trim().to_owned())

@@ -12,7 +12,7 @@ use crate::{
     vocabulary::{self as words, MISSING, compact_stage},
 };
 use graphite_meter_core::format;
-use ratatui::{
+use ratatui_core::{
     style::Style,
     text::{Line, Span},
 };

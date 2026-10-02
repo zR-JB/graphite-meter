@@ -2,7 +2,7 @@
 //! colorprofile.Detect picks, with the indexed and ANSI colours it converts each tone to.
 
 use crate::model::Stage;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui_core::style::{Color, Modifier, Style};
 #[cfg(unix)]
 use std::time::Duration;
 
@@ -170,7 +170,11 @@ fn flag(name: &str) -> bool {
 /// reports Tc or RGB.
 pub(crate) fn detect(tty: bool) -> Profile {
     let (tty, term) = (tty || flag("TTY_FORCE"), std::env::var("TERM").ok());
-    let env = environment(term.as_deref().unwrap_or_default());
+    let env = environment(
+        term.as_deref().unwrap_or_default(),
+        &std::env::var("COLORTERM").unwrap_or_default(),
+        std::env::var_os("WT_SESSION").is_some_and(|session| !session.is_empty()) || flag("GOOGLE_CLOUD_SHELL"),
+    );
     // colorProfile's dumb terminal: TERM=dumb, or none outside Windows.
     let dumb = term.as_deref().map_or(!cfg!(windows), |term| term == "dumb");
     let mut profile = if tty && !dumb { env } else { Profile::NoTty };
@@ -195,7 +199,7 @@ pub(crate) fn detect(tty: bool) -> Profile {
 }
 
 /// colorprofile's envColorProfile.
-fn environment(term: &str) -> Profile {
+fn environment(term: &str, color_term: &str, true_color_terminal: bool) -> Profile {
     // Windows Terminal and cmd.exe render 24-bit colour without a TERM.
     let mut profile = match term {
         "" | "dumb" if cfg!(windows) => Profile::TrueColor,
@@ -206,13 +210,12 @@ fn environment(term: &str) -> Profile {
     if multiplexer {
         profile = profile.max(Profile::Ansi256);
     }
-    let color_term = std::env::var("COLORTERM").unwrap_or_default().to_ascii_lowercase();
+    let color_term = color_term.to_ascii_lowercase();
     let direct = ["truecolor", "24bit", "yes", "true"].contains(&color_term.as_str()) && !multiplexer;
-    let windows_terminal = std::env::var_os("WT_SESSION").is_some_and(|session| !session.is_empty());
     let named = "alacritty contour foot ghostty kitty rio st wezterm"
         .split(' ')
         .any(|name| term.contains(name));
-    if named || windows_terminal || flag("GOOGLE_CLOUD_SHELL") || direct || term.ends_with("direct") {
+    if named || true_color_terminal || direct || term.ends_with("direct") {
         return Profile::TrueColor;
     }
     match term.ends_with("256color") {
@@ -344,8 +347,11 @@ mod tests {
         let terms = [("xterm-kitty", TrueColor), ("wezterm", TrueColor), ("screen", Ansi256), ("tmux-256color", Ansi256),
             ("xterm-256color", Ansi256), ("xterm", Ansi), ("xterm-direct", TrueColor), ("dumb", NoTty), ("", NoTty)];
         for (term, profile) in terms {
-            assert_eq!(environment(term), profile, "{term}");
+            assert_eq!(environment(term, "", false), profile, "{term}");
         }
+        assert_eq!(environment("screen", "TRUECOLOR", false), Ansi256);
+        assert_eq!(environment("xterm", "TRUECOLOR", false), TrueColor);
+        assert_eq!(environment("screen", "", true), TrueColor);
     }
 
     #[test]

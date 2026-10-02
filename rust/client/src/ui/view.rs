@@ -11,10 +11,9 @@ use crate::{
     theme::Theme,
     vocabulary::{self as words, BLOCKED, CHECKING_SIGN_IN, MISSING, NOT_STARTED, START_FAILED},
 };
-use ratatui::{
-    Frame,
+use ratatui_core::{
+    terminal::Frame,
     text::{Line, Span},
-    widgets::Paragraph,
 };
 use std::time::Duration;
 use unicode_width::UnicodeWidthStr;
@@ -276,7 +275,7 @@ impl Ui {
         self.size = (area.width, area.height);
         let mut lines = self.screen();
         crate::report::sanitize(&mut lines, &self.theme);
-        frame.render_widget(Paragraph::new(lines), area);
+        frame.render_widget(ratatui_core::text::Text::from(lines), area);
     }
 
     /// Go's header: the badge and the status pill, then the version beside the catalogue or the run's servers.

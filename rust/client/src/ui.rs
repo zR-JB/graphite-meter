@@ -18,7 +18,7 @@ use crossterm::{
         KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind,
     },
     execute,
-    terminal::{Clear, ClearType},
+    terminal::{Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures_util::StreamExt;
 use keys::*;
@@ -91,7 +91,7 @@ struct Chrome {
 }
 
 impl Chrome {
-    fn show(&mut self, ui: &Ui, drawn: &ratatui::buffer::Buffer) -> io::Result<()> {
+    fn show(&mut self, ui: &Ui, drawn: &ratatui_core::buffer::Buffer) -> io::Result<()> {
         let mut sequences = self.update(ui.title(), ui.progress());
         if let Some(auth) = &ui.snapshot.auth {
             let url: String = auth.browser_url.chars().filter(|c| c.is_ascii_graphic()).collect();
@@ -140,12 +140,21 @@ impl Drop for Chrome {
 }
 
 /// Return paths, cancellation and partial initialization all restore the terminal.
-/// Ratatui additionally installs its panic hook before entering raw mode.
 struct Restore;
+impl Restore {
+    fn terminal() {
+        let _ = disable_raw_mode();
+        let _ = execute!(
+            io::stdout(),
+            DisableBracketedPaste,
+            DisableMouseCapture,
+            LeaveAlternateScreen
+        );
+    }
+}
 impl Drop for Restore {
     fn drop(&mut self) {
-        let _ = execute!(io::stdout(), DisableBracketedPaste, DisableMouseCapture);
-        ratatui::restore();
+        Self::terminal();
     }
 }
 
@@ -160,7 +169,14 @@ pub async fn run(
         return Err("interactive mode requires a terminal on stdout".into());
     }
     let _restore = Restore;
-    let mut terminal = ratatui::try_init()?;
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        Restore::terminal();
+        hook(info);
+    }));
+    enable_raw_mode()?;
+    execute!(io::stdout(), EnterAlternateScreen)?;
+    let mut terminal = ratatui_core::terminal::Terminal::new(ratatui_crossterm::CrosstermBackend::new(io::stdout()))?;
     // As Go's, the first frame does not wait for the background query: its answer arrives among the
     // keys whenever it comes. The clear wipes whatever a terminal that ignores the query printed.
     #[cfg(unix)]
