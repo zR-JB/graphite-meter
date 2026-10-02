@@ -67,62 +67,27 @@ pub fn encode_pong(id: u32, handling_nanos: u64) -> String {
     format!("PONG,{id},{handling_nanos}")
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
 pub enum UploadProgress {
     Ready,
-    Error { message: String, code: String },
+    Error {
+        #[serde(skip_serializing_if = "String::is_empty")]
+        message: String,
+        #[serde(skip_serializing_if = "String::is_empty")]
+        code: String,
+    },
     Progress { bytes: u64, nanos: u64 },
     Complete { bytes: u64, nanos: u64 },
 }
 
-#[derive(Serialize)]
-struct EncodedProgress<'a> {
-    #[serde(rename = "type")]
-    kind: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    bytes: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    nanos: Option<u64>,
-    #[serde(skip_serializing_if = "str::is_empty")]
-    message: &'a str,
-    #[serde(skip_serializing_if = "str::is_empty")]
-    code: &'a str,
-}
-
 pub fn encode_upload_progress(event: &UploadProgress) -> Result<String, WireError> {
-    let record = match event {
-        UploadProgress::Ready => EncodedProgress {
-            kind: "ready",
-            bytes: None,
-            nanos: None,
-            message: "",
-            code: "",
-        },
-        UploadProgress::Error { message, code } => EncodedProgress {
-            kind: "error",
-            bytes: None,
-            nanos: None,
-            message,
-            code,
-        },
-        UploadProgress::Progress { bytes, nanos } | UploadProgress::Complete { bytes, nanos } => {
-            if *bytes > MAX_UPLOAD_COUNTER || *nanos > MAX_UPLOAD_COUNTER {
-                return Err(WireError::UploadCounterOutOfRange);
-            }
-            EncodedProgress {
-                kind: if matches!(event, UploadProgress::Progress { .. }) {
-                    "progress"
-                } else {
-                    "complete"
-                },
-                bytes: Some(*bytes),
-                nanos: Some(*nanos),
-                message: "",
-                code: "",
-            }
-        }
-    };
-    serde_json::to_string(&record).map_err(|_| WireError::InvalidUploadProgress)
+    if let UploadProgress::Progress { bytes, nanos } | UploadProgress::Complete { bytes, nanos } = event
+        && (*bytes > MAX_UPLOAD_COUNTER || *nanos > MAX_UPLOAD_COUNTER)
+    {
+        return Err(WireError::UploadCounterOutOfRange);
+    }
+    serde_json::to_string(event).map_err(|_| WireError::InvalidUploadProgress)
 }
 
 /// Decodes a JSON object as Go's json/v2 does: [`strict`] refuses what it refuses, any other value

@@ -60,45 +60,31 @@ fn reflector_diagnostic_never_changes_raw_reply_population() {
 #[test]
 fn reflector_duration_bounds_and_large_sums_are_exact() {
     let mut stats = LatencyAccumulator::default();
-    assert_eq!(
-        stats.record(ProbeOutcome::Reply {
-            rtt_nanos: i64::MAX,
-            handling_nanos: i64::MAX as u64
-        }),
-        Some(i64::MAX as u64)
-    );
-    assert_eq!(
-        stats.record(ProbeOutcome::Reply {
-            rtt_nanos: i64::MAX,
-            handling_nanos: i64::MAX as u64 + 1
-        }),
-        None
-    );
-    assert_eq!(
-        stats.record(ProbeOutcome::Reply {
-            rtt_nanos: i64::MAX,
-            handling_nanos: u64::MAX
-        }),
-        None
-    );
+    for (handling_nanos, expected) in [
+        (i64::MAX as u64, Some(i64::MAX as u64)),
+        (i64::MAX as u64 + 1, None),
+        (u64::MAX, None),
+    ] {
+        assert_eq!(
+            stats.record(ProbeOutcome::Reply {
+                rtt_nanos: i64::MAX,
+                handling_nanos,
+            }),
+            expected,
+            "handling {handling_nanos}"
+        );
+    }
     let snapshot = stats.snapshot();
     assert_eq!(snapshot.distribution.unwrap().p50, i64::MAX as u64);
     assert_eq!(snapshot.reflector_timing.unwrap().mean_handling, i64::MAX as u64);
     assert_eq!(snapshot.jitter, Some(0));
 
-    assert_eq!(
-        stats.record(ProbeOutcome::Reply {
-            rtt_nanos: 0,
-            handling_nanos: 0
-        }),
-        Some(0)
-    );
-    assert_eq!(
-        stats.record(ProbeOutcome::Reply {
-            rtt_nanos: -1,
-            handling_nanos: 0
-        }),
-        None
-    );
+    for (rtt_nanos, expected) in [(0, Some(0)), (-1, None)] {
+        assert_eq!(
+            stats.record(ProbeOutcome::Reply { rtt_nanos, handling_nanos: 0 }),
+            expected,
+            "RTT {rtt_nanos}"
+        );
+    }
     assert_eq!(stats.snapshot().count, 4);
 }

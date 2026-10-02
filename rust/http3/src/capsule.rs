@@ -1,5 +1,5 @@
 //! HTTP datagrams and capsules (RFC 9297) as WebTransport sessions use them.
-use crate::{code::Code, frame::Pair, varint};
+use crate::{code::Code, frame, varint};
 use bytes::{Buf, BufMut, Bytes};
 
 const CLOSE: u64 = 0x2843;
@@ -16,46 +16,39 @@ pub(crate) enum Capsule {
 /// skipped unbuffered.
 #[derive(Default)]
 pub(crate) struct Reader {
-    header: Pair,
-    body: Option<(u64, u64)>,
+    frames: frame::Reader,
+    kind: u64,
     close: Vec<u8>,
 }
 
 impl Reader {
     pub(crate) fn read(&mut self, input: &mut Bytes) -> Result<Option<Capsule>, Code> {
-        loop {
-            let Some((kind, remaining)) = self.body else {
-                let Some((kind, length)) = self.header.read(input) else {
-                    return Ok(None);
-                };
-                if HTTP2_ONLY.contains(&kind) || kind == CLOSE && !(4..=4 + MAX_REASON as u64).contains(&length) {
-                    return Err(Code::H3_MESSAGE_ERROR);
+        while let Some(piece) = self.frames.next(input) {
+            match piece {
+                frame::Piece::Header { kind, length } => {
+                    if HTTP2_ONLY.contains(&kind) || kind == CLOSE && !(4..=4 + MAX_REASON as u64).contains(&length) {
+                        return Err(Code::H3_MESSAGE_ERROR);
+                    }
+                    self.kind = kind;
                 }
-                self.body = Some((kind, length));
-                continue;
-            };
-            let take = usize::try_from(remaining).map_or(input.len(), |remaining| remaining.min(input.len()));
-            let body = input.split_to(take);
-            if kind == CLOSE {
-                self.close.extend_from_slice(&body);
-            }
-            if remaining > take as u64 {
-                self.body = Some((kind, remaining - take as u64));
-                return Ok(None);
-            }
-            self.body = None;
-            if kind == CLOSE {
-                let mut close = std::mem::take(&mut self.close);
-                let reason = String::from_utf8(close.split_off(4)).map_err(|_| Code::H3_MESSAGE_ERROR)?;
-                let code = u32::from_be_bytes(close.try_into().expect("four code bytes"));
-                return Ok(Some(Capsule::Close { code, reason }));
+                frame::Piece::Payload(body) if self.kind == CLOSE => {
+                    self.close.extend_from_slice(&body);
+                    if self.frames.remaining() == 0 {
+                        let mut close = std::mem::take(&mut self.close);
+                        let reason = String::from_utf8(close.split_off(4)).map_err(|_| Code::H3_MESSAGE_ERROR)?;
+                        let code = u32::from_be_bytes(close.try_into().expect("four code bytes"));
+                        return Ok(Some(Capsule::Close { code, reason }));
+                    }
+                }
+                _ => {}
             }
         }
+        Ok(None)
     }
 
     /// Whether the stream may end here without truncating a capsule.
     pub(crate) fn at_boundary(&self) -> bool {
-        self.body.is_none() && self.header.is_empty()
+        self.frames.at_boundary()
     }
 }
 
