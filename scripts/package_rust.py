@@ -52,6 +52,17 @@ def build(version: str, platform: str, output: Path, supplement: Path) -> None:
             actual = subprocess.check_output([str(binary), "--version"], text=True).strip()
             if actual != f"graphite-meter-client {version}-rust":
                 raise ValueError(f"the {platform} TUI reports {actual!r}, not version {version}-rust")
+            if platform.startswith("linux/"):
+                allocator_env = {key: value for key, value in os.environ.items()
+                                 if not key.upper().startswith("MIMALLOC_")}
+                for setting in (None, "2"):
+                    probe_env = allocator_env | {"MIMALLOC_VERBOSE": "1"}
+                    if setting is not None:
+                        probe_env["MIMALLOC_ALLOW_THP"] = setting
+                    probe = subprocess.run([str(binary), "--version"], env=probe_env,
+                                           capture_output=True, text=True, check=True, timeout=10)
+                    if not re.search(rf"option 'allow_thp': {setting or '0'}(?:\s|$)", probe.stderr):
+                        raise ValueError(f"the {platform} TUI has the wrong allocator THP setting: {probe.stderr}")
         for filename in ("LICENSE", "COPYRIGHT"):
             shutil.copyfile(REPO / filename, package / filename)
         shutil.copyfile(legal / "LEGAL.txt", package / "THIRD_PARTY_NOTICES.txt")

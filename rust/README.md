@@ -322,9 +322,18 @@ The static musl binaries use rustfs-mimalloc 0.5.6, bundling mimalloc 3.5.3.
 This is a temporary binding choice. Switch back to the main `mimalloc` crate
 when it resumes maintained releases with a suitably current native allocator;
 track its [upstream version update](https://github.com/purpleprotocol/mimalloc_rust/pull/169).
-Huge-page and purge settings use upstream defaults. Linux deployments can
-set `MIMALLOC_ALLOW_THP=0` to reduce resident memory, with workload-dependent
-performance changes; this also changes allocator purging behavior.
+Linux musl server and TUI builds disable allocator transparent huge pages by
+default through the native `MI_DEFAULT_ALLOW_THP=0` compile setting. Set
+`MIMALLOC_ALLOW_THP=2` when starting either binary to restore the upstream
+huge-page policy, including its 2 MiB minimum purge size. Other purge settings
+retain upstream defaults. Target-specific CFLAGS supplied by a build caller
+override Cargo's defaults; include `-DMI_DEFAULT_ALLOW_THP=0` when adding flags
+to retain this policy.
+
+The current 12-pair server study found lower sampled peak RSS in every workload,
+with small workload-dependent speed changes. The TUI uses the same native
+allocator and build default, but that study did not measure TUI performance.
+
 Local musl cross builds need musl headers and a target C compiler wrapper: set
 `CC_x86_64_unknown_linux_musl=x86_64-linux-musl-gcc` or
 `CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc`. Debian provides these in

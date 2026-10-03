@@ -1,0 +1,5 @@
+[env]
+# Set the native allocator default before initialization; its runtime environment
+# option remains available. Target CFLAGS supplied by the caller take precedence.
+CFLAGS_x86_64_unknown_linux_musl = "-DMI_DEFAULT_ALLOW_THP=0"
+CFLAGS_aarch64_unknown_linux_musl = "-DMI_DEFAULT_ALLOW_THP=0"

@@ -85,6 +85,14 @@ if grep -q '^SSL_CERT_FILE=' <<<"$environment" && ! grep -qx 'SSL_CERT_DIR=/etc/
     echo "an image that sets SSL_CERT_FILE must also set SSL_CERT_DIR=/etc/ssl/certs" >&2
     exit 1
 fi
+case "${ENGINE_VERSION:-$version}" in
+    *-rust)
+        "$engine" run --rm -e MIMALLOC_VERBOSE=1 "$image" --version >"$tmp/mimalloc-default" 2>&1
+        grep -E "option 'allow_thp': 0([[:space:]]|$)" "$tmp/mimalloc-default"
+        "$engine" run --rm -e MIMALLOC_VERBOSE=1 -e MIMALLOC_ALLOW_THP=2 "$image" --version >"$tmp/mimalloc-override" 2>&1
+        grep -E "option 'allow_thp': 2([[:space:]]|$)" "$tmp/mimalloc-override"
+        ;;
+esac
 
 curl -fsS "$base/" -o "$tmp/index.html"
 grep -qi '<script[^>]*type="module"' "$tmp/index.html"

@@ -287,7 +287,11 @@ class RustPackageTests(CheckoutTests):
             binary = self.root / 'rust/target' / target.name / 'release' / (
                 'graphite-meter-client.exe' if '-windows-' in target.name else 'graphite-meter-client')
             binary.parent.mkdir(parents=True, exist_ok=True)
-            binary.write_text(f"#!/bin/sh\ntouch '{ran}'\necho graphite-meter-client {reported['version']}\n")
+            binary.write_text(
+                f"#!/bin/sh\ntouch '{ran}'\necho graphite-meter-client {reported['version']}\n"
+                'if [ "${MIMALLOC_VERBOSE:-0}" = 1 ]; then\n'
+                '  echo "mimalloc: option \'allow_thp\': ${MIMALLOC_ALLOW_THP:-0}" >&2\n'
+                'fi\n')
             binary.chmod(0o755)
             return None
 

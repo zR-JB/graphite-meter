@@ -66,6 +66,7 @@ rust-release:
   - 'client/bunfig.toml'
   - 'rust/Cargo.lock'
   - 'rust/Cargo.toml'
+  - 'rust/.cargo/**'
   - 'rust/*/Cargo.toml'
   - 'rust/*/build.rs'
   - 'rust/legal_build.rs'

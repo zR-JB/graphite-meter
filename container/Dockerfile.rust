@@ -19,6 +19,7 @@ RUN printf 'Types: deb\nURIs: https://snapshot.debian.org/archive/%s/20260927T18
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY rust/Cargo.toml rust/Cargo.lock rust/rust-toolchain.toml rust/
+COPY rust/.cargo/config.toml rust/.cargo/config.toml
 COPY rust/server/Cargo.toml rust/server/
 COPY rust/client/Cargo.toml rust/client/
 COPY rust/core/Cargo.toml rust/core/
