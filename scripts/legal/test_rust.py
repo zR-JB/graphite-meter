@@ -19,8 +19,10 @@ from scripts.legal.model import (Component, Json, LegalError, Provenance, Review
                                  manual_sources, marshal, read_json, sha256)
 from scripts.legal.review import add_provenance, validate_review
 from scripts.legal.rust import (DEVELOPMENT, DEVELOPMENT_NOTICE, add_cargo_sources, artifacts, capture, cargo,
+                                checked_platform_notice,
                                 image_additions, legal_report, reusable, stage_browser, write_changed)
 from scripts.legal.rust_platform import SYSROOT, candidate, fetch_notices, imports, link_map, linked, linker_version, notice
+from scripts.legal.rustc_inspect import MARKER, inspection_arguments
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -177,6 +179,19 @@ class RustBrowserFreshnessTests(CheckoutTests):
 
 
 class RustArtifactTests(unittest.TestCase):
+    def test_inspection_rewrites_only_the_selected_root_library_emission(self) -> None:
+        arguments = ['rustc', '--crate-name', 'application', '--crate-type', 'lib',
+                     '--emit=dep-info,metadata,link', '--emit', 'llvm-ir', '-C', 'lto=fat']
+        self.assertEqual(inspection_arguments(arguments, 'application'), arguments)
+        self.assertEqual(inspection_arguments([*arguments, MARKER], 'application'),
+                         ['rustc', '--crate-name', 'application', '--crate-type', 'lib', '-C', 'lto=fat',
+                          '--emit=dep-info,metadata'])
+        for invalid in (arguments + [MARKER, MARKER], arguments + [MARKER, '--test'],
+                        [value.replace('application', 'other') for value in arguments] + [MARKER],
+                        [value.replace('lib', 'bin') for value in arguments] + [MARKER]):
+            with self.subTest(arguments=invalid), self.assertRaises(ValueError):
+                inspection_arguments(invalid, 'application')
+
     def messages(self) -> list[dict]:
         return [
             {'reason': 'compiler-artifact', 'package_id': 'dependency',
@@ -197,6 +212,18 @@ class RustArtifactTests(unittest.TestCase):
         self.assertEqual(result['dependency']['units'][0]['features'], ['a', 'b'])
         self.assertEqual(result['dependency']['nativeLibraries'], ['static=crypto'])
         self.assertEqual(set(result), {'application', 'dependency'})
+
+    def test_inspection_accepts_a_library_but_final_validation_requires_the_executable(self) -> None:
+        messages = self.messages()
+        messages[2]['target']['kind'] = ['lib']
+        messages[2]['executable'] = None
+        result = artifacts(messages, 'application', 'application', inspection=True)
+        self.assertEqual(result['dependency'], artifacts(self.messages(), 'application', 'application')['dependency'])
+        with self.assertRaisesRegex(LegalError, 'requested executable'):
+            artifacts(messages, 'application', 'application')
+        messages[2]['target']['name'] = 'other'
+        with self.assertRaisesRegex(LegalError, 'requested library'):
+            artifacts(messages, 'application', 'application', inspection=True)
 
     def test_failed_truncated_or_wrong_binary_build_is_rejected(self) -> None:
         messages = self.messages()
@@ -453,6 +480,16 @@ class RustPlatformRecordTests(CheckoutTests):
         for linked_input in (self.CRT1, '/elsewhere/libother.rlib'):
             with self.subTest(linked=linked_input), self.assertRaisesRegex(LegalError, 'native inputs lack review'):
                 self.notice(inputs={self.STD, linked_input})
+
+    def test_provisional_platform_notice_still_requires_the_final_native_closure(self) -> None:
+        notice(self.entry, **self.facts(inputs=set(), libraries=set()))
+        unexpected = str(self.root / 'unexpected.o')
+        self.write(unexpected, 'unreviewed native code')
+        with self.assertRaises(LegalError) as failure:
+            checked_platform_notice(self.entry, self.facts(inputs={self.NATIVE, unexpected}))
+        self.assertIn('linked native inputs lack review', str(failure.exception))
+        self.assertIn('"reviewDecision": "pending"', str(failure.exception))
+        self.assertIn(unexpected, str(failure.exception))
 
     def test_every_review_fact_is_still_required(self) -> None:
         cases = [(None, {}, 'absent or stale'), ({'rustc': 'rustc 2'}, {}, 'absent or stale'),

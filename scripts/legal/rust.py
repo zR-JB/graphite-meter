@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import zlib
 from dataclasses import replace
 from pathlib import Path
@@ -97,7 +98,7 @@ def cargo(repo: Path, *args: str) -> list[str]:
 
 def capture(repo: Path, package: str, target: str | None, profile: str, link_map: Path | None,
             legal_directory: Path | None = None, asset_directory: Path | None = None,
-            *, link_target: str | None = None) -> tuple[dict, list[dict]]:
+            *, link_target: str | None = None, inspection: bool = False) -> tuple[dict, list[dict]]:
     """Own the invocation so test/workspace artifacts cannot contaminate the scan.
 
     Without a target it is Cargo's plain build for this host, and without a link map it maps no native inputs.
@@ -115,18 +116,42 @@ def capture(repo: Path, package: str, target: str | None, profile: str, link_map
         environment['GM_RUST_ASSET_DIR'] = str(asset_directory)
     if legal_directory is not None:
         environment['GM_RUST_LEGAL_DIR'] = str(legal_directory)
+    if inspection:
+        environment['GM_RUST_INSPECT_PACKAGE'] = package
+        environment['GM_RUST_INSPECT_WRAPPER'] = environment.get(
+            'RUSTC_WRAPPER', environment.get('CARGO_BUILD_RUSTC_WRAPPER', ''))
+        environment['RUSTC_WRAPPER'] = str(Path(__file__).with_name('rustc_inspect.py'))
+    trace = None
+    if environment.get('GM_RUST_BUILD_TRACE_DIR'):
+        trace = local_path(Path(environment['GM_RUST_BUILD_TRACE_DIR']), repo)
+        trace.mkdir(parents=True, exist_ok=True)
+        environment['GM_RUST_BUILD_TRACE_DIR'] = str(trace)
     # Only the executable's link gets the map request; a fresh executable keeps the map of its last link.
-    command = cargo(repo, 'rustc', '--locked', '--package', package, '--bin', package,
+    command = cargo(repo, 'rustc', '--locked', '--package', package,
+                    *(['--lib'] if inspection else ['--bin', package]),
                     *(['--target', target] if target else []), '--profile', profile, '--message-format=json',
-                    *(['--', platform.link_map_argument(link_target or target or '', link_map)] if link_map else []))
+                    *(['--timings'] if environment.get('GM_RUST_BUILD_TIMINGS') == '1' else []),
+                    *(['--', '--cfg=graphite_meter_legal_inspection'] if inspection else
+                      ['--', platform.link_map_argument(link_target or target or '', link_map)] if link_map else []))
+    started = time.perf_counter()
     result = subprocess.run(command, cwd=repo / 'rust', env=environment,
                             stdout=subprocess.PIPE, check=True, text=True)
+    compiled = time.perf_counter()
     messages = []
     for line in result.stdout.splitlines():
         if line.startswith('{'):
             messages.append(json.loads(line))
     metadata = subprocess.check_output(cargo(repo, 'metadata', '--locked', '--format-version=1'),
                                        cwd=repo / 'rust', text=True)
+    elapsed = time.perf_counter() - compiled
+    mode = 'inspection' if inspection else 'linked'
+    if environment.get('GM_RUST_BUILD_TIMINGS') == '1':
+        print(f'Rust capture [{mode}]: cargo={compiled - started:.3f}s metadata={elapsed:.3f}s', flush=True)
+    if trace:
+        with tempfile.NamedTemporaryFile(mode='w', prefix=f'capture-{mode}-', suffix='.json', dir=trace,
+                                         delete=False) as destination:
+            json.dump({'command': command, 'cargoSeconds': compiled - started,
+                       'metadataSeconds': elapsed, 'messages': messages}, destination)
     return json.loads(metadata), messages
 
 
@@ -140,7 +165,7 @@ def add_cargo_sources(archive: tarfile.TarFile, repo: Path, components: list[Com
             add_tree(archive, destination / name, f'third_party/cargo/{name}', destination / name)
 
 
-def artifacts(messages: list[dict], package_id: str, binary: str) -> dict[str, dict]:
+def artifacts(messages: list[dict], package_id: str, binary: str, *, inspection: bool = False) -> dict[str, dict]:
     if not messages or messages[-1] != {'reason': 'build-finished', 'success': True}:
         raise LegalError('Cargo did not report a successful completed build')
     collected: dict[str, dict] = {}
@@ -160,10 +185,14 @@ def artifacts(messages: list[dict], package_id: str, binary: str) -> dict[str, d
         unit = {'name': target['name'], 'kinds': sorted(target['kind']), 'features': sorted(message['features'])}
         if unit not in entry['units']:
             entry['units'].append(unit)
-        if identity == package_id and target['name'] == binary and target['kind'] == ['bin']:
+        if (inspection and identity == package_id and target['name'] == binary.replace('-', '_')
+                and target['kind'] == ['lib']):
+            executable = True
+        elif not inspection and identity == package_id and target['name'] == binary and target['kind'] == ['bin']:
             executable = bool(message['executable'])
     if not executable:
-        raise LegalError('Cargo did not produce the requested executable')
+        raise LegalError('Cargo did not produce the requested library' if inspection else
+                         'Cargo did not produce the requested executable')
     for entry in collected.values():
         entry['units'].sort(key=lambda unit: (unit['name'], unit['kinds'], unit['features']))
     return collected
@@ -176,7 +205,8 @@ def script_output(messages: list[dict], package_id: str) -> Path:
 
 
 def discover(repo: Path, metadata: dict, messages: list[dict], package: str, reviews: list[Review],
-             provenance: list[Provenance] | None = None) -> tuple[list[Component], list[dict], list[str], str]:
+             provenance: list[Provenance] | None = None,
+             *, inspection: bool = False) -> tuple[list[Component], list[dict], list[str], str]:
     packages = {item['id']: item for item in metadata['packages']}
     own = {item['id'] for item in packages.values()
            if Path(item['manifest_path']).resolve().parent in
@@ -186,7 +216,7 @@ def discover(repo: Path, metadata: dict, messages: list[dict], package: str, rev
     root = next((item['id'] for item in packages.values() if item['name'] == package and item['id'] in own), None)
     if root is None:
         raise LegalError(f'workspace package is missing: {package}')
-    compiled = artifacts(messages, root, package)
+    compiled = artifacts(messages, root, package, inspection=inspection)
     components, inventory, failures = [], [], []
     for identity, build in compiled.items():
         item = packages.get(identity)
@@ -285,6 +315,16 @@ def review_candidates(components: list[Component]) -> list[dict]:
             for item in components]
 
 
+def checked_platform_notice(record: dict | None, facts: dict) -> str:
+    try:
+        return platform.notice(record, **facts)
+    except (LegalError, OSError) as error:
+        candidate, listing = platform.candidate(record, **facts)
+        raise LegalError(f'{error}\nUnreviewed platform record of this build:\n{marshal(candidate).decode()}'
+                         'Its inputsSha256 hashes this listing of its inputs:\n'
+                         + listing.removesuffix('\n')) from error
+
+
 def main() -> None:
     # Only the full --development selects development notices, which the workflow policy looks for.
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
@@ -350,18 +390,38 @@ def build(args: argparse.Namespace) -> None:
     mapped = None if args.development else link_map
     cargo_home = Path(os.environ.get('CARGO_HOME', Path.home() / '.cargo'))
     config_directories = [cargo_home, *((path / '.cargo') for path in (repo / 'rust', repo, *repo.parents))]
+    configuration = {str(path): sha256(path.read_bytes()) for directory in config_directories
+                     for name in ('config', 'config.toml') if (path := directory / name).is_file()}
     # Runtime GM_* settings are deliberately absent. Cargo still checks the real build;
     # this identity only decides whether it can start with the previous notices embedded.
     invocation = marshal({'package': args.package, 'profile': args.profile, 'target': args.target,
                           'development': args.development, 'version': args.version, 'rustc': toolchain,
                           'supplement': str(supplement), 'reviews': str(reviews_path),
-                          'configuration': {str(path): sha256(path.read_bytes()) for directory in config_directories
-                                            for name in ('config', 'config.toml') if (path := directory / name).is_file()},
+                          'configuration': configuration,
                           'environment': {key: value for key, value in sorted(os.environ.items())
                                           if key.startswith(('CARGO_', 'RUST', 'CC', 'CXX', 'AR', 'LD', 'PKG_CONFIG'))
                                           or key in ('PATH', 'GM_ENGINE_VERSION', 'GM_RUST_ASSET_DIR')}})
     reuse = args.local and (mapped is None or mapped.is_file()) and reusable(output, repo, invocation)
     (output / 'invocation.json').unlink(missing_ok=True)
+    sysroot = Path(subprocess.check_output(['rustc', f'+{channel}', '--print', 'sysroot'], text=True).strip())
+    record = platform.record(supplement, target) if supplement else None
+    if record is not None:
+        platform.fetch_notices(repo, record)
+    inspection = False
+    provisional_notice = None
+    # Notices depend on the fully fingerprinted approved record, not its linked subset. Only the final
+    # executable can establish that subset. Unknown/stale records retain an actual-link diagnostic build.
+    # Configured Cargo wrappers may not be silently bypassed by our inspection wrapper.
+    if not reuse and not args.review_template and not configuration and os.name != 'nt':
+        if args.development:
+            inspection = True
+        elif record is not None:
+            try:
+                provisional_notice = platform.notice(record, target=target, compiler=toolchain, sysroot=sysroot,
+                                                     inputs=set(), libraries=set())
+                inspection = True
+            except (LegalError, OSError):
+                pass
     staged_assets = None
     if args.package == 'graphite-meter-server' and os.environ.get('GM_RUST_ASSET_DIR'):
         source_assets = (repo / 'rust/server' / os.environ['GM_RUST_ASSET_DIR']).resolve()
@@ -371,25 +431,23 @@ def build(args: argparse.Namespace) -> None:
         stage_browser(source_assets, staged_assets)
     print(f'Rust {args.package} [{args.profile}]: {"reuse notices" if reuse else "inspect build inputs"}', flush=True)
     metadata, messages = capture(repo, args.package, args.target, args.profile, mapped,
-                                 output if reuse else None, staged_assets if reuse else None, link_target=target)
-    components, inventory, failures, root = discover(repo, metadata, messages, args.package, reviews, provenance)
+                                 output if reuse else None, staged_assets if reuse else None, link_target=target,
+                                 inspection=inspection)
+    components, inventory, failures, root = discover(repo, metadata, messages, args.package, reviews, provenance,
+                                                      inspection=inspection)
     manifest = {'schemaVersion': 1, 'package': args.package, 'target': target,
                 'profile': args.profile, 'rustc': toolchain,
                 'scope': 'compiled Cargo inputs, including build scripts and procedural macros',
                 'cargoLockSha256': sha256((repo / 'rust/Cargo.lock').read_bytes()), 'components': inventory}
     (output / 'inventory.json').write_bytes(marshal(manifest))
-    sysroot = Path(subprocess.check_output(['rustc', f'+{channel}', '--print', 'sysroot'], text=True).strip())
-    executable = Path(next(message['executable'] for message in messages
+    executable = None if inspection else Path(next(message['executable'] for message in messages
                            if message.get('reason') == 'compiler-artifact' and message.get('executable')
                            and message['target']['name'] == args.package))
     cargo_outputs = {Path(metadata['target_directory'])} | {
         Path(item['manifest_path']).parent for item in metadata['packages']}
     facts = {'target': target, 'compiler': toolchain, 'sysroot': sysroot,
-             'inputs': set() if args.development else platform.linked(link_map, sysroot, cargo_outputs),
-             'libraries': set() if args.development else platform.imports(executable, target)}
-    record = platform.record(supplement, target) if supplement else None
-    if record is not None:
-        platform.fetch_notices(repo, record)
+             'inputs': set() if args.development or inspection else platform.linked(link_map, sysroot, cargo_outputs),
+             'libraries': set() if args.development or executable is None else platform.imports(executable, target)}
     if args.review_template:
         (output / 'LEGAL.txt').unlink(missing_ok=True)
         (output / 'review-candidates.json').write_bytes(marshal(review_candidates(components)))
@@ -405,14 +463,7 @@ def build(args: argparse.Namespace) -> None:
     elif supplement is None and not args.host:
         raise LegalError('reviewed Rust sysroot and platform-library notice supplement is required')
     else:
-        try:
-            extra = platform.notice(record, **facts)
-        except (LegalError, OSError) as error:
-            candidate, listing = platform.candidate(record, **facts)
-            # Exiting adds the final line break: the output ends with exactly the listing inputsSha256 hashes.
-            raise LegalError(f'{error}\nUnreviewed platform record of this build:\n{marshal(candidate).decode()}'
-                             'Its inputsSha256 hashes this listing of its inputs:\n'
-                             + listing.removesuffix('\n')) from error
+        extra = provisional_notice if provisional_notice is not None else checked_platform_notice(record, facts)
     embedding_changed = not reuse
     browser_components: list[Component] = []
     shared_notices = None
@@ -481,10 +532,21 @@ def build(args: argparse.Namespace) -> None:
                                                          output, staged_assets, link_target=target)
             _, rebuilt_inventory, rebuilt_failures, _ = discover(repo, rebuilt_metadata, rebuilt_messages, args.package,
                                                                  reviews, provenance)
-            if rebuilt_failures or rebuilt_inventory != inventory or not args.development and (
-                    platform.linked(link_map, sysroot, cargo_outputs) != facts['inputs']
-                    or platform.imports(executable, target) != facts['libraries']):
+            executable = Path(next(message['executable'] for message in rebuilt_messages
+                                   if message.get('reason') == 'compiler-artifact' and message.get('executable')
+                                   and message['target']['name'] == args.package))
+            if rebuilt_failures or rebuilt_inventory != inventory:
                 raise LegalError('embedded-notice rebuild changed the compiled dependency or native closure')
+            if not args.development:
+                actual = facts | {'inputs': platform.linked(link_map, sysroot, cargo_outputs),
+                                  'libraries': platform.imports(executable, target)}
+                if inspection:
+                    # The provisional report is accepted only after the actual fully optimized link agrees.
+                    if checked_platform_notice(record, actual) != extra:
+                        raise LegalError('linked executable platform notices changed during inspection')
+                elif actual != facts:
+                    raise LegalError('embedded-notice rebuild changed the compiled dependency or native closure')
+        assert executable is not None
         payload = (script_output(rebuilt_messages, root) / 'LEGAL.zlib').read_bytes()
         if payload not in executable.read_bytes() or zlib.decompress(payload) != (output / 'LEGAL.txt').read_bytes():
             raise LegalError('executable does not embed the generated notices')
