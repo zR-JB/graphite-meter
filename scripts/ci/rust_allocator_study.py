@@ -1,4 +1,4 @@
-"""Temporary hosted allocator comparison; every diagnostic binary is development-marked, never uploaded."""
+"""Temporary hosted Go/Rust server comparison; binaries and TLS keys are never uploaded."""
 from __future__ import annotations
 
 import argparse
@@ -22,25 +22,11 @@ ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / 'rust/target/allocator-study-results'
 MUSL = 'x86_64-unknown-linux-musl'
 GNU = 'x86_64-unknown-linux-gnu'
-VARIANTS = ('musl-system', 'musl-dlmalloc', 'musl-mimalloc', 'gnu-system')
-CONFIRM_CASES = {
-    'server': (('http1', 'upload', 1), ('http1', 'upload', 4), ('http1-tls', 'upload', 4),
-               ('http2', 'upload', 4), ('http3', 'upload', 4), ('http3', 'download', 4), ('http1', 'download', 4)),
-    'client': (('http1', 'download', 4), ('http2', 'download', 1), ('http3', 'download', 4), ('http2', 'upload', 4)),
-}
+VARIANTS = ('go-static', 'musl-mimalloc')
+CASES = (('http1', 'upload', 4), ('http1-tls', 'upload', 4),
+         ('http2', 'upload', 4), ('http3', 'upload', 4))
 ALLOCATOR = b'#[cfg(target_env = "musl")]\n#[global_allocator]\nstatic ALLOCATOR: rustfs_mimalloc::MiMalloc = rustfs_mimalloc::MiMalloc;\n'
-DLMALLOC = b'#[cfg(target_env = "musl")]\n#[global_allocator]\nstatic ALLOCATOR: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;\n'
-DLMALLOC_PACKAGE = {'name': 'dlmalloc', 'version': '0.2.14',
-                    'source': 'registry+https://github.com/rust-lang/crates.io-index',
-                    'checksum': 'ad5208a115eaba24916f7456929832e310a81518c641f93fee4f89aa93aa3675',
-                    'dependencies': ['cfg-if', 'libc', 'windows-sys 0.61.2']}
-OLD_ALLOCATOR = b'#[cfg(target_env = "musl")]\n#[global_allocator]\nstatic ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;\n'
-OLD_PACKAGES = [
-    {'name': 'libmimalloc-sys', 'version': '0.1.49', 'source': 'registry+https://github.com/rust-lang/crates.io-index',
-     'checksum': '6a45a52f43e1c16f667ccfe4dd8c85b7f7c204fd5e3bf46c5b0db9a5c3c0b8e9', 'dependencies': ['cc']},
-    {'name': 'mimalloc', 'version': '0.1.52', 'source': 'registry+https://github.com/rust-lang/crates.io-index',
-     'checksum': '2d4139bb28d14ad1facf21d5eb8825051b326e172d216b39f6d31df53cc97862', 'dependencies': ['libmimalloc-sys']},
-]
+GO_FLAGS = ['-trimpath', '-ldflags=-s -w -X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=0.0.0-server-study']
 TELEMETRY = b'''    if let Some(snapshot) = &finished {
         for stage in &snapshot.results {
             for (direction, result) in [("download", &stage.down), ("upload", &stage.up)] {
@@ -83,73 +69,36 @@ def build_child(package: str, target: str, variant: str) -> None:
                              review_template=False, local=True, development=True))
 
 
-def build_variants(environment: dict[str, str], confirm: bool = False) -> dict[tuple[str, str], Path]:
-    paths = [ROOT / f'rust/{package}/{name}' for package, name in
-             (('server', 'Cargo.toml'), ('server', 'src/main.rs'), ('client', 'src/main.rs'), ('client', 'Cargo.toml'))]
-    paths.append(ROOT / 'rust/Cargo.lock')
-    original = {path: path.read_bytes() for path in paths}
-    server_manifest, server_main, client_main, client_manifest, lock = paths
-    locked_packages = [item for item in tomllib.loads(original[lock].decode())['package'] if item.get('source')]
+def build_variants(environment: dict[str, str]) -> dict[tuple[str, str], Path]:
+    main = ROOT / 'rust/client/src/main.rs'
+    original = main.read_bytes()
     marker = b'    let last = finished.map(|snapshot| snapshot.phase);'
-    assert original[server_main].count(ALLOCATOR) == original[client_main].count(ALLOCATOR) == 1
-    assert original[client_main].count(marker) == 1
+    assert original.count(ALLOCATOR) == original.count(marker) == 1
+    assert (ROOT / 'rust/server/src/main.rs').read_bytes().count(ALLOCATOR) == 1
+    locked = tomllib.loads((ROOT / 'rust/Cargo.lock').read_text())['package']
     expected = {'rustfs-mimalloc': '95bb29aa7aee255a84d956b4f5309a3f98993ae6e10836ae5e4e8519e960780f',
                 'rustfs-mimalloc-sys': '0e6571957abe93757f0c6dd99182589054ace7da4102af4296ffcc8297eb3524'}
     for name, checksum in expected.items():
-        entries = [item for item in locked_packages if item['name'] == name]
+        entries = [item for item in locked if item['name'] == name]
         assert len(entries) == 1 and entries[0]['version'] == '0.5.6' and entries[0]['checksum'] == checksum
-    base_client = original[client_main].replace(marker, TELEMETRY + marker)
     binaries = {}
-    selections = (('server', 'musl-system'), ('server', 'musl-mimalloc'), ('server', 'musl-mimalloc-old'), ('server', 'gnu-system'),
-                  ('client', 'musl-dlmalloc'), ('client', 'musl-mimalloc'), ('client', 'gnu-system')) if confirm else tuple(
-        (package, variant) for variant in VARIANTS for package in ('server', 'client'))
     try:
-        for package, variant in selections:
-            for path, data in original.items():
-                path.write_bytes(data)
-            client_main.write_bytes(base_client)
-            if variant == 'musl-mimalloc-old':
-                # Both sys crates own links="mimalloc"; isolate the old build across the workspace.
-                dependency = b'rustfs-mimalloc.workspace = true\n'
-                for manifest in (server_manifest, client_manifest):
-                    assert original[manifest].count(dependency) == 1
-                    replacement = b'mimalloc = "=0.1.52"\nlibmimalloc-sys = "=0.1.49"\n' if manifest == server_manifest else b''
-                    manifest.write_bytes(original[manifest].replace(dependency, replacement))
-                server_main.write_bytes(original[server_main].replace(ALLOCATOR, OLD_ALLOCATOR))
-                client_main.write_bytes(base_client.replace(ALLOCATOR, b''))
-                run(['cargo', 'metadata', '--format-version=1'], environment, OUTPUT / 'lock-server-musl-mimalloc-old.log')
-                current = [item for item in tomllib.loads(lock.read_text())['package'] if item.get('source')]
-                assert [item for item in current if item not in locked_packages] == OLD_PACKAGES
-                removed = [item for item in locked_packages if item not in current]
-                assert {item['name'] for item in removed} == set(expected) and len(removed) == 2
-                assert [item for item in current if item not in OLD_PACKAGES] == [item for item in locked_packages if item not in removed]
-            elif variant != 'musl-mimalloc':
-                main = server_main if package == 'server' else client_main
-                manifest = server_manifest if package == 'server' else client_manifest
-                declaration = original[main] if package == 'server' else base_client
-                main.write_bytes(declaration.replace(ALLOCATOR, DLMALLOC if variant == 'musl-dlmalloc' else b''))
-                dependency = b'rustfs-mimalloc.workspace = true\n'
-                assert original[manifest].count(dependency) == 1
-                replacement = b'dlmalloc = { version = "=0.2.14", features = ["global"] }\n' if variant == 'musl-dlmalloc' else b''
-                # The other workspace consumer retains RustFS lock entries; only this allocator selection changes.
-                manifest.write_bytes(original[manifest].replace(dependency, replacement))
-                run(['cargo', 'metadata', '--format-version=1'], environment, OUTPUT / f'lock-{package}-{variant}.log')
-                current = [item for item in tomllib.loads(lock.read_text())['package'] if item.get('source')]
-                added = [item for item in current if item not in locked_packages]
-                assert added == ([DLMALLOC_PACKAGE] if variant == 'musl-dlmalloc' and DLMALLOC_PACKAGE not in locked_packages else [])
-                assert [item for item in current if item not in added] == locked_packages
-            (OUTPUT / f'{package}-{variant}-Cargo.lock.txt').write_bytes(lock.read_bytes())
-            target = GNU if variant == 'gnu-system' else MUSL
-            run([sys.executable, '-m', 'scripts.ci.rust_allocator_study', '--build', package, '--variant', variant],
+        main.write_bytes(original.replace(ALLOCATOR, b'').replace(marker, TELEMETRY + marker))
+        for package, variant, target in (('server', 'musl-mimalloc', MUSL), ('client', 'gnu-system', GNU)):
+            run([sys.executable, '-m', 'scripts.ci.rust_allocator_study', '--build', package],
                 environment, OUTPUT / f'build-{package}-{variant}.log')
             binary = ROOT / 'rust/target/allocator-study-build/binaries' / f'{package}-{variant}'
             binary.parent.mkdir(exist_ok=True)
             shutil.copy2(Path(environment['CARGO_TARGET_DIR']) / target / 'release' / f'graphite-meter-{package}', binary)
             assert b'UNREVIEWED DEVELOPMENT BUILD' in binary.read_bytes()
             binaries[package, variant] = binary
+        binary = ROOT / 'rust/target/allocator-study-build/binaries/server-go-static'
+        run(['go', '-C', str(ROOT / 'go'), 'build', *GO_FLAGS, '-o', str(binary), './cmd/graphite-meter'],
+            environment, OUTPUT / 'build-server-go-static.log')
+        run(['go', 'version', '-m', str(binary)], environment, OUTPUT / 'go-build-info.log')
+        binaries['server', 'go-static'] = binary
     finally:
-        for path, data in original.items():
-            path.write_bytes(data)
+        main.write_bytes(original)
     return binaries
 
 
@@ -260,44 +209,25 @@ def publish(rows: list[dict], row: dict, name: str) -> None:
     print(json.dumps(row), flush=True)
 
 
-def measure(binaries: dict[tuple[str, str], Path], environment: dict[str, str], ports: dict[str, int],
-            confirm: bool = False) -> None:
+def measure(binaries: dict[tuple[str, str], Path], environment: dict[str, str], ports: dict[str, int]) -> None:
     results: list[dict] = []
-    for experiment in ('server', 'client'):
-        baseline = 'musl-system' if experiment == 'server' else 'musl-dlmalloc'
-        variants = (baseline, 'musl-mimalloc') if confirm else VARIANTS
-        cases = CONFIRM_CASES[experiment] if confirm else tuple(
-            (protocol, direction, streams) for protocol in ('http1', 'http2', 'http3')
-            for direction in ('download', 'upload') for streams in (1, 4))
-        for repeat in range(4 if confirm else 2):
-            order = variants if repeat % 2 == 0 else variants[::-1]
-            for kind, direction, streams in cases:
-                case_order = order
-                third = None
-                if confirm and experiment == 'server':
-                    if direction == 'upload' and streams == 4:
-                        third = 'musl-mimalloc-old'
-                    elif (kind, direction, streams) == ('http3', 'download', 4):
-                        third = 'gnu-system'
-                if third:
-                    three = (*variants, third)
-                    case_order = three if repeat % 2 == 0 else three[::-1]
-                for variant in case_order:
-                    cell = f'{experiment}-{repeat + 1}-{kind}-{direction}-{streams}-{variant}'
-                    own_server = variant if experiment == 'server' else ('gnu-system' if confirm else 'musl-system')
-                    own_client = 'gnu-system' if experiment == 'server' else variant
-                    with server(binaries['server', own_server], environment, ports['http1'],
-                                OUTPUT / f'{cell}-server.log') as backend:
-                        row = transfer(backend, binaries['client', own_client], environment, ports,
-                                       cell, kind, direction, streams, 10 if confirm else 3)
-                    row.update(experiment=experiment, variant=variant, repeat=repeat + 1,
-                               serverVariant=own_server, clientVariant=own_client)
-                    publish(results, row, 'results.json')
+    for repeat in range(4):
+        order = VARIANTS if repeat % 2 == 0 else VARIANTS[::-1]
+        for kind, direction, streams in CASES:
+            for variant in order:
+                cell = f'server-{repeat + 1}-{kind}-{direction}-{streams}-{variant}'
+                with server(binaries['server', variant], environment, ports['http1'],
+                            OUTPUT / f'{cell}-server.log') as backend:
+                    row = transfer(backend, binaries['client', 'gnu-system'], environment, ports,
+                                   cell, kind, direction, streams, 10)
+                row.update(experiment='server', variant=variant, repeat=repeat + 1,
+                           serverVariant=variant, clientVariant='gnu-system')
+                publish(results, row, 'results.json')
 
 
 def retention(binaries: dict[tuple[str, str], Path], environment: dict[str, str], ports: dict[str, int]) -> None:
     results: list[dict] = []
-    for variant in ('musl-system', 'musl-mimalloc'):
+    for variant in VARIANTS:
         with server(binaries['server', variant], environment, ports['http1'],
                     OUTPUT / f'retention-{variant}-server.log') as backend:
             time.sleep(3)
@@ -322,89 +252,76 @@ def retention(binaries: dict[tuple[str, str], Path], environment: dict[str, str]
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--build', choices=('server', 'client'))
-    parser.add_argument('--variant', choices=(*VARIANTS, 'musl-mimalloc-old'))
-    parser.add_argument('--confirm', action='store_true', help='focused mimalloc confirmation with GNU peers')
     args = parser.parse_args()
     if args.build:
-        if args.confirm:
-            parser.error('--confirm cannot be combined with --build')
-        if args.variant is None:
-            parser.error('--build requires --variant')
-        package = {'server': 'graphite-meter-server', 'client': 'graphite-meter-client'}[args.build]
-        target, variant = {'musl-system': (MUSL, 'musl-system'), 'musl-dlmalloc': (MUSL, 'musl-dlmalloc'),
-                           'musl-mimalloc': (MUSL, 'musl-mimalloc'), 'musl-mimalloc-old': (MUSL, 'musl-mimalloc-old'),
-                           'gnu-system': (GNU, 'gnu-system')}[args.variant]
+        package, target, variant = {
+            'server': ('graphite-meter-server', MUSL, 'musl-mimalloc'),
+            'client': ('graphite-meter-client', GNU, 'gnu-system'),
+        }[args.build]
         build_child(package, target, variant)
         return
-    if args.variant is not None:
-        parser.error('--variant requires --build')
     OUTPUT.mkdir(parents=True, exist_ok=True)
     profile = tomllib.loads((ROOT / 'rust/Cargo.toml').read_text())['profile']['release']
     assert (profile['opt-level'], profile['lto'], profile['codegen-units']) == (3, 'fat', 1)
     environment = {key: value for key, value in os.environ.items()
                    if not key.startswith(('GM_', 'CARGO_PROFILE_', 'MIMALLOC_', 'MALLOC_'))
-                   and not key.endswith('RUSTFLAGS')}
+                   and not key.endswith('RUSTFLAGS')
+                   and key not in ('GOFLAGS', 'GOGC', 'GOMEMLIMIT', 'GOMAXPROCS', 'GODEBUG',
+                                   'GOEXPERIMENT', 'GOAMD64', 'GOOS', 'GOARCH')}
     environment.update(LC_ALL='C', CARGO_INCREMENTAL='0', CARGO_TARGET_DIR=str(ROOT / 'rust/target/allocator-study-build'),
                        CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER='x86_64-linux-gnu-gcc',
-                       CC_x86_64_unknown_linux_musl='musl-gcc')
+                       CC_x86_64_unknown_linux_musl='musl-gcc', CGO_ENABLED='0', GOENV='off', GOTOOLCHAIN='local',
+                       RUSTUP_TOOLCHAIN=tomllib.loads((ROOT / 'rust/rust-toolchain.toml').read_text())['toolchain']['channel'])
     assert not any(environment.get(key) for key in ('RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER', 'CARGO_BUILD_RUSTC_WRAPPER'))
-    run(['rustup', 'target', 'add', MUSL], environment, OUTPUT / 'target-setup.log')
-    run(['cargo', 'fetch', '--locked'], environment, OUTPUT / 'cargo-fetch.log')
-    for name, command in (('cpu', ['lscpu']), ('rustc', ['rustc', '-vV']),
-                          ('musl-cc', ['musl-gcc', '-v']), ('gnu-cc', ['gcc', '-v'])):
-        run(command, environment, OUTPUT / f'{name}.log')
     fixture = Fixture('allocator-study-')
     try:
-        binaries = build_variants(environment, args.confirm)
+        run(['rustup', 'target', 'add', MUSL], environment, OUTPUT / 'target-setup.log')
+        run(['cargo', 'fetch', '--locked'], environment, OUTPUT / 'cargo-fetch.log')
+        for name, command in (('cpu', ['lscpu']), ('rustc', ['rustc', '-vV']), ('go-version', ['go', 'version']),
+                              ('musl-cc', ['musl-gcc', '-v']), ('gnu-cc', ['gcc', '-v'])):
+            run(command, environment, OUTPUT / f'{name}.log')
+        run(['go', 'env', '-json', 'CGO_ENABLED', 'GOFLAGS', 'GOAMD64', 'GOEXPERIMENT', 'GOOS', 'GOARCH', 'GOTOOLCHAIN'],
+            environment, OUTPUT / 'go-build-env.json')
+        binaries = build_variants(environment)
         _, cert, key = fixture.identity()
-        ports = {protocol: unused_port() for protocol in ('http1', 'http2', 'http3')}
+        ports = {protocol: unused_port() for protocol in ('http1', 'http2', 'http1-tls')}
         ports['http3'] = unused_port(kind=socket.SOCK_DGRAM)
-        ports['http1-tls'] = unused_port()
         environment.update(GM_AUTH_MODE='off', GM_H1_ADDR=f'127.0.0.1:{ports["http1"]}',
-                           GM_H1_TLS_ADDR=f'127.0.0.1:{ports["http1-tls"]}' if args.confirm else '',
+                           GM_H1_TLS_ADDR=f'127.0.0.1:{ports["http1-tls"]}',
                            GM_H2_ADDR=f'127.0.0.1:{ports["http2"]}', GM_H3_ADDR=f'127.0.0.1:{ports["http3"]}',
                            GM_TLS_CERT=str(cert), GM_TLS_KEY=str(key))
-        (OUTPUT / 'study.json').write_text(json.dumps({'profile': profile,
-            'mode': 'confirmation' if args.confirm else 'screening',
-            'variants': ['musl-system', 'musl-dlmalloc', 'musl-mimalloc', 'musl-mimalloc-old'] if args.confirm else VARIANTS,
-            'variantLabels': {'musl-system': 'musl system baseline', 'musl-dlmalloc': 'dlmalloc0.2.14 client baseline',
-                              'musl-mimalloc': 'RustFS wrapper0.5.6 / native mimalloc3.5.3',
-                              'musl-mimalloc-old': 'standard mimalloc wrapper0.1.52 / native mimalloc3.3.2',
-                              'gnu-system': 'GNU system peer/comparator'},
-            'baselines': {'server': 'musl-system', 'client': 'musl-dlmalloc'}, 'candidate': 'musl-mimalloc',
+        (OUTPUT / 'study.json').write_text(json.dumps({'profile': profile, 'mode': 'go-rust-server',
+            'variants': VARIANTS,
+            'variantLabels': {'go-static': 'Go production static server / default GC',
+                              'musl-mimalloc': 'Rust musl / RustFS wrapper0.5.6 / native mimalloc3.5.3',
+                              'gnu-system': 'fixed GNU Rust client'},
+            'baselines': {'server': 'go-static'}, 'candidate': 'musl-mimalloc',
             'candidateSource': {'wrapper': 'rustfs-mimalloc =0.5.6', 'sys': 'rustfs-mimalloc-sys =0.5.6',
-                'native': 'Microsoft mimalloc v3.5.3',
-                'wrapperArchiveSha256': '95bb29aa7aee255a84d956b4f5309a3f98993ae6e10836ae5e4e8519e960780f',
-                'sysArchiveSha256': '0e6571957abe93757f0c6dd99182589054ace7da4102af4296ffcc8297eb3524'},
-            'oldSource': {'wrapper': 'mimalloc =0.1.52', 'sys': 'libmimalloc-sys =0.1.49',
-                          'native': 'Microsoft mimalloc v3.3.2', 'lockPackages': OLD_PACKAGES},
-            'baselineSource': 'same application/toolchain/current lock; only selected musl allocator declaration '
-                              'and dependency differ. dlmalloc0.2.14 uses its verified original lock record',
-            'repeats': 4 if args.confirm else 2, 'order': 'AB/BA/AB/BA' if args.confirm else 'forward/reverse',
-            'orderException': 'server H1 clear/TLS upload4, H2 upload4 and H3 upload4 include old standard mimalloc; '
-                              'server H3 download4 includes GNU-system; each triple uses forward/reverse/'
-                              'forward/reverse order' if args.confirm else None,
-            'expectedTransfers': 132 if args.confirm else 192,
-            'families': CONFIRM_CASES if args.confirm else 'all http1/http2/http3 download/upload at 1/4 streams',
-            'experiments': ['server', 'client'], 'counterparts': {'server': 'fixed GNU-system client',
-                'client': 'fixed GNU-system server' if args.confirm else 'fixed musl-system server'},
+                                'native': 'Microsoft mimalloc v3.5.3'},
+            'goVersion': (OUTPUT / 'go-version.log').read_text().strip(), 'goBuildFlags': GO_FLAGS,
+            'goBuildEnvironment': json.loads((OUTPUT / 'go-build-env.json').read_text()),
+            'goRuntime': 'default GC, memory limit and GOMAXPROCS; inherited overrides removed; no forced GC',
+            'source': 'unchanged Go production server; actual RustFS musl server; fixed GNU Rust client with telemetry only',
+            'repeats': 4, 'order': 'Go/Rust, Rust/Go, Go/Rust, Rust/Go', 'expectedTransfers': 56,
+            'builds': 3, 'families': CASES, 'experiments': ['server'],
+            'counterparts': {'server': 'fixed GNU-system Rust client'},
             'platform': list(os.uname()), 'logicalCpus': os.cpu_count(),
             'transparentHugePages': {name: Path('/sys/kernel/mm/transparent_hugepage', name).read_text().strip()
                                      for name in ('enabled', 'defrag', 'hpage_pmd_size')},
-            'muslCCompiler': 'musl-gcc for every musl variant; earlier study used host GCC',
-            'warmupMs': 500, 'measureMs': 10000 if args.confirm else 3000, 'streams': [1, 4],
+            'muslCCompiler': 'musl-gcc', 'warmupMs': 500, 'measureMs': 10000, 'streams': [4],
             'cpuWindow': 'client GNU-time counters cover its entire process lifetime; server deltas bracket that same '
                          'client invocation, including preparation, warmup and drain; reported bytes/duration belong '
                          'to the receiver measurement, not an identical CPU window',
-            'rss': 'server sampled every 50ms; client exact process high-water RSS via GNU time',
-            'retention': 'one persistent server per baseline/new candidate, four cycles of H2 upload/H1 clear download/'
-                         'H3 upload at four streams; post-stage and three-second-idle RSS. Short mixed retention '
-                         'check, not a long soak; retained measurement records or connection state can contribute '
-                         'to growth, which alone does not establish a leak' if args.confirm else None,
-            'limitation': 'shared hosted x86_64 loopback; fixed peer can cap throughput; compare same-run pairs only; no shaped link or ARM evidence'}, indent=2) + '\n')
-        measure(binaries, environment, ports, args.confirm)
-        if args.confirm:
-            retention(binaries, environment, ports)
+            'rss': 'server sampled every 50ms; Go RSS includes runtime and GC-retained heap by default; '
+                   'client exact process high-water RSS via GNU time',
+            'retention': 'one persistent server per implementation, four cycles of H2 upload/H1 clear download/'
+                         'H3 upload at four streams; post-stage and three-second-idle RSS. No forced GC. '
+                         'Short mixed retention check, not a long soak; retained measurement records, connection state, '
+                         'allocator or GC heap can contribute to growth, which alone does not establish a leak',
+            'limitation': 'shared hosted x86_64 loopback; fixed peer can cap throughput; compare same-run pairs only; '
+                          'no shaped link, ARM, or H3 download GNU-server control'}, indent=2) + '\n')
+        measure(binaries, environment, ports)
+        retention(binaries, environment, ports)
     finally:
         shutil.rmtree(fixture.directory, ignore_errors=True)
         shutil.rmtree(ROOT / 'rust/target/allocator-study-build', ignore_errors=True)
