@@ -525,7 +525,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn busy_upgrade_waits_for_backoff_and_retry_after_before_redial() -> Result<(), Error> {
+    async fn upgrade_refusals_retry_with_busy_backoff_and_retry_after() -> Result<(), Error> {
         let (listener, target) = websocket_listener().await?;
         let http = Http::new(false)?;
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
@@ -544,6 +544,7 @@ mod tests {
                 Some(
                     "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
                 ),
+                Some("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
                 None,
             ] {
                 let (mut stream, _) = listener.accept().await?;
@@ -571,39 +572,11 @@ mod tests {
             }
             Ok::<_, Error>((attempts, minimum))
         });
-        dial(&http, &target, Instant::now() + REDIAL_WINDOW).await?;
+        dial(&http, &target, Instant::now() + REDIAL_WINDOW + Duration::from_secs(1)).await?;
         let (attempts, minimum) = peer.await??;
         assert!(attempts[1] - attempts[0] + Duration::from_millis(20) >= minimum);
         assert!(attempts[2] - attempts[1] >= Duration::from_secs(1));
-        Ok(())
-    }
-
-    /// The first dial is tried again as Go's measureLatency tries it (latency.go:141), whatever
-    /// the failure: here the server refuses its first upgrade outright.
-    #[tokio::test]
-    async fn the_first_dial_is_tried_again_after_any_failure() -> Result<(), Error> {
-        let (listener, target) = websocket_listener().await?;
-        let peer = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await?;
-            let _ = stream.read(&mut [0; 4096]).await?;
-            stream
-                .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-                .await?;
-            let (stream, _) = listener.accept().await?;
-            echo(tokio_tungstenite::accept_async(stream).await?, Duration::ZERO).await;
-            Ok::<_, Error>(())
-        });
-        let (observations, mut observed) = mpsc::channel(64);
-        let (_stop, cancel) = watch::channel(Stop::Running);
-        let timing = (Duration::from_millis(50), Duration::from_millis(300), 16);
-        let measured = run(&Http::new(false)?, &target, timing, observations, cancel).await;
-        peer.abort();
-        measured?;
-        let mut replies = 0;
-        while let Ok(observation) = observed.try_recv() {
-            replies += usize::from(matches!(observation, Observation::Sample { .. }));
-        }
-        assert!(replies > 0);
+        assert!(attempts[3] - attempts[2] >= crate::transport::TRANSFER_RETRY_BACKOFF);
         Ok(())
     }
 
