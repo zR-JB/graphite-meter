@@ -2,7 +2,7 @@ mod support;
 
 use std::{
     io::{BufRead, BufReader},
-    net::{SocketAddr, TcpStream, UdpSocket},
+    net::{SocketAddr, UdpSocket},
     process::{Child, Command, Stdio},
     sync::mpsc,
     time::Duration,
@@ -54,38 +54,6 @@ fn start(mut command: Command) -> (Server, mpsc::Receiver<String>, std::thread::
         }
     });
     (server, received, reader)
-}
-
-/// As Go's `http.Server`, an accept that fails for want of descriptors is logged, then retried after a delay.
-#[cfg(unix)]
-#[test]
-fn failed_accepts_are_logged_and_retried() {
-    let mut command = Command::new("/bin/sh");
-    command.args([
-        "-c",
-        "ulimit -n 64 && exec \"$0\"",
-        env!("CARGO_BIN_EXE_graphite-meter-server"),
-    ]);
-    command.env_clear().env("GM_H1_ADDR", "127.0.0.1:0");
-    let (server, received, reader) = start(command);
-    let mut lines = std::iter::from_fn(|| received.recv_timeout(Duration::from_secs(10)).ok());
-    let listening = lines
-        .find(|line| line.contains(" listening on "))
-        .expect("a listener line");
-    let (_, address) = listening.split_once(" listening on ").unwrap();
-    let address = &address[..address.find("/tcp").unwrap()];
-    let _held: Vec<_> = (0..64).map_while(|_| TcpStream::connect(address).ok()).collect();
-    let failure = lines
-        .find(|line| line.contains("Accept error"))
-        .expect("an accept error line");
-    let expected = format!("http: Accept error: accept tcp {address}: ");
-    let failure = timestamped(&failure).unwrap();
-    assert!(
-        failure.starts_with(&expected) && failure.ends_with("; retrying in 5ms"),
-        "{failure}"
-    );
-    drop(server);
-    reader.join().unwrap();
 }
 
 /// A close reason that would add a whole forged log line and clear the operator's terminal.

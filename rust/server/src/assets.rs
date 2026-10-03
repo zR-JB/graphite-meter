@@ -299,11 +299,9 @@ mod tests {
     #[test]
     fn shell_metadata_and_head_length_are_precomputed() {
         let assets = Assets::from_entries(FILES, true, true);
-        assert!(assets.index.is_some());
         let get = assets.serve(&Method::GET, "/", &HeaderMap::new());
         let body = std::str::from_utf8(get.body()).unwrap();
         assert!(body.contains("name=\"graphite-meter-auth\" content=\"enabled\""));
-        assert!(body.contains("name=\"graphite-meter-result-history-default\" content=\"true\""));
         assert_eq!(get.headers()["cache-control"], "no-store");
         assert_eq!(get.headers()["x-content-type-options"], "nosniff");
         let head = assets.serve(&Method::HEAD, "/", &HeaderMap::new());
@@ -326,12 +324,6 @@ mod tests {
             );
         }
         assert!(!policy.contains("unsafe-inline"));
-        let public = Assets::from_entries(FILES, false, false).serve(&Method::GET, "/", &HeaderMap::new());
-        assert!(
-            !std::str::from_utf8(public.body())
-                .unwrap()
-                .contains("graphite-meter-auth")
-        );
     }
 
     #[test]

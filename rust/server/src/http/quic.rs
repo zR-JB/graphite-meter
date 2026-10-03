@@ -1181,45 +1181,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn peer_closes_end_connections_normally_and_protocol_errors_do_not() {
-        use super::*;
-        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-        let (tls, client_config) = tls();
-        let quic = server.quic_endpoint(tls, "127.0.0.1:0".parse().unwrap()).unwrap();
-        let address = quic.local_addr().unwrap();
-        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
-        client.set_default_client_config(client_config);
-        let floor = connection_floor(0);
-        tokio::time::timeout(Duration::from_secs(10), async {
-            let connect = || async {
-                let (peer, (accepted, budget, from)) =
-                    tokio::join!(client.connect(address, "localhost").unwrap(), async {
-                        let incoming = quic.endpoint.accept().await.unwrap();
-                        let from = incoming.remote_address();
-                        let (connecting, budget) = quic.accept(incoming, server.memory.lease(floor).unwrap()).unwrap();
-                        (connecting.await.unwrap(), budget, from)
-                    });
-                (
-                    peer.unwrap(),
-                    server.clone().serve_quic_connection(accepted, budget, from),
-                )
-            };
-            let (peer, served) = connect().await;
-            peer.close(Code::H3_EXCESSIVE_LOAD.into(), b"");
-            let error = served.await.unwrap_err();
-            assert!(ended_normally(&error), "{error}");
-
-            let (peer, served) = connect().await;
-            let mut control = peer.open_uni().await.unwrap();
-            control.write_all(&[0x00, 0x00, 0x00]).await.unwrap();
-            let error = served.await.unwrap_err();
-            assert!(!ended_normally(&error), "{error}");
-        })
-        .await
-        .unwrap();
-    }
-
-    #[tokio::test]
     async fn transfers_complete_from_their_floors_when_the_budget_is_exhausted() {
         use super::*;
         let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());

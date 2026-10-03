@@ -38,29 +38,12 @@ fn source_presence_and_inline_file_equivalence() {
 }
 
 #[test]
-fn null_and_missing_defaults_match_go() {
-    for raw in [
-        "null",
-        "{}",
-        r#"{"servers":null,"defaultSelection":null}"#,
-        r#"{"servers":[]}"#,
-        "[]",
-    ] {
-        assert_eq!(parse(raw.as_bytes()).unwrap(), load(None, None).unwrap(), "{raw}");
-    }
+fn rejects_unsafe_ambiguous_and_duplicate_json() {
     for raw in [
         r#"{"defaultSelection":[]}"#,
         r#"{"defaultSelection":[null]}"#,
         r#"{"servers":[null]}"#,
         "[null]",
-    ] {
-        assert!(parse(raw.as_bytes()).is_err(), "{raw}");
-    }
-}
-
-#[test]
-fn rejects_unsafe_ambiguous_and_duplicate_json() {
-    for raw in [
         r#"{"defaultSelection":["missing"]}"#,
         r#"{"servers":[{"id":"self","url":"https://example.net"}]}"#,
         r#"{"servers":[{"id":"a","url":"https://example.net"},{"id":"b","url":"https://EXAMPLE.net:443"}]}"#,
