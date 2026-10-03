@@ -319,6 +319,9 @@ python3 rust/tests/browser_transports.py --server rust/target/ci/graphite-meter-
 ```
 
 The static musl binaries use rustfs-mimalloc 0.5.6, bundling mimalloc 3.5.3.
+This is a temporary binding choice. Switch back to the main `mimalloc` crate
+when it resumes maintained releases with a suitably current native allocator;
+track its [upstream version update](https://github.com/purpleprotocol/mimalloc_rust/pull/169).
 Local musl cross builds need musl headers and a target C compiler wrapper: set
 `CC_x86_64_unknown_linux_musl=x86_64-linux-musl-gcc` or
 `CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc`. Debian provides these in
