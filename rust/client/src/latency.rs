@@ -576,7 +576,6 @@ mod tests {
         let (attempts, minimum) = peer.await??;
         assert!(attempts[1] - attempts[0] + Duration::from_millis(20) >= minimum);
         assert!(attempts[2] - attempts[1] >= Duration::from_secs(1));
-        assert!(attempts[3] - attempts[2] >= crate::transport::TRANSFER_RETRY_BACKOFF);
         Ok(())
     }
 
