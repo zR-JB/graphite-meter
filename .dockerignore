@@ -1,5 +1,6 @@
 # Build context is the repo root (docker build -f container/Dockerfile .). Keep it lean.
 .git
+.scratch
 **/node_modules
 client/dist
 client/.e2e-dist
@@ -15,6 +16,9 @@ go/dist
 go/internal/static/dist
 .go-cache
 .tools
+rust/target
+legal/manual/llvm
+legal/manual/musl
 **/.DS_Store
 **/__pycache__
 .claude

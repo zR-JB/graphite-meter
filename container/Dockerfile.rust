@@ -1,0 +1,141 @@
+# Experimental only; container/Dockerfile remains the default Go build.
+ARG VERSION=0.0.0-dev
+ARG TARGETARCH
+
+FROM --platform=$BUILDPLATFORM docker.io/library/python:3.14.8-slim-bookworm@sha256:c8137f4c460908c8763f281c8f22c431eb5c538514ba9553fc3a89c06b7cfb88 AS python
+FROM --platform=$BUILDPLATFORM docker.io/library/rust:1.99.0-bookworm@sha256:59037199c44290f2befcdd58dcc540164763fc296950255aaefeef096a1866b0 AS rust-amd64
+COPY --from=python /usr/local /usr/local
+ENV LD_LIBRARY_PATH=/usr/local/lib \
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-gnu-gcc \
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc \
+    CC_x86_64_unknown_linux_musl=x86_64-linux-musl-gcc
+# Debian's archive serves one version of each package, so apt reads it as it was when the
+# platform records were reviewed: the pinned versions and every dependency stay installable.
+# C dependencies use musl headers; Rust's final link still uses its self-contained libc.
+RUN printf 'Types: deb\nURIs: https://snapshot.debian.org/archive/%s/20260927T180000Z\nSuites: %s\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\nCheck-Valid-Until: no\n\n' \
+        debian 'bookworm bookworm-updates' debian-security bookworm-security >/etc/apt/sources.list.d/debian.sources \
+    && rm -f /etc/apt/sources.list \
+    && apt-get update && apt-get install -y --no-install-recommends musl-dev:amd64=1.2.3-1 \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY rust/Cargo.toml rust/Cargo.lock rust/rust-toolchain.toml rust/
+COPY rust/.cargo/config.toml rust/.cargo/config.toml
+COPY rust/server/Cargo.toml rust/server/
+COPY rust/client/Cargo.toml rust/client/
+COPY rust/core/Cargo.toml rust/core/
+COPY rust/net/Cargo.toml rust/net/
+COPY rust/http3/Cargo.toml rust/http3/
+COPY scripts/ci/rust_dependencies.py /usr/local/bin/gm-rust-dependencies
+COPY scripts/tui-targets.txt scripts/tui-targets.txt
+
+FROM scratch AS source
+COPY LICENSE COPYRIGHT mise.toml ./
+COPY scripts/ scripts/
+COPY legal/ legal/
+COPY rust/ rust/
+COPY api/ api/
+COPY go/internal/auth/assets/ go/internal/auth/assets/
+
+# Debian's arm64 musl wrapper uses the existing GNU cross compiler with musl target headers.
+FROM rust-amd64 AS rust-arm64
+RUN dpkg --add-architecture arm64 \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        gcc-aarch64-linux-gnu=4:12.2.0-3 libc6-dev-arm64-cross=2.36-8cross1 musl-dev:arm64=1.2.3-1 \
+    && rm -rf /var/lib/apt/lists/*
+ENV CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc
+
+# Rust TUI releases support Linux and Windows.
+FROM rust-arm64 AS tui-build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc-mingw-w64-x86-64-win32=12.2.0-14+deb12u1+25.2+b1 mingw-w64-x86-64-dev=10.0.0-3 \
+    && rm -rf /var/lib/apt/lists/*
+ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
+ARG GM_RUST_DEPENDENCY_CACHE=0
+ARG GM_RUST_RELEASE_LTO=fat
+ARG GM_RUST_RELEASE_CODEGEN_UNITS=1
+ENV CARGO_PROFILE_RELEASE_LTO=$GM_RUST_RELEASE_LTO \
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$GM_RUST_RELEASE_CODEGEN_UNITS
+RUN if [ "$GM_RUST_DEPENDENCY_CACHE" = "1" ]; then python3 /usr/local/bin/gm-rust-dependencies \
+    --package graphite-meter-client --target x86_64-unknown-linux-musl aarch64-unknown-linux-musl x86_64-pc-windows-gnu; fi
+COPY --from=source / /src/
+ARG VERSION
+RUN python3 -m scripts.package_rust "$VERSION" --os linux windows --output /src/dist \
+    --supplement legal/rust-platform-debian-bookworm.json
+
+FROM scratch AS tui-artifacts
+COPY --from=tui-build /src/dist/ /
+
+FROM --platform=$BUILDPLATFORM docker.io/oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS browser
+ARG VERSION
+ARG GM_CLIENT_REVISION=source
+ARG GM_CLIENT_VALIDATE=1
+ENV VERSION=$VERSION \
+    GM_CLIENT_BUILD_PROFILE=prod \
+    GM_CLIENT_REVISION=$GM_CLIENT_REVISION \
+    GM_LEGAL_SCAN_OUT=/tmp/browser-modules.json
+WORKDIR /src/client
+COPY client/package.json client/bun.lock client/bunfig.toml ./
+COPY client/patches/ ./patches/
+RUN bun --bun install --frozen-lockfile
+COPY client/ ./
+COPY api/ /src/api/
+COPY go/internal/auth/assets/ /src/go/internal/auth/assets/
+RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:bundle; fi
+
+FROM rust-${TARGETARCH} AS server-build
+ARG TARGETARCH
+ARG PROFILE=release
+ARG GM_RUST_DEPENDENCY_CACHE=0
+ARG GM_RUST_RELEASE_LTO=fat
+ARG GM_RUST_RELEASE_CODEGEN_UNITS=1
+ENV CARGO_PROFILE_RELEASE_LTO=$GM_RUST_RELEASE_LTO \
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$GM_RUST_RELEASE_CODEGEN_UNITS
+RUN if [ "$GM_RUST_DEPENDENCY_CACHE" = "1" ]; then \
+    target=$(awk -v platform="linux/$TARGETARCH" '$1 == platform { print $2 }' scripts/tui-targets.txt) \
+    && python3 /usr/local/bin/gm-rust-dependencies --package graphite-meter-server --target "$target" --profile "$PROFILE"; fi
+COPY --from=source / /src/
+ARG VERSION
+ENV GM_ENGINE_VERSION=${VERSION}-rust \
+    GM_RUST_ASSET_DIR=/src/client/dist
+COPY --from=browser /src/client/ /src/client/
+# The legal scan reads the bundled packages through Bun's installation cache, at the same paths.
+COPY --from=browser /root/.bun/install/cache/ /root/.bun/install/cache/
+COPY --from=browser /tmp/browser-modules.json /tmp/browser-modules.json
+# The server and Linux TUIs link musl statically; Go's static server does not use musl.
+# Rust's standard library comes from the archives of the pinned channel manifest.
+RUN target=$(awk -v platform="linux/$TARGETARCH" '$1 == platform { print $2 }' scripts/tui-targets.txt) \
+    && python3 -m scripts.ci.toolchains verify-rust && (cd rust && rustup target add "$target") \
+    && python3 -m scripts.legal.rust --package graphite-meter-server --target "$target" --profile "$PROFILE" --version "$VERSION" \
+        --out /src/rust/target/server-notices --reviews legal/rust-reviewed-components.json \
+        --supplement legal/rust-platform-debian-bookworm.json --browser-scan /tmp/browser-modules.json \
+    && cp "rust/target/$target/$PROFILE/graphite-meter-server" /graphite-meter \
+    && printf 'Graphite Meter source: https://github.com/zR-JB/graphite-meter\nMatching release: v%s\nDependency source archive: %s\n' \
+        "$VERSION" "graphite-meter-server_${VERSION}_linux_${TARGETARCH}_rust_third-party-source.tar.gz" >/SOURCE.txt
+
+# Export matching source separately for the GitHub release; it is not runtime data.
+FROM scratch AS server-artifacts
+ARG VERSION
+ARG TARGETARCH
+COPY --from=server-build /src/rust/target/server-notices/THIRD_PARTY_SOURCE.tar.gz \
+    /graphite-meter-server_${VERSION}_linux_${TARGETARCH}_rust_third-party-source.tar.gz
+
+# Go's image takes the CA roots and their copyright from this builder, so both images trust the same roots.
+FROM docker.io/library/golang:1.27.1@sha256:3680233e3204827fbdc66088528ae6d4b3d034f51d03a99d454f6de034888244 AS ca-certificates
+
+# Like Go's image: one static binary, its notices and the CA roots, with no libc, shell or package.
+FROM scratch AS server
+COPY --from=server-build /graphite-meter /graphite-meter
+COPY LICENSE COPYRIGHT /usr/share/licenses/graphite-meter/
+# The binary's notices and the image's own additions, as Go's image lists them.
+COPY --from=server-build /src/rust/target/server-notices/IMAGE_NOTICES.txt /usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt
+COPY --from=server-build /SOURCE.txt /usr/share/licenses/graphite-meter/SOURCE.txt
+COPY --from=ca-certificates /usr/share/doc/ca-certificates/copyright /usr/share/licenses/ca-certificates/COPYRIGHT
+# Outbound OIDC discovery, token exchange, UserInfo and JWKS requests need the public CA roots.
+COPY --from=ca-certificates /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+EXPOSE 7246/tcp 7247/tcp 7248/tcp 7249/tcp 7249/udp
+# As in Go's image, relative GM_* paths resolve from /, and like Go's x509 the
+# server trusts the bundle and any CA file added to /etc/ssl/certs.
+ENV SSL_CERT_DIR=/etc/ssl/certs
+WORKDIR /
+USER 65532:65532
+ENTRYPOINT ["/graphite-meter"]

@@ -1,6 +1,7 @@
 import {
   amsterdam,
   baseConfig,
+  catalog,
   closeSettings,
   frankfurt,
   home,
@@ -13,6 +14,7 @@ import {
   run,
   runButton,
   savedResult,
+  spawnPeer,
 } from "./fleet";
 import { Locator, Page, expect, test } from "./webview";
 
@@ -204,7 +206,7 @@ test("peer sign-in opens an isolated popup from the user click", async (page) =>
 });
 
 /* The approving browser keeps the login session that owns the grant. */
-async function approve(row: Locator): Promise<Page> {
+async function approve(row: Locator, expectedOrigin = home.url): Promise<Page> {
   const link = row.getByRole("link", { name: "Open sign-in page" });
   await expect(link).toBeVisible();
   const code = await row.locator(".approval-code strong").textContent();
@@ -213,7 +215,7 @@ async function approve(row: Locator): Promise<Page> {
   try {
     await approval.goto((await link.getAttribute("href"))!);
     await signIn(approval);
-    await expect(approval.locator("main")).toContainText(home.url);
+    await expect(approval.locator("main")).toContainText(expectedOrigin);
     await expect(approval.locator("main")).toContainText(code!);
     await approval.getByRole("button", { name: "Approve this client" }).click();
     return approval;
@@ -270,42 +272,51 @@ test("a protected WebSocket peer approved through the sign-in link joins a run",
 });
 
 test("a peer grant revoked mid-run ends in the sign-in state", async (page) => {
-  await page.addInitScript(() => (window.open = () => null));
-  await open(page, home.url, {
-    servers: [home, locked],
-    config: {
-      duration: { ...baseConfig.duration, downloadMs: 1500, uploadMs: 1000 },
-    },
-  });
-  await openSettings(page);
-  const row = feedback(page, "Private");
-  const signInButton = row.getByRole("button", { name: "Sign in to Private" });
-  await signInButton.click();
-  const approval = await approve(row);
-  let startedAt = 0;
+  // The survivor must not inherit retained upload quota from other suite runs.
+  const self = await spawnPeer("Revocation home", catalog(locked));
   try {
-    await ready(page);
-    startedAt = Date.now();
-    await runButton(page, "Start test").click();
-    await expect(phase(page, "download")).toHaveCount(1, { timeout: 10_000 });
-    await approval.evaluate(async () => {
-      const { csrf } = await (await fetch("/auth/session")).json();
-      const body = new URLSearchParams({ csrf, scope: "all" });
-      await fetch("/auth/logout", { method: "POST", body });
+    await page.addInitScript(() => (window.open = () => null));
+    await open(page, self.server.url, {
+      servers: [{ id: "self", url: self.server.url }, locked],
+      config: {
+        duration: { ...baseConfig.duration, downloadMs: 1500 },
+      },
     });
+    await openSettings(page);
+    const row = feedback(page, "Private");
+    const signInButton = row.getByRole("button", {
+      name: "Sign in to Private",
+    });
+    await signInButton.click();
+    const approval = await approve(row, self.server.url);
+    let startedAt = 0;
+    try {
+      await ready(page);
+      startedAt = Date.now();
+      await runButton(page, "Start test").click();
+      await expect(phase(page, "download")).toHaveCount(1, { timeout: 10_000 });
+      await approval.evaluate(async () => {
+        const { csrf } = await (await fetch("/auth/session")).json();
+        const body = new URLSearchParams({ csrf, scope: "all" });
+        await fetch("/auth/logout", { method: "POST", body });
+      });
+    } finally {
+      approval.close();
+    }
+    const saved = await savedResult(page, startedAt, 20_000);
+    expect(saved.result.outcome).toBe("partial");
+    const revoked = saved.result.multiServer.failures.find(
+      (failure) => failure.scope === "throughput",
+    );
+    expect(revoked).toMatchObject({
+      serverId: "server-4",
+      reason: "sign-in-required",
+    });
+    await expect(phase(page, "complete")).toHaveCount(1);
+    await openSettings(page);
+    await expect(signInButton).toBeVisible();
   } finally {
-    approval.close();
+    self.kill();
+    await self.exited;
   }
-  const saved = await savedResult(page, startedAt, 20_000);
-  expect(saved.result.outcome).toBe("partial");
-  const revoked = saved.result.multiServer.failures.find(
-    (failure) => failure.scope === "throughput",
-  );
-  expect(revoked).toMatchObject({
-    serverId: "server-4",
-    reason: "sign-in-required",
-  });
-  await expect(phase(page, "complete")).toHaveCount(1);
-  await openSettings(page);
-  await expect(signInButton).toBeVisible();
 });

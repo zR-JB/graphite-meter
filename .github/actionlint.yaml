@@ -1,0 +1,5 @@
+# actionlint 1.7.12 predates GitHub's cache-mode workflow key.
+paths:
+  .github/workflows/release-request.yml:
+    ignore:
+      - 'unexpected key "cache-mode" for "workflow" section'

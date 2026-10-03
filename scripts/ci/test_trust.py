@@ -11,13 +11,15 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import patch
 
-from github_api import (
+from .github_api import (
     ControlPlaneError, JsonObject, confined_path, file_sha256, local_path, runner_path,
 )
-from fixtures import (
-    AMD, Answers, engine, git_head, github, outcome, pages, write_oci, write_release_assets,
+from .fixtures import (
+    AMD, Answers, engine, git_head, github, outcome, pages, write_archive, write_oci, write_release_assets,
 )
-from release import (
+from .release import (
+    BUILD_JOB,
+    COMMANDS,
     OCI,
     Release,
     assets_sha256,
@@ -30,7 +32,7 @@ from release import (
     require_publishable,
     verify_request,
 )
-from trust import (
+from .trust import (
     exact_files,
     require_check_run,
     require_ci_gate,
@@ -50,6 +52,7 @@ P = f"repos/{REPO}/"
 PULL, MAIN_COMMIT = P + "pulls/101", P + "commits/main"
 REQUEST_WORKFLOW, REQUEST_RUN = P + "actions/workflows/release-request.yml", P + "actions/runs/4242"
 ARTIFACTS = REQUEST_RUN + "/artifacts?per_page=100"
+REQUEST_JOBS = REQUEST_RUN + "/jobs?filter=latest&per_page=100"
 JOBS = P + "actions/runs/5151/jobs?filter=latest&per_page=100"
 CHECKS = P + f"commits/{HEAD}/check-runs?per_page=100&filter=all"
 CODEQL = P + "code-scanning/analyses?ref=refs%2Fheads%2Fmain&tool_name=CodeQL&per_page=100"
@@ -102,9 +105,23 @@ def dispatch_run(workflow_id: int, run_id: int, title: str = "title") -> dict[st
     }
 
 
-def artifacts(*names: str, size: int = 1024, expired: bool = False) -> object:
-    return pages({"artifacts": [{"name": name, "expired": expired, "size_in_bytes": size}
-                                for name in names]})
+def job(name: str, start: str, end: str) -> dict[str, object]:
+    return {"name": name, "status": "completed", "conclusion": "success",
+            "started_at": f"2026-08-15T{start}:00Z", "completed_at": f"2026-08-15T{end}:00Z"}
+
+
+# An unrelated job cannot impersonate the expected artifact-producing job.
+OTHER_JOB = "Unrelated job"
+REQUEST_JOB_RUNS = pages({"jobs": [job(BUILD_JOB, "10:00", "10:20"), job(OTHER_JOB, "10:21", "10:40")]})
+
+
+def artifacts(*names: str, size: int = 1024, expired: bool = False, written: str = "") -> object:
+    """Each artifact as the job that writes it uploads it, unless it was `written` at another time."""
+    def at(name: str) -> str:
+        return f"2026-08-15T{written or ('10:30' if 'other' in name else '10:10')}:00Z"
+
+    return pages({"artifacts": [{"name": name, "expired": expired, "size_in_bytes": size,
+                                 "created_at": at(name), "updated_at": at(name)} for name in names]})
 
 
 def release_of(stable: bool) -> Release:
@@ -113,11 +130,11 @@ def release_of(stable: bool) -> Release:
 
 def trusted(stable: bool, mode: str = "publish") -> dict[str, object]:
     """Every GitHub answer that authorizes a stable release or a PR #101 prerelease."""
-    names = ["release-request-4242"] + (["release-assets-4242"] if stable else [])
+    names = ["release-request-4242", "release-assets-4242"]
     responses: dict[str, object] = {
         MAIN_COMMIT: {"sha": MAIN}, REQUEST_WORKFLOW: {"id": 31337},
         REQUEST_RUN: dispatch_run(31337, 4242, request_title(mode, release_of(stable), MAIN)),
-        ARTIFACTS: artifacts(*names), JOBS: pages({"jobs": [GATE]}),
+        ARTIFACTS: artifacts(*names), REQUEST_JOBS: REQUEST_JOB_RUNS, JOBS: pages({"jobs": [GATE]}),
     }
     if mode == "publish":
         responses |= {ENVIRONMENT: REVIEWED, POLICIES: MAIN_ONLY}
@@ -284,7 +301,11 @@ class GateTests(unittest.TestCase):
 
 class RequestTests(unittest.TestCase):
     def test_request_run_is_bound_to_main_owner_attempt_and_artifacts(self) -> None:
-        name = "release-request-4242"
+        name, other = "release-request-4242", "other-asset-4242"
+        expected = {name: (BUILD_JOB, 4096), other: (OTHER_JOB, 4096)}
+        only_build = pages({"jobs": [job(BUILD_JOB, "10:00", "10:20")]})
+        failed = pages({"jobs": [job(BUILD_JOB, "10:00", "10:20"),
+                                 job(OTHER_JOB, "10:21", "10:40") | {"conclusion": "failure"}]})
         for field, value, error in (
             (None, None, None),
             ("id", 4243, "is not a release-request.yml run"),
@@ -298,20 +319,33 @@ class RequestTests(unittest.TestCase):
             ("conclusion", "failure", "request run is completed/failure"),
             ("actor", {"login": "other"}, "repository owner"),
             ("triggering_actor", {"login": "other"}, "repository owner"),
-            ("artifact", artifacts(name, expired=True), "expected one unexpired"),
-            ("artifact", artifacts(name, name), "expected one unexpired"),
-            ("artifact", artifacts(name, size=4097), "exceeds"),
+            ("artifact", artifacts(name, other, expired=True), "expected one unexpired"),
+            ("artifact", artifacts(name, name, other), "expected one unexpired"),
+            ("artifact", artifacts(name, other, size=4097), "exceeds"),
+            # Another job cannot replace the build job's artifacts,
+            # and its own must come from its run.
+            ("artifact", artifacts(name, other, written="10:30"), f"{name} was not written while"),
+            ("artifact", artifacts(name, other, written="10:10"), f"{other} was not written while"),
+            ("artifact", artifacts(name, other, written="10:41"), f"{name} was not written while"),
+            ("jobs", only_build, "no single successful job 'Unrelated job'"),
+            ("jobs", failed, "no single successful job 'Unrelated job'"),
         ):
-            run = dispatch_run(7001, 4242)
-            files = artifacts(name)
+            run, files, jobs = dispatch_run(7001, 4242), artifacts(name, other), REQUEST_JOB_RUNS
             if field == "artifact":
                 files = value
+            elif field == "jobs":
+                jobs = value
             elif field is not None:
                 run[field] = value
             with (self.subTest(field=field, error=error),
-                  github({REQUEST_WORKFLOW: {"id": 7001}, ARTIFACTS: files, REQUEST_RUN: run})):
+                  github({REQUEST_WORKFLOW: {"id": 7001}, ARTIFACTS: files, REQUEST_JOBS: jobs, REQUEST_RUN: run})):
                 outcome(self, error, lambda: require_dispatch_run(
-                    REPO, "zR-JB", MAIN, 4242, "release-request.yml", "title", {name: 4096}))
+                    REPO, "zR-JB", MAIN, 4242, "release-request.yml", "title", expected))
+
+    def test_artifacts_are_bound_to_the_request_workflow_jobs(self) -> None:
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/release-request.yml").read_text()
+        for name in (BUILD_JOB,):
+            self.assertEqual(workflow.count(f"    name: {name}\n"), 1)
 
     def test_handoff_directories_hold_exact_regular_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -404,7 +438,7 @@ class RequestTests(unittest.TestCase):
 
     def test_consumer_binds_the_request_artifact_to_its_trusted_run(self) -> None:
         request: dict[str, object] = {
-            "schemaVersion": 2, "repository": REPO, "tag": "v1.2.3", "sourceSha": MAIN, "pr": 0,
+            "schemaVersion": 3, "rust": "none", "repository": REPO, "tag": "v1.2.3", "sourceSha": MAIN, "pr": 0,
             "mode": "publish", "requestRunId": 4242, "requestRunAttempt": 1,
         }
         prerelease = {"tag": "v1.2.3-rc.1", "sourceSha": HEAD, "pr": 101}
@@ -414,8 +448,8 @@ class RequestTests(unittest.TestCase):
             "REQUEST_RUN_ID": "4242",
         }
         for change, env, artifacts_present, error in (
-            ({}, {}, True, None), (prerelease, {}, False, None),
-            (prerelease, {}, True, "downloaded artifacts"), ({}, {}, False, "downloaded artifacts"),
+            ({}, {}, True, None), (prerelease, {}, True, None),
+            (prerelease, {}, False, "downloaded artifacts"), ({}, {}, False, "downloaded artifacts"),
             ({"sourceSha": HEAD}, {}, True, "trusted main commit"),
             ({"requestRunAttempt": True}, {}, True, "requestRunAttempt"),
             ({"requestRunId": 1}, {}, True, "requestRunId"),
@@ -456,13 +490,12 @@ def write_request(root: Path, stable: bool, mode: str) -> tuple[Path, JsonObject
     candidate = request_dir / "release-request-4242"
     candidate.mkdir(parents=True)
     (candidate / "request.json").write_text(json.dumps({
-        "schemaVersion": 2, "repository": REPO, "tag": release.tag, "sourceSha": release.sha,
+        "schemaVersion": 3, "rust": "none", "repository": REPO, "tag": release.tag, "sourceSha": release.sha,
         "pr": release.pr, "mode": mode, "requestRunId": 4242, "requestRunAttempt": 1,
     }))
     oci = write_oci(candidate / OCI, REPO, release.sha, remote=not stable)
     (candidate / f"{OCI}.sha256").write_text(f"{file_sha256(candidate / OCI)}  {OCI}\n")
-    if stable:
-        write_release_assets(request_dir / "release-assets-4242", "1.2.3")
+    write_release_assets(request_dir / "release-assets-4242", release.version, tuis=stable)
     return request_dir, oci
 
 
@@ -516,7 +549,7 @@ class CommandTests(unittest.TestCase):
                     "GITHUB_STEP_SUMMARY": str(root / "summary"), "RUNNER_TEMP": str(self.root),
                 } | engine(root, REPO, release.version, release.sha, oci) | git_head(root, MAIN) | env
                 limit = int(env.get("LIMIT", 1 << 30))
-                with (patch.dict(os.environ, variables), patch("release.OCI_LIMIT", limit),
+                with (patch.dict(os.environ, variables), patch("scripts.ci.release.OCI_LIMIT", limit),
                       github(trusted(stable, mode) | responses)):
                     outcome(self, error, command_verify)
                 if error is not None:
@@ -526,18 +559,38 @@ class CommandTests(unittest.TestCase):
                 self.assertEqual((result["digest"], result["publish"], result["sha"]),
                                  (AMD, str(mode == "publish").lower(), release.sha))
                 self.assertEqual(file_sha256(root / "handoff/image" / OCI), result["oci_sha256"])
-                if stable:
-                    self.assertEqual(result["assets_sha256"],
-                                     assets_sha256(request_dir / "release-assets-4242"))
+                self.assertEqual(result["assets_sha256"], assets_sha256(request_dir / "release-assets-4242"))
+
+    def test_a_prerelease_stages_the_image_source_offer_it_exported(self) -> None:
+        name = "graphite-meter_1.2.3-rc.1_third-party-source.tar.gz"
+        export, staged = self.root / "export", self.root / "staged"
+        write_release_assets(export, "1.2.3-rc.1", tuis=False)
+        environment = {"RUNNER_TEMP": str(self.root), "VERSION": "1.2.3-rc.1",
+                       "SOURCE_EXPORT": str(export), "RELEASE_ASSETS": str(staged)}
+        with patch.dict(os.environ, environment):
+            COMMANDS["stage-source"]()
+            self.assertEqual(sorted(path.name for path in staged.iterdir()), ["checksums.txt", name])
+            write_archive(export / name, {"graphite-meter_1.2.3-rc.1_third-party-source/README.txt": b"x"})
+            with self.assertRaisesRegex(ControlPlaneError, "source-offer metadata"):
+                COMMANDS["stage-source"]()
+        with patch.dict(os.environ, environment | {"VERSION": "/../../x"}):
+            with self.assertRaisesRegex(ControlPlaneError, "is outside"):
+                COMMANDS["stage-source"]()
 
     def test_recheck_reauthorizes_the_exact_handoff_after_approval(self) -> None:
         handoff = self.root / "handoff"
         (handoff / "image").mkdir(parents=True)
         (handoff / "image" / OCI).write_bytes(b"verified")
+        (handoff / "rust-image").mkdir()
+        (handoff / "rust-image" / OCI).write_bytes(b"verified Rust")
         write_release_assets(handoff / "assets", "1.2.3")
         closed = {PULL: PR | {"state": "closed"}}
         for stable, env, responses, error in (
             (True, {}, {}, None), (False, {}, {}, None),
+            (False, {"RUST": "tui"}, {}, None),
+            (False, {"RUST": "server", "RUST_OCI_SHA256": hashlib.sha256(b"verified Rust").hexdigest()}, {}, None),
+            (False, {"RUST": "tui", "ASSETS_SHA256": "0" * 64}, {}, "asset handoff"),
+            (False, {"RUST": "server", "RUST_OCI_SHA256": "0" * 64}, {}, "Rust OCI handoff"),
             (True, {"OCI_SHA256": "0" * 64}, {}, "OCI handoff"),
             (True, {"ASSETS_SHA256": "0" * 64}, {}, "asset handoff"),
             (True, {"HEAD": OLD}, {}, "checked-out tooling"),

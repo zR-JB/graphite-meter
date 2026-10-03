@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import platform
 import re
 import subprocess
 import tomllib
+import urllib.request
 from pathlib import Path
+
+from .github_api import fail
 
 ROOT = Path(__file__).resolve().parents[2]
 TOOL_KEYS = {
@@ -18,6 +22,8 @@ TOOL_KEYS = {
     "ty": "aqua:astral-sh/ty",
     "actionlint": "aqua:rhysd/actionlint",
     "zizmor": "aqua:zizmorcore/zizmor",
+    "cargo-deny": "aqua:EmbarkStudios/cargo-deny",
+    "cargo-nextest": "aqua:nextest-rs/nextest/cargo-nextest",
 }
 PIN_PATTERNS = {
     "browser": {"chrome": r"\d+\.\d+\.\d+\.\d+"},
@@ -26,8 +32,37 @@ PIN_PATTERNS = {
         "binfmt": r"docker\.io/tonistiigi/binfmt@sha256:[0-9a-f]{64}",
         "bun": r"docker\.io/oven/bun:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}",
         "golang": r"docker\.io/library/golang:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}",
+        "python": r"docker\.io/library/python:\d+\.\d+\.\d+-slim-bookworm@sha256:[0-9a-f]{64}",
+        "rust": r"docker\.io/library/rust:\d+\.\d+\.\d+-bookworm@sha256:[0-9a-f]{64}",
     },
 }
+
+
+def rust_channel(root: Path = ROOT) -> str:
+    """The Rust release that rust/rust-toolchain.toml pins for every Rust build."""
+    return tomllib.loads((root / "rust/rust-toolchain.toml").read_text(encoding="utf-8"))["toolchain"]["channel"]
+
+
+def host_platform() -> str:
+    """This machine as GOOS/GOARCH, the platform whose TUI builds it can run."""
+    machine = platform.machine().lower()
+    return f"{platform.system().lower()}/{ {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(machine, machine)}"
+
+
+def tui_targets(path: Path) -> dict[str, str]:
+    """Each shipped GOOS/GOARCH platform and its Rust target, as scripts/tui-targets.txt lists them."""
+    platforms: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if (match := re.fullmatch(r"([a-z0-9]+/[a-z0-9]+) ([a-z0-9_]+(?:-[a-z0-9_]+){2,3})", line)) is None:
+            fail(f"invalid TUI target: {line!r}")
+        platforms[match[1]] = match[2]
+    return platforms
+
+
+def rust_tui_targets(path: Path) -> dict[str, str]:
+    """Rust distributes Linux and Windows TUIs; Go retains every listed platform."""
+    return {platform: target for platform, target in tui_targets(path).items()
+            if platform.startswith(('linux/', 'windows/'))}
 
 
 def load_pins(root: Path = ROOT) -> dict[str, dict[str, str]]:
@@ -56,15 +91,48 @@ def load_pins(root: Path = ROOT) -> dict[str, dict[str, str]]:
                 raise ValueError(f"mise.toml {section}.{name} must be an exact version or image digest")
             pins[section][name] = value
     pins["runtime"] = {name: pins["tools"][name] for name in ("bun", "python", "go")}
-    for name, runtime in (("bun", "bun"), ("golang", "go")):
-        if pins["images"][name].split(":")[1].split("@")[0] != pins["runtime"][runtime]:
+    for name, runtime in (("bun", "bun"), ("golang", "go"), ("python", "python")):
+        if pins["images"][name].split(":")[1].split("@")[0].split("-")[0] != pins["runtime"][runtime]:
             raise ValueError(f"mise.toml images.{name} must use the tools.{runtime} version")
+    manifest = metadata.get("rust_manifest_sha256")
+    if not isinstance(manifest, str) or re.fullmatch(r"[0-9a-f]{64}", manifest) is None:
+        raise ValueError("mise.toml vars.rust_manifest_sha256 must be a SHA-256")
+    pins["rust"] = {"channel": rust_channel(root), "manifest": manifest}
+    if pins["images"]["rust"].split(":")[1].split("-")[0] != pins["rust"]["channel"]:
+        raise ValueError("mise.toml images.rust must use the rust/rust-toolchain.toml channel")
     return pins
 
 
 def pin(name: str, root: Path = ROOT) -> str:
     section, key = name.split(".", 1)
     return load_pins(root)[section][key]
+
+
+def rust_downloads(manifest: bytes) -> dict[tuple[str, str], dict[str, object]]:
+    """Each package archive of a channel manifest and its SHA-256, which rustup checks every download against:
+    every compression's `url`/`hash` pair (`xz_url`, `zst_url`, ...), since rustup picks the one it prefers."""
+    packages = tomllib.loads(manifest.decode()).get("pkg", {})
+    return {(name, target): {key: value for key, value in item.items() if re.fullmatch(r"(?:\w+_)?(?:url|hash)", key)}
+            for name, package in packages.items() for target, item in package.get("target", {}).items()}
+
+
+def check_rust_manifest(installed: Path, manifest: bytes, root: Path = ROOT) -> None:
+    """Require the pinned channel `manifest` and the one rustup installed to name the same archives.
+
+    rustup rewrites the manifest it installs, so the copies are compared by what rustup verifies."""
+    if hashlib.sha256(manifest).hexdigest() != pin("rust.manifest", root):
+        raise ValueError("the Rust channel manifest does not match mise.toml's rust_manifest_sha256")
+    if rust_downloads(installed.read_bytes()) != rust_downloads(manifest):
+        raise ValueError(f"rustup installed Rust {rust_channel(root)} from another manifest than the pinned one")
+
+
+def verify_rust_toolchain(root: Path = ROOT) -> None:
+    """Check the pinned Rust toolchain that rustup installed against the pinned channel manifest."""
+    channel = rust_channel(root)
+    with urllib.request.urlopen(f"https://static.rust-lang.org/dist/channel-rust-{channel}.toml", timeout=60) as reply:
+        manifest = reply.read(64 * 1024 * 1024)
+    sysroot = Path(subprocess.check_output(["rustc", f"+{channel}", "--print", "sysroot"], text=True).strip())
+    check_rust_manifest(sysroot / "lib/rustlib/multirust-channel-manifest.toml", manifest, root)
 
 
 def runtime_pins(root: Path = ROOT) -> dict[str, str]:
@@ -81,6 +149,19 @@ def literal_updates(root: Path = ROOT) -> dict[Path, str]:
              f"FROM {pins['images']['bun']} AS client"),
             (r"(?m)^FROM docker\.io/library/golang:\S+ AS server$",
              f"FROM {pins['images']['golang']} AS server"),
+            (r"(?m)^FROM docker\.io/library/python:\S+ AS source-offer$",
+             f"FROM {pins['images']['python']} AS source-offer"),
+        ],
+        "container/Dockerfile.rust": [
+            (r"(?m)^(FROM --platform=\$BUILDPLATFORM )docker\.io/library/python:\S+( AS python)$",
+             rf"\g<1>{pins['images']['python']}\g<2>"),
+            (r"(?m)^(FROM --platform=\$BUILDPLATFORM )docker\.io/library/rust:\S+( AS rust-amd64)$",
+             rf"\g<1>{pins['images']['rust']}\g<2>"),
+            (r"(?m)^(FROM --platform=\$BUILDPLATFORM )docker\.io/oven/bun:\S+( AS browser)$",
+             rf"\g<1>{pins['images']['bun']}\g<2>"),
+            # The CA roots come from Go's builder image.
+            (r"(?m)^FROM docker\.io/library/golang:\S+ AS ca-certificates$",
+             f"FROM {pins['images']['golang']} AS ca-certificates"),
         ],
         ".github/workflows/release-request.yml": [
             (r"(?m)^(\s*image: )docker.io/tonistiigi/binfmt@\S+$", rf"\g<1>{pins['images']['binfmt']}"),
@@ -154,7 +235,7 @@ def doctor(root: Path = ROOT) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("get", "check", "sync", "doctor", "python-target"))
+    parser.add_argument("command", choices=("get", "check", "sync", "doctor", "python-target", "verify-rust"))
     parser.add_argument("name", nargs="?")
     args = parser.parse_args()
     try:
@@ -173,6 +254,8 @@ def main() -> None:
                     print(path.relative_to(ROOT))
             case "doctor":
                 doctor()
+            case "verify-rust":
+                verify_rust_toolchain()
     except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as exc:
         parser.exit(1, f"toolchains: {exc}\n")
 

@@ -54,7 +54,10 @@ Quadlet units live in a systemd search directory, not in the repo, so replace
 both `/path/to/graphite-meter` occurrences in `graphite-meter.build` with your
 checkout's absolute path: `SetWorkingDirectory=` (the build context) and the
 `cd` in `ExecStartPre=` (which stamps the source revision). Keep
-`File=container/Dockerfile`, and check `Arch=` (default arm64).
+`File=container/Dockerfile`, and check `Arch=` (default arm64). The
+experimental `container/Dockerfile.rust` builds only on an amd64 host, with
+`Arch=amd64`; on arm64 hosts run a published `-rust` tag instead (see
+[DEPLOYMENT.md](../../docs/DEPLOYMENT.md#experimental-rust-image)).
 
 ### 2. Install the units
 

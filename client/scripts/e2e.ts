@@ -4,6 +4,32 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { describe, host, launch } from "../e2e/servers";
 
+const command = process.argv.slice(2);
+let group = command.length ? undefined : process.env.GM_E2E_GROUP;
+if (command[0]?.startsWith("--group=")) {
+  group = command.shift()!.slice("--group=".length);
+}
+if (group !== undefined) {
+  if ((group !== "heavy" && group !== "rest") || command.length)
+    throw new Error(
+      "--group must be heavy or rest and cannot accompany a custom command",
+    );
+  // One anchored pattern and its complement assign new and renamed tests to rest.
+  const heavy =
+    "^rapid surface reversals release resources at (?:1600|1000|390)px, " +
+    "including during a run$";
+  command.push(
+    process.execPath,
+    "test",
+    "./e2e",
+    `--parallel=${group === "heavy" ? 1 : 3}`,
+    "--no-orphans",
+    "--timeout=60000",
+    "--test-name-pattern",
+    group === "heavy" ? heavy : `^(?!${heavy.slice(1)})[\\s\\S]*$`,
+  );
+}
+
 const bin =
   process.env.GM_E2E_SERVER_BIN ??
   resolve(import.meta.dir, "../test-results/graphite-meter");
@@ -49,6 +75,8 @@ const fleet = [
   await describe("server-3", "Helsinki"),
   await describe("server-4", "Private"),
 ];
+// Transport smoke cases retain only six uploads, independently of the app fleet.
+const transport = await describe("transport", "Transport");
 const [, frankfurt, , , locked] = fleet;
 const peers = fleet.slice(1).map(({ id, name, url }) => ({ id, name, url }));
 const native = { GM_ADVERTISED_NATIVE_ENDPOINTS: "http1-tls,http2,http3" };
@@ -66,9 +94,13 @@ const environments: Record<string, string>[] = [
   },
 ];
 const launched = { bin, cert, key };
-const children = await Promise.all(
-  fleet.map((server, i) => launch(launched, server, environments[i])),
-);
+const children = await Promise.all([
+  ...fleet.map((server, i) => launch(launched, server, environments[i])),
+  launch(launched, transport),
+]);
+const quicOrigins = [...fleet, transport]
+  .map((s) => new URL(s.h3).host)
+  .join(",");
 
 const root = resolve(import.meta.dir, "../.e2e-dist");
 const harness = Bun.serve({
@@ -93,7 +125,6 @@ for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.on(signal, () => stop().then(() => process.exit(130)));
 
 const started = performance.now();
-const command = process.argv.slice(2);
 const suite = Bun.spawn(
   command.length ? command : [process.execPath, "run", "test:e2e"],
   {
@@ -104,12 +135,17 @@ const suite = Bun.spawn(
       // Bun's Chrome profiles belong to this suite, including parallel workers
       // that exit without running process-level cleanup callbacks.
       TMPDIR: dir,
-      GM_E2E: JSON.stringify({ fleet, password, harness: harness.url.origin }),
+      GM_E2E: JSON.stringify({
+        fleet,
+        transport,
+        password,
+        harness: harness.url.origin,
+      }),
       GM_E2E_LAUNCH: JSON.stringify(launched),
       BUN_CHROME_ARGS: [
         process.env.BUN_CHROME_ARGS ?? "",
         `--ignore-certificate-errors-spki-list=${spki}`,
-        `--origin-to-force-quic-on=${fleet.map((s) => new URL(s.h3).host)}`,
+        `--origin-to-force-quic-on=${quicOrigins}`,
         "--test-third-party-cookie-phaseout",
       ].join(" "),
     },

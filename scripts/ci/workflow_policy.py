@@ -6,10 +6,11 @@ from __future__ import annotations
 import re
 import subprocess
 import tomllib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-from github_api import PEM, TLS_NAME, ControlPlaneError, fail
-from toolchains import check as check_toolchain_literals, pin
+from .github_api import PEM, TLS_NAME, ControlPlaneError, fail
+from .release import BUILD_JOB
+from .toolchains import check as check_toolchain_literals, pin
 
 ROOT = Path(__file__).resolve().parents[2]
 USES = re.compile(r"(?m)^\s*(?:-\s*)?uses:\s*(\S+)")
@@ -19,6 +20,7 @@ JOB = re.compile(r"(?m)^  (?=[a-z-]+:$)")
 RELEASE_SECRETS = {"GHCR_TOKEN", "RELEASE_APP_PRIVATE_KEY"}
 
 TRIGGERS = {
+    "advisories.yml": {"schedule", "workflow_dispatch"},
     "ci.yml": {"pull_request", "push"},
     "release-request.yml": {"workflow_dispatch"},
     "release.yml": {"workflow_run"},
@@ -26,7 +28,7 @@ TRIGGERS = {
 ALLOWED_USES = {
     "release-request.yml": {
         "actions/checkout", "jdx/mise-action", "./.github/actions/setup-project",
-        "docker/setup-qemu-action", "docker/setup-buildx-action", "docker/build-push-action",
+        "docker/setup-qemu-action", "./.github/actions/setup-buildx", "docker/build-push-action",
         "actions/upload-artifact",
     },
     "release.yml": {
@@ -37,46 +39,76 @@ ALLOWED_USES = {
 ORDERED = {
     "workflows/release-request.yml": (
         "if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}",
-        "run: python3 scripts/ci/release.py prepare",
-        'python3 scripts/ci/verify_release_assets.py "$VERSION"',
+        "run: python3 -m scripts.ci.release prepare",
+        "VERSION= mise run legal-check\n",
         "SOURCE_SHA: ${{ steps.request.outputs.remote_sha }}\n",
         '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', "uses: docker/build-push-action@",
-        "no-cache: true", "provenance: mode=max", "github-token: ''",
-        "GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}\n",
+        'python3 -m scripts.ci.verify_release_assets "$VERSION"',
+        # Only the expected source offer and Rust artifacts leave the exports, with a listing that cannot
+        # list itself.
+        "run: python3 -m scripts.ci.release stage-source\n",
+        "run: python3 -m scripts.ci.release stage-rust\n",
+    ),
+    # CI builds, stages and verifies the prerelease source offer and the Rust exports as a release request
+    # and the release do.
+    "workflows/ci.yml": (
+        "--target third-party-source", "run: python3 -m scripts.ci.release stage-source\n",
+        "run: mise run rust-check\n", "run: python3 -m scripts.legal.check_git_sources --verify\n",
+        "run: mise run rust-check-targets\n", "run: mise run rust-delayed-downloads\n",
+        "target: tui-artifacts\n", "target: server-artifacts\n",
+        "python3 -m scripts.ci.release stage-rust\n", "python3 -m scripts.ci.release check-rust\n",
     ),
     "workflows/release.yml": (
         "github.event.workflow_run.conclusion == 'success'\n",
         "&& github.event.workflow_run.event == 'workflow_dispatch'\n",
         "&& github.event.workflow_run.head_branch == 'main'\n",
         "&& github.event.workflow_run.path == '.github/workflows/release-request.yml'\n",
-        "run: python3 scripts/ci/release.py verify",
+        "run: python3 -m scripts.ci.release verify",
         "group: release-publish-${{ github.repository }}\n", "cancel-in-progress: false\n",
-        "run: python3 scripts/ci/release.py recheck", "run: scripts/ci/publish.sh image",
-        "run: python3 scripts/ci/release.py publish", "run: scripts/ci/publish.sh aliases",
+        "run: python3 -m scripts.ci.release recheck", "run: scripts/ci/publish.sh image",
+        "run: python3 -m scripts.ci.release publish", "run: scripts/ci/publish.sh aliases",
     ),
 }
 # Identity that release.py trusts comes from the run context, never from dispatch inputs.
 CONTEXT = {
-    "run: python3 scripts/ci/release.py prepare": {
+    "run: python3 -m scripts.ci.release prepare": {
         "REPOSITORY": "github.repository", "REPOSITORY_OWNER": "github.repository_owner",
         "ACTOR": "github.actor", "TRIGGERING_ACTOR": "github.triggering_actor",
         "EVENT_NAME": "github.event_name", "EVENT_SHA": "github.sha", "REF": "github.ref",
         "WORKFLOW_REF": "github.workflow_ref", "REQUEST_RUN_ID": "github.run_id",
         "REQUEST_RUN_ATTEMPT": "github.run_attempt",
     },
-    "run: python3 scripts/ci/release.py verify": {
+    "run: python3 -m scripts.ci.release verify": {
         "REPOSITORY": "github.repository", "REPOSITORY_OWNER": "github.repository_owner",
         "PUBLISHER_SHA": "github.sha", "WORKFLOW_REF": "github.workflow_ref",
         "REQUEST_RUN_ID": "github.event.workflow_run.id",
     },
-    "run: python3 scripts/ci/release.py publish": {
+    "run: python3 -m scripts.ci.release recheck": {
+        "REPOSITORY": "github.repository", "TAG": "needs.verify.outputs.tag",
+        "SOURCE_SHA": "needs.verify.outputs.sha", "MAIN_SHA": "needs.verify.outputs.main_sha",
+        "PR": "needs.verify.outputs.pr", "RUST": "needs.verify.outputs.rust",
+        "OCI_SHA256": "needs.verify.outputs.oci_sha256",
+        "RUST_OCI_SHA256": "needs.verify.outputs.rust_oci_sha256",
+        "ASSETS_SHA256": "needs.verify.outputs.assets_sha256",
+    },
+    "run: python3 -m scripts.ci.release publish": {
         "REPOSITORY": "github.repository", "TARGET_SHA": "github.sha",
+        "TAG": "needs.verify.outputs.tag",
+        "SOURCE_SHA": "needs.verify.outputs.sha", "PR": "needs.verify.outputs.pr",
+        "RUST": "needs.verify.outputs.rust",
     },
 }
+CHECKOUT_REFS = {"workflows/release-request.yml": ("github.sha", "needs.build.outputs.sha")}
+IMAGE_BUILD = (
+    "no-cache: true\n", "provenance: mode=max\n", "github-token: ''\n",
+    "GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}\n",
+)
 FORBIDDEN = {
+    "actions/setup-buildx/action.yml": ("allow-insecure-entitlement",),
     "workflows/release.yml": ("head_sha", "pull_request.head", "mise run", "secrets["),
     "workflows/release-request.yml": (
         "allow-insecure-entitlement", "cache-from:", "cache-to:", "GIT_AUTH_TOKEN",
+        "GM_RUST_DEPENDENCY_CACHE", "GM_RUST_RELEASE_LTO", "GM_RUST_RELEASE_CODEGEN_UNITS",
     ),
 }
 
@@ -108,7 +140,7 @@ def check_actions(root: Path) -> None:
     for path in files:
         name = str(path.relative_to(github))
         text = path.read_text(encoding="utf-8")
-        needles = ["ubuntu-latest"]
+        needles = ["ubuntu-latest", "secrets["]
         if name != "workflows/release.yml":
             needles += ["secrets.", "secrets[", "environment:"]
         for needle in needles:
@@ -120,16 +152,24 @@ def check_actions(root: Path) -> None:
             fail(f"{name}: run scripts must read expressions through env, not interpolate them")
         for step in STEP.split(text):
             if "uses: actions/checkout@" in step:
-                if re.search(r"\bref: (?!\$\{\{ github\.sha \}\}$)", step, re.M):
-                    fail(f"{name}: checkout may only select the triggering github.sha")
+                refs = {f"${{{{ {ref} }}}}" for ref in CHECKOUT_REFS.get(name, ("github.sha",))}
+                if set(re.findall(r"(?m)\bref: (.*)$", step)) - refs:
+                    fail(f"{name}: checkout may only select the triggering github.sha or the commit release.py validated")
             if "uses: jdx/mise-action@" in step:
                 required = [mise, "install_args: --locked ", "cache:", "MISE_AUTO_INSTALL: '0'"]
                 if name.startswith("workflows/"):
                     required += ["install_args: --locked python\n", "cache: false"]
                 if missing := [item for item in required if item not in step]:
                     fail(f"{name}: mise setup must declare {missing[0].strip()}")
+            if "uses: docker/build-push-action@" in step:
+                # Local smoke images use Docker's loader, which cannot load an attestation manifest.
+                provenance = "provenance: 'false'\n" if "load: true\n" in step else "provenance: mode=max\n"
+                required = IMAGE_BUILD if name == "workflows/release-request.yml" else (
+                    "context: .\n", "github-token: ''\n", provenance)
+                if missing := [item for item in required if item not in step]:
+                    fail(f"{name}: every image build must declare {missing[0].strip()}")
             for marker, bindings in CONTEXT.items():
-                env = re.findall(r"(?m)^ +([A-Z_]+): (.*)$", step) if marker in step else []
+                env = re.findall(r"(?m)^ +([A-Z][A-Z0-9_]*): (.*)$", step) if marker in step else []
                 for variable, value in bindings.items() if env else ():
                     if [found for key, found in env if key == variable] != [f"${{{{ {value} }}}}"]:
                         fail(f"{name}: {variable} must be exactly ${{{{ {value} }}}}")
@@ -176,11 +216,17 @@ def check_workflows(root: Path) -> None:
                 and "if: steps.verify.outputs.publish == 'true'" not in step):
             fail("release.yml: only publish mode may hand off verified artifacts")
     request = (workflows / "release-request.yml").read_text(encoding="utf-8")
+    # release.py takes each artifact only from the request job of its name.
+    if re.findall(r"(?m)^    name: (.*)$", request) != [BUILD_JOB]:
+        fail(f"release-request.yml: its job must be named {BUILD_JOB!r}, as release.py expects")
     scopes = re.findall(r"(?m)^ *permissions:.*(?:\n +\S.*)*", request)
     if scopes != ["permissions:\n  contents: read"]:
         fail("release-request.yml: the untrusted build may only read contents")
+    # Dispatch runs in the default branch's cache scope, where built PR code could plant caches.
+    if re.findall(r"(?m)^ *cache-mode:.*", request) != ["cache-mode: none"]:
+        fail("release-request.yml: the untrusted build must get no cache token")
     for step in STEP.split(request.split("\njobs:", 1)[1]):
-        if "${{ inputs." in step and "run: python3 scripts/ci/release.py prepare" not in step:
+        if "${{ inputs." in step and "run: python3 -m scripts.ci.release prepare" not in step:
             fail("release-request.yml: dispatch inputs may reach only the request validator")
         if "setup-project" in step and "cache: 'false'" not in step:
             fail("release-request.yml: the untrusted build must disable every cache")
@@ -202,11 +248,85 @@ def check_ci(root: Path) -> None:
     for task in steps("ci"):
         if not re.search(rf"mise run {re.escape(task)}(?![\w-])", ci):
             fail(f"CI must run the local gate step {task}")
+    jobs = set(re.findall(r"(?m)^  ([a-z-]+):$", ci.split("\njobs:\n", 1)[1])) - {"gate"}
+    gate = re.search(r"(?ms)^  gate:\n.*?^    needs: \[([^]]*)\]", ci)
+    if missing := sorted(jobs - {name.strip() for name in (gate.group(1) if gate else "").split(",")}):
+        fail(f"CI Gate must need every job: {missing}")
+
+
+def check_run_commands(root: Path) -> None:
+    """No workflow, image build or release script, nor any task or scripts/ shell script they run, builds with
+    the unreviewed notices of `scripts.legal.rust --development`, which only the development tasks use, or lets
+    rustup replace itself while it installs a toolchain. Python modules are not followed: scripts.legal.rust
+    defines the flag, and package_rust.py, the one that runs it, is read."""
+    tasks = tomllib.loads(read(root, "mise.toml"))["tasks"]
+    texts = [path.read_text(encoding="utf-8") for path in sorted((root / ".github").rglob("*.y*ml"))]
+    texts += [read(root, name) for name in ("container/Dockerfile", "container/Dockerfile.rust", "scripts/package_rust.py")]
+    reached: set[str] = set()
+    while texts:
+        text = texts.pop()
+        if "--development" in text:
+            fail("CI and releases must not build with unreviewed --development notices")
+        if any("--no-self-update" not in line for line in re.findall(r"rustup\W+toolchain\W+install\b.*", text)):
+            fail("CI and releases must install Rust toolchains with --no-self-update")
+        found = re.findall(r"mise run ([\w-]+)|(?<![\w/.-])(scripts/[\w/.-]+\.sh)\b", text)
+        for name in {task or script for task, script in found} - reached:
+            reached.add(name)
+            if name.endswith(".sh"):
+                texts.append(read(root, name))
+                continue
+            # A task runs its steps and, before and after them, the tasks it depends on.
+            for key in ("run", "depends", "depends_post"):
+                steps = tasks.get(name, {}).get(key, [])
+                for step in steps if isinstance(steps, list) else [steps]:
+                    texts.append(step if key == "run" and isinstance(step, str)
+                                 else f"mise run {step if isinstance(step, str) else step['task']}")
+
+
+def path_filters(text: str) -> dict[str, list[str]]:
+    """The globs of each .github/ci-paths.yml filter, with its aliases expanded."""
+    filters: dict[str, list[str]] = {}
+    anchors: dict[str, list[str]] = {}
+    current: list[str] = []
+    for line in text.splitlines():
+        if match := re.fullmatch(r"([\w-]+):(?: &([\w-]+))?", line):
+            current = filters[match[1]] = []
+            if match[2]:
+                anchors[match[2]] = current
+        elif match := re.fullmatch(r"  - '([^']+)'|  - \*([\w-]+)", line):
+            current.extend([match[1]] if match[1] else anchors[match[2]])
+    return filters
+
+
+def check_paths(root: Path) -> None:
+    """PRs that change a Rust image input select the jobs that build it."""
+    filters = path_filters(read(root, ".github/ci-paths.yml"))
+    image = [source + "x" if source.endswith("/") else source for line in re.findall(
+        r"(?m)^COPY (?!--)(.+)$", read(root, "container/Dockerfile.rust")) for source in line.split()[:-1]]
+    for name, inputs in (("rust", [".dockerignore", *image]),):
+        if missing := [path for path in inputs
+                       if not any(PurePosixPath(path).full_match(glob) for glob in filters.get(name, []))]:
+            fail(f".github/ci-paths.yml {name} misses {missing}")
+
+
+def check_build_context(root: Path) -> None:
+    """Local Rust build output, which the .gitignore files under rust/ name, stays out of the image build context."""
+    excluded, missing = set(read(root, ".dockerignore").splitlines()), []
+    for directory, subdirectories, files in (root / "rust").walk():
+        ignored = [line.strip("/") for line in (directory / ".gitignore").read_text().splitlines()
+                   if line.strip() and not line.startswith("#")] if ".gitignore" in files else []
+        subdirectories[:] = [name for name in subdirectories if name not in ignored]
+        missing += [path for name in ignored if (path := (directory / name).relative_to(root).as_posix()) not in excluded]
+    if missing:
+        fail(f".dockerignore misses Rust build output {missing}")
 
 
 def check_certificates(root: Path) -> None:
+    repository = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=root,
+                                capture_output=True, text=True, check=False)
     listed = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True, check=False)
-    if listed.returncode == 0:
+    if (repository.returncode == 0 and Path(repository.stdout.rstrip('\n')).resolve() == root.resolve()
+            and listed.returncode == 0):
         names = [entry.decode() for entry in listed.stdout.split(b"\0") if entry]
     else:
         names = [str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()]
@@ -221,15 +341,35 @@ def check_repository(root: Path = ROOT) -> None:
         check_toolchain_literals(root)
     except (ValueError, OSError) as exc:
         fail(str(exc))
-    dockerfile = read(root, "container/Dockerfile")
-    if unpinned := [image for image in re.findall(r"(?m)^FROM (\S+)", dockerfile)
-                    if image != "scratch" and "@sha256:" not in image]:
-        fail(f"container/Dockerfile base images must be digest-pinned: {unpinned}")
-    if re.search(r"(?im)^\s*#\s*syntax\s*=", dockerfile):
-        fail("container/Dockerfile must not select a BuildKit frontend with # syntax=")
+    for name in ("container/Dockerfile", "container/Dockerfile.rust"):
+        dockerfile = read(root, name)
+        stages = re.findall(r"(?im)^FROM\s.*\sAS\s+(\S+)\s*$", dockerfile)
+
+        def stage(image: str) -> bool:
+            # A build argument such as rust-${TARGETARCH} may select an earlier stage; a bare
+            # ${BASE} could name any image.
+            literals = re.split(r"\$\{[^}]*\}", image)
+            pattern = ".+".join(map(re.escape, literals))
+            return "".join(literals) != "" and any(re.fullmatch(pattern, name) for name in stages)
+
+        if unpinned := [image for image in re.findall(r"(?m)^FROM(?:\s+--\S+)*\s+(\S+)", dockerfile)
+                        if image != "scratch" and "@sha256:" not in image and not stage(image)]:
+            fail(f"{name} base images must be digest-pinned: {unpinned}")
+        if re.search(r"(?im)^\s*#\s*syntax\s*=", dockerfile):
+            fail(f"{name} must not select a BuildKit frontend with # syntax=")
+        # Debian serves one version per package; exact versions install only from a fixed snapshot.
+        snapshot = re.search(r"https://snapshot\.debian\.org/archive/%s/\d{8}T\d{6}Z\\n", dockerfile)
+        if "apt-get update" in dockerfile and (not snapshot or dockerfile.index("apt-get update") < snapshot.start()):
+            fail(f"{name} must point apt at one snapshot.debian.org timestamp before apt-get update")
+        if unpinned := [package for packages in re.findall(r"apt-get install ([^&]*)", dockerfile)
+                        for package in packages.split() if package[0] not in "-\\" and "=" not in package]:
+            fail(f"{name} must install exact apt package versions: {unpinned}")
     check_actions(root)
     check_workflows(root)
     check_ci(root)
+    check_run_commands(root)
+    check_paths(root)
+    check_build_context(root)
     check_certificates(root)
 
 

@@ -37,9 +37,10 @@ The full matrix takes hours. For shaped paths, use the coordinated-server harnes
 ## Coordinated servers
 
 `mise run bench-servers` builds the production server, creates a client, a router and four servers in disposable
-user and network namespaces with its own certificate, and writes raw JSONL results and logs outside the checkout. It
-never touches host interfaces or queue disciplines. It needs `iproute2` (`ip`, `tc`), `util-linux` (`unshare`,
-`nsenter`), OpenSSL, curl and the pinned Chrome for Testing:
+user, network and PID namespaces with its own certificate, and writes raw JSONL results and logs outside the checkout.
+It never touches host interfaces or queue disciplines, and segmentation and receive offloads are off on every link so
+netem sees single packets. It needs `iproute2` (`ip`, `tc`), `util-linux` (`unshare`, `nsenter`), ethtool, OpenSSL,
+curl and the pinned Chrome for Testing:
 
 ```sh
 BUN_CHROME_PATH=/path/to/chrome GM_MULTI_BENCH_OUTPUT=/tmp/graphite-meter-servers mise run bench-servers

@@ -17,8 +17,12 @@ inputs:
     description: Install frozen client dependencies
     required: false
     default: 'false'
+  rust:
+    description: Include the pinned Rust toolchain
+    required: false
+    default: 'false'
   cache:
-    description: Cache mise tools, Go modules and build results, and Bun packages
+    description: Cache mise tools, Go modules and build results, Bun packages, and Cargo downloads and dependency builds
     required: false
     default: 'true'
   staticcheck:
@@ -31,6 +35,14 @@ inputs:
     default: 'false'
   gitleaks:
     description: Include pinned Gitleaks
+    required: false
+    default: 'false'
+  cargo-deny:
+    description: Include pinned cargo-deny
+    required: false
+    default: 'false'
+  cargo-nextest:
+    description: Include pinned cargo-nextest
     required: false
     default: 'false'
 outputs:
@@ -50,6 +62,8 @@ runs:
         INCLUDE_STATICCHECK: ${{ inputs.staticcheck }}
         INCLUDE_GOVULNCHECK: ${{ inputs.govulncheck }}
         INCLUDE_GITLEAKS: ${{ inputs.gitleaks }}
+        INCLUDE_CARGO_DENY: ${{ inputs.cargo-deny }}
+        INCLUDE_CARGO_NEXTEST: ${{ inputs.cargo-nextest }}
       run: |
         tools=(python)
         if [[ "$INCLUDE_GO" == true ]]; then tools+=(go); fi
@@ -58,14 +72,16 @@ runs:
         if [[ "$INCLUDE_STATICCHECK" == true ]]; then tools+=(aqua:dominikh/go-tools/staticcheck); fi
         if [[ "$INCLUDE_GOVULNCHECK" == true ]]; then tools+=(go:golang.org/x/vuln/cmd/govulncheck); fi
         if [[ "$INCLUDE_GITLEAKS" == true ]]; then tools+=(aqua:gitleaks/gitleaks); fi
+        if [[ "$INCLUDE_CARGO_DENY" == true ]]; then tools+=(aqua:EmbarkStudios/cargo-deny); fi
+        if [[ "$INCLUDE_CARGO_NEXTEST" == true ]]; then tools+=(aqua:nextest-rs/nextest/cargo-nextest); fi
         printf 'install-args=%s\n' "${tools[*]}" >> "$GITHUB_OUTPUT"
 
     - name: Install pinned mise toolchain
-      uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
       env:
         MISE_AUTO_INSTALL: '0'
       with:
-        version: 2026.9.14
+        version: 2026.9.16
         install_args: --locked ${{ steps.tools.outputs.install-args }}
         cache: ${{ inputs.cache }}
 
@@ -74,9 +90,9 @@ runs:
       shell: bash
       run: |
         printf 'MISE_AUTO_INSTALL=0\n' >> "$GITHUB_ENV"
-        chrome=$(python3 scripts/ci/toolchains.py get browser.chrome)
-        go=$(python3 scripts/ci/toolchains.py get runtime.go)
-        bun=$(python3 scripts/ci/toolchains.py get runtime.bun)
+        chrome=$(python3 -m scripts.ci.toolchains get browser.chrome)
+        go=$(python3 -m scripts.ci.toolchains get runtime.go)
+        bun=$(python3 -m scripts.ci.toolchains get runtime.bun)
         printf 'chrome=%s\ngo=%s\nbun=%s\n' "$chrome" "$go" "$bun" >> "$GITHUB_OUTPUT"
 
     - id: go-cache
@@ -121,3 +137,33 @@ runs:
       if: inputs.client-deps == 'true'
       shell: bash
       run: cd client && bun install --frozen-lockfile --prefer-offline
+
+    - name: Install pinned experimental Rust toolchain
+      if: inputs.rust == 'true'
+      shell: bash
+      run: |
+        version=$(python3 -m scripts.ci.toolchains get rust.channel)
+        rustup toolchain install --no-self-update "$version" --profile minimal --component rustfmt --component clippy
+
+    - name: Cache Cargo downloads and dependency builds
+      if: inputs.rust == 'true' && inputs.cache == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+          rust/target/debug
+          rust/target/ci
+          rust/target/release
+          rust/target/*/debug
+          rust/target/*/ci
+          rust/target/*/release
+          rust/target/cached-Cargo.lock
+        key: rust-cargo-v2-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('rust/rust-toolchain.toml') }}-${{ hashFiles('rust/Cargo.lock') }}
+        restore-keys: rust-cargo-v2-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('rust/rust-toolchain.toml') }}-
+
+    - name: Drop cached builds of changed Cargo packages
+      if: inputs.rust == 'true' && inputs.cache == 'true'
+      shell: bash
+      run: python3 -m scripts.ci.cargo_prune

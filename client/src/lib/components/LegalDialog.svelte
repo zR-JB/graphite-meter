@@ -37,6 +37,7 @@
   const ECOSYSTEM: Record<string, string> = {
     go: "Go modules",
     "go-toolchain": "Go toolchain",
+    cargo: "Rust crates",
     npm: "npm packages",
     font: "Fonts",
   };
@@ -126,12 +127,17 @@
                         >{/if}</span
                     >
                     <span>{component.selectedLicenseExpression}</span>
-                    <a
-                      href={component.source}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      >{component.source.replace(/^https?:\/\//, "")}</a
-                    >
+                    <span class="component-links">
+                      {#each component.links as link (link.label)}
+                        <a
+                          href={link.url}
+                          aria-label={`${link.label} for ${component.name}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          >{link.label}<Icon name="external" /></a
+                        >
+                      {/each}
+                    </span>
                   </dd>
                 </div>
               {/each}
@@ -174,16 +180,32 @@
     gap: 2px var(--space-3);
   }
   .components a {
-    width: fit-content;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    flex: none;
+    width: max-content;
+    white-space: nowrap;
     color: var(--text-muted);
     text-decoration-color: transparent;
-    overflow-wrap: anywhere;
+    text-underline-offset: 0.2em;
+  }
+  .components a :global(svg) {
+    flex: none;
+    width: var(--icon);
+    height: var(--icon);
   }
   @media (hover: hover) {
     .components a:hover {
       color: var(--brand-strong);
       text-decoration-color: currentColor;
     }
+  }
+  .component-links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: start;
+    gap: var(--space-2) var(--space-3);
   }
   .legal-status {
     display: grid;
@@ -201,7 +223,7 @@
     .components dd {
       grid-template-columns: auto minmax(0, 1fr);
     }
-    .components a {
+    .component-links {
       grid-column: 1 / -1;
     }
   }

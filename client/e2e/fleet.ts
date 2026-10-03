@@ -8,6 +8,7 @@ import { expect, settled, type Page } from "./webview";
 
 const env = JSON.parse(process.env.GM_E2E ?? '{ "fleet": [] }');
 export const fleet: Server[] = env.fleet;
+export const transport: Server = env.transport;
 export const [home, frankfurt, amsterdam, helsinki, locked] = fleet;
 export const password: string = env.password;
 export const harness: string = env.harness;
@@ -38,8 +39,11 @@ export const baseConfig = {
     warmupMs: 0,
     latencyMs: 1000,
     downloadMs: 1000,
-    uploadMs: 1000,
-    bidirectionalMs: 1000,
+    // A result needs 800 ms of upload evidence. In the browser, that evidence starts
+    // at the first progress record the page reads, and a busy page reads it up to
+    // ~350 ms late. So stages with upload keep headroom over 1 s.
+    uploadMs: 1500,
+    bidirectionalMs: 1500,
   },
   adaptive: false,
   transferStreams: { mode: "forced", count: 1 },
@@ -96,6 +100,8 @@ export async function closeSettings(page: Page) {
   await expect
     .poll(() => panel.all((els) => els.every((el) => el.inert)))
     .toBe(true);
+  // Its column narrows after it: a pointer aimed mid-slide lands beside its button.
+  await page.evaluate(settled);
 }
 
 export async function ready(page: Page) {

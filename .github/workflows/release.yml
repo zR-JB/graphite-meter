@@ -41,6 +41,9 @@ jobs:
       oci_sha256: ${{ steps.verify.outputs.oci_sha256 }}
       digest: ${{ steps.verify.outputs.digest }}
       assets_sha256: ${{ steps.verify.outputs.assets_sha256 }}
+      rust: ${{ steps.verify.outputs.rust }}
+      rust_digest: ${{ steps.verify.outputs.rust_digest }}
+      rust_oci_sha256: ${{ steps.verify.outputs.rust_oci_sha256 }}
     steps:
       - name: Checkout trusted release tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -50,11 +53,11 @@ jobs:
           persist-credentials: false
 
       - name: Set up pinned mise and Python
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
         env:
           MISE_AUTO_INSTALL: '0'
         with:
-          version: 2026.9.14
+          version: 2026.9.16
           install_args: --locked python
           cache: false
 
@@ -77,27 +80,18 @@ jobs:
           REQUEST_RUN_ID: ${{ github.event.workflow_run.id }}
           REQUEST_DIR: ${{ runner.temp }}/request
           HANDOFF_DIR: ${{ runner.temp }}/handoff
-        run: python3 scripts/ci/release.py verify
+        run: python3 -m scripts.ci.release verify
 
-      - name: Upload verified image handoff
+      # One directory per handoff: image/, assets/ and, with the Rust server, rust-image/.
+      - name: Upload verified handoff
         if: steps.verify.outputs.publish == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-image
-          path: ${{ runner.temp }}/handoff/image/graphite-meter.oci.tar
+          name: release-handoff
+          path: ${{ runner.temp }}/handoff/
           if-no-files-found: error
           retention-days: 35
           compression-level: 0
-          overwrite: true
-
-      - name: Upload verified stable asset handoff
-        if: steps.verify.outputs.publish == 'true' && steps.verify.outputs.stable == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: release-assets
-          path: ${{ runner.temp }}/handoff/assets/*
-          if-no-files-found: error
-          retention-days: 35
           overwrite: true
 
   publish:
@@ -125,26 +119,19 @@ jobs:
           persist-credentials: false
 
       - name: Set up pinned mise and Python
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
         env:
           MISE_AUTO_INSTALL: '0'
         with:
-          version: 2026.9.14
+          version: 2026.9.16
           install_args: --locked python
           cache: false
 
-      - name: Download verified image handoff
+      - name: Download verified handoff
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: release-image
-          path: ${{ runner.temp }}/handoff/image
-
-      - name: Download verified stable asset handoff
-        if: needs.verify.outputs.stable == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: release-assets
-          path: ${{ runner.temp }}/handoff/assets
+          name: release-handoff
+          path: ${{ runner.temp }}/handoff
 
       - name: Recheck handoff, source, main, Gate and CodeQL after approval
         env:
@@ -156,8 +143,10 @@ jobs:
           PR: ${{ needs.verify.outputs.pr }}
           OCI_SHA256: ${{ needs.verify.outputs.oci_sha256 }}
           ASSETS_SHA256: ${{ needs.verify.outputs.assets_sha256 }}
+          RUST: ${{ needs.verify.outputs.rust }}
+          RUST_OCI_SHA256: ${{ needs.verify.outputs.rust_oci_sha256 }}
           HANDOFF_DIR: ${{ runner.temp }}/handoff
-        run: python3 scripts/ci/release.py recheck
+        run: python3 -m scripts.ci.release recheck
 
       - name: Publish the exact version tag
         env:
@@ -169,9 +158,20 @@ jobs:
           ARCHIVE_DIR: ${{ runner.temp }}/handoff/image
         run: scripts/ci/publish.sh image
 
+      - name: Publish the exact experimental Rust version tag
+        if: needs.verify.outputs.rust_digest != ''
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          REGISTRY_ACTOR: ${{ github.repository_owner }}
+          REPOSITORY: ${{ github.repository }}
+          IMPLEMENTATION: rust
+          IMAGE_TAG: ${{ needs.verify.outputs.version }}-rust
+          DIGEST: ${{ needs.verify.outputs.rust_digest }}
+          ARCHIVE_DIR: ${{ runner.temp }}/handoff/rust-image
+        run: scripts/ci/publish.sh image
+
       - id: app
         name: Mint the release App token
-        if: needs.verify.outputs.stable == 'true'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
@@ -179,14 +179,16 @@ jobs:
           permission-contents: write
 
       - name: Publish the verified GitHub Release
-        if: needs.verify.outputs.stable == 'true'
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           REPOSITORY: ${{ github.repository }}
           TAG: ${{ needs.verify.outputs.tag }}
           TARGET_SHA: ${{ github.sha }}
+          SOURCE_SHA: ${{ needs.verify.outputs.sha }}
+          PR: ${{ needs.verify.outputs.pr }}
+          RUST: ${{ needs.verify.outputs.rust }}
           ASSETS_DIR: ${{ runner.temp }}/handoff/assets
-        run: python3 scripts/ci/release.py publish
+        run: python3 -m scripts.ci.release publish
 
       - name: Promote stable aliases without rollback
         if: needs.verify.outputs.stable == 'true'
@@ -197,4 +199,5 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           VERSION: ${{ needs.verify.outputs.version }}
           DIGEST: ${{ needs.verify.outputs.digest }}
+          RUST_DIGEST: ${{ needs.verify.outputs.rust_digest }}
         run: scripts/ci/publish.sh aliases

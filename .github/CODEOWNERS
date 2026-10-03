@@ -1,12 +1,28 @@
 # Supply-chain-sensitive repository controls and release inputs.
-/.github/                  @zR-JB
-/mise.toml                 @zR-JB
-/mise.lock                 @zR-JB
-/container/                @zR-JB
-/scripts/                  @zR-JB
-/go/go.mod                 @zR-JB
-/go/go.sum                 @zR-JB
-/client/bun.lock           @zR-JB
-/legal/                    @zR-JB
-/LICENSE                   @zR-JB
-/COPYRIGHT                 @zR-JB
+/.github/                    @zR-JB
+/.githooks/                  @zR-JB
+/.gitattributes              @zR-JB
+/.dockerignore               @zR-JB
+/mise.toml                   @zR-JB
+/mise.lock                   @zR-JB
+/container/                  @zR-JB
+/scripts/                    @zR-JB
+/go/go.mod                   @zR-JB
+/go/go.sum                   @zR-JB
+/client/package.json         @zR-JB
+/client/bun.lock             @zR-JB
+/client/bunfig.toml          @zR-JB
+/rust/Cargo.toml             @zR-JB
+/rust/Cargo.lock             @zR-JB
+/rust/deny.toml              @zR-JB
+/rust/rust-toolchain.toml    @zR-JB
+/rust/legal_build.rs         @zR-JB
+# A crate manifest names its build script.
+/rust/*/Cargo.toml           @zR-JB
+/rust/*/build.rs             @zR-JB
+# Cargo and rustup read .cargo/config.toml and rust-toolchain in the directory they run in and its parents.
+.cargo/                      @zR-JB
+rust-toolchain               @zR-JB
+/legal/                      @zR-JB
+/LICENSE                     @zR-JB
+/COPYRIGHT                   @zR-JB

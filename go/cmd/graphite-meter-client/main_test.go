@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -24,6 +25,7 @@ import (
 	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/apipin"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
+	"github.com/zR-JB/graphite-meter/go/internal/legal"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -123,6 +125,34 @@ func TestParsePing(t *testing.T) {
 		if got != want || (err != nil) != (want == 0) {
 			t.Errorf("parsePing(%q) = %v, %v; want %v", raw, got, err, want)
 		}
+	}
+}
+
+// TestLegalFlag runs main in a copy of this test binary: a true -legal, in either form, prints the notices once every
+// flag parses, before arguments, settings and -version are checked; a false one parses as any boolean flag.
+func TestLegalFlag(t *testing.T) {
+	if args, ok := os.LookupEnv("GM_TEST_MAIN_ARGS"); ok {
+		os.Args = append(os.Args[:1], strings.Fields(args)...)
+		main()
+		os.Exit(0)
+	}
+	t.Parallel()
+	run := func(args string) string {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestLegalFlag$")
+		cmd.Env = append(os.Environ(), "GM_TEST_MAIN_ARGS="+args)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("%s: %v", args, err)
+		}
+		return string(out)
+	}
+	for _, args := range []string{"-legal", "--legal", "-legal=true foo", "--legal=1 -warmup 9s", "-version --legal"} {
+		if run(args) != string(legal.TUIReport()) {
+			t.Errorf("%s did not print the notices", args)
+		}
+	}
+	if got, want := run("-legal=false -version"), "graphite-meter-client "+goclient.Version+"\n"; got != want {
+		t.Errorf("-legal=false -version printed %q, want %q", got, want)
 	}
 }
 

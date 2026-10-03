@@ -25,7 +25,8 @@ ARG VERSION
 ARG CLIENT_VERSION
 ENV GM_CLIENT_BUILD_PROFILE=$GM_CLIENT_BUILD_PROFILE \
     GM_CLIENT_REVISION=$GM_CLIENT_REVISION \
-    VERSION=$CLIENT_VERSION
+    VERSION=$CLIENT_VERSION \
+    GM_LEGAL_SCAN_OUT=/tmp/browser-modules.json
 WORKDIR /app/client
 # Install deps first for layer caching. Every official build uses the
 # repository's exact Bun release and the committed lockfile.
@@ -34,6 +35,8 @@ COPY client/patches/ ./patches/
 RUN bun --bun install --frozen-lockfile
 # Then the source, then build.
 COPY client/ ./
+COPY api/ /app/api/
+COPY go/internal/auth/assets/ /app/go/internal/auth/assets/
 RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:bundle; fi
 
 # ---------------------------------------------------------------------------
@@ -57,6 +60,32 @@ RUN CGO_ENABLED=0 go build \
       -trimpath \
       -o /graphite-meter ./cmd/graphite-meter
 RUN set -eux; test -f /usr/share/doc/ca-certificates/copyright; mkdir -p /legal/ca-certificates; cp /usr/share/doc/ca-certificates/copyright /legal/ca-certificates/COPYRIGHT
+
+# ---------------------------------------------------------------------------
+# Stage: third-party source - the source of the image's components, which a
+# prerelease exports (--target third-party-source) and attaches as a stable
+# release attaches the one scripts/release-artifacts.sh builds.
+# ---------------------------------------------------------------------------
+FROM docker.io/library/python:3.14.8-slim-bookworm@sha256:c8137f4c460908c8763f281c8f22c431eb5c538514ba9553fc3a89c06b7cfb88 AS source-offer
+ARG VERSION
+ENV GOPATH=/go GOTOOLCHAIN=local PATH=/usr/local/go/bin:$PATH
+COPY --from=server /usr/local/go /usr/local/go
+COPY --from=server /go/pkg/mod /go/pkg/mod
+# The scan names the bundled packages where the client stage installed them.
+COPY --from=client /app/client/ /app/client/
+COPY --from=client /root/.bun/install/cache/ /root/.bun/install/cache/
+COPY --from=client /tmp/browser-modules.json /tmp/browser-modules.json
+WORKDIR /src
+COPY scripts/ scripts/
+COPY legal/ legal/
+COPY client/public/fonts/ client/public/fonts/
+COPY go/ go/
+COPY --from=client /app/client/dist go/internal/static/dist
+RUN python3 -m scripts.legal --mode third-party-source-bundle --version "$VERSION" \
+      --browser-scan /tmp/browser-modules.json
+
+FROM scratch AS third-party-source
+COPY --from=source-offer /src/go/dist/ /
 
 # ---------------------------------------------------------------------------
 # Final: a single static binary. The Svelte client is embedded inside it.

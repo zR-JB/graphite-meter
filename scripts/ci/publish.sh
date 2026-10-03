@@ -21,7 +21,13 @@ registry() {
 }
 
 publish_image() {
-  [[ "$IMAGE_TAG" =~ ^$STABLE(-(alpha|beta|rc)\.(0|[1-9][0-9]*))?$ ]] || fail "invalid image tag: $IMAGE_TAG"
+  local suffix=''
+  case "${IMPLEMENTATION:-go}" in
+    go) ;;
+    rust) suffix=-rust ;;
+    *) fail "invalid image implementation" ;;
+  esac
+  [[ "$IMAGE_TAG" =~ ^$STABLE(-(alpha|beta|rc)\.(0|[1-9][0-9]*))?$suffix$ ]] || fail "invalid image tag: $IMAGE_TAG"
   [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "invalid verified digest"
   registry '
     archive=oci-archive:/work/graphite-meter.oci.tar
@@ -49,17 +55,18 @@ publish_image() {
 }
 
 promote_aliases() {
-  [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "invalid verified digest"
+  local suffix=$1 digest=$2 series=${VERSION%.*} tags shipped=true
+  [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "invalid verified digest"
   [[ "$VERSION" =~ ^$STABLE$ ]] || fail "invalid stable version: $VERSION"
-  local series=${VERSION%.*} tags
+  # Aliases follow the highest published releases that shipped the image; any later run repairs a cancelled one.
+  [[ -z $suffix ]] || shipped='any(.assets[].name; test("^graphite-meter-server_.+_rust_third-party-source[.]tar[.]gz$"))'
   tags=$(gh api --paginate "repos/$REPOSITORY/releases?per_page=100" \
-    --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' \
+    --jq ".[] | select(.draft == false and .prerelease == false and $shipped) | .tag_name" \
     | { grep -E "^v$STABLE\$" || true; } | sort -V)
   grep -qx "v$VERSION" <<<"$tags" || fail "v$VERSION is not a published stable release yet"
-  # Aliases follow the highest published releases, so any later run repairs a cancelled one.
   registry '
-    [ "$(skopeo inspect --format "{{.Digest}}" "docker://$IMAGE:$VERSION")" = "$DIGEST" ] || {
-      echo "$VERSION is not the verified $DIGEST" >&2
+    [ "$(skopeo inspect --format "{{.Digest}}" "docker://$IMAGE:$VERSION$SUFFIX")" = "$VERIFIED" ] || {
+      echo "$VERSION$SUFFIX is not the verified $VERIFIED" >&2
       exit 1
     }
     promote() {
@@ -72,15 +79,17 @@ promote_aliases() {
       }
       echo "promoted $IMAGE:$1 -> $2 @ $digest"
     }
-    promote "$SERIES" "$SERIES_TARGET"
-    promote latest "$LATEST_TARGET"
-  ' -e VERSION -e SERIES="$series" \
+    promote "$SERIES$SUFFIX" "$SERIES_TARGET$SUFFIX"
+    promote "latest$SUFFIX" "$LATEST_TARGET$SUFFIX"
+  ' -e VERSION -e SUFFIX="$suffix" -e VERIFIED="$digest" -e SERIES="$series" \
     -e SERIES_TARGET="$(grep -E "^v${series//./\\.}\\.[0-9]+\$" <<<"$tags" | tail -n1 | cut -c2-)" \
     -e LATEST_TARGET="$(tail -n1 <<<"$tags" | cut -c2-)"
 }
 
 case ${1-} in
   image) publish_image ;;
-  aliases) promote_aliases ;;
+  aliases)
+    promote_aliases '' "$DIGEST"
+    [[ -z ${RUST_DIGEST-} ]] || promote_aliases -rust "$RUST_DIGEST" ;;
   *) fail "usage: publish.sh image|aliases" ;;
 esac

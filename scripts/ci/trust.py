@@ -6,9 +6,10 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
-import github_api as gh
+from . import github_api as gh
 
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 SEMVER_NUMBER = r"(?:0|[1-9][0-9]*)"
@@ -60,26 +61,6 @@ def read_record(path: Path, keys: set[str], expected: gh.JsonObject) -> gh.JsonO
     return record
 
 
-def _objects(pages: gh.JsonValue, key: str | None = None) -> list[gh.JsonObject]:
-    items: list[gh.JsonObject] = []
-    for page in gh.expect_array(pages, "GitHub pages"):
-        values = page if key is None else gh.expect_object(page, "GitHub page").get(key)
-        items += [gh.expect_object(item, "item") for item in gh.expect_array(values, "page")]
-    return items
-
-
-def _number(value: gh.JsonValue) -> int:
-    return value if isinstance(value, int) and not isinstance(value, bool) else 0
-
-
-def _text(value: gh.JsonValue) -> str:
-    return value if isinstance(value, str) else ""
-
-
-def _get(value: gh.JsonValue, key: str) -> gh.JsonValue:
-    return value.get(key) if isinstance(value, dict) else None
-
-
 def _bound_to_pr(item: gh.JsonObject, pr_number: int | None) -> bool:
     if pr_number is None:
         return True
@@ -128,18 +109,29 @@ def require_control_plane_matches_main(repository: str, pr_sha: str, main_sha: s
     def entries(ref: str) -> dict[str, gh.JsonValue]:
         tree = gh.expect_object(gh.api(f"repos/{repository}/git/trees/{ref}"), f"tree at {ref}")
         items = [gh.expect_object(item, "entry") for item in gh.expect_array(tree.get("tree"), "tree")]
-        return {_text(item.get("path")): item.get("sha") for item in items}
+        return {gh.str_field(item, "path", "entry"): item.get("sha") for item in items}
 
     pr, main = entries(pr_sha), entries(main_sha)
     if changed := [path for path in CONTROL_PLANE if pr.get(path) != main.get(path)]:
         gh.fail(f"PR changes {', '.join(changed)}; prereleases need main's CI control plane")
 
 
+def timestamp(item: gh.JsonObject, key: str) -> datetime:
+    try:
+        return datetime.fromisoformat(gh.str_field(item, key, "GitHub record"))
+    except ValueError as exc:
+        raise gh.ControlPlaneError(f"{key} is not an ISO 8601 time") from exc
+
+
 def require_dispatch_run(
     repository: str, owner: str, main_sha: str, run_id: int, workflow: str, title: str,
-    artifacts: dict[str, int],
+    artifacts: dict[str, tuple[str, int]],
 ) -> None:
-    """Bind a request run to its workflow, inputs, main, one attempt, the owner and artifacts."""
+    """Bind a request run to its workflow, inputs, main, one attempt, the owner and artifacts.
+
+    `artifacts` maps each name to the job that writes it and a size limit. An artifact must have been
+    written while its job ran, so a job that runs the requested source natively cannot replace another's.
+    """
     workflow_id = gh.int_field(gh.expect_object(gh.api(f"repos/{repository}/actions/workflows/{workflow}"),
                                           workflow), "id", workflow)
     run = gh.expect_object(gh.api(f"repos/{repository}/actions/runs/{run_id}"), "request run")
@@ -160,12 +152,20 @@ def require_dispatch_run(
             gh.fail("request was not initiated by the repository owner")
     pages = gh.api(gh.query(f"repos/{repository}/actions/runs/{run_id}/artifacts", per_page=100),
                    paginate=True)
-    unexpired = [item for item in _objects(pages, "artifacts") if item.get("expired") is False]
-    for name, limit in artifacts.items():
+    unexpired = [item for item in gh.page_items(pages, "artifacts") if item.get("expired") is False]
+    jobs = gh.page_items(gh.api(gh.query(f"repos/{repository}/actions/runs/{run_id}/jobs", filter="latest",
+                                         per_page=100), paginate=True), "jobs")
+    for name, (job, limit) in artifacts.items():
         if len(matches := [item for item in unexpired if item.get("name") == name]) != 1:
             gh.fail(f"expected one unexpired artifact {name}, found {len(matches)}")
         if not 0 <= gh.int_field(matches[0], "size_in_bytes", name) <= limit:
             gh.fail(f"artifact {name} exceeds {limit} bytes")
+        if len(found := [item for item in jobs if item.get("name") == job]) != 1 or (
+                found[0].get("status"), found[0].get("conclusion")) != DONE:
+            gh.fail(f"request run has no single successful job {job!r}")
+        if not (timestamp(found[0], "started_at") <= timestamp(matches[0], "created_at")
+                <= timestamp(matches[0], "updated_at") <= timestamp(found[0], "completed_at")):
+            gh.fail(f"artifact {name} was not written while its job {job!r} ran")
 
 
 def require_ci_gate(
@@ -175,25 +175,23 @@ def require_ci_gate(
     pages = gh.api(gh.query(f"repos/{repository}/actions/workflows/ci.yml/runs",
                          event=event, head_sha=sha, per_page=100), paginate=True)
     identity = (sha, branch, event)
-    runs = [run for run in _objects(pages, "workflow_runs") if _bound_to_pr(run, pr_number)
+    runs = [run for run in gh.page_items(pages, "workflow_runs") if _bound_to_pr(run, pr_number)
             and (run.get("head_sha"), run.get("head_branch"), run.get("event")) == identity]
     scope = f"PR #{pr_number}" if pr_number is not None else branch
     if not runs:
         gh.fail(f"CI for {scope} at {sha} is missing")
-    run = max(runs, key=lambda item: (_number(item.get("run_number")),
-                                      _number(item.get("run_attempt")),
-                                      _text(item.get("updated_at"))))
+    run = max(runs, key=lambda item: gh.int_field(item, "run_number", "CI run"))
     run_id = gh.int_field(run, "id", "CI run")
     if (run.get("status"), run.get("conclusion")) != DONE:
         gh.fail(f"latest CI run {run_id} for {scope} at {sha} is "
                f"{run.get('status')}/{run.get('conclusion')}")
     pages = gh.api(gh.query(f"repos/{repository}/actions/runs/{run_id}/jobs", filter="latest",
                          per_page=100), paginate=True)
-    jobs = _objects(pages, "jobs")
+    jobs = gh.page_items(pages, "jobs")
     gates = [job for job in jobs if job.get("name") == "Gate"]
     if [(gate.get("status"), gate.get("conclusion")) for gate in gates] != [DONE]:
         gh.fail(f"Gate in CI run {run_id} did not succeed")
-    if event == "push" and (partial := [_text(job.get("name")) for job in jobs
+    if event == "push" and (partial := [str(job.get("name")) for job in jobs
                                         if (job.get("status"), job.get("conclusion")) != DONE]):
         gh.fail(f"CI run {run_id} on {branch} did not run every job: {', '.join(partial)}")
     return run_id
@@ -204,15 +202,14 @@ def require_check_run(
 ) -> int:
     pages = gh.api(gh.query(f"repos/{repository}/commits/{sha}/check-runs", per_page=100,
                          filter="all"), paginate=True)
-    checks = [check for check in _objects(pages, "check_runs")
-              if check.get("name") == name and _get(check.get("app"), "slug") == app_slug
+    checks = [check for check in gh.page_items(pages, "check_runs")
+              if check.get("name") == name and gh.object_field(check, "app", name).get("slug") == app_slug
               and _bound_to_pr(check, pr_number)]
     scope = f"{name} for PR #{pr_number}" if pr_number is not None else name
     if not checks:
         gh.fail(f"{scope} at {sha} is missing")
     # Unfinished checks block; an older slow success must not hide a newer retry.
-    check = max(checks, key=lambda item: (item.get("status") != "completed",
-                                          _text(item.get("started_at")), _number(item.get("id"))))
+    check = max(checks, key=lambda item: (item.get("status") != "completed", gh.int_field(item, "id", name)))
     if (check.get("status"), check.get("conclusion")) != DONE:
         gh.fail(f"{scope} at {sha} is {check.get('status')}/{check.get('conclusion')}")
     return gh.int_field(check, "id", name)
@@ -223,20 +220,20 @@ def require_main_codeql(repository: str, sha: str) -> None:
     pages = gh.api(gh.query(f"repos/{repository}/code-scanning/analyses", ref="refs/heads/main",
                          tool_name="CodeQL", per_page=100), paginate=True)
     def order(item: gh.JsonObject) -> tuple[str, int]:
-        return _text(item.get("created_at")), _number(item.get("id"))
+        return gh.str_field(item, "created_at", "analysis"), gh.int_field(item, "id", "analysis")
 
-    matching = [item for item in _objects(pages)
-                if item.get("commit_sha") == sha and _get(item.get("tool"), "name") == "CodeQL"]
+    matching = [item for item in gh.page_items(pages)
+                if item.get("commit_sha") == sha and gh.object_field(item, "tool", "analysis").get("name") == "CodeQL"]
     identity = ("category", "analysis_key", "environment")
-    newest = {tuple(_text(item.get(key)) for key in identity): item
+    newest = {tuple(gh.str_field(item, key, "analysis") for key in identity): item
               for item in sorted(matching, key=order)}
     if not newest:
         gh.fail(f"CodeQL analysis for {sha} is missing")
     if errors := [f"{key[0] or key[1]}: {item['error']}" for key, item in newest.items()
-                  if _text(item.get("error"))]:
+                  if gh.str_field(item, "error", "analysis")]:
         gh.fail(f"latest CodeQL analysis for {sha} has errors: {'; '.join(errors)}")
     for item in newest.values():
-        if warning := _text(item.get("warning")):
+        if warning := gh.str_field(item, "warning", "analysis"):
             print(f"::warning::CodeQL analysis warning for {sha}: {warning}")
 
 
@@ -249,10 +246,11 @@ def require_protected_environment(repository: str) -> None:
     if not any(rule.get("type") == "required_reviewers" and rule.get("reviewers")
                for rule in rules):
         gh.fail(f"{ENVIRONMENT} must require reviewers")
-    if _get(environment.get("deployment_branch_policy"), "custom_branch_policies") is not True:
+    policy = gh.expect_object(environment.get("deployment_branch_policy") or {}, "deployment branch policy")
+    if policy.get("custom_branch_policies") is not True:
         gh.fail(f"{ENVIRONMENT} must limit deployments to main")
     policies = gh.expect_object(gh.api(f"{path}/deployment-branch-policies"), "branch policies")
-    branches = [(_get(item, "name"), _get(item, "type"))
+    branches = [gh.expect_object(item, "branch policy")
                 for item in gh.expect_array(policies.get("branch_policies"), "branch policies")]
-    if branches != [("main", "branch")]:
+    if [(item.get("name"), item.get("type")) for item in branches] != [("main", "branch")]:
         gh.fail(f"{ENVIRONMENT} must limit deployments to main")

@@ -1,6 +1,6 @@
 # Deployment and configuration
 
-One static server binary with the browser client embedded. With no configuration it serves clear HTTP/1.1 on port 7246. Native TLS listeners add deterministic HTTP/1.1 TLS, HTTP/2, HTTP/3 and WebTransport.
+The default server is one static Go binary with the browser client embedded; releases can also publish an [experimental Rust image](#experimental-rust-image). With no configuration it serves clear HTTP/1.1 on port 7246. Native TLS listeners add deterministic HTTP/1.1 TLS, HTTP/2, HTTP/3 and WebTransport.
 
 | Your setup                  | Start here                                                              | What you need                                    |
 | --------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------ |
@@ -90,6 +90,30 @@ by it:
 Rootful Docker gives container root the host's root. _Rootless Podman already maps root to my user, so why a
 non-root user?_ Defence in depth: an escape from the default unit lands on a subordinate UID with no access to your
 files; the keep-id units run as your user, as root did before.
+
+### Experimental Rust image
+
+Releases can also publish an experimental Rust server image for linux/amd64 and linux/arm64. It is not yet a drop-in
+replacement, and Go remains the default. To try it, change the tag in the `docker run` command, Compose file or
+Quadlet unit to `:latest-rust` (the newest stable release that shipped one), or pin `:X.Y.Z-rust` or a digest. It
+keeps the Go image's ports, `GM_*` variables, `hash-password` command and [container user](#container-user), and runs
+with the same read-only root and dropped capabilities. Like Go's, it holds one static binary on `scratch` with the
+notices and CA roots, and trusts CA files added to `/etc/ssl/certs`. It differs in:
+
+- **Identity and notices:** `--version` and `/preflight` report `X.Y.Z-rust`. `--legal` prints the third-party
+  notices, which both images also ship in `/usr/share/licenses/graphite-meter/`; the Go server has no such flag.
+- **Settings and behaviour:** `GM_MAX_BUFFER_BYTES` (default 8 GiB) caps the connection buffers its HTTP/2 and QUIC
+  listeners share. The [Rust README](../rust/README.md) covers it, the image tags and the known differences.
+
+The Compose build overlay and the Quadlet `.build` unit build the Go image. On an amd64 host,
+`mise run rust-container-build` builds this one from a checkout as `graphite-meter:latest-rust`; without mise, run:
+
+```sh
+docker build -f container/Dockerfile.rust --target server -t graphite-meter:latest-rust .
+```
+
+The image's third-party notices are reviewed for that builder's toolchain, which also cross-compiles the arm64 image,
+so the build stops with a legal error on any other host. On arm64 hosts, such as a Raspberry Pi, run a published tag.
 
 ## Native listeners
 

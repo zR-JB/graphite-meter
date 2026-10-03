@@ -97,6 +97,8 @@ interface Participant extends PreparedServer {
   down: number;
   /** Latest measured receiver evidence in the current stage. */
   up: ReceiverCheckpoint | null;
+  /** Receiver evidence taken while the timeline holds, which opens the next measured window. */
+  anchor: ReceiverCheckpoint | null;
   /** Run-clock active time of the last measured progress in each direction. */
   progressAt: Record<FlowDirection, number>;
   /** Run-clock active time of the last receiver record with advancing time, and the receiver time its bytes last grew. */
@@ -210,6 +212,7 @@ export class Run {
       rotated: false,
       down: 0,
       up: null,
+      anchor: null,
       progressAt: { down: 0, up: 0 },
       heardAt: 0,
       grewNanos: 0,
@@ -473,7 +476,7 @@ export class Run {
     this.#continuity++;
     if (previous?.activity.stage === segment.activity.stage) {
       show();
-      return this.#measureStage();
+      return this.#measureAnchored();
     }
     const generation = ++this.#generation;
     this.#clock.hold();
@@ -489,23 +492,29 @@ export class Run {
         measuring: true,
       });
     }
-    this.#beginStage(segment.activity).then(
-      () => {
-        if (generation !== this.#generation || !this.#running) return;
-        this.#tickAt = this.#clock.resume();
-        if (!previous) show();
-        if (segment.phase !== "warmup") this.#measureStage();
-        this.#tick();
-        this.#arm();
-      },
-      (cause) => {
-        if (generation !== this.#generation) return;
-        this.#fail(
-          classify(cause, "protocol-error"),
-          cause instanceof Error ? cause.message : "Stage preparation failed",
-        );
-      },
-    );
+    this.#beginStage(segment.activity)
+      .then(() =>
+        segment.phase === "warmup" || generation !== this.#generation
+          ? undefined
+          : this.#anchor(),
+      )
+      .then(
+        () => {
+          if (generation !== this.#generation || !this.#running) return;
+          this.#tickAt = this.#clock.resume();
+          if (!previous) show();
+          if (segment.phase !== "warmup") this.#measureStage();
+          this.#tick();
+          this.#arm();
+        },
+        (cause) => {
+          if (generation !== this.#generation) return;
+          this.#fail(
+            classify(cause, "protocol-error"),
+            cause instanceof Error ? cause.message : "Stage preparation failed",
+          );
+        },
+      );
   }
 
   async #beginStage(activity: PhaseActivity): Promise<void> {
@@ -553,6 +562,37 @@ export class Run {
         );
   }
 
+  /** A window with upload opens once its receivers are anchored; the timeline holds meanwhile. */
+  #measureAnchored(): void {
+    if (!this.#activity?.transfer.includes("up")) return this.#measureStage();
+    const generation = this.#generation;
+    this.#clock.hold();
+    void this.#anchor().then(() => {
+      if (generation !== this.#generation || !this.#running) return;
+      this.#tickAt = this.#clock.resume();
+      this.#measureStage();
+      this.#tick();
+      this.#arm();
+    });
+  }
+
+  /** Fresh receiver checkpoints open an upload window at its start, as the native client's first boundary does. */
+  async #anchor(): Promise<void> {
+    if (!this.#activity?.transfer.includes("up")) return;
+    const signal = this.#boundaryAbort.signal;
+    await Promise.all(
+      this.#participants().map(async (server) => {
+        server.anchor = null;
+        try {
+          server.anchor =
+            (await server.stage?.checkpoint(signal, true)) ?? null;
+        } catch {
+          // The final boundary reports a lost or revoked receiver; this window opens on its next record.
+        }
+      }),
+    );
+  }
+
   #measureStage(): void {
     const activity = this.#activity!;
     const cfg = this.#cfg!;
@@ -578,6 +618,10 @@ export class Run {
       server.stage?.measure();
     }
     if (!isTransfer(activity.stage)) return;
+    for (const server of this.#participants()) {
+      server.up = server.anchor;
+      server.anchor = null;
+    }
     this.#live.reset(
       Object.fromEntries(this.#ids().map((id) => [id, 0])),
       this.#clock.read(),

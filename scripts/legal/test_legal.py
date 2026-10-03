@@ -14,7 +14,7 @@ from scripts.legal.discovery import (
     repository_go_toolchain_version, repository_url, source_for,
 )
 from scripts.legal.model import (
-    Component, Json, LegalError, LegalFile, LocalArtifact, Project, Provenance, Review, read_json, sha256,
+    Component, Json, LegalError, LegalFile, LocalArtifact, Project, Provenance, Review, marshal, read_json, sha256,
 )
 from scripts.legal.review import (
     add_provenance, component_from_files, component_legal_files, prepare_scopes,
@@ -50,6 +50,23 @@ class LegalTests(unittest.TestCase):
             path = self.write("review.json", value)
             with self.subTest(value=value), self.assertRaises(LegalError):
                 read_json(path)
+
+    def test_reviews_keep_each_legal_file_on_one_line_and_everything_else_indented(self) -> None:
+        other: Json = {"empty": [], "none": {}, "scalars": [1, 2.5, True, None, 'é "quoted"\n '],
+                       "nested": {"records": [{"name": "LICENSE", "sha256": "0" * 64}]}}
+        self.assertEqual(marshal(other), (json.dumps(other, ensure_ascii=False, indent=2) + "\n").encode())
+        review = Review("cargo", "crate", "1", legalFiles=[LegalFile("LICENSE", "0" * 64, kind="license"),
+                                                           LegalFile("NOTICE", "1" * 64)]).json()
+        lines = marshal([review]).decode().splitlines()
+        start = lines.index('    "legalFiles": [')
+        self.assertEqual(lines[start + 1:start + 4], [
+            f'      {{"name": "LICENSE", "sha256": "{"0" * 64}", "kind": "license"}},',
+            f'      {{"name": "NOTICE", "sha256": "{"1" * 64}"}}', "    ],"])
+        without = {key: value for key, value in review.items() if key != "legalFiles"}
+        self.assertEqual(marshal([without]), (json.dumps([without], ensure_ascii=False, indent=2) + "\n").encode())
+        self.assertEqual(json.loads(marshal([review, other])), [review, other])
+        with self.assertRaises(ValueError):
+            marshal({"legalFiles": [{"sha256": float("nan")}]})
 
     def test_legal_files_preserve_bytes_kinds_and_nested_population(self) -> None:
         contents = "MIT License\r\n<script>literal</script>\n"
@@ -221,7 +238,7 @@ class LegalTests(unittest.TestCase):
             return [f"{os}/{arch}" for scope, os, arch in targets if scope == component]
 
         self.assertEqual(built("server"), ["linux/amd64", "linux/arm64"])
-        self.assertEqual(built("tui"), (ROOT / "scripts/tui-targets.txt").read_text().splitlines())
+        self.assertEqual(built("tui"), [line.split()[0] for line in (ROOT / "scripts/tui-targets.txt").read_text().splitlines()])
         entries = [Provenance("go", "replacement", "v1", artifactScopes=["server/browser"])]
         self.assertFalse(has_go_replacement_provenance([], "replacement", "v1", "server"))
         self.assertTrue(has_go_replacement_provenance(entries, "replacement", "v1", "server"))

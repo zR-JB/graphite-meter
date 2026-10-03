@@ -1,0 +1,25 @@
+name: Advisories
+
+on:
+  schedule:
+    - cron: '43 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust advisories
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up Rust and pinned cargo-deny without caches
+        uses: ./.github/actions/setup-project
+        with: {rust: 'true', cargo-deny: 'true', cache: 'false'}
+      - name: Check Rust dependencies against the live advisory database
+        working-directory: rust
+        run: cargo deny --locked check advisories

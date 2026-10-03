@@ -6,36 +6,52 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from github_api import ControlPlaneError
-from workflow_policy import check_repository
+from .github_api import ControlPlaneError
+from .workflow_policy import check_repository
 
 ROOT = Path(__file__).resolve().parents[2]
 W = ".github/workflows/"
 SETUP = ".github/actions/setup-project/action.yml"
 PINNED_STEP = "\n      - uses: {}@" + "a" * 40 + "\n        with: {{persist-credentials: false}}\n"
 REQUEST = W + "release-request.yml"
-PREPARE = "        run: python3 scripts/ci/release.py prepare\n"
+PREPARE = "        run: python3 -m scripts.ci.release prepare\n"
 RELEASE = W + "release.yml"
 PUBLISH = "  extra:\n    if: needs.verify.outputs.publish == 'true'\n    environment: other\n"
 MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (SETUP, None, "# ${{ secrets.TOKEN }}\n", r"secrets\."),
     (W + "ci.yml", "runs-on: ubuntu-24.04", "runs-on: ubuntu-latest", "ubuntu-latest"),
-    (W + "release.yml", "run: python3 scripts/ci/release.py recheck",
+    (W + "release.yml", "run: python3 -m scripts.ci.release recheck",
      'run: echo "${{ github.head_ref }}"', "through env"),
     (REQUEST, "          if [[ -z", "          echo ${{ github.ref }}\n          if [[ -z",
      "through env"),
     ("container/Dockerfile", None, "FROM docker.io/library/alpine:3 AS extra\n", "digest-pinned"),
     ("container/Dockerfile", "# Graphite Meter", "#Syntax = example/frontend\n# Graphite Meter",
      "BuildKit frontend"),
+    ("container/Dockerfile.rust", None, "FROM --platform=$BUILDPLATFORM docker.io/library/alpine:3 AS extra\n",
+     "Dockerfile.rust base images must be digest-pinned"),
+    ("container/Dockerfile.rust", "FROM rust-amd64 AS rust-arm64", "FROM rust:1.98.1 AS rust-arm64",
+     "Dockerfile.rust base images must be digest-pinned"),
+    ("container/Dockerfile.rust", "FROM rust-${TARGETARCH} AS server-build", "FROM ${BASE} AS server-build",
+     "Dockerfile.rust base images must be digest-pinned"),
+    ("container/Dockerfile.rust", "# Experimental only", "# syntax=example/frontend\n# Experimental only",
+     "BuildKit frontend"),
+    ("container/Dockerfile.rust", "mingw-w64-x86-64-dev=10.0.0-3", "mingw-w64-x86-64-dev", "exact apt package"),
+    ("container/Dockerfile.rust", "/20260927T180000Z", "", "one snapshot.debian.org timestamp"),
+    ("container/Dockerfile.rust", "RUN printf", "RUN apt-get update && printf", "one snapshot.debian.org timestamp"),
     (W + "ci.yml", None, PINNED_STEP.format("actions/setup-go"), "through mise"),
     (REQUEST, "ref: ${{ github.sha }}", "ref: ${{ inputs.sha }}", "triggering github.sha"),
+    (W + "ci.yml", "        with: {persist-credentials: false}\n",
+     "        with:\n          ref: ${{ needs.build.outputs.sha }}\n          persist-credentials: false\n",
+     "triggering github.sha"),
     (W + "release.yml", "cache: false", "cache: true", "cache: false"),
     (SETUP, "install_args:", "args:", "install_args"),
     (REQUEST, "cache: 'false'", "cache: 'true'", "disable every cache"),
+    (REQUEST, "cache-mode: none\n", "", "no cache token"),
+    (REQUEST, "cache-mode: none\n", "cache-mode: read\n", "no cache token"),
     (SETUP, "inputs.client-deps == 'true' && inputs.cache == 'true'", "inputs.client-deps == 'true'",
      "follow the cache input"),
     (SETUP, "cache: ${{ inputs.cache }}", "cache: true", "follow the cache input"),
-    (REQUEST, "buildkitd-flags: --log-level=info",
+    (".github/actions/setup-buildx/action.yml", "buildkitd-flags: --log-level=info",
      "buildkitd-flags: --allow-insecure-entitlement network.host", "insecure-entitlement"),
     (W + "release.yml", "TARGET_SHA: ${{ github.sha }}",
      "TARGET_SHA: ${{ needs.verify.outputs.sha }}", "TARGET_SHA"),
@@ -51,10 +67,10 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (W + "release.yml", "secrets.GHCR_TOKEN", "secrets.OTHER_TOKEN", "release secrets"),
     (W + "release.yml", None, "  extra:\n    environment: ghcr-release\n", "release secrets"),
     (W + "ci.yml", None, "# ${{ secrets.GHCR_TOKEN }}\n", r"secrets\."),
-    (W + "release.yml", "        run: python3 scripts/ci/release.py recheck\n", "",
-     "misorders invariant: run: python3 scripts/ci/release.py recheck"),
+    (W + "release.yml", "        run: python3 -m scripts.ci.release recheck\n", "",
+     "misorders invariant: run: python3 -m scripts.ci.release recheck"),
     (W + "release.yml", "run: scripts/ci/publish.sh image", "run: scripts/ci/publish.sh aliases",
-     "misorders invariant: run: scripts/ci/publish.sh image"),
+     "misorders invariant"),
     (W + "ci.yml", "permissions: {contents: read}", "permissions: {contents: write}",
      "write permission"),
     (W + "release.yml", "on:\n", "on:\n  push:\n    tags: ['v*']\n", "triggered only by"),
@@ -65,8 +81,8 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (REQUEST, "  contents: read", "  contents: write", "write permission"),
     (W + "release.yml", "    steps:\n", "    steps:" + PINNED_STEP.format("actions/cache"),
      "repository code"),
-    (W + "release.yml", "        run: python3 scripts/ci/release.py verify\n",
-     "        run: python3 scripts/ci/release.py verify\n      - run: mise run release-check\n",
+    (W + "release.yml", "        run: python3 -m scripts.ci.release verify\n",
+     "        run: python3 -m scripts.ci.release verify\n      - run: mise run release-check\n",
      "mise run"),
     (REQUEST, "    steps:\n", "    steps:" + PINNED_STEP.format("actions/cache"),
      "repository code"),
@@ -74,7 +90,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (W + "ci.yml", "mise run server-race", "mise run server-test", "local gate step server-race"),
     (W + "ci.yml", "mise run legal-check", "mise run legal-generate",
      "local gate step legal-check"),
-    (REQUEST, "VERSION= mise run legal-check\n", "", "committed legal outputs"),
+    (REQUEST, "VERSION= mise run legal-check\n", "", "legal-check|committed legal outputs"),
     ("certs/dev.txt", None, "local development certificate", "TLS certificate/key paths"),
     ("notes.txt", None, "-----BEGIN " + "PRIVATE KEY-----", "PEM"),
     (W + "ci.yml", "on:\n", "on:\n  pull_request_target:\n", "triggered only by"),
@@ -83,30 +99,31 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (RELEASE, None, PUBLISH + "    env:\n      TOKEN: ${{ secrets.GHCR_TOKEN }}\n",
      "release secrets"),
     (REQUEST, "  contents: read\n", "  contents: read\n  actions: read\n", "only read contents"),
+    (REQUEST, "name: Build untrusted release candidate", "name: Build the release candidate", "as release.py expects"),
     (REQUEST, "    runs-on:", "    permissions: read-all\n    runs-on:", "only read contents"),
     (REQUEST, "EVENT_SHA: ${{ github.sha }}", "EVENT_SHA: ${{ inputs.sha }}", "EVENT_SHA"),
-    (REQUEST, PREPARE, "        run: python3 -c pass\n", "release.py prepare"),
-    (REQUEST, 'python3 scripts/ci/verify_release_assets.py "$VERSION"', "true",
+    (REQUEST, PREPARE, "        run: python3 -c pass\n", "release prepare"),
+    (REQUEST, 'python3 -m scripts.ci.verify_release_assets "$VERSION"', "true",
      "verify_release_assets"),
-    (REQUEST, "uses: docker/build-push-action@", "uses: docker/bake-action@", "build-push-action"),
+    (REQUEST, "uses: docker/build-push-action@", "uses: docker/bake-action@", "misorders invariant"),
     (RELEASE, "github.event.workflow_run.conclusion == 'success'\n      && ", "",
      "conclusion == 'success'"),
     (RELEASE, "workflow_run.event == 'workflow_dispatch'", "workflow_run.event != 'push'",
      "workflow_dispatch"),
     (RELEASE, "workflow_run.path == '.github", "workflow_run.path != '.github", "path =="),
-    (RELEASE, "run: python3 scripts/ci/release.py verify", "run: echo verified",
-     "release.py verify"),
+    (RELEASE, "run: python3 -m scripts.ci.release verify", "run: echo verified",
+     "release verify"),
     (RELEASE, "        if: steps.verify.outputs.publish == 'true'\n", "", "hand off"),
     (RELEASE, "group: release-publish-${{ github.repository }}",
      "group: release-publish-${{ github.run_id }}", "group: release-publish"),
     (RELEASE, "cancel-in-progress: false", "cancel-in-progress: true", "cancel-in-progress"),
-    (RELEASE, "run: python3 scripts/ci/release.py publish", "run: echo released",
-     "release.py publish"),
+    (RELEASE, "run: python3 -m scripts.ci.release publish", "run: echo released",
+     "release publish"),
     (RELEASE, "run: scripts/ci/publish.sh aliases", "run: echo promoted", "publish.sh aliases"),
     (RELEASE, "SOURCE_SHA: ${{ needs.verify.outputs.sha }}",
-     "SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}", "head_sha"),
+     "SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}", "head_sha|SOURCE_SHA"),
     (RELEASE, "SOURCE_SHA: ${{ needs.verify.outputs.sha }}",
-     "SOURCE_SHA: ${{ github.event.pull_request.head.sha }}", "pull_request.head"),
+     "SOURCE_SHA: ${{ github.event.pull_request.head.sha }}", "pull_request.head|SOURCE_SHA"),
     (RELEASE, "secrets.GHCR_TOKEN", "secrets['GHCR_TOKEN']", r"secrets\["),
     (REQUEST, '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', '[[ -n "$SOURCE_SHA" ]]', "SOURCE_SHA"),
     (REQUEST, "no-cache: true", "no-cache: false", "no-cache"),
@@ -116,9 +133,47 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "cache-to"),
     (REQUEST, "          no-cache: true\n", "          no-cache: true\n          secrets: GIT_AUTH_TOKEN=x\n",
      "GIT_AUTH_TOKEN"),
+    (REQUEST, "            VERSION=${{ steps.request.outputs.version }}\n",
+     "            VERSION=${{ steps.request.outputs.version }}\n            GM_RUST_RELEASE_LTO=false\n",
+     "GM_RUST_RELEASE_LTO"),
+    (W + "ci.yml", "          github-token: ''\n", "          github-token: ${{ github.token }}\n", "github-token"),
+    (W + "ci.yml", "provenance: 'false'", "provenance: mode=max", "provenance"),
     (REQUEST, "github-token: ''", "github-token: ${{ github.token }}", "github-token"),
     (REQUEST, "            GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}\n", "",
      "GM_CLIENT_REVISION"),
+    (REQUEST, "/rust-export/tui\n          no-cache: true\n", "/rust-export/tui\n", "every image build must declare no-cache"),
+    (REQUEST, "run: python3 -m scripts.ci.release stage-source\n",
+     'run: cp -R "$SOURCE_EXPORT" "$RELEASE_ASSETS"\n', "release stage-source"),
+    (W + "ci.yml", "--target third-party-source", "--target client", "target third-party-source"),
+    (REQUEST, "run: python3 -m scripts.ci.release stage-rust\n",
+     'run: find "$RUST_EXPORT" -type f -exec cp {} "$RUST_ASSETS/" \\;\n', "release stage-rust"),
+    (W + "ci.yml", "          python3 -m scripts.ci.release check-rust\n", "", "release check-rust"),
+    (W + "ci.yml", "run: mise run rust-check-targets\n", "run: mise run rust-check\n", "rust-check-targets"),
+    (W + "ci.yml", "check_git_sources --verify\n", "check_git_sources\n", "check_git_sources --verify"),
+    (W + "ci.yml", "run: mise run rust-delayed-downloads\n",
+     "run: cargo test --workspace --test connection_faults quic_downloads -- --ignored\n", "rust-delayed-downloads"),
+    (W + "ci.yml", "target: server-artifacts", "target: server", "target: server-artifacts"),
+    (W + "ci.yml", "rust-release-server, rust-release]", "rust-release-server]", r"Gate must need every job: \['rust-release'\]"),
+    (".github/ci-paths.yml", "  - 'container/Dockerfile.rust'\n  - '.dockerignore'\n", "  - 'container/Dockerfile.rust'\n",
+     r"rust misses \['.dockerignore'\]"),
+    ("container/Dockerfile.rust", None, "COPY docs/ docs/\n", r"rust misses \['docs/x'\]"),
+    # Development notices stay out of CI and releases, directly or through a task a job runs.
+    (W + "ci.yml", None, "      - run: python3 -m scripts.legal.rust --development\n", "unreviewed --development notices"),
+    ("mise.toml", '  "cargo fmt --all --check",\n',
+     '  "python3 -m scripts.legal.rust --development",\n  "cargo fmt --all --check",\n',
+     "unreviewed --development notices"),
+    ("mise.toml", "[tasks.rust-check]\n", '[tasks.unreviewed-fixture]\nrun = "python3 -m scripts.legal.rust --development"\n'
+     '[tasks.rust-check]\ndepends = ["unreviewed-fixture"]\n',
+     "unreviewed --development notices"),
+    ("scripts/release-artifacts.sh", "set -eu\n", "set -eu\npython3 -m scripts.legal.rust --development\n",
+     "unreviewed --development notices"),
+    ("container/Dockerfile.rust", '--profile "$PROFILE"', '--profile "$PROFILE" --development',
+     "unreviewed --development notices"),
+    ("scripts/package_rust.py", '"--profile", "release",', '"--profile", "release", "--development",',
+     "unreviewed --development notices"),
+    # rustup would replace itself from the network before it installs and checks a toolchain.
+    (SETUP, "install --no-self-update", "install", "--no-self-update"),
+    ("scripts/package_rust.py", '"install", "--no-self-update",', '"install",', "--no-self-update"),
 )
 
 
@@ -128,7 +183,9 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
         shutil.copytree(ROOT / ".github", root / ".github")
-        for name in ("mise.toml", "mise.lock", "go/go.mod", "container/Dockerfile"):
+        shutil.copytree(ROOT / "scripts", root / "scripts", ignore=shutil.ignore_patterns("__pycache__"))
+        for name in ("mise.toml", "mise.lock", "go/go.mod", "container/Dockerfile", "container/Dockerfile.rust",
+                     ".dockerignore", "rust/rust-toolchain.toml", "rust/.gitignore"):
             (root / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, root / name)
         return root
@@ -153,11 +210,11 @@ class WorkflowPolicyTests(unittest.TestCase):
                     check_repository(root)
 
     def test_release_identity_comes_only_from_the_run_context(self) -> None:
-        for name, marker in ((REQUEST, "release.py prepare"), (RELEASE, "release.py verify"),
-                             (RELEASE, "release.py publish")):
+        for name, marker in ((REQUEST, "release prepare"), (RELEASE, "release verify"),
+                             (RELEASE, "release publish"), (RELEASE, "release recheck")):
             text = (ROOT / name).read_text()
             step = next(step for step in re.split(r"(?m)^(?=      - )", text) if marker in step)
-            for variable in re.findall(r"(?m)^ +(?!GH_TOKEN)([A-Z_]+): \$\{\{ github\.", step):
+            for variable in re.findall(r"(?m)^ +(?!GH_TOKEN)([A-Z][A-Z0-9_]*): \$\{\{ (?:github|needs)\.", step):
                 with self.subTest(marker=marker, variable=variable):
                     root = self.tree()
                     rebound = re.sub(rf"(?m)^( +{variable}): .*$", r"\1: ${{ github.job }}", step)

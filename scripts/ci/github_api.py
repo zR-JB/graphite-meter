@@ -78,6 +78,15 @@ def expect_array(value: JsonValue, context: str) -> JsonArray:
     return value
 
 
+def page_items(pages: JsonValue, key: str | None = None) -> list[JsonObject]:
+    """The objects of a paginated answer, whose pages are arrays or hold one under `key`."""
+    items: list[JsonObject] = []
+    for page in expect_array(pages, "GitHub pages"):
+        values = page if key is None else expect_object(page, "GitHub page").get(key)
+        items += [expect_object(item, "item") for item in expect_array(values, "page")]
+    return items
+
+
 def object_field(value: Mapping[str, JsonValue], key: str, context: str) -> JsonObject:
     return expect_object(value.get(key), f"{context}.{key}")
 
@@ -133,3 +142,10 @@ def append_summary(text: str) -> None:
 def file_sha256(path: Path) -> str:
     with path.open("rb") as handle:
         return hashlib.file_digest(handle, "sha256").hexdigest()
+
+
+def write_checksums(dist: Path) -> None:
+    """List every other file of `dist` in checksums.txt; the listing never includes itself."""
+    listing = "".join(f"{file_sha256(path)}  {path.name}\n" for path in sorted(dist.iterdir())
+                      if path.name != "checksums.txt")
+    (dist / "checksums.txt").write_text(listing, encoding="utf-8")

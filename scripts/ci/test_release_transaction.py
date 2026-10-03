@@ -17,8 +17,8 @@ from collections.abc import Callable
 from typing import Any
 from unittest.mock import patch
 
-from github_api import ControlPlaneError
-from release import command_publish
+from .github_api import ControlPlaneError
+from .release import command_publish
 
 SCRIPT = pathlib.Path(__file__).resolve().parent / "publish.sh"
 VERIFIED = "sha256:" + "a" * 64
@@ -41,10 +41,11 @@ SHIM = """docker() {
   while [ "$1" != -ec ]; do [ "$1" = -e ] && export "$2"; shift; done
   sh -ec "$2"
 }
-gh() { printf '%s\\n' $RELEASES; }
+gh() { case "$*" in *_rust_*) printf '%s\\n' $RUST_RELEASES ;; *) printf '%s\\n' $RELEASES ;; esac; }
 """
 TAG, SHA, OTHER_SHA = "v1.2.3", "d" * 40, "e" * 40
 SOURCE = "graphite-meter_1.2.3_third-party-source.tar.gz"
+GO_SOURCE = "graphite-meter_1.2.3-rc.1_third-party-source.tar.gz"
 ASSETS = {SOURCE: b"third-party source", "checksums.txt": b"checksums"}
 # GitHub's tags, annotated tags, releases and uploads behind `gh api`. A write becomes readable
 # only after `lag` reads of a new tag or `publish_lag` reads of a published release; a publish
@@ -187,6 +188,20 @@ class RegistryTests(unittest.TestCase):
                     self.assertIn(error, output)
                     self.assertNotEqual(tags.get("1.2.3"), VERIFIED)
 
+    def test_implementation_tags_cannot_overwrite_each_other(self) -> None:
+        for implementation, tag, accepted in (
+            ("rust", "1.2.3-rust", True), ("rust", "1.2.3-rc.1-rust", True),
+            ("rust", "1.2.3", False), ("go", "1.2.3-rust", False),
+            ("unknown", "1.2.3", False),
+        ):
+            with self.subTest(implementation=implementation, tag=tag):
+                status, output, tags = self.run_script("image", {"1.2.3": OTHER},
+                    IMPLEMENTATION=implementation, IMAGE_TAG=tag)
+                self.assertEqual(status == 0, accepted, output)
+                self.assertEqual(tags["1.2.3"], OTHER)
+                if accepted:
+                    self.assertEqual(tags[tag], VERIFIED)
+
     def test_aliases_follow_the_highest_published_releases(self) -> None:
         for releases, series, latest in (
             ("v1.1.9 v1.2.3", VERIFIED, VERIFIED),
@@ -199,6 +214,21 @@ class RegistryTests(unittest.TestCase):
                 self.assertEqual(status, 0, output)
                 self.assertEqual((tags["1.2"], tags["latest"]), (series, latest))
 
+    def test_rust_aliases_follow_the_highest_releases_that_shipped_rust(self) -> None:
+        rust = "sha256:" + "c" * 64
+        registry = {"1.2.3": VERIFIED, "1.2.3-rust": rust, "1.2.4": OTHER}
+        for digest, error in ((rust, None), (OTHER, "1.2.3-rust is not the verified")):
+            with self.subTest(error=error):
+                status, output, tags = self.run_script("aliases", registry, "v1.2.3 v1.2.4",
+                                                       RUST_DIGEST=digest, RUST_RELEASES="v1.2.3")
+                self.assertEqual((tags["1.2"], tags["latest"]), (OTHER, OTHER))
+                if error is None:
+                    self.assertEqual(status, 0, output)
+                    self.assertEqual((tags["1.2-rust"], tags["latest-rust"]), (rust, rust))
+                else:
+                    self.assertIn(error, output)
+                    self.assertNotIn("latest-rust", tags)
+
     def test_a_moved_or_unreleased_version_stops_promotion(self) -> None:
         for registry, releases, error in (({"1.2.3": OTHER}, "v1.2.3", "not the verified"),
                                           ({"1.2.3": VERIFIED}, "v1.2.2", "not a published")):
@@ -210,7 +240,8 @@ class RegistryTests(unittest.TestCase):
 
 
 class ReleasePublicationTests(unittest.TestCase):
-    def publish(self, state: State, assets: dict[str, bytes] = ASSETS) -> tuple[str | None, str, State]:
+    def publish(self, state: State, assets: dict[str, bytes] = ASSETS,
+                **identity: str) -> tuple[str | None, str, State]:
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             (root / "bin").mkdir()
@@ -225,15 +256,50 @@ class ReleasePublicationTests(unittest.TestCase):
                 "GH_STATE": str(root / "state.json"), "GH_TOKEN": "secret-token",
                 "REPOSITORY": "owner/repo", "TAG": TAG, "TARGET_SHA": SHA,
                 "ASSETS_DIR": str(root / "assets"), "RUNNER_TEMP": directory,
-            }
+            } | identity
             output, error = io.StringIO(), None
-            with (patch.dict(os.environ, env), patch("release.time.sleep"),
+            with (patch.dict(os.environ, env), patch("scripts.ci.release.time.sleep"),
                   contextlib.redirect_stdout(output), contextlib.redirect_stderr(output)):
                 try:
                     command_publish()
                 except ControlPlaneError as exc:
                     error = str(exc)
             return error, output.getvalue(), json.loads((root / "state.json").read_text())
+
+    def test_rust_prerelease_assets_target_the_verified_pr_commit(self) -> None:
+        tag = "v1.2.3-rc.1"
+        sources = [f"graphite-meter-{build}_1.2.3-rc.1_linux_amd64_rust_third-party-source.tar.gz"
+                   for build in ("client", "server")]
+        assets = {source: b"verified source" for source in [GO_SOURCE, *sources]} | {"checksums.txt": b"checksums"}
+        identity = {"TAG": tag, "PR": "101", "SOURCE_SHA": OTHER_SHA, "RUST": "both"}
+        error, output, published = self.publish(copy.deepcopy(EMPTY), assets, **identity)
+        self.assertIsNone(error, output)
+        release = published["releases"][0]
+        self.assertEqual((release["draft"], release["prerelease"], release["target_commitish"]),
+                         (False, True, OTHER_SHA))
+        self.assertEqual(published["tags"], {tag: {"type": "commit", "sha": OTHER_SHA}})
+        self.assertIn(OTHER_SHA, release["body"])
+        # Each Rust build's archive is the source of that build alone; the Go image's is the Go builds'.
+        self.assertIn(f"**{sources[0]}**, **{sources[1]}**. Together with the tagged repository source, each archive",
+                      release["body"])
+        self.assertIn(f"included in the Go builds is attached as **{GO_SOURCE}**", release["body"])
+        error, output, retried = self.publish(copy.deepcopy(published), assets, **identity)
+        self.assertIsNone(error, output)
+        self.assertEqual(retried["writes"], published["writes"])
+        for change in ({"RUST": "none"}, {"SOURCE_SHA": SHA}):
+            error, _, rejected = self.publish(copy.deepcopy(published), assets, **(identity | change))
+            self.assertIsNotNone(error)
+            self.assertEqual(rejected["writes"], published["writes"])
+
+    def test_a_prerelease_without_rust_offers_the_source_of_its_image(self) -> None:
+        assets = {GO_SOURCE: b"verified source", "checksums.txt": b"checksums"}
+        error, output, published = self.publish(copy.deepcopy(EMPTY), assets, TAG="v1.2.3-rc.1", PR="101",
+                                                SOURCE_SHA=OTHER_SHA)
+        self.assertIsNone(error, output)
+        release = published["releases"][0]
+        self.assertEqual((release["prerelease"], release["target_commitish"]), (True, OTHER_SHA))
+        self.assertIn(f"attached as **{GO_SOURCE}**", release["body"])
+        self.assertNotIn("Rust", release["body"])
 
     def test_release_without_the_third_party_source_offer_is_refused(self) -> None:
         error, _, after = self.publish(copy.deepcopy(EMPTY), {"checksums.txt": b"checksums"})
@@ -279,7 +345,7 @@ class ReleasePublicationTests(unittest.TestCase):
             (EMPTY, lambda state: state | {"patch_error": "drop"}, "publication did not become", False),
             (published, edit(draft=True, upload_url="https://example.invalid/upload{?name}"),
              "unexpected release upload URL", False),
-            (published, edit(prerelease=True), "already exists as a prerelease", True),
+            (published, edit(prerelease=True), "different release kind", True),
             (published, tampered, "published but asset names/digests differ", True),
             (published, edit(body="notes"), "notice is missing or stale", True),
             (published, lambda state: state | other_tag, f"already exists at {OTHER_SHA}", True),

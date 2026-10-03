@@ -10,7 +10,7 @@ LEGAL_THIRD_PARTY_SOURCE_OUT="$dist/graphite-meter_${version}_third-party-source
     VERSION=$version mise run _legal-run third-party-source-bundle
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
-while IFS=/ read -r goos goarch; do
+while IFS='/ ' read -r goos goarch _; do
     [ -n "$goos" ] || continue
     base="graphite-meter-client_${version}_${goos}_${goarch}"
     binary=graphite-meter-client

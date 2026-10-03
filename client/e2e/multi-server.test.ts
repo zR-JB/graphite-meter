@@ -15,21 +15,16 @@ import {
 } from "./fleet";
 import { expect, test } from "./webview";
 
-export const combined = {
-  ...baseConfig,
-  duration: { ...baseConfig.duration, downloadMs: 1000, uploadMs: 1000 },
-};
-
 test("four servers share one run and keep separate receiver windows", async (page) => {
   const four = [home, frankfurt, amsterdam, helsinki];
   await open(page, home.url, {
     servers: four,
     config: {
-      ...combined,
+      ...baseConfig,
       stages: { ...baseConfig.stages, bidirectional: true },
       // Eight transfers start at once, and a receiver's window opens only once every server has reported: in a
       // 1 s stage the slowest left under the 800 ms evidence floor on a loaded runner.
-      duration: { ...combined.duration, bidirectionalMs: 2000 },
+      duration: { ...baseConfig.duration, bidirectionalMs: 2000 },
     },
   });
   await ready(page);
@@ -79,7 +74,6 @@ test("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1", async 
   await open(page, home.http, {
     servers: [{ id: "self", url: home.http }, frankfurt],
     config: {
-      ...combined,
       transports: { throughputTarget: "auto", latencyTarget: "auto" },
     },
   });
@@ -114,7 +108,7 @@ test("deselecting a verified peer starts a self-only run at once", async (page) 
 });
 
 test("a missed final upload checkpoint is retried and keeps the interval and the run", async (page) => {
-  await open(page, home.url, { servers: [home, frankfurt], config: combined });
+  await open(page, home.url, { servers: [home, frankfurt] });
   await ready(page);
   await page.evaluate((origin) => {
     const original = window.fetch.bind(window);
@@ -153,7 +147,7 @@ test("a missed final upload checkpoint is retried and keeps the interval and the
 });
 
 test("every server's latency is saved; the lens starts on the first selected and keeps the record", async (page) => {
-  await open(page, home.url, { servers: [home, frankfurt], config: combined });
+  await open(page, home.url, { servers: [home, frankfurt] });
   await ready(page);
   const saves = await countSaves(page);
   const saved = await run(page);

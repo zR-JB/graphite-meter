@@ -1,4 +1,4 @@
-# Graphite Meter — HTTP route pin (shared across Go / TS).
+# Graphite Meter — HTTP route pin (shared across Go / TS / Rust).
 #
 # Format (one route per non-comment, non-blank line):
 #   <name> | <path> | <kind>

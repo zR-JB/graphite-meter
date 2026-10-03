@@ -4,12 +4,37 @@ import { expect, test, type Locator, type Page } from "./webview";
 const tip = (page: Page) => page.locator('[role="tooltip"]');
 
 async function centre(locator: Locator) {
-  return locator.evaluate(async (el: Element) => {
-    el.scrollIntoView({ block: "center" });
-    await new Promise((done) => requestAnimationFrame(done));
-    const box = el.getBoundingClientRect();
-    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-  });
+  let point: Point | undefined;
+  // A preceding touch scroll can keep moving after touchEnd.
+  await expect
+    .poll(async () => {
+      const at = await locator.evaluate(async (el: Element) => {
+        el.scrollIntoView({ block: "center", behavior: "instant" });
+        const before = el.getBoundingClientRect();
+        await new Promise((done) =>
+          requestAnimationFrame(() => requestAnimationFrame(done)),
+        );
+        const box = el.getBoundingClientRect();
+        const x = box.x + box.width / 2;
+        const y = box.y + box.height / 2;
+        const hit = document.elementFromPoint(x, y);
+        return {
+          x,
+          y,
+          ready:
+            box.width > 0 &&
+            box.height > 0 &&
+            box.x === before.x &&
+            box.y === before.y &&
+            !!hit &&
+            el.contains(hit),
+        };
+      });
+      point = at;
+      return at.ready;
+    })
+    .toBe(true);
+  return point!;
 }
 
 const moveMouse = (page: Page, x: number, y: number) =>

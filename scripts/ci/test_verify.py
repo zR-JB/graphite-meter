@@ -11,7 +11,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from fixtures import (
+from .fixtures import (
     AMD,
     ARM,
     ATTESTED,
@@ -21,20 +21,20 @@ from fixtures import (
     index,
     outcome,
     source_members,
-    write_checksums,
     write_release_assets,
     SLSA,
     write_oci,
-    write_tar,
+    write_archive,
 )
-from verify_oci import (
+from .verify_oci import (
     BLOB_LIMIT,
     select_engine,
     validate_index_descriptors,
     verify as verify_oci,
 )
-from github_api import ControlPlaneError
-from verify_release_assets import (
+from .github_api import ControlPlaneError, write_checksums
+from ..legal.rust import DEVELOPMENT, DEVELOPMENT_NOTICE
+from .verify_release_assets import (
     archive_names,
     tui_archives,
     verify_artifacts,
@@ -80,6 +80,14 @@ class ReleaseAssetTests(unittest.TestCase):
             with self.subTest(line=line), self.assertRaisesRegex(ControlPlaneError, error):
                 verify_checksums(self.dist)
 
+    def test_a_written_listing_never_lists_itself(self) -> None:
+        # A shell glob could expand after the redirect created checksums.txt and list it empty.
+        (self.dist / "artifact.bin").write_bytes(b"graphite-meter")
+        (self.dist / "checksums.txt").write_text("")
+        write_checksums(self.dist)
+        self.assertEqual(verify_checksums(self.dist), {"artifact.bin"})
+        verify_release_file_set(self.dist, {"artifact.bin"})
+
     def test_archives_reject_traversal_links_and_special_files(self) -> None:
         link = tarfile.TarInfo("bundle/link")
         link.type, link.linkname = tarfile.SYMTYPE, "../../outside"
@@ -91,7 +99,7 @@ class ReleaseAssetTests(unittest.TestCase):
                             ("device.zip", "link or special")):
             path = self.dist / name
             if name == "escape.tar.gz":
-                write_tar(path, {"../escape": b"x"})
+                write_archive(path, {"../escape": b"x"})
             elif name == "link.tar.gz":
                 with tarfile.open(path, "w:gz") as tar:
                     tar.addfile(link)
@@ -111,22 +119,22 @@ class ReleaseAssetTests(unittest.TestCase):
             ({f"{root}/project/LICENSE": b"x"}, "unexpected non-third-party"),
             ({f"{root}/README.txt": b"source is elsewhere"}, "describe the source offer"),
         ):
-            write_tar(self.dist / f"{root}.tar.gz", base | extra)
+            write_archive(self.dist / f"{root}.tar.gz", base | extra)
             with self.subTest(error=error):
                 outcome(self, error, lambda: verify_third_party_source_archive(self.dist, "1.2.3"))
 
     def test_tui_archives_follow_targets_and_require_the_binary(self) -> None:
         targets = self.dist / "targets.txt"
-        targets.write_text("linux/amd64\nwindows/amd64\n")
+        targets.write_text("linux/amd64 x86_64-unknown-linux-gnu\nwindows/amd64 x86_64-pc-windows-gnu\n")
         linux = "graphite-meter-client_1.2.3_linux_amd64"
         windows = "graphite-meter-client_1.2.3_windows_amd64"
         self.assertEqual(tui_archives("1.2.3", targets), {
             f"{linux}.tar.gz": (linux, "graphite-meter-client"),
             f"{windows}.zip": (windows, "graphite-meter-client.exe"),
         })
-        targets.write_text("linux/amd64\n")
+        targets.write_text("linux/amd64 x86_64-unknown-linux-gnu\n")
         legal = ("LICENSE", "COPYRIGHT", "THIRD_PARTY_NOTICES.txt", "SOURCE.txt")
-        write_tar(self.dist / f"{linux}.tar.gz", {f"{linux}/{name}": b"x" for name in legal})
+        write_archive(self.dist / f"{linux}.tar.gz", {f"{linux}/{name}": b"x" for name in legal})
         with self.assertRaisesRegex(ControlPlaneError, "graphite-meter-client"):
             verify_client_archives(self.dist, "1.2.3", targets)
 
@@ -142,15 +150,15 @@ class ReleaseAssetTests(unittest.TestCase):
             members = {f"{LINUX}/{name}": b"x" for name in (
                 "graphite-meter-client", "LICENSE", "COPYRIGHT", "THIRD_PARTY_NOTICES.txt",
                 "SOURCE.txt", "certs/server.key")}
-            write_tar(dist / f"{LINUX}.tar.gz", members)
+            write_archive(dist / f"{LINUX}.tar.gz", members)
             write_checksums(dist)
 
         def no_binary(dist: Path) -> None:
-            write_tar(dist / f"{LINUX}.tar.gz", {f"{LINUX}/LICENSE": b"x"})
+            write_archive(dist / f"{LINUX}.tar.gz", {f"{LINUX}/LICENSE": b"x"})
             write_checksums(dist)
 
         def bad_offer(dist: Path) -> None:
-            write_tar(dist / f"{SOURCE}.tar.gz", source_members("1.2.3") | {
+            write_archive(dist / f"{SOURCE}.tar.gz", source_members("1.2.3") | {
                 f"{SOURCE}/README.txt": b"source is elsewhere"})
             write_checksums(dist)
 
@@ -177,7 +185,7 @@ class ReleaseAssetTests(unittest.TestCase):
 class OCITests(unittest.TestCase):
     def test_index_requires_linked_provenance_for_each_platform(self) -> None:
         self.assertEqual(validate_index_descriptors(index(*RUNNABLE, *ATTESTED)),
-                         [item["digest"] for item in ATTESTED])
+                         ([item["digest"] for item in ATTESTED], [AMD, ARM]))
         stray = descriptor("unknown", "unknown", "sha256:" + "e" * 64, "sha256:" + "f" * 64)
         mistyped = descriptor("unknown", "unknown", "sha256:" + "d" * 64, ARM)
         mistyped["annotations"] = {"vnd.docker.reference.type": "other",
@@ -254,7 +262,18 @@ class OCITests(unittest.TestCase):
                 oci = write_oci(archive, repository, commit, remote=remote, tamper=tamper,
                                 predicate=predicate)
                 env = engine(Path(directory), "example/repo", "1.2.3", "f" * 40, oci)
-                with patch.dict(os.environ, env), patch("verify_oci.BLOB_LIMIT", limit):
+                with patch.dict(os.environ, env), patch("scripts.ci.verify_oci.BLOB_LIMIT", limit):
+                    outcome(self, error, lambda: verify_oci("1.2.3", "f" * 40, archive))
+
+    def test_each_image_ships_its_server_and_notices_without_the_development_marker(self) -> None:
+        reviewed, server = b"THIRD-PARTY SOFTWARE NOTICES\n", b"\x7fELF server"
+        for notices, executable, error in ((reviewed, server, None), (None, server, "must ship"),
+                                           (DEVELOPMENT_NOTICE.encode() + reviewed, server, "UNREVIEWED"),
+                                           (reviewed, server + DEVELOPMENT.encode(), "UNREVIEWED")):
+            with tempfile.TemporaryDirectory() as directory, self.subTest(notices=notices, server=executable):
+                archive = Path(directory) / "image.oci.tar"
+                oci = write_oci(archive, "example/repo", "f" * 40, remote=False, notices=notices, server=executable)
+                with patch.dict(os.environ, engine(Path(directory), "example/repo", "1.2.3", "f" * 40, oci)):
                     outcome(self, error, lambda: verify_oci("1.2.3", "f" * 40, archive))
 
     def test_engine_is_a_known_name_resolved_on_path(self) -> None:

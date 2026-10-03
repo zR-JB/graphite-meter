@@ -1,4 +1,5 @@
 import { readHistoryRecord } from "../src/lib/history/types";
+import type { LegalAbout } from "../src/lib/legal/types";
 import {
   baseConfig,
   home,
@@ -202,6 +203,63 @@ test("a completed run fits every layout and theme without serious violations", a
   const dialog = page.getByRole("dialog", { name: "About & legal" });
   expect(await dialog.evaluate((el) => el.matches(":modal"))).toBe(true);
   await expect(dialog).toContainText("AGPL-3.0-or-later");
+  const identity = await (await fetch(`${home.http}/preflight`)).json();
+  const legal: LegalAbout = await (
+    await fetch(`${home.http}/legal/about.json`)
+  ).json();
+  const rust = identity.engineVersion.endsWith("-rust");
+  expect(
+    legal.components.some(
+      (component) => component.ecosystem === (rust ? "cargo" : "go"),
+    ),
+  ).toBe(true);
+  if (rust) {
+    expect(legal.sourceVersion).toBe(identity.engineVersion);
+    expect(
+      legal.components.some((component) => component.ecosystem === "go"),
+    ).toBe(false);
+  }
+  await expect(dialog).toContainText(rust ? "Rust crates" : "Go modules");
+  const links = legal.components.flatMap((component) => {
+    expect(component.links.length).toBeGreaterThan(0);
+    return component.links.map((link) => {
+      expect(new URL(link.url).protocol).toMatch(/^https?:$/);
+      return { label: `${link.label} for ${component.name}`, href: link.url };
+    });
+  });
+  expect(
+    await dialog.evaluate((el: HTMLElement) =>
+      Array.from(el.querySelectorAll(".component-links a"), (link) => ({
+        label: link.getAttribute("aria-label"),
+        href: link.getAttribute("href"),
+      })),
+    ),
+  ).toEqual(links);
+  const svelte = legal.components.find(
+    (component) => component.name === "svelte",
+  )!;
+  expect(svelte.modified).toBe(true);
+  expect(
+    decodeURIComponent(
+      svelte.links.find((link) => link.label === "Changes")!.url,
+    ),
+  ).toContain(`/client/patches/svelte@${svelte.version}.patch`);
+  if (rust) {
+    const fork = legal.components.find(
+      (component) => component.name === "noq",
+    )!;
+    expect(fork.links.map((link) => link.label)).toEqual([
+      "Source",
+      "Upstream",
+      "Changes",
+    ]);
+    expect(fork.links[0].url).toMatch(
+      /^https:\/\/github\.com\/zR-JB\/noq\/tree\/[0-9a-f]{40}$/,
+    );
+    expect(fork.links[1].url).toMatch(
+      /^https:\/\/github\.com\/n0-computer\/noq\/tree\/[0-9a-f]{40}$/,
+    );
+  }
   expect(await seriousViolations(page, '[role="dialog"]')).toEqual([]);
   await page.raw.press("Escape");
   await expect(dialog).toHaveCount(0);

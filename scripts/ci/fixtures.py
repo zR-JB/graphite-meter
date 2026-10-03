@@ -15,8 +15,9 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import patch
 
-from github_api import ControlPlaneError, JsonObject, JsonValue
-from verify_release_assets import TARGETS, TUI_FILES, tui_archives
+from .github_api import ControlPlaneError, JsonObject, JsonValue, write_checksums
+from .verify_oci import NOTICES, SERVER
+from .verify_release_assets import TARGETS, TUI_FILES, tui_archives
 
 AMD, ARM = "sha256:" + "a" * 64, "sha256:" + "b" * 64
 INDEX_TYPE = "application/vnd.oci.image.index.v1+json"
@@ -60,7 +61,7 @@ def github(responses: Mapping[str, object]) -> AbstractContextManager[object]:
         served[path] = served.get(path, -1) + 1
         return cast(JsonValue, items[min(served[path], len(items) - 1)])
 
-    return patch("github_api.api", api)
+    return patch("scripts.ci.github_api.api", api)
 
 
 def outcome[T](test: unittest.TestCase, error: str | None, call: Callable[[], T]) -> T | None:
@@ -99,35 +100,49 @@ ATTESTED = (descriptor("unknown", "unknown", "sha256:" + "c" * 64, AMD),
             descriptor("unknown", "unknown", "sha256:" + "d" * 64, ARM))
 
 
-def write_oci(path: Path, repository: str, revision: str, *, remote: bool,
-              tamper: bool = False, predicate: str = SLSA) -> JsonObject:
-    """Write BuildKit-shaped provenance for both images into an OCI archive; return its index."""
-    blobs: dict[str, bytes] = {}
-
-    def add(value: object) -> str:
-        data = json.dumps(value).encode()
-        digest = "sha256:" + hashlib.sha256(data).hexdigest()
-        blobs[digest] = data + (b" " if tamper else b"")
-        return digest
-
+def statement(repository: str, revision: str, *, remote: bool, subjects: Mapping[str, str] | None = None) -> JsonObject:
+    """BuildKit's SLSA statement of a build of `revision`, fetched remotely or from a local checkout."""
     source: JsonObject = {"path": "Dockerfile"}
     if remote:
         source = {"uri": f"https://github.com/{repository}.git#{revision}",
                   "digest": {"sha1": revision}, "path": "container/Dockerfile"}
-    vcs = {"source": f"https://github.com/{repository}", "revision": revision}
-    statement = add({"predicateType": SLSA, "subject": [], "predicate": {
-        "buildDefinition": {"externalParameters": {"configSource": source}},
-        "runDetails": {"metadata": {"buildkit_metadata": {} if remote else {"vcs": vcs}}}}})
-    layer = {"mediaType": "application/vnd.in-toto+json", "digest": statement,
+    vcs: JsonObject = {"source": f"https://github.com/{repository}", "revision": revision}
+    return {"_type": "https://in-toto.io/Statement/v0.1", "predicateType": SLSA,
+            "subject": [{"name": name, "digest": {"sha256": digest}} for name, digest in (subjects or {}).items()],
+            "predicate": {"buildDefinition": {"externalParameters": {"configSource": source}},
+                          "runDetails": {"metadata": {"buildkit_metadata": {} if remote else {"vcs": vcs}}}}}
+
+
+def write_oci(path: Path, repository: str, revision: str, *, remote: bool, tamper: bool = False, predicate: str = SLSA,
+              notices: bytes | None = b"THIRD-PARTY SOFTWARE NOTICES\n", server: bytes = b"\x7fELF server") -> JsonObject:
+    """Write BuildKit-shaped images, which ship `server` and `notices` unless None, and their provenance into an
+    OCI archive; return its index."""
+    blobs: dict[str, bytes] = {}
+
+    def add(value: object) -> str:
+        data = value if isinstance(value, bytes) else json.dumps(value).encode()
+        digest = "sha256:" + hashlib.sha256(data).hexdigest()
+        blobs[digest] = data + (b" " if tamper else b"")
+        return digest
+
+    files = io.BytesIO()
+    with tarfile.open(fileobj=files, mode="w:gz") as layer:
+        for name, data in {SERVER: server, NOTICES: notices}.items():
+            if data is not None:
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                layer.addfile(info, io.BytesIO(data))
+    images = [add({"config": {"architecture": arch}, "layers": [{"digest": add(files.getvalue())}]})
+              for arch in ("amd64", "arm64")]
+    layer = {"mediaType": "application/vnd.in-toto+json", "digest": add(statement(repository, revision, remote=remote)),
              "annotations": {"in-toto.io/predicate-type": predicate}}
-    attested = [descriptor("unknown", "unknown", add({"layers": [layer]}), image)
-                for image in (AMD, ARM)]
+    attested = [descriptor("unknown", "unknown", add({"layers": [layer]}), image) for image in images]
     with tarfile.open(path, "w") as archive:
         for digest, data in blobs.items():
             info = tarfile.TarInfo("blobs/sha256/" + digest.removeprefix("sha256:"))
             info.size = len(data)
             archive.addfile(info, io.BytesIO(data))
-    return index(*RUNNABLE, *attested)
+    return index(descriptor("linux", "amd64", images[0]), descriptor("linux", "arm64", images[1]), *attested)
 
 
 def engine(directory: Path, repository: str, version: str, revision: str,
@@ -151,11 +166,23 @@ def engine(directory: Path, repository: str, version: str, revision: str,
     }
 
 
-def write_tar(path: Path, members: dict[str, bytes]) -> None:
+def write_archive(path: Path, members: dict[str, bytes], base: str = "") -> None:
+    """Write `members` as a zip or, by any other suffix, a gzip tar, after the directory `base` if given."""
+    if path.suffix == ".zip":
+        with zipfile.ZipFile(path, "w") as archive:
+            if base:
+                archive.writestr(f"{base}/", b"")
+            for name, payload in members.items():
+                archive.writestr(name, payload)
+        return
     with tarfile.open(path, "w:gz") as archive:
+        if base:
+            directory = tarfile.TarInfo(base)
+            directory.type = tarfile.DIRTYPE
+            archive.addfile(directory)
         for name, payload in members.items():
             info = tarfile.TarInfo(name)
-            info.size = len(payload)
+            info.size, info.mode = len(payload), 0o755
             archive.addfile(info, io.BytesIO(payload))
 
 
@@ -172,24 +199,11 @@ def source_members(version: str) -> dict[str, bytes]:
     }
 
 
-def write_checksums(dist: Path) -> None:
-    lines = [f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
-             for path in sorted(dist.iterdir()) if path.name != "checksums.txt"]
-    (dist / "checksums.txt").write_text("".join(lines))
-
-
-def write_release_assets(dist: Path, version: str, reported: str = "") -> None:
-    """Write the native release a stable request uploads; each TUI prints `reported`."""
+def write_release_assets(dist: Path, version: str, reported: str = "", tuis: bool = True) -> None:
+    """Write the native release a stable request uploads, each TUI printing `reported`, or a prerelease's."""
     dist.mkdir(parents=True, exist_ok=True)
-    write_tar(dist / f"graphite-meter_{version}_third-party-source.tar.gz",
-              source_members(version))
+    write_archive(dist / f"graphite-meter_{version}_third-party-source.tar.gz", source_members(version))
     script = f"#!/bin/sh\necho graphite-meter-client {reported or version}\n".encode()
-    for name, (base, binary) in tui_archives(version, TARGETS).items():
-        members = {f"{base}/{file}": b"x" for file in TUI_FILES} | {f"{base}/{binary}": script}
-        if name.endswith(".zip"):
-            with zipfile.ZipFile(dist / name, "w") as archive:
-                for member, payload in members.items():
-                    archive.writestr(member, payload)
-        else:
-            write_tar(dist / name, members)
+    for name, (base, binary) in tui_archives(version, TARGETS).items() if tuis else ():
+        write_archive(dist / name, {f"{base}/{file}": b"x" for file in TUI_FILES} | {f"{base}/{binary}": script})
     write_checksums(dist)

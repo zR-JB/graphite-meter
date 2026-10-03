@@ -20,6 +20,8 @@ mise run dev        # development build on http://localhost:7246
 mise run tui        # native TUI against it; add `-- -server <url>` for another server
 ```
 
+`GM_IMPLEMENTATION=rust` runs the experimental Rust server or TUI instead in `dev`, `prod` and `tui`.
+
 mise trusts the project configuration automatically; in paranoid mode run
 [`mise trust`](https://mise.jdx.dev/cli/trust.html) once. Use `mise run <task>` in scripts (`mise doctor` is mise's
 own command) and `mise exec -- <cmd>` for tools. `mise tasks` lists every task with its description.

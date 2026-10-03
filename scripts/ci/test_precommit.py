@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from precommit import staged_paths
+from .precommit import staged_paths
 
 
 class PlanTests(unittest.TestCase):

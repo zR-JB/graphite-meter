@@ -96,9 +96,11 @@ async function harness(
       const tag = `${peer.id}:${activity.stage}`;
       let measuring = false;
       let started = 0;
+      // A receiver counts from its stage's start, across warmup and measurement.
+      const opened = performance.now();
       let timer: ReturnType<typeof setInterval> | undefined;
       const receiver = (): ReceiverCheckpoint => {
-        const ms = performance.now() - started;
+        const ms = performance.now() - opened;
         return {
           id: `${tag}`,
           bytes: Math.round(ms * rate),
@@ -633,7 +635,14 @@ test("a stable feed completes early and each result arrives before the next stag
 test("the live stage track shows the statuses the run settles, one-lane bidirectional included", async () => {
   const { store } = await import("../state/store.svelte");
   const h = await harness(
-    [{ id: "self", rate: 2, receives: false }],
+    [
+      {
+        id: "self",
+        rate: 2,
+        receives: false,
+        checkpoint: () => Promise.resolve(null),
+      },
+    ],
     { download: true, bidirectional: true },
     { downloadMs: 1_000, bidirectionalMs: 1_000 },
   );
@@ -847,6 +856,28 @@ test("a live change while a stage ends measures no warmup and never runs a stage
       ...(upload ? ["upload:stage-start"] : []),
       "bidirectional:stage-start",
     ]);
+  }
+});
+
+test("a window with upload opens where measurement starts, not at the receiver's first late record", async () => {
+  for (const [stages, duration] of [
+    [{ upload: true }, { uploadMs: 1_000 }],
+    [{ bidirectional: true }, { bidirectionalMs: 1_000 }],
+    [{ upload: true }, { warmupMs: 200, uploadMs: 1_000 }],
+  ] as const) {
+    // A loaded page reads the feed's first record 300 ms into the window.
+    const h = await harness(
+      [{ id: "self", silent: (_, ms, dir) => dir === "up" && ms < 300 }],
+      stages,
+      duration,
+    );
+    h.start();
+    const result = await h.result();
+    const stage = stages.upload ? "upload" : "bidirectional";
+    expect(result.stages[stage]).toBe("complete");
+    const [interval] = result.multiServer.intervals;
+    expect(interval.reason).toBe("stage-start");
+    expect(interval.full!.endMs - interval.full!.startMs).toBeGreaterThan(950);
   }
 });
 
@@ -1118,9 +1149,15 @@ test("a stage with a hole never finishes early, however steady it runs after", a
 });
 
 test("a result spanning too little of its stage settles Partial, as History judges it", async () => {
-  // The receiver's first record arrives 3 s into a 4 s upload, so its result spans one second.
+  // No checkpoint anchors this receiver; its first feed record arrives 3 s into a 4 s upload.
   const h = await harness(
-    [{ id: "self", silent: hole("upload", 0, 3_000) }],
+    [
+      {
+        id: "self",
+        silent: hole("upload", 0, 3_000),
+        checkpoint: () => Promise.resolve(null),
+      },
+    ],
     { upload: true },
     { uploadMs: 4_000 },
   );

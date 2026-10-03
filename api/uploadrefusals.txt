@@ -1,4 +1,4 @@
-# Graphite Meter — upload refusal pin (shared across Go / TS).
+# Graphite Meter — upload refusal pin (shared across Go / TS / Rust).
 #
 # Format (one refusal per non-comment, non-blank line):
 #   <name> | <message> | <http status>

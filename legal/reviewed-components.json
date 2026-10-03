@@ -7,10 +7,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "373b3931e66627aadcfebd7771df93f3439203147e587a924508c63e20184d7f"
-      }
+      {"name": "LICENSE", "sha256": "373b3931e66627aadcfebd7771df93f3439203147e587a924508c63e20184d7f"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -27,10 +24,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "373b3931e66627aadcfebd7771df93f3439203147e587a924508c63e20184d7f"
-      }
+      {"name": "LICENSE", "sha256": "373b3931e66627aadcfebd7771df93f3439203147e587a924508c63e20184d7f"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -47,10 +41,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "3f531fb89f23b218fbe16b24fb5950418fa1f0046db5cfddb2c1e0d6d39bfcc0"
-      }
+      {"name": "LICENSE", "sha256": "3f531fb89f23b218fbe16b24fb5950418fa1f0046db5cfddb2c1e0d6d39bfcc0"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -67,10 +58,7 @@
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "2c4bac8e2a97180d6e7758c37de85d1cda1859aaf85b56da15d935d2d9a5564f"
-      }
+      {"name": "LICENSE", "sha256": "2c4bac8e2a97180d6e7758c37de85d1cda1859aaf85b56da15d935d2d9a5564f"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -87,10 +75,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "57d6eeeb336030b89c0e0d12cf869f84b97a481cd00b350ef21fca995da5a39a"
-      }
+      {"name": "LICENSE", "sha256": "57d6eeeb336030b89c0e0d12cf869f84b97a481cd00b350ef21fca995da5a39a"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -102,22 +87,19 @@
   {
     "ecosystem": "go",
     "name": "github.com/charmbracelet/ultraviolet",
-    "reviewedVersion": "v0.0.0-20260929091141-666ce5eec9fc",
+    "reviewedVersion": "v0.0.0-20261001125412-878653296cfd",
     "upstream": "https://github.com/charmbracelet/ultraviolet",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "8a77c755a1d1fbdc932e86f0449549121820b6f4cc1234b12fcfc8d38013c1de"
-      }
+      {"name": "LICENSE", "sha256": "8a77c755a1d1fbdc932e86f0449549121820b6f4cc1234b12fcfc8d38013c1de"}
     ],
     "modified": false,
     "artifactScopes": [
       "tui"
     ],
     "reviewDecision": "approved",
-    "reviewNotes": "Audited 2026-09-26 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+    "reviewNotes": "Audited 2026-10-02 at revision 878653296cfdcb92c4b15721eedfcadfb6fd7406; complete legal-file fingerprint matches the existing MIT review, and the three upstream renderer fixes introduce no licensing changes."
   },
   {
     "ecosystem": "go",
@@ -127,10 +109,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "0baa4a5942a801d93f4050d2bc0039d8c037105fcd335230d118eec99a11782b"
-      }
+      {"name": "LICENSE", "sha256": "0baa4a5942a801d93f4050d2bc0039d8c037105fcd335230d118eec99a11782b"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -147,10 +126,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "0baa4a5942a801d93f4050d2bc0039d8c037105fcd335230d118eec99a11782b"
-      }
+      {"name": "LICENSE", "sha256": "0baa4a5942a801d93f4050d2bc0039d8c037105fcd335230d118eec99a11782b"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -167,10 +143,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "0baa4a5942a801d93f4050d2bc0039d8c037105fcd335230d118eec99a11782b"
-      }
+      {"name": "LICENSE", "sha256": "0baa4a5942a801d93f4050d2bc0039d8c037105fcd335230d118eec99a11782b"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -187,10 +160,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "0baa4a5942a801d93f4050d2bc0039d8c037105fcd335230d118eec99a11782b"
-      }
+      {"name": "LICENSE", "sha256": "0baa4a5942a801d93f4050d2bc0039d8c037105fcd335230d118eec99a11782b"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -207,10 +177,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "fcdcc889a11c39c73d36019b838af41b418eb7811af12b746ace40c3074bb96c"
-      }
+      {"name": "LICENSE", "sha256": "fcdcc889a11c39c73d36019b838af41b418eb7811af12b746ace40c3074bb96c"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -227,10 +194,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "07e9e3daaccc707c9b7d535ed1405a65d37919fdd42197fe55e68820e974688c"
-      }
+      {"name": "LICENSE", "sha256": "07e9e3daaccc707c9b7d535ed1405a65d37919fdd42197fe55e68820e974688c"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -247,10 +211,7 @@
     "declaredLicenseExpression": "ISC",
     "selectedLicenseExpression": "ISC",
     "legalFiles": [
-      {
-        "name": "LICENSE.txt",
-        "sha256": "cc0975a5f6305145bdd7b41ce9479632fdac3870e6ac4281f28017f18c767c4e"
-      }
+      {"name": "LICENSE.txt", "sha256": "cc0975a5f6305145bdd7b41ce9479632fdac3870e6ac4281f28017f18c767c4e"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -269,14 +230,8 @@
     "declaredLicenseExpression": "Apache-2.0",
     "selectedLicenseExpression": "Apache-2.0",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "cb5e8e7e5f4a3988e1063c142c60dc2df75605f4c46515e776e3aca6df976e14"
-      },
-      {
-        "name": "NOTICE",
-        "sha256": "dccd26c6fd9c296daf44d0bc56bb4efc566edd4880381b3331c9a63e6e471338"
-      }
+      {"name": "LICENSE", "sha256": "cb5e8e7e5f4a3988e1063c142c60dc2df75605f4c46515e776e3aca6df976e14"},
+      {"name": "NOTICE", "sha256": "dccd26c6fd9c296daf44d0bc56bb4efc566edd4880381b3331c9a63e6e471338"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -295,10 +250,7 @@
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "2a5341732bde88aeb3b066492df6e15bf10d082761f9e3a251236ce80419d6ba"
-      }
+      {"name": "LICENSE", "sha256": "2a5341732bde88aeb3b066492df6e15bf10d082761f9e3a251236ce80419d6ba"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -317,14 +269,8 @@
     "declaredLicenseExpression": "Apache-2.0",
     "selectedLicenseExpression": "Apache-2.0",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
-      },
-      {
-        "name": "json/LICENSE",
-        "sha256": "dd26a7abddd02e2d0aba97805b31f248ef7835d9e10da289b22e3b8ab78b324d"
-      }
+      {"name": "LICENSE", "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"},
+      {"name": "json/LICENSE", "sha256": "dd26a7abddd02e2d0aba97805b31f248ef7835d9e10da289b22e3b8ab78b324d"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -343,10 +289,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "1e4cf2a117516ec1b54041d68ed4f5d331878b04de3386f4790e7b5b9c04e1ec"
-      }
+      {"name": "LICENSE", "sha256": "1e4cf2a117516ec1b54041d68ed4f5d331878b04de3386f4790e7b5b9c04e1ec"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -363,10 +306,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "88a2379b3ca34bf5c57127aff9dcb802bbb60ece0805cdbda65b3bd115f971d9"
-      }
+      {"name": "LICENSE", "sha256": "88a2379b3ca34bf5c57127aff9dcb802bbb60ece0805cdbda65b3bd115f971d9"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -383,10 +323,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "8c139dbbc83b4fb055b4100b6b9402f7de3dd6bbca05015bdfcc4b392c8cfd5f"
-      }
+      {"name": "LICENSE", "sha256": "8c139dbbc83b4fb055b4100b6b9402f7de3dd6bbca05015bdfcc4b392c8cfd5f"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -403,10 +340,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE.md",
-        "sha256": "1b6a897efd39b20b3cdce8cd306160d115dbded39d855ceeffe21dc11e4d53df"
-      }
+      {"name": "LICENSE.md", "sha256": "1b6a897efd39b20b3cdce8cd306160d115dbded39d855ceeffe21dc11e4d53df"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -425,14 +359,8 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "77d0b7b53e8abb84cf4dd3f9945a7fdf27044240d2e8023966a721a9a46fe96e"
-      },
-      {
-        "name": "assets/LICENSE.md",
-        "sha256": "2c8d4ff4244edf09d99dcd428d278e47a059d24f0030b38c1ab38e93b1c8030c"
-      }
+      {"name": "LICENSE", "sha256": "77d0b7b53e8abb84cf4dd3f9945a7fdf27044240d2e8023966a721a9a46fe96e"},
+      {"name": "assets/LICENSE.md", "sha256": "2c8d4ff4244edf09d99dcd428d278e47a059d24f0030b38c1ab38e93b1c8030c"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -451,10 +379,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "83fcbe9e2a58019f63c1eb3dbccd74ec735bf69a750822bf4a0a17a1d174672c"
-      }
+      {"name": "LICENSE", "sha256": "83fcbe9e2a58019f63c1eb3dbccd74ec735bf69a750822bf4a0a17a1d174672c"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -473,10 +398,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE.txt",
-        "sha256": "a59885f5f0f3b3c07cf9444db5fe399b6f0791eac82055f7b85cc65500551039"
-      }
+      {"name": "LICENSE.txt", "sha256": "a59885f5f0f3b3c07cf9444db5fe399b6f0791eac82055f7b85cc65500551039"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -493,10 +415,7 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "1f5f51151ba96f0492ce288bd007242f924fdad9f04002e175e951644340a891"
-      }
+      {"name": "LICENSE", "sha256": "1f5f51151ba96f0492ce288bd007242f924fdad9f04002e175e951644340a891"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -513,14 +432,8 @@
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
-      },
-      {
-        "name": "PATENTS",
-        "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
-      }
+      {"name": "LICENSE", "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"},
+      {"name": "PATENTS", "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -539,14 +452,8 @@
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
-      },
-      {
-        "name": "PATENTS",
-        "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
-      }
+      {"name": "LICENSE", "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"},
+      {"name": "PATENTS", "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -565,10 +472,7 @@
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
-      }
+      {"name": "LICENSE", "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -587,14 +491,8 @@
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
-      },
-      {
-        "name": "PATENTS",
-        "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
-      }
+      {"name": "LICENSE", "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"},
+      {"name": "PATENTS", "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -611,14 +509,8 @@
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
-      },
-      {
-        "name": "PATENTS",
-        "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
-      }
+      {"name": "LICENSE", "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"},
+      {"name": "PATENTS", "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -637,14 +529,8 @@
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
-      },
-      {
-        "name": "PATENTS",
-        "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
-      }
+      {"name": "LICENSE", "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"},
+      {"name": "PATENTS", "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -663,14 +549,8 @@
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
-      },
-      {
-        "name": "PATENTS",
-        "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
-      }
+      {"name": "LICENSE", "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"},
+      {"name": "PATENTS", "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -689,14 +569,8 @@
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",
     "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
-      },
-      {
-        "name": "PATENTS",
-        "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
-      }
+      {"name": "LICENSE", "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"},
+      {"name": "PATENTS", "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -715,14 +589,8 @@
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
-      {
-        "name": "LICENSE.md",
-        "sha256": "06257f4847b13a49a039efb17b944c141e71b12fd8d231b362d86919067d77a3"
-      },
-      {
-        "name": "node_modules/magic-string/LICENSE",
-        "sha256": "1cbe51b907662f6cb1492b16c359384a595180bf0e4d101603ed525e75c4e484"
-      }
+      {"name": "LICENSE.md", "sha256": "06257f4847b13a49a039efb17b944c141e71b12fd8d231b362d86919067d77a3"},
+      {"name": "node_modules/magic-string/LICENSE", "sha256": "1cbe51b907662f6cb1492b16c359384a595180bf0e4d101603ed525e75c4e484"}
     ],
     "modified": true,
     "artifactScopes": [
@@ -740,10 +608,7 @@
     "declaredLicenseExpression": "OFL-1.1",
     "selectedLicenseExpression": "OFL-1.1",
     "legalFiles": [
-      {
-        "name": "IBM-PLEX-OFL-1.1.txt",
-        "sha256": "d741e57d5f865e294df801f96b7b5161a88b211df65887e4358d271c9fc5fb4f"
-      }
+      {"name": "IBM-PLEX-OFL-1.1.txt", "sha256": "d741e57d5f865e294df801f96b7b5161a88b211df65887e4358d271c9fc5fb4f"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -761,10 +626,7 @@
     "declaredLicenseExpression": "OFL-1.1",
     "selectedLicenseExpression": "OFL-1.1",
     "legalFiles": [
-      {
-        "name": "IBM-PLEX-OFL-1.1.txt",
-        "sha256": "d741e57d5f865e294df801f96b7b5161a88b211df65887e4358d271c9fc5fb4f"
-      }
+      {"name": "IBM-PLEX-OFL-1.1.txt", "sha256": "d741e57d5f865e294df801f96b7b5161a88b211df65887e4358d271c9fc5fb4f"}
     ],
     "modified": false,
     "artifactScopes": [
@@ -782,10 +644,7 @@
     "declaredLicenseExpression": "LicenseRef-Debian-ca-certificates-bundle",
     "selectedLicenseExpression": "LicenseRef-Debian-ca-certificates-bundle",
     "legalFiles": [
-      {
-        "name": "README.txt",
-        "sha256": "55577caffaee581cb3b1e746b200915260c693c70de006ab6c0ffa050ac44503"
-      }
+      {"name": "README.txt", "sha256": "55577caffaee581cb3b1e746b200915260c693c70de006ab6c0ffa050ac44503"}
     ],
     "modified": false,
     "artifactScopes": [

@@ -9,12 +9,35 @@ const servers: { id: string; url: string; name: string }[] = JSON.parse(
 const count = Number(process.env.GM_MULTI_BENCH_COUNT);
 if (![1, 2, 4].includes(count))
   throw new Error("Select a 1-, 2-, or 4-server cell");
+const config = {
+  transports: {
+    throughputTarget: "protocol:http1",
+    latencyTarget: "transport:websocket",
+  },
+  stages: {
+    latency: true,
+    download: true,
+    upload: false,
+    bidirectional: false,
+  },
+  duration: {
+    warmupMs: 750,
+    latencyMs: 1500,
+    downloadMs: 4000,
+    uploadMs: 0,
+    bidirectionalMs: 0,
+  },
+  pingCadence: "medium",
+  loadedPingCadence: "medium",
+  adaptive: { enabled: false },
+  transferStreams: { mode: "forced", count: 1 },
+};
 test("coordinated server collection cell", async () => {
   const page = new Page();
   try {
     console.log("GM_BENCH_STEP init");
     await page.addInitScript(
-      ({ servers, count }) => {
+      ({ servers, count, config }) => {
         localStorage.setItem(
           "graphite-meter:server-selection:v1",
           JSON.stringify(
@@ -25,35 +48,10 @@ test("coordinated server collection cell", async () => {
         );
         localStorage.setItem(
           "graphite-meter:v1",
-          JSON.stringify({
-            resultHistoryPreference: "enabled",
-            config: {
-              transports: {
-                throughputTarget: "protocol:http1",
-                latencyTarget: "transport:websocket",
-              },
-              stages: {
-                latency: true,
-                download: true,
-                upload: false,
-                bidirectional: false,
-              },
-              duration: {
-                warmupMs: 750,
-                latencyMs: 1500,
-                downloadMs: 4000,
-                uploadMs: 0,
-                bidirectionalMs: 0,
-              },
-              pingCadence: "medium",
-              loadedPingCadence: "medium",
-              adaptive: { enabled: false },
-              transferStreams: { mode: "forced", count: 1 },
-            },
-          }),
+          JSON.stringify({ resultHistoryPreference: "enabled", config }),
         );
       },
-      { servers, count },
+      { servers, count, config },
     );
     console.log("GM_BENCH_STEP navigate");
     await page.goto(servers[0].url);
@@ -72,7 +70,7 @@ test("coordinated server collection cell", async () => {
       (window as any).__gmFrameHandle = requestAnimationFrame(sample);
     });
     console.log("GM_BENCH_BEGIN");
-    const record = await run(page, 30_000);
+    const record = await run(page, 60_000);
     console.log("GM_BENCH_STEP completed");
     const frames = await page.evaluate(() => {
       cancelAnimationFrame((window as any).__gmFrameHandle);
@@ -84,11 +82,12 @@ test("coordinated server collection cell", async () => {
         maxMs: frames.at(-1),
       };
     });
-    const details = record.result.multiServer;
+    const result = record.result;
+    const details = result.multiServer;
     if (
       details.failures.length ||
       details.participants.length !== count ||
-      !record.result.download
+      result.stages.download !== "complete"
     )
       throw new Error(
         `Invalid measurement cell: ${JSON.stringify(details.failures)}`,
@@ -97,7 +96,9 @@ test("coordinated server collection cell", async () => {
       "GM_BENCH_END " +
         JSON.stringify({
           count,
-          downloadMbps: (record.result.download.reportedBytesPerSec * 8) / 1e6,
+          downloadMbps: result.download
+            ? (result.download.reportedBytesPerSec * 8) / 1e6
+            : null,
           receiverWindows: details.intervals.filter(
             (interval) => interval.stage === "download",
           ),
@@ -107,7 +108,9 @@ test("coordinated server collection cell", async () => {
             loaded: server.latencyByStage.download,
           })),
           frames,
-          durationMs: record.result.durationMs,
+          durationMs: result.durationMs,
+          browser: (await page.cdp("Browser.getVersion")).product,
+          paths: details.servers.map((server) => server.throughput),
         }),
     );
     // Give the external process sampler time to capture the final live browser tree.
@@ -116,4 +119,4 @@ test("coordinated server collection cell", async () => {
     page.close();
     Bun.WebView.closeAll();
   }
-}, 60000);
+}, 120_000);

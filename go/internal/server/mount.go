@@ -147,12 +147,13 @@ func (m *mounter) webSocketPing() http.Handler {
 
 func (m *mounter) webTransport(server *webtransport.Server, serve endpoint.SessionHandler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Upgrade flushes acceptance before returning; shutdown must already wait for this connection.
+		ended, cut := webTransportSession(r)
 		sess, err := server.Upgrade(w, r)
 		if err != nil {
 			http.Error(w, "webtransport upgrade failed", http.StatusBadRequest)
 			return
 		}
-		ended, cut := webTransportSession(r)
 		ctx, cancel := linkedContext(m.ctx, r.Context(), sess.Context())
 		defer cancel()
 		ctx, live := endpoint.WatchIdle(ctx, m.e.idleBound)

@@ -68,8 +68,34 @@ def sha256(data: bytes) -> str:
 
 def marshal(value: object) -> bytes:
     # Callers provide ordered records. Unlike generic map serialization, record
-    # field order is part of the existing generated-file contract.
-    return (json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode()
+    # field order is part of the existing generated-file contract. The layout is
+    # json.dumps(indent=2), except that each legalFiles entry of a review takes one line.
+    return (layout(value, "") + "\n").encode()
+
+
+def marshal_reviews(reviews: list[dict]) -> bytes:
+    """One complete review per line; shipped inventory layouts keep their existing format."""
+    return ("[\n" + ",\n".join("  " + compact(review) for review in reviews) + "\n]\n").encode()
+
+
+def layout(value: object, indent: str) -> str:
+    inner = indent + "  "
+    if isinstance(value, dict) and value:
+        fields = []
+        for key, item in value.items():
+            if key == "legalFiles" and isinstance(item, list) and item:
+                entries = [f"{inner}  {compact(entry)}" for entry in item]
+                fields.append(f"{inner}{compact(key)}: [\n" + ",\n".join(entries) + f"\n{inner}]")
+            else:
+                fields.append(f"{inner}{compact(key)}: {layout(item, inner)}")
+        return "{\n" + ",\n".join(fields) + f"\n{indent}}}"
+    if isinstance(value, (list, tuple)) and value:
+        return "[\n" + ",\n".join(inner + layout(item, inner) for item in value) + f"\n{indent}]"
+    return compact(value)
+
+
+def compact(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, allow_nan=False)
 
 
 @dataclass
@@ -196,6 +222,20 @@ class Provenance:
             if not result[key]:
                 del result[key]
         return result
+
+
+def manual_sources(repo: Path, package: str) -> list[Provenance]:
+    """The reviewed manual entries whose files a Rust package's source offer carries: the Rust ones, and for
+    the server also those of its browser assets and of its image."""
+    scopes = {"rust", "server/browser", "container"} if package == "graphite-meter-server" else {"rust"}
+    return [entry for name in ("legal/rust-provenance.json", "legal/provenance.json")
+            for entry in map(Provenance.parse, array(read_json(repo / name))) if scopes & set(entry.artifactScopes)]
+
+
+def manual_files(entry: Provenance) -> list[str]:
+    """The repository files of an entry that a source offer carries; absolute paths name image content."""
+    return [path for path in entry.localPaths + [file.name for file in entry.localLegalFiles]
+            if not Path(path).is_absolute()]
 
 
 @dataclass
