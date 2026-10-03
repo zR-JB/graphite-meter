@@ -8,15 +8,8 @@ server is prepared again for the next stage; prior results retain their failure
 and partial evidence. Latency observations and results remain separate for each server;
 the run's latency is the first selected server's, and `l` changes the displayed server.
 Full parity validation is unfinished.
-An adaptive HTTP/3 send window reduced Rust peak memory versus a fixed-window
-Rust build. A separate Go/Rust HTTP/3 batch still showed higher Rust CPU and
-peak memory. A matched WebTransport stream-download run showed lower Rust server
-memory and CPU but lower throughput than Go. Short WebTransport stream-upload
-and datagram runs found similar or higher Rust receiver throughput with lower
-server CPU and memory. Simulated 100 ms RTT runs
-exposed fixed QUIC receive-window limits in the Rust server and TUI; larger
-bounded windows improved those runs. These short local and delayed-path samples
-do not establish real-WAN, packet-loss, many-user, or sustained-memory superiority.
+Local performance samples do not establish real-WAN, packet-loss, many-user,
+or sustained-memory superiority; the many-client matrix remains unfinished.
 The release server embeds one reviewed third-party notice payload for both
 `--legal` and the browser About endpoint. As Go's TUI report does, `--legal`
 opens with the project's copyright, its source (the release tag's tree for a
@@ -331,10 +324,7 @@ It also limits the crates each static Linux binary compiles, build-time crates a
 binary’s own included, to 141 for the server and 170 for the TUI.
 The first-party Rust crates forbid unsafe code. This does not make the full
 dependency graph free of unsafe code or native cryptography: ring contains
-C/assembly. Isolated probes of rustls-graviola 0.4.0 and rustls-rustcrypto
-0.0.2-alpha compiled, but neither exposed a QUIC cipher suite to Noq. The
-RustCrypto provider also explicitly warns against production use. A pure-Rust
-QUIC performance comparison therefore remains unmeasured.
+C/assembly.
 
 The tests require OpenSSL; interoperability checks also require Go.
 `server_interop.py` exercises the assembled debug server with unchanged Go

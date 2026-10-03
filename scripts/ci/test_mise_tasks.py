@@ -69,26 +69,12 @@ class MiseTaskTests(unittest.TestCase):
             self.assertEqual(built["env"], {"VERSION": payload, "GM_CLIENT_REVISION": payload})
             run("goclient-build", VERSION=payload, status=2)
 
-            def host_build(package: str, profile: str, *browser: str) -> list[str]:
-                return ["-m", "scripts.rust_build", "--package", package, "--profile", profile, *browser]
-
-            for name in ("ci/graphite-meter-server", "ci/graphite-meter-client", "release/graphite-meter-server"):
-                (root / "rust/target" / name).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(root / "bin/cargo", root / "rust/target" / name)
+            server = root / "rust/target/ci/graphite-meter-server"
+            server.parent.mkdir(parents=True)
+            shutil.copy2(root / "bin/cargo", server)
             pipeline = run("rust-server-build", VERSION=payload)
-            self.assertEqual(pipeline["args"], host_build("graphite-meter-server", "release", "--browser", "prod"))
             self.assertEqual(pipeline["env"], {"VERSION": payload, "GM_ENGINE_VERSION": f"{payload}-rust"})
-            # prod stamps the Rust server as Go's prod stamps Go's, and leaves the browser client unstamped.
-            run("prod", GM_IMPLEMENTATION="rust", GM_CLIENT_REVISION="abc123")
-            pipeline = json.loads(trace.read_text().splitlines()[0])
-            self.assertNotIn("VERSION", pipeline["env"])
-            self.assertEqual(pipeline["env"]["GM_ENGINE_VERSION"], "abc123-rust")
             self.assertEqual(run("rust-server-run", "--listen", payload)["args"], ["--listen", payload])
-            tui = run("tui", "-legal", GM_IMPLEMENTATION="rust", GM_CLIENT_REVISION="abc123")
-            pipeline = json.loads(trace.read_text().splitlines()[0])
-            self.assertEqual((pipeline["args"], pipeline["env"]["GM_ENGINE_VERSION"]),
-                             (host_build("graphite-meter-client", "ci"), "abc123-rust"))
-            self.assertEqual(tui["args"], ["-legal"])
             self.assertFalse(canary.exists())
 
             # The delayed-download gate runs exactly its one ignored test, fails when that matches

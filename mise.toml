@@ -448,35 +448,18 @@ dir = "rust"
 run = "cargo fmt --all"
 
 # Host builds verify native inputs against their reviewed platform record (legal/README.md).
-[tasks._rust-dev-legal]
-hide = true
-usage = '''
-arg "<package>"
-arg "<profile>"
-arg "[client]" help="browser profile: dev or prod"
-'''
-run = '''
-#!/usr/bin/env sh
-set -eu
-set -- --package "$usage_package" --profile "$usage_profile"
-if [ -n "${usage_client:-}" ]; then
-  set -- "$@" --browser "$usage_client"
-fi
-exec python3 -m scripts.rust_build "$@"
-'''
-
 [tasks.rust-server-build]
 description = "Build the experimental Rust server, rust/target/release/graphite-meter-server, with the production browser UI and reviewed host notices"
 # prod stamps only the server, through GM_ENGINE_VERSION: a VERSION would stamp the browser client too.
 env = { GM_ENGINE_VERSION = "{{ get_env(name='GM_ENGINE_VERSION', default=get_env(name='VERSION', default='development') ~ '-rust') }}" }
-run = [{ task = "_rust-dev-legal", args = ["graphite-meter-server", "release", "prod"] }]
+run = "python3 -m scripts.rust_build --package graphite-meter-server --profile release --browser prod"
 
 [tasks.rust-server-run]
 description = "Run the optimized (ci profile) experimental Rust server with reviewed host notices and GM_* configuration; arguments after -- go to the server"
 raw = true
 env = { GM_ENGINE_VERSION = "development-rust" }
 run = [
-  { task = "_rust-dev-legal", args = ["graphite-meter-server", "ci", "dev"] },
+  "python3 -m scripts.rust_build --package graphite-meter-server --profile ci --browser dev",
   "cd rust && exec target/ci/graphite-meter-server",
 ]
 
@@ -484,13 +467,13 @@ run = [
 description = "Run the optimized (ci profile) experimental Rust TUI, with reviewed host notices, against a server"
 raw = true
 run = [
-  { task = "_rust-dev-legal", args = ["graphite-meter-client", "ci"] },
+  "python3 -m scripts.rust_build --package graphite-meter-client --profile ci",
   "cd rust && exec target/ci/graphite-meter-client",
 ]
 
 [tasks.rust-client-build]
 description = "Build the experimental Rust TUI, rust/target/release/graphite-meter-client, without browser assets, with reviewed host notices"
-run = [{ task = "_rust-dev-legal", args = ["graphite-meter-client", "release"] }]
+run = "python3 -m scripts.rust_build --package graphite-meter-client --profile release"
 
 [tasks.rust-check]
 description = "Check experimental Rust formatting, dependencies, lints, and tests"
