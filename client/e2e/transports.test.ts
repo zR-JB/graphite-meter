@@ -1,14 +1,14 @@
 import type { CellResult, CellSpec } from "../bench/harness";
-import { harness, home } from "./fleet";
+import { harness, transport as peer } from "./fleet";
 import { expect, test } from "./webview";
 
 const paths = [
-  ["HTTP/1.1 clear", home.http, "fetch-stream", "http/1.1"],
-  ["HTTP/1.1 TLS", home.url, "fetch-stream", "http/1.1"],
-  ["HTTP/2", home.h2, "fetch-stream", "h2"],
-  ["HTTP/3", home.h3, "fetch-stream", "h3"],
-  ["WebTransport streams", home.h3, "webtransport", "h3"],
-  ["WebTransport datagrams", home.h3, "webtransport-datagram", "h3"],
+  ["HTTP/1.1 clear", peer.http, "fetch-stream", "http/1.1"],
+  ["HTTP/1.1 TLS", peer.url, "fetch-stream", "http/1.1"],
+  ["HTTP/2", peer.h2, "fetch-stream", "h2"],
+  ["HTTP/3", peer.h3, "fetch-stream", "h3"],
+  ["WebTransport streams", peer.h3, "webtransport", "h3"],
+  ["WebTransport datagrams", peer.h3, "webtransport-datagram", "h3"],
 ] as const;
 
 for (const [name, origin, transport, protocol] of paths)

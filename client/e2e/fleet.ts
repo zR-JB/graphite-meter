@@ -8,6 +8,7 @@ import { expect, settled, type Page } from "./webview";
 
 const env = JSON.parse(process.env.GM_E2E ?? '{ "fleet": [] }');
 export const fleet: Server[] = env.fleet;
+export const transport: Server = env.transport;
 export const [home, frankfurt, amsterdam, helsinki, locked] = fleet;
 export const password: string = env.password;
 export const harness: string = env.harness;

@@ -75,6 +75,8 @@ const fleet = [
   await describe("server-3", "Helsinki"),
   await describe("server-4", "Private"),
 ];
+// Transport smoke cases retain only six uploads, independently of the app fleet.
+const transport = await describe("transport", "Transport");
 const [, frankfurt, , , locked] = fleet;
 const peers = fleet.slice(1).map(({ id, name, url }) => ({ id, name, url }));
 const native = { GM_ADVERTISED_NATIVE_ENDPOINTS: "http1-tls,http2,http3" };
@@ -92,9 +94,11 @@ const environments: Record<string, string>[] = [
   },
 ];
 const launched = { bin, cert, key };
-const children = await Promise.all(
-  fleet.map((server, i) => launch(launched, server, environments[i])),
-);
+const children = await Promise.all([
+  ...fleet.map((server, i) => launch(launched, server, environments[i])),
+  launch(launched, transport),
+]);
+const quicOrigins = [...fleet, transport].map((s) => new URL(s.h3).host).join(",");
 
 const root = resolve(import.meta.dir, "../.e2e-dist");
 const harness = Bun.serve({
@@ -129,12 +133,17 @@ const suite = Bun.spawn(
       // Bun's Chrome profiles belong to this suite, including parallel workers
       // that exit without running process-level cleanup callbacks.
       TMPDIR: dir,
-      GM_E2E: JSON.stringify({ fleet, password, harness: harness.url.origin }),
+      GM_E2E: JSON.stringify({
+        fleet,
+        transport,
+        password,
+        harness: harness.url.origin,
+      }),
       GM_E2E_LAUNCH: JSON.stringify(launched),
       BUN_CHROME_ARGS: [
         process.env.BUN_CHROME_ARGS ?? "",
         `--ignore-certificate-errors-spki-list=${spki}`,
-        `--origin-to-force-quic-on=${fleet.map((s) => new URL(s.h3).host)}`,
+        `--origin-to-force-quic-on=${quicOrigins}`,
         "--test-third-party-cookie-phaseout",
       ].join(" "),
     },
