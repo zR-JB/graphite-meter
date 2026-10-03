@@ -98,7 +98,8 @@ def cargo(repo: Path, *args: str) -> list[str]:
 
 def capture(repo: Path, package: str, target: str | None, profile: str, link_map: Path | None,
             legal_directory: Path | None = None, asset_directory: Path | None = None,
-            *, link_target: str | None = None, inspection: bool = False) -> tuple[dict, list[dict]]:
+            *, link_target: str | None = None, inspection: bool = False,
+            metadata_host: str = 'host-tuple') -> tuple[dict, list[dict]]:
     """Own the invocation so test/workspace artifacts cannot contaminate the scan.
 
     Without a target it is Cargo's plain build for this host, and without a link map it maps no native inputs.
@@ -141,8 +142,12 @@ def capture(repo: Path, package: str, target: str | None, profile: str, link_map
     for line in result.stdout.splitlines():
         if line.startswith('{'):
             messages.append(json.loads(line))
-    metadata = subprocess.check_output(cargo(repo, 'metadata', '--locked', '--format-version=1'),
-                                       cwd=repo / 'rust', text=True)
+    # Target-only metadata can omit host build/proc-macro dependencies from its packages array.
+    filters = ['--filter-platform', metadata_host]
+    if target and target != metadata_host:
+        filters += ['--filter-platform', target]
+    metadata = subprocess.check_output(cargo(repo, 'metadata', '--locked', '--format-version=1', *filters),
+                                       cwd=repo / 'rust', env=environment, text=True)
     elapsed = time.perf_counter() - compiled
     mode = 'inspection' if inspection else 'linked'
     if environment.get('GM_RUST_BUILD_TIMINGS') == '1':
@@ -375,8 +380,8 @@ def build(args: argparse.Namespace) -> None:
     # rustup selects exactly the pinned workspace toolchain.
     channel = rust_channel(repo)
     toolchain = subprocess.check_output(['rustc', f'+{channel}', '-vV'], text=True)
-    target = args.target or next(line.removeprefix('host: ') for line in toolchain.splitlines()
-                                 if line.startswith('host: '))
+    host = next(line.removeprefix('host: ') for line in toolchain.splitlines() if line.startswith('host: '))
+    target = args.target or host
     if args.host and supplement is None:
         native_compiler = platform.linker_version(target)
         matches = [path for path in sorted((repo / 'legal').glob('rust-platform-*.json'))
@@ -432,7 +437,7 @@ def build(args: argparse.Namespace) -> None:
     print(f'Rust {args.package} [{args.profile}]: {"reuse notices" if reuse else "inspect build inputs"}', flush=True)
     metadata, messages = capture(repo, args.package, args.target, args.profile, mapped,
                                  output if reuse else None, staged_assets if reuse else None, link_target=target,
-                                 inspection=inspection)
+                                 inspection=inspection, metadata_host=host)
     components, inventory, failures, root = discover(repo, metadata, messages, args.package, reviews, provenance,
                                                       inspection=inspection)
     manifest = {'schemaVersion': 1, 'package': args.package, 'target': target,
@@ -529,7 +534,7 @@ def build(args: argparse.Namespace) -> None:
         rebuilt_messages = messages
         if embedding_changed:
             rebuilt_metadata, rebuilt_messages = capture(repo, args.package, args.target, args.profile, mapped,
-                                                         output, staged_assets, link_target=target)
+                                                         output, staged_assets, link_target=target, metadata_host=host)
             _, rebuilt_inventory, rebuilt_failures, _ = discover(repo, rebuilt_metadata, rebuilt_messages, args.package,
                                                                  reviews, provenance)
             executable = Path(next(message['executable'] for message in rebuilt_messages
