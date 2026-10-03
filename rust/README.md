@@ -322,9 +322,9 @@ The static musl binaries use rustfs-mimalloc 0.5.6, bundling mimalloc 3.5.3.
 This is a temporary binding choice. Switch back to the main `mimalloc` crate
 when it resumes maintained releases with a suitably current native allocator;
 track its [upstream version update](https://github.com/purpleprotocol/mimalloc_rust/pull/169).
-Huge-page and purge settings stay at upstream defaults. Disabling huge pages
-reduced RSS but slowed cold HTTP/2 uploads in the native 3.3.2 controls; lower
-idle memory alone is not a reason to change the policy.
+Huge-page and purge settings currently use upstream defaults. The earlier
+native 3.3.2 controls are not sufficient to choose a different huge-page policy
+for 3.5.3; compare throughput, CPU cost and memory on the current allocator.
 Local musl cross builds need musl headers and a target C compiler wrapper: set
 `CC_x86_64_unknown_linux_musl=x86_64-linux-musl-gcc` or
 `CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc`. Debian provides these in
