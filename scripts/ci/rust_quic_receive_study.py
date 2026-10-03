@@ -23,9 +23,10 @@ OUTPUT = ROOT / 'rust/target/quic-receive-study-results'
 BUILD = ROOT / 'rust/target/quic-receive-study-build'
 MUSL = 'x86_64-unknown-linux-musl'
 GNU = 'x86_64-unknown-linux-gnu'
-BASELINE = 'b34035dcfc96789f8269a5e080a6513e981f4904'
+BASELINE = '615cbfb9e61c0a90e9801c4c739b574b2f52c430'
 VERSION = '0.0.0-quic-receive-study'
 VARIANTS = ('baseline', 'candidate')
+MECHANISM_ONLY = True
 CASES = (('http3', 'upload', 4), ('http3', 'download', 4), ('http2', 'upload', 4),
          ('http3', 'upload', 1))
 REPEATS = 8
@@ -129,6 +130,152 @@ EDITS = {
 }
 
 
+EDITS.update({
+    'noq/src/connection.rs': [
+        ('        let span = debug_span!("drive", id = conn.handle.0);\n',
+         '        conn.diagnostic_driver_polls += 1;\n\n'
+         '        let span = debug_span!("drive", id = conn.handle.0);\n'),
+        ('        let mut keep_going = conn.drive_transmit(cx)?;\n',
+         '        if !tokio::task::coop::has_budget_remaining() {\n'
+         '            conn.diagnostic_transmit_no_coop_budget += 1;\n'
+         '        }\n'
+         '        let mut keep_going = conn.drive_transmit(cx)?;\n'),
+        ('        keep_going |= conn.drive_timer(cx);\n',
+         '        if !tokio::task::coop::has_budget_remaining() {\n'
+         '            conn.diagnostic_timer_no_coop_budget += 1;\n'
+         '        }\n'
+         '        keep_going |= conn.drive_timer(cx);\n'),
+        ('    conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,\n    endpoint_events:',
+         '    conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,\n'
+         '    diagnostic_driver_polls: u64,\n'
+         '    diagnostic_transmit_no_coop_budget: u64,\n'
+         '    diagnostic_timer_no_coop_budget: u64,\n'
+         '    diagnostic_event_polls: u64,\n'
+         '    diagnostic_events_total: u64,\n'
+         '    diagnostic_events_max_per_poll: u64,\n'
+         '    diagnostic_pending_nonempty: u64,\n'
+         '    diagnostic_pending_nonempty_no_coop_budget: u64,\n'
+         '    diagnostic_remaining_queue_max: usize,\n'
+         '    endpoint_events:'),
+        ('            conn_events,\n            endpoint_events,\n',
+         '            conn_events,\n'
+         '            diagnostic_driver_polls: 0,\n'
+         '            diagnostic_transmit_no_coop_budget: 0,\n'
+         '            diagnostic_timer_no_coop_budget: 0,\n'
+         '            diagnostic_event_polls: 0,\n'
+         '            diagnostic_events_total: 0,\n'
+         '            diagnostic_events_max_per_poll: 0,\n'
+         '            diagnostic_pending_nonempty: 0,\n'
+         '            diagnostic_pending_nonempty_no_coop_budget: 0,\n'
+         '            diagnostic_remaining_queue_max: 0,\n'
+         '            endpoint_events,\n'),
+        ('    ) -> Result<(), ConnectionError> {\n        loop {\n            match self.conn_events.poll_recv(cx) {\n',
+         '    ) -> Result<(), ConnectionError> {\n'
+         '        self.diagnostic_event_polls += 1;\n'
+         '        let mut processed = 0;\n'
+         '        loop {\n'
+         '            let event = self.conn_events.poll_recv(cx);\n'
+         '            if matches!(&event, Poll::Ready(Some(_))) {\n'
+         '                processed += 1;\n'
+         '                self.diagnostic_events_total += 1;\n'
+         '                self.diagnostic_events_max_per_poll =\n'
+         '                    self.diagnostic_events_max_per_poll.max(processed);\n'
+         '            }\n'
+         '            match event {\n'),
+        ('                Poll::Pending => {\n                    return Ok(());\n                }\n',
+         '                Poll::Pending => {\n'
+         '                    let remaining = self.conn_events.len();\n'
+         '                    self.diagnostic_remaining_queue_max =\n'
+         '                        self.diagnostic_remaining_queue_max.max(remaining);\n'
+         '                    if remaining != 0 {\n'
+         '                        self.diagnostic_pending_nonempty += 1;\n'
+         '                        if !tokio::task::coop::has_budget_remaining() {\n'
+         '                            self.diagnostic_pending_nonempty_no_coop_budget += 1;\n'
+         '                        }\n'
+         '                    }\n'
+         '                    return Ok(());\n'
+         '                }\n'),
+        ('impl Drop for State {\n    fn drop(&mut self) {\n',
+         'impl Drop for State {\n    fn drop(&mut self) {\n'
+         '        eprintln!(\n'
+         '            r#"GM_QUIC_CONNECTION_DRIVER {{"connection_handle":{},"driver_polls":{},"transmit_no_coop_budget":{},"timer_no_coop_budget":{},"event_polls":{},"events_total":{},"events_max_per_poll":{},"pending_nonempty":{},"pending_nonempty_no_coop_budget":{},"remaining_queue_max_at_pending":{}}}"#,\n'
+         '            self.handle.0, self.diagnostic_driver_polls, self.diagnostic_transmit_no_coop_budget,\n'
+         '            self.diagnostic_timer_no_coop_budget, self.diagnostic_event_polls,\n'
+         '            self.diagnostic_events_total, self.diagnostic_events_max_per_poll,\n'
+         '            self.diagnostic_pending_nonempty, self.diagnostic_pending_nonempty_no_coop_budget,\n'
+         '            self.diagnostic_remaining_queue_max,\n'
+         '        );\n'),
+    ],
+    'noq/src/endpoint.rs': [
+        ('struct ConnectionSender {\n    events:',
+         'struct ConnectionSender {\n'
+         '    diagnostic_handle: ConnectionHandle,\n'
+         '    diagnostic_charge_failures: u64,\n'
+         '    events:'),
+        ('    fn send_proto(&self, event: proto::ConnectionEvent) {\n',
+         '    fn send_proto(&mut self, event: proto::ConnectionEvent) {\n'),
+        ('                let Some(charge) = self.packets.charge(bytes) else {\n                    return;\n',
+         '                let Some(charge) = self.packets.charge(bytes) else {\n'
+         '                    self.diagnostic_charge_failures += 1;\n'
+         '                    return;\n'),
+        ('#[derive(Debug)]\nstruct ConnectionSet {\n',
+         'impl Drop for ConnectionSender {\n'
+         '    fn drop(&mut self) {\n'
+         '        eprintln!(\n'
+         '            r#"GM_QUIC_PACKET_QUEUE_FAILURES {{"connection_handle":{},"charge_failures":{}}}"#,\n'
+         '            self.diagnostic_handle.0, self.diagnostic_charge_failures,\n'
+         '        );\n'
+         '    }\n'
+         '}\n\n'
+         '#[derive(Debug)]\nstruct ConnectionSet {\n'),
+        ('            ConnectionSender {\n                events: send,\n',
+         '            ConnectionSender {\n'
+         '                diagnostic_handle: handle,\n'
+         '                diagnostic_charge_failures: 0,\n'
+         '                events: send,\n'),
+        ('    recv_limiter: WorkLimiter,\n',
+         '    recv_limiter: WorkLimiter,\n'
+         '    diagnostic_socket_polls: u64,\n'
+         '    diagnostic_messages_total: u64,\n'
+         '    diagnostic_messages_max_per_poll: u64,\n'
+         '    diagnostic_datagrams_total: u64,\n'
+         '    diagnostic_datagrams_max_per_poll: u64,\n'),
+        ('            recv_limiter: WorkLimiter::new(RECV_TIME_BOUND),\n',
+         '            recv_limiter: WorkLimiter::new(RECV_TIME_BOUND),\n'
+         '            diagnostic_socket_polls: 0,\n'
+         '            diagnostic_messages_total: 0,\n'
+         '            diagnostic_messages_max_per_poll: 0,\n'
+         '            diagnostic_datagrams_total: 0,\n'
+         '            diagnostic_datagrams_max_per_poll: 0,\n'),
+        ('        let mut received_connection_packet = false;\n',
+         '        self.diagnostic_socket_polls += 1;\n'
+         '        let mut cycle_messages = 0;\n'
+         '        let mut cycle_datagrams = 0;\n'
+         '        let mut received_connection_packet = false;\n'),
+        ('                Poll::Ready(Ok(msgs)) => {\n                    self.recv_limiter.record_work(msgs);\n',
+         '                Poll::Ready(Ok(msgs)) => {\n'
+         '                    cycle_messages += msgs as u64;\n'
+         '                    self.diagnostic_messages_total += msgs as u64;\n'
+         '                    self.diagnostic_messages_max_per_poll =\n'
+         '                        self.diagnostic_messages_max_per_poll.max(cycle_messages);\n'
+         '                    self.recv_limiter.record_work(msgs);\n'),
+        ('                        for data in buf[..meta.len].chunks(meta.stride.max(1)) {\n',
+         '                        for data in buf[..meta.len].chunks(meta.stride.max(1)) {\n'
+         '                            cycle_datagrams += 1;\n'
+         '                            self.diagnostic_datagrams_total += 1;\n'
+         '                            self.diagnostic_datagrams_max_per_poll =\n'
+         '                                self.diagnostic_datagrams_max_per_poll.max(cycle_datagrams);\n'),
+        ('impl Drop for State {\n    fn drop(&mut self) {\n',
+         'impl Drop for State {\n    fn drop(&mut self) {\n'
+         '        eprintln!(\n'
+         '            r#"GM_QUIC_ENDPOINT_RECEIVE {{"socket_polls":{},"messages_total":{},"messages_max_per_poll":{},"datagrams_total":{},"datagrams_max_per_poll":{}}}"#,\n'
+         '            self.recv_state.diagnostic_socket_polls, self.recv_state.diagnostic_messages_total,\n'
+         '            self.recv_state.diagnostic_messages_max_per_poll, self.recv_state.diagnostic_datagrams_total,\n'
+         '            self.recv_state.diagnostic_datagrams_max_per_poll,\n'
+         '        );\n'),
+    ],
+})
+
 def source_revision(revision: str) -> str:
     return f'git+https://github.com/zR-JB/noq?rev={revision}#{revision}'
 
@@ -156,7 +303,11 @@ def build_variants(environment: dict[str, str], candidate: str) -> dict[str, Pat
         main.write_bytes(original[main].replace(marker, TELEMETRY + marker))
         for label, package, target, revision in (
                 ('client', 'client', GNU, BASELINE), ('baseline', 'server', MUSL, BASELINE),
-                ('candidate', 'server', MUSL, candidate), ('diagnostic', 'server', MUSL, candidate)):
+                ('candidate', 'server', MUSL, candidate),
+                ('diagnostic-baseline', 'server', MUSL, BASELINE),
+                ('diagnostic-candidate', 'server', MUSL, candidate)):
+            if MECHANISM_ONLY and label not in ('client', 'diagnostic-baseline'):
+                continue
             manifest.write_bytes(original[manifest].replace(f'rev = "{initial}"'.encode(),
                                                             f'rev = "{revision}"'.encode()))
             lock.write_bytes(original[lock].replace(source_revision(initial).encode(),
@@ -164,10 +315,11 @@ def build_variants(environment: dict[str, str], candidate: str) -> dict[str, Pat
             changed = tomllib.loads(lock.read_text())['package']
             assert [{**item, 'source': source_revision(initial)}
                     if item.get('source') == source_revision(revision) else item for item in changed] == packages
-            with diagnostic_patch(environment) if label == 'diagnostic' else nullcontext():
-                if label == 'diagnostic':
+            instrumented = label.startswith('diagnostic-')
+            with diagnostic_patch(environment, label) if instrumented else nullcontext():
+                if instrumented:
                     run(['cargo', 'clean', '--release', '--target', MUSL, '-p', 'noq-proto',
-                         '-p', 'noq', '-p', 'graphite-meter-server'], environment, OUTPUT / 'diagnostic-clean.log')
+                         '-p', 'noq', '-p', 'graphite-meter-server'], environment, OUTPUT / f'{label}-clean.log')
                 run(['cargo', 'build', '--locked', '--release', '--target', target,
                      '-p', f'graphite-meter-{package}'], environment, OUTPUT / f'build-{label}.log')
                 binary = BUILD / 'binaries' / label
@@ -176,18 +328,19 @@ def build_variants(environment: dict[str, str], candidate: str) -> dict[str, Pat
                 run([str(binary), '-version' if package == 'client' else '--version'],
                     environment, OUTPUT / f'version-{label}.log', timeout=10)
                 assert VERSION in (OUTPUT / f'version-{label}.log').read_text()
-                assert (b'GM_QUIC_BUFFER_BUDGET' in binary.read_bytes()) == (label == 'diagnostic')
+                assert (b'GM_QUIC_BUFFER_BUDGET' in binary.read_bytes()) == instrumented
                 binaries[label] = binary
     finally:
         for path, content in original.items():
             path.write_bytes(content)
-    assert binaries['diagnostic'].read_bytes() != binaries['candidate'].read_bytes()
+    for variant in (() if MECHANISM_ONLY else VARIANTS):
+        assert binaries[f'diagnostic-{variant}'].read_bytes() != binaries[variant].read_bytes()
     return binaries
 
 
 @contextmanager
-def diagnostic_patch(environment: dict[str, str]):
-    log = OUTPUT / 'candidate-metadata.log'
+def diagnostic_patch(environment: dict[str, str], label: str):
+    log = OUTPUT / f'{label}-metadata.log'
     run(['cargo', 'metadata', '--locked', '--format-version', '1'], environment, log, timeout=120)
     records = [line for line in log.read_text().splitlines() if line.startswith('{')]
     assert len(records) == 1
@@ -229,11 +382,17 @@ def memory(pid: int) -> dict[str, int]:
             if key in ('Rss', 'Pss', 'Anonymous', 'AnonHugePages')}
 
 
+def enter_cgroup(group: Path) -> None:
+    # A hosted runner may lack write permission on its common cgroup ancestor.
+    subprocess.run(['sudo', '-n', 'tee', str(group / 'cgroup.procs')],
+                   input=str(os.getpid()), text=True, stdout=subprocess.DEVNULL, check=True, timeout=5)
+
+
 @contextmanager
 def server(binary: Path, environment: dict[str, str], port: int, log: Path, group: Path | None):
     def enter_group() -> None:
         assert group is not None
-        (group / 'cgroup.procs').write_text('0')
+        enter_cgroup(group)
     with log.open('w') as output:
         process = subprocess.Popen([str(binary)], env=environment, stdout=output, stderr=subprocess.STDOUT,
                                    start_new_session=True, preexec_fn=enter_group if group else None)
@@ -358,7 +517,7 @@ def setup_cgroup(environment: dict[str, str]) -> tuple[bool, str]:
         try:
             with (OUTPUT / 'cgroup-probe.log').open('w') as log:
                 subprocess.run(['/bin/true'], env=environment, stdout=log, stderr=subprocess.STDOUT,
-                               preexec_fn=lambda: (probe / 'cgroup.procs').write_text('0'),
+                               preexec_fn=lambda: enter_cgroup(probe),
                                check=True, timeout=10)
         finally:
             probe.rmdir()
@@ -410,7 +569,7 @@ def measure(binaries: dict[str, Path], environment: dict[str, str], ports: dict[
     results: list[dict] = []
     diagnostic: list[dict] = []
     server_environment = environment | {'MIMALLOC_ALLOW_THP': '0'}
-    for repeat in range(REPEATS):
+    for repeat in range(0 if MECHANISM_ONLY else REPEATS):
         offset = repeat % len(CASES)
         order = VARIANTS if repeat % 2 == 0 else VARIANTS[::-1]
         for case_position, (kind, direction, streams) in enumerate(CASES[offset:] + CASES[:offset], 1):
@@ -427,17 +586,25 @@ def measure(binaries: dict[str, Path], environment: dict[str, str], ports: dict[
                            serverBinarySha256=hashes[variant], clientBinarySha256=hashes['client'])
                 publish(results, row, 'results.json')
     for repeat in range(3):
-        cell = f'diagnostic-{repeat + 1}-http3-upload-4'
-        log = OUTPUT / f'{cell}-server.log'
-        own = server_environment | {'MIMALLOC_SHOW_STATS': '1'}
-        with cell_cgroup(cgroup_enabled, cell) as group:
-            with server(binaries['diagnostic'], own, ports['http1'], log, group) as backend:
-                row = transfer(backend, binaries['client'], environment, ports, cell, 'http3', 'upload', 4, 10, group)
-            row['serverCgroupAfterShutdownBytes'] = cgroup_memory(group)
-        row.update(variant='diagnostic', repeat=repeat + 1, instrumented=True, speedComparison=False,
-                   serverBinarySha256=hashes['diagnostic'], clientBinarySha256=hashes['client'],
-                   budgetReportsAtShutdown=budget_reports(log), allocatorShutdownSummaryLog=log.name)
-        publish(diagnostic, row, 'diagnostic.json')
+        order = ('baseline',) if MECHANISM_ONLY else (VARIANTS if repeat % 2 == 0 else VARIANTS[::-1])
+        for variant_position, variant in enumerate(order, 1):
+            label = f'diagnostic-{variant}'
+            cell = f'{label}-{repeat + 1}-http3-upload-4'
+            log = OUTPUT / f'{cell}-server.log'
+            own = server_environment | {'MIMALLOC_SHOW_STATS': '1'}
+            with cell_cgroup(cgroup_enabled, cell) as group:
+                with server(binaries[label], own, ports['http1'], log, group) as backend:
+                    row = transfer(backend, binaries['client'], environment, ports, cell, 'http3', 'upload', 4, 10, group)
+                row['serverCgroupAfterShutdownBytes'] = cgroup_memory(group)
+            row.update(kind='diagnostic', variant='diagnostic', diagnosticVariant=variant,
+                       repeat=repeat + 1, variantPosition=variant_position,
+                       instrumented=True, speedComparison=False,
+                       serverBinarySha256=hashes[label], clientBinarySha256=hashes['client'],
+                       budgetReportsAtShutdown=budget_reports(log), allocatorShutdownSummaryLog=log.name,
+                       mechanismReports={prefix: [json.loads(raw) for raw in re.findall(r'^' + prefix + r' (.+)$', log.read_text(), re.MULTILINE)]
+                                         for prefix in ('GM_QUIC_CONNECTION_DRIVER', 'GM_QUIC_PACKET_QUEUE_FAILURES', 'GM_QUIC_ENDPOINT_RECEIVE')})
+            assert all(row['mechanismReports'].values()), cell
+            publish(diagnostic, row, 'diagnostic.json')
 
 
 def main() -> None:
@@ -446,8 +613,8 @@ def main() -> None:
     profile = workspace['profile']['release']
     assert (profile['opt-level'], profile['lto'], profile['codegen-units']) == (3, 'fat', 1)
     assert workspace['workspace']['dependencies']['rustfs-mimalloc'] == '=0.5.6'
-    candidate = os.environ.get('GM_QUIC_RECEIVE_CANDIDATE_REV', workspace['patch']['crates-io']['noq']['rev'])
-    assert re.fullmatch(r'[0-9a-f]{40}', candidate) and candidate != BASELINE
+    candidate = BASELINE if MECHANISM_ONLY else os.environ['GM_QUIC_RECEIVE_CANDIDATE_REV']
+    assert re.fullmatch(r'[0-9a-f]{40}', candidate) and (MECHANISM_ONLY or candidate != BASELINE)
     environment = {key: value for key, value in os.environ.items()
                    if not key.startswith(('GM_', 'CARGO_PROFILE_', 'MIMALLOC_', 'MALLOC_'))
                    and not key.endswith('RUSTFLAGS')}
@@ -475,8 +642,9 @@ def main() -> None:
                            GM_H2_ADDR=f'127.0.0.1:{ports["http2"]}', GM_H3_ADDR=f'127.0.0.1:{ports["http3"]}',
                            GM_TLS_CERT=str(cert), GM_TLS_KEY=str(key))
         study = {
-            'mode': 'quic-receive-paired', 'baselineRevision': BASELINE, 'candidateRevision': candidate,
-            'profile': profile, 'builds': 4, 'binarySha256': hashes, 'rustChannel': channel,
+            'mode': 'quic-receive-mechanism' if MECHANISM_ONLY else 'quic-receive-paired', 'baselineRevision': BASELINE, 'candidateRevision': candidate,
+            'profile': profile, 'builds': 2 if MECHANISM_ONLY else 5, 'binarySha256': hashes, 'rustChannel': channel,
+            'binaryRevisions': {label: candidate if label.endswith('candidate') else BASELINE for label in binaries},
             'rustc': (OUTPUT / 'rustc.log').read_text(), 'platform': list(os.uname()),
             'logicalCpus': os.cpu_count(), 'lscpu': (OUTPUT / 'cpu.log').read_text(),
             'nativeAllocator': 'rustfs-mimalloc 0.5.6 / Microsoft mimalloc 3.5.3',
@@ -485,8 +653,11 @@ def main() -> None:
                                    if key.startswith(('CARGO_', 'CC_', 'RUSTUP_'))},
             'developmentBuild': {'engineVersion': VERSION, 'dependencyNotices': 'absent',
                                  'distribution': 'diagnostic-only; binaries and assets are not uploaded'},
-            'repeats': REPEATS, 'families': CASES, 'expectedCleanTransfers': 64, 'expectedDiagnosticTransfers': 3,
-            'order': 'baseline/candidate then candidate/baseline alternating; rotate cases each repetition',
+            'repeats': REPEATS, 'families': CASES, 'expectedCleanTransfers': 0 if MECHANISM_ONLY else 64,
+            'expectedDiagnosticTransfers': 3 if MECHANISM_ONLY else 6,
+            'diagnosticRepeats': 3, 'diagnosticVariants': ('baseline',) if MECHANISM_ONLY else VARIANTS,
+            'diagnosticOrder': 'baseline only' if MECHANISM_ONLY else 'baseline/candidate then candidate/baseline alternating; HTTP/3 upload 4 only',
+            'order': 'no clean speed comparison' if MECHANISM_ONLY else 'baseline/candidate then candidate/baseline alternating; rotate cases each repetition',
             'counterpart': 'fixed GNU Rust client built with baseline Noq; unchanged across all server variants',
             'serverAllocatorEnvironment': {'MIMALLOC_ALLOW_THP': '0'},
             'diagnosticOnlyEnvironment': {'MIMALLOC_SHOW_STATS': '1'},
@@ -500,7 +671,12 @@ def main() -> None:
                       'server exec, client outside; current/peak and sock/kernel/anon/file are separate charges. '
                       'Cgroup peak covers startup through shutdown; sampled process peaks cover the client invocation. '
                       'Shared file page ownership and kernel/socket charges differ from RSS; peaks are not additive.',
-            'diagnostic': 'Only diagnostic candidate has relaxed atomic per-budget high-water instrumentation. '
+            'diagnostic': 'Mechanism-only mode instruments baseline only; it has no clean speed comparison. '
+                          'Endpoint and connection counters observe scheduling; exhausted-budget counters before '
+                          'transmit/timer do not establish starvation: this pinned timer has clock-based expiry '
+                          'and the Tokio sender uses async writable readiness without a cooperative budget check. '
+                          'In paired mode separate diagnostic-baseline and diagnostic-candidate binaries have relaxed atomic '
+                          'per-budget high-water instrumentation; three runs of each, fixed baseline client. '
                           'Packet queue and reassembly peaks belong to independent budgets, not simultaneous total RSS. '
                           'used_at_drop_bytes is zero after the final Arc owner, not transfer-end live bytes. '
                           'floor_bytes is a separate reservation; allocator summary is shutdown state if emitted. '
