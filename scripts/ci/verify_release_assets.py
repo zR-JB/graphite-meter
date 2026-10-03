@@ -237,8 +237,7 @@ def rust_statements(version: str, server: list[str], tui: list[str]) -> dict[str
 
 def expected_rust_artifacts(version: str, server: list[str], tui: list[str]) -> set[str]:
     statements = rust_statements(version, server, tui)
-    return set(statements).union(*statements.values(), *(
-        rust_files(version, "graphite-meter-client", platform) for platform in tui))
+    return set(statements).union(*statements.values())
 
 
 def stage_rust(export: Path, dist: Path, version: str, server: list[str], tui: list[str]) -> None:

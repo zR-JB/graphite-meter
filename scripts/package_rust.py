@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .ci.github_api import ControlPlaneError, confined_path, local_path, write_checksums
 from .ci.toolchains import host_platform, rust_channel, rust_tui_targets, verify_rust_toolchain
+from .ci.verify_release_assets import tui_archive
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -24,12 +25,10 @@ def build(version: str, platform: str, output: Path, supplement: Path) -> None:
         raise ValueError("invalid release version")
     if (target := rust_tui_targets(REPO / "scripts/tui-targets.txt").get(platform)) is None:
         raise ValueError(f"no TUI target for {platform}")
-    goos, goarch = platform.split("/")
     # The archives go to the checkout or a temporary directory, and never leave it.
     output = local_path(output, REPO)
     output.mkdir(parents=True, exist_ok=True)
-    base = f"graphite-meter-client_{version}_{goos}_{goarch}_rust"
-    name = "graphite-meter-client.exe" if goos == "windows" else "graphite-meter-client"
+    archive, base, name = tui_archive(version, platform, "_rust")
     environment = dict(os.environ, GM_ENGINE_VERSION=f"{version}-rust")
     cargo = REPO / "rust/target"
     environment["CARGO_TARGET_DIR"] = str(cargo)
@@ -63,8 +62,8 @@ def build(version: str, platform: str, output: Path, supplement: Path) -> None:
             f"Experimental native target: {target}\n"
         )
         # Finish both staged files before replacing either destination.
-        archive_path = confined_path(stage / (f"{base}.zip" if goos == "windows" else f"{base}.tar.gz"), stage)
-        shutil.make_archive(str(stage / base), "zip" if goos == "windows" else "gztar",
+        archive_path = confined_path(stage / archive, stage)
+        shutil.make_archive(str(stage / base), "zip" if archive.endswith(".zip") else "gztar",
                             root_dir=stage, base_dir=base)
         shutil.copyfile(legal / "THIRD_PARTY_SOURCE.tar.gz", confined_path(stage / source_name, stage))
         for filename in (archive_path.name, source_name):

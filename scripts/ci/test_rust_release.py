@@ -145,50 +145,31 @@ class RustArchiveBoundaryTests(unittest.TestCase):
 class RustServerReleaseTests(unittest.TestCase):
     def test_server_source_identity_and_component_presence(self) -> None:
         target = RUST_TARGETS["linux/arm64"]
-        for mutation in (
-            "valid",
-            "cargo_fixture",
-            "package",
-            "target",
-            "target_libc",
-            "lock",
-            "missing",
-            "first_party_key",
-            "undeclared_tree",
-            "schema_boolean",
-            "component_array",
-            "component_name",
-            "browser_component",
-            "image_component",
-            "image_notice_missing",
-            "image_unreviewed",
-            "development_notices",
-        ):
+        image: JsonObject = {"imageComponents": [{"ecosystem": CA.ecosystem, "name": CA.name, "version": CA.version}]}
+        manual = {path: b"reviewed" for path in manual_files(CA)}
+        mutations: dict[str, tuple[JsonObject, dict[str, bytes]]] = {
+            "valid": ({}, {}),
+            "cargo_fixture": ({}, {"third_party/cargo/example-1.0/tests/test_vector.pem": b"public upstream fixture"}),
+            "package": ({"package": "graphite-meter-client"}, {}),
+            "target": ({"target": RUST_TARGETS["linux/amd64"]}, {}),
+            "target_libc": ({"target": target.replace("-musl", "-gnu")}, {}),
+            "lock": ({"cargoLockSha256": "0" * 64}, {}),
+            "missing": ({"components": [{"component": {"name": "absent", "version": "1.0"}}]}, {}),
+            "first_party_key": ({}, {"rust/.dev-certs/private.key": b"must not ship"}),
+            "undeclared_tree": ({}, {"third_party/cargo/other-2.0/tests/key.pem": b"not in inventory"}),
+            "schema_boolean": ({"schemaVersion": True}, {}),
+            "component_array": ({"components": {"component": "not an array"}}, {}),
+            "component_name": ({"components": [{"component": {"name": [], "version": "1.0"}}]}, {}),
+            "browser_component": ({"browserComponents": ["not an object"]}, {}),
+            "image_component": (image, manual),
+            "image_notice_missing": (image, {}),
+            "image_unreviewed": (
+                {"imageComponents": [{"ecosystem": CA.ecosystem, "name": "unreviewed", "version": CA.version}]}, manual),
+            "development_notices": ({}, {"LEGAL.txt": DEVELOPMENT_NOTICE.encode() + b"fixture notices\n"}),
+        }
+        for mutation, (change, extra) in mutations.items():
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
-                metadata = inventory("graphite-meter-server", target)
-                mutations: dict[str, dict] = {
-                    "package": {"package": "graphite-meter-client"},
-                    "target": {"target": RUST_TARGETS["linux/amd64"]},
-                    "target_libc": {"target": target.replace("-musl", "-gnu")},
-                    "lock": {"cargoLockSha256": "0" * 64},
-                    "schema_boolean": {"schemaVersion": True},
-                    "component_array": {"components": {"component": "not an array"}},
-                    "component_name": {"components": [{"component": {"name": [], "version": "1.0"}}]},
-                    "browser_component": {"browserComponents": ["not an object"]},
-                    "missing": {"components": [{"component": {"name": "absent", "version": "1.0"}}]},
-                }
-                metadata.update(mutations.get(mutation, {}))
-                if mutation.startswith("image"):
-                    name = "unreviewed" if mutation == "image_unreviewed" else CA.name
-                    metadata["imageComponents"] = [{"ecosystem": CA.ecosystem, "name": name, "version": CA.version}]
-                extra = {
-                    "cargo_fixture": {"third_party/cargo/example-1.0/tests/test_vector.pem": b"public upstream fixture"},
-                    "first_party_key": {"rust/.dev-certs/private.key": b"must not ship"},
-                    "undeclared_tree": {"third_party/cargo/other-2.0/tests/key.pem": b"not in inventory"},
-                    "image_component": {path: b"reviewed" for path in manual_files(CA)},
-                    "image_unreviewed": {path: b"reviewed" for path in manual_files(CA)},
-                    "development_notices": {"LEGAL.txt": DEVELOPMENT_NOTICE.encode() + b"fixture notices\n"},
-                }.get(mutation)
+                metadata = inventory("graphite-meter-server", target) | change
                 path = Path(temporary) / "source.tar.gz"
                 write_source(path, metadata, extra)
                 with patch("subprocess.Popen", side_effect=AssertionError("artifact execution")):
