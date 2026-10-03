@@ -1,6 +1,6 @@
 GNU C Library x86-64 startup notices
 
-From glibc-2.43-8.fc44.src.rpm, upstream bc95068f5f9d7f57d0f01757fed0900893b122b8.
+From glibc-2.43-9.fc44.src.rpm, upstream 9cda6fc96abd035d9cbe68482138d4a78a51a7d5.
 
 --- sysdeps/x86_64/start.S ---
 
