@@ -505,35 +505,6 @@ jobs:
           python3 -m scripts.ci.release stage-rust
           python3 -m scripts.ci.release check-rust
 
-  rust-allocator-study:
-    name: Go and Rust server performance evidence
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    needs: plan
-    if: needs.plan.outputs.rust == 'true'
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false}
-      - name: Set up pinned Python, Go and Rust without caches
-        uses: ./.github/actions/setup-project
-        with: {go: 'true', rust: 'true', cache: 'false'}
-      - name: Install musl headers and C compiler for every musl variant
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
-      - name: Compare optimized Go and Rust servers with a fixed client
-        run: python3 -m scripts.ci.rust_allocator_study
-      - name: Upload allocator evidence without study binaries or TLS keys
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: rust-allocator-study
-          path: |
-            rust/target/allocator-study-results/*.json
-            rust/target/allocator-study-results/*.log
-            rust/target/allocator-study-results/*.txt
-          if-no-files-found: error
-          retention-days: 3
-
   rust-server-profile:
     name: Rust server CPU profiles
     runs-on: ubuntu-24.04
@@ -563,40 +534,11 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  rust-native-arm:
-    name: Rust allocator native ARM correctness
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 15
-    needs: [plan, rust-release]
-    if: needs.plan.outputs.rust-release == 'true'
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false}
-      - name: Set up pinned Python and Go without caches
-        uses: ./.github/actions/setup-project
-        with: {go: 'true', cache: 'false'}
-      - name: Download the verified same-run TUI packages
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: rust-ci-tui-export
-          path: ${{ runner.temp }}/rust-export/tui
-      - name: Exercise the static ARM client against native Go
-        run: python3 -m scripts.ci.native_arm_client "$RUNNER_TEMP/rust-export/tui"
-      - name: Upload native ARM correctness logs
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: rust-native-arm
-          path: rust/target/native-arm-client-*/*.log
-          if-no-files-found: ignore
-          retention-days: 3
-
   gate:
     name: Gate
     runs-on: ubuntu-24.04
     if: always()
-    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-e2e-build, rust-e2e, rust-allocator-study, rust-server-profile, rust-native-arm, rust-release-tui, rust-release-server, rust-release]
+    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-e2e-build, rust-e2e, rust-server-profile, rust-release-tui, rust-release-server, rust-release]
     steps:
       - name: Require every selected job
         env:

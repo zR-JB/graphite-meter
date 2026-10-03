@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import gzip
 import json
 import os
@@ -15,12 +16,80 @@ import sys
 import tempfile
 import time
 import tomllib
+import urllib.request
 
-from .rust_allocator_study import ALLOCATOR, GNU, MUSL, ROOT, TELEMETRY, Fixture, run, server, unused_port
+from rust.tests.process_fixture import Fixture, unused_port
+
+ROOT = Path(__file__).resolve().parents[2]
+MUSL = 'x86_64-unknown-linux-musl'
+GNU = 'x86_64-unknown-linux-gnu'
+ALLOCATOR = b'#[cfg(target_env = "musl")]\n#[global_allocator]\nstatic ALLOCATOR: rustfs_mimalloc::MiMalloc = rustfs_mimalloc::MiMalloc;\n'
+TELEMETRY = b'''    if let Some(snapshot) = &finished {
+        for stage in &snapshot.results {
+            for (direction, result) in [("download", &stage.down), ("upload", &stage.up)] {
+                if let Some(result) = result {
+                    println!("GM_ALLOCATOR_RESULT {}", serde_json::json!({
+                        "direction": direction, "totalBytes": result.total_bytes,
+                        "meanBytesPerSec": result.mean_bytes_per_sec, "elapsedNanos": result.elapsed_nanos,
+                    }));
+                }
+            }
+        }
+        for server in &snapshot.servers {
+            println!("GM_ALLOCATOR_PATH {:?}", server.throughput);
+        }
+    }
+'''
 
 OUTPUT = ROOT / 'rust/target/server-profile-results'
 BUILD = ROOT / 'rust/target/server-profile-build'
 CASES = (('h1-clear', 'http1'), ('h1-tls', 'http1'), ('h2-tls', 'http2'), ('h3-quic', 'http3'))
+
+
+def run(command: list[str], environment: dict[str, str], log: Path, timeout: int = 1200) -> None:
+    with log.open('w') as output:
+        process = subprocess.Popen(command, cwd=ROOT / 'rust' if command[0] in ('cargo', 'rustup') else ROOT,
+                                   env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            process.wait(timeout=timeout)
+            if process.returncode:
+                raise subprocess.CalledProcessError(process.returncode, command)
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=5)
+
+
+@contextmanager
+def server(binary: Path, environment: dict[str, str], port: int, log: Path):
+    with log.open('w') as output:
+        process = subprocess.Popen([str(binary)], env=environment, stdout=output, stderr=subprocess.STDOUT)
+        try:
+            deadline = time.monotonic() + 10
+            while True:
+                if process.poll() is not None:
+                    raise RuntimeError(f'server exited; see {log}')
+                try:
+                    with urllib.request.urlopen(f'http://127.0.0.1:{port}/preflight', timeout=0.5):
+                        break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f'server startup timed out; see {log}')
+                    time.sleep(0.05)
+            yield process
+        finally:
+            failed = sys.exc_info()[0] is not None
+            if process.poll() is None:
+                process.send_signal(signal.SIGINT)
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                    if not failed:
+                        raise RuntimeError(f'server shutdown timed out; see {log}')
+            if process.returncode != 0 and not failed:
+                raise RuntimeError(f'server failed to shut down cleanly; see {log}')
 
 
 def command_output(command: list[str], environment: dict[str, str], *, input_text: str | None = None) -> str:
@@ -117,7 +186,8 @@ def classify(symbol: str, source: str, dso: str) -> tuple[str, str]:
     for bucket, fragments in source_rules:
         if any(fragment in source for fragment in fragments):
             return bucket, 'source location'
-    if '/.cargo/registry/src/' in source or '/.cargo/git/checkouts/' in source:
+    if any(path in source for path in ('/.cargo/registry/src/', '/.cargo/git/checkouts/',
+                                      '/cargo/registry/src/', '/cargo/git/checkouts/')):
         return 'other-dependencies', 'source location'
     clean = re.sub(r'^\[[^]]+\]\s*', '', symbol)
     if clean in {'malloc', 'calloc', 'realloc', 'free', 'aligned_alloc', 'posix_memalign',
@@ -150,8 +220,10 @@ def symbolize(perf: str, demangler: str, raw: Path, cell: str, environment: dict
     window = ','.join(f'{value // 1_000_000_000}.{value % 1_000_000_000:09d}' for value in (start, stop))
     base = ['sudo', '-n', perf, 'report', '-i', str(raw), '--stdio', '--stdio-color=never', '--inline',
             '--full-source-path', '--percent-limit', '0', '--time', window]
+    table_started = time.monotonic()
     table = command_output([*base, '--no-children', '--no-demangle', '-g', 'none', '-t', '\t',
                             '-F', 'period,sample,dso,symbol,srcline', '-s', 'dso,symbol,srcline'], environment)
+    timings = {'selfTable': time.monotonic() - table_started}
     with gzip.open(OUTPUT / f'{cell}-self-table.txt.gz', 'wt') as output:
         output.write(table)
     rows: list[dict] = []
@@ -183,8 +255,10 @@ def symbolize(perf: str, demangler: str, raw: Path, cell: str, environment: dict
     if not rows or not sum(row['period'] for row in rows):
         raise RuntimeError(f'no CPU samples collected for {cell}')
     names = [re.sub(r'^\[[^]]+\]\s*', '', row['rawSymbol']) for row in rows]
+    demangle_started = time.monotonic()
     demangled = command_output([demangler, '--format=auto', '--no-strip-underscore'], environment,
                                input_text='\n'.join(names) + '\n').splitlines()
+    timings['demangle'] = time.monotonic() - demangle_started
     if len(demangled) != len(rows):
         raise RuntimeError('Rust demangler changed the number of histogram rows')
     buckets: dict[str, int] = {}
@@ -199,18 +273,14 @@ def symbolize(perf: str, demangler: str, raw: Path, cell: str, environment: dict
     total = sum(buckets.values())
     for row in rows:
         row['percent'] = row['period'] * 100 / total
-    for label, command in (
-        ('self', [*base, '--no-children', '-g', 'none', '-F', 'overhead,period,sample,dso,symbol,srcline']),
-        ('inclusive', [*base, '--children', '-g', 'graph,0.5,caller']),
-        ('script', ['sudo', '-n', perf, 'script', '-i', str(raw), '--inline', '--full-source-path', '--demangle',
-                    '--time', window, '--show-lost-events',
-                    '-F', 'comm,pid,tid,time,event,period,ip,sym,dso,srcline,misc']),
-    ):
-        data = command_output(command, environment)
-        with gzip.open(OUTPUT / f'{cell}-{label}.txt.gz', 'wt') as output:
-            output.write(data)
+    inclusive_started = time.monotonic()
+    inclusive = command_output([*base, '--children', '-g', 'graph,0.5,caller'], environment)
+    timings['inclusive'] = time.monotonic() - inclusive_started
+    with gzip.open(OUTPUT / f'{cell}-inclusive.txt.gz', 'wt') as output:
+        output.write(inclusive)
+    print(f'{cell} symbolization seconds: {json.dumps(timings)}', flush=True)
     lost = re.search(r'^#\s*Total Lost Samples:\s*(\S+)', table, re.MULTILINE)
-    return {'totalPeriod': total, 'samples': sum(row['samples'] for row in rows),
+    return {'totalPeriod': total, 'samples': sum(row['samples'] for row in rows), 'symbolizationSeconds': timings,
             'reportedLostSamples': lost[1] if lost else None,
             'sourceAttributedPeriod': sum(row['period'] for row in rows if row['attribution'] == 'source location'),
             'symbolOnlyPeriod': sum(row['period'] for row in rows if 'symbol' in row['attribution']),
