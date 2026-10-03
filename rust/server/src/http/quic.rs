@@ -1349,9 +1349,14 @@ mod tests {
                 }
                 clients.push(client);
             }
-            let silent = futures_util::future::join_all(connecting).await;
-            assert!(silent.iter().all(Result::is_ok));
-            let charged = idle - server.memory.available();
+            let silent = futures_util::future::try_join_all(connecting).await.unwrap();
+            // Client establishment precedes the server receiving Finished. Even after confirmation, packet
+            // storage can remain charged until ACKs are processed, so measure the silent, settled connections.
+            futures_util::future::try_join_all(silent.iter().map(noq::Connection::handshake_confirmed))
+                .await
+                .unwrap();
+            let charged = idle - settled(&server.memory, &silent.iter().collect::<Vec<_>>()).await;
+            assert!(silent.iter().all(|peer| peer.close_reason().is_none()));
             eprintln!("{} silent connections charge {charged} bytes", silent.len());
             let floor = connection_floor(0) + noq_floor(&server.config.limits).unwrap();
             assert!(charged <= silent.len() * floor);

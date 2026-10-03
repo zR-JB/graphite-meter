@@ -233,7 +233,8 @@ async fn download_peer_with_gate(
                             return;
                         }
                         if request.starts_with(b"GET /upload/progress") {
-                            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 68719476736\r\n\r\n{\"type\":\"ready\"}\n").await;
+                            if stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 68719476736\r\n\r\n{\"type\":\"ready\"}\n").await.is_err()
+                                || stream.flush().await.is_err() { return; }
                             let mut finished = finalized.subscribe();
                             if flag.compare_exchange(11, 12, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
                                 let _ = finished.wait_for(|finished| *finished).await;
@@ -242,7 +243,10 @@ async fn download_peer_with_gate(
                             let record = |kind: &str, bytes| format!("{{\"type\":\"{kind}\",\"bytes\":{bytes},\"nanos\":1}}\n");
                             while !*finished.borrow() {
                                 let bytes = *observed.borrow_and_update();
-                                if stream.write_all(record("progress", bytes).as_bytes()).await.is_err() { return; }
+                                // TLS may accept plaintext before its ciphertext reaches the socket.
+                                // Flush before waiting for an event that depends on the client's readiness.
+                                if stream.write_all(record("progress", bytes).as_bytes()).await.is_err()
+                                    || stream.flush().await.is_err() { return; }
                                 tokio::select! {
                                     _ = finished.changed() => {},
                                     _ = observed.changed() => {},
@@ -250,6 +254,7 @@ async fn download_peer_with_gate(
                             }
                             let complete = record("complete", *observed.borrow());
                             let _ = stream.write_all(complete.as_bytes()).await;
+                            let _ = stream.flush().await;
                             return;
                         }
                         if request.starts_with(b"DELETE /upload/progress") {
@@ -836,14 +841,13 @@ async fn a_receiver_without_a_first_checkpoint_fails_its_preparation() -> Result
     Ok(())
 }
 
-#[tokio::test(start_paused = true)]
+// This checks the receiver's byte baseline, not a virtual deadline. Its TLS feed needs real I/O.
+#[tokio::test]
 async fn an_upload_counts_what_its_receiver_took_during_the_first_checkpoint() -> Result<(), Error> {
-    let heartbeat = heartbeat();
     let fixture = Fixture::new(&["peer"], 1500).await?;
     fixture.modes[0].store(19, Ordering::SeqCst);
 
     let result = fixture.measure(Stage::Upload).await;
-    heartbeat.abort();
     assert!(result?.is_empty());
     // Go's baseline is the upload observed before that checkpoint, not the progress reported after it.
     assert_eq!(fixture.snapshots.borrow().results[0].up_bytes(), 1 << 16);
