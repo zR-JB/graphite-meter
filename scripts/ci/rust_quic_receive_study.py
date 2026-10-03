@@ -26,7 +26,7 @@ GNU = 'x86_64-unknown-linux-gnu'
 BASELINE = '615cbfb9e61c0a90e9801c4c739b574b2f52c430'
 VERSION = '0.0.0-quic-receive-study'
 VARIANTS = ('baseline', 'candidate')
-MECHANISM_ONLY = True
+MECHANISM_ONLY = False
 CASES = (('http3', 'upload', 4), ('http3', 'download', 4), ('http2', 'upload', 4),
          ('http3', 'upload', 1))
 REPEATS = 8
@@ -276,6 +276,92 @@ EDITS.update({
     ],
 })
 
+CANDIDATE_ENDPOINT_EDITS = {'noq/src/endpoint.rs': [('struct ConnectionSender {\n    events:',
+                          'struct ConnectionSender {\n'
+                          '    diagnostic_handle: ConnectionHandle,\n'
+                          '    diagnostic_charge_failures: u64,\n'
+                          '    events:'),
+                         ('    fn send_proto(&self, event: proto::ConnectionEvent) {\n',
+                          '    fn send_proto(&mut self, event: proto::ConnectionEvent) {\n'),
+                         ('                let Some(charge) = self.packets.charge(bytes) else {\n'
+                          '                    return;\n',
+                          '                let Some(charge) = self.packets.charge(bytes) else {\n'
+                          '                    self.diagnostic_charge_failures += 1;\n'
+                          '                    return;\n'),
+                         ('#[derive(Debug)]\nstruct ConnectionSet {\n',
+                          'impl Drop for ConnectionSender {\n'
+                          '    fn drop(&mut self) {\n'
+                          '        eprintln!(\n'
+                          '            r#"GM_QUIC_PACKET_QUEUE_FAILURES '
+                          '{{"connection_handle":{},"charge_failures":{}}}"#,\n'
+                          '            self.diagnostic_handle.0, self.diagnostic_charge_failures,\n'
+                          '        );\n'
+                          '    }\n'
+                          '}\n'
+                          '\n'
+                          '#[derive(Debug)]\n'
+                          'struct ConnectionSet {\n'),
+                         ('            ConnectionSender {\n                events: send,\n',
+                          '            ConnectionSender {\n'
+                          '                diagnostic_handle: handle,\n'
+                          '                diagnostic_charge_failures: 0,\n'
+                          '                events: send,\n'),
+                         ('    recv_limiter: WorkLimiter,\n',
+                          '    recv_limiter: WorkLimiter,\n'
+                          '    diagnostic_receive_turns: u64,\n'
+                          '    diagnostic_turn_messages: u64,\n'
+                          '    diagnostic_turn_datagrams: u64,\n'
+                          '    diagnostic_messages_total: u64,\n'
+                          '    diagnostic_messages_max_per_turn: u64,\n'
+                          '    diagnostic_datagrams_total: u64,\n'
+                          '    diagnostic_datagrams_max_per_turn: u64,\n'),
+                         ('            recv_limiter: WorkLimiter::new(RECV_TIME_BOUND),\n',
+                          '            recv_limiter: WorkLimiter::new(RECV_TIME_BOUND),\n'
+                          '            diagnostic_receive_turns: 0,\n'
+                          '            diagnostic_turn_messages: 0,\n'
+                          '            diagnostic_turn_datagrams: 0,\n'
+                          '            diagnostic_messages_total: 0,\n'
+                          '            diagnostic_messages_max_per_turn: 0,\n'
+                          '            diagnostic_datagrams_total: 0,\n'
+                          '            diagnostic_datagrams_max_per_turn: 0,\n'),
+                         ('        let get_time = || self.runtime.now();\n',
+                          '        self.recv_state.diagnostic_receive_turns += 1;\n'
+                          '        self.recv_state.diagnostic_turn_messages = 0;\n'
+                          '        self.recv_state.diagnostic_turn_datagrams = 0;\n'
+                          '        let get_time = || self.runtime.now();\n'),
+                         ('        self.recv_state.recv_limiter.finish_cycle(get_time);\n'
+                          '        let progress = result?;\n',
+                          '        self.recv_state.diagnostic_messages_max_per_turn = '
+                          'self.recv_state\n'
+                          '            '
+                          '.diagnostic_messages_max_per_turn.max(self.recv_state.diagnostic_turn_messages);\n'
+                          '        self.recv_state.diagnostic_datagrams_max_per_turn = '
+                          'self.recv_state\n'
+                          '            '
+                          '.diagnostic_datagrams_max_per_turn.max(self.recv_state.diagnostic_turn_datagrams);\n'
+                          '        self.recv_state.recv_limiter.finish_cycle(get_time);\n'
+                          '        let progress = result?;\n'),
+                         ('            Poll::Ready(Ok(messages)) => {\n',
+                          '            Poll::Ready(Ok(messages)) => {\n'
+                          '                self.diagnostic_messages_total += messages as u64;\n'
+                          '                self.diagnostic_turn_messages += messages as u64;\n'),
+                         ('            self.recv_limiter.record_work(1);\n',
+                          '            self.diagnostic_datagrams_total += 1;\n'
+                          '            self.diagnostic_turn_datagrams += 1;\n'
+                          '            self.recv_limiter.record_work(1);\n'),
+                         ('impl Drop for State {\n    fn drop(&mut self) {\n',
+                          'impl Drop for State {\n'
+                          '    fn drop(&mut self) {\n'
+                          '        eprintln!(\n'
+                          '            r#"GM_QUIC_ENDPOINT_RECEIVE '
+                          '{{"receive_turns":{},"messages_total":{},"messages_max_per_turn":{},"datagrams_total":{},"datagrams_max_per_turn":{}}}"#,\n'
+                          '            self.recv_state.diagnostic_receive_turns, '
+                          'self.recv_state.diagnostic_messages_total,\n'
+                          '            self.recv_state.diagnostic_messages_max_per_turn, '
+                          'self.recv_state.diagnostic_datagrams_total,\n'
+                          '            self.recv_state.diagnostic_datagrams_max_per_turn,\n'
+                          '        );\n')]}
+
 def source_revision(revision: str) -> str:
     return f'git+https://github.com/zR-JB/noq?rev={revision}#{revision}'
 
@@ -353,7 +439,8 @@ def diagnostic_patch(environment: dict[str, str], label: str):
     assert checkout.is_relative_to(cargo_home / 'git/checkouts')
     originals: dict[Path, bytes] = {}
     try:
-        for relative, changes in EDITS.items():
+        edits = EDITS if revision == BASELINE else EDITS | CANDIDATE_ENDPOINT_EDITS
+        for relative, changes in edits.items():
             path = checkout / relative
             originals[path] = path.read_bytes()
             content = originals[path].decode()
@@ -476,11 +563,12 @@ def transfer(backend: subprocess.Popen, binary: Path, environment: dict[str, str
                  'transfer': result, 'path': paths[0],
                  'server': {key: last[key] - first[key] for key in ('cpuSeconds', 'minorFaults', 'majorFaults')},
                  'client': json.loads(resource.read_text())}
-    row['server'].update(peakRssBytes=max(peaks['Rss'], last['rssBytes']), postStageRssBytes=last['rssBytes'])
+    row['server']['postStageRssBytes'] = last['rssBytes']
     row['serverMemoryStartBytes'] = first_memory
     row['serverMemoryEndBytes'] = memory(backend.pid)
     for key, value in row['serverMemoryEndBytes'].items():
         peaks[key] = max(peaks.get(key, 0), value)
+    row['server']['peakRssBytes'] = max(peaks['Rss'], last['rssBytes'])
     row['serverMemorySampledPeakBytes'] = peaks
     row['serverCgroupStartBytes'] = group_start
     row['serverCgroupEndBytes'] = cgroup_memory(group)

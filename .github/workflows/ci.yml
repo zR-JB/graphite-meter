@@ -506,7 +506,7 @@ jobs:
           python3 -m scripts.ci.release check-rust
 
   rust-quic-receive-study:
-    name: Temporary QUIC receive diagnostics
+    name: Temporary QUIC receive comparison
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     needs: plan
@@ -520,7 +520,9 @@ jobs:
         with: {rust: 'true', cache: 'false'}
       - name: Install musl headers and compiler
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
-      - name: Diagnose QUIC receive scheduling and buffer lifetimes
+      - name: Compare cooperative receive scheduling and buffer lifetimes
+        env:
+          GM_QUIC_RECEIVE_CANDIDATE_REV: 1294845f2678eae3c58660bedd60c8df08991e00
         run: python3 -m scripts.ci.rust_quic_receive_study
       - name: Upload measurements and build logs
         if: always()

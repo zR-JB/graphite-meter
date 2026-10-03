@@ -1,12 +1,12 @@
 [
   {
     "fork": "https://github.com/zR-JB/noq",
-    "branch": "graphite-meter/noq-v1.3.0",
-    "rev": "615cbfb9e61c0a90e9801c4c739b574b2f52c430",
+    "branch": "graphite-meter/receive-fairness",
+    "rev": "1294845f2678eae3c58660bedd60c8df08991e00",
     "upstream": "https://github.com/n0-computer/noq",
     "baseTag": "noq-v1.3.0",
     "base": "c1f411562e6078852749b8bcf1190523096a107f",
-    "diffSha256": "72881601b1b9701a73948f652f868555f7888cd44929b2f62250bedcf30cbb13",
+    "diffSha256": "3addaa219df0d09dfcdd3e254483fe9b68aebddcff1e6faa3e9cadff829b669e",
     "modifiedPackages": [
       "noq",
       "noq-proto"
@@ -65,7 +65,8 @@
       {"subject": "Drain old lost-packet records when packet tracking is exhausted", "purpose": "Retires lost-packet records older than two PTOs when tracking cannot reserve a packet, then retries once to restore send progress.", "origin": "graphite-meter"},
       {"subject": "Batch up to 32 datagrams per QUIC transmit", "purpose": "Bounds GSO batches at 32 datagrams and each drive at 64 before yielding to receive work.", "origin": "graphite-meter"},
       {"subject": "Reuse bounded receive metadata and account copied backing accurately", "purpose": "Reuses at most four fully charged reassembly metadata slots, releases larger drained heaps, and bases compaction on copied backing plus owner allocation instead of discarded packet storage; retains lifetime and tiny-fragment budget tests.", "origin": "graphite-meter"},
-      {"subject": "Make receive compaction coverage independent of pointer width", "purpose": "Derives the tiny-fragment compaction test threshold from the actual owner footprint on each architecture.", "origin": "graphite-meter"}
+      {"subject": "Make receive compaction coverage independent of pointer width", "purpose": "Derives the tiny-fragment compaction test threshold from the actual owner footprint on each architecture.", "origin": "graphite-meter"},
+      {"subject": "Preserve receive batches across cooperative packet-processing yields", "purpose": "Preserves full socket and GRO batches across cooperative packet-processing yields, retains receive metadata and rebinding origin, and covers interruption, migration and Smol-only builds.", "origin": "graphite-meter"}
     ],
     "metadataFiles": [
       ".github/workflows/graphite-meter.yml"
