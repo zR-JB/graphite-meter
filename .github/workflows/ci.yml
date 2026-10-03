@@ -237,8 +237,12 @@ jobs:
         uses: ./.github/actions/setup-buildx
       - name: Prepare the original collector and pinned compiler image
         run: |
-          mkdir -p rust/target
-          git show 4e712e1aec70d0371b960281565e2fc7760d20ce:scripts/legal/rust.py >rust/target/build-study-baseline.py
+          baseline_dir=rust/target/build-study-baseline
+          mkdir -p "$baseline_dir"/{scripts/legal,rust,legal}
+          git show 4e712e1aec70d0371b960281565e2fc7760d20ce:scripts/legal/rust.py >"$baseline_dir/scripts/legal/rust.py"
+          for path in rust/legal_build.rs scripts/legal/rust_platform.py legal/rust-platform-debian-bookworm.json; do
+            git show "3ee69f3543a0864c5390ec326ead48bebdf5129b:$path" >"$baseline_dir/$path"
+          done
           docker buildx build --file container/Dockerfile.rust --target rust-amd64 \
             --platform linux/amd64 --load --tag graphite-meter-rust:build-study .
       - name: Compare cold and edited-source builds with full release optimization

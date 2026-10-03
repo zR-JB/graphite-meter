@@ -51,8 +51,6 @@ pub fn embed(share_browser_notices: bool) -> Result<()> {
     println!("cargo:rerun-if-env-changed=GM_RUST_LEGAL_DIR");
     let repo = checkout()?;
     let output = output_directory(&repo)?;
-    let identity = build_identity();
-    fs::write(output.join("legal-build-identity.txt"), &identity)?;
     let Some(configured) = env::var_os("GM_RUST_LEGAL_DIR") else {
         return write_constants(&output, share_browser_notices, None, None, false);
     };
@@ -60,11 +58,6 @@ pub fn embed(share_browser_notices: bool) -> Result<()> {
         return Err("GM_RUST_LEGAL_DIR must be an absolute directory".into());
     }
     let directory = inside(&repo, configured)?;
-    let identity_path = directory.join("build-identity.txt");
-    println!("cargo:rerun-if-changed={}", identity_path.display());
-    if fs::read_to_string(identity_path)? != identity {
-        return Err("notice features, compiler flags, or build profile do not match this build".into());
-    }
     for (name, expected) in [
         ("package.txt", env::var("CARGO_PKG_NAME")?),
         ("target.txt", env::var("TARGET")?),
@@ -150,24 +143,4 @@ fn write_constants(
     }
     fs::write(output.join("legal.rs"), generated)?;
     Ok(())
-}
-
-fn build_identity() -> String {
-    let mut values: Vec<_> = env::vars()
-        .filter(|(name, _)| {
-            name.starts_with("CARGO_FEATURE_")
-                || matches!(
-                    name.as_str(),
-                    "TARGET"
-                        | "PROFILE"
-                        | "DEBUG"
-                        | "OPT_LEVEL"
-                        | "CARGO_ENCODED_RUSTFLAGS"
-                        | "CARGO_CFG_TARGET_FEATURE"
-                )
-        })
-        .collect();
-    values.sort();
-    // Debug escaping keeps embedded line breaks and separators unambiguous.
-    format!("{values:?}")
 }

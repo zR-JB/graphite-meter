@@ -447,15 +447,15 @@ description = "Format the experimental Rust workspace"
 dir = "rust"
 run = "cargo fmt --all"
 
-# Host builds verify native inputs against their reviewed platform record (legal/README.md).
+# Local builds retain dependency notices and carry a non-distributable development marker.
 [tasks.rust-server-build]
-description = "Build the experimental Rust server, rust/target/release/graphite-meter-server, with the production browser UI and reviewed host notices"
+description = "Build the experimental Rust server, rust/target/release/graphite-meter-server, with the production browser UI and development dependency notices"
 # prod stamps only the server, through GM_ENGINE_VERSION: a VERSION would stamp the browser client too.
 env = { GM_ENGINE_VERSION = "{{ get_env(name='GM_ENGINE_VERSION', default=get_env(name='VERSION', default='development') ~ '-rust') }}" }
 run = "python3 -m scripts.rust_build --package graphite-meter-server --profile release --browser prod"
 
 [tasks.rust-server-run]
-description = "Run the optimized (ci profile) experimental Rust server with reviewed host notices and GM_* configuration; arguments after -- go to the server"
+description = "Run the optimized (ci profile) experimental Rust server with development dependency notices and GM_* configuration; arguments after -- go to the server"
 raw = true
 env = { GM_ENGINE_VERSION = "development-rust" }
 run = [
@@ -464,7 +464,7 @@ run = [
 ]
 
 [tasks.rust-client-run]
-description = "Run the optimized (ci profile) experimental Rust TUI, with reviewed host notices, against a server"
+description = "Run the optimized (ci profile) experimental Rust TUI, with development dependency notices, against a server"
 raw = true
 run = [
   "python3 -m scripts.rust_build --package graphite-meter-client --profile ci",
@@ -472,7 +472,7 @@ run = [
 ]
 
 [tasks.rust-client-build]
-description = "Build the experimental Rust TUI, rust/target/release/graphite-meter-client, without browser assets, with reviewed host notices"
+description = "Build the experimental Rust TUI, rust/target/release/graphite-meter-client, without browser assets, with development dependency notices"
 run = "python3 -m scripts.rust_build --package graphite-meter-client --profile release"
 
 [tasks.rust-check]

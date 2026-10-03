@@ -48,7 +48,7 @@ editor and arrow steps cover the same range as Go's.
 
 `mise run rust-client-package VERSION` builds the experimental Linux and Windows
 TUI archives in the pinned builder image, with reviewed dependency notices and
-matching source; the Linux TUIs and the server image's binary are static musl executables, like Go's. Release requests can
+matching source; the Linux TUIs and the server image's binary are static musl executables. Release requests can
 opt into Rust TUI archives for Linux amd64/arm64 and Windows amd64, named like Go's
 with a `_rust` marker, and into a linux/amd64 + linux/arm64 server image tagged
 `VERSION-rust`; stable releases move `X.Y-rust` and `latest-rust` with it. These
@@ -64,8 +64,8 @@ linked inputs against the release builder's platform record. Go remains the rele
 prerelease integration remains gated.
 The experimental container uses `container/Dockerfile.rust`, which
 `mise run rust-container-build` builds as `graphite-meter:latest-rust`. That
-task and `rust-client-package` need an amd64 build host: the reviewed platform
-notices record its toolchain, which also cross-compiles arm64. The builder installs
+task and `rust-client-package` need an amd64 build host: the pinned builder
+toolchain also cross-compiles arm64. The builder installs
 its exact cross-compiler versions from snapshot.debian.org at a fixed timestamp, so
 a Debian point release changes neither them nor their dependencies. Like Go's image,
 the Rust image takes its CA roots and their copyright from the pinned Go builder, and
@@ -81,10 +81,9 @@ release profile (fat LTO, one code-generation unit).
 
 Local builds retain the browser bundle and its matching module scan separately
 from Go's `client/dist`. Rust edits reuse them; browser inputs and build stamps
-invalidate them. Cargo checks every invocation, and the legal pipeline verifies
-the actual compiled dependencies, native link inputs and embedded notices.
-Unchanged inputs retain their timestamps. Application edits normally link once;
-changed dependency/build inputs require a fresh inventory and notice embedding.
+invalidate them. The legal pipeline prepares a conservative locked dependency notice set,
+builds the final binary once, then verifies actual compiled dependencies and embedded notices.
+Unchanged generated inputs retain their timestamps so Cargo can reuse its artifacts.
 Local builds omit dependency-source archives; distribution builds still create
 and verify them. Changing runtime listener or certificate settings does not
 invalidate the build.
@@ -93,11 +92,15 @@ To repeat measurements without any build work, run the already-built
 `rust/target/release/graphite-meter-server` directly with the desired `GM_*`
 configuration and flags. `rust/target/ci/graphite-meter-server` and
 `rust/target/ci/graphite-meter-client` are the optimized local executables.
-The build output identifies the selected profile and browser/notices reuse.
+The build output identifies Cargo's selected profile and browser-asset reuse.
 
 `rust-server-build`, `rust-server-run`, `rust-client-run` and
-`rust-client-build` verify [reviewed host notices](../legal/README.md#rust-platform-records);
-an unrecorded host needs a platform review. The builder image produces the reviewed release binaries. HTTP/1, HTTPS/WSS, HTTP/2, and
+`rust-client-build` include reviewed dependency notices without requiring host platform approval.
+Their executables carry `UNREVIEWED DEVELOPMENT BUILD` because local runtime notices are not
+reviewed; even the optimized `prod` task produces a non-distributable development build.
+The pinned builder image produces the reviewed release binaries and checks actual native/import
+coverage plus notice-text fingerprints ([legal pipeline](../legal/README.md#rust-platform-records)).
+HTTP/1, HTTPS/WSS, HTTP/2, and
 HTTP/3/WebTransport listeners share authentication and measurement state.
 Password, OIDC, and hybrid authentication are implemented. OIDC has been checked
 against a local signed-token provider and a temporary HTTPS Keycloak realm,
@@ -320,8 +323,8 @@ whose first suite is AES, the server deliberately follows the client's TLS 1.3 s
 OpenSSL-based clients such as curl, which list AES-256-GCM first, get AES-256-GCM, at about 3%
 more CPU per byte. `rust-check` enforces dependency policy with
 `cargo deny --locked check` (cargo-deny pinned in `mise.toml`); a daily workflow rechecks advisories.
-It also limits the crates each static Linux binary compiles, build-time crates and the
-binary’s own included, to 141 for the server and 170 for the TUI.
+As a separate dependency policy, it limits the crates each static Linux binary compiles,
+build-time crates and the binary’s own included, to 141 for the server and 149 for the TUI.
 The first-party Rust crates forbid unsafe code. This does not make the full
 dependency graph free of unsafe code or native cryptography: ring contains
 C/assembly.
@@ -367,9 +370,9 @@ and [h2](https://github.com/zR-JB/h2) forks.
 [Fork provenance](../legal/rust-forks.json) records upstream bases, reviewed
 revisions and each commit's purpose. `rust-check` validates locked sources offline,
 requires an approved Rust legal review of every crate a shipped binary compiles for any
-shipped target, also those only release builds compile, and rejects reviews of crates no
-shipped binary compiles (`python3 -m scripts.legal.check_rust_reviews --prune` drops them)
-or in another layout than the legal tools write (`--format` rewrites them);
+shipped target, also those only release builds compile. Registry version updates reuse reviews
+only when the source and legal facts agree; Git forks retain exact revision reviews. Unused
+approvals may remain. Reviews must use the legal tools' layout (`--format` rewrites them);
 `python3 -m scripts.legal.check_git_sources --verify`, which CI's Rust job runs, checks fork
 branches, upstream tags and diffs. [Updating pinned forks](../legal/README.md#updating-pinned-forks) covers updates.
 The workspace's `http3` crate, shared by the server and the client, keeps a

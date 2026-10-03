@@ -74,7 +74,7 @@ def main() -> None:
     package = PACKAGES[PACKAGES.index(args.package)]
     profile = PROFILES[PROFILES.index(args.profile)]
     environment = dict(os.environ, CARGO_TARGET_DIR=str(ROOT / 'rust/target'))
-    command = [sys.executable, '-m', 'scripts.legal.rust', '--host', '--local', '--package', package,
+    command = [sys.executable, '-m', 'scripts.legal.rust', '--development', '--local', '--package', package,
                '--profile', profile, '--out', f'rust/target/dev-legal/{package}-{profile}',
                '--reviews', 'legal/rust-reviewed-components.json']
     if args.browser:

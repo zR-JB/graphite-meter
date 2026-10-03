@@ -15,33 +15,18 @@ from copy import deepcopy
 
 from scripts.ci.github_api import ControlPlaneError
 from scripts.legal.fixtures import CheckoutTests
-from scripts.legal.model import (Component, Json, LegalError, Provenance, Review, array, manual_files,
+from scripts.legal.model import (Component, Json, LegalError, LegalFile, Provenance, Review, array, manual_files,
                                  manual_sources, marshal, read_json, sha256)
 from scripts.legal.review import add_provenance, validate_review
 from scripts.legal.rust import (DEVELOPMENT, DEVELOPMENT_NOTICE, add_cargo_sources, artifacts, capture, cargo,
-                                checked_platform_notice,
-                                image_additions, legal_report, reusable, stage_browser, write_changed)
-from scripts.legal.rust_platform import SYSROOT, candidate, fetch_notices, imports, link_map, linked, linker_version, notice
-from scripts.legal.rustc_inspect import MARKER, inspection_arguments
+                                checked_platform_notice, discover,
+                                image_additions, legal_report, resolved_inputs, stage_browser, verify_prepared, write_changed)
+from scripts.legal.rust_platform import SYSROOT, candidate, fetch_notices, imports, link_map, linked, notice
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 class RustFreshnessTests(CheckoutTests):
-    def test_reuse_requires_successful_validation_and_identical_dependency_inputs(self) -> None:
-        output = self.root / 'output'
-        for name, data in {'rust/Cargo.lock': b'locked', 'output/inputs/rust/Cargo.lock': b'locked',
-                           'output/inputs.txt': b'rust/Cargo.lock\n', 'output/LEGAL.txt': b'notices',
-                           'output/invocation.json': b'configuration'}.items():
-            write_changed(self.root / name, data)
-        self.assertTrue(reusable(output, self.root, b'configuration'))
-        self.assertFalse(reusable(output, self.root, b'changed compiler flags'))
-        write_changed(self.root / 'rust/Cargo.lock', b'new dependency')
-        self.assertFalse(reusable(output, self.root, b'configuration'))
-        write_changed(self.root / 'rust/Cargo.lock', b'locked')
-        (output / 'invocation.json').unlink()
-        self.assertFalse(reusable(output, self.root, b'configuration'))
-
     def test_staging_preserves_identical_assets_and_rust_notices_but_removes_deleted_assets(self) -> None:
         source, target = self.root / 'source', self.root / 'target'
         for path, data in ((source / 'index.html', b'page'), (source / 'obsolete.js', b'old'),
@@ -59,18 +44,16 @@ class RustFreshnessTests(CheckoutTests):
         with self.assertRaisesRegex(LegalError, 'symbolic links'):
             stage_browser(source, target)
 
-    def test_failed_regeneration_invalidates_the_old_notice_and_reuse_marker(self) -> None:
+    def test_failed_regeneration_invalidates_the_old_notice(self) -> None:
         from scripts.legal.rust import main
         output = self.root / 'output'
-        for name in ('LEGAL.txt', 'invocation.json'):
-            write_changed(output / name, b'previous success')
-        with patch.object(sys, 'argv', ['rust', '--host', '--local', '--package', 'graphite-meter-client',
+        write_changed(output / 'LEGAL.txt', b'previous success')
+        with patch.object(sys, 'argv', ['rust', '--development', '--local', '--package', 'graphite-meter-client',
                                         '--out', str(output)]), \
                 patch('scripts.legal.rust.build', side_effect=LegalError('unreviewed dependency')):
             with self.assertRaisesRegex(LegalError, 'unreviewed dependency'):
                 main()
         self.assertFalse((output / 'LEGAL.txt').exists())
-        self.assertFalse((output / 'invocation.json').exists())
 
     def test_staging_allows_assets_to_change_between_files_and_directories(self) -> None:
         source, target = self.root / 'source', self.root / 'target'
@@ -92,7 +75,6 @@ class RustFreshnessTests(CheckoutTests):
 
         output = self.root / 'output'
         write_changed(output / 'LEGAL.txt', b'previously approved')
-        write_changed(output / 'invocation.json', b'previous success')
         write_changed(self.root / 'rust/Cargo.lock', b'locked')
         metadata = {'target_directory': str(self.root / 'target'), 'packages': []}
         messages = [{'reason': 'compiler-artifact', 'executable': str(self.root / 'binary'),
@@ -103,6 +85,7 @@ class RustFreshnessTests(CheckoutTests):
                 patch('scripts.legal.rust.manual_sources', return_value=[]), \
                 patch('scripts.legal.rust.rust_channel', return_value='pinned'), \
                 patch('scripts.legal.rust.subprocess.check_output', side_effect=['host: target\n', str(self.root / 'sysroot')]), \
+                patch('scripts.legal.rust.prepare', return_value=(metadata, {})), \
                 patch('scripts.legal.rust.capture', return_value=(metadata, messages)), \
                 patch('scripts.legal.rust.discover', return_value=([], [], ['unreviewed dependency'], 'root')), \
                 patch('scripts.legal.rust.platform.linked', return_value=set()), \
@@ -112,7 +95,6 @@ class RustFreshnessTests(CheckoutTests):
         self.assertTrue((output / 'platform-candidate.json').is_file())
         self.assertEqual(json.loads((output / 'review-errors.json').read_text()), ['unreviewed dependency'])
         self.assertFalse((output / 'LEGAL.txt').exists())
-        self.assertFalse((output / 'invocation.json').exists())
 
 
 class RustBrowserFreshnessTests(CheckoutTests):
@@ -178,19 +160,56 @@ class RustBrowserFreshnessTests(CheckoutTests):
             self.assertEqual(built, 7)
 
 
+class RustDependencyReviewTests(CheckoutTests):
+    def test_registry_version_reuse_keeps_license_fingerprint_and_ambiguity_checks(self) -> None:
+        directory = self.root / 'dependency'
+        write_changed(directory / 'LICENSE', b'reviewed license')
+        write_changed(self.root / 'legal/rust-forks.json', b'[]')
+        source = 'registry+https://example.invalid/index'
+        item = {'id': 'dependency', 'name': 'dependency', 'version': '2.0', 'source': source,
+                'manifest_path': str(directory / 'Cargo.toml'), 'license': 'MIT'}
+        metadata = {'packages': [item, {'id': 'root', 'name': 'graphite-meter-client',
+                                       'manifest_path': str(self.root / 'rust/client/Cargo.toml')}]}
+        review = Review(ecosystem='cargo', name='dependency', reviewedVersion='1.0', upstream=source,
+                        declaredLicenseExpression='MIT', selectedLicenseExpression='MIT', reviewDecision='approved',
+                        legalFiles=[LegalFile('LICENSE', sha256(b'reviewed license'), kind='license')])
+
+        def check(reviews: list[Review]) -> list[str]:
+            return discover(self.root, metadata, [], 'graphite-meter-client', reviews,
+                            compiled={'dependency': {'units': [], 'nativeLibraries': []}})[2]
+
+        self.assertEqual(check([review]), [])
+        duplicate = deepcopy(review)
+        duplicate.reviewedVersion = 'older'
+        with self.assertRaisesRegex(LegalError, 'ambiguous Rust legal review'):
+            check([review, duplicate])
+        duplicate.reviewedVersion = '2.0'
+        self.assertEqual(check([review, duplicate]), [])
+        item['license'] = 'Apache-2.0'
+        self.assertIn('declared license changed', check([review])[0])
+        item['license'] = 'MIT'
+        write_changed(directory / 'LICENSE', b'changed license')
+        self.assertIn('legal fingerprint changed', check([review])[0])
+
+
 class RustArtifactTests(unittest.TestCase):
-    def test_inspection_rewrites_only_the_selected_root_library_emission(self) -> None:
-        arguments = ['rustc', '--crate-name', 'application', '--crate-type', 'lib',
-                     '--emit=dep-info,metadata,link', '--emit', 'llvm-ir', '-C', 'lto=fat']
-        self.assertEqual(inspection_arguments(arguments, 'application'), arguments)
-        self.assertEqual(inspection_arguments([*arguments, MARKER], 'application'),
-                         ['rustc', '--crate-name', 'application', '--crate-type', 'lib', '-C', 'lto=fat',
-                          '--emit=dep-info,metadata'])
-        for invalid in (arguments + [MARKER, MARKER], arguments + [MARKER, '--test'],
-                        [value.replace('application', 'other') for value in arguments] + [MARKER],
-                        [value.replace('lib', 'bin') for value in arguments] + [MARKER]):
-            with self.subTest(arguments=invalid), self.assertRaises(ValueError):
-                inspection_arguments(invalid, 'application')
+    def test_target_and_host_trees_require_unambiguous_metadata_identities(self) -> None:
+        packages = [{'id': name, 'name': name, 'version': '1.0'} for name in ('app', 'runtime', 'macro', 'generator')]
+        selected = resolved_inputs({'packages': packages}, ['app v1.0\nruntime v1.0\nmacro v1.0',
+                                                            'app v1.0\ngenerator v1.0'])
+        self.assertEqual(set(selected), {'app', 'runtime', 'macro', 'generator'})
+        for changed in (packages[:-1], packages + [packages[-1] | {'id': 'another source'}]):
+            with self.assertRaisesRegex(LegalError, 'missing or ambiguous'):
+                resolved_inputs({'packages': changed}, ['generator v1.0'])
+
+    def test_final_build_requires_prepared_notices_and_unchanged_reviewed_facts(self) -> None:
+        component = Component('runtime', '1.0', 'cargo', 'registry+source', 'MIT')
+        unused = Component('host-only', '1.0', 'cargo', 'registry+source', 'MIT')
+        verify_prepared([component, unused], [component], [])
+        for actual, failures in (([component], ['changed legal files']), ([component, unused], []),
+                                 ([Component('runtime', '1.0', 'cargo', 'registry+source', 'Apache-2.0')], [])):
+            with self.assertRaisesRegex(LegalError, 'missing or changed dependency notices'):
+                verify_prepared([component], actual, failures)
 
     def messages(self) -> list[dict]:
         return [
@@ -212,18 +231,6 @@ class RustArtifactTests(unittest.TestCase):
         self.assertEqual(result['dependency']['units'][0]['features'], ['a', 'b'])
         self.assertEqual(result['dependency']['nativeLibraries'], ['static=crypto'])
         self.assertEqual(set(result), {'application', 'dependency'})
-
-    def test_inspection_accepts_a_library_but_final_validation_requires_the_executable(self) -> None:
-        messages = self.messages()
-        messages[2]['target']['kind'] = ['lib']
-        messages[2]['executable'] = None
-        result = artifacts(messages, 'application', 'application', inspection=True)
-        self.assertEqual(result['dependency'], artifacts(self.messages(), 'application', 'application')['dependency'])
-        with self.assertRaisesRegex(LegalError, 'requested executable'):
-            artifacts(messages, 'application', 'application')
-        messages[2]['target']['name'] = 'other'
-        with self.assertRaisesRegex(LegalError, 'requested library'):
-            artifacts(messages, 'application', 'application', inspection=True)
 
     def test_failed_truncated_or_wrong_binary_build_is_rejected(self) -> None:
         messages = self.messages()
@@ -344,8 +351,14 @@ class RustPlatformTests(CheckoutTests):
         (self.root / 'legal').mkdir()
         relative = 'legal/manual/runtime/LICENSE'
         resource = {'url': 'https://example.invalid/immutable/LICENSE', 'sha256': sha256(b'reviewed license')}
-        (self.root / 'legal/rust-notice-sources.json').write_text(json.dumps({relative: resource}))
+        self.enterContext(patch('scripts.legal.rust_platform.rust_channel', return_value='pinned'))
+        resources = {'rustVersion': 'pinned', relative: resource}
+        (self.root / 'legal/rust-notice-sources.json').write_text(json.dumps(resources))
         entry: dict[str, Json] = {'notices': {relative: 'runtime/LICENSE'}}
+        (self.root / 'legal/rust-notice-sources.json').write_text(json.dumps(resources | {'rustVersion': 'old'}))
+        with self.assertRaisesRegex(LegalError, 'require review for Rust'):
+            fetch_notices(self.root, entry)
+        (self.root / 'legal/rust-notice-sources.json').write_text(json.dumps(resources))
         with patch('urllib.request.urlopen', return_value=io.BytesIO(b'changed license')):
             with self.assertRaisesRegex(LegalError, 'bytes differ'):
                 fetch_notices(self.root, entry)
@@ -402,17 +415,6 @@ class RustPlatformTests(CheckoutTests):
             self.assertEqual(imports(Path('/build/graphite-meter-client'), 'aarch64-apple-darwin'),
                              {'/usr/lib/libSystem.B.dylib'} | relative)
 
-    def test_only_a_reviewed_linker_runs(self) -> None:
-        with patch.dict(os.environ, {'CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER': './linker'}):
-            with self.assertRaisesRegex(LegalError, 'unreviewed linker'):
-                linker_version('x86_64-unknown-linux-gnu')
-        # A Cargo configuration file can name a linker too.
-        for config in ('.cargo/config.toml', 'rust/.cargo/config'):
-            (self.root / config).parent.mkdir(parents=True)
-            (self.root / config).write_text('[target.x86_64-unknown-linux-gnu]\nlinker = "./linker"\n')
-            with self.subTest(config=config), self.assertRaisesRegex(LegalError, 'no Cargo configuration'):
-                linker_version('x86_64-unknown-linux-gnu', self.root)
-            (self.root / config).unlink()
 
 
 class RustPlatformRecordTests(CheckoutTests):
@@ -422,7 +424,6 @@ class RustPlatformRecordTests(CheckoutTests):
     MIT = SYSROOT + 'share/doc/rust/licenses/MIT.txt'
 
     def setUp(self) -> None:
-        self.enterContext(patch('scripts.legal.rust_platform.linker_version', return_value='cc 1'))
         super().setUp()
         self.sysroot = self.root / 'sysroot'
         zlib, libc = str(self.root / 'zlib/copyright'), str(self.root / 'libc/copyright')
@@ -434,15 +435,17 @@ class RustPlatformRecordTests(CheckoutTests):
         }
         for path, content in self.files.items():
             self.write(path, content)
-        # Every file above is an input; its listing and digest are computed here independently.
-        self.listing = ''.join(f'{path}\t{sha256(self.files[path].encode())}\n' for path in sorted(self.files))
+        # Only notice texts are fingerprinted; native files remain an allowlist.
+        self.texts = {path: content for path, content in self.files.items()
+                      if '/share/doc/' in path or path.endswith('/copyright')}
+        self.listing = ''.join(f'{path}\t{sha256(self.texts[path].encode())}\n' for path in sorted(self.texts))
         self.entry: dict = {
-            'target': 't', 'rustc': 'rustc 1', 'nativeCompiler': 'cc 1', 'systemLibraries': ['libc.so.6'],
+            'target': 't', 'systemLibraries': ['libc.so.6'],
             'reviewDecision': 'approved', 'reviewNotes': 'reviewed', 'description': 'Platform notices.',
             'nativeInputs': [self.NATIVE],
             # The record's order, not path order, orders its notices.
             'notices': {zlib: 'zlib/copyright', libc: 'libc/copyright'},
-            'inputsSha256': sha256(self.listing.encode()),
+            'noticesSha256': sha256(self.listing.encode()),
         }
 
     def write(self, path: str, content: str) -> None:
@@ -451,29 +454,31 @@ class RustPlatformRecordTests(CheckoutTests):
         local.write_text(content)
 
     def facts(self, **changes: object) -> dict:
-        return {'target': 't', 'compiler': 'rustc 1', 'sysroot': self.sysroot,
+        return {'target': 't', 'sysroot': self.sysroot,
                 'inputs': {self.NATIVE, self.STD}, 'libraries': {'libc.so.6'}} | changes
 
     def notice(self, entry: dict | None = None, **changes: object) -> str:
         return notice(self.entry if entry is None else entry, **self.facts(**changes))
 
-    def test_any_changed_added_or_missing_input_is_refused(self) -> None:
-        for path, content in self.files.items():
+    def test_changed_added_or_missing_notices_are_refused_but_native_bytes_are_not_pinned(self) -> None:
+        for path, content in self.texts.items():
             with self.subTest(changed=path):
                 self.write(path, content + ' ')
-                with self.assertRaisesRegex(LegalError, 'inputs changed'):
+                with self.assertRaisesRegex(LegalError, 'platform notices changed'):
                     self.notice()
                 self.write(path, content)
-        for path in (SYSROOT + 'lib/rustlib/t/lib/libextra-3.rlib', SYSROOT + 'share/doc/rust/licenses/ISC.txt'):
-            with self.subTest(added=path):
-                self.write(path, 'added')
-                with self.assertRaisesRegex(LegalError, 'inputs changed'):
-                    self.notice()
-                (self.sysroot / path.removeprefix(SYSROOT)).unlink()
+        for path in (self.STD, self.NATIVE):
+            self.write(path, 'new compiler output')
+        self.notice()
+        extra = self.sysroot / 'share/doc/rust/licenses/ISC.txt'
+        extra.write_text('new notice')
+        with self.assertRaisesRegex(LegalError, 'platform notices changed'):
+            self.notice()
+        extra.unlink()
         with self.assertRaisesRegex(LegalError, 'reviewed none'):
-            self.notice({key: value for key, value in self.entry.items() if key != 'inputsSha256'})
-        (self.sysroot / self.NATIVE.removeprefix(SYSROOT)).unlink()
-        with self.assertRaises(FileNotFoundError):
+            self.notice({key: value for key, value in self.entry.items() if key != 'noticesSha256'})
+        (self.sysroot / self.MIT.removeprefix(SYSROOT)).unlink()
+        with self.assertRaisesRegex(LegalError, 'platform notices changed'):
             self.notice()
 
     def test_a_linked_input_outside_the_rlibs_and_native_inputs_is_refused(self) -> None:
@@ -492,9 +497,9 @@ class RustPlatformRecordTests(CheckoutTests):
         self.assertIn(unexpected, str(failure.exception))
 
     def test_every_review_fact_is_still_required(self) -> None:
-        cases = [(None, {}, 'absent or stale'), ({'rustc': 'rustc 2'}, {}, 'absent or stale'),
-                 ({'reviewDecision': 'pending'}, {}, 'absent or stale'), ({'reviewNotes': ''}, {}, 'absent or stale'),
-                 ({'nativeCompiler': 'cc 2'}, {}, 'native linker toolchain differs'),
+        cases = [(None, {}, 'absent or unresolved'), ({'target': 'other'}, {}, 'absent or unresolved'),
+                 ({'reviewDecision': 'pending'}, {}, 'absent or unresolved'),
+                 ({'reviewNotes': ''}, {}, 'absent or unresolved'),
                  ({}, {'libraries': {'libc.so.6', 'libm.so.6'}}, 'system libraries lack review'),
                  ({'notices': {self.MIT: 'MIT'}}, {}, 'beyond the Rust standard library'),
                  ({'notices': {str(self.root / 'zlib/copyright'): ''}}, {}, 'each with a name')]
@@ -517,8 +522,8 @@ class RustPlatformRecordTests(CheckoutTests):
         self.write(self.CRT1, 'crt1')
         record, listing = candidate(None, **self.facts(inputs={self.STD, self.NATIVE, self.CRT1}))
         self.assertEqual((record['nativeInputs'], record['notices']), ([self.CRT1, self.NATIVE], {}))
-        self.assertIn(f"{self.CRT1}\t{sha256(b'crt1')}\n", listing)
-        self.assertEqual(record['inputsSha256'], sha256(listing.encode()))
+        self.assertNotIn(self.CRT1, listing)
+        self.assertEqual(record['noticesSha256'], sha256(listing.encode()))
         approved = record | {'reviewDecision': 'approved', 'reviewNotes': 'reviewed'}
         self.assertIn('--- rust-standard-library/MIT.txt ---', self.notice(approved, inputs={self.STD, self.CRT1}))
 
@@ -601,15 +606,11 @@ class RustBuildTests(CheckoutTests):
             subprocess.run(cargo(self.root, 'generate-lockfile', '--offline'), cwd=self.root / 'rust', check=True)
             # A development build is Cargo's host build; a release build names its --target.
             for target, notices in ((None, DEVELOPMENT_NOTICE + 'notices\n'), (host, 'Reviewed notices\n')):
-                # The notices must match the identity of the build that embeds them, which a first build writes.
-                _, messages = capture(self.root, 'app', target, 'release', None)
-                output = Path(next(item['out_dir'] for item in messages if item.get('out_dir')))
                 legal = self.root / 'rust/target/notices' / (target or 'host')
                 (legal / 'inputs/rust').mkdir(parents=True)
                 for name, content in (('LEGAL.txt', notices), ('package.txt', 'app'), ('target.txt', host),
                                       ('rustc-path.txt', rustc), ('inputs.txt', 'rust/Cargo.lock\n'),
-                                      ('inputs/rust/Cargo.lock', (self.root / 'rust/Cargo.lock').read_text()),
-                                      ('build-identity.txt', (output / 'legal-build-identity.txt').read_text())):
+                                      ('inputs/rust/Cargo.lock', (self.root / 'rust/Cargo.lock').read_text())):
                     (legal / name).write_text(content)
                 _, messages = capture(self.root, 'app', target, 'release', None, legal)
                 executable = Path(next(item['executable'] for item in messages if item.get('executable')))

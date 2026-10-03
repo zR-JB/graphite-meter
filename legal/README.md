@@ -86,49 +86,53 @@ pretend custom material is an ordinary MIT dependency to silence the gate.
 
 ## Rust platform records
 
-Each `rust-platform-*.json` file holds one reviewed record per Rust target of a build
-environment: the linked native files beyond the target's sysroot rlibs (`nativeInputs`), the
-package texts that cover them (`notices`, path to notice name), and the system libraries the
-executable may import. The rlibs (`lib/rustlib/<target>/lib/*.rlib`) and the Rust
-standard-library texts (`share/doc/rust/COPYRIGHT-library.html` and `licenses/*`) come from the
-sysroot. `inputsSha256` is the SHA-256 of one `path<TAB>sha256` line per file of all four sets,
-sorted by path. `scripts.legal.rust` reads the linker map of every Rust build and refuses a
-target whose compiler, linked native files, imported libraries or inputs differ from its record;
-the error prints this build's unreviewed record and the listing it hashes, and
-`--review-template` writes them to `platform-candidate.json` and `platform-inputs.txt`. The
-record keeps the reviewed native inputs this build did not link while they exist, such as import
-libraries only unoptimized builds take, so re-approving it drops no fingerprinted input. Review
-both, add each package text that covers the native files to `notices`, rerun with that record
-for its digest, then approve it and commit it to the environment's file. Texts the environment
-lacks, such as musl's and LLVM's for the static musl targets, are fetched from immutable
-upstream revisions in `rust-notice-sources.json`. Downloaded and cached bytes must match
-the pinned SHA-256 before entering the notices; cached files stay out of Git and Docker
-contexts. Other missing package notices remain under `legal/manual`
-and named by repository path. Each actual distributed build checks its linked inputs and prints
-its facts if the review is stale. Rust releases support Linux and Windows; Go keeps its macOS targets.
-PR checks use the pinned Debian release builder for Linux/Windows, with fat LTO disabled to reduce
-compile time. Release requests use full release settings and no CI caches. The Fedora host record
-covers local builds only; distributed artifacts always use their own builder's record.
+The release builder's `rust-platform-debian-bookworm.json` holds one reviewed record per
+distributed Rust target: native files beyond known sysroot rlibs (`nativeInputs`), package texts
+that cover them (`notices`, path to notice name), and allowed system-library imports.
+Every distributed build checks its actual linker map and imports against these allowlists.
+The standard-library aggregate (`share/doc/rust/COPYRIGHT-library.html`) and every text in
+`licenses/*` come from the actual sysroot. `noticesSha256` hashes one `path<TAB>sha256` line
+per standard-library or additional notice text, sorted by path. Changed, added or missing
+notice texts require review. Object/archive bytes and full compiler version strings are not
+separate legal approvals; pinned toolchain archives, builder images and native package versions
+establish provenance. These checks provide assurance that the shipped notices cover the build;
+the underlying licenses govern attribution, notice preservation and source provision, not our
+particular fingerprint scheme.
+
+`scripts.legal.rust --target TARGET --review-template` writes `platform-candidate.json` and
+`platform-inputs.txt`: observed native/import facts and the canonical notice listing. Review
+the contributing sources and their terms, add their covering texts to `notices`, then approve
+the resulting record. Previously approved native paths remain covered while present, including
+import libraries used only by unoptimized builds. Texts the builder lacks, such as musl's and
+LLVM's, come from immutable upstream sources in `rust-notice-sources.json`; downloaded and
+cached bytes must match their pinned SHA-256. Its `rustVersion` must match the pinned toolchain
+when external runtime notices are used, so a Rust upgrade also requires reviewing those sources.
+Cached texts stay out of Git and Docker contexts. Rust releases support Linux and Windows;
+Go keeps its macOS targets. PR package checks disable fat LTO; release requests retain full
+release settings and omit CI caches.
 
 The local tasks (`rust-server-run`, `rust-server-build`, `rust-client-run`, `rust-client-build`)
-run `scripts.rust_build`, which calls `scripts.legal.rust --host --local`: they keep Cargo's ordinary host output paths and flags, read its
-linker map, and select the host's `rust-platform-*.json` record by target and native compiler.
-The same compiler, native-input, import and notice fingerprints used for release builds must match.
-Fedora 44 x86-64 has a host record. A different host or changed
-toolchain needs review; run the pipeline with `--host --review-template` to collect its candidate
-and input listing, then review it as above. These tasks fail if the platform review is missing or stale.
-The local path retains validated notices and identical input snapshots so Cargo can reuse its
-artifact or link an application edit once. Every invocation still checks the compiled/native
-closure and embedded report; failures invalidate the report and reuse marker. It omits source
-archives, which the distribution path continues to build and verify.
-
-Explicit `scripts.legal.rust --development` builds remain available on unreviewed hosts: they keep
-every dependency review but omit the platform, and their notices open with `UNREVIEWED DEVELOPMENT
-BUILD`, which their executables carry in plain text beside the compressed notices. The workflow
-policy refuses the flag in any workflow, image build, task or shell script that CI or a release runs.
+call `scripts.legal.rust --development --local`. They retain dependency and browser reviews,
+ordinary Cargo host output paths and the selected profile, but require no host platform approval
+and omit source archives. Their notices omit unreviewed host runtime texts and open with
+`UNREVIEWED DEVELOPMENT BUILD`; the executable carries that marker beside its compressed notices.
+The optimized local `prod` task remains a development build for distribution purposes.
+Workflow policy refuses the development flag in workflow, image and release command chains.
 Release verification refuses the marker in each Rust source offer's notices, in each Rust TUI archive's
 executable and `THIRD_PARTY_NOTICES.txt`, which must equal its offer's, and in each image's server and
 notices.
+
+The collector prepares notices from the locked normal/build dependency graph for the target and
+host, then compiles the final binary once. This conservative inventory may include uncompiled
+dependencies; after compilation every actual component must be covered and its source and legal
+facts must agree. The exported inventory and dependency-source archive describe actual compiled
+inputs, including build scripts and procedural macros. Final checks also verify native/import
+coverage and the embedded notice bytes. The reviewed-distribution guarantee belongs to this
+collector and final packaging verification; manually supplying private `GM_RUST_LEGAL_DIR` to
+Cargo is not a substitute. Registry version updates may reuse a same-name/source review only
+while license expressions, modification status and complete legal-file fingerprints agree.
+Git forks retain exact revision reviews. Unused approvals may remain; the Linux crate-count limit
+is a separate project dependency policy.
 
 About uses browser URLs separately from Cargo's package-source identities, which remain in the
 inventories for review. Crates link to their published version; Git dependencies link to their

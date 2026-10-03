@@ -1,17 +1,18 @@
-"""Keep legal/rust-reviewed-components.json to exactly the crates the shipped Rust binaries compile.
+"""Check review coverage for the shipped Rust targets.
 
-    python3 -m scripts.legal.check_rust_reviews [--prune] [--format]
+    python3 -m scripts.legal.check_rust_reviews [--format]
 
 Each supported Linux/Windows package and target is resolved as its release build is (cargo tree over normal and
 build edges, with that target's features), so crates only a release build compiles, such as the
-Windows TUI's, count as well. Every such crate needs an approved review of its exact name,
-version and source, and every review must name one of them; --prune drops the reviews that name
-none. The file keeps the layout the legal tools write, so hand edits cannot drift; --format
-rewrites it in that layout. The static Linux binaries may compile at most BUDGET crates.
+Windows TUI's, count as well. Registry reviews cover the same name and source across versions;
+the artifact collector still checks actual license expressions, modifications and legal-file bytes.
+Git reviews bind the exact version and revision. Unused approved reviews may remain. --format
+rewrites the file in the layout the legal tools write. The Linux crate budget is a separate
+project dependency policy, not a license requirement.
 
 Every shipped target also needs an approved platform record in the --supplement file its builder
-reads, so a release request cannot reach a target nobody reviewed, and a release or host builder must read every
-legal/rust-platform-*.json file.
+reads, so a release request cannot reach a target nobody reviewed. Local development needs no
+platform approval and cannot produce distributable artifacts.
 """
 from __future__ import annotations
 
@@ -23,7 +24,6 @@ import sys
 import tomllib
 from pathlib import Path
 
-from ..ci.toolchains import rust_channel
 from .model import marshal_reviews
 
 REPO = Path(__file__).resolve().parents[2]
@@ -57,58 +57,28 @@ def compiled(package: str, target: str) -> set[tuple[str, str]]:
     return {(name, version.removeprefix('v')) for name, version, *_ in map(str.split, tree.splitlines())}
 
 
-# The pinned builder image packages every distributed Rust target.
-BUILDERS = {
-    'container/Dockerfile.rust': lambda platform: platform.startswith(('linux/', 'windows/')),
-}
-
-
 def unreviewed_platforms(repo: Path, targets: str) -> list[str]:
-    """Shipped targets whose builder's --supplement file holds no approved record for this toolchain,
-    and platform record files that no builder reads."""
-    channel = rust_channel(repo)
-    problems, read = [], set()
-    for builder, builds in BUILDERS.items():
-        supplements = set(re.findall(r'--supplement (legal/\S+\.json)', (repo / builder).read_text()))
-        read |= supplements
-        if len(supplements) != 1:
-            problems.append(f'{builder} must read exactly one --supplement file')
-            continue
-        name = supplements.pop()
-        records = json.loads((repo / name).read_text()) if (repo / name).exists() else []
-        approved = {record['target'] for record in records
-                    if record.get('reviewDecision') == 'approved' and record.get('reviewNotes')
-                    and f'\nrelease: {channel}\n' in record.get('rustc', '')}
-        for line in targets.splitlines():
-            platform, target = line.split()
-            if builds(platform) and target not in approved:
-                problems.append(f'{name} has no approved record for {target} on Rust {channel}, which {builder} builds')
-    mise = (repo / 'mise.toml').read_text()
-    wrapper = repo / 'scripts/rust_build.py'
-    host_builds = ('python3 -m scripts.rust_build' in mise and wrapper.is_file()
-                   and "'--host'" in wrapper.read_text())
-    for path in sorted((repo / 'legal').glob('rust-platform-*.json')):
-        name = path.relative_to(repo).as_posix()
-        if name in read:
-            continue
-        records = json.loads(path.read_text())
-        if not (host_builds and records and all(
-                record.get('reviewDecision') == 'approved' and record.get('reviewNotes')
-                and f"\nhost: {record.get('target')}\n" in record.get('rustc', '')
-                and f'\nrelease: {channel}\n' in record.get('rustc', '') for record in records)):
-            problems.append(f'{name} is read by no builder')
-    return problems
-
-
-def unused(reviews: list[dict], used: set[Crate]) -> list[dict]:
-    return [review for review in reviews
-            if (review['name'], review['reviewedVersion'], review['upstream']) not in used]
+    """Every shipped target needs an approved notice record in the pinned builder's supplement."""
+    builder = 'container/Dockerfile.rust'
+    supplements = set(re.findall(r'--supplement (legal/\S+\.json)', (repo / builder).read_text()))
+    if len(supplements) != 1:
+        return [f'{builder} must read exactly one --supplement file']
+    name = supplements.pop()
+    records = json.loads((repo / name).read_text()) if (repo / name).exists() else []
+    approved = {record['target'] for record in records
+                if record.get('reviewDecision') == 'approved' and record.get('reviewNotes')
+                and re.fullmatch(r'[0-9a-f]{64}', record.get('noticesSha256', ''))}
+    return [f'{name} has no approved record for {target}, which {builder} builds'
+            for target in sorted({target for _, target in shipped(targets)} - approved)]
 
 
 def unreviewed(reviews: list[dict], used: set[Crate]) -> list[Crate]:
-    """The compiled crates that no approved review names exactly."""
-    return sorted(used - {(review['name'], review['reviewedVersion'], review['upstream'])
-                          for review in reviews if review.get('reviewDecision') == 'approved'})
+    """The compiled identities without an approved registry family or exact Git review."""
+    return sorted(crate for crate in used if not any(
+        review.get('reviewDecision') == 'approved'
+        and (review['name'], review['upstream']) == (crate[0], crate[2])
+        and (crate[2].startswith('registry+') or review['reviewedVersion'] == crate[1])
+        for review in reviews))
 
 
 def over_budget(trees: dict[tuple[str, str], set[tuple[str, str]]]) -> list[str]:
@@ -119,7 +89,6 @@ def over_budget(trees: dict[tuple[str, str], set[tuple[str, str]]]) -> list[str]
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--prune', action='store_true', help='remove the reviews no shipped binary compiles')
     parser.add_argument('--format', action='store_true', help='rewrite the reviews in the layout the legal tools write')
     args = parser.parse_args()
     reviews = json.loads(REVIEWS.read_text())
@@ -140,19 +109,11 @@ def main() -> None:
             for source in sources.get((name, version), ())}
     problems = [f'no approved review names {name} {version} {source}, which a shipped binary compiles'
                 for name, version, source in unreviewed(reviews, used)] + over_budget(trees)
-    if stale := unused(reviews, used):
-        if args.prune:
-            REVIEWS.write_bytes(marshal_reviews([review for review in reviews if review not in stale]))
-            print(f'pruned {len(stale)} of {len(reviews)} Rust legal reviews')
-        else:
-            problems += [f"{review['name']} {review['reviewedVersion']} {review['upstream']} is reviewed but no "
-                         'shipped binary compiles it (run with --prune)' for review in stale]
     if problems:
         sys.exit('legal/rust-reviewed-components.json does not match the shipped Rust binaries:\n'
                  + '\n'.join(f'  {problem}' for problem in problems))
-    budget = ', '.join(f'{package} {len(trees[package, target])}/{limit}' for (package, target), limit in BUDGET.items())
-    print(f'{len(used)} Rust legal reviews, one for each crate a shipped binary compiles; '
-          f'Linux crate budget: {budget}')
+    counts = ', '.join(f'{package} [{target}] {len(crates)}' for (package, target), crates in trees.items())
+    print(f'{len(used)} shipped crate identities covered by approved reviews; compiled crate counts: {counts}')
 
 
 if __name__ == '__main__':

@@ -2,7 +2,8 @@
 
 A record lists the linked inputs beyond the target's sysroot rlibs (`nativeInputs`) and the notice
 texts beyond the Rust standard library's (`notices`); the rlibs and the standard-library texts are
-found in the sysroot by rule. `inputsSha256` hashes the canonical listing of all of these files.
+found in the sysroot by rule. `noticesSha256` hashes only the canonical listing of notice texts;
+the pinned release builder and toolchain establish binary provenance separately.
 """
 from __future__ import annotations
 
@@ -13,10 +14,10 @@ import urllib.request
 from pathlib import Path
 
 from ..ci.github_api import confined_path
+from ..ci.toolchains import rust_channel
 from .model import Json, LegalError, array, obj, read_json, sha256, string, strings, text
 
 SYSROOT = '$RUST_SYSROOT/'
-CHECKOUT = Path(__file__).resolve().parents[2]
 IMPORTS = {
     'elf': (['readelf', '--dynamic'], r'\(NEEDED\).*\[([^]]+)\]'),
     'pe': (['objdump', '-p'], r'DLL Name: (\S+)'),
@@ -52,18 +53,6 @@ def imports(executable: Path, target: str) -> set[str]:
     return {name.lower() for name in names} if kind == 'pe' else set(names)
 
 
-def linker_version(target: str, checkout: Path = CHECKOUT) -> str:
-    # Cargo, which runs in rust/, also takes a linker, rustc wrapper, environment or source from these files.
-    if found := [str(path) for directory in (checkout, checkout / 'rust') for name in ('config', 'config.toml')
-                 if (path := directory / '.cargo' / name).exists()]:
-        raise LegalError(f'release builds take no Cargo configuration from the checkout: {found}')
-    linker = os.environ.get(f'CARGO_TARGET_{target.upper().replace("-", "_")}_LINKER', 'cc')
-    # Only the linkers the reviewed builders configure; any other is an unreviewed toolchain.
-    if linker not in ('cc', 'aarch64-linux-gnu-gcc', 'x86_64-linux-gnu-gcc', 'x86_64-w64-mingw32-gcc'):
-        raise LegalError(f'unreviewed linker for {target}: {linker}')
-    return subprocess.check_output([linker, '--version'], text=True).split('\n', 1)[0]
-
-
 def record(path: Path, target: str) -> dict[str, Json] | None:
     entries = [obj(item) for item in array(read_json(path))] if path.exists() else []
     matching = [entry for entry in entries if entry.get('target') == target]
@@ -88,7 +77,10 @@ def own_notices(entry: dict[str, Json] | None) -> dict[str, str]:
 def fetch_notices(repo: Path, entry: dict[str, Json]) -> None:
     """Materialize only this platform's notices, checking downloaded and cached bytes."""
     resources = obj(read_json(repo / 'legal/rust-notice-sources.json'))
-    for relative in own_notices(entry).keys() & resources.keys():
+    external = own_notices(entry).keys() & resources.keys()
+    if external and resources.get('rustVersion') != (version := rust_channel(repo)):
+        raise LegalError(f'external runtime notice sources require review for Rust {version}')
+    for relative in external:
         resource = obj(resources[relative])
         path = confined_path(repo / relative, repo)
         if path.exists():
@@ -117,52 +109,49 @@ def notice_names(entry: dict[str, Json] | None, sysroot: Path) -> dict[str, str]
     return names | listed
 
 
-def fingerprint(paths: set[str], sysroot: Path, texts: set[str]) -> tuple[str, dict[str, bytes]]:
-    """The listing inputsSha256 hashes, `path<TAB>sha256<LF>` sorted by path, and the bytes of `texts`."""
+def fingerprint(paths: set[str], sysroot: Path) -> tuple[str, dict[str, bytes]]:
+    """The notice listing, `path<TAB>sha256<LF>` sorted by path, and the exact texts to embed."""
     lines: list[str] = []
     kept: dict[str, bytes] = {}
     for path in sorted(paths):
         data = source(path, sysroot).read_bytes()
         lines.append(f'{path}\t{sha256(data)}\n')
-        if path in texts:
-            kept[path] = data
+        kept[path] = data
     return ''.join(lines), kept
 
 
-def notice(entry: dict[str, Json] | None, *, target: str, compiler: str, sysroot: Path,
+def notice(entry: dict[str, Json] | None, *, target: str, sysroot: Path,
            inputs: set[str], libraries: set[str]) -> str:
-    if (entry is None or entry.get('rustc') != compiler or entry.get('reviewDecision') != 'approved'
+    if (entry is None or entry.get('target') != target or entry.get('reviewDecision') != 'approved'
             or not entry.get('reviewNotes')):
-        raise LegalError(f'Rust platform review for {target} is absent or stale for this compiler')
-    if text(entry, 'nativeCompiler') != linker_version(target):
-        raise LegalError('native linker toolchain differs from reviewed platform')
+        raise LegalError(f'Rust platform review for {target} is absent or unresolved')
     reviewed = rlibs(sysroot, target) | set(strings(entry, 'nativeInputs'))
     if unreviewed := sorted(inputs - reviewed):
         raise LegalError(f'linked native inputs lack review: {unreviewed}')
     if unreviewed := sorted(libraries - set(strings(entry, 'systemLibraries'))):
         raise LegalError(f'imported system libraries lack review: {unreviewed}')
     names = notice_names(entry, sysroot)
-    listing, texts = fingerprint(reviewed | names.keys(), sysroot, set(names))
-    if (digest := sha256(listing.encode())) != (reviewed_digest := text(entry, 'inputsSha256')):
-        raise LegalError(f'reviewed Rust platform inputs changed: inputsSha256 is {digest}, '
+    listing, texts = fingerprint(set(names), sysroot)
+    if (digest := sha256(listing.encode())) != (reviewed_digest := text(entry, 'noticesSha256')):
+        raise LegalError(f'reviewed Rust platform notices changed: noticesSha256 is {digest}, '
                          f'reviewed {reviewed_digest or "none"}')
     return text(entry, 'description') + '\n' + ''.join(
         f'\n--- {name} ---\n\n' + texts[path].decode() for path, name in names.items())
 
 
-def candidate(entry: dict[str, Json] | None, *, target: str, compiler: str, sysroot: Path,
+def candidate(entry: dict[str, Json] | None, *, target: str, sysroot: Path,
               inputs: set[str], libraries: set[str]) -> tuple[dict[str, object], str]:
-    """This build's unreviewed record, and the listing of its inputs that its inputsSha256 hashes.
+    """This build's unreviewed native/import record and canonical notice listing.
 
     It keeps the reviewed native inputs this build did not link while they exist, such as import
-    libraries only unoptimized builds take, so re-approving it never drops a fingerprinted input.
+    libraries only unoptimized builds take, so re-approving it retains their coverage.
     """
     rlib = rlibs(sysroot, target)
     native = inputs - rlib | {path for path in strings(entry or {}, 'nativeInputs') if source(path, sysroot).exists()}
-    listing, _ = fingerprint(rlib | native | notice_names(entry, sysroot).keys(), sysroot, set())
+    listing, _ = fingerprint(set(notice_names(entry, sysroot)), sysroot)
     return {
-        'target': target, 'rustc': compiler, 'nativeCompiler': linker_version(target),
+        'target': target,
         'systemLibraries': sorted(libraries), 'reviewDecision': 'pending', 'reviewNotes': '',
         'description': text(entry or {}, 'description'), 'nativeInputs': sorted(native),
-        'notices': own_notices(entry), 'inputsSha256': sha256(listing.encode()),
+        'notices': own_notices(entry), 'noticesSha256': sha256(listing.encode()),
     }, listing
