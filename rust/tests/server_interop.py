@@ -30,6 +30,10 @@ def build_current_reset_peer(directory: Path, environment: dict[str, str]) -> Pa
     module = Path(wire).parents[1]
     local_module = directory / "quic-go-current-reset"
     shutil.copytree(module, local_module)
+    # Module-cache directories are read-only; the disposable copy must be removable.
+    for path in [local_module, *local_module.rglob("*")]:
+        if path.is_dir():
+            path.chmod(path.stat().st_mode | 0o700)
     source = local_module / "internal/wire/transport_parameters.go"
     legacy_offer = (
         "\t\tb = quicvarint.Append(b, uint64(legacyResetStreamAtParameterID))\n"
