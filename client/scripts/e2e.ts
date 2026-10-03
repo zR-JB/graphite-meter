@@ -5,11 +5,12 @@ import { join, resolve, sep } from "node:path";
 import { describe, host, launch } from "../e2e/servers";
 
 const command = process.argv.slice(2);
-const group = command[0]?.startsWith("--group=")
-  ? command.shift()!.slice("--group=".length)
-  : command.length
-    ? undefined
-    : process.env.GM_E2E_GROUP;
+const group =
+  command[0]?.startsWith("--group=")
+    ? command.shift()!.slice("--group=".length)
+    : command.length
+      ? undefined
+      : process.env.GM_E2E_GROUP;
 if (group !== undefined) {
   if ((group !== "heavy" && group !== "rest") || command.length)
     throw new Error(

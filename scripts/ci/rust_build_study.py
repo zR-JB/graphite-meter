@@ -34,8 +34,9 @@ def main() -> None:
     subprocess.run(['cargo', 'fetch', '--locked'],
                    cwd=root / 'rust', env=environment, check=True)
     results = []
+    candidate_mtimes = {}
     try:
-        for label, implementation in [('baseline', baseline), ('candidate', originals[collector])]:
+        for label, implementation in [('candidate', originals[collector]), ('baseline', baseline)]:
             collector.write_bytes(implementation)
             for bytecode in collector.parent.glob('__pycache__/rust.*.pyc'):
                 bytecode.unlink()
@@ -77,8 +78,10 @@ def main() -> None:
                 if timings.exists():
                     shutil.copytree(timings, output / f'{label}-{phase}-cargo-timings')
                     shutil.rmtree(timings)
-            # Keep small reports, not duplicate multi-gigabyte release target trees.
-            shutil.rmtree(target)
+            if label == 'baseline':
+                shutil.rmtree(target)
+            else:
+                candidate_mtimes = {path: path.stat().st_mtime_ns for path in (source, provenance)}
         inspections = list((output / 'candidate').glob('capture-inspection-*.json'))
         assert len(inspections) == 2, 'candidate must inspect cold and invalidated legal inputs'
         invocation = json.loads((output / 'candidate/inspection-rustc.json').read_text())
@@ -87,9 +90,56 @@ def main() -> None:
             for suffix in ('inventory.json', 'LEGAL.txt'):
                 assert (output / f'baseline-{phase}-{suffix}').read_bytes() == (
                     output / f'candidate-{phase}-{suffix}').read_bytes(), (phase, suffix)
+        # Separate diagnostic after the comparison: keep the same optimized library and notices.
+        collector.write_bytes(originals[collector])
+        for path, modified in candidate_mtimes.items():
+            os.utime(path, ns=(path.stat().st_atime_ns, modified))
+        target = root / 'rust/target/build-study-candidate'
+        environment.update(CARGO_TARGET_DIR=str(target), GM_RUST_LEGAL_DIR=str(target / 'notices'))
+        cargo_home = environment.get('CARGO_HOME') or str(Path.home() / '.cargo')
+        environment['CARGO_ENCODED_RUSTFLAGS'] = '\x1f'.join(
+            f'--remap-path-prefix={path}={name}' for path, name in ((root, '/src'), (cargo_home, '/cargo')))
+        linker = environment.get('CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER', 'cc')
+        shim = output / 'capture-linker.py'
+        # rustc discards successful linker output; record it while preserving the real driver's result.
+        shim.write_text(
+            '#!/usr/bin/env python3\nimport json, subprocess, sys, time\n'
+            f'command = [{linker!r}, *sys.argv[1:]]\nstarted = time.monotonic()\n'
+            'result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)\n'
+            f'with open({str(output / "native-link-stats.log")!r}, "ab") as stream:\n'
+            '    stream.write(result.stdout + result.stderr)\n'
+            f'with open({str(output / "native-link.json")!r}, "w") as stream:\n'
+            '    json.dump({"command": command, "seconds": time.monotonic() - started, '
+            '"exit_code": result.returncode}, stream)\n'
+            'sys.stdout.buffer.write(result.stdout)\nsys.stderr.buffer.write(result.stderr)\n'
+            'sys.exit(result.returncode)\n')
+        shim.chmod(0o755)
+        channel = tomllib.loads((root / 'rust/rust-toolchain.toml').read_text())['toolchain']['channel']
+        command = ['cargo', f'+{channel}', 'rustc', '--locked', '--package', 'graphite-meter-server',
+                   '--bin', 'graphite-meter-server', '--target', 'x86_64-unknown-linux-musl',
+                   '--profile', 'release', '--timings', '--', f'-Clinker={shim}', '-Clink-arg=-Wl,--stats']
+        started = time.monotonic()
+        with (output / 'candidate-native-link-diagnostic.log').open('w') as stream:
+            completed = subprocess.run(command, cwd=root / 'rust', env=environment, stdout=stream,
+                                       stderr=subprocess.STDOUT, timeout=1200)
+        result = {'pipeline': 'candidate', 'phase': 'native-link-diagnostic',
+                  'seconds': round(time.monotonic() - started, 3), 'exit_code': completed.returncode,
+                  'profile': profile}
+        results.append(result)
+        (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
+        print(json.dumps(result), flush=True)
+        completed.check_returncode()
+        print((output / 'native-link-stats.log').read_text(), flush=True)
+        shutil.copytree(target / 'cargo-timings', output / 'candidate-native-link-diagnostic-cargo-timings')
     finally:
         for path, content in originals.items():
             path.write_bytes(content)
+        # Reports cross from the root container to the unprivileged artifact uploader.
+        for path in output.rglob('*'):
+            path.chmod(0o755 if path.is_dir() else 0o644)
+        output.chmod(0o755)
+        for label in ('candidate', 'baseline'):
+            shutil.rmtree(root / 'rust/target' / f'build-study-{label}', ignore_errors=True)
 
 
 if __name__ == '__main__':

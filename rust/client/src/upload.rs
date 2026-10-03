@@ -726,7 +726,7 @@ mod tests {
                 let count = stream.read(&mut request).await?;
                 assert!(request[..count].starts_with(b"POST /upload/checkpoint?id=test-session"));
                 if remaining
-                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1))
+                    .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1))
                     .is_ok()
                 {
                     refused = Instant::now();

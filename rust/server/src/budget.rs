@@ -226,7 +226,7 @@ impl MemoryBudget {
 impl SharedBudget for MemoryBudget {
     fn try_charge(&self, bytes: usize) -> bool {
         self.used
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
                 used.checked_add(bytes).filter(|&used| used <= self.limit)
             })
             .is_ok()
