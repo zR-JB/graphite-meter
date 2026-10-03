@@ -522,7 +522,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
       - name: Compare cooperative receive scheduling and buffer lifetimes
         env:
-          GM_QUIC_RECEIVE_CANDIDATE_REV: 1294845f2678eae3c58660bedd60c8df08991e00
+          GM_QUIC_RECEIVE_CANDIDATE_REV: b0438db9463336fd35d65e851cb7cade0ff47484
         run: python3 -m scripts.ci.rust_quic_receive_study
       - name: Upload measurements and build logs
         if: always()
