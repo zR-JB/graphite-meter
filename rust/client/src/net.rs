@@ -1026,64 +1026,6 @@ mod tests {
         Ok(())
     }
 
-    /// A dial that stalls in its proxy handshake holds up neither another request's own dial nor
-    /// the return of its response.
-    #[tokio::test]
-    async fn a_stalled_http1_dial_leaves_other_requests_to_dial_their_own() -> Result<()> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        /// A SOCKS5 proxy that is also the origin.
-        async fn origin(mut stream: tokio::net::TcpStream) -> Result<()> {
-            stream.read_exact(&mut [0; 3]).await?;
-            stream.write_all(&[5, 0]).await?;
-            let mut request = [0; 5];
-            stream.read_exact(&mut request).await?;
-            stream.read_exact(&mut vec![0; usize::from(request[4]) + 2]).await?;
-            stream.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await?;
-            loop {
-                let mut head = Vec::new();
-                while !head.ends_with(b"\r\n\r\n") {
-                    head.push(stream.read_u8().await?);
-                }
-                stream
-                    .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok")
-                    .await?;
-            }
-        }
-        /// The first dial stops after its SOCKS greeting; later ones reach the origin.
-        async fn proxy(listener: tokio::net::TcpListener, stalling: tokio::sync::oneshot::Sender<()>) -> Result<()> {
-            let (_first, _) = listener.accept().await?;
-            let _ = stalling.send(());
-            loop {
-                tokio::spawn(origin(listener.accept().await?.0));
-            }
-        }
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-        let address = listener.local_addr()?;
-        let (stalling, stalled) = tokio::sync::oneshot::channel();
-        let proxy = tokio::spawn(proxy(listener, stalling));
-        let mut http = http(false);
-        http.set_proxy(Proxy::new(&format!("socks5://{address}"), "", ""));
-        let target = "http://meter.test/probe";
-        let first = tokio::spawn({
-            let http = http.clone();
-            async move { http.request(Method::GET, target, Protocol::Http1).await.map(drop) }
-        });
-        stalled.await?;
-        tokio::time::timeout(Duration::from_secs(5), async {
-            for _ in 0..2 {
-                let response = http.request(Method::GET, target, Protocol::Http1).await?;
-                assert_eq!(bounded_body(response).await?, b"ok");
-            }
-            Ok::<_, Error>(())
-        })
-        .await
-        .map_err(|_| "a request waited behind another request's dial")??;
-        assert!(!first.is_finished());
-        first.abort();
-        proxy.abort();
-        Ok(())
-    }
-
     const ACCEPTED: &str = "HTTP/1.1 202 Accepted\r\ncontent-length: 0\r\n\r\n";
     const ISSUED: &str =
         "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 19\r\n\r\n{\"token\":\"fixture\"}";

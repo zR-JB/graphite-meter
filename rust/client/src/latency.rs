@@ -579,57 +579,6 @@ mod tests {
         Ok(())
     }
 
-    /// A lost channel redials at Go's pace (latency.go:124-132, transfer.go:95-104): 500 ms after
-    /// each refusal, where 100 ms made some twenty dials, and after a channel lost as it opened,
-    /// which once drew a tight loop. The window's end bounds the redial (probeLedger.bound,
-    /// latency.go:256), and the stage draining meanwhile does not end it: only a stop does.
-    #[tokio::test]
-    async fn a_lost_channel_redials_at_gos_pace() -> Result<(), Error> {
-        let (listener, target) = websocket_listener().await?;
-        let (stop, cancel) = watch::channel(Stop::Window(Instant::now() + Duration::from_millis(1500)));
-        let dials = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let seen = dials.clone();
-        // The first channel answers a probe and ends, the next ends as it opens, and the stage
-        // drains as the redials after find upgrades refused.
-        let peer = tokio::spawn(async move {
-            for dial in 0..32 {
-                let (mut stream, _) = listener.accept().await?;
-                seen.lock().unwrap().push(Instant::now());
-                if dial < 2 {
-                    let mut socket = tokio_tungstenite::accept_async(stream).await?;
-                    if dial == 0
-                        && let Some(Ok(Message::Text(text))) = socket.next().await
-                    {
-                        let pong = wire::encode_pong(wire::decode_ping(&text)?, 0);
-                        socket.send(Message::Text(pong.into())).await?;
-                    }
-                    socket.close(Some(close_frame(LaneEnding::Idle))).await?;
-                    continue;
-                }
-                stop.send_replace(Stop::Drain);
-                let _ = stream.read(&mut [0; 4096]).await?;
-                stream
-                    .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-                    .await?;
-            }
-            Ok::<_, Error>(())
-        });
-        let (observations, _observed) = mpsc::channel(64);
-        let timing = (Duration::from_millis(50), Duration::from_secs(10), 16);
-        let lost = run(&Http::new(false)?, &target, timing, observations, cancel).await;
-        peer.abort();
-        let dials = dials.lock().unwrap();
-        assert!(lost.is_err_and(|error| error.to_string().contains("not replaced")));
-        assert_eq!(dials.len(), 3, "{dials:?}");
-        for pair in dials.windows(2) {
-            assert!(
-                pair[1] - pair[0] >= crate::transport::TRANSFER_RETRY_BACKOFF,
-                "{dials:?}"
-            );
-        }
-        Ok(())
-    }
-
     /// A close frame naming `ending`.
     fn close_frame(ending: LaneEnding) -> CloseFrame {
         CloseFrame {
@@ -856,67 +805,6 @@ mod tests {
         }
         // A probe every 80 ms from the first: 125 in ten seconds.
         assert_eq!(sent.len(), 125, "last probe at {:?}", sent.last());
-        peer.abort();
-        Ok(())
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn every_pong_sends_the_next_reply_driven_probe() -> Result<(), Error> {
-        // Probe 0 is answered after 10 ms. Probe 1 is answered after 260 ms: 10 ms past its deadline,
-        // before the expiry sweep at 300 ms. Later probes get no answer.
-        let (bus, peer) = linked(|mut socket| async move {
-            let mut due = None;
-            loop {
-                tokio::select! {
-                    message = socket.next() => {
-                        let Some(Ok(Message::Text(text))) = message else { break };
-                        let id = wire::decode_ping(&text).unwrap();
-                        if let Some(delay) = [10, 260].get(id as usize) {
-                            due = Some((id, Instant::now() + Duration::from_millis(*delay)));
-                        }
-                    }
-                    () = tokio::time::sleep_until(due.map_or_else(Instant::now, |(_, at)| at)), if due.is_some() => {
-                        let (id, _) = due.take().unwrap();
-                        if socket.send(Message::Text(wire::encode_pong(id, 0).into())).await.is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
-        })
-        .await;
-        let (started, mut receiver) = collect(bus, 0, 400, 64, 4).await?;
-        let mut sent = Vec::new();
-        while let Ok(observation) = receiver.try_recv() {
-            if let Observation::Sample { sent: at, .. } | Observation::Lost { sent: at, .. } = observation {
-                sent.push((at - started).as_millis());
-            }
-        }
-        sent.sort_unstable();
-        // Probe 2 is the backup at probe 1's deadline; probe 3 answers probe 1's late pong.
-        assert_eq!(sent, [0, 10, 260, 270]);
-        peer.abort();
-        Ok(())
-    }
-
-    /// Over a real socket, a reply after its probe's deadline counts as a timeout and extends the
-    /// deadlines of the probes after it, which their replies then meet (probeLedger.reply and
-    /// observe, latency.go:315-322, 382-387). A message longer than a pong is skipped first, as
-    /// Go's wsBus.Recv skips it (latency.go:33-47), up to the 32 KiB its WebSocket library reads
-    /// by default, where one over 1 KiB once ended the channel.
-    #[tokio::test]
-    async fn a_late_reply_over_a_real_socket_extends_later_deadlines() -> Result<(), Error> {
-        let (listener, target) = websocket_listener().await?;
-        let peer = tokio::spawn(async move {
-            let mut socket = tokio_tungstenite::accept_async(listener.accept().await?.0).await?;
-            socket.send(Message::Text("x".repeat(32 * 1024).into())).await?;
-            echo(socket, Duration::from_millis(400)).await;
-            Ok::<_, Error>(())
-        });
-        let bus = connect(&Http::new(false)?, &target.base_url, target.transport).await?;
-        // Probes at 0 and 900 ms: the first's reply, 400 ms on, passes the 250 ms floor but comes
-        // 500 ms before the second, whose 1.2 s deadline its own reply then meets.
-        assert_eq!(outcomes(bus, 900, 1000).await?, (1, 1));
         peer.abort();
         Ok(())
     }

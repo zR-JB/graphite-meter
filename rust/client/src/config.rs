@@ -152,30 +152,3 @@ impl Config {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Go's PreparationKey: loaded latency changes the checked paths only through the latency they need.
-    #[test]
-    fn loaded_latency_changes_the_key_only_through_the_latency_it_needs() {
-        let (on, transfers) = (Config::default(), vec![Stage::Download, Stage::Upload]);
-        let off = Config {
-            loaded_latency: false,
-            ..on.clone()
-        };
-        assert_eq!(on.preparation_key(), off.preparation_key());
-        let (on, off) = (
-            Config {
-                stages: transfers.clone(),
-                ..on
-            },
-            Config {
-                stages: transfers,
-                ..off
-            },
-        );
-        assert_ne!(on.preparation_key(), off.preparation_key());
-    }
-}

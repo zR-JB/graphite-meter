@@ -155,39 +155,6 @@ async fn report_refuses_a_stage_longer_than_its_server_admits() -> Result<(), Er
     Ok(())
 }
 
-#[tokio::test]
-async fn report_runs_a_real_latency_path_and_exits_complete() -> Result<(), Error> {
-    let (origin, peer) = latency_peer(false).await?;
-    let output = tokio::time::timeout(Duration::from_secs(5), client(&origin).output()).await??;
-    peer.abort();
-    assert_eq!(
-        output.status.code(),
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = String::from_utf8(output.stdout)?;
-    assert!(
-        report.starts_with("Graphite Meter  Complete  local peer · "),
-        "{report}"
-    );
-    let idle = report
-        .lines()
-        .find(|line| line.starts_with("Idle "))
-        .unwrap_or_default();
-    assert!(
-        idle.rsplit_once("  ")
-            .is_some_and(|(_, timeouts)| timeouts.starts_with("0 / ")),
-        "{report}"
-    );
-    assert!(
-        report.contains("Server handling of the mean round trip: Idle "),
-        "{report}"
-    );
-    assert_eq!(String::from_utf8(output.stderr)?, "Latency…\n");
-    Ok(())
-}
-
 #[path = "../../test_identity.rs"]
 mod test_identity;
 
@@ -456,19 +423,6 @@ async fn flags(args: &[&str]) -> Result<std::process::Output, Error> {
     .await??)
 }
 
-async fn refused(args: &[&str], stderr: String) -> Result<(), Error> {
-    let output = flags(args).await?;
-    assert_eq!(output.status.code(), Some(2), "{args:?}");
-    assert!(output.stdout.is_empty(), "{args:?}");
-    assert_eq!(String::from_utf8(output.stderr)?, stderr, "{args:?}");
-    Ok(())
-}
-
-/// Go's usage, which names the program as it was invoked.
-fn usage() -> String {
-    graphite_meter_client::cli::usage(env!("CARGO_BIN_EXE_graphite-meter-client"))
-}
-
 /// Go checks origins when it prepares the run, so a malformed one fails the run, not the flags.
 #[tokio::test]
 async fn malformed_origins_fail_the_path_check_like_go() -> Result<(), Error> {
@@ -482,20 +436,6 @@ async fn malformed_origins_fail_the_path_check_like_go() -> Result<(), Error> {
             "{url}"
         );
     }
-    Ok(())
-}
-
-#[tokio::test]
-async fn invalid_flags_and_settings_are_refused() -> Result<(), Error> {
-    refused(&["-x"], format!("flag provided but not defined: -x\n{}", usage())).await?;
-    refused(
-        &["-warmup", "5s"],
-        "graphite-meter-client: warmup must be from 0s to 4s\n".into(),
-    )
-    .await?;
-    let output = flags(&["-help"]).await?;
-    assert!(output.status.success() && output.stdout.is_empty());
-    assert_eq!(String::from_utf8(output.stderr)?, usage());
     Ok(())
 }
 

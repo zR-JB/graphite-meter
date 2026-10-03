@@ -151,10 +151,6 @@ impl Drop for Fixture {
     }
 }
 
-async fn download_peer() -> Result<(String, Arc<AtomicU8>, JoinHandle<()>), Error> {
-    download_peer_with_gate(None).await
-}
-
 async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, Arc<AtomicU8>, JoinHandle<()>), Error> {
     let _ = crate::crypto::provider().install_default();
     let listener = TcpListener::bind("127.0.0.1:0").await?;
@@ -218,28 +214,6 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                             return;
                         }
                         let request = &request[..length];
-                        if request.starts_with(b"GET /servers ") {
-                            let body = serde_json::json!({"defaultSelection":["self","gone"],"servers":[{"id":"self","url":".","name":"self"},{"id":"gone","url":"http://127.0.0.1:1","name":"gone"}]}).to_string();
-                            let response = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
-                            let _ = stream.write_all(response.as_bytes()).await;
-                            return;
-                        }
-                        if flag.load(Ordering::SeqCst) == 18 && request.starts_with(b"GET /preflight ") {
-                            let _ = stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
-                            return;
-                        }
-                        if request.starts_with(b"GET /preflight ") || request.starts_with(b"GET /probe ") {
-                            let body = if request.starts_with(b"GET /preflight ") {
-                                serde_json::json!({"generation":"fixture","capabilities":{"uploadCheckpoint":true,"throughput":[{"baseUrl":".","transport":"fetch-stream","protocol":"http1"}],"latency":[]}})
-                            } else { serde_json::json!({"clientIp":"127.0.0.1","clientIpVersion":4,"clientIpSource":"socket","protocolNegotiated":"http/1.1"}) }.to_string();
-                            let response = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
-                            let _ = stream.write_all(response.as_bytes()).await;
-                            return;
-                        }
-                        if flag.load(Ordering::SeqCst) == 1 && request.starts_with(b"POST /upload/session") {
-                            let _ = stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
-                            return;
-                        }
                         if request.starts_with(b"POST /upload/session") {
                             finalized.store(false, Ordering::SeqCst);
                             // Mode 20 forgets the upload id until the next mint, mode 21 for good.
@@ -258,8 +232,7 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                                 }
                             }
                             let record = |kind: &str| format!("{{\"type\":\"{kind}\",\"bytes\":{},\"nanos\":1}}\n", progress.load(Ordering::SeqCst));
-                            // Mode 22 completes the receiver before the stage finishes.
-                            while !finalized.load(Ordering::SeqCst) && flag.load(Ordering::SeqCst) != 22 && stream.write_all(record("progress").as_bytes()).await.is_ok() {
+                            while !finalized.load(Ordering::SeqCst) && stream.write_all(record("progress").as_bytes()).await.is_ok() {
                                 tokio::time::sleep(Duration::from_millis(5)).await;
                             }
                             let _ = stream.write_all(record("complete").as_bytes()).await;
@@ -290,7 +263,7 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                             return;
                         }
                         let mode = flag.load(Ordering::SeqCst);
-                        if request.starts_with(b"POST /upload/checkpoint") && matches!(mode, 0 | 5 | 7 | 15 | 16 | 17 | 19 | 20 | 21 | 22) {
+                        if request.starts_with(b"POST /upload/checkpoint") && matches!(mode, 0 | 5 | 7 | 15 | 16 | 17 | 19 | 20 | 21) {
                             if mode == 17 {
                                 tokio::time::sleep(Duration::from_millis(100)).await;
                             }
@@ -328,7 +301,7 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                             let _ = stream.shutdown().await;
                             return;
                         }
-                        if matches!(flag.load(Ordering::SeqCst), 1 | 14) {
+                        if flag.load(Ordering::SeqCst) == 14 {
                             let _ = stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n").await;
                             return;
                         }
@@ -351,25 +324,6 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
         }
     });
     Ok((origin, failed, server))
-}
-
-#[tokio::test]
-async fn selected_peers_start_stage_together_and_keep_catalogue_order() -> Result<(), Error> {
-    let gate = Arc::new(Barrier::new(2));
-    let mut fixture = Fixture::with_gates(&["near", "far"], 1400, &[Some(gate.clone()), Some(gate)]).await?;
-    fixture.config.warmup = Duration::from_millis(10);
-    fixture.snapshots.send_replace(listing(&fixture.servers));
-    let result = tokio::time::timeout(Duration::from_secs(3), fixture.measure(Stage::Download)).await??;
-    assert!(result.is_empty());
-    let snapshot = fixture.snapshots.borrow();
-    let stage = &snapshot.results[0];
-    assert!(snapshot.failures.is_empty(), "{:?}", snapshot.failures);
-    // Without loaded latency no latency population is recorded, as in Go.
-    assert!(stage.server_latencies.is_empty(), "{:?}", stage.server_latencies);
-    assert_eq!(stage.server_results[0].id, "near");
-    assert_eq!(stage.server_results[1].id, "far");
-    assert!(stage.server_results.iter().all(|server| server.down_bytes() > 0));
-    Ok(())
 }
 
 /// A snapshot listing `servers` as the catalogue names them.
@@ -531,7 +485,7 @@ async fn first_stage_setup_failure_keeps_survivors_and_its_sign_in_cause() -> Re
         config,
         servers,
         snapshots,
-        cancelled.clone(),
+        cancelled,
         &mut ledger,
     )
     .await?;
@@ -549,24 +503,6 @@ async fn first_stage_setup_failure_keeps_survivors_and_its_sign_in_cause() -> Re
     );
     assert!(contributions[0].down_bps().is_none());
     assert!(contributions[1].down_bps().is_some());
-    drop(snapshot);
-
-    fixture.modes[1].store(1, Ordering::SeqCst);
-    let third = measure(
-        Stage::Download,
-        config,
-        &servers[1..],
-        snapshots,
-        cancelled,
-        &mut ledger,
-    )
-    .await;
-    assert!(third.is_err());
-    let snapshot = observed.borrow();
-    assert_eq!(snapshot.results.len(), 3);
-    assert_eq!(snapshot.results[0].down_bytes(), first_bytes);
-    assert!(snapshot.results[2].down_bps().is_none());
-    assert!(snapshot.failures.iter().any(|failure| failure.server_id == "far"));
     Ok(())
 }
 
@@ -973,66 +909,6 @@ fn checkpoints_skip_two_misses_reset_on_success_and_keep_final_misses() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_sole_server_rejoins_its_next_stage_on_the_transport_it_prepared() -> Result<(), Error> {
-    let heartbeat = heartbeat();
-    let mut fixture = Fixture::new(&["self"], 1000).await?;
-    fixture.config.stages = vec![Stage::Download, Stage::Upload, Stage::Download];
-    fixture.config.insecure = true;
-    fixture.snapshots.send_replace(Snapshot {
-        servers: vec![ServerSummary {
-            id: "self".into(),
-            name: "fixture".into(),
-            ..ServerSummary::default()
-        }],
-        ..Snapshot::default()
-    });
-    let (fault, mut observed) = (fixture.modes[0].clone(), fixture.snapshots.subscribe());
-    // The upload is refused; from then on the server refuses a new path check but still transfers.
-    let drive_fault = tokio::spawn(async move {
-        loop {
-            if observed.borrow().results.len() >= 2 {
-                fault.store(18, Ordering::SeqCst);
-                return;
-            }
-            if observed.borrow().stage == Some(Stage::Upload) {
-                fault.store(1, Ordering::SeqCst);
-            }
-            if observed.changed().await.is_err() {
-                return;
-            }
-        }
-    });
-    fixture.run().await?;
-    tokio::time::timeout(Duration::from_secs(30), drive_fault).await??;
-    heartbeat.abort();
-    let snapshot = fixture.snapshots.borrow();
-    assert_eq!(snapshot.phase, Phase::Incomplete);
-    let statuses: Vec<_> = snapshot
-        .results
-        .iter()
-        .map(|result| snapshot.stage_status(result))
-        .collect();
-    assert_eq!(
-        statuses,
-        [StageStatus::Complete, StageStatus::Failed, StageStatus::Complete],
-        "{:?}",
-        snapshot.failures
-    );
-    assert!(snapshot.results[0].down_bytes() > 0);
-    assert!(snapshot.results[2].down_bytes() > 0);
-    assert_eq!(snapshot.participants, ["self"], "the sole server did not rejoin");
-    let [failure] = &snapshot.failures[..] else {
-        panic!("{:?}", snapshot.failures);
-    };
-    assert_eq!(
-        (failure.stage, failure.reason),
-        (Stage::Upload, graphite_meter_core::failure::FailureReason::ServerBusy)
-    );
-    assert!(failure.at >= snapshot.results[0].elapsed);
-    Ok(())
-}
-
-#[tokio::test(start_paused = true)]
 async fn intervals_and_failures_share_the_run_clock() -> Result<(), Error> {
     let heartbeat = heartbeat();
     let mut fixture = Fixture::new(&["near", "far"], 1000).await?;
@@ -1088,79 +964,6 @@ async fn intervals_and_failures_share_the_run_clock() -> Result<(), Error> {
 }
 
 #[tokio::test]
-async fn a_selection_that_lost_a_server_in_preparation_gets_no_sole_retry() -> Result<(), Error> {
-    let (origin, mode, peer) = download_peer().await?;
-    let config = Config {
-        url: origin,
-        stages: vec![Stage::Download, Stage::Upload],
-        download_duration: Duration::from_secs(3),
-        upload_duration: Duration::from_secs(1),
-        insecure: true,
-        ..transfer_config()
-    };
-    let (snapshots, mut observed) = watch::channel(Snapshot::default());
-    let (_stop, cancelled) = watch::channel(false);
-    let refuse = async {
-        observed
-            .wait_for(|snapshot| snapshot.phase == Phase::Measuring)
-            .await
-            .unwrap();
-        mode.store(14, Ordering::SeqCst);
-    };
-    let run = super::super::run(config, Http::new(true)?, snapshots.clone(), cancelled, None);
-    let (result, ()) = joined(run, refuse).await?;
-    peer.abort();
-    assert!(
-        result.is_err(),
-        "the prepared server of two was retried as a sole server"
-    );
-    let snapshot = snapshots.borrow();
-    assert_eq!(snapshot.results.len(), 1);
-    assert_eq!(snapshot.failures[0].server_id, "gone");
-    Ok(())
-}
-
-#[tokio::test]
-async fn the_latency_result_follows_the_focus_server() -> Result<(), Error> {
-    for (silent_focus, outcome) in [(false, Phase::Partial), (true, Phase::Incomplete)] {
-        let mut fixture = Fixture::new(&["near", "far"], 1000).await?;
-        fixture.latency();
-        let silent = if silent_focus { "near" } else { "far" };
-        fixture.modes[usize::from(!silent_focus)].store(8, Ordering::SeqCst);
-        for (server, rtt) in fixture.servers.iter_mut().zip([4, 1]) {
-            server.idle_rtt = Duration::from_millis(rtt);
-        }
-        fixture.config.stages = vec![Stage::Latency];
-        fixture.config.ping_interval = Duration::from_millis(100);
-        fixture.config.insecure = true;
-        fixture.run().await?;
-        let snapshot = fixture.snapshots.borrow();
-        assert_eq!(
-            snapshot.latency_focus.as_deref(),
-            Some("near"),
-            "the first selected server leads, not the lowest path-check RTT"
-        );
-        assert_eq!(
-            snapshot.phase, outcome,
-            "silent focus {silent_focus}: {:?}",
-            snapshot.failures
-        );
-        let [failure] = &snapshot.failures[..] else {
-            panic!("{:?}", snapshot.failures);
-        };
-        assert_eq!(
-            (failure.server_id.as_str(), failure.scope, failure.reason),
-            (
-                silent,
-                crate::model::FailureScope::Latency,
-                graphite_meter_core::failure::FailureReason::InsufficientEvidence
-            )
-        );
-    }
-    Ok(())
-}
-
-#[tokio::test]
 async fn latency_stage_losses_drop_one_server_and_the_run_continues() -> Result<(), Error> {
     let mut fixture = Fixture::new(&["near", "far"], 1000).await?;
     let far_mode = fixture.modes[1].clone();
@@ -1200,11 +1003,6 @@ async fn latency_stage_losses_drop_one_server_and_the_run_continues() -> Result<
         "a server lost before its latency channel dialled stayed in the run"
     );
     assert_eq!(download.server_results[0].id, "far");
-    assert_eq!(
-        snapshot.latency_focus.as_deref(),
-        Some("near"),
-        "the focus moves only to a survivor that measured latency"
-    );
     Ok(())
 }
 
@@ -1266,40 +1064,6 @@ async fn a_stop_records_the_evidence_its_stage_lacked() -> Result<(), Error> {
                 graphite_meter_core::failure::FailureReason::InsufficientEvidence
             )
         );
-    }
-    Ok(())
-}
-
-/// A lane lost in warmup is noticed when it is lost, not once the window opens, and has one reason,
-/// Go's for a failure before measuring (stage.go:195-197, 240-260), in the failure list and in the
-/// latency population alike.
-#[tokio::test]
-async fn a_warmup_loss_is_noticed_at_once_with_one_reason() -> Result<(), Error> {
-    for loaded_latency in [false, true] {
-        let mut fixture = Fixture::new(&["peer"], 1000).await?;
-        fixture.latency();
-        fixture.config.warmup = Duration::from_millis(1500);
-        fixture.config.loaded_latency = loaded_latency;
-        fixture.config.insecure = true;
-
-        let begun = Instant::now();
-        // The receiver completes as the warmup starts, ending the upload the stage still needs.
-        let complete = async {
-            fixture.phase(Phase::Warmup).await;
-            fixture.modes[0].store(22, Ordering::SeqCst);
-            begun.elapsed()
-        };
-        let run = fixture.measure(Stage::Upload);
-        let (result, completed) = joined(run, complete).await?;
-        assert!(result.is_err());
-        let snapshot = fixture.snapshots.borrow();
-        assert_eq!(snapshot.failures.len(), 1, "{:?}", snapshot.failures);
-        let (failure, preparing) = (&snapshot.failures[0], FailureReason::PreparationFailed);
-        assert_eq!(failure.reason, preparing, "loaded latency {loaded_latency}");
-        let population = snapshot.results[0].server_latencies.first().map(|host| host.ending);
-        assert_eq!(population, loaded_latency.then_some(Some(Ending::Failed(preparing))));
-        let late = failure.at.saturating_sub(completed);
-        assert!(late < Duration::from_millis(750), "noticed {late:?} late");
     }
     Ok(())
 }

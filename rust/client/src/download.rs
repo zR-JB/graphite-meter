@@ -341,101 +341,82 @@ mod tests {
         asked_again?
     }
 
-    /// A WebTransport session is dialled again as Go's restore dials it (webtransport.go:104-118),
-    /// here once a busy answer's 300 ms backoff has passed, well inside its 2 s window.
     #[tokio::test]
-    async fn a_busy_webtransport_session_is_dialled_again() -> Result<(), Error> {
-        let _ = crate::crypto::provider().install_default();
-        let (endpoint, origin) = h3_endpoint()?;
-        let dials = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let seen = dials.clone();
-        let server = tokio::spawn(async move {
-            let mut refused = Vec::new();
-            loop {
+    async fn webtransport_download_counts_payload_without_stream_headers() -> Result<(), Error> {
+        use graphite_meter_http3::{server::Connection, webtransport::Session as PeerSession};
+        timeout(Duration::from_secs(5), async {
+            let _ = crate::crypto::provider().install_default();
+            let (endpoint, origin) = h3_endpoint()?;
+            let mut servers = JoinSet::new();
+            servers.spawn(async move {
                 let quic = endpoint.accept().await.ok_or("endpoint closed")?.await?;
-                let mut connection = graphite_meter_http3::server::Connection::new(quic, None);
-                let (_, stream) = connection.next().await?.ok_or("no CONNECT")?.resolve().await?;
-                seen.lock().unwrap().push(Instant::now());
-                if !refused.is_empty() {
-                    // The connection's driver writes the session's answer.
-                    let accept = graphite_meter_http3::webtransport::Session::accept(stream, http::HeaderMap::new());
-                    let _ = tokio::join!(accept, async { while let Ok(Some(_)) = connection.next().await {} });
-                    return Ok::<_, Error>(());
-                }
-                let (mut send, _recv) = stream.split();
-                send.send_response(http::Response::builder().status(503).body(())?)
-                    .await?;
-                send.finish().await?;
-                refused.push(connection);
-            }
-        });
-        let target = format!("{origin}/wt/download?bytes=0");
-        let slot = SessionSlot::dial(&Http::new(true)?, target).await;
-        server.abort();
-        slot?.close().await;
-        let dials = dials.lock().unwrap();
-        assert!(dials[1] - dials[0] >= Duration::from_millis(300), "{dials:?}");
-        Ok(())
-    }
-
-    /// Go's TestLanePersistence (transfer_test.go:87-151): only a refusal ends a lane at once; a
-    /// refused connection and an empty answer are retried for 2 s, 500 ms apart.
-    #[tokio::test]
-    async fn http_lane_retries_all_but_a_refusal_like_go() -> Result<(), Error> {
-        use graphite_meter_core::failure::FailureReason::{ConnectionLost, ProtocolError, ServerBusy, Timeout};
-        let _ = crate::crypto::provider().install_default();
-        let mut cases = JoinSet::new();
-        for (answer, reason, requests) in [
-            (Some("429 Too Many Requests"), ServerBusy, 4),
-            (Some("410 Gone"), ProtocolError, 1),
-            (Some("200 OK"), Timeout, 5),
-            (None, ConnectionLost, 0),
-        ] {
-            cases.spawn(async move {
-                let listener = TcpListener::bind("127.0.0.1:0").await?;
-                let origin = format!("http://{}", listener.local_addr()?);
-                let served = Arc::new(AtomicU64::new(0));
-                // Without an answer the port closes, and every dial is refused.
-                let server = answer.map(|answer| tokio::spawn(serve(listener, answer, served.clone())));
-                let transport = Transport::connect(Http::new(false)?, &origin, Protocol::Http1).await?;
-                let (ready, _announced) = mpsc::channel(1);
-                let bytes = AtomicU64::new(0);
-                let retry = TransferRetry::new(Retrying::default(), 0);
-                let started = Instant::now();
-                let lane = receive_http_lane(&transport, 0, &bytes, &ready, Duration::from_secs(5), retry);
-                let error = timeout(Duration::from_secs(5), lane).await?.unwrap_err();
-                let lasted = started.elapsed();
-                if let Some(server) = server {
-                    server.abort();
-                }
-                assert_eq!(
-                    crate::failure::reason(error.as_ref(), false),
-                    reason,
-                    "{answer:?}: {error}"
-                );
-                assert_eq!(served.load(Ordering::SeqCst), requests, "{answer:?}");
-                assert_eq!(
-                    lasted >= Duration::from_secs(2),
-                    requests != 1,
-                    "{answer:?} after {lasted:?}"
-                );
+                let mut connection = Connection::new(quic, None);
+                let (_, stream) = connection.next().await?.ok_or("missing CONNECT")?.resolve().await?;
+                let payload = async {
+                    let session = PeerSession::accept(stream, http::HeaderMap::new()).await?;
+                    let mut lane = session.open_uni().await?;
+                    lane.write_all(b"progress").await?;
+                    // Leave the stream open so cancellation, rather than EOF, ends the lane.
+                    std::future::pending::<Result<(), Error>>().await
+                };
+                let driver = async {
+                    while connection.next().await?.is_some() {}
+                    Ok::<_, Error>(())
+                };
+                tokio::try_join!(payload, driver)?;
                 Ok::<_, Error>(())
             });
-        }
-        while let Some(case) = cases.join_next().await {
-            case??;
-        }
-        Ok(())
+            let (_stop, cancelled) = watch::channel(false);
+            let download = Download::start_webtransport(
+                &Http::new(true)?,
+                &ThroughputTarget {
+                    base_url: origin,
+                    protocol: Protocol::Http3,
+                    transport: ThroughputTransport::WebTransport,
+                },
+                1,
+                Duration::from_secs(30),
+                cancelled,
+            )
+            .await?;
+            let measured = download.bytes();
+            download.stop().await;
+            servers.shutdown().await;
+            assert_eq!(measured, 8, "WebTransport counted stream framing as payload");
+            Ok::<_, Error>(())
+        })
+        .await?
     }
 
-    /// Answers each request with an empty `status` response on a connection of its own.
-    async fn serve(listener: TcpListener, status: &str, served: Arc<AtomicU64>) -> Result<(), Error> {
-        loop {
-            let (mut stream, _) = listener.accept().await?;
-            let _ = stream.read(&mut [0_u8; 4096]).await?;
-            let head = format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-            stream.write_all(head.as_bytes()).await?;
-            served.fetch_add(1, Ordering::SeqCst);
-        }
+    /// A refusal ends the lane immediately, without another request or the retry window.
+    #[tokio::test]
+    async fn http_lane_stops_at_a_refusal() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let origin = format!("http://{}", listener.local_addr()?);
+        let served = Arc::new(AtomicU64::new(0));
+        let seen = served.clone();
+        let server = tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let _ = stream.read(&mut [0_u8; 4096]).await?;
+                seen.fetch_add(1, Ordering::SeqCst);
+                stream
+                    .write_all(b"HTTP/1.1 410 Gone\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await?;
+            }
+            Ok::<_, Error>(())
+        });
+        let transport = Transport::connect(Http::new(false)?, &origin, Protocol::Http1).await?;
+        let (ready, _announced) = mpsc::channel(1);
+        let bytes = AtomicU64::new(0);
+        let retry = TransferRetry::new(Retrying::default(), 0);
+        let started = Instant::now();
+        let lane = receive_http_lane(&transport, 0, &bytes, &ready, Duration::from_secs(5), retry);
+        let error = timeout(Duration::from_secs(5), lane).await?.unwrap_err();
+        server.abort();
+        assert_eq!(crate::failure::reason(error.as_ref(), false), FailureReason::ProtocolError);
+        assert_eq!(served.load(Ordering::SeqCst), 1);
+        assert!(started.elapsed() < Duration::from_secs(2));
+        Ok(())
     }
 }

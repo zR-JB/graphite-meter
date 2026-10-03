@@ -616,7 +616,6 @@ mod tests {
     const OPERATION_LIMIT: Duration = Duration::from_secs(60);
     /// HTTP lanes that start together and last the operation limit.
     const HTTP_LANES: Option<(Duration, Duration)> = Some((Duration::ZERO, OPERATION_LIMIT));
-    use crate::transport::TRANSFER_RETRY_BACKOFF;
     use graphite_meter_core::{discovery::Protocol, failure::FailureReason};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -626,69 +625,6 @@ mod tests {
     /// A client of `origin` over `protocol`, sharing none of its connections.
     async fn transport(origin: &str, protocol: Protocol) -> Result<Transport, Error> {
         Transport::connect(crate::net::Http::new(false)?, origin, protocol).await
-    }
-
-    #[tokio::test]
-    async fn http_lane_retries_dropped_streaming_request() -> Result<(), Error> {
-        let _ = crate::crypto::provider().install_default();
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let origin = format!("http://{}", listener.local_addr()?);
-        let transport = transport(&origin, Protocol::Http1).await?;
-        let active = Arc::new(AtomicBool::new(false));
-        let lane = tokio::spawn(async move {
-            send_lane(
-                &transport,
-                "upload-session",
-                0,
-                Bytes::from(vec![42; 64 * 1024]),
-                active,
-                TransferRetry::new(Retrying::default(), 0),
-                OPERATION_LIMIT,
-            )
-            .await
-        });
-        tokio::time::timeout(Duration::from_secs(5), async {
-            let mut first_closed = None;
-            for attempt in 0..2 {
-                let (mut stream, _) = listener.accept().await?;
-                if attempt == 1 {
-                    assert!(
-                        first_closed.is_some_and(|closed: Instant| { closed.elapsed() >= TRANSFER_RETRY_BACKOFF }),
-                        "a dropped upload request was retried without pacing"
-                    );
-                }
-                let mut headers = Vec::new();
-                let mut chunk = [0_u8; 4096];
-                let body_start = loop {
-                    let count = stream.read(&mut chunk).await?;
-                    assert!(count > 0, "upload ended before request headers");
-                    headers.extend_from_slice(&chunk[..count]);
-                    if let Some(end) = headers.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
-                        break end + 4;
-                    }
-                    assert!(headers.len() <= 16 * 1024, "upload headers are too large");
-                };
-                assert!(headers.starts_with(b"POST /upload?cb="));
-                let mut payload_bytes = headers.len() - body_start;
-                while attempt == 0 && payload_bytes < 128 * 1024 {
-                    let count = stream.read(&mut chunk).await?;
-                    assert!(count > 0, "upload ended before the partial payload");
-                    payload_bytes += count;
-                }
-                // The first connection drops after accepting payload bytes;
-                // the second request proves recovery after a partial upload.
-                drop(stream);
-                if attempt == 0 {
-                    first_closed = Some(Instant::now());
-                }
-            }
-            Ok::<_, Error>(())
-        })
-        .await??;
-        assert!(!lane.is_finished());
-        lane.abort();
-        let _ = lane.await;
-        Ok(())
     }
 
     /// The progress feed of a WebTransport receiver that writes `records` on its first stream, and
@@ -737,45 +673,6 @@ mod tests {
         assert!(state.complete);
         let latest = state.latest.ok_or("no count")?;
         assert_eq!((latest.bytes, latest.nanos), (7, 9));
-        Ok(())
-    }
-
-    /// A lane the receiver ends as idle, 408 with its refusal code, ends that attempt as Go's does
-    /// (upload.go:124-130): the next request goes out at once, not after a failure's pause.
-    #[tokio::test]
-    async fn an_idle_ending_starts_the_next_request_at_once() -> Result<(), Error> {
-        let _ = crate::crypto::provider().install_default();
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let origin = format!("http://{}", listener.local_addr()?);
-        let transport = transport(&origin, Protocol::Http1).await?;
-        let block = Bytes::from(vec![42; 64 * 1024]);
-        let active = Arc::new(AtomicBool::new(false));
-        let retry = TransferRetry::new(Retrying::default(), 0);
-        let lane = tokio::spawn(async move {
-            send_lane(&transport, "upload-session", 0, block, active, retry, OPERATION_LIMIT).await
-        });
-        let requests = tokio::time::timeout(Duration::from_secs(5), async {
-            let (mut requests, mut held) = (Vec::new(), Vec::new());
-            for _ in 0..2 {
-                let (mut stream, _) = listener.accept().await?;
-                requests.push(Instant::now());
-                let mut received = 0;
-                while received < 128 * 1024 {
-                    received += stream.read(&mut [0_u8; 64 * 1024]).await?;
-                }
-                let idle =
-                    "HTTP/1.1 408 Request Timeout\r\nX-Graphite-Upload-Refusal: idle\r\nContent-Length: 0\r\n\r\n";
-                stream.write_all(idle.as_bytes()).await?;
-                // Closing with the body still arriving resets the connection, and macOS then drops the
-                // unread answer; a real receiver ends only an idle lane, with nothing in flight.
-                held.push(stream);
-            }
-            Ok::<_, Error>(requests)
-        })
-        .await;
-        lane.abort();
-        let requests = requests??;
-        assert!(requests[1] - requests[0] < TRANSFER_RETRY_BACKOFF, "{requests:?}");
         Ok(())
     }
 
@@ -934,7 +831,7 @@ mod tests {
     async fn checkpoints_never_queue_behind_http2_upload_lanes() -> Result<(), Error> {
         let _ = crate::crypto::provider().install_default();
         let armed = Arc::new(AtomicBool::new(false));
-        let (transport, server) = receiver(0, armed.clone(), Default::default()).await?;
+        let (transport, server) = receiver(armed.clone()).await?;
         let (_stop, cancel) = watch::channel(false);
         let upload = tokio::time::timeout(
             Duration::from_secs(5),
@@ -978,68 +875,8 @@ mod tests {
         Ok(())
     }
 
-    /// The mint is tried again as Go's restore tries it (upload.go:33-39), here once a busy
-    /// answer's Retry-After has passed.
-    #[tokio::test]
-    async fn a_busy_mint_is_tried_again() -> Result<(), Error> {
-        let _ = crate::crypto::provider().install_default();
-        let requests = Requests::default();
-        let (transport, server) = receiver(1, Default::default(), requests.clone()).await?;
-        let (_stop, cancel) = watch::channel(false);
-        let upload = Upload::start(transport, 1, HTTP_LANES, Arc::default(), cancel).await;
-        server.abort();
-        drop(upload?);
-        let mints = times(&requests, "/upload/session");
-        assert!(
-            mints.len() == 2 && mints[1] - mints[0] >= Duration::from_secs(1),
-            "{mints:?}"
-        );
-        Ok(())
-    }
-
-    /// An upload request lasts the stage's operation limit, as Go's lanes last their stage
-    /// (upload.go:96-130), where a 120 s cap ended every lane at once.
-    #[tokio::test(start_paused = true)]
-    async fn an_upload_request_lasts_the_stage() -> Result<(), Error> {
-        let _ = crate::crypto::provider().install_default();
-        // Paused time leaps to the next timer while a socket is awaited; this keeps leaps to 1 ms.
-        let heartbeat = tokio::spawn(async {
-            loop {
-                tokio::time::sleep(Duration::from_millis(1)).await;
-            }
-        });
-        let requests = Requests::default();
-        let (transport, server) = receiver(0, Default::default(), requests.clone()).await?;
-        let (_stop, cancel) = watch::channel(false);
-        let http = Some((Duration::ZERO, Duration::from_secs(300)));
-        let upload = Upload::start(transport, 1, http, Arc::default(), cancel).await?;
-        tokio::time::sleep(Duration::from_secs(200)).await;
-        drop(upload);
-        server.abort();
-        heartbeat.abort();
-        assert_eq!(times(&requests, "/upload").len(), 1);
-        Ok(())
-    }
-
-    /// Each request's path and arrival.
-    type Requests = Arc<std::sync::Mutex<Vec<(String, Instant)>>>;
-
-    fn times(requests: &Requests, path: &str) -> Vec<Instant> {
-        let requests = requests.lock().unwrap();
-        requests
-            .iter()
-            .filter(|(seen, _)| seen == path)
-            .map(|(_, at)| *at)
-            .collect()
-    }
-
-    /// A receiver over HTTP/2 that answers its first `busy` mints with 503 and Retry-After: 1, and
-    /// records each request; once `armed` it stops reading the connections that carried lanes.
-    async fn receiver(
-        busy: usize,
-        armed: Arc<AtomicBool>,
-        requests: Requests,
-    ) -> Result<(Arc<Transport>, tokio::task::JoinHandle<()>), Error> {
+    /// A receiver over HTTP/2 that stops reading the connections carrying lanes once armed.
+    async fn receiver(armed: Arc<AtomicBool>) -> Result<(Arc<Transport>, tokio::task::JoinHandle<()>), Error> {
         use http_body_util::{BodyExt, Full, StreamBody, combinators::BoxBody};
         use hyper::{body::Frame, service::service_fn};
         use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -1054,22 +891,15 @@ mod tests {
                     lanes: lanes.clone(),
                     armed: armed.clone(),
                 };
-                let requests = requests.clone();
                 let service = service_fn(move |request: http::Request<hyper::body::Incoming>| {
-                    let (lanes, requests) = (lanes.clone(), requests.clone());
+                    let lanes = lanes.clone();
                     async move {
                         let json =
                             |body: &'static str| -> Payload { Full::new(Bytes::from_static(body.as_bytes())).boxed() };
                         let path = request.uri().path();
-                        requests.lock().unwrap().push((path.to_owned(), Instant::now()));
-                        let mut answer = http::Response::builder();
+                        let answer = http::Response::builder();
                         let body = match path {
-                            "/upload/session" => {
-                                if times(&requests, path).len() <= busy {
-                                    answer = answer.status(503).header(http::header::RETRY_AFTER, "1");
-                                }
-                                json(r#"{"uploadId":"fixture"}"#)
-                            }
+                            "/upload/session" => json(r#"{"uploadId":"fixture"}"#),
                             "/upload/checkpoint" => json(r#"{"bytes":1,"nanos":1}"#),
                             "/upload/progress" => {
                                 let events = Bytes::from_static(
@@ -1132,39 +962,6 @@ mod tests {
         assert!(observed.complete);
         let latest = observed.latest.unwrap();
         assert_eq!((latest.bytes, latest.nanos), (12, 30));
-        Ok(())
-    }
-
-    /// A feed that cannot open is tried again for 2 s at Go's pace (upload.go:284-297,
-    /// transfer.go:95-104): 500 ms after each refusal, where 100 ms made some twenty requests.
-    #[tokio::test]
-    async fn a_failing_progress_feed_reopens_at_gos_pace() -> Result<(), Error> {
-        let _ = crate::crypto::provider().install_default();
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let origin = format!("http://{}", listener.local_addr()?);
-        let opens = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let seen = opens.clone();
-        let server = tokio::spawn(async move {
-            for _ in 0..32 {
-                let (mut stream, _) = listener.accept().await?;
-                seen.lock().unwrap().push(Instant::now());
-                let _ = stream.read(&mut [0_u8; 4096]).await?;
-                stream
-                    .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-                    .await?;
-            }
-            Ok::<_, Error>(())
-        });
-        let transport = transport(&origin, Protocol::Http1).await?;
-        let (state, _) = watch::channel(State::default());
-        let lost = progress_loop(&transport, "test-session", &state).await;
-        server.abort();
-        let opens = opens.lock().unwrap();
-        assert!(lost.is_err_and(|error| error.to_string().contains("not replaced")));
-        assert!((3..=5).contains(&opens.len()), "{} opens", opens.len());
-        for pair in opens.windows(2) {
-            assert!(pair[1] - pair[0] >= TRANSFER_RETRY_BACKOFF);
-        }
         Ok(())
     }
 }

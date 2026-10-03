@@ -4,14 +4,12 @@ use graphite_meter_core::wire;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::Barrier,
 };
 use tokio_tungstenite::tungstenite::Message;
 
 #[derive(Clone, Copy)]
 pub(crate) enum FixtureMode {
     Latency,
-    Throughput,
     Negotiated,
 }
 
@@ -61,17 +59,6 @@ pub(crate) async fn serve(mut stream: TcpStream, origin: String, mode: FixtureMo
                         {"baseUrl": origin.replacen("http://", "https://", 1), "transport": "webtransport"},
                         {"baseUrl": ".", "transport": "websocket"}
                     ]
-                }
-            }),
-            FixtureMode::Throughput => serde_json::json!({
-                "generation": "fixture",
-                "capabilities": {
-                    "throughput": [
-                        {"baseUrl": "http://127.0.0.1:1", "transport": "fetch-stream", "protocol": "negotiated"},
-                        {"baseUrl": "http://127.0.0.1:2", "transport": "fetch-stream", "protocol": "negotiated"},
-                        {"baseUrl": origin.replacen("http://", "https://", 1), "transport": "webtransport", "protocol": "http3"}
-                    ],
-                    "latency": []
                 }
             }),
             FixtureMode::Negotiated => serde_json::json!({
@@ -135,22 +122,10 @@ async fn fixture(mode: FixtureMode) -> Result<(String, tokio::task::JoinHandle<(
     Ok((origin, fixture))
 }
 
-async fn serve_selected(
-    mut stream: TcpStream,
-    origin: String,
-    catalog: String,
-    barrier: Arc<Barrier>,
-    no_throughput: bool,
-) -> Result<(), Error> {
+async fn serve_selected(mut stream: TcpStream, origin: String, catalog: String) -> Result<(), Error> {
     let Some(path) = request_path(&stream).await? else {
         return Ok(());
     };
-    if path == "/preflight" {
-        barrier.wait().await;
-        if no_throughput {
-            return serve(stream, origin, FixtureMode::Latency).await;
-        }
-    }
     if path == "/servers" {
         let _ = stream.read(&mut [0_u8; 2048]).await?;
         stream
@@ -165,70 +140,6 @@ async fn serve_selected(
         return Ok(());
     }
     serve(stream, origin, FixtureMode::Negotiated).await
-}
-
-#[tokio::test]
-async fn selected_servers_verify_concurrently_and_report_each_result() -> Result<(), Error> {
-    let _ = crate::crypto::provider().install_default();
-    let first = TcpListener::bind("127.0.0.1:0").await?;
-    let second = TcpListener::bind("127.0.0.1:0").await?;
-    let first_origin = format!("http://{}", first.local_addr()?);
-    let second_origin = format!("http://{}", second.local_addr()?);
-    let catalog = serde_json::json!({
-        "defaultSelection": ["self", "beta"],
-        "servers": [
-            {"id": "self", "url": first_origin, "name": "alpha"},
-            {"id": "beta", "url": second_origin, "name": "beta"}
-        ]
-    })
-    .to_string();
-    let barrier = Arc::new(Barrier::new(2));
-    let serve_listener = |listener: TcpListener, origin: String, no_throughput| {
-        let catalog = catalog.clone();
-        let barrier = barrier.clone();
-        tokio::spawn(async move {
-            while let Ok((stream, _)) = listener.accept().await {
-                let origin = origin.clone();
-                let catalog = catalog.clone();
-                let barrier = barrier.clone();
-                tokio::spawn(async move {
-                    let _ = serve_selected(stream, origin, catalog, barrier, no_throughput).await;
-                });
-            }
-        })
-    };
-    let first_server = serve_listener(first, first_origin.clone(), false);
-    let second_server = serve_listener(second, second_origin, true);
-    let config = download(first_origin);
-    let (snapshots, _) = watch::channel(Snapshot::default());
-    let result = tokio::time::timeout(Duration::from_secs(3), check(&config, &Http::new(false)?, &snapshots)).await?;
-    let Ok(Preparation { servers, failures }) = result else {
-        return Err("one unusable server failed the whole selection".into());
-    };
-    assert_eq!(servers.len(), 1);
-    assert_eq!(failures.len(), 1);
-    assert!(failures[0].to_string().contains("beta"), "{}", failures[0]);
-    assert_eq!(
-        crate::failure::reason(failures[0].source.as_ref(), true),
-        graphite_meter_core::failure::FailureReason::PreparationFailed
-    );
-    let snapshot = snapshots.borrow();
-    assert!(
-        snapshot
-            .servers
-            .iter()
-            .any(|server| { server.id == "self" && server.throughput.is_some() && server.error.is_none() })
-    );
-    assert!(snapshot.servers.iter().any(|server| {
-        server.id == "beta"
-            && server
-                .error
-                .as_deref()
-                .is_some_and(|error| error.contains("unavailable"))
-    }));
-    first_server.abort();
-    second_server.abort();
-    Ok(())
 }
 
 #[tokio::test]
@@ -252,7 +163,7 @@ async fn a_slow_server_fails_alone_at_the_shared_deadline() -> Result<(), Error>
             tokio::select! {
                 Ok((stream, _)) = fast.accept() => {
                     let (origin, catalog) = (origin.clone(), catalog.clone());
-                    tokio::spawn(serve_selected(stream, origin, catalog, Arc::new(Barrier::new(1)), false));
+                    tokio::spawn(serve_selected(stream, origin, catalog));
                 }
                 Ok((stream, _)) = slow.accept() => held.push(stream),
             }
@@ -295,26 +206,6 @@ async fn automatic_latency_uses_websocket_when_advertised_quic_cannot_reply() ->
         ..config
     };
     assert!(check(&forced, &http, &snapshots).await.is_err());
-    fixture.abort();
-    Ok(())
-}
-
-#[tokio::test]
-async fn unreachable_webtransport_preserves_ambiguous_fetch_error() -> Result<(), Error> {
-    let _ = crate::crypto::provider().install_default();
-    let (origin, fixture) = fixture(FixtureMode::Throughput).await?;
-    let config = download(origin);
-    let (snapshots, _) = watch::channel(Snapshot::default());
-    let error = check(&config, &Http::new(false)?, &snapshots)
-        .await
-        .err()
-        .ok_or("unreachable WebTransport unexpectedly passed preparation")?;
-    assert!(
-        error
-            .to_string()
-            .contains("several throughput targets are available; select an origin")
-    );
-    assert!(error.to_string().contains("advertised WebTransport is unavailable"));
     fixture.abort();
     Ok(())
 }

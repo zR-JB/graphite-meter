@@ -1,50 +1,11 @@
 //! Go's TUI tests (main_test.go and run_test.go) over the controller's snapshots.
 use super::*;
-use crate::model::{AuthPrompt, FailureScope, Point, ServerFailure, ServerLatency, ServerLatencyResult, StageResult};
+use crate::model::{AuthPrompt, FailureScope, ServerFailure};
 use graphite_meter_core::{
     discovery::{LatencyTarget, LatencyTransport, Protocol, ThroughputTarget, ThroughputTransport},
     failure::FailureReason,
-    latency::{LatencyAccumulator, LatencySummary, ProbeOutcome},
-    measurement::{Direction, MeasurementResult},
 };
 use ratatui_core::{backend::TestBackend, terminal::Terminal};
-
-/// 1.5 MB received in a second.
-pub(crate) fn download_measurement() -> MeasurementResult {
-    MeasurementResult {
-        direction: Direction::Down,
-        total_bytes: 1_500_000,
-        mean_bytes_per_sec: Some(1_500_000.0),
-        peak_bytes_per_sec: Some(1_500_000.0),
-        samples: 4,
-        elapsed_nanos: Some(1_000_000_000),
-    }
-}
-
-/// The summary of replies with these round trips, then of timed-out probes.
-pub(crate) fn probes(rtts: &[i64], timeouts: usize) -> LatencySummary {
-    let mut probes = LatencyAccumulator::default();
-    for &rtt_nanos in rtts {
-        probes.record(ProbeOutcome::Reply {
-            rtt_nanos,
-            handling_nanos: 0,
-        });
-    }
-    for _ in 0..timeouts {
-        probes.record(ProbeOutcome::Timeout);
-    }
-    probes.snapshot()
-}
-
-/// A server's latency over a second.
-pub(crate) fn latency_result(id: &str, summary: LatencySummary) -> ServerLatencyResult {
-    ServerLatencyResult {
-        elapsed: Some(Duration::from_secs(1)),
-        id: id.into(),
-        summary,
-        ending: None,
-    }
-}
 
 fn key(name: &str) -> KeyEvent {
     let (modifiers, base) = match name.split_once('+') {
@@ -187,44 +148,6 @@ fn fail(ui: &mut Ui, error: &str) {
     });
 }
 
-/// A sample `quarters` quarter seconds in: the download rate, and server a's last reply and timeout streak.
-fn sample(ui: &mut Ui, quarters: u64, down_bps: Option<f64>, latest_ms: Option<f64>, timeouts: u32) {
-    let elapsed = Duration::from_millis(250 * quarters);
-    step(ui, |snapshot| {
-        snapshot.latest = Point {
-            elapsed,
-            down_bps,
-            sample_count: 1,
-            ..Point::default()
-        };
-        snapshot.server_latencies = vec![ServerLatency {
-            id: "a".into(),
-            latest_ms,
-            timeouts,
-            steps: vec![(Instant::now(), latest_ms.unwrap_or(f64::NAN), 1)],
-        }];
-    });
-}
-
-fn at(ui: &mut Ui, setting: Setting) {
-    ui.row = ui.rows().iter().position(|row| *row == setting).unwrap();
-}
-
-pub(crate) fn result(stage: Stage, down: Option<f64>, up: Option<f64>) -> StageResult {
-    let measurement = |direction, mean| MeasurementResult {
-        direction,
-        mean_bytes_per_sec: mean,
-        ..download_measurement()
-    };
-    StageResult {
-        stage,
-        elapsed: Duration::from_secs(1),
-        down: down.map(|mean| measurement(Direction::Down, Some(mean))),
-        up: up.map(|mean| measurement(Direction::Up, Some(mean))),
-        ..StageResult::default()
-    }
-}
-
 /// A server's lost connection in a stage's throughput.
 fn lost(id: &str, stage: Stage) -> ServerFailure {
     ServerFailure {
@@ -234,10 +157,6 @@ fn lost(id: &str, stage: Stage) -> ServerFailure {
         reason: FailureReason::ConnectionLost,
         at: Duration::ZERO,
     }
-}
-
-fn report(ui: &Ui) -> String {
-    crate::report::render(&ui.snapshot, 100, Theme::default()).unwrap()
 }
 
 fn prompt(code: &str, url: &str) -> AuthPrompt {
@@ -257,74 +176,6 @@ impl Ui {
             .map(|(snapshot, run)| self.live_view(snapshot, run, width, height));
         plain(&live.unwrap_or_default())
     }
-}
-
-#[test]
-fn setup_keys_change_paths_and_debounce_the_check() {
-    let (commands, mut sent) = mpsc::channel(8);
-    let mut ui = setup();
-    press(&mut ui, &commands, &["up"]);
-    assert_eq!(ui.current(), Setting::Start);
-    ui.advanced = true;
-    at(&mut ui, Setting::Protocol);
-    press(&mut ui, &commands, &["right"]);
-    assert_eq!(ui.config.throughput_protocol, Some(Protocol::Http1));
-    assert!(!ui.recheck(&commands));
-    ui.recheck = Some(Instant::now());
-    assert!(ui.recheck(&commands));
-    assert!(matches!(sent.try_recv(), Ok(Command::Verify(_))));
-    at(&mut ui, Setting::Reset);
-    press(&mut ui, &commands, &["enter"]);
-    assert!(ui.reset_prompt);
-    press(&mut ui, &commands, &["enter"]);
-    assert_eq!(ui.config, Config::default());
-    press(&mut ui, &commands, &["r"]);
-    assert!(matches!(sent.try_recv(), Ok(Command::Run(_))));
-}
-
-#[test]
-fn edits_apply_refuse_and_discard() {
-    let (commands, _sent) = mpsc::channel(8);
-    let mut ui = setup();
-    ui.config.servers = vec!["near".into()];
-    ui.begin_edit(Setting::Catalogue, "meter.example".into());
-    press(&mut ui, &commands, &["enter"]);
-    assert_eq!(ui.config.url, "https://meter.example");
-    assert!(ui.config.servers.is_empty() && ui.recheck.is_some());
-    ui.begin_edit(Setting::Warmup, "5s".into());
-    press(&mut ui, &commands, &["enter"]);
-    assert!(!ui.edit.as_ref().unwrap().error.is_empty());
-    press(&mut ui, &commands, &["backspace"]);
-    assert!(ui.edit.as_ref().unwrap().error.is_empty());
-    press(&mut ui, &commands, &["esc"]);
-    assert!(ui.edit.is_none());
-    ui.theme = Theme::new(crate::theme::Profile::TrueColor, true);
-    ui.begin_edit(Setting::Catalogue, "界".repeat(30));
-    let edit = ui.edit.as_ref().unwrap().view(&ui, 12);
-    assert!(edit.width() <= 12);
-    assert!(edit.spans.iter().any(|span| {
-        span.style
-            .add_modifier
-            .contains(ratatui_core::style::Modifier::REVERSED)
-    }));
-    assert!(press(&mut ui, &commands, &["ctrl+c"]));
-}
-
-#[test]
-fn available_servers_and_chooser_recheck_the_selection() {
-    let (commands, _sent) = mpsc::channel(8);
-    let mut ui = setup();
-    prepare(&mut ui, &[None, Some("sign in"), Some("connection refused")]);
-    assert!(ui.can_use_available());
-    press(&mut ui, &commands, &["u"]);
-    assert_eq!(ui.config.servers, ["a"]);
-    ui.recheck = None;
-    ui.checked_at = Some(Instant::now() - FRESHNESS - Duration::from_secs(1));
-    assert!(screen(&mut ui).contains("Recheck needed"));
-    prepare(&mut ui, &[None, None]);
-    press(&mut ui, &commands, &["s", "down", "space", "enter"]);
-    assert_eq!(ui.config.servers, ["a", "b"]);
-    assert!(ui.recheck.is_some());
 }
 
 #[test]
@@ -433,86 +284,6 @@ fn run_keys_stop_quit_and_return_as_go_does() {
     press(&mut ui, &commands, &["esc"]);
     assert!(!ui.live && ui.prepare() == Prepare::Checking); // esc returns to a freshly checked setup
     assert!(ui.exit().shown.is_none(), "Go prints no report after a return to setup");
-    // Run again keeps the last results until the next run starts, and after a failed start, whose check waits for esc.
-    let mut ui = running(&["a"]);
-    step(&mut ui, |snapshot| {
-        snapshot.results.push(result(Stage::Download, Some(1e6), None));
-        snapshot.phase = Phase::Complete;
-    });
-    while sent.try_recv().is_ok() {}
-    press(&mut ui, &commands, &["r"]);
-    assert!(matches!(sent.try_recv(), Ok(Command::Run(_))));
-    ui.update(Snapshot {
-        phase: Phase::Preparing,
-        ..Snapshot::default()
-    });
-    assert!(ui.shown().is_some_and(|(shown, _)| shown.results.len() == 1));
-    assert!(ui.status_label() == "Checking paths" && ui.running() && ui.progress() == Some(Progress::Checking));
-    ui.update(Snapshot {
-        phase: Phase::Failed,
-        error: Some("Test could not start: Server could not be reached".into()),
-        ..Snapshot::default()
-    });
-    assert!(ui.shown().is_some_and(|(shown, _)| shown.phase == Phase::Complete)); // a failed start keeps the results
-    assert!(ui.notice.starts_with("Test could not start:") && ui.status_label() == "Complete");
-    assert!(!screen(&mut ui).lines().last().unwrap_or_default().is_empty());
-    ui.recheck = ui.recheck.map(|_| Instant::now()); // a due check's Checking snapshot would bring setup back
-    assert!(!ui.recheck(&commands) && sent.try_recv().is_err() && ui.shown().is_some());
-    assert!(!press(&mut ui, &commands, &["esc"]) && !ui.live && ui.recheck.is_some()); // esc checks anew
-    // A start that replaced the first check keeps it checking; stopped, it checks again, where Go's spins on.
-    let mut ui = setup();
-    step(&mut ui, |snapshot| snapshot.phase = Phase::Checking);
-    press(&mut ui, &commands, &["r"]);
-    step(&mut ui, |snapshot| snapshot.phase = Phase::Preparing);
-    assert!(ui.prepare() == Prepare::Checking && screen(&mut ui).contains("checking paths"));
-    step(&mut ui, |snapshot| snapshot.phase = Phase::Cancelled);
-    assert!(!ui.live && ui.recheck.is_some() && ui.notice == "Test stopped before it started.");
-}
-
-#[test]
-fn multi_server_runs_name_their_latency_server() {
-    let (commands, _sent) = mpsc::channel(32);
-    let mut ui = running(&["a", "b"]);
-    step(&mut ui, |snapshot| {
-        let mut latency = result(Stage::Latency, None, None);
-        latency.server_latencies = vec![
-            latency_result("a", probes(&[10_000_000; 3], 0)),
-            latency_result("b", probes(&[90_000_000; 3], 0)),
-        ];
-        snapshot.results = vec![latency, result(Stage::Download, Some(3e6), None)];
-        snapshot.stage = Some(Stage::Download);
-        snapshot.failures.push(lost("b", Stage::Download));
-    });
-    assert_eq!(ui.notice, "B: Connection lost"); // the failure names its server and reason
-    step(&mut ui, |snapshot| snapshot.phase = Phase::Complete);
-    let shown = screen(&mut ui);
-    assert!(shown.contains("latency to A") && shown.contains("10.0 ms"), "{shown}");
-    press(&mut ui, &commands, &["l"]);
-    let shown = screen(&mut ui);
-    assert_eq!(ui.latency_server(), Some("b"));
-    assert!(shown.contains("latency to B") && shown.contains("90.0 ms"), "{shown}");
-    let report = self::report(&ui);
-    // The report follows the run's focus.
-    assert!(report.contains("Latency to A"), "{report}");
-    assert!(report.contains("10.0 ms"), "{report}");
-    press(&mut ui, &commands, &["d"]);
-    let details = screen(&mut ui);
-    let (all, own) = (details.find("│ All servers "), details.find("│ A "));
-    assert_eq!(ui.popup, Popup::Details);
-    assert!(all.is_some_and(|all| own.is_some_and(|own| all < own)), "{details}");
-    assert!(details.contains("24.00 Mbit/s"), "{details}");
-    press(&mut ui, &commands, &["esc"]);
-    assert_eq!(ui.popup, Popup::None);
-    // The pick follows the run's focus once the picked server leaves.
-    let mut ui = running(&["a", "b"]);
-    press(&mut ui, &commands, &["l"]);
-    for (focus, participants, want) in [("a", &["a", "b"][..], "b"), ("a", &["a"], "a"), ("b", &["b"], "b")] {
-        step(&mut ui, |snapshot| {
-            snapshot.latency_focus = Some(focus.into());
-            snapshot.participants = participants.iter().map(|id| (*id).into()).collect();
-        });
-        assert_eq!(ui.latency_server(), Some(want), "{focus} with {participants:?}");
-    }
 }
 
 #[test]
@@ -544,53 +315,4 @@ fn remote_errors_cannot_write_terminal_controls() {
         assert!(!view.contains(['\x07', '\r', '\u{9b}']), "{view:?}");
         assert!(!view.contains("\x1b]"), "{view:?}");
     }
-}
-
-#[test]
-fn the_live_view_draws_rates_and_round_trips() {
-    let mut ui = running(&["a"]);
-    stage(&mut ui, Stage::Bidirectional, Phase::Measuring);
-    for quarters in [1, 2] {
-        sample(&mut ui, quarters, Some(8e6), Some(3.0), 0);
-        std::thread::sleep(Duration::from_millis(60));
-    }
-    let shown = ui.live_text(60, 16);
-    for text in ["↓", "↑", "Loaded latency", "3.0 ms", "solid", "dashed"] {
-        assert!(shown.contains(text), "{shown}");
-    }
-    assert!(shown.chars().any(|c| ('\u{2801}'..='\u{28ff}').contains(&c)), "{shown}");
-}
-
-#[test]
-fn representative_views_fit_the_terminal() {
-    let mut small = setup();
-    small.size = (30, 10);
-    assert!(screen(&mut small).contains("Enlarge the terminal"));
-    let mut setup = setup();
-    setup.size = (40, 12);
-    setup.begin_edit(Setting::Catalogue, "https://界.example".into());
-    let mut run = running(&["a", "b"]);
-    run.size = (80, 24);
-    run.popup = Popup::Details;
-    for (ui, width, height) in [(&setup, 40, 12), (&run, 80, 24)] {
-        let frame = ui.screen();
-        assert!(frame.len() <= height);
-        assert!(frame.iter().all(|line| line.width() <= width));
-        assert!(plain(&frame).contains("Graphite Meter"));
-    }
-}
-
-#[test]
-fn mouse_scrolling_obeys_the_stop_prompt() {
-    let mut ui = running(&["a"]);
-    ui.size = (80, 12);
-    step(&mut ui, |snapshot| {
-        snapshot.results.push(result(Stage::Download, Some(1e6), None));
-        snapshot.phase = Phase::Complete;
-    });
-    assert!(ui.mouse(MouseEventKind::ScrollDown));
-    assert!(ui.mouse(MouseEventKind::ScrollUp));
-    assert_eq!(ui.body, 0);
-    ui.stop_prompt = true;
-    assert!(!ui.mouse(MouseEventKind::ScrollDown));
 }

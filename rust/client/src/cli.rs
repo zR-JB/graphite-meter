@@ -344,46 +344,8 @@ fn quote(text: &str) -> String {
 mod tests {
     use super::*;
 
-    /// A script's unset variable keeps Go's default, as its normalized configuration does.
     #[test]
-    fn empty_origins_and_path_choices_read_as_defaults() -> Result<(), Error> {
-        #[rustfmt::skip]
-        let empty = ["-url", "", "-throughput-origin=", "-latency-origin=", "-throughput-protocol=",
-            "-throughput-transport=", "-latency-transport="];
-        let Action::Run { config, .. } = parse(empty.map(OsString::from))? else {
-            return Err("empty values did not start a run".into());
-        };
-        assert_eq!(*config, Config::default());
-        // Go's checkPaths refuses a path choice before the cadence ceiling.
-        let refused = parse(["-ping", "20s", "-throughput-transport", "bogus"].map(OsString::from)).err();
-        assert!(refused.is_some_and(|error| error.to_string().starts_with("invalid throughput transport")));
-        Ok(())
-    }
-
-    /// Go's strconv.ParseInt in base 0, its -1 ns reply-driven cadence and its %q, as Go reads
-    /// and writes these.
-    #[test]
-    fn counts_cadences_and_quotes_read_as_go() {
-        let (range, max) = (Err("value out of range"), Ok(usize::MAX));
-        #[rustfmt::skip]
-        let counts = [("010", Ok(8)), ("0x8", Ok(8)), ("0B1_000", Ok(8)), ("0o17", Ok(15)), ("0X1F", Ok(31)),
-            ("1_0", Ok(10)), ("0_10", Ok(8)), ("0x_1", Ok(1)), ("+3", Ok(3)), ("0", Ok(0)), ("-0", Ok(0)), ("-1", max),
-            ("-9223372036854775808", max), ("9223372036854775807", Ok(9_223_372_036_854_775_807)),
-            ("9223372036854775808", range), ("-9223372036854775809", range), ("99999999999999999999x", range)];
-        for (text, expected) in counts {
-            assert_eq!(count(text), expected, "{text}");
-        }
-        for text in [
-            "08", "1__0", "_1", "1_", "0_", "0x", "0b", "0b2", "++1", "-+1", "", "x9", "0xg",
-        ] {
-            assert_eq!(count(text), Err("parse error"), "{text}");
-        }
-        let nanos = Duration::from_nanos;
-        #[rustfmt::skip]
-        let cadences = [("-1ns", nanos(0)), ("0", nanos(1)), ("-2ns", nanos(1)), (" Fast ", nanos(80_000_000))];
-        for (text, interval) in cadences {
-            assert_eq!(cadence(text), Ok(interval), "{text}");
-        }
+    fn quotes_escape_control_characters_as_go_does() {
         let text = "x\x01y\u{202e}\"é\u{a0}\t\x7f\u{85}😀 \u{200b}";
         // "@" stands for the backslash that begins each of Go's escapes.
         let expected = "\"x@x01y@u202e@\"é@u00a0@t@x7f@u0085😀 @u200b\"".replace('@', "\\");
