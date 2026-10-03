@@ -7,7 +7,7 @@ use serde::Serialize;
 use sha2::Sha256;
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
     time::Duration,
 };
 use tokio::time::Instant;
@@ -97,7 +97,7 @@ struct Aggregate {
     lanes: usize,
     finished: bool,
     expired: bool,
-    claim: Option<Arc<()>>,
+    claim: Weak<()>,
     changed: Arc<tokio::sync::Notify>,
 }
 impl Aggregate {
@@ -216,7 +216,7 @@ impl UploadStore {
                 lanes: 0,
                 finished: false,
                 expired: false,
-                claim: None,
+                claim: Weak::new(),
                 changed: Arc::new(tokio::sync::Notify::new()),
             }));
             entries.by_id.insert(id.to_owned(), aggregate.clone());
@@ -263,7 +263,7 @@ impl UploadStore {
         let claim = Arc::new(());
         let changed = {
             let mut state = lock(&aggregate);
-            state.claim = Some(claim.clone());
+            state.claim = Arc::downgrade(&claim);
             state.changed.notify_waiters();
             state.changed.clone()
         };
@@ -383,11 +383,8 @@ impl UploadSubscription {
             self.store.sweep_if_due();
             {
                 let state = lock(&self.aggregate);
-                if !state
-                    .claim
-                    .as_ref()
-                    .is_some_and(|claim| Arc::ptr_eq(claim, &self.claim))
-                {
+                // The weak registration keeps its allocation distinct from every newer claim.
+                if !std::ptr::eq(state.claim.as_ptr(), Arc::as_ptr(&self.claim)) {
                     self.ended = true;
                     return None;
                 }
@@ -427,18 +424,6 @@ impl UploadSubscription {
                     ticked = true;
                 }
             }
-        }
-    }
-}
-impl Drop for UploadSubscription {
-    fn drop(&mut self) {
-        let mut state = lock(&self.aggregate);
-        if state
-            .claim
-            .as_ref()
-            .is_some_and(|claim| Arc::ptr_eq(claim, &self.claim))
-        {
-            state.claim = None;
         }
     }
 }
