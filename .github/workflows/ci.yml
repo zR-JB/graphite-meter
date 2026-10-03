@@ -219,45 +219,6 @@ jobs:
       - name: Scan repository with pinned Gitleaks
         run: mise run secret-scan-ci
 
-  # Temporary: compare both legal build paths on one runner with full release optimization.
-  rust-build-study:
-    name: Rust release build study
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    needs: plan
-    if: needs.plan.outputs.rust == 'true'
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false, fetch-depth: 0}
-      - name: Set up pinned mise and Python
-        uses: ./.github/actions/setup-project
-        with: {cache: 'false'}
-      - name: Set up pinned Buildx
-        uses: ./.github/actions/setup-buildx
-      - name: Prepare the original collector and pinned compiler image
-        run: |
-          baseline_dir=rust/target/build-study-baseline-inputs
-          mkdir -p "$baseline_dir"/{scripts/legal,rust,legal}
-          git show 4e712e1aec70d0371b960281565e2fc7760d20ce:scripts/legal/rust.py >"$baseline_dir/scripts/legal/rust.py"
-          for path in rust/legal_build.rs scripts/legal/rust_platform.py legal/rust-platform-debian-bookworm.json; do
-            git show "3ee69f3543a0864c5390ec326ead48bebdf5129b:$path" >"$baseline_dir/$path"
-          done
-          docker buildx build --file container/Dockerfile.rust --target rust-amd64 \
-            --platform linux/amd64 --load --tag graphite-meter-rust:build-study .
-      - name: Compare cold and edited-source builds with full release optimization
-        run: >-
-          docker run --rm --volume "$GITHUB_WORKSPACE:/src" --workdir /src
-          graphite-meter-rust:build-study python3 -B -m scripts.ci.rust_build_study
-      - name: Upload timings and actual compilation inventories
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: rust-release-build-study
-          path: rust/target/build-study-results
-          if-no-files-found: warn
-          retention-days: 3
-
   rust:
     name: Experimental Rust checks
     runs-on: ubuntu-24.04
@@ -544,7 +505,7 @@ jobs:
     name: Gate
     runs-on: ubuntu-24.04
     if: always()
-    needs: [plan, rust-build-study, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-e2e-build, rust-e2e, rust-release-tui, rust-release-server, rust-release]
+    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-e2e-build, rust-e2e, rust-release-tui, rust-release-server, rust-release]
     steps:
       - name: Require every selected job
         env:

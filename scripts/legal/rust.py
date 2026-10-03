@@ -17,7 +17,6 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import time
 import zlib
 from dataclasses import replace
 from pathlib import Path
@@ -134,25 +133,13 @@ def capture(repo: Path, package: str, target: str | None, profile: str, link_map
                     *(['--target', target] if target else []), '--profile', profile, '--message-format=json',
                     *(['--timings'] if environment.get('GM_RUST_BUILD_TIMINGS') == '1' else []),
                     *(['--', platform.link_map_argument(link_target or target or '', link_map)] if link_map else []))
-    started = time.perf_counter()
     result = subprocess.run(command, cwd=repo / 'rust', env=environment,
                             stdout=subprocess.PIPE, check=True, text=True)
-    elapsed = time.perf_counter() - started
-    metadata_started = time.perf_counter()
     messages = [json.loads(line) for line in result.stdout.splitlines() if line.startswith('{')]
     if metadata is None:
         toolchain = subprocess.check_output(['rustc', f'+{rust_channel(repo)}', '-vV'], text=True)
         host = next(line.removeprefix('host: ') for line in toolchain.splitlines() if line.startswith('host: '))
         metadata = cargo_metadata(repo, host, target)
-    if environment.get('GM_RUST_BUILD_TIMINGS') == '1':
-        print(f'Rust capture [linked]: cargo={elapsed:.3f}s', flush=True)
-    if trace_name := environment.get('GM_RUST_BUILD_TRACE_DIR'):
-        trace = local_path(Path(trace_name), repo)
-        trace.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(mode='w', prefix='capture-linked-', suffix='.json', dir=trace,
-                                         delete=False) as destination:
-            json.dump({'command': command, 'cargoSeconds': elapsed,
-                       'metadataSeconds': time.perf_counter() - metadata_started, 'messages': messages}, destination)
     return metadata, messages
 
 

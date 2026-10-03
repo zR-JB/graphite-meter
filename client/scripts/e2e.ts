@@ -16,7 +16,7 @@ if (group !== undefined) {
     );
   // One anchored pattern and its complement assign new and renamed tests to rest.
   const heavy =
-    "^rapid surface reversals release resources at (?:1600|1000)px, " +
+    "^rapid surface reversals release resources at (?:1600|1000|390)px, " +
     "including during a run$";
   command.push(
     process.execPath,
