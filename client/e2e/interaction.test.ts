@@ -4,14 +4,12 @@ import { expect, test, type Locator, type Page } from "./webview";
 const tip = (page: Page) => page.locator('[role="tooltip"]');
 
 async function centre(locator: Locator) {
-  await locator.evaluate((el: Element) => {
-    el.scrollIntoView({ block: "center", behavior: "instant" });
-  });
   let point: Point | undefined;
   // A preceding touch scroll can keep moving after touchEnd.
   await expect
     .poll(async () => {
       const at = await locator.evaluate(async (el: Element) => {
+        el.scrollIntoView({ block: "center", behavior: "instant" });
         const before = el.getBoundingClientRect();
         await new Promise((done) =>
           requestAnimationFrame(() => requestAnimationFrame(done)),

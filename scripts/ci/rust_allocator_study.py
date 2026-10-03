@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / 'rust/target/allocator-study-results'
 MUSL = 'x86_64-unknown-linux-musl'
 GNU = 'x86_64-unknown-linux-gnu'
-VARIANTS = ('musl-system', 'musl-dlmalloc', 'gnu-system')
+VARIANTS = ('musl-system', 'musl-dlmalloc', 'musl-mimalloc', 'gnu-system')
 ALLOCATOR = b'#[cfg(target_env = "musl")]\n#[global_allocator]\nstatic ALLOCATOR: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;\n'
 TELEMETRY = b'''    if let Some(snapshot) = &finished {
         for stage in &snapshot.results {
@@ -68,41 +68,60 @@ def build_child(package: str, target: str, variant: str) -> None:
 
 def build_variants(environment: dict[str, str]) -> dict[tuple[str, str], Path]:
     paths = [ROOT / f'rust/{package}/{name}' for package, name in
-             (('server', 'Cargo.toml'), ('server', 'src/main.rs'), ('client', 'src/main.rs'))]
+             (('server', 'Cargo.toml'), ('server', 'src/main.rs'), ('client', 'src/main.rs'), ('client', 'Cargo.toml'))]
     paths.append(ROOT / 'rust/Cargo.lock')
     original = {path: path.read_bytes() for path in paths}
-    server_manifest, server_main, client_main, lock = paths
+    server_manifest, server_main, client_main, client_manifest, lock = paths
     locked_packages = [item for item in tomllib.loads(original[lock].decode())['package'] if item.get('source')]
     marker = b'    let last = finished.map(|snapshot| snapshot.phase);'
     assert original[client_main].count(ALLOCATOR) == original[client_main].count(marker) == 1
     base_client = original[client_main].replace(marker, TELEMETRY + marker)
     binaries = {}
     try:
-        for variant in VARIANTS:
-            for package in ('server', 'client'):
-                for path, data in original.items():
-                    path.write_bytes(data)
-                client_main.write_bytes(base_client.replace(ALLOCATOR, b'') if variant == 'musl-system'
-                                        else base_client)
-                if package == 'server' and variant == 'musl-dlmalloc':
-                    header = b'#![forbid(unsafe_code)]\n'
-                    assert original[server_main].count(header) == 1
-                    server_main.write_bytes(original[server_main].replace(header, header + ALLOCATOR, 1))
-                    # Reuse an already locked/reviewed dependency; no permanent manifest or lock change.
+        for package, variant in ((package, variant) for variant in VARIANTS for package in ('server', 'client')):
+            for path, data in original.items():
+                path.write_bytes(data)
+            client_main.write_bytes(base_client.replace(ALLOCATOR, b'') if variant == 'musl-system'
+                                    else base_client)
+            if package == 'server' and variant == 'musl-dlmalloc':
+                header = b'#![forbid(unsafe_code)]\n'
+                assert original[server_main].count(header) == 1
+                server_main.write_bytes(original[server_main].replace(header, header + ALLOCATOR, 1))
+                # Reuse an already locked/reviewed dependency; no permanent manifest or lock change.
+                server_manifest.write_bytes(original[server_manifest] + b'\n[target.\'cfg(target_env = "musl")\'.dependencies]\n'
+                                            b'dlmalloc = { version = "0.2.14", features = ["global"] }\n')
+                run(['cargo', 'metadata', '--offline', '--format-version=1'], environment,
+                    OUTPUT / 'allocator-lock-update.log')
+                current = tomllib.loads(lock.read_text())['package']
+                assert [item for item in current if item.get('source')] == locked_packages
+            if variant == 'musl-mimalloc':
+                header = b'#![forbid(unsafe_code)]\n'
+                assert original[server_main].count(header) == 1
+                allocator = b'\n#[cfg(target_env = "musl")]\n#[global_allocator]\nstatic ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;\n'
+                dependencies = b'mimalloc = "=0.1.52"\nlibmimalloc-sys = "=0.1.49"\n'
+                if package == 'server':
+                    server_main.write_bytes(original[server_main].replace(header, header + allocator, 1))
                     server_manifest.write_bytes(original[server_manifest] + b'\n[target.\'cfg(target_env = "musl")\'.dependencies]\n'
-                                                b'dlmalloc = { version = "0.2.14", features = ["global"] }\n')
-                    run(['cargo', 'metadata', '--offline', '--format-version=1'], environment,
-                        OUTPUT / 'allocator-lock-update.log')
-                    current = tomllib.loads(lock.read_text())['package']
-                    assert [item for item in current if item.get('source')] == locked_packages
-                target = GNU if variant == 'gnu-system' else MUSL
-                run([sys.executable, '-m', 'scripts.ci.rust_allocator_study', '--build', package, '--variant', variant],
-                    environment, OUTPUT / f'build-{package}-{variant}.log')
-                binary = ROOT / 'rust/target/allocator-study-build/binaries' / f'{package}-{variant}'
-                binary.parent.mkdir(exist_ok=True)
-                shutil.copy2(Path(environment['CARGO_TARGET_DIR']) / target / 'release' / f'graphite-meter-{package}', binary)
-                assert b'UNREVIEWED DEVELOPMENT BUILD' in binary.read_bytes()
-                binaries[package, variant] = binary
+                                                + dependencies)
+                else:
+                    client_main.write_bytes(base_client.replace(ALLOCATOR, allocator))
+                    dependency = b'dlmalloc = { version = "0.2.14", features = ["global"] }\n'
+                    assert original[client_manifest].count(dependency) == 1
+                    client_manifest.write_bytes(original[client_manifest].replace(dependency, dependency + dependencies))
+                run(['cargo', 'metadata', '--format-version=1'], environment, OUTPUT / 'mimalloc-lock-update.log')
+                current = [item for item in tomllib.loads(lock.read_text())['package'] if item.get('source')]
+                added = [item for item in current if item not in locked_packages]
+                assert {(item['name'], item['version']) for item in added} == {('mimalloc', '0.1.52'), ('libmimalloc-sys', '0.1.49')}
+                assert [item for item in current if item not in added] == locked_packages
+                (OUTPUT / f'mimalloc-{package}-Cargo.lock.txt').write_bytes(lock.read_bytes())
+            target = GNU if variant == 'gnu-system' else MUSL
+            run([sys.executable, '-m', 'scripts.ci.rust_allocator_study', '--build', package, '--variant', variant],
+                environment, OUTPUT / f'build-{package}-{variant}.log')
+            binary = ROOT / 'rust/target/allocator-study-build/binaries' / f'{package}-{variant}'
+            binary.parent.mkdir(exist_ok=True)
+            shutil.copy2(Path(environment['CARGO_TARGET_DIR']) / target / 'release' / f'graphite-meter-{package}', binary)
+            assert b'UNREVIEWED DEVELOPMENT BUILD' in binary.read_bytes()
+            binaries[package, variant] = binary
     finally:
         for path, data in original.items():
             path.write_bytes(data)
@@ -223,7 +242,7 @@ def main() -> None:
             parser.error('--build requires --variant')
         package = {'server': 'graphite-meter-server', 'client': 'graphite-meter-client'}[args.build]
         target, variant = {'musl-system': (MUSL, 'musl-system'), 'musl-dlmalloc': (MUSL, 'musl-dlmalloc'),
-                           'gnu-system': (GNU, 'gnu-system')}[args.variant]
+                           'musl-mimalloc': (MUSL, 'musl-mimalloc'), 'gnu-system': (GNU, 'gnu-system')}[args.variant]
         build_child(package, target, variant)
         return
     if args.variant is not None:
@@ -234,7 +253,8 @@ def main() -> None:
     environment = {key: value for key, value in os.environ.items()
                    if not key.startswith(('GM_', 'CARGO_PROFILE_')) and not key.endswith('RUSTFLAGS')}
     environment.update(LC_ALL='C', CARGO_INCREMENTAL='0', CARGO_TARGET_DIR=str(ROOT / 'rust/target/allocator-study-build'),
-                       CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER='x86_64-linux-gnu-gcc')
+                       CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER='x86_64-linux-gnu-gcc',
+                       CC_x86_64_unknown_linux_musl='musl-gcc')
     assert not any(environment.get(key) for key in ('RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER', 'CARGO_BUILD_RUSTC_WRAPPER'))
     run(['rustup', 'target', 'add', MUSL], environment, OUTPUT / 'target-setup.log')
     run(['cargo', 'fetch', '--locked'], environment, OUTPUT / 'cargo-fetch.log')
@@ -248,11 +268,13 @@ def main() -> None:
                            GM_H2_ADDR=f'127.0.0.1:{ports["http2"]}', GM_H3_ADDR=f'127.0.0.1:{ports["http3"]}',
                            GM_TLS_CERT=str(cert), GM_TLS_KEY=str(key))
         (OUTPUT / 'study.json').write_text(json.dumps({'profile': profile, 'variants': VARIANTS, 'repeats': 2,
+            'experiments': ['server', 'client'], 'counterparts': {'server': 'fixed GNU-system client', 'client': 'fixed musl-system server'},
             'platform': list(os.uname()), 'logicalCpus': os.cpu_count(),
+            'muslCCompiler': 'musl-gcc for every musl variant; earlier study used host GCC',
             'warmupMs': 500, 'measureMs': 3000, 'streams': [1, 4],
             'cpuWindow': 'entire client lifetime, including preparation, warmup and drain',
             'rss': 'server sampled every 50ms; client exact process high-water RSS via GNU time',
-            'limitation': 'shared hosted x86_64 loopback runner; no shaped link or ARM evidence'}, indent=2) + '\n')
+            'limitation': 'shared hosted x86_64 loopback; fixed peer can cap throughput; compare same-run pairs only; no shaped link or ARM evidence'}, indent=2) + '\n')
         measure(binaries, environment, ports)
     finally:
         shutil.rmtree(fixture.directory, ignore_errors=True)
