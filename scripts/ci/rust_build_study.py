@@ -21,7 +21,7 @@ def main() -> None:
              'legal/rust-platform-debian-bookworm.json')
     candidate = {root / name: (root / name).read_bytes() for name in files}
     originals = candidate | {path: path.read_bytes() for path in (source, provenance)}
-    baseline = {root / name: (root / 'rust/target/build-study-baseline' / name).read_bytes() for name in files}
+    baseline = {root / name: (root / 'rust/target/build-study-baseline-inputs' / name).read_bytes() for name in files}
     invocation = b'    result = subprocess.run(command, cwd=repo / \'rust\', env=environment,'
     assert baseline[collector].count(invocation) == 1
     baseline[collector] = baseline[collector].replace(invocation, b"    command.insert(3, '--timings')\n" + invocation)

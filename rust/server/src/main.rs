@@ -44,7 +44,7 @@ async fn main() {
 
 fn legal() -> Result<i32, ServerError> {
     let report = graphite_meter_server::assets::legal_report()
-        .ok_or("this build embeds no notices; mise run rust-server-run -- --legal builds the server with reviewed host notices and prints them")?;
+        .ok_or("this build embeds no notices; mise run rust-server-run -- --legal builds the server with dependency notices and prints them")?;
     Ok(print(std::io::stdout().lock(), report)?)
 }
 

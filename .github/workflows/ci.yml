@@ -237,7 +237,7 @@ jobs:
         uses: ./.github/actions/setup-buildx
       - name: Prepare the original collector and pinned compiler image
         run: |
-          baseline_dir=rust/target/build-study-baseline
+          baseline_dir=rust/target/build-study-baseline-inputs
           mkdir -p "$baseline_dir"/{scripts/legal,rust,legal}
           git show 4e712e1aec70d0371b960281565e2fc7760d20ce:scripts/legal/rust.py >"$baseline_dir/scripts/legal/rust.py"
           for path in rust/legal_build.rs scripts/legal/rust_platform.py legal/rust-platform-debian-bookworm.json; do

@@ -398,7 +398,7 @@ def build(args: argparse.Namespace) -> None:
                 'cargoLockSha256': sha256((repo / 'rust/Cargo.lock').read_bytes()), 'components': inventory}
     cargo_outputs = {Path(metadata['target_directory'])} | {
         Path(item['manifest_path']).parent for item in metadata['packages']}
-    facts = {'target': target, 'sysroot': sysroot, 'inputs': set(), 'libraries': set()}
+    facts: dict = {'target': target, 'sysroot': sysroot, 'inputs': set(), 'libraries': set()}
     if args.review_template:
         (output / 'LEGAL.txt').unlink(missing_ok=True)
         metadata, messages = capture(repo, args.package, args.target, args.profile, mapped,
