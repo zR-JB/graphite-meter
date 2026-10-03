@@ -505,38 +505,11 @@ jobs:
           python3 -m scripts.ci.release stage-rust
           python3 -m scripts.ci.release check-rust
 
-  # Temporary: compare allocator choices with identical full release optimization.
-  rust-allocator-study:
-    name: Rust allocator performance evidence
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    needs: plan
-    if: needs.plan.outputs.rust == 'true'
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false}
-      - name: Set up pinned Python and Rust without caches
-        uses: ./.github/actions/setup-project
-        with: {rust: 'true', cache: 'false'}
-      - name: Build and measure development-marked allocator variants
-        run: python3 -m scripts.ci.rust_allocator_study
-      - name: Upload allocator evidence without study binaries or TLS keys
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: rust-allocator-study
-          path: |
-            rust/target/allocator-study-results/*.json
-            rust/target/allocator-study-results/*.log
-          if-no-files-found: error
-          retention-days: 3
-
   gate:
     name: Gate
     runs-on: ubuntu-24.04
     if: always()
-    needs: [rust-allocator-study, plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-e2e-build, rust-e2e, rust-release-tui, rust-release-server, rust-release]
+    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-e2e-build, rust-e2e, rust-release-tui, rust-release-server, rust-release]
     steps:
       - name: Require every selected job
         env:
