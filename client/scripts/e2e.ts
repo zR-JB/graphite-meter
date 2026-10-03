@@ -98,7 +98,9 @@ const children = await Promise.all([
   ...fleet.map((server, i) => launch(launched, server, environments[i])),
   launch(launched, transport),
 ]);
-const quicOrigins = [...fleet, transport].map((s) => new URL(s.h3).host).join(",");
+const quicOrigins = [...fleet, transport]
+  .map((s) => new URL(s.h3).host)
+  .join(",");
 
 const root = resolve(import.meta.dir, "../.e2e-dist");
 const harness = Bun.serve({

@@ -206,7 +206,7 @@ test("peer sign-in opens an isolated popup from the user click", async (page) =>
 });
 
 /* The approving browser keeps the login session that owns the grant. */
-async function approve(row: Locator): Promise<Page> {
+async function approve(row: Locator, expectedOrigin = home.url): Promise<Page> {
   const link = row.getByRole("link", { name: "Open sign-in page" });
   await expect(link).toBeVisible();
   const code = await row.locator(".approval-code strong").textContent();
@@ -215,7 +215,7 @@ async function approve(row: Locator): Promise<Page> {
   try {
     await approval.goto((await link.getAttribute("href"))!);
     await signIn(approval);
-    await expect(approval.locator("main")).toContainText(home.url);
+    await expect(approval.locator("main")).toContainText(expectedOrigin);
     await expect(approval.locator("main")).toContainText(code!);
     await approval.getByRole("button", { name: "Approve this client" }).click();
     return approval;
@@ -284,9 +284,11 @@ test("a peer grant revoked mid-run ends in the sign-in state", async (page) => {
     });
     await openSettings(page);
     const row = feedback(page, "Private");
-    const signInButton = row.getByRole("button", { name: "Sign in to Private" });
+    const signInButton = row.getByRole("button", {
+      name: "Sign in to Private",
+    });
     await signInButton.click();
-    const approval = await approve(row);
+    const approval = await approve(row, self.server.url);
     let startedAt = 0;
     try {
       await ready(page);

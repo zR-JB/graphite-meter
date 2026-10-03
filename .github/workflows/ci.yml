@@ -428,6 +428,7 @@ jobs:
           path: ${{ runner.temp }}/rust-export/tui
           if-no-files-found: error
           retention-days: 1
+          compression-level: 0
 
   rust-release-server:
     name: Experimental Rust server source exports
@@ -470,6 +471,7 @@ jobs:
           path: ${{ runner.temp }}/rust-export/server
           if-no-files-found: error
           retention-days: 1
+          compression-level: 0
 
   rust-release:
     name: Experimental Rust release artifacts
