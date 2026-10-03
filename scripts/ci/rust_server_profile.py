@@ -155,14 +155,31 @@ def symbolize(perf: str, demangler: str, raw: Path, cell: str, environment: dict
     with gzip.open(OUTPUT / f'{cell}-self-table.txt.gz', 'wt') as output:
         output.write(table)
     rows: list[dict] = []
+    required = {'Period', 'Samples', 'Shared Object', 'Symbol', 'Source:Line'}
+    headers: list[str] | None = None
     for line in table.splitlines():
-        if not line.strip() or line.lstrip().startswith('#'):
+        if not line.strip():
+            continue
+        if line.lstrip().startswith('#'):
+            columns = [re.sub(r'\s+', ' ', field.strip()) for field in line.lstrip()[1:].split('\t')]
+            if 'Period' in columns:
+                # Perf 6.8 appends this auxiliary IPC column even for software-clock samples.
+                if (len(columns) != len(set(columns)) or not required.issubset(columns)
+                        or set(columns) - required - {'IPC [IPC Coverage]'}):
+                    raise RuntimeError(f'unexpected perf self histogram header: {line!r}')
+                headers = columns
             continue
         fields = [field.strip() for field in line.split('\t')]
-        if len(fields) != 5 or not fields[0].isdigit() or not fields[1].isdigit():
+        if headers is None or len(fields) != len(headers):
             raise RuntimeError(f'unexpected perf self histogram row: {line!r}')
-        period, count, dso, symbol, source = fields
-        rows.append({'period': int(period), 'samples': int(count), 'dso': dso, 'rawSymbol': symbol, 'source': source})
+        values = dict(zip(headers, fields, strict=True))
+        if not values['Period'].isdigit() or not values['Samples'].isdigit():
+            raise RuntimeError(f'invalid perf self histogram counts: {line!r}')
+        row = {'period': int(values['Period']), 'samples': int(values['Samples']),
+               'dso': values['Shared Object'], 'rawSymbol': values['Symbol'], 'source': values['Source:Line']}
+        if 'IPC [IPC Coverage]' in values:
+            row['ipc'] = values['IPC [IPC Coverage]']
+        rows.append(row)
     if not rows or not sum(row['period'] for row in rows):
         raise RuntimeError(f'no CPU samples collected for {cell}')
     names = [re.sub(r'^\[[^]]+\]\s*', '', row['rawSymbol']) for row in rows]

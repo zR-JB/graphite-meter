@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+from itertools import permutations
 import json
 import os
 from pathlib import Path
@@ -23,8 +24,9 @@ OUTPUT = ROOT / 'rust/target/allocator-study-results'
 MUSL = 'x86_64-unknown-linux-musl'
 GNU = 'x86_64-unknown-linux-gnu'
 VARIANTS = ('go-static', 'musl-mimalloc')
-CASES = (('http1', 'upload', 4), ('http1-tls', 'upload', 4),
-         ('http2', 'upload', 4), ('http3', 'upload', 4))
+CASES = (('http2', 'upload', 4), ('http3', 'upload', 4), ('http3', 'download', 4))
+TRIPLE_ORDERS = tuple(permutations((*VARIANTS, 'gnu-system')))
+REPEATS = 12
 ALLOCATOR = b'#[cfg(target_env = "musl")]\n#[global_allocator]\nstatic ALLOCATOR: rustfs_mimalloc::MiMalloc = rustfs_mimalloc::MiMalloc;\n'
 GO_FLAGS = ['-trimpath', '-ldflags=-s -w -X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=0.0.0-server-study']
 TELEMETRY = b'''    if let Some(snapshot) = &finished {
@@ -84,8 +86,10 @@ def build_variants(environment: dict[str, str]) -> dict[tuple[str, str], Path]:
     binaries = {}
     try:
         main.write_bytes(original.replace(ALLOCATOR, b'').replace(marker, TELEMETRY + marker))
-        for package, variant, target in (('server', 'musl-mimalloc', MUSL), ('client', 'gnu-system', GNU)):
-            run([sys.executable, '-m', 'scripts.ci.rust_allocator_study', '--build', package],
+        for label, package, variant, target in (('server', 'server', 'musl-mimalloc', MUSL),
+                                                ('server-gnu', 'server', 'gnu-system', GNU),
+                                                ('client', 'client', 'gnu-system', GNU)):
+            run([sys.executable, '-m', 'scripts.ci.rust_allocator_study', '--build', label],
                 environment, OUTPUT / f'build-{package}-{variant}.log')
             binary = ROOT / 'rust/target/allocator-study-build/binaries' / f'{package}-{variant}'
             binary.parent.mkdir(exist_ok=True)
@@ -211,51 +215,33 @@ def publish(rows: list[dict], row: dict, name: str) -> None:
 
 def measure(binaries: dict[tuple[str, str], Path], environment: dict[str, str], ports: dict[str, int]) -> None:
     results: list[dict] = []
-    for repeat in range(4):
-        order = VARIANTS if repeat % 2 == 0 else VARIANTS[::-1]
-        for kind, direction, streams in CASES:
-            for variant in order:
+    for repeat in range(REPEATS):
+        offset = repeat % len(CASES)
+        for case_position, (kind, direction, streams) in enumerate(CASES[offset:] + CASES[:offset], 1):
+            if direction == 'download':
+                order = TRIPLE_ORDERS[repeat % len(TRIPLE_ORDERS)]
+            else:
+                order = VARIANTS if repeat % 2 == 0 else VARIANTS[::-1]
+            for variant_position, variant in enumerate(order, 1):
                 cell = f'server-{repeat + 1}-{kind}-{direction}-{streams}-{variant}'
                 with server(binaries['server', variant], environment, ports['http1'],
                             OUTPUT / f'{cell}-server.log') as backend:
                     row = transfer(backend, binaries['client', 'gnu-system'], environment, ports,
                                    cell, kind, direction, streams, 10)
                 row.update(experiment='server', variant=variant, repeat=repeat + 1,
+                           casePosition=case_position, variantPosition=variant_position,
                            serverVariant=variant, clientVariant='gnu-system')
                 publish(results, row, 'results.json')
 
 
-def retention(binaries: dict[tuple[str, str], Path], environment: dict[str, str], ports: dict[str, int]) -> None:
-    results: list[dict] = []
-    for variant in VARIANTS:
-        with server(binaries['server', variant], environment, ports['http1'],
-                    OUTPUT / f'retention-{variant}-server.log') as backend:
-            time.sleep(3)
-            initial = stats(backend.pid)
-            peak = initial['rssBytes']
-            for session in range(12):
-                kind, direction = (('http2', 'upload'), ('http1', 'download'), ('http3', 'upload'))[session % 3]
-                cell = f'retention-{variant}-{session + 1}-{kind}-{direction}'
-                row = transfer(backend, binaries['client', 'gnu-system'], environment, ports,
-                               cell, kind, direction, 4, 10)
-                peak = max(peak, row['server']['peakRssBytes'])
-                time.sleep(3)
-                idle = stats(backend.pid)
-                row['server']['idleRssBytes'] = idle['rssBytes']
-                row.update(experiment='retention', variant=variant, allocatorEnvironment={}, session=session + 1,
-                           serverVariant=variant, clientVariant='gnu-system', initialIdle=initial,
-                           idleAfterSeconds=3, idle=idle, idleMemoryBytes=memory(backend.pid),
-                           lifetimeSampledPeakRssBytes=peak)
-                publish(results, row, 'retention.json')
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--build', choices=('server', 'client'))
+    parser.add_argument('--build', choices=('server', 'server-gnu', 'client'))
     args = parser.parse_args()
     if args.build:
         package, target, variant = {
             'server': ('graphite-meter-server', MUSL, 'musl-mimalloc'),
+            'server-gnu': ('graphite-meter-server', GNU, 'gnu-system'),
             'client': ('graphite-meter-client', GNU, 'gnu-system'),
         }[args.build]
         build_child(package, target, variant)
@@ -290,11 +276,11 @@ def main() -> None:
                            GM_H1_TLS_ADDR=f'127.0.0.1:{ports["http1-tls"]}',
                            GM_H2_ADDR=f'127.0.0.1:{ports["http2"]}', GM_H3_ADDR=f'127.0.0.1:{ports["http3"]}',
                            GM_TLS_CERT=str(cert), GM_TLS_KEY=str(key))
-        (OUTPUT / 'study.json').write_text(json.dumps({'profile': profile, 'mode': 'go-rust-server',
-            'variants': VARIANTS,
+        (OUTPUT / 'study.json').write_text(json.dumps({'profile': profile, 'mode': 'go-rust-server-focused-repeat',
+            'variants': [*VARIANTS, 'gnu-system'],
             'variantLabels': {'go-static': 'Go production static server / default GC',
                               'musl-mimalloc': 'Rust musl / RustFS wrapper0.5.6 / native mimalloc3.5.3',
-                              'gnu-system': 'fixed GNU Rust client'},
+                              'gnu-system': 'GNU Rust server reference / fixed GNU Rust client'},
             'baselines': {'server': 'go-static'}, 'candidate': 'musl-mimalloc',
             'candidateSource': {'wrapper': 'rustfs-mimalloc =0.5.6', 'sys': 'rustfs-mimalloc-sys =0.5.6',
                                 'native': 'Microsoft mimalloc v3.5.3'},
@@ -302,10 +288,12 @@ def main() -> None:
             'goBuildEnvironment': json.loads((OUTPUT / 'go-build-env.json').read_text()),
             'goRuntime': 'default GC, memory limit and GOMAXPROCS; inherited overrides removed; no forced GC',
             'source': 'unchanged Go production server; actual RustFS musl server; fixed GNU Rust client with telemetry only',
-            'repeats': 4, 'order': 'Go/Rust, Rust/Go, Go/Rust, Rust/Go', 'expectedTransfers': 56,
-            'builds': 3, 'families': CASES, 'experiments': ['server'],
+            'repeats': REPEATS, 'order': 'upload pairs alternate Go/Rust and Rust/Go; '
+                         'H3 download uses all six three-variant permutations twice',
+            'h3DownloadOrders': TRIPLE_ORDERS, 'caseOrder': 'rotate the three cases one position each repetition',
+            'expectedTransfers': 84, 'builds': 4, 'families': CASES, 'experiments': ['server'],
             'counterparts': {'server': 'fixed GNU-system Rust client'},
-            'platform': list(os.uname()), 'logicalCpus': os.cpu_count(),
+            'platform': list(os.uname()), 'logicalCpus': os.cpu_count(), 'lscpu': (OUTPUT / 'cpu.log').read_text(),
             'transparentHugePages': {name: Path('/sys/kernel/mm/transparent_hugepage', name).read_text().strip()
                                      for name in ('enabled', 'defrag', 'hpage_pmd_size')},
             'muslCCompiler': 'musl-gcc', 'warmupMs': 500, 'measureMs': 10000, 'streams': [4],
@@ -314,14 +302,10 @@ def main() -> None:
                          'to the receiver measurement, not an identical CPU window',
             'rss': 'server sampled every 50ms; Go RSS includes runtime and GC-retained heap by default; '
                    'client exact process high-water RSS via GNU time',
-            'retention': 'one persistent server per implementation, four cycles of H2 upload/H1 clear download/'
-                         'H3 upload at four streams; post-stage and three-second-idle RSS. No forced GC. '
-                         'Short mixed retention check, not a long soak; retained measurement records, connection state, '
-                         'allocator or GC heap can contribute to growth, which alone does not establish a leak',
+            'retention': 'not repeated; preceding study covers 12 mixed sessions per Go/Rust server',
             'limitation': 'shared hosted x86_64 loopback; fixed peer can cap throughput; compare same-run pairs only; '
-                          'no shaped link, ARM, or H3 download GNU-server control'}, indent=2) + '\n')
+                          'no shaped link or ARM evidence; GNU server reference only for H3 download4'}, indent=2) + '\n')
         measure(binaries, environment, ports)
-        retention(binaries, environment, ports)
     finally:
         shutil.rmtree(fixture.directory, ignore_errors=True)
         shutil.rmtree(ROOT / 'rust/target/allocator-study-build', ignore_errors=True)
