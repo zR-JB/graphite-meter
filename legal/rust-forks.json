@@ -1,7 +1,7 @@
 [
   {
     "fork": "https://github.com/zR-JB/noq",
-    "branch": "graphite-meter/receive-fairness",
+    "branch": "graphite-meter/noq-v1.3.0",
     "rev": "b0438db9463336fd35d65e851cb7cade0ff47484",
     "upstream": "https://github.com/n0-computer/noq",
     "baseTag": "noq-v1.3.0",
