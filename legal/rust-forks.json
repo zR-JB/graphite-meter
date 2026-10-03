@@ -2,11 +2,11 @@
   {
     "fork": "https://github.com/zR-JB/noq",
     "branch": "graphite-meter/noq-v1.3.0",
-    "rev": "b34035dcfc96789f8269a5e080a6513e981f4904",
+    "rev": "dd66d030e966f4633fcc4113b4a813e8de0e518e",
     "upstream": "https://github.com/n0-computer/noq",
     "baseTag": "noq-v1.3.0",
     "base": "c1f411562e6078852749b8bcf1190523096a107f",
-    "diffSha256": "4db2f8ff03d438ddd22b5d358dac512207fa88148f82ab6cf72e6c3ee9dc4e0f",
+    "diffSha256": "be17097920d4e29da1b6922f14243731c0012ffd7fbd792daa222f6697acc060",
     "modifiedPackages": [
       "noq",
       "noq-proto"
@@ -63,7 +63,8 @@
       {"subject": "Resend a lost FIN that carried no data", "purpose": "Keeps a lost FIN-only STREAM frame queued for retransmission (fixes a stall introduced with noq#805).", "origin": "graphite-meter"},
       {"subject": "Keep leased send chunks uncopied until acknowledged", "purpose": "Adds write_leased_chunks: a stream keeps the Bytes it is handed instead of copying them into 16 KiB blocks, charged by length like a copied block until the segment is released.", "origin": "graphite-meter"},
       {"subject": "Drain old lost-packet records when packet tracking is exhausted", "purpose": "Retires lost-packet records older than two PTOs when tracking cannot reserve a packet, then retries once to restore send progress.", "origin": "graphite-meter"},
-      {"subject": "Batch up to 32 datagrams per QUIC transmit", "purpose": "Bounds GSO batches at 32 datagrams and each drive at 64 before yielding to receive work.", "origin": "graphite-meter"}
+      {"subject": "Batch up to 32 datagrams per QUIC transmit", "purpose": "Bounds GSO batches at 32 datagrams and each drive at 64 before yielding to receive work.", "origin": "graphite-meter"},
+      {"subject": "Reuse bounded receive metadata and account copied backing accurately", "purpose": "Reuses at most four fully charged reassembly metadata slots, releases larger drained heaps, and bases compaction on copied backing plus owner allocation instead of discarded packet storage; retains lifetime and tiny-fragment budget tests.", "origin": "graphite-meter"}
     ],
     "metadataFiles": [
       ".github/workflows/graphite-meter.yml"

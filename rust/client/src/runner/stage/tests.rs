@@ -7,7 +7,7 @@ use crate::{
 use graphite_meter_core::discovery::{LatencyTransport, Protocol};
 use graphite_meter_core::{catalog::ServerEntry, discovery::ThroughputTarget};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
@@ -37,11 +37,12 @@ fn transfer_config() -> Config {
     }
 }
 
-/// A real TLS peer per named participant; cases own only their fault schedule and assertions.
+/// TLS fault peers retain scenarios the product-server interoperability replay cannot inject.
 struct Fixture {
     config: Config,
     servers: Vec<PreparedServer>,
     modes: Vec<Arc<AtomicU8>>,
+    started: Vec<Arc<tokio::sync::Notify>>,
     peers: Vec<JoinHandle<()>>,
     snapshots: watch::Sender<Snapshot>,
     stop: watch::Sender<bool>,
@@ -64,14 +65,16 @@ impl Fixture {
             },
             servers: Vec::new(),
             modes: Vec::new(),
+            started: Vec::new(),
             peers: Vec::new(),
             snapshots: watch::channel(Snapshot::default()).0,
             stop: watch::channel(false).0,
         };
         for (index, id) in ids.iter().enumerate() {
-            let (origin, mode, peer) = download_peer_with_gate(gates.get(index).cloned().flatten()).await?;
+            let (origin, mode, started, peer) = download_peer_with_gate(gates.get(index).cloned().flatten()).await?;
             fixture.peers.push(peer);
             fixture.modes.push(mode);
+            fixture.started.push(started);
             fixture.servers.push(prepared_download(id, &origin, &http).await?);
         }
         fixture.config.url = fixture.servers[0].entry.url.clone();
@@ -151,7 +154,9 @@ impl Drop for Fixture {
     }
 }
 
-async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, Arc<AtomicU8>, JoinHandle<()>), Error> {
+async fn download_peer_with_gate(
+    gate: Option<Arc<Barrier>>,
+) -> Result<(String, Arc<AtomicU8>, Arc<tokio::sync::Notify>, JoinHandle<()>), Error> {
     let _ = crate::crypto::provider().install_default();
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let origin = format!("https://{}", listener.local_addr()?);
@@ -159,11 +164,13 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
     let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(tls));
     let failed = Arc::new(AtomicU8::new(0));
     let flag = failed.clone();
+    let started = Arc::new(tokio::sync::Notify::new());
+    let starting = started.clone();
     let first_request = Arc::new(AtomicBool::new(false));
     let checkpoints = Arc::new(AtomicU64::new(0));
     // The receiver's count as its progress feed reports it.
-    let progress = Arc::new(AtomicU64::new(1));
-    let finalized = Arc::new(AtomicBool::new(false));
+    let progress = watch::channel(1_u64).0;
+    let finalized = watch::channel(false).0;
     let mints = Arc::new(AtomicU64::new(0));
     // Tokio's clock, so a receiver on paused time counts the stage's time.
     let receiver_clock = Instant::now();
@@ -180,6 +187,7 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                     let first_request = first_request.clone();
                     let checkpoints = checkpoints.clone();
                     let progress = progress.clone();
+                    let starting = starting.clone();
                     let finalized = finalized.clone();
                     let mints = mints.clone();
                     let login_url = login_url.clone();
@@ -215,7 +223,7 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                         }
                         let request = &request[..length];
                         if request.starts_with(b"POST /upload/session") {
-                            finalized.store(false, Ordering::SeqCst);
+                            finalized.send_replace(false);
                             // Mode 20 forgets the upload id until the next mint, mode 21 for good.
                             let _ = flag.compare_exchange(20, 0, Ordering::SeqCst, Ordering::SeqCst);
                             let body = format!(r#"{{"uploadId":"test-session-{}"}}"#, mints.fetch_add(1, Ordering::SeqCst));
@@ -226,20 +234,26 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                         }
                         if request.starts_with(b"GET /upload/progress") {
                             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 68719476736\r\n\r\n{\"type\":\"ready\"}\n").await;
+                            let mut finished = finalized.subscribe();
                             if flag.compare_exchange(11, 12, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
-                                while !finalized.load(Ordering::SeqCst) {
-                                    tokio::time::sleep(Duration::from_millis(5)).await;
+                                let _ = finished.wait_for(|finished| *finished).await;
+                            }
+                            let mut observed = progress.subscribe();
+                            let record = |kind: &str, bytes| format!("{{\"type\":\"{kind}\",\"bytes\":{bytes},\"nanos\":1}}\n");
+                            while !*finished.borrow() {
+                                let bytes = *observed.borrow_and_update();
+                                if stream.write_all(record("progress", bytes).as_bytes()).await.is_err() { return; }
+                                tokio::select! {
+                                    _ = finished.changed() => {},
+                                    _ = observed.changed() => {},
                                 }
                             }
-                            let record = |kind: &str| format!("{{\"type\":\"{kind}\",\"bytes\":{},\"nanos\":1}}\n", progress.load(Ordering::SeqCst));
-                            while !finalized.load(Ordering::SeqCst) && stream.write_all(record("progress").as_bytes()).await.is_ok() {
-                                tokio::time::sleep(Duration::from_millis(5)).await;
-                            }
-                            let _ = stream.write_all(record("complete").as_bytes()).await;
+                            let complete = record("complete", *observed.borrow());
+                            let _ = stream.write_all(complete.as_bytes()).await;
                             return;
                         }
                         if request.starts_with(b"DELETE /upload/progress") {
-                            finalized.store(true, Ordering::SeqCst);
+                            finalized.send_replace(true);
                             let _ = flag.compare_exchange(12, 13, Ordering::SeqCst, Ordering::SeqCst);
                             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n").await;
                             return;
@@ -272,9 +286,9 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                                 7 | 16 => checkpoints.load(Ordering::SeqCst),
                                 // The receiver counts 64 KiB more, and reports them, while its first checkpoint is in flight.
                                 19 => {
-                                    let bytes = progress.load(Ordering::SeqCst);
+                                    let bytes = *progress.borrow();
                                     if bytes == 1 {
-                                        progress.store(1 + (1 << 16), Ordering::SeqCst);
+                                        progress.send_replace(1 + (1 << 16));
                                         tokio::time::sleep(Duration::from_millis(100)).await;
                                     }
                                     bytes
@@ -290,10 +304,11 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                         if !first_request.swap(true, Ordering::SeqCst)
                             && let Some(gate) = gate
                         {
+                            starting.notify_one();
                             gate.wait().await;
                         }
                         if flag.load(Ordering::SeqCst) == 2 {
-                            tokio::time::sleep(Duration::from_secs(30)).await;
+                            std::future::pending::<()>().await;
                             return;
                         }
                         if flag.load(Ordering::SeqCst) == 3 {
@@ -310,11 +325,17 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                             std::future::pending::<()>().await;
                         }
                         let bytes = [0_u8; 65536];
+                        let mut started = false;
                         while !matches!(flag.load(Ordering::SeqCst), 3 | 14) && stream.write_all(&bytes).await.is_ok() {
-                            // Hold the connection open while its download stops moving.
-                            while flag.load(Ordering::SeqCst) == 23 {
-                                tokio::time::sleep(Duration::from_millis(5)).await;
+                            if !started {
+                                starting.notify_one();
+                                started = true;
                             }
+                            // Shared silence keeps its sockets open until the fixture drops them.
+                            if flag.load(Ordering::SeqCst) == 23 {
+                                std::future::pending::<()>().await;
+                            }
+                            // A bounded transfer cadence lets paused time advance between socket writes.
                             tokio::time::sleep(Duration::from_millis(5)).await;
                         }
                     });
@@ -323,7 +344,7 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
             }
         }
     });
-    Ok((origin, failed, server))
+    Ok((origin, failed, started, server))
 }
 
 /// A snapshot listing `servers` as the catalogue names them.
@@ -385,7 +406,7 @@ async fn a_stopped_bidirectional_start_drains_its_started_download() -> Result<(
     let _ = crate::crypto::provider().install_default();
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let origin = format!("http://{}", listener.local_addr()?);
-    let active = Arc::new(AtomicUsize::new(0));
+    let active = watch::channel(0_usize).0;
     let uploading = Arc::new(tokio::sync::Notify::new());
     let active_server = active.clone();
     let upload_server = uploading.clone();
@@ -406,12 +427,10 @@ async fn a_stopped_bidirectional_start_drains_its_started_download() -> Result<(
                         }
                         if !request[..length].starts_with(b"GET /download") { return; }
                         if stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 68719476736\r\n\r\n").await.is_err() { return; }
-                        active.fetch_add(1, Ordering::SeqCst);
+                        active.send_modify(|count| *count += 1);
                         let bytes = [0_u8; 65536];
-                        while stream.write_all(&bytes).await.is_ok() {
-                            tokio::time::sleep(Duration::from_millis(5)).await;
-                        }
-                        active.fetch_sub(1, Ordering::SeqCst);
+                        while stream.write_all(&bytes).await.is_ok() {}
+                        active.send_modify(|count| *count -= 1);
                     });
                 }
                 _ = clients.join_next(), if !clients.is_empty() => {},
@@ -439,12 +458,10 @@ async fn a_stopped_bidirectional_start_drains_its_started_download() -> Result<(
     })
     .await?;
     assert!(result.is_err());
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while active.load(Ordering::SeqCst) != 0 {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    })
-    .await?;
+    let mut draining = active.subscribe();
+    tokio::time::timeout(Duration::from_secs(1), draining.wait_for(|count| *count == 0))
+        .await?
+        .map(drop)?;
     peer.abort();
     Ok(())
 }
@@ -1105,7 +1122,7 @@ async fn a_lane_lost_while_another_member_starts_is_noticed_at_once() -> Result<
     // Near's started lane asks for sign-in while far's start waits at its gate, which opens once the
     // loss is recorded, or after 5 s.
     let revoke_near = async {
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        tokio::join!(fixture.started[0].notified(), fixture.started[1].notified());
         fixture.modes[0].store(3, Ordering::SeqCst);
         let failed = |snapshot: &Snapshot| !snapshot.failures.is_empty();
         let noticed = tokio::time::timeout(Duration::from_secs(5), observed.wait_for(failed))
