@@ -150,7 +150,6 @@ type ProgressStream = Pin<Box<dyn Stream<Item = UploadProgress> + Send>>;
 pub(super) struct ProgressBody {
     subscription: Option<ProgressStream>,
     heartbeat: Pin<Box<Sleep>>,
-    pub(super) done: bool,
 }
 
 impl ProgressBody {
@@ -160,28 +159,23 @@ impl ProgressBody {
                 subscription.next().await.map(|event| (event, subscription))
             }))),
             heartbeat: Box::pin(tokio::time::sleep(PROGRESS_HEARTBEAT)),
-            done: false,
         }
     }
 
+    pub(super) fn is_end_stream(&self) -> bool {
+        self.subscription.is_none()
+    }
+
     pub(super) fn poll_frame(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, io::Error>>> {
-        if self.done {
+        let Some(subscription) = self.subscription.as_mut() else {
             return Poll::Ready(None);
-        }
-        if let Poll::Ready(event) = self
-            .subscription
-            .as_mut()
-            .expect("active subscription")
-            .as_mut()
-            .poll_next(cx)
-        {
+        };
+        if let Poll::Ready(event) = subscription.as_mut().poll_next(cx) {
             let Some(event) = event else {
                 self.subscription = None;
-                self.done = true;
                 return Poll::Ready(None);
             };
-            self.done = matches!(event, UploadProgress::Complete { .. });
-            if self.done {
+            if matches!(event, UploadProgress::Complete { .. }) {
                 self.subscription = None;
             }
             let record = encode_upload_progress(&event)

@@ -29,68 +29,46 @@ pub(crate) fn cid_generator(shard: u8) -> Arc<dyn Fn() -> Box<dyn ConnectionIdGe
     Arc::new(move || {
         Box::new(ShardCids {
             shard,
-            inner: Box::new(HashedCids(RandomState::new())),
+            hash: RandomState::new(),
         })
     })
 }
 
-/// The inner generator's connection IDs behind the shard index, which only this shard validates.
+/// A shard index followed by noq's default hashed connection ID: a random nonce and a keyed SipHash signature.
+/// noq does not export its `HashedConnectionIdGenerator`; this owner generates and validates the same format.
 struct ShardCids {
     shard: u8,
-    inner: Box<dyn ConnectionIdGenerator>,
+    hash: RandomState,
+}
+
+impl ShardCids {
+    fn signature(&self, nonce: &[u8]) -> [u8; 8] {
+        self.hash.hash_one(nonce).to_le_bytes()
+    }
 }
 
 impl ConnectionIdGenerator for ShardCids {
     fn generate_cid(&mut self) -> ConnectionId {
-        let inner = self.inner.generate_cid();
-        ConnectionId::new(&[&[self.shard][..], &inner[..]].concat())
-    }
-
-    fn validate(&self, cid: ConnectionId) -> Result<(), InvalidCid> {
-        match cid.split_first() {
-            Some((&shard, rest)) if shard == self.shard && rest.len() == self.inner.cid_len() => {
-                self.inner.validate(ConnectionId::new(rest))
-            }
-            _ => Err(InvalidCid),
-        }
-    }
-
-    fn cid_len(&self) -> usize {
-        1 + self.inner.cid_len()
-    }
-
-    fn cid_lifetime(&self) -> Option<Duration> {
-        self.inner.cid_lifetime()
-    }
-}
-
-/// noq's default `HashedConnectionIdGenerator`, which noq does not export, with a SipHash key.
-struct HashedCids(RandomState);
-
-impl HashedCids {
-    fn signature(&self, nonce: &[u8]) -> [u8; 8] {
-        self.0.hash_one(nonce).to_le_bytes()
-    }
-}
-
-impl ConnectionIdGenerator for HashedCids {
-    fn generate_cid(&mut self) -> ConnectionId {
-        let mut cid = [0; HASHED_CID_BYTES];
-        let (nonce, signature) = cid.split_at_mut(NONCE_BYTES);
+        let mut cid = [0; 1 + HASHED_CID_BYTES];
+        cid[0] = self.shard;
+        let (nonce, signature) = cid[1..].split_at_mut(NONCE_BYTES);
         getrandom::fill(nonce).expect("randomness for QUIC connection IDs");
         signature.copy_from_slice(&self.signature(nonce)[..signature.len()]);
         ConnectionId::new(&cid)
     }
 
     fn validate(&self, cid: ConnectionId) -> Result<(), InvalidCid> {
-        let (nonce, signature) = cid.split_at_checked(NONCE_BYTES).ok_or(InvalidCid)?;
-        (cid.len() == HASHED_CID_BYTES && self.signature(nonce)[..signature.len()] == *signature)
+        if cid.len() != self.cid_len() || cid[0] != self.shard {
+            return Err(InvalidCid);
+        }
+        let (nonce, signature) = cid[1..].split_at(NONCE_BYTES);
+        (self.signature(nonce)[..signature.len()] == *signature)
             .then_some(())
             .ok_or(InvalidCid)
     }
 
     fn cid_len(&self) -> usize {
-        HASHED_CID_BYTES
+        1 + HASHED_CID_BYTES
     }
 
     fn cid_lifetime(&self) -> Option<Duration> {

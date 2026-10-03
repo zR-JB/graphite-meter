@@ -99,7 +99,7 @@ impl Body for ResponseBody {
         let frame = match &mut self.content {
             Content::Progress(progress) => {
                 let frame = progress.poll_frame(cx);
-                if progress.done {
+                if progress.is_end_stream() {
                     self.complete();
                 }
                 return frame;
@@ -128,7 +128,7 @@ impl Body for ResponseBody {
         match &self.content {
             Content::Bytes(bytes) => bytes.is_empty(),
             Content::Download { remaining, .. } => *remaining == 0,
-            Content::Progress(progress) => progress.done,
+            Content::Progress(progress) => progress.is_end_stream(),
         }
     }
 
@@ -136,7 +136,7 @@ impl Body for ResponseBody {
         match &self.content {
             Content::Bytes(bytes) => SizeHint::with_exact(bytes.len() as u64),
             Content::Download { remaining, .. } => SizeHint::with_exact(*remaining),
-            Content::Progress(progress) if progress.done => SizeHint::with_exact(0),
+            Content::Progress(progress) if progress.is_end_stream() => SizeHint::with_exact(0),
             Content::Progress(_) => SizeHint::default(),
         }
     }
