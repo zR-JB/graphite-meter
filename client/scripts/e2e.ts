@@ -5,12 +5,10 @@ import { join, resolve, sep } from "node:path";
 import { describe, host, launch } from "../e2e/servers";
 
 const command = process.argv.slice(2);
-const group =
-  command[0]?.startsWith("--group=")
-    ? command.shift()!.slice("--group=".length)
-    : command.length
-      ? undefined
-      : process.env.GM_E2E_GROUP;
+let group = command.length ? undefined : process.env.GM_E2E_GROUP;
+if (command[0]?.startsWith("--group=")) {
+  group = command.shift()!.slice("--group=".length);
+}
 if (group !== undefined) {
   if ((group !== "heavy" && group !== "rest") || command.length)
     throw new Error(
@@ -18,7 +16,8 @@ if (group !== undefined) {
     );
   // One anchored pattern and its complement assign new and renamed tests to rest.
   const heavy =
-    /^rapid surface reversals release resources at (?:1600|1000)px, including during a run$/.source;
+    "^rapid surface reversals release resources at (?:1600|1000)px, " +
+    "including during a run$";
   command.push(
     process.execPath,
     "test",
