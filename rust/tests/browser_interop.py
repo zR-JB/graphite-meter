@@ -6,12 +6,13 @@ from pathlib import Path
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
+GROUP_FLAGS = {"heavy": "--group=heavy", "rest": "--group=rest"}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--server", type=Path, required=True)
-    parser.add_argument("--group", choices=("heavy", "rest"), help="run complementary groups of the full suite")
+    parser.add_argument("--group", choices=GROUP_FLAGS, help="run complementary groups of the full suite")
     args = parser.parse_args()
     environment = {
         key: value for key, value in os.environ.items()
@@ -28,7 +29,7 @@ def main() -> None:
     run(["bun", "run", "build:e2e-harness"], ROOT / "client")
     command = ["bun", "run", "scripts/e2e.ts"]
     if args.group:
-        command.append(f"--group={args.group}")
+        command.append(GROUP_FLAGS[args.group])
     run(command, ROOT / "client")
 
 
