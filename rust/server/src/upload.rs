@@ -336,8 +336,7 @@ impl UploadLane {
             return;
         }
         let mut state = lock(&self.aggregate);
-        let now = Instant::now();
-        state.first_chunk.get_or_insert(now);
+        state.first_chunk.get_or_insert_with(Instant::now);
         state.bytes = state.bytes.saturating_add(bytes as u64);
         self.bytes = self.bytes.saturating_add(bytes as u64);
         if let Some(transfer) = &self.transfer {
