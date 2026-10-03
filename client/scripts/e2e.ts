@@ -4,6 +4,32 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { describe, host, launch } from "../e2e/servers";
 
+const command = process.argv.slice(2);
+const group = command[0]?.startsWith("--group=")
+  ? command.shift()!.slice("--group=".length)
+  : command.length
+    ? undefined
+    : process.env.GM_E2E_GROUP;
+if (group !== undefined) {
+  if ((group !== "heavy" && group !== "rest") || command.length)
+    throw new Error(
+      "--group must be heavy or rest and cannot accompany a custom command",
+    );
+  // One anchored pattern and its complement assign new and renamed tests to rest.
+  const heavy =
+    /^rapid surface reversals release resources at (?:1600|1000)px, including during a run$/.source;
+  command.push(
+    process.execPath,
+    "test",
+    "./e2e",
+    `--parallel=${group === "heavy" ? 1 : 3}`,
+    "--no-orphans",
+    "--timeout=60000",
+    "--test-name-pattern",
+    group === "heavy" ? heavy : `^(?!${heavy.slice(1)})[\\s\\S]*$`,
+  );
+}
+
 const bin =
   process.env.GM_E2E_SERVER_BIN ??
   resolve(import.meta.dir, "../test-results/graphite-meter");
@@ -93,7 +119,6 @@ for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.on(signal, () => stop().then(() => process.exit(130)));
 
 const started = performance.now();
-const command = process.argv.slice(2);
 const suite = Bun.spawn(
   command.length ? command : [process.execPath, "run", "test:e2e"],
   {
