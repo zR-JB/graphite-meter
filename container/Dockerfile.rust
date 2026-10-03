@@ -7,7 +7,16 @@ FROM --platform=$BUILDPLATFORM docker.io/library/rust:1.99.0-bookworm@sha256:590
 COPY --from=python /usr/local /usr/local
 ENV LD_LIBRARY_PATH=/usr/local/lib \
     CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-gnu-gcc \
-    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc \
+    CC_x86_64_unknown_linux_musl=x86_64-linux-musl-gcc
+# Debian's archive serves one version of each package, so apt reads it as it was when the
+# platform records were reviewed: the pinned versions and every dependency stay installable.
+# C dependencies use musl headers; Rust's final link still uses its self-contained libc.
+RUN printf 'Types: deb\nURIs: https://snapshot.debian.org/archive/%s/20260927T180000Z\nSuites: %s\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\nCheck-Valid-Until: no\n\n' \
+        debian 'bookworm bookworm-updates' debian-security bookworm-security >/etc/apt/sources.list.d/debian.sources \
+    && rm -f /etc/apt/sources.list \
+    && apt-get update && apt-get install -y --no-install-recommends musl-dev:amd64=1.2.3-1 \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY rust/Cargo.toml rust/Cargo.lock rust/rust-toolchain.toml rust/
 COPY rust/server/Cargo.toml rust/server/
@@ -26,17 +35,13 @@ COPY rust/ rust/
 COPY api/ api/
 COPY go/internal/auth/assets/ go/internal/auth/assets/
 
-# The static musl link takes only Rust's self-contained startup objects and libc.a, but ring
-# compiles its C with aarch64-linux-gnu-gcc, which needs the arm64 libc headers.
-# Debian's archive serves one version of each package, so apt reads it as it was when the
-# platform records were reviewed: the pinned versions and every dependency stay installable.
+# Debian's arm64 musl wrapper uses the existing GNU cross compiler with musl target headers.
 FROM rust-amd64 AS rust-arm64
-RUN printf 'Types: deb\nURIs: https://snapshot.debian.org/archive/%s/20260927T180000Z\nSuites: %s\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\nCheck-Valid-Until: no\n\n' \
-        debian 'bookworm bookworm-updates' debian-security bookworm-security >/etc/apt/sources.list.d/debian.sources \
-    && rm -f /etc/apt/sources.list \
+RUN dpkg --add-architecture arm64 \
     && apt-get update && apt-get install -y --no-install-recommends \
-        gcc-aarch64-linux-gnu=4:12.2.0-3 libc6-dev-arm64-cross=2.36-8cross1 \
+        gcc-aarch64-linux-gnu=4:12.2.0-3 libc6-dev-arm64-cross=2.36-8cross1 musl-dev:arm64=1.2.3-1 \
     && rm -rf /var/lib/apt/lists/*
+ENV CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc
 
 # Rust TUI releases support Linux and Windows.
 FROM rust-arm64 AS tui-build
