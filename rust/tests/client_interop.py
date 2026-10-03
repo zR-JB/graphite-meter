@@ -16,7 +16,7 @@ def main() -> None:
     fixture = Fixture("client-interop-")
     directory = fixture.directory
     subprocess.run(
-        ["cargo", "test", "--locked", "--workspace",
+        ["cargo", "test", "--locked", "--workspace", "--profile", "ci",
          "--test", "go_server_interop", "--no-run"],
         cwd=ROOT / "rust", check=True, timeout=600,
     )
@@ -53,7 +53,7 @@ def main() -> None:
     ], environment, log,
         lambda: probe(opener, h3_origin + "/probe")):
         command = [
-            "cargo", "test", "--locked", "--workspace",
+            "cargo", "test", "--locked", "--workspace", "--profile", "ci",
             "--test", "go_server_interop", "go_server_completes_native_transport_stages",
             "--", "--exact", "--ignored", "--nocapture",
         ]
@@ -113,7 +113,7 @@ def main() -> None:
         lambda: probe(opener, auth_url + "/login")):
         native = subprocess.run(
             [
-                "cargo", "test", "--locked", "--workspace",
+                "cargo", "test", "--locked", "--workspace", "--profile", "ci",
                 "--test", "go_server_interop", "go_server_completes_approved_native_stages",
                 "--", "--exact", "--ignored", "--nocapture",
             ],

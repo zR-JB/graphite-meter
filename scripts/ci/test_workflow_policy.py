@@ -153,7 +153,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (W + "ci.yml", "run: mise run rust-delayed-downloads\n",
      "run: cargo test --workspace --test connection_faults quic_downloads -- --ignored\n", "rust-delayed-downloads"),
     (W + "ci.yml", "target: server-artifacts", "target: server", "target: server-artifacts"),
-    (W + "ci.yml", "rust-e2e, rust-release]", "rust-e2e]", r"Gate must need every job: \['rust-release'\]"),
+    (W + "ci.yml", "rust-release-server, rust-release]", "rust-release-server]", r"Gate must need every job: \['rust-release'\]"),
     (".github/ci-paths.yml", "  - 'container/Dockerfile.rust'\n  - '.dockerignore'\n", "  - 'container/Dockerfile.rust'\n",
      r"rust misses \['.dockerignore'\]"),
     ("container/Dockerfile.rust", None, "COPY docs/ docs/\n", r"rust misses \['docs/x'\]"),

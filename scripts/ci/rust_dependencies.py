@@ -28,8 +28,10 @@ def main() -> None:
     environment['CARGO_ENCODED_RUSTFLAGS'] = '\x1f'.join(
         f'--remap-path-prefix={path}={name}' for path, name in (('/src', '/src'), (cargo_home, '/cargo')))
     subprocess.run(['rustup', 'target', 'add', *args.target], cwd=root, check=True)
+    # Both application packages give their bin and lib the same normal dependencies and have
+    # no bin-only required features. Only dependencies survive: omit the empty binary's link.
     for target in args.target:
-        subprocess.run(['cargo', 'build', '--locked', '--package', args.package, '--bin', args.package,
+        subprocess.run(['cargo', 'build', '--locked', '--package', args.package, '--lib',
                         '--target', target, '--profile', args.profile], cwd=root, env=environment, check=True)
     # Real source and build scripts are copied next; none of these placeholders may enter the cache.
     subprocess.run(['cargo', 'clean', '--profile', args.profile,

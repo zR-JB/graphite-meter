@@ -10,8 +10,10 @@ import subprocess
 from process_fixture import Fixture, PASSWORD_HASH, ROOT, running, unused_port
 
 H3_TCP = "/tcp (HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe, upload and ticket control)"
-# Every interop step selects the workspace with dev-dependencies, so all share one build.
-BUILD = ["cargo", "build", "--locked", "--workspace", "--bins"]
+# Build the binaries and both interop gates together: workspace dev-dependency features and the
+# optimized ci profile match the later Cargo test and nextest invocations.
+BUILD = ["cargo", "build", "--locked", "--workspace", "--profile", "ci", "--bins",
+         "--test", "go_server_interop", "--test", "connection_faults"]
 
 
 def build_current_reset_peer(directory: Path, environment: dict[str, str]) -> Path:
@@ -82,7 +84,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.server is None:
         subprocess.run(BUILD, cwd=ROOT / "rust", check=True)
-        args.server = ROOT / "rust/target/debug/graphite-meter-server"
+        args.server = ROOT / "rust/target/ci/graphite-meter-server"
     fixture = Fixture("server-interop-")
     directory = fixture.directory
     ca, cert, key = fixture.identity()

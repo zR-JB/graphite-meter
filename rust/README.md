@@ -304,7 +304,7 @@ The WebSocket handshake checks a request in the order Go's library does, but
 keeps two headers HTTP requires where that library omits them: a HEAD upgrade is
 refused with `Allow: GET`, and an HTTP/1.0 one with `Upgrade: websocket`.
 
-The workspace pins Rust 1.98.1. From the repository root:
+The workspace pins Rust 1.99.0. From the repository root:
 
 ```sh
 mise run rust-check
@@ -312,7 +312,7 @@ mise run rust-check-targets  # needs gcc-mingw-w64-x86-64-win32 and mingw-w64-x8
 mise run rust-format
 python3 rust/tests/server_interop.py
 python3 rust/tests/client_interop.py
-python3 rust/tests/browser_transports.py --server rust/target/debug/graphite-meter-server
+python3 rust/tests/browser_transports.py --server rust/target/ci/graphite-meter-server
 ```
 
 Ring is the TLS/QUIC crypto provider. Unlike Go's server, which prefers AES-128-GCM for clients
@@ -327,7 +327,7 @@ dependency graph free of unsafe code or native cryptography: ring contains
 C/assembly.
 
 The tests require OpenSSL; interoperability checks also require Go.
-`server_interop.py` exercises the assembled debug server with unchanged Go
+`server_interop.py` exercises the assembled optimized `ci` server with unchanged Go
 libraries: bootstrap, HTTP/3 transfers, WebTransport pings, stream and datagram
 downloads/uploads, receiver-counted upload progress, independent connections,
 and rejection of excess WebTransport sessions. A password-protected loopback
