@@ -50,10 +50,6 @@ fn screen(ui: &mut Ui) -> String {
     rows(ui).join("\n")
 }
 
-fn plain(lines: &[ratatui_core::text::Line]) -> String {
-    lines.iter().map(crate::report::plain).collect::<Vec<_>>().join("\n")
-}
-
 /// Go's testModel: setup at 120×40 with its paths ready.
 fn setup() -> Ui {
     let mut ui = Ui::new(Config::default(), Snapshot::default());
@@ -165,16 +161,6 @@ fn prompt(code: &str, url: &str) -> AuthPrompt {
         origin: "https://meter.example".into(),
         code: code.into(),
         browser_url: url.into(),
-    }
-}
-
-/// The shown run's views as plain text, for Go's view tests.
-impl Ui {
-    fn live_text(&self, width: usize, height: usize) -> String {
-        let live = self
-            .shown()
-            .map(|(snapshot, run)| self.live_view(snapshot, run, width, height));
-        plain(&live.unwrap_or_default())
     }
 }
 
