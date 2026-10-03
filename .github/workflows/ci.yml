@@ -505,41 +505,11 @@ jobs:
           python3 -m scripts.ci.release stage-rust
           python3 -m scripts.ci.release check-rust
 
-  rust-quic-receive-study:
-    name: Temporary QUIC ownership comparison
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    needs: plan
-    if: needs.plan.outputs.rust == 'true'
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false}
-      - name: Set up pinned Python and Rust without build caches
-        uses: ./.github/actions/setup-project
-        with: {rust: 'true', cache: 'false'}
-      - name: Install musl headers and compiler
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
-      - name: Compare receive allocation ownership and buffer lifetimes
-        env:
-          GM_QUIC_RECEIVE_CANDIDATE_REV: 27c7d131a50d6ed5fc7f8b20f8d4c0836173f338
-        run: python3 -m scripts.ci.rust_quic_receive_study
-      - name: Upload measurements and build logs
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: rust-quic-receive-study
-          path: |
-            rust/target/quic-receive-study-results/*.json
-            rust/target/quic-receive-study-results/*.log
-          if-no-files-found: error
-          retention-days: 3
-
   gate:
     name: Gate
     runs-on: ubuntu-24.04
     if: always()
-    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-e2e-build, rust-e2e, rust-release-tui, rust-quic-receive-study, rust-release-server, rust-release]
+    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-e2e-build, rust-e2e, rust-release-tui, rust-release-server, rust-release]
     steps:
       - name: Require every selected job
         env:
