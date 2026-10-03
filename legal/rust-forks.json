@@ -1,12 +1,12 @@
 [
   {
     "fork": "https://github.com/zR-JB/noq",
-    "branch": "graphite-meter/noq-v1.3.0",
-    "rev": "b0438db9463336fd35d65e851cb7cade0ff47484",
+    "branch": "graphite-meter/receive-ownership",
+    "rev": "27c7d131a50d6ed5fc7f8b20f8d4c0836173f338",
     "upstream": "https://github.com/n0-computer/noq",
     "baseTag": "noq-v1.3.0",
     "base": "c1f411562e6078852749b8bcf1190523096a107f",
-    "diffSha256": "05f217741d3be53ef4072f427ff5be220a646ef4fcf1e0a8406ca73fa383024b",
+    "diffSha256": "16d53c70885bce444f2c90290c3467d1f6a23778a45ee4ebf4308ba4b6d3d83f",
     "modifiedPackages": [
       "noq",
       "noq-proto"
@@ -68,7 +68,8 @@
       {"subject": "Make receive compaction coverage independent of pointer width", "purpose": "Derives the tiny-fragment compaction test threshold from the actual owner footprint on each architecture.", "origin": "graphite-meter"},
       {"subject": "Preserve receive batches across cooperative packet-processing yields", "purpose": "Preserves full socket and GRO batches across cooperative packet-processing yields, retains receive metadata and rebinding origin, and covers interruption, migration and Smol-only builds.", "origin": "graphite-meter"},
       {"subject": "Explicitly discard transmit metadata in the rebinding fixture", "purpose": "Test-only: explicitly consumes the must-use transmit metadata while constructing the rebinding fixture.", "origin": "graphite-meter"},
-      {"subject": "Reuse receive metadata across cooperative endpoint turns", "purpose": "Keeps received descriptors in stable endpoint storage and borrows each descriptor, avoiding repeated array initialization and moves without changing receive batches, cooperative checks or socket migration.", "origin": "graphite-meter"}
+      {"subject": "Reuse receive metadata across cooperative endpoint turns", "purpose": "Keeps received descriptors in stable endpoint storage and borrows each descriptor, avoiding repeated array initialization and moves without changing receive batches, cooperative checks or socket migration.", "origin": "graphite-meter"},
+      {"subject": "Reuse dense uniquely owned receive packet allocations", "purpose": "Reuses bounded uniquely owned packet allocations for terminal STREAM frames with full-capacity charges and exact-copy fallback under sharing or pressure.", "origin": "graphite-meter"}
     ],
     "metadataFiles": [
       ".github/workflows/graphite-meter.yml"
