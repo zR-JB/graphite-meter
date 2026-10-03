@@ -93,7 +93,7 @@ class ToolchainBoundaryTests(unittest.TestCase):
                 b"available = true\n", b'available = true\nzst_url = "https://static.rust-lang.org/dist/'
                 b'rustc.tar.zst"\nzst_hash = "' + b"3" * 64 + b'"\n')):
             installed.write_bytes(tampered)
-            with self.assertRaisesRegex(ValueError, "installed Rust 1.98.1 from another manifest"):
+            with self.assertRaisesRegex(ValueError, r"installed Rust \d+\.\d+\.\d+ from another manifest"):
                 check_rust_manifest(installed, manifest, root)
         path.write_text(re.sub(r'(?m)^rust_manifest_sha256 = ".*"$', 'rust_manifest_sha256 = "latest"', path.read_text()))
         with self.assertRaisesRegex(ValueError, "rust_manifest_sha256 must be a SHA-256"):
