@@ -504,12 +504,13 @@ fi
 '''
 
 [tasks.rust-check-targets]
-description = "Check the Windows and musl TUIs (needs mingw-w64)"
+description = "Check the Windows TUI and musl binaries (needs mingw-w64 and musl-tools)"
 dir = "rust"
-env = { CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = "x86_64-linux-gnu-gcc" }
+env = { CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = "x86_64-linux-gnu-gcc", CC_x86_64_unknown_linux_musl = "x86_64-linux-musl-gcc" }
 run = [
   "rustup target add x86_64-pc-windows-gnu x86_64-unknown-linux-musl",
   "cargo check --locked -p graphite-meter-client --target x86_64-pc-windows-gnu --target x86_64-unknown-linux-musl",
+  "cargo check --locked -p graphite-meter-server --target x86_64-unknown-linux-musl",
 ]
 
 [tasks.rust-cache-trim]

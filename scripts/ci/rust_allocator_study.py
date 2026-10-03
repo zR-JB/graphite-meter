@@ -24,16 +24,16 @@ MUSL = 'x86_64-unknown-linux-musl'
 GNU = 'x86_64-unknown-linux-gnu'
 VARIANTS = ('musl-system', 'musl-dlmalloc', 'musl-mimalloc', 'gnu-system')
 CONFIRM_CASES = {
-    'server': (('http1', 'upload', 1), ('http1', 'upload', 4),
-               ('http1-tls', 'upload', 1), ('http1-tls', 'upload', 4),
-               ('http2', 'upload', 1), ('http2', 'upload', 4),
-               ('http3', 'upload', 4), ('http1', 'download', 4),
-               ('http1', 'download', 1), ('http2', 'download', 1), ('http3', 'download', 4)),
-    'client': (('http1', 'download', 4), ('http1-tls', 'download', 4),
-               ('http2', 'download', 1), ('http3', 'download', 4),
-               ('http2', 'upload', 4), ('http3', 'upload', 4)),
+    'server': (('http1', 'upload', 4), ('http1-tls', 'upload', 4), ('http2', 'upload', 4),
+               ('http3', 'upload', 4), ('http3', 'download', 4)),
+    'client': (('http1', 'download', 4), ('http2', 'download', 1), ('http3', 'download', 4)),
 }
-ALLOCATOR = b'#[cfg(target_env = "musl")]\n#[global_allocator]\nstatic ALLOCATOR: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;\n'
+ALLOCATOR = b'#[cfg(target_env = "musl")]\n#[global_allocator]\nstatic ALLOCATOR: rustfs_mimalloc::MiMalloc = rustfs_mimalloc::MiMalloc;\n'
+DLMALLOC = b'#[cfg(target_env = "musl")]\n#[global_allocator]\nstatic ALLOCATOR: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;\n'
+DLMALLOC_PACKAGE = {'name': 'dlmalloc', 'version': '0.2.14',
+                    'source': 'registry+https://github.com/rust-lang/crates.io-index',
+                    'checksum': 'ad5208a115eaba24916f7456929832e310a81518c641f93fee4f89aa93aa3675',
+                    'dependencies': ['cfg-if', 'libc', 'windows-sys 0.61.2']}
 TELEMETRY = b'''    if let Some(snapshot) = &finished {
         for stage in &snapshot.results {
             for (direction, result) in [("download", &stage.down), ("upload", &stage.up)] {
@@ -84,7 +84,13 @@ def build_variants(environment: dict[str, str], confirm: bool = False) -> dict[t
     server_manifest, server_main, client_main, client_manifest, lock = paths
     locked_packages = [item for item in tomllib.loads(original[lock].decode())['package'] if item.get('source')]
     marker = b'    let last = finished.map(|snapshot| snapshot.phase);'
-    assert original[client_main].count(ALLOCATOR) == original[client_main].count(marker) == 1
+    assert original[server_main].count(ALLOCATOR) == original[client_main].count(ALLOCATOR) == 1
+    assert original[client_main].count(marker) == 1
+    expected = {'rustfs-mimalloc': '95bb29aa7aee255a84d956b4f5309a3f98993ae6e10836ae5e4e8519e960780f',
+                'rustfs-mimalloc-sys': '0e6571957abe93757f0c6dd99182589054ace7da4102af4296ffcc8297eb3524'}
+    for name, checksum in expected.items():
+        entries = [item for item in locked_packages if item['name'] == name]
+        assert len(entries) == 1 and entries[0]['version'] == '0.5.6' and entries[0]['checksum'] == checksum
     base_client = original[client_main].replace(marker, TELEMETRY + marker)
     binaries = {}
     selections = (('server', 'musl-system'), ('server', 'musl-mimalloc'), ('server', 'gnu-system'),
@@ -94,39 +100,23 @@ def build_variants(environment: dict[str, str], confirm: bool = False) -> dict[t
         for package, variant in selections:
             for path, data in original.items():
                 path.write_bytes(data)
-            client_main.write_bytes(base_client.replace(ALLOCATOR, b'') if variant == 'musl-system'
-                                    else base_client)
-            if package == 'server' and variant == 'musl-dlmalloc':
-                header = b'#![forbid(unsafe_code)]\n'
-                assert original[server_main].count(header) == 1
-                server_main.write_bytes(original[server_main].replace(header, header + ALLOCATOR, 1))
-                # Reuse an already locked/reviewed dependency; no permanent manifest or lock change.
-                server_manifest.write_bytes(original[server_manifest] + b'\n[target.\'cfg(target_env = "musl")\'.dependencies]\n'
-                                            b'dlmalloc = { version = "0.2.14", features = ["global"] }\n')
-                run(['cargo', 'metadata', '--offline', '--format-version=1'], environment,
-                    OUTPUT / 'allocator-lock-update.log')
-                current = tomllib.loads(lock.read_text())['package']
-                assert [item for item in current if item.get('source')] == locked_packages
-            if variant == 'musl-mimalloc':
-                header = b'#![forbid(unsafe_code)]\n'
-                assert original[server_main].count(header) == 1
-                allocator = b'\n#[cfg(target_env = "musl")]\n#[global_allocator]\nstatic ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;\n'
-                dependencies = b'mimalloc = "=0.1.52"\nlibmimalloc-sys = "=0.1.49"\n'
-                if package == 'server':
-                    server_main.write_bytes(original[server_main].replace(header, header + allocator, 1))
-                    server_manifest.write_bytes(original[server_manifest] + b'\n[target.\'cfg(target_env = "musl")\'.dependencies]\n'
-                                                + dependencies)
-                else:
-                    client_main.write_bytes(base_client.replace(ALLOCATOR, allocator))
-                    dependency = b'dlmalloc = { version = "0.2.14", features = ["global"] }\n'
-                    assert original[client_manifest].count(dependency) == 1
-                    client_manifest.write_bytes(original[client_manifest].replace(dependency, dependency + dependencies))
-                run(['cargo', 'metadata', '--format-version=1'], environment, OUTPUT / 'mimalloc-lock-update.log')
+            client_main.write_bytes(base_client)
+            if variant != 'musl-mimalloc':
+                main = server_main if package == 'server' else client_main
+                manifest = server_manifest if package == 'server' else client_manifest
+                declaration = original[main] if package == 'server' else base_client
+                main.write_bytes(declaration.replace(ALLOCATOR, DLMALLOC if variant == 'musl-dlmalloc' else b''))
+                dependency = b'rustfs-mimalloc.workspace = true\n'
+                assert original[manifest].count(dependency) == 1
+                replacement = b'dlmalloc = { version = "=0.2.14", features = ["global"] }\n' if variant == 'musl-dlmalloc' else b''
+                # The other workspace consumer retains RustFS lock entries; only this allocator selection changes.
+                manifest.write_bytes(original[manifest].replace(dependency, replacement))
+                run(['cargo', 'metadata', '--format-version=1'], environment, OUTPUT / f'lock-{package}-{variant}.log')
                 current = [item for item in tomllib.loads(lock.read_text())['package'] if item.get('source')]
                 added = [item for item in current if item not in locked_packages]
-                assert {(item['name'], item['version']) for item in added} == {('mimalloc', '0.1.52'), ('libmimalloc-sys', '0.1.49')}
+                assert added == ([DLMALLOC_PACKAGE] if variant == 'musl-dlmalloc' and DLMALLOC_PACKAGE not in locked_packages else [])
                 assert [item for item in current if item not in added] == locked_packages
-                (OUTPUT / f'mimalloc-{package}-Cargo.lock.txt').write_bytes(lock.read_bytes())
+            (OUTPUT / f'{package}-{variant}-Cargo.lock.txt').write_bytes(lock.read_bytes())
             target = GNU if variant == 'gnu-system' else MUSL
             run([sys.executable, '-m', 'scripts.ci.rust_allocator_study', '--build', package, '--variant', variant],
                 environment, OUTPUT / f'build-{package}-{variant}.log')
@@ -234,8 +224,8 @@ def transfer(backend: subprocess.Popen, binary: Path, environment: dict[str, str
                  'transfer': result, 'path': paths[0],
                  'server': {key: last[key] - first[key] for key in ('cpuSeconds', 'minorFaults', 'majorFaults')},
                  'client': json.loads(resource.read_text())}
-    row['server'].update(peakRssBytes=max(peak, last['rssBytes']), postStageRssBytes=last['rssBytes'],
-                         postStageMemoryBytes=memory(backend.pid))
+    row['server'].update(peakRssBytes=max(peak, last['rssBytes']), postStageRssBytes=last['rssBytes'])
+    row['serverMemoryBytes'] = memory(backend.pid)
     gib = result['totalBytes'] / 2**30
     row['server']['cpuSecondsPerReportedGiB'] = row['server']['cpuSeconds'] / gib
     row['client']['cpuSecondsPerReportedGiB'] = (row['client']['userSeconds'] + row['client']['systemSeconds']) / gib
@@ -372,6 +362,12 @@ def main() -> None:
             'mode': 'confirmation' if args.confirm else 'screening',
             'variants': ['musl-system', 'musl-dlmalloc', 'musl-mimalloc'] if args.confirm else VARIANTS,
             'baselines': {'server': 'musl-system', 'client': 'musl-dlmalloc'}, 'candidate': 'musl-mimalloc',
+            'candidateSource': {'wrapper': 'rustfs-mimalloc =0.5.6', 'sys': 'rustfs-mimalloc-sys =0.5.6',
+                'native': 'Microsoft mimalloc v3.5.3',
+                'wrapperArchiveSha256': '95bb29aa7aee255a84d956b4f5309a3f98993ae6e10836ae5e4e8519e960780f',
+                'sysArchiveSha256': '0e6571957abe93757f0c6dd99182589054ace7da4102af4296ffcc8297eb3524'},
+            'baselineSource': 'same application/toolchain/current lock; only selected musl allocator declaration '
+                              'and dependency differ. dlmalloc0.2.14 uses its verified original lock record',
             'repeats': 4 if args.confirm else 2, 'order': 'AB/BA/AB/BA' if args.confirm else 'forward/reverse',
             'orderException': 'server H3 download4 includes GNU-system as a third variant, forward/reverse/'
                               'forward/reverse order' if args.confirm else None,

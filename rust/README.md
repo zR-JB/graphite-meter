@@ -311,12 +311,20 @@ The workspace pins Rust 1.99.0. From the repository root:
 
 ```sh
 mise run rust-check
-mise run rust-check-targets  # needs gcc-mingw-w64-x86-64-win32 and mingw-w64-x86-64-dev
+mise run rust-check-targets  # needs mingw-w64 and musl-tools
 mise run rust-format
 python3 rust/tests/server_interop.py
 python3 rust/tests/client_interop.py
 python3 rust/tests/browser_transports.py --server rust/target/ci/graphite-meter-server
 ```
+
+The static musl binaries use rustfs-mimalloc 0.5.6, bundling mimalloc 3.5.3.
+Local musl cross builds need musl headers and a target C compiler wrapper: set
+`CC_x86_64_unknown_linux_musl=x86_64-linux-musl-gcc` or
+`CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc`. Debian provides these in
+`musl-dev` for the corresponding architecture; arm64 also needs the GNU cross
+compiler. The pinned Docker builder supplies both. Cargo's final GNU linkers
+and release optimization settings stay unchanged.
 
 Ring is the TLS/QUIC crypto provider. Unlike Go's server, which prefers AES-128-GCM for clients
 whose first suite is AES, the server deliberately follows the client's TLS 1.3 suite order, so
@@ -324,9 +332,9 @@ OpenSSL-based clients such as curl, which list AES-256-GCM first, get AES-256-GC
 more CPU per byte. `rust-check` enforces dependency policy with
 `cargo deny --locked check` (cargo-deny pinned in `mise.toml`); a daily workflow rechecks advisories.
 As a separate dependency policy, it limits the crates each static Linux binary compiles,
-build-time crates and the binary’s own included, to 141 for the server and 149 for the TUI.
+build-time crates and the binary’s own included, to 143 for the server and 150 for the TUI.
 The first-party Rust crates forbid unsafe code. This does not make the full
-dependency graph free of unsafe code or native cryptography: ring contains
+dependency graph free of unsafe code or native code: ring and mimalloc contain
 C/assembly.
 
 The tests require OpenSSL; interoperability checks also require Go.

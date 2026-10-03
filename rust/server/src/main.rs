@@ -8,6 +8,10 @@ use graphite_meter_server::{
     runtime,
 };
 
+#[cfg(target_env = "musl")]
+#[global_allocator]
+static ALLOCATOR: rustfs_mimalloc::MiMalloc = rustfs_mimalloc::MiMalloc;
+
 #[tokio::main]
 async fn main() {
     // A development build's plain marker, which release verification refuses, stays in the executable.

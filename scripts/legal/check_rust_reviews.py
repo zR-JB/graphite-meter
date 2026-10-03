@@ -30,8 +30,8 @@ REPO = Path(__file__).resolve().parents[2]
 REVIEWS = REPO / 'legal/rust-reviewed-components.json'
 Crate = tuple[str, str, str]
 # Crates each static Linux binary compiles, its own and build-time crates included.
-BUDGET = {('graphite-meter-server', 'x86_64-unknown-linux-musl'): 141,
-          ('graphite-meter-client', 'x86_64-unknown-linux-musl'): 149}
+BUDGET = {('graphite-meter-server', 'x86_64-unknown-linux-musl'): 143,
+          ('graphite-meter-client', 'x86_64-unknown-linux-musl'): 150}
 
 
 def shipped(targets: str) -> list[tuple[str, str]]:

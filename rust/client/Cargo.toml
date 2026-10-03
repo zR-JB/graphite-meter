@@ -39,7 +39,7 @@ unicode-width = "0.2.2"
 quinn = { package = "noq", version = "1.3.0", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 
 [target.'cfg(target_env = "musl")'.dependencies]
-dlmalloc = { version = "0.2.14", features = ["global"] }
+rustfs-mimalloc.workspace = true
 
 [build-dependencies]
 miniz_oxide.workspace = true

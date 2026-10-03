@@ -19,10 +19,9 @@ use std::{
 };
 use tokio::sync::mpsc;
 
-// musl's malloc re-faults freed memory, which cut HTTP/3 download throughput by 40%.
 #[cfg(target_env = "musl")]
 #[global_allocator]
-static ALLOCATOR: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
+static ALLOCATOR: rustfs_mimalloc::MiMalloc = rustfs_mimalloc::MiMalloc;
 
 #[tokio::main]
 async fn main() {
