@@ -414,7 +414,10 @@ mod tests {
         let lane = receive_http_lane(&transport, 0, &bytes, &ready, Duration::from_secs(5), retry);
         let error = timeout(Duration::from_secs(5), lane).await?.unwrap_err();
         server.abort();
-        assert_eq!(crate::failure::reason(error.as_ref(), false), FailureReason::ProtocolError);
+        assert_eq!(
+            crate::failure::reason(error.as_ref(), false),
+            FailureReason::ProtocolError
+        );
         assert_eq!(served.load(Ordering::SeqCst), 1);
         assert!(started.elapsed() < Duration::from_secs(2));
         Ok(())

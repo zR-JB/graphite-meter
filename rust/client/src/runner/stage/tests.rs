@@ -480,15 +480,7 @@ async fn first_stage_setup_failure_keeps_survivors_and_its_sign_in_cause() -> Re
 
     // A stalled first peer must not consume the next peer's startup budget.
     fixture.modes[0].store(2, Ordering::SeqCst);
-    let second = measure(
-        Stage::Download,
-        config,
-        servers,
-        snapshots,
-        cancelled,
-        &mut ledger,
-    )
-    .await?;
+    let second = measure(Stage::Download, config, servers, snapshots, cancelled, &mut ledger).await?;
     assert_eq!(second, vec!["near"]);
     let snapshot = observed.borrow();
     assert_eq!(snapshot.results.len(), 2);
