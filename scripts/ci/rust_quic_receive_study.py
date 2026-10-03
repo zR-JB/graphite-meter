@@ -138,6 +138,7 @@ def build_variants(environment: dict[str, str], candidate: str) -> dict[str, Pat
                             ('rust/client/src/main.rs', 'rust/Cargo.toml', 'rust/Cargo.lock'))
     original = {path: path.read_bytes() for path in (main, manifest, lock)}
     workspace = tomllib.loads(original[manifest].decode())
+    assert workspace['patch']['crates-io']['noq']['git'] == 'https://github.com/zR-JB/noq'
     initial = workspace['patch']['crates-io']['noq']['rev']
     assert re.fullmatch(r'[0-9a-f]{40}', initial)
     assert original[manifest].count(f'rev = "{initial}"'.encode()) == 1
