@@ -84,11 +84,11 @@
   {
     "fork": "https://github.com/zR-JB/h2",
     "branch": "graphite-meter/h2-v0.4.19",
-    "rev": "c1f366b7925c2dbeae99cbb02083ed983f569b40",
+    "rev": "214e3f4afeefab885c0f2f35b8cb6a73479fcec0",
     "upstream": "https://github.com/hyperium/h2",
     "baseTag": "v0.4.19",
     "base": "d57d1b852fec9dda6d42d3454502006d52104da8",
-    "diffSha256": "f7fec8a0ae49e9ab7bab858329cff619987ee69966ab32c37976b837aca4d6f3",
+    "diffSha256": "ff263dea5b766305d57edfb8307bbbd6aa9461eb8f76b199669add0a82e2a251",
     "modifiedPackages": [
       "h2"
     ],
@@ -150,7 +150,8 @@
       {"subject": "Reject GOAWAY frames with a non-zero stream identifier (#951)", "purpose": "Treats a GOAWAY on a non-zero stream as a connection protocol error, as RFC 9113 requires.", "origin": "hyperium/h2#951 d4a37fcac2c382746b6ff3509d8bd5871235ab37"},
       {"subject": "fix: rare race during shutdown (#956)", "purpose": "Fixes a rare race between connection shutdown and stream state.", "origin": "hyperium/h2#956 e43124bb5579bae0306d4a8f70dc127a640534c4"},
       {"subject": "fix(client): reject responses without `:status` (#959)", "purpose": "Refuses a response head that lacks the :status pseudo-header.", "origin": "hyperium/h2#959 3c5f61c9bac3b9ab9b24031a3bb90d8b58eccb9a"},
-      {"subject": "Refresh large receive windows once a mebibyte is unclaimed", "purpose": "Caps the WINDOW_UPDATE threshold at 1 MiB so a large receive window stays nearly full over a long path, as Go refreshes after 4 KiB.", "origin": "graphite-meter"}
+      {"subject": "Refresh large receive windows once a mebibyte is unclaimed", "purpose": "Caps the WINDOW_UPDATE threshold at 1 MiB so a large receive window stays nearly full over a long path, as Go refreshes after 4 KiB.", "origin": "graphite-meter"},
+      {"subject": "Scale the large-window refresh with the window", "purpose": "Refreshes a window once a sixteenth of it, at least 1 MiB, is unclaimed, so a 64 MiB window does not send an update per mebibyte.", "origin": "graphite-meter"}
     ],
     "metadataFiles": [
       ".github/workflows/graphite-meter.yml"
