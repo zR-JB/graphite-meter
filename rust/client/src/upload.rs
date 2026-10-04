@@ -28,16 +28,11 @@ const FEED_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 const CHECKPOINT_RETRY: Duration = Duration::from_millis(100);
 
-#[derive(Clone, Copy, Debug)]
-struct ReceiverProgress {
-    bytes: u64,
-    nanos: u64,
-}
 #[derive(Clone, Default)]
 struct State {
     ready: bool,
     complete: bool,
-    latest: Option<ReceiverProgress>,
+    latest: Option<wire::Counters>,
     error: Option<Arc<Error>>,
 }
 
@@ -67,18 +62,15 @@ pub(crate) struct Plan {
 }
 
 impl Plan {
-    /// Takes the server's one replacement when its receiver refused the upload id as `invalid`
-    /// (upload.go:23-31).
+    /// Takes the server's one replacement for a receiver that refused its id as `invalid`.
     pub(crate) fn replaces(&self, error: &Error) -> bool {
         crate::failure::refused(error.as_ref(), UploadRefusal::Invalid) && !self.replaced.swap(true, Ordering::Relaxed)
     }
 }
 
 impl Upload {
-    /// `lanes` lanes over HTTP with `http`'s stagger and request limit, or over WebTransport
-    /// without: the stage-owned cancellation covers the stagger, and each request lasts up to the
-    /// stage's operation limit, as Go's lanes last the stage. `replaced` records the server's one
-    /// replacement receiver in its run.
+    /// `lanes` lanes over HTTP with `http`'s stagger and request limit, or over WebTransport without;
+    /// `replaced` records the server's one replacement receiver in its run.
     pub async fn start(
         transport: Arc<Transport>,
         lanes: usize,
@@ -92,21 +84,15 @@ impl Upload {
         if !(1..=128).contains(&lanes) || http.is_some_and(|(stagger, _)| stagger > Duration::from_millis(75)) {
             return Err("invalid upload lane count or stagger".into());
         }
-        // Lanes and control requests never share a connection, as Go gives upload lanes a
-        // transport of their own: HTTP/3 control takes a new QUIC connection, and HTTP/1.1 and
-        // HTTP/2 lanes take connections apart from control requests and download reads.
         let (transport, control) = if http.is_none() {
             (transport.clone(), transport)
-        } else if transport.is_http3() {
+        } else {
             let mut stopped = cancel.clone();
-            let control = tokio::select! {
+            tokio::select! {
                 biased;
                 _ = stopped.wait_for(|cancelled| *cancelled) => return Err("upload cancelled before startup".into()),
-                control = transport.isolated_connection() => control?,
-            };
-            (transport, control)
-        } else {
-            (Arc::new(transport.for_upload_lanes()), transport)
+                split = transport.upload_split() => split?,
+            }
         };
         let plan = Plan { transport, control, lanes, http, cancel, replaced };
         match Self::begin(plan.clone()).await {
@@ -114,8 +100,7 @@ impl Upload {
             started => started,
         }
     }
-    /// Ends this receiver and starts another on the same connections; its new id resumes the
-    /// aggregate's evidence, as Go's replacement does.
+    /// Ends this receiver and starts another on the same connections, as Go's replacement does.
     pub(crate) async fn replace(self) -> Result<Self, Error> {
         let plan = self.plan.clone();
         let _ = self.finish(false).await;
@@ -149,10 +134,8 @@ impl Upload {
             _ = cancel.wait_for(|cancelled| *cancelled) => return Err("upload cancelled before startup".into()),
             minted = restore("upload session", Instant::now() + REDIAL_WINDOW, mint) => minted?,
         };
-        if minted.upload_id.is_empty()
-            || minted.upload_id.len() > 8192
-            || minted.upload_id.bytes().any(|byte| byte <= 32 || byte == 127)
-        {
+        let id = &minted.upload_id;
+        if id.is_empty() || id.len() > 8192 || id.bytes().any(|byte| byte <= 32 || byte == 127) {
             return Err("server returned an invalid upload session ID".into());
         }
         let mut block = vec![0_u8; 64 * 1024];
@@ -219,35 +202,31 @@ impl Upload {
         let home = session
             .as_ref()
             .map_or_else(|| transport.lane_home(), |slot| slot.home.clone());
-        self.lanes.spawn_on(
-            async move {
-                tokio::select! {
-                    biased;
-                    _ = stop.wait_for(|stopped| *stopped) => {},
-                    _ = cancelled.wait_for(|cancelled| *cancelled) => {},
-                    _ = health.wait_for(|state| state.error.is_some() || state.complete) => {},
-                    result = async {
-                        if index > 0 && !stagger.is_zero() {
-                            tokio::time::sleep(stagger * index as u32).await;
-                        }
-                        match session {
-                            Some(session) => send_wt_lane(&session, block, sending, retry).await,
-                            None => send_lane(&transport, &id, index, block, sending, retry, limit).await,
-                        }
-                    } => if let Err(error) = result {
-                        fail(&state, error);
-                    },
-                }
-            },
-            &home,
-        );
+        let lane = async move {
+            tokio::select! {
+                biased;
+                _ = stop.wait_for(|stopped| *stopped) => {},
+                _ = cancelled.wait_for(|cancelled| *cancelled) => {},
+                _ = health.wait_for(|state| state.error.is_some() || state.complete) => {},
+                result = async {
+                    if index > 0 && !stagger.is_zero() {
+                        tokio::time::sleep(stagger * index as u32).await;
+                    }
+                    match session {
+                        Some(session) => send_wt_lane(&session, block, sending, retry).await,
+                        None => send_lane(&transport, &id, index, block, sending, retry, limit).await,
+                    }
+                } => if let Err(error) = result {
+                    fail(&state, error);
+                },
+            }
+        };
+        self.lanes.spawn_on(lane, &home);
         active
     }
     pub fn observed(&self) -> Option<ObservedUpload> {
-        self.state
-            .borrow()
-            .latest
-            .map(|value| ObservedUpload { id: self.id.clone(), maximum: value.bytes })
+        let latest = self.state.borrow().latest?;
+        Some(ObservedUpload { id: self.id.clone(), maximum: latest.bytes })
     }
     pub(crate) fn retrying(&self) -> Option<Error> {
         self.retrying.failure()
@@ -267,33 +246,25 @@ impl Upload {
     }
     pub async fn checkpoint(&self, budget: Duration) -> Result<ReceiverSnapshot, Error> {
         let (deadline, query, control) = (Instant::now() + budget, [("id", self.id.as_str())], &self.plan.control);
+        let timed_out = || std::io::Error::new(std::io::ErrorKind::TimedOut, "upload receiver checkpoint timed out");
         loop {
             self.health()?;
             let checkpoint = control.json::<wire::Counters>(Method::POST, Route::UploadCheckpoint, &query);
-            let response = tokio::time::timeout_at(deadline, checkpoint).await;
-            let count = match response {
-                Ok(Ok(count)) => count,
-                Ok(Err(error)) if crate::failure::sign_in(error.as_ref()).is_none() => {
-                    if deadline.saturating_duration_since(Instant::now()) <= CHECKPOINT_RETRY {
-                        return Err(error);
-                    }
+            match tokio::time::timeout_at(deadline, checkpoint).await {
+                Ok(Ok(count)) if count.nanos == 0 => return Err(wire::WireError::InvalidReceiverCheckpoint.into()),
+                Ok(Ok(count)) => {
+                    self.health()?;
+                    return Ok(ReceiverSnapshot { id: self.id.clone(), bytes: count.bytes, nanos: count.nanos });
+                }
+                Ok(Err(error))
+                    if crate::failure::sign_in(error.as_ref()).is_none()
+                        && deadline.saturating_duration_since(Instant::now()) > CHECKPOINT_RETRY =>
+                {
                     tokio::time::sleep(CHECKPOINT_RETRY).await;
-                    continue;
                 }
                 Ok(Err(error)) => return Err(error),
-                Err(_) => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        "upload receiver checkpoint timed out",
-                    )
-                    .into());
-                }
-            };
-            if count.nanos == 0 {
-                return Err(wire::WireError::InvalidReceiverCheckpoint.into());
+                Err(_) => return Err(timed_out().into()),
             }
-            self.health()?;
-            return Ok(ReceiverSnapshot { id: self.id.clone(), bytes: count.bytes, nanos: count.nanos });
         }
     }
     pub async fn finish(mut self, confirm: bool) -> Result<(), Error> {
@@ -331,6 +302,16 @@ impl Upload {
     }
 }
 
+/// One request's or stream's `MAX_TRANSFER_BYTES`, as slices of `block`.
+fn payload(block: &Bytes) -> impl Iterator<Item = Bytes> + use<> {
+    let (block, mut remaining) = (block.clone(), MAX_TRANSFER_BYTES);
+    std::iter::from_fn(move || {
+        let size = remaining.min(block.len() as u64);
+        remaining -= size;
+        (size > 0).then(|| block.slice(..size as usize))
+    })
+}
+
 async fn send_lane(
     transport: &Transport,
     id: &str,
@@ -343,31 +324,25 @@ async fn send_lane(
     let lane = index.to_string();
     loop {
         let started = Instant::now();
-        let moved = Arc::new(AtomicBool::new(false));
-        let body = futures_util::stream::unfold(
-            (block.clone(), MAX_TRANSFER_BYTES, active.clone(), moved.clone()),
-            |(block, remaining, active, moved)| async move {
-                if remaining == 0 {
-                    return None;
-                }
-                active.store(true, Ordering::Release);
-                if remaining < MAX_TRANSFER_BYTES {
-                    moved.store(true, Ordering::Relaxed);
-                }
-                let size = remaining.min(block.len() as u64) as usize;
-                Some((Ok::<_, Error>(block.slice(..size)), (block, remaining - size as u64, active, moved)))
-            },
-        );
+        let (moved, active) = (Arc::new(AtomicBool::new(false)), active.clone());
+        let pulled = moved.clone();
+        // A slice handed on, once the one before it was taken, counts as progress.
+        let body = futures_util::stream::iter(payload(&block).enumerate().map(move |(index, slice)| {
+            active.store(true, Ordering::Release);
+            if index > 0 {
+                pulled.store(true, Ordering::Relaxed);
+            }
+            Ok::<_, Error>(slice)
+        }));
         let query = [("cb", &*cache_buster()), ("id", id), ("lane", &*lane)];
-        let result = transport
-            .send(Route::Upload, &query, body, MAX_TRANSFER_BYTES, limit)
-            .await;
+        let sent = transport.send(Route::Upload, &query, body, MAX_TRANSFER_BYTES, limit);
         // A lane the receiver ended as idle ends its attempt normally; any other answer, busy
         // included, means the lane made no progress, whatever it sent (upload.go:118-128).
         let idle = |error: &Error| match error.downcast_ref() {
             Some(Failure::Http { status, refusal, .. }) => (*status, *refusal) == (408, Some(UploadRefusal::Idle)),
             _ => false,
         };
+        let result = sent.await;
         let result = result.or_else(|error| if idle(&error) { Ok(()) } else { Err(error) });
         let answer = result.as_ref().err().and_then(|error| error.downcast_ref::<Failure>());
         let answered = matches!(answer, Some(Failure::Http { .. } | Failure::SignIn { .. }));
@@ -375,9 +350,25 @@ async fn send_lane(
         retry.ended(result, started, progressed).await?;
     }
 }
-/// Go's followUploadFeed and attach (upload.go:284-297, 228-259): a feed that fails is reopened
-/// within 2 s, after 500 ms if it failed at once.
-async fn progress_loop(transport: &Transport, id: &str, state: &watch::Sender<State>) -> Result<(), Error> {
+/// The receiver's progress until `complete`, over the upload session's first server stream if it
+/// has one; otherwise, or once that fails, over the HTTP feed, which Go's followUploadFeed and
+/// attach reopen within 2 s, after 500 ms if it failed at once (upload.go:284-297, 228-259).
+async fn progress_feed(
+    transport: &Transport,
+    id: &str,
+    state: &watch::Sender<State>,
+    session: Option<Arc<SessionSlot>>,
+) -> Result<(), Error> {
+    if let Some(session) = session {
+        let read = async {
+            let stream = session.current().await.accept_uni().await?;
+            Feed::new(Source::WebTransport(stream)).follow(state).await
+        };
+        match read.await {
+            Err(error) if !crate::failure::permanent(error.as_ref()) => {}
+            done => return done,
+        }
+    }
     let mut deadline = Instant::now() + REDIAL_WINDOW;
     loop {
         let mut feed = restore("upload progress", deadline, || Feed::open(transport, id, state)).await?;
@@ -397,8 +388,7 @@ enum Source {
     WebTransport(RecvStream),
 }
 
-/// The receiver's progress, a record a line of at most 64 KiB over either source, as api/upload.md
-/// bounds it.
+/// The receiver's progress: a record a line, each at most 64 KiB, as api/upload.md bounds it.
 struct Feed {
     source: Source,
     line: Vec<u8>,
@@ -434,14 +424,14 @@ impl Feed {
     async fn next(&mut self) -> Result<UploadProgress, Error> {
         loop {
             if self.chunk.is_empty() {
-                self.chunk = match &mut self.source {
-                    Source::Http(body) => tokio::time::timeout(CONTROL_TIMEOUT, body.chunk())
-                        .await??
-                        .ok_or("upload progress ended without complete")?,
-                    Source::WebTransport(stream) => {
-                        stream.read_chunk().await?.ok_or("upload progress stream closed")?
-                    }
+                let read = async {
+                    Ok::<_, Error>(match &mut self.source {
+                        Source::Http(body) => body.chunk().await?,
+                        Source::WebTransport(stream) => stream.read_chunk().await?,
+                    })
                 };
+                let chunk = tokio::time::timeout(CONTROL_TIMEOUT, read).await??;
+                self.chunk = chunk.ok_or("upload progress ended without complete")?;
             }
             let end = self.chunk.iter().position(|&byte| byte == b'\n');
             let count = end.map_or(self.chunk.len(), |end| end + 1);
@@ -480,11 +470,8 @@ async fn send_wt_lane(
             let sent: Result<(), Error> = async {
                 loop {
                     let mut stream = session.open_uni().await?;
-                    let mut remaining = MAX_TRANSFER_BYTES;
-                    while remaining > 0 {
-                        let size = remaining.min(block.len() as u64) as usize;
-                        stream.write_chunk(block.slice(..size)).await?;
-                        remaining -= size as u64;
+                    for slice in payload(&block) {
+                        stream.write_chunk(slice).await?;
                         active.store(true, Ordering::Release);
                         moved = true;
                     }
@@ -498,31 +485,6 @@ async fn send_wt_lane(
     .await
 }
 
-async fn progress_feed(
-    transport: &Transport,
-    id: &str,
-    state: &watch::Sender<State>,
-    session: Option<Arc<SessionSlot>>,
-) -> Result<(), Error> {
-    if let Some(session) = session {
-        let read = async {
-            let mut feed = Feed::new(Source::WebTransport(session.current().await.accept_uni().await?));
-            loop {
-                let event = tokio::time::timeout(CONTROL_TIMEOUT, feed.next()).await??;
-                if apply_event(event, state)? {
-                    return Ok::<_, Error>(());
-                }
-            }
-        };
-        match read.await {
-            Ok(()) => return Ok(()),
-            Err(error) if crate::failure::permanent(error.as_ref()) => return Err(error),
-            Err(_) => {}
-        }
-        // Reattach only the receiver's control feed. Payload lanes remain WT.
-    }
-    progress_loop(transport, id, state).await
-}
 fn apply_event(event: UploadProgress, state: &watch::Sender<State>) -> Result<bool, Error> {
     match event {
         UploadProgress::Ready => state.send_modify(|state| state.ready = true),
@@ -544,7 +506,7 @@ fn apply_event(event: UploadProgress, state: &watch::Sender<State>) -> Result<bo
             if old.is_some_and(|old| bytes < old.bytes || nanos < old.nanos) {
                 return Ok(false);
             }
-            let count = ReceiverProgress { bytes, nanos };
+            let count = wire::Counters { bytes, nanos };
             let complete = matches!(event, UploadProgress::Complete { .. });
             state.send_modify(|state| {
                 state.latest = Some(count);
@@ -559,24 +521,20 @@ fn apply_event(event: UploadProgress, state: &watch::Sender<State>) -> Result<bo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use graphite_meter_core::{discovery::Protocol, failure::FailureReason, measurement::CHECKPOINT_BUDGET};
+    use tokio::net::TcpListener;
 
     /// A stage's operation limit, the lifetime a stage gives its lanes' requests.
     const OPERATION_LIMIT: Duration = Duration::from_secs(60);
     /// HTTP lanes that start together and last the operation limit.
     const HTTP_LANES: Option<(Duration, Duration)> = Some((Duration::ZERO, OPERATION_LIMIT));
-    use graphite_meter_core::{discovery::Protocol, failure::FailureReason, measurement::CHECKPOINT_BUDGET};
-    use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt},
-        net::TcpListener,
-    };
 
     /// A client of `origin` over `protocol`, sharing none of its connections.
     async fn transport(origin: &str, protocol: Protocol) -> Result<Transport, Error> {
         Transport::connect(crate::net::Http::new(false)?, origin, protocol).await
     }
 
-    /// The progress feed of a WebTransport receiver that writes `records` on its first stream, and
-    /// the state it left; nothing answers the HTTP feed a failing one falls back to.
+    /// The progress feed of a WebTransport receiver writing `records`, and the state it left.
     async fn webtransport_feed(records: String) -> Result<(Result<(), Error>, State), Error> {
         let (endpoint, origin) = crate::fixtures::h3_endpoint()?;
         let server = tokio::spawn(crate::fixtures::webtransport_peer(endpoint, |session| async move {
@@ -594,9 +552,8 @@ mod tests {
         Ok((fed, observed.borrow().clone()))
     }
 
-    /// A WebTransport receiver that withdraws the grant with a `revoked` record asks for sign-in,
-    /// as Go's uploadRefusal (failure.go:69-70), not a refusal that falls back to the HTTP feed.
-    /// A record may take the 64 KiB api/upload.md allows every record, as over HTTP.
+    /// A `revoked` record over WebTransport asks for sign-in, as Go's uploadRefusal (failure.go:69-70),
+    /// rather than falling back to the HTTP feed; a record may take 64 KiB, as over HTTP.
     #[tokio::test]
     async fn a_revoked_record_asks_for_sign_in() -> Result<(), Error> {
         let revoked = "{\"type\":\"ready\"}\n{\"type\":\"error\",\"code\":\"revoked\"}\n";
@@ -614,9 +571,8 @@ mod tests {
         Ok(())
     }
 
-    /// An HTTP/3 upload the server answers early, then stops reading, returns that answer, read
-    /// once its body can no longer be sent, as Go's round trip returns the response: here busy. A
-    /// request that lets caches keep its answer is refused as invalid instead.
+    /// An HTTP/3 upload the server answers early, then stops reading, returns that answer (busy), as
+    /// Go's round trip does; a request that lets caches keep its answer is refused as invalid instead.
     #[tokio::test]
     async fn an_http3_upload_answered_early_returns_the_answer() -> Result<(), Error> {
         let (endpoint, origin) = crate::fixtures::h3_endpoint()?;
@@ -647,34 +603,20 @@ mod tests {
 
     #[tokio::test]
     async fn checkpoint_retries_a_refusal_and_keeps_its_cause_past_the_budget() -> Result<(), Error> {
-        use std::sync::atomic::AtomicUsize;
-        let (listener, origin) = crate::fixtures::listener().await?;
-        let refusals = Arc::new(AtomicUsize::new(usize::MAX));
-        let remaining = refusals.clone();
-        let server = tokio::spawn(async move {
-            let mut refused = Instant::now();
-            loop {
-                let (mut stream, _) = listener.accept().await?;
-                let mut request = [0_u8; 4096];
-                let count = stream.read(&mut request).await?;
-                assert!(request[..count].starts_with(b"POST /upload/checkpoint?id=test-session"));
-                if remaining
-                    .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1))
-                    .is_ok()
-                {
-                    refused = Instant::now();
-                    stream
-                        .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
-                        .await?;
-                    continue;
-                }
-                // Go's decodeCounters takes any exact integer, in exponent form too.
-                let counters = crate::fixtures::ok(r#"{"bytes":1.23e2,"nanos":456}"#);
-                stream.write_all(counters.as_bytes()).await?;
-                return Ok::<_, Error>(refused);
+        use std::sync::{Mutex, atomic::AtomicUsize};
+        let (refusals, refused) = (Arc::new(AtomicUsize::new(usize::MAX)), Arc::new(Mutex::new(Instant::now())));
+        let (remaining, last_refused) = (refusals.clone(), refused.clone());
+        let origin = crate::fixtures::peer(move |head| {
+            assert!(head.starts_with("post /upload/checkpoint?id=test-session"));
+            let refuse = remaining.try_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1));
+            if refuse.is_ok() {
+                *last_refused.lock().unwrap() = Instant::now();
+                return Some("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n".into());
             }
+            // Go's decodeCounters takes any exact integer, in exponent form too.
+            Some(crate::fixtures::ok(r#"{"bytes":1.23e2,"nanos":456}"#))
         });
-        let transport = Arc::new(transport(&origin, Protocol::Http1).await?);
+        let transport = Arc::new(transport(&origin.await?, Protocol::Http1).await?);
         let (state_sender, state) = watch::channel(State::default());
         let plan = Plan {
             transport: transport.clone(),
@@ -697,7 +639,7 @@ mod tests {
         let retried = Instant::now();
         assert_eq!((snapshot.bytes, snapshot.nanos), (123, 456));
         assert!(state_sender.borrow().latest.is_none());
-        assert!(retried - server.await?? >= CHECKPOINT_RETRY);
+        assert!(retried - *refused.lock().unwrap() >= CHECKPOINT_RETRY);
         Ok(())
     }
 
@@ -720,18 +662,14 @@ mod tests {
         }
     }
 
-    /// Upload lanes keep their own HTTP/2 connection, as Go's upload transport: a checkpoint
-    /// never queues behind their unsent bodies, here a peer that stops reading the lanes.
+    /// A checkpoint never queues behind HTTP/2 upload lanes whose peer stopped reading them.
     #[tokio::test]
     async fn checkpoints_never_queue_behind_http2_upload_lanes() -> Result<(), Error> {
         let armed = Arc::new(AtomicBool::new(false));
         let (transport, server) = receiver(armed.clone()).await?;
         let (_stop, cancel) = watch::channel(false);
-        let upload = tokio::time::timeout(
-            Duration::from_secs(5),
-            Upload::start(transport, 2, HTTP_LANES, Arc::default(), cancel),
-        )
-        .await??;
+        let start = Upload::start(transport, 2, HTTP_LANES, Arc::default(), cancel);
+        let upload = tokio::time::timeout(Duration::from_secs(5), start).await??;
         armed.store(true, Ordering::SeqCst);
         let checkpoint = upload.checkpoint(CHECKPOINT_BUDGET).await;
         drop(upload);
@@ -741,8 +679,7 @@ mod tests {
         Ok(())
     }
 
-    /// A stop ends an HTTP/3 upload's start at once, also while its control connection dials, so
-    /// the stopped stage closes within the controller's 5 s grace (controller.rs:19).
+    /// A stop ends an HTTP/3 upload's start at once, also while its control connection dials.
     #[tokio::test]
     async fn a_stop_ends_an_http3_start_while_its_control_connection_dials() -> Result<(), Error> {
         let (endpoint, origin) = crate::fixtures::h3_endpoint()?;
@@ -754,8 +691,7 @@ mod tests {
         let transport = Transport::connect(crate::net::Http::new(true)?, &origin, Protocol::Http3).await?;
         let (stop, stopped) = watch::channel(false);
         let start = Upload::start(Arc::new(transport), 1, HTTP_LANES, Arc::default(), stopped);
-        // The stop arrives 100 ms into the control connection's dial, which a check made only as the
-        // start began misses.
+        // The stop arrives 100 ms into the control connection's dial.
         let stop_soon = async {
             tokio::time::sleep(Duration::from_millis(100)).await;
             stop.send_replace(true);
@@ -768,6 +704,7 @@ mod tests {
 
     /// A receiver over HTTP/2 that stops reading the connections carrying lanes once armed.
     async fn receiver(armed: Arc<AtomicBool>) -> Result<(Arc<Transport>, tokio::task::JoinHandle<()>), Error> {
+        use futures_util::stream;
         use http_body_util::{BodyExt, Full, StreamBody, combinators::BoxBody};
         use hyper::{body::Frame, service::service_fn};
         use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -782,37 +719,26 @@ mod tests {
                 let service = service_fn(move |request: http::Request<hyper::body::Incoming>| {
                     let lanes = lanes.clone();
                     async move {
-                        let json =
-                            |body: &'static str| -> Payload { Full::new(Bytes::from_static(body.as_bytes())).boxed() };
-                        let path = request.uri().path();
-                        let answer = http::Response::builder();
-                        let body = match path {
+                        let json = |body: &'static str| -> Payload { Full::from(body).boxed() };
+                        let body = match request.uri().path() {
                             "/upload/session" => json(r#"{"uploadId":"fixture"}"#),
                             "/upload/checkpoint" => json(r#"{"bytes":1,"nanos":1}"#),
                             "/upload/progress" => {
-                                let events = Bytes::from_static(
-                                    b"{\"type\":\"ready\"}\n{\"type\":\"progress\",\"bytes\":1,\"nanos\":1}\n",
-                                );
-                                let chunks = futures_util::StreamExt::chain(
-                                    futures_util::stream::once(async move { Ok(Frame::data(events)) }),
-                                    futures_util::stream::pending(),
-                                );
-                                StreamBody::new(chunks).boxed()
+                                let events = b"{\"type\":\"ready\"}\n{\"type\":\"progress\",\"bytes\":1,\"nanos\":1}\n";
+                                let first = stream::once(async { Ok(Frame::data(Bytes::from_static(events))) });
+                                StreamBody::new(stream::select(first, stream::pending())).boxed()
                             }
                             "/upload" => {
                                 lanes.store(true, Ordering::SeqCst);
-                                std::future::pending::<()>().await;
-                                unreachable!()
+                                std::future::pending().await
                             }
                             _ => json("{}"),
                         };
-                        Ok::<_, Infallible>(answer.body(body).expect("fixture answer"))
+                        Ok::<_, Infallible>(http::Response::new(body))
                     }
                 });
-                tokio::spawn(
-                    hyper::server::conn::http2::Builder::new(TokioExecutor::new())
-                        .serve_connection(TokioIo::new(io), service),
-                );
+                let http2 = hyper::server::conn::http2::Builder::new(TokioExecutor::new());
+                tokio::spawn(http2.serve_connection(TokioIo::new(io), service));
             }
         });
         let transport = transport(&origin, Protocol::Http2).await?;
@@ -821,27 +747,19 @@ mod tests {
 
     #[tokio::test]
     async fn progress_feed_ignores_malformed_unknown_and_stale_records() -> Result<(), Error> {
-        let (listener, origin) = crate::fixtures::listener().await?;
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await?;
-            let count = stream.read(&mut [0_u8; 4096]).await?;
-            assert!(count > 0);
-            let body = concat!(
-                "{\"type\":\"ready\"}\n",
-                "{\"type\":\"progress\",\"bytes\":10,\"nanos\":20}\n",
-                "not json\n\n",
-                "{\"type\":\"future\"}\n",
-                "{\"type\":\"progress\",\"bytes\":9,\"nanos\":21}\n",
-                "{\"type\":\"complete\",\"bytes\":11,\"nanos\":19}\n",
-                "{\"type\":\"complete\",\"bytes\":12,\"nanos\":30}\n",
-            );
-            stream.write_all(crate::fixtures::ok(body).as_bytes()).await?;
-            Ok::<_, Error>(())
-        });
-        let transport = transport(&origin, Protocol::Http1).await?;
+        let body = concat!(
+            "{\"type\":\"ready\"}\n",
+            "{\"type\":\"progress\",\"bytes\":10,\"nanos\":20}\n",
+            "not json\n\n",
+            "{\"type\":\"future\"}\n",
+            "{\"type\":\"progress\",\"bytes\":9,\"nanos\":21}\n",
+            "{\"type\":\"complete\",\"bytes\":11,\"nanos\":19}\n",
+            "{\"type\":\"complete\",\"bytes\":12,\"nanos\":30}\n",
+        );
+        let origin = crate::fixtures::peer(move |_| Some(crate::fixtures::ok(body)));
+        let transport = transport(&origin.await?, Protocol::Http1).await?;
         let (state, observed) = watch::channel(State::default());
-        progress_loop(&transport, "test-session", &state).await?;
-        server.await??;
+        progress_feed(&transport, "test-session", &state, None).await?;
         let observed = observed.borrow();
         assert!(observed.complete);
         let latest = observed.latest.unwrap();

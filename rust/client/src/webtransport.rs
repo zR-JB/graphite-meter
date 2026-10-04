@@ -23,8 +23,7 @@ pub struct Session {
 }
 
 impl Session {
-    /// One session, on a connection of its own, to `target`, an absolute HTTPS URL: its grant
-    /// goes to that URL alone, redirects are never followed, and a refusal is the server's answer.
+    /// One session, on a connection of its own, to `target`, which alone takes its grant.
     pub async fn dial(http: &Http, target: &str, deadline: Duration) -> Result<Self, Error> {
         let mut request = Request::get(target).body(())?;
         http.authorize(target, request.headers_mut())?;
@@ -51,8 +50,7 @@ impl Session {
     pub fn is_closed(&self) -> bool {
         self.connection.close_reason().is_some() || self.ended().is_some()
     }
-    /// The lane ending the server closed the session with, once it has, as Go's laneEnding reads
-    /// a session error's code (failure.go:83-95).
+    /// The lane ending the server closed the session with, as Go's laneEnding (failure.go:83-95).
     pub fn ending(&self) -> Option<LaneEnding> {
         LaneEnding::from_webtransport_code(self.ended()?.ok()?.0)
     }
@@ -60,16 +58,12 @@ impl Session {
         Ok(self.session.send_datagram_wait(payload).await?)
     }
     pub async fn recv_datagram(&self) -> Result<Bytes, Error> {
-        self.session
-            .read_datagram()
-            .await
-            .ok_or_else(|| "WebTransport session closed".into())
+        let datagram = self.session.read_datagram().await;
+        datagram.ok_or_else(|| "WebTransport session closed".into())
     }
     pub async fn accept_uni(&self) -> Result<RecvStream, Error> {
-        self.session
-            .accept_uni()
-            .await
-            .ok_or_else(|| "WebTransport session closed".into())
+        let stream = self.session.accept_uni().await;
+        stream.ok_or_else(|| "WebTransport session closed".into())
     }
     pub async fn open_uni(&self) -> Result<SendStream, Error> {
         Ok(self.session.open_uni().await?)
@@ -79,8 +73,7 @@ impl Session {
     }
 }
 
-/// A stage group shares one live session. Replacement is serialized, so a
-/// connection loss cannot make every lane dial its own replacement session.
+/// A stage group's one live session, replaced one dial at a time once lost.
 pub struct SessionSlot {
     current: Mutex<Arc<Session>>,
     http: Http,
@@ -92,13 +85,8 @@ pub struct SessionSlot {
 impl SessionSlot {
     pub async fn dial(http: &Http, target: String) -> Result<Self, Error> {
         let home = crate::transport::home();
-        let session = Self::open(&home, http, &target).await?;
-        Ok(Self {
-            current: Mutex::new(Arc::new(session)),
-            http: http.clone(),
-            target,
-            home,
-        })
+        let current = Mutex::new(Arc::new(Self::open(&home, http, &target).await?));
+        Ok(Self { current, http: http.clone(), target, home })
     }
 
     /// Go's stage session dial and redial (webtransport.go:104-154), tried again for 2 s, on `home`.
@@ -125,8 +113,8 @@ impl SessionSlot {
         Ok(())
     }
 
-    /// Go's runWTLane: `attempt` on the current session again and again, paced by `retry`, with
-    /// the session dialled again once it closed. An attempt says whether it moved bytes.
+    /// Go's runWTLane: `attempt`, which says whether it moved bytes, on the current session, paced
+    /// by `retry`, with the session dialled again once it closed.
     pub(crate) async fn lane<F>(
         &self,
         mut retry: TransferRetry,

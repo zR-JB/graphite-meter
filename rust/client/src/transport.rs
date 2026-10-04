@@ -5,6 +5,7 @@ use crate::{
     failure::Failure,
     net::{Http, url},
     quic::{Http3Client, Http3Stream},
+    webtransport::SessionSlot,
 };
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt};
@@ -67,9 +68,7 @@ pub(crate) fn retry_pause(started: Instant) -> Duration {
     TRANSFER_RETRY_BACKOFF * u32::from(started.elapsed() < TRANSFER_RETRY_BACKOFF)
 }
 
-/// Go's restore (transfer.go:36-59): `attempt` again, each try bounded by `deadline`, until it
-/// succeeds or fails permanently, paced as a lane's retries; past the deadline the error names
-/// what was lost, the window it had and the last cause.
+/// Go's restore (transfer.go:36-59): `attempt`, paced as a lane's retries, until done or `deadline`.
 pub(crate) async fn restore<T, F: Future<Output = Result<T, Error>>>(
     what: &'static str,
     deadline: Instant,
@@ -102,14 +101,13 @@ pub(crate) struct Retrying(Arc<std::sync::Mutex<BTreeMap<usize, Arc<Error>>>>);
 impl Retrying {
     pub(crate) fn failure(&self) -> Option<Error> {
         let lanes = self.0.lock().expect("retrying lanes poisoned");
-        lanes
-            .values()
-            .next()
-            .map(|error| Box::new(Failure::Shared(error.clone())) as Error)
+        let error = lanes.values().next()?;
+        Some(Failure::Shared(error.clone()).into())
     }
 }
 
 /// Ends a lane whose attempts fail without moving bytes; silence is the stage's rule.
+#[derive(Default)]
 pub(crate) struct TransferRetry {
     failing_since: Option<Instant>,
     backoff: RetryBackoff,
@@ -119,17 +117,11 @@ pub(crate) struct TransferRetry {
 
 impl TransferRetry {
     pub(crate) fn new(retrying: Retrying, lane: usize) -> Self {
-        Self {
-            failing_since: None,
-            backoff: RetryBackoff::default(),
-            retrying,
-            lane,
-        }
+        Self { retrying, lane, ..Self::default() }
     }
 
-    /// Go's persist after an attempt (transfer.go:84-107): an attempt that ended cleanly after
-    /// moving bytes goes on at once; one that moved none counts as stalled; an error retries unless
-    /// it is permanent (failure::retryable).
+    /// Go's persist after an attempt (transfer.go:84-107): a clean attempt that moved bytes goes on
+    /// at once, one that moved none stalls, and an error retries unless `failure::retryable` refuses.
     pub(crate) async fn ended(
         &mut self,
         result: Result<(), Error>,
@@ -180,9 +172,8 @@ pub struct Transport {
 
 /// When a request lasting `duration` from now ends.
 fn deadline(duration: Duration) -> Result<Instant, Error> {
-    Ok(Instant::now()
-        .checked_add(duration)
-        .ok_or("request duration is too large")?)
+    let deadline = Instant::now().checked_add(duration);
+    Ok(deadline.ok_or("request duration is too large")?)
 }
 
 /// Dials on `home`, which then runs the connection's endpoint and drivers.
@@ -193,23 +184,14 @@ async fn dial_h3(home: &Handle, origin: &str, http: &Http) -> Result<Http3Client
 }
 
 impl Transport {
-    pub(crate) fn is_http3(&self) -> bool {
-        self.h3.is_some()
-    }
-
-    pub(crate) async fn isolated_connection(&self) -> Result<Arc<Self>, Error> {
-        Ok(Arc::new(Self::connect(self.http.clone(), &self.origin, self.protocol).await?))
-    }
-
-    /// This HTTP/1.1 or HTTP/2 target for upload lanes, over connections of their own.
-    pub(crate) fn for_upload_lanes(&self) -> Self {
-        Self {
-            http: self.http.for_upload_lanes(),
-            origin: self.origin.clone(),
-            protocol: self.protocol,
-            h3: None,
-            home: home(),
+    /// Upload lanes' target and their control requests', on connections apart, as Go's upload transport.
+    pub(crate) async fn upload_split(self: Arc<Self>) -> Result<(Arc<Self>, Arc<Self>), Error> {
+        let (http, origin, protocol) = (self.http.clone(), self.origin.clone(), self.protocol);
+        if self.h3.is_some() {
+            return Ok((self, Arc::new(Self::connect(http, &origin, protocol).await?)));
         }
+        let http = http.for_upload_lanes();
+        Ok((Arc::new(Self { http, origin, protocol, h3: None, home: home() }), self))
     }
 
     /// Where a lane runs: with its HTTP/2 or HTTP/3 connection, or, over HTTP/1.1, on a thread in turn.
@@ -230,16 +212,11 @@ impl Transport {
         Ok(Self { http, origin, protocol, h3, home })
     }
 
-    pub async fn webtransport_slot(
-        &self,
-        route: Route,
-        query: &[(&str, &str)],
-    ) -> Result<crate::webtransport::SessionSlot, Error> {
-        crate::webtransport::SessionSlot::dial(&self.http, url(&self.origin, route, query)).await
+    pub async fn webtransport_slot(&self, route: Route, query: &[(&str, &str)]) -> Result<SessionSlot, Error> {
+        SessionSlot::dial(&self.http, url(&self.origin, route, query)).await
     }
 
-    /// `request` to `target` on this target's HTTP/3 connection, dialled again once it closed or
-    /// went away; None over HTTP/1.1 and HTTP/2, whose requests the client's pool carries.
+    /// `request` on the HTTP/3 connection, redialled once it closed or went away; None over TCP.
     async fn open_h3(&self, request: http::request::Builder, target: &str) -> Result<Option<Http3Stream>, Error> {
         let Some(slot) = &self.h3 else {
             return Ok(None);
@@ -263,9 +240,8 @@ impl Transport {
         self.http.check_status(target, response.status(), response.headers())
     }
 
-    /// `sent`, or why an HTTP/3 request's body could not be sent: a server that answers early stops
-    /// reading it, so its answer, read for a second, names the refusal, as Go's round trip returns
-    /// it; otherwise the send's error.
+    /// `sent`, or why the body could not be sent: the answer of a server that answered early, read
+    /// for a second, as Go's round trip returns it; otherwise the send's error.
     async fn answered(
         &self,
         sent: Result<(), http3::Error>,
@@ -303,8 +279,7 @@ impl Transport {
         Ok(Body { inner, deadline, remaining: limit })
     }
 
-    /// Stream a finite request without materializing its body. No sender counts
-    /// escape this API: upload measurements must use the receiver's counters.
+    /// Streams a finite body; no sender counts escape, as uploads measure the receiver's counters.
     pub async fn send<S>(
         &self,
         route: Route,
@@ -322,10 +297,8 @@ impl Transport {
             request.header(http::header::CONTENT_LENGTH, length)
         };
         timeout_at(deadline, async {
-            let Some(mut stream) = self
-                .open_h3(octets(Request::builder().method(Method::POST)), &target)
-                .await?
-            else {
+            let request = octets(Request::builder().method(Method::POST));
+            let Some(mut stream) = self.open_h3(request, &target).await? else {
                 let request = octets(self.http.builder(Method::POST, &target)?).body(crate::net::streaming(body))?;
                 let response = self.http.send(request, self.protocol, None).await?;
                 crate::net::bounded_body(response).await?;
@@ -346,11 +319,8 @@ impl Transport {
                 return Err("request body shorter than content length".into());
             }
             self.answer_h3(&mut stream, &target).await?;
-            let mut response = Body {
-                inner: BodyInner::H3(Box::new(stream)),
-                deadline,
-                remaining: 64 * 1024,
-            };
+            let inner = BodyInner::H3(Box::new(stream));
+            let mut response = Body { inner, deadline, remaining: 64 * 1024 };
             while response.raw_chunk().await?.is_some() {}
             Ok(())
         })
@@ -363,9 +333,8 @@ impl Transport {
         route: Route,
         query: &[(&str, &str)],
     ) -> Result<T, Error> {
-        let mut body = self
-            .receive(method, route, query, 64 * 1024, Duration::from_secs(10))
-            .await?;
+        let body = self.receive(method, route, query, 64 * 1024, Duration::from_secs(10));
+        let mut body = body.await?;
         let mut bytes = Vec::new();
         while let Some(chunk) = body.chunk().await? {
             bytes.extend_from_slice(&chunk);
@@ -399,13 +368,11 @@ impl Body {
         let chunk = timeout_at(self.deadline, async {
             match &mut self.inner {
                 BodyInner::Http(response) => loop {
-                    match http_body_util::BodyExt::frame(response.body_mut()).await {
-                        None => break Ok(None),
-                        Some(frame) => {
-                            if let Ok(data) = frame?.into_data() {
-                                break Ok(Some(data));
-                            }
-                        }
+                    let Some(frame) = http_body_util::BodyExt::frame(response.body_mut()).await else {
+                        break Ok(None);
+                    };
+                    if let Ok(data) = frame?.into_data() {
+                        break Ok(Some(data));
                     }
                 },
                 BodyInner::H3(stream) => Ok::<_, Error>(stream.recv.data().await?),
@@ -413,10 +380,8 @@ impl Body {
         })
         .await??;
         if let Some(chunk) = &chunk {
-            self.remaining = self
-                .remaining
-                .checked_sub(chunk.len() as u64)
-                .ok_or("response exceeds byte limit")?;
+            let remaining = self.remaining.checked_sub(chunk.len() as u64);
+            self.remaining = remaining.ok_or("response exceeds byte limit")?;
         }
         Ok(chunk)
     }

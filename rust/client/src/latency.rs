@@ -20,8 +20,12 @@ use tokio::{
     sync::{mpsc, watch},
     time::Instant,
 };
-use tokio_tungstenite::tungstenite::protocol::CloseFrame;
-use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest, protocol::WebSocketConfig};
+use tokio_tungstenite::tungstenite::{
+    Message, Utf8Bytes,
+    client::IntoClientRequest,
+    handshake::derive_accept_key,
+    protocol::{CloseFrame, Role, WebSocketConfig},
+};
 
 type Socket = tokio_tungstenite::WebSocketStream<Box<dyn graphite_meter_net::Stream>>;
 
@@ -45,9 +49,8 @@ impl Observation {
     }
 }
 
-/// How far a session's stage has come: once its window opens, the window's end bounds a lost
-/// channel's redial; at the stage end in-window probes drain to their deadlines; a stop ends it
-/// at once.
+/// How far a session's stage has come: the window's end bounds a redial, a drain lets in-window
+/// probes reach their deadlines, and a stop ends the session at once.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Stop {
     #[default]
@@ -58,8 +61,7 @@ pub(crate) enum Stop {
     Now,
 }
 
-/// The caller must validate this selected origin against its catalogue/preflight.
-/// A probe is skipped while the observation queue lacks room for its outcome, so none is dropped.
+/// A session to a validated origin; a probe is skipped while the queue lacks room for its outcome.
 pub(crate) async fn run(
     http: &Http,
     target: &LatencyTarget,
@@ -76,22 +78,18 @@ pub(crate) async fn run(
         _ = stopped(&mut cancel, Stop::Drain) => return Ok(()),
         bus = dial(http, target, Instant::now() + REDIAL_WINDOW) => bus?,
     };
-    let end = Instant::now()
-        .checked_add(duration)
-        .ok_or("latency duration exceeds clock range")?;
+    let end = Instant::now().checked_add(duration);
+    let end = end.ok_or("latency duration exceeds clock range")?;
     let mut ledger = Ledger::default();
     loop {
-        observations
-            .send(Observation::ConnectionBoundary)
-            .await
-            .map_err(|_| "latency observation consumer closed")?;
+        let boundary = observations.send(Observation::ConnectionBoundary).await;
+        boundary.map_err(|_| "latency observation consumer closed")?;
         let opened = Instant::now();
         let Err(error) = measure(socket, interval, window, end, &mut ledger, &observations, &mut cancel).await else {
             return Ok(());
         };
-        // As Go's measureLatency (latency.go:244-264), a lost channel is dialled again whatever
-        // ended it but a revoked grant, once a probe was ever answered (probeLedger.interrupt);
-        // once the window has ended, the loss ends the session.
+        // As Go's measureLatency (latency.go:244-264), a lost channel is dialled again, unless a
+        // revoked grant ended it, no probe was ever answered or the window has ended.
         if !lost(&error) || !ledger.answered {
             return Err(error);
         }
@@ -104,11 +102,9 @@ pub(crate) async fn run(
         if now >= window_end {
             return Ok(());
         }
-        // The window's end cuts a redial short and fails it (probeLedger.bound, latency.go:256),
-        // so only a stop ends one. A channel lost as it opened waits as a lane that failed at
-        // once does (transfer.go:100-103), so a server that ends each channel at once is never
-        // dialled in a tight loop; a wait that would reach the bound is skipped, and the channel
-        // dialled at once, as Go dials every loss.
+        // The window's end cuts a redial short and fails it (probeLedger.bound, latency.go:256). A
+        // channel lost as it opened waits as a lane that failed at once does (transfer.go:100-103),
+        // unless the wait would reach the bound, so no server is dialled in a tight loop.
         let bound = (now + REDIAL_WINDOW).min(window_end);
         let paced = now + retry_pause(opened);
         let paced = if paced < bound { paced } else { now };
@@ -129,8 +125,7 @@ pub(crate) async fn run(
     }
 }
 
-/// What a session learns across its channels, as Go's probeLedger keeps it: one deadline
-/// estimate, so a redial does not restart at the 250 ms floor, and whether any probe was answered.
+/// Go's probeLedger: one deadline estimate across a session's channels, and whether any probe was answered.
 #[derive(Default)]
 struct Ledger {
     estimator: DeadlineEstimator,
@@ -145,8 +140,7 @@ impl Ledger {
     }
 }
 
-/// A channel the server ended with any lane ending but a revoked grant, or that failed
-/// (failure.go:83-95), which Go's measureLatency dials again.
+/// A channel that failed or ended other than revoked, which Go dials again (failure.go:83-95).
 fn lost(error: &Error) -> bool {
     match error.downcast_ref() {
         Some(Failure::Lane(ending)) => *ending != LaneEnding::Revoked,
@@ -154,8 +148,7 @@ fn lost(error: &Error) -> bool {
     }
 }
 
-/// Go's redialPingBus (latency.go:124-132): the channel dialled until `deadline`, paced as Go's
-/// restore paces it.
+/// Go's redialPingBus (latency.go:124-132): the channel, restored until `deadline`.
 async fn dial(http: &Http, target: &LatencyTarget, deadline: Instant) -> Result<Bus, Error> {
     restore("latency channel", deadline, || connect(http, &target.base_url, target.transport)).await
 }
@@ -189,10 +182,7 @@ impl Bus {
         match self {
             Self::WebSocket(socket) => socket.next().await.map(|result| result.map_err(Into::into)),
             Self::WebTransport(session) => match session.recv_datagram().await {
-                Ok(bytes) => Some(Ok(match String::from_utf8(bytes.to_vec()) {
-                    Ok(text) => Message::Text(text.into()),
-                    Err(_) => Message::Binary(bytes),
-                })),
+                Ok(bytes) => Some(Ok(Utf8Bytes::try_from(bytes.clone()).map_or(Message::Binary(bytes), Message::Text))),
                 // A session the server closed ends with its lane ending, as a WebSocket's close frame does.
                 Err(_) => session.ending().map(|ending| Err(Failure::Lane(ending).into())),
             },
@@ -200,8 +190,7 @@ impl Bus {
     }
 }
 
-/// Check the actual latency channel before a run starts. A successful HTTP
-/// probe does not establish that QUIC datagrams or WebSocket pings work.
+/// The latency channel's own round trip, which an HTTP probe does not establish.
 pub(crate) async fn verify(http: &Http, target: &LatencyTarget) -> Result<Duration, Error> {
     let attempt = async {
         // One dial, as Go's verifyLatency (latency.go:85-97).
@@ -241,9 +230,8 @@ pub(crate) async fn verify(http: &Http, target: &LatencyTarget) -> Result<Durati
         bus.close().await;
         result
     };
-    tokio::time::timeout(Duration::from_secs(3), attempt)
-        .await
-        .map_err(|_| -> Error { "latency channel did not reply within three seconds".into() })?
+    let verified = tokio::time::timeout(Duration::from_secs(3), attempt).await;
+    verified.map_err(|_| -> Error { "latency channel did not reply within three seconds".into() })?
 }
 async fn connect(http: &Http, origin: &str, transport: LatencyTransport) -> Result<Bus, Error> {
     Ok(match transport {
@@ -278,18 +266,12 @@ async fn connect_ws(http: &Http, origin: &str) -> Result<Socket, Error> {
         .max_frame_size(Some(32 * 1024));
     let connection = async {
         let connection = http.dial(&origin, tls.as_ref()).await?;
-        let key = tokio_tungstenite::tungstenite::handshake::derive_accept_key(
-            request.headers()["sec-websocket-key"].as_bytes(),
-        );
-        *request.uri_mut() = if connection.absolute_form {
-            target.parse()?
-        } else {
-            Route::Ping.path().parse()?
-        };
+        let key = derive_accept_key(request.headers()["sec-websocket-key"].as_bytes());
+        let uri = if connection.absolute_form { target.as_str() } else { Route::Ping.path() };
+        *request.uri_mut() = uri.parse()?;
         if let Some(authorization) = connection.proxy_authorization {
-            request
-                .headers_mut()
-                .insert(http::header::PROXY_AUTHORIZATION, authorization);
+            let headers = request.headers_mut();
+            headers.insert(http::header::PROXY_AUTHORIZATION, authorization);
         }
         let (mut sender, driver) =
             hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(connection.stream)).await?;
@@ -300,17 +282,10 @@ async fn connect_ws(http: &Http, origin: &str) -> Result<Socket, Error> {
             return Err("WebSocket upgrade was not accepted".into());
         }
         let headers = response.headers();
-        let header = |name: &str| {
-            headers
-                .get(name)
-                .and_then(|value| value.to_str().ok())
-                .unwrap_or_default()
-        };
-        let connection = header("connection").split(',');
+        let header = |name: &str| headers.get(name).map_or("", |value| value.to_str().unwrap_or_default());
+        let mut connection = header("connection").split(',');
         if !header("upgrade").eq_ignore_ascii_case("websocket")
-            || !connection
-                .map(str::trim)
-                .any(|token| token.eq_ignore_ascii_case("upgrade"))
+            || !connection.any(|token| token.trim().eq_ignore_ascii_case("upgrade"))
             || header("sec-websocket-accept") != key
             || headers.contains_key("sec-websocket-protocol")
             || headers.contains_key("sec-websocket-extensions")
@@ -319,14 +294,7 @@ async fn connect_ws(http: &Http, origin: &str) -> Result<Socket, Error> {
         }
         let upgraded = hyper::upgrade::on(response).await?;
         let stream: Box<dyn graphite_meter_net::Stream> = Box::new(hyper_util::rt::TokioIo::new(upgraded));
-        Ok::<_, Error>(
-            tokio_tungstenite::WebSocketStream::from_raw_socket(
-                stream,
-                tokio_tungstenite::tungstenite::protocol::Role::Client,
-                Some(config),
-            )
-            .await,
-        )
+        Ok::<_, Error>(Socket::from_raw_socket(stream, Role::Client, Some(config)).await)
     };
     tokio::time::timeout(Duration::from_secs(10), connection).await?
 }
@@ -452,15 +420,12 @@ async fn due(at: Instant) {
 }
 
 fn emit(observations: &mpsc::Sender<Observation>, observation: Observation) -> Result<(), Error> {
-    observations
-        .try_send(observation)
-        .map_err(|_| "latency observation consumer closed or fell behind".into())
+    let sent = observations.try_send(observation);
+    sent.map_err(|_| "latency observation consumer closed or fell behind".into())
 }
 async fn stopped(cancel: &mut watch::Receiver<Stop>, at_least: Stop) -> Stop {
-    cancel
-        .wait_for(|stop| *stop >= at_least)
-        .await
-        .map_or(Stop::Now, |stop| *stop)
+    let stop = cancel.wait_for(|stop| *stop >= at_least).await;
+    stop.map_or(Stop::Now, |stop| *stop)
 }
 
 #[cfg(test)]
@@ -499,10 +464,8 @@ mod tests {
                 if let Some(response) = response {
                     crate::fixtures::read_head(&mut stream).await?;
                     if attempts.len() == 1 {
-                        minimum = httpdate::parse_http_date(&date)?
-                            .duration_since(std::time::SystemTime::now())
-                            .unwrap_or_default()
-                            .max(Duration::from_millis(300));
+                        let until = httpdate::parse_http_date(&date)?.duration_since(std::time::SystemTime::now());
+                        minimum = until.unwrap_or_default().max(Duration::from_millis(300));
                     }
                     stream.write_all(response.as_bytes()).await?;
                 } else {
@@ -520,22 +483,17 @@ mod tests {
 
     /// A close frame naming `ending`.
     fn close_frame(ending: LaneEnding) -> CloseFrame {
-        CloseFrame {
-            code: ending.websocket_code().into(),
-            reason: ending.reason().into(),
-        }
+        let (code, reason) = (ending.websocket_code().into(), ending.reason().into());
+        CloseFrame { code, reason }
     }
 
-    /// As Go's measureLatency (latency.go:244-264): a channel the server ends is dialled again
-    /// unless the ending revokes the grant (TestLaneEndingsNameTheirReason, latency_test.go:67-110)
-    /// or no probe was ever answered (probeLedger.interrupt, latency_test.go:134-148); once the
-    /// window has ended, a loss ends the session cleanly (latency.go:252). A channel lost as it
-    /// opened, with less of the window left than the pause after such a loss, is dialled again at once.
+    /// As Go's measureLatency (latency.go:244-264): a channel the server ends is dialled again unless
+    /// the ending revokes the grant or no probe was ever answered (latency_test.go:67-110, 134-148);
+    /// past the window a loss ends the session cleanly, and near its end a loss redials at once.
     #[tokio::test]
     async fn a_lost_channel_is_dialled_again_as_go_dials_it() -> Result<(), Error> {
         use std::sync::atomic::{AtomicUsize, Ordering};
-        // The first channel answers a probe if `answered`, holds the next and ends with `ending`,
-        // as the stage drains if `drained`; later ones echo. The window ends `window` ms in.
+        // The first channel answers a probe if `answered`, holds the next and ends; later ones echo.
         for (ending, answered, drained, window, dials, outcome) in [
             (LaneEnding::Idle, true, false, None, 2, "Ok(())"),
             (LaneEnding::Lifetime, true, false, None, 2, "Ok(())"),
@@ -582,11 +540,9 @@ mod tests {
         Ok(())
     }
 
-    /// A WebTransport session the server closes as revoked reads as that lane ending, as a
-    /// WebSocket's close frame does, so it asks for sign-in and is not dialled again
-    /// (latency.go:33-47, failure.go:83-95). Here the close arrives before a due probe: the session's
-    /// first probe reports its ending, and a later one's failure is counted while the reader decides,
-    /// as Go's (latency.go:218-220, 265-268).
+    /// A WebTransport session closed as revoked reads as that lane ending, as a WebSocket close frame
+    /// does, and is not dialled again (failure.go:83-95); the close arrives before a due probe, which
+    /// reports it, whether or not one was answered before (latency.go:218-220, 265-268).
     #[tokio::test]
     async fn a_webtransport_session_closed_as_revoked_is_not_dialled_again() -> Result<(), Error> {
         let mut seen = Vec::new();
@@ -630,11 +586,8 @@ mod tests {
             if !delay.is_zero() {
                 tokio::time::sleep(delay).await;
             }
-            if socket
-                .send(Message::Text(wire::encode_pong(id, 0).into()))
-                .await
-                .is_err()
-            {
+            let pong = Message::Text(wire::encode_pong(id, 0).into());
+            if socket.send(pong).await.is_err() {
                 break;
             }
         }
@@ -647,7 +600,6 @@ mod tests {
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        use tokio_tungstenite::tungstenite::protocol::Role;
         let (client, server) = tokio::io::duplex(4096);
         let socket = Socket::from_raw_socket(Box::new(client), Role::Client, None).await;
         let peer = tokio::spawn(async move { peer(Peer::from_raw_socket(server, Role::Server, None).await).await });
@@ -789,23 +741,13 @@ mod tests {
                 let head = crate::fixtures::read_head(&mut stream).await.unwrap();
                 assert!(head.starts_with("GET http://meter.test/ws/ping HTTP/1.1\r\n"), "{head}");
                 assert!(head.contains("proxy-authorization: Basic dXNlcjpzZWNyZXQ="), "{head}");
-                let key = head
-                    .lines()
-                    .find_map(|line| line.strip_prefix("sec-websocket-key: "))
-                    .unwrap();
-                let key = if valid {
-                    tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes())
-                } else {
-                    String::from("invalid")
-                };
+                let key = head.lines().find_map(|line| line.strip_prefix("sec-websocket-key: "));
+                let key = key.unwrap().as_bytes();
+                let key = if valid { derive_accept_key(key) } else { String::from("invalid") };
                 stream.write_all(format!("HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-accept: {key}\r\n\r\n").as_bytes()).await.unwrap();
                 if valid {
-                    let mut socket = tokio_tungstenite::WebSocketStream::from_raw_socket(
-                        stream,
-                        tokio_tungstenite::tungstenite::protocol::Role::Server,
-                        None,
-                    )
-                    .await;
+                    let mut socket =
+                        tokio_tungstenite::WebSocketStream::from_raw_socket(stream, Role::Server, None).await;
                     socket.send(Message::Text("pong".into())).await.unwrap();
                     let _ = socket.next().await;
                 }

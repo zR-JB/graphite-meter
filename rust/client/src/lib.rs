@@ -59,6 +59,34 @@ mod fixtures {
         Ok(String::from_utf8_lossy(&head).into_owned())
     }
 
+    /// A loopback HTTP/1.1 peer answering each request, by its lowercased head, with `answer`'s
+    /// response; None closes the connection unanswered.
+    pub(crate) async fn peer(
+        answer: impl Fn(&str) -> Option<String> + Send + Sync + 'static,
+    ) -> std::io::Result<String> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (listener, origin) = listener().await?;
+        let answer = Arc::new(answer);
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let answer = answer.clone();
+                tokio::spawn(async move {
+                    while let Ok(head) = read_head(&mut stream).await {
+                        let head = head.to_ascii_lowercase();
+                        let length = head.lines().find_map(|line| line.strip_prefix("content-length:"));
+                        let mut body = vec![0; length.map_or(0, |length| length.trim().parse().unwrap())];
+                        let read = stream.read_exact(&mut body).await;
+                        let Some(response) = read.ok().and_then(|_| answer(&head)) else { return };
+                        if stream.write_all(response.as_bytes()).await.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        Ok(origin)
+    }
+
     /// An HTTP/1.1 `200 OK` carrying `body`.
     pub(crate) fn ok(body: &str) -> String {
         format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}", body.len())

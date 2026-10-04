@@ -56,12 +56,8 @@ impl Connection {
             if let Some(warning) = warning {
                 eprintln!("{warning}");
             }
-            let endpoint = Endpoint(quinn::Endpoint::new(
-                quinn::EndpointConfig::default(),
-                None,
-                socket,
-                quinn::default_runtime().ok_or("no async runtime for QUIC")?,
-            )?);
+            let runtime = quinn::default_runtime().ok_or("no async runtime for QUIC")?;
+            let endpoint = Endpoint(quinn::Endpoint::new(quinn::EndpointConfig::default(), None, socket, runtime)?);
             let connecting = endpoint.0.connect_with(config.clone(), address, &origin.host)?;
             let connected = timeout(Duration::from_secs(3), connecting).await.map_err(Error::from);
             let quic = match connected.and_then(|quic| Ok(quic?)) {
@@ -93,15 +89,14 @@ impl Connection {
     }
 }
 
-/// quic-go dials the first IPv4 address, or the first address when none is, as an IPv6 literal
-/// resolves to itself alone (quic-go http3/ip_addr.go:23-48, client.go:42-50); the rest follow.
+/// IPv4 addresses first, as quic-go dials them (quic-go http3/ip_addr.go:23-48, client.go:42-50).
 fn ipv4_first(mut addresses: Vec<SocketAddr>) -> Vec<SocketAddr> {
     addresses.sort_by_key(|address| !address.ip().to_canonical().is_ipv4());
     addresses
 }
 
-/// HTTP/3 or QUIC that this side found the peer breaking, which no retry mends. A stream or
-/// connection the peer ended, with whatever code, or a lost connection is retried, as in Go.
+/// HTTP/3 or QUIC this side found the peer breaking, which no retry mends; as in Go, whatever the
+/// peer ended, with any code, and a lost connection are retried.
 pub(crate) fn violation(error: &(dyn std::error::Error + 'static)) -> bool {
     let quic = match error.downcast_ref() {
         Some(http3::Error::Protocol(_) | http3::Error::Connection { local: true, .. }) => return true,
@@ -111,8 +106,7 @@ pub(crate) fn violation(error: &(dyn std::error::Error + 'static)) -> bool {
     matches!(quic, Some(quinn::ConnectionError::TransportError(_)))
 }
 
-/// Holds the sole driver task. Request streams retain this owner, so connection
-/// work cannot outlive them. Requests never follow redirects or change authority.
+/// Holds the sole driver task, which its request streams retain; requests never change authority.
 pub struct Http3Client {
     connection: Connection,
     requests: http3::client::SendRequest,
@@ -124,12 +118,8 @@ impl Http3Client {
     pub async fn connect(uri: &Uri, insecure: bool, deadline: Duration) -> Result<Self, Error> {
         let origin = Origin::from_uri(uri)?;
         let (connection, requests) = timeout(deadline, Connection::dial(&origin, insecure)).await??;
-        Ok(Self {
-            connection,
-            requests,
-            permits: Arc::new(Semaphore::new(MAX_REQUESTS)),
-            origin,
-        })
+        let permits = Arc::new(Semaphore::new(MAX_REQUESTS));
+        Ok(Self { connection, requests, permits, origin })
     }
 
     /// Closed, or going away since the server's GOAWAY: either takes no new request.
@@ -170,17 +160,10 @@ impl Origin {
             return Err("HTTP/3 URI must not contain credentials".into());
         }
         let suffix = &authority.as_str()[authority.host().len()..];
-        let port = if suffix.is_empty() {
-            443
-        } else {
-            uri.port_u16().ok_or("HTTP/3 URI has an invalid port")?
-        };
-        let host = uri
-            .host()
-            .ok_or("HTTP/3 URI has no hostname")?
-            .trim_start_matches('[')
-            .trim_end_matches(']')
-            .to_ascii_lowercase();
+        let port = if suffix.is_empty() { Some(443) } else { uri.port_u16() };
+        let port = port.ok_or("HTTP/3 URI has an invalid port")?;
+        let host = uri.host().ok_or("HTTP/3 URI has no hostname")?;
+        let host = host.trim_start_matches('[').trim_end_matches(']').to_ascii_lowercase();
         if host.is_empty() {
             return Err("HTTP/3 URI has no hostname".into());
         }

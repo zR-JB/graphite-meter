@@ -3,7 +3,7 @@ use super::{PreparedServer, ServerError};
 use crate::{
     Error,
     config::Config,
-    download::Download,
+    download::{Download, Source},
     failure::Failure,
     latency::{Observation, Stop},
     model::{
@@ -820,14 +820,12 @@ async fn start_transfer(
         transport.clone()
     };
     // Both directions start together, as Go's roles do.
-    let download = OptionFuture::from(stage.downloads().then_some(async {
-        if fetch {
-            let stagger = lane_stagger(config.warmup, server.idle_rtt, down);
-            Download::start(transport.clone(), down, operation_limit, stagger, stopped.clone()).await
-        } else {
-            Download::start_webtransport(&server.client, target, down, operation_limit, stopped.clone()).await
-        }
-    }));
+    let source = match fetch {
+        true => Source::Http(transport.clone(), lane_stagger(config.warmup, server.idle_rtt, down)),
+        false => Source::WebTransport(&server.client, target),
+    };
+    let start = Download::start(source, down, operation_limit, stopped.clone());
+    let download = OptionFuture::from(stage.downloads().then_some(start));
     let upload = OptionFuture::from(stage.uploads().then_some(async {
         let (replaced, stopped) = (server.replaced_upload.clone(), stopped.clone());
         let http = fetch.then(|| (lane_stagger(config.warmup, server.idle_rtt, up), operation_limit));

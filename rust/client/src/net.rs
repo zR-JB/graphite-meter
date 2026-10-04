@@ -7,6 +7,7 @@ use graphite_meter_core::{
     approval,
     catalog::{Rejected, ServerCatalog, ServerEntry},
     discovery::{Preflight, Probe, Protocol},
+    failure::UploadRefusal,
     origin::{canonical_origin, split_url, target_origin},
     route::Route,
     wire::decode_json,
@@ -47,8 +48,7 @@ const H2_STREAM_WINDOW: u32 = 8 << 20;
 const H2_CONNECTION_WINDOW: u32 = 16 << 20;
 /// hyper's HTTP/1 read buffer grows to 408 KiB, and each body chunk keeps it, so every read allocates a new one.
 const H1_READ_BYTES: usize = 64 * 1024;
-/// An HTTP/2 connection that reads nothing for this long is pinged, at Go's TCP keep-alive
-/// period, and closed if the peer does not answer within hyper's default 20 s.
+/// An idle HTTP/2 connection's ping period, Go's TCP keep-alive, and its answer's deadline.
 const H2_KEEP_ALIVE: Duration = Duration::from_secs(30);
 const H2_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -71,8 +71,7 @@ struct Connections {
 }
 type Key = (String, Protocol, Lanes);
 
-/// Upload lanes keep connections of their own, as Go's upload transport does, so control requests
-/// and download reads never queue behind unsent upload bodies.
+/// Upload lanes keep connections of their own, as Go's upload transport, so nothing queues behind them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 enum Lanes {
     #[default]
@@ -81,26 +80,15 @@ enum Lanes {
 }
 
 /// Held only to pick or return a connection, never across a dial or a request.
+#[derive(Default)]
 struct Pool {
-    used: tokio::time::Instant,
+    used: Option<tokio::time::Instant>,
     h1: Vec<Http1>,
     h2: Option<Http2>,
-    /// A dial that may yield HTTP/2: requests wait for it rather than open their own. Its sender
-    /// drops when the dial ends, however it ends.
+    /// A dial that may yield HTTP/2, which requests wait for; its sender drops as the dial ends.
     dialing: Option<watch::Receiver<()>>,
     /// A negotiated dial found HTTP/1.1, so each request dials its own connection at once.
     http1_only: bool,
-}
-impl Default for Pool {
-    fn default() -> Self {
-        Self {
-            used: tokio::time::Instant::now(),
-            h1: Vec::new(),
-            h2: None,
-            dialing: None,
-            http1_only: false,
-        }
-    }
 }
 
 enum Next {
@@ -113,7 +101,7 @@ enum Next {
 impl Pool {
     /// `idle` false leaves idle HTTP/1.1 connections to others, for a replay after one failed.
     fn next(&mut self, multiplexed: bool, idle: bool) -> Next {
-        self.used = tokio::time::Instant::now();
+        self.used = Some(tokio::time::Instant::now());
         if let Some(shared) = &self.h2 {
             if !shared.sender.is_closed() {
                 return Next::Ready(Sender::H2(shared.clone()));
@@ -195,30 +183,24 @@ fn replayable(request: &Request<Body>) -> Option<Request<Body>> {
     Some(copy)
 }
 
-/// `request` as an HTTP/1.1 connection carries it: with its Host, in origin form unless it goes to a
-/// proxy in absolute form, which takes the proxy's credentials instead.
+/// `request` with its Host, in origin form, or in absolute form with the proxy's credentials.
 fn for_http1(request: &mut Request<Body>, connection: &Http1) -> Result<()> {
     let host = HeaderValue::from_str(request.uri().authority().ok_or("missing authority")?.as_str())?;
     request.headers_mut().insert(HOST, host);
     if !connection.absolute_form {
-        *request.uri_mut() = request
-            .uri()
-            .path_and_query()
-            .map_or("/", |path| path.as_str())
-            .parse()?;
+        let path = request.uri().path_and_query();
+        *request.uri_mut() = path.map_or("/", |path| path.as_str()).parse()?;
     } else if let Some(authorization) = &connection.proxy_authorization {
-        request
-            .headers_mut()
-            .insert(http::header::PROXY_AUTHORIZATION, authorization.clone());
+        let headers = request.headers_mut();
+        headers.insert(http::header::PROXY_AUTHORIZATION, authorization.clone());
     }
     *request.version_mut() = Version::HTTP_11;
     Ok(())
 }
 
 fn stream_reset(error: &hyper::Error) -> bool {
-    std::error::Error::source(error)
-        .and_then(|source| source.downcast_ref::<h2::Error>())
-        .is_some_and(h2::Error::is_reset)
+    let h2 = std::error::Error::source(error).and_then(|source| source.downcast_ref::<h2::Error>());
+    h2.is_some_and(h2::Error::is_reset)
 }
 
 async fn until<T>(deadline: Option<tokio::time::Instant>, work: impl Future<Output = T>) -> Result<T> {
@@ -240,9 +222,8 @@ impl Connections {
         }
     }
 
-    /// A pooled connection, or a new one dialled outside the pool's lock, so no request waits
-    /// behind another's dial unless that dial may bring the HTTP/2 connection it would share.
-    /// The flag is true when the connection is not this request's own new dial.
+    /// A pooled connection, true, or a new one dialled outside the pool's lock, false; a request
+    /// waits for another's dial only when that may bring the HTTP/2 connection it would share.
     async fn sender(&self, origin: &str, protocol: Protocol, pool: &Mutex<Pool>, idle: bool) -> Result<(Sender, bool)> {
         let multiplexed =
             protocol == Protocol::Http2 || protocol == Protocol::Negotiated && origin.starts_with("https:");
@@ -309,11 +290,8 @@ impl Connections {
         } else {
             let (sender, driver) = http1::Builder::new().max_buf_size(H1_READ_BYTES).handshake(io).await?;
             tokio::spawn(driver);
-            Ok(Sender::H1(Http1 {
-                sender,
-                absolute_form: connection.absolute_form,
-                proxy_authorization: connection.proxy_authorization,
-            }))
+            let (absolute_form, proxy_authorization) = (connection.absolute_form, connection.proxy_authorization);
+            Ok(Sender::H1(Http1 { sender, absolute_form, proxy_authorization }))
         }
     }
 
@@ -331,16 +309,17 @@ impl Connections {
                     };
                     owner.pools.lock().expect("connections poisoned").retain(|_, pool| {
                         Arc::strong_count(pool) > 1
-                            || pool.lock().is_ok_and(|pool| pool.used.elapsed() < POOL_IDLE_TIMEOUT)
+                            || pool
+                                .lock()
+                                .is_ok_and(|pool| pool.used.is_some_and(|used| used.elapsed() < POOL_IDLE_TIMEOUT))
                     });
                 }
             })
         });
     }
 
-    /// The response headers by `deadline`, if any. A request without a body that fails on a
-    /// connection an earlier request used is sent once more over a new connection, as Go's
-    /// transport retries a dead reused connection.
+    /// The response headers by `deadline`, if any; a bodyless request that fails on a reused
+    /// connection is sent once more on a new one, as Go's transport retries it.
     async fn send(
         self: &Arc<Self>,
         request: Request<Body>,
@@ -351,13 +330,10 @@ impl Connections {
         self.maintain();
         let (origin, _) = split_url(&request.uri().to_string())?;
         let origin = origin.key();
-        let pool = self
-            .pools
-            .lock()
-            .expect("connections poisoned")
-            .entry((origin.clone(), protocol, lanes))
-            .or_default()
-            .clone();
+        let pool = {
+            let mut pools = self.pools.lock().expect("connections poisoned");
+            pools.entry((origin.clone(), protocol, lanes)).or_default().clone()
+        };
         let replay = replayable(&request);
         let first = self.attempt(request, &origin, protocol, &pool, deadline, true).await;
         Ok(match (first, replay) {
@@ -379,10 +355,8 @@ impl Connections {
     ) -> std::result::Result<Response, Attempt> {
         let acquired = tokio::time::Instant::now() + CONTROL_TIMEOUT;
         let acquired = deadline.map_or(acquired, |deadline| deadline.min(acquired));
-        let (sender, reused) = tokio::time::timeout_at(acquired, self.sender(origin, protocol, pool, idle))
-            .await
-            .map_err(|elapsed| Attempt::Failed(elapsed.into()))?
-            .map_err(Attempt::Failed)?;
+        let sender = async { tokio::time::timeout_at(acquired, self.sender(origin, protocol, pool, idle)).await? };
+        let (sender, reused) = sender.await.map_err(Attempt::Failed)?;
         let (response, h2) = match sender {
             Sender::H2(mut shared) => {
                 let response = until(deadline, async {
@@ -398,7 +372,7 @@ impl Connections {
                 if matches!(response, Ok(Ok(_))) {
                     let mut pool = pool.lock().expect("connection pool poisoned");
                     if pool.h1.len() < IDLE_PER_ORIGIN {
-                        pool.used = tokio::time::Instant::now();
+                        pool.used = Some(tokio::time::Instant::now());
                         pool.h1.push(connection);
                     }
                 }
@@ -475,14 +449,10 @@ impl Http {
     pub(crate) fn for_upload_lanes(&self) -> Self {
         Self { lanes: Lanes::Upload, ..self.clone() }
     }
-    /// The same credentials over a pool of its own. Each check and run takes one, as Go's client
-    /// takes new transports for them, so none reuses a connection an earlier one left idle, which
-    /// a sleep or a network change may have killed since.
+    /// The same credentials over a pool of its own, as Go takes new transports for each check and run.
     pub fn fresh(&self) -> Self {
-        Self {
-            connections: Arc::new(Connections::new(self.insecure, self.connections.proxy.clone())),
-            ..self.clone()
-        }
+        let connections = Arc::new(Connections::new(self.insecure, self.connections.proxy.clone()));
+        Self { connections, ..self.clone() }
     }
     pub async fn dial(&self, origin: &str, tls: Option<&TlsConnector>) -> Result<graphite_meter_net::Connection> {
         self.connections.connect(origin, tls).await
@@ -491,8 +461,7 @@ impl Http {
     pub(crate) fn set_proxy(&mut self, proxy: Proxy) {
         Arc::get_mut(&mut self.connections).unwrap().proxy = proxy;
     }
-    /// The issuer whose grant `origin` takes: a client bound to a server sends its grant to the
-    /// server's enrolled targets alone, and an unbound client each origin's own.
+    /// The issuer whose grant `origin` takes: the bound server's for its targets, or the origin's own.
     fn issuer(&self, origin: String) -> Option<String> {
         match &self.scope {
             Some(scope) => scope.targets.contains(&origin).then(|| scope.issuer.clone()),
@@ -501,11 +470,8 @@ impl Http {
     }
     pub fn authorization(&self, target: &str) -> Option<HeaderValue> {
         let issuer = self.issuer(destination_origin(target).ok()?)?;
-        self.grants
-            .lock()
-            .expect("client grants poisoned")
-            .get(&issuer)
-            .cloned()
+        let grants = self.grants.lock().expect("client grants poisoned");
+        grants.get(&issuer).cloned()
     }
     /// Adds `target`'s grant to `headers`; an authenticated operation refuses TLS it does not verify.
     pub(crate) fn authorize(&self, target: &str, headers: &mut http::HeaderMap) -> Result<()> {
@@ -517,8 +483,7 @@ impl Http {
         }
         Ok(())
     }
-    /// No answer is for a cache to keep: Go's control requests say so (httpjson.go:23), and the
-    /// browser's fetches, lanes included.
+    /// No answer is for a cache to keep, as Go's control requests (httpjson.go:23) and the browser's fetches say.
     pub fn builder(&self, method: Method, target: &str) -> Result<http::request::Builder> {
         destination_origin(target)?;
         let mut request = Request::builder()
@@ -531,8 +496,7 @@ impl Http {
         }
         Ok(request)
     }
-    /// The response headers by `deadline`; without one, as for a streamed request whose headers
-    /// may wait on its body, the caller bounds it.
+    /// The response headers by `deadline`; without one, as for a streamed body, the caller bounds it.
     pub async fn send(
         &self,
         request: Request<Body>,
@@ -554,16 +518,11 @@ impl Http {
         self.send(request, protocol, Some(deadline)).await
     }
     pub fn check_status(&self, target: &str, status: http::StatusCode, headers: &http::HeaderMap) -> Result<()> {
-        if status == StatusCode::FORBIDDEN
-            && headers
-                .get("graphite-meter-auth")
-                .is_some_and(|value| value == "required")
-        {
-            let issuer = self
-                .issuer(destination_origin(target)?)
-                .ok_or("authentication refusal came from an unapproved target")?;
-            // Both servers name no login page when they end a revoked lane (go/internal/endpoint/
-            // upload.go:65-66); Go's client asks for sign-in all the same (auth.go:32-40).
+        let header = |name: &str| headers.get(name).and_then(|value| value.to_str().ok());
+        if status == StatusCode::FORBIDDEN && header("graphite-meter-auth") == Some("required") {
+            let issuer = self.issuer(destination_origin(target)?);
+            let issuer = issuer.ok_or("authentication refusal came from an unapproved target")?;
+            // A revoked lane names no login page; Go's client asks for sign-in all the same (auth.go:32-40).
             let login_url = match headers.get("graphite-meter-auth-url") {
                 Some(raw) => validated_login(&issuer, raw.to_str()?)?,
                 None => String::new(),
@@ -575,21 +534,8 @@ impl Http {
             return Err(Box::new(Failure::Http {
                 status: status.as_u16(),
                 from: crate::failure::source(target),
-                retry_after: headers
-                    .get(http::header::RETRY_AFTER)
-                    .and_then(|value| value.to_str().ok())
-                    .and_then(|value| {
-                        value.parse::<u64>().ok().map(Duration::from_secs).or_else(|| {
-                            httpdate::parse_http_date(value)
-                                .ok()
-                                .and_then(|date| date.duration_since(std::time::SystemTime::now()).ok())
-                        })
-                    })
-                    .unwrap_or_default(),
-                refusal: headers
-                    .get("x-graphite-upload-refusal")
-                    .and_then(|value| value.to_str().ok())
-                    .and_then(graphite_meter_core::failure::UploadRefusal::from_name),
+                retry_after: header("retry-after").and_then(retry_after).unwrap_or_default(),
+                refusal: header("x-graphite-upload-refusal").and_then(UploadRefusal::from_name),
             }));
         }
         Ok(())
@@ -608,9 +554,8 @@ impl Http {
     }
     pub async fn discover(&self, source: &str) -> Result<Discovery> {
         let source = canonical_origin(source)?;
-        let catalog: ServerCatalog = self
-            .json(Method::GET, &url(&source, Route::Servers, &[]), Protocol::Negotiated)
-            .await?;
+        let servers = url(&source, Route::Servers, &[]);
+        let catalog: ServerCatalog = self.json(Method::GET, &servers, Protocol::Negotiated).await?;
         let (catalog, rejected) = catalog.resolve(&source).received()?;
         Ok(Discovery { catalog, rejected })
     }
@@ -623,9 +568,8 @@ impl Http {
         entry.validate_discovery(&preflight)?;
         Ok(preflight)
     }
-    /// The protocol a valid probe answer came over: this connection's own HTTP version, as Go's
-    /// `response.Proto`. The probe's `protocolNegotiated` names the server's hop, which a reverse
-    /// proxy may speak differently, so it stays evidence for diagnostics only.
+    /// The HTTP version a valid probe answer came over, as Go's `response.Proto`; the probe's
+    /// `protocolNegotiated` names the server's hop, behind any reverse proxy, for diagnostics only.
     pub async fn probe(&self, origin: &str, protocol: Protocol) -> Result<Protocol> {
         let target = url(&canonical_origin(origin)?, Route::Probe, &[]);
         let (version, bytes) = self.control(Method::GET, &target, protocol).await?;
@@ -636,9 +580,8 @@ impl Http {
             _ => Err("probe used an unsupported HTTP protocol".into()),
         }
     }
-    /// Bind one selected server's grant to its validated HTTPS targets. The
-    /// shared grant store retains issuer tokens only; overlapping target ports
-    /// cannot replace another selected server's credential.
+    /// Binds one selected server's grant to its validated HTTPS targets; the shared store keeps
+    /// issuer tokens only, so overlapping targets cannot replace another server's credential.
     pub fn for_server(&self, entry: &ServerEntry, preflight: &Preflight) -> Result<Self> {
         entry.validate_discovery(preflight)?;
         let issuer = canonical_origin(&entry.url)?;
@@ -676,8 +619,7 @@ impl Http {
             token_url: format!("{origin}/auth/cli/token"),
         })
     }
-    /// The caller displays browser_url/code and owns cancellation of this future. As in Go, polls
-    /// outlast network errors; the deadline reports the last poll's error or ApprovalExpired.
+    /// Polls outlast network errors, as in Go; the deadline reports the last one or ApprovalExpired.
     pub async fn poll_authorization(&self, pending: PendingAuthorization) -> Result<()> {
         let second = Duration::from_secs(1);
         let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + second, second);
@@ -710,11 +652,10 @@ impl Http {
             .header(CONTENT_TYPE, "application/json")
             .body(full(body))?;
         let deadline = tokio::time::Instant::now() + CONTROL_TIMEOUT;
-        let response = match self
+        let sent = self
             .connections
-            .send(request, Protocol::Negotiated, Lanes::Shared, Some(deadline))
-            .await
-        {
+            .send(request, Protocol::Negotiated, Lanes::Shared, Some(deadline));
+        let response = match sent.await {
             Ok(response) => response,
             Err(error) => return Ok(Approval::Unreachable(error)),
         };
@@ -747,10 +688,8 @@ impl Http {
 
 pub async fn bounded_body(response: Response) -> Result<Vec<u8>> {
     let mut body = response.into_body();
-    if hyper::body::Body::size_hint(&body)
-        .exact()
-        .is_some_and(|length| length > CONTROL_LIMIT as u64)
-    {
+    let length = hyper::body::Body::size_hint(&body).exact();
+    if length.is_some_and(|length| length > CONTROL_LIMIT as u64) {
         return Err("control response exceeds 64 KiB".into());
     }
     tokio::time::timeout(CONTROL_TIMEOUT, async {
@@ -771,14 +710,20 @@ pub async fn bounded_body(response: Response) -> Result<Vec<u8>> {
 pub(crate) fn url(origin: &str, route: Route, query: &[(&str, &str)]) -> String {
     let mut url = format!("{origin}{}", route.path());
     if !query.is_empty() {
+        let mut form = form_urlencoded::Serializer::new(String::new());
         url.push('?');
-        url.push_str(
-            &form_urlencoded::Serializer::new(String::new())
-                .extend_pairs(query.iter().copied())
-                .finish(),
-        );
+        url.push_str(&form.extend_pairs(query).finish());
     }
     url
+}
+
+/// The wait a Retry-After value asks for, in seconds or until a date.
+fn retry_after(value: &str) -> Option<Duration> {
+    if let Ok(seconds) = value.parse() {
+        return Some(Duration::from_secs(seconds));
+    }
+    let date = httpdate::parse_http_date(value).ok()?;
+    date.duration_since(std::time::SystemTime::now()).ok()
 }
 
 fn destination_origin(raw: &str) -> Result<String> {
@@ -848,8 +793,8 @@ mod tests {
         Ok(())
     }
 
-    /// An HTTPS proxy that would speak HTTP/2 if offered it: its hop offers no protocol, and under
-    /// -insecure skips verification for cleartext and HTTPS targets alike, as Go's addTLS does.
+    /// An HTTPS proxy hop offers no protocol and, under --insecure, skips verification for cleartext
+    /// and HTTPS targets alike, as Go's addTLS does.
     #[tokio::test]
     async fn https_proxy_hops_offer_no_protocol_and_follow_insecure() -> Result<()> {
         use crate::fixtures::{ok, read_head};
@@ -889,29 +834,8 @@ mod tests {
         Ok(())
     }
 
-    /// Serves each request's path from `bodies`, one request per connection.
-    async fn json_peer(bodies: Vec<(&'static str, String)>) -> Result<String> {
-        use tokio::io::AsyncWriteExt;
-        let (listener, origin) = crate::fixtures::listener().await?;
-        tokio::spawn(async move {
-            while let Ok((mut stream, _)) = listener.accept().await {
-                let head = crate::fixtures::read_head(&mut stream).await.unwrap_or_default();
-                let path = head.split_whitespace().nth(1).unwrap_or_default();
-                let body = bodies
-                    .iter()
-                    .find(|(route, _)| *route == path)
-                    .map_or("{}", |(_, body)| body.as_str());
-                let response =
-                    format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
-                let _ = stream.write_all(response.as_bytes()).await;
-            }
-        });
-        Ok(origin)
-    }
-
-    /// Catalogue origins may end in one slash, as servers.schema.json allows, and may name
-    /// international hosts, which are dialled as punycode, as Go does; an entry that is still
-    /// invalid is left out alone. Preflight targets may name international hosts too.
+    /// Catalogue origins may end in one slash (servers.schema.json) and name international hosts,
+    /// dialled as punycode as Go does, as may preflight targets; only an invalid entry is left out.
     #[tokio::test]
     async fn discovery_takes_go_catalogue_origins_and_leaves_out_only_a_broken_entry() -> Result<()> {
         let catalog = serde_json::json!({
@@ -934,24 +858,23 @@ mod tests {
                 "latency": []
             }
         });
-        let origin = json_peer(vec![("/servers", catalog.to_string()), ("/preflight", preflight.to_string())]).await?;
+        let bodies = [("/servers", catalog.to_string()), ("/preflight", preflight.to_string())];
+        let origin = crate::fixtures::peer(move |head| {
+            let path = head.split_whitespace().nth(1).unwrap_or_default();
+            let route = bodies.iter().find(|(route, _)| *route == path);
+            Some(crate::fixtures::ok(route.map_or("{}", |(_, body)| body.as_str())))
+        });
+        let origin = origin.await?;
         let http = http(false);
         let discovery = http.discover(&origin).await?;
-        let urls: Vec<_> = discovery
-            .catalog
-            .servers
-            .iter()
-            .map(|entry| entry.url.as_str())
-            .collect();
+        let servers = &discovery.catalog.servers;
+        let urls: Vec<_> = servers.iter().map(|entry| entry.url.as_str()).collect();
         assert_eq!(urls, [origin.as_str(), "https://remote.example:8443", "https://xn--bcher-kva.example"]);
         assert_eq!(discovery.catalog.servers[2].additional_origins, ["https://xn--mnchen-3ya.example"]);
         assert_eq!(discovery.catalog.default_selection, ["self", "international"]);
         use graphite_meter_core::catalog::CatalogError;
-        let rejected: Vec<_> = discovery
-            .rejected
-            .iter()
-            .map(|left| (left.id.as_str(), left.error))
-            .collect();
+        let left_out = discovery.rejected.iter();
+        let rejected: Vec<_> = left_out.map(|left| (left.id.as_str(), left.error)).collect();
         assert_eq!(
             rejected,
             [
@@ -974,33 +897,13 @@ mod tests {
 
     /// Answers polls in turn, repeating the last answer; "drop" closes the connection unanswered.
     async fn token_endpoint(answers: &'static [&'static str]) -> Result<String> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let (listener, origin) = crate::fixtures::listener().await?;
-        let polls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        tokio::spawn(async move {
-            while let Ok((mut stream, _)) = listener.accept().await {
-                let polls = polls.clone();
-                tokio::spawn(async move {
-                    while let Ok(head) = crate::fixtures::read_head(&mut stream).await {
-                        let head = head.to_ascii_lowercase();
-                        let length = head
-                            .lines()
-                            .find_map(|line| line.strip_prefix("content-length:"))
-                            .map_or(0, |length| length.trim().parse().unwrap());
-                        let mut body = vec![0; length];
-                        let poll = polls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                        let answer = answers[poll.min(answers.len() - 1)];
-                        if stream.read_exact(&mut body).await.is_err()
-                            || answer == "drop"
-                            || stream.write_all(answer.as_bytes()).await.is_err()
-                        {
-                            return;
-                        }
-                    }
-                });
-            }
+        let polls = std::sync::atomic::AtomicUsize::new(0);
+        let origin = crate::fixtures::peer(move |_| {
+            let poll = polls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let answer = answers[poll.min(answers.len() - 1)];
+            (answer != "drop").then(|| answer.to_owned())
         });
-        Ok(format!("{origin}/auth/cli/token"))
+        Ok(format!("{}/auth/cli/token", origin.await?))
     }
 
     fn pending(token_url: String, window: Duration) -> PendingAuthorization {
@@ -1027,23 +930,14 @@ mod tests {
     #[tokio::test]
     async fn approval_deadline_reports_expiry_unless_the_last_poll_was_unreachable() -> Result<()> {
         let http = http(false);
-        let answered = token_endpoint(&["drop", ACCEPTED]).await?;
-        let expired = http
-            .poll_authorization(pending(answered, Duration::from_millis(1500)))
-            .await
-            .unwrap_err();
+        let (answered, window) = (token_endpoint(&["drop", ACCEPTED]).await?, Duration::from_millis(1500));
+        let expired = http.poll_authorization(pending(answered, window)).await.unwrap_err();
         assert!(matches!(expired.downcast_ref(), Some(Failure::ApprovalExpired)), "{expired}");
         let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await?.local_addr()?;
-        let unreachable = http
-            .poll_authorization(pending(format!("http://{closed}/auth/cli/token"), Duration::from_millis(1500)))
-            .await
-            .unwrap_err();
-        assert!(
-            unreachable
-                .to_string()
-                .starts_with("server unreachable while waiting for browser approval: "),
-            "{unreachable}"
-        );
+        let poll = http.poll_authorization(pending(format!("http://{closed}/auth/cli/token"), window));
+        let unreachable = poll.await.unwrap_err();
+        let text = unreachable.to_string();
+        assert!(text.starts_with("server unreachable while waiting for browser approval: "), "{text}");
         assert_eq!(crate::failure::text(unreachable.as_ref()), "Server could not be reached");
         Ok(())
     }
@@ -1052,11 +946,8 @@ mod tests {
     fn request_destinations_preserve_validated_ascii_host_identity() {
         let http = http(false);
         for origin in ["https://xn--bcher-kva.example", "https://meter.example.", "https://127.0.0.1"] {
-            let request = http
-                .builder(Method::GET, &format!("{origin}/probe"))
-                .unwrap()
-                .body(())
-                .unwrap();
+            let request = http.builder(Method::GET, &format!("{origin}/probe")).unwrap();
+            let request = request.body(()).unwrap();
             assert_eq!(request.uri().host(), Some(target_origin(origin).unwrap().unwrap().host.as_str()));
         }
         for origin in [
@@ -1086,21 +977,16 @@ mod tests {
             assert!(validated_login("https://meter.example", raw).is_err(), "{raw}");
         }
         assert!(validated_login("https://meter.example:443", "https://meter.example:8443/login").is_ok());
-        assert!(
-            http(true)
-                .begin_authorization("https://meter.example", "https://meter.example/login")
-                .is_err()
-        );
+        let insecure = http(true).begin_authorization("https://meter.example", "https://meter.example/login");
+        assert!(insecure.is_err());
     }
 
     #[test]
     fn grants_require_explicit_validated_target_enrollment() {
         let http = http(false);
-        let fixture = HeaderValue::from_static("Bearer fixture");
-        http.grants
-            .lock()
-            .unwrap()
-            .insert("https://meter.example".into(), fixture);
+        let mut grants = http.grants.lock().unwrap();
+        grants.insert("https://meter.example".into(), HeaderValue::from_static("Bearer fixture"));
+        drop(grants);
         assert!(http.authorization("https://meter.example/download").is_some());
         for target in [
             "https://meter.example:8443/download",
@@ -1164,9 +1050,8 @@ mod tests {
         let mut headers = http::HeaderMap::new();
         headers.insert("graphite-meter-auth", HeaderValue::from_static("required"));
         headers.insert("graphite-meter-auth-url", HeaderValue::from_static("https://meter.example:7247/login"));
-        let error = first_client
-            .check_status(&target, StatusCode::FORBIDDEN, &headers)
-            .unwrap_err();
+        let refused = first_client.check_status(&target, StatusCode::FORBIDDEN, &headers);
+        let error = refused.unwrap_err();
         assert_eq!(crate::failure::sign_in(error.as_ref()).unwrap().0, first);
         assert!(first_client.authorization(&target).is_none());
         assert_eq!(second_client.authorization(&target).unwrap(), "Bearer second");
