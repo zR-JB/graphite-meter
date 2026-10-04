@@ -183,30 +183,51 @@ test("a one-lane bidirectional result has no combined value, only its surviving 
   ]);
 });
 
-test("the latency card groups signed added latency, even of a failed stage; transfer cards show stability as a value", () => {
-  const cards = summaryCards(
-    {
-      status: {
-        download: "complete",
-        upload: "complete",
-        bidirectional: "failed",
-        latency: "complete",
-      },
-      download: lane(40),
-      upload: { ...lane(20), stabilityPct: 80 },
-      bidirectional: null,
-      latency: { reportedMs: 12, jitterMs: 1, stabilityPct: 91.7 },
-      added: { download: 8.25, upload: -0.04, bidirectional: 0 },
+test("the latency card states the idle stage's own facts; transfer cards show stability as a value", () => {
+  const evidence = {
+    status: {
+      download: "complete",
+      upload: "complete",
+      bidirectional: "failed",
+      latency: "complete",
     },
-    units,
-    true,
-  );
-  const added = cards[0].rows.filter((row) => row.label === "Added");
-  expect(added.map((row) => [row.stage, row.value])).toEqual([
-    ["download", "+8.3 ms"],
-    ["upload", "+0.0 ms"],
-    ["bidirectional", "+0.0 ms"],
-  ]);
+    download: lane(40),
+    upload: { ...lane(20), stabilityPct: 80 },
+    bidirectional: null,
+    latency: { reportedMs: 12, jitterMs: 1, stabilityPct: 91.7 },
+    added: { download: 8.25, upload: -0.04, bidirectional: 0 },
+  } as const;
+  const idle = {
+    accountingComplete: true,
+    probeCount: 40,
+    timeoutCount: 2,
+    unresolvedCount: 0,
+    sendFailureCount: 0,
+    jitterPairs: 37,
+    minMs: 9.6,
+    maxMs: 31.2,
+    meanMs: 12.4,
+    p10Ms: 10,
+    p50Ms: 12,
+    p90Ms: 20,
+    p95Ms: 25,
+    jitterMs: 1,
+  };
+  const rows = (idleStage: typeof idle | null) =>
+    Object.fromEntries(
+      summaryCards({ ...evidence, idle: idleStage }, units, true)[0].rows.map(
+        (row) => [row.label, row.value],
+      ),
+    );
+  expect(rows(idle)).toEqual({
+    Jitter: "1.0 ms",
+    Stability: "92%",
+    Range: "9.6–31.2 ms",
+    Replies: "38",
+    Timeouts: "5.0%",
+  });
+  expect(rows(null)).toMatchObject({ Range: "—", Replies: "—", Timeouts: "—" });
+  const cards = summaryCards({ ...evidence, idle }, units, true);
   const stability = (card: (typeof cards)[number]) =>
     card.rows.find((row) => row.label === "Stability")?.value;
   expect(cards.slice(1).map(stability)).toEqual(["95%", "80%", undefined]);

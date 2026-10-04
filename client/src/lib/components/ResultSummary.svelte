@@ -5,7 +5,6 @@
   import {
     cardFacts,
     cardNoData,
-    cardTip,
     type CardScale,
     type SummaryCard,
     type SummaryRow,
@@ -84,7 +83,7 @@
         data-tone={card.key}
         style:--fade={fade}
       >
-        <span class="face" use:tooltipAction={cardTip(card)}>
+        <span class="face">
           <span class="name">
             <span class="tone-icon" aria-hidden="true"
               ><Icon name={card.icon} /></span
@@ -187,18 +186,9 @@
             class="facts"
             class:unknown={facts.every((row) => row.value === MISSING)}
           >
-            {#each facts as row (row.stage ? `${row.label}:${row.stage}` : row.label)}
+            {#each facts as row (row.label)}
               <div>
-                <dt use:tooltipAction={row.tip ?? ""}>
-                  {#if row.stage}<span
-                      class="fact-stage"
-                      data-tone={row.stage}
-                      aria-hidden="true"
-                      ><Icon name={STAGE[row.stage].icon} /></span
-                    ><span class="sr-only"
-                      >{STAGE[row.stage].short}
-                    </span>{/if}{row.label}
-                </dt>
+                <dt use:tooltipAction={row.tip ?? ""}>{row.label}</dt>
                 <dd class:quiet={row.value === MISSING}>{row.value}</dd>
               </div>
             {/each}
@@ -250,6 +240,9 @@
     }
   }
   @container results (max-width: 520px) {
+    .wire .delta {
+      display: none;
+    }
     .running .card:not(.active, .recovering) > :is(.line, .strip, .facts),
     .card:is(.pending, .not-run) > :is(.line, .strip, .facts) {
       display: none;
@@ -441,20 +434,8 @@
     border-top: var(--hairline) solid var(--border-subtle);
   }
   .facts dt {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
     color: var(--text-soft);
     font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
-  }
-  /* A fact about one stage carries that stage's glyph in its hue. */
-  .fact-stage {
-    display: inline-grid;
-    color: var(--tone);
-  }
-  .fact-stage :global(svg) {
-    width: 11px;
-    height: 11px;
   }
   .facts dd {
     font-variant-numeric: tabular-nums;

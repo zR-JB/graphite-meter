@@ -75,6 +75,7 @@
         upload: result.upload,
         bidirectional: result.bidirectional,
         latency: result.latency,
+        idle: (latencyServer?.latencyByStage ?? result.latencyByStage).latency,
         added: result.addedLatency,
       },
       details,

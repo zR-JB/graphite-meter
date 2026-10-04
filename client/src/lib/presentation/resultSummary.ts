@@ -1,6 +1,5 @@
 import { compensationTooltip, type WireModel } from "../compensation";
 import {
-  fmtAddedMs,
   fmtBytes,
   fmtDuration,
   fmtMs,
@@ -11,6 +10,7 @@ import {
   type RateUnits,
 } from "../format";
 import type {
+  StageLatencySummary,
   AddedLatency,
   LatencyBucket,
   ThroughputSample,
@@ -37,6 +37,8 @@ interface SummaryEvidence extends Pick<
 > {
   status: Partial<Record<TransportRole, SummaryStatus>>;
   added: AddedLatency | null;
+  /** The idle stage's probe population, for the latency card's facts. */
+  idle?: StageLatencySummary | null;
   /** The loaded stages in the run, settled or not, so their rows stand from Start; else the settled ones. */
   transfers?: (typeof LOADED)[number][];
 }
@@ -245,21 +247,13 @@ function wire(
   };
 }
 
-/** Every loaded stage in the run gets its added-latency row from Start, "—" until measured. */
+/** The idle stage's own facts: its spread, its replies and the probes that went unanswered. */
 function latencyCard(card: SummaryCard, evidence: SummaryEvidence) {
   const latency = evidence.latency;
   if (!latency) return card;
   const { reportedMs, jitterMs, stabilityPct } = latency;
-  const transfers =
-    evidence.transfers ?? LOADED.filter((stage) => evidence.status[stage]);
-  const added = transfers.map((stage): SummaryRow => {
-    const ms = evidence.added?.[stage];
-    return {
-      label: "Added",
-      value: ms == null ? MISSING : `${fmtAddedMs(ms)} ms`,
-      stage,
-    };
-  });
+  const idle = evidence.idle;
+  const answered = idle ? idle.probeCount - idle.timeoutCount : null;
   return {
     ...card,
     num: fmtMs(reportedMs),
@@ -270,7 +264,24 @@ function latencyCard(card: SummaryCard, evidence: SummaryEvidence) {
         label: "Stability",
         value: stabilityPct == null ? MISSING : `${Math.round(stabilityPct)}%`,
       },
-      ...added,
+      {
+        label: "Range",
+        value:
+          idle?.minMs == null || idle.maxMs == null
+            ? MISSING
+            : `${fmtMs(idle.minMs)}–${fmtMs(idle.maxMs)} ms`,
+      },
+      {
+        label: "Replies",
+        value: answered == null ? MISSING : String(answered),
+      },
+      {
+        label: "Timeouts",
+        value:
+          idle && idle.probeCount
+            ? `${((100 * idle.timeoutCount) / idle.probeCount).toFixed(1)}%`
+            : MISSING,
+      },
     ],
   };
 }
@@ -372,7 +383,7 @@ export function summaryCards(
 // Facts read the same way on every card: what the link peaked at, how steady it was, what moved.
 const TRANSFER_FACTS = ["Peak", "Stability", "Transferred"];
 const FACTS: Record<TransportRole, string[]> = {
-  latency: ["Stability", "Added"],
+  latency: ["Stability", "Range", "Replies", "Timeouts"],
   download: TRANSFER_FACTS,
   upload: TRANSFER_FACTS,
   bidirectional: ["Stability", "Down + up", "Transferred"],
@@ -380,7 +391,8 @@ const FACTS: Record<TransportRole, string[]> = {
 const FACT_TIPS: Record<string, string> = {
   Peak: JARGON.peak,
   Stability: JARGON.rateStability,
-  Added: JARGON.addedLatency,
+  Range: JARGON.latencyRange,
+  Replies: JARGON.replies,
   Transferred: JARGON.transferred,
 };
 
@@ -402,7 +414,7 @@ export const cardFacts = (card: SummaryCard): SummaryRow[] =>
 export const cardNoData = (card: SummaryCard) =>
   card.rows.find((row) => row.label === "No data") ?? null;
 
-/** A completed run spoken in card order: each headline, then latency's jitter and added latency. */
+/** A completed run spoken in card order: each headline, then latency's jitter. */
 export const resultSentence = (cards: SummaryCard[]) =>
   cards
     .map((card) =>
@@ -410,28 +422,12 @@ export const resultSentence = (cards: SummaryCard[]) =>
         `${card.label} ${`${card.num} ${card.unit}`.trim()}${card.status === "complete" ? "" : `, ${card.status}`}`,
         ...(card.key === "latency"
           ? card.rows
-              .filter((row) => row.label === "Jitter" || row.stage)
-              .map(
-                (row) =>
-                  `${row.label}${row.stage ? ` ${STAGE[row.stage].short}` : ""} ${row.value}`,
-              )
+              .filter((row) => row.label === "Jitter")
+              .map((row) => `${row.label} ${row.value}`)
           : []),
       ].join(", "),
     )
     .join("; ");
-
-export const cardTip = (card: SummaryCard) =>
-  [
-    card.label,
-    card.tip.split("\n")[1],
-    ...card.rows
-      .filter((row) => row.value !== MISSING)
-      .map((row) =>
-        row.stage && row.label !== STAGE[row.stage].short
-          ? `${row.label} under ${STAGE[row.stage].short.toLowerCase()}\t${row.value}`
-          : `${row.label}\t${row.value}`,
-      ),
-  ].join("\n");
 
 interface TracePoint {
   t: number;
@@ -493,6 +489,7 @@ function serverEvidence(
   return {
     status: shownStatus(server.stages),
     transfers: LOADED.filter((stage) => server.stages[stage] !== "not-run"),
+    idle: server.latencyByStage?.latency ?? null,
     download: server.download,
     upload: server.upload,
     bidirectional: server.bidirectional,

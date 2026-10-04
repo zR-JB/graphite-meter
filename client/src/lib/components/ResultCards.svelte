@@ -55,6 +55,7 @@
         download: store.stageResults.download,
         upload: store.stageResults.upload,
         bidirectional: store.result?.bidirectional ?? null,
+        idle: store.result?.latencyByStage.latency ?? null,
         latency: store.stageResults.latency,
         added: store.result?.addedLatency ?? null,
       },
