@@ -41,9 +41,12 @@ const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 const CONTROL_LIMIT: usize = 64 * 1024;
 const IDLE_PER_ORIGIN: usize = 32;
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
-// Go's client windows; hyper's defaults cap a 100 ms path at a few hundred Mbit/s.
-const H2_STREAM_WINDOW: u32 = 32 << 20;
-const H2_CONNECTION_WINDOW: u32 = 64 << 20;
+// The server's upload windows, as Go's h2ReceiveWindowPer*: a reader that falls behind buffers at most the
+// connection's 16 MiB, and a 100 ms path still carries 1.3 Gbit/s. hyper's defaults cap it at a few hundred Mbit/s.
+const H2_STREAM_WINDOW: u32 = 8 << 20;
+const H2_CONNECTION_WINDOW: u32 = 16 << 20;
+/// hyper's HTTP/1 read buffer grows to 408 KiB, and each body chunk keeps it, so every read allocates a new one.
+const H1_READ_BYTES: usize = 64 * 1024;
 /// An HTTP/2 connection that reads nothing for this long is pinged, at Go's TCP keep-alive
 /// period, and closed if the peer does not answer within hyper's default 20 s.
 const H2_KEEP_ALIVE: Duration = Duration::from_secs(30);
@@ -304,7 +307,7 @@ impl Connections {
             tokio::spawn(driver);
             Ok(Sender::H2(Http2 { id: self.ids.fetch_add(1, Ordering::Relaxed), sender }))
         } else {
-            let (sender, driver) = http1::handshake(io).await?;
+            let (sender, driver) = http1::Builder::new().max_buf_size(H1_READ_BYTES).handshake(io).await?;
             tokio::spawn(driver);
             Ok(Sender::H1(Http1 {
                 sender,
