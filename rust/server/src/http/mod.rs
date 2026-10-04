@@ -71,8 +71,9 @@ use tokio::{
 };
 
 const MAX_HEADER_BYTES: usize = 32 * 1024;
-/// hyper's HTTP/1 read buffer, which also bounds the head it buffers before parsing: 128 KiB reads cost less CPU
-/// per uploaded byte than Go's 64 KiB, and `validate_request` still refuses a head over `MAX_HEADER_BYTES`.
+/// hyper's HTTP/1 buffer limit: 128 KiB reads cost less CPU per uploaded byte than Go's 64 KiB. It also bounds the
+/// head hyper buffers before parsing, which `validate_request` refuses over `MAX_HEADER_BYTES`, and the response
+/// bytes it queues.
 const H1_READ_BYTES: usize = 128 * 1024;
 const DEFAULT_DOWNLOAD_BYTES: u64 = 25 * 1024 * 1024;
 /// As Go's `http.Server`, a failed accept is logged and retried after a delay that doubles from the first bound to
@@ -1478,9 +1479,7 @@ mod tests {
     #[tokio::test]
     async fn a_stopping_listener_refuses_connections_during_its_drain() {
         let server = Arc::new(server(Config::default()));
-        // On an address of its own, the closed listener's port cannot pass to another test's listener.
-        let own = if cfg!(target_os = "linux") { "127.77.0.1:0" } else { "127.0.0.1:0" };
-        let listener = TcpListener::bind(own).await.unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
         let serving = tokio::spawn(server.clone().serve(NativeKind::H1, listener, None, async {
@@ -1496,7 +1495,9 @@ mod tests {
         while !*server.stopping.borrow() {
             tokio::task::yield_now().await;
         }
-        assert!(TcpStream::connect(address).await.is_err(), "connected while draining");
+        // Only a closed listener frees its address, which then stays this test's, where a connection could
+        // reach another test's listener on the reused port.
+        let _closed = TcpListener::bind(address).await.expect("listening while draining");
         drop(held);
         serving.await.unwrap().unwrap();
     }

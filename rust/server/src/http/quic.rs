@@ -1175,7 +1175,7 @@ mod tests {
                 let before = settled(&server.memory, &[&quic]).await;
                 let request = Request::post(format!("https://localhost/upload?id={id}"));
                 send(&requests, request.body(()).unwrap(), b"funded").await.unwrap();
-                charged.push(before - settled(&server.memory, &[&quic]).await);
+                charged.push(before.saturating_sub(settled(&server.memory, &[&quic]).await));
                 held.push((client, quic, requests));
             }
             // One HTTP/3 window fits the rest of 127.0.0.1's share and a second does not; 127.0.0.2's own share
