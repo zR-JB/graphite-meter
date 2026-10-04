@@ -446,7 +446,7 @@ env = { CC_x86_64_unknown_linux_musl = "x86_64-linux-musl-gcc", CC_aarch64_unkno
 run = '''
 tui=($(python3 ../scripts/ci/rust_workspace.py targets tui))
 server=($(python3 ../scripts/ci/rust_workspace.py targets server))
-rustup target add "${tui[@]}" "${server[@]}"
+rustup target add $(printf '%s\n' "${tui[@]}" "${server[@]}" | sort -u)
 cargo check --locked -p graphite-meter-client "${tui[@]/#/--target=}"
 cargo check --locked -p graphite-meter-server "${server[@]/#/--target=}"
 '''
