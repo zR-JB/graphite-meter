@@ -28,7 +28,7 @@ import {
   type ServerView,
 } from "../runner/paths";
 import { presentConnections } from "../presentation/paths";
-import { fmtDuration, rateUnit, rateValueAt, rawRateFrom } from "../format";
+import { fmtDuration, rateUnit, rateValueAt } from "../format";
 import { STAGE } from "../presentation/vocabulary";
 import { latencyAxisMs, throughputScales } from "../presentation/scales";
 import { Smoothed } from "../presentation/motion.svelte";
@@ -521,11 +521,6 @@ class AppStore {
   toUnit(bytesPerSec: number): number {
     const { unitBase, unitKind, scales } = this;
     return rateValueAt(bytesPerSec, unitBase, unitKind, scales.unitIndex);
-  }
-
-  fromUnit(displayValue: number): number {
-    const { unitBase, unitKind, scales } = this;
-    return rawRateFrom(displayValue, unitBase, unitKind, scales.unitIndex);
   }
 
   /** Bytes the running stage has moved so far, so its card counts up live. */

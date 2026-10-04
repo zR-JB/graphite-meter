@@ -29,7 +29,6 @@ export type PingCadence = "reply-driven" | "fast" | "medium" | "slow";
 /* Warmup and measurement share one activity object, so preparation primes the connections measurement reuses. */
 export interface PhaseActivity {
   stage: Extract<Phase, "latency" | "download" | "upload" | "bidirectional">;
-  /** Byte lanes to open: `[]` (latency-only), `["down"]`, `["up"]`, or both. */
   transfer: FlowDirection[];
   /** Concurrent pings during transfer stages provide loaded-latency evidence. */
   loadedLatency: boolean;
@@ -365,7 +364,7 @@ export type RunnerEvent =
   | { type: "stageResult"; stage: "latency"; result: LatencyResult }
   | { type: "stageEnd"; stage: TransportRole; status: StageStatus }
   | { type: "complete"; result: RunResult }
-  // Abnormal end (user-abort is the "aborted" phase).
+  // A user abort is the "aborted" phase, not an error.
   | { type: "error"; error: RunnerError };
 
 /* Connection and worker construction stay as built; these reshape only the remaining timeline or completion rule. */

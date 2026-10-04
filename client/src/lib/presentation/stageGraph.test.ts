@@ -1,10 +1,5 @@
 import { expect, test } from "bun:test";
-import {
-  replies,
-  stageGraph,
-  stageGraphGeometry,
-  drawStageGraph,
-} from "./stageGraph";
+import { replies, stageGraphGeometry, drawStageGraph } from "./stageGraph";
 import { monotoneCurve } from "./smoothPath";
 import { singleLatencyBucket } from "../runner/series";
 
@@ -81,10 +76,9 @@ test("cached moving tails preserve the complete curve and reuse measured geometr
 
 test("a running stage spans its plan and its leading edge carries the glided rate", () => {
   const lane = [0, 1, 2].map((i) => ({ t: 1000 + i * 500, v: 50 }));
-  const graph = stageGraph({
-    ...base,
-    lanes: [lane],
-    head: { t: 3000, values: [100] },
+  const graph = drawStageGraph(stageGraphGeometry({ ...base, lanes: [lane] }), {
+    t: 3000,
+    values: [100],
   });
   expect(graph.heads).toEqual([{ x: 200, y: 3 }]);
   expect(graph.bins[0].at(-1)!.t).toBeLessThan(3000);
@@ -92,18 +86,20 @@ test("a running stage spans its plan and its leading edge carries the glided rat
 });
 
 test("a live lane ends at its head even when the newest bin is centred past it", () => {
-  const graph = stageGraph({
-    ...base,
-    lanes: [[1000, 2000, 2961].map((t) => ({ t, v: 50 }))],
-    head: { t: 2970, values: [80] },
-  });
+  const graph = drawStageGraph(
+    stageGraphGeometry({
+      ...base,
+      lanes: [[1000, 2000, 2961].map((t) => ({ t, v: 50 }))],
+    }),
+    { t: 2970, values: [80] },
+  );
   const [{ x, y }] = graph.heads;
   expect(graph.bins[0].at(-1)!.t).toBeGreaterThan(2970);
   expect(graph.lines[0].endsWith(`${x} ${y}`)).toBe(true);
 });
 
 test("a reply below the idle median sits below its line; the track clamps at its top", () => {
-  const graph = stageGraph({
+  const graph = stageGraphGeometry({
     ...base,
     lanes: [[]],
     latency: [

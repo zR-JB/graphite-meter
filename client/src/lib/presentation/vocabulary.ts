@@ -226,9 +226,6 @@ export const JARGON = {
   probeAccounting:
     "Probe accounting\nReplies, and timeouts: no reply before the deadline\n" +
     "Unfinished probes and failed sends are counted apart, never as timeouts",
-  preflight:
-    "Preflight request\nOne request before any test: connection setup plus the response\n" +
-    "Not a latency measurement",
   pretestLatency:
     "Pre-test latency\nMedian round trip of the probes that checked the latency path\n" +
     "The first selected server's sizes the warmup",

@@ -578,9 +578,7 @@ export class Run {
       server.stage?.measure();
     }
     if (!isTransfer(activity.stage)) return;
-    // The warmup's bytes stay out of the live rate: the download count carries on from here, and a receiver's
-    // count is asked for afresh, so the first upload window starts at the measurement rather than at the last
-    // record heard during the warmup.
+    // The live rate and the first upload window start at the measurement, not in the warmup.
     this.#live.reset(this.#counts(), this.#clock.read());
     this.#aggregate.begin(activity.stage, this.#ids(), this.#now());
     if (activity.transfer.includes("up")) {

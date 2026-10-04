@@ -7,7 +7,6 @@ import type { TransitionConfig } from "svelte/transition";
 type Task = (now: number) => boolean;
 const tasks = new Set<Task>();
 let frame = 0;
-let lastFrame = 0;
 let watching = false;
 
 function visibilityChanged(): void {
@@ -36,14 +35,10 @@ function request(): void {
 
 function run(now: number): void {
   frame = 0;
-  lastFrame = now;
   for (const task of tasks) if (!task(now)) tasks.delete(task);
   releaseClock();
   request();
 }
-
-/** The shared clock's latest frame time. */
-export const frameTime = () => lastFrame;
 
 /** Runs `task` on every frame until it returns false or the returned stop is called. */
 export function animate(task: Task): () => void {
