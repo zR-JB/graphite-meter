@@ -208,6 +208,8 @@ def check_ci(root: Path) -> None:
     for task in steps("ci"):
         if not re.search(rf"mise run {re.escape(task)}(?![\w-])", ci):
             fail(f"CI must run the local gate step {task}")
+    if "run: python3 -m scripts.legal.check_git_sources --verify\n" not in ci:
+        fail("CI must verify the Cargo fork pins with check_git_sources --verify")
     jobs = set(re.findall(r"(?m)^  ([a-z-]+):$", ci.split("\njobs:\n", 1)[1])) - {"gate"}
     gate = re.search(r"(?ms)^  gate:\n.*?^    needs: \[([^]]*)\]", ci)
     if missing := sorted(jobs - {name.strip() for name in (gate.group(1) if gate else "").split(",")}):

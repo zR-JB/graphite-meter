@@ -120,7 +120,8 @@ installs the Bun lockfile frozen; `bun dedupe` output is advisory.
 
 ## Rust
 
-The `rust` job runs `mise run rust-check` and `rust-check-targets`. Setup
+The `rust` job runs `mise run rust-check`, verifies the Cargo fork pins with
+`check_git_sources --verify` and runs `rust-check-targets`. Setup
 installs the toolchain `rust/rust-toolchain.toml` pins with `--no-self-update`
 and refuses it unless rustup installed it from the channel manifest whose
 SHA-256 `mise.toml` pins as `rust_manifest_sha256`; a new channel needs the

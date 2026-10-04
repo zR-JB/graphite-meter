@@ -36,3 +36,4 @@ deps:
 rust:
   - *workflow
   - 'rust/**'
+  - 'legal/rust-*'

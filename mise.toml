@@ -433,6 +433,7 @@ description = "Check Rust formatting, dependency policy, lints, and tests"
 dir = "rust"
 run = [
   "cargo fmt --all --check",
+  "cd .. && python3 -m scripts.legal.check_git_sources",
   "cargo deny --locked check",
   "cargo clippy --workspace --all-targets --locked -- -D warnings",
   "cargo nextest run --workspace --all-targets --locked --no-fail-fast --no-tests=warn",

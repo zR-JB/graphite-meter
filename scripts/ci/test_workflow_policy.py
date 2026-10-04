@@ -122,6 +122,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (W + "ci.yml", "secret-scan, rust]", "secret-scan]", r"Gate must need every job: \['rust'\]"),
     (W + "ci.yml", "mise run rust-check\n", "cargo test\n", "local gate step rust-check"),
     (W + "ci.yml", "mise run rust-check-targets\n", "cargo check\n", "local gate step rust-check-targets"),
+    (W + "ci.yml", "check_git_sources --verify\n", "check_git_sources\n", "check_git_sources --verify"),
     # rustup would replace itself from the network before it installs and checks a toolchain.
     (SETUP, "install --no-self-update", "install", "--no-self-update"),
     (SETUP, "        python3 scripts/ci/toolchains.py verify-rust\n", "", "misorders invariant"),

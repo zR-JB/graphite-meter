@@ -100,3 +100,22 @@ metadata and reviewed component set.
 
 `legal/project.json` is the only place to update Graphite Meter's copyright
 year or year range. The generator never derives it from the wall clock.
+
+## Updating pinned forks
+
+The Rust workspace builds noq and h2 from forks that carry Graphite Meter
+patches on a stable upstream release. Each pin in `rust/Cargo.toml` has a
+record in `rust-forks.json`: the fork branch and full-SHA `rev`, the upstream
+tag and its commit `base`, `diffSha256` (the SHA-256 of
+`git diff-tree -r --no-renames --full-index base rev`), the changed packages
+and files, and each commit's subject, purpose and origin.
+
+To move a fork, carry the patches onto the new upstream release on its
+`graphite-meter/<crate>-v<version>` branch and review the upstream base, each
+patch's origin, the changed paths and their licenses. Then update
+`rust/Cargo.toml`, `rust/Cargo.lock` and the record. `mise run rust-check`
+requires a record for every git package in the lock and a lock package for
+every record; CI's Rust job also runs
+`python3 -m scripts.legal.check_git_sources --verify`, which fetches each
+branch and tag and checks ancestry, the change-set digest and scope, and the
+commit list.
