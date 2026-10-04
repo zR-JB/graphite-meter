@@ -87,6 +87,14 @@
   const hoverValue = $derived(
     hoverLane && hover ? metricValue(hoverLane, hover.metric) : null,
   );
+  let readingWidth = $state(0);
+  // The reading stands clear of the marker on the side with room for it, else as far in from the edge as it can.
+  const readingLeft = (x: number, track: number) =>
+    x + 10 + readingWidth <= track
+      ? x + 10
+      : x - 10 - readingWidth >= 0
+        ? x - 10 - readingWidth
+        : Math.max(0, Math.min(x + 10, track - readingWidth));
 
   // Markers keep this margin, so one at either end of the scale stays whole.
   const EDGE = 7;
@@ -446,10 +454,19 @@
               {/if}
             </span>
             {#if hover?.key === lane.key && hoverValue != null}
+              {@const x = atPct(pos(hoverValue, scale), hover.trackWidth)}
+              <span class="guide" style:left="{x}px"></span>
               <span
-                class="guide"
-                style:left={`${atPct(pos(hoverValue, scale), hover.trackWidth)}px`}
-              ></span>
+                class="inspect-card hover-card"
+                class:unmeasured={!readingWidth}
+                bind:clientWidth={readingWidth}
+                style:left="{readingLeft(x, hover.trackWidth)}px"
+              >
+                <strong
+                  >{metricLabel(hover.metric)} {fmtMs(hoverValue)} ms</strong
+                >
+                <span>{metricMeaning(hover.metric)}</span>
+              </span>
             {/if}
           </div>
           <span
@@ -471,17 +488,6 @@
             >{tick.text}{index === 2 ? " ms" : ""}</span
           >
         {/each}
-      </div>
-      <!-- The marker under the pointer reads in a line of its own under the axis, never over a plot. -->
-      <div class="reading" aria-hidden="true">
-        {#if hoverLane && hover && hoverValue != null}
-          <span class="reading-lane" data-tone={hoverLane.key}
-            >{hoverLane.label}</span
-          >
-          <span class="reading-metric">{metricLabel(hover.metric)}</span>
-          <strong>{fmtMs(hoverValue)} ms</strong>
-          <span class="reading-meaning">{metricMeaning(hover.metric)}</span>
-        {/if}
       </div>
     </div>
   </div>
@@ -608,7 +614,7 @@
     grid-template-columns:
       repeat(4, max-content) [track] minmax(120px, 1fr)
       minmax(64px, max-content);
-    grid-template-rows: auto repeat(var(--lanes), minmax(36px, 52px)) auto auto;
+    grid-template-rows: auto repeat(var(--lanes), minmax(36px, 52px)) auto;
     column-gap: var(--space-3);
     min-width: 0;
     isolation: isolate;
@@ -834,36 +840,35 @@
     background: color-mix(in srgb, var(--text) 54%, transparent);
     pointer-events: none;
   }
-  /* One line kept under the axis from Start, so a reading arriving never moves the rows. */
-  .reading {
+  /* The reading stands beside the marker above the box's band, so it never covers the box it reads; it shows
+     once measured, in place. */
+  .hover-card {
+    z-index: 10;
+    bottom: calc(50% + 8px);
     display: flex;
-    grid-column: 1 / -1;
     align-items: baseline;
     gap: var(--space-2);
-    height: 20px;
-    min-width: 0;
-    margin-top: var(--space-1);
-    overflow: hidden;
-    color: var(--text-soft);
-    font: var(--w-normal) var(--type-sm) / 20px var(--font-sans);
+    max-width: 100%;
+    padding-block: 2px;
     white-space: nowrap;
   }
-  .reading-lane {
-    color: var(--tone-ink);
-    font-weight: var(--w-strong);
+  .hover-card.unmeasured {
+    visibility: hidden;
   }
-  .reading strong {
-    color: var(--text);
-    font: var(--role-figure-sm);
-    line-height: 20px;
+  .hover-card strong {
+    font: var(--w-strong) var(--type-sm) var(--font-sans);
+    font-variant-numeric: tabular-nums;
   }
-  .reading-meaning {
-    min-width: 0;
+  .hover-card span {
     overflow: hidden;
+    color: var(--text-soft);
     text-overflow: ellipsis;
   }
-  /* Narrower cards put the idle facts above the rows. */
+  /* Narrower cards put the idle facts above the rows and read a marker by its value alone. */
   @container latency (max-width: 720px) {
+    .hover-card span {
+      display: none;
+    }
     .body {
       grid-template-columns: minmax(0, 1fr);
       gap: var(--space-3);
