@@ -399,9 +399,12 @@
     min-width: 0;
   }
   @container viz (min-width: 760px) {
+    /* A tall screen's spare height goes into even air above, between and below the sections, not under the cards. */
     .instrument {
       --dial-width: clamp(300px, 30cqw, 560px);
       --dial-ratio: 0.86;
+      min-height: 100%;
+      align-content: space-evenly;
       grid-template:
         "dial latency" auto
         "dial controls" auto
@@ -411,6 +414,10 @@
     /* The dial is as tall as its ring wants, or as the lanes and the controls together, whichever is more. */
     .instrument .dial {
       min-height: calc(var(--dial-width) * var(--dial-ratio));
+    }
+    /* The lanes start a step under the dial's top, nearer the ring's crown than its box. */
+    .latency-panel {
+      margin-top: var(--space-6);
     }
     .instrument:not(:has(.latency-panel)) {
       --dial-width: clamp(360px, 48cqw, 720px);
@@ -517,11 +524,10 @@
   .terminal-number {
     max-width: 100%;
     color: var(--text);
-    font-family: var(--font-sans);
-    font-weight: 300;
+    font-family: var(--font-mono);
+    font-weight: 500;
     font-variant-numeric: lining-nums tabular-nums;
     line-height: 1;
-    letter-spacing: -0.025em;
     white-space: nowrap;
   }
   .gauge-value {

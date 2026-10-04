@@ -321,14 +321,15 @@
         {#key beat}
           <!-- A reply rings out from the head: a hairline ring in its hue widens and fades as the head settles. -->
           {#if beat !== null}
-            <circle class="ripple" r={headRadius} fill="none" stroke={accent} />
+            <circle
+              class="ripple"
+              r={headRadius}
+              fill="none"
+              stroke={accent}
+              onanimationend={() => (beating = false)}
+            />
           {/if}
-          <circle
-            class:beat={beat !== null}
-            r={headRadius}
-            fill={accent}
-            onanimationend={() => (beating = false)}
-          />
+          <circle r={headRadius} fill={accent} />
         {/key}
       </svg>
     </div>
@@ -413,33 +414,22 @@
     /* The ring widens past the head's box; the dial's own clip bounds it. */
     overflow: visible;
   }
-  /* A reply's beat: the head swells and settles over one live pulse, and a ring spreads from it and fades,
-     so a steady link is seen to answer even while the needle holds still. */
-  .beat,
+  /* A reply rings out from the head: a faint hairline ring widens to twice the head and fades over one pulse,
+     eased out, so a steady link is seen to answer while the head itself holds still. */
   .ripple {
     transform-box: fill-box;
     transform-origin: center;
-  }
-  .beat {
-    animation: beat var(--dur-pulse) var(--ease-out);
-  }
-  .ripple {
-    stroke-width: 1.5;
+    stroke-width: 1;
     opacity: 0;
-    animation: ripple var(--dur-pulse) cubic-bezier(0.2, 0.6, 0.35, 1);
-  }
-  @keyframes beat {
-    from {
-      scale: 1.2;
-    }
+    animation: ripple var(--dur-pulse) var(--ease-out);
   }
   @keyframes ripple {
     from {
       scale: 1;
-      opacity: 0.6;
+      opacity: 0.32;
     }
     to {
-      scale: 3;
+      scale: 2.2;
       opacity: 0;
     }
   }
