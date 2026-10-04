@@ -11,8 +11,6 @@
     throughputValueAtFraction,
   } from "./gaugeScale";
   import StageTrack from "./StageTrack.svelte";
-  import { stageShown } from "./stageTrack";
-  import { planned, STAGES } from "../runner/schedule";
   import ServerLens from "./ServerLens.svelte";
   import RunButton from "./RunButton.svelte";
   import LatencyProfile from "./LatencyProfile.svelte";
@@ -35,12 +33,6 @@
   import { handoff } from "../presentation/motion.svelte";
   import { MediaQuery } from "svelte/reactivity";
 
-  // The stages with a key, in order: the columns the keys and the cards share.
-  const columns = $derived(
-    STAGES.filter((key) =>
-      stageShown(key, planned(store.config, key), store.stagePresentation[key]),
-    ),
-  );
   const indicatedServers = $derived(
     store.serverDetails?.selection ??
       catalogSelection(store.serverCatalog, store.selectedServers),
@@ -377,14 +369,9 @@
       <div class="latency-panel panel"><LatencyProfile /></div>
     {/if}
 
-    <!-- One key per stage, each over its stage's card. -->
-    <div class="transport" style:--columns={columns.length}>
-      <StageTrack />
-    </div>
+    <div class="transport"><StageTrack /></div>
 
-    <div class="results" style:--columns={columns.length}>
-      <ResultCards live={liveReadout} {columns} />
-    </div>
+    <div class="results"><ResultCards live={liveReadout} /></div>
   </div>
 </section>
 
@@ -393,9 +380,9 @@
     container: viz / inline-size;
     height: 100%;
   }
-  /* The dial's panel beside the latency panel; under them the keys, then the cards, in one set of columns. On a
-     landscape screen the console takes the column's height: the spare height goes to the top row first, so the
-     ring grows with the screen, and to the cards' strips second. */
+  /* The dial's panel beside the latency panel; under them the stage chips, then the cards. On a landscape
+     screen the console takes the column's height: the spare height goes to the top row first, up to a limit, so
+     the ring grows with the screen, and to the cards' strips second. */
   .instrument {
     --dial-height: clamp(320px, 40svh, 380px);
     display: grid;
@@ -421,14 +408,14 @@
       height: 100%;
       max-height: 1100px;
       grid-template:
-        "dial latency" minmax(var(--dial-height), 1.3fr)
+        "dial latency" minmax(var(--dial-height), 460px)
         "transport transport" auto
         "results results" minmax(auto, 1fr)
         / var(--dial-width) minmax(0, 1fr);
     }
     .instrument:not(:has(.latency-panel)) {
       grid-template:
-        "dial dial" minmax(var(--dial-height), 1.3fr)
+        "dial dial" minmax(var(--dial-height), 460px)
         "transport transport" auto
         "results results" minmax(auto, 1fr)
         / var(--dial-width) minmax(0, 1fr);
@@ -439,8 +426,8 @@
       gap: var(--space-3);
     }
   }
-  /* The dial's panel: the face, the note under the ring, and the run key at the foot; the face ends on the note,
-     so a hung note measures from it. */
+  /* The dial's panel: the face, the note under the ring, and the run key as the panel's foot; the face ends on
+     the note, so a hung note measures from it. */
   .dial {
     grid-area: dial;
     position: relative;
@@ -453,8 +440,8 @@
   .run-slot {
     display: flex;
     flex: none;
-    justify-content: center;
-    padding: 0 var(--space-3) var(--space-3);
+    margin-top: auto;
+    border-top: var(--hairline) solid var(--border);
   }
   .latency-panel {
     grid-area: latency;
@@ -470,24 +457,12 @@
     min-width: 0;
     min-height: 0;
   }
-  /* The keys' columns are the cards' columns and gaps, at every width. */
+  /* The chips stand centred between the panels and the cards. */
   .transport {
     grid-area: transport;
-    display: grid;
-    grid-template-columns: repeat(var(--columns, 4), minmax(0, 1fr));
-    gap: var(--space-4);
+    display: flex;
+    justify-content: center;
     min-width: 0;
-  }
-  @container viz (max-width: 1100px) {
-    .transport {
-      gap: var(--space-3);
-    }
-  }
-  @container viz (max-width: 720px) {
-    .transport {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: var(--space-2);
-    }
   }
   @container viz (max-width: 520px) {
     .latency-panel {

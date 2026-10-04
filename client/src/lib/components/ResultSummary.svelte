@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
   import StageGraph from "./StageGraph.svelte";
-  import { latencyScale } from "../presentation/scales";
+  import { latencyTrackScale } from "../presentation/scales";
   import {
     cardFacts,
     cardNoData,
@@ -29,7 +29,6 @@
     issues = [],
     scope = "",
     running = false,
-    columns = null,
   }: {
     cards: SummaryCard[];
     /** Strips share one rate and latency scale so their heights compare. */
@@ -47,14 +46,7 @@
     scope?: string;
     /** A run is under way: on a phone only the running card stays open. */
     running?: boolean;
-    /** The stage keys' columns; a stage with a key and no card keeps its column with a quiet placeholder. */
-    columns?: SummaryCard["key"][] | null;
   } = $props();
-  const column = (key: SummaryCard["key"]) =>
-    columns ? columns.indexOf(key) + 1 : null;
-  const off = $derived(
-    columns?.filter((key) => !cards.some((card) => card.key === key)) ?? [],
-  );
   // A failed transfer's reason sits on its card's line, named by server when several ran, so it never adds a row.
   const attributed = $derived((details?.selection.length ?? 1) > 1 && !scope);
   const listed = $derived(issues.filter((issue) => !issue.throughput.length));
@@ -75,10 +67,7 @@
     card.rows.find((row) => row.label === "Jitter")?.value ?? null;
 </script>
 
-<div
-  class="result-summary"
-  style:--cards={columns ? columns.length : Math.min(4, cards.length)}
->
+<div class="result-summary" style:--cards={Math.min(4, cards.length)}>
   <div class="result-cards" class:running data-tip-group {@attach tipGroup}>
     {#each cards as card (card.key)}
       {@const graph = card.graph}
@@ -94,7 +83,6 @@
         class="card {card.status}"
         data-tone={card.key}
         style:--fade={fade}
-        data-col={column(card.key)}
       >
         <span class="face" use:tooltipAction={cardTip(card)}>
           <span class="name">
@@ -167,7 +155,9 @@
               span={graph.span}
               ceiling={1}
               {baseline}
-              latencyTop={latencyScale(graph.latency.map((point) => point.ms))}
+              latencyTop={latencyTrackScale(
+                graph.latency.map((point) => point.ms),
+              )}
               rate={scale.rate}
               label="Idle latency over time"
             />
@@ -208,17 +198,6 @@
         {#if card.accessible}<span class="sr-only">{card.accessible}</span>{/if}
       </article>
     {/each}
-    {#each off as key (key)}
-      <article class="card off" data-tone={key} data-col={column(key)}>
-        <span class="name">
-          <span class="tone-icon" aria-hidden="true"
-            ><Icon name={STAGE[key].icon} /></span
-          >
-          <h3>{STAGE[key].label}</h3>
-        </span>
-        <span class="off-note">{STATUS.off}</span>
-      </article>
-    {/each}
   </div>
   {#if listed.length}
     <dl class="issues enter" class:attributed aria-label="Issues">
@@ -233,7 +212,7 @@
 </div>
 
 <style>
-  /* One card per stage in the keys' columns; the strips share one scale, so a stage's shape compares. */
+  /* One card per stage across the console; the strips share one scale, so a stage's shape compares. */
   .result-summary {
     display: grid;
     grid-template-rows: minmax(0, 1fr) auto;
@@ -259,21 +238,6 @@
     .result-cards {
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: var(--space-2);
-    }
-  }
-  /* Above a narrow console each card takes its key's column; narrower, they flow two across. */
-  @container results (min-width: 721px) {
-    .card[data-col="1"] {
-      grid-column: 1;
-    }
-    .card[data-col="2"] {
-      grid-column: 2;
-    }
-    .card[data-col="3"] {
-      grid-column: 3;
-    }
-    .card[data-col="4"] {
-      grid-column: 4;
     }
   }
   @container results (max-width: 520px) {
@@ -312,17 +276,9 @@
   .card:is(.active, .recovering) {
     --edge: color-mix(in oklab, var(--tone) 55%, var(--border));
   }
-  .card:is(.pending, .not-run, .off) {
+  .card:is(.pending, .not-run) {
     --edge: var(--border-subtle);
     border-top-color: color-mix(in oklab, var(--tone) 45%, transparent);
-  }
-  /* A stage with a key and no card keeps its column: its name, and why there is nothing under it. */
-  .card.off {
-    gap: var(--space-2);
-  }
-  .off-note {
-    color: var(--text-soft);
-    font: var(--w-normal) var(--type-sm) / 16px var(--font-sans);
   }
   .face {
     display: grid;

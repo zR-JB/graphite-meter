@@ -45,7 +45,8 @@ export interface StageGraph {
   lines: string[];
   area: string;
   heads: { x: number; y: number }[];
-  dots: { x: number; y: number; t: number; ms: number }[];
+  /** A reply over the track's top is clamped there and marked. */
+  dots: { x: number; y: number; t: number; ms: number; over: boolean }[];
   baselineY: number | null;
   /** Per lane: bin centre times and rates, for the hover readout. */
   bins: GraphPoint[][];
@@ -120,7 +121,12 @@ export function stageGraphGeometry(
     Math.min(1, Math.max(0, ms / (input.latencyTop || 1))) * (trackHeight - 3);
   const dots = input.latency
     .filter((point) => point.t >= start && point.t <= start + span)
-    .map((point) => ({ ...point, x: x(point.t), y: trackY(point.ms) }));
+    .map((point) => ({
+      ...point,
+      x: x(point.t),
+      y: trackY(point.ms),
+      over: point.ms > (input.latencyTop || 1),
+    }));
   return {
     lines,
     area: areaOf(lines[0] ?? "", points[0] ?? [], plotHeight),

@@ -9,6 +9,7 @@
   import { fmtBytes, fmtMs, formatRate, resultRate } from "../format";
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
   import { replies } from "../presentation/stageGraph";
+  import { latencyTrackScale } from "../presentation/scales";
   import type { LiveReadout } from "../presentation/liveReadout.svelte";
   import { announce } from "../presentation/announcer.svelte";
   import { handoff } from "../presentation/motion.svelte";
@@ -29,10 +30,7 @@
 
   type Stage = (typeof CARD_ORDER)[number];
 
-  let {
-    live,
-    columns = null,
-  }: { live: LiveReadout; columns?: Stage[] | null } = $props();
+  let { live }: { live: LiveReadout } = $props();
 
   const shown = $derived(store.resultScope);
   const details = $derived(store.result?.multiServer);
@@ -121,7 +119,9 @@
     ceiling: store.scales.chartBytesPerSec,
     baseline:
       store.latencyLanes.find((lane) => lane.key === "latency")?.center ?? null,
-    latencyTop: store.latencyScaleMs,
+    latencyTop: latencyTrackScale(
+      store.latency.map((bucket) => bucket.medianRttMs),
+    ),
     rate: (bytesPerSec) => formatRate(bytesPerSec, units),
   });
   // A stage subscribes to its own live value. Animating one must not rebuild
@@ -271,7 +271,6 @@
 
 <ResultSummary
   cards={view.shown.cards}
-  {columns}
   {scale}
   {head}
   fade={view.opacity}

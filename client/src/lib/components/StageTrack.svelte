@@ -16,7 +16,7 @@
     STATUS_TONE,
     type Tone,
   } from "../presentation/vocabulary";
-  import { fmtDuration, formatLatency, resultRate } from "../format";
+  import { fmtDuration, formatLatency, formatRate } from "../format";
   import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
   import type { StageKey } from "../state/store.svelte";
   import { planned, STAGES } from "../runner/schedule";
@@ -24,13 +24,10 @@
 
   const controller = getApplicationController();
 
-  // A stage's result as a figure and its unit; the latency stage's keeps its unit with the figure.
-  function resultFigure(key: StageKey): { num: string; unit: string } | null {
+  function resultValue(key: StageKey): string | null {
     if (key === "latency") {
       const latency = store.stageResults.latency;
-      return latency
-        ? { num: formatLatency(latency.reportedMs), unit: "" }
-        : null;
+      return latency ? formatLatency(latency.reportedMs) : null;
     }
     const bytes =
       key === "bidirectional"
@@ -41,21 +38,17 @@
         : store.stageResults[key]?.reportedBytesPerSec;
     return bytes == null
       ? null
-      : resultRate(bytes, {
+      : formatRate(bytes, {
           base: store.unitBase,
           kind: store.unitKind,
           tier: store.scales.unitIndex,
         });
   }
-  const resultValue = (key: StageKey) => {
-    const figure = resultFigure(key);
-    return figure ? `${figure.num} ${figure.unit}`.trim() : null;
-  };
 
   const model = $derived(
     STAGES.map((key) => {
       const execution = store.stagePresentation[key];
-      // The run skips a stage without a duration, so the key does too.
+      // The run skips a stage without a duration, so the chip does too.
       const selected = planned(store.config, key);
       const locked = !store.canToggleStage(key);
       const model = stageTrackModel({ selected, locked, execution });
@@ -84,115 +77,138 @@
       stageShown(s.key, s.selected, store.stagePresentation[s.key]),
     ),
   );
-  // A key's end: the stage's result once measured, the time into the stage while it runs, its state word while
-  // it waits. The card under the key draws the stage's progress, so the key's bar shows only how it settled.
+  const plannedMs = (key: StageKey) =>
+    (store.run?.config ?? store.config).duration[`${key}Ms`];
+  // The bar along a chip's top is the stage's progress while it runs and how it settled after; the chip's end is
+  // the time into the stage while it runs, the stage's length while it waits, and its state word otherwise.
   const look = (key: StageKey) => {
     const s = model.find((s) => s.key === key)!;
     const live = s.state === "active" && store.phaseBudgetMs > 0;
-    const done = s.state === "complete" || s.state === "partial";
-    const figure = done ? resultFigure(key) : null;
+    const waiting =
+      s.selected &&
+      (s.state === "pending" ||
+        (s.state === "disabled" && !store.isRunning && !s.tag));
+    const upcoming = s.selected && s.tag === STATUS.next;
+    const time = live || waiting || upcoming;
     return {
       state: s.state,
       live,
-      text: figure
-        ? figure.num
-        : live
-          ? `${fmtDuration(store.phaseClock.current, 1)} / ${fmtDuration(store.phaseBudgetMs, 0)}`
+      time,
+      text: live
+        ? `${fmtDuration(store.phaseClock.current, 1)} / ${fmtDuration(store.phaseBudgetMs, 0)}`
+        : time
+          ? fmtDuration(plannedMs(key), 0)
           : s.reason,
-      unit: figure?.unit ?? "",
+      // A narrow chip keeps the time into the stage and drops its length.
+      short: live ? fmtDuration(store.phaseClock.current, 1) : null,
       tone: s.state === "recovering" ? STATUS_TONE.recovering : key,
+      tagTone: time
+        ? undefined
+        : (STATUS_TONE as Record<string, Tone | undefined>)[s.state],
       progress:
         s.state === "warmup" || s.state === "failed"
           ? 1
           : live
-            ? 0
+            ? store.phaseClock.current / store.phaseBudgetMs
             : s.fill / 100,
     };
   };
-  // A result or word fades in with its state; the running time counts in place.
+  // A word or check fades in with its state; the running time counts in place.
   const looks = Object.fromEntries(
     STAGES.map((key) => [
       key,
       handoff(
         () => look(key),
         (shown) =>
-          shown.live
-            ? `${shown.state}:live`
-            : `${shown.state}:${shown.text}:${shown.unit}`,
+          shown.live ? `${shown.state}:live` : `${shown.state}:${shown.text}`,
       ),
     ]),
   ) as Record<StageKey, Handoff<ReturnType<typeof look>>>;
 </script>
 
 <div class="stage-track" role="group" aria-label="Test stages">
-  {#each segments as s (s.key)}
-    {@const view = looks[s.key]}
-    {@const look = view.shown}
-    <button
-      type="button"
-      class="chip chip--{s.state}"
-      class:on={s.selected}
-      class:done={look.state === "complete"}
-      data-tone={s.key}
-      role="switch"
-      aria-checked={s.selected}
-      aria-label="{s.label} stage{s.reason
-        ? ` (${s.reason})`
-        : s.state === 'complete'
-          ? ` (${STATUS.complete})`
-          : ''}"
-      use:tooltipAction={s.tip}
-      disabled={s.locked}
-      onclick={() => controller.toggleStage(s.key)}
-    >
-      <span class="chip-key" aria-hidden="true">
-        {#if look.state === "complete"}<Icon name="check" />{/if}
-      </span>
-      <span class="chip-label">{s.label}</span>
-      {#if look.text}
-        <span
-          class="chip-res"
-          class:value={look.state === "complete" || look.state === "partial"}
-          data-tone={look.live
-            ? undefined
-            : (STATUS_TONE as Record<string, Tone>)[look.state]}
-          style:opacity={view.opacity}
-          >{look.text}{#if look.unit}<span class="chip-unit">{look.unit}</span
-            >{/if}</span
-        >
-      {/if}
-      <span class="chip-bar" aria-hidden="true">
-        <span
-          class="chip-fill"
-          data-tone={look.tone}
-          class:chip-fill--warmup={look.state === "warmup"}
-          class:chip-fill--failed={look.state === "failed"}
-          class:is-partial={look.state === "partial"}
-          class:is-stalled={look.state === "recovering"}
-          class:is-live={look.live}
-          style:--progress={look.progress}
-        ></span>
-      </span>
-    </button>
-  {/each}
+  <span class="legend caps" aria-hidden="true">Test stages</span>
+  <div class="chips">
+    {#each segments as s (s.key)}
+      {@const view = looks[s.key]}
+      {@const look = view.shown}
+      <button
+        type="button"
+        class="chip chip--{s.state}"
+        class:on={s.selected}
+        data-tone={s.key}
+        role="switch"
+        aria-checked={s.selected}
+        aria-label="{s.label} stage{s.reason
+          ? ` (${s.reason})`
+          : s.state === 'complete'
+            ? ` (${STATUS.complete})`
+            : ''}"
+        use:tooltipAction={s.tip}
+        disabled={s.locked}
+        onclick={() => controller.toggleStage(s.key)}
+      >
+        <span class="chip-bar" aria-hidden="true">
+          <span
+            class="chip-fill"
+            data-tone={look.tone}
+            class:chip-fill--warmup={look.state === "warmup"}
+            class:chip-fill--failed={look.state === "failed"}
+            class:is-partial={look.state === "partial"}
+            class:is-stalled={look.state === "recovering"}
+            class:is-live={look.live}
+            style:--progress={look.progress}
+          ></span>
+        </span>
+        <span class="chip-row">
+          <span class="chip-ico" aria-hidden="true"><Icon name={s.icon} /></span
+          >
+          <span class="chip-label">{s.label}</span>
+          {#if look.state === "complete"}
+            <span class="chip-check" style:opacity={view.opacity}
+              ><Icon name="check" /></span
+            >
+          {:else if look.text}
+            <span
+              class="chip-tag"
+              class:time={look.time}
+              data-tone={look.tagTone}
+              style:opacity={view.opacity}
+              >{#if look.short}<span class="full">{look.text}</span><span
+                  class="short">{look.short}</span
+                >{:else}{look.text}{/if}</span
+            >
+          {/if}
+        </span>
+      </button>
+    {/each}
+  </div>
 </div>
 
 <style>
-  /* The keys take the cards' columns, so each stands over its stage's card; the row lays them out. */
+  /* The caption and the chips stand as one block, centred between the panels and the cards. */
   .stage-track {
-    display: contents;
+    display: grid;
+    gap: 6px;
+    justify-items: start;
+    max-width: 100%;
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    justify-content: center;
+    max-width: 100%;
   }
 
-  /* A key: a flat plate with a check box, the stage's name and, at its end, its result; along its base a bar in
-     the stage's hue once the stage has settled. */
+  /* A chip: its stage's bar along the top, then its glyph, name and, at the end, its time, word or check. */
   .chip {
-    position: relative;
-    display: flex;
-    align-items: center;
-    gap: 10px;
+    display: grid;
+    gap: 7px;
+    align-content: center;
+    width: 172px;
     height: 46px;
-    min-width: 0;
-    padding: 0 12px;
+    padding: 8px 10px;
     overflow: hidden;
     border: var(--hairline) solid var(--border);
     border-radius: var(--r-chrome);
@@ -206,8 +222,9 @@
       border-color: var(--border-strong);
     }
   }
-  /* One off stays operable, so it reads soft rather than dimmed; only a locked key dims. */
+  /* One off stays operable, so it reads soft rather than dimmed; only a locked chip dims. */
   .chip:not(.on) {
+    border-color: var(--border-subtle);
     color: var(--text-soft);
   }
   .chip:disabled {
@@ -216,76 +233,23 @@
   .chip--disabled:disabled {
     opacity: 0.5;
   }
-  /* The box is the switch: ink square while on, the hue's check once measured. */
-  .chip-key {
-    display: grid;
-    flex: none;
-    place-items: center;
-    width: 13px;
-    height: 13px;
-    border: 1px solid var(--field-edge);
-    border-radius: 1px;
-    color: var(--tone);
-  }
-  .on .chip-key {
-    border-color: var(--brand);
-  }
-  .on .chip-key::after {
-    content: "";
-    width: 7px;
-    height: 7px;
-    background: var(--brand);
-  }
-  .done .chip-key {
-    border-color: var(--tone);
-  }
-  .done .chip-key::after {
-    display: none;
-  }
-  .chip-key :global(svg) {
-    width: 10px;
-    height: 10px;
-  }
-  .chip-label {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    font: 500 var(--type-body) / 1 var(--font-sans);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .chip-res {
-    flex: none;
-    color: var(--text-muted);
-    font: var(--role-figure-sm);
-    line-height: 1;
-    white-space: nowrap;
-  }
-  .chip-res.value {
-    color: var(--text);
-  }
-  .chip-res[data-tone] {
-    color: var(--tone-ink);
-  }
-  .chip-unit {
-    margin-left: 0.5ch;
-    color: var(--text-muted);
-  }
-  /* A narrower row keeps the figure and drops its unit, which the dial names. */
-  @container viz (max-width: 1180px) {
-    .chip-unit {
-      display: none;
-    }
+  /* The running chip takes its hue as its edge, like the running card. */
+  .chip--active,
+  .chip--warmup,
+  .chip--recovering {
+    border-color: color-mix(in oklab, var(--tone) 55%, var(--border));
   }
   .chip-bar {
-    position: absolute;
-    inset: auto 0 0;
-    height: 2px;
+    position: relative;
+    height: 3px;
     overflow: hidden;
+    border-radius: var(--r-full);
+    background: var(--surface-inset);
   }
   .chip-fill {
     position: absolute;
     inset: 0;
+    border-radius: inherit;
     background: var(--tone);
     transform: scaleX(var(--progress, 0));
     transform-origin: left center;
@@ -335,27 +299,82 @@
       translate: 240%;
     }
   }
-  @container viz (max-width: 720px) {
-    .chip {
-      padding: 0 10px;
-    }
+  .chip-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 16px;
+    min-width: 0;
   }
+  .chip-ico {
+    display: grid;
+    flex: none;
+    place-items: center;
+  }
+  .chip-ico :global(svg) {
+    width: 14px;
+    height: 14px;
+  }
+  .chip-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    font: var(--w-heavy) var(--type-sm) / 1 var(--font-sans);
+    letter-spacing: var(--track-tight);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .chip-check {
+    display: grid;
+    flex: none;
+    color: var(--ok);
+  }
+  .chip-check :global(svg) {
+    width: 12px;
+    height: 12px;
+  }
+  /* A state word is a small engraved tag; a time is a plain figure. */
+  .chip-tag {
+    flex: none;
+    padding: 2px 5px;
+    border-radius: var(--r-well);
+    background: var(--surface-inset);
+    color: var(--text-soft);
+    font: var(--w-strong) var(--type-2xs) / 1 var(--font-mono);
+    letter-spacing: var(--track-caps);
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .chip-tag[data-tone] {
+    color: var(--tone-ink);
+  }
+  .chip-tag.time {
+    padding: 0;
+    background: none;
+    color: var(--text-muted);
+    font: var(--role-figure-sm);
+    line-height: 1;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .chip-tag .short {
+    display: none;
+  }
+  /* Narrow rows: two chips to a line, the running one with the time into its stage alone. */
   @container viz (max-width: 430px) {
-    .chip {
+    .chips {
       display: grid;
-      grid-template-columns: auto minmax(0, 1fr);
-      grid-template-rows: auto auto;
-      row-gap: 2px;
-      column-gap: 8px;
-      align-content: center;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
-    .chip-key {
-      grid-row: 1 / 3;
+    .chip {
+      width: auto;
+      padding: 8px;
     }
-    .chip-res {
-      grid-column: 2;
-      justify-self: start;
-      font-size: var(--type-xs);
+    .chip-tag .full {
+      display: none;
+    }
+    .chip-tag .short {
+      display: inline;
     }
   }
 </style>

@@ -62,29 +62,29 @@
 {/if}
 
 <style>
-  /* Graphite: the one primary action is ink, like every selected control; Stop steps back to an outline. The key
-     sits under the ring on the dial's panel: its label at the left, the estimate at the right. */
+  /* Graphite: the one primary action is ink, like every selected control; Stop steps back to a quiet plate. The
+     key is the dial panel's foot, edge to edge, its label and estimate centred. */
   .run-button {
     position: relative;
     isolation: isolate;
     overflow: hidden;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
+    justify-content: center;
+    gap: var(--space-3);
     width: 100%;
-    max-width: 320px;
-    height: 46px;
+    height: 48px;
     padding-inline: 14px;
     border: 0;
-    border-radius: var(--r-chrome);
+    border-radius: 0 0 calc(var(--r-surface) - var(--hairline))
+      calc(var(--r-surface) - var(--hairline));
     background: none;
     color: color-mix(
       in oklab,
       var(--text-inverse) calc(100% * (1 - var(--stop))),
       var(--text)
     );
-    font: 500 var(--type-body) / 1 var(--font-sans);
+    font: var(--w-strong) var(--type-md) / 1 var(--font-sans);
     transition: transform var(--dur-hover) var(--ease-out);
   }
   /* Hover strengthens the skin itself; a filter would re-rasterize the label. */
@@ -93,17 +93,15 @@
       background: var(--brand-strong);
     }
     .run-button:hover:not(.pending, [aria-disabled="true"]) .skin.stop {
-      background: none;
-      box-shadow: inset 0 0 0 1px var(--field-edge);
+      background: var(--hover-wash);
     }
   }
   .run-button:active {
     transform: scale(0.985);
   }
-  /* A phone's key spans its panel at a thumb's height. */
+  /* A phone's key keeps a thumb's height. */
   @container viz (max-width: 520px) {
     .run-button {
-      max-width: none;
       height: var(--hit);
     }
   }
@@ -119,8 +117,7 @@
       box-shadow var(--dur-hover) var(--ease-out);
   }
   .skin.stop {
-    background: none;
-    box-shadow: inset 0 0 0 1px var(--border-strong);
+    background: var(--surface-2);
     opacity: var(--stop);
   }
   .run-button[aria-disabled="true"] {

@@ -258,6 +258,10 @@
             y1={graph.baselineY ?? trackH}
             y2={dot.y}
           />
+          {#if dot.over}<path
+              class="reply-over"
+              d={`M ${dot.x - 2.5} 5.5 L ${dot.x} 0.5 L ${dot.x + 2.5} 5.5 Z`}
+            />{/if}
         {/each}
         {#if hover}<line
             class="cursor"

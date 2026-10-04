@@ -176,38 +176,39 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
 ## Components
 
 - **Console** (`GaugePanel`): the dial's panel, 300 px wide and up to 560 with the console, beside the latency
-  panel; under them one key per stage, and under each key its stage's card: the keys and the cards share one
-  set of columns and gaps, so a stage is one column from its switch to its figures. A complete run fits
-  1024 × 768 without scrolling. On a phone the dial keeps about two fifths of the screen with the run key at its
-  foot, the keys sit two to a row, the cards two to a row with the running card first, and the lanes come last.
+  panel; under them the stage chips, centred; under those one card per stage across the console. A complete run
+  fits 1024 × 768 without scrolling. On a phone the dial keeps about two fifths of the screen with the run key at
+  its foot, the chips sit two to a row, the cards two to a row with the running card first, and the lanes come
+  last.
   The dial is a 270° ring with an arc a twelfth of its radius wide, short ticks and five labels; every result's
   arc lies on the ring, the longest underneath, so each shows from where the next shorter one ends, and ends in
   a bead in its hue; a bead moved inward off a close neighbour hangs on a stalk; the stage's mark and name sit
-  over the number. The ring and its readout grow with the screen: on a landscape screen the console takes the
-  column's height, the top row takes the spare height first and the cards' strips second. Every "—" that waits for a value is `--text-soft`; a measured value is full ink. The note under the
+  over the number. The ring and its readout grow with the screen: on a landscape screen the
+  console takes the column's height, the top row takes the spare height first, to 460 px, and the cards' strips
+  the rest, to 120 px. Every "—" that waits for a value is `--text-soft`; a measured value is full ink. The note under the
   dial holds the phase's note or a failure, and while no data or no reply arrives, for how long; on a landscape
   screen it hangs just under the ring. Every rate on the page reads in the dial's unit, zero included. Nothing
   above the cards moves from Start to the result.
-- **Top bar and status strip**: 40 px on the canvas and 28 px in `--surface-1`, each with a hairline, their
+- **Top bar and status strip**: 48 px on the canvas and 28 px in `--surface-1`, each with a hairline, their
   text on the console's gutter (`--gutter`, 24 px, 16 under 1024 px), so the brand, the panels' edges and the
-  status word share one line. The bar carries the brand, a Settings key, the connection dot and spark, and at
-  the right History, Details and the theme; a key is its glyph and word, the word dropped on a phone. The strip
+  status word share one line. The bar carries the brand, a Settings key, the connection dot, and at the right
+  History, Details and the theme; a key is a 30 px plate with a hairline and a darker foot, its glyph and word,
+  the word dropped on a phone. The strip
   reads the status word, the elapsed time, the bytes moved, the time left while a stage runs, the build, and the
   key hints at the right; each figure starts on a fixed edge and grows to the right.
 - **Server lens** (`ServerLens`, `ServerScope quiet`): with several servers, one quiet field in the dial's corner
   (All servers or one), as wide as the choice it shows, drives the cards and which server's latency is shown once
   the run finishes. History's detail has its own.
-- **Stage keys** (`StageTrack`): one key per stage, over its card. A key is a switch: a check box in ink while
-  the stage is in the run, its name, and at its end its result as a figure once measured (the unit dropped under
-  1180 px), the time into the stage while it runs ("1.9 s / 4 s", counting in place), or its state word while it
-  recovers or is skipped; along its base a 2 px bar in the stage's hue once the stage has settled (hatched for a
-  partial stage, failed in `--err`), never while it runs: the card under the key draws the running stage. The box
-  takes the hue's check once complete. One off stays operable, so it reads soft, and only a locked key dims; a
-  stage with a key and no card keeps its column with a quiet placeholder ("Not in this run"). Nothing on the row
-  moves between states.
-- **Run key** (`RunButton`): the one solid control, ink, at the foot of the dial's panel under the ring, up to
-  320 px wide and the panel's width on a phone; its label at the left and the estimate at the right; Stop steps
-  back to an outline with a square.
+- **Stage chips** (`StageTrack`): under the engraved caption "Test stages", one 172 × 46 px chip per stage,
+  centred as a row. A chip is a switch: along its top a 3 px bar in the stage's hue that fills as the stage runs
+  and stays full once measured (hatched for a partial stage, failed in `--err`, a sweep while warming up); under
+  it the stage's glyph and name and, at the end, its time: the stage's length while it waits ("4 s"), the time
+  into it while it runs ("1.9 s / 4 s", counting in place; the time alone on a phone), a check once complete, or
+  its state as a small engraved tag (Skipped, Recovering, Partial, Failed). The running chip takes its hue as its
+  edge, like the running card. One off stays operable, so it reads soft, and only a locked chip dims. The chip's
+  hover names its result. Nothing on the row moves between states.
+- **Run key** (`RunButton`): the one solid control, ink, the dial panel's foot: edge to edge under a hairline, 48 px
+  (44 on a phone), its label and estimate centred; Stop steps back to a quiet plate with a square.
 - **Result card** (`ResultSummary`): one panel per stage, ruled 2 px in its hue along the top: the stage's mark
   and name with a status word at the line's end when not complete; the readout, one line tall (bidirectional: ↓
   and ↑ as a pair on one baseline); one quiet line (the wire rate with its overhead, the latency card's jitter, a
@@ -220,7 +221,9 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
 - **Strip** (`StageGraph`): 68 px on the card's field, up to 120 with the console's height. A transfer's strip is the rate from zero to
   the shared ceiling (`store.scales.chartBytesPerSec`), a dashed second lane for bidirectional upload, and a 20 px
   latency track below: one bar per reply bucket from the dashed idle median, its length being time over the
-  median. The latency card's strip is the same track alone at the strip's height, with the same readout: the
+  median. The track's top is the ladder tier above 2.5× the p75 of the run's replies, so the body of the replies
+  keeps its shape; a reply past it is clamped at the edge and ends in an arrowhead, and its readout names the
+  value. The latency card's strip is the same track alone at the strip's height, with the same readout: the
   idle replies over the stage, kept as the record (History has no series). A mouse, a tap, a sideways drag or arrow keys show a readout on a
   transfer's strip at once: time into the stage, the rate, and the latency replies measured then. A vertical swipe
   scrolls past; a drag's readout leaves with the finger.
@@ -283,8 +286,8 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
 | `.kv` row                | 42             | plate 4            | row               | separators `--border-subtle`                     |
 | Choice row               | 42 (two lines) | 2, concentric      | row + `small`     | hover `--hover-wash`; chosen by its mark         |
 | `.btn`                   | 32 (bar 28)    | 3                  | control           | hairline; quiet: hover, press and open washes    |
-| Run key                  | 46             | 3                  | 13 px 500         | ink fill, `--text-inverse`; running: outline     |
-| Stage key                | 46             | 3                  | 13 px 500, figure | on: ink box; live: time; done: hue bar and check |
+| Run key                  | 48             | panel foot         | 14 px 600         | ink fill, `--text-inverse`; running: quiet plate |
+| Stage chip               | 172 × 46       | 3                  | 12 px 700, figure | bar in hue; live: time and hue edge; done: check |
 | `.segmented`             | 32             | 3 track, 2 segment | control           | a plate thumb slides to the chosen segment       |
 | Switch                   | 22 × 38        | full               | row label         | off: check edge; on: ink track                   |
 | Check, radio             | 18             | 2, full            | —                 | ink fill or ring                                 |

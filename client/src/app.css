@@ -125,7 +125,7 @@
   --font-mono:
     "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 
-  --topbar-h: 40px;
+  --topbar-h: 48px;
   --statusbar-h: 28px;
 
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -826,6 +826,10 @@
     stroke-width: 1.5;
     stroke-linecap: round;
     opacity: 0.75;
+  }
+  /* A reply past the track's top ends in an arrowhead at the edge. */
+  .reply-over {
+    fill: var(--tone);
   }
   .reply-median {
     stroke: color-mix(in oklab, var(--phase-latency) 55%, transparent);

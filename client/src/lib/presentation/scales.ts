@@ -103,16 +103,27 @@ export function throughputScales(
 const latencyCeiling = (ms: number) =>
   Math.max(LATENCY_FLOOR_MS, ceilStep(ms, LATENCY_STEPS));
 
-/** The ladder tier above the p95 of reply medians, with headroom. */
-export function latencyScale(medians: readonly (number | null)[]): number {
-  const valid = medians
+const validMs = (values: readonly (number | null)[]) =>
+  values
     .filter(
       (value): value is number =>
         value != null && Number.isFinite(value) && value >= 0,
     )
     .sort((a, b) => a - b);
+
+/** The ladder tier above the p95 of reply medians, with headroom. */
+export function latencyScale(medians: readonly (number | null)[]): number {
+  const valid = validMs(medians);
   if (!valid.length) return EMPTY_LATENCY_MS;
   return latencyCeiling(nearestRank(valid, 0.95) * LATENCY_HEADROOM);
+}
+
+/** A reply track's top: the ladder tier above 2.5× the p75, so the body of the replies keeps its shape and an
+ *  outlier is clamped with an arrow instead of flattening the rest. */
+export function latencyTrackScale(medians: readonly (number | null)[]): number {
+  const valid = validMs(medians);
+  if (!valid.length) return EMPTY_LATENCY_MS;
+  return latencyCeiling(nearestRank(valid, 0.75) * 2.5);
 }
 
 /** The latency axis: the last 8 s while live, the whole series once finished. */

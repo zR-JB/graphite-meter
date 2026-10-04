@@ -822,22 +822,35 @@
     border-bottom: var(--hairline) solid var(--border);
     container: topbar / inline-size;
   }
-  /* A key names itself: its glyph and word, a plate on the bar. */
+  /* A key names itself: its glyph and word on a plate with a foot, so it reads as a key, not a field. */
   .topbar :global(.btn) {
-    --control-h: 26px;
+    --control-h: 30px;
     background-color: var(--surface-1);
+    box-shadow:
+      inset 0 0 0 var(--hairline) var(--btn-line),
+      inset 0 -1px 0 var(--border-strong);
+  }
+  .topbar :global(.btn:active) {
+    background-color: var(--surface-2);
+    box-shadow:
+      inset 0 0 0 var(--hairline) var(--btn-line),
+      inset 0 1px 0 var(--border-strong);
   }
   .key {
-    gap: 6px;
-    padding-inline: 9px;
+    gap: 7px;
+    padding-inline: 10px;
     color: var(--text);
-    font: 500 var(--type-sm) / 1 var(--font-sans);
+    font: 500 var(--type-body) / 1 var(--font-sans);
   }
   .key :global(svg),
   .direct-theme :global(svg) {
-    width: 13px;
-    height: 13px;
+    width: 14px;
+    height: 14px;
     color: var(--text-muted);
+  }
+  /* The bar keeps the connection's dot; its reply trace belongs to the instrument. */
+  .connectivity :global(.spark) {
+    display: none;
   }
   /* The measurement column scrolls under the bar, so its rule strengthens as content passes beneath, as a sheet's head's does. */
   @supports (animation-timeline: scroll()) {
@@ -866,7 +879,7 @@
     margin-left: -6px;
     margin-right: 2px;
     border-radius: var(--r-chrome);
-    font: var(--w-strong) var(--type-body) / 1.4 var(--font-sans);
+    font: var(--w-strong) var(--type-md) / 1.4 var(--font-sans);
     letter-spacing: -0.01em;
     transition: var(--transition-control);
   }
@@ -881,8 +894,8 @@
   }
   /* Hexagon in the brand accent, needle in the text colour (favicon.svg). */
   .brand-glyph {
-    width: 18px;
-    height: 18px;
+    width: 20px;
+    height: 20px;
   }
   .connectivity {
     display: grid;
