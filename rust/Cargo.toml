@@ -29,4 +29,4 @@ codegen-units = 16
 
 [patch.crates-io]
 h2 = { git = "https://github.com/zR-JB/h2", rev = "238744966508e206bbcc81f13994d9637b8449d0" }
-noq = { git = "https://github.com/zR-JB/noq", rev = "6abfdf0f8d7ef2750fcf1a15710880800b64a752" }
+noq = { git = "https://github.com/zR-JB/noq", rev = "c694c869afc71095b267b9481730885f035395ac" }

@@ -2,11 +2,11 @@
   {
     "fork": "https://github.com/zR-JB/noq",
     "branch": "graphite-meter/noq-v1.3.0",
-    "rev": "6abfdf0f8d7ef2750fcf1a15710880800b64a752",
+    "rev": "c694c869afc71095b267b9481730885f035395ac",
     "upstream": "https://github.com/n0-computer/noq",
     "baseTag": "noq-v1.3.0",
     "base": "c1f411562e6078852749b8bcf1190523096a107f",
-    "diffSha256": "697af9b6d15502a14b01029ec54e30bc1cbca8c530d9312b4eae8fe3f5bd94a0",
+    "diffSha256": "02e21e4c6534ad064138f5ec643c3d4ad157dc86c8eda531b643efdddc51140f",
     "modifiedPackages": [
       "noq",
       "noq-proto"
@@ -71,7 +71,8 @@
       {"subject": "Reuse receive metadata across cooperative endpoint turns", "purpose": "Keeps received descriptors in stable endpoint storage and borrows each descriptor, avoiding repeated array initialization and moves without changing receive batches, cooperative checks or socket migration.", "origin": "graphite-meter"},
       {"subject": "Size the endpoint receive batch to four GRO messages", "purpose": "Holds four GRO messages per endpoint receive batch instead of 32, which still exceeds one cooperative turn, and exposes receive_batch_bytes for owner accounting.", "origin": "graphite-meter"},
       {"subject": "Autotune the connection receive window", "purpose": "Adds TransportConfig::initial_receive_window: the connection window starts there and doubles up to receive_window while half of it is read within two round trips, as in quic-go.", "origin": "graphite-meter"},
-      {"subject": "Gate the Graphite Meter fork on Rust 1.99.0", "purpose": "Runs the fork workflow on Rust 1.99.0 and allows the fetch_update deprecation the older MSRV requires.", "origin": "graphite-meter"}
+      {"subject": "Gate the Graphite Meter fork on Rust 1.99.0", "purpose": "Runs the fork workflow on Rust 1.99.0 and allows the fetch_update deprecation the older MSRV requires.", "origin": "graphite-meter"},
+      {"subject": "Wake connection-blocked streams longest waiting first", "purpose": "Wakes streams blocked on connection credit in the order they blocked, so a writer that takes every grant cannot starve the other streams on a slow or lossy path.", "origin": "graphite-meter"}
     ],
     "metadataFiles": [
       ".github/workflows/graphite-meter.yml"

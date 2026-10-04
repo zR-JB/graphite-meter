@@ -1237,6 +1237,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn connection_credit_reaches_the_reply_that_waited_longest() {
+        let (_server, served, mut client_config) = start();
+        let mut transport = noq::TransportConfig::default();
+        // Each grant of connection credit is smaller than what one reply queues at a time.
+        transport.receive_window((64 * 1024_u32).into());
+        client_config.transport_config(Arc::new(transport));
+        let client = client();
+        let (quic, requests) = within(5, h3_client(&client, client_config, served.address)).await;
+        let open = async |path: &str| {
+            let request = Request::get(format!("https://localhost{path}")).body(()).unwrap();
+            let (mut send, recv) = requests.send_request(request).await.unwrap().split();
+            send.finish().await.unwrap();
+            (send, recv)
+        };
+        // The first reply fills the window, then a second and a third wait for credit in that order. Reading the
+        // first frees credit a little at a time; the second's head must not lose every grant to the others.
+        let (_bulk, mut bulk) = open("/download?bytes=1000000000").await;
+        bulk.response().await.unwrap();
+        let (_other, mut other) = open("/download?bytes=1000000000").await;
+        let (_later, _later_reply) = open("/download?bytes=1000000000").await;
+        let reading = async {
+            loop {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                bulk.data().await.unwrap();
+            }
+        };
+        let reply = within(5, async {
+            tokio::select! {
+                reply = other.response() => reply,
+                () = reading => unreachable!(),
+            }
+        })
+        .await;
+        assert_eq!(reply.unwrap().status(), StatusCode::OK);
+        quic.close(0_u32.into(), b"done");
+        served.stop().await;
+    }
+
+    #[tokio::test]
     async fn silent_connections_from_few_sources_leave_budget_for_new_clients() {
         let (server, served, client_config) = start();
         within(8, async {
