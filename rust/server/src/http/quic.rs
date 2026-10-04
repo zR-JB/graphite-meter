@@ -966,9 +966,11 @@ mod tests {
                 "grant charged when made"
             );
             round_trip(&peer, &credit).await;
-            assert_eq!(fill(&peer).await, QUIC_CREDIT_BYTES);
+            // Unread, the window stays where autotuning starts it.
+            let initial = crate::budget::QUIC_INITIAL_RECEIVE_WINDOW - QUIC_RECEIVE_WINDOW_FLOOR;
+            assert_eq!(fill(&peer).await, initial as usize);
             let charged = idle - settled(&server.memory, &[&peer]).await;
-            eprintln!("{QUIC_CREDIT_BYTES} bytes of credit filled: {charged} bytes charged");
+            eprintln!("{initial} bytes of credit filled: {charged} bytes charged");
             assert!(charged < QUIC_CREDIT_BYTES / 4 * 5, "credit charged again as it filled");
 
             assert!(credit.fund(&clients));

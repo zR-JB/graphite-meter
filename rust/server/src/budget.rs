@@ -39,6 +39,8 @@ const QUIC_DATAGRAM_BUFFER_BYTES: usize = 64 * 1024;
 const QUIC_STREAM_RECEIVE_WINDOW: u32 = 32 * 1024 * 1024;
 pub(crate) const QUIC_RECEIVE_WINDOW: u32 = 48 * 1024 * 1024;
 pub(crate) const QUIC_RECEIVE_WINDOW_FLOOR: u32 = 64 * 1024;
+/// quic-go's first connection window, from which a funded window autotunes up to `QUIC_RECEIVE_WINDOW`.
+pub(crate) const QUIC_INITIAL_RECEIVE_WINDOW: u32 = 768 * 1024;
 /// The receive credit a funded QUIC connection reserves past its floor.
 pub(crate) const QUIC_CREDIT_BYTES: usize = (QUIC_RECEIVE_WINDOW - QUIC_RECEIVE_WINDOW_FLOOR) as usize;
 /// A QUIC connection's first send window, and the least its tuning returns to.
@@ -62,6 +64,7 @@ pub(crate) fn quic_transport(limits: &Limits) -> Result<noq::TransportConfig, Co
     transport.max_concurrent_uni_streams(QUIC_UNI_STREAMS.into());
     transport.stream_receive_window(QUIC_STREAM_RECEIVE_WINDOW.into());
     transport.receive_window(QUIC_RECEIVE_WINDOW_FLOOR.into());
+    transport.initial_receive_window(Some(QUIC_INITIAL_RECEIVE_WINDOW.into()));
     transport.send_window(QUIC_MIN_SEND_WINDOW);
     transport.datagram_receive_buffer_size(Some(QUIC_DATAGRAM_BUFFER_BYTES));
     transport.datagram_send_buffer_size(QUIC_DATAGRAM_BUFFER_BYTES);
@@ -99,9 +102,7 @@ pub(crate) fn endpoint_bytes(
     } else {
         0
     };
-    packet
-        .checked_mul(receive_segments)?
-        .checked_mul(noq::udp::BATCH_SIZE)?
+    noq::receive_batch_bytes(packet, receive_segments)
         .checked_add(packet.checked_mul(max_connections.div_ceil(shards).checked_add(1)?)?)?
         .checked_add((QUIC_INCOMING_TOTAL_BYTES as usize).div_ceil(shards))?
         .checked_add(queue)?

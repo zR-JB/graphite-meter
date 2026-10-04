@@ -13,9 +13,11 @@ use tokio::{
 use crate::Error;
 
 const MAX_REQUESTS: usize = 256;
-/// Go's receive ceilings (noq's credit is fixed; less caps 100 ms below 1 Gbit/s) and quic-go's in-flight cap.
+/// Go's receive ceilings and quic-go's in-flight cap.
 const STREAM_RECEIVE_BYTES: u32 = 32 * 1024 * 1024;
 const CONNECTION_RECEIVE_BYTES: u32 = 48 * 1024 * 1024;
+/// quic-go's first connection window, which autotuning grows up to `CONNECTION_RECEIVE_BYTES`.
+const INITIAL_RECEIVE_BYTES: u32 = 768 * 1024;
 const SEND_BYTES: u64 = 16 * 1024 * 1024;
 const DATAGRAM_BYTES: usize = 256 * 1024;
 
@@ -43,6 +45,7 @@ impl Connection {
         transport.max_concurrent_uni_streams(36_u32.into());
         transport.stream_receive_window(STREAM_RECEIVE_BYTES.into());
         transport.receive_window(CONNECTION_RECEIVE_BYTES.into());
+        transport.initial_receive_window(Some(INITIAL_RECEIVE_BYTES.into()));
         transport.send_window(SEND_BYTES);
         transport.datagram_receive_buffer_size(Some(DATAGRAM_BYTES));
         transport.max_idle_timeout(Some(Duration::from_secs(60).try_into()?));

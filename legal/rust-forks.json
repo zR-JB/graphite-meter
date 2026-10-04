@@ -2,11 +2,11 @@
   {
     "fork": "https://github.com/zR-JB/noq",
     "branch": "graphite-meter/noq-v1.3.0",
-    "rev": "b0438db9463336fd35d65e851cb7cade0ff47484",
+    "rev": "6abfdf0f8d7ef2750fcf1a15710880800b64a752",
     "upstream": "https://github.com/n0-computer/noq",
     "baseTag": "noq-v1.3.0",
     "base": "c1f411562e6078852749b8bcf1190523096a107f",
-    "diffSha256": "05f217741d3be53ef4072f427ff5be220a646ef4fcf1e0a8406ca73fa383024b",
+    "diffSha256": "697af9b6d15502a14b01029ec54e30bc1cbca8c530d9312b4eae8fe3f5bd94a0",
     "modifiedPackages": [
       "noq",
       "noq-proto"
@@ -68,7 +68,10 @@
       {"subject": "Make receive compaction coverage independent of pointer width", "purpose": "Derives the tiny-fragment compaction test threshold from the actual owner footprint on each architecture.", "origin": "graphite-meter"},
       {"subject": "Preserve receive batches across cooperative packet-processing yields", "purpose": "Preserves full socket and GRO batches across cooperative packet-processing yields, retains receive metadata and rebinding origin, and covers interruption, migration and Smol-only builds.", "origin": "graphite-meter"},
       {"subject": "Explicitly discard transmit metadata in the rebinding fixture", "purpose": "Test-only: explicitly consumes the must-use transmit metadata while constructing the rebinding fixture.", "origin": "graphite-meter"},
-      {"subject": "Reuse receive metadata across cooperative endpoint turns", "purpose": "Keeps received descriptors in stable endpoint storage and borrows each descriptor, avoiding repeated array initialization and moves without changing receive batches, cooperative checks or socket migration.", "origin": "graphite-meter"}
+      {"subject": "Reuse receive metadata across cooperative endpoint turns", "purpose": "Keeps received descriptors in stable endpoint storage and borrows each descriptor, avoiding repeated array initialization and moves without changing receive batches, cooperative checks or socket migration.", "origin": "graphite-meter"},
+      {"subject": "Size the endpoint receive batch to four GRO messages", "purpose": "Holds four GRO messages per endpoint receive batch instead of 32, which still exceeds one cooperative turn, and exposes receive_batch_bytes for owner accounting.", "origin": "graphite-meter"},
+      {"subject": "Autotune the connection receive window", "purpose": "Adds TransportConfig::initial_receive_window: the connection window starts there and doubles up to receive_window while half of it is read within two round trips, as in quic-go.", "origin": "graphite-meter"},
+      {"subject": "Gate the Graphite Meter fork on Rust 1.99.0", "purpose": "Runs the fork workflow on Rust 1.99.0 and allows the fetch_update deprecation the older MSRV requires.", "origin": "graphite-meter"}
     ],
     "metadataFiles": [
       ".github/workflows/graphite-meter.yml"
@@ -80,11 +83,11 @@
   {
     "fork": "https://github.com/zR-JB/h2",
     "branch": "graphite-meter/h2-v0.4.19",
-    "rev": "ece53421ec31270ff843a783bcdf244bd6c5eef7",
+    "rev": "81631f0916ecaaf550dadebe941b947a9e4c1a13",
     "upstream": "https://github.com/hyperium/h2",
     "baseTag": "v0.4.19",
     "base": "d57d1b852fec9dda6d42d3454502006d52104da8",
-    "diffSha256": "622d9b7aefe21afa198b65c5cced6b0ebc777dde1f2b36bffe351e0d48d792fc",
+    "diffSha256": "5ddb79d056c4bf77749b6e3f3d2ed515861b12ef7b97ca7f77eb871badf41852",
     "modifiedPackages": [
       "h2"
     ],
@@ -137,7 +140,8 @@
       {"subject": "Refuse requests the state allowance cannot hold as retryable", "purpose": "Answers allowance refusals of request headers with RST_STREAM(REFUSED_STREAM) and no response, keeps HPACK in sync, keeps 431 for genuinely oversize lists and uses ENHANCE_YOUR_CALM for refused trailers.", "origin": "graphite-meter"},
       {"subject": "Refund receive window credit when the connection ends", "purpose": "Refunds charged receive credit on EOF, drop and connection error even while handlers hold stream handles.", "origin": "graphite-meter"},
       {"subject": "Exempt empty final DATA from the send allowance", "purpose": "Lets a response finish with an empty END_STREAM frame under allowance pressure.", "origin": "graphite-meter"},
-      {"subject": "Restore is_released's doc comment", "purpose": "Moves a misplaced doc comment back to its function.", "origin": "graphite-meter"}
+      {"subject": "Restore is_released's doc comment", "purpose": "Moves a misplaced doc comment back to its function.", "origin": "graphite-meter"},
+      {"subject": "Gate the Graphite Meter fork on Rust 1.99.0", "purpose": "Runs the fork workflow on Rust 1.99.0 and allows the fetch_update deprecation the older MSRV requires.", "origin": "graphite-meter"}
     ],
     "metadataFiles": [
       ".github/workflows/graphite-meter.yml"
