@@ -335,10 +335,6 @@ to retain this policy. mimalloc returns freed pages to the OS only while the
 freeing thread allocates, so two seconds after its last connection closes the
 server collects every runtime thread's heap.
 
-The current 12-pair server study found lower sampled peak RSS in every workload,
-with small workload-dependent speed changes. The TUI uses the same native
-allocator and build default, but that study did not measure TUI performance.
-
 Local musl cross builds need musl headers and a target C compiler wrapper: set
 `CC_x86_64_unknown_linux_musl=x86_64-linux-musl-gcc` or
 `CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc`. Debian provides these in
@@ -388,9 +384,7 @@ identity provider or real deployment.
 
 The full probe includes immediate WebTransport stream reset against the unchanged
 Go client using quic-go v0.63.0. It requires the session association prefix to
-survive reset without a temporary dependency overlay. Earlier quic-go v0.62.0
-lost the final prefix byte when a read returned that byte with a reset error.
-The current-only Go probe exercises the draft-09+ transport parameter; it is
+survive reset without a temporary dependency overlay. The current-only Go probe exercises the draft-09+ transport parameter; it is
 not evidence of Safari browser parity.
 
 The workspace uses exact revisions of the [Noq](https://github.com/zR-JB/noq)
