@@ -71,9 +71,9 @@
     align-items: center;
     justify-content: center;
     gap: var(--space-2);
-    min-width: 176px;
-    height: 40px;
-    padding-inline: 20px;
+    min-width: 168px;
+    height: 36px;
+    padding-inline: var(--space-4);
     border: 0;
     border-radius: var(--r-chrome);
     background: none;
@@ -82,7 +82,7 @@
       var(--text-inverse) calc(100% * (1 - var(--stop))),
       var(--text)
     );
-    font: var(--w-strong) var(--type-md) / 1 var(--font-display);
+    font: var(--w-strong) var(--type-body) / 1 var(--font-sans);
     transition: transform var(--dur-hover) var(--ease-out);
   }
   /* Hover strengthens the skin itself; a filter would re-rasterize the label. */
@@ -132,14 +132,14 @@
   .stop-sq {
     width: 10px;
     height: 10px;
-    border-radius: 2px;
+    border-radius: 1px;
     background: currentColor;
   }
-  /* On the label's baseline (app.css, --role-label). */
+  /* The estimate reads in the figure voice, on the label's baseline (app.css, --role-label). */
   .duration {
-    margin-top: calc(var(--type-md) - var(--type-sm));
-    color: color-mix(in oklab, currentColor 62%, transparent);
-    font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
+    margin-top: calc(var(--type-body) - var(--type-sm));
+    color: color-mix(in oklab, currentColor 66%, transparent);
+    font: 500 var(--type-sm) / 1 var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
 </style>

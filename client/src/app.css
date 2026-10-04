@@ -131,7 +131,7 @@
   --font-mono:
     "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 
-  --topbar-h: 60px;
+  --topbar-h: 52px;
   --statusbar-h: 28px;
 
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -154,12 +154,13 @@
   --space-5: 24px;
   --space-6: 32px;
 
-  --r-well: 4px;
-  --r-chrome: 8px;
-  --r-surface: 12px;
+  /* Square: an instrument's frames and controls take the smallest radius that still reads as a cut corner. */
+  --r-well: 2px;
+  --r-chrome: 3px;
+  --r-surface: 4px;
   --r-full: 999px;
-  /* A row's wash sits 2 px inside its plate, on a radius concentric with the plate's. */
-  --r-row: calc(var(--r-chrome) - var(--hairline) - 2px);
+  /* A row's wash sits 2 px inside its plate. */
+  --r-row: 2px;
   /* One device pixel on dense screens; field edges stay 1px for their 3:1 floor. */
   --hairline: 1px;
 
@@ -179,10 +180,16 @@
   --role-caption: var(--w-normal) var(--type-xs) / 1.5 var(--font-sans);
   --role-panel-title: var(--w-strong) var(--type-lg) / 1.25 var(--font-display);
   --role-label: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
+  /* The readout voice: every measured value, axis and counter is mono, so figures align and read as data. */
+  --role-figure: 500 var(--type-md) / 1.3 var(--font-mono);
+  --role-figure-sm: 500 var(--type-sm) / 1.3 var(--font-mono);
+  /* A frame's engraved label: small mono capitals, tracked. */
+  --role-kicker: 500 var(--type-2xs) / 1 var(--font-mono);
   /* Centred beside a larger word, a smaller one sits half their size gap high; that gap as its top margin sets it
      on the larger word's baseline, e.g. margin-top: calc(var(--type-md) - var(--type-sm)). */
   --track-tight: -0.02em;
   --track-wide: 0.1em;
+  --track-figure: -0.02em;
 
   --z-toast: 40;
   --z-scrim: 50;
@@ -207,17 +214,14 @@
        for the terminal client (see DESIGN.md). */
   /* Dark fills stay above the levels where OLED pixels switch off and smear. */
   --canvas: light-dark(oklch(0.962 0.004 258), oklch(0.17 0.008 258));
-  --canvas-deep: light-dark(oklch(0.93 0.006 258), oklch(0.15 0.008 258));
+  /* A framed area of the instrument: one step above the page. */
+  --panel: light-dark(oklch(0.985 0.002 258), oklch(0.192 0.009 258));
   --surface-1: light-dark(oklch(0.995 0.002 258), oklch(0.215 0.009 258));
   --surface-2: light-dark(oklch(0.975 0.003 258), oklch(0.25 0.01 258));
   --surface-inset: light-dark(oklch(0.948 0.005 258), oklch(0.15 0.008 258));
-  /* What floats over the instrument: sheets, popovers and menus. */
+  /* What floats over the instrument: sheets, popovers and menus. Opaque: a blur costs every frame on a slow GPU. */
   --sheet-solid: light-dark(oklch(0.985 0.003 258), oklch(0.195 0.009 258));
-  --sheet: light-dark(
-    oklch(0.985 0.003 258 / 0.88),
-    oklch(0.195 0.009 258 / 0.88)
-  );
-  --sheet-blur: blur(28px) saturate(1.4);
+  --sheet: var(--sheet-solid);
 
   --border-subtle: light-dark(
     oklch(0.3 0.02 255 / 0.08),
@@ -269,40 +273,20 @@
   --hover-wash: color-mix(in oklab, var(--text) 6%, transparent);
   --selected-wash: color-mix(in oklab, var(--text) 10%, transparent);
 
-  /* Material. Shadows are one ink whose depth differs per theme: a dark canvas
-     needs a denser shadow to read at all. The grain is a cached tile of
-     mid-grey noise: blended with overlay it dithers gradients by about one
-     8-bit level without lifting or darkening the page. */
+  /* Material is flat: hairlines separate, fills step. Only what floats casts a shadow, one ink whose depth
+     differs per theme, because a dark canvas needs a denser shadow to read at all. */
   --shade: light-dark(oklch(0.25 0.02 255), oklch(0.08 0.01 255));
-  --edge-light: light-dark(oklch(1 0 0 / 0.8), oklch(1 0 0 / 0.075));
-  --edge-highlight: rgb(255 255 255 / 0.22);
-  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='.3 0 0 0 .35 .3 0 0 0 .35 .3 0 0 0 .35 0 0 0 0 1'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
-  --bg:
-    var(--grain),
-    radial-gradient(
-      120% 70% at 50% 0%,
-      light-dark(oklch(1 0 0 / 0.55), oklch(0.8 0.04 225 / 0.05)),
-      transparent 70%
-    ),
-    var(--canvas);
-  --glass: color-mix(in oklab, var(--surface-2) 74%, transparent);
-  --glass-blur: blur(20px) saturate(1.6);
-
-  --elev-tile: inset 0 var(--hairline) 0 var(--edge-light);
-  --elev-recess: inset 0 1px 2px
-    color-mix(in oklab, var(--shade) 6%, transparent);
+  --glass: var(--surface-2);
   --elev-tooltip:
-    var(--elev-tile),
-    0 1px 3px
-      light-dark(oklch(0.25 0.02 255 / 0.08), oklch(0.08 0.01 255 / 0.3)),
-    0 10px 28px -8px
-      light-dark(oklch(0.25 0.02 255 / 0.22), oklch(0.08 0.01 255 / 0.5));
+    0 1px 2px
+      light-dark(oklch(0.25 0.02 255 / 0.1), oklch(0.08 0.01 255 / 0.35)),
+    0 8px 20px -6px
+      light-dark(oklch(0.25 0.02 255 / 0.2), oklch(0.08 0.01 255 / 0.5));
   --elev-float:
-    var(--elev-tile),
     0 2px 6px
-      light-dark(oklch(0.25 0.02 255 / 0.06), oklch(0.08 0.01 255 / 0.3)),
-    0 28px 64px -16px
-      light-dark(oklch(0.25 0.02 255 / 0.24), oklch(0.08 0.01 255 / 0.55));
+      light-dark(oklch(0.25 0.02 255 / 0.08), oklch(0.08 0.01 255 / 0.35)),
+    0 20px 48px -16px
+      light-dark(oklch(0.25 0.02 255 / 0.24), oklch(0.08 0.01 255 / 0.6));
 
   /* Solid brand clears the 3:1 non-text contrast floor on light surfaces, where
      a translucent ring does not. */
@@ -343,20 +327,6 @@
   :root {
     --border-subtle: var(--border-strong);
     --text-soft: var(--text-muted);
-  }
-}
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  :root {
-    --glass: var(--surface-2);
-    --glass-blur: none;
-    --sheet: var(--sheet-solid);
-    --sheet-blur: none;
-  }
-}
-/* Forced colours drop gradients but keep images; the grain would paint over the system canvas. */
-@media (forced-colors: active) {
-  :root {
-    --grain: none;
   }
 }
 
@@ -569,7 +539,6 @@
     border: var(--hairline) solid var(--border-strong);
     border-radius: var(--r-well);
     background: var(--surface-2);
-    box-shadow: var(--elev-tile);
     color: var(--text-muted);
     font: 500 var(--type-2xs) / 1 var(--font-mono);
   }
@@ -594,6 +563,46 @@
     line-height: 1.5;
   }
 
+  /* A framed area of the instrument: a hairline, one fill step above the page, square corners. */
+  .panel {
+    border: var(--hairline) solid var(--border);
+    border-radius: var(--r-surface);
+    background: var(--panel);
+  }
+  /* A frame's head: its engraved label, and whatever operates the frame at the line's end. */
+  .panel-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    min-height: 28px;
+  }
+  .panel-head > :last-child:not(:first-child) {
+    margin-inline-start: auto;
+  }
+  .kicker {
+    color: var(--text-soft);
+    font: var(--role-kicker);
+    letter-spacing: var(--track-wide);
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  /* A measured value: mono, so figures sit in columns and a changing digit never moves its neighbours. */
+  .figure {
+    font: var(--role-figure);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  /* A stage's key: a small square in its hue. */
+  .swatch {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 1px;
+    background: var(--tone);
+    forced-color-adjust: none;
+  }
+
   /* The edge is an inset ring so a coarse pointer's transparent border grows the hit area in place. */
   .btn {
     --btn-line: var(--border);
@@ -609,9 +618,7 @@
     border: var(--hit-pad) solid transparent;
     border-radius: calc(var(--r-chrome) + var(--hit-pad));
     background: var(--surface-2) padding-box;
-    box-shadow:
-      inset 0 0 0 var(--hairline) var(--btn-line),
-      var(--elev-tile);
+    box-shadow: inset 0 0 0 var(--hairline) var(--btn-line);
     color: var(--text-muted);
     font: var(--role-control);
     text-decoration: none;
@@ -731,7 +738,7 @@
     vertical-align: middle;
     box-shadow: none;
   }
-  /* A stage or phase named in a row leads with a dot in its tone (data-tone). */
+  /* A stage or phase named in a row leads with its key (data-tone). */
   .stage-name {
     display: inline-flex;
     align-items: center;
@@ -739,31 +746,37 @@
   }
   .stage-name::before {
     content: "";
+    flex: none;
     width: 7px;
     height: 7px;
-    border-radius: var(--r-full);
+    border-radius: 1px;
     background: var(--tone);
     forced-color-adjust: none;
   }
-  /* A stage's area is its light on the page: a rule in its hue and a wash that fades out, no box. */
+  /* A stage's frame: a panel whose top edge is a rule in its hue. Its light is held inside the frame, like an
+     indicator: a wash from the rule while it runs, a trace of it once measured, none while it waits. */
   .stage-area {
     --wash: 0%;
+    border: var(--hairline) solid var(--border);
     border-top: 2px solid
       color-mix(in oklab, var(--tone) var(--rule, 100%), transparent);
-    background: linear-gradient(
-      180deg,
-      color-mix(in oklab, var(--tone) var(--wash), transparent),
-      transparent 78%
-    );
+    border-radius: var(--r-surface);
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--tone) var(--wash), transparent),
+        transparent 56%
+      ),
+      var(--panel);
     transition:
       --wash var(--dur-graph) var(--ease-out),
       border-color var(--dur-graph) var(--ease-out);
   }
   .stage-area:is(.complete, .partial, .failed, .stopped) {
-    --wash: 9%;
+    --wash: 7%;
   }
   .stage-area:is(.active, .recovering) {
-    --wash: 16%;
+    --wash: 14%;
   }
   .stage-area:is(.pending, .not-run) {
     --rule: 30%;
@@ -795,12 +808,9 @@
     color: var(--tone);
   }
 
-  /* A sticky head over the page repaints the page itself, so it never reads as a slab. The grain is noise, so
-     its tile needs no alignment with the page's; a fixed attachment would shimmer against it whenever the
-     column glides or the head slides in. */
+  /* A sticky head over the page repaints the page itself, so it never reads as a slab. */
   .page-fill {
-    background: var(--grain), var(--canvas);
-    background-blend-mode: overlay;
+    background: var(--canvas);
   }
 
   .sheet {
@@ -814,7 +824,7 @@
     align-items: center;
     gap: var(--space-1) var(--space-4);
     min-width: 0;
-    min-height: 56px;
+    min-height: 48px;
     padding: var(--space-2) calc(var(--panel-pad) - 12px) var(--space-2)
       calc(var(--panel-pad) + var(--row-inset));
     overflow: hidden;
@@ -900,10 +910,9 @@
   .kv {
     display: grid;
     padding-inline: var(--row-inset);
-    border: var(--hairline) solid var(--border-subtle);
+    border: var(--hairline) solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-1);
-    box-shadow: var(--elev-tile);
     font: var(--role-row);
     text-wrap: pretty;
   }
@@ -1172,10 +1181,6 @@
     background-color: var(--selected-wash);
     color: var(--brand-strong);
   }
-  /* A pressed segment is raised like a key. */
-  .segmented > button[aria-pressed="true"] {
-    box-shadow: var(--elev-tile);
-  }
 
   .empty-state {
     display: grid;
@@ -1210,7 +1215,6 @@
     border: var(--hairline) solid var(--border-strong);
     border-radius: var(--r-surface);
     background: var(--surface-inset);
-    box-shadow: var(--elev-recess);
     color: var(--tone, var(--brand));
     font: var(--w-heavy) var(--type-lg) var(--font-mono);
   }
@@ -1223,8 +1227,6 @@
   .tooltip,
   .inspect-card {
     background: var(--glass);
-    -webkit-backdrop-filter: var(--glass-blur);
-    backdrop-filter: var(--glass-blur);
   }
   .float {
     border: var(--hairline) solid var(--border-strong);
@@ -1232,10 +1234,9 @@
     color: var(--text);
     box-shadow: var(--elev-float);
   }
-  /* A dialog holds reading text over a scrim, so it stays opaque. */
+  /* A dialog holds reading text over a scrim. */
   dialog.float {
     background: var(--surface-1);
-    backdrop-filter: none;
   }
   /* Built like a side sheet, it takes a sheet's material and edge, opaque. */
   dialog.float.sheet {
@@ -1416,7 +1417,7 @@
     opacity: 1;
     scale: none;
   }
-  /* The arrow is the bubble's own glass, so it never reads as a second material. */
+  /* The arrow is the bubble's own material, so it never reads as a second one. */
   .tooltip::before {
     position: absolute;
     top: calc(100% - var(--hairline));
@@ -1426,8 +1427,6 @@
     border: inherit;
     border-width: 0 var(--hairline) var(--hairline) 0;
     background: inherit;
-    -webkit-backdrop-filter: inherit;
-    backdrop-filter: inherit;
     content: "";
     clip-path: polygon(100% 0, 100% 100%, 0 100%);
     translate: -50% -50%;

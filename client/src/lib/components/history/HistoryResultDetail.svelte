@@ -458,10 +458,6 @@
   .detail-body > :global(.result-summary) {
     max-width: none;
   }
-  /* The stage areas' text shares the detail's one edge, a row inset in like its head and groups. */
-  .detail-body :global(.stage-area) {
-    padding-inline: var(--row-inset);
-  }
   /* A saved result's three cards run three across or one to a row, never two and an orphan (3 × 240 px + 2 gaps). */
   @container results (width < 768px) {
     .detail-body :global(.result-cards:has(> :nth-child(3))) {

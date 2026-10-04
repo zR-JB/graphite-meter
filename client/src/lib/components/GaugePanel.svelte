@@ -270,12 +270,15 @@
   bind:clientWidth={panelWidth}
 >
   <div class="instrument">
-    <div class="dial" class:hung>
-      {#if indicatedServers.length > 1}
-        <div class="server-indicator">
-          <ServerLens servers={indicatedServers} {participants} />
-        </div>
-      {/if}
+    <div class="dial panel" class:hung>
+      <header class="panel-head dial-head">
+        <span class="kicker">{msTicksActive ? "Latency" : "Throughput"}</span>
+        {#if indicatedServers.length > 1}
+          <div class="server-indicator">
+            <ServerLens servers={indicatedServers} {participants} />
+          </div>
+        {/if}
+      </header>
       <div
         bind:clientWidth={gaugeWidth}
         bind:clientHeight={gaugeHeight}
@@ -312,8 +315,11 @@
                 class:partial={terminal.dashed}
                 aria-hidden="true"
               >
-                <span class="terminal-direction" data-tone={terminal.direction}>
-                  <span class="terminal-dot"></span>
+                <span
+                  class="terminal-direction kicker"
+                  data-tone={terminal.direction}
+                >
+                  <span class="swatch"></span>
                   {STAGE[terminal.direction].label}
                 </span>
                 <span class="terminal-number">{terminal.value}</span>
@@ -364,7 +370,8 @@
       <div class="latency-slot"><LatencyProfile /></div>
     {/if}
 
-    <div class="run-bar">
+    <div class="run-bar panel">
+      <span class="kicker run-label">Stages</span>
       <StageTrack />
       <RunButton />
     </div>
@@ -382,9 +389,9 @@
   .instrument {
     display: grid;
     height: 100%;
-    gap: var(--space-4) var(--space-5);
+    gap: var(--space-3);
     grid-template:
-      "dial" minmax(280px, 42svh)
+      "dial" minmax(260px, 40svh)
       "run" auto
       "results" auto
       "latency" auto
@@ -396,7 +403,7 @@
         "dial latency" minmax(min-content, 1fr)
         "run run" auto
         "results results" auto
-        / max(240px, (100% - 2 * var(--space-5)) / 3) minmax(0, 1fr);
+        / max(240px, (100% - 2 * var(--space-3)) / 3) minmax(0, 1fr);
     }
     .instrument:not(:has(.latency-slot)) {
       grid-template:
@@ -418,13 +425,15 @@
      latency stage runs, its card is the one under the run button. */
   @container viz (max-width: 520px) {
     .instrument {
-      grid-template-rows: clamp(232px, 32svh, 300px) repeat(3, auto);
-      row-gap: var(--space-3);
+      grid-template-rows: clamp(240px, 34svh, 300px) repeat(3, auto);
+      row-gap: var(--space-2);
     }
     .gauge-panel[data-stage="latency"] .instrument {
       grid-template-areas: "dial" "run" "latency" "results";
     }
   }
+  /* The dial's frame: its head, the face, and the note under the ring; the face ends on the frame's edge, so a
+     hung note measures from it. */
   .dial {
     grid-area: dial;
     position: relative;
@@ -433,10 +442,14 @@
     min-width: 0;
     min-height: 0;
   }
-  /* As tall as its content and centred beside the dial; a tight screen scrolls rather than overlapping the run bar. */
+  .dial-head {
+    flex: none;
+    padding: var(--space-1) var(--space-2) 0 var(--space-3);
+  }
+  /* Framed like the dial and as tall; its content centres in the frame. A tight screen scrolls rather than
+     overlapping the run bar. */
   .latency-slot {
     grid-area: latency;
-    align-self: center;
     display: grid;
     min-width: 0;
   }
@@ -444,15 +457,18 @@
     grid-area: results;
     min-width: 0;
   }
-  /* What runs next and the one action that runs it, on one line. */
+  /* The control strip: what runs next, and the one action that runs it, at the line's end. */
   .run-bar {
     grid-area: run;
     min-width: 0;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    justify-content: center;
-    gap: var(--space-3) var(--space-4);
+    gap: var(--space-2) var(--space-3);
+    padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  }
+  .run-bar > :global(.run-button) {
+    margin-inline-start: auto;
   }
   /* A phone stacks them: the chips' row, then the run button across it. */
   @container viz (max-width: 520px) {
@@ -460,6 +476,10 @@
       display: grid;
       grid-template-columns: minmax(0, 1fr);
       gap: var(--space-2);
+      padding: var(--space-2);
+    }
+    .run-label {
+      display: none;
     }
   }
   .server-indicator {
@@ -493,7 +513,7 @@
     position: absolute;
     translate: var(--x) var(--y);
     color: var(--text-soft);
-    font: var(--w-normal) var(--type-2xs) / 1 var(--font-sans);
+    font: 500 var(--type-2xs) / 1 var(--font-mono);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
@@ -517,21 +537,21 @@
     padding-inline: 9%;
     padding-top: calc(2 * var(--gauge-center-offset));
   }
-  /* Tabular figures keep a live value from shifting layout; light weight reads as a measured value. */
+  /* The readout: mono, so a live value never shifts the layout, in the instrument's figure weight. */
   .gauge-value,
   .terminal-number {
     max-width: 100%;
     color: var(--text);
-    font-family: var(--font-display);
-    font-weight: 300;
+    font-family: var(--font-mono);
+    font-weight: 500;
     font-variant-numeric: lining-nums tabular-nums;
     line-height: 1;
-    letter-spacing: -0.025em;
+    letter-spacing: var(--track-figure);
     white-space: nowrap;
   }
   .gauge-value {
     min-width: 5ch;
-    font-size: clamp(24px, 17cqmin, 76px);
+    font-size: clamp(22px, 12.5cqmin, 56px);
     text-align: center;
   }
   /* "—" waits quietly where the value arrives, like the cards'. */
@@ -556,39 +576,31 @@
     gap: var(--space-1);
     max-width: 100%;
   }
+  /* The stage the result names, engraved over it. */
   .terminal-direction {
     position: absolute;
-    bottom: calc(100% + clamp(10px, 4cqmin, 16px));
+    bottom: calc(100% + clamp(8px, 3.5cqmin, 14px));
     display: flex;
     align-items: center;
     gap: 6px;
     color: var(--text-muted);
-    font-size: clamp(var(--type-xs), 3.6cqmin, 14px);
-    font-weight: var(--w-strong);
-    line-height: 1;
-    white-space: nowrap;
+    font-size: clamp(var(--type-2xs), 2.8cqmin, var(--type-xs));
   }
   @container (max-height: 180px) {
     .terminal-direction {
       display: none;
     }
   }
-  .terminal-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: var(--r-full);
-    background: var(--tone);
-  }
   .terminal-number {
-    font-size: clamp(30px, 17cqmin, 76px);
+    font-size: clamp(26px, 12.5cqmin, 56px);
   }
   /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. One size and line height for both, so the result
      lands where the live value stood. */
   .terminal-unit,
   .gauge-unit {
     color: var(--text-muted);
-    font: var(--w-normal) clamp(var(--type-sm), 4cqmin, var(--type-lg)) /
-      var(--type-md) var(--font-sans);
+    font: 500 clamp(var(--type-xs), 3.4cqmin, var(--type-md)) / var(--type-md)
+      var(--font-mono);
   }
   /* Empty, it keeps its line, so "—" sits where the value arrives. */
   .gauge-unit {
@@ -607,7 +619,7 @@
     display: grid;
     align-items: center;
     min-height: calc(var(--space-2) + 2.7 * var(--type-body));
-    padding-top: var(--space-1);
+    padding: var(--space-1) var(--space-3) var(--space-2);
   }
   /* Hung under the ring's tick ends, out of the column's flow, in a band gaugeLayout keeps free; one line sits up top. */
   .hung .gauge-footer {
@@ -618,16 +630,16 @@
   }
   .gauge-notes {
     display: grid;
-    gap: var(--space-1);
+    gap: 2px;
     text-align: center;
   }
   .gauge-hint {
     color: var(--text-muted);
-    font: var(--w-normal) var(--type-body) / 1.35 var(--font-sans);
+    font: var(--w-normal) var(--type-sm) / 1.35 var(--font-sans);
   }
   .gauge-status {
     color: var(--text);
-    font: var(--w-strong) var(--type-body) / 1.35 var(--font-sans);
+    font: var(--w-strong) var(--type-sm) / 1.35 var(--font-sans);
   }
   .gauge-status.error {
     color: var(--err);

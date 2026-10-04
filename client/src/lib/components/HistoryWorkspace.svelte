@@ -991,8 +991,11 @@
     padding: 6px var(--space-3);
     border-radius: var(--r-well);
     color: var(--text-muted);
-    font: var(--w-strong) var(--type-sm) / 1.3 var(--font-sans);
+    font: var(--role-kicker);
+    letter-spacing: var(--track-wide);
+    line-height: 1.3;
     text-align: end;
+    text-transform: uppercase;
     white-space: nowrap;
     transition: var(--transition-control);
   }
@@ -1054,14 +1057,22 @@
   .unit {
     display: block;
     color: var(--text-soft);
-    font: var(--w-normal) var(--type-2xs) / 1.4 var(--font-mono);
+    font: 500 var(--type-2xs) / 1.4 var(--font-mono);
+    letter-spacing: 0;
+    text-transform: none;
   }
   /* A day spaces its heading as a .group, but its gap must not open the table's columns. */
   .day {
     column-gap: 0;
   }
+  /* A day's heading is engraved over its rows. */
   .day > h3 {
     grid-column: 1 / -1;
+    color: var(--text-soft);
+    font: var(--role-kicker);
+    letter-spacing: var(--track-wide);
+    line-height: 20px;
+    text-transform: uppercase;
   }
   /* The list is page, not plate: a day's rows sit between two rules, with hairlines between them. */
   ol {
@@ -1110,7 +1121,7 @@
     grid-area: note;
     justify-self: end;
     color: color-mix(in oklab, var(--tone) 65%, var(--text));
-    font: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
+    font: var(--role-figure-sm);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
@@ -1125,7 +1136,7 @@
     align-self: center;
     width: 100%;
     height: 4px;
-    border-radius: var(--r-full);
+    border-radius: 1px;
     background: linear-gradient(
         270deg,
         color-mix(in oklab, var(--tone) 62%, transparent)
@@ -1137,13 +1148,14 @@
   .value {
     grid-area: value;
     justify-self: end;
-    font-weight: 500;
+    font: var(--role-figure);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
+  /* A status word in a value's place is prose, not a figure. */
   .missing .value {
     color: var(--text-soft);
-    font-weight: var(--w-normal);
+    font: var(--role-row);
   }
   /* The selected wash dims soft text below 4.5:1; muted keeps it, as on a running card. */
   .result-row[aria-current] time small,

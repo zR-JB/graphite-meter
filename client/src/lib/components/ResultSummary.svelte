@@ -82,8 +82,8 @@
         style:--fade={fade}
       >
         <header class="card-head">
-          <span class="dot" aria-hidden="true"></span>
-          <h3 use:tooltipAction={cardTip(card)}>
+          <span class="swatch" aria-hidden="true"></span>
+          <h3 class="kicker" use:tooltipAction={cardTip(card)}>
             {STAGE[card.key].label}
           </h3>
           {#if tone || card.status === "active"}<span class="state"
@@ -194,10 +194,10 @@
   .result-cards {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: var(--space-4) var(--space-5);
+    gap: var(--space-3);
   }
-  /* A card is its stage's area (`.stage-area`): a rule and a wash, no box. Stretched by a taller
-     neighbour, its rows stay put and the room falls below them. */
+  /* A card is its stage's frame (`.stage-area`). Stretched by a taller neighbour, its rows stay put and the
+     room falls below them. */
   .card {
     display: grid;
     grid-template-rows: 20px auto 18px;
@@ -205,7 +205,7 @@
     align-content: start;
     gap: 6px;
     min-width: 0;
-    padding: var(--space-3) var(--space-4) var(--space-3);
+    padding: var(--space-2) var(--space-3) var(--space-3);
   }
   /* A phone stacks the cards, so an empty line has nothing to align with. */
   @container results (max-width: 520px) {
@@ -233,24 +233,17 @@
     gap: var(--space-2);
     min-width: 0;
   }
-  .dot {
-    flex: none;
-    width: 7px;
-    height: 7px;
-    border-radius: var(--r-full);
-    background: var(--tone);
-  }
+  /* The frame's engraved name, in the title's ink. */
   h3 {
     color: var(--text);
-    font: var(--w-strong) var(--type-md) / 20px var(--font-sans);
-    white-space: nowrap;
+    font-size: var(--type-xs);
+    line-height: 20px;
   }
-  /* On the title's baseline (app.css, --role-label). */
   .state {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    margin: calc(var(--type-md) - var(--type-sm)) 0 0 auto;
+    margin-inline-start: auto;
     /* Muted, not soft: small text on a running card's wash keeps 4.5:1. */
     color: var(--text-muted);
     font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
@@ -261,13 +254,13 @@
   .graph-slot {
     opacity: var(--fade);
   }
-  /* Light numerals read as measured values, not as headings. */
+  /* The readout, in the figure voice. */
   .headline {
     display: flex;
     align-items: baseline;
-    gap: 10px;
+    gap: 8px;
     min-width: 0;
-    font: 300 clamp(32px, 2.6vw, 46px) / 1 var(--font-display);
+    font: 500 clamp(22px, 2.2vw, 32px) / 1 var(--font-mono);
     white-space: nowrap;
   }
   /* A strut one value tall, so a bidirectional pair's smaller figures sit on its baseline and keep the card's height. */
@@ -276,7 +269,7 @@
   }
   .num {
     font-variant-numeric: tabular-nums;
-    letter-spacing: -0.025em;
+    letter-spacing: var(--track-figure);
   }
   .pair {
     display: inline-flex;
@@ -284,18 +277,18 @@
     gap: 2px;
   }
   .pair .num {
-    font-size: clamp(26px, 2vw, 36px);
+    font-size: clamp(18px, 1.7vw, 26px);
   }
   .arrow {
     color: var(--tone);
-    font: var(--w-normal) var(--type-lg) / 1 var(--font-sans);
+    font: var(--w-normal) var(--type-md) / 1 var(--font-sans);
   }
   .quiet .num {
     color: var(--text-soft);
   }
   .unit {
     color: var(--text-muted);
-    font: var(--w-normal) var(--type-md) / 1 var(--font-sans);
+    font: 500 var(--type-sm) / 1 var(--font-mono);
   }
   .line {
     display: flex;
@@ -303,7 +296,7 @@
     min-width: 0;
     overflow: hidden;
     color: var(--text-muted);
-    font: var(--w-normal) var(--type-body) / 18px var(--font-sans);
+    font: var(--w-normal) var(--type-sm) / 18px var(--font-sans);
     white-space: nowrap;
   }
   .reason,
@@ -331,7 +324,7 @@
     font-weight: var(--w-strong);
   }
   .graph-slot {
-    height: clamp(64px, 11svh, 132px);
+    height: clamp(56px, 10svh, 120px);
     min-height: 0;
   }
   /* A card with no data yet keeps its graph's room but draws nothing in it: only its rule, name and "—". */
@@ -343,7 +336,7 @@
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 5.25rem), 1fr));
     gap: var(--space-2) var(--space-3);
     padding-top: var(--space-2);
-    border-top: var(--hairline) solid var(--border-subtle);
+    border-top: var(--hairline) solid var(--border);
   }
   /* Under the dial on a landscape page, which fits one screen down to 1024 x 768, a card's rows sit closer. */
   @media (orientation: landscape) {
@@ -362,18 +355,23 @@
   }
   .facts > div {
     display: grid;
-    gap: 1px;
+    gap: 3px;
     min-width: 0;
   }
+  /* A fact is an engraved label over its figure. */
   .facts dt {
+    width: fit-content;
+    max-width: 100%;
     overflow: hidden;
     color: var(--text-soft);
-    font: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
+    font: var(--role-kicker);
+    letter-spacing: var(--track-wide);
     text-overflow: ellipsis;
+    text-transform: uppercase;
     white-space: nowrap;
   }
   .facts dd {
-    font: var(--w-normal) var(--type-md) / 1.3 var(--font-sans);
+    font: var(--role-figure);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }

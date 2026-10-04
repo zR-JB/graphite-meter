@@ -143,11 +143,11 @@
     align-items: center;
     justify-content: center;
     gap: var(--space-2);
-    height: 36px;
+    height: 32px;
     padding: 0 var(--space-3) 0 10px;
     border-radius: var(--r-chrome);
     color: var(--text-soft);
-    font: var(--w-normal) var(--type-body) / 1 var(--font-sans);
+    font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
     white-space: nowrap;
     transition: var(--transition-control);
   }
@@ -188,13 +188,13 @@
   .chip--disabled:disabled {
     opacity: 0.5;
   }
-  /* The bead is the stage's colour: filled when it runs, a ring when it is off, a check once complete. */
+  /* The bead is the stage's key: filled when it runs, an outline when it is off, a check once complete. */
   .bead {
     position: relative;
     flex: none;
     width: 8px;
     height: 8px;
-    border-radius: var(--r-full);
+    border-radius: 1px;
     box-shadow: inset 0 0 0 1.5px var(--tone);
     transition: background-color var(--dur-graph) var(--ease-out);
   }
@@ -225,10 +225,10 @@
   /* Progress is a hairline under the label, like a stage's rule. */
   .chip-bar {
     position: absolute;
-    inset: auto var(--space-3) 5px 10px;
+    inset: auto var(--space-3) 4px 10px;
     height: 2px;
     overflow: hidden;
-    border-radius: var(--r-full);
+    border-radius: 1px;
   }
   .chip-fill {
     position: absolute;

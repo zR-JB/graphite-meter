@@ -137,18 +137,17 @@
   .panel-layer {
     display: contents;
   }
-  /* A sheet floats over the page: inset, rounded, frosted, with the one shadow the design allows. */
+  /* A flyout sheet floats over the page with the one shadow the design allows; docked, it is a frame beside
+     the instrument, flat. */
   .panel-layer > :global(dialog.panel) {
     max-width: none;
     max-height: none;
     margin: 0;
     flex-direction: column;
     overflow: hidden;
-    border: var(--hairline) solid var(--border-subtle);
+    border: var(--hairline) solid var(--border);
     border-radius: var(--r-surface);
     background: var(--sheet);
-    -webkit-backdrop-filter: var(--sheet-blur);
-    backdrop-filter: var(--sheet-blur);
     box-shadow: var(--elev-float);
     color: var(--text);
   }
@@ -174,9 +173,8 @@
     width: calc(var(--dock-w) - var(--space-3));
     height: auto;
     margin: 0 var(--space-3) var(--space-3) 0;
-    /* Docked, only the plain page lies behind it: a blur would cost every frame and change nothing. */
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
+    background: var(--panel);
+    box-shadow: none;
     transition:
       overlay var(--dur-sheet) allow-discrete,
       display var(--dur-sheet) allow-discrete;

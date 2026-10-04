@@ -34,7 +34,6 @@
     loadPersisted,
     savePersisted,
   } from "../state/persistence";
-  import { STAGES } from "../runner/schedule";
   import { authEnabled as pageAuthEnabled } from "../auth";
   const authEnabled = pageAuthEnabled();
   const status = handoff(
@@ -573,20 +572,6 @@
   data-resizing={resizingDock ? "" : undefined}
   style="--dock-left: {docks.left}px; --dock-right: {docks.right}px;"
 >
-  <!-- The room takes a little of the running stage's light, from above; History is read in plain light.
-       The light spans the whole room and falls from over the stage, so a docked sheet never cuts it at
-       its column's edge; each layer glides with the columns, as the shell does. -->
-  <div class="amb" aria-hidden="true">
-    {#each STAGES as stage (stage)}
-      <i
-        data-tone={stage}
-        class:lit={measurementOpen &&
-          store.isRunning &&
-          store.phaseStage === stage}
-        style="--dock-left: {docks.left}px; --dock-right: {docks.right}px;"
-      ></i>
-    {/each}
-  </div>
   <!-- Container queries move direct actions into More as the bar narrows. -->
   <header class="topbar" class:saving={store.savingResults}>
     <button
@@ -815,16 +800,7 @@
       "leftdock stage   rightdock"
       "status   status  status";
     height: 100dvh;
-    /* The grain is zero-mean dither: it breaks gradients into noise without moving the page's level. */
-    background:
-      var(--grain),
-      radial-gradient(
-        140% 90% at 50% 125%,
-        var(--canvas-deep),
-        transparent 70%
-      ),
-      var(--canvas);
-    background-blend-mode: overlay, normal;
+    background: var(--canvas);
     color: var(--text);
     transition:
       --dock-left var(--dur-sheet) var(--ease-out),
@@ -832,41 +808,8 @@
     timeline-scope: --column;
   }
   /* A dragged handle moves its column with the pointer, without the glide. */
-  #console[data-resizing],
-  #console[data-resizing] .amb > i {
+  #console[data-resizing] {
     transition: none;
-  }
-  /* Each stage's light is its own layer, so a stage change cross-fades on the compositor. */
-  .amb {
-    position: relative;
-    z-index: -1;
-    grid-area: 1 / 1 / 3 / 4;
-    pointer-events: none;
-  }
-  /* The light's source sits a fifth of the way across the stage, however the columns stand. */
-  .amb > i {
-    --amb-mix: 14%;
-    position: absolute;
-    inset: 0;
-    background: radial-gradient(
-      120% 70% at
-        calc(
-          var(--dock-left) + (100% - var(--dock-left) - var(--dock-right)) * 0.2
-        ) -14%,
-      color-mix(in oklab, var(--tone) var(--amb-mix), transparent),
-      transparent 62%
-    );
-    opacity: 0;
-    transition:
-      opacity 1100ms var(--ease-out),
-      --dock-left var(--dur-sheet) var(--ease-out),
-      --dock-right var(--dur-sheet) var(--ease-out);
-  }
-  .amb > :is([data-tone="download"], [data-tone="bidirectional"]) {
-    --amb-mix: 16%;
-  }
-  .amb > .lit {
-    opacity: 1;
   }
 
   /* The last icon's own 8 px padding completes the right inset, so the bar's ink sits 16 px in at both ends. */
@@ -876,10 +819,10 @@
     align-items: center;
     gap: var(--space-2);
     padding-inline: var(--space-4) var(--space-2);
-    border-bottom: var(--hairline) solid transparent;
+    border-bottom: var(--hairline) solid var(--border-subtle);
     container: topbar / inline-size;
   }
-  /* The measurement column scrolls under the bar, so its rule comes in as content passes beneath, as a sheet's head's does. */
+  /* The measurement column scrolls under the bar, so its rule strengthens as content passes beneath, as a sheet's head's does. */
   @supports (animation-timeline: scroll()) {
     .measurement-stage {
       scroll-timeline: --column block;
@@ -988,7 +931,7 @@
     flex-direction: column;
     gap: var(--space-3);
     min-width: 0;
-    padding: var(--space-3) var(--space-5) var(--space-4);
+    padding: var(--space-3) var(--space-4);
     overflow-y: auto;
     /* Keep stage scrolling from chaining out to the document. */
     overscroll-behavior: contain;
@@ -1029,9 +972,9 @@
     min-width: 0;
     overflow: hidden;
     padding: 0 var(--space-4) env(safe-area-inset-bottom, 0px);
-    border-top: var(--hairline) solid var(--border-subtle);
+    border-top: var(--hairline) solid var(--border);
     color: var(--text-soft);
-    font: var(--w-normal) var(--type-xs) var(--font-sans);
+    font: 500 var(--type-xs) var(--font-mono);
     font-variant-numeric: tabular-nums;
     container: status / inline-size;
   }

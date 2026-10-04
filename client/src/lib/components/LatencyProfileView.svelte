@@ -297,8 +297,10 @@
   aria-label={label}
 >
   <header class="card-head">
-    <span class="dot" aria-hidden="true"></span>
-    <h3 use:tooltipAction={JARGON.latency}>{STAGE.latency.label}</h3>
+    <span class="swatch" aria-hidden="true"></span>
+    <h3 class="kicker" use:tooltipAction={JARGON.latency}>
+      {STAGE.latency.label}
+    </h3>
     <span class="aside"
       >{source ? `${source}, idle and under load` : "Idle and under load"}</span
     >
@@ -419,7 +421,7 @@
               >
             {:else}
               <span class="mark" aria-hidden="true"
-                ><span class="dot"></span></span
+                ><span class="swatch"></span></span
               >
             {/if}
             <span class="lane-label">{lane.label}</span>
@@ -549,12 +551,14 @@
 </section>
 
 <style>
-  /* Latency is its stage's area on the page like every card (`.stage-area`). */
+  /* Latency is its stage's frame like every card (`.stage-area`); as tall as the dial beside it, its content
+     centres in the frame under the head. */
   .latency-card {
     display: grid;
-    gap: var(--space-3);
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: var(--space-2);
     min-width: 0;
-    padding: var(--space-3) var(--space-4) var(--space-3);
+    padding: var(--space-2) var(--space-3) var(--space-3);
     container: latency / inline-size;
   }
   .card-head {
@@ -564,21 +568,13 @@
     min-width: 0;
     min-height: 20px;
   }
-  .dot {
-    flex: none;
-    width: 7px;
-    height: 7px;
-    border-radius: var(--r-full);
-    background: var(--tone);
-  }
   h3 {
-    font: var(--w-strong) var(--type-md) / 20px var(--font-sans);
-    white-space: nowrap;
+    color: var(--text);
+    font-size: var(--type-xs);
+    line-height: 20px;
   }
-  /* On the title's baseline (app.css, --role-label). */
   .aside {
     min-width: 0;
-    margin-top: calc(var(--type-md) - var(--type-sm));
     overflow: hidden;
     color: var(--text-soft);
     font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
@@ -587,6 +583,7 @@
   }
   .body {
     display: grid;
+    align-self: center;
     grid-template-columns: minmax(176px, 0.62fr) minmax(0, 2fr);
     gap: var(--space-5);
   }
@@ -604,16 +601,16 @@
     white-space: nowrap;
   }
   .num {
-    font: 300 clamp(32px, 2.6vw, 46px) / 1 var(--font-display);
+    font: 500 clamp(22px, 2.2vw, 32px) / 1 var(--font-mono);
     font-variant-numeric: tabular-nums;
-    letter-spacing: -0.025em;
+    letter-spacing: var(--track-figure);
   }
   .quiet .num {
     color: var(--text-soft);
   }
   .unit {
     color: var(--text-muted);
-    font: var(--w-normal) var(--type-md) / 1 var(--font-sans);
+    font: 500 var(--type-sm) / 1 var(--font-mono);
   }
   .caption {
     color: var(--text-soft);
@@ -629,7 +626,7 @@
     gap: var(--space-2) var(--space-3);
     margin-top: var(--space-3);
     padding-top: var(--space-2);
-    border-top: var(--hairline) solid var(--border-subtle);
+    border-top: var(--hairline) solid var(--border);
   }
   /* The idle replies over the stage, a latency track (`.reply`) whose floor is the facts' edge. */
   .trace {
@@ -647,16 +644,18 @@
   }
   .facts > div {
     display: grid;
-    gap: 1px;
+    gap: 3px;
     min-width: 0;
   }
   .facts dt {
     width: fit-content;
     color: var(--text-soft);
-    font: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
+    font: var(--role-kicker);
+    letter-spacing: var(--track-wide);
+    text-transform: uppercase;
   }
   .facts dd {
-    font: var(--w-normal) var(--type-md) / 1.3 var(--font-sans);
+    font: var(--role-figure);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
@@ -689,16 +688,22 @@
   .lane-head {
     padding-bottom: var(--space-1);
     color: var(--text-soft);
-    font: var(--w-normal) var(--type-xs) / 1 var(--font-sans);
+    font: var(--role-kicker);
+    letter-spacing: var(--track-wide);
     text-align: end;
+    text-transform: uppercase;
+  }
+  /* Rows are ruled, so the table reads as a grid with the axis ticks running up through it. */
+  .lane + .lane {
+    border-top: var(--hairline) solid var(--border-subtle);
   }
   /* Every figure in a row on the median's baseline (app.css, --role-label). */
-  .lane-name,
-  .lane-added {
+  .lane-name {
     margin-top: calc(var(--type-md) - var(--type-body));
   }
   .lane-jitter,
-  .lane-timeouts {
+  .lane-timeouts,
+  .lane-added {
     margin-top: calc(var(--type-md) - var(--type-sm));
   }
   .lane-name {
@@ -718,7 +723,7 @@
     width: 12px;
     height: 12px;
   }
-  .mark .dot {
+  .mark .swatch {
     width: 6px;
     height: 6px;
   }
@@ -732,7 +737,7 @@
   /* Figures take their longest value's width ("9999 ms") from Start, so arriving values never shift the plot. */
   .lane-median {
     min-width: 7ch;
-    font: var(--w-normal) var(--type-md) / 1 var(--font-sans);
+    font: 500 var(--type-md) / 1 var(--font-mono);
     font-variant-numeric: tabular-nums;
     text-align: end;
     white-space: nowrap;
@@ -743,7 +748,7 @@
   .lane-jitter,
   .lane-timeouts {
     color: var(--text-muted);
-    font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
+    font: 500 var(--type-sm) / 1 var(--font-mono);
     font-style: normal;
     font-variant-numeric: tabular-nums;
     text-align: end;
@@ -756,7 +761,7 @@
   }
   .lane-added {
     color: var(--tone-ink);
-    font: var(--w-strong) var(--type-body) / 1 var(--font-sans);
+    font: 600 var(--type-sm) / 1 var(--font-mono);
     font-variant-numeric: tabular-nums;
     text-align: end;
     white-space: nowrap;
@@ -777,7 +782,7 @@
     top: 4px;
     translate: -50%;
     color: var(--text-soft);
-    font: var(--w-normal) var(--type-2xs) / 1.2 var(--font-sans);
+    font: 500 var(--type-2xs) / 1.2 var(--font-mono);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
@@ -862,7 +867,7 @@
     right: calc(var(--edge) + var(--space-1));
     bottom: var(--space-1);
     color: var(--text-soft);
-    font: var(--w-normal) var(--type-2xs) / 1 var(--font-sans);
+    font: 500 var(--type-2xs) / 1 var(--font-mono);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
