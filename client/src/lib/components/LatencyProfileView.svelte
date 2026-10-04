@@ -35,7 +35,6 @@
     added?: Partial<
       Record<LatencyProfileViewLane["key"], number | null>
     > | null;
-    stability?: number | null;
     /** Whose latency this is, when several servers ran. */
     source?: string;
     /** Why the Latency stage failed; it stands under the idle headline in place of its caption. */
@@ -47,7 +46,6 @@
     variant = "bare",
     label = "Latency, jitter and probe timeouts by phase",
     added = null,
-    stability = null,
     source,
     failure,
   }: Props = $props();
@@ -273,53 +271,15 @@
     <h3 use:tooltipAction={JARGON.latency}>
       {STAGE.latency.label}
     </h3>
-    <span class="aside"
-      >{source ? `${source}, idle and under load` : "Idle and under load"}</span
+    <span class="aside" class:failure={!!failure && idle?.center == null}
+      >{failure && idle?.center == null
+        ? failure
+        : source
+          ? `${source}, idle and under load`
+          : "Idle and under load"}</span
     >
   </header>
   <div class="body">
-    {#if idle}
-      <div class="idle">
-        <div class="headline" class:quiet={idle.center == null}>
-          <span class="num"
-            >{idle.center == null ? MISSING : fmtMs(idle.center)}</span
-          >
-          {#if idle.center != null}<span class="unit">ms</span>{/if}
-        </div>
-        <span class="sub" class:failure={failure && idle.center == null}
-          >{failure && idle.center == null ? failure : "Idle median"}</span
-        >
-        <dl class="facts">
-          <div>
-            <dt use:tooltipAction={JARGON.jitter}>Jitter</dt>
-            <dd class:quiet={idle.jitter == null}>
-              {formatLatency(idle.jitter)}
-            </dd>
-          </div>
-          <div>
-            <dt use:tooltipAction={JARGON.latencyRange}>Range</dt>
-            <dd class:quiet={idle.min == null || idle.max == null}>
-              {idle.min == null || idle.max == null
-                ? MISSING
-                : `${fmtMs(idle.min)}–${fmtMs(idle.max)} ms`}
-            </dd>
-          </div>
-          <!-- Held from Start, so the result lands without moving Timeouts. -->
-          <div>
-            <dt use:tooltipAction={JARGON.latencyStability}>Stability</dt>
-            <dd class:quiet={stability == null}>
-              {stability == null ? MISSING : `${Math.round(stability)}%`}
-            </dd>
-          </div>
-          <div>
-            <dt use:tooltipAction={timeoutsTip(idle)}>Timeouts</dt>
-            <dd class:quiet={idle.timeoutRatio == null}>
-              {formatTimeouts(idle.timeoutRatio)}
-            </dd>
-          </div>
-        </dl>
-      </div>
-    {/if}
     <div
       class="lanes"
       data-latency-profile
@@ -545,73 +505,11 @@
   .body {
     display: grid;
     align-self: center;
-    grid-template-columns: minmax(176px, auto) minmax(0, 1fr);
-    gap: var(--space-5);
+    grid-template-columns: minmax(0, 1fr);
   }
-  .idle {
-    display: grid;
-    align-self: center;
-    align-content: start;
-    gap: 2px;
-    min-width: 0;
-  }
-  .headline {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    white-space: nowrap;
-  }
-  .num {
-    font: var(--role-readout);
-    font-variant-numeric: tabular-nums;
-  }
-  .quiet .num {
-    color: var(--text-soft);
-  }
-  .unit {
-    color: var(--text-muted);
-    font: 500 var(--type-sm) / 1 var(--font-mono);
-  }
-  .sub {
-    color: var(--text-soft);
-    font: var(--w-normal) var(--type-sm) / 1.4 var(--font-sans);
-  }
-  .sub.failure {
+  .aside.failure {
     color: var(--err);
     font-weight: var(--w-strong);
-  }
-  /* The idle figures are ruled rows under the headline, a quiet label and its figure on one line. */
-  .facts {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    margin-top: var(--space-3);
-    border-top: var(--hairline) solid var(--border-subtle);
-  }
-  .facts > div {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--space-3);
-    height: 24px;
-    min-width: 0;
-  }
-  .facts > div + div {
-    border-top: var(--hairline) solid var(--border-subtle);
-  }
-  .facts dt {
-    width: fit-content;
-    color: var(--text-soft);
-    font: var(--role-label);
-    line-height: 1;
-  }
-  .facts dd {
-    font: var(--role-figure-sm);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
-  /* "—" for a value not yet measured is soft; a measured value is full ink. */
-  .facts dd.quiet {
-    color: var(--text-soft);
   }
 
   /* One row per population on one scale: name, median, jitter, timeouts, spread, and what the load added.
@@ -874,49 +772,10 @@
     color: var(--text-soft);
     text-overflow: ellipsis;
   }
-  /* Narrower cards put the idle facts above the rows and read a marker by its value alone. */
+  /* A narrower panel reads a marker by its value alone. */
   @container latency (max-width: 720px) {
     .hover-card span {
       display: none;
-    }
-    .body {
-      grid-template-columns: minmax(0, 1fr);
-      gap: var(--space-3);
-    }
-    .idle {
-      grid-template-columns: auto 1fr;
-      align-items: end;
-      column-gap: var(--space-4);
-    }
-    .idle .sub {
-      grid-row: 2;
-    }
-    .idle .facts {
-      grid-column: 2;
-      grid-row: 1 / 3;
-      grid-template-columns: repeat(4, max-content);
-      gap: 0 var(--space-4);
-      margin: 0;
-      padding: 0;
-      border: 0;
-    }
-    .idle .facts > div,
-    .idle .facts > div + div {
-      display: grid;
-      gap: 4px;
-      height: auto;
-      border: 0;
-    }
-  }
-  @container latency (max-width: 400px) {
-    .idle {
-      grid-template-columns: minmax(0, 1fr);
-    }
-    .idle .facts {
-      grid-column: 1;
-      grid-row: auto;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      margin-top: var(--space-2);
     }
   }
   /* Narrow: jitter leaves the row for the hover; the timeouts stay. */

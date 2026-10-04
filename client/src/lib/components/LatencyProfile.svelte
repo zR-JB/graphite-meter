@@ -77,7 +77,6 @@
     lanes={profile.shown.lanes}
     variant="bare"
     added={saved?.addedLatency}
-    stability={saved?.latency?.stabilityPct ?? null}
     {failure}
     source={servers.length > 1
       ? servers.find((server) => server.id === store.latencyFocus)?.name

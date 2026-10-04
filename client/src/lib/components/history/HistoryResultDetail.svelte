@@ -305,8 +305,6 @@
             variant="compact"
             label="Saved latency distributions"
             added={latencyServer?.addedLatency ?? result.addedLatency}
-            stability={(latencyServer?.latency ?? result.latency)
-              ?.stabilityPct ?? null}
             source={multiple ? latencyServer?.server.name : undefined}
           />
         </div>
