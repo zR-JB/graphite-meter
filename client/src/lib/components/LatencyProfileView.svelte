@@ -271,13 +271,12 @@
     <h3 use:tooltipAction={JARGON.latency}>
       {STAGE.latency.label}
     </h3>
-    <span class="aside" class:failure={!!failure && idle?.center == null}
-      >{failure && idle?.center == null
-        ? failure
-        : source
-          ? `${source}, idle and under load`
-          : "Idle and under load"}</span
-    >
+    <!-- Whose latency this is when several servers ran, or why the idle stage failed. -->
+    {#if failure && idle?.center == null}
+      <span class="aside failure">{failure}</span>
+    {:else if source}
+      <span class="aside">{source}</span>
+    {/if}
   </header>
   <div class="body">
     <div
