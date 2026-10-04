@@ -255,18 +255,12 @@ test("a transfer card keeps the same facts in every state, a dash until known; N
     tip: "",
     rows: [],
   };
-  expect(facts(waiting)).toEqual([
-    "Peak —",
-    "Stability —",
-    "Transferred —",
-    "Added latency —",
-  ]);
+  expect(facts(waiting)).toEqual(["Peak —", "Stability —", "Transferred —"]);
   const running = [{ label: "Transferred", value: "1.0 MB" }];
   expect(facts({ ...waiting, status: "active", rows: running })).toEqual([
     "Peak —",
     "Stability —",
     "Transferred 1.0 MB",
-    "Added latency —",
   ]);
   const [download, bidirectional] = summaryCards(
     {
@@ -275,7 +269,7 @@ test("a transfer card keeps the same facts in every state, a dash until known; N
       upload: null,
       bidirectional: { down: lane(40), up: lane(20) },
       latency: null,
-      added: { download: 2.3, upload: null, bidirectional: null },
+      added: null,
     },
     units,
     true,
@@ -284,7 +278,6 @@ test("a transfer card keeps the same facts in every state, a dash until known; N
     "Peak 120.0 B/s",
     "Stability 95%",
     "Transferred 1.0 MB",
-    "Added latency +2.3 ms",
   ]);
   expect(cardNoData(download)?.value).toBe("0.8 s");
   expect(cardNoData(bidirectional)).toBeNull();
@@ -292,6 +285,5 @@ test("a transfer card keeps the same facts in every state, a dash until known; N
     "Stability 95%",
     "Down + up 60.00 B/s",
     "Transferred 2.0 MB",
-    "Added latency —",
   ]);
 });

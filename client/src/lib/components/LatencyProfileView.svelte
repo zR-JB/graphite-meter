@@ -9,6 +9,8 @@
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
   import { fmtAddedMs, fmtMs, formatLatency } from "../format";
   import { fmtGaugeTick } from "./gaugeScale";
+  import { latencyScale } from "../presentation/scales";
+  import { stageGraph, type LatencyPoint } from "../presentation/stageGraph";
   import {
     entries,
     formatTimeouts,
@@ -38,6 +40,8 @@
     stability?: number | null;
     /** Whose latency this is, when several servers ran. */
     source?: string;
+    /** The idle stage's replies over its time, while the run's series exists. */
+    trace?: { points: LatencyPoint[]; start: number; span: number } | null;
     /** Why the Latency stage failed; it stands under the idle headline in place of its caption. */
     failure?: string;
   }
@@ -49,6 +53,7 @@
     added = null,
     stability = null,
     source,
+    trace = null,
     failure,
   }: Props = $props();
   const idle = $derived(lanes.find((lane) => lane.key === "latency") ?? null);
@@ -60,6 +65,26 @@
         ? "complete"
         : "pending",
   );
+  let traceWidth = $state(0);
+  let traceHeight = $state(0);
+  // The trace reuses the stage graph's latency track: one dot per reply bucket over the idle median.
+  const drawn = $derived(
+    trace && traceWidth && traceHeight
+      ? stageGraph({
+          lanes: [],
+          latency: trace.points,
+          start: trace.start,
+          span: trace.span,
+          ceiling: 1,
+          baseline: idle?.center ?? null,
+          latencyTop: latencyScale(trace.points.map((point) => point.ms)),
+          width: traceWidth,
+          plotHeight: 0,
+          trackHeight: traceHeight,
+        })
+      : null,
+  );
+
   let motion = $state(false);
 
   const scale = $derived(profileDomain(lanes));
@@ -273,7 +298,7 @@
 >
   <header class="card-head">
     <span class="swatch" aria-hidden="true"></span>
-    <h3 class="card-title" use:tooltipAction={JARGON.latency}>
+    <h3 class="caption" use:tooltipAction={JARGON.latency}>
       {STAGE.latency.label}
     </h3>
     <span class="aside"
@@ -292,6 +317,35 @@
         <span class="sub" class:failure={failure && idle.center == null}
           >{failure && idle.center == null ? failure : "Idle median"}</span
         >
+        {#if trace}
+          <div
+            class="trace"
+            aria-hidden="true"
+            bind:clientWidth={traceWidth}
+            bind:clientHeight={traceHeight}
+          >
+            {#if drawn}
+              <svg width={traceWidth} height={traceHeight}>
+                {#if drawn.baselineY !== null}<line
+                    class="reply-median"
+                    x1="0"
+                    x2={traceWidth}
+                    y1={drawn.baselineY}
+                    y2={drawn.baselineY}
+                  />{/if}
+                {#each drawn.dots as dot, index (index)}
+                  <line
+                    class="reply"
+                    x1={dot.x}
+                    x2={dot.x}
+                    y1={drawn.baselineY ?? traceHeight}
+                    y2={dot.y}
+                  />
+                {/each}
+              </svg>
+            {/if}
+          </div>
+        {/if}
         <dl class="facts">
           <div>
             <dt use:termAction={JARGON.jitter}>Jitter</dt>
@@ -577,6 +631,20 @@
     margin-top: var(--space-3);
     padding-top: var(--space-2);
     border-top: var(--hairline) solid var(--border);
+  }
+  /* The idle replies over the stage, a latency track (`.reply`) whose floor is the facts' edge. */
+  .trace {
+    position: relative;
+    height: 32px;
+    margin-top: var(--space-2);
+  }
+  .trace + .facts {
+    margin-top: 0;
+  }
+  .trace svg {
+    position: absolute;
+    inset: 0;
+    overflow: visible;
   }
   .facts > div {
     display: grid;
@@ -885,7 +953,7 @@
       align-items: end;
       column-gap: var(--space-4);
     }
-    .idle .sub {
+    .idle .caption {
       grid-row: 2;
     }
     .idle .facts {
@@ -895,6 +963,11 @@
       margin: 0;
       padding: 0;
       border: 0;
+    }
+    /* The trace spans the card under the idle figures, on its own floor. */
+    .idle .trace {
+      grid-column: 1 / -1;
+      border-bottom: var(--hairline) solid var(--border-subtle);
     }
   }
   @container latency (max-width: 480px) {

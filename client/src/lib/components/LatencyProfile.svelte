@@ -1,0 +1,106 @@
+<script lang="ts">
+  import {
+    catalogSelection,
+    serverName,
+  } from "../presentation/serverAppearance";
+  import { store } from "../state/store.svelte";
+  import { reasonLabel, STAGE, STATUS } from "../presentation/vocabulary";
+  import { LATENCY_LANES, type LatencyProfileViewLane } from "./latencyProfile";
+  import LatencyProfileView from "./LatencyProfileView.svelte";
+  import { handoff } from "../presentation/motion.svelte";
+  import { announceChanges } from "../presentation/announcer.svelte";
+  import { replies } from "../presentation/stageGraph";
+
+  const servers = $derived(
+    store.serverDetails?.selection ??
+      catalogSelection(store.serverCatalog, store.selectedServers),
+  );
+  // Lost probes name their reason on their population's row, by server when several ran, so the card never grows.
+  const notes = $derived.by(() => {
+    const details = store.result?.multiServer ?? store.serverDetails;
+    const notes: Partial<Record<LatencyProfileViewLane["key"], string[]>> = {};
+    if (!details) return notes;
+    const several = details.selection.length > 1;
+    for (const failure of details.failures) {
+      if (failure.scope !== "latency") continue;
+      if (store.resultScope && failure.serverId !== store.resultScope) continue;
+      const reason = reasonLabel(failure.reason);
+      (notes[failure.stage] ??= []).push(
+        several
+          ? `${serverName(details.selection, failure.serverId)}: ${reason.charAt(0).toLowerCase()}${reason.slice(1)}`
+          : reason,
+      );
+    }
+    return notes;
+  });
+  const lanes = $derived<LatencyProfileViewLane[]>(
+    LATENCY_LANES.filter(
+      (meta) => store.stagePresentation[meta.key].configured,
+    ).map((meta) => {
+      const lane = store.latencyLanes.find((lane) => lane.key === meta.key)!;
+      // A settled lane draws like a saved one: the latest reply only marks a running stage.
+      return {
+        ...lane,
+        ...meta,
+        current: lane.active ? lane.current : null,
+        failure: notes[meta.key]?.join("\n"),
+      };
+    }),
+  );
+  const profile = handoff(
+    () => ({ run: store.runSeq, lanes }),
+    (profile) => profile.run,
+  );
+  const saved = $derived(store.result && store.latencyServer);
+  // The idle replies span the planned stage while it may still run, then the time they took, like a stage graph.
+  const trace = $derived.by(() => {
+    const points = replies(store.latency, "latency");
+    const start = points[0]?.t ?? 0;
+    const measured = (points.at(-1)?.t ?? start) - start;
+    const settled = !["pending", "active", "recovering"].includes(
+      store.stagePresentation.latency.status,
+    );
+    const plan = (store.run?.config ?? store.config).duration.latencyMs;
+    return { points, start, span: Math.max(measured, settled ? 0 : plan) || 1 };
+  });
+  const stage = $derived(store.stagePresentation.latency);
+  const failure = $derived(
+    stage.status !== "failed"
+      ? undefined
+      : stage.failure
+        ? reasonLabel(stage.failure)
+        : STATUS.failed,
+  );
+  // The reason stands in the caption's place; a screen reader hears it once, when the stage fails.
+  announceChanges(() =>
+    stage.status !== "failed"
+      ? ""
+      : [
+          `${STAGE.latency.label} ${STATUS.failed.toLowerCase()}`,
+          stage.failure && reasonLabel(stage.failure),
+        ]
+          .filter(Boolean)
+          .join(": "),
+  );
+</script>
+
+<div class="live-profile" style:opacity={profile.opacity}>
+  <LatencyProfileView
+    lanes={profile.shown.lanes}
+    variant="bare"
+    added={saved?.addedLatency}
+    stability={saved?.latency?.stabilityPct ?? null}
+    {trace}
+    {failure}
+    source={servers.length > 1
+      ? servers.find((server) => server.id === store.latencyFocus)?.name
+      : undefined}
+  />
+</div>
+
+<style>
+  .live-profile {
+    display: grid;
+    min-width: 0;
+  }
+</style>

@@ -42,7 +42,7 @@
   const model = $derived(
     STAGES.map((key) => {
       const execution = store.stagePresentation[key];
-      // The run skips a stage without a duration, so its row does too.
+      // The run skips a stage without a duration, so the key does too.
       const selected = planned(store.config, key);
       const locked = !store.canToggleStage(key);
       const model = stageTrackModel({ selected, locked, execution });
@@ -53,7 +53,8 @@
       return {
         ...model,
         key,
-        label: STAGE[key].label,
+        label: STAGE[key].short,
+        icon: STAGE[key].icon,
         reason,
         value,
         tip: stageTip({
@@ -67,12 +68,12 @@
       };
     }),
   );
-  const rows = $derived(
+  const segments = $derived(
     model.filter((s) =>
       stageShown(s.key, s.selected, store.stagePresentation[s.key]),
     ),
   );
-  // The line across the row: the stage's progress while it runs, how it settled after.
+  // The line under the name: the stage's progress while it runs, how it settled after.
   const line = (s: (typeof model)[number]) => {
     const live = s.state === "active" && store.phaseBudgetMs > 0;
     return {
@@ -86,7 +87,7 @@
             : s.fill / 100,
     };
   };
-  // The row's figure: the result once measured, the time while it runs, its plan before, a word otherwise.
+  // The key's second line: the result once measured, the time while it runs, its plan before, a word otherwise.
   const detail = (s: (typeof model)[number], live: boolean) => {
     if (s.value && (s.state === "complete" || s.state === "partial"))
       return { text: s.value, figure: true };
@@ -113,12 +114,12 @@
 
 <fieldset class="stage-track">
   <legend class="sr-only">Test stages, toggle to include or skip</legend>
-  {#each rows as s (s.key)}
+  {#each segments as s (s.key)}
     {@const look = line(s)}
     {@const second = detail(s, look.live)}
     <button
       type="button"
-      class="row row--{s.state}"
+      class="key key--{s.state}"
       class:on={s.selected}
       data-tone={s.key}
       role="switch"
@@ -132,113 +133,149 @@
       disabled={s.locked}
       onclick={() => controller.toggleStage(s.key)}
     >
-      <span class="check" aria-hidden="true"><Icon name="check" /></span>
-      <span class="name">{s.label}</span>
-      <span class="track" aria-hidden="true">
+      <span class="key-head">
+        <!-- One glyph per key, so no state changes its width and nothing on the row moves. -->
+        <span class="bead" aria-hidden="true"><Icon name="check" /></span>
+        <span class="key-label">{s.label}</span>
+      </span>
+      <span class="key-line" class:figure={second.figure} aria-hidden="true"
+        >{second.text}</span
+      >
+      <span class="key-bar" aria-hidden="true">
         <span
-          class="fill"
+          class="key-fill"
           data-tone={look.tone}
-          class:fill--warmup={s.state === "warmup"}
-          class:fill--failed={s.state === "failed"}
+          class:key-fill--warmup={s.state === "warmup"}
+          class:key-fill--failed={s.state === "failed"}
           class:is-partial={s.state === "partial"}
           class:is-stalled={s.state === "recovering"}
           class:is-live={look.live}
           style:--progress={look.progress}
         ></span>
       </span>
-      <span class="figure" class:word={!second.figure} aria-hidden="true"
-        >{second.text}</span
-      >
     </button>
   {/each}
 </fieldset>
 
 <style>
-  /* The run sheet: one row per stage, each a switch. A row is its check, its name, its line and its figure. */
+  /* One key per stage, in equal columns, so the row keeps its shape in every state. */
   .stage-track {
     display: grid;
-    min-width: 0;
-  }
-  .row {
-    display: grid;
-    grid-template-columns: var(--check) 7.5rem minmax(0, 1fr) auto;
-    align-items: center;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
     gap: var(--space-3);
     min-width: 0;
-    min-height: 44px;
-    padding: 0 var(--space-2);
-    margin-inline: calc(-1 * var(--space-2));
-    border-radius: var(--r-chrome);
+  }
+  /* A key is a small frame: its name over its figure, its stage's line along its base. Locked by a run it
+     shows the run's progress; off, it is its outline alone. */
+  .key {
+    position: relative;
+    display: grid;
+    align-content: start;
+    gap: 3px;
+    min-width: 0;
+    min-height: 54px;
+    padding: var(--space-2) var(--space-3) 10px;
+    overflow: hidden;
+    border: var(--hairline) solid var(--panel-edge);
+    border-radius: var(--r-surface);
+    background: var(--panel);
+    box-shadow: var(--elev-card);
     color: var(--text);
     text-align: start;
     transition: var(--transition-control);
   }
-  .row + .row {
-    margin-top: 2px;
-  }
+  /* The washes are layers, so they add to the frame instead of replacing it. */
   @media (hover: hover) {
-    .row:hover:not(:disabled) {
-      background: var(--hover-wash);
+    .key:hover:not(:disabled) {
+      background-image: linear-gradient(var(--hover-wash) 0 0);
     }
   }
-  .row:active:not(:disabled) {
-    background: var(--selected-wash);
+  .key:active:not(:disabled) {
+    background-image: linear-gradient(var(--selected-wash) 0 0);
   }
-  .row:disabled {
+  .key:not(.on) {
+    background-color: transparent;
+    box-shadow: none;
+    color: var(--text-muted);
+  }
+  /* The running key takes its stage's light. */
+  .key--active,
+  .key--warmup,
+  .key--recovering {
+    background-color: color-mix(in oklab, var(--tone) 12%, var(--panel));
+  }
+  .key:disabled {
     cursor: default;
   }
-  .row--disabled:disabled {
+  .key--disabled:disabled {
     opacity: 0.5;
   }
-  .row:not(.on) {
-    color: var(--text-soft);
+  .key-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
   }
-  /* The check is the switch, drawn like every check: an edge when off, ink with the mark when on. */
-  .check {
-    display: grid;
-    place-items: center;
-    width: var(--check);
-    height: var(--check);
-    border: var(--check-edge);
-    border-radius: var(--r-well);
-    background: var(--surface-1);
-    color: var(--text-inverse);
-    transition: var(--transition-control);
+  /* The bead is the stage's key: filled when it runs, an outline when it is off, a check once complete. */
+  .bead {
+    position: relative;
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 1px;
+    box-shadow: inset 0 0 0 1.5px var(--tone);
+    transition: background-color var(--dur-graph) var(--ease-out);
   }
-  .check :global(svg) {
+  .on .bead {
+    background: var(--tone);
+    box-shadow: none;
+  }
+  /* Centred on the bead, the check crossfades with it. */
+  .bead :global(svg) {
+    position: absolute;
+    top: calc((8px - var(--icon-sm)) / 2);
+    left: calc((8px - var(--icon-sm)) / 2);
     width: var(--icon-sm);
     height: var(--icon-sm);
+    color: var(--tone-ink);
     opacity: 0;
-    transition: opacity var(--dur-slide) var(--ease-out);
+    transition: opacity var(--dur-graph) var(--ease-out);
   }
-  .on .check {
-    border-color: var(--brand);
-    background: var(--brand);
+  .key--complete .bead {
+    background-color: transparent;
   }
-  .on .check :global(svg) {
+  .key--complete .bead :global(svg) {
     opacity: 1;
   }
-  .name {
+  .key-label {
     overflow: hidden;
     font: var(--w-strong) var(--type-body) / 1.3 var(--font-sans);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  /* The line is the stage's progress on its own track; a stage not in the run has no line. */
-  .track {
-    position: relative;
-    height: 4px;
+  .key-line {
     overflow: hidden;
-    border-radius: 2px;
-    background: var(--track);
+    color: var(--text-soft);
+    font: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .row:not(.on) .track {
-    visibility: hidden;
+  .key-line.figure {
+    color: var(--text-muted);
+    font: var(--role-figure-sm);
+    font-variant-numeric: tabular-nums;
   }
-  .fill {
+  /* Progress is the stage's line along the key's base. */
+  .key-bar {
+    position: absolute;
+    inset: auto 0 0 0;
+    height: 3px;
+    overflow: hidden;
+  }
+  .key-fill {
     position: absolute;
     inset: 0;
-    border-radius: inherit;
     background: var(--tone);
     transform: scaleX(var(--progress, 0));
     transform-origin: left center;
@@ -246,20 +283,20 @@
       transform var(--dur-graph) var(--ease-out),
       background-color var(--dur-graph) var(--ease-out);
   }
-  .fill.is-live {
+  .key-fill.is-live {
     transition: background-color var(--dur-graph) var(--ease-out);
   }
-  .fill.is-partial {
+  .key-fill.is-partial {
     background: repeating-linear-gradient(
       90deg,
       var(--tone) 0 6px,
       transparent 6px 9px
     );
   }
-  .fill--failed {
+  .key-fill--failed {
     background: var(--err);
   }
-  .fill.is-stalled {
+  .key-fill.is-stalled {
     animation: stall-pulse var(--dur-pulse) var(--ease-out) infinite;
   }
   @keyframes stall-pulse {
@@ -267,13 +304,13 @@
       opacity: 0.4;
     }
   }
-  .fill--warmup {
+  .key-fill--warmup {
     width: 45%;
     background: color-mix(in oklab, var(--tone) 55%, transparent);
     animation: warmup-sweep var(--dur-pulse) var(--ease-out) infinite;
   }
   @media (prefers-reduced-motion: reduce) {
-    .fill--warmup {
+    .key-fill--warmup {
       width: 100%;
       opacity: 0.55;
     }
@@ -286,22 +323,15 @@
       translate: 240%;
     }
   }
-  /* Figures are as wide as their longest value, so the lines end on one edge. */
-  .figure {
-    min-width: 8ch;
-    font: var(--role-figure-sm);
-    font-variant-numeric: tabular-nums;
-    text-align: end;
-    white-space: nowrap;
-  }
-  .figure.word {
-    color: var(--text-soft);
-    font: var(--role-label);
-  }
+  /* A phone gives the keys two columns. */
   @container viz (max-width: 520px) {
-    .row {
-      grid-template-columns: var(--check) 6rem minmax(0, 1fr) auto;
+    .stage-track {
+      grid-auto-flow: row;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: var(--space-2);
+    }
+    .key {
+      padding-inline: 10px;
     }
   }
 </style>

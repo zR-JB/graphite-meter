@@ -81,7 +81,7 @@
   }
   .readout {
     display: inline-block;
-    min-width: 6ch;
+    min-width: 9ch;
     color: var(--text-muted);
     font-variant-numeric: tabular-nums;
     text-align: end;
