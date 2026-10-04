@@ -21,6 +21,10 @@
   import type { StageKey } from "../state/store.svelte";
   import { planned, STAGES } from "../runner/schedule";
   import { handoff, type Handoff } from "../presentation/motion.svelte";
+  import type { Snippet } from "svelte";
+
+  /** The run key, set over the chips as wide as their row. */
+  let { children }: { children?: Snippet } = $props();
 
   const controller = getApplicationController();
 
@@ -126,77 +130,81 @@
   ) as Record<StageKey, Handoff<ReturnType<typeof look>>>;
 </script>
 
-<div
-  class="stage-track"
-  role="group"
-  aria-label="Test stages"
-  style:--chips={segments.length}
->
-  <span class="legend caps" aria-hidden="true">Test stages</span>
-  {#each segments as s (s.key)}
-    {@const view = looks[s.key]}
-    {@const look = view.shown}
-    <button
-      type="button"
-      class="chip chip--{s.state}"
-      class:on={s.selected}
-      data-tone={s.key}
-      role="switch"
-      aria-checked={s.selected}
-      aria-label="{s.label} stage{s.reason
-        ? ` (${s.reason})`
-        : s.state === 'complete'
-          ? ` (${STATUS.complete})`
-          : ''}"
-      use:tooltipAction={s.tip}
-      disabled={s.locked}
-      onclick={() => controller.toggleStage(s.key)}
-    >
-      <span class="chip-bar" aria-hidden="true">
-        <span
-          class="chip-fill"
-          data-tone={look.tone}
-          class:chip-fill--warmup={look.state === "warmup"}
-          class:chip-fill--failed={look.state === "failed"}
-          class:is-partial={look.state === "partial"}
-          class:is-stalled={look.state === "recovering"}
-          class:is-live={look.live}
-          style:--progress={look.progress}
-        ></span>
-      </span>
-      <span class="chip-row">
-        <span class="chip-ico" aria-hidden="true"><Icon name={s.icon} /></span>
-        <span class="chip-label">{s.label}</span>
-        {#if look.state === "complete"}
-          <span class="chip-check" style:opacity={view.opacity}
-            ><Icon name="check" /></span
-          >
-        {:else if look.text}
+<div class="stage-track" style:--chips={segments.length}>
+  {@render children?.()}
+  <div class="chips" role="group" aria-label="Test stages">
+    <span class="legend caps" aria-hidden="true">Test stages</span>
+    {#each segments as s (s.key)}
+      {@const view = looks[s.key]}
+      {@const look = view.shown}
+      <button
+        type="button"
+        class="chip chip--{s.state}"
+        class:on={s.selected}
+        data-tone={s.key}
+        role="switch"
+        aria-checked={s.selected}
+        aria-label="{s.label} stage{s.reason
+          ? ` (${s.reason})`
+          : s.state === 'complete'
+            ? ` (${STATUS.complete})`
+            : ''}"
+        use:tooltipAction={s.tip}
+        disabled={s.locked}
+        onclick={() => controller.toggleStage(s.key)}
+      >
+        <span class="chip-bar" aria-hidden="true">
           <span
-            class="chip-tag"
-            class:time={look.time}
-            data-tone={look.tagTone}
-            style:opacity={view.opacity}
-            >{#if look.short}<span class="full">{look.text}</span><span
-                class="short">{look.short}</span
-              >{:else}{look.text}{/if}</span
+            class="chip-fill"
+            data-tone={look.tone}
+            class:chip-fill--warmup={look.state === "warmup"}
+            class:chip-fill--failed={look.state === "failed"}
+            class:is-partial={look.state === "partial"}
+            class:is-stalled={look.state === "recovering"}
+            class:is-live={look.live}
+            style:--progress={look.progress}
+          ></span>
+        </span>
+        <span class="chip-row">
+          <span class="chip-ico" aria-hidden="true"><Icon name={s.icon} /></span
           >
-        {/if}
-      </span>
-    </button>
-  {/each}
+          <span class="chip-label">{s.label}</span>
+          {#if look.state === "complete"}
+            <span class="chip-check" style:opacity={view.opacity}
+              ><Icon name="check" /></span
+            >
+          {:else if look.text}
+            <span
+              class="chip-tag"
+              class:time={look.time}
+              data-tone={look.tagTone}
+              style:opacity={view.opacity}
+              >{#if look.short}<span class="full">{look.text}</span><span
+                  class="short">{look.short}</span
+                >{:else}{look.text}{/if}</span
+            >
+          {/if}
+        </span>
+      </button>
+    {/each}
+  </div>
 </div>
 
 <style>
-  /* As many chips to a row as fit, 140–172 px each, centred, with the caption on the first chip's edge. */
+  /* The key over the chips, both as wide as the chip row: as many chips to a line as fit, 140–172 px each,
+     with the caption on the first chip's edge. */
   .stage-track {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 6px var(--space-2);
+    gap: var(--space-3);
     width: min(
       100%,
       calc(var(--chips) * 172px + (var(--chips) - 1) * var(--space-2))
     );
+  }
+  .chips {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 6px var(--space-2);
   }
   .legend {
     grid-column: 1 / -1;
@@ -363,7 +371,7 @@
   }
   /* Narrow rows: two chips to a line, the running one with the time into its stage alone. */
   @container viz (max-width: 430px) {
-    .stage-track {
+    .chips {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .chip {

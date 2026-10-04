@@ -272,111 +272,104 @@
   bind:clientWidth={panelWidth}
 >
   <div class="instrument">
-    <div class="face">
-      <div class="dial panel" class:hung>
-        {#if indicatedServers.length > 1}
-          <div class="server-indicator">
-            <ServerLens servers={indicatedServers} {participants} />
+    <div class="dial panel" class:hung>
+      {#if indicatedServers.length > 1}
+        <div class="server-indicator">
+          <ServerLens servers={indicatedServers} {participants} />
+        </div>
+      {/if}
+      <div
+        bind:clientWidth={gaugeWidth}
+        bind:clientHeight={gaugeHeight}
+        class="gauge-face"
+        style:--gauge-center-offset={`${layout.center.y - layout.height / 2}px`}
+      >
+        <GaugeDial
+          input={dialState}
+          {layout}
+          result={{ arcs: hero.shown.arcs, opacity: hero.opacity }}
+        />
+        {#if ticks.shown.length > 1}
+          <div
+            class="gauge-ticks"
+            aria-hidden="true"
+            style:opacity={ticks.opacity}
+          >
+            {#each layout.labelPoints as point, index (index)}
+              <span
+                class="gauge-tick"
+                data-anchor-x={point.anchorX}
+                data-anchor-y={point.anchorY}
+                style:left={`${point.x}px`}
+                style:top={`${point.y}px`}>{ticks.shown[index]}</span
+              >
+            {/each}
           </div>
         {/if}
-        <div
-          bind:clientWidth={gaugeWidth}
-          bind:clientHeight={gaugeHeight}
-          class="gauge-face"
-          style:--gauge-center-offset={`${layout.center.y - layout.height / 2}px`}
-        >
-          <GaugeDial
-            input={dialState}
-            {layout}
-            result={{ arcs: hero.shown.arcs, opacity: hero.opacity }}
-          />
-          {#if ticks.shown.length > 1}
-            <div
-              class="gauge-ticks"
-              aria-hidden="true"
-              style:opacity={ticks.opacity}
-            >
-              {#each layout.labelPoints as point, index (index)}
-                <span
-                  class="gauge-tick"
-                  data-anchor-x={point.anchorX}
-                  data-anchor-y={point.anchorY}
-                  style:left={`${point.x}px`}
-                  style:top={`${point.y}px`}>{ticks.shown[index]}</span
-                >
-              {/each}
-            </div>
-          {/if}
-          <div class="metric-wrap" style:opacity={hero.opacity}>
-            <div class="hero" class:terminal={!!terminal}>
-              {#if terminal}
-                <div
-                  class="terminal-readout"
-                  class:partial={terminal.dashed}
-                  aria-hidden="true"
-                >
-                  <span
-                    class="terminal-direction"
-                    data-tone={terminal.direction}
+        <div class="metric-wrap" style:opacity={hero.opacity}>
+          <div class="hero" class:terminal={!!terminal}>
+            {#if terminal}
+              <div
+                class="terminal-readout"
+                class:partial={terminal.dashed}
+                aria-hidden="true"
+              >
+                <span class="terminal-direction" data-tone={terminal.direction}>
+                  <span class="tone-icon" aria-hidden="true"
+                    ><Icon name={STAGE[terminal.direction].icon} /></span
                   >
-                    <span class="tone-icon" aria-hidden="true"
-                      ><Icon name={STAGE[terminal.direction].icon} /></span
-                    >
-                    {STAGE[terminal.direction].label}
-                  </span>
-                  <span class="terminal-number">{terminal.value}</span>
-                  <span class="terminal-unit">{hero.shown.unit}</span>
-                  {#if terminal.dashed}
-                    <span
-                      class="terminal-partial"
-                      data-tone={STATUS_TONE.partial}>{OUTCOME.partial}</span
-                    >
-                  {/if}
-                </div>
-              {:else}
-                <span
-                  class="gauge-value"
-                  class:quiet={display.value === MISSING}
-                  aria-hidden="true">{display.value}</span
-                >
-                <span class="gauge-unit" aria-hidden="true">{display.unit}</span
-                >
-              {/if}
-              <span class="sr-only">{spoken.value} {spoken.unit}</span>
-            </div>
+                  {STAGE[terminal.direction].label}
+                </span>
+                <span class="terminal-number">{terminal.value}</span>
+                <span class="terminal-unit">{hero.shown.unit}</span>
+                {#if terminal.dashed}
+                  <span class="terminal-partial" data-tone={STATUS_TONE.partial}
+                    >{OUTCOME.partial}</span
+                  >
+                {/if}
+              </div>
+            {:else}
+              <span
+                class="gauge-value"
+                class:quiet={display.value === MISSING}
+                aria-hidden="true">{display.value}</span
+              >
+              <span class="gauge-unit" aria-hidden="true">{display.unit}</span>
+            {/if}
+            <span class="sr-only">{spoken.value} {spoken.unit}</span>
           </div>
         </div>
-        <div
-          class="gauge-footer"
-          bind:clientHeight={noteHeight}
-          style:top={hung
-            ? `calc(100% - ${layout.height - layout.noteTop}px)`
-            : null}
-          style:opacity={footer.opacity}
-        >
-          {#if footer.shown.status || footer.shown.hint}
-            {@const { status, tone, hint, tip } = footer.shown}
-            <div class="gauge-notes">
-              {#if status}
-                <span class="gauge-status {tone}">{status}</span>
-              {/if}
-              {#if hint}
-                <span class="gauge-hint" use:tooltipAction={tip ?? ""}
-                  >{hint}</span
-                >
-              {/if}
-            </div>
-          {/if}
-        </div>
       </div>
-      <div class="run-slot"><RunButton /></div>
+      <div
+        class="gauge-footer"
+        bind:clientHeight={noteHeight}
+        style:top={hung
+          ? `calc(100% - ${layout.height - layout.noteTop}px)`
+          : null}
+        style:opacity={footer.opacity}
+      >
+        {#if footer.shown.status || footer.shown.hint}
+          {@const { status, tone, hint, tip } = footer.shown}
+          <div class="gauge-notes">
+            {#if status}
+              <span class="gauge-status {tone}">{status}</span>
+            {/if}
+            {#if hint}
+              <span class="gauge-hint" use:tooltipAction={tip ?? ""}
+                >{hint}</span
+              >
+            {/if}
+          </div>
+        {/if}
+      </div>
     </div>
 
     {#if store.latencyEnabled}
       <div class="latency-panel panel"><LatencyProfile /></div>
     {/if}
 
-    <div class="transport"><StageTrack /></div>
+    <!-- The run key over the stage chips, under the lanes beside the dial. -->
+    <div class="controls"><StageTrack><RunButton /></StageTrack></div>
 
     <div class="results"><ResultCards live={liveReadout} /></div>
   </div>
@@ -387,35 +380,35 @@
     container: viz / inline-size;
     height: 100%;
   }
-  /* The face column (the dial's panel over the run key) beside the latency panel with the stage chips under
-     it, then the cards. The face is as tall as the lanes and the chips together, so the ring has more height than
-     the lanes; on a landscape screen the console takes the column's height, and the spare height goes to the
-     face and the chips' row, not to the cards. */
+  /* The dial's panel beside the latency panel, with the run key and the stage chips under the lanes; the dial
+     spans both rows, so the ring has the height of the lanes and the controls together. On a landscape screen
+     the console takes the column's height and the spare height goes to the controls' row: the ring grows, the
+     controls centre in the room under the lanes, and the cards keep their size. Without the latency stage the
+     dial stands centred with the controls under it. */
   .instrument {
     --dial-height: clamp(320px, 40svh, 380px);
     display: grid;
     gap: var(--space-4);
     grid-template:
-      "face" auto
-      "transport" auto
+      "dial" var(--dial-height)
+      "controls" auto
       "results" auto
       "latency" auto
       / minmax(0, 1fr);
   }
   .instrument:not(:has(.latency-panel)) {
     grid-template:
-      "face" auto
-      "transport" auto
+      "dial" var(--dial-height)
+      "controls" auto
       "results" auto
       / minmax(0, 1fr);
   }
-  .face {
-    grid-area: face;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
+  .controls {
+    grid-area: controls;
+    display: grid;
+    align-content: center;
+    justify-items: center;
     min-width: 0;
-    min-height: 0;
   }
   @container viz (min-width: 760px) {
     .instrument {
@@ -423,20 +416,21 @@
       height: 100%;
       max-height: 1100px;
       grid-template:
-        "face latency" auto
-        "face transport" minmax(auto, 1fr)
+        "dial latency" auto
+        "dial controls" minmax(auto, 1fr)
         "results results" auto
         / var(--dial-width) minmax(0, 1fr);
     }
     .instrument:not(:has(.latency-panel)) {
       grid-template:
-        "face transport" minmax(var(--dial-height), 1fr)
-        "results results" auto
-        / var(--dial-width) minmax(0, 1fr);
+        "dial" minmax(var(--dial-height), 1fr)
+        "controls" auto
+        "results" auto
+        / minmax(0, 1fr);
     }
-    /* The chips stand on the row's foot, level with the run key. */
-    .transport {
-      align-self: end;
+    .instrument:not(:has(.latency-panel)) .dial {
+      justify-self: center;
+      width: clamp(360px, 48cqw, 720px);
     }
   }
   @container viz (max-width: 520px) {
@@ -445,25 +439,15 @@
     }
   }
   /* The dial's panel: the face, and the note under the ring; the face ends on the note, so a hung note measures
-     from it. On a phone the panel keeps its height; beside the lanes it fills the face column. */
+     from it. */
   .dial {
+    grid-area: dial;
     position: relative;
     display: flex;
-    flex: 1 1 auto;
     flex-direction: column;
     min-width: 0;
     min-height: 0;
-    height: var(--dial-height);
     overflow: hidden;
-  }
-  @container viz (min-width: 760px) {
-    .dial {
-      height: auto;
-    }
-  }
-  .run-slot {
-    display: flex;
-    flex: none;
   }
   .latency-panel {
     grid-area: latency;
@@ -478,13 +462,6 @@
     display: grid;
     min-width: 0;
     min-height: 0;
-  }
-  /* The chips stand centred between the panels and the cards. */
-  .transport {
-    grid-area: transport;
-    display: flex;
-    justify-content: center;
-    min-width: 0;
   }
   @container viz (max-width: 520px) {
     .latency-panel {
