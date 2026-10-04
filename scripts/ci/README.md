@@ -117,3 +117,15 @@ key and certificate names and PEM material.
 Python uses the exact patch release from `mise.toml` and the standard library
 only. `mise run python-check` runs the pinned `ty` with warnings as errors. CI
 installs the Bun lockfile frozen; `bun dedupe` output is advisory.
+
+## Rust
+
+The `rust` job runs `mise run rust-check` and `rust-check-targets`. Setup
+installs the toolchain `rust/rust-toolchain.toml` pins with `--no-self-update`
+and refuses it unless rustup installed it from the channel manifest whose
+SHA-256 `mise.toml` pins as `rust_manifest_sha256`; a new channel needs the
+SHA-256 of its `channel-rust-<version>.toml`. Shipped platforms, their Rust
+targets and the platform record live in `[workspace.metadata.graphite-meter]`
+of `rust/Cargo.toml`, which tooling reads through `rust_workspace.py`. Cargo
+caches are keyed by job, toolchain and `Cargo.lock`, so a new lockfile builds
+once from scratch.

@@ -119,6 +119,14 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (REQUEST, "github-token: ''", "github-token: ${{ github.token }}", "github-token"),
     (REQUEST, "            GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}\n", "",
      "GM_CLIENT_REVISION"),
+    (W + "ci.yml", "secret-scan, rust]", "secret-scan]", r"Gate must need every job: \['rust'\]"),
+    (W + "ci.yml", "mise run rust-check\n", "cargo test\n", "local gate step rust-check"),
+    (W + "ci.yml", "mise run rust-check-targets\n", "cargo check\n", "local gate step rust-check-targets"),
+    # rustup would replace itself from the network before it installs and checks a toolchain.
+    (SETUP, "install --no-self-update", "install", "--no-self-update"),
+    (SETUP, "        python3 scripts/ci/toolchains.py verify-rust\n", "", "misorders invariant"),
+    (SETUP, "inputs.rust == 'true' && inputs.cache == 'true'", "inputs.rust == 'true'",
+     "follow the cache input"),
 )
 
 
@@ -128,7 +136,8 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
         shutil.copytree(ROOT / ".github", root / ".github")
-        for name in ("mise.toml", "mise.lock", "go/go.mod", "container/Dockerfile"):
+        for name in ("mise.toml", "mise.lock", "go/go.mod", "container/Dockerfile",
+                     "rust/rust-toolchain.toml"):
             (root / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, root / name)
         return root

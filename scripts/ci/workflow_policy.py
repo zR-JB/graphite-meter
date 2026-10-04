@@ -35,6 +35,9 @@ ALLOWED_USES = {
     },
 }
 ORDERED = {
+    "actions/setup-project/action.yml": (
+        "rustup toolchain install", "python3 scripts/ci/toolchains.py verify-rust",
+    ),
     "workflows/release-request.yml": (
         "if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}",
         "run: python3 scripts/ci/release.py prepare",
@@ -116,6 +119,9 @@ def check_actions(root: Path) -> None:
                 fail(f"{name} must not use {needle}")
         if re.search(r"uses: (?:actions/setup-(?:go|python)|oven-sh/setup-bun)@", text):
             fail(f"{name} must provision project tools through mise")
+        installs = re.findall(r"rustup\W+toolchain\W+install\b.*", text)
+        if any("--no-self-update" not in line for line in installs):
+            fail(f"{name}: rustup must install toolchains with --no-self-update")
         if any("${{" in script for script in run_scripts(text)):
             fail(f"{name}: run scripts must read expressions through env, not interpolate them")
         for step in STEP.split(text):
@@ -202,6 +208,10 @@ def check_ci(root: Path) -> None:
     for task in steps("ci"):
         if not re.search(rf"mise run {re.escape(task)}(?![\w-])", ci):
             fail(f"CI must run the local gate step {task}")
+    jobs = set(re.findall(r"(?m)^  ([a-z-]+):$", ci.split("\njobs:\n", 1)[1])) - {"gate"}
+    gate = re.search(r"(?ms)^  gate:\n.*?^    needs: \[([^]]*)\]", ci)
+    if missing := sorted(jobs - {name.strip() for name in (gate.group(1) if gate else "").split(",")}):
+        fail(f"CI Gate must need every job: {missing}")
 
 
 def check_certificates(root: Path) -> None:

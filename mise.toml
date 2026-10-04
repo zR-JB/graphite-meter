@@ -12,6 +12,8 @@ go = "1.27.1"
 "aqua:astral-sh/ty" = "0.0.84"
 "aqua:rhysd/actionlint" = "1.7.12"
 "aqua:zizmorcore/zizmor" = "1.30.1"
+"aqua:EmbarkStudios/cargo-deny" = "0.20.2"
+"aqua:nextest-rs/nextest/cargo-nextest" = "0.9.146"
 "go:golang.org/x/vuln/cmd/govulncheck" = "1.8.0"
 
 [vars]
@@ -27,6 +29,9 @@ quay.io/containers/skopeo:v1.22.3-immutable\
 image_bun = "docker.io/oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895"
 image_golang = "docker.io/library/golang:1.27.1@sha256:3680233e3204827fbdc66088528ae6d4b3d034f51d03a99d454f6de034888244"
 image_binfmt = "docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
+
+# SHA-256 of static.rust-lang.org/dist/channel-rust-<channel>.toml for rust/rust-toolchain.toml's channel.
+rust_manifest_sha256 = "ce6dddc886364f8d786514771212cebe9b731ba82d6b859951c6b0ccc516b6a2"
 
 [env]
 CGO_ENABLED = "0"
@@ -344,13 +349,15 @@ run = [
 
 # Mirrors CI job by job: server-race replaces check's server-test.
 [tasks.ci]
-description = "Run deterministic, race, advisory, browser, release, and container gates"
+description = "Run deterministic, race, Rust, advisory, browser, release, and container gates"
 run = [
   { task = "workflow-check" },
   { task = "pipeline-test" },
   { task = "core-check" },
   { task = "legal-check" },
   { task = "server-race" },
+  { task = "rust-check" },
+  { task = "rust-check-targets" },
   { task = "security" },
   { task = "client-audit" },
   { task = "secret-scan-ci" },
@@ -413,4 +420,33 @@ revision=${GM_CLIENT_REVISION:-$(git rev-parse --short HEAD 2>/dev/null || echo 
   --build-arg CLIENT_VERSION="${VERSION:-}" \
   --build-arg GM_CLIENT_REVISION="$revision" --build-arg GM_CLIENT_VALIDATE="${GM_CLIENT_VALIDATE:-1}" \
   --label org.opencontainers.image.licenses=AGPL-3.0-or-later .
+'''
+
+[tasks.rust-format]
+description = "Format the Rust workspace"
+dir = "rust"
+run = "cargo fmt --all"
+
+# Ordered: static policy checks run before the workspace compiles.
+[tasks.rust-check]
+description = "Check Rust formatting, dependency policy, lints, and tests"
+dir = "rust"
+run = [
+  "cargo fmt --all --check",
+  "cargo deny --locked check",
+  "cargo clippy --workspace --all-targets --locked -- -D warnings",
+  "cargo nextest run --workspace --all-targets --locked --no-fail-fast --no-tests=warn",
+]
+
+[tasks.rust-check-targets]
+shell = "bash -e -o pipefail -c"
+description = "Check the shipped TUI and server targets (needs mingw-w64, musl-tools and an aarch64 GNU compiler)"
+dir = "rust"
+env = { CC_x86_64_unknown_linux_musl = "x86_64-linux-musl-gcc", CC_aarch64_unknown_linux_musl = "aarch64-linux-gnu-gcc" }
+run = '''
+tui=($(python3 ../scripts/ci/rust_workspace.py targets tui))
+server=($(python3 ../scripts/ci/rust_workspace.py targets server))
+rustup target add "${tui[@]}" "${server[@]}"
+cargo check --locked -p graphite-meter-client "${tui[@]/#/--target=}"
+cargo check --locked -p graphite-meter-server "${server[@]/#/--target=}"
 '''

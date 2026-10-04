@@ -29,6 +29,7 @@ jobs:
       code: ${{ github.event_name == 'push' || steps.filter.outputs.code == 'true' }}
       go: ${{ github.event_name == 'push' || steps.filter.outputs.go == 'true' }}
       deps: ${{ github.event_name == 'push' || steps.filter.outputs.deps == 'true' }}
+      rust: ${{ github.event_name == 'push' || steps.filter.outputs.rust == 'true' }}
     steps:
       - name: Checkout exact CI source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -185,6 +186,33 @@ jobs:
           mise run security
           mise run client-audit
 
+  rust:
+    name: Rust checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up Rust, pinned cargo-deny and cargo-nextest
+        uses: ./.github/actions/setup-project
+        with: {rust: 'true', cargo-deny: 'true', cargo-nextest: 'true'}
+      - name: Check Rust formatting, dependency policy, lints and tests
+        run: mise run rust-check
+      # Target build scripts compile C; only these checks use Ubuntu's unpinned cross compilers.
+      - name: Install C cross compilers for the target checks
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-win32 mingw-w64-x86-64-dev \
+            musl-tools gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+      - name: Check the shipped TUI and server targets
+        run: mise run rust-check-targets
+
   secret-scan:
     name: Secret Scan
     runs-on: ubuntu-24.04
@@ -204,7 +232,7 @@ jobs:
     name: Gate
     runs-on: ubuntu-24.04
     if: always()
-    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan]
+    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust]
     steps:
       - name: Require every selected job
         env:
