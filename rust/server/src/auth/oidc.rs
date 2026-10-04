@@ -141,12 +141,8 @@ pub(super) struct Oidc {
 }
 impl Oidc {
     pub fn new(config: &AuthConfig, log: Arc<super::logging::SecurityLog>) -> Result<Self, ConfigError> {
-        let secret = read_secret(
-            "OIDC client secret",
-            &config.oidc_client_secret,
-            &config.oidc_secret_file,
-            16 * 1024,
-        )?;
+        let (inline, file) = (&config.oidc_client_secret, &config.oidc_secret_file);
+        let secret = read_secret("OIDC client secret", inline, file, 16 * 1024)?;
         let mut config = config.clone();
         config.oidc_client_secret.zeroize();
         config.password_hash.zeroize();
@@ -189,10 +185,8 @@ impl Oidc {
     async fn fetch_provider(&self) -> Result<Provider, ConfigError> {
         let issuer = &self.config.oidc_issuer;
         let separator = if issuer.ends_with('/') { "" } else { "/" };
-        let response = self
-            .http
-            .call(get(&format!("{issuer}{separator}.well-known/openid-configuration"))?)
-            .await?;
+        let url = format!("{issuer}{separator}.well-known/openid-configuration");
+        let response = self.http.call(get(&url)?).await?;
         Provider::new(&go_json(ok(&response)?)?, issuer)
     }
     pub async fn start(
@@ -280,23 +274,12 @@ impl Oidc {
         let deadline = Instant::now() + CALLBACK_DEADLINE;
         let _permit = within(deadline, Reason::TokenExchange, self.exchanges.acquire()).await?;
         let provider = &tx.provider;
-        let tokens = within(
-            deadline,
-            Reason::TokenExchange,
-            self.exchange(provider, code, &tx.verifier),
-        )
-        .await?;
-        let id_token = tokens
-            .id_token
-            .as_ref()
-            .and_then(serde_json::Value::as_str)
-            .ok_or(Reason::MissingIdToken)?;
-        let verified = within(
-            deadline,
-            Reason::IdTokenVerification,
-            provider.verify(&self.http, id_token),
-        )
-        .await?;
+        let exchange = self.exchange(provider, code, &tx.verifier);
+        let tokens = within(deadline, Reason::TokenExchange, exchange).await?;
+        let id_token = tokens.id_token.as_ref().and_then(Value::as_str);
+        let id_token = id_token.ok_or(Reason::MissingIdToken)?;
+        let verify = provider.verify(&self.http, id_token);
+        let verified = within(deadline, Reason::IdTokenVerification, verify).await?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| Reason::IdTokenVerification)?
@@ -316,12 +299,8 @@ impl Oidc {
             Reject::AccessTokenHash => Reason::AccessTokenHash,
             _ => Reason::IdTokenVerification,
         })?;
-        let info = within(
-            deadline,
-            Reason::UserInfoOrSubject,
-            self.user_info(provider, &tokens.access_token),
-        )
-        .await?;
+        let user_info = self.user_info(provider, &tokens.access_token);
+        let info = within(deadline, Reason::UserInfoOrSubject, user_info).await?;
         // go-oidc's UserInfo reads these members and refuses a mistyped one; email_verified may be a string.
         let flag = |value: &Value| value.is_boolean() || matches!(value.as_str(), Some("true" | "false"));
         if info.text("sub") != Some(&claims.subject)

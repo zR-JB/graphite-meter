@@ -7,36 +7,37 @@ use graphite_meter_server::{
     },
     config::AuthMode,
 };
-use http::{Request, header};
+use http::{HeaderName, Method, Request, header};
 use std::net::SocketAddr;
 
 const PUBLIC: &str = "https://meter.example";
 const CLIENT: &str = "https://client.example";
+const UI: Listener = Listener {
+    ui: true,
+    webtransport: false,
+};
 
-fn policy(store: &SessionStore) -> Policy {
-    Policy::new(
-        PUBLIC,
-        AuthMode::Password,
-        vec!["10.0.0.0/8".parse().unwrap()],
-        store.clone(),
-    )
-    .unwrap()
+fn setup() -> (SessionStore, Policy) {
+    let store = SessionStore::new();
+    let trusted = vec!["10.0.0.0/8".parse().unwrap()];
+    let policy = Policy::new(PUBLIC, AuthMode::Password, trusted, store.clone()).unwrap();
+    (store, policy)
 }
 
 /// A grant's bearer token, issued by an approved exchange for the browser `origin`, or a terminal.
 fn grant(store: &SessionStore, session: &SessionLease, origin: Option<&str>) -> String {
     let verifier = "v".repeat(43);
     let challenge = graphite_meter_core::approval::challenge(&verifier);
-    let client = "192.0.2.1".parse().unwrap();
-    let kind = match origin {
-        Some(origin) => store
-            .begin_browser_approval(&valid_challenge(&challenge).unwrap(), origin, Some(session), client)
-            .map(|_| ApprovalKind::Browser),
-        None => store
-            .begin_cli_approval(session, &valid_challenge(&challenge).unwrap(), client)
-            .map(|_| ApprovalKind::Cli),
+    let (valid, client) = (valid_challenge(&challenge).unwrap(), "192.0.2.1".parse().unwrap());
+    let (begun, kind) = match origin {
+        Some(origin) => (
+            store.begin_browser_approval(&valid, origin, Some(session), client),
+            ApprovalKind::Browser,
+        ),
+        None => (store.begin_cli_approval(session, &valid, client), ApprovalKind::Cli),
     };
-    store.approve(session, &challenge, kind.unwrap()).unwrap();
+    assert!(begun.is_ok());
+    store.approve(session, &challenge, kind).unwrap();
     let exchange = match origin {
         Some(origin) => store.exchange_browser(&verifier, origin),
         None => store.exchange_cli(&verifier),
@@ -52,56 +53,52 @@ fn peer() -> SocketAddr {
 }
 
 fn request(method: &str, path: &str) -> Request<()> {
-    Request::builder()
-        .method(method)
-        .uri(path)
-        .header(header::HOST, "meter.example")
-        .body(())
-        .unwrap()
+    let request = Request::builder().method(method).uri(path);
+    request.header(header::HOST, "meter.example").body(()).unwrap()
 }
 
 fn set(request: &mut Request<()>, name: impl http::header::IntoHeaderName, value: &str) {
     request.headers_mut().insert(name, value.parse().unwrap());
 }
 
+fn append(request: &mut Request<()>, name: impl http::header::IntoHeaderName, value: &str) {
+    request.headers_mut().append(name, value.parse().unwrap());
+}
+
 fn cookie(request: &mut Request<()>, token: &str) {
-    request
-        .headers_mut()
-        .insert(header::COOKIE, format!("__Host-gm_session={token}").parse().unwrap());
+    set(request, header::COOKIE, &format!("__Host-gm_session={token}"));
 }
 
 fn bearer(request: &mut Request<()>, token: &str) {
-    request
-        .headers_mut()
-        .insert(header::AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
+    set(request, header::AUTHORIZATION, &format!("Bearer {token}"));
+}
+
+fn evaluate(policy: &Policy, request: &Request<()>, listener: Listener) -> Result<Authorization, Refusal> {
+    let connection = Connection {
+        peer: peer(),
+        tls: true,
+        listener,
+    };
+    let authorized = policy.authorize(request.clone(), connection);
+    authorized
+        .map(|authorized| authorized.authorization().clone())
+        .map_err(|rejected| rejected.reason())
 }
 
 fn allowed(policy: &Policy, request: &Request<()>) -> AuthLease {
-    match evaluate(
-        policy,
-        request,
-        peer(),
-        true,
-        Listener {
-            ui: true,
-            webtransport: false,
-        },
-    ) {
+    match evaluate(policy, request, UI) {
         Ok(Authorization::Authenticated(lease)) => lease,
         _ => panic!("request should authenticate"),
     }
 }
 
 fn refused(policy: &Policy, request: &Request<()>, refusal: Refusal) {
-    assert!(
-        matches!(evaluate(policy, request, peer(), true, Listener { ui: true, webtransport: false }), Err(actual) if actual == refusal)
-    );
+    assert_eq!(evaluate(policy, request, UI).err(), Some(refusal));
 }
 
 #[test]
 fn tls_hostnames_and_proxy_evidence_have_distinct_trust_boundaries() {
-    let store = SessionStore::new();
-    let policy = policy(&store);
+    let (_, policy) = setup();
     let mut req = request("GET", "/login");
     let trusted: SocketAddr = "10.1.2.3:4000".parse().unwrap();
     assert!(policy.trust(&req, peer(), true).canonical);
@@ -111,7 +108,7 @@ fn tls_hostnames_and_proxy_evidence_have_distinct_trust_boundaries() {
     set(&mut req, header::HOST, "other.example");
     assert!(!policy.trust(&req, peer(), true).secure);
     set(&mut req, header::HOST, "meter.example");
-    req.headers_mut().append(header::HOST, "other.example".parse().unwrap());
+    append(&mut req, header::HOST, "other.example");
     assert!(!policy.trust(&req, peer(), true).secure);
     req.headers_mut().remove(header::HOST);
     set(&mut req, header::HOST, "other.example");
@@ -119,15 +116,13 @@ fn tls_hostnames_and_proxy_evidence_have_distinct_trust_boundaries() {
     set(&mut req, "x-forwarded-host", "meter.example");
     assert!(!policy.trust(&req, peer(), false).secure);
     assert!(policy.trust(&req, trusted, false).canonical);
-    req.headers_mut().append("x-forwarded-proto", "https".parse().unwrap());
+    append(&mut req, "x-forwarded-proto", "https");
     assert!(!policy.trust(&req, trusted, false).secure);
     set(&mut req, "x-forwarded-proto", "https,http");
     assert!(!policy.trust(&req, trusted, false).secure);
     set(&mut req, "x-real-ip", "::ffff:198.51.100.4");
-    assert_eq!(
-        policy.client_address(req.headers(), trusted).unwrap().to_string(),
-        "198.51.100.4"
-    );
+    let client = policy.client_address(req.headers(), trusted);
+    assert_eq!(client, Some("198.51.100.4".parse().unwrap()));
     set(&mut req, "x-forwarded-for", "198.51.100.4");
     assert!(policy.client_address(req.headers(), trusted).is_none());
     assert_eq!(policy.client_address(req.headers(), peer()), Some(peer().ip()));
@@ -135,8 +130,7 @@ fn tls_hostnames_and_proxy_evidence_have_distinct_trust_boundaries() {
 
 #[test]
 fn cookie_measurements_require_positive_origin_evidence_and_mutation_csrf() {
-    let store = SessionStore::new();
-    let policy = policy(&store);
+    let (store, policy) = setup();
     let (token, session) = store.create("operator", "Operator", "local", None).unwrap();
     let mut req = request("GET", "/download");
     cookie(&mut req, &token);
@@ -147,7 +141,7 @@ fn cookie_measurements_require_positive_origin_evidence_and_mutation_csrf() {
     refused(&policy, &req, Refusal::Forbidden);
     set(&mut req, header::ORIGIN, PUBLIC);
     allowed(&policy, &req);
-    *req.method_mut() = http::Method::POST;
+    *req.method_mut() = Method::POST;
     *req.uri_mut() = "/upload".parse().unwrap();
     refused(&policy, &req, Refusal::Forbidden);
     set(&mut req, "x-csrf-token", session.session().csrf());
@@ -155,7 +149,7 @@ fn cookie_measurements_require_positive_origin_evidence_and_mutation_csrf() {
     set(&mut req, header::ORIGIN, CLIENT);
     refused(&policy, &req, Refusal::Forbidden);
 
-    *req.method_mut() = http::Method::GET;
+    *req.method_mut() = Method::GET;
     *req.uri_mut() = "/ws/ping".parse().unwrap();
     req.headers_mut().remove(header::ORIGIN);
     set(&mut req, "sec-fetch-site", "same-origin");
@@ -166,8 +160,7 @@ fn cookie_measurements_require_positive_origin_evidence_and_mutation_csrf() {
 
 #[test]
 fn explicit_credentials_never_fall_back_to_ambient_cookies() {
-    let store = SessionStore::new();
-    let policy = policy(&store);
+    let (store, policy) = setup();
     let (token, session) = store.create("operator", "Operator", "local", None).unwrap();
     let cli = grant(&store, &session, None);
     let mut req = request("GET", "/download");
@@ -177,12 +170,10 @@ fn explicit_credentials_never_fall_back_to_ambient_cookies() {
     refused(&policy, &req, Refusal::AuthenticationRequired);
     // As in Go, a repeated Authorization is forbidden before any credential is read.
     set(&mut req, header::AUTHORIZATION, "");
-    req.headers_mut()
-        .append(header::AUTHORIZATION, "Bearer invalid".parse().unwrap());
+    append(&mut req, header::AUTHORIZATION, "Bearer invalid");
     refused(&policy, &req, Refusal::Ambiguous);
     bearer(&mut req, &cli);
-    req.headers_mut()
-        .append(header::AUTHORIZATION, "Bearer invalid".parse().unwrap());
+    append(&mut req, header::AUTHORIZATION, "Bearer invalid");
     refused(&policy, &req, Refusal::Ambiguous);
     set(&mut req, header::AUTHORIZATION, "");
     refused(&policy, &req, Refusal::AuthenticationRequired);
@@ -200,8 +191,7 @@ fn explicit_credentials_never_fall_back_to_ambient_cookies() {
 
 #[test]
 fn ambiguous_cookie_and_origin_evidence_cannot_authorize_a_measurement() {
-    let store = SessionStore::new();
-    let policy = policy(&store);
+    let (store, policy) = setup();
     let (token, session) = store.create("operator", "Operator", "local", None).unwrap();
     let mut req = request("POST", "/upload");
     cookie(&mut req, &token);
@@ -210,12 +200,12 @@ fn ambiguous_cookie_and_origin_evidence_cannot_authorize_a_measurement() {
     set(&mut req, "x-csrf-token", session.session().csrf());
     allowed(&policy, &req);
     for other in ["theme=é", "__Host-gm_session=ab\"c"] {
-        req.headers_mut().append(header::COOKIE, other.parse().unwrap());
+        append(&mut req, header::COOKIE, other);
         allowed(&policy, &req);
     }
 
     for duplicate in ["__Host-gm_session=other", "__Host-gm_session"] {
-        req.headers_mut().append(header::COOKIE, duplicate.parse().unwrap());
+        append(&mut req, header::COOKIE, duplicate);
         refused(&policy, &req, Refusal::AuthenticationRequired);
         req.headers_mut().remove(header::COOKIE);
         cookie(&mut req, &token);
@@ -223,23 +213,18 @@ fn ambiguous_cookie_and_origin_evidence_cannot_authorize_a_measurement() {
 
     for (name, value) in [
         (header::ORIGIN, PUBLIC),
-        (header::HeaderName::from_static("sec-fetch-site"), "same-origin"),
-        (
-            header::HeaderName::from_static("x-csrf-token"),
-            session.session().csrf(),
-        ),
+        (HeaderName::from_static("sec-fetch-site"), "same-origin"),
+        (HeaderName::from_static("x-csrf-token"), session.session().csrf()),
     ] {
-        req.headers_mut().append(name.clone(), value.parse().unwrap());
+        append(&mut req, name.clone(), value);
         refused(&policy, &req, Refusal::Ambiguous);
-        req.headers_mut().remove(name.clone());
-        req.headers_mut().insert(name, value.parse().unwrap());
+        set(&mut req, name, value);
     }
 }
 
 #[test]
 fn browser_grants_are_audience_and_route_scoped() {
-    let store = SessionStore::new();
-    let policy = policy(&store);
+    let (store, policy) = setup();
     let (_, session) = store.create("operator", "Operator", "local", None).unwrap();
     let token = grant(&store, &session, Some(CLIENT));
     let mut req = request("POST", "/upload");
@@ -258,92 +243,65 @@ fn browser_grants_are_audience_and_route_scoped() {
 
 #[test]
 fn webtransport_uses_no_cookie_and_burns_tickets_even_with_bearer() {
-    let store = SessionStore::new();
-    let policy = policy(&store);
+    let (store, policy) = setup();
     let (token, session) = store.create("operator", "Operator", "local", None).unwrap();
     let lease = AuthLease::cookie(session.clone());
     let cli = grant(&store, &session, None);
     let target = "https://meter.example/wt/ping";
+    let mint = || store.mint_ticket(&lease, PUBLIC, target, PUBLIC, Kind::WebTransport);
     let listener = Listener {
         ui: false,
         webtransport: true,
     };
+    let refusal = |req: &Request<()>| evaluate(&policy, req, listener).err();
     let mut req = request("CONNECT", "/wt/ping");
     cookie(&mut req, &token);
     set(&mut req, header::ORIGIN, PUBLIC);
     set(&mut req, "x-csrf-token", session.session().csrf());
-    assert!(matches!(
-        evaluate(&policy, &req, peer(), true, listener),
-        Err(Refusal::AuthenticationRequired)
-    ));
-    let ticket = store
-        .mint_ticket(&lease, PUBLIC, target, PUBLIC, Kind::WebTransport)
-        .unwrap();
+    assert_eq!(refusal(&req), Some(Refusal::AuthenticationRequired));
+    let ticket = mint().unwrap();
     *req.uri_mut() = format!("/wt/ping?token={}", ticket.token).parse().unwrap();
     // A non-WT listener must not consume a CONNECT ticket.
-    assert!(evaluate(&policy, &req, peer(), true, Listener::default()).is_ok());
+    assert!(evaluate(&policy, &req, Listener::default()).is_ok());
     bearer(&mut req, &cli);
     assert!(matches!(
-        evaluate(&policy, &req, peer(), true, listener),
+        evaluate(&policy, &req, listener),
         Ok(Authorization::Authenticated(_))
     ));
     assert!(store.consume_ticket(&ticket.token, target, PUBLIC).is_none());
     req.headers_mut().remove(header::AUTHORIZATION);
-    assert!(matches!(
-        evaluate(&policy, &req, peer(), true, listener),
-        Err(Refusal::AuthenticationRequired)
-    ));
+    assert_eq!(refusal(&req), Some(Refusal::AuthenticationRequired));
 
-    let ticket = store
-        .mint_ticket(&lease, PUBLIC, target, PUBLIC, Kind::WebTransport)
-        .unwrap();
+    let ticket = mint().unwrap();
     *req.uri_mut() = format!("/wt/upload?token={}", ticket.token).parse().unwrap();
-    assert!(matches!(
-        evaluate(&policy, &req, peer(), true, listener),
-        Err(Refusal::AuthenticationRequired)
-    ));
+    assert_eq!(refusal(&req), Some(Refusal::AuthenticationRequired));
     assert!(store.consume_ticket(&ticket.token, target, PUBLIC).is_none());
 
     // An authenticated CONNECT from a foreign origin is forbidden, as in Go, not sent to sign in.
     *req.uri_mut() = "/wt/ping".parse().unwrap();
     set(&mut req, header::ORIGIN, CLIENT);
     bearer(&mut req, &cli);
-    assert!(matches!(
-        evaluate(&policy, &req, peer(), true, listener),
-        Err(Refusal::Forbidden)
-    ));
+    assert_eq!(refusal(&req), Some(Refusal::Forbidden));
 }
 
 #[test]
 fn auth_pages_are_canonical_and_foreign_preflights_never_allow_cookies() {
-    let store = SessionStore::new();
-    let policy = policy(&store);
-    let ui = Listener {
-        ui: true,
-        webtransport: false,
-    };
+    let (_, policy) = setup();
     let mut req = request("GET", "/login");
-    assert!(matches!(
-        evaluate(&policy, &req, peer(), true, ui),
-        Ok(Authorization::PublicAuth)
-    ));
-    assert!(matches!(
-        evaluate(&policy, &req, peer(), true, Listener::default()),
-        Err(Refusal::Forbidden)
-    ));
+    assert!(matches!(evaluate(&policy, &req, UI), Ok(Authorization::PublicAuth)));
+    let other = evaluate(&policy, &req, Listener::default());
+    assert_eq!(other.err(), Some(Refusal::Forbidden));
     set(&mut req, header::HOST, "meter.example:8443");
-    assert!(matches!(
-        evaluate(&policy, &req, peer(), true, ui),
-        Err(Refusal::Forbidden)
-    ));
+    refused(&policy, &req, Refusal::Forbidden);
     req = request("OPTIONS", "/upload");
     set(&mut req, header::ORIGIN, CLIENT);
     set(&mut req, header::ACCESS_CONTROL_REQUEST_METHOD, "POST");
-    req.headers_mut().insert(
+    set(
+        &mut req,
         header::ACCESS_CONTROL_REQUEST_HEADERS,
-        "Authorization, Content-Type".parse().unwrap(),
+        "Authorization, Content-Type",
     );
-    let Ok(Authorization::Preflight(headers)) = evaluate(&policy, &req, peer(), true, ui) else {
+    let Ok(Authorization::Preflight(headers)) = evaluate(&policy, &req, UI) else {
         panic!("expected bearer preflight");
     };
     assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_ORIGIN], CLIENT);
@@ -351,7 +309,7 @@ fn auth_pages_are_canonical_and_foreign_preflights_never_allow_cookies() {
     set(&mut req, header::ACCESS_CONTROL_REQUEST_HEADERS, "Content-Type");
     refused(&policy, &req, Refusal::Forbidden);
     *req.uri_mut() = "/auth/browser/token".parse().unwrap();
-    let Ok(Authorization::Preflight(headers)) = evaluate(&policy, &req, peer(), true, ui) else {
+    let Ok(Authorization::Preflight(headers)) = evaluate(&policy, &req, UI) else {
         panic!("expected browser token preflight");
     };
     assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_ORIGIN], CLIENT);
@@ -361,23 +319,9 @@ fn auth_pages_are_canonical_and_foreign_preflights_never_allow_cookies() {
     assert!(!headers.contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS));
 }
 
-fn evaluate(
-    policy: &Policy,
-    request: &Request<()>,
-    peer: SocketAddr,
-    tls: bool,
-    listener: Listener,
-) -> Result<Authorization, Refusal> {
-    policy
-        .authorize(request.clone(), Connection { peer, tls, listener })
-        .map(|authorized| authorized.authorization().clone())
-        .map_err(|rejected| rejected.reason())
-}
-
 #[test]
 fn repeated_security_headers_are_forbidden_before_anything_else() {
-    let store = SessionStore::new();
-    let policy = policy(&store);
+    let (_, policy) = setup();
     for name in [
         "authorization",
         "origin",
@@ -387,27 +331,22 @@ fn repeated_security_headers_are_forbidden_before_anything_else() {
         "access-control-request-headers",
     ] {
         let mut req = request("POST", "/auth/password");
-        req.headers_mut().append(name, "a".parse().unwrap());
-        req.headers_mut().append(name, "b".parse().unwrap());
+        append(&mut req, name, "a");
+        append(&mut req, name, "b");
         refused(&policy, &req, Refusal::Ambiguous);
     }
 }
 
 #[test]
 fn only_the_two_sign_in_fonts_are_public_and_only_for_get_and_head() {
-    let store = SessionStore::new();
-    let policy = policy(&store);
-    let listener = Listener {
-        ui: true,
-        webtransport: false,
-    };
+    let (_, policy) = setup();
     refused(&policy, &request("HEAD", "/login"), Refusal::AuthenticationRequired);
     for path in [
         "/fonts/ibm-plex-sans-var-latin1.woff2",
         "/fonts/ibm-plex-mono-600-latin1.woff2",
     ] {
         for method in ["GET", "HEAD", "POST", "OPTIONS", "DELETE"] {
-            let result = evaluate(&policy, &request(method, path), peer(), true, listener);
+            let result = evaluate(&policy, &request(method, path), UI);
             assert_eq!(result.is_ok(), matches!(method, "GET" | "HEAD"), "{method} {path}");
         }
     }

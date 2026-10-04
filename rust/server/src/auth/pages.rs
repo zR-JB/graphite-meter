@@ -98,13 +98,6 @@ fn flag(on: bool) -> &'static str {
 /// field, nested `not` and `and`, or `eq`/`ne` with a string. A field is escaped for HTML, or for a URL query
 /// within an href.
 fn render(template: &Parts, fields: &[(&str, &str)]) -> String {
-    let field = |name: &str| {
-        let name = name.trim_start_matches('.');
-        fields
-            .iter()
-            .find(|(key, _)| *key == name)
-            .map_or("", |(_, value)| value)
-    };
     let test = |condition: &str| {
         // The shared templates use prefix boolean operators and parentheses; consume both operands
         // even when the first decides the result so a nested expression stays aligned.
@@ -122,10 +115,7 @@ fn render(template: &Parts, fields: &[(&str, &str)]) -> String {
                     })
                 }
                 quoted if quoted.starts_with('"') => quoted.trim_matches('"'),
-                name => fields
-                    .iter()
-                    .find(|(key, _)| *key == name.trim_start_matches('.'))
-                    .map_or("", |(_, value)| *value),
+                name => field(fields, name),
             }
         }
         // These template operators have fixed arity, so their prefix order also defines the grouping.
@@ -161,7 +151,7 @@ fn render(template: &Parts, fields: &[(&str, &str)]) -> String {
                 "template \"pending\"" => write!(out, "<script>{PENDING_SCRIPT}</script>").expect("string writer"),
                 ".Styles" => out.push_str(STYLES),
                 name if out.rfind("href=\"").is_some_and(|at| !out[at + 6..].contains('"')) => {
-                    for byte in field(name).bytes() {
+                    for byte in field(fields, name).bytes() {
                         if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
                             out.push(byte.into());
                         } else {
@@ -169,7 +159,7 @@ fn render(template: &Parts, fields: &[(&str, &str)]) -> String {
                         }
                     }
                 }
-                name => out.push_str(&escape(field(name))),
+                name => out.push_str(&escape(field(fields, name))),
             }
         }
         if shown(&branches) {
@@ -177,6 +167,15 @@ fn render(template: &Parts, fields: &[(&str, &str)]) -> String {
         }
     }
     out
+}
+
+/// The field a template names, with or without its leading dot; empty where unset.
+fn field<'a>(fields: &[(&str, &'a str)], name: &str) -> &'a str {
+    let name = name.trim_start_matches('.');
+    fields
+        .iter()
+        .find(|(key, _)| *key == name)
+        .map_or("", |(_, value)| value)
 }
 
 /// Go's html/template escaping of text and quoted attribute values.

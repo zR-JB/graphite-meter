@@ -27,6 +27,7 @@ use ipnet::IpNet;
 use serde::Deserialize;
 use serde_json::json;
 use std::{
+    net::IpAddr,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -148,15 +149,13 @@ impl Service {
             Some(AuthRoute::Logout) => self.logout(authorized),
             Some(AuthRoute::CliPage) => self.approval_page(authorized, false),
             Some(AuthRoute::BrowserPage) => self.approval_page(authorized, true),
-            Some(AuthRoute::CliApprove) => self.approve(authorized, false),
-            Some(AuthRoute::BrowserApprove) => self.approve(authorized, true),
+            Some(AuthRoute::CliApprove) => self.approve(authorized, ApprovalKind::Cli),
+            Some(AuthRoute::BrowserApprove) => self.approve(authorized, ApprovalKind::Browser),
             Some(AuthRoute::CliToken) => self.exchange(request, false),
             Some(AuthRoute::BrowserToken) => self.exchange(request, true),
-            None => match route::lookup(path) {
-                Some(Route::WtSession) if request.method() == Method::POST => {
-                    self.ticket(authorized, Kind::WebTransport)
-                }
-                Some(Route::WsSession) if request.method() == Method::POST => self.ticket(authorized, Kind::WebSocket),
+            None => match (route::lookup(path), request.method() == Method::POST) {
+                (Some(Route::WtSession), true) => self.ticket(authorized, Kind::WebTransport),
+                (Some(Route::WsSession), true) => self.ticket(authorized, Kind::WebSocket),
                 _ => error_response(StatusCode::NOT_FOUND),
             },
         }
@@ -179,30 +178,22 @@ impl Service {
             value @ ("expired" | "renew" | "signed_out") => value,
             _ => "",
         };
-        let mut result = html(
-            StatusCode::OK,
-            LoginPage {
-                csrf: &nonce,
-                provider: &self.provider,
-                challenge,
-                password: self.password.is_some(),
-                oidc: self.oidc.is_some(),
-                oidc_ready: provider.is_some(),
-                notice,
-                status,
-            }
-            .render(),
-        );
+        let page = LoginPage {
+            csrf: &nonce,
+            provider: &self.provider,
+            challenge,
+            password: self.password.is_some(),
+            oidc: self.oidc.is_some(),
+            oidc_ready: provider.is_some(),
+            notice,
+            status,
+        };
+        let mut result = html(StatusCode::OK, page.render());
         if let Some(provider) = provider {
             result.headers_mut().extend(provider.page_headers.clone());
         }
-        set_cookie(
-            &mut result,
-            "__Host-gm_login",
-            &nonce,
-            SystemTime::now() + LOGIN_NONCE_LIFETIME,
-            "Strict",
-        );
+        let expires = SystemTime::now() + LOGIN_NONCE_LIFETIME;
+        set_cookie(&mut result, "__Host-gm_login", &nonce, expires, "Strict");
         result
     }
 
@@ -217,9 +208,7 @@ impl Service {
         let challenge = value(&form, "challenge");
         let result = password
             .attempt(PasswordAttempt {
-                client: self
-                    .policy
-                    .client_address(request.headers(), authorized.connection().peer),
+                client: self.client(authorized),
                 origin: text(request.headers(), "origin").unwrap_or_default(),
                 nonce_cookie: cookie(request.headers(), "__Host-gm_login"),
                 device_cookie: cookie(request.headers(), "__Host-gm_device"),
@@ -264,9 +253,7 @@ impl Service {
         if let Err(reason) = check_csrf(self.policy.public_origin(), origin, nonce, value(form, "csrf")) {
             return self.oidc_rejected(request.method(), reason, challenge);
         }
-        let address = self
-            .policy
-            .client_address(request.headers(), authorized.connection().peer);
+        let address = self.client(authorized);
         let Some(address) = address.filter(|&address| self.attempts.allow(Budget::OidcStart, address)) else {
             return self.oidc_rejected(request.method(), Reason::Throttled, challenge);
         };
@@ -328,9 +315,7 @@ impl Service {
         let browser = cookie(request.headers(), "__Host-gm_oidc").ok_or(refuse(Reason::TransactionCookie))?;
         let tx = oidc.take(state, browser, unique("iss"))?;
         let fail = |reason| (reason, tx.challenge.clone());
-        let address = self
-            .policy
-            .client_address(request.headers(), authorized.connection().peer);
+        let address = self.client(authorized);
         if !address.is_some_and(|address| self.attempts.allow(Budget::OidcExchange, address)) {
             return Err(fail(Reason::ExchangeRateLimited));
         }
@@ -355,11 +340,8 @@ impl Service {
 
     fn rejected(&self, method: &Method, reason: Reason, challenge: &str) -> Response<Bytes> {
         self.log.refused(reason);
-        let mut fields = Vec::new();
-        if valid_challenge(challenge).is_some() {
-            fields.push(("challenge", challenge));
-        }
-        fields.push(("error", reason.notice()));
+        let challenge = valid_challenge(challenge).map(|_| ("challenge", challenge));
+        let fields: Vec<_> = challenge.into_iter().chain([("error", reason.notice())]).collect();
         redirect(method, &query_url(AuthRoute::Login.path(), &fields))
     }
 
@@ -368,17 +350,12 @@ impl Service {
             return response(StatusCode::FORBIDDEN);
         };
         let session = lease.session();
-        json(
-            StatusCode::OK,
-            json!({"name":session.name(), "provider":lease.provider(), "expires":rfc3339(session.expires()), "csrf":session.csrf(), "remainingMs":remaining_ms(session.expires()), "maximumLifetimeMs":SESSION_LIFETIME.as_millis() as u64}),
-        )
+        let body = json!({"name":session.name(), "provider":lease.provider(), "expires":rfc3339(session.expires()), "csrf":session.csrf(), "remainingMs":remaining_ms(session.expires()), "maximumLifetimeMs":SESSION_LIFETIME.as_millis() as u64});
+        json(StatusCode::OK, body)
     }
 
     fn logout(&self, authorized: &AuthorizedRequest<Bytes>) -> Response<Bytes> {
-        let Ok(form) = form(authorized.request()) else {
-            return response(StatusCode::FORBIDDEN);
-        };
-        let Some(lease) = self.form_session(authorized, &form) else {
+        let Some((form, lease)) = self.form_session(authorized) else {
             return response(StatusCode::FORBIDDEN);
         };
         {
@@ -414,21 +391,15 @@ impl Service {
         if !browser && let Some(destination) = self.sessions.browser_approval_redirect(challenge) {
             return redirect(request.method(), &destination);
         }
-        let client = self
-            .policy
-            .client_address(request.headers(), authorized.connection().peer);
+        let client = self.client(authorized);
         // Public approval pages may inspect an ambient cookie, but never treat a
         // request carrying Authorization as a cookie-authenticated request.
-        let session = if request
-            .headers()
-            .get(header::AUTHORIZATION)
-            .is_some_and(|value| !value.is_empty())
-        {
-            None
-        } else {
-            cookie(request.headers(), "__Host-gm_session").and_then(|token| self.sessions.lookup(token))
-        };
+        let bearer = text(request.headers(), "authorization") != Some("");
+        let session = cookie(request.headers(), "__Host-gm_session").filter(|_| !bearer);
+        let session = session.and_then(|token| self.sessions.lookup(token));
         let origin = value(&query, "client_origin");
+        let login = query_url(AuthRoute::Login.path(), &[("challenge", challenge)]);
+        let sign_in = || redirect(request.method(), &login);
         let approval = if browser {
             if !super::secure_browser_origin(origin) {
                 return refusal_page(false);
@@ -445,10 +416,7 @@ impl Service {
                 .begin_browser_approval(&valid, origin, session.as_ref(), client)
         } else {
             let Some(session) = &session else {
-                return redirect(
-                    request.method(),
-                    &query_url(AuthRoute::Login.path(), &[("challenge", challenge)]),
-                );
+                return sign_in();
             };
             let Some(client) = client else {
                 return refusal_page(true);
@@ -465,16 +433,11 @@ impl Service {
                     {
                         return html(StatusCode::OK, pages::continue_page(challenge, true));
                     }
-                    return redirect(
-                        request.method(),
-                        &query_url(AuthRoute::Login.path(), &[("challenge", challenge)]),
-                    );
+                    return sign_in();
                 };
                 let origin = view.browser_origin.as_deref().unwrap_or_default();
-                html(
-                    StatusCode::OK,
-                    pages::approval_page(&view.code, session.session().csrf(), challenge, origin),
-                )
+                let page = pages::approval_page(&view.code, session.session().csrf(), challenge, origin);
+                html(StatusCode::OK, page)
             }
             Err(ApprovalError::GrantCapacity) => capacity_page(),
             Err(ApprovalError::Capacity) => {
@@ -487,26 +450,14 @@ impl Service {
         }
     }
 
-    fn approve(&self, authorized: &AuthorizedRequest<Bytes>, browser: bool) -> Response<Bytes> {
-        let Ok(form) = form(authorized.request()) else {
+    fn approve(&self, authorized: &AuthorizedRequest<Bytes>, kind: ApprovalKind) -> Response<Bytes> {
+        let Some((form, lease)) = self.form_session(authorized) else {
             return response(StatusCode::FORBIDDEN);
         };
-        let Some(lease) = self.form_session(authorized, &form) else {
-            return response(StatusCode::FORBIDDEN);
-        };
-        let challenge = value(&form, "challenge");
-        match self.sessions.approve(
-            &lease.session,
-            challenge,
-            if browser {
-                ApprovalKind::Browser
-            } else {
-                ApprovalKind::Cli
-            },
-        ) {
+        match self.sessions.approve(&lease.session, value(&form, "challenge"), kind) {
             Ok(()) => {
                 self.log.count(Counter::CliApproval);
-                html(StatusCode::OK, pages::done_page(browser))
+                html(StatusCode::OK, pages::done_page(kind == ApprovalKind::Browser))
             }
             Err(ApprovalError::GrantCapacity) => capacity_page(),
             Err(_) => response(StatusCode::FORBIDDEN),
@@ -537,10 +488,8 @@ impl Service {
             Ok(Exchange::Issued { token, lease }) => {
                 let expires = lease.session().expires();
                 if browser {
-                    json(
-                        StatusCode::OK,
-                        json!({"token":token, "expires":unix_ms(expires), "remainingMs":remaining_ms(expires), "maximumLifetimeMs":SESSION_LIFETIME.as_millis() as u64}),
-                    )
+                    let body = json!({"token":token, "expires":unix_ms(expires), "remainingMs":remaining_ms(expires), "maximumLifetimeMs":SESSION_LIFETIME.as_millis() as u64});
+                    json(StatusCode::OK, body)
                 } else {
                     json(StatusCode::OK, json!({"token":token, "expires":rfc3339(expires)}))
                 }
@@ -561,14 +510,10 @@ impl Service {
         let Some(lease) = principal(authorized) else {
             return error_response(StatusCode::FORBIDDEN);
         };
-        let query = query_pairs(request);
-        match self.sessions.mint_ticket(
-            lease,
-            self.policy.public_origin(),
-            value(&query, "target"),
-            text(request.headers(), "origin").unwrap_or_default(),
-            kind,
-        ) {
+        let (query, public) = (query_pairs(request), self.policy.public_origin());
+        let origin = text(request.headers(), "origin").unwrap_or_default();
+        let target = value(&query, "target");
+        match self.sessions.mint_ticket(lease, public, target, origin, kind) {
             Ok(ticket) => json(
                 StatusCode::OK,
                 json!({"token":ticket.token, "expires":unix_ms(ticket.expires)}),
@@ -586,17 +531,20 @@ impl Service {
         }
     }
 
-    fn form_session<'a>(
-        &self,
-        authorized: &'a AuthorizedRequest<Bytes>,
-        form: &[(String, String)],
-    ) -> Option<&'a AuthLease> {
+    fn client(&self, authorized: &AuthorizedRequest<Bytes>) -> Option<IpAddr> {
+        let (headers, peer) = (authorized.request().headers(), authorized.connection().peer);
+        self.policy.client_address(headers, peer)
+    }
+
+    /// The posted form and the cookie login whose CSRF proof it carries from the public origin.
+    fn form_session<'a>(&self, authorized: &'a AuthorizedRequest<Bytes>) -> Option<(Form, &'a AuthLease)> {
+        let form = form(authorized.request()).ok()?;
         let lease = principal(authorized)?;
         (lease.is_active()
             && !lease.is_bearer()
             && text(authorized.request().headers(), "origin") == Some(self.policy.public_origin())
-            && constant_equal(lease.session().csrf(), value(form, "csrf")))
-        .then_some(lease)
+            && constant_equal(lease.session().csrf(), value(&form, "csrf")))
+        .then_some((form, lease))
     }
 }
 
@@ -663,7 +611,9 @@ fn value<'a>(values: &'a [(String, String)], key: &str) -> &'a str {
         .find(|(name, _)| name == key)
         .map_or("", |(_, value)| value)
 }
-fn form(request: &Request<Bytes>) -> Result<Vec<(String, String)>, ()> {
+type Form = Vec<(String, String)>;
+
+fn form(request: &Request<Bytes>) -> Result<Form, ()> {
     if request.body().len() > FORM_BYTES || media_type(request.headers()) != "application/x-www-form-urlencoded" {
         return Err(());
     }
@@ -715,10 +665,19 @@ fn remaining_ms(expires: SystemTime) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::super::policy::{Connection, Listener};
+    use super::super::{
+        oidc::tests::{discovered, query_fields, ready},
+        policy::{Connection, Listener},
+    };
     use super::*;
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use std::net::Ipv4Addr;
+
+    const PUBLIC: &str = "https://meter.example";
+    const FORM: &str = "application/x-www-form-urlencoded";
+    const HASH: &str =
+        "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0";
+    const PASSWORD: &str = "correct horse battery staple";
 
     impl Service {
         pub(crate) fn sessions(&self) -> &SessionStore {
@@ -728,7 +687,6 @@ mod tests {
 
     #[test]
     fn auth_forms_require_unambiguous_body_fields() {
-        const FORM: &str = "application/x-www-form-urlencoded";
         let request = |content_type, body: &'static str| {
             Request::builder()
                 .method(Method::POST)
@@ -754,25 +712,31 @@ mod tests {
     fn oidc_config() -> AuthConfig {
         AuthConfig {
             mode: AuthMode::Oidc,
-            public_url: "https://meter.example".into(),
+            public_url: PUBLIC.into(),
             oidc_issuer: "https://identity.example".into(),
             oidc_client_id: "meter".into(),
-            oidc_client_secret: "secret".into(),
+            oidc_client_secret: "provider-secret".into(),
             oidc_allowed_groups: vec!["operators".into()],
             ..AuthConfig::default()
         }
     }
 
-    fn connection() -> Connection {
-        Connection {
-            peer: "192.0.2.1:1234".parse().unwrap(),
-            tls: true,
-            listener: Listener {
-                ui: true,
-                webtransport: true,
-            },
-        }
+    fn oidc_service(oidc: Oidc) -> Service {
+        let mut service = Service::new(&oidc_config(), vec![]).unwrap();
+        service.oidc = Some(oidc);
+        service
     }
+
+    fn password_service(trusted: Vec<IpNet>) -> Service {
+        let config = AuthConfig {
+            mode: AuthMode::Password,
+            public_url: PUBLIC.into(),
+            password_hash: HASH.into(),
+            ..AuthConfig::default()
+        };
+        Service::new(&config, trusted).unwrap()
+    }
+
     async fn call(
         service: &Service,
         method: Method,
@@ -787,12 +751,48 @@ mod tests {
         for (name, value) in fields {
             request = request.header(*name, *value);
         }
+        let connection = Connection {
+            peer: "192.0.2.1:1234".parse().unwrap(),
+            tls: true,
+            listener: Listener {
+                ui: true,
+                webtransport: true,
+            },
+        };
         let request = service
             .policy()
-            .authorize(request.body(Bytes::from(body)).unwrap(), connection())
+            .authorize(request.body(Bytes::from(body)).unwrap(), connection)
             .unwrap_or_else(|_| panic!("unexpected auth refusal for {path}"));
         service.handle(&request).await
     }
+
+    async fn get(service: &Service, path: &str, headers: &[(&str, &str)]) -> Response<Bytes> {
+        call(service, Method::GET, path, headers, String::new()).await
+    }
+
+    /// A form posted from the public origin, with `headers` besides.
+    async fn post(service: &Service, path: &str, headers: &[(&str, &str)], fields: &[(&str, &str)]) -> Response<Bytes> {
+        let headers = [&[("origin", PUBLIC), ("content-type", FORM)], headers].concat();
+        let body = form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(fields.iter().copied())
+            .finish();
+        call(service, Method::POST, path, &headers, body).await
+    }
+
+    /// The sign-in page's form nonce.
+    async fn login_nonce(service: &Service) -> String {
+        let page = get(service, "/login", &[]).await;
+        assert_eq!(page.status(), StatusCode::OK);
+        set_cookie_value(&page, "__Host-gm_login")
+    }
+
+    /// A sign-in with the provider, started by the page that set the login `nonce`.
+    async fn start_oidc(service: &Service, nonce: &str) -> Response<Bytes> {
+        let cookie = format!("__Host-gm_login={nonce}");
+        let headers = [("cookie", cookie.as_str())];
+        post(service, "/auth/oidc/start", &headers, &[("csrf", nonce)]).await
+    }
+
     fn set_cookie_value(response: &Response<Bytes>, name: &str) -> String {
         response
             .headers()
@@ -807,324 +807,186 @@ mod tests {
             .expect("response cookie")
             .into()
     }
-    fn encoded(values: &[(&str, &str)]) -> String {
-        form_urlencoded::Serializer::new(String::new())
-            .extend_pairs(values.iter().copied())
-            .finish()
+
+    fn location(response: &Response<Bytes>) -> &str {
+        response.headers()[header::LOCATION].to_str().unwrap()
     }
 
     #[tokio::test]
     async fn hybrid_initialization_and_local_login_do_not_wait_for_stalled_provider() {
         use tokio::io::AsyncReadExt;
-        const PUBLIC: &str = "https://meter.example";
         let provider = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let service = Arc::new(Service::new(&AuthConfig {
+        let config = AuthConfig {
             mode: AuthMode::Hybrid,
-            public_url: PUBLIC.into(),
-            password_hash: "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0".into(),
+            password_hash: HASH.into(),
             oidc_issuer: format!("https://localhost:{}", provider.local_addr().unwrap().port()),
-            oidc_client_id: "meter".into(),
-            oidc_client_secret: "provider-secret".into(),
-            oidc_allowed_groups: vec!["operators".into()],
-            ..AuthConfig::default()
-        }, vec![]).unwrap());
+            ..oidc_config()
+        };
+        let service = Arc::new(Service::new(&config, vec![]).unwrap());
         tokio::time::pause();
-        tokio::time::timeout(Duration::from_secs(1), service.initialize())
-            .await
-            .unwrap()
-            .unwrap();
+        let initialized = tokio::time::timeout(Duration::from_secs(1), service.initialize()).await;
+        initialized.unwrap().unwrap();
         tokio::time::resume();
         let logging = {
             let service = service.clone();
             tokio::spawn(async move { service.security_log().await })
         };
         let (mut stalled, _) = provider.accept().await.unwrap();
-        let mut hello = [0; 1];
-        stalled.read_exact(&mut hello).await.unwrap();
+        stalled.read_exact(&mut [0; 1]).await.unwrap();
         tokio::time::pause();
-        let login = tokio::time::timeout(
-            Duration::from_secs(1),
-            call(&service, Method::GET, "/login", &[], String::new()),
-        )
-        .await
-        .unwrap();
+        let nonce = tokio::time::timeout(Duration::from_secs(1), login_nonce(&service)).await;
+        let nonce = nonce.unwrap();
         tokio::time::resume();
-        assert_eq!(login.status(), StatusCode::OK);
-        let nonce = set_cookie_value(&login, "__Host-gm_login");
         let cookie = format!("__Host-gm_login={nonce}");
-        let signed_in = call(
-            &service,
-            Method::POST,
-            "/auth/password",
-            &[
-                ("cookie", &cookie),
-                ("origin", PUBLIC),
-                ("content-type", "application/x-www-form-urlencoded"),
-            ],
-            encoded(&[("csrf", &nonce), ("password", "correct horse battery staple")]),
-        )
-        .await;
+        let fields = [("csrf", nonce.as_str()), ("password", PASSWORD)];
+        let signed_in = post(&service, "/auth/password", &[("cookie", &cookie)], &fields).await;
         assert_eq!(signed_in.status(), StatusCode::SEE_OTHER);
         let token = set_cookie_value(&signed_in, "__Host-gm_session");
-        assert!(service.sessions().lookup(&token).is_some());
+        assert!(service.sessions.lookup(&token).is_some());
         let line = service.log.window(&mut [0; Counter::COUNT]).unwrap();
         assert!(!line.contains(&token) && !line.contains("correct horse"));
         logging.abort();
         assert!(logging.await.unwrap_err().is_cancelled());
         let closed = stalled.read_to_end(&mut Vec::new()).await;
-        assert!(
-            closed.is_ok()
-                || closed.is_err_and(|error| matches!(
-                    error.kind(),
-                    std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::UnexpectedEof
-                ))
-        );
+        let reset = |error: std::io::Error| {
+            use std::io::ErrorKind::{ConnectionReset, UnexpectedEof};
+            matches!(error.kind(), ConnectionReset | UnexpectedEof)
+        };
+        assert!(closed.is_ok() || closed.is_err_and(reset));
     }
 
     #[tokio::test]
     async fn discovered_provider_serves_sign_in_and_authorization() {
-        let mut service = Service::new(&oidc_config(), vec![]).unwrap();
-        service.oidc = Some(super::super::oidc::tests::ready());
+        let service = oidc_service(ready());
         let provider_csp = |response: &Response<Bytes>| {
-            response.headers().get("content-security-policy").is_some_and(|csp| {
-                csp.to_str()
-                    .unwrap()
-                    .contains("form-action 'self' https://identity.example")
-            })
+            let policy = response.headers()["content-security-policy"].to_str().unwrap();
+            policy.contains("form-action 'self' https://identity.example")
         };
-        let page = call(&service, Method::GET, "/login", &[], String::new()).await;
-        assert!(
-            !std::str::from_utf8(page.body())
-                .unwrap()
-                .contains("temporarily unavailable")
-        );
+        let page = get(&service, "/login", &[]).await;
+        let body = std::str::from_utf8(page.body()).unwrap();
+        assert!(!body.contains("temporarily unavailable"));
         assert!(provider_csp(&page));
-        let nonce = set_cookie_value(&page, "__Host-gm_login");
-        let started = call(
-            &service,
-            Method::POST,
-            "/auth/oidc/start",
-            &[
-                ("cookie", &format!("__Host-gm_login={nonce}")),
-                ("origin", "https://meter.example"),
-                ("content-type", "application/x-www-form-urlencoded"),
-            ],
-            encoded(&[("csrf", &nonce)]),
-        )
-        .await;
-        assert!(
-            started.headers()[header::LOCATION]
-                .to_str()
-                .unwrap()
-                .starts_with("https://identity.example/authorize?")
-        );
+        let started = start_oidc(&service, &set_cookie_value(&page, "__Host-gm_login")).await;
+        assert!(location(&started).starts_with("https://identity.example/authorize?"));
         assert!(provider_csp(&started));
     }
 
     #[tokio::test]
     async fn sign_in_pages_render_when_the_provider_names_no_usable_authorization_origin() {
-        let mut service = Service::new(&oidc_config(), vec![]).unwrap();
         // No browser can post a sign-in form to port 0, so no page may name it in its form-action.
-        service.oidc = Some(super::super::oidc::tests::discovered(
-            "https://identity.example:0/authorize",
-            true,
-        ));
-        let page = call(&service, Method::GET, "/login", &[], String::new()).await;
+        let service = oidc_service(discovered("https://identity.example:0/authorize", true));
+        let page = get(&service, "/login", &[]).await;
         assert_eq!(page.status(), StatusCode::OK);
         let policy = page.headers()["content-security-policy"].to_str().unwrap();
         assert!(policy.contains("form-action 'self';"), "{policy}");
-        let nonce = set_cookie_value(&page, "__Host-gm_login");
-        let started = call(
-            &service,
-            Method::POST,
-            "/auth/oidc/start",
-            &[
-                ("cookie", &format!("__Host-gm_login={nonce}")),
-                ("origin", "https://meter.example"),
-                ("content-type", "application/x-www-form-urlencoded"),
-            ],
-            encoded(&[("csrf", &nonce)]),
-        )
-        .await;
+        let started = start_oidc(&service, &set_cookie_value(&page, "__Host-gm_login")).await;
+        let refused = location(&started);
         assert_eq!(
-            started.headers()[header::LOCATION],
-            "/login?error=provider",
+            refused, "/login?error=provider",
             "a sign-in started with no usable provider"
         );
     }
 
     #[tokio::test]
     async fn oidc_refusals_show_go_notices_and_keep_a_found_challenge() {
-        let mut service = Service::new(&oidc_config(), vec![]).unwrap();
-        service.oidc = Some(super::super::oidc::tests::ready());
-        let location = |response: &Response<Bytes>| response.headers()[header::LOCATION].to_str().unwrap().to_owned();
+        let service = oidc_service(ready());
         let challenge = URL_SAFE_NO_PAD.encode([7; 32]);
-        let nonce = set_cookie_value(
-            &call(&service, Method::GET, "/login", &[], String::new()).await,
-            "__Host-gm_login",
-        );
+        let nonce = login_nonce(&service).await;
         let login = format!("__Host-gm_login={nonce}");
-        let mut start = vec![
-            ("origin", "https://meter.example"),
-            ("content-type", "application/x-www-form-urlencoded"),
-        ];
-        let form = || encoded(&[("csrf", &nonce), ("challenge", &challenge)]);
-        let stale = call(&service, Method::POST, "/auth/oidc/start", &start, form()).await;
+        let fields = [("csrf", nonce.as_str()), ("challenge", &challenge)];
+        let stale = post(&service, "/auth/oidc/start", &[], &fields).await;
         assert_eq!(location(&stale), format!("/login?challenge={challenge}&error=stale"));
-        start.push(("cookie", &login));
-        let started = call(&service, Method::POST, "/auth/oidc/start", &start, form()).await;
-        let state = super::super::oidc::tests::query_fields(&location(&started))["state"].clone();
+        let started = post(&service, "/auth/oidc/start", &[("cookie", &login)], &fields).await;
+        let state = query_fields(location(&started))["state"].clone();
         let browser = format!("__Host-gm_oidc={}", set_cookie_value(&started, "__Host-gm_oidc"));
         let callback = query_url(
             "/auth/oidc/callback",
             &[("state", &state), ("code", "code"), ("iss", "https://other.example")],
         );
-        let foreign = call(&service, Method::GET, &callback, &[("cookie", &browser)], String::new()).await;
+        let foreign = get(&service, &callback, &[("cookie", &browser)]).await;
         assert_eq!(location(&foreign), format!("/login?challenge={challenge}&error=failed"));
         let transaction = started.headers()[header::SET_COOKIE].to_str().unwrap();
         assert!(transaction.contains("; Expires=") && transaction.ends_with("; HttpOnly; Secure; SameSite=Lax"));
         let cleared = foreign.headers()[header::SET_COOKIE].to_str().unwrap();
-        assert!(
-            cleared.ends_with("; Max-Age=0; HttpOnly; Secure; SameSite=Lax"),
-            "{cleared}"
-        );
-        let cookieless = call(&service, Method::GET, &callback, &[], String::new()).await;
+        let expired = "; Max-Age=0; HttpOnly; Secure; SameSite=Lax";
+        assert!(cleared.ends_with(expired), "{cleared}");
+        let cookieless = get(&service, &callback, &[]).await;
         assert_eq!(location(&cookieless), "/login?error=stale");
         // Where no transaction names a challenge, Go's refusal keeps the callback's own.
         let unknown = [("state", "unknown"), ("code", "code"), ("challenge", &challenge)];
         let unknown = query_url("/auth/oidc/callback", &unknown);
-        let unknown = call(&service, Method::GET, &unknown, &[("cookie", &browser)], String::new()).await;
+        let unknown = get(&service, &unknown, &[("cookie", &browser)]).await;
         assert_eq!(location(&unknown), format!("/login?challenge={challenge}&error=failed"));
     }
 
     #[tokio::test]
     async fn callback_replay_is_counted_without_recording_request_credentials() {
-        let service = Service::new(
-            &AuthConfig {
-                mode: AuthMode::Oidc,
-                public_url: "https://meter.example".into(),
-                oidc_issuer: "https://identity.example".into(),
-                oidc_client_id: "client".into(),
-                oidc_client_secret: "provider-secret".into(),
-                oidc_allowed_groups: vec!["operators".into()],
-                ..AuthConfig::default()
-            },
-            vec![],
-        )
-        .unwrap();
+        let service = Service::new(&oidc_config(), vec![]).unwrap();
         let callback = query_url(
             "/auth/oidc/callback",
             &[("state", &"a".repeat(43)), ("code", "private-provider-code")],
         );
-        let response = call(
-            &service,
-            Method::GET,
-            &callback,
-            &[("cookie", "__Host-gm_oidc=private-cookie")],
-            String::new(),
-        )
-        .await;
+        let response = get(&service, &callback, &[("cookie", "__Host-gm_oidc=private-cookie")]).await;
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
-        let location = response.headers()[header::LOCATION].to_str().unwrap();
-        assert_eq!(location, "/login?error=failed");
+        assert_eq!(location(&response), "/login?error=failed");
         assert_eq!(response.headers()[header::CONTENT_TYPE], "text/html; charset=utf-8");
         assert_eq!(response.body(), "<a href=\"/login?error=failed\">See Other</a>.\n\n");
         let line = service.log.window(&mut [0; Counter::COUNT]).unwrap();
         assert!(line.contains("oidc-failure=1 group-denial=0 replay-expiry=1"), "{line}");
-        assert!(!line.contains("private-"));
-        assert!(!line.contains("provider-secret"));
+        assert!(!line.contains("private-") && !line.contains("provider-secret"));
     }
 
     #[tokio::test]
     async fn a_device_cookie_signs_in_past_the_global_ceiling_and_a_full_address_table() {
         use hmac::{Hmac, KeyInit, Mac};
-        const PUBLIC: &str = "https://meter.example";
-        const HASH: &str =
-            "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0";
         for full_table in [false, true] {
-            let config = AuthConfig {
-                mode: AuthMode::Password,
-                public_url: PUBLIC.into(),
-                password_hash: HASH.into(),
-                ..AuthConfig::default()
-            };
-            let service = Service::new(&config, vec!["192.0.2.1/32".parse().unwrap()]).unwrap();
+            let service = password_service(vec!["192.0.2.1/32".parse().unwrap()]);
             let sign_in = async |address: &str, device: Option<&str>| {
-                let login = call(&service, Method::GET, "/login", &[], String::new()).await;
-                let nonce = set_cookie_value(&login, "__Host-gm_login");
-                let cookies = format!(
-                    "__Host-gm_login={nonce}; __Host-gm_device={}",
-                    device.unwrap_or_default()
-                );
-                let response = call(
-                    &service,
-                    Method::POST,
-                    "/auth/password",
-                    &[
-                        ("cookie", &cookies),
-                        ("origin", PUBLIC),
-                        ("content-type", "application/x-www-form-urlencoded"),
-                        ("x-real-ip", address),
-                    ],
-                    encoded(&[("csrf", &nonce), ("password", "correct horse battery staple")]),
-                )
-                .await;
-                (response.headers()[header::LOCATION] == "/").then_some(response)
+                let nonce = login_nonce(&service).await;
+                let device = device.unwrap_or_default();
+                let cookies = format!("__Host-gm_login={nonce}; __Host-gm_device={device}");
+                let headers = [("cookie", cookies.as_str()), ("x-real-ip", address)];
+                let fields = [("csrf", nonce.as_str()), ("password", PASSWORD)];
+                let response = post(&service, "/auth/password", &headers, &fields).await;
+                (location(&response) == "/").then_some(response)
             };
             let first = sign_in("198.51.100.7", None).await.expect("first sign-in");
-            let issued = first
-                .headers()
-                .get_all(header::SET_COOKIE)
-                .iter()
-                .next_back()
-                .unwrap()
-                .to_str()
-                .unwrap();
-            assert!(
-                issued.starts_with("__Host-gm_device=") && issued.contains("; Max-Age=259199"),
-                "{issued}"
-            );
-            assert!(
-                issued.contains("; Secure") && issued.contains("; SameSite=Strict") && issued.contains("; HttpOnly")
-            );
+            let issued = first.headers().get_all(header::SET_COOKIE).iter().next_back();
+            let issued = issued.unwrap().to_str().unwrap();
+            let parts = [
+                "__Host-gm_device=",
+                "; Max-Age=259199",
+                "; Secure",
+                "; SameSite=Strict",
+                "; HttpOnly",
+            ];
+            let attributes = parts.iter().all(|part| issued.contains(part));
+            assert!(issued.starts_with(parts[0]) && attributes, "{issued}");
             let device = set_cookie_value(&first, "__Host-gm_device");
             if full_table {
                 for address in 0..2047 {
-                    assert!(
-                        service
-                            .attempts
-                            .allow(Budget::Password, Ipv4Addr::from(0x0a00_0000 + address).into())
-                    );
+                    let address = Ipv4Addr::from(0x0a00_0000 + address).into();
+                    assert!(service.attempts.allow(Budget::Password, address));
                 }
             } else {
                 for _ in 0..60 {
                     service.attempts.note_failed_password();
                 }
             }
-            assert!(
-                sign_in("203.0.113.9", None).await.is_none(),
-                "an unknown client passed the shared bounds"
-            );
-            assert!(
-                sign_in("192.0.2.77", Some(&device)).await.is_some(),
-                "the known device was locked out"
-            );
+            let unknown = sign_in("203.0.113.9", None).await;
+            assert!(unknown.is_none(), "an unknown client passed the shared bounds");
+            let known = sign_in("192.0.2.77", Some(&device)).await;
+            assert!(known.is_some(), "the known device was locked out");
             let mut forged = URL_SAFE_NO_PAD.decode(&device).unwrap();
             forged[39] ^= 1;
-            let past = (SystemTime::now() - Duration::from_secs(60))
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
-                .to_be_bytes();
+            let past = SystemTime::now() - Duration::from_secs(60);
+            let past = past.duration_since(UNIX_EPOCH).unwrap().as_secs().to_be_bytes();
             let mut tag = Hmac::<sha2::Sha256>::new_from_slice(HASH.as_bytes()).unwrap();
             tag.update(&past);
             let expired = [past.as_slice(), &tag.finalize().into_bytes()].concat();
             for value in [forged, expired] {
-                assert!(
-                    sign_in("192.0.2.78", Some(&URL_SAFE_NO_PAD.encode(value)))
-                        .await
-                        .is_none()
-                );
+                let device = URL_SAFE_NO_PAD.encode(value);
+                assert!(sign_in("192.0.2.78", Some(&device)).await.is_none());
             }
         }
     }
@@ -1132,41 +994,22 @@ mod tests {
     #[tokio::test]
     async fn browser_token_exchange_refuses_an_insecure_origin() {
         let service = Service::new(&oidc_config(), vec![]).unwrap();
-        let refused = call(
-            &service,
-            Method::POST,
-            "/auth/browser/token",
-            &[("origin", "http://client.example")],
-            json!({"verifier": "v".repeat(43)}).to_string(),
-        )
-        .await;
+        let body = json!({"verifier": "v".repeat(43)}).to_string();
+        let headers = [("origin", "http://client.example")];
+        let refused = call(&service, Method::POST, "/auth/browser/token", &headers, body).await;
         assert_eq!(refused.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
     async fn logout_revokes_the_login_or_with_scope_all_every_login_of_its_subject() {
-        const PUBLIC: &str = "https://meter.example";
-        let config = AuthConfig {
-            mode: AuthMode::Password,
-            public_url: PUBLIC.into(),
-            password_hash:
-                "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0"
-                    .into(),
-            ..AuthConfig::default()
-        };
-        let service = Service::new(&config, vec![]).unwrap();
+        let service = password_service(vec![]);
         for scope in ["", "all"] {
-            let (token, current) = service.sessions().create("subject", "name", "local", None).unwrap();
-            let (_, sibling) = service.sessions().create("subject", "name", "local", None).unwrap();
-            let (_, other) = service.sessions().create("other", "name", "local", None).unwrap();
+            let (token, current) = service.sessions.create("subject", "name", "local", None).unwrap();
+            let (_, sibling) = service.sessions.create("subject", "name", "local", None).unwrap();
+            let (_, other) = service.sessions.create("other", "name", "local", None).unwrap();
             let cookie = format!("__Host-gm_session={token}");
-            let headers = [
-                ("cookie", cookie.as_str()),
-                ("origin", PUBLIC),
-                ("content-type", "application/x-www-form-urlencoded"),
-            ];
-            let form = encoded(&[("csrf", current.session().csrf()), ("scope", scope)]);
-            let logged_out = call(&service, Method::POST, "/auth/logout", &headers, form).await;
+            let fields = [("csrf", current.session().csrf()), ("scope", scope)];
+            let logged_out = post(&service, "/auth/logout", &[("cookie", &cookie)], &fields).await;
             let line = service.log.window(&mut [0; Counter::COUNT]).unwrap();
             assert!(!line.contains(&token) && !line.contains(current.session().csrf()));
             assert_eq!(logged_out.status(), StatusCode::SEE_OTHER);

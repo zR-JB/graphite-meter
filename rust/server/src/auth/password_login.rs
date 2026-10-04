@@ -228,10 +228,8 @@ mod tests {
         let wrong = random_password();
         let _occupied = login.slots.clone().acquire_many_owned(2).await.unwrap();
         for _ in 0..5 {
-            assert!(matches!(
-                login.attempt(attempt(&wrong)).await,
-                Err(Reason::VerifierBusy)
-            ));
+            let refused = login.attempt(attempt(&wrong)).await;
+            assert!(matches!(refused, Err(Reason::VerifierBusy)));
         }
         assert!(matches!(login.attempt(attempt(&wrong)).await, Err(Reason::Throttled)));
         let mut request = attempt(&wrong);

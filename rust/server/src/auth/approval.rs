@@ -55,6 +55,16 @@ pub(super) struct Approval {
 }
 
 impl Approval {
+    fn new(now: Instant, client: IpAddr, code: &str, session: Option<&SessionLease>, origin: Option<&str>) -> Self {
+        Self {
+            client_keys: crate::client_address::client_keys(client),
+            session: session.cloned(),
+            browser_origin: origin.map(str::to_owned),
+            code: code.into(),
+            deadline: now + APPROVAL_LIFETIME,
+            approved: false,
+        }
+    }
     pub(super) fn active_at(&self, now: Instant) -> bool {
         now < self.deadline && self.session.as_ref().is_none_or(|session| session.0.active_at(now))
     }
@@ -72,6 +82,12 @@ impl Approval {
 }
 
 impl State {
+    fn session_approvals(&self, session: &SessionLease) -> usize {
+        self.approvals
+            .values()
+            .filter(|approval| approval.belongs_to(session))
+            .count()
+    }
     fn approval_capacity(&self, client: IpAddr, signed_in: bool) -> bool {
         let anonymous = || {
             self.approvals
@@ -115,24 +131,10 @@ impl SessionStore {
                 Err(ApprovalError::InvalidApproval)
             };
         }
-        if state.approval_capacity(client, true)
-            || state
-                .approvals
-                .values()
-                .filter(|approval| approval.belongs_to(session))
-                .count()
-                >= MAX_SESSION_APPROVALS
-        {
+        if state.approval_capacity(client, true) || state.session_approvals(session) >= MAX_SESSION_APPROVALS {
             return Err(ApprovalError::Capacity);
         }
-        let approval = Approval {
-            client_keys: crate::client_address::client_keys(client),
-            session: Some(session.clone()),
-            browser_origin: None,
-            code: code.clone(),
-            deadline: now + APPROVAL_LIFETIME,
-            approved: false,
-        };
+        let approval = Approval::new(now, client, code, Some(session), None);
         let view = approval.view();
         state.approvals.insert(challenge.into(), approval);
         Ok(view)
@@ -160,17 +162,8 @@ impl SessionStore {
             if state.approval_capacity(client, session.is_some()) {
                 return Err(ApprovalError::Capacity);
             }
-            state.approvals.insert(
-                challenge.into(),
-                Approval {
-                    client_keys: crate::client_address::client_keys(client),
-                    session: None,
-                    browser_origin: Some(origin.into()),
-                    code: code.clone(),
-                    deadline: now + APPROVAL_LIFETIME,
-                    approved: false,
-                },
-            );
+            let approval = Approval::new(now, client, code, None, Some(origin));
+            state.approvals.insert(challenge.into(), approval);
         }
         let approval = state.approvals.get(challenge).expect("approval exists");
         if approval.browser_origin.as_deref() != Some(origin) {
@@ -181,13 +174,7 @@ impl SessionStore {
                 if approval.session.is_some() {
                     return Err(ApprovalError::InvalidApproval);
                 }
-                if state
-                    .approvals
-                    .values()
-                    .filter(|approval| approval.belongs_to(session))
-                    .count()
-                    >= MAX_SESSION_APPROVALS
-                {
+                if state.session_approvals(session) >= MAX_SESSION_APPROVALS {
                     return Err(ApprovalError::Capacity);
                 }
                 state.approvals.get_mut(challenge).expect("approval exists").session = Some(session.clone());
@@ -292,79 +279,52 @@ pub fn valid_challenge(challenge: &str) -> Option<Challenge> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::Ipv4Addr;
+
+    const CLIENT: IpAddr = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1));
+    const ORIGIN: &str = "https://client.example";
+
+    /// A store with one login, and the challenge of `verifier`.
+    fn setup(verifier: &str) -> (SessionStore, SessionLease, String, Challenge) {
+        let store = SessionStore::new();
+        let (_, session) = store.create("subject", "name", "local", None).unwrap();
+        let challenge = approval::challenge(verifier);
+        let valid = valid_challenge(&challenge).unwrap();
+        (store, session, challenge, valid)
+    }
 
     #[test]
     fn browser_capacity_is_reported_without_revoking_or_approving_existing_clients() {
-        let store = SessionStore::new();
-        let (_, session) = store.create("subject", "Name", "local", None).unwrap();
         let verifier = "v".repeat(32);
-        let challenge = approval::challenge(&verifier);
-        let valid = valid_challenge(&challenge).unwrap();
-        store
-            .begin_browser_approval(
-                &valid,
-                "https://client.example",
-                Some(&session),
-                "192.0.2.1".parse().unwrap(),
-            )
-            .unwrap();
+        let (store, session, challenge, valid) = setup(&verifier);
+        let begin = || store.begin_browser_approval(&valid, ORIGIN, Some(&session), CLIENT);
+        let exchange = || store.exchange_browser(&verifier, ORIGIN);
+        assert!(begin().is_ok());
         let grants: Vec<_> = (0..8)
-            .map(|_| store.issue_browser_grant(&session, "https://client.example").unwrap().0)
+            .map(|_| store.issue_browser_grant(&session, ORIGIN).unwrap().0)
             .collect();
-        assert!(matches!(
-            store.begin_browser_approval(
-                &valid,
-                "https://client.example",
-                Some(&session),
-                "192.0.2.1".parse().unwrap()
-            ),
-            Err(ApprovalError::GrantCapacity)
-        ));
-        assert!(matches!(
-            store.approve(&session, &challenge, ApprovalKind::Browser),
-            Err(ApprovalError::GrantCapacity)
-        ));
-        assert!(matches!(
-            store.exchange_browser(&verifier, "https://client.example"),
-            Err(ExchangeError::GrantCapacity)
-        ));
-        assert!(matches!(
-            store.exchange_browser(&verifier, "https://wrong.example").unwrap(),
-            Exchange::Pending
-        ));
+        assert_eq!(begin().err(), Some(ApprovalError::GrantCapacity));
+        let approved = store.approve(&session, &challenge, ApprovalKind::Browser);
+        assert_eq!(approved, Err(ApprovalError::GrantCapacity));
+        assert_eq!(exchange().err(), Some(ExchangeError::GrantCapacity));
+        let wrong = store.exchange_browser(&verifier, "https://wrong.example");
+        assert!(matches!(wrong.unwrap(), Exchange::Pending));
         for grant in &grants {
             assert!(store.lookup_bearer(grant).is_some());
         }
         store.revoke_grant(&grants[0]);
-        assert!(matches!(
-            store.exchange_browser(&verifier, "https://client.example").unwrap(),
-            Exchange::Pending
-        ));
+        assert!(matches!(exchange().unwrap(), Exchange::Pending));
         store.approve(&session, &challenge, ApprovalKind::Browser).unwrap();
-        assert!(matches!(
-            store.exchange_browser(&verifier, "https://client.example").unwrap(),
-            Exchange::Issued { .. }
-        ));
+        assert!(matches!(exchange().unwrap(), Exchange::Issued { .. }));
     }
 
     #[test]
     fn reentry_keeps_original_deadline_and_revocation_removes_attached_approvals() {
-        let store = SessionStore::new();
-        let (_, session) = store.create("subject", "name", "local", None).unwrap();
-        let challenge = approval::challenge("verifier");
-        let valid = valid_challenge(&challenge).unwrap();
-        store
-            .begin_browser_approval(&valid, "https://client.example", None, "192.0.2.1".parse().unwrap())
-            .unwrap();
+        let (store, session, challenge, valid) = setup("verifier");
+        assert!(store.begin_browser_approval(&valid, ORIGIN, None, CLIENT).is_ok());
         let deadline = store.0.lock().unwrap().approvals[&challenge].deadline;
-        store
-            .begin_browser_approval(
-                &valid,
-                "https://client.example",
-                Some(&session),
-                "192.0.2.1".parse().unwrap(),
-            )
-            .unwrap();
+        let reentered = store.begin_browser_approval(&valid, ORIGIN, Some(&session), CLIENT);
+        assert!(reentered.is_ok());
         assert_eq!(store.0.lock().unwrap().approvals[&challenge].deadline, deadline);
         store.revoke(&session);
         assert!(store.0.lock().unwrap().approvals.is_empty());
@@ -373,30 +333,18 @@ mod tests {
 
     #[test]
     fn expired_approval_cannot_be_marked_approved() {
-        let store = SessionStore::new();
-        let (_, session) = store.create("subject", "name", "local", None).unwrap();
-        let challenge = approval::challenge("verifier");
-        let valid = valid_challenge(&challenge).unwrap();
-        store
-            .begin_cli_approval(&session, &valid, "192.0.2.1".parse().unwrap())
-            .unwrap();
+        let (store, session, challenge, valid) = setup("verifier");
+        assert!(store.begin_cli_approval(&session, &valid, CLIENT).is_ok());
         store.0.lock().unwrap().approvals.get_mut(&challenge).unwrap().deadline = Instant::now();
-        assert_eq!(
-            store.approve(&session, &challenge, ApprovalKind::Cli),
-            Err(ApprovalError::InvalidApproval)
-        );
+        let approved = store.approve(&session, &challenge, ApprovalKind::Cli);
+        assert_eq!(approved, Err(ApprovalError::InvalidApproval));
     }
 
     #[tokio::test(start_paused = true)]
     async fn expired_approval_cannot_exchange_and_unknown_verifier_allocates_nothing() {
-        let store = SessionStore::new();
-        let (_, session) = store.create("subject", "name", "local", None).unwrap();
         let verifier = "v".repeat(32);
-        let challenge = approval::challenge(&verifier);
-        let valid = valid_challenge(&challenge).unwrap();
-        store
-            .begin_cli_approval(&session, &valid, "192.0.2.1".parse().unwrap())
-            .unwrap();
+        let (store, session, challenge, valid) = setup(&verifier);
+        assert!(store.begin_cli_approval(&session, &valid, CLIENT).is_ok());
         store.approve(&session, &challenge, ApprovalKind::Cli).unwrap();
         tokio::time::advance(APPROVAL_LIFETIME).await;
         assert!(matches!(store.exchange_cli(&verifier).unwrap(), Exchange::Pending));

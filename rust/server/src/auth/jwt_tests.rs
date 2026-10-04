@@ -2,23 +2,14 @@ use super::super::test_keys::Signers;
 use super::*;
 use serde_json::json;
 
-const ALL: [Alg; 9] = [
-    Alg::RS256,
-    Alg::RS384,
-    Alg::RS512,
-    Alg::PS256,
-    Alg::PS384,
-    Alg::PS512,
-    Alg::ES256,
-    Alg::ES384,
-    Alg::EdDSA,
-];
+const ALL: [Alg; 9] = Alg::ALL;
 
 #[test]
 fn every_ring_algorithm_verifies_against_the_matching_key_only() {
     let signers = Signers::new(b"c2VjcmV0");
     let keys = Jwks::parse(signers.jwks().to_string().as_bytes()).unwrap();
     let claims = json!({"sub": "operator"});
+    let check = |header: Value| verify(&signers.sign(header, &claims), &keys, &ALL);
     for (alg, kid) in [
         ("RS256", "rsa"),
         ("RS384", "rsa"),
@@ -30,21 +21,15 @@ fn every_ring_algorithm_verifies_against_the_matching_key_only() {
         ("ES384", "p384"),
         ("EdDSA", "ed"),
     ] {
-        let token = signers.sign(json!({"alg": alg, "kid": kid}), &claims);
-        assert_eq!(
-            verify(&token, &keys, &ALL).map(|v| serde_json::from_slice::<Value>(&v.payload).unwrap()["sub"].clone()),
-            Ok(json!("operator")),
-            "{alg}"
-        );
+        let verified = check(json!({"alg": alg, "kid": kid})).unwrap();
+        let payload: Value = serde_json::from_slice(&verified.payload).unwrap();
+        assert_eq!(payload["sub"], "operator", "{alg}");
         for header in [
             json!({"alg": alg}),
             json!({"alg": alg, "kid": ""}),
             json!({"alg": alg, "kid": null}),
         ] {
-            assert!(
-                verify(&signers.sign(header.clone(), &claims), &keys, &ALL).is_ok(),
-                "{header}"
-            );
+            assert!(check(header.clone()).is_ok(), "{header}");
         }
     }
     let refused = [
@@ -69,8 +54,7 @@ fn every_ring_algorithm_verifies_against_the_matching_key_only() {
         (json!({"alg": "RS256", "kid": 7}), Reject::Malformed),
     ];
     for (header, reject) in refused {
-        let token = signers.sign(header.clone(), &claims);
-        assert_eq!(verify(&token, &keys, &ALL).err(), Some(reject), "{header}");
+        assert_eq!(check(header.clone()).err(), Some(reject), "{header}");
     }
     let token = signers.sign(json!({"alg": "RS256", "kid": "rsa", "typ": "JWT"}), &claims);
     assert!(verify(&token, &keys, &ALL).is_ok());
@@ -80,11 +64,10 @@ fn every_ring_algorithm_verifies_against_the_matching_key_only() {
     let (message, _) = token.rsplit_once('.').unwrap();
     let forged = format!("{message}.{}", B64.encode([0; 256]));
     assert_eq!(verify(&forged, &keys, &ALL).err(), Some(Reject::Signature));
-    assert_eq!(
-        verify(&format!("{token}.extra.parts"), &keys, &ALL).err(),
-        Some(Reject::Malformed)
-    );
+    let extra = format!("{token}.extra.parts");
+    assert_eq!(verify(&extra, &keys, &ALL).err(), Some(Reject::Malformed));
     let public: signature::RsaPublicKeyComponents<Vec<u8>> = signers.rsa.public().into();
+    let rs256 = signers.sign(json!({"alg": "RS256"}), &claims);
     for extra in [
         json!({"alg": "PS256"}),
         json!({"alg": 7}),
@@ -96,10 +79,7 @@ fn every_ring_algorithm_verifies_against_the_matching_key_only() {
         let mut key = json!({"kty": "RSA", "n": B64.encode(&public.n), "e": B64.encode(&public.e)});
         key.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
         let keys = Jwks::parse(json!({"keys": [key]}).to_string().as_bytes()).unwrap();
-        assert_eq!(
-            verify(&signers.sign(json!({"alg": "RS256"}), &claims), &keys, &ALL).err(),
-            Some(Reject::UnknownKey)
-        );
+        assert_eq!(verify(&rs256, &keys, &ALL).err(), Some(Reject::UnknownKey));
     }
     // Keys no token can use count nothing towards the cap.
     let mut junk: Vec<_> = (0..64)
@@ -107,7 +87,7 @@ fn every_ring_algorithm_verifies_against_the_matching_key_only() {
         .collect();
     junk.push(json!({"kty": "RSA", "n": B64.encode(&public.n), "e": B64.encode(&public.e)}));
     let keys = Jwks::parse(json!({"keys": junk}).to_string().as_bytes()).unwrap();
-    assert!(verify(&signers.sign(json!({"alg": "RS256"}), &claims), &keys, &ALL).is_ok());
+    assert!(verify(&rs256, &keys, &ALL).is_ok());
 }
 
 #[test]
@@ -134,10 +114,9 @@ fn id_token_claims_bind_issuer_audience_nonce_time_and_access_token() {
     // The base claims with `changes` set; a null change sends null.
     let check = |alg: &str, kid: &str, changes: Value| {
         let mut claims = base.clone();
-        claims
-            .as_object_mut()
-            .unwrap()
-            .extend(changes.as_object().unwrap().clone());
+        for (name, value) in changes.as_object().unwrap() {
+            claims[name] = value.clone();
+        }
         sign_in(alg, kid, &claims)
     };
     for (absent, expected) in [
@@ -171,11 +150,8 @@ fn id_token_claims_bind_issuer_audience_nonce_time_and_access_token() {
         ("ES384", "p384", &ring::digest::SHA384),
         ("EdDSA", "ed", &ring::digest::SHA512),
     ] {
-        assert_eq!(
-            check(alg, kid, json!({"at_hash": at_hash(digest)})),
-            Ok("operator".into()),
-            "{alg}"
-        );
+        let subject = check(alg, kid, json!({"at_hash": at_hash(digest)}));
+        assert_eq!(subject, Ok("operator".into()), "{alg}");
     }
     for changes in [
         json!({"aud": ["meter"], "azp": "meter", "nbf": now + 299}),

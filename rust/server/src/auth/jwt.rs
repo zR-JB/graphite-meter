@@ -21,19 +21,21 @@ pub(super) enum Alg {
 }
 
 impl Alg {
+    const ALL: [Self; 9] = [
+        Self::RS256,
+        Self::RS384,
+        Self::RS512,
+        Self::PS256,
+        Self::PS384,
+        Self::PS512,
+        Self::ES256,
+        Self::ES384,
+        Self::EdDSA,
+    ];
+
+    /// Each variant's Debug name is its JOSE name.
     fn parse(name: &str) -> Option<Self> {
-        Some(match name {
-            "RS256" => Self::RS256,
-            "RS384" => Self::RS384,
-            "RS512" => Self::RS512,
-            "PS256" => Self::PS256,
-            "PS384" => Self::PS384,
-            "PS512" => Self::PS512,
-            "ES256" => Self::ES256,
-            "ES384" => Self::ES384,
-            "EdDSA" => Self::EdDSA,
-            _ => return None,
-        })
+        Self::ALL.into_iter().find(|alg| format!("{alg:?}") == name)
     }
 
     /// The advertised algorithms ring verifies, or RS256 where go-oidc, which also knows ES512, knows none.
@@ -89,6 +91,11 @@ impl Key {
                 .is_ok(),
             _ => false,
         };
+        let point = |algorithm: &'static dyn signature::VerificationAlgorithm, point| {
+            UnparsedPublicKey::new(algorithm, point)
+                .verify(message, signature)
+                .is_ok()
+        };
         match (alg, &self.material) {
             (Alg::RS256, _) => rsa(&signature::RSA_PKCS1_2048_8192_SHA256),
             (Alg::RS384, _) => rsa(&signature::RSA_PKCS1_2048_8192_SHA384),
@@ -96,15 +103,9 @@ impl Key {
             (Alg::PS256, _) => rsa(&signature::RSA_PSS_2048_8192_SHA256),
             (Alg::PS384, _) => rsa(&signature::RSA_PSS_2048_8192_SHA384),
             (Alg::PS512, _) => rsa(&signature::RSA_PSS_2048_8192_SHA512),
-            (Alg::ES256, Material::P256(point)) => UnparsedPublicKey::new(&signature::ECDSA_P256_SHA256_FIXED, point)
-                .verify(message, signature)
-                .is_ok(),
-            (Alg::ES384, Material::P384(point)) => UnparsedPublicKey::new(&signature::ECDSA_P384_SHA384_FIXED, point)
-                .verify(message, signature)
-                .is_ok(),
-            (Alg::EdDSA, Material::Ed25519(point)) => UnparsedPublicKey::new(&signature::ED25519, point)
-                .verify(message, signature)
-                .is_ok(),
+            (Alg::ES256, Material::P256(key)) => point(&signature::ECDSA_P256_SHA256_FIXED, key),
+            (Alg::ES384, Material::P384(key)) => point(&signature::ECDSA_P384_SHA384_FIXED, key),
+            (Alg::EdDSA, Material::Ed25519(key)) => point(&signature::ED25519, key),
             _ => false,
         }
     }
@@ -203,16 +204,9 @@ pub(super) fn verify(token: &str, keys: &Jwks, allowed: &[Alg]) -> Result<Verifi
     let decode = |part: &str| B64.decode(part).map_err(|_| Reject::Malformed);
     let header: Map<String, Value> = serde_json::from_slice(&decode(header)?).map_err(|_| Reject::Malformed)?;
     let typ = header.get("typ").map(|typ| typ.as_str().map(str::to_ascii_lowercase));
-    if header.contains_key("cty")
-        || header.contains_key("crit")
-        || header.contains_key("enc")
-        || typ.is_some_and(|typ| {
-            !matches!(
-                typ.as_deref(),
-                Some("jwt" | "application/jwt" | "jose" | "application/jose")
-            )
-        })
-    {
+    let jose = ["jwt", "application/jwt", "jose", "application/jose"];
+    let typed = typ.is_none_or(|typ| typ.is_some_and(|typ| jose.contains(&typ.as_str())));
+    if ["cty", "crit", "enc"].into_iter().any(|name| header.contains_key(name)) || !typed {
         return Err(Reject::Malformed);
     }
     let alg = header

@@ -52,24 +52,20 @@ pub(super) enum Ceiling {
     ApprovalAddress,
     OidcTransaction,
 }
-impl Ceiling {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Password => "password-attempt",
-            Self::PasswordAddress => "password-attempt-address",
-            Self::ExchangeAddress => "oidc-exchange-address",
-            Self::StartAddress => "oidc-start-address",
-            Self::ApprovalAddress => "browser-approval-address",
-            Self::OidcTransaction => "oidc-transaction",
-        }
-    }
-}
+const CEILINGS: [&str; Ceiling::OidcTransaction as usize + 1] = [
+    "password-attempt",
+    "password-attempt-address",
+    "oidc-exchange-address",
+    "oidc-start-address",
+    "browser-approval-address",
+    "oidc-transaction",
+];
 
 #[derive(Default)]
 pub(super) struct SecurityLog {
     counters: [AtomicU64; Counter::COUNT],
     verbose: AtomicBool,
-    ceilings: Mutex<[Option<Instant>; Ceiling::OidcTransaction as usize + 1]>,
+    ceilings: Mutex<[Option<Instant>; CEILINGS.len()]>,
 }
 impl SecurityLog {
     pub fn configure(&self, verbose: bool) {
@@ -96,22 +92,16 @@ impl SecurityLog {
         });
     }
     pub fn ceiling(&self, ceiling: Ceiling) {
-        if self.ceiling_due(ceiling) {
-            crate::log!(
-                "[gm:auth] global {} ceiling engaged; further attempts are refused until the window drains",
-                ceiling.name()
-            );
-        }
-    }
-    fn ceiling_due(&self, ceiling: Ceiling) -> bool {
         let mut ceilings = lock(&self.ceilings);
         let now = Instant::now();
         let last = &mut ceilings[ceiling as usize];
         if last.is_some_and(|last| now.duration_since(last) < CEILING_LOG_INTERVAL) {
-            return false;
+            return;
         }
         *last = Some(now);
-        true
+        drop(ceilings);
+        let name = CEILINGS[ceiling as usize];
+        crate::log!("[gm:auth] global {name} ceiling engaged; further attempts are refused until the window drains");
     }
     pub fn window(&self, last: &mut [u64; Counter::COUNT]) -> Option<String> {
         let values = self.counters.each_ref().map(|counter| counter.load(Ordering::Relaxed));

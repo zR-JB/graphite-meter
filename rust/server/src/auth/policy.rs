@@ -170,7 +170,7 @@ impl Policy {
         request: Request<B>,
         connection: Connection,
     ) -> Result<AuthorizedRequest<B>, Box<RejectedRequest<B>>> {
-        match self.evaluate(&request, connection.peer, connection.tls, connection.listener) {
+        match self.evaluate(&request, connection) {
             Ok(authorization) => Ok(AuthorizedRequest {
                 request,
                 authorization,
@@ -180,13 +180,8 @@ impl Policy {
         }
     }
 
-    fn evaluate<B>(
-        &self,
-        request: &Request<B>,
-        peer: SocketAddr,
-        tls: bool,
-        listener: Listener,
-    ) -> Result<Authorization, Refusal> {
+    fn evaluate<B>(&self, request: &Request<B>, connection: Connection) -> Result<Authorization, Refusal> {
+        let Connection { peer, tls, listener } = connection;
         // Go's Enforce refuses a repeated security-relevant field before anything else.
         if [
             header::AUTHORIZATION,

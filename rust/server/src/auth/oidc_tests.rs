@@ -16,15 +16,11 @@ use tokio_rustls::TlsAcceptor;
 
 use crate::{config::AuthMode, test_tls};
 
-#[derive(Clone, Copy, Default)]
-struct Claims {
+#[derive(Default)]
+struct Twist {
     wrong_nonce: bool,
     wrong_subject: bool,
     denied_group: bool,
-}
-
-#[derive(Default)]
-struct Twist {
     unavailable: bool,
     rotated: bool,
     unknown_kid: bool,
@@ -53,7 +49,6 @@ struct Double {
     issuer: String,
     algorithms: Vec<String>,
     keys: Signers,
-    claims: Mutex<Claims>,
     nonces: Mutex<HashMap<String, String>>,
     twist: Mutex<Twist>,
     jwks_requests: AtomicUsize,
@@ -75,7 +70,7 @@ impl Double {
             format!("graphite-meter/{}", crate::config::ENGINE_VERSION)
         );
         assert!(!headers.contains_key(header::ACCEPT));
-        let (claims, twist, issuer) = (*self.claims.lock().unwrap(), self.twist.lock().unwrap(), &self.issuer);
+        let (twist, issuer) = (self.twist.lock().unwrap(), &self.issuer);
         let with = |mut value: Value, twist: &Option<Value>| {
             for (key, member) in twist.iter().filter_map(Value::as_object).flatten() {
                 value[key] = member.clone();
@@ -115,7 +110,7 @@ impl Double {
                 let basic = format!("Basic {}", STANDARD.encode("meter:s3cret~%2A"));
                 assert_eq!(headers[header::AUTHORIZATION], basic);
                 let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-                let nonce = if claims.wrong_nonce { "invalid" } else { &nonce };
+                let nonce = if twist.wrong_nonce { "invalid" } else { &nonce };
                 let token_claims = json!({"iss": issuer, "aud": "meter", "sub": "operator", "iat": now,
                     "exp": now + 300, "nonce": nonce, "at_hash": at_hash("access")});
                 let header = match (&twist.header, twist.rotated, twist.unknown_kid) {
@@ -134,8 +129,8 @@ impl Double {
             "/userinfo" => {
                 assert_eq!(headers[header::AUTHORIZATION], "Bearer access");
                 let name = twist.name.as_deref().unwrap_or("Example Operator");
-                let groups = [if claims.denied_group { "outsiders" } else { "operators" }];
-                let subject = if claims.wrong_subject { "other" } else { "operator" };
+                let groups = [if twist.denied_group { "outsiders" } else { "operators" }];
+                let subject = if twist.wrong_subject { "other" } else { "operator" };
                 let info = json!({"sub": subject, "name": name, "groups": groups});
                 let info = with(with(info, &twist.userinfo), &twist.signed_userinfo);
                 let header = json!({"alg": "RS256", "kid": "test-key"});
@@ -150,23 +145,21 @@ impl Double {
             .header(header::CONTENT_TYPE, content_type)
             .body(body)
     }
-    async fn login(&self, claims: Claims) -> Result<Identity, Reason> {
-        let tx = self.begin(claims).await?;
+    /// Answers as `change` makes a fresh twist say.
+    fn set_twist(&self, change: impl FnOnce(&mut Twist)) {
+        let mut twist = Twist::default();
+        change(&mut twist);
+        *self.twist.lock().unwrap() = twist;
+    }
+    async fn login(&self) -> Result<Identity, Reason> {
+        let tx = self.begin().await?;
         self.oidc.complete(&tx, "valid~code*").await
     }
-    async fn begin(&self, claims: Claims) -> Result<Transaction, Reason> {
+    async fn begin(&self) -> Result<Transaction, Reason> {
         assert!(self.oidc.ready().is_some() || self.oidc.discover().await.is_ok());
-        let started = self
-            .oidc
-            .start("192.0.2.1".parse().unwrap(), "challenge".into(), None)
-            .await
-            .unwrap();
-        let fields = tests::query_fields(&started.url);
-        self.nonces
-            .lock()
-            .unwrap()
-            .insert(fields["code_challenge"].clone(), fields["nonce"].clone());
-        *self.claims.lock().unwrap() = claims;
+        let (started, fields) = start(&self.oidc, "192.0.2.1").await;
+        let (challenge, nonce) = (fields["code_challenge"].clone(), fields["nonce"].clone());
+        self.nonces.lock().unwrap().insert(challenge, nonce);
         let tx = self
             .oidc
             .take(&fields["state"], &started.browser, Some(&self.issuer))
@@ -186,19 +179,7 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Arc<D
     let (tls, client_tls) = test_tls::configs(host, rustls::DEFAULT_VERSIONS, &[]).unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let issuer = format!("https://{host}:{}", listener.local_addr().unwrap().port());
-    let mut oidc = Oidc::new(
-        &AuthConfig {
-            mode: AuthMode::Oidc,
-            public_url: "https://meter.example".into(),
-            oidc_issuer: issuer.clone(),
-            oidc_client_id: "meter".into(),
-            oidc_client_secret: "s3cret~*".into(),
-            oidc_allowed_groups: vec!["operators".into()],
-            ..AuthConfig::default()
-        },
-        Arc::new(crate::auth::logging::SecurityLog::default()),
-    )
-    .unwrap();
+    let mut oidc = client(&issuer, "meter", "s3cret~*");
     oidc.http = ProviderHttp {
         tls: TlsConnector::from(Arc::new(client_tls)),
         proxy,
@@ -208,7 +189,6 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Arc<D
         issuer,
         algorithms: algorithms.iter().map(|alg| (*alg).to_owned()).collect(),
         keys: Signers::new(b"s3cret~*"),
-        claims: Mutex::default(),
         nonces: Mutex::default(),
         twist: Mutex::default(),
         jwks_requests: AtomicUsize::new(0),
@@ -243,19 +223,14 @@ async fn signed_provider_exchange_checks_nonce_subject_group_and_pkce() {
     let provider = provider_double("localhost", &["RS256"], Proxy::default()).await;
     // Go's CleanText blanks the control, keeps 63 characters and an ellipsis, then trims.
     let display_name = format!("{}…", "é".repeat(61));
-    provider.twist.lock().unwrap().name = Some(format!(
-        "\u{009b} {}\u{202e}🙂{}",
-        "é".repeat(127),
-        "x".repeat(256 * 1024)
-    ));
+    let name = format!("\u{009b} {}\u{202e}🙂{}", "é".repeat(127), "x".repeat(256 * 1024));
     for scenario in 0..4 {
-        let result = provider
-            .login(Claims {
-                wrong_nonce: scenario == 1,
-                wrong_subject: scenario == 2,
-                denied_group: scenario == 3,
-            })
-            .await;
+        provider.set_twist(|twist| {
+            twist.name = Some(name.clone());
+            (twist.wrong_nonce, twist.wrong_subject, twist.denied_group) =
+                (scenario == 1, scenario == 2, scenario == 3);
+        });
+        let result = provider.login().await;
         if scenario == 0 {
             let identity = result.unwrap();
             assert_eq!(identity.subject, "oidc:operator");
@@ -273,36 +248,21 @@ async fn signed_provider_exchange_checks_nonce_subject_group_and_pkce() {
 #[tokio::test]
 async fn callbacks_past_the_concurrent_exchanges_wait_within_gos_deadline() {
     let provider = provider_double("localhost", &["RS256"], Proxy::default()).await;
-    let busy = provider
-        .oidc
-        .exchanges
-        .acquire_many(MAX_EXCHANGES as u32)
-        .await
-        .unwrap();
-    let tx = provider.begin(Claims::default()).await.unwrap();
+    let exchanges = &provider.oidc.exchanges;
+    let busy = exchanges.acquire_many(MAX_EXCHANGES as u32).await.unwrap();
+    let tx = provider.begin().await.unwrap();
     let mut callback = Box::pin(provider.oidc.complete(&tx, "valid~code*"));
-    assert!(
-        tokio::time::timeout(Duration::from_millis(100), &mut callback)
-            .await
-            .is_err(),
-        "a callback past the concurrent exchanges was refused"
-    );
+    let waiting = tokio::time::timeout(Duration::from_millis(100), &mut callback).await;
+    assert!(waiting.is_err(), "a callback past the concurrent exchanges was refused");
     drop(busy);
     assert_eq!(callback.await.unwrap().subject, "oidc:operator");
 
-    let busy = provider
-        .oidc
-        .exchanges
-        .acquire_many(MAX_EXCHANGES as u32)
-        .await
-        .unwrap();
-    let tx = provider.begin(Claims::default()).await.unwrap();
+    let busy = exchanges.acquire_many(MAX_EXCHANGES as u32).await.unwrap();
+    let tx = provider.begin().await.unwrap();
     tokio::time::pause();
     let waited = Instant::now();
-    assert!(matches!(
-        provider.oidc.complete(&tx, "valid~code*").await,
-        Err(Reason::TokenExchange)
-    ));
+    let refused = provider.oidc.complete(&tx, "valid~code*").await;
+    assert_eq!(refused.err(), Some(Reason::TokenExchange));
     // Tokio's timer rounds up to its next millisecond.
     assert!((CALLBACK_DEADLINE..=CALLBACK_DEADLINE + Duration::from_millis(1)).contains(&waited.elapsed()));
     tokio::time::resume();
@@ -326,45 +286,24 @@ async fn forged_or_misbound_tokens_are_refused_and_rotation_refetches_keys_once(
         ("signed_userinfo", json!({"iss": provider.issuer, "aud": "other"})),
     ];
     for (field, value) in changes {
-        *provider.twist.lock().unwrap() = match field {
-            "claims" => Twist {
-                claims: Some(value.clone()),
-                ..Twist::default()
-            },
-            "header" => Twist {
-                header: Some(value.clone()),
-                ..Twist::default()
-            },
-            "unknown_kid" => Twist {
-                unknown_kid: true,
-                ..Twist::default()
-            },
-            _ => Twist {
-                signed_userinfo: Some(value.clone()),
-                ..Twist::default()
-            },
-        };
-        assert!(
-            provider.login(Claims::default()).await.is_err(),
-            "{field}={value} authenticated"
-        );
+        provider.set_twist(|twist| match field {
+            "claims" => twist.claims = Some(value.clone()),
+            "header" => twist.header = Some(value.clone()),
+            "unknown_kid" => twist.unknown_kid = true,
+            _ => twist.signed_userinfo = Some(value.clone()),
+        });
+        assert!(provider.login().await.is_err(), "{field}={value} authenticated");
     }
-    *provider.twist.lock().unwrap() = Twist {
-        signed_userinfo: Some(
-            json!({"iss": provider.issuer, "aud": "meter", "name": "\u{009b}München \u{202e}العربية\u{2069} 👩\u{200d}💻"}),
-        ),
-        ..Twist::default()
-    };
-    let identity = provider.login(Claims::default()).await.unwrap();
+    let name = "\u{009b}München \u{202e}العربية\u{2069} 👩\u{200d}💻";
+    let userinfo = json!({"iss": provider.issuer, "aud": "meter", "name": name});
+    provider.set_twist(|twist| twist.signed_userinfo = Some(userinfo));
+    let identity = provider.login().await.unwrap();
     assert_eq!(identity.subject, "oidc:operator");
     assert_eq!(identity.name, "München  العربية  👩\u{200d}💻");
     let before = provider.jwks_requests.load(Ordering::SeqCst);
     assert_eq!(before, 2);
-    *provider.twist.lock().unwrap() = Twist {
-        rotated: true,
-        ..Twist::default()
-    };
-    let (first, second) = tokio::join!(provider.login(Claims::default()), provider.login(Claims::default()));
+    provider.set_twist(|twist| twist.rotated = true);
+    let (first, second) = tokio::join!(provider.login(), provider.login());
     assert_eq!(first.unwrap().subject, "oidc:operator");
     assert_eq!(second.unwrap().subject, "oidc:operator");
     assert_eq!(provider.jwks_requests.load(Ordering::SeqCst), before + 1);
@@ -387,37 +326,21 @@ async fn provider_traffic_uses_the_https_proxy() {
                     head.push(client.read_u8().await.unwrap());
                 }
                 let head = String::from_utf8(head).unwrap();
-                assert!(
-                    head.to_ascii_lowercase()
-                        .contains("proxy-authorization: basic dxnlcjpwyxnz\r\n")
-                );
-                let target = head
-                    .strip_prefix("CONNECT provider.test:")
-                    .unwrap()
-                    .split(' ')
-                    .next()
-                    .unwrap()
-                    .to_owned();
+                let lower = head.to_ascii_lowercase();
+                assert!(lower.contains("proxy-authorization: basic dxnlcjpwyxnz\r\n"));
+                let target = head.strip_prefix("CONNECT provider.test:").unwrap();
+                let port = target.split(' ').next().unwrap();
                 counted.fetch_add(1, Ordering::SeqCst);
-                let mut upstream = TcpStream::connect(format!("127.0.0.1:{target}")).await.unwrap();
-                client
-                    .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
-                    .await
-                    .unwrap();
+                let mut upstream = TcpStream::connect(format!("127.0.0.1:{port}")).await.unwrap();
+                let established = b"HTTP/1.1 200 Connection established\r\n\r\n";
+                client.write_all(established).await.unwrap();
                 let _ = tokio::io::copy_bidirectional(&mut client, &mut upstream).await;
             });
         }
     });
-    let provider = provider_double(
-        "provider.test",
-        &["RS256"],
-        Proxy::new("", &format!("http://user:pass@{proxy_address}"), ""),
-    )
-    .await;
-    assert_eq!(
-        provider.login(Claims::default()).await.unwrap().subject,
-        "oidc:operator"
-    );
+    let through = Proxy::new("", &format!("http://user:pass@{proxy_address}"), "");
+    let provider = provider_double("provider.test", &["RS256"], through).await;
+    assert_eq!(provider.login().await.unwrap().subject, "oidc:operator");
     assert_eq!(tunnels.load(Ordering::SeqCst), 4);
     provider.stop().await;
 }
@@ -426,11 +349,7 @@ async fn provider_traffic_uses_the_https_proxy() {
 async fn rs256_signs_in_only_where_go_oidc_supports_no_advertised_algorithm() {
     for (algorithms, signs_in) in [(vec![], true), (vec!["HS256"], true), (vec!["HS256", "ES512"], false)] {
         let provider = provider_double("localhost", &algorithms, Proxy::default()).await;
-        assert_eq!(
-            provider.login(Claims::default()).await.is_ok(),
-            signs_in,
-            "{algorithms:?}"
-        );
+        assert_eq!(provider.login().await.is_ok(), signs_in, "{algorithms:?}");
         provider.stop().await;
     }
 }
@@ -454,21 +373,15 @@ async fn provider_members_read_as_go_reads_them() {
         (json!({}), json!({}), json!({"email_verified": "yes"}), false),
     ] {
         let case = format!("{tokens} {claims} {userinfo}");
-        *provider.twist.lock().unwrap() = Twist {
-            tokens: Some(tokens),
-            claims: Some(claims),
-            userinfo: Some(userinfo),
-            ..Twist::default()
-        };
-        assert_eq!(provider.login(Claims::default()).await.is_ok(), signs_in, "{case}");
+        provider.set_twist(|twist| {
+            (twist.tokens, twist.claims, twist.userinfo) = (Some(tokens), Some(claims), Some(userinfo));
+        });
+        assert_eq!(provider.login().await.is_ok(), signs_in, "{case}");
     }
     // A form, which x/oauth2 refuses where url.ParseQuery does.
     for (form, signs_in) in [("", true), ("&x=%zz", false), ("&x=a;b", false)] {
-        *provider.twist.lock().unwrap() = Twist {
-            form: Some(form),
-            ..Twist::default()
-        };
-        assert_eq!(provider.login(Claims::default()).await.is_ok(), signs_in, "{form}");
+        provider.set_twist(|twist| twist.form = Some(form));
+        assert_eq!(provider.login().await.is_ok(), signs_in, "{form}");
     }
     provider.stop().await;
 }
@@ -503,10 +416,7 @@ async fn discovery_refuses_only_an_authorization_endpoint_that_breaks_sign_in() 
         assert_eq!(provider.oidc.discover().await.is_ok(), discovered);
     }
     assert!(!provider.oidc.ready().unwrap().issuer_parameter);
-    assert_eq!(
-        provider.login(Claims::default()).await.unwrap().subject,
-        "oidc:operator"
-    );
+    assert_eq!(provider.login().await.unwrap().subject, "oidc:operator");
     provider.stop().await;
 }
 
@@ -516,22 +426,30 @@ async fn unavailable_provider_refuses_logins_until_discovery_recovers_once() {
     provider.twist.lock().unwrap().unavailable = true;
     assert!(provider.oidc.discover().await.is_err());
     let address = "192.0.2.1".parse().unwrap();
-    assert!(matches!(
-        provider.oidc.start(address, String::new(), None).await,
-        Err(Reason::ProviderNotReady)
-    ));
+    let refused = provider.oidc.start(address, String::new(), None).await;
+    assert_eq!(refused.err(), Some(Reason::ProviderNotReady));
     provider.twist.lock().unwrap().unavailable = false;
     provider.oidc.retry_discovery().await;
     let ready = provider.oidc.ready().unwrap().clone();
     provider.oidc.retry_discovery().await;
     assert!(Arc::ptr_eq(&ready, provider.oidc.ready().unwrap()));
-    assert_eq!(
-        provider.jwks_requests.load(Ordering::SeqCst),
-        0,
-        "keys wait for the first token"
-    );
+    let fetched = provider.jwks_requests.load(Ordering::SeqCst);
+    assert_eq!(fetched, 0, "keys wait for the first token");
     assert!(provider.oidc.start(address, String::new(), None).await.is_ok());
     provider.stop().await;
+}
+
+fn client(issuer: &str, client_id: &str, secret: &str) -> Oidc {
+    let config = AuthConfig {
+        mode: AuthMode::Oidc,
+        public_url: "https://meter.example".into(),
+        oidc_issuer: issuer.into(),
+        oidc_client_id: client_id.into(),
+        oidc_client_secret: secret.into(),
+        oidc_allowed_groups: vec!["operators".into()],
+        ..AuthConfig::default()
+    };
+    Oidc::new(&config, Arc::new(crate::auth::logging::SecurityLog::default())).unwrap()
 }
 
 pub(in crate::auth) fn ready() -> Oidc {
@@ -546,19 +464,7 @@ fn ready_with(issuer_parameter: bool) -> Oidc {
 
 /// A client that discovered metadata naming `authorization_endpoint`, ready if discovery accepted it.
 pub(in crate::auth) fn discovered(authorization_endpoint: &str, issuer_parameter: bool) -> Oidc {
-    let oidc = Oidc::new(
-        &AuthConfig {
-            mode: AuthMode::Oidc,
-            public_url: "https://meter.example".into(),
-            oidc_issuer: "https://identity.example".into(),
-            oidc_client_id: "meter~*".into(),
-            oidc_client_secret: "secret".into(),
-            oidc_allowed_groups: vec!["operators".into()],
-            ..AuthConfig::default()
-        },
-        Arc::new(crate::auth::logging::SecurityLog::default()),
-    )
-    .unwrap();
+    let oidc = client("https://identity.example", "meter~*", "secret");
     let metadata = serde_json::from_value(serde_json::json!({
         "issuer": "https://identity.example",
         "authorization_endpoint": authorization_endpoint,
@@ -573,6 +479,14 @@ pub(in crate::auth) fn discovered(authorization_endpoint: &str, issuer_parameter
         assert!(oidc.provider.set(Arc::new(provider)).is_ok());
     }
     oidc
+}
+
+/// A sign-in started from `address` for a challenge, with its authorization URL's fields.
+async fn start(oidc: &Oidc, address: &str) -> (Started, HashMap<String, String>) {
+    let started = oidc.start(address.parse().unwrap(), "challenge".into(), None).await;
+    let started = started.unwrap();
+    let fields = query_fields(&started.url);
+    (started, fields)
 }
 
 pub(in crate::auth) fn query_fields(url: &str) -> HashMap<String, String> {
@@ -609,33 +523,23 @@ async fn authorization_is_pkce_bound_bounded_and_consumed_before_browser_validat
 #[tokio::test]
 async fn transactions_charge_wider_ipv6_shares_before_global_capacity() {
     let oidc = ready();
+    let start = |address: &str| oidc.start(address.parse().unwrap(), String::new(), None);
     for subnet in 0..2 {
         for host in 1..=8 {
-            let address = format!("2001:db8:1:{subnet:x}::{host}").parse().unwrap();
-            oidc.start(address, String::new(), None).await.unwrap();
+            start(&format!("2001:db8:1:{subnet:x}::{host}")).await.unwrap();
         }
     }
-    assert!(
-        oidc.start("2001:db8:1:2::1".parse().unwrap(), String::new(), None)
-            .await
-            .is_err()
-    );
-    assert!(
-        oidc.start("2001:db8:2::1".parse().unwrap(), String::new(), None)
-            .await
-            .is_ok()
-    );
+    assert!(start("2001:db8:1:2::1").await.is_err());
+    assert!(start("2001:db8:2::1").await.is_ok());
 }
 
 #[tokio::test]
 async fn mismatched_response_issuer_cannot_redeem_a_code() {
     let oidc = ready();
-    let started = oidc
-        .start("192.0.2.2".parse().unwrap(), "challenge".into(), None)
-        .await
-        .unwrap();
-    let state = query_fields(&started.url)["state"].clone();
-    let refused = oidc.take(&state, &started.browser, Some("https://other.example")).err();
+    let (started, fields) = start(&oidc, "192.0.2.2").await;
+    let refused = oidc
+        .take(&fields["state"], &started.browser, Some("https://other.example"))
+        .err();
     assert_eq!(refused, Some((Reason::ResponseIssuer, "challenge".into())));
     assert!(oidc.transactions.lock().unwrap().is_empty());
 }
@@ -644,22 +548,11 @@ async fn mismatched_response_issuer_cannot_redeem_a_code() {
 async fn an_empty_response_issuer_is_absent_like_go() {
     for advertised in [false, true] {
         let oidc = ready_with(advertised);
-        let started = oidc
-            .start("192.0.2.3".parse().unwrap(), "challenge".into(), None)
-            .await
-            .unwrap();
-        let state = query_fields(&started.url)["state"].clone();
-        let taken = oidc
-            .take(&state, &started.browser, Some(""))
-            .map(|_| ())
-            .map_err(|(reason, _)| reason);
+        let (started, fields) = start(&oidc, "192.0.2.3").await;
+        let refused = oidc.take(&fields["state"], &started.browser, Some("")).err();
         assert_eq!(
-            taken,
-            if advertised {
-                Err(Reason::ResponseIssuer)
-            } else {
-                Ok(())
-            }
+            refused.map(|(reason, _)| reason),
+            advertised.then_some(Reason::ResponseIssuer)
         );
     }
 }

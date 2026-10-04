@@ -161,12 +161,8 @@ mod tests {
         let (_, session) = store.create("subject", "Name", "local", None).unwrap();
         let (grant, browser) = store.issue_browser_grant(&session, AUDIENCE).unwrap();
         let (_, sibling) = store.issue_browser_grant(&session, AUDIENCE).unwrap();
-        let ticket = store
-            .mint_ticket(&browser, PUBLIC, TARGET, AUDIENCE, Kind::WebTransport)
-            .unwrap();
-        let unused = store
-            .mint_ticket(&browser, PUBLIC, TARGET, AUDIENCE, Kind::WebTransport)
-            .unwrap();
+        let mint = || store.mint_ticket(&browser, PUBLIC, TARGET, AUDIENCE, Kind::WebTransport);
+        let (ticket, unused) = (mint().unwrap(), mint().unwrap());
         let active = store.consume_ticket(&ticket.token, TARGET, AUDIENCE).unwrap();
         assert_eq!(active.owner(), browser.owner());
         assert_ne!(active.owner(), sibling.owner());
@@ -177,15 +173,10 @@ mod tests {
             .unwrap();
         assert!(store.consume_ticket(&unused.token, TARGET, AUDIENCE).is_none());
         assert!(sibling.is_active());
-        assert!(matches!(
-            store.mint_ticket(&browser, PUBLIC, TARGET, AUDIENCE, Kind::WebTransport),
-            Err(TicketError::NoSession)
-        ));
+        assert_eq!(mint().err(), Some(TicketError::NoSession));
         let (_, cli) = store.issue_cli_grant(&session).unwrap();
-        assert!(matches!(
-            store.mint_ticket(&cli, PUBLIC, TARGET, "", Kind::WebTransport),
-            Err(TicketError::NoSession)
-        ));
+        let refused = store.mint_ticket(&cli, PUBLIC, TARGET, "", Kind::WebTransport);
+        assert_eq!(refused.err(), Some(TicketError::NoSession));
     }
 
     #[tokio::test(start_paused = true)]
@@ -205,16 +196,13 @@ mod tests {
     fn session_removal_eagerly_removes_grants_and_outstanding_tickets() {
         let store = SessionStore::new();
         let (old, session) = store.create("subject", "name", "local", None).unwrap();
-        let (_, lease) = store.issue_browser_grant(&session, "https://client.example").unwrap();
-        store
-            .mint_ticket(
-                &lease,
-                "https://meter.example",
-                "https://meter.example/wt/ping",
-                "https://client.example",
-                Kind::WebTransport,
-            )
-            .unwrap();
+        let (_, lease) = store.issue_browser_grant(&session, AUDIENCE).unwrap();
+        let target = "https://meter.example/wt/ping";
+        assert!(
+            store
+                .mint_ticket(&lease, PUBLIC, target, AUDIENCE, Kind::WebTransport)
+                .is_ok()
+        );
         store.create("subject", "name", "local", Some(&old)).unwrap();
         let state = store.0.lock().unwrap();
         assert!(state.grants.is_empty());
@@ -229,9 +217,8 @@ mod tests {
         let (grant, lease) = store.issue_browser_grant(&session, AUDIENCE).unwrap();
         let left = Duration::from_secs(5);
         tokio::time::advance(SESSION_LIFETIME - left).await;
-        let ticket = store
-            .mint_ticket(&lease, PUBLIC, TARGET, AUDIENCE, Kind::WebTransport)
-            .unwrap();
+        let ticket = store.mint_ticket(&lease, PUBLIC, TARGET, AUDIENCE, Kind::WebTransport);
+        let ticket = ticket.unwrap();
         // The paused clock leaves wall time behind, so the ticket's expiry follows the parent's time left.
         assert!(ticket.expires <= SystemTime::now() + left);
         tokio::time::advance(left).await;

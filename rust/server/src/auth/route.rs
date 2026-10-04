@@ -116,43 +116,13 @@ mod tests {
         }
         assert!(claims("/auth/unknown") && !claims("/login/") && !claims("/auth"));
         let public = |mode| {
-            AuthRoute::ALL
-                .into_iter()
-                .filter(|route| route.public(mode))
-                .map(AuthRoute::path)
-                .collect::<Vec<_>>()
+            let paths = AuthRoute::ALL.into_iter().filter(|route| route.public(mode));
+            paths.map(AuthRoute::path).collect::<Vec<_>>().join(" ")
         };
-        let always = [
-            "/login",
-            "/auth/cli",
-            "/auth/cli/token",
-            "/auth/browser",
-            "/auth/browser/token",
-        ];
-        assert_eq!(public(AuthMode::Off), always);
-        assert_eq!(
-            public(AuthMode::Password),
-            [
-                "/login",
-                "/auth/password",
-                "/auth/cli",
-                "/auth/cli/token",
-                "/auth/browser",
-                "/auth/browser/token"
-            ]
-        );
-        assert_eq!(
-            public(AuthMode::Hybrid),
-            [
-                "/login",
-                "/auth/password",
-                "/auth/oidc/start",
-                "/auth/oidc/callback",
-                "/auth/cli",
-                "/auth/cli/token",
-                "/auth/browser",
-                "/auth/browser/token"
-            ]
-        );
+        let always = "/auth/cli /auth/cli/token /auth/browser /auth/browser/token";
+        assert_eq!(public(AuthMode::Off), format!("/login {always}"));
+        assert_eq!(public(AuthMode::Password), format!("/login /auth/password {always}"));
+        let hybrid = format!("/login /auth/password /auth/oidc/start /auth/oidc/callback {always}");
+        assert_eq!(public(AuthMode::Hybrid), hybrid);
     }
 }

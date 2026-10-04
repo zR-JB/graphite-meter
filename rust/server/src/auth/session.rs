@@ -103,13 +103,12 @@ pub(super) struct State {
 
 impl State {
     pub(super) fn remove(&mut self, key: &TokenHash) -> bool {
-        if let Some(session) = self.sessions.remove(key) {
-            session.revoke();
-            self.reap_delegated(Instant::now());
-            true
-        } else {
-            false
-        }
+        let Some(session) = self.sessions.remove(key) else {
+            return false;
+        };
+        session.revoke();
+        self.reap_delegated(Instant::now());
+        true
     }
 
     pub(super) fn contains(&self, lease: &SessionLease) -> bool {
@@ -119,13 +118,12 @@ impl State {
     }
 
     pub(super) fn remove_grant(&mut self, hash: &TokenHash) -> bool {
-        if let Some(grant) = self.grants.remove(hash) {
-            grant.revoke_grant();
-            self.reap_delegated(Instant::now());
-            true
-        } else {
-            false
-        }
+        let Some(grant) = self.grants.remove(hash) else {
+            return false;
+        };
+        grant.revoke_grant();
+        self.reap_delegated(Instant::now());
+        true
     }
 
     pub(super) fn reap_delegated(&mut self, now: Instant) {
@@ -259,9 +257,8 @@ mod tests {
     async fn active_transport_expires_without_lookup_or_sweep() {
         let store = SessionStore::new();
         let (_, lease) = store.create("subject", "name", "local", None).unwrap();
-        tokio::time::timeout(SESSION_LIFETIME + Duration::from_secs(1), lease.ended())
-            .await
-            .unwrap();
+        let ended = tokio::time::timeout(SESSION_LIFETIME + Duration::from_secs(1), lease.ended());
+        ended.await.unwrap();
         assert!(!lease.is_active());
     }
 }

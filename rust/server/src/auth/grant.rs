@@ -192,6 +192,8 @@ mod tests {
     use crate::auth::SESSION_LIFETIME;
     use std::time::Duration;
 
+    const ORIGIN: &str = "https://client.example";
+
     /// Grants as an approved exchange issues them, and their revocation, for tests.
     impl SessionStore {
         pub(crate) fn issue_cli_grant(&self, session: &SessionLease) -> Result<(String, AuthLease), GrantError> {
@@ -215,8 +217,8 @@ mod tests {
         let (_, session) = store.create("subject", "Name", "local", None).unwrap();
         let cookie = AuthLease::cookie(session.clone());
         let (cli_token, cli) = store.issue_cli_grant(&session).unwrap();
-        let (first_token, first) = store.issue_browser_grant(&session, "https://client.example").unwrap();
-        let (_, second) = store.issue_browser_grant(&session, "https://client.example").unwrap();
+        let (first_token, first) = store.issue_browser_grant(&session, ORIGIN).unwrap();
+        let (_, second) = store.issue_browser_grant(&session, ORIGIN).unwrap();
         assert_eq!(cli.provider(), "cli");
         assert_eq!(first.provider(), "browser");
         assert_eq!(cookie.provider(), "local");
@@ -227,10 +229,8 @@ mod tests {
         assert_ne!(first.owner(), second.owner());
         assert_eq!(first.owner().client_keys()[1], cookie.owner().client_keys()[1]);
         assert_eq!(first.session().id(), second.session().id());
-        assert_eq!(
-            store.lookup_bearer(&first_token).unwrap().browser_origin(),
-            Some("https://client.example")
-        );
+        let found = store.lookup_bearer(&first_token).unwrap();
+        assert_eq!(found.browser_origin(), Some(ORIGIN));
         assert!(store.lookup_bearer(&cli_token).is_some());
         assert!(store.lookup_bearer(&(cli_token + "=")).is_none());
     }
@@ -242,12 +242,10 @@ mod tests {
         let (first, lease) = store.issue_cli_grant(&session).unwrap();
         let (second, _) = store.issue_cli_grant(&session).unwrap();
         let browsers: Vec<_> = (0..6)
-            .map(|_| store.issue_browser_grant(&session, "https://client.example").unwrap())
+            .map(|_| store.issue_browser_grant(&session, ORIGIN).unwrap())
             .collect();
-        assert_eq!(
-            store.issue_browser_grant(&session, "https://client.example").err(),
-            Some(GrantError::Capacity)
-        );
+        let refused = store.issue_browser_grant(&session, ORIGIN).err();
+        assert_eq!(refused, Some(GrantError::Capacity));
         let (new, _) = store.issue_cli_grant(&session).unwrap();
         assert!(store.lookup_bearer(&first).is_none() && !lease.is_active());
         assert!(store.lookup_bearer(&second).is_some() && store.lookup_bearer(&new).is_some());
@@ -256,9 +254,7 @@ mod tests {
         }
         let (_, only_browsers) = store.create("subject", "Name", "local", None).unwrap();
         for _ in 0..8 {
-            store
-                .issue_browser_grant(&only_browsers, "https://client.example")
-                .unwrap();
+            assert!(store.issue_browser_grant(&only_browsers, ORIGIN).is_ok());
         }
         assert_eq!(store.issue_cli_grant(&only_browsers).err(), Some(GrantError::Capacity));
     }
@@ -267,22 +263,19 @@ mod tests {
     async fn revocation_wakes_existing_waiters_and_preserves_siblings() {
         let store = SessionStore::new();
         let (_, session) = store.create("subject", "Name", "local", None).unwrap();
-        let (token, browser) = store.issue_browser_grant(&session, "https://client.example").unwrap();
-        let (sibling_token, sibling) = store.issue_browser_grant(&session, "https://client.example").unwrap();
+        let (token, browser) = store.issue_browser_grant(&session, ORIGIN).unwrap();
+        let (sibling_token, sibling) = store.issue_browser_grant(&session, ORIGIN).unwrap();
         let active = browser.clone();
         let waiter = tokio::spawn(async move { active.ended().await });
         tokio::task::yield_now().await;
         assert!(store.revoke_grant(&token));
-        tokio::time::timeout(Duration::from_secs(1), waiter)
-            .await
-            .unwrap()
-            .unwrap();
+        let woken = tokio::time::timeout(Duration::from_secs(1), waiter).await;
+        woken.unwrap().unwrap();
         assert!(!browser.is_active() && store.lookup_bearer(&token).is_none());
         assert!(sibling.is_active() && store.lookup_bearer(&sibling_token).is_some());
         store.revoke(&session);
-        tokio::time::timeout(Duration::from_secs(1), sibling.ended())
-            .await
-            .unwrap();
+        let ended = tokio::time::timeout(Duration::from_secs(1), sibling.ended()).await;
+        ended.unwrap();
         assert!(store.lookup_bearer(&sibling_token).is_none());
     }
 
@@ -292,10 +285,8 @@ mod tests {
         let foreign = SessionStore::new();
         let (_, session) = foreign.create("subject", "Name", "local", None).unwrap();
         assert_eq!(store.issue_cli_grant(&session).err(), Some(GrantError::NoSession));
-        assert_eq!(
-            store.issue_browser_grant(&session, "https://client.example").err(),
-            Some(GrantError::NoSession)
-        );
+        let refused = store.issue_browser_grant(&session, ORIGIN).err();
+        assert_eq!(refused, Some(GrantError::NoSession));
         foreign.revoke(&session);
         assert_eq!(foreign.issue_cli_grant(&session).err(), Some(GrantError::NoSession));
     }
@@ -321,7 +312,7 @@ mod tests {
         let store = SessionStore::new();
         let (_, expiring) = store.create("old", "name", "local", None).unwrap();
         let (expired_token, expired_lease) = store.issue_cli_grant(&expiring).unwrap();
-        let (sibling_token, _) = store.issue_browser_grant(&expiring, "https://client.example").unwrap();
+        let (sibling_token, _) = store.issue_browser_grant(&expiring, ORIGIN).unwrap();
         tokio::time::advance(SESSION_LIFETIME - Duration::from_secs(60)).await;
         let (_, current) = store.create("current", "name", "local", None).unwrap();
         let (valid_token, _) = store.issue_cli_grant(&current).unwrap();
