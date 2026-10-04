@@ -48,8 +48,8 @@ const H2_STREAM_WINDOW: u32 = 32 << 20;
 const H2_CONNECTION_WINDOW: u32 = 64 << 20;
 /// The largest DATA frame the client accepts, as the server: larger frames cost less CPU per byte.
 const H2_FRAME_BYTES: u32 = 64 * 1024;
-/// Each HTTP/1 connection reads into one fixed buffer, Go's lane buffer size; hyper's adaptive buffer grows to
-/// 408 KiB and allocates a new one whenever a body chunk still holds the last.
+/// A download lane's HTTP/1.1 reads, Go's lane buffer size; hyper's adaptive buffer grows to 408 KiB, and hosted
+/// runs measured more memory with it.
 const H1_READ_BYTES: usize = 256 * 1024;
 /// An idle HTTP/2 connection's ping period, Go's TCP keep-alive, and its answer's deadline.
 const H2_KEEP_ALIVE: Duration = Duration::from_secs(30);
@@ -75,7 +75,7 @@ struct Connections {
 type Key = (String, Protocol, Lanes);
 
 /// Transfer lanes keep connections of their own, as Go's upload transport, so nothing queues behind them. A
-/// lane dials them on its own thread, where their drivers then run, so no chunk crosses threads.
+/// lane dials them on its own thread, where their drivers then run.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 enum Lanes {
     #[default]
@@ -87,6 +87,7 @@ enum Lanes {
 /// Held only to pick or return a connection, never across a dial or a request.
 #[derive(Default)]
 struct Pool {
+    lanes: Lanes,
     used: Option<tokio::time::Instant>,
     h1: Vec<Http1>,
     h2: Option<Http2>,
@@ -240,7 +241,8 @@ impl Connections {
                     let _ = dialing.changed().await;
                 }
                 Next::Dial(reservation) => {
-                    let sender = self.dial(origin, protocol).await?;
+                    let lanes = pool.lock().expect("connection pool poisoned").lanes;
+                    let sender = self.dial(origin, protocol, lanes).await?;
                     let mut pool = pool.lock().expect("connection pool poisoned");
                     match &sender {
                         Sender::H2(shared) => pool.h2 = Some(shared.clone()),
@@ -259,7 +261,7 @@ impl Connections {
         Ok(connect(&self.proxy, &target, tls, hop).await?)
     }
 
-    async fn dial(&self, origin: &str, protocol: Protocol) -> Result<Sender> {
+    async fn dial(&self, origin: &str, protocol: Protocol, lanes: Lanes) -> Result<Sender> {
         let alpn = match protocol {
             Protocol::Http1 => Alpn::Http1,
             Protocol::Http2 => Alpn::Http2,
@@ -294,10 +296,11 @@ impl Connections {
             tokio::spawn(driver);
             Ok(Sender::H2(Http2 { id: self.ids.fetch_add(1, Ordering::Relaxed), sender }))
         } else {
-            let (sender, driver) = http1::Builder::new()
-                .read_buf_exact_size(Some(H1_READ_BYTES))
-                .handshake(io)
-                .await?;
+            let mut builder = http1::Builder::new();
+            if lanes == Lanes::Download {
+                builder.read_buf_exact_size(Some(H1_READ_BYTES));
+            }
+            let (sender, driver) = builder.handshake(io).await?;
             tokio::spawn(driver);
             let (absolute_form, proxy_authorization) = (connection.absolute_form, connection.proxy_authorization);
             Ok(Sender::H1(Http1 { sender, absolute_form, proxy_authorization }))
@@ -341,7 +344,11 @@ impl Connections {
         let origin = origin.key();
         let pool = {
             let mut pools = self.pools.lock().expect("connections poisoned");
-            pools.entry((origin.clone(), protocol, lanes)).or_default().clone()
+            let pool = || Arc::new(Mutex::new(Pool { lanes, ..Pool::default() }));
+            pools
+                .entry((origin.clone(), protocol, lanes))
+                .or_insert_with(pool)
+                .clone()
         };
         let replay = replayable(&request);
         let first = self.attempt(request, &origin, protocol, &pool, deadline, true).await;
