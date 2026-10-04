@@ -181,24 +181,26 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   dial is as tall as the lanes and the controls together, so the ring has more height than the lanes; under both
   one card per stage across the console. Without the latency stage the dial stands centred and wider with the
   controls under it. A complete run fits 1024 × 768 without scrolling. On a phone the dial keeps about two fifths
-  of the screen with the controls under it, the chips two to a row, the cards two to a row with the running card
-  first, and the lanes come last.
+  of the screen with the controls under it, up to three chips to a row (four as two and two, a narrow chip
+  without its glyph), the cards one to a row in stage order, each whole from Start so nothing moves as the
+  stages run, and the lanes come last.
   The dial is a 270° ring with an arc a twelfth of its radius wide, short ticks and five labels; every result's
   arc lies on the ring, the longest underneath, so each shows from where the next shorter one ends, and ends in
   a bead in its hue; a bead moved inward off a close neighbour hangs on a stalk; the stage's mark and name sit
   over the number. The ring and its readout grow with the screen: on a landscape screen the
-  console takes the column's height, and the spare height goes to the dial and the controls' row, so the
-  cards keep their size. Every "—" that waits for a value is `--text-soft`; a measured value is full ink. The note under the
+  console's rows are as tall as their content, the dial as tall as its ring wants (0.86 of its width) or as the
+  lanes and the controls together, so the spare height stays on the canvas under the cards. Every "—" that waits for a value is `--text-soft`; a measured value is full ink. The note under the
   dial holds the phase's note or a failure, and while no data or no reply arrives, for how long; on a landscape
   screen it hangs just under the ring. Every rate on the page reads in the dial's unit, zero included. Nothing
   above the cards moves from Start to the result.
 - **Top bar and status strip**: 48 px on the canvas and 28 px in `--surface-1`, each with a hairline, their
   text on the console's gutter (`--gutter`, 24 px, 16 under 1024 px), so the brand, the panels' edges and the
   status word share one line. The bar carries the brand, whose hexagon is the latency hue as the favicon's
-  is, a Settings key, the connection dot, and at the right History, Details and the theme; a key is a 32 px
-  square glyph plate with a hairline. The strip
-  reads the status word, the elapsed time, the bytes moved, the time left while a stage runs, the build, and the
-  key hints at the right; each figure starts on a fixed edge and grows to the right.
+  is, the connection dot, and at the right Settings, History, Details and the theme, so no key stands beside the
+  brand's wide target; a key is a 32 px square glyph plate with a hairline. The brand's hover dims its word, no
+  plate. The strip reads the status word at the left and, against the right, the elapsed time, the bytes moved,
+  the time left while a stage runs and the build; each figure ends on a fixed edge in a cell as wide as its
+  longest value.
 - **Server lens** (`ServerLens`, `ServerScope quiet`): with several servers, one quiet field in the dial's corner
   (All servers or one), as wide as the choice it shows, drives the cards and which server's latency is shown once
   the run finishes. History's detail has its own.
@@ -225,7 +227,8 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   on, folds on a phone to its name and value. The card's hover lists every fact as pairs.
 - **Strip** (`StageGraph`): 68 px on the card's field, up to 120 with the console's height. A transfer's strip is the rate from zero to
   the shared ceiling (`store.scales.chartBytesPerSec`), a dashed second lane for bidirectional upload, and a 20 px
-  latency track below: one bar per reply bucket from the dashed idle median, its length being time over the
+  latency track below: one bar per 4 px column of the width, the mean of its reply buckets, so every stage's
+  track has bars of one pitch whatever its length, from the dashed idle median, its length being time over the
   median. The track's top is the ladder tier above 2.5× the p75 of the run's replies, so the body of the replies
   keeps its shape; a reply past it is clamped at the edge and ends in an arrowhead, and its readout names the
   value. The latency card's strip is the same track alone at the strip's height, with the same readout: the
@@ -252,11 +255,13 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   ellipsis; the ring or check alone marks the choice. Unavailable choices fold into one row. While a run locks a list,
   every row but the chosen one dims.
 - **Duration** (`DurationStrip`): presets over a bar of the enabled stages, each segment as wide as its time but never
-  narrower than its words, with the time and name under it; Custom adds a − time + stepper (`TimeStepper`) per stage
+  narrower than its words, with the time and name under it; Custom adds a − time + stepper (`Stepper`) per stage
   and for warmup. Steps grow with the time (0.5 s, 1 s, 10 s, 1 min, 5 min) and land on their grid; a click edits the
   time as text (`90`, `2h`, `1 h 30 min`, `1:30:00`), which rounds to the time shown, and Escape drops the edit. The
   field takes the keyboard like a spin button; − and + serve pointers and stay put at a limit. The stream limit is
-  the same − figure + stepper over a whole number (`CountStepper`). The servers' stage
+  the same `Stepper` over a whole number. In a settings row a control stands at its label's end while the row
+  holds both and against the right edge under it when it wraps; a cadence's segments then take the row's width.
+  The servers' stage
   limit bounds every time, and its notice names each stage over it.
 - **Select**: only for a list of servers (`ServerScope`): a native `select`, so a phone opens its own picker;
   where the browser allows it (`appearance: base-select`) the field and its list take the console's own field,
@@ -268,7 +273,8 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   name is cut), then per column a value over a note on the same two baselines: added latency under each rate in its
   hue, jitter under idle, the stage under loaded; bars share a zero end per column and run on a track that shows the
   column's scale. The time takes the row's slack and each value column is as wide as its content, so the figures
-  sit together at the right; the table stops at 1120 px, and the column heads' rule comes in as rows scroll under
+  sit together at the right; the value columns share the slack after the time, so the table fills the list at any
+  width, and the column heads' rule comes in as rows scroll under
   them. Columns never shrink below their content: once they no longer fit, each row folds, its time on one line and
   its values under it. Sort by lists only the shown columns. A notice over the list counts the records it cannot
   read, with Remove them, which deletes only those, or Dismiss. The detail repeats the result cards (three across or
@@ -280,8 +286,10 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
 - **Tooltip and readout**: a readout is a light plate (`.inspect-card`, a hairline, 3 px corners); a tip is
   ink (`--brand`, inverse text, 3 px corners, no arrow), so it never reads as part of the instrument, and it
   fades in over 120 ms. A tip opens once the pointer has rested on its word for 0.3 s (jargon 0.2 s, 60 ms just
-  after another closed); a hand moving faster than 0.4 px/ms starts the rest over, a reading hand's drift does
-  not, so a pointer passing by or dragging opens none. It also opens on keyboard focus, on a
+  after another closed); a hand moving faster than 0.2 px/ms starts the rest over, a reading hand's drift does
+  not, so a pointer passing by or dragging opens none. A dotted underline marks jargon inside a line of text
+  (a card's "wire", "no data"); a row's or a control's label carries its tip on the help cursor alone, so rows
+  and sheets read clean. It also opens on keyboard focus, on a
   click or tap on jargon or an explained fact, or on a long press on a control; never after a click on a control. It
   stays while the pointer is on its word, closes a moment after it leaves, and one tip shows at a time. A scroll or a
   tap elsewhere closes a pointer's tip; a tap on the tip closes it without reaching what lies beneath. A tip the

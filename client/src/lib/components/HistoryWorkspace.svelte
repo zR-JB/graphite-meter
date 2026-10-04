@@ -964,17 +964,15 @@
   .history-list {
     container: history-list / inline-size;
   }
-  /* A reading table, not a spread: the time takes the slack and each value column is as wide as its content, so
-     the figures sit together at the right, and the table stops at a width the eye crosses in one line. Columns
-     never shrink below their content: the rows fold first (fitTable). */
+  /* The time takes the first share of the slack and the value columns the rest, so the table fills the list
+     whatever its width. Columns never shrink below their content: the rows fold first (fitTable). */
   .history-table {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto repeat(
         var(--metric-columns),
-        max-content
+        minmax(max-content, 1fr)
       );
     row-gap: var(--space-5);
-    max-width: 1120px;
     padding: 0 var(--panel-pad) var(--space-6);
   }
   .column-head,
@@ -1123,9 +1121,10 @@
     padding: 0;
   }
   /* A value, then what it cost or how it varied, in the column's own ink. */
+  /* The bar takes the column's slack up to a reading length, so a wide list draws longer bars, not wider gaps. */
   .metric {
     display: grid;
-    grid-template: "bar value" auto ". note" auto / minmax(0, 4.5rem) auto;
+    grid-template: "bar value" auto ". note" auto / minmax(0, 12rem) auto;
     align-items: baseline;
     justify-content: end;
     column-gap: var(--space-2);
