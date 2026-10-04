@@ -7,6 +7,9 @@ export interface GraphPoint {
 }
 export interface LatencyPoint {
   t: number;
+  /** The bucket's span on the run's timeline. */
+  t0: number;
+  t1: number;
   /** The bucket's median reply. */
   ms: number;
   /** The bucket's fastest and slowest replies. */
@@ -24,6 +27,8 @@ export const replies = (
       ? [
           {
             t: b.t,
+            t0: b.startT,
+            t1: b.endT,
             ms: b.medianRttMs,
             lo: b.minRttMs ?? b.medianRttMs,
             hi: b.maxRttMs ?? b.medianRttMs,
@@ -140,24 +145,28 @@ export function stageGraphGeometry(
     trackHeight -
     1.5 -
     Math.min(1, Math.max(0, ms / (input.latencyTop || 1))) * (trackHeight - 3);
-  // Replies bin to the width like the lanes, so every stage's track has bars of one pitch whatever its length; a
-  // bin spans its buckets' fastest to slowest reply, reads their median's mean, and keeps the mark of any reply
-  // over the top.
+  // Replies bin to the width like the lanes, so every stage's track has bars of one pitch whatever its length or
+  // its buckets' width: a bucket reaches every column its span covers, a column spans its buckets' fastest to
+  // slowest reply, reads their medians' mean, and keeps the mark of any reply over the top.
   const top = input.latencyTop || 1;
   const sums = new Float64Array(columns);
   const counts = new Uint16Array(columns);
   const los = new Float64Array(columns).fill(Infinity);
   const his = new Float64Array(columns).fill(-Infinity);
-  for (const point of input.latency) {
-    if (point.t < start || point.t > start + span) continue;
-    const i = Math.min(
+  const column = (t: number) =>
+    Math.min(
       columns - 1,
-      Math.floor(((point.t - start) / (span || 1)) * columns),
+      Math.max(0, Math.floor(((t - start) / (span || 1)) * columns)),
     );
-    sums[i] += point.ms;
-    counts[i]++;
-    los[i] = Math.min(los[i], point.lo);
-    his[i] = Math.max(his[i], point.hi);
+  for (const point of input.latency) {
+    if (point.t1 < start || point.t0 > start + span) continue;
+    const last = column(Math.min(point.t1, start + span) - 1e-6);
+    for (let i = column(point.t0); i <= Math.max(last, column(point.t0)); i++) {
+      sums[i] += point.ms;
+      counts[i]++;
+      los[i] = Math.min(los[i], point.lo);
+      his[i] = Math.max(his[i], point.hi);
+    }
   }
   const dots = [...counts.keys()]
     .filter((i) => counts[i])

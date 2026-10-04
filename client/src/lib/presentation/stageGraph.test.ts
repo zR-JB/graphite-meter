@@ -11,8 +11,8 @@ test("a stage's replies are its measured buckets; a bucket of timeouts has no po
     singleLatencyBucket(700, 14, false, "latency"),
   ];
   expect(replies(history, "latency")).toEqual([
-    { t: 100, ms: 12, lo: 12, hi: 12 },
-    { t: 700, ms: 14, lo: 14, hi: 14 },
+    { t: 100, t0: 100, t1: 100, ms: 12, lo: 12, hi: 12 },
+    { t: 700, t0: 700, t1: 700, ms: 14, lo: 14, hi: 14 },
   ]);
 });
 
@@ -103,10 +103,10 @@ test("a reply below the idle median sits below its line; the track clamps at its
     ...base,
     lanes: [[]],
     latency: [
-      { t: 2000, ms: 5, lo: 5, hi: 5 },
-      { t: 2400, ms: 30, lo: 30, hi: 30 },
-      { t: 2800, ms: 500, lo: 500, hi: 500 },
-      { t: 9000, ms: 30, lo: 30, hi: 30 },
+      { t: 2000, t0: 2000, t1: 2000, ms: 5, lo: 5, hi: 5 },
+      { t: 2400, t0: 2400, t1: 2400, ms: 30, lo: 30, hi: 30 },
+      { t: 2800, t0: 2800, t1: 2800, ms: 500, lo: 500, hi: 500 },
+      { t: 9000, t0: 9000, t1: 9000, ms: 30, lo: 30, hi: 30 },
     ],
   });
   const [below, above, capped] = graph.dots.map((dot) => dot.y);
@@ -117,15 +117,28 @@ test("a reply below the idle median sits below its line; the track clamps at its
   expect(graph.lines).toEqual([""]);
 });
 
+test("a bucket reaches every column its span covers", () => {
+  const graph = stageGraphGeometry({
+    ...base,
+    lanes: [[]],
+    latency: [{ t: 2000, t0: 1800, t1: 2200, ms: 12, lo: 10, hi: 14 }],
+  });
+  // 400 ms of a 4000 ms span over 100 columns: ten columns, one bar each, the same range in all.
+  expect(graph.dots).toHaveLength(10);
+  expect(new Set(graph.dots.map((dot) => `${dot.lo}-${dot.hi}`))).toEqual(
+    new Set(["10-14"]),
+  );
+});
+
 test("replies in one column of the width draw as one bar at their mean, marked when any went over the top", () => {
   const graph = stageGraphGeometry({
     ...base,
     lanes: [[]],
     latency: [
-      { t: 3000, ms: 10, lo: 10, hi: 10 },
-      { t: 3010, ms: 30, lo: 30, hi: 30 },
-      { t: 3500, ms: 10, lo: 10, hi: 10 },
-      { t: 3510, ms: 500, lo: 500, hi: 500 },
+      { t: 3000, t0: 3000, t1: 3000, ms: 10, lo: 10, hi: 10 },
+      { t: 3010, t0: 3010, t1: 3010, ms: 30, lo: 30, hi: 30 },
+      { t: 3500, t0: 3500, t1: 3500, ms: 10, lo: 10, hi: 10 },
+      { t: 3510, t0: 3510, t1: 3510, ms: 500, lo: 500, hi: 500 },
     ],
   });
   expect(graph.dots).toHaveLength(2);

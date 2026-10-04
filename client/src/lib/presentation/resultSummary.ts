@@ -117,9 +117,14 @@ export function buildCardGraphs(
     ),
     latency: sequence(
       previous[key]?.latency,
-      ({ ms, lo, hi }) => ({ ms, lo, hi }),
-      (t, { ms, lo, hi }) => ({ t, ms, lo, hi }),
-      (a, b) => a.ms === b.ms && a.lo === b.lo && a.hi === b.hi,
+      ({ t0, t1, ms, lo, hi }) => ({ t0, t1, ms, lo, hi }),
+      (t, { t0, t1, ms, lo, hi }) => ({ t, t0, t1, ms, lo, hi }),
+      (a, b) =>
+        a.t0 === b.t0 &&
+        a.t1 === b.t1 &&
+        a.ms === b.ms &&
+        a.lo === b.lo &&
+        a.hi === b.hi,
     ),
     start: Infinity,
     end: -Infinity,
@@ -147,6 +152,8 @@ export function buildCardGraphs(
   for (const sample of latency) {
     if (sample.medianRttMs === null || !(sample.phase in stages)) continue;
     stages[sample.phase as Transfer].latency.add(sample.t, {
+      t0: sample.startT,
+      t1: sample.endT,
       ms: sample.medianRttMs,
       lo: sample.minRttMs ?? sample.medianRttMs,
       hi: sample.maxRttMs ?? sample.medianRttMs,
