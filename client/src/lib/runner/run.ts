@@ -590,7 +590,14 @@ export class Run {
           const checkpoint = await server.stage
             ?.checkpoint(this.#boundaryAbort.signal)
             .catch(() => null);
-          if (epoch !== this.#epoch || !this.#measuring || !checkpoint) return;
+          // A feed record heard while the answer was in flight is newer; the answer would take the count back.
+          if (
+            epoch !== this.#epoch ||
+            !this.#measuring ||
+            !checkpoint ||
+            server.up
+          )
+            return;
           this.#hear(server, checkpoint);
           this.#live.receiver(server.server.id, checkpoint, this.#clock.read());
         }),

@@ -56,6 +56,8 @@ interface Peer {
   finish?(host: ParticipantHost): void | Promise<void>;
   discard?(host: ParticipantHost, incomplete: boolean): void;
   checkpoint?(measuring: boolean): Promise<ReceiverCheckpoint | null>;
+  /** A measuring checkpoint answers the count at the moment it was asked, this long after. */
+  checkpointLagMs?: number;
   replaceUpload?(signal: AbortSignal): Promise<void>;
   receives?: false;
 }
@@ -141,14 +143,21 @@ async function harness(
           peer.discard?.(host, incomplete);
         },
         // A receiver that is absent, or silent at this moment, answers no checkpoint either.
-        checkpoint: () =>
-          peer.checkpoint?.(measuring) ??
-          Promise.resolve(
+        checkpoint: () => {
+          const answer =
             peer.receives === false ||
-              peer.silent?.(activity, performance.now() - started, "up")
+            peer.silent?.(activity, performance.now() - started, "up")
               ? null
-              : receiver(),
-          ),
+              : receiver();
+          return (
+            peer.checkpoint?.(measuring) ??
+            (measuring && peer.checkpointLagMs
+              ? new Promise<ReceiverCheckpoint | null>((resolve) =>
+                  setTimeout(() => resolve(answer), peer.checkpointLagMs),
+                )
+              : Promise.resolve(answer))
+          );
+        },
         replaceUpload: peer.replaceUpload,
       };
       return stage;
@@ -878,6 +887,22 @@ const receiverOf = (id: string): ReceiverCheckpoint => ({
   bytes: 0,
   nanos: 1,
   receivedAtMs: 0,
+});
+
+test("a measurement checkpoint answered after a newer feed record never takes the count back", async () => {
+  const h = await harness(
+    // The answer reflects the count when it was asked, and arrives after the feed has moved on.
+    two({ checkpointLagMs: 300 }),
+    { upload: true },
+    { uploadMs: 2_000 },
+  );
+  h.start();
+  const result = await h.result();
+  const upload = result.multiServer.intervals.filter(
+    (interval) => interval.stage === "upload",
+  );
+  expect(upload).toHaveLength(1);
+  expect(upload[0].complete).toBe(true);
 });
 
 test("each server ends its stage as soon as its own final evidence arrives", async () => {
