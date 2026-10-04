@@ -478,6 +478,9 @@
       gap: var(--space-2);
       padding: var(--space-2);
     }
+    .run-bar > :global(.run-button) {
+      margin-inline-start: 0;
+    }
     .run-label {
       display: none;
     }
