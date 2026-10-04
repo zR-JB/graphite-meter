@@ -162,6 +162,7 @@
     padding: 2px;
     border-radius: var(--r-chrome);
     background: var(--track);
+    box-shadow: var(--elev-recess);
   }
   /* The stepper grows as a whole for touch, so its buttons add no hit border;
      they sit in the track like segments, with concentric corners and an inset ring. */

@@ -274,13 +274,18 @@
     border-top: 2px solid var(--tone);
     border-radius: var(--r-surface);
     background: var(--surface-1);
+    box-shadow: var(--elev-tile);
     transition: var(--transition-control);
   }
   .card:has(> .strip) {
     grid-template-rows: auto auto minmax(68px, 1fr) auto;
   }
+  /* The running card lifts a little on a glow in its hue, a static shadow repainted only when the stage changes. */
   .card:is(.active, .recovering) {
     --edge: color-mix(in oklab, var(--tone) 55%, var(--border));
+    box-shadow:
+      var(--elev-tile),
+      0 12px 32px -16px color-mix(in oklab, var(--tone) 60%, transparent);
   }
   .card:is(.pending, .not-run) {
     --edge: var(--border-subtle);

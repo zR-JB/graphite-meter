@@ -544,6 +544,13 @@
   .lane + .lane {
     border-top: var(--hairline) solid var(--border-subtle);
   }
+  /* The population under load takes a faint wash of its hue while its stage runs: one fill change per stage. */
+  .lane {
+    transition: background-color var(--dur-graph) var(--ease-out);
+  }
+  .lane[data-active="true"] {
+    background: color-mix(in oklab, var(--tone) 6%, transparent);
+  }
   /* Every figure in a row on the median's baseline (app.css, --role-label). */
   .lane-name {
     margin-top: calc(var(--type-md) - var(--type-body));

@@ -226,6 +226,7 @@
     border: var(--hairline) solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-1);
+    box-shadow: var(--elev-tile);
     color: var(--text);
     text-align: start;
     transition: var(--transition-control);

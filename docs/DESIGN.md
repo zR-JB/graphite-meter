@@ -139,9 +139,11 @@ titles and controls, 700 only for `.caps`.
 
 | Layer    | What                                                           | Material                                                                            |
 | -------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Page     | `--canvas`; History's list                                     | Flat.                                                                               |
-| Panel    | The dial, the latency lanes, result cards, keys, docked sheets | `--surface-1` in a `--border` hairline (`.panel`); a card is ruled in its hue.      |
-| Field    | A strip's field, a key's live tint, a lane's track             | The stage's hue mixed a few percent into the panel; no edge.                        |
+| Page     | `--canvas`; the dial, the stage keys, History's list           | Flat, under one soft light from the top (`body`'s radial gradient), no texture.     |
+| Area     | The latency lanes                                              | A 2 px rule in the stage's hue and a wash of it fading out (`.stage-area`); no box. |
+| Tile     | Result cards, plates (`.kv`), chips, keys, docked sheets       | `--surface-1` in a `--border` hairline with a light top edge (`--elev-tile`); a card is ruled in its hue and the running one lifts on a glow of it. |
+| Recess   | A segmented control's or a stepper's track                     | `--track` with an inset shadow (`--elev-recess`).                                   |
+| Field    | A strip's field, a key's live tint, a lane's track             | The stage's hue mixed a few percent into the tile; no edge.                         |
 | Bar      | The top bar and the status strip                               | `--surface-1` with one hairline against the page.                                   |
 | Floating | Flyout sheets, dialogs, popovers, menus, tooltips, readouts    | `--sheet` or `--surface-2`, opaque, a hairline, `--elev-float` or `--elev-tooltip`. |
 
@@ -174,7 +176,11 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
 - The dial's head is a bead in its hue, a little wider than the arc. While the latency stage runs, each idle
   reply rings out from it, one `--dur-pulse` at a time: a faint hairline ring in its hue widens to twice the
   head and fades, eased out, while the head itself holds still; without replies nothing rings.
-- A radio's ring closes in and a check draws in (180 ms); a row that appears in a sheet unfolds from its own height.
+- A radio's ring closes in and a check draws in (180 ms, `--ease-spring`, a touch of overshoot); the switch's knob
+  slides on the same spring; a row that appears in a sheet unfolds from its own height. The instrument's own
+  motion, the ring and the strips, never overshoots.
+- While a stage runs, its card lifts on a glow in its hue and its population's row in the lanes takes a faint
+  wash of it: one fill change per stage, never per frame.
 - Reduced motion keeps colour and opacity changes; sheets, rolls and glides jump to their end state.
 
 ## Components
