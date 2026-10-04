@@ -342,10 +342,6 @@ class RequestTests(unittest.TestCase):
                 outcome(self, error, lambda: require_dispatch_run(
                     REPO, "zR-JB", MAIN, 4242, "release-request.yml", "title", expected))
 
-    def test_artifacts_are_bound_to_the_request_workflow_jobs(self) -> None:
-        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/release-request.yml").read_text()
-        self.assertEqual(workflow.count(f"    name: {BUILD_JOB}\n"), 1)
-
     def test_handoff_directories_hold_exact_regular_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

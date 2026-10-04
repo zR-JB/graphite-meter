@@ -1,6 +1,7 @@
 use std::{
     env,
     error::Error,
+    ffi::OsString,
     fs,
     path::{Path, PathBuf},
 };
@@ -27,6 +28,12 @@ pub fn inside(root: &Path, path: impl AsRef<Path>) -> Result<PathBuf> {
     }
 }
 
+/// The bytes of `path`, which Cargo then watches for a rebuild.
+fn watched(path: impl AsRef<Path>) -> Result<Vec<u8>> {
+    println!("cargo:rerun-if-changed={}", path.as_ref().display());
+    Ok(fs::read(path)?)
+}
+
 pub fn output_directory(repo: &Path) -> Result<PathBuf> {
     match env::var_os("OUT_DIR") {
         Some(output) => inside(repo, output),
@@ -37,11 +44,8 @@ pub fn output_directory(repo: &Path) -> Result<PathBuf> {
 pub fn embed(share_browser_notices: bool) -> Result<()> {
     println!("cargo:rerun-if-env-changed=GM_ENGINE_VERSION");
     if let Ok(version) = env::var("GM_ENGINE_VERSION") {
-        if version.is_empty()
-            || !version
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || b".-+".contains(&byte))
-        {
+        let release_byte = |byte: u8| byte.is_ascii_alphanumeric() || b".-+".contains(&byte);
+        if version.is_empty() || !version.bytes().all(release_byte) {
             return Err("GM_ENGINE_VERSION must be a nonempty release identifier".into());
         }
         let version: String = version.bytes().map(char::from).collect();
@@ -59,21 +63,15 @@ pub fn embed(share_browser_notices: bool) -> Result<()> {
     }
     let directory = inside(&repo, configured)?;
     for (name, expected) in [("package.txt", env::var("CARGO_PKG_NAME")?), ("target.txt", env::var("TARGET")?)] {
-        let path = directory.join(name);
-        println!("cargo:rerun-if-changed={}", path.display());
-        if fs::read_to_string(path)? != expected {
+        if watched(directory.join(name))? != expected.as_bytes() {
             return Err(format!("notice {name} does not match this build").into());
         }
     }
     // The notices describe the pinned toolchain's sysroot; Cargo must build with that compiler.
-    let compiler_path = directory.join("rustc-path.txt");
-    println!("cargo:rerun-if-changed={}", compiler_path.display());
-    if env::var_os("RUSTC") != Some(fs::read_to_string(compiler_path)?.into()) {
+    if env::var_os("RUSTC").map(OsString::into_encoded_bytes) != Some(watched(directory.join("rustc-path.txt"))?) {
         return Err("notice compiler does not match this build".into());
     }
-    let index = directory.join("inputs.txt");
-    println!("cargo:rerun-if-changed={}", index.display());
-    let inputs = fs::read_to_string(index)?;
+    let inputs = String::from_utf8(watched(directory.join("inputs.txt"))?)?;
     if !inputs.lines().any(|line| line == "rust/Cargo.lock") {
         return Err("notice input manifest has no Cargo.lock".into());
     }
@@ -81,15 +79,11 @@ pub fn embed(share_browser_notices: bool) -> Result<()> {
     for relative in inputs.lines() {
         let source = inside(&repo, repo.join(relative))?;
         let snapshot = inside(&snapshots, snapshots.join(relative))?;
-        println!("cargo:rerun-if-changed={}", source.display());
-        println!("cargo:rerun-if-changed={}", snapshot.display());
-        if fs::read(source)? != fs::read(snapshot)? {
+        if watched(source)? != watched(snapshot)? {
             return Err(format!("Rust legal notices are stale: {relative}").into());
         }
     }
-    let report = directory.join("LEGAL.txt");
-    println!("cargo:rerun-if-changed={}", report.display());
-    let text = fs::read_to_string(report)?;
+    let text = String::from_utf8(watched(directory.join("LEGAL.txt"))?)?;
     if text.is_empty() {
         return Err("empty Rust legal report".into());
     }
@@ -98,9 +92,7 @@ pub fn embed(share_browser_notices: bool) -> Result<()> {
     }
     // The release server serves its reviewed browser notice, the report's suffix, from the report.
     let notices = if share_browser_notices && env::var_os("GM_RUST_ASSET_DIR").is_some() {
-        let notices_path = directory.join("browser-assets/legal/THIRD_PARTY_NOTICES.txt");
-        println!("cargo:rerun-if-changed={}", notices_path.display());
-        let notices = fs::read_to_string(notices_path)?;
+        let notices = String::from_utf8(watched(directory.join("browser-assets/legal/THIRD_PARTY_NOTICES.txt"))?)?;
         let prefix = text
             .strip_suffix(&notices)
             .ok_or("reviewed CLI notice does not end with the browser notice")?;

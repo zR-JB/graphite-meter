@@ -283,12 +283,8 @@ impl AggregateMeasurements {
             stats: interval.stats.clone(),
         });
         for direction in [Direction::Down, Direction::Up] {
-            for component in sample
-                .direction(direction)
-                .0
-                .iter()
-                .filter(|component| component.bytes > 0)
-            {
+            let (components, _) = sample.direction(direction);
+            for component in components.iter().filter(|component| component.bytes > 0) {
                 if let Some(moved) = self.moved.get_mut(&component.server_id) {
                     moved[direction as usize] = Some(mark.clone());
                 }
@@ -372,14 +368,11 @@ impl AggregateMeasurements {
             result.mean_bytes_per_sec = rate;
             result.peak_bytes_per_sec = rate.map(|rate| interval.stats.peak[direction as usize].max(rate));
             result.samples = interval.stats.samples;
-            result.elapsed_nanos = Some(match direction {
-                Direction::Down => interval.end_nanos - interval.start_nanos,
-                Direction::Up => components
-                    .iter()
-                    .map(|component| component.duration_nanos)
-                    .max()
-                    .unwrap(),
-            });
+            let longest = components.iter().map(|component| component.duration_nanos).max();
+            result.elapsed_nanos = match direction {
+                Direction::Down => Some(interval.end_nanos - interval.start_nanos),
+                Direction::Up => longest,
+            };
             return result;
         }
         result
@@ -394,19 +387,13 @@ impl AggregateMeasurements {
     pub fn server_result(&self, id: &str, direction: Direction) -> MeasurementResult {
         let mut result = MeasurementResult::unavailable(direction, self.bytes(id, direction));
         for (interval, window) in self.stage_windows() {
-            let Some(component) = window
-                .direction(direction)
-                .0
-                .iter()
-                .find(|component| component.server_id == id && evidence(std::slice::from_ref(component)))
-            else {
+            let (components, _) = window.direction(direction);
+            let found = components.iter().find(|component| component.server_id == id);
+            let Some(component) = found.filter(|component| evidence(std::slice::from_ref(component))) else {
                 continue;
             };
-            let peak = interval
-                .stats
-                .server_peaks
-                .get(id)
-                .map_or(0.0, |peak| peak[direction as usize]);
+            let peaks = &interval.stats.server_peaks;
+            let peak = peaks.get(id).map_or(0.0, |peak| peak[direction as usize]);
             result.mean_bytes_per_sec = Some(component.bytes_per_sec);
             result.peak_bytes_per_sec = Some(peak.max(component.bytes_per_sec));
             result.samples = interval.stats.samples;
@@ -437,11 +424,8 @@ impl AggregateMeasurements {
             server.down = Some(count);
         }
         for (id, observed) in &boundary.observed_up {
-            if boundary
-                .up
-                .get(id)
-                .is_none_or(|snapshot| snapshot.id != observed.id || snapshot.bytes < observed.maximum)
-            {
+            let behind = |snapshot: &ReceiverSnapshot| snapshot.id != observed.id || snapshot.bytes < observed.maximum;
+            if boundary.up.get(id).is_none_or(behind) {
                 self.credit_upload(id, &observed.id, observed.maximum);
             }
         }
@@ -491,29 +475,19 @@ fn window(first: &Boundary, last: &Boundary, interval: &AggregationInterval) -> 
     if elapsed == 0 {
         return Err(Gap::Stale);
     }
-    let mut window = AggregateWindow {
-        start_nanos: first.at_nanos,
-        end_nanos: last.at_nanos,
-        down: Vec::new(),
-        up: Vec::new(),
-        down_bytes_per_sec: None,
-        up_bytes_per_sec: None,
-    };
-    let mut stale = false;
+    let (mut down, mut up, mut stale) = (Vec::new(), Vec::new(), false);
     for id in &interval.participants {
+        let component = |bytes: u64, duration_nanos: u64| ComponentWindow {
+            server_id: id.clone(),
+            bytes,
+            duration_nanos,
+            bytes_per_sec: bytes as f64 / seconds(duration_nanos),
+        };
         if interval.stage.needs_down() {
             let (Some(&start), Some(&end)) = (first.down.get(id), last.down.get(id)) else {
                 return Err(Gap::Invalid);
             };
-            let bytes = end.checked_sub(start).ok_or(Gap::Invalid)?;
-            let rate = bytes as f64 / seconds(elapsed);
-            window.down.push(ComponentWindow {
-                server_id: id.clone(),
-                bytes,
-                duration_nanos: elapsed,
-                bytes_per_sec: rate,
-            });
-            *window.down_bytes_per_sec.get_or_insert(0.0) += rate;
+            down.push(component(end.checked_sub(start).ok_or(Gap::Invalid)?, elapsed));
         }
         if interval.stage.needs_up() {
             let (Some(start), Some(end)) = (first.up.get(id), last.up.get(id)) else {
@@ -526,21 +500,23 @@ fn window(first: &Boundary, last: &Boundary, interval: &AggregationInterval) -> 
                 stale = true;
                 continue;
             }
-            let (bytes, duration) = (end.bytes - start.bytes, end.nanos - start.nanos);
-            let rate = bytes as f64 / seconds(duration);
-            window.up.push(ComponentWindow {
-                server_id: id.clone(),
-                bytes,
-                duration_nanos: duration,
-                bytes_per_sec: rate,
-            });
-            *window.up_bytes_per_sec.get_or_insert(0.0) += rate;
+            up.push(component(end.bytes - start.bytes, end.nanos - start.nanos));
         }
     }
     if stale {
         return Err(Gap::Stale);
     }
-    Ok(window)
+    let total = |components: &[ComponentWindow]| {
+        (!components.is_empty()).then(|| components.iter().map(|component| component.bytes_per_sec).sum())
+    };
+    Ok(AggregateWindow {
+        start_nanos: first.at_nanos,
+        end_nanos: last.at_nanos,
+        down_bytes_per_sec: total(&down),
+        up_bytes_per_sec: total(&up),
+        down,
+        up,
+    })
 }
 
 /// Go's Duration.Seconds: whole seconds plus the remaining nanoseconds, so rates round as Go's do.

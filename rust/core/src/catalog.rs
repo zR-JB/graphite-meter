@@ -6,7 +6,6 @@ use crate::{
     text::label,
 };
 use serde::{Deserialize, Deserializer, Serialize};
-use std::fmt;
 
 pub const MAX_CATALOG_SERVERS: usize = 32;
 pub const MAX_SELECTED_SERVERS: usize = 4;
@@ -41,29 +40,16 @@ pub struct ServerCatalog {
     pub servers: Vec<ServerEntry>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CatalogError {
-    InvalidServers,
-    InvalidIdentity,
-    DuplicateServer,
-    InvalidOrigin,
-    TooManyAdditionalOrigins,
-    InvalidSelection,
-}
-
-impl fmt::Display for CatalogError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::InvalidServers => "catalogue requires self followed by at most 31 additional servers",
-            Self::InvalidIdentity => "invalid catalogue server identity",
-            Self::DuplicateServer => "duplicate catalogue server",
-            Self::InvalidOrigin => "invalid catalogue origin",
-            Self::TooManyAdditionalOrigins => "too many additional origins",
-            Self::InvalidSelection => "select one to four distinct known servers",
-        })
+errors! {
+    pub enum CatalogError {
+        InvalidServers => "catalogue requires self followed by at most 31 additional servers",
+        InvalidIdentity => "invalid catalogue server identity",
+        DuplicateServer => "duplicate catalogue server",
+        InvalidOrigin => "invalid catalogue origin",
+        TooManyAdditionalOrigins => "too many additional origins",
+        InvalidSelection => "select one to four distinct known servers",
     }
 }
-impl std::error::Error for CatalogError {}
 
 /// A received catalogue entry left out, and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,27 +102,19 @@ impl ServerCatalog {
             return Err(CatalogError::InvalidIdentity);
         }
         let origin_key = key(&entry.url);
-        if self.servers[..index]
-            .iter()
-            .any(|prior| prior.id == entry.id || key(&prior.url) == origin_key)
-        {
+        let duplicate = |prior: &ServerEntry| prior.id == entry.id || key(&prior.url) == origin_key;
+        if self.servers[..index].iter().any(duplicate) {
             return Err(CatalogError::DuplicateServer);
         }
-        if entry.url == "." {
-            if entry.id != "self" {
-                return Err(CatalogError::InvalidOrigin);
-            }
-        } else if canonical_origin(&entry.url).is_err() {
+        let invalid = |raw: &String| canonical_origin(raw).is_err();
+        let url_valid = if entry.url == "." { entry.id == "self" } else { !invalid(&entry.url) };
+        if !url_valid {
             return Err(CatalogError::InvalidOrigin);
         }
         if entry.additional_origins.len() > 32 {
             return Err(CatalogError::TooManyAdditionalOrigins);
         }
-        if entry
-            .additional_origins
-            .iter()
-            .any(|raw| canonical_origin(raw).is_err())
-        {
+        if entry.additional_origins.iter().any(invalid) {
             return Err(CatalogError::InvalidOrigin);
         }
         Ok(())
@@ -240,13 +218,10 @@ impl ServerEntry {
         let Ok(Some(origin)) = target_origin(raw) else {
             return false;
         };
-        let base = match target_origin(&self.url) {
-            Ok(base) => base,
-            Err(_) => return false,
+        let Ok(base) = target_origin(&self.url) else {
+            return false;
         };
-        if base.is_some_and(|base| origin.host.eq_ignore_ascii_case(&base.host)) {
-            return true;
-        }
-        self.additional_origins.iter().any(|allowed| key(raw) == key(allowed))
+        base.is_some_and(|base| origin.host.eq_ignore_ascii_case(&base.host))
+            || self.additional_origins.iter().any(|allowed| key(raw) == key(allowed))
     }
 }

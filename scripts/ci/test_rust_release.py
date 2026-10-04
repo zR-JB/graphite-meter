@@ -99,23 +99,20 @@ class RustArchiveBoundaryTests(unittest.TestCase):
     def test_executable_member_is_never_executed(self) -> None:
         for platform, target in RUST_TARGETS.items():
             archive, base, binary = tui_archive("1.2.3", platform, "_rust")
+            member = f"{base}/{binary}"
             with self.subTest(platform=platform), tempfile.TemporaryDirectory() as temporary:
                 dist = Path(temporary)
                 marker = dist / "executed"
                 files = write_build(dist, "graphite-meter-client", platform)
-                files[f"{base}/{binary}"] += f"touch '{marker}'\n".encode()
-                write_archive(dist / archive, files, base)
+                files[member] += f"touch '{marker}'\n".encode()
                 arch, rest = target.split("-", 1)
                 other = {"x86_64": "aarch64", "aarch64": "x86_64"}[arch] + "-" + rest
                 with patch("subprocess.Popen", side_effect=AssertionError("artifact execution")):
-                    verify_rust_client_archive(dist, "1.2.3", platform, target)
-                    write_archive(dist / archive, files | {f"{base}/{binary}": executable(other)}, base)
-                    with self.assertRaisesRegex(VerificationError, f"does not hold a {target} executable"):
-                        verify_rust_client_archive(dist, "1.2.3", platform, target)
-                    write_archive(dist / archive, files | {f"{base}/{binary}": files[f"{base}/{binary}"]
-                                                           + DEVELOPMENT.encode()}, base)
-                    with self.assertRaisesRegex(VerificationError, "unreviewed development build"):
-                        verify_rust_client_archive(dist, "1.2.3", platform, target)
+                    for binary_data, error in ((files[member], None),
+                                               (executable(other), f"does not hold a {target} executable"),
+                                               (files[member] + DEVELOPMENT.encode(), "unreviewed development build")):
+                        write_archive(dist / archive, files | {member: binary_data}, base)
+                        outcome(self, error, lambda: verify_rust_client_archive(dist, "1.2.3", platform, target))
                 self.assertFalse(marker.exists())
 
     def test_member_read_rejects_oversize_member(self) -> None:

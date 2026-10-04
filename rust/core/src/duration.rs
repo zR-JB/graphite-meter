@@ -34,10 +34,7 @@ pub fn parse_go_duration(input: &str) -> Result<i64, DurationError> {
         let mut before = false;
         while let Some(&digit) = rest.first().filter(|b| b.is_ascii_digit()) {
             before = true;
-            if integer > LIMIT / 10 {
-                return Err(invalid());
-            }
-            integer = integer * 10 + u64::from(digit - b'0');
+            integer = integer.saturating_mul(10).saturating_add(u64::from(digit - b'0'));
             if integer > LIMIT {
                 return Err(invalid());
             }
@@ -52,20 +49,13 @@ pub fn parse_go_duration(input: &str) -> Result<i64, DurationError> {
             while let Some(&digit) = rest.first().filter(|b| b.is_ascii_digit()) {
                 after = true;
                 rest = &rest[1..];
-                if overflow {
-                    continue;
+                // Once the fraction would pass 1<<63, later digits are read but dropped.
+                let next = fraction.saturating_mul(10).saturating_add(u64::from(digit - b'0'));
+                overflow |= next > LIMIT;
+                if !overflow {
+                    fraction = next;
+                    scale *= 10.0;
                 }
-                if fraction > (LIMIT - 1) / 10 {
-                    overflow = true;
-                    continue;
-                }
-                let next = fraction * 10 + u64::from(digit - b'0');
-                if next > LIMIT {
-                    overflow = true;
-                    continue;
-                }
-                fraction = next;
-                scale *= 10.0;
             }
         }
         if !before && !after {
@@ -89,17 +79,11 @@ pub fn parse_go_duration(input: &str) -> Result<i64, DurationError> {
             }
         };
         rest = &rest[length..];
-        if integer > LIMIT / unit {
-            return Err(invalid());
-        }
-        let mut nanos = integer * unit;
         // Preserve Go's operation order: f * (unit / scale), not f / scale * unit.
-        nanos += (fraction as f64 * (unit as f64 / scale)) as u64;
-        if nanos > LIMIT {
-            return Err(invalid());
-        }
-        total = total.checked_add(nanos).ok_or_else(invalid)?;
-        if total > LIMIT {
+        let fraction = (fraction as f64 * (unit as f64 / scale)) as u64;
+        let nanos = integer.saturating_mul(unit).saturating_add(fraction);
+        total = total.saturating_add(nanos);
+        if nanos > LIMIT || total > LIMIT {
             return Err(invalid());
         }
     }

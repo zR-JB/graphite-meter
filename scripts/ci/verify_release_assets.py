@@ -295,10 +295,7 @@ def verify_rust_source(path: Path, package: str, target: str, root: Path = Path(
     if int_field(inventory, "schemaVersion", path.name) != 1 or any(
             inventory.get(key) != value for key, value in identity.items()):
         fail(f"{path.name} has invalid Rust build identity")
-    lock = inventory.get("cargoLockSha256")
-    if not isinstance(lock, str) or re.fullmatch(r"[0-9a-f]{64}", lock) is None:
-        fail("invalid Rust Cargo lock identity")
-    if lock != file_sha256(root / "rust/Cargo.lock"):
+    if inventory.get("cargoLockSha256") != file_sha256(root / "rust/Cargo.lock"):
         fail("Rust source inventory does not match release Cargo lock")
     components = expect_array(inventory.get("components"), "Rust components")
     if not components:

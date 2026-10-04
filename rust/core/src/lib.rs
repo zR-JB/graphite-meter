@@ -17,6 +17,22 @@ macro_rules! vocabulary {
     };
 }
 
+/// A fieldless error enum whose variants are listed once, each with its message.
+macro_rules! errors {
+    (pub enum $name:ident { $($variant:ident => $message:expr,)+ }) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum $name { $($variant,)+ }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str(match self { $(Self::$variant => $message,)+ })
+            }
+        }
+
+        impl std::error::Error for $name {}
+    };
+}
+
 pub mod approval;
 pub mod catalog;
 pub mod discovery;

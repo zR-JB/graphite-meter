@@ -97,8 +97,7 @@ impl Link {
             let mut buffer = vec![0; 65536];
             while let Ok((count, from)) = reader.recv_from(&mut buffer).await {
                 client_tx.send_replace(Some(from));
-                let forward = *open.borrow() == Fault::None;
-                if forward {
+                if *open.borrow() == Fault::None {
                     let packet = Bytes::copy_from_slice(&buffer[..count]);
                     let _ = up_tx.send((Instant::now() + one_way, packet)).await;
                 }
@@ -112,8 +111,7 @@ impl Link {
                 if buffer[0] & QUIC_RETRY_HEADER == QUIC_RETRY_HEADER {
                     counted.fetch_add(1, Ordering::Relaxed);
                 }
-                let forward = *open.borrow() == Fault::None;
-                if forward {
+                if *open.borrow() == Fault::None {
                     let packet = Bytes::copy_from_slice(&buffer[..count]);
                     let _ = down_tx.send((Instant::now() + one_way, packet)).await;
                 }
@@ -123,8 +121,7 @@ impl Link {
         tasks.spawn(async move {
             while let Some((at, packet)) = up.recv().await {
                 tokio::time::sleep_until(at).await;
-                let forward = *open.borrow() == Fault::None;
-                if forward {
+                if *open.borrow() == Fault::None {
                     let _ = back.send(&packet).await;
                 }
             }

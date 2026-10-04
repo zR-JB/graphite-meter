@@ -2,39 +2,24 @@
 
 use crate::{origin::target_origin, text::label, wire::decode_json};
 use serde::{Deserialize, Deserializer, Serialize};
-use std::fmt;
 use std::time::Duration;
 
 pub const MIN_STAGE_LIMIT: Duration = Duration::from_secs(1);
 pub const DEFAULT_STAGE_LIMIT: Duration = Duration::from_secs(300);
 pub const MAX_STAGE_LIMIT: Duration = Duration::from_secs(24 * 60 * 60);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DiscoveryError {
-    InvalidJson,
-    InvalidMetadata,
-    InvalidTargets,
-    InvalidStageLimit,
-    InvalidOrigin,
-    InvalidProbe,
-    InvalidLoad,
-    UnapprovedOrigin,
-}
-impl fmt::Display for DiscoveryError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::InvalidJson => "invalid discovery JSON",
-            Self::InvalidMetadata => "invalid discovery metadata",
-            Self::InvalidTargets => "invalid discovery target lists",
-            Self::InvalidStageLimit => "invalid stage limit",
-            Self::InvalidOrigin => "invalid discovery target origin",
-            Self::InvalidProbe => "invalid probe evidence",
-            Self::InvalidLoad => "invalid probe occupancy",
-            Self::UnapprovedOrigin => "server advertised an unapproved origin",
-        })
+errors! {
+    pub enum DiscoveryError {
+        InvalidJson => "invalid discovery JSON",
+        InvalidMetadata => "invalid discovery metadata",
+        InvalidTargets => "invalid discovery target lists",
+        InvalidStageLimit => "invalid stage limit",
+        InvalidOrigin => "invalid discovery target origin",
+        InvalidProbe => "invalid probe evidence",
+        InvalidLoad => "invalid probe occupancy",
+        UnapprovedOrigin => "server advertised an unapproved origin",
     }
 }
-impl std::error::Error for DiscoveryError {}
 
 pub(crate) fn null_default<'de, D: Deserializer<'de>, T: Deserialize<'de> + Default>(
     deserializer: D,
@@ -275,10 +260,9 @@ impl Probe {
             return Err(DiscoveryError::InvalidProbe);
         }
         // Match Go's signed int range even though occupancy is nonnegative.
-        if self
-            .load
-            .is_some_and(|load| load.max == 0 || load.active > isize::MAX as usize || load.max > isize::MAX as usize)
-        {
+        let invalid =
+            |load: ProbeLoad| load.max == 0 || load.active > isize::MAX as usize || load.max > isize::MAX as usize;
+        if self.load.is_some_and(invalid) {
             return Err(DiscoveryError::InvalidLoad);
         }
         Ok(())

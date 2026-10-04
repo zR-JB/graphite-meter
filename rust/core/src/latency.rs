@@ -133,9 +133,7 @@ impl LatencyAccumulator {
             jitter_pairs: self.jitter_pairs,
             ..LatencySummary::default()
         };
-        if self.jitter_pairs > 0 {
-            out.jitter = Some((self.variation_sum / self.jitter_pairs as u128) as u64);
-        }
+        out.jitter = (self.jitter_pairs > 0).then(|| (self.variation_sum / self.jitter_pairs as u128) as u64);
         if self.timing_count > 0 {
             let count = self.timing_count as u128;
             out.reflector_timing = Some(ReflectorTiming {

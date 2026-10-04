@@ -57,11 +57,8 @@ pub fn target_origin(raw: &str) -> Result<Option<Origin>, OriginError> {
     if raw == "." {
         return Ok(None);
     }
-    if raw.len() > 2048
-        || raw
-            .bytes()
-            .any(|c| c <= b' ' || c == 127 || matches!(c, b'\\' | b'#' | b'?'))
-    {
+    let forbidden = |c: u8| c <= b' ' || c == 127 || matches!(c, b'\\' | b'#' | b'?');
+    if raw.len() > 2048 || raw.bytes().any(forbidden) {
         return Err(OriginError);
     }
     let (scheme, authority) = raw.split_once("://").ok_or(OriginError)?;
@@ -72,12 +69,10 @@ pub fn target_origin(raw: &str) -> Result<Option<Origin>, OriginError> {
     let (host, port) = if let Some(bracketed) = authority.strip_prefix('[') {
         let (host, suffix) = bracketed.split_once(']').ok_or(OriginError)?;
         host.parse::<std::net::Ipv6Addr>().map_err(|_| OriginError)?;
-        let port = if suffix.is_empty() {
-            None
-        } else {
-            Some(suffix.strip_prefix(':').ok_or(OriginError)?)
-        };
-        (host, port)
+        if !suffix.is_empty() && !suffix.starts_with(':') {
+            return Err(OriginError);
+        }
+        (host, suffix.strip_prefix(':'))
     } else {
         let (host, port) = authority
             .split_once(':')
@@ -249,17 +244,12 @@ fn punycode(input: &[char]) -> Option<String> {
 fn ascii_name(host: &str) -> bool {
     let name = host.strip_suffix('.').unwrap_or(host);
     let last = name.rsplit('.').next().unwrap_or_default();
-    let numeric = last.bytes().all(|c| c.is_ascii_digit())
-        || last
-            .strip_prefix("0x")
-            .or_else(|| last.strip_prefix("0X"))
-            .is_some_and(|hex| hex.bytes().all(|c| c.is_ascii_hexdigit()));
-    name.split('.').all(|label| {
-        !label.is_empty()
-            && label
-                .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
-    }) && (!numeric || host.parse::<std::net::Ipv4Addr>().is_ok())
+    let hex = last.strip_prefix("0x").or_else(|| last.strip_prefix("0X"));
+    let numeric =
+        last.bytes().all(|c| c.is_ascii_digit()) || hex.is_some_and(|hex| hex.bytes().all(|c| c.is_ascii_hexdigit()));
+    let label_byte = |c: u8| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_');
+    let label = |label: &str| !label.is_empty() && label.bytes().all(label_byte);
+    name.split('.').all(label) && (!numeric || host.parse::<std::net::Ipv4Addr>().is_ok())
 }
 
 pub fn split_url(raw: &str) -> Result<(Origin, &str), OriginError> {

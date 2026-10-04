@@ -11,27 +11,14 @@ pub const MAX_WEBTRANSPORT_STREAMS: usize = 16;
 /// The published inactivity bound of every lane, per api/wire.md#lane-endings, as Go's `wire.IdleBound`.
 pub const IDLE_BOUND: Duration = Duration::from_secs(30);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WireError {
-    MalformedProbe,
-    InvalidUploadProgress,
-    UploadCounterOutOfRange,
-    InvalidReceiverCheckpoint,
-}
-
-impl fmt::Display for WireError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let message = match self {
-            Self::MalformedProbe => "malformed ping protocol message",
-            Self::InvalidUploadProgress => "invalid upload progress record",
-            Self::UploadCounterOutOfRange => "upload progress counter exceeds exact JSON range",
-            Self::InvalidReceiverCheckpoint => "invalid receiver checkpoint counters",
-        };
-        formatter.write_str(message)
+errors! {
+    pub enum WireError {
+        MalformedProbe => "malformed ping protocol message",
+        InvalidUploadProgress => "invalid upload progress record",
+        UploadCounterOutOfRange => "upload progress counter exceeds exact JSON range",
+        InvalidReceiverCheckpoint => "invalid receiver checkpoint counters",
     }
 }
-
-impl std::error::Error for WireError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Pong {
@@ -132,20 +119,17 @@ pub struct Counters {
 /// As Go's DecodeUploadProgress, only the members a record's type uses are read.
 pub fn decode_upload_progress(data: &[u8]) -> Result<UploadProgress, WireError> {
     let members = |names: &[&str]| decode_object(data, Members(names)).map_err(|_| WireError::InvalidUploadProgress);
-    let kind = match members(&["type"])?.remove("type") {
-        Some(Value::String(kind)) => kind,
-        _ => return Err(WireError::InvalidUploadProgress),
+    let Some(Value::String(kind)) = members(&["type"])?.remove("type") else {
+        return Err(WireError::InvalidUploadProgress);
     };
     let event = match kind.as_str() {
         "ready" => UploadProgress::Ready,
         "error" => {
             let mut fields = members(&["message", "code"])?;
-            let detail = |value: Option<Value>| -> Result<String, WireError> {
-                match value {
-                    None => Ok(String::new()),
-                    Some(Value::String(text)) => Ok(text),
-                    _ => Err(WireError::InvalidUploadProgress),
-                }
+            let detail = |value: Option<Value>| match value {
+                None => Ok(String::new()),
+                Some(Value::String(text)) => Ok(text),
+                _ => Err(WireError::InvalidUploadProgress),
             };
             UploadProgress::Error {
                 message: detail(fields.remove("message"))?,

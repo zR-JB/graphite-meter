@@ -21,6 +21,7 @@ import sys
 import tomllib
 from pathlib import Path
 
+from ..ci.toolchains import rust_tui_targets
 from .model import marshal_reviews
 
 REPO = Path(__file__).resolve().parents[2]
@@ -31,15 +32,10 @@ BUDGET = {('graphite-meter-server', 'x86_64-unknown-linux-musl'): 143,
           ('graphite-meter-client', 'x86_64-unknown-linux-musl'): 150}
 
 
-def shipped(targets: str) -> list[tuple[str, str]]:
-    """Rust ships Linux/Windows TUIs and Linux servers; Go retains the macOS targets."""
-    pairs = []
-    for platform, target in map(str.split, targets.splitlines()):
-        if platform.startswith(('linux/', 'windows/')):
-            pairs.append(('graphite-meter-client', target))
-        if platform.startswith('linux/'):
-            pairs.append(('graphite-meter-server', target))
-    return pairs
+def shipped(targets: dict[str, str]) -> list[tuple[str, str]]:
+    """A TUI for each of `rust_tui_targets`, and a server for each Linux one."""
+    servers = [('graphite-meter-server', target) for platform, target in targets.items() if platform.startswith('linux/')]
+    return [('graphite-meter-client', target) for target in targets.values()] + servers
 
 
 def compiled(package: str, target: str) -> set[tuple[str, str]]:
@@ -52,7 +48,7 @@ def compiled(package: str, target: str) -> set[tuple[str, str]]:
     return {(name, version.removeprefix('v')) for name, version, *_ in map(str.split, tree.splitlines())}
 
 
-def unreviewed_platforms(repo: Path, targets: str) -> list[str]:
+def unreviewed_platforms(repo: Path, targets: dict[str, str]) -> list[str]:
     """Every shipped target needs an approved notice record in the pinned builder's supplement."""
     builder = 'container/Dockerfile.rust'
     supplements = set(re.findall(r'--supplement (legal/\S+\.json)', (repo / builder).read_text()))
@@ -64,7 +60,7 @@ def unreviewed_platforms(repo: Path, targets: str) -> list[str]:
                 if record.get('reviewDecision') == 'approved' and record.get('reviewNotes')
                 and re.fullmatch(r'[0-9a-f]{64}', record.get('noticesSha256', ''))}
     return [f'{name} has no approved record for {target}, which {builder} builds'
-            for target in sorted({target for _, target in shipped(targets)} - approved)]
+            for target in sorted(set(targets.values()) - approved)]
 
 
 def unreviewed(reviews: list[dict], used: set[Crate]) -> list[Crate]:
@@ -95,7 +91,7 @@ def main() -> None:
     for package in tomllib.loads((REPO / 'rust/Cargo.lock').read_text())['package']:
         if 'source' in package:
             sources.setdefault((package['name'], package['version']), set()).add(package['source'])
-    targets = (REPO / 'scripts/tui-targets.txt').read_text()
+    targets = rust_tui_targets(REPO / 'scripts/tui-targets.txt')
     if problems := unreviewed_platforms(REPO, targets):
         sys.exit('Rust platform records are missing:\n' + '\n'.join(f'  {problem}' for problem in problems))
     trees = {pair: compiled(*pair) for pair in shipped(targets)}

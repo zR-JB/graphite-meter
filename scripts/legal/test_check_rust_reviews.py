@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import unittest
-
 import json
 import tempfile
+import unittest
 from pathlib import Path
 
+from scripts.ci.toolchains import rust_tui_targets
 from scripts.legal.check_rust_reviews import BUDGET, over_budget, shipped, unreviewed, unreviewed_platforms
 
 REGISTRY = 'registry+https://github.com/rust-lang/crates.io-index'
@@ -17,11 +17,12 @@ def review(name: str, version: str, upstream: str = REGISTRY, decision: str = 'a
 
 class ReviewScopeTests(unittest.TestCase):
     def test_rust_skips_macos_and_the_server_ships_only_linux(self) -> None:
-        targets = 'linux/amd64 x86_64-unknown-linux-musl\ndarwin/arm64 aarch64-apple-darwin\n'
-        self.assertEqual(shipped(targets), [
-            ('graphite-meter-client', 'x86_64-unknown-linux-musl'),
-            ('graphite-meter-server', 'x86_64-unknown-linux-musl'),
-        ])
+        path = Path(self.enterContext(tempfile.TemporaryDirectory())) / 'tui-targets.txt'
+        path.write_text('linux/amd64 x86_64-unknown-linux-musl\ndarwin/arm64 aarch64-apple-darwin\n'
+                        'windows/amd64 x86_64-pc-windows-gnu\n')
+        self.assertEqual(shipped(rust_tui_targets(path)), [
+            ('graphite-meter-client', 'x86_64-unknown-linux-musl'), ('graphite-meter-client', 'x86_64-pc-windows-gnu'),
+            ('graphite-meter-server', 'x86_64-unknown-linux-musl')])
 
     def test_registry_versions_share_coverage_but_unapproved_and_changed_sources_do_not(self) -> None:
         # Crates only a release build compiles, such as the Windows TUI's, are compiled crates too.
@@ -51,7 +52,7 @@ class ReviewScopeTests(unittest.TestCase):
 
 
 class PlatformRecordTests(unittest.TestCase):
-    TARGETS = 'linux/amd64 x86_64-unknown-linux-musl\nwindows/amd64 x86_64-pc-windows-gnu\n'
+    TARGETS = {'linux/amd64': 'x86_64-unknown-linux-musl', 'windows/amd64': 'x86_64-pc-windows-gnu'}
     APPROVED = {'reviewDecision': 'approved', 'reviewNotes': 'reviewed', 'noticesSha256': 'a' * 64}
     WINDOWS = {'target': 'x86_64-pc-windows-gnu', **APPROVED}
 

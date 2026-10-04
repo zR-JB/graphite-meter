@@ -49,13 +49,8 @@ fn rejects_duplicates_even_in_unknown_nested_fields_but_allows_additions() {
     value["server"]["future"] = json!(true);
     value["capabilities"]["throughput"][0]["future"] = json!({"supported": true});
     decode_preflight_value(&value).unwrap();
-    let duplicate_unknown_field = br#"{
-        "clientIp": "x",
-        "clientIpVersion": 4,
-        "clientIpSource": "socket",
-        "protocolNegotiated": "h2",
-        "future": {"x": 0, "x": 1}
-    }"#;
+    let duplicate_unknown_field = br#"{"clientIp": "x", "clientIpVersion": 4, "clientIpSource": "socket",
+        "protocolNegotiated": "h2", "future": {"x": 0, "x": 1}}"#;
     assert!(Probe::decode(duplicate_unknown_field).is_err());
     assert!(Probe::decode(br#"["192.0.2.1",4,"socket","h3",[1,2]]"#).is_err());
 }
@@ -87,13 +82,7 @@ fn metadata_and_target_lists_are_bounded_in_bytes() {
         value["capabilities"].as_object_mut().unwrap().remove(list);
         assert!(decode_preflight_value(&value).is_err());
     }
-    let minimal = json!({
-        "generation": "g",
-        "capabilities": {
-            "throughput": [],
-            "latency": []
-        }
-    });
+    let minimal = json!({"generation": "g", "capabilities": {"throughput": [], "latency": []}});
     decode_preflight_value(&minimal).unwrap();
     let mut no_generation = minimal;
     no_generation["generation"] = json!("");
@@ -143,19 +132,13 @@ fn probe_evidence_and_occupancy_preserve_go_bounds() {
         ("clientIpVersion", json!(5)),
         ("clientIpSource", json!("header")),
         ("protocolNegotiated", json!("http3")),
+        ("load", json!({"active": -1, "max": 1})),
+        ("load", json!({"active": 0, "max": 0})),
+        ("load", json!({"active": u64::MAX, "max": 1})),
     ] {
         let mut invalid_probe = base.clone();
         invalid_probe[field] = value;
-        assert!(decode_probe_value(&invalid_probe).is_err());
-    }
-    for load in [
-        json!({"active": -1, "max": 1}),
-        json!({"active": 0, "max": 0}),
-        json!({"active": u64::MAX, "max": 1}),
-    ] {
-        let mut value = base.clone();
-        value["load"] = load;
-        assert!(decode_probe_value(&value).is_err());
+        assert!(decode_probe_value(&invalid_probe).is_err(), "{invalid_probe}");
     }
     let mut value = base.clone();
     value["load"] = json!({"active": 9, "max": 1});

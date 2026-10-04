@@ -39,11 +39,9 @@ def linked(link_map: Path, sysroot: Path, cargo: set[Path]) -> set[str]:
     """Objects and archives with a linked archive(member) in a GNU ld, LLD or ld64 map, outside Cargo."""
     listing = link_map.read_text(errors='replace')
     paths = re.findall(r'(/[^\s():]+\.o)\b', listing) + re.findall(r'(/[^\s():]+)\([^\s()]+\)', listing)
-    found = set()
-    for path in {Path(os.path.normpath(path)) for path in paths}:
-        if not any(path.is_relative_to(directory) for directory in cargo):
-            found.add(SYSROOT + path.relative_to(sysroot).as_posix() if path.is_relative_to(sysroot) else str(path))
-    return found
+    normalized = {Path(os.path.normpath(path)) for path in paths}
+    return {SYSROOT + path.relative_to(sysroot).as_posix() if path.is_relative_to(sysroot) else str(path)
+            for path in normalized if not any(path.is_relative_to(directory) for directory in cargo)}
 
 
 def imports(executable: Path, target: str) -> set[str]:
@@ -111,13 +109,8 @@ def notice_names(entry: dict[str, Json] | None, sysroot: Path) -> dict[str, str]
 
 def fingerprint(paths: set[str], sysroot: Path) -> tuple[str, dict[str, bytes]]:
     """The notice listing, `path<TAB>sha256<LF>` sorted by path, and the exact texts to embed."""
-    lines: list[str] = []
-    kept: dict[str, bytes] = {}
-    for path in sorted(paths):
-        data = source(path, sysroot).read_bytes()
-        lines.append(f'{path}\t{sha256(data)}\n')
-        kept[path] = data
-    return ''.join(lines), kept
+    kept = {path: source(path, sysroot).read_bytes() for path in sorted(paths)}
+    return ''.join(f'{path}\t{sha256(data)}\n' for path, data in kept.items()), kept
 
 
 def notice(entry: dict[str, Json] | None, *, target: str, sysroot: Path,

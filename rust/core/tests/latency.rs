@@ -1,4 +1,4 @@
-use graphite_meter_core::latency::{LatencyAccumulator, ProbeOutcome, ReflectorTiming};
+use graphite_meter_core::latency::{Distribution, LatencyAccumulator, ProbeOutcome, ReflectorTiming};
 
 const MS: i64 = 1_000_000;
 
@@ -38,10 +38,7 @@ fn reflector_diagnostic_never_changes_raw_reply_population() {
     }
     let summary = rounded.snapshot();
     assert_eq!(summary.count, 60_000);
-    assert_eq!(
-        summary.distribution.unwrap(),
-        graphite_meter_core::latency::Distribution { p50: 1_000, p95: 2_000 }
-    );
+    assert_eq!(summary.distribution, Some(Distribution { p50: 1_000, p95: 2_000 }));
     assert_eq!(summary.jitter, Some(499));
 }
 

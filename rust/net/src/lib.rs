@@ -62,15 +62,11 @@ where
                 tunnel(stream, &authority, upstream.authorization.as_deref()).await?
             } else {
                 absolute_form = true;
-                proxy_authorization = upstream
-                    .authorization
-                    .as_ref()
-                    .map(|value| {
-                        let mut header = http::HeaderValue::from_str(value).map_err(io::Error::other)?;
-                        header.set_sensitive(true);
-                        Ok::<_, io::Error>(header)
-                    })
-                    .transpose()?;
+                if let Some(value) = &upstream.authorization {
+                    let mut header = http::HeaderValue::from_str(value).map_err(io::Error::other)?;
+                    header.set_sensitive(true);
+                    proxy_authorization = Some(header);
+                }
                 stream
             }
         }
@@ -124,14 +120,9 @@ async fn tcp(host: &str, port: u16) -> io::Result<TcpStream> {
 async fn dial(host: &str, port: u16) -> io::Result<TcpStream> {
     let addresses = resolve(host, port).await?;
     let (v6, v4): (Vec<_>, Vec<_>) = addresses.into_iter().partition(SocketAddr::is_ipv6);
-    let mut ordered = Vec::with_capacity(v6.len() + v4.len());
-    let (mut v6, mut v4) = (v6.into_iter(), v4.into_iter());
-    loop {
-        match (v6.next(), v4.next()) {
-            (None, None) => break,
-            (a, b) => ordered.extend(a.into_iter().chain(b)),
-        }
-    }
+    let ordered: Vec<_> = (0..v6.len().max(v4.len()))
+        .flat_map(|index| v6.get(index).into_iter().chain(v4.get(index)).copied())
+        .collect();
     let mut attempts = JoinSet::new();
     let mut pending = ordered.into_iter();
     let mut last = io::Error::new(io::ErrorKind::NotFound, "no address resolved");
@@ -251,10 +242,7 @@ impl Socks {
                 if user.is_empty() || user.len() > 255 || password.len() > 255 {
                     return Err(failed("invalid username/password".into()));
                 }
-                let mut login = vec![1, user.len() as u8];
-                login.extend_from_slice(user);
-                login.push(password.len() as u8);
-                login.extend_from_slice(password);
+                let login = [&[1, user.len() as u8][..], user, &[password.len() as u8], password].concat();
                 stream.write_all(&login).await?;
                 stream.read_exact(&mut reply).await?;
                 if reply[0] != 1 {
@@ -266,24 +254,16 @@ impl Socks {
             }
             (method, _) => return Err(failed(format!("unsupported authentication method {method}"))),
         }
-        let mut request = vec![5, 1, 0];
         // Like Go's To4, an IPv4-mapped address goes as IPv4.
-        match host.parse::<IpAddr>().map(|ip| ip.to_canonical()) {
-            Ok(IpAddr::V4(ip)) => {
-                request.push(1);
-                request.extend_from_slice(&ip.octets());
-            }
-            Ok(IpAddr::V6(ip)) => {
-                request.push(4);
-                request.extend_from_slice(&ip.octets());
-            }
+        let address = match host.parse::<IpAddr>().map(|ip| ip.to_canonical()) {
+            Ok(IpAddr::V4(ip)) => [&[1][..], &ip.octets()].concat(),
+            Ok(IpAddr::V6(ip)) => [&[4][..], &ip.octets()].concat(),
             Err(_) => {
                 let length = u8::try_from(host.len()).map_err(|_| failed("FQDN too long".into()))?;
-                request.extend_from_slice(&[3, length]);
-                request.extend_from_slice(host.as_bytes());
+                [&[3, length][..], host.as_bytes()].concat()
             }
-        }
-        request.extend_from_slice(&port.to_be_bytes());
+        };
+        let request = [&[5, 1, 0][..], &address, &port.to_be_bytes()].concat();
         stream.write_all(&request).await?;
         let mut head = [0; 4];
         stream.read_exact(&mut head).await?;
@@ -339,13 +319,8 @@ impl Proxy {
     /// HTTP_PROXY, every cleartext request refuses it as Go's do, before NO_PROXY or loopback
     /// apply; HTTPS_PROXY still applies.
     fn from_variables(variable: impl Fn(&str) -> Option<String>) -> Self {
-        let read = |names: [&'static str; 2]| {
-            names.into_iter().find_map(|name| {
-                variable(name)
-                    .filter(|value| !value.is_empty())
-                    .map(|value| (name, value))
-            })
-        };
+        let set = |name: &'static str| Some((name, variable(name).filter(|value| !value.is_empty())?));
+        let read = |names: [&'static str; 2]| names.into_iter().find_map(set);
         let (http, https) = (read(["HTTP_PROXY", "http_proxy"]), read(["HTTPS_PROXY", "https_proxy"]));
         let no_proxy = read(["NO_PROXY", "no_proxy"]).map(|(_, value)| value);
         let mut proxy = Self::named(

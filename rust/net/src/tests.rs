@@ -1,6 +1,8 @@
 use super::*;
-use std::sync::Arc;
+use std::{ffi::OsStr, sync::Arc};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+const OK: &[u8] = b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n";
 
 fn origin(raw: &str) -> Origin {
     target_origin(raw).unwrap().unwrap()
@@ -28,9 +30,9 @@ async fn probe(connection: Connection, host: &str) {
     assert!(sender.send_request(request).await.unwrap().status().is_success());
 }
 
-/// The HTTPS proxy hop's connector, for a proxy that is not HTTPS.
-fn no_hop() -> std::future::Ready<Result<TlsConnector, &'static str>> {
-    std::future::ready(Err("no HTTPS proxy"))
+/// Connects to the cleartext `target` through a proxy that is not HTTPS, so no hop connector is needed.
+async fn cleartext(proxy: &Proxy, target: &str) -> io::Result<Connection> {
+    connect(proxy, &origin(target), None, std::future::ready(Err("no HTTPS proxy"))).await
 }
 
 #[test]
@@ -120,12 +122,7 @@ fn upstreams_default_to_http_carry_decoded_credentials_and_refuse_unknown_scheme
 #[test]
 fn environment_proxies_follow_go_variables() {
     fn from(pairs: &'static [(&'static str, &'static str)]) -> Proxy {
-        Proxy::from_variables(|name| {
-            pairs
-                .iter()
-                .find(|(key, _)| *key == name)
-                .map(|(_, value)| (*value).to_owned())
-        })
+        Proxy::from_variables(|name| Some(pairs.iter().find(|(key, _)| *key == name)?.1.to_owned()))
     }
     let (http, https) = (origin("http://meter.example"), origin("https://meter.example"));
     let via = |proxy: &Proxy, target: &Origin| proxy.route(target).map(|route| route.as_ref().unwrap().origin.key());
@@ -138,25 +135,17 @@ fn environment_proxies_follow_go_variables() {
         ("https_proxy", "lower.example:3129"),
         ("no_proxy", "meter.example"),
     ]);
-    assert_eq!(via(&spelled, &http), None);
-    let spelled = from(&[
-        ("HTTP_PROXY", "http://upper.example:3128"),
-        ("http_proxy", "http://lower.example:3128"),
-        ("HTTPS_PROXY", ""),
-        ("https_proxy", "lower.example:3129"),
-    ]);
-    assert_eq!(via(&spelled, &http).as_deref(), Some("http://upper.example:3128"));
-    assert_eq!(via(&spelled, &https).as_deref(), Some("http://lower.example:3129"));
+    assert_eq!((via(&spelled, &http), via(&spelled, &https)), (None, None));
+    let (other, secure_other) = (origin("http://other.example"), origin("https://other.example"));
+    assert_eq!(via(&spelled, &other).as_deref(), Some("http://upper.example:3128"));
+    assert_eq!(via(&spelled, &secure_other).as_deref(), Some("http://lower.example:3129"));
     let cgi = from(&[
         ("REQUEST_METHOD", "GET"),
         ("HTTP_PROXY", "http://attacker.example"),
         ("HTTPS_PROXY", "http://proxy.example:3128"),
     ]);
-    let refused = cgi.route(&http).unwrap().as_ref().err().unwrap();
-    assert_eq!(
-        refused.to_string(),
-        "HTTP_PROXY is not a usable proxy: a CGI request's Proxy header can set it"
-    );
+    let refused = cgi.route(&http).unwrap().as_ref().err().unwrap().to_string();
+    assert_eq!(refused, "HTTP_PROXY is not a usable proxy: a CGI request's Proxy header can set it");
     assert_eq!(via(&cgi, &https).as_deref(), Some("http://proxy.example:3128"));
     // Go refuses it before it looks at NO_PROXY or loopback.
     let listed = from(&[
@@ -182,10 +171,8 @@ async fn refused_connect_fails_closed() {
     let peer = tokio::spawn(async move {
         let (mut client, _) = listener.accept().await.unwrap();
         read_head(&mut client).await;
-        client
-            .write_all(b"HTTP/1.1 407 Proxy Authentication Required\r\ncontent-length: 0\r\n\r\n")
-            .await
-            .unwrap();
+        let refusal = b"HTTP/1.1 407 Proxy Authentication Required\r\ncontent-length: 0\r\n\r\n";
+        client.write_all(refusal).await.unwrap();
     });
     let socket = Box::new(TcpStream::connect(address).await.unwrap());
     let error = tunnel(socket, "meter.test:443", None).await.err().unwrap();
@@ -210,16 +197,11 @@ async fn socks5_logs_in_and_connects_by_name_then_speaks_origin_form() {
             client.write_all(reply).await.unwrap();
         }
         let head = read_head(&mut client).await;
-        client
-            .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n")
-            .await
-            .unwrap();
+        client.write_all(OK).await.unwrap();
         head
     });
     let proxy = Proxy::new(&format!("socks5://user:p%40ss@{address}"), "", "");
-    let connection = connect(&proxy, &origin("http://meter.test:8080"), None, no_hop())
-        .await
-        .unwrap();
+    let connection = cleartext(&proxy, "http://meter.test:8080").await.unwrap();
     assert!(!connection.absolute_form);
     assert!(connection.proxy_authorization.is_none());
     probe(connection, "meter.test:8080").await;
@@ -265,7 +247,7 @@ async fn socks5_sends_addresses_as_go_does_and_fails_closed() {
     ] {
         let (proxy, sent) = socks_peer(0, 0).await;
         let proxy = Proxy::new(&format!("socks5h://{proxy}"), "", "");
-        connect(&proxy, &origin(target), None, no_hop()).await.unwrap();
+        cleartext(&proxy, target).await.unwrap();
         assert_eq!(sent.await.unwrap(), [&[5, 1, 0, 5, 1, 0][..], &address[..]].concat(), "{target}");
     }
     for (method, status, reason) in [
@@ -275,10 +257,7 @@ async fn socks5_sends_addresses_as_go_does_and_fails_closed() {
     ] {
         let (proxy, _) = socks_peer(method, status).await;
         let proxy = Proxy::new(&format!("socks5://{proxy}"), "", "");
-        let error = connect(&proxy, &origin("http://meter.test"), None, no_hop())
-            .await
-            .err()
-            .unwrap();
+        let error = cleartext(&proxy, "http://meter.test").await.err().unwrap();
         assert_eq!(error.to_string(), format!("socks connect: {reason}"));
     }
 }
@@ -339,7 +318,6 @@ fn certificate() -> (String, rustls::pki_types::CertificateDer<'static>) {
 /// directory list alone, so the other defaults still load; missing paths are skipped.
 #[test]
 fn trust_roots_follow_go_ssl_cert_rules() {
-    use std::ffi::OsStr;
     let scratch = Scratch::new("rules");
     let [
         (file_pem, file_root),
@@ -375,7 +353,6 @@ fn trust_roots_follow_go_ssl_cert_rules() {
 /// the next BEGIN line.
 #[test]
 fn trust_roots_survive_a_block_cut_short() {
-    use std::ffi::OsStr;
     let scratch = Scratch::new("cut");
     let [(cut, _), (pem, root)] = [certificate(), certificate()];
     let cut: String = cut.lines().take(3).map(|line| format!("{line}\n")).collect();
@@ -390,7 +367,6 @@ fn trust_roots_survive_a_block_cut_short() {
 #[cfg(unix)]
 #[test]
 fn trust_roots_skip_hash_links_and_keep_the_first_failure() {
-    use std::ffi::OsStr;
     let scratch = Scratch::new("links");
     let (pem, root) = certificate();
     let directory = scratch.dir("certs");
@@ -416,13 +392,8 @@ fn a_trusted_self_signed_ca_is_its_own_chain() {
         Error::InvalidCertificate,
         pki_types::{CertificateDer, ServerName, UnixTime, pem::PemObject},
     };
-    const CA: &str = "req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1 -subj /CN=localhost \
-                      -keyout /dev/null -addext subjectAltName=DNS:localhost -addext basicConstraints=critical,CA:TRUE";
-    let output = std::process::Command::new("openssl")
-        .args(CA.split_whitespace())
-        .output()
-        .unwrap();
-    let ca = CertificateDer::from_pem_slice(&output.stdout).unwrap();
+    let pem = test_identity::self_signed("localhost", "CA:TRUE").unwrap();
+    let ca = CertificateDer::from_pem_slice(pem.as_bytes()).unwrap();
     let now = UnixTime::now();
     let verify = |root: &CertificateDer<'static>, name, now| {
         let name = ServerName::try_from(name).unwrap();
@@ -462,18 +433,13 @@ async fn https_targets_verify_tls_inside_http_and_https_proxy_tunnels() {
             let head = read_head(&mut stream).await;
             assert!(head.starts_with("CONNECT localhost.:443 HTTP/1.1\r\n"), "{head}");
             assert!(head.contains("proxy-authorization: Basic dXNlcjpzZWNyZXQ="));
-            stream
-                .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
-                .await
-                .unwrap();
+            let established = b"HTTP/1.1 200 Connection established\r\n\r\n";
+            stream.write_all(established).await.unwrap();
             let mut stream = acceptor.accept(stream).await.unwrap();
             let head = read_head(&mut stream).await;
             assert!(head.starts_with("GET /probe HTTP/1.1\r\n"));
             assert!(!head.contains("proxy-authorization"));
-            stream
-                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n")
-                .await
-                .unwrap();
+            stream.write_all(OK).await.unwrap();
         });
         let scheme = if secure_proxy { "https" } else { "http" };
         let proxy = Proxy::new("", &format!("{scheme}://user:secret@localhost:{port}"), "");

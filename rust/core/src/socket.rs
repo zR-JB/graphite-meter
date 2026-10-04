@@ -33,16 +33,12 @@ pub fn udp_socket_with(address: SocketAddr, sockets: usize) -> io::Result<(UdpSo
     let bytes = buffer_bytes(sockets);
     let receive = grow(&socket, Buffer::Receive, bytes);
     let send = grow(&socket, Buffer::Send, bytes);
-    let warning = receive
-        .err()
-        .or(send.err())
-        .filter(|_| {
-            !WARNED.swap(true, Ordering::Relaxed)
-                && !quiet(std::env::var("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING").ok().as_deref())
-        })
-        .map(|shortfall| {
-            format!("{shortfall}. See https://github.com/quic-go/quic-go/wiki/UDP-Buffer-Sizes for details.")
-        });
+    // Both buffers grow; the receive buffer's shortfall is reported first.
+    let shortfall = receive.and(send).err();
+    let silenced = quiet(std::env::var("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING").ok().as_deref());
+    let reported = shortfall.filter(|_| !WARNED.swap(true, Ordering::Relaxed) && !silenced);
+    let link = "See https://github.com/quic-go/quic-go/wiki/UDP-Buffer-Sizes for details.";
+    let warning = reported.map(|shortfall| format!("{shortfall}. {link}"));
     if sockets > 1 {
         #[cfg(target_os = "linux")]
         socket.set_reuse_port(true)?;

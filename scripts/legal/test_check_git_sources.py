@@ -1,27 +1,21 @@
 from __future__ import annotations
 
 import hashlib
-import subprocess
 import unittest
 from pathlib import Path
 
 from scripts.legal.check_git_sources import REGISTRY, check_fork, check_lock
-from scripts.legal.fixtures import CheckoutTests
+from scripts.legal.fixtures import CheckoutTests, git
 
 REV = 'a' * 40
-
-
-def run(directory: Path, *args: str) -> str:
-    return subprocess.run(['git', '-C', str(directory), '-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
-                           *args], check=True, text=True, stdout=subprocess.PIPE).stdout.strip()
 
 
 def commit(directory: Path, path: str, subject: str) -> str:
     (directory / path).parent.mkdir(parents=True, exist_ok=True)
     (directory / path).write_text(subject)
-    run(directory, 'add', path)
-    run(directory, 'commit', '-q', '-m', subject)
-    return run(directory, 'rev-parse', 'HEAD')
+    git(directory, 'add', path)
+    git(directory, 'commit', '-q', '-m', subject)
+    return git(directory, 'rev-parse', 'HEAD')
 
 
 class LockTests(unittest.TestCase):
@@ -51,16 +45,16 @@ class ForkTests(CheckoutTests):
         super().setUp()
         self.upstream = self.root / 'upstream'
         self.upstream.mkdir()
-        run(self.upstream, 'init', '-q')
+        git(self.upstream, 'init', '-q')
         self.base = commit(self.upstream, 'pkg/lib.rs', 'upstream')
-        run(self.upstream, 'tag', 'v1')
+        git(self.upstream, 'tag', 'v1')
         self.fork = self.root / 'fork'
-        run(self.root, 'clone', '-q', str(self.upstream), str(self.fork))
-        run(self.fork, 'checkout', '-q', '-b', 'gm/v1')
+        git(self.root, 'clone', '-q', str(self.upstream), str(self.fork))
+        git(self.fork, 'checkout', '-q', '-b', 'gm/v1')
         self.rev = commit(self.fork, 'pkg/lib.rs', 'fix pkg')
 
     def record(self) -> dict:
-        changes = run(self.fork, 'diff-tree', '-r', '--no-renames', '--full-index', self.base, self.rev) + '\n'
+        changes = git(self.fork, 'diff-tree', '-r', '--no-renames', '--full-index', self.base, self.rev) + '\n'
         return {'fork': str(self.fork), 'branch': 'gm/v1', 'rev': self.rev, 'upstream': str(self.upstream),
                 'baseTag': 'v1', 'base': self.base, 'diffSha256': hashlib.sha256(changes.encode()).hexdigest(),
                 'modifiedPackages': ['pkg'], 'commits': [{'subject': 'fix pkg'}]}
@@ -96,7 +90,7 @@ class ForkTests(CheckoutTests):
 
     def test_revision_off_the_fork_branch_fails(self) -> None:
         record = self.record()
-        run(self.fork, 'checkout', '-q', '-b', 'scratch')
+        git(self.fork, 'checkout', '-q', '-b', 'scratch')
         record['rev'] = commit(self.fork, 'pkg/lib.rs', 'unreviewed')
         self.assertEqual(check_fork(record, self.root / 'check'),
                          [f"{self.fork}: {record['rev']} is not on branch gm/v1"])

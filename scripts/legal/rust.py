@@ -182,12 +182,6 @@ def artifacts(messages: list[dict], package_id: str, binary: str) -> dict[str, d
     return collected
 
 
-def script_output(messages: list[dict], package_id: str) -> Path:
-    """The OUT_DIR of the build script that Cargo ran for `package_id`."""
-    return Path(next(message['out_dir'] for message in messages
-                     if message.get('reason') == 'build-script-executed' and message['package_id'] == package_id))
-
-
 def discover(repo: Path, metadata: dict, messages: list[dict], package: str, reviews: list[Review],
              provenance: list[Provenance] | None = None,
              *, compiled: dict[str, dict] | None = None) -> tuple[list[Component], list[dict], list[str], str]:
@@ -285,15 +279,6 @@ def legal_report(repo: Path, version: str, sections: str, development: bool = Fa
             + f'Cargo compilation-input notices (including build-time dependencies)\n\n{sections}'.encode())
 
 
-def about(project: Project, version: str, engine_version: str, components: list[Component],
-          repo: Path = Path(__file__).resolve().parents[2]) -> dict[str, object]:
-    """The browser's about.json, whose source is a release version's tag as in Go's."""
-    return {'schemaVersion': 2, 'project': project.json(), 'sourceVersion': engine_version,
-            'sourceURL': release_source(project, version)[1], 'licenseURL': 'legal/LICENSE.txt',
-            'noticesURL': 'legal/THIRD_PARTY_NOTICES.txt',
-            'components': about_components(repo, release_source(project, version)[1], components)}
-
-
 def image_additions(repo: Path, browser: list[Component], provenance: list[Provenance]) -> list[Component]:
     """What the server image ships beyond its binary, such as the CA roots: Go's container scope less its server."""
     shipped = {component_key(component) for component in browser}
@@ -349,9 +334,8 @@ def main() -> None:
         parser.error('--target is required unless --development selects the host')
     try:
         build(args)
-    except (LegalError, OSError, ValueError, subprocess.CalledProcessError):
-        output = local_path(args.out, args.repo.resolve())
-        (output / 'LEGAL.txt').unlink(missing_ok=True)
+    except (LegalError, OSError, ValueError, zlib.error, subprocess.CalledProcessError):
+        (local_path(args.out, args.repo.resolve()) / 'LEGAL.txt').unlink(missing_ok=True)
         raise
 
 
@@ -442,9 +426,14 @@ def build(args: argparse.Namespace) -> None:
         shared_notices = ((DEVELOPMENT_NOTICE if args.development else '')
                           + notices(components + browser_components) + '\n' + extra)
         write_changed(legal_assets / 'THIRD_PARTY_NOTICES.txt', shared_notices.encode())
-        write_changed(legal_assets / 'about.json', marshal(about(
-            Project.read(repo), args.version, os.environ.get('GM_ENGINE_VERSION', 'rust-experimental'),
-            components + browser_components, repo)))
+        # The browser's about.json, whose source is a release version's tag as in Go's.
+        project = Project.read(repo)
+        source_url = release_source(project, args.version)[1]
+        write_changed(legal_assets / 'about.json', marshal({
+            'schemaVersion': 2, 'project': project.json(),
+            'sourceVersion': os.environ.get('GM_ENGINE_VERSION', 'rust-experimental'), 'sourceURL': source_url,
+            'licenseURL': 'legal/LICENSE.txt', 'noticesURL': 'legal/THIRD_PARTY_NOTICES.txt',
+            'components': about_components(repo, source_url, components + browser_components)}))
     write_changed(output / 'LEGAL.txt', legal_report(repo, args.version, shared_notices if shared_notices is not None
                                                     else notices(components) + '\n\nRust sysroot and platform notices\n\n' + extra,
                                                     args.development))
@@ -473,28 +462,27 @@ def build(args: argparse.Namespace) -> None:
     # build.rs requires Cargo to compile with exactly this compiler.
     write_changed(output / 'rustc-path.txt', subprocess.check_output(
         ['rustup', 'which', '--toolchain', channel, 'rustc'], text=True).strip().encode())
-    try:
-        built_metadata, messages = capture(repo, args.package, args.target, args.profile, mapped,
-                                           output, staged_assets, link_target=target)
-        actual, inventory, failures, _ = discover(repo, built_metadata, messages, args.package, reviews, provenance)
-        if set(artifacts(messages, root, args.package)) - selected.keys():
-            raise LegalError('final Cargo build compiled a dependency absent from the prepared inventory')
-        verify_prepared(components, actual, failures)
-        executable = Path(next(message['executable'] for message in messages if message.get('executable')
-                               and message['target']['name'] == args.package))
-        if not args.development:
-            facts |= {'inputs': platform.linked(link_map, sysroot, cargo_outputs),
-                      'libraries': platform.imports(executable, target)}
-            if checked_platform_notice(record, facts) != extra:
-                raise LegalError('linked executable platform notices changed during build')
-        payload = (script_output(messages, root) / 'LEGAL.zlib').read_bytes()
-        if payload not in executable.read_bytes() or zlib.decompress(payload) != (output / 'LEGAL.txt').read_bytes():
-            raise LegalError('executable does not embed the generated notices')
-        manifest['components'] = inventory
-        write_changed(output / 'inventory.json', marshal(manifest))
-    except (LegalError, OSError, ValueError, zlib.error, subprocess.CalledProcessError):
-        (output / 'LEGAL.txt').unlink(missing_ok=True)
-        raise
+    # main removes LEGAL.txt when any later check fails.
+    built_metadata, messages = capture(repo, args.package, args.target, args.profile, mapped,
+                                       output, staged_assets, link_target=target)
+    actual, inventory, failures, _ = discover(repo, built_metadata, messages, args.package, reviews, provenance)
+    if set(artifacts(messages, root, args.package)) - selected.keys():
+        raise LegalError('final Cargo build compiled a dependency absent from the prepared inventory')
+    verify_prepared(components, actual, failures)
+    executable = Path(next(message['executable'] for message in messages if message.get('executable')
+                           and message['target']['name'] == args.package))
+    if not args.development:
+        facts |= {'inputs': platform.linked(link_map, sysroot, cargo_outputs),
+                  'libraries': platform.imports(executable, target)}
+        if checked_platform_notice(record, facts) != extra:
+            raise LegalError('linked executable platform notices changed during build')
+    out_dir = next(message['out_dir'] for message in messages
+                   if message.get('reason') == 'build-script-executed' and message['package_id'] == root)
+    payload = (Path(out_dir) / 'LEGAL.zlib').read_bytes()
+    if payload not in executable.read_bytes() or zlib.decompress(payload) != (output / 'LEGAL.txt').read_bytes():
+        raise LegalError('executable does not embed the generated notices')
+    manifest['components'] = inventory
+    write_changed(output / 'inventory.json', marshal(manifest))
     # The offer includes actual build inputs, including code generators and native crate sources.
     if args.local or args.profile != 'release' or args.development:
         return

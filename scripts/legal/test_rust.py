@@ -14,16 +14,18 @@ from unittest.mock import patch
 from copy import deepcopy
 
 from scripts.ci.github_api import ControlPlaneError
-from scripts.legal.fixtures import CheckoutTests
+from scripts.ci.toolchains import host_platform, rust_channel, rust_tui_targets
+from scripts.legal.fixtures import CheckoutTests, git
 from scripts.legal.model import (Component, Json, LegalError, LegalFile, Provenance, Review, array, manual_files,
                                  manual_sources, marshal, read_json, sha256)
 from scripts.legal.review import add_provenance, validate_review
 from scripts.legal.rust import (DEVELOPMENT, DEVELOPMENT_NOTICE, add_cargo_sources, artifacts, capture, cargo,
-                                checked_platform_notice, discover,
-                                image_additions, legal_report, resolved_inputs, stage_browser, verify_prepared, write_changed)
+                                checked_platform_notice, discover, image_additions, legal_report, main, resolved_inputs,
+                                stage_browser, verify_prepared, write_changed)
 from scripts.legal.rust_platform import SYSROOT, candidate, fetch_notices, imports, link_map, linked, notice
 
 ROOT = Path(__file__).resolve().parents[2]
+SUPPLEMENT = ROOT / 'legal/rust-platform-debian-bookworm.json'
 
 
 class RustFreshnessTests(CheckoutTests):
@@ -56,7 +58,6 @@ class RustFreshnessTests(CheckoutTests):
             stage_browser(source, target)
 
     def test_failed_regeneration_invalidates_the_old_notice(self) -> None:
-        from scripts.legal.rust import main
         output = self.root / 'output'
         write_changed(output / 'LEGAL.txt', b'previous success')
         with patch.object(sys, 'argv', ['rust', '--development', '--local', '--package', 'graphite-meter-client',
@@ -67,8 +68,6 @@ class RustFreshnessTests(CheckoutTests):
         self.assertFalse((output / 'LEGAL.txt').exists())
 
     def test_review_template_cannot_retain_an_earlier_successful_report(self) -> None:
-        from scripts.legal.rust import main
-
         output = self.root / 'output'
         write_changed(output / 'LEGAL.txt', b'previously approved')
         write_changed(self.root / 'rust/Cargo.lock', b'locked')
@@ -98,7 +97,7 @@ class RustBrowserFreshnessTests(CheckoutTests):
         from scripts import rust_build
 
         run = subprocess.run
-        run(['git', 'init', '--quiet', str(self.root)], check=True)
+        git(self.root, 'init', '-q')
         for name, data in {'client/src/app.ts': b'export {}', 'api/golden.json': b'{}',
                            'go/internal/auth/assets/auth.js': b'auth', '.gitignore': b'*.local\n',
                            'client/.env.local': b'VITE_VALUE=one', 'client/public/obsolete.js': b'old',
@@ -223,37 +222,33 @@ class RustArtifactTests(unittest.TestCase):
         self.assertEqual(result['dependency']['nativeLibraries'], ['static=crypto'])
         self.assertEqual(set(result), {'application', 'dependency'})
 
-    def test_failed_truncated_or_wrong_binary_build_is_rejected(self) -> None:
+    def test_failed_truncated_or_wrong_binary_builds_and_test_targets_are_rejected(self) -> None:
         messages = self.messages()
-        for bad in (messages[:-1], messages[:-1] + [{'reason': 'build-finished', 'success': False}], messages[:2] + messages[-1:]):
+        # Tests, examples and benchmarks cannot expand the release closure.
+        targets = [deepcopy(messages) for _ in range(3)]
+        for changed, kind in zip(targets, ('test', 'example', 'bench')):
+            changed[0]['target']['kind'] = [kind]
+        for bad in (messages[:-1], messages[:-1] + [{'reason': 'build-finished', 'success': False}],
+                    messages[:2] + messages[-1:], *targets):
             with self.subTest(messages=bad), self.assertRaises(LegalError):
                 artifacts(bad, 'application', 'application')
-
-    def test_tests_and_examples_cannot_expand_release_closure(self) -> None:
-        for kind in ('test', 'example', 'bench'):
-            messages = deepcopy(self.messages())
-            messages[0]['target']['kind'] = [kind]
-            with self.subTest(kind=kind), self.assertRaises(LegalError):
-                artifacts(messages, 'application', 'application')
 
 
 class RustPackageTests(CheckoutTests):
     def test_packaging_takes_listed_platforms_and_writes_only_inside_its_roots(self) -> None:
         from scripts.package_rust import build
 
-        supplement = ROOT / 'legal/rust-platform-debian-bookworm.json'
         for version, platform, output, error, message in (
                 ('1.2.3', 'plan9/amd64', self.root, ValueError, 'no TUI target for plan9/amd64'),
                 ('1.2.3', 'darwin/arm64', self.root, ValueError, 'no TUI target for darwin/arm64'),
                 ('1.2.3', 'linux/amd64', Path('/'), ControlPlaneError, 'is outside'),
                 ('1.2.3;id', 'linux/amd64', self.root, ValueError, 'invalid release version')):
             with patch('subprocess.run', side_effect=AssertionError('built')), self.assertRaisesRegex(error, message):
-                build(version, platform, output, supplement)
+                build(version, platform, output, SUPPLEMENT)
 
     @unittest.skipUnless(os.name == 'posix', 'the fake executable is a shell script')
     def test_a_build_for_this_system_and_architecture_reports_its_version(self) -> None:
         import scripts.package_rust as package
-        from scripts.ci.toolchains import host_platform, rust_tui_targets
 
         platforms = rust_tui_targets(ROOT / 'scripts/tui-targets.txt')
         if host_platform() not in platforms:
@@ -265,7 +260,6 @@ class RustPackageTests(CheckoutTests):
             (self.root / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, self.root / name)
         ran, reported = self.root / 'ran', {'version': '1.2.3-rust'}
-        supplement = ROOT / 'legal/rust-platform-debian-bookworm.json'
 
         def legal_build(command: list[str], **options: Any) -> object:
             if command[0] != sys.executable:
@@ -286,13 +280,13 @@ class RustPackageTests(CheckoutTests):
             return None
 
         with patch.object(package, 'REPO', self.root), patch('subprocess.run', side_effect=legal_build):
-            package.build('1.2.3', other, self.root / 'dist', supplement)
+            package.build('1.2.3', other, self.root / 'dist', SUPPLEMENT)
             self.assertFalse(ran.exists())
-            package.build('1.2.3', host_platform(), self.root / 'dist', supplement)
+            package.build('1.2.3', host_platform(), self.root / 'dist', SUPPLEMENT)
             self.assertTrue(ran.exists())
             reported['version'] = '1.2.2-rust'
             with self.assertRaisesRegex(ValueError, "reports 'graphite-meter-client 1.2.2-rust'"):
-                package.build('1.2.3', host_platform(), self.root / 'dist', supplement)
+                package.build('1.2.3', host_platform(), self.root / 'dist', SUPPLEMENT)
 
 
 class RustReportTests(unittest.TestCase):
@@ -517,8 +511,6 @@ class RustPlatformRecordTests(CheckoutTests):
 
 class RustBuildTests(CheckoutTests):
     def test_git_sources_are_remapped_and_the_vendored_workspace_builds_without_its_checkout(self) -> None:
-        from scripts.ci.toolchains import rust_channel
-
         upstream, repo = self.root / 'upstream', self.root / 'repo'
         files = {
             'Cargo.toml': '[workspace]\nmembers = ["dependency"]\nresolver = "2"\n'
@@ -532,10 +524,8 @@ class RustBuildTests(CheckoutTests):
             write_changed(upstream / name, content.encode())
         (upstream / 'dependency/LICENSE').symlink_to('../LICENSE')
         for args in (('init', '-q'), ('add', '.'), ('commit', '-qm', 'fixture')):
-            subprocess.run(['git', '-C', str(upstream), '-c', 'user.name=fixture',
-                            '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false',
-                            *args], check=True)
-        revision = subprocess.check_output(['git', '-C', str(upstream), 'rev-parse', 'HEAD'], text=True).strip()
+            git(upstream, *args)
+        revision = git(upstream, 'rev-parse', 'HEAD')
         write_changed(repo / 'rust/rust-toolchain.toml', (ROOT / 'rust/rust-toolchain.toml').read_bytes())
         write_changed(repo / 'rust/Cargo.toml', (
             '[package]\nname = "app"\nversion = "1.0.0"\nedition = "2021"\n'
@@ -565,8 +555,6 @@ class RustBuildTests(CheckoutTests):
                            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
     def test_only_development_notices_leave_their_marker_in_the_executable(self) -> None:
-        from scripts.ci.toolchains import rust_channel
-
         # The real build script and release profile, and a compressor that keeps the notices unreadable.
         files = {
             'rust/Cargo.toml': '[workspace]\nmembers = ["app"]\nresolver = "2"\n'

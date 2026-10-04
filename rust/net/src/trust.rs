@@ -180,26 +180,16 @@ pub(crate) fn on_disk_roots(
         Some(file) => vec![file.into()],
         None => files.iter().map(PathBuf::from).collect(),
     };
-    for file in files {
-        match fs::read(&file) {
-            Ok(data) => {
-                roots.extend(certificates(&data));
-                break;
-            }
-            Err(error) => keep(error),
-        }
+    if let Some(data) = files.iter().find_map(|file| fs::read(file).map_err(&mut keep).ok()) {
+        roots.extend(certificates(&data));
     }
     let directories: Vec<PathBuf> = match directories {
         Some(list) => std::env::split_paths(list).collect(),
         None => default_directories.iter().map(PathBuf::from).collect(),
     };
     for directory in directories {
-        let entries = match fs::read_dir(&directory) {
-            Ok(entries) => entries,
-            Err(error) => {
-                keep(error);
-                continue;
-            }
+        let Ok(entries) = fs::read_dir(&directory).map_err(&mut keep) else {
+            continue;
         };
         for entry in entries.flatten() {
             let path = entry.path();

@@ -111,11 +111,8 @@ fn collect(root: &Path, directory: &Path, prefix: &str, files: &mut Vec<(String,
             .file_name()
             .into_string()
             .map_err(|_| "asset names must be UTF-8")?;
-        if name.starts_with('.')
-            || !name
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-        {
+        let safe_byte = |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.');
+        if name.starts_with('.') || !name.bytes().all(safe_byte) {
             return Err(format!("unsafe browser asset name: {name:?}").into());
         }
         let relative = format!("{prefix}{name}");

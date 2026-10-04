@@ -86,19 +86,15 @@ fn enforces_identity_origin_and_size_limits() {
         assert_eq!(invalid.validate(), Err(CatalogError::InvalidOrigin), "{url}");
     }
     let mut full = ServerCatalog::default();
-    for i in 1..32 {
-        full.servers
-            .push(entry(&format!("s{i}"), &format!("https://s{i}.example")));
-    }
+    full.servers
+        .extend((1..32).map(|i| entry(&format!("s{i}"), &format!("https://s{i}.example"))));
     full.validate().unwrap();
     full.servers.push(entry("overflow", "https://overflow.example"));
     assert_eq!(full.validate(), Err(CatalogError::InvalidServers));
     let mut additional = ServerCatalog::default();
     additional.servers[0].additional_origins = vec!["https://extra.example".into(); 32];
     additional.validate().unwrap(); // Additional entries may intentionally repeat; Go allows this.
-    additional.servers[0]
-        .additional_origins
-        .push("https://extra.example".into());
+    additional.servers[0].additional_origins = vec!["https://extra.example".into(); 33];
     assert_eq!(additional.validate(), Err(CatalogError::TooManyAdditionalOrigins));
     additional.servers[0].additional_origins = vec![".".into()];
     assert_eq!(additional.validate(), Err(CatalogError::InvalidOrigin));
