@@ -1,14 +1,7 @@
 //! Disposable TLS identities from the openssl CLI, so no key lives in source.
-use crate::Error;
+use crate::{Error, Scratch};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
-use std::{
-    path::{Path, PathBuf},
-    process::Command,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-};
+use std::{path::Path, process::Command, sync::Arc};
 
 const NEW_KEY: &str = "req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1";
 const CA: &str = "-subj /CN=graphite-meter-test-ca -addext basicConstraints=critical,CA:TRUE \
@@ -16,7 +9,7 @@ const CA: &str = "-subj /CN=graphite-meter-test-ca -addext basicConstraints=crit
 const LEAF: &str = "-subj /CN=localhost -addext subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1 \
                     -addext basicConstraints=critical,CA:FALSE -addext extendedKeyUsage=serverAuth";
 
-/// A CA and the leaf it signed for `localhost`, `127.0.0.1` and `::1`, as PEM.
+/// A CA and the leaf it signed, as PEM: for `localhost`, `127.0.0.1` and `::1` unless self-signed.
 pub struct Identity {
     pub ca: String,
     pub certificate: String,
@@ -26,11 +19,27 @@ pub struct Identity {
 impl Identity {
     pub fn generate() -> Result<Self, Error> {
         let scratch = Scratch::new()?;
-        let [ca, ca_key, leaf, key] = ["ca.pem", "ca.key", "leaf.pem", "leaf.key"].map(|name| scratch.0.join(name));
+        let [ca, ca_key, leaf, key] =
+            ["ca.pem", "ca.key", "leaf.pem", "leaf.key"].map(|name| scratch.path().join(name));
         openssl(CA, &[("-keyout", &ca_key), ("-out", &ca)])?;
         openssl(LEAF, &[("-CA", &ca), ("-CAkey", &ca_key), ("-keyout", &key), ("-out", &leaf)])?;
         let read = std::fs::read_to_string;
         Ok(Self { ca: read(ca)?, certificate: read(leaf)?, key: read(key)? })
+    }
+
+    /// A certificate for the DNS name `host` that is its own CA, as `openssl req -x509` makes one.
+    pub fn self_signed(host: &str) -> Result<Self, Error> {
+        let scratch = Scratch::new()?;
+        let [certificate, key] = ["self.pem", "self.key"].map(|name| scratch.path().join(name));
+        let subject =
+            format!("-subj /CN={host} -addext subjectAltName=DNS:{host} -addext basicConstraints=critical,CA:TRUE");
+        openssl(&subject, &[("-keyout", &key), ("-out", &certificate)])?;
+        let certificate = std::fs::read_to_string(certificate)?;
+        Ok(Self {
+            ca: certificate.clone(),
+            certificate,
+            key: std::fs::read_to_string(key)?,
+        })
     }
 
     /// A TLS 1.3 server config presenting the leaf.
@@ -92,23 +101,4 @@ fn openssl(subject: &str, files: &[(&str, &Path)]) -> Result<(), Error> {
         return Err(format!("openssl failed: {}", String::from_utf8_lossy(&output.stderr)).into());
     }
     Ok(())
-}
-
-/// A private directory, removed on drop.
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new() -> std::io::Result<Self> {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let name = format!("graphite-meter-identity-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
-        let path = std::env::temp_dir().join(name);
-        std::fs::create_dir_all(&path)?;
-        Ok(Self(path))
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
 }
