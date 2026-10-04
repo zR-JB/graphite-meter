@@ -18,7 +18,7 @@
   import LegalDialog from "./LegalDialog.svelte";
   import TopbarMore from "./TopbarMore.svelte";
   import { statusLabel, THEME } from "../presentation/vocabulary";
-  import { handoff, morph, still } from "../presentation/motion.svelte";
+  import { handoff, still } from "../presentation/motion.svelte";
   import { keyHint as tipKey, tooltip } from "../actions/tooltip";
   import { canFocus, activeModal } from "../actions/focus";
   import { MediaQuery } from "svelte/reactivity";
@@ -418,19 +418,7 @@
   }
 
   // Direct closes and browser navigation commit through the same focus owner.
-  // A change of workspace or of the open result morphs the layout; panels and dialogs keep their own motion.
-  const workspaceKey = (route: Route) =>
-    route.kind === "app"
-      ? route.workspace.kind === "history"
-        ? `history:${route.workspace.selectedId ?? ""}`
-        : "measurement"
-      : route.kind;
   function commitRoute(next: Route, fromHistory = false) {
-    if (workspaceKey(next) === workspaceKey(currentRoute))
-      applyRoute(next, fromHistory);
-    else morph(() => applyRoute(next, fromHistory));
-  }
-  function applyRoute(next: Route, fromHistory: boolean) {
     const previous = currentRoute;
     const previousHistory = historyOpen;
     const nextHistory =
