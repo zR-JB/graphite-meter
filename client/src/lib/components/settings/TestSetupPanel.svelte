@@ -18,6 +18,7 @@
   import ConnectionPicker from "./ConnectionPicker.svelte";
   import DurationStrip from "./DurationStrip.svelte";
   import TimeStepper from "./TimeStepper.svelte";
+  import CountStepper from "./CountStepper.svelte";
   import Roll from "../Roll.svelte";
   import {
     BLOCKED,
@@ -574,7 +575,7 @@
         (on) => streams({ mode: on ? "forced" : "auto" }),
         running || store.preparing,
       )}
-      <label>
+      <div class="units">
         <span
           {@attach term(() =>
             forced ? JARGON.forcedStreamCount : JARGON.autoStreamCount,
@@ -583,25 +584,19 @@
             ? "Streams per server and direction"
             : "HTTP/1.1 stream limit per direction"}</span
         >
-        <input
-          type="number"
-          min="1"
-          max="128"
-          step="1"
-          disabled={running || store.preparing}
+        <CountStepper
+          label={forced ? "streams" : "stream limit"}
           value={store.config.transferStreams.count}
-          onkeydowncapture={(event) =>
-            keepOnEscape(event, store.config.transferStreams.count)}
-          onchange={(event) =>
-            commitNumber(
-              event,
-              "streams",
-              store.config.transferStreams.count,
-              normalizeStreamCount,
-              (count) => streams({ count }),
-            )}
+          min={1}
+          max={128}
+          disabled={running || store.preparing}
+          onChange={(count) => {
+            const accepted = streams({ count: normalizeStreamCount(count) });
+            if (!accepted) announce(rejection);
+            return accepted;
+          }}
         />
-      </label>
+      </div>
       {@render toggle(
         "Datagram throughput (experimental)",
         JARGON.datagramThroughput,
