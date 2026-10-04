@@ -46,8 +46,6 @@ const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 // connection's 16 MiB, and a 100 ms path still carries 1.3 Gbit/s. hyper's defaults cap it at a few hundred Mbit/s.
 const H2_STREAM_WINDOW: u32 = 8 << 20;
 const H2_CONNECTION_WINDOW: u32 = 16 << 20;
-/// hyper's HTTP/1 read buffer grows to 408 KiB, and each body chunk keeps it, so every read allocates a new one.
-const H1_READ_BYTES: usize = 64 * 1024;
 /// The largest DATA frame the client accepts, as the server: larger frames cost less CPU per byte.
 const H2_FRAME_BYTES: u32 = 64 * 1024;
 /// An idle HTTP/2 connection's ping period, Go's TCP keep-alive, and its answer's deadline.
@@ -291,7 +289,7 @@ impl Connections {
             tokio::spawn(driver);
             Ok(Sender::H2(Http2 { id: self.ids.fetch_add(1, Ordering::Relaxed), sender }))
         } else {
-            let (sender, driver) = http1::Builder::new().max_buf_size(H1_READ_BYTES).handshake(io).await?;
+            let (sender, driver) = http1::handshake(io).await?;
             tokio::spawn(driver);
             let (absolute_form, proxy_authorization) = (connection.absolute_form, connection.proxy_authorization);
             Ok(Sender::H1(Http1 { sender, absolute_form, proxy_authorization }))
