@@ -24,6 +24,7 @@
     JARGON,
     phaseLabel,
     PING_CADENCE,
+    PING_CADENCE_SHORT,
     READINESS,
     READINESS_TIP,
     STAGE,
@@ -536,21 +537,21 @@
     <h3>Latency probes</h3>
     <div class="kv">
       {#each CADENCES as [key, label, tip] (key)}
-        <label>
+        <div class="cadence">
           <span {@attach tooltip(() => tip)}>{label}</span>
-          <select
-            value={store.config[key]}
-            onchange={(event) =>
-              controller.configureRun({
-                [key]: event.currentTarget.value as PingCadence,
-              })}
-            disabled={running || store.preparing}
-          >
-            {#each Object.entries(PING_CADENCE) as [value, name] (value)}
-              <option {value}>{name}</option>
+          <div class="segmented" role="group" aria-label={label}>
+            {#each Object.keys(PING_CADENCE) as PingCadence[] as value (value)}
+              <button
+                type="button"
+                aria-pressed={store.config[key] === value}
+                disabled={running || store.preparing}
+                {@attach tooltip(() => PING_CADENCE[value])}
+                onclick={() => controller.configureRun({ [key]: value })}
+                >{PING_CADENCE_SHORT[value]}</button
+              >
             {/each}
-          </select>
-        </label>
+          </div>
+        </div>
       {/each}
       {@render toggle(
         "Skip loaded latency if the Latency stage is off",
@@ -730,6 +731,13 @@
   .units {
     column-gap: var(--space-2);
   }
+  /* A cadence's segments stand under their label, so the two rows read alike. */
+  .cadence {
+    row-gap: 6px;
+  }
+  .cadence > span {
+    flex-basis: 100%;
+  }
   .units > span {
     margin-inline-end: auto;
   }
@@ -742,10 +750,6 @@
     .units > span {
       flex-basis: 100%;
     }
-  }
-  .kv select {
-    width: auto;
-    max-width: 11rem;
   }
   .reset {
     justify-self: start;

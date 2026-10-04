@@ -37,6 +37,8 @@ interface SummaryEvidence extends Pick<
 > {
   status: Partial<Record<TransportRole, SummaryStatus>>;
   added: AddedLatency | null;
+  /** The loaded stages in the run, settled or not, so their rows stand from Start; else the settled ones. */
+  transfers?: (typeof LOADED)[number][];
 }
 export interface SummaryRow {
   label: string;
@@ -189,7 +191,7 @@ const shownStatus = (stages: Record<TransportRole, string>) =>
 /** The shown server's evidence, else the run's own; stages without a result are left out. */
 export function summaryEvidence(
   stages: Record<TransportRole, string>,
-  run: Omit<SummaryEvidence, "status">,
+  run: Omit<SummaryEvidence, "status" | "transfers">,
   details: MultiServerResult | null | undefined,
   shown: string,
 ): SummaryEvidence {
@@ -197,6 +199,9 @@ export function summaryEvidence(
     (details && shown && serverEvidence(details, shown)) || {
       ...run,
       status: shownStatus(stages),
+      transfers: LOADED.filter(
+        (stage) => stages[stage] && stages[stage] !== "disabled",
+      ),
     }
   );
 }
@@ -240,21 +245,33 @@ function wire(
   };
 }
 
+/** Every loaded stage in the run gets its added-latency row from Start, "—" until measured. */
 function latencyCard(card: SummaryCard, evidence: SummaryEvidence) {
   const latency = evidence.latency;
   if (!latency) return card;
-  const { reportedMs, jitterMs } = latency;
-  const added = LOADED.flatMap((stage): SummaryRow[] => {
+  const { reportedMs, jitterMs, stabilityPct } = latency;
+  const transfers =
+    evidence.transfers ?? LOADED.filter((stage) => evidence.status[stage]);
+  const added = transfers.map((stage): SummaryRow => {
     const ms = evidence.added?.[stage];
-    return ms == null
-      ? []
-      : [{ label: "Added", value: `${fmtAddedMs(ms)} ms`, stage }];
+    return {
+      label: "Added",
+      value: ms == null ? MISSING : `${fmtAddedMs(ms)} ms`,
+      stage,
+    };
   });
   return {
     ...card,
     num: fmtMs(reportedMs),
     unit: "ms",
-    rows: [{ label: "Jitter", value: formatLatency(jitterMs) }, ...added],
+    rows: [
+      { label: "Jitter", value: formatLatency(jitterMs) },
+      {
+        label: "Stability",
+        value: stabilityPct == null ? MISSING : `${Math.round(stabilityPct)}%`,
+      },
+      ...added,
+    ],
   };
 }
 
@@ -355,7 +372,7 @@ export function summaryCards(
 // Facts read the same way on every card: what the link peaked at, how steady it was, what moved.
 const TRANSFER_FACTS = ["Peak", "Stability", "Transferred"];
 const FACTS: Record<TransportRole, string[]> = {
-  latency: [],
+  latency: ["Stability", "Added"],
   download: TRANSFER_FACTS,
   upload: TRANSFER_FACTS,
   bidirectional: ["Stability", "Down + up", "Transferred"],
@@ -363,17 +380,23 @@ const FACTS: Record<TransportRole, string[]> = {
 const FACT_TIPS: Record<string, string> = {
   Peak: JARGON.peak,
   Stability: JARGON.rateStability,
+  Added: JARGON.addedLatency,
   Transferred: JARGON.transferred,
 };
 
-/** A card's facts in every state, "—" until known, so a value arriving never moves the instrument. */
+/** A card's facts in every state, "—" until known, so a value arriving never moves the instrument; a label with
+ *  one row per stage gives each its row. */
 export const cardFacts = (card: SummaryCard): SummaryRow[] =>
-  FACTS[card.key].map((label) => ({
-    label,
-    value: MISSING,
-    ...card.rows.find((row) => row.label === label),
-    tip: FACT_TIPS[label],
-  }));
+  FACTS[card.key].flatMap((label) => {
+    const tip =
+      card.key === "latency" && label === "Stability"
+        ? JARGON.latencyStability
+        : FACT_TIPS[label];
+    const rows = card.rows.filter((row) => row.label === label);
+    return rows.length
+      ? rows.map((row) => ({ ...row, tip }))
+      : [{ label, value: MISSING, tip }];
+  });
 
 /** Time without data after a stall, which the card's line carries so it never adds a row. */
 export const cardNoData = (card: SummaryCard) =>
@@ -469,6 +492,7 @@ function serverEvidence(
     };
   return {
     status: shownStatus(server.stages),
+    transfers: LOADED.filter((stage) => server.stages[stage] !== "not-run"),
     download: server.download,
     upload: server.upload,
     bidirectional: server.bidirectional,

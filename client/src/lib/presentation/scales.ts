@@ -20,6 +20,8 @@ const CHART_RATE_STEPS = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8];
 // Quarter ticks of a 1-2-4 ladder stay round: 0.25, 0.5, 1, 2.5, 5, 10 ms.
 const LATENCY_STEPS = [1, 2, 4];
 const LATENCY_FLOOR_MS = 1;
+/* A track of sub-millisecond replies still shows their variation. */
+const TRACK_FLOOR_MS = 0.1;
 const EMPTY_LATENCY_MS = 20;
 
 /** The 100 Mbit/s reference used before automatic measurement has data. */
@@ -123,7 +125,10 @@ export function latencyScale(medians: readonly (number | null)[]): number {
 export function latencyTrackScale(medians: readonly (number | null)[]): number {
   const valid = validMs(medians);
   if (!valid.length) return EMPTY_LATENCY_MS;
-  return latencyCeiling(nearestRank(valid, 0.75) * 2.5);
+  return Math.max(
+    TRACK_FLOOR_MS,
+    ceilStep(nearestRank(valid, 0.75) * 2.5, LATENCY_STEPS),
+  );
 }
 
 /** The latency axis: the last 8 s while live, the whole series once finished. */

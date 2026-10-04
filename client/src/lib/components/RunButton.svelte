@@ -63,7 +63,7 @@
 
 <style>
   /* Graphite: the one primary action is ink, like every selected control; Stop steps back to a quiet plate. The
-     key is the dial panel's foot, edge to edge, its label and estimate centred. */
+     key stands under the dial's panel at the panel's width, its label and estimate centred. */
   .run-button {
     position: relative;
     isolation: isolate;
@@ -76,8 +76,7 @@
     height: 48px;
     padding-inline: 14px;
     border: 0;
-    border-radius: 0 0 calc(var(--r-surface) - var(--hairline))
-      calc(var(--r-surface) - var(--hairline));
+    border-radius: var(--r-chrome);
     background: none;
     color: color-mix(
       in oklab,
@@ -117,7 +116,8 @@
       box-shadow var(--dur-hover) var(--ease-out);
   }
   .skin.stop {
-    background: var(--surface-2);
+    background: var(--surface-1);
+    box-shadow: inset 0 0 0 var(--hairline) var(--border-strong);
     opacity: var(--stop);
   }
   .run-button[aria-disabled="true"] {

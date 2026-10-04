@@ -400,3 +400,10 @@ export const PING_CADENCE: Record<PingCadence, string> = {
   medium: "Medium (250 ms)",
   slow: "Slow (600 ms)",
 };
+/** The cadence's word on a segment; its interval is the segment's tip. */
+export const PING_CADENCE_SHORT: Record<PingCadence, string> = {
+  "reply-driven": "Reply",
+  fast: "Fast",
+  medium: "Medium",
+  slow: "Slow",
+};

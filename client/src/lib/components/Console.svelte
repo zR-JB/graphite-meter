@@ -588,7 +588,7 @@
         ><path
           d="M12 2.6 3.9 7.3v9.4l8.1 4.7 8.1-4.7V7.3Z"
           fill="none"
-          stroke="var(--brand)"
+          stroke="var(--phase-latency)"
           stroke-width="2"
           stroke-linejoin="round"
         /><path
@@ -600,13 +600,13 @@
       ><span class="brand-label">Graphite&nbsp;Meter</span></button
     >
     <button
-      class="btn key"
+      class="btn btn-icon key"
       aria-label="Settings"
       aria-expanded={settingsOpen}
       {@attach tooltip(() => `Settings — test and display${keyHint("S")}`)}
       onclick={(event) =>
         togglePanel("settings", event.currentTarget as HTMLElement)}
-      ><Icon name="settings" /><span class="key-label">Settings</span></button
+      ><Icon name="settings" /></button
     >
     <div class="connectivity"><ConnectivityIndicator /></div>
     <div class="topbar-spacer"></div>
@@ -631,7 +631,7 @@
       </button>{/if}
     {#if AccountControl}<AccountControl />{/if}
     {#if store.savingResults}<button
-        class="btn key direct-history"
+        class="btn btn-icon key direct-history"
         type="button"
         aria-label="History"
         aria-current={historyOpen ? "page" : undefined}
@@ -639,19 +639,19 @@
         {@attach tooltip(() => `History — saved results${keyHint("H")}`)}
         onclick={(event) =>
           toggleHistoryFromPointer(event.currentTarget as HTMLElement)}
-        ><Icon name="history" /><span class="key-label">History</span></button
+        ><Icon name="history" /></button
       >{/if}
     <button
-      class="btn key direct-endpoint"
+      class="btn btn-icon key direct-endpoint"
       aria-label="Details"
       aria-expanded={telemetryOpen}
       {@attach tooltip(() => `Details — server and connection${keyHint("D")}`)}
       onclick={(event) =>
         togglePanel("endpoint", event.currentTarget as HTMLElement)}
-      ><Icon name="info" /><span class="key-label">Details</span></button
+      ><Icon name="info" /></button
     >
     <button
-      class="btn btn-icon direct-theme"
+      class="btn btn-icon key direct-theme"
       aria-label={`Theme: ${THEME[store.theme].label}`}
       {@attach tooltip(
         () =>
@@ -822,31 +822,12 @@
     border-bottom: var(--hairline) solid var(--border);
     container: topbar / inline-size;
   }
-  /* A key names itself: its glyph and word on a plate with a foot, so it reads as a key, not a field. */
+  /* The bar's keys are square glyph plates with a hairline. */
   .topbar :global(.btn) {
-    --control-h: 30px;
     background-color: var(--surface-1);
-    box-shadow:
-      inset 0 0 0 var(--hairline) var(--btn-line),
-      inset 0 -1px 0 var(--border-strong);
-  }
-  .topbar :global(.btn:active) {
-    background-color: var(--surface-2);
-    box-shadow:
-      inset 0 0 0 var(--hairline) var(--btn-line),
-      inset 0 1px 0 var(--border-strong);
   }
   .key {
-    gap: 7px;
-    padding-inline: 10px;
     color: var(--text);
-    font: 500 var(--type-body) / 1 var(--font-sans);
-  }
-  .key :global(svg),
-  .direct-theme :global(svg) {
-    width: 14px;
-    height: 14px;
-    color: var(--text-muted);
   }
   /* The bar keeps the connection's dot; its reply trace belongs to the instrument. */
   .connectivity :global(.spark) {
@@ -1031,12 +1012,10 @@
       padding-inline: calc(var(--gutter) - (var(--hit) - var(--icon)) / 2);
     }
     .brand-label,
-    .live-copy,
-    .key-label {
+    .live-copy {
       display: none;
     }
     .key {
-      padding: 0;
       width: var(--hit);
     }
     .brand-btn {

@@ -95,7 +95,7 @@
       live,
       time,
       text: live
-        ? `${fmtDuration(store.phaseClock.current, 1)} / ${fmtDuration(store.phaseBudgetMs, 0)}`
+        ? `${(store.phaseClock.current / 1000).toFixed(1)} / ${fmtDuration(store.phaseBudgetMs, 0)}`
         : time
           ? fmtDuration(plannedMs(key), 0)
           : s.reason,
@@ -126,79 +126,80 @@
   ) as Record<StageKey, Handoff<ReturnType<typeof look>>>;
 </script>
 
-<div class="stage-track" role="group" aria-label="Test stages">
+<div
+  class="stage-track"
+  role="group"
+  aria-label="Test stages"
+  style:--chips={segments.length}
+>
   <span class="legend caps" aria-hidden="true">Test stages</span>
-  <div class="chips">
-    {#each segments as s (s.key)}
-      {@const view = looks[s.key]}
-      {@const look = view.shown}
-      <button
-        type="button"
-        class="chip chip--{s.state}"
-        class:on={s.selected}
-        data-tone={s.key}
-        role="switch"
-        aria-checked={s.selected}
-        aria-label="{s.label} stage{s.reason
-          ? ` (${s.reason})`
-          : s.state === 'complete'
-            ? ` (${STATUS.complete})`
-            : ''}"
-        use:tooltipAction={s.tip}
-        disabled={s.locked}
-        onclick={() => controller.toggleStage(s.key)}
-      >
-        <span class="chip-bar" aria-hidden="true">
-          <span
-            class="chip-fill"
-            data-tone={look.tone}
-            class:chip-fill--warmup={look.state === "warmup"}
-            class:chip-fill--failed={look.state === "failed"}
-            class:is-partial={look.state === "partial"}
-            class:is-stalled={look.state === "recovering"}
-            class:is-live={look.live}
-            style:--progress={look.progress}
-          ></span>
-        </span>
-        <span class="chip-row">
-          <span class="chip-ico" aria-hidden="true"><Icon name={s.icon} /></span
+  {#each segments as s (s.key)}
+    {@const view = looks[s.key]}
+    {@const look = view.shown}
+    <button
+      type="button"
+      class="chip chip--{s.state}"
+      class:on={s.selected}
+      data-tone={s.key}
+      role="switch"
+      aria-checked={s.selected}
+      aria-label="{s.label} stage{s.reason
+        ? ` (${s.reason})`
+        : s.state === 'complete'
+          ? ` (${STATUS.complete})`
+          : ''}"
+      use:tooltipAction={s.tip}
+      disabled={s.locked}
+      onclick={() => controller.toggleStage(s.key)}
+    >
+      <span class="chip-bar" aria-hidden="true">
+        <span
+          class="chip-fill"
+          data-tone={look.tone}
+          class:chip-fill--warmup={look.state === "warmup"}
+          class:chip-fill--failed={look.state === "failed"}
+          class:is-partial={look.state === "partial"}
+          class:is-stalled={look.state === "recovering"}
+          class:is-live={look.live}
+          style:--progress={look.progress}
+        ></span>
+      </span>
+      <span class="chip-row">
+        <span class="chip-ico" aria-hidden="true"><Icon name={s.icon} /></span>
+        <span class="chip-label">{s.label}</span>
+        {#if look.state === "complete"}
+          <span class="chip-check" style:opacity={view.opacity}
+            ><Icon name="check" /></span
           >
-          <span class="chip-label">{s.label}</span>
-          {#if look.state === "complete"}
-            <span class="chip-check" style:opacity={view.opacity}
-              ><Icon name="check" /></span
-            >
-          {:else if look.text}
-            <span
-              class="chip-tag"
-              class:time={look.time}
-              data-tone={look.tagTone}
-              style:opacity={view.opacity}
-              >{#if look.short}<span class="full">{look.text}</span><span
-                  class="short">{look.short}</span
-                >{:else}{look.text}{/if}</span
-            >
-          {/if}
-        </span>
-      </button>
-    {/each}
-  </div>
+        {:else if look.text}
+          <span
+            class="chip-tag"
+            class:time={look.time}
+            data-tone={look.tagTone}
+            style:opacity={view.opacity}
+            >{#if look.short}<span class="full">{look.text}</span><span
+                class="short">{look.short}</span
+              >{:else}{look.text}{/if}</span
+          >
+        {/if}
+      </span>
+    </button>
+  {/each}
 </div>
 
 <style>
-  /* The caption and the chips stand as one block, centred between the panels and the cards. */
+  /* As many chips to a row as fit, 140–172 px each, centred, with the caption on the first chip's edge. */
   .stage-track {
     display: grid;
-    gap: 6px;
-    justify-items: start;
-    max-width: 100%;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 6px var(--space-2);
+    width: min(
+      100%,
+      calc(var(--chips) * 172px + (var(--chips) - 1) * var(--space-2))
+    );
   }
-  .chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
-    justify-content: center;
-    max-width: 100%;
+  .legend {
+    grid-column: 1 / -1;
   }
 
   /* A chip: its stage's bar along the top, then its glyph, name and, at the end, its time, word or check. */
@@ -206,7 +207,7 @@
     display: grid;
     gap: 7px;
     align-content: center;
-    width: 172px;
+    min-width: 0;
     height: 46px;
     padding: 8px 10px;
     overflow: hidden;
@@ -362,12 +363,10 @@
   }
   /* Narrow rows: two chips to a line, the running one with the time into its stage alone. */
   @container viz (max-width: 430px) {
-    .chips {
-      display: grid;
+    .stage-track {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .chip {
-      width: auto;
       padding: 8px;
     }
     .chip-tag .full {

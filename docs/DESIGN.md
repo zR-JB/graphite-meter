@@ -50,7 +50,8 @@ size of a result), glass, grain, glow and 3D light (effects over data, and compo
 - Tracked capitals as labels. `.caps` is chrome: an axis name or a unit caption.
 - Glass, grain, glow, inner shadows, animated backgrounds, 3D, and a fade-and-slide-up on every block.
 - Animating a number's weight or width. A value may roll in once when it changes; live values update in place.
-- Judgement colours or grades, dotted underlines outside curated jargon, help cursors, focus rings after clicks.
+- Judgement colours or grades, dotted underlines outside curated jargon, a pointer cursor on anything that is
+  not pressed (an explained word takes the help cursor), focus rings after clicks.
 - A hue on a control. Colour on screen always names a stage or a state.
 - Black shadows, mixed radius systems, pill buttons, and labels right-aligned against right-aligned controls.
 
@@ -175,25 +176,26 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
 
 ## Components
 
-- **Console** (`GaugePanel`): the dial's panel, 300 px wide and up to 560 with the console, beside the latency
-  panel; under them the stage chips, centred; under those one card per stage across the console. A complete run
-  fits 1024 × 768 without scrolling. On a phone the dial keeps about two fifths of the screen with the run key at
-  its foot, the chips sit two to a row, the cards two to a row with the running card first, and the lanes come
-  last.
+- **Console** (`GaugePanel`): a face column, the dial's panel over the run key, 300 px wide and up to 560 with
+  the console, beside the latency panel with the stage chips under it; the face is as tall as the lanes and the
+  chips together, so the ring has more height than the lanes and the chips stand level with the run key; under
+  both one card per stage across the console. A complete run fits 1024 × 768 without scrolling. On a phone the
+  dial keeps about two fifths of the screen with the run key under it, the chips sit two to a row, the cards two
+  to a row with the running card first, and the lanes come last.
   The dial is a 270° ring with an arc a twelfth of its radius wide, short ticks and five labels; every result's
   arc lies on the ring, the longest underneath, so each shows from where the next shorter one ends, and ends in
   a bead in its hue; a bead moved inward off a close neighbour hangs on a stalk; the stage's mark and name sit
   over the number. The ring and its readout grow with the screen: on a landscape screen the
-  console takes the column's height, the top row takes the spare height first, to 460 px, and the cards' strips
-  the rest, to 120 px. Every "—" that waits for a value is `--text-soft`; a measured value is full ink. The note under the
+  console takes the column's height, and the spare height goes to the face column and the chips' row, so the
+  cards keep their size. Every "—" that waits for a value is `--text-soft`; a measured value is full ink. The note under the
   dial holds the phase's note or a failure, and while no data or no reply arrives, for how long; on a landscape
   screen it hangs just under the ring. Every rate on the page reads in the dial's unit, zero included. Nothing
   above the cards moves from Start to the result.
 - **Top bar and status strip**: 48 px on the canvas and 28 px in `--surface-1`, each with a hairline, their
   text on the console's gutter (`--gutter`, 24 px, 16 under 1024 px), so the brand, the panels' edges and the
-  status word share one line. The bar carries the brand, a Settings key, the connection dot, and at the right
-  History, Details and the theme; a key is a 30 px plate with a hairline and a darker foot, its glyph and word,
-  the word dropped on a phone. The strip
+  status word share one line. The bar carries the brand, whose hexagon is the latency hue as the favicon's
+  is, a Settings key, the connection dot, and at the right History, Details and the theme; a key is a 32 px
+  square glyph plate with a hairline. The strip
   reads the status word, the elapsed time, the bytes moved, the time left while a stage runs, the build, and the
   key hints at the right; each figure starts on a fixed edge and grows to the right.
 - **Server lens** (`ServerLens`, `ServerScope quiet`): with several servers, one quiet field in the dial's corner
@@ -203,19 +205,21 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   centred as a row. A chip is a switch: along its top a 3 px bar in the stage's hue that fills as the stage runs
   and stays full once measured (hatched for a partial stage, failed in `--err`, a sweep while warming up); under
   it the stage's glyph and name and, at the end, its time: the stage's length while it waits ("4 s"), the time
-  into it while it runs ("1.9 s / 4 s", counting in place; the time alone on a phone), a check once complete, or
-  its state as a small engraved tag (Skipped, Recovering, Partial, Failed). The running chip takes its hue as its
+  into it while it runs ("1.9 / 4 s", counting in place; the time alone on a phone), a check once complete, or
+  its state as a small engraved tag (Skipped, Recovering, Partial, Failed). As many chips stand in a row as fit,
+  140–172 px each. The running chip takes its hue as its
   edge, like the running card. One off stays operable, so it reads soft, and only a locked chip dims. The chip's
   hover names its result. Nothing on the row moves between states.
-- **Run key** (`RunButton`): the one solid control, ink, the dial panel's foot: edge to edge under a hairline, 48 px
-  (44 on a phone), its label and estimate centred; Stop steps back to a quiet plate with a square.
+- **Run key** (`RunButton`): the one solid control, ink, under the dial's panel at the panel's width, 48 px (44 on
+  a phone), its label and estimate centred; Stop steps back to a quiet plate with a square.
 - **Result card** (`ResultSummary`): one panel per stage, ruled 2 px in its hue along the top: the stage's mark
   and name with a status word at the line's end when not complete; the readout, one line tall (bidirectional: ↓
   and ↑ as a pair on one baseline); one quiet line (the wire rate with its overhead, the latency card's jitter, a
   failure's reason named by server when several ran, and after a stall No data from 0.5 s); the strip on a field
   tinted in the hue; then the facts as ruled rows, a quiet label and its figure on one line: Peak, Stability,
-  Transferred (bidirectional: Stability, Down + up, Transferred), "—" until known, so the card keeps its height
-  from Start to the result. The running card's edge takes its hue. A card with no data yet keeps its strip's room
+  Transferred (bidirectional: Stability, Down + up, Transferred; latency: Stability and the latency each loaded
+  stage added, with the stage's glyph in its hue), "—" until known, so the card keeps its height from Start to
+  the result. The running card's edge takes its hue. A card with no data yet keeps its strip's room
   but draws nothing in it; a saved result has no strip; a card that has not run, or is done while the run goes
   on, folds on a phone to its name and value. The card's hover lists every fact as pairs.
 - **Strip** (`StageGraph`): 68 px on the card's field, up to 120 with the console's height. A transfer's strip is the rate from zero to
@@ -252,8 +256,9 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   time as text (`90`, `2h`, `1 h 30 min`, `1:30:00`), which rounds to the time shown, and Escape drops the edit. The
   field takes the keyboard like a spin button; − and + serve pointers and stay put at a limit. The servers' stage
   limit bounds every time, and its notice names each stage over it.
-- **Select**: a native `select`, so a phone opens its own picker; where the browser allows it
-  (`appearance: base-select`) the field and its list take the console's own field, plate and rows.
+- **Select**: only for a list of servers (`ServerScope`): a native `select`, so a phone opens its own picker;
+  where the browser allows it (`appearance: base-select`) the field and its list take the console's own field,
+  plate and rows. A choice among a few words is a segmented control (units, presets, probe cadences).
 - **Switch**: a plate row with the link row's wash and ring; off is an empty track with the check box's edge
   (`--check-edge`), on an ink track with an inverse knob. **Check**: 18 px, ink when checked.
 - **History**: the list is page, not plate: a day's rows sit under its heading between two rules, with hairlines
@@ -278,21 +283,21 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   tap elsewhere closes a pointer's tip; a tap on the tip closes it without reaching what lies beneath. A tip the
   viewport would cut flips below its word, then aligns to the word's edge.
 
-| Primitive                | Height         | Radius             | Type              | States                                           |
-| ------------------------ | -------------- | ------------------ | ----------------- | ------------------------------------------------ |
-| `.panel`                 | content        | 4                  | —                 | flat, hairline                                   |
-| Result card              | content        | 4                  | title 13 px 600   | hue rule; running: hue edge; pending: subtle     |
-| `.tone-icon`             | 18             | 2                  | 10 px glyph       | tone wash and line                               |
-| `.kv` row                | 42             | plate 4            | row               | separators `--border-subtle`                     |
-| Choice row               | 42 (two lines) | 2, concentric      | row + `small`     | hover `--hover-wash`; chosen by its mark         |
-| `.btn`                   | 32 (bar 28)    | 3                  | control           | hairline; quiet: hover, press and open washes    |
-| Run key                  | 48             | panel foot         | 14 px 600         | ink fill, `--text-inverse`; running: quiet plate |
-| Stage chip               | 172 × 46       | 3                  | 12 px 700, figure | bar in hue; live: time and hue edge; done: check |
-| `.segmented`             | 32             | 3 track, 2 segment | control           | a plate thumb slides to the chosen segment       |
-| Switch                   | 22 × 38        | full               | row label         | off: check edge; on: ink track                   |
-| Check, radio             | 18             | 2, full            | —                 | ink fill or ring                                 |
-| `.inspect-card`, tooltip | content        | 3                  | 12 px / 1.4       | `--surface-2`, `--elev-tooltip`                  |
-| Sheet, dialog            | content        | 4                  | panel title       | `--sheet`; flyout `--elev-float`; docked flat    |
+| Primitive                | Height         | Radius             | Type              | States                                              |
+| ------------------------ | -------------- | ------------------ | ----------------- | --------------------------------------------------- |
+| `.panel`                 | content        | 4                  | —                 | flat, hairline                                      |
+| Result card              | content        | 4                  | title 13 px 600   | hue rule; running: hue edge; pending: subtle        |
+| `.tone-icon`             | 18             | 2                  | 10 px glyph       | tone wash and line                                  |
+| `.kv` row                | 42             | plate 4            | row               | separators `--border-subtle`                        |
+| Choice row               | 42 (two lines) | 2, concentric      | row + `small`     | hover `--hover-wash`; chosen by its mark            |
+| `.btn`                   | 32 (bar 28)    | 3                  | control           | hairline; quiet: hover, press and open washes       |
+| Run key                  | 48             | panel foot         | 14 px 600         | ink fill, `--text-inverse`; running: quiet plate    |
+| Stage chip               | 172 × 46       | 3                  | 12 px 700, figure | bar in hue; live: time and hue edge; done: check    |
+| `.segmented`             | 32             | 3 track, 2 segment | control           | a plate thumb anchored to the chosen segment slides |
+| Switch                   | 22 × 38        | full               | row label         | off: check edge; on: ink track                      |
+| Check, radio             | 18             | 2, full            | —                 | ink fill or ring                                    |
+| `.inspect-card`, tooltip | content        | 3                  | 12 px / 1.4       | `--surface-2`, `--elev-tooltip`                     |
+| Sheet, dialog            | content        | 4                  | panel title       | `--sheet`; flyout `--elev-float`; docked flat       |
 
 ## Do and don't
 

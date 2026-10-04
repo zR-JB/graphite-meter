@@ -1169,8 +1169,6 @@
   }
 
   .segmented {
-    --n: 2;
-    --i: 0;
     position: relative;
     isolation: isolate;
     display: flex;
@@ -1179,42 +1177,50 @@
     padding: 2px;
     border-radius: var(--r-chrome);
     background: var(--track);
+    anchor-scope: --segment;
   }
-  /* The thumb: one plate the width of a segment, slid to the chosen one; the words sit on top of it. */
-  .segmented::before {
+  /* The thumb: one plate on the chosen segment, anchored to it, so it slides between segments of any width;
+     the words sit on top of it. */
+  .segmented::after {
     content: "";
     position: absolute;
     z-index: -1;
-    inset: 2px auto 2px 2px;
-    width: calc((100% - 4px - (var(--n) - 1) * 2px) / var(--n));
+    position-anchor: --segment;
+    inset: anchor(top) anchor(right) anchor(bottom) anchor(left);
     border-radius: calc(var(--r-chrome) - 1px);
     background: var(--surface-1);
     box-shadow:
       inset 0 0 0 var(--hairline) var(--border-strong),
       0 1px 2px light-dark(oklch(0.25 0.02 255 / 0.08), oklch(0 0 0 / 0.3));
-    translate: calc(var(--i) * (100% + 2px)) 0;
-    transition: translate var(--dur-graph) var(--ease-out);
+    transition:
+      left var(--dur-graph) var(--ease-out),
+      right var(--dur-graph) var(--ease-out);
   }
-  .segmented:has(> :nth-child(3):last-child) {
-    --n: 3;
+  .segmented
+    > button:is(
+      [aria-pressed="true"],
+      [aria-checked="true"],
+      [aria-selected="true"],
+      [aria-current]:not([aria-current="false"]),
+      :has(> input:checked)
+    ) {
+    anchor-name: --segment;
   }
-  .segmented:has(> :nth-child(4):last-child) {
-    --n: 4;
-  }
-  .segmented:has(
-    > :nth-child(2):is([aria-pressed="true"], [aria-checked="true"])
-  ) {
-    --i: 1;
-  }
-  .segmented:has(
-    > :nth-child(3):is([aria-pressed="true"], [aria-checked="true"])
-  ) {
-    --i: 2;
-  }
-  .segmented:has(
-    > :nth-child(4):is([aria-pressed="true"], [aria-checked="true"])
-  ) {
-    --i: 3;
+  /* Without anchors the chosen segment keeps a wash instead of a thumb. */
+  @supports not (anchor-name: --segment) {
+    .segmented::after {
+      display: none;
+    }
+    .segmented
+      > button:is(
+        [aria-pressed="true"],
+        [aria-checked="true"],
+        [aria-selected="true"],
+        [aria-current]:not([aria-current="false"]),
+        :has(> input:checked)
+      ) {
+      background-color: var(--selected-wash);
+    }
   }
   /* After the base rule, which would otherwise keep it at control height. */
   @media (pointer: coarse) {
@@ -1222,9 +1228,9 @@
       min-height: var(--hit);
     }
   }
-  /* Segments share the width equally, so the thumb's slide is one segment's width. */
+  /* Segments share spare width but never shrink below their word. */
   .segmented > button {
-    flex: 1 1 0;
+    flex: 1 1 auto;
     min-width: 0;
     padding-inline: var(--space-2);
     overflow: hidden;
@@ -1247,7 +1253,9 @@
     outline-offset: -2px;
   }
   .segmented > button {
-    transition: var(--transition-control);
+    transition:
+      var(--transition-control),
+      color var(--dur-graph) var(--ease-out);
   }
   /* The hover wash is an image layer, so it adds to a selected fill instead of replacing it. */
   @media (hover: hover) {
@@ -1561,6 +1569,10 @@
   }
 }
 
+/* An explained word is read, not pressed: the help cursor, whatever its row's cursor is. */
+:root [data-tip]:not(button, a, label, [role="switch"]) {
+  cursor: help;
+}
 /* Curated jargon carries a mark; every explained word brightens. Unlayered to outrank component tones. */
 :root [data-tip="term"] {
   text-decoration: underline dotted
