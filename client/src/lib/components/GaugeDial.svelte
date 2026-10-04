@@ -41,9 +41,7 @@
   const target = $derived(sweepTarget(input));
   const visible = $derived(input.showValue && target !== null);
   // A head is flat in its hue and a little wider than its arc, so it and its beat read at any size.
-  const headRadius = $derived(
-    layout.arcWidth / 2 + Math.max(2, layout.arcWidth * 0.1),
-  );
+  const headRadius = $derived(layout.arcWidth / 2 + 2);
   // The beat swells the head by a fifth; its box leaves that room.
   const headExtent = $derived(Math.ceil(headRadius * 1.2) + 1);
   // Readout frames change the handoff object while the result arcs stay put.
@@ -128,8 +126,8 @@
   });
 </script>
 
-<!-- A result is a mark on the rim in its stage's hue; one moved outward off a close neighbour sits a step
-     further out, and a partial one is dashed. -->
+<!-- A head is a bead in its stage's hue at its arc's end, cut from its neighbours by a ring of the well; one moved
+     inward off a close neighbour hangs on a stalk of its hue, and a partial one is a ring. -->
 {#snippet head(
   fraction: number,
   radius: number,
@@ -137,18 +135,24 @@
   hollow = false,
   lane = 0,
 )}
-  {@const from = radius + layout.arcWidth / 2 + 3 + lane * 2}
   <g transform={`translate(${layout.center.x} ${layout.center.y})`}>
     <g
       class="head result"
       style:transform={`rotate(${angleForFraction(fraction, layout.arcStart, layout.arcSweep)}rad)`}
     >
-      <path
-        d={`M ${from} 0 H ${from + 8}`}
-        stroke={color}
-        stroke-width="2.5"
-        stroke-linecap="round"
-        stroke-dasharray={hollow ? "1 3" : undefined}
+      {#if lane !== 0}
+        <path
+          d={`M ${layout.radius} 0 H ${radius}`}
+          stroke={color}
+          stroke-width="2"
+        />
+      {/if}
+      <circle
+        cx={radius}
+        r={hollow ? headRadius - 1 : headRadius}
+        fill={hollow ? "none" : color}
+        stroke={hollow ? color : "var(--surface-inset)"}
+        stroke-width={hollow ? 2 : 1.5}
       />
     </g>
   </g>
@@ -187,7 +191,7 @@
         viewBox={`0 0 ${layout.width} ${layout.height}`}
       >
         <g fill="none" stroke-linecap="round">
-          {#each results.filter((result) => result.primary) as result (result.phase)}
+          {#each results.toSorted((a, b) => Number(a.primary) - Number(b.primary)) as result (result.phase)}
             <mask
               id={`${shadeId}-${result.phase}`}
               maskUnits="userSpaceOnUse"
@@ -239,8 +243,8 @@
         class="head-target"
         aria-hidden="true"
         tabindex="-1"
-        style:left={`${layout.center.x + Math.cos(angle) * (result.radius + layout.arcWidth / 2 + 7)}px`}
-        style:top={`${layout.center.y + Math.sin(angle) * (result.radius + layout.arcWidth / 2 + 7)}px`}
+        style:left={`${layout.center.x + Math.cos(angle) * result.radius}px`}
+        style:top={`${layout.center.y + Math.sin(angle) * result.radius}px`}
         {@attach tooltip(() => result.description)}
       ></span>
     {/each}

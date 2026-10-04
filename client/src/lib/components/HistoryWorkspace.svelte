@@ -1111,7 +1111,7 @@
     grid-area: note;
     justify-self: end;
     color: color-mix(in oklab, var(--tone) 65%, var(--text));
-    font: var(--role-figure-sm);
+    font: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
@@ -1138,7 +1138,7 @@
   .value {
     grid-area: value;
     justify-self: end;
-    font: var(--role-figure);
+    font: 500 var(--type-md) / 1.35 var(--font-sans);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }

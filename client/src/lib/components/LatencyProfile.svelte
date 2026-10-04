@@ -9,7 +9,6 @@
   import LatencyProfileView from "./LatencyProfileView.svelte";
   import { handoff } from "../presentation/motion.svelte";
   import { announceChanges } from "../presentation/announcer.svelte";
-  import { replies } from "../presentation/stageGraph";
 
   const servers = $derived(
     store.serverDetails?.selection ??
@@ -52,17 +51,6 @@
     (profile) => profile.run,
   );
   const saved = $derived(store.result && store.latencyServer);
-  // The idle replies span the planned stage while it may still run, then the time they took, like a stage graph.
-  const trace = $derived.by(() => {
-    const points = replies(store.latency, "latency");
-    const start = points[0]?.t ?? 0;
-    const measured = (points.at(-1)?.t ?? start) - start;
-    const settled = !["pending", "active", "recovering"].includes(
-      store.stagePresentation.latency.status,
-    );
-    const plan = (store.run?.config ?? store.config).duration.latencyMs;
-    return { points, start, span: Math.max(measured, settled ? 0 : plan) || 1 };
-  });
   const stage = $derived(store.stagePresentation.latency);
   const failure = $derived(
     stage.status !== "failed"
@@ -90,7 +78,6 @@
     variant="bare"
     added={saved?.addedLatency}
     stability={saved?.latency?.stabilityPct ?? null}
-    {trace}
     {failure}
     source={servers.length > 1
       ? servers.find((server) => server.id === store.latencyFocus)?.name

@@ -12,7 +12,7 @@ export const GAUGE_TICK_FRACTIONS = [
   1,
 ] as const;
 export const GAUGE_LABEL_FRACTIONS = [0, 2 / 8, 4 / 8, 6 / 8, 1] as const;
-const LABEL_CLEARANCE = 9;
+const LABEL_CLEARANCE = 8;
 const AXIS_EPSILON = 1e-6;
 // The share of the labelled ring's height the centring shifts it down, and the room between tick ends and a note.
 const DROP = (1 - Math.SQRT1_2) / 2;
@@ -66,10 +66,9 @@ export function gaugeLayout(
         : Infinity,
     ),
   );
-  const arcWidth = Math.max(6, radius * 0.085);
-  // Result marks sit between the arc and the ticks, so the ticks start clear of them.
-  const tickInner = radius + arcWidth * 0.5 + 9;
-  const tickOuter = tickInner + Math.max(5, radius * 0.05);
+  const arcWidth = Math.max(6, radius * 0.13);
+  const tickInner = radius + arcWidth * 0.5 + 3;
+  const tickOuter = tickInner + radius * 0.08;
   // Center the visible 270-degree sweep, including its label clearance.
   const center = {
     x: safeWidth / 2,

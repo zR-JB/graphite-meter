@@ -8,6 +8,7 @@
   import { store } from "../state/store.svelte";
   import { fmtBytes, fmtMs, formatRate, resultRate } from "../format";
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
+  import { replies } from "../presentation/stageGraph";
   import type { LiveReadout } from "../presentation/liveReadout.svelte";
   import { announce } from "../presentation/announcer.svelte";
   import { handoff } from "../presentation/motion.svelte";
@@ -84,6 +85,21 @@
       retainedGraphs,
     ));
   });
+  // The idle replies span the planned stage while it may still run, then the time they took: the latency card's
+  // strip.
+  const latencyTrace = $derived.by<CardGraph>(() => {
+    const points = replies(store.latency, "latency");
+    const start = points[0]?.t ?? 0;
+    const measured = (points.at(-1)?.t ?? start) - start;
+    const settled = !running("latency") && status("latency") !== "pending";
+    const plan = (store.run?.config ?? store.config).duration.latencyMs;
+    return {
+      lanes: [],
+      latency: points,
+      start,
+      span: Math.max(measured, settled ? 0 : plan) || 1,
+    };
+  });
   // The running card's leading edge moves on the frame clock; the other graphs stay put.
   const head = $derived.by(() => {
     const key = live.phase;
@@ -130,7 +146,10 @@
     Record<Stage, { source: SummaryCard; view: SummaryCard }>
   > = {};
   function withGraph(card: SummaryCard): SummaryCard {
-    const graph = graphs[card.key as Transfer] ?? null;
+    const graph =
+      card.key === "latency"
+        ? latencyTrace
+        : (graphs[card.key as Transfer] ?? null);
     const previous = retainedCards[card.key];
     if (previous?.source === card && previous.view.graph === graph)
       return previous.view;

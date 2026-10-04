@@ -71,18 +71,19 @@
     align-items: center;
     justify-content: center;
     gap: var(--space-2);
-    min-width: 168px;
-    height: 36px;
+    width: 100%;
+    max-width: 320px;
+    min-height: 46px;
     padding-inline: var(--space-4);
     border: 0;
-    border-radius: var(--r-chrome);
+    border-radius: var(--r-surface);
     background: none;
     color: color-mix(
       in oklab,
       var(--text-inverse) calc(100% * (1 - var(--stop))),
       var(--text)
     );
-    font: var(--w-strong) var(--type-body) / 1 var(--font-sans);
+    font: var(--w-strong) var(--type-md) / 1 var(--font-sans);
     transition: transform var(--dur-hover) var(--ease-out);
   }
   /* Hover strengthens the skin itself; a filter would re-rasterize the label. */
@@ -104,12 +105,14 @@
       height: var(--hit);
     }
   }
+  /* The one solid control, with a lit top edge like every plate. */
   .skin {
     position: absolute;
     inset: 0;
     z-index: -1;
     border-radius: inherit;
     background: var(--brand);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.22);
     opacity: calc(1 - var(--stop));
     transition:
       background-color var(--dur-hover) var(--ease-out),
@@ -135,11 +138,15 @@
     border-radius: 1px;
     background: currentColor;
   }
-  /* The estimate reads in the figure voice, on the label's baseline (app.css, --role-label). */
+  /* The estimate is a small chip at the label's side, in the button's own ink. */
   .duration {
-    margin-top: calc(var(--type-body) - var(--type-sm));
-    color: color-mix(in oklab, currentColor 66%, transparent);
-    font: 500 var(--type-sm) / 1 var(--font-mono);
+    padding: 3px 6px;
+    border: var(--hairline) solid
+      color-mix(in oklab, currentColor 22%, transparent);
+    border-radius: var(--r-well);
+    background: color-mix(in oklab, currentColor 9%, transparent);
+    color: color-mix(in oklab, currentColor 80%, transparent);
+    font: 500 var(--type-2xs) / 1 var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
 </style>

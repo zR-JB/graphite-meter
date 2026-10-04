@@ -1,5 +1,6 @@
 <script lang="ts">
   import { catalogSelection } from "../presentation/serverAppearance";
+  import Icon from "./Icon.svelte";
   import { onDestroy, untrack } from "svelte";
   import { store } from "../state/store.svelte";
   import GaugeDial, { type GaugeDialState } from "./GaugeDial.svelte";
@@ -271,13 +272,11 @@
   bind:clientWidth={panelWidth}
 >
   <div class="instrument">
-    <div class="dial panel" class:hung>
+    <div class="dial well" class:hung>
       {#if indicatedServers.length > 1}
-        <header class="panel-head dial-head">
-          <div class="server-indicator">
-            <ServerLens servers={indicatedServers} {participants} />
-          </div>
-        </header>
+        <div class="server-indicator">
+          <ServerLens servers={indicatedServers} {participants} />
+        </div>
       {/if}
       <div
         bind:clientWidth={gaugeWidth}
@@ -316,7 +315,9 @@
                 aria-hidden="true"
               >
                 <span class="terminal-direction" data-tone={terminal.direction}>
-                  <span class="swatch"></span>
+                  <span class="tone-icon" aria-hidden="true"
+                    ><Icon name={STAGE[terminal.direction].icon} /></span
+                  >
                   {STAGE[terminal.direction].label}
                 </span>
                 <span class="terminal-number">{terminal.value}</span>
@@ -364,12 +365,13 @@
     </div>
 
     {#if store.latencyEnabled}
-      <div class="latency-slot"><LatencyProfile /></div>
+      <div class="latency-panel well"><LatencyProfile /></div>
     {/if}
 
-    <div class="run-bar">
-      <StageTrack />
-      <RunButton />
+    <!-- The one action, and under it the stages it runs, centred on the instrument. -->
+    <div class="instrument-controls">
+      <div class="run-slot"><RunButton /></div>
+      <div class="stage-head"><StageTrack /></div>
     </div>
 
     <div class="results"><ResultCards live={liveReadout} /></div>
@@ -381,55 +383,56 @@
     container: viz / inline-size;
     height: 100%;
   }
-  /* The dial and latency share the top; the run bar and the transfer cards keep their height, the top takes the rest. */
+  /* The dial's well and the latency well share the top as equal halves; the controls and the cards keep their
+     height under them. The dial yields to the rest of the instrument before the page would scroll. */
   .instrument {
+    --gauge-well-height: clamp(220px, min(36svh, 100svh - 460px), 380px);
     display: grid;
-    height: 100%;
-    gap: var(--space-4);
+    gap: var(--space-3);
     grid-template:
-      "dial" minmax(260px, 40svh)
-      "run" auto
+      "dial" var(--gauge-well-height)
+      "controls" auto
       "results" auto
       "latency" auto
+      / minmax(0, 1fr);
+  }
+  .instrument:not(:has(.latency-panel)) {
+    grid-template:
+      "dial" var(--gauge-well-height)
+      "controls" auto
+      "results" auto
       / minmax(0, 1fr);
   }
   @container viz (min-width: 760px) {
     .instrument {
       grid-template:
-        "dial latency" minmax(min-content, 1fr)
-        "run run" auto
+        "dial latency" minmax(var(--gauge-well-height), auto)
+        "controls controls" auto
         "results results" auto
-        / max(240px, (100% - 2 * var(--space-4)) / 3) minmax(0, 1fr);
+        / minmax(240px, 1fr) minmax(240px, 1fr);
     }
-    .instrument:not(:has(.latency-slot)) {
+    .instrument:not(:has(.latency-panel)) {
       grid-template:
-        "dial" minmax(220px, 1fr)
-        "run" auto
-        "results" auto
-        / minmax(0, 1fr);
+        "dial dial" var(--gauge-well-height)
+        "controls controls" auto
+        "results results" auto
+        / minmax(240px, 1fr) minmax(240px, 1fr);
     }
   }
-  /* Portrait, the dial is bound by its width, so it and the latency card share the width evenly. */
-  @media (orientation: portrait) {
-    @container viz (min-width: 760px) {
-      .instrument:has(.latency-slot) {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
+  @media (min-width: 1800px) and (min-height: 1000px) {
+    .instrument {
+      --gauge-well-height: clamp(280px, min(42svh, 100svh - 460px), 520px);
     }
   }
-  /* A phone keeps the dial compact, so the running stage's card shares the first screen with it; while the
-     latency stage runs, its card is the one under the run button. */
+  /* A phone keeps a readable dial while the page carries the rest. */
   @container viz (max-width: 520px) {
     .instrument {
-      grid-template-rows: clamp(240px, 34svh, 300px) repeat(3, auto);
-      row-gap: var(--space-2);
-    }
-    .gauge-panel[data-stage="latency"] .instrument {
-      grid-template-areas: "dial" "run" "latency" "results";
+      --gauge-well-height: clamp(260px, 32svh, 320px);
+      gap: var(--space-2);
     }
   }
-  /* The dial's frame: its head, the face, and the note under the ring; the face ends on the frame's edge, so a
-     hung note measures from it. */
+  /* The dial's housing: the face, and the note under the ring; the face ends on the well's edge, so a hung note
+     measures from it. */
   .dial {
     grid-area: dial;
     position: relative;
@@ -437,50 +440,59 @@
     flex-direction: column;
     min-width: 0;
     min-height: 0;
+    overflow: hidden;
   }
-  .dial-head {
-    flex: none;
-    justify-content: end;
-    padding: var(--space-2) var(--space-2) 0;
-  }
-  /* Framed like the dial and as tall; its content centres in the frame. A tight screen scrolls rather than
-     overlapping the run bar. */
-  .latency-slot {
+  /* The lanes centre in the latency housing beside the dial. */
+  .latency-panel {
     grid-area: latency;
-    display: grid;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
     min-width: 0;
+    min-height: 0;
+    padding: var(--space-2) var(--space-3);
   }
   .results {
     grid-area: results;
     min-width: 0;
   }
-  /* The key row: one key per stage, and the one action that runs them, as tall as the keys, at the row's end. */
-  .run-bar {
-    grid-area: run;
+  .instrument-controls {
+    --stage-controls-width: 540px;
+    grid-area: controls;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: stretch;
+    justify-self: center;
     gap: var(--space-3);
-    min-width: 0;
+    width: 100%;
+    padding-block: var(--space-1);
   }
-  .run-bar > :global(.run-button) {
-    height: auto;
-    min-height: 54px;
-    min-width: 200px;
+  .instrument-controls:has(:global(.quad)) {
+    --stage-controls-width: 700px;
   }
-  /* A phone stacks them: the keys in two columns, then the run button across them. */
-  @container viz (max-width: 520px) {
-    .run-bar {
-      grid-template-columns: minmax(0, 1fr);
-      gap: var(--space-2);
+  .run-slot {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 46px;
+  }
+  .stage-head {
+    width: 100%;
+    max-width: var(--stage-controls-width);
+    justify-self: center;
+  }
+  @media (max-height: 800px) {
+    .instrument {
+      --gauge-well-height: clamp(200px, min(34svh, 100svh - 420px), 320px);
     }
-    .run-bar > :global(.run-button) {
-      min-height: var(--hit);
+    .instrument-controls {
+      gap: var(--space-2);
+      padding-block: 0;
     }
   }
   .server-indicator {
+    position: absolute;
+    z-index: 1;
+    inset: var(--space-2) auto auto var(--space-2);
     display: flex;
-    flex: none;
     align-items: center;
     gap: 6px;
     color: var(--text-soft);
@@ -509,9 +521,10 @@
     position: absolute;
     translate: var(--x) var(--y);
     color: var(--text-soft);
-    font: 500 var(--type-2xs) / 1 var(--font-mono);
+    font: var(--w-strong) var(--type-2xs) / 1 var(--font-mono);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+    opacity: 0.75;
   }
   .gauge-tick[data-anchor-x="end"] {
     --x: -100%;
@@ -533,21 +546,21 @@
     padding-inline: 9%;
     padding-top: calc(2 * var(--gauge-center-offset));
   }
-  /* The readout: mono, so a live value never shifts the layout, in the instrument's figure weight. */
+  /* Tabular figures keep a live value from shifting layout; the readout carries the one bold weight on the page. */
   .gauge-value,
   .terminal-number {
     max-width: 100%;
     color: var(--text);
-    font-family: var(--font-mono);
-    font-weight: 500;
+    font-family: var(--font-display);
+    font-weight: var(--w-strong);
     font-variant-numeric: lining-nums tabular-nums;
     line-height: 1;
-    letter-spacing: var(--track-figure);
+    letter-spacing: var(--track-tight);
     white-space: nowrap;
   }
   .gauge-value {
     min-width: 5ch;
-    font-size: clamp(22px, 12.5cqmin, 56px);
+    font-size: clamp(22px, 14cqmin, 64px);
     text-align: center;
   }
   /* "—" waits quietly where the value arrives, like the cards'. */
@@ -572,18 +585,22 @@
     gap: var(--space-1);
     max-width: 100%;
   }
-  /* The stage the result names, under its unit, out of the readout's flow so the result lands where the live
+  /* The stage the result names, over the number, out of the readout's flow so the result lands where the live
      value stood. */
   .terminal-direction {
     position: absolute;
-    top: calc(100% + var(--space-2));
+    bottom: calc(100% + clamp(8px, 3.5cqmin, 14px));
     display: flex;
     align-items: center;
     gap: 6px;
     color: var(--text-muted);
-    font: var(--w-normal) clamp(var(--type-xs), 3cqmin, var(--type-sm)) / 1
+    font: var(--w-strong) clamp(var(--type-xs), 3.4cqmin, var(--type-body)) / 1
       var(--font-sans);
     white-space: nowrap;
+  }
+  .terminal-direction .tone-icon {
+    width: 20px;
+    height: 20px;
   }
   @container (max-height: 180px) {
     .terminal-direction {
@@ -591,25 +608,25 @@
     }
   }
   .terminal-number {
-    font-size: clamp(26px, 12.5cqmin, 56px);
+    font-size: clamp(28px, 14cqmin, 64px);
   }
   /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. One size and line height for both, so the result
      lands where the live value stood. */
   .terminal-unit,
   .gauge-unit {
-    color: var(--text-muted);
-    font: 500 clamp(var(--type-xs), 3.4cqmin, var(--type-md)) / var(--type-md)
-      var(--font-mono);
+    color: var(--text-soft);
+    font: var(--w-strong) clamp(var(--type-xs), 3.6cqmin, var(--type-md)) /
+      var(--type-md) var(--font-mono);
   }
   /* Empty, it keeps its line, so "—" sits where the value arrives. */
   .gauge-unit {
     min-height: 1lh;
     margin-top: var(--space-1);
   }
-  /* Under the stage's name, out of the readout's flow, so the value stays where it landed. */
+  /* Under the readout, out of its flow, so the value stays where it landed. */
   .terminal-partial {
     position: absolute;
-    top: calc(100% + var(--space-2) + var(--type-sm) + var(--space-1));
+    top: calc(100% + var(--space-1));
     color: var(--tone-ink);
     font-size: var(--type-xs);
   }

@@ -173,7 +173,7 @@
     width: calc(var(--dock-w) - var(--space-3));
     height: auto;
     margin: 0 var(--space-3) var(--space-3) 0;
-    background: var(--panel);
+    background: var(--sheet-solid);
     box-shadow: none;
     transition:
       overlay var(--dur-sheet) allow-discrete,

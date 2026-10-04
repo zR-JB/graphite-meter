@@ -929,9 +929,9 @@
     grid-area: stage;
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
+    gap: var(--space-3);
     min-width: 0;
-    padding: var(--space-4) var(--space-5) var(--space-5);
+    padding: var(--space-3) var(--space-4) var(--space-4);
     overflow-y: auto;
     /* Keep stage scrolling from chaining out to the document. */
     overscroll-behavior: contain;

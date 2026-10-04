@@ -49,9 +49,9 @@
   --space-4: 16px;
   --space-5: 24px;
 
-  --r-well: 2px;
-  --r-chrome: 3px;
-  --r-surface: 4px;
+  --r-well: 4px;
+  --r-chrome: 6px;
+  --r-surface: 8px;
   --r-full: 999px;
   --hairline: 1px;
 
