@@ -71,6 +71,9 @@ use tokio::{
 };
 
 const MAX_HEADER_BYTES: usize = 32 * 1024;
+/// hyper's HTTP/1 read buffer, which also bounds the head it buffers before parsing: 128 KiB reads cost less CPU
+/// per uploaded byte than Go's 64 KiB, and `validate_request` still refuses a head over `MAX_HEADER_BYTES`.
+const H1_READ_BYTES: usize = 128 * 1024;
 const DEFAULT_DOWNLOAD_BYTES: u64 = 25 * 1024 * 1024;
 /// As Go's `http.Server`, a failed accept is logged and retried after a delay that doubles from the first bound to
 /// the last.
@@ -385,7 +388,7 @@ impl HttpServer {
         let serving = builder
             .timer(TokioTimer::new())
             .header_read_timeout(None)
-            .max_buf_size(MAX_HEADER_BYTES)
+            .max_buf_size(H1_READ_BYTES)
             .serve_connection(TokioIo::new(io), service)
             .with_upgrades();
         tokio::pin!(serving);

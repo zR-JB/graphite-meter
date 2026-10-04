@@ -48,6 +48,9 @@ const H2_STREAM_WINDOW: u32 = 8 << 20;
 const H2_CONNECTION_WINDOW: u32 = 16 << 20;
 /// The largest DATA frame the client accepts, as the server: larger frames cost less CPU per byte.
 const H2_FRAME_BYTES: u32 = 64 * 1024;
+/// Each HTTP/1 connection reads into one fixed buffer, Go's lane buffer size; hyper's adaptive buffer grows to
+/// 408 KiB and allocates a new one whenever a body chunk still holds the last.
+const H1_READ_BYTES: usize = 256 * 1024;
 /// An idle HTTP/2 connection's ping period, Go's TCP keep-alive, and its answer's deadline.
 const H2_KEEP_ALIVE: Duration = Duration::from_secs(30);
 const H2_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(20);
@@ -289,7 +292,10 @@ impl Connections {
             tokio::spawn(driver);
             Ok(Sender::H2(Http2 { id: self.ids.fetch_add(1, Ordering::Relaxed), sender }))
         } else {
-            let (sender, driver) = http1::handshake(io).await?;
+            let (sender, driver) = http1::Builder::new()
+                .read_buf_exact_size(Some(H1_READ_BYTES))
+                .handshake(io)
+                .await?;
             tokio::spawn(driver);
             let (absolute_form, proxy_authorization) = (connection.absolute_form, connection.proxy_authorization);
             Ok(Sender::H1(Http1 { sender, absolute_form, proxy_authorization }))
