@@ -14,6 +14,8 @@
     primary: boolean;
     description: string;
   }
+  /** The result sweep's length, as in the stylesheet's `result-sweep`. */
+  const SWEEP_MS = 1200;
 </script>
 
 <script lang="ts">
@@ -149,6 +151,8 @@
         />
       {/if}
       <circle
+        class="bead"
+        style:--at="{(1 - Math.cbrt(1 - fraction)) * SWEEP_MS}ms"
         cx={radius}
         r={hollow ? headRadius - 1 : headRadius}
         fill={hollow ? "none" : color}
@@ -209,7 +213,7 @@
                 class="result-arc"
                 d={track}
                 pathLength="1"
-                style:stroke-dasharray={`${result.fraction} 1`}
+                style:stroke-dasharray={`min(${result.fraction}, var(--sweep)) 1`}
                 stroke="white"
                 stroke-width={layout.arcWidth + 2}
               />
@@ -358,12 +362,6 @@
   .motion .live {
     transition: opacity var(--dur-slide) var(--ease-out);
   }
-  .motion .live svg path {
-    transition: stroke var(--dur-slide) linear;
-  }
-  .motion .live svg circle {
-    transition: fill var(--dur-slide) linear;
-  }
   .sweep-ring {
     position: absolute;
     transform: rotate(225deg);
@@ -416,6 +414,27 @@
   }
   /* A reply rings out from the head: a faint hairline ring widens to twice the head and fades over one pulse,
      eased out, so a steady link is seen to answer while the head itself holds still. */
+  /* The result replays the run as one sweep from zero: every arc shows up to the shared front, so the front
+     changes hue as it passes each shorter result, and each bead lands on the spring as the front reaches it.
+     Once, as the result arrives; the bead's moment follows the sweep's ease-out-cubic (SWEEP_MS). */
+  @media (prefers-reduced-motion: no-preference) {
+    .result-arc {
+      animation: result-sweep 1200ms cubic-bezier(0.33, 1, 0.68, 1) backwards;
+    }
+    .bead {
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: pop 480ms var(--ease-spring) var(--at) backwards;
+    }
+  }
+  @keyframes result-sweep {
+    from {
+      --sweep: 0;
+    }
+    to {
+      --sweep: 1;
+    }
+  }
   .ripple {
     transform-box: fill-box;
     transform-origin: center;

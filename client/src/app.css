@@ -90,8 +90,13 @@
     U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF;
 }
 
-/* Docked sheets open and close by gliding their column, so the page makes room instead of jumping.
-   Only the shell reads them, so a glide never restyles what it contains. */
+/* How far the dial's result sweep has run on an arc, 0 to 1; at rest every arc shows whole. */
+@property --sweep {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+/* How much of its hue a stage area's wash carries; a typed percentage, so it transitions. */
 @property --wash {
   syntax: "<percentage>";
   inherits: false;
