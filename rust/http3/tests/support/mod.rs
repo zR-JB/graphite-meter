@@ -2,7 +2,7 @@
 //! conforming peer never would. Deadlines run on tokio's paused clock.
 #![allow(dead_code)]
 
-use graphite_meter_http3::{Code, Error, RequestStream, client, server};
+use graphite_meter_http3::{Code, Error, RequestStream, client, server, webtransport::Session};
 use graphite_meter_testkit::Identity;
 use std::{
     future::Future,
@@ -42,12 +42,13 @@ impl noq::SharedBudget for Budget {
     }
 }
 
-/// How the peers connect: the server budget's limit; the client's stream receive window, reliable
-/// reset offer and datagram transport parameter; and the SETTINGS a raw client sends, if it is raw.
+/// How the peers connect: the server budget's limit; the client's stream and connection receive windows,
+/// reliable reset offer and datagram transport parameter; and the SETTINGS a raw client sends, if it is raw.
 #[derive(Clone, Copy)]
 pub struct Setup {
     pub limit: usize,
     pub window: Option<u32>,
+    pub connection_window: Option<u32>,
     pub reliable_reset: bool,
     pub datagrams: bool,
     pub settings: Option<&'static [(u64, u64)]>,
@@ -56,6 +57,7 @@ pub struct Setup {
 pub const PLAIN: Setup = Setup {
     limit: usize::MAX,
     window: None,
+    connection_window: None,
     reliable_reset: true,
     datagrams: true,
     settings: None,
@@ -83,6 +85,9 @@ fn transport(setup: &Setup) -> Arc<noq::TransportConfig> {
     transport.max_idle_timeout(Some(Duration::from_secs(120).try_into().expect("idle timeout")));
     if let Some(window) = setup.window {
         transport.stream_receive_window(window.into());
+    }
+    if let Some(window) = setup.connection_window {
+        transport.receive_window(window.into());
     }
     if !setup.datagrams {
         transport.datagram_receive_buffer_size(None);
@@ -145,6 +150,32 @@ impl Peers {
         }
     }
 
+    /// Accepts every CONNECT as a session and runs `scenario` on it; other requests get an empty 200.
+    pub fn sessions<F, H>(self, scenario: H) -> Served<F::Output>
+    where
+        H: Fn(Session) -> F + Send + Sync + 'static,
+        F: Future<Output: Send> + Send + 'static,
+    {
+        let (scenario, (outcomes, outcome)) = (Arc::new(scenario), mpsc::unbounded_channel());
+        let Served { peers, serving, stop, .. } = self.serve(move |request, stream| {
+            let (scenario, outcomes) = (scenario.clone(), outcomes.clone());
+            async move {
+                if request.method() != http::Method::CONNECT {
+                    respond(request, stream).await;
+                } else if let Ok(session) = Session::accept(stream, http::HeaderMap::new()).await {
+                    let _ = outcomes.send(scenario(session).await);
+                }
+            }
+        });
+        Served { peers, serving, stop, outcomes: outcome }
+    }
+
+    /// A raw CONNECT; a task reads its response stream so stream credit keeps flowing.
+    pub async fn connect(&self) -> Result<(noq::SendStream, JoinHandle<(Vec<u8>, Result<(), Code>)>), TestError> {
+        let (send, mut recv) = self.bi(&connect_head()).await?;
+        Ok((send, tokio::spawn(async move { raw_stream(&mut recv).await })))
+    }
+
     /// A raw client request stream that has sent `bytes`.
     pub async fn bi(&self, bytes: &[u8]) -> Result<(noq::SendStream, noq::RecvStream), TestError> {
         let (mut send, recv) = self.client.open_bi().await?;
@@ -170,7 +201,7 @@ where
         let request = tokio::select! {
             request = connection.next() => request?,
             () = stop.notified() => {
-                connection.shutdown();
+                connection.shutdown(4, "shutdown");
                 continue;
             }
         };
@@ -194,6 +225,26 @@ pub async fn respond(_: http::Request<()>, stream: RequestStream) {
 pub fn client(peers: &Peers) -> (Task, client::SendRequest) {
     let (mut driver, requests) = client::new(peers.client.clone());
     (tokio::spawn(async move { driver.drive().await }), requests)
+}
+
+/// Our client's session at /wt, which the server accepts.
+pub async fn accepted(requests: &client::SendRequest) -> Result<Session, TestError> {
+    Ok(Session::connect(requests, get("/wt")).await?.expect("accepted").0)
+}
+
+pub async fn until_closed(session: Session) -> Result<(u32, String), Error> {
+    session.closed().await
+}
+
+/// Whether a session's streams and datagrams ended, and how it closed; each must end within 5 s.
+pub async fn session_end(session: &Session) -> (bool, bool, Result<(u32, String), Error>) {
+    let ended = async {
+        let streams = session.accept_uni().await.is_none();
+        (streams, session.read_datagram().await.is_none(), session.closed().await)
+    };
+    tokio::time::timeout(Duration::from_secs(5), ended)
+        .await
+        .expect("the session ends with its connection")
 }
 
 pub fn get(path: &str) -> http::Request<()> {
@@ -292,6 +343,15 @@ pub fn request_head(fields: &[(&str, &str)]) -> Vec<u8> {
         .collect();
     all.extend(fields);
     frame(0x01, &section(&all))
+}
+
+pub fn connect_head() -> Vec<u8> {
+    request_head(&[(":method", "CONNECT"), (":protocol", "webtransport"), (":path", "/wt")])
+}
+
+/// A CLOSE_WEBTRANSPORT_SESSION capsule in a DATA frame; capsules are framed as frames are.
+pub fn close_capsule(code: u32, reason: &str) -> Vec<u8> {
+    frame(0x00, &frame(0x2843, &[&code.to_be_bytes()[..], reason.as_bytes()].concat()))
 }
 
 /// A control stream's type, then SETTINGS of `pairs`.

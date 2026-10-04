@@ -1,8 +1,5 @@
 //! HTTP/3 and WebTransport over the noq QUIC fork, for both roles: sans-IO protocol modules and one
 //! driver per connection that runs them.
-// WebTransport, which uses the remaining protocol items, follows.
-#![allow(dead_code)]
-
 mod budget;
 mod capsule;
 pub mod client;
@@ -19,6 +16,7 @@ pub mod server;
 mod settings;
 mod stream;
 mod varint;
+pub mod webtransport;
 
 pub use {
     budget::Budget,

@@ -1,7 +1,9 @@
 //! One driver per connection, for both roles: our control stream, the peer's streams, request
-//! admission, GOAWAY, and the deadlines that close the connection.
+//! admission, datagram routing, the sessions' CONNECT streams, GOAWAY, and the deadlines that close the
+//! connection.
 use crate::{
-    budget::Budget,
+    budget::{Budget, Charge},
+    capsule,
     code::Code,
     control,
     error::Error,
@@ -10,12 +12,14 @@ use crate::{
     settings::{self, Peer},
     stream::{self, RequestStream},
     varint,
+    webtransport::{RecvStream, Registry, Sessions, Unrouted},
 };
+use bytes::Bytes;
 use std::{
     future::{Future, poll_fn},
     pin::{Pin, pin},
     sync::{
-        Arc, OnceLock,
+        Arc, Mutex, MutexGuard, OnceLock, PoisonError,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     task::{Context, Poll, ready},
@@ -59,6 +63,7 @@ pub(crate) struct Shared {
     /// The code this side closed the connection with.
     closed: OnceLock<Code>,
     wake: Notify,
+    sessions: Mutex<Registry>,
 }
 
 impl Shared {
@@ -91,6 +96,10 @@ impl Shared {
 
     pub(crate) fn wake(&self) {
         self.wake.notify_one();
+    }
+
+    pub(crate) fn sessions(&self) -> MutexGuard<'_, Registry> {
+        self.sessions.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Closes the connection, on a violation or with H3_NO_ERROR when it is done. noq reports any
@@ -128,6 +137,7 @@ pub(crate) struct Driver {
     pub(crate) shared: Arc<Shared>,
     control: Control,
     incoming: Incoming,
+    sessions: Sessions,
     /// Server: the lowest request stream ID not yet accepted, and the one our GOAWAY named.
     next_request: u64,
     goaway: Option<u64>,
@@ -152,6 +162,7 @@ impl Driver {
             going_away: AtomicBool::new(false),
             closed: OnceLock::new(),
             wake: Notify::new(),
+            sessions: Mutex::default(),
         });
         Self {
             shared,
@@ -161,6 +172,7 @@ impl Driver {
                 written: 0,
             },
             incoming: Incoming::new(),
+            sessions: Sessions::default(),
             next_request: 0,
             goaway: None,
             drain: None,
@@ -179,10 +191,13 @@ impl Driver {
         }
     }
 
-    /// Server: [`Self::goaway`], and 5 s bound the requests still running.
-    pub(crate) fn shutdown(&mut self) {
+    /// Server: [`Self::goaway`], every session ends with `code` and `reason`, and 5 s bound the rest.
+    pub(crate) fn shutdown(&mut self, code: u32, reason: &str) {
         self.goaway();
-        self.drain.get_or_insert_with(|| Instant::now() + DRAIN);
+        if self.drain.is_none() && !self.ended {
+            self.drain = Some(Instant::now() + DRAIN);
+            self.shared.sessions().shutdown(code, reason);
+        }
     }
 
     /// Drives the connection and yields the server's next request stream; `None` once the connection
@@ -208,15 +223,21 @@ impl Driver {
 
     async fn run(&mut self) -> Result<Option<RequestStream>, Error> {
         let shared = self.shared.clone();
+        let mut datagrams = pin!(route_datagrams(&shared));
         loop {
             let now = Instant::now();
             self.incoming.expire(now);
+            shared.sessions().expire(now);
             let close_at = self.close_at(now);
             if close_at.is_some_and(|close_at| close_at <= now) {
                 shared.close(Code::H3_NO_ERROR);
                 return Ok(None);
             }
-            let deadline = close_at.into_iter().chain(self.incoming.deadline()).min();
+            let early = shared.sessions().deadline();
+            let deadline = [close_at, self.incoming.deadline(), early, self.sessions.deadline()]
+                .into_iter()
+                .flatten()
+                .min();
             if let Some(deadline) = deadline.filter(|&deadline| deadline != self.timer.deadline()) {
                 self.timer.as_mut().reset(deadline);
             }
@@ -225,14 +246,16 @@ impl Driver {
                 code = poll_fn(|cx| self.control.poll(cx, &shared.quic)) => return Err(shared.close(code)),
                 stream = shared.quic.accept_uni() => self.incoming.admit(stream?, &shared.budget),
                 read = poll_fn(|cx| self.incoming.poll(cx, &shared)) => match read {
-                    Ok((_, mut stream, _)) => drop(stream.stop(Code::H3_STREAM_CREATION_ERROR.into())),
+                    Ok((session, stream, first)) => route(&shared, session, stream, first),
                     Err(code) => return Err(shared.close(code)),
                 },
+                error = &mut datagrams => return Err(error),
                 streams = shared.quic.accept_bi(), if shared.role == Role::Server => {
                     if let Some(request) = self.admit(streams?) {
                         return Ok(Some(request));
                     }
                 }
+                () = poll_fn(|cx| self.sessions.poll(cx, &shared)) => {}
                 () = shared.wake.notified() => {}
                 () = &mut self.timer, if deadline.is_some() => {}
             }
@@ -249,7 +272,9 @@ impl Driver {
             return self.drain;
         }
         let idle = *self.idle_since.get_or_insert(now) + IDLE;
-        let done = self.goaway.map(|_| now);
+        let sessions = self.shared.sessions();
+        // A connection that only carried sessions ends with its last one: browsers would hold its slot.
+        let done = (self.goaway.is_some() || sessions.only_sessions()).then(|| sessions.linger.unwrap_or(now));
         [self.drain, Some(idle), done].into_iter().flatten().min()
     }
 
@@ -269,9 +294,30 @@ impl Driver {
         }
     }
 
-    /// The connection ended: so does everything that depends on it.
+    /// The connection ended: so does every session, also one handed over from now on.
     fn end(&mut self) {
-        self.ended = true;
+        if !std::mem::replace(&mut self.ended, true) {
+            self.sessions.end(&self.shared, &self.shared.close_error());
+        }
+    }
+}
+
+/// Hands a peer's session stream to the registry; one the budget cannot hold is refused as unbuffered.
+fn route(shared: &Shared, session: u64, mut stream: noq::RecvStream, first: Bytes) {
+    match Charge::new(&shared.budget, size_of::<RecvStream>()) {
+        Some(charge) => shared.sessions().stream(session, Unrouted { stream, first, charge }),
+        None => drop(stream.stop(Code::WT_BUFFERED_STREAM_REJECTED.into())),
+    }
+}
+
+/// Routes each datagram to its session; ends only with the connection or a malformed session ID.
+async fn route_datagrams(shared: &Shared) -> Error {
+    loop {
+        match shared.quic.read_datagram().await.map(capsule::datagram) {
+            Ok(Ok((session, payload))) => shared.sessions().datagram(session, payload),
+            Ok(Err(code)) => return shared.close(code),
+            Err(error) => return error.into(),
+        }
     }
 }
 

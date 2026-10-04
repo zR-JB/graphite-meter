@@ -30,9 +30,10 @@ impl Connection {
         self.0.goaway();
     }
 
-    /// Also bounds the requests still running to 5 s.
-    pub fn shutdown(&mut self) {
-        self.0.shutdown();
+    /// Also ends the session with `code` and `reason`, even one accepted later, and closes the connection
+    /// once the other requests end or 5 s pass.
+    pub fn shutdown(&mut self, code: u32, reason: &str) {
+        self.0.shutdown(code, reason);
     }
 }
 
@@ -98,6 +99,9 @@ fn admit(stream: &mut RequestStream, head: fields::Head<http::Request<()>>) -> R
         return Err(stream.abort(Code::H3_REQUEST_REJECTED));
     };
     let mut request = head.message;
+    if request.method() != http::Method::CONNECT {
+        stream.shared().sessions().served = true;
+    }
     request.extensions_mut().insert(Arc::new(charge));
     stream.recv.message.content_length(head.content_length);
     Ok(request)
