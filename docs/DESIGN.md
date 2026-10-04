@@ -165,6 +165,9 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   Easing is `--ease-out` for anything the user triggered.
 - Live values and the running strip's leading edge move on the single frame clock in
   `presentation/motion.svelte.ts`; a glide smooths only the rendering.
+- A view hands off by a class: the old fades out in 90 ms and the new in over 180 (`.handoff`, `.handoff-out`,
+  `--dur-handoff-out`, `--dur-handoff-in`); the frame clock flips the class once at the start and once at the
+  swap, so the fade itself runs on the compositor and no element writes its opacity per frame.
 - A docked sheet hugs its column's inner edge, so the column's glide (`--dock-left`, `--dock-right`) is its slide:
   sheet and page move in one layout pass, in and out, and a dragged handle moves them without the glide. A changed
   time rolls like a counter (`Roll`, 320 ms): up as it grows, down as it shrinks.
@@ -224,7 +227,9 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   tinted in the hue; then the facts as ruled rows, a quiet label and its figure on one line: Peak, Stability,
   Transferred (bidirectional: Stability, Down + up, Transferred; latency: the idle stage's Stability, Range,
   Replies and Timeouts), "—" until known, so the card keeps its height from Start to
-  the result; a card that has measured nothing yet shows them quietly. The running card's edge takes its hue. A card with no data yet keeps its strip's room
+  the result; a card that has measured nothing yet shows them quietly. The running card's edge takes its hue. A
+  stopped stage's card keeps the last value its series measured and the facts measured up to the stop, under
+  the word Stopped. A card with no data yet keeps its strip's room
   but draws nothing in it; a saved result has no strip; a card that has not run, or is done while the run goes
   on, folds on a phone to its name and value. The card's hover lists every fact as pairs.
 - **Strip** (`StageGraph`): 68 px on the card's field, up to 120 with the console's height. A transfer's strip is the rate from zero to
@@ -239,8 +244,7 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   scrolls past; a drag's readout leaves with the finger.
 - **Latency lanes** (`LatencyProfileView`): the latency stage's area beside the dial (`.stage-area`: a 2 px rule
   in its hue along the top and a wash of it that fades out, no box), under the head (mark, Latency, "Idle and
-  under load"): the idle median as the headline over "Idle median" with Jitter, Range, Stability and Timeouts as
-  label-over-figure pairs under it (beside it on a narrow panel); then one 32 px ruled row per population, each
+  under load"; a failed idle stage names its reason there): one 32 px ruled row per population, each
   led by its mark: name, median, jitter, timeouts (the share of resolved probes that got no reply, which is not
   packet loss), box plot (P10–P90 box over its min–max whisker, median tick, latest reply as a dot while live) and
   the added latency in its ink, from the medians until the run saves it, "—" without evidence. Figures are as

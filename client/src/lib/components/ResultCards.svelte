@@ -270,14 +270,25 @@
     const { down = null, up = null } =
       store.live?.phase === key ? store.live : {};
     const stopped = store.phase === "aborted" && store.phaseStage === key;
-    const [value, accessible] = !own
-      ? [null, null]
+    // A stopped stage keeps the last value it measured, as the lanes keep their rows.
+    const held = !stopped
+      ? null
       : key === "latency"
+        ? (store.latencySummaries.latency?.p50Ms ?? null)
+        : (graphs[key]?.lanes.reduce(
+            (sum, lane) => sum + (lane.at(-1)?.v ?? 0),
+            0,
+          ) ??
+            null) ||
+          null;
+    const [value, accessible] = own
+      ? key === "latency"
         ? [live.rtt.current, store.liveRtt]
         : [
             live.rates!.down + live.rates!.up,
             down == null && up == null ? null : (down ?? 0) + (up ?? 0),
-          ];
+          ]
+      : [held, held];
     // A value's unit arrives with it, so a pending card never shifts its unit.
     const readout = (n: number | null) =>
       n === null
