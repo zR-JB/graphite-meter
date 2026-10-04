@@ -96,7 +96,7 @@ pub struct HttpServer {
     uploads: UploadStore,
     auth: Option<crate::auth::http::Service>,
     assets: crate::assets::Assets,
-    pub(crate) pool: crate::runtime::Pool,
+    pub(crate) pool: graphite_meter_net::Pool,
 }
 
 impl HttpServer {
@@ -214,7 +214,7 @@ impl HttpServer {
             uploads,
             auth,
             assets,
-            pool: crate::runtime::Pool::new()?,
+            pool: graphite_meter_net::Pool::new()?,
         })
     }
 
@@ -248,7 +248,6 @@ impl HttpServer {
         let mut tasks = JoinSet::new();
         let mut accept_delay = Duration::ZERO;
         let mut accept_at = tokio::time::Instant::now();
-        let mut accepts = 0_usize;
         let local = listener.local_addr()?;
         let result = loop {
             tokio::select! {
@@ -300,11 +299,7 @@ impl HttpServer {
                             server.serve_tcp_connection(socket, accepted, tls, h2, bootstrap).await;
                         }
                     };
-                    accepts += 1;
-                    match self.pool.runtimes.get(accepts % self.pool.runtimes.len().max(1)) {
-                        Some(runtime) => tasks.spawn_on(serving, runtime),
-                        None => tasks.spawn(serving),
-                    };
+                    tasks.spawn_on(serving, &self.pool.next());
                 }
             }
         };

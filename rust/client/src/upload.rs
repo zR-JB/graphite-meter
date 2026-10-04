@@ -231,25 +231,31 @@ impl Upload {
             self.state.clone(),
         );
         let retry = TransferRetry::new(self.retrying.clone(), index);
-        self.lanes.spawn(async move {
-            tokio::select! {
-                biased;
-                _ = stop.wait_for(|stopped| *stopped) => {},
-                _ = cancelled.wait_for(|cancelled| *cancelled) => {},
-                _ = health.wait_for(|state| state.error.is_some() || state.complete) => {},
-                result = async {
-                    if index > 0 && !stagger.is_zero() {
-                        tokio::time::sleep(stagger * index as u32).await;
-                    }
-                    match session {
-                        Some(session) => send_wt_reconnecting(&session, block, sending, retry).await,
-                        None => send_lane(&transport, &id, index, block, sending, retry, limit).await,
-                    }
-                } => if let Err(error) = result {
-                    fail(&state, error);
-                },
-            }
-        });
+        let home = session
+            .as_ref()
+            .map_or_else(|| transport.lane_home(), |slot| slot.home.clone());
+        self.lanes.spawn_on(
+            async move {
+                tokio::select! {
+                    biased;
+                    _ = stop.wait_for(|stopped| *stopped) => {},
+                    _ = cancelled.wait_for(|cancelled| *cancelled) => {},
+                    _ = health.wait_for(|state| state.error.is_some() || state.complete) => {},
+                    result = async {
+                        if index > 0 && !stagger.is_zero() {
+                            tokio::time::sleep(stagger * index as u32).await;
+                        }
+                        match session {
+                            Some(session) => send_wt_reconnecting(&session, block, sending, retry).await,
+                            None => send_lane(&transport, &id, index, block, sending, retry, limit).await,
+                        }
+                    } => if let Err(error) = result {
+                        fail(&state, error);
+                    },
+                }
+            },
+            &home,
+        );
         active
     }
     pub fn observed(&self) -> Option<ObservedUpload> {

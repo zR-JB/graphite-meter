@@ -523,7 +523,10 @@ fn unmapped(network: ipnet::IpNet) -> ipnet::IpNet {
         .map_or(network, ipnet::IpNet::V4)
 }
 
+mod pool;
 pub mod trust;
+
+pub use pool::Pool;
 
 #[cfg(test)]
 mod tests;

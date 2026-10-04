@@ -179,35 +179,6 @@ async fn cancelled(mut stopped: watch::Receiver<bool>) {
     let _ = stopped.wait_for(|value| *value).await;
 }
 
-/// Current-thread runtimes on threads of their own, one for each worker of the multi-thread runtime that makes them,
-/// which QUIC shards and TCP connections run on, so that a connection's tasks stay on one thread. Their threads end
-/// with the pool; a current-thread runtime makes none.
-pub(crate) struct Pool {
-    pub(crate) runtimes: Vec<tokio::runtime::Handle>,
-    _running: watch::Sender<()>,
-}
-
-impl Pool {
-    pub(crate) fn new() -> std::io::Result<Self> {
-        let workers = tokio::runtime::Handle::try_current().map_or(1, |runtime| runtime.metrics().num_workers());
-        let (running, ended) = watch::channel(());
-        let runtimes = (0..if workers > 1 { workers } else { 0 })
-            .map(|index| {
-                let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-                let (handle, mut ended) = (runtime.handle().clone(), ended.clone());
-                std::thread::Builder::new()
-                    .name(format!("gm-worker-{index}"))
-                    .spawn(move || runtime.block_on(ended.changed()))?;
-                Ok(handle)
-            })
-            .collect::<std::io::Result<_>>()?;
-        Ok(Self {
-            runtimes,
-            _running: running,
-        })
-    }
-}
-
 /// HTTP/3 on the caller's runtime, or on shards on half of the pool's runtimes.
 pub(crate) enum Quic {
     Endpoint(QuicEndpoint),
@@ -271,7 +242,7 @@ impl Quic {
 }
 
 /// Returns freed allocator pages to the OS on the calling thread and on every pool thread.
-fn release_memory(pool: &Pool) {
+fn release_memory(pool: &graphite_meter_net::Pool) {
     release_freed_memory();
     for runtime in &pool.runtimes {
         runtime.spawn(async { release_freed_memory() });

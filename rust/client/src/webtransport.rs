@@ -12,6 +12,7 @@ use graphite_meter_http3::webtransport::{self as layer, RecvStream, SendStream};
 use http::Request;
 use std::{sync::Arc, time::Duration};
 use tokio::{
+    runtime::Handle,
     sync::Mutex,
     time::{Instant, timeout},
 };
@@ -84,25 +85,33 @@ pub struct SessionSlot {
     current: Mutex<Arc<Session>>,
     http: Http,
     target: String,
+    /// Where the session's connection and lanes run.
+    pub(crate) home: Handle,
 }
 
 impl SessionSlot {
     pub async fn dial(http: &Http, target: String) -> Result<Self, Error> {
-        let session = Self::open(http, &target).await?;
+        let home = crate::transport::home();
+        let session = Self::open(&home, http, &target).await?;
         Ok(Self {
             current: Mutex::new(Arc::new(session)),
             http: http.clone(),
             target,
+            home,
         })
     }
 
-    /// Go's stage session dial and redial (webtransport.go:104-154), tried again for 2 s.
-    async fn open(http: &Http, target: &str) -> Result<Session, Error> {
-        let deadline = Instant::now() + REDIAL_WINDOW;
-        restore("WebTransport session", deadline, || {
-            Session::dial(http, target, REDIAL_WINDOW)
+    /// Go's stage session dial and redial (webtransport.go:104-154), tried again for 2 s, on `home`.
+    async fn open(home: &Handle, http: &Http, target: &str) -> Result<Session, Error> {
+        let (http, target) = (http.clone(), target.to_owned());
+        home.spawn(async move {
+            let deadline = Instant::now() + REDIAL_WINDOW;
+            restore("WebTransport session", deadline, || {
+                Session::dial(&http, &target, REDIAL_WINDOW)
+            })
+            .await
         })
-        .await
+        .await?
     }
 
     pub async fn current(&self) -> Arc<Session> {
@@ -115,7 +124,7 @@ impl SessionSlot {
         if !Arc::ptr_eq(&current, failed) {
             return Ok(());
         }
-        *current = Arc::new(Self::open(&self.http, &self.target).await?);
+        *current = Arc::new(Self::open(&self.home, &self.http, &self.target).await?);
         Ok(())
     }
 

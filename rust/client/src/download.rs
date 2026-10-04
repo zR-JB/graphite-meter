@@ -51,7 +51,7 @@ impl Download {
         let (ready, mut received) = mpsc::channel(lanes);
         for lane in 0..lanes {
             let (transport, ready) = (transport.clone(), ready.clone());
-            owner.spawn(lane, &cancel, move |bytes, retry| async move {
+            owner.spawn(&transport.lane_home(), lane, &cancel, move |bytes, retry| async move {
                 if lane > 0 && !stagger.is_zero() {
                     tokio::time::sleep(stagger * lane as u32).await;
                 }
@@ -93,8 +93,8 @@ impl Download {
                 );
                 let slot = Arc::new(SessionSlot::dial(http, target).await?);
                 for lane in first..first + group {
-                    let (slot, ready) = (slot.clone(), ready.clone());
-                    owner.spawn(lane, &lane_cancel, move |bytes, retry| async move {
+                    let (home, slot, ready) = (slot.home.clone(), slot.clone(), ready.clone());
+                    owner.spawn(&home, lane, &lane_cancel, move |bytes, retry| async move {
                         timeout(duration, receive_webtransport(slot, bytes, ready, retry)).await?
                     });
                 }
@@ -112,6 +112,7 @@ impl Download {
     /// Runs lane `lane` until `cancel`, counting into this download's bytes and reporting its retries.
     fn spawn<F>(
         &mut self,
+        home: &tokio::runtime::Handle,
         lane: usize,
         cancel: &watch::Receiver<bool>,
         run: impl FnOnce(Arc<AtomicU64>, TransferRetry) -> F,
@@ -120,13 +121,16 @@ impl Download {
     {
         let mut cancel = cancel.clone();
         let run = run(self.bytes.clone(), TransferRetry::new(self.retrying.clone(), lane));
-        self.tasks.spawn(async move {
-            tokio::select! {
-                biased;
-                _ = cancel.wait_for(|value| *value) => Ok(()),
-                result = run => result,
-            }
-        });
+        self.tasks.spawn_on(
+            async move {
+                tokio::select! {
+                    biased;
+                    _ = cancel.wait_for(|value| *value) => Ok(()),
+                    result = run => result,
+                }
+            },
+            home,
+        );
     }
 
     /// Waits until `lanes` lanes are ready; a lane that ends first reports its cause.

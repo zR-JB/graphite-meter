@@ -14,8 +14,13 @@ use graphite_meter_core::{
 use graphite_meter_http3::{self as http3, Code};
 use http::{Method, Request, header::CACHE_CONTROL};
 use serde::de::DeserializeOwned;
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 use tokio::{
+    runtime::Handle,
     sync::Mutex,
     time::{Instant, timeout_at},
 };
@@ -26,6 +31,14 @@ pub(crate) const TRANSFER_RETRY_BACKOFF: Duration = Duration::from_millis(500);
 /// Go's busyBackoff and busyBackoffCap: a busy answer's first wait, doubled up to the cap.
 const BUSY_BACKOFF: Duration = Duration::from_millis(300);
 const BUSY_BACKOFF_CAP: Duration = Duration::from_millis(1200);
+
+/// A thread for a connection and its lanes, as the server keeps its connections, in turn across the cores.
+pub(crate) fn home() -> Handle {
+    static POOL: OnceLock<Option<graphite_meter_net::Pool>> = OnceLock::new();
+    let pool = POOL.get_or_init(|| graphite_meter_net::Pool::new().ok());
+    pool.as_ref()
+        .map_or_else(Handle::current, graphite_meter_net::Pool::next)
+}
 
 /// A lane request's cache buster, the time in nanoseconds, as Go's (download.go:51, upload.go:106).
 pub(crate) fn cache_buster() -> String {
@@ -161,10 +174,15 @@ pub struct Transport {
     origin: String,
     protocol: Protocol,
     h3: Option<Mutex<Arc<Http3Client>>>,
+    /// Where the HTTP/2 or HTTP/3 connection and its lanes run.
+    home: Handle,
 }
 
-async fn dial_h3(origin: &str, http: &Http) -> Result<Http3Client, Error> {
-    Http3Client::connect(&origin.parse()?, http.insecure, Duration::from_secs(10)).await
+/// Dials on `home`, which then runs the connection's endpoint and drivers.
+async fn dial_h3(home: &Handle, origin: &str, http: &Http) -> Result<Http3Client, Error> {
+    let (uri, insecure) = (origin.parse()?, http.insecure);
+    home.spawn(async move { Http3Client::connect(&uri, insecure, Duration::from_secs(10)).await })
+        .await?
 }
 
 impl Transport {
@@ -185,13 +203,23 @@ impl Transport {
             origin: self.origin.clone(),
             protocol: self.protocol,
             h3: None,
+            home: home(),
+        }
+    }
+
+    /// Where a lane runs: with its HTTP/2 or HTTP/3 connection, or, over HTTP/1.1, on a thread in turn.
+    pub(crate) fn lane_home(&self) -> Handle {
+        match self.protocol {
+            Protocol::Http2 | Protocol::Http3 => self.home.clone(),
+            Protocol::Http1 | Protocol::Negotiated => home(),
         }
     }
 
     pub async fn connect(http: Http, origin: &str, protocol: Protocol) -> Result<Self, Error> {
         let origin = canonical_origin(origin)?;
+        let home = home();
         let h3 = match protocol {
-            Protocol::Http3 => Some(Mutex::new(Arc::new(dial_h3(&origin, &http).await?))),
+            Protocol::Http3 => Some(Mutex::new(Arc::new(dial_h3(&home, &origin, &http).await?))),
             _ => None,
         };
         Ok(Self {
@@ -199,6 +227,7 @@ impl Transport {
             origin,
             protocol,
             h3,
+            home,
         })
     }
 
@@ -219,7 +248,7 @@ impl Transport {
         let client = {
             let mut owner = slot.lock().await;
             if owner.is_closed() {
-                *owner = Arc::new(dial_h3(&self.origin, &self.http).await?);
+                *owner = Arc::new(dial_h3(&self.home, &self.origin, &self.http).await?);
             }
             owner.clone()
         };
