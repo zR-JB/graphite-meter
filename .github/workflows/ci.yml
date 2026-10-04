@@ -506,21 +506,21 @@ jobs:
           python3 -m scripts.ci.release check-rust
 
   rust-campaign-build:
-    name: Temporary Go/Rust campaign binaries
+    name: Temporary campaign variant binaries
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     needs: plan
     if: needs.plan.outputs.rust == 'true'
     steps:
-      - name: Checkout repository with the baseline commit
+      - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false, fetch-depth: 0}
-      - name: Set up pinned Python, Go and Rust without build caches
+        with: {persist-credentials: false}
+      - name: Set up pinned Python and Rust without build caches
         uses: ./.github/actions/setup-project
-        with: {go: 'true', rust: 'true', cache: 'false'}
+        with: {rust: 'true', cache: 'false'}
       - name: Install musl headers and compiler
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
-      - name: Build baseline and candidate release binaries
+      - name: Build the candidate and its variants
         run: python3 -m scripts.ci.rust_perf_campaign build
       - name: Upload campaign binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -539,7 +539,7 @@ jobs:
           retention-days: 3
 
   rust-campaign:
-    name: Temporary Go/Rust campaign (${{ matrix.study }})
+    name: Temporary campaign (${{ matrix.mode }})
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     needs: [plan, rust-campaign-build]
@@ -547,7 +547,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        study: [server, client]
+        mode: [measure, profile]
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -559,16 +559,19 @@ jobs:
         with:
           name: rust-campaign-bin
           path: rust/target/campaign/bin
-      - name: Measure every transport across Go, baseline and candidate
+      - name: Install perf for the profile
+        if: matrix.mode == 'profile'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends linux-tools-generic
+      - name: Measure the variants or profile the candidate
         env:
-          STUDY: ${{ matrix.study }}
-        run: chmod +x rust/target/campaign/bin/* && python3 -m scripts.ci.rust_perf_campaign measure "$STUDY"
+          MODE: ${{ matrix.mode }}
+        run: chmod +x rust/target/campaign/bin/* && python3 -m scripts.ci.rust_perf_campaign "$MODE"
       - name: Upload measurements and logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: rust-campaign-${{ matrix.study }}
-          path: rust/target/campaign/results-${{ matrix.study }}
+          name: rust-campaign-${{ matrix.mode }}
+          path: rust/target/campaign/results-*
           if-no-files-found: error
           retention-days: 3
 
