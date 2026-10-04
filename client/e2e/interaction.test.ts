@@ -118,7 +118,7 @@ test("a finger scrolls past graphs, reads one by dragging sideways and toggles j
   await touch(page, "touchEnd");
   await expect(readout).toHaveCount(0);
 
-  const jitter = page.locator('.latency-card dt[data-tip="term"]');
+  const jitter = page.locator(".latency-card dt[data-tip]");
   await tap(page, jitter);
   await expect(tip(page)).toContainText("Jitter");
   await tap(page, jitter);

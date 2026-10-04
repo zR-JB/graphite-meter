@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from "../Icon.svelte";
   import { httpProtocolLabel } from "../../runner/paths";
-  import { keyHint, term, tipGroup, tooltip } from "../../actions/tooltip";
+  import { keyHint, tipGroup, tooltip } from "../../actions/tooltip";
   import {
     fmtBytes,
     fmtDuration,
@@ -374,7 +374,7 @@
         <section class="group">
           <h3>
             <span
-              {@attach term(() =>
+              {@attach tooltip(() =>
                 accounting.some((lane) => lane.accountingComplete === false)
                   ? `${JARGON.probeAccounting}\nPartial: ${PARTIAL_ACCOUNTING_HELP}`
                   : JARGON.probeAccounting,

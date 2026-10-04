@@ -3,7 +3,7 @@
   import { inView } from "../actions/inView";
   import { handoff, Smoothed } from "../presentation/motion.svelte";
   import Icon from "./Icon.svelte";
-  import { termAction, tooltipAction } from "../actions/tooltip";
+  import { tooltipAction } from "../actions/tooltip";
   import { warmUp } from "../actions/intent";
   import { scrub } from "../actions/scrub";
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
@@ -287,13 +287,13 @@
         >
         <dl class="facts">
           <div>
-            <dt use:termAction={JARGON.jitter}>Jitter</dt>
+            <dt use:tooltipAction={JARGON.jitter}>Jitter</dt>
             <dd class:quiet={idle.jitter == null}>
               {formatLatency(idle.jitter)}
             </dd>
           </div>
           <div>
-            <dt use:termAction={JARGON.latencyRange}>Range</dt>
+            <dt use:tooltipAction={JARGON.latencyRange}>Range</dt>
             <dd class:quiet={idle.min == null || idle.max == null}>
               {idle.min == null || idle.max == null
                 ? MISSING
