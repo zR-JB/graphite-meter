@@ -388,7 +388,7 @@
   /* Narrow rows: two chips to a line, the running one with the time into its stage alone. */
   /* A phone keeps up to three chips on one line and sets four as two and two; a chip too narrow for its glyph
      keeps its name and its time. */
-  @container viz (max-width: 430px) {
+  :global(.gauge-panel.tight) {
     .chips {
       grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
     }

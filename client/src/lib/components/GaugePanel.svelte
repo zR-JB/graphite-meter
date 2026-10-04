@@ -63,7 +63,7 @@
   let gaugeHeight = $state(0);
   let panelWidth = $state(0);
   let noteHeight = $state(0);
-  // Beside the latency card (landscape, from the 760 px container), the ring centres on the card's axis and its
+  // Beside the latency card (landscape, from a 760 px panel), the ring centres on the card's axis and its
   // note hangs just under it; portrait and phones keep the note in the column's flow.
   const portrait = new MediaQuery("(orientation: portrait)");
   const hung = $derived(panelWidth >= 760 && !portrait.current);
@@ -253,6 +253,10 @@
 
 <section
   class="gauge-panel"
+  class:wide={panelWidth >= 760}
+  class:compact={panelWidth <= 520}
+  class:tight={panelWidth <= 430}
+  style:--panel-width="{panelWidth}px"
   data-phase={store.phase}
   data-stage={store.isRunning ? store.phaseStage : null}
   bind:clientWidth={panelWidth}
@@ -377,8 +381,9 @@
 </section>
 
 <style>
+  /* The panel's width classes come from its measured box: as a size container it would restyle the whole
+     instrument on every frame that changes a figure. */
   .gauge-panel {
-    container: viz / inline-size;
     height: 100%;
   }
   /* The dial's panel beside the latency panel, with the run key and the stage chips under the lanes; the dial
@@ -428,45 +433,41 @@
   .metric-wrap {
     --rise: 6px;
   }
-  @container viz (min-width: 760px) {
-    /* A tall screen's spare height goes into even air above, between and below the sections, not under the cards. */
-    .instrument {
-      --dial-width: clamp(300px, 30cqw, 560px);
-      --dial-ratio: 0.86;
-      min-height: 100%;
-      align-content: space-evenly;
-      grid-template:
-        "dial latency" auto
-        "dial controls" auto
-        "results results" auto
-        / var(--dial-width) minmax(0, 1fr);
-    }
-    /* The dial is as tall as its ring wants, or as the lanes and the controls together, whichever is more. */
-    .instrument .dial {
-      min-height: calc(var(--dial-width) * var(--dial-ratio));
-    }
-    /* The lanes start a step under the dial's top, nearer the ring's crown than its box. */
-    .latency-panel {
-      margin-top: var(--space-6);
-    }
-    .instrument:not(:has(.latency-panel)) {
-      --dial-width: clamp(360px, 48cqw, 720px);
-      --dial-ratio: 0.6;
-      grid-template:
-        "dial" auto
-        "controls" auto
-        "results" auto
-        / minmax(0, 1fr);
-    }
-    .instrument:not(:has(.latency-panel)) .dial {
-      justify-self: center;
-      width: var(--dial-width);
-    }
+  /* A tall screen's spare height goes into even air above, between and below the sections, not under the cards. */
+  .wide .instrument {
+    --dial-width: clamp(300px, var(--panel-width) * 0.3, 560px);
+    --dial-ratio: 0.86;
+    min-height: 100%;
+    align-content: space-evenly;
+    grid-template:
+      "dial latency" auto
+      "dial controls" auto
+      "results results" auto
+      / var(--dial-width) minmax(0, 1fr);
   }
-  @container viz (max-width: 520px) {
-    .instrument {
-      gap: var(--space-3);
-    }
+  /* The dial is as tall as its ring wants, or as the lanes and the controls together, whichever is more. */
+  .wide .instrument .dial {
+    min-height: calc(var(--dial-width) * var(--dial-ratio));
+  }
+  /* The lanes start a step under the dial's top, nearer the ring's crown than its box. */
+  .wide .latency-panel {
+    margin-top: var(--space-6);
+  }
+  .wide .instrument:not(:has(.latency-panel)) {
+    --dial-width: clamp(360px, var(--panel-width) * 0.48, 720px);
+    --dial-ratio: 0.6;
+    grid-template:
+      "dial" auto
+      "controls" auto
+      "results" auto
+      / minmax(0, 1fr);
+  }
+  .wide .instrument:not(:has(.latency-panel)) .dial {
+    justify-self: center;
+    width: var(--dial-width);
+  }
+  .compact .instrument {
+    gap: var(--space-3);
   }
   /* The dial's panel: the face, and the note under the ring; the face ends on the note, so a hung note measures
      from it. */

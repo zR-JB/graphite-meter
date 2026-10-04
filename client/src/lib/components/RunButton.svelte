@@ -98,10 +98,8 @@
     transform: scale(0.985);
   }
   /* A phone's key keeps a thumb's height. */
-  @container viz (max-width: 520px) {
-    .run-button {
-      height: var(--hit);
-    }
+  :global(.gauge-panel.compact) .run-button {
+    height: var(--hit);
   }
   /* The ink skin stays; the Stop skin fades over it with the hand-off, so the key changes in one breath. */
   .skin {
