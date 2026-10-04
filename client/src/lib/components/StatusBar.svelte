@@ -70,10 +70,14 @@
   span {
     white-space: nowrap;
   }
-  /* Each cell starts on a fixed edge and grows to the right, so a changing figure never moves its neighbours. */
+  /* The phase word holds the left edge; the figures stand against the right, each in a cell as wide as its
+     longest value, so a changing figure never moves its neighbours. */
   .label {
     color: var(--text);
     font-weight: var(--w-strong);
+  }
+  .elapsed {
+    margin-left: auto;
   }
   .readout {
     display: inline-block;
@@ -82,10 +86,10 @@
     font: var(--role-figure-sm);
     line-height: 1;
     font-variant-numeric: tabular-nums;
-    text-align: start;
+    text-align: end;
   }
   .build {
-    margin-left: auto;
+    margin-left: var(--space-5);
     color: var(--text-soft);
   }
   .remaining[data-tone] {
