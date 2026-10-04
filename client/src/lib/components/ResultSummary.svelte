@@ -80,8 +80,9 @@
       {@const noData = cardNoData(card)}
       <article
         class="card {card.status}"
-        class:handoff-out={out}
+        class:out
         data-tone={card.key}
+        data-flip="card-{card.key}"
       >
         <span class="face">
           <span class="name">
@@ -367,7 +368,7 @@
       opacity var(--dur-handoff-in) var(--ease-out),
       translate var(--dur-handoff-in) var(--ease-out);
   }
-  .handoff-out > :is(.line, .facts, .strip, .status) {
+  .out :is(.headline, .line, .facts, .strip, .status) {
     opacity: 0;
     translate: 0 3px;
     transition-duration: var(--dur-handoff-out);

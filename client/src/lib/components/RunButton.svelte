@@ -26,9 +26,10 @@
   );
 </script>
 
+<!-- The skin answers a press at once; only the label crosses over to the next one. -->
 <button
   class="run-button"
-  class:running
+  class:running={store.isRunning || pending}
   class:pending={action.shown.pending}
   aria-busy={pending}
   aria-disabled={!!blocker}

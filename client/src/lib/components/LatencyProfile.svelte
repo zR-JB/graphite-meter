@@ -72,9 +72,10 @@
   );
 </script>
 
-<div class="live-profile handoff" class:handoff-out={profile.out}>
+<div class="live-profile">
   <LatencyProfileView
     lanes={profile.shown.lanes}
+    out={profile.out}
     variant="bare"
     added={saved?.addedLatency}
     {failure}
