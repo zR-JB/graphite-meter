@@ -583,14 +583,34 @@
               ? "record was"
               : "records were"} ignored.</span
           >
-          <button
-            class="btn"
-            type="button"
-            onclick={() => {
-              dismissedMalformed = malformedCount;
-              workspace?.focus({ preventScroll: true });
-            }}>Dismiss</button
-          >
+          <span class="notice-actions">
+            <button
+              class="btn"
+              type="button"
+              onclick={async () => {
+                actionError = "";
+                try {
+                  const removed = await repository.removeMalformed();
+                  malformedCount = 0;
+                  announce(
+                    `${removed} malformed ${removed === 1 ? "record" : "records"} removed.`,
+                  );
+                  announceHistoryChanged(changeSource);
+                } catch {
+                  actionError = "Unable to remove the malformed records.";
+                }
+                workspace?.focus({ preventScroll: true });
+              }}>Remove them</button
+            >
+            <button
+              class="btn btn-quiet"
+              type="button"
+              onclick={() => {
+                dismissedMalformed = malformedCount;
+                workspace?.focus({ preventScroll: true });
+              }}>Dismiss</button
+            >
+          </span>
         </p>
       {/if}
     </div>
@@ -885,6 +905,10 @@
   .notice {
     align-items: center;
     justify-content: space-between;
+  }
+  .notice-actions {
+    display: flex;
+    gap: var(--space-2);
   }
   .workspace-body {
     position: relative;
