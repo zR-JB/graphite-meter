@@ -147,18 +147,6 @@
       )?.endT ?? store.phaseStartedAtMs;
     return newest - answered >= 1000 ? newest - answered : null;
   });
-  // Idle replies so far: what the stage's figures are drawn from, counted as they arrive.
-  const replies = $derived(
-    phase === "latency"
-      ? store.latency.reduce(
-          (count, bucket) =>
-            bucket.phase === "latency"
-              ? count + bucket.pingCount - bucket.timeoutCount
-              : count,
-          0,
-        )
-      : null,
-  );
   const readout = $derived(
     gaugeReadout({
       phase,
@@ -171,7 +159,6 @@
       latencyMs: liveReadout.rtt.current,
       quietMs: store.live?.quietMs ?? null,
       unansweredMs,
-      replies,
       hasLatencyResult: !!store.result?.latency,
       unusable: unusableStage,
       headline: headlineArc,
@@ -254,10 +241,7 @@
       if (noData) return { hint: noData, tip: JARGON.noData };
       if (noReplies) return { hint: noReplies, tip: JARGON.noReplies };
       const known = PHASE_HINT[phase];
-      // The reply count changes in place under one explainer, never fading per reply.
-      const tip =
-        known?.tip ?? (phase === "latency" ? JARGON.replies : undefined);
-      return hint ? { hint: known?.text ?? hint, tip } : {};
+      return hint ? { hint: known?.text ?? hint, tip: known?.tip } : {};
     },
     // A note that counts keys on its explainer, so it updates in place.
     (notes: { status?: string; tone?: string; hint?: string; tip?: string }) =>
@@ -381,10 +365,9 @@
     height: 100%;
   }
   /* The dial's panel beside the latency panel, with the run key and the stage chips under the lanes; the dial
-     spans both rows, so the ring has the height of the lanes and the controls together. On a landscape screen
-     the console takes the column's height and the spare height goes to the controls' row: the ring grows, the
-     controls centre in the room under the lanes, and the cards keep their size. Without the latency stage the
-     dial stands centred with the controls under it. */
+     spans both rows. Each row is as tall as its content, so the console ends where the cards end and the spare
+     height stays on the canvas below; what little the dial's ring adds over the lanes goes around the controls.
+     Without the latency stage the dial stands centred with the controls under it. */
   .instrument {
     --dial-height: clamp(320px, 40svh, 380px);
     display: grid;
@@ -413,24 +396,29 @@
   @container viz (min-width: 760px) {
     .instrument {
       --dial-width: clamp(300px, 30cqw, 560px);
-      height: 100%;
-      max-height: 1100px;
+      --dial-ratio: 0.86;
       grid-template:
         "dial latency" auto
-        "dial controls" minmax(auto, 1fr)
+        "dial controls" auto
         "results results" auto
         / var(--dial-width) minmax(0, 1fr);
     }
+    /* The dial is as tall as its ring wants, or as the lanes and the controls together, whichever is more. */
+    .instrument .dial {
+      min-height: calc(var(--dial-width) * var(--dial-ratio));
+    }
     .instrument:not(:has(.latency-panel)) {
+      --dial-width: clamp(360px, 48cqw, 720px);
+      --dial-ratio: 0.6;
       grid-template:
-        "dial" minmax(var(--dial-height), 1fr)
+        "dial" auto
         "controls" auto
         "results" auto
         / minmax(0, 1fr);
     }
     .instrument:not(:has(.latency-panel)) .dial {
       justify-self: center;
-      width: clamp(360px, 48cqw, 720px);
+      width: var(--dial-width);
     }
   }
   @container viz (max-width: 520px) {

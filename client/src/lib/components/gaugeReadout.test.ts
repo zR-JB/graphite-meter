@@ -12,7 +12,6 @@ const input = (overrides: Partial<GaugeReadoutInput>): GaugeReadoutInput => ({
   latencyMs: 12,
   quietMs: null,
   unansweredMs: null,
-  replies: null,
   hasLatencyResult: false,
   unusable: false,
   headline: null,
