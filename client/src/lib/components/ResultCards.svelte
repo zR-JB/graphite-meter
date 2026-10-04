@@ -10,6 +10,7 @@
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
   import { replies } from "../presentation/stageGraph";
   import { latencyTrackScale } from "../presentation/scales";
+  import { stabilityPct } from "../runner/measure";
   import type { LiveReadout } from "../presentation/liveReadout.svelte";
   import { announce } from "../presentation/announcer.svelte";
   import { handoff } from "../presentation/motion.svelte";
@@ -55,7 +56,7 @@
         download: store.stageResults.download,
         upload: store.stageResults.upload,
         bidirectional: store.result?.bidirectional ?? null,
-        idle: store.result?.latencyByStage.latency ?? null,
+        idle: store.latencySummaries.latency ?? null,
         latency: store.stageResults.latency,
         added: store.result?.addedLatency ?? null,
       },
@@ -196,7 +197,7 @@
       label: "Transferred",
       value: fmtBytes(store.liveStageBytes, units.base),
     };
-    if (key !== "bidirectional") return [moved];
+    if (key !== "bidirectional") return [moved, ...liveShape(key, true)];
     const combined = live.rates && live.rates.down + live.rates.up;
     return [
       ...(["download", "upload"] as const).map((stage) => {
@@ -213,6 +214,47 @@
         value: combined == null ? MISSING : formatRate(combined, units),
       },
       moved,
+      ...liveShape(key, false),
+    ];
+  }
+  // Peak and Stability so far, read from the stage's series by the second, as the settled figures are: the
+  // card fills in while the stage runs and the result replaces the estimate.
+  function liveShape(key: Transfer, withPeak: boolean): SummaryRow[] {
+    const graph = graphs[key];
+    if (!graph) return [];
+    const perLane = graph.lanes.map((lane) => {
+      const seconds = new Map<number, { sum: number; n: number }>();
+      for (const { t, v } of lane) {
+        const second = Math.floor((t - graph.start) / 1000);
+        const cell = seconds.get(second) ?? { sum: 0, n: 0 };
+        cell.sum += v;
+        cell.n++;
+        seconds.set(second, cell);
+      }
+      return seconds;
+    });
+    const seconds = [...new Set(perLane.flatMap((lane) => [...lane.keys()]))];
+    const rates = seconds
+      .sort((a, b) => a - b)
+      .map((second) =>
+        perLane.reduce((total, lane) => {
+          const cell = lane.get(second);
+          return total + (cell ? cell.sum / cell.n : 0);
+        }, 0),
+      );
+    if (!rates.length) return [];
+    return [
+      ...(withPeak
+        ? [{ label: "Peak", value: formatRate(Math.max(...rates), units) }]
+        : []),
+      ...(rates.length >= 2
+        ? [
+            {
+              label: "Stability",
+              value: `${Math.round(stabilityPct(rates))}%`,
+            },
+          ]
+        : []),
     ];
   }
 
