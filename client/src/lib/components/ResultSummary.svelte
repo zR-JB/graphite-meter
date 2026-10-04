@@ -1,7 +1,6 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
   import StageGraph from "./StageGraph.svelte";
-  import { latencyTrackScale } from "../presentation/scales";
   import {
     cardFacts,
     cardNoData,
@@ -155,9 +154,7 @@
               span={graph.span}
               ceiling={1}
               {baseline}
-              latencyTop={latencyTrackScale(
-                graph.latency.map((point) => point.hi),
-              )}
+              {latencyTop}
               rate={scale.rate}
               label="Idle latency over time"
             />

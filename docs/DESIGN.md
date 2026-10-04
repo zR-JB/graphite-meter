@@ -266,7 +266,7 @@ of keyframes in `app.css` (`rise`, `row-in`, `pop`, `grow-x`, `glint`), each wit
   reply, so a bucket's spread shows at a glance and every stage's track has bars of one pitch whatever its
   length, over the dashed idle median. The track's top is the ladder tier above 2.5× the p75 of the run's
   slowest replies, so the body of the replies keeps its shape; a reply past it is clamped at the edge and ends in
-  an arrowhead, and the readout names a bucket's median and, when its replies spread, their range. The latency card's strip is the same track alone at the strip's height, with the same readout: the
+  an arrowhead, and the readout names a bucket's median and, when its replies spread, their range. The latency card's strip is the same track alone at the strip's height, on the same top as every card's track so idle and loaded replies compare at a glance, with the same readout: the
   idle replies over the stage, kept as the record (History has no series). A mouse, a tap, a sideways drag or arrow keys show a readout on a
   transfer's strip at once: time into the stage, the rate, and the latency replies measured then. A vertical swipe
   scrolls past; a drag's readout leaves with the finger.
