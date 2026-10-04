@@ -292,7 +292,7 @@
   /* The cards arrive after the console, one beat apart, left to right. */
   @media (prefers-reduced-motion: no-preference) {
     .card {
-      animation: rise var(--dur-stage) var(--ease-out) backwards;
+      animation: rise var(--dur-stage) var(--ease-settle) backwards;
       animation-delay: calc(3 * var(--beat));
     }
     .card:nth-child(2) {
@@ -306,7 +306,7 @@
     }
     /* A stage that settles lays its facts down one row after another under the figure. */
     .card:is(.complete, .partial, .stopped, .failed) .facts > div {
-      animation: row-in 360ms var(--ease-out) backwards;
+      animation: row-in 260ms var(--ease-settle) backwards;
       animation-delay: calc(var(--n, 0) * 40ms + var(--beat));
     }
     .facts > div:nth-child(2) {
@@ -470,10 +470,10 @@
     color: var(--text);
     font: var(--role-figure-sm);
   }
-  /* A card that has measured nothing yet shows its facts' names with dashes, quietly, so the page is laid out
-     from Start and every "—" marks where a value arrives. */
-  .facts.unknown {
-    opacity: 0.7;
+  /* A card that has measured nothing yet shows its facts' names with dashes, so the page is laid out from Start
+     and every "—" marks where a value arrives; the names keep their soft colour, which reads at AA. */
+  .facts.unknown dd {
+    color: var(--text-soft);
   }
   .facts > div {
     display: flex;
