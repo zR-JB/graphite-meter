@@ -186,26 +186,24 @@ export class Smoothed {
 }
 
 const HANDOFF_OUT_MS = 90;
-const HANDOFF_IN_MS = 180;
 
-/** A new key fades the shown view out and the new one in; a key shorter than the fade-out never shows. */
+/** A new key fades the shown view out and the new one in; a key shorter than the fade-out never shows. The
+    fades are the stylesheet's (`.handoff`, `.handoff-out`, on the compositor); this only flips `out` on the frame
+    clock and swaps the view once the fade-out has run. */
 export class Handoff<T> {
   shown: T = $state.raw() as T;
-  #fade = new Smoothed();
+  /** True while the shown view fades out before the next one takes its place. */
+  out = $state(false);
   #key: unknown;
   #latest: T;
   #keyOf: (value: T) => unknown;
   #stop: (() => void) | null = null;
+  #outAt = 0;
 
   constructor(value: T, keyOf: (value: T) => unknown = (value) => value) {
     this.shown = this.#latest = value;
     this.#keyOf = keyOf;
     this.#key = keyOf(value);
-    this.#fade.set(1, { snap: true });
-  }
-
-  get opacity(): number {
-    return this.#fade.current;
   }
 
   set(value: T): void {
@@ -215,7 +213,7 @@ export class Handoff<T> {
       if (this.#stop) this.#swap();
     } else if (still() || globalThis.document?.hidden) this.#swap();
     else {
-      this.#fade.set(0, { over: HANDOFF_OUT_MS * this.#fade.current });
+      this.out = true;
       this.#stop ??= animate(this.#frame);
     }
   }
@@ -223,13 +221,15 @@ export class Handoff<T> {
   #swap(): void {
     this.#stop?.();
     this.#stop = null;
+    this.#outAt = 0;
     this.shown = this.#latest;
     this.#key = this.#keyOf(this.#latest);
-    this.#fade.set(1, { over: HANDOFF_IN_MS * (1 - this.#fade.current) });
+    this.out = false;
   }
 
-  #frame = (): boolean => {
-    if (this.#fade.current > 0 && !still()) return true;
+  #frame = (now: number): boolean => {
+    this.#outAt ||= now;
+    if (now - this.#outAt < HANDOFF_OUT_MS && !still()) return true;
     this.#swap();
     return false;
   };
@@ -237,7 +237,6 @@ export class Handoff<T> {
   dispose(): void {
     this.#stop?.();
     this.#stop = null;
-    this.#fade.dispose();
   }
 }
 

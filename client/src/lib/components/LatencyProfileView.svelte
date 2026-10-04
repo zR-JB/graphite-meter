@@ -486,7 +486,11 @@
           >
         </div>
       {/each}
-      <div class="ticks" aria-hidden="true" style:opacity={ticks.opacity}>
+      <div
+        class="ticks handoff"
+        class:handoff-out={ticks.out}
+        aria-hidden="true"
+      >
         {#each ticks.shown as tick, index (index)}
           <span style={`left:${tick.left}%`}
             >{tick.text}{index === 2 ? " ms" : ""}</span

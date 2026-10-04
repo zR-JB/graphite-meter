@@ -36,26 +36,26 @@
 </script>
 
 <span
-  class="label"
-  style:opacity={label.opacity}
+  class="label handoff"
+  class:handoff-out={label.out}
   {@attach refused
     ? tooltip(() => store.startError || store.startBlocker)
     : null}>{label.shown.label}</span
 >
 <span
-  class="elapsed"
+  class="elapsed handoff"
   class:secondary={left.shown.show}
-  style:opacity={counters.opacity}
+  class:handoff-out={counters.out}
   ><span class="readout">{fmtDuration(counters.shown.elapsedMs)}</span></span
 >
-<span class="transferred" style:opacity={counters.opacity}
+<span class="transferred handoff" class:handoff-out={counters.out}
   ><span class="readout">{counters.shown.bytes}</span></span
 >
 {#if left.shown.show}
   <span
-    class="remaining"
+    class="remaining handoff"
+    class:handoff-out={left.out}
     data-tone={left.shown.recovering ? CONNECTIVITY.recovering.tone : undefined}
-    style:opacity={left.opacity}
   >
     {#if left.shown.recovering}{CONNECTIVITY.recovering.label}, {fmtDuration(
         left.shown.ms,

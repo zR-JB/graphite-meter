@@ -272,13 +272,13 @@
         <GaugeDial
           input={dialState}
           {layout}
-          result={{ arcs: hero.shown.arcs, opacity: hero.opacity }}
+          result={{ arcs: hero.shown.arcs, out: hero.out }}
         />
         {#if ticks.shown.length > 1}
           <div
-            class="gauge-ticks"
+            class="gauge-ticks handoff"
+            class:handoff-out={ticks.out}
             aria-hidden="true"
-            style:opacity={ticks.opacity}
           >
             {#each layout.labelPoints as point, index (index)}
               <span
@@ -291,7 +291,7 @@
             {/each}
           </div>
         {/if}
-        <div class="metric-wrap" style:opacity={hero.opacity}>
+        <div class="metric-wrap handoff" class:handoff-out={hero.out}>
           <div
             class="hero"
             class:terminal={!!terminal}
@@ -330,12 +330,12 @@
         </div>
       </div>
       <div
-        class="gauge-footer"
+        class="gauge-footer handoff"
         bind:clientHeight={noteHeight}
+        class:handoff-out={footer.out}
         style:top={hung
           ? `calc(100% - ${layout.height - layout.noteTop}px)`
           : null}
-        style:opacity={footer.opacity}
       >
         {#if footer.shown.status || footer.shown.hint}
           {@const { status, tone, hint, tip } = footer.shown}

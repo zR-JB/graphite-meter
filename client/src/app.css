@@ -134,7 +134,11 @@
   --statusbar-h: 28px;
 
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  /* A small control's settle overshoots a touch; the instrument's own motion never does. */
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
   --dur-hover: 120ms;
+  --dur-handoff-out: 90ms;
+  --dur-handoff-in: 180ms;
   --dur-slide: 180ms;
   --dur-sheet: 420ms;
   --dur-graph: 280ms;
@@ -678,6 +682,15 @@
     border: var(--hairline) solid var(--border);
     border-radius: var(--r-surface);
     background: var(--surface-1);
+  }
+  /* A hand-off's fades: the view leaves in 90 ms and the next arrives over 180, on the compositor; the frame
+     clock only flips the class. */
+  .handoff {
+    transition: opacity var(--dur-handoff-in) var(--ease-out);
+  }
+  .handoff-out {
+    opacity: 0;
+    transition-duration: var(--dur-handoff-out);
   }
   /* A stage's mark: its glyph in a small plate washed in its hue. */
   .tone-icon {

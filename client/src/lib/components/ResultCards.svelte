@@ -317,7 +317,7 @@
   cards={view.shown.cards}
   {scale}
   {head}
-  fade={view.opacity}
+  out={view.out}
   details={details ?? store.serverDetails}
   issues={view.shown.issues}
   scope={details ? shown : ""}

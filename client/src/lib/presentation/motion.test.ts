@@ -103,7 +103,7 @@ test("a handoff never shows a key shorter than its fade-out and follows a held k
       shown.add(view.shown.phase);
     }
     expect([...shown]).toEqual(["latency", "download"]);
-    expect(view.opacity).toBe(1);
+    expect(view.out).toBe(false);
     view.set({ phase: "download", ms: 2 });
     expect(view.shown.ms).toBe(2);
   }));
@@ -128,5 +128,5 @@ test("disposing a view stops its glide and handoff, and a new sample can resume"
     view.dispose();
     frame(1_000);
     expect(view.shown).toBe("old");
-    expect(view.opacity).toBe(1);
+    expect(view.out).toBe(true);
   }));

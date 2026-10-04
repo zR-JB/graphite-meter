@@ -23,7 +23,7 @@
     cards,
     scale = null,
     head = null,
-    fade = 1,
+    out = false,
     details,
     issues = [],
     scope = "",
@@ -34,7 +34,8 @@
     scale?: CardScale | null;
     /** The running stage's leading edge. */
     head?: { key: string; t: number; values: (number | null)[] } | null;
-    fade?: number;
+    /** True while the cards hand off to a new run's view. */
+    out?: boolean;
     details?: MultiServerResult | null;
     issues?: {
       server: string;
@@ -80,8 +81,8 @@
       {@const noData = cardNoData(card)}
       <article
         class="card {card.status}"
+        class:handoff-out={out}
         data-tone={card.key}
-        style:--fade={fade}
       >
         <span class="face">
           <span class="name">
@@ -317,11 +318,16 @@
     font: var(--w-normal) var(--type-xs) / 1 var(--font-sans);
   }
   .headline,
+  /* A card's measured parts hand off together: out in 90 ms, in over 180, on the compositor. */
   .line,
   .facts,
   .strip,
   .status {
-    opacity: var(--fade);
+    transition: opacity var(--dur-handoff-in) var(--ease-out);
+  }
+  .handoff-out > :is(.line, .facts, .strip, .status) {
+    opacity: 0;
+    transition-duration: var(--dur-handoff-out);
   }
   .headline {
     display: flex;

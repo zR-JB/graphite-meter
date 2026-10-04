@@ -32,7 +32,7 @@
   }: {
     input: GaugeDialState;
     layout: GaugeLayout;
-    result: { arcs: readonly ResultArc[]; opacity: number };
+    result: { arcs: readonly ResultArc[]; out: boolean };
   } = $props();
   const shadeId = $props.id();
   // An unseen dial snaps rather than animating.
@@ -187,7 +187,7 @@
     </g>
   </svg>
   {#if results.length}
-    <div class="result-layer" style:opacity={result.opacity}>
+    <div class="result-layer handoff" class:handoff-out={result.out}>
       <svg
         class="dial-art"
         aria-hidden="true"

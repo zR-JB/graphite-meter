@@ -72,7 +72,7 @@
   );
 </script>
 
-<div class="live-profile" style:opacity={profile.opacity}>
+<div class="live-profile handoff" class:handoff-out={profile.out}>
   <LatencyProfileView
     lanes={profile.shown.lanes}
     variant="bare"

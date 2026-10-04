@@ -174,15 +174,15 @@
           >
           <span class="chip-label">{s.label}</span>
           {#if look.state === "complete"}
-            <span class="chip-check" style:opacity={view.opacity}
+            <span class="chip-check handoff" class:handoff-out={view.out}
               ><Icon name="check" /></span
             >
           {:else if look.text}
             <span
-              class="chip-tag"
+              class="chip-tag handoff"
               class:time={look.time}
+              class:handoff-out={view.out}
               data-tone={look.tagTone}
-              style:opacity={view.opacity}
               >{#if look.short}<span class="full">{look.text}</span><span
                   class="short">{look.short}</span
                 >{:else}{look.text}{/if}</span

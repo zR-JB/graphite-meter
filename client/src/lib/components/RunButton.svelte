@@ -21,10 +21,6 @@
     (shown) => shown.label,
   );
   const { label, running } = $derived(action.shown);
-  // The skins crossfade through the handoff: half-way at its swap, settled once it has faded in.
-  const stop = $derived(
-    running ? (1 + action.opacity) / 2 : (1 - action.opacity) / 2,
-  );
   const blocker = $derived(
     idle && !store.catalogLoading ? store.startBlocker : "",
   );
@@ -37,21 +33,22 @@
   aria-busy={pending}
   aria-disabled={!!blocker}
   aria-describedby={idle ? "run-duration" : undefined}
-  style:--stop={stop}
   onclick={controller.toggleRun}
   use:tooltipAction={blocker}
 >
   <span class="skin" aria-hidden="true"></span>
   <span class="skin stop" aria-hidden="true"></span>
-  <span class="run-button-content" style:opacity={action.opacity}>
+  <span class="run-button-content handoff" class:handoff-out={action.out}>
     {#if running}
       <span class="stop-sq" aria-hidden="true"></span>
     {/if}
     {label}
   </span>
   {#if action.shown.eta}
-    <span class="duration" aria-hidden="true" style:opacity={action.opacity}
-      >~{action.shown.eta}</span
+    <span
+      class="duration handoff"
+      class:handoff-out={action.out}
+      aria-hidden="true">~{action.shown.eta}</span
     >
   {/if}
 </button>
@@ -78,13 +75,14 @@
     border: 0;
     border-radius: var(--r-chrome);
     background: none;
-    color: color-mix(
-      in oklab,
-      var(--text-inverse) calc(100% * (1 - var(--stop))),
-      var(--text)
-    );
+    color: var(--text-inverse);
     font: var(--w-strong) var(--type-md) / 1 var(--font-sans);
-    transition: transform var(--dur-hover) var(--ease-out);
+    transition:
+      transform var(--dur-hover) var(--ease-out),
+      color var(--dur-handoff-in) var(--ease-out);
+  }
+  .run-button.running {
+    color: var(--text);
   }
   /* Hover strengthens the skin itself; a filter would re-rasterize the label. */
   @media (hover: hover) {
@@ -104,21 +102,25 @@
       height: var(--hit);
     }
   }
+  /* The ink skin stays; the Stop skin fades over it with the hand-off, so the key changes in one breath. */
   .skin {
     position: absolute;
     inset: 0;
     z-index: -1;
     border-radius: inherit;
     background: var(--brand);
-    opacity: calc(1 - var(--stop));
     transition:
       background-color var(--dur-hover) var(--ease-out),
-      box-shadow var(--dur-hover) var(--ease-out);
+      box-shadow var(--dur-hover) var(--ease-out),
+      opacity var(--dur-handoff-in) var(--ease-out);
   }
   .skin.stop {
     background: var(--surface-1);
     box-shadow: inset 0 0 0 var(--hairline) var(--border-strong);
-    opacity: var(--stop);
+    opacity: 0;
+  }
+  .running .skin.stop {
+    opacity: 1;
   }
   .run-button[aria-disabled="true"] {
     opacity: 0.6;
