@@ -79,6 +79,8 @@ export interface StageGraph {
 }
 
 const BIN_PX = 4;
+/* A reply bar's pitch: slim bars with air between them. */
+const REPLY_PX = 8;
 const TOP_PAD = 3;
 
 interface PlotPoint {
@@ -145,18 +147,20 @@ export function stageGraphGeometry(
     trackHeight -
     1.5 -
     Math.min(1, Math.max(0, ms / (input.latencyTop || 1))) * (trackHeight - 3);
-  // Replies bin to the width like the lanes, so every stage's track has bars of one pitch whatever its length or
+  // Replies bin to the width like the lanes but on a wider pitch, so every stage's track has slim bars with air
+  // between them whatever its length or
   // its buckets' width: a bucket reaches every column its span covers, a column spans its buckets' fastest to
   // slowest reply, reads their medians' mean, and keeps the mark of any reply over the top.
   const top = input.latencyTop || 1;
-  const sums = new Float64Array(columns);
-  const counts = new Uint16Array(columns);
-  const los = new Float64Array(columns).fill(Infinity);
-  const his = new Float64Array(columns).fill(-Infinity);
+  const slots = Math.max(8, Math.floor(width / REPLY_PX));
+  const sums = new Float64Array(slots);
+  const counts = new Uint16Array(slots);
+  const los = new Float64Array(slots).fill(Infinity);
+  const his = new Float64Array(slots).fill(-Infinity);
   const column = (t: number) =>
     Math.min(
-      columns - 1,
-      Math.max(0, Math.floor(((t - start) / (span || 1)) * columns)),
+      slots - 1,
+      Math.max(0, Math.floor(((t - start) / (span || 1)) * slots)),
     );
   for (const point of input.latency) {
     if (point.t1 < start || point.t0 > start + span) continue;
@@ -171,7 +175,7 @@ export function stageGraphGeometry(
   const dots = [...counts.keys()]
     .filter((i) => counts[i])
     .map((i) => {
-      const t = start + ((i + 0.5) / columns) * span;
+      const t = start + ((i + 0.5) / slots) * span;
       const ms = sums[i] / counts[i];
       return {
         t,

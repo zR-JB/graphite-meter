@@ -123,8 +123,8 @@ test("a bucket reaches every column its span covers", () => {
     lanes: [[]],
     latency: [{ t: 2000, t0: 1800, t1: 2200, ms: 12, lo: 10, hi: 14 }],
   });
-  // 400 ms of a 4000 ms span over 100 columns: ten columns, one bar each, the same range in all.
-  expect(graph.dots).toHaveLength(10);
+  // 400 ms of a 4000 ms span over 50 reply slots: five slots, one bar each, the same range in all.
+  expect(graph.dots).toHaveLength(5);
   expect(new Set(graph.dots.map((dot) => `${dot.lo}-${dot.hi}`))).toEqual(
     new Set(["10-14"]),
   );
