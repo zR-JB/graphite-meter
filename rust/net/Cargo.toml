@@ -19,6 +19,7 @@ tokio-rustls.workspace = true
 webpki.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# rustix 1.1.5 compiles its net module only with time.
 rustix = { workspace = true, features = ["net", "time"] }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]

@@ -12,9 +12,8 @@ const SHARED_BUFFER_FLOOR: usize = 2 << 20;
 /// Whether a socket of this process has returned the warning.
 static WARNED: AtomicBool = AtomicBool::new(false);
 
-/// Binds one of `sockets` that share `address` through `SO_REUSEPORT`, which only Linux balances, so other
-/// targets refuse several. The first socket whose buffers stay short returns quic-go's warning, unless
-/// `QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING` is true.
+/// Binds one of `sockets` sharing `address` through `SO_REUSEPORT` (Linux only), returning quic-go's warning for
+/// the first socket whose buffers stay short unless `QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING` is true.
 pub fn bind_udp(address: SocketAddr, sockets: usize) -> io::Result<(UdpSocket, Option<String>)> {
     let socket = socket2::Socket::new(
         socket2::Domain::for_address(address),
