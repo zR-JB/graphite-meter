@@ -260,7 +260,8 @@ not trusted instead of the whole client.
 Each path check and run opens connections of its own, as Go's client takes new
 transports, and TCP connections probe an idle peer after 30 seconds as Go's
 dialer does; a run within 30 seconds of its check keeps that check's
-connections. Unlike Go, an HTTP/2 connection that reads nothing for 30 seconds
+connections for its control requests. Transfer lanes dial connections of their
+own on the threads they run on. Unlike Go, an HTTP/2 connection that reads nothing for 30 seconds
 is pinged and closed when the ping goes unanswered for 20 seconds, and one whose
 request gets no response headers within 10 seconds takes no further requests.
 A request without a body that fails on a reused connection before its response
