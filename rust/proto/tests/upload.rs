@@ -35,7 +35,7 @@ fn records_encode_as_one_object_and_a_newline() {
     let clamped = Record::Complete(Counters::new(u64::MAX, 5)).line();
     assert_eq!(clamped, format!(r#"{{"type":"complete","bytes":{MAX_COUNTER},"nanos":5}}"#) + "\n");
     let refused = Record::from(UploadRefusal::OwnerMismatch).line();
-    let message = r#"{"type":"error","code":"ownerMismatch","message":"upload id belongs to another client"}"#;
+    let message = r#"{"type":"error","message":"upload id belongs to another client","code":"ownerMismatch"}"#;
     assert_eq!(refused, message.to_owned() + "\n");
     let bare = Record::Error { code: String::new(), message: String::new() };
     assert_eq!(bare.line(), "{\"type\":\"error\"}\n");

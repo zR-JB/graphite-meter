@@ -100,13 +100,25 @@ fn urls_split_into_their_origin_and_the_rest() {
     for (url, origin, rest) in [
         ("HTTPS://Id.Example:8443/realms/x?a=b", "https://id.example:8443", "/realms/x?a=b"),
         ("https://id.example?x=1", "https://id.example", "?x=1"),
-        ("https://id.example#top", "https://id.example", "#top"),
         ("https://id.example", "https://id.example", ""),
     ] {
         let (parsed, tail) = Origin::split(url).unwrap();
         assert_eq!((parsed.to_string().as_str(), tail), (origin, rest), "{url}");
     }
-    assert!(Origin::split("https://user@id.example/a").is_err());
+    let long = format!("https://id.example/{}", "a".repeat(2048));
+    for url in [
+        "https://user@id.example/a",
+        "https://id.example#top",
+        "https://id.example/a#top",
+        "https://id.example/realms/é",
+        "https://id.example/a b",
+        "https://id.example/a\tb",
+        "https://id.example/a\\b",
+        &long,
+    ] {
+        assert!(Origin::split(url).is_err(), "accepted {url:?}");
+    }
+    assert!(Origin::split(&long[..long.len() - 1]).is_ok());
 }
 
 #[test]

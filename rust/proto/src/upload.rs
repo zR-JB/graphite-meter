@@ -81,9 +81,9 @@ pub enum Record {
     /// An explicit refusal; an empty field was absent, and decoding cleans both as Go does.
     Error {
         #[serde(skip_serializing_if = "String::is_empty")]
-        code: String,
-        #[serde(skip_serializing_if = "String::is_empty")]
         message: String,
+        #[serde(skip_serializing_if = "String::is_empty")]
+        code: String,
     },
 }
 

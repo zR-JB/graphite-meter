@@ -1,4 +1,5 @@
-//! HTTP(S) origins in canonical form: the form browsers write in an `Origin` header.
+//! HTTP(S) origins. Compare them parsed, never as text: an IPv6 host prints in Rust's form, which for an
+//! IPv4-mapped address differs from a browser's `Origin` header.
 
 use crate::idna;
 use serde::{Serialize, Serializer};
@@ -116,7 +117,8 @@ impl Origin {
         Self::parse(&format!("{scheme}://{host}{port}"))
     }
 
-    /// Splits a URL into its origin and the rest, which begins at its path, query or fragment.
+    /// Splits a URL into its origin and the rest, from its path or query: at most 2048 bytes of printable
+    /// ASCII without `#` or `\`.
     pub fn split(url: &str) -> Result<(Self, &str), OriginError> {
         let (scheme, rest) = url.split_once("://").ok_or(OriginError)?;
         let scheme = [Scheme::Http, Scheme::Https]
@@ -138,6 +140,10 @@ impl Origin {
             "" | ":" => scheme.default_port(),
             _ => port.strip_prefix(':').and_then(decimal_port).ok_or(OriginError)?,
         };
+        let refused = |byte: u8| byte <= b' ' || byte >= 0x7f || matches!(byte, b'#' | b'\\');
+        if rest.len() > MAX_ORIGIN_BYTES || rest.bytes().any(refused) {
+            return Err(OriginError);
+        }
         Ok((Self { scheme, host, port }, rest))
     }
 }

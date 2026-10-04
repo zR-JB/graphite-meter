@@ -11,7 +11,8 @@ pub enum Kind {
     Int,
     Duration,
     String,
-    /// A value type of the binary's own.
+    /// A value type of the binary's own, as Go's `fs.Var` registers the server's non-boolean settings:
+    /// its usage line names `value` and prints the default unquoted.
     Value,
 }
 
