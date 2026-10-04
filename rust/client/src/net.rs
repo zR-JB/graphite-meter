@@ -48,6 +48,8 @@ const H2_STREAM_WINDOW: u32 = 8 << 20;
 const H2_CONNECTION_WINDOW: u32 = 16 << 20;
 /// hyper's HTTP/1 read buffer grows to 408 KiB, and each body chunk keeps it, so every read allocates a new one.
 const H1_READ_BYTES: usize = 64 * 1024;
+/// The largest DATA frame the client accepts, as the server: larger frames cost less CPU per byte.
+const H2_FRAME_BYTES: u32 = 64 * 1024;
 /// An idle HTTP/2 connection's ping period, Go's TCP keep-alive, and its answer's deadline.
 const H2_KEEP_ALIVE: Duration = Duration::from_secs(30);
 const H2_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(20);
@@ -278,6 +280,7 @@ impl Connections {
         if h2 {
             let (sender, driver) = http2::Builder::new(TokioExecutor::new())
                 .timer(TokioTimer::new())
+                .max_frame_size(H2_FRAME_BYTES)
                 .initial_stream_window_size(H2_STREAM_WINDOW)
                 .initial_connection_window_size(H2_CONNECTION_WINDOW)
                 .keep_alive_interval(H2_KEEP_ALIVE)
