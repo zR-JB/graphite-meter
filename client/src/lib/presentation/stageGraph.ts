@@ -7,7 +7,11 @@ export interface GraphPoint {
 }
 export interface LatencyPoint {
   t: number;
+  /** The bucket's median reply. */
   ms: number;
+  /** The bucket's fastest and slowest replies. */
+  lo: number;
+  hi: number;
 }
 
 /** A stage's reply buckets as points; a bucket of timeouts has none. */
@@ -17,7 +21,14 @@ export const replies = (
 ): LatencyPoint[] =>
   history.flatMap((b) =>
     b.phase === phase && b.medianRttMs !== null
-      ? [{ t: b.t, ms: b.medianRttMs }]
+      ? [
+          {
+            t: b.t,
+            ms: b.medianRttMs,
+            lo: b.minRttMs ?? b.medianRttMs,
+            hi: b.maxRttMs ?? b.medianRttMs,
+          },
+        ]
       : [],
   );
 
@@ -46,7 +57,17 @@ export interface StageGraph {
   area: string;
   heads: { x: number; y: number }[];
   /** A reply over the track's top is clamped there and marked. */
-  dots: { x: number; y: number; t: number; ms: number; over: boolean }[];
+  dots: {
+    x: number;
+    y: number;
+    yLo: number;
+    yHi: number;
+    t: number;
+    ms: number;
+    lo: number;
+    hi: number;
+    over: boolean;
+  }[];
   baselineY: number | null;
   /** Per lane: bin centre times and rates, for the hover readout. */
   bins: GraphPoint[][];
@@ -120,11 +141,13 @@ export function stageGraphGeometry(
     1.5 -
     Math.min(1, Math.max(0, ms / (input.latencyTop || 1))) * (trackHeight - 3);
   // Replies bin to the width like the lanes, so every stage's track has bars of one pitch whatever its length; a
-  // bin reads its buckets' mean and keeps the mark of any bucket over the top.
+  // bin spans its buckets' fastest to slowest reply, reads their median's mean, and keeps the mark of any reply
+  // over the top.
   const top = input.latencyTop || 1;
   const sums = new Float64Array(columns);
   const counts = new Uint16Array(columns);
-  const overs = new Uint8Array(columns);
+  const los = new Float64Array(columns).fill(Infinity);
+  const his = new Float64Array(columns).fill(-Infinity);
   for (const point of input.latency) {
     if (point.t < start || point.t > start + span) continue;
     const i = Math.min(
@@ -133,14 +156,25 @@ export function stageGraphGeometry(
     );
     sums[i] += point.ms;
     counts[i]++;
-    if (point.ms > top) overs[i] = 1;
+    los[i] = Math.min(los[i], point.lo);
+    his[i] = Math.max(his[i], point.hi);
   }
   const dots = [...counts.keys()]
     .filter((i) => counts[i])
     .map((i) => {
       const t = start + ((i + 0.5) / columns) * span;
       const ms = sums[i] / counts[i];
-      return { t, ms, x: x(t), y: trackY(ms), over: overs[i] === 1 };
+      return {
+        t,
+        ms,
+        lo: los[i],
+        hi: his[i],
+        x: x(t),
+        y: trackY(ms),
+        yLo: trackY(los[i]),
+        yHi: trackY(his[i]),
+        over: his[i] > top,
+      };
     });
   return {
     lines,

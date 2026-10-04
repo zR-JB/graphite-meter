@@ -131,6 +131,7 @@ export interface LatencyBucket {
   startT: number;
   endT: number;
   medianRttMs: number | null;
+  minRttMs: number | null;
   p95RttMs: number | null;
   maxRttMs: number | null;
   pingCount: number;

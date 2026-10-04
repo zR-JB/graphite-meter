@@ -19,6 +19,7 @@ import type {
 } from "../runner/contract";
 import type { MultiServerResult } from "../runner/measure";
 import { bidirectionalResultPresentation } from "./bidirectionalResult";
+import type { LatencyPoint } from "./stageGraph";
 import type { IconName } from "./icons";
 import { serverName } from "./serverAppearance";
 import {
@@ -70,7 +71,7 @@ export interface SummaryCard {
 /** One stage's series on the run's timeline; the leading edge while it runs. */
 export interface CardGraph {
   lanes: TracePoint[][];
-  latency: { t: number; ms: number }[];
+  latency: LatencyPoint[];
   start: number;
   span: number;
 }
@@ -84,17 +85,18 @@ export function buildCardGraphs(
   spans: Record<Transfer, number>,
   previous: CardGraphs = {},
 ): Record<Transfer, CardGraph> {
-  function sequence<T extends { t: number }>(
+  function sequence<T extends { t: number }, V>(
     before: T[] = [],
-    value: (point: T) => number,
-    create: (t: number, value: number) => T,
+    value: (point: T) => V,
+    create: (t: number, value: V) => T,
+    same: (a: V, b: V) => boolean = (a, b) => a === b,
   ) {
     let next = before;
     let length = 0;
     return {
-      add(t: number, amount: number) {
+      add(t: number, amount: V) {
         const old = before[length];
-        if (old === undefined || old.t !== t || value(old) !== amount) {
+        if (old === undefined || old.t !== t || !same(value(old), amount)) {
           if (next === before) next = before.slice(0, length);
           next.push(create(t, amount));
         } else if (next !== before) next.push(old);
@@ -115,8 +117,9 @@ export function buildCardGraphs(
     ),
     latency: sequence(
       previous[key]?.latency,
-      (point) => point.ms,
-      (t, ms) => ({ t, ms }),
+      ({ ms, lo, hi }) => ({ ms, lo, hi }),
+      (t, { ms, lo, hi }) => ({ t, ms, lo, hi }),
+      (a, b) => a.ms === b.ms && a.lo === b.lo && a.hi === b.hi,
     ),
     start: Infinity,
     end: -Infinity,
@@ -143,7 +146,11 @@ export function buildCardGraphs(
   }
   for (const sample of latency) {
     if (sample.medianRttMs === null || !(sample.phase in stages)) continue;
-    stages[sample.phase as Transfer].latency.add(sample.t, sample.medianRttMs);
+    stages[sample.phase as Transfer].latency.add(sample.t, {
+      ms: sample.medianRttMs,
+      lo: sample.minRttMs ?? sample.medianRttMs,
+      hi: sample.maxRttMs ?? sample.medianRttMs,
+    });
   }
   const finish = (key: Transfer): CardGraph => {
     const target = stages[key];

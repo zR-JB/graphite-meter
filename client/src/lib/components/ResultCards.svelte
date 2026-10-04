@@ -121,8 +121,9 @@
     ceiling: store.scales.chartBytesPerSec,
     baseline:
       store.latencyLanes.find((lane) => lane.key === "latency")?.center ?? null,
+    // The tracks' top comes from the buckets' slowest replies, since a bar spans its bucket's range.
     latencyTop: latencyTrackScale(
-      store.latency.map((bucket) => bucket.medianRttMs),
+      store.latency.map((bucket) => bucket.maxRttMs ?? bucket.medianRttMs),
     ),
     rate: (bytesPerSec) => formatRate(bytesPerSec, units),
   });

@@ -11,8 +11,8 @@ test("a stage's replies are its measured buckets; a bucket of timeouts has no po
     singleLatencyBucket(700, 14, false, "latency"),
   ];
   expect(replies(history, "latency")).toEqual([
-    { t: 100, ms: 12 },
-    { t: 700, ms: 14 },
+    { t: 100, ms: 12, lo: 12, hi: 12 },
+    { t: 700, ms: 14, lo: 14, hi: 14 },
   ]);
 });
 
@@ -103,10 +103,10 @@ test("a reply below the idle median sits below its line; the track clamps at its
     ...base,
     lanes: [[]],
     latency: [
-      { t: 2000, ms: 5 },
-      { t: 2400, ms: 30 },
-      { t: 2800, ms: 500 },
-      { t: 9000, ms: 30 },
+      { t: 2000, ms: 5, lo: 5, hi: 5 },
+      { t: 2400, ms: 30, lo: 30, hi: 30 },
+      { t: 2800, ms: 500, lo: 500, hi: 500 },
+      { t: 9000, ms: 30, lo: 30, hi: 30 },
     ],
   });
   const [below, above, capped] = graph.dots.map((dot) => dot.y);
@@ -122,13 +122,13 @@ test("replies in one column of the width draw as one bar at their mean, marked w
     ...base,
     lanes: [[]],
     latency: [
-      { t: 3000, ms: 10 },
-      { t: 3010, ms: 30 },
-      { t: 3500, ms: 10 },
-      { t: 3510, ms: 500 },
+      { t: 3000, ms: 10, lo: 10, hi: 10 },
+      { t: 3010, ms: 30, lo: 30, hi: 30 },
+      { t: 3500, ms: 10, lo: 10, hi: 10 },
+      { t: 3510, ms: 500, lo: 500, hi: 500 },
     ],
   });
   expect(graph.dots).toHaveLength(2);
-  expect(graph.dots[0]).toMatchObject({ ms: 20, over: false });
-  expect(graph.dots[1]).toMatchObject({ y: 1.5, over: true });
+  expect(graph.dots[0]).toMatchObject({ ms: 20, lo: 10, hi: 30, over: false });
+  expect(graph.dots[1]).toMatchObject({ yHi: 1.5, over: true });
 });

@@ -3,7 +3,7 @@
   import { warmUp } from "../actions/intent";
   import { scrub } from "../actions/scrub";
   import { inView } from "../actions/inView";
-  import { fmtDuration, formatLatency } from "../format";
+  import { fmtDuration, fmtMs, formatLatency } from "../format";
   import {
     nearestAt,
     stageGraphGeometry,
@@ -82,6 +82,13 @@
   const samples = $derived(
     lanes.map((lane) => lane.filter((point) => point.t >= start)),
   );
+  // A bucket reads as its median and, when its replies spread, their range.
+  const replyRows = (reply: LatencyPoint) => [
+    { label: "Latency", value: formatLatency(reply.ms) },
+    ...(reply.lo < reply.hi
+      ? [{ label: "Range", value: `${fmtMs(reply.lo)}–${fmtMs(reply.hi)} ms` }]
+      : []),
+  ];
   const hover = $derived.by(() => {
     if (hoverT === null || !geometry || !hasData) return null;
     if (trackOnly) {
@@ -92,7 +99,7 @@
           width,
           Math.max(0, ((reply.t - start) / (span || 1)) * width),
         ),
-        rows: [{ label: "Latency", value: formatLatency(reply.ms) }],
+        rows: replyRows(reply),
         time: fmtDuration(Math.max(0, reply.t - start), 1),
       };
     }
@@ -104,7 +111,7 @@
       label: laneNames[lane] ?? "Rate",
       value: point ? rate(point.v) : "",
     }));
-    if (near) rows.push({ label: "Latency", value: formatLatency(near.ms) });
+    if (near) rows.push(...replyRows(near));
     return {
       x: Math.min(width, Math.max(0, ((at - start) / (span || 1)) * width)),
       rows,
@@ -250,13 +257,14 @@
             y1={graph.baselineY}
             y2={graph.baselineY}
           />{/if}
+        <!-- A bar spans a bin's fastest to slowest reply, at least a dot's length. -->
         {#each graph.dots as dot, index (index)}
           <line
             class="reply"
             x1={dot.x}
             x2={dot.x}
-            y1={graph.baselineY ?? trackH}
-            y2={dot.y}
+            y1={dot.yLo}
+            y2={Math.min(dot.yHi, dot.yLo - 1.5)}
           />
           {#if dot.over}<path
               class="reply-over"
