@@ -73,7 +73,7 @@ impl Reader {
                     } else if matches!(self.kind, frame::GOAWAY | frame::MAX_PUSH_ID | frame::CANCEL_PUSH) {
                         let value = self.value.read(&mut payload);
                         // The varint must end exactly where the frame does.
-                        if !payload.is_empty() || value.is_some() != (self.frames.remaining() == 0) {
+                        if !payload.is_empty() || value.is_some() != (self.frames.remaining == 0) {
                             return Err(Code::H3_FRAME_ERROR);
                         }
                         // A server's GOAWAY names request streams; a client's names push IDs, and we never push.

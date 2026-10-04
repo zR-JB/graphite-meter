@@ -225,12 +225,7 @@ mod tests {
             } else if let Some(encoded) = line.strip_prefix("rust: ") {
                 assert_eq!(fields(&go), Ok(block.clone()), "Rust decodes Go's encoding");
                 let mut ours = Vec::new();
-                encode(
-                    block
-                        .iter()
-                        .map(|(name, value): &(Vec<u8>, Vec<u8>)| (&name[..], &value[..])),
-                    &mut ours,
-                );
+                encode(block.iter().map(|(name, value)| (name.as_slice(), value.as_slice())), &mut ours);
                 let ours_hex: String = ours.iter().map(|byte| format!("{byte:02x}")).collect();
                 assert_eq!(encoded, ours_hex, "our encoding changed: recheck Go decodes it");
                 assert_eq!(fields(&ours), Ok(block.clone()));

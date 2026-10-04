@@ -290,27 +290,18 @@ mod tests {
 
     #[test]
     fn heads_encode_within_the_peer_limit() {
-        let mut request = http::Request::connect("https://meter.example/wt/ping")
+        let (parts, ()) = http::Request::connect("https://meter.example/wt/ping")
+            .header(header::CONNECTION, "close")
+            .header("authorization", "Bearer token")
             .body(())
-            .unwrap();
-        request
-            .headers_mut()
-            .insert(header::CONNECTION, HeaderValue::from_static("close"));
-        request
-            .headers_mut()
-            .insert("authorization", HeaderValue::from_static("Bearer token"));
-        let (parts, ()) = request.into_parts();
+            .unwrap()
+            .into_parts();
         let encoded = encode_request(&parts, Some("webtransport-h3"), Some(4096)).unwrap();
         let decoded = decode_request(&encoded, 4096).unwrap().message;
         assert_eq!((decoded.uri(), decoded.headers().len()), (&parts.uri, 1));
         assert_eq!(encode_request(&parts, None, Some(100)), Err(Invalid::TooLarge));
         let (parts, ()) = http::Response::builder().status(431).body(()).unwrap().into_parts();
-        assert_eq!(
-            decode_response(&encode_response(&parts, None).unwrap(), 4096)
-                .unwrap()
-                .message
-                .status(),
-            431
-        );
+        let encoded = encode_response(&parts, None).unwrap();
+        assert_eq!(decode_response(&encoded, 4096).unwrap().message.status(), 431);
     }
 }

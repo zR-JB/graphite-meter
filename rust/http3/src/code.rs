@@ -26,35 +26,16 @@ impl Code {
     pub const WT_SESSION_GONE: Self = Self(0x170d7b68);
 }
 
-pub(crate) const WT_FIRST: u64 = 0x52e4a40fa8db;
-pub(crate) const WT_LAST: u64 = 0x52e5ac983162;
-
 /// A WebTransport application error code. Firefox reads only 8 bits, so codes above 255 are unrepresentable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WtCode(pub u8);
 
 impl WtCode {
+    /// The draft's mapping skips one reserved codepoint every 0x1f.
     pub fn to_http(self) -> Code {
-        Code(to_http(self.0.into()))
+        let code = u64::from(self.0);
+        Code(0x52e4a40fa8db + code + code / 0x1e)
     }
-
-    /// `None` for codes outside the WebTransport range, reserved codepoints and codes above 255.
-    pub fn from_http(code: Code) -> Option<Self> {
-        from_http(code.0).and_then(|code| u8::try_from(code).ok()).map(Self)
-    }
-}
-
-/// The draft's mapping skips one reserved codepoint every 0x1f.
-pub(crate) fn to_http(code: u32) -> u64 {
-    WT_FIRST + u64::from(code) + u64::from(code) / 0x1e
-}
-
-pub(crate) fn from_http(code: u64) -> Option<u32> {
-    if !(WT_FIRST..=WT_LAST).contains(&code) || (code - 0x21).is_multiple_of(0x1f) {
-        return None;
-    }
-    let shifted = code - WT_FIRST;
-    u32::try_from(shifted - shifted / 0x1f).ok()
 }
 
 #[cfg(test)]
@@ -68,15 +49,8 @@ mod tests {
             (0x1d, 0x52e4a40fa8f8),
             (0x1e, 0x52e4a40fa8fa),
             (0xff, 0x52e4a40fa9e2),
-            (0xffff_ffff, 0x52e5ac983162),
         ] {
-            assert_eq!(to_http(code), http);
-            assert_eq!(from_http(http), Some(code));
+            assert_eq!(WtCode(code).to_http(), Code(http));
         }
-        for reserved in [0x52e4a40fa8f9, WT_FIRST - 1, WT_LAST + 1] {
-            assert_eq!(from_http(reserved), None);
-        }
-        assert_eq!(WtCode::from_http(Code(0x52e4a40fa9e2)), Some(WtCode(0xff)));
-        assert_eq!(WtCode::from_http(Code(0x52e4a40fa9e3)), None);
     }
 }

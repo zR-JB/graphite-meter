@@ -7,13 +7,8 @@ const CLOSE: u64 = 0x2843;
 const HTTP2_ONLY: [u64; 2] = [0x190b4d3e, 0x190b4d42];
 pub(crate) const MAX_REASON: usize = 1024;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Capsule {
-    Close { code: u32, reason: String },
-}
-
-/// Reads CLOSE capsules from a CONNECT stream's DATA. Others, DRAIN and flow control included, are
-/// skipped unbuffered.
+/// Reads CLOSE capsules, as their code and reason, from a CONNECT stream's DATA. Others, DRAIN and
+/// flow control included, are skipped unbuffered.
 #[derive(Default)]
 pub(crate) struct Reader {
     frames: frame::Reader,
@@ -22,7 +17,7 @@ pub(crate) struct Reader {
 }
 
 impl Reader {
-    pub(crate) fn read(&mut self, input: &mut Bytes) -> Result<Option<Capsule>, Code> {
+    pub(crate) fn read(&mut self, input: &mut Bytes) -> Result<Option<(u32, String)>, Code> {
         while let Some(piece) = self.frames.next(input) {
             match piece {
                 frame::Piece::Header { kind, length } => {
@@ -33,11 +28,11 @@ impl Reader {
                 }
                 frame::Piece::Payload(body) if self.kind == CLOSE => {
                     self.close.extend_from_slice(&body);
-                    if self.frames.remaining() == 0 {
+                    if self.frames.remaining == 0 {
                         let mut close = std::mem::take(&mut self.close);
                         let reason = String::from_utf8(close.split_off(4)).map_err(|_| Code::H3_MESSAGE_ERROR)?;
                         let code = u32::from_be_bytes(close.try_into().expect("four code bytes"));
-                        return Ok(Some(Capsule::Close { code, reason }));
+                        return Ok(Some((code, reason)));
                     }
                 }
                 _ => {}
@@ -86,7 +81,7 @@ mod tests {
         [bytes, body.to_vec()].concat()
     }
 
-    fn read_all(chunks: impl IntoIterator<Item = Vec<u8>>) -> Result<(Vec<Capsule>, bool), Code> {
+    fn read_all(chunks: impl IntoIterator<Item = Vec<u8>>) -> Result<(Vec<(u32, String)>, bool), Code> {
         let mut reader = Reader::default();
         let mut capsules = Vec::new();
         for chunk in chunks {
@@ -105,7 +100,7 @@ mod tests {
         bytes.extend(capsule(0x17 + 41 * 3, b"grease"));
         bytes.extend(capsule(0x78ae, b""));
         bytes.extend(close(0xf123_4567, "done"));
-        let expected = vec![Capsule::Close { code: 0xf123_4567, reason: "done".into() }];
+        let expected = vec![(0xf123_4567, "done".into())];
         for split in 0..=bytes.len() {
             let (first, second) = bytes.split_at(split);
             assert_eq!(read_all([first.to_vec(), second.to_vec()]), Ok((expected.clone(), true)), "split {split}");
@@ -138,10 +133,7 @@ mod tests {
             assert_eq!(read_all([bytes]), Err(Code::H3_MESSAGE_ERROR));
         }
         let text = format!("{}€tail", "a".repeat(MAX_REASON - 1));
-        assert_eq!(
-            read_all([close(1, &text)]),
-            Ok((vec![Capsule::Close { code: 1, reason: "a".repeat(MAX_REASON - 1) }], true))
-        );
+        assert_eq!(read_all([close(1, &text)]), Ok((vec![(1, "a".repeat(MAX_REASON - 1))], true)));
         let bytes = close(7, "bye");
         for end in 1..bytes.len() {
             assert_eq!(read_all([bytes[..end].to_vec()]), Ok((vec![], false)), "end {end}");

@@ -1,6 +1,11 @@
 //! HTTP/3 frames and stream types (RFC 9114 §6.2, §7.2), read incrementally from arbitrary chunks.
 use crate::varint;
 use bytes::{Buf, BufMut, Bytes};
+use std::{
+    future::Future,
+    pin::pin,
+    task::{Context, Poll, ready},
+};
 
 pub(crate) const DATA: u64 = 0x00;
 pub(crate) const HEADERS: u64 = 0x01;
@@ -27,6 +32,44 @@ pub(crate) fn is_http2(kind: u64) -> bool {
 pub(crate) fn put_header(kind: u64, length: u64, output: &mut impl BufMut) {
     varint::put(kind, output);
     varint::put(length, output);
+}
+
+/// A frame or stream header, written in as many parts as the stream takes.
+#[derive(Default)]
+pub(crate) struct Header {
+    bytes: [u8; 16],
+    end: u8,
+    written: u8,
+}
+
+impl Header {
+    pub(crate) fn new(kind: u64, length: u64) -> Self {
+        let mut bytes = [0; 16];
+        let mut rest = &mut bytes[..];
+        put_header(kind, length, &mut rest);
+        let end = (16 - rest.len()) as u8;
+        Self { bytes, end, written: 0 }
+    }
+
+    pub(crate) fn len(&self) -> u8 {
+        self.end
+    }
+
+    pub(crate) fn is_written(&self) -> bool {
+        self.written == self.end
+    }
+
+    pub(crate) fn poll_write(
+        &mut self,
+        stream: &mut noq::SendStream,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), noq::WriteError>> {
+        while !self.is_written() {
+            let rest = &self.bytes[usize::from(self.written)..usize::from(self.end)];
+            self.written += ready!(pin!(stream.write(rest)).poll(cx))? as u8;
+        }
+        Poll::Ready(Ok(()))
+    }
 }
 
 /// One varint, split anywhere across chunks.
@@ -116,7 +159,8 @@ pub(crate) enum Piece {
 #[derive(Default)]
 pub(crate) struct Reader {
     header: Pair,
-    remaining: u64,
+    /// Payload bytes the current frame still owes.
+    pub(crate) remaining: u64,
 }
 
 impl Reader {
@@ -132,11 +176,6 @@ impl Reader {
         let take = usize::try_from(self.remaining).map_or(input.len(), |remaining| remaining.min(input.len()));
         self.remaining -= take as u64;
         Some(Piece::Payload(input.split_to(take)))
-    }
-
-    /// Payload bytes the current frame still owes.
-    pub(crate) fn remaining(&self) -> u64 {
-        self.remaining
     }
 
     /// Whether the stream may end here without truncating a frame.

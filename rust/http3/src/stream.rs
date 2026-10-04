@@ -4,7 +4,8 @@ use crate::{
     code::Code,
     connection::{Role, Shared},
     error::Error,
-    fields, frame,
+    fields,
+    frame::{self, Header},
     message::{Event, Message},
 };
 use bytes::Bytes;
@@ -32,15 +33,21 @@ impl RequestStream {
         shared: &Arc<Shared>,
         send: noq::SendStream,
         recv: noq::RecvStream,
-        limit: u64,
         (send_charge, recv_charge): (Charge, Charge),
     ) -> Self {
         shared.hold(2);
         Self {
-            send: SendHalf::new(shared.clone(), send, send_charge),
+            send: SendHalf {
+                stream: send,
+                header: Header::default(),
+                payload: Bytes::new(),
+                shared: shared.clone(),
+                _charge: send_charge,
+                finished: false,
+            },
             recv: RecvHalf {
                 stream: recv,
-                message: Message::new(limit, shared.role == Role::Client),
+                message: Message::new(shared.role.field_limit(), shared.role == Role::Client),
                 input: Bytes::new(),
                 shared: shared.clone(),
                 charge: recv_charge,
@@ -60,9 +67,10 @@ impl RequestStream {
     }
 
     /// Answers `code` in both directions.
-    pub(crate) fn abort(mut self, code: Code) {
+    pub(crate) fn abort(&mut self, code: Code) -> Error {
         self.recv.stop(code);
         self.send.reset(code);
+        Error::Protocol(code)
     }
 
     pub(crate) fn recv_abort(&mut self, code: Code) -> Error {
@@ -78,7 +86,7 @@ impl RequestStream {
 /// Reads a message: its head, then DATA payloads as noq delivered them. Trailers are checked and dropped.
 pub struct RecvHalf {
     stream: noq::RecvStream,
-    message: Message,
+    pub(crate) message: Message,
     input: Bytes,
     shared: Arc<Shared>,
     charge: Charge,
@@ -135,10 +143,6 @@ impl RecvHalf {
         if !std::mem::replace(&mut self.done, true) {
             let _ = self.stream.stop(code.into());
         }
-    }
-
-    pub(crate) fn content_length(&mut self, length: Option<u64>) {
-        self.message.content_length(length);
     }
 
     fn poll_event(&mut self, cx: &mut Context<'_>) -> Poll<Result<Option<Event>, Error>> {
@@ -205,9 +209,7 @@ impl Drop for RecvHalf {
 /// Writes frames; a partly written frame stays owned here, and dropping it resets instead of FIN.
 pub struct SendHalf {
     stream: noq::SendStream,
-    header: [u8; 16],
-    header_end: u8,
-    header_written: u8,
+    header: Header,
     payload: Bytes,
     shared: Arc<Shared>,
     _charge: Charge,
@@ -215,26 +217,9 @@ pub struct SendHalf {
 }
 
 impl SendHalf {
-    fn new(shared: Arc<Shared>, stream: noq::SendStream, charge: Charge) -> Self {
-        Self {
-            stream,
-            header: [0; 16],
-            header_end: 0,
-            header_written: 0,
-            payload: Bytes::new(),
-            shared,
-            _charge: charge,
-            finished: false,
-        }
-    }
-
     /// Writes whatever frame is pending.
     pub(crate) fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
-        while self.header_written < self.header_end {
-            let header = &self.header[usize::from(self.header_written)..usize::from(self.header_end)];
-            let written = ready!(pin!(self.stream.write(header)).poll(cx))?;
-            self.header_written += written as u8;
-        }
+        ready!(self.header.poll_write(&mut self.stream, cx))?;
         while !self.payload.is_empty() {
             let length = self.payload.len();
             let mut chunks = std::slice::from_mut(&mut self.payload);
@@ -248,10 +233,7 @@ impl SendHalf {
 
     /// Queues a frame; the previous one must be written.
     pub(crate) fn queue(&mut self, kind: u64, payload: Bytes) {
-        let mut header = &mut self.header[..];
-        frame::put_header(kind, payload.len() as u64, &mut header);
-        let remaining = header.len();
-        (self.header_end, self.header_written, self.payload) = ((16 - remaining) as u8, 0, payload);
+        (self.header, self.payload) = (Header::new(kind, payload.len() as u64), payload);
     }
 
     pub(crate) async fn frame(&mut self, kind: u64, payload: Bytes) -> Result<(), Error> {

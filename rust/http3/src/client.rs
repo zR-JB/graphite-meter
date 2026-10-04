@@ -24,13 +24,9 @@ impl Connection {
 }
 
 #[derive(Clone)]
-pub struct SendRequest(Arc<Shared>);
+pub struct SendRequest(pub(crate) Arc<Shared>);
 
 impl SendRequest {
-    pub(crate) fn shared(&self) -> &Arc<Shared> {
-        &self.0
-    }
-
     /// Whether the server sent GOAWAY, after which this connection takes no new request.
     pub fn going_away(&self) -> bool {
         self.0.going_away()
@@ -53,7 +49,7 @@ impl SendRequest {
         let head = fields::encode_request(&parts, protocol, self.0.peer_field_limit()).map_err(|_| Error::Refused)?;
         let charges = stream::charges(&self.0.budget).ok_or(Error::Refused)?;
         let (send, recv) = self.0.quic.open_bi().await?;
-        let mut stream = RequestStream::new(&self.0, send, recv, Role::Client.field_limit(), charges);
+        let mut stream = RequestStream::new(&self.0, send, recv, charges);
         stream.recv.method = parts.method;
         stream.send.frame(frame::HEADERS, head.into()).await?;
         Ok(stream)

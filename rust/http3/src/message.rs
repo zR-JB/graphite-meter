@@ -121,16 +121,16 @@ impl Message {
                         }
                         return Ok(Some(Event::Data(payload)));
                     }
-                    frame::HEADERS if self.frames.remaining() == 0 && self.section.is_empty() => {
+                    frame::HEADERS if self.frames.remaining == 0 && self.section.is_empty() => {
                         return Ok(Some(self.fields(payload)));
                     }
                     frame::HEADERS => {
                         if self.section.is_empty() {
                             self.section
-                                .reserve_exact(payload.len() + self.frames.remaining() as usize);
+                                .reserve_exact(payload.len() + self.frames.remaining as usize);
                         }
                         self.section.extend_from_slice(&payload);
-                        if self.frames.remaining() == 0 {
+                        if self.frames.remaining == 0 {
                             let section = std::mem::take(&mut self.section);
                             return Ok(Some(self.fields(section.into())));
                         }

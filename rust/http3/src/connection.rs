@@ -389,18 +389,14 @@ impl Connection {
 
     /// A budget refusal stops the new stream, never a critical one within the floor.
     fn admit_uni(&mut self, mut stream: noq::RecvStream) {
-        let charge = match self.floor.checked_sub(1) {
-            Some(floor) => {
-                self.floor = floor;
-                None
-            }
-            None => match Charge::new(&self.shared.budget, size_of::<Uni>()) {
-                Some(charge) => Some(charge),
-                None => {
-                    let _ = stream.stop(Code::H3_REQUEST_REJECTED.into());
-                    return;
-                }
-            },
+        let charge = if let Some(floor) = self.floor.checked_sub(1) {
+            self.floor = floor;
+            None
+        } else if let Some(charge) = Charge::new(&self.shared.budget, size_of::<Uni>()) {
+            Some(charge)
+        } else {
+            let _ = stream.stop(Code::H3_REQUEST_REJECTED.into());
+            return;
         };
         let kind = Kind::Unknown {
             header: frame::StreamType::default(),
@@ -416,9 +412,7 @@ impl Connection {
         let late = self.goaway_sent && id >= self.next_request;
         self.next_request = self.next_request.max(id + 4);
         match stream::charges(&self.shared.budget) {
-            Some(charges) if !late => {
-                Some(RequestStream::new(&self.shared, send, recv, self.shared.role.field_limit(), charges))
-            }
+            Some(charges) if !late => Some(RequestStream::new(&self.shared, send, recv, charges)),
             _ => {
                 let _ = send.reset(Code::H3_REQUEST_REJECTED.into());
                 let _ = recv.stop(Code::H3_REQUEST_REJECTED.into());
@@ -543,8 +537,8 @@ impl Connection {
             Kind::Unknown { deadline, .. } => Some(deadline),
             _ => None,
         });
-        let resets = self.resets.iter().map(PendingReset::deadline);
-        let closing = self.sessions.iter().filter_map(Connect::deadline);
+        let resets = self.resets.iter().map(|pending| pending.deadline);
+        let closing = self.sessions.iter().filter_map(|connect| connect.deadline);
         let Some(deadline) = types
             .chain(resets)
             .chain(closing)
