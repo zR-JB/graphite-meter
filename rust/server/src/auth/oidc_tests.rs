@@ -18,16 +18,11 @@ use crate::{config::AuthMode, test_tls};
 
 #[derive(Default)]
 struct Twist {
-    wrong_nonce: bool,
-    wrong_subject: bool,
-    denied_group: bool,
     unavailable: bool,
     rotated: bool,
-    unknown_kid: bool,
     claims: Option<Value>,
     header: Option<Value>,
     signed_userinfo: Option<Value>,
-    name: Option<String>,
     /// Discovery members that replace the double's own.
     metadata: Option<Value>,
     /// Token response members that replace the double's own.
@@ -107,13 +102,11 @@ impl Double {
                 let basic = format!("Basic {}", STANDARD.encode("meter:s3cret~%2A"));
                 assert_eq!(headers[header::AUTHORIZATION], basic);
                 let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-                let nonce = if twist.wrong_nonce { "invalid" } else { &nonce };
                 let token_claims = json!({"iss": issuer, "aud": "meter", "sub": "operator", "iat": now,
                     "exp": now + 300, "nonce": nonce, "at_hash": at_hash("access")});
-                let header = match (&twist.header, twist.rotated, twist.unknown_kid) {
-                    (Some(header), ..) => header.clone(),
-                    (_, _, true) => json!({"alg": "ES256", "kid": "gone"}),
-                    (_, true, _) => json!({"alg": "ES256", "kid": "rotated", "typ": "JWT"}),
+                let header = match (&twist.header, twist.rotated) {
+                    (Some(header), _) => header.clone(),
+                    (_, true) => json!({"alg": "ES256", "kid": "rotated", "typ": "JWT"}),
                     _ => json!({"alg": "RS256", "kid": "test-key"}),
                 };
                 let id_token = self.keys.sign(header, &with(token_claims, &twist.claims));
@@ -125,10 +118,7 @@ impl Double {
             }
             "/userinfo" => {
                 assert_eq!(headers[header::AUTHORIZATION], "Bearer access");
-                let name = twist.name.as_deref().unwrap_or("Example Operator");
-                let groups = [if twist.denied_group { "outsiders" } else { "operators" }];
-                let subject = if twist.wrong_subject { "other" } else { "operator" };
-                let info = json!({"sub": subject, "name": name, "groups": groups});
+                let info = json!({"sub": "operator", "name": "Example Operator", "groups": ["operators"]});
                 let info = with(with(info, &twist.userinfo), &twist.signed_userinfo);
                 let header = json!({"alg": "RS256", "kid": "test-key"});
                 match twist.signed_userinfo {
@@ -218,12 +208,13 @@ async fn signed_provider_exchange_checks_nonce_subject_group_and_pkce() {
     // Go's CleanText blanks the control, keeps 63 characters and an ellipsis, then trims.
     let display_name = format!("{}…", "é".repeat(61));
     let name = format!("\u{009b} {}\u{202e}🙂{}", "é".repeat(127), "x".repeat(256 * 1024));
-    for scenario in 0..4 {
-        provider.set_twist(|twist| {
-            twist.name = Some(name.clone());
-            (twist.wrong_nonce, twist.wrong_subject, twist.denied_group) =
-                (scenario == 1, scenario == 2, scenario == 3);
-        });
+    for (scenario, claims, userinfo) in [
+        (0, json!({}), json!({"name": name})),
+        (1, json!({"nonce": "invalid"}), json!({"name": name})),
+        (2, json!({}), json!({"name": name, "sub": "other"})),
+        (3, json!({}), json!({"name": name, "groups": ["outsiders"]})),
+    ] {
+        provider.set_twist(|twist| (twist.claims, twist.userinfo) = (Some(claims), Some(userinfo)));
         let result = provider.login().await;
         if scenario == 0 {
             let identity = result.unwrap();
@@ -276,14 +267,13 @@ async fn forged_or_misbound_tokens_are_refused_and_rotation_refetches_keys_once(
         ("claims", json!({"at_hash": at_hash("other")})),
         ("header", json!({"alg": "none"})),
         ("header", json!({"alg": "HS256", "kid": "test-key"})),
-        ("unknown_kid", json!(true)),
+        ("header", json!({"alg": "ES256", "kid": "gone"})),
         ("signed_userinfo", json!({"iss": provider.issuer, "aud": "other"})),
     ];
     for (field, value) in changes {
         provider.set_twist(|twist| match field {
             "claims" => twist.claims = Some(value.clone()),
             "header" => twist.header = Some(value.clone()),
-            "unknown_kid" => twist.unknown_kid = true,
             _ => twist.signed_userinfo = Some(value.clone()),
         });
         assert!(provider.login().await.is_err(), "{field}={value} authenticated");
@@ -422,25 +412,27 @@ async fn unavailable_provider_refuses_logins_until_discovery_recovers_once() {
     provider.stop().await;
 }
 
-fn client(issuer: &str, client_id: &str, secret: &str) -> Oidc {
-    let config = AuthConfig {
+/// OIDC sign-in for the "operators" group at https://meter.example.
+pub(in crate::auth) fn config(issuer: &str, client_id: &str, secret: &str) -> AuthConfig {
+    AuthConfig {
         mode: AuthMode::Oidc,
         public_url: "https://meter.example".into(),
         oidc_issuer: issuer.into(),
         oidc_client_id: client_id.into(),
         oidc_client_secret: secret.into(),
         oidc_allowed_groups: vec!["operators".into()],
+        oidc_provider_name: "Authelia".into(),
         ..AuthConfig::default()
-    };
-    Oidc::new(&config, Arc::new(crate::auth::logging::SecurityLog::default())).unwrap()
+    }
+}
+
+fn client(issuer: &str, client_id: &str, secret: &str) -> Oidc {
+    let log = Arc::new(crate::auth::logging::SecurityLog::default());
+    Oidc::new(&config(issuer, client_id, secret), log).unwrap()
 }
 
 pub(in crate::auth) fn ready() -> Oidc {
-    ready_with(true)
-}
-
-fn ready_with(issuer_parameter: bool) -> Oidc {
-    let oidc = discovered("https://identity.example/authorize", issuer_parameter);
+    let oidc = discovered("https://identity.example/authorize", true);
     assert!(oidc.ready().is_some());
     oidc
 }
@@ -530,7 +522,7 @@ async fn mismatched_response_issuer_cannot_redeem_a_code() {
 #[tokio::test]
 async fn an_empty_response_issuer_is_absent_like_go() {
     for advertised in [false, true] {
-        let oidc = ready_with(advertised);
+        let oidc = discovered("https://identity.example/authorize", advertised);
         let (started, fields) = start(&oidc, "192.0.2.3").await;
         let refused = oidc.take(&fields["state"], &started.browser, Some("")).err();
         assert_eq!(refused.map(|(reason, _)| reason), advertised.then_some(Reason::ResponseIssuer));

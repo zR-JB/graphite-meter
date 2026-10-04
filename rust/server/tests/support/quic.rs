@@ -6,7 +6,7 @@ use bytes::Bytes;
 use graphite_meter_http3::{self as http3, RecvHalf, client::SendRequest};
 use graphite_meter_server::{ServerError, config::Config, http::HttpServer};
 use http::{Request, Response, StatusCode};
-use std::{error::Error, net::SocketAddr, sync::Arc};
+use std::{error::Error, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{sync::oneshot, task::JoinHandle};
 
 pub type TestError = Box<dyn Error + Send + Sync>;
@@ -24,6 +24,11 @@ impl QuicServer {
         let _ = self.stop.send(());
         self.task.await?
     }
+}
+
+/// The default configuration, with measurement operations bounded at `operation`.
+pub fn lasting(operation: Duration) -> Config {
+    Config { max_operation_duration: operation, ..Config::default() }
 }
 
 pub fn serve(config: Config) -> Result<QuicServer, TestError> {

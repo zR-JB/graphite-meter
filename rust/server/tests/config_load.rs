@@ -96,11 +96,8 @@ fn the_auth_mode_is_checked_once_flags_apply_as_in_go() {
         (&[("GM_AUTH_MODE", "")], &[]),
         (&[], &["-auth-mode=bogus"]),
     ] {
-        assert_eq!(
-            failure(env, args),
-            "GM_AUTH_MODE must be off, password, oidc, or hybrid",
-            "{env:?} {args:?}"
-        );
+        let refused = failure(env, args);
+        assert_eq!(refused, "GM_AUTH_MODE must be off, password, oidc, or hybrid", "{env:?} {args:?}");
     }
 }
 

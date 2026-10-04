@@ -82,31 +82,18 @@ impl Approval {
 }
 
 impl State {
+    fn approval_count(&self, matches: impl Fn(&Approval) -> bool) -> usize {
+        self.approvals.values().filter(|approval| matches(approval)).count()
+    }
     fn session_approvals(&self, session: &SessionLease) -> usize {
-        self.approvals
-            .values()
-            .filter(|approval| approval.belongs_to(session))
-            .count()
+        self.approval_count(|approval| approval.belongs_to(session))
     }
     fn approval_capacity(&self, client: IpAddr, signed_in: bool) -> bool {
-        let anonymous = || {
-            self.approvals
-                .values()
-                .filter(|approval| approval.session.is_none())
-                .count()
-        };
+        let keys = crate::client_address::client_keys(client);
+        let held = |key: &str| self.approval_count(|approval| approval.client_keys.iter().any(|held| held == key));
         self.approvals.len() >= MAX_APPROVALS
-            || !signed_in && anonymous() >= MAX_APPROVALS / 2
-            || crate::client_address::share_full(
-                &crate::client_address::client_keys(client),
-                MAX_CLIENT_APPROVALS,
-                |key| {
-                    self.approvals
-                        .values()
-                        .filter(|approval| approval.client_keys.iter().any(|held| held == key))
-                        .count()
-                },
-            )
+            || !signed_in && self.approval_count(|approval| approval.session.is_none()) >= MAX_APPROVALS / 2
+            || crate::client_address::share_full(&keys, MAX_CLIENT_APPROVALS, held)
     }
 }
 

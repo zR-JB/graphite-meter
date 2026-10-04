@@ -5,6 +5,7 @@ use std::{
     net::{SocketAddr, UdpSocket},
     process::{Child, Command, Stdio},
     sync::mpsc,
+    thread::JoinHandle,
     time::Duration,
 };
 
@@ -28,18 +29,14 @@ impl Drop for Server {
     }
 }
 
-fn command(identity: &support::Identity) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_graphite-meter-server"));
-    command
-        .env_clear()
-        .env("GM_TLS_CERT", identity.directory().join("identity.pem"))
-        .env("GM_TLS_KEY", identity.directory().join("identity.key"));
-    command
-}
-
-fn start(mut command: Command) -> (Server, mpsc::Receiver<String>, std::thread::JoinHandle<()>) {
+/// The server serving `identity` with only `env` besides, and its stderr lines.
+fn start(identity: &support::Identity, env: [(&str, &str); 2]) -> (Server, mpsc::Receiver<String>, JoinHandle<()>) {
     let mut server = Server(
-        command
+        Command::new(env!("CARGO_BIN_EXE_graphite-meter-server"))
+            .env_clear()
+            .env("GM_TLS_CERT", identity.directory().join("identity.pem"))
+            .env("GM_TLS_KEY", identity.directory().join("identity.key"))
+            .envs(env)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -94,9 +91,7 @@ fn closing_initial(reason: &[u8]) -> Vec<u8> {
 #[test]
 fn a_peers_handshake_close_reason_cannot_forge_log_lines() {
     let identity = support::Identity::generate();
-    let mut command = command(&identity);
-    command.envs([("GM_H1_ADDR", "127.0.0.2:0"), ("GM_H3_ADDR", "127.0.0.1:0")]);
-    let (server, received, reader) = start(command);
+    let (server, received, reader) = start(&identity, [("GM_H1_ADDR", "127.0.0.2:0"), ("GM_H3_ADDR", "127.0.0.1:0")]);
     let next = || received.recv_timeout(Duration::from_secs(10)).expect("a log line");
     let quic: SocketAddr = loop {
         let line = next();

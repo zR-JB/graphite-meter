@@ -21,7 +21,7 @@ use std::{
     net::IpAddr,
     pin::Pin,
     sync::{Arc, Mutex, OnceLock},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, UNIX_EPOCH},
 };
 use tokio::{
     sync::{Mutex as AsyncMutex, Semaphore},
@@ -219,17 +219,17 @@ impl Oidc {
         let now = Instant::now();
         transactions.retain(|_, transaction| transaction.deadline > now);
         let client_keys = crate::client_address::client_keys(address);
-        if transactions.len() >= MAX_TRANSACTIONS
-            || crate::client_address::share_full(&client_keys, 8, |key| {
-                transactions
-                    .values()
-                    .filter(|tx| tx.client_keys.iter().any(|held| held == key))
-                    .count()
-            })
-        {
-            if transactions.len() >= MAX_TRANSACTIONS {
-                self.log.ceiling(super::logging::Ceiling::OidcTransaction);
-            }
+        let full = transactions.len() >= MAX_TRANSACTIONS;
+        if full {
+            self.log.ceiling(super::logging::Ceiling::OidcTransaction);
+        }
+        let held = |key: &str| {
+            transactions
+                .values()
+                .filter(|tx| tx.client_keys.iter().any(|held| held == key))
+                .count()
+        };
+        if full || crate::client_address::share_full(&client_keys, 8, held) {
             return Err(Reason::TransactionCapacity);
         }
         transactions.insert(
@@ -277,10 +277,7 @@ impl Oidc {
         let id_token = id_token.ok_or(Reason::MissingIdToken)?;
         let verify = provider.verify(&self.http, id_token);
         let verified = within(deadline, Reason::IdTokenVerification, verify).await?;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| Reason::IdTokenVerification)?
-            .as_secs();
+        let now = UNIX_EPOCH.elapsed().map_err(|_| Reason::IdTokenVerification)?;
         let claims = jwt::id_token(
             verified,
             &jwt::Expected {
@@ -288,7 +285,7 @@ impl Oidc {
                 client_id: &self.config.oidc_client_id,
                 nonce: &tx.nonce,
                 access_token: &tokens.access_token,
-                now,
+                now: now.as_secs(),
             },
         )
         .map_err(|reject| match reject {

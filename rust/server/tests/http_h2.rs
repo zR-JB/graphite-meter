@@ -1,3 +1,6 @@
+#[path = "support/http2.rs"]
+mod http2;
+
 #[path = "support/native.rs"]
 mod native;
 
@@ -6,9 +9,8 @@ mod test_tls;
 
 use bytes::Bytes;
 use graphite_meter_server::config::{Config, NativeKind};
-use graphite_meter_server::http::HttpServer;
 use h2::{RecvStream, client::SendRequest};
-use http::{Request, Response, Version};
+use http::{Response, Version};
 use rustls::pki_types::ServerName;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
@@ -33,8 +35,7 @@ impl Harness {
 
     async fn start_config(config: Config) -> Self {
         let (tls, client_tls) = test_tls::configs("localhost", &[&rustls::version::TLS13], &[b"h2"]).unwrap();
-        let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let server = native::serve(server, NativeKind::H2, Some(Arc::new(tls))).await;
+        let server = native::serve(native::server(config), NativeKind::H2, Some(Arc::new(tls))).await;
         let address = server.address;
         let connector = TlsConnector::from(Arc::new(client_tls));
         let stream = connect(&connector, TcpStream::connect(address).await.unwrap()).await;
@@ -57,6 +58,12 @@ impl Harness {
         client
     }
 
+    /// Waits for the server to close the client's connection without error.
+    async fn closed(&mut self, failure: &str) {
+        let closed = tokio::time::timeout(Duration::from_secs(2), &mut self.driver).await;
+        closed.expect(failure).unwrap().unwrap();
+    }
+
     async fn close(self) {
         self.server.shutdown().await;
         self.driver.abort();
@@ -65,37 +72,16 @@ impl Harness {
 }
 
 async fn connect(connector: &TlsConnector, socket: TcpStream) -> tokio_rustls::client::TlsStream<TcpStream> {
-    let stream = connector
-        .connect(ServerName::try_from("localhost").unwrap(), socket)
-        .await
-        .unwrap();
+    let name = ServerName::try_from("localhost").unwrap();
+    let stream = connector.connect(name, socket).await.unwrap();
     assert_eq!(stream.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
     stream
 }
 
-fn request(method: &str, path: &str) -> Request<()> {
-    Request::builder()
-        .method(method)
-        .uri(format!("https://localhost{path}"))
-        .version(Version::HTTP_2)
-        .body(())
-        .unwrap()
-}
-
 async fn response(client: &mut SendRequest<Bytes>, method: &str, path: &str) -> Response<RecvStream> {
     std::future::poll_fn(|cx| client.poll_ready(cx)).await.unwrap();
-    let (response, _) = client.send_request(request(method, path), true).unwrap();
+    let (response, _) = client.send_request(http2::request(method, path), true).unwrap();
     response.await.unwrap()
-}
-
-async fn collect(mut body: RecvStream) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    while let Some(chunk) = body.data().await {
-        let chunk = chunk.unwrap();
-        body.flow_control().release_capacity(chunk.len()).unwrap();
-        bytes.extend_from_slice(&chunk);
-    }
-    bytes
 }
 
 fn parse(body: &[u8]) -> serde_json::Value {
@@ -103,7 +89,7 @@ fn parse(body: &[u8]) -> serde_json::Value {
 }
 
 async fn json(client: &mut SendRequest<Bytes>, method: &str, path: &str) -> serde_json::Value {
-    parse(&collect(response(client, method, path).await.into_body()).await)
+    parse(&http2::body(response(client, method, path).await.into_body()).await)
 }
 
 #[tokio::test]
@@ -120,7 +106,7 @@ async fn validated_h2_serves_probe_and_mounts_only_native_routes() {
         assert_eq!(probe.headers()["cache-control"], "no-store");
         assert!(!probe.headers().contains_key("alt-svc"));
         assert!(!probe.headers().contains_key("connection"));
-        assert_eq!(parse(&collect(probe.into_body()).await)["protocolNegotiated"], "h2");
+        assert_eq!(parse(&http2::body(probe.into_body()).await)["protocolNegotiated"], "h2");
         for path in ["/preflight", "/servers", "/ws/session", "/ws/ping"] {
             let reply = response(&mut harness.client, "GET", path).await;
             assert_eq!(reply.status(), 404, "{path}");
@@ -145,7 +131,7 @@ async fn expired_flow_controlled_stream_does_not_cancel_healthy_sibling() {
         std::future::poll_fn(|cx| harness.client.poll_ready(cx)).await.unwrap();
         let (healthy_reply, mut healthy_upload) = harness
             .client
-            .send_request(request("POST", &format!("/upload?id={id}")), false)
+            .send_request(http2::request("POST", &format!("/upload?id={id}")), false)
             .unwrap();
         healthy_upload.send_data(Bytes::from_static(b"abc"), false).unwrap();
         let checkpoint = json(&mut harness.client, "POST", &format!("/upload/checkpoint?id={id}")).await;
@@ -166,7 +152,7 @@ async fn expired_flow_controlled_stream_does_not_cancel_healthy_sibling() {
             .await
             .expect("healthy upload was cancelled with its sibling");
         assert_eq!(reply.status(), 200);
-        assert_eq!(parse(&collect(reply.into_body()).await)["bytes"], 6);
+        assert_eq!(parse(&http2::body(reply.into_body()).await)["bytes"], 6);
         assert_eq!(json(&mut harness.client, "GET", "/probe").await["load"]["active"], 0);
         harness.close().await;
     })
@@ -205,17 +191,13 @@ async fn fifteen_seconds_idle_closes_h2_and_releases_connection_capacity() {
     .await;
     // Complete one exchange so the server has processed the client's preface.
     let probe = response(&mut harness.client, "GET", "/probe").await;
-    collect(probe.into_body()).await;
+    http2::body(probe.into_body()).await;
     let mut rejected = TcpStream::connect(harness.address).await.unwrap();
     assert_eq!(rejected.read(&mut [0; 1]).await.unwrap(), 0);
     advance_clock(Duration::from_secs(14)).await;
     assert!(!harness.driver.is_finished(), "closed before 15 seconds idle");
     advance_clock(Duration::from_secs(2)).await;
-    tokio::time::timeout(Duration::from_secs(2), &mut harness.driver)
-        .await
-        .expect("idle connection did not close")
-        .unwrap()
-        .unwrap();
+    harness.closed("idle connection did not close").await;
     let mut replacement = TcpStream::connect(harness.address).await.unwrap();
     let read = tokio::time::timeout(Duration::from_millis(50), replacement.read(&mut [0; 1])).await;
     assert!(read.is_err(), "idle connection retained the sole connection permit");
@@ -238,18 +220,16 @@ async fn active_progress_is_not_idle_and_gets_a_fresh_idle_period_when_finished(
     assert_eq!(json(&mut harness.client, "GET", "/probe").await["load"]["active"], 1);
     let finished = response(&mut harness.client, "DELETE", &path).await;
     assert_eq!(finished.status(), 204);
-    collect(finished.into_body()).await;
-    let completed = collect(progress).await;
+    http2::body(finished.into_body()).await;
+    let completed = http2::body(progress).await;
     assert!(std::str::from_utf8(&completed).unwrap().contains("complete"));
     advance_clock(Duration::from_secs(14)).await;
     let idle = harness.driver.is_finished();
     assert!(!idle, "active lifetime was charged to idle timeout");
     advance_clock(Duration::from_secs(2)).await;
-    tokio::time::timeout(Duration::from_secs(2), &mut harness.driver)
-        .await
-        .expect("connection did not become idle after progress completed")
-        .unwrap()
-        .unwrap();
+    harness
+        .closed("connection did not become idle after progress completed")
+        .await;
     harness.server.shutdown().await;
 }
 
@@ -273,7 +253,7 @@ async fn silent_connections_from_few_sources_leave_room_for_new_clients() {
         let mut client = harness.connect_from([127, 0, 0, 6]).await;
         let probe = response(&mut client, "GET", "/probe").await;
         assert_eq!(probe.status(), 200);
-        collect(probe.into_body()).await;
+        http2::body(probe.into_body()).await;
         drop(silent);
         harness.close().await;
     })

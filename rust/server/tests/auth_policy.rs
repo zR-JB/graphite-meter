@@ -14,11 +14,13 @@ const PUBLIC: &str = "https://meter.example";
 const CLIENT: &str = "https://client.example";
 const UI: Listener = Listener { ui: true, webtransport: false };
 
-fn setup() -> (SessionStore, Policy) {
+/// A policy over a store holding one login, with that login's cookie token.
+fn setup() -> (SessionStore, Policy, String, SessionLease) {
     let store = SessionStore::new();
     let trusted = vec!["10.0.0.0/8".parse().unwrap()];
     let policy = Policy::new(PUBLIC, AuthMode::Password, trusted, store.clone()).unwrap();
-    (store, policy)
+    let (token, session) = store.create("operator", "Operator", "local", None).unwrap();
+    (store, policy, token, session)
 }
 
 /// A grant's bearer token, issued by an approved exchange for the browser `origin`, or a terminal.
@@ -88,7 +90,7 @@ fn refused(policy: &Policy, request: &Request<()>, refusal: Refusal) {
 
 #[test]
 fn tls_hostnames_and_proxy_evidence_have_distinct_trust_boundaries() {
-    let (_, policy) = setup();
+    let (_, policy, ..) = setup();
     let mut req = request("GET", "/login");
     let trusted: SocketAddr = "10.1.2.3:4000".parse().unwrap();
     assert!(policy.trust(&req, peer(), true).canonical);
@@ -120,8 +122,7 @@ fn tls_hostnames_and_proxy_evidence_have_distinct_trust_boundaries() {
 
 #[test]
 fn cookie_measurements_require_positive_origin_evidence_and_mutation_csrf() {
-    let (store, policy) = setup();
-    let (token, session) = store.create("operator", "Operator", "local", None).unwrap();
+    let (_, policy, token, session) = setup();
     let mut req = request("GET", "/download");
     cookie(&mut req, &token);
     refused(&policy, &req, Refusal::Forbidden);
@@ -134,7 +135,7 @@ fn cookie_measurements_require_positive_origin_evidence_and_mutation_csrf() {
     *req.method_mut() = Method::POST;
     *req.uri_mut() = "/upload".parse().unwrap();
     refused(&policy, &req, Refusal::Forbidden);
-    set(&mut req, "x-csrf-token", session.session().csrf());
+    set(&mut req, "x-csrf-token", &session.session().csrf);
     allowed(&policy, &req);
     set(&mut req, header::ORIGIN, CLIENT);
     refused(&policy, &req, Refusal::Forbidden);
@@ -150,8 +151,7 @@ fn cookie_measurements_require_positive_origin_evidence_and_mutation_csrf() {
 
 #[test]
 fn explicit_credentials_never_fall_back_to_ambient_cookies() {
-    let (store, policy) = setup();
-    let (token, session) = store.create("operator", "Operator", "local", None).unwrap();
+    let (store, policy, token, session) = setup();
     let cli = grant(&store, &session, None);
     let mut req = request("GET", "/download");
     cookie(&mut req, &token);
@@ -181,13 +181,12 @@ fn explicit_credentials_never_fall_back_to_ambient_cookies() {
 
 #[test]
 fn ambiguous_cookie_and_origin_evidence_cannot_authorize_a_measurement() {
-    let (store, policy) = setup();
-    let (token, session) = store.create("operator", "Operator", "local", None).unwrap();
+    let (_, policy, token, session) = setup();
     let mut req = request("POST", "/upload");
     cookie(&mut req, &token);
     set(&mut req, header::ORIGIN, PUBLIC);
     set(&mut req, "sec-fetch-site", "same-origin");
-    set(&mut req, "x-csrf-token", session.session().csrf());
+    set(&mut req, "x-csrf-token", &session.session().csrf);
     allowed(&policy, &req);
     for other in ["theme=é", "__Host-gm_session=ab\"c"] {
         append(&mut req, header::COOKIE, other);
@@ -204,7 +203,7 @@ fn ambiguous_cookie_and_origin_evidence_cannot_authorize_a_measurement() {
     for (name, value) in [
         (header::ORIGIN, PUBLIC),
         (HeaderName::from_static("sec-fetch-site"), "same-origin"),
-        (HeaderName::from_static("x-csrf-token"), session.session().csrf()),
+        (HeaderName::from_static("x-csrf-token"), session.session().csrf.as_str()),
     ] {
         append(&mut req, name.clone(), value);
         refused(&policy, &req, Refusal::Ambiguous);
@@ -214,8 +213,7 @@ fn ambiguous_cookie_and_origin_evidence_cannot_authorize_a_measurement() {
 
 #[test]
 fn browser_grants_are_audience_and_route_scoped() {
-    let (store, policy) = setup();
-    let (_, session) = store.create("operator", "Operator", "local", None).unwrap();
+    let (store, policy, _, session) = setup();
     let token = grant(&store, &session, Some(CLIENT));
     let mut req = request("POST", "/upload");
     bearer(&mut req, &token);
@@ -233,8 +231,7 @@ fn browser_grants_are_audience_and_route_scoped() {
 
 #[test]
 fn webtransport_uses_no_cookie_and_burns_tickets_even_with_bearer() {
-    let (store, policy) = setup();
-    let (token, session) = store.create("operator", "Operator", "local", None).unwrap();
+    let (store, policy, token, session) = setup();
     let lease = AuthLease::cookie(session.clone());
     let cli = grant(&store, &session, None);
     let target = "https://meter.example/wt/ping";
@@ -244,7 +241,7 @@ fn webtransport_uses_no_cookie_and_burns_tickets_even_with_bearer() {
     let mut req = request("CONNECT", "/wt/ping");
     cookie(&mut req, &token);
     set(&mut req, header::ORIGIN, PUBLIC);
-    set(&mut req, "x-csrf-token", session.session().csrf());
+    set(&mut req, "x-csrf-token", &session.session().csrf);
     assert_eq!(refusal(&req), Some(Refusal::AuthenticationRequired));
     let ticket = mint().unwrap();
     *req.uri_mut() = format!("/wt/ping?token={}", ticket.token).parse().unwrap();
@@ -270,7 +267,7 @@ fn webtransport_uses_no_cookie_and_burns_tickets_even_with_bearer() {
 
 #[test]
 fn auth_pages_are_canonical_and_foreign_preflights_never_allow_cookies() {
-    let (_, policy) = setup();
+    let (_, policy, ..) = setup();
     let mut req = request("GET", "/login");
     assert!(matches!(evaluate(&policy, &req, UI), Ok(Authorization::PublicAuth)));
     let other = evaluate(&policy, &req, Listener::default());
@@ -301,7 +298,7 @@ fn auth_pages_are_canonical_and_foreign_preflights_never_allow_cookies() {
 
 #[test]
 fn repeated_security_headers_are_forbidden_before_anything_else() {
-    let (_, policy) = setup();
+    let (_, policy, ..) = setup();
     for name in [
         "authorization",
         "origin",
@@ -319,7 +316,7 @@ fn repeated_security_headers_are_forbidden_before_anything_else() {
 
 #[test]
 fn only_the_two_sign_in_fonts_are_public_and_only_for_get_and_head() {
-    let (_, policy) = setup();
+    let (_, policy, ..) = setup();
     refused(&policy, &request("HEAD", "/login"), Refusal::AuthenticationRequired);
     for path in ["/fonts/ibm-plex-sans-var-latin1.woff2", "/fonts/ibm-plex-mono-600-latin1.woff2"] {
         for method in ["GET", "HEAD", "POST", "OPTIONS", "DELETE"] {

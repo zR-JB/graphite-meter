@@ -1,6 +1,9 @@
 #[path = "support/http1.rs"]
 mod http1;
 
+#[path = "support/http2.rs"]
+mod http2;
+
 #[path = "support/native.rs"]
 mod native;
 
@@ -9,11 +12,8 @@ mod test_tls;
 
 use bytes::Bytes;
 use futures_util::StreamExt;
-use graphite_meter_server::{
-    config::{AuthConfig, AuthMode, Config, NativeKind},
-    http::HttpServer,
-};
-use http::Request;
+use graphite_meter_server::config::{AuthConfig, AuthMode, Config, NativeKind};
+use http::{HeaderValue, Request};
 use rustls::pki_types::ServerName;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
@@ -48,17 +48,15 @@ impl Harness {
             },
             ..Config::default()
         };
-        let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
+        let server = native::server(config);
         let h1 = native::serve(server.clone(), NativeKind::H1Tls, Some(Arc::new(tls.clone()))).await;
         let h2 = native::serve(server, NativeKind::H2, Some(Arc::new(tls))).await;
         Self { connector, h2_connector, listeners: [h1, h2] }
     }
     async fn tls(connector: &TlsConnector, address: SocketAddr) -> TlsStream<TcpStream> {
         let tcp = TcpStream::connect(address).await.unwrap();
-        connector
-            .connect(ServerName::try_from("localhost").unwrap(), tcp)
-            .await
-            .unwrap()
+        let name = ServerName::try_from("localhost").unwrap();
+        connector.connect(name, tcp).await.unwrap()
     }
     async fn connect(&self) -> TlsStream<TcpStream> {
         Self::tls(&self.connector, self.listeners[0].address).await
@@ -106,10 +104,20 @@ fn cookie(headers: &str, name: &str) -> String {
         })
         .unwrap()
 }
+/// An HTTP/2 request from the public origin, signed in where a session is given.
+fn h2_request(method: &str, path: &str, session: Option<&str>) -> Request<()> {
+    let mut request = http2::request(method, path);
+    let headers = request.headers_mut();
+    headers.insert("origin", HeaderValue::from_static("https://localhost"));
+    if let Some(session) = session {
+        headers.insert("cookie", format!("__Host-gm_session={session}").parse().unwrap());
+    }
+    request
+}
 fn credentials(session: &str, csrf: &str) -> String {
     format!("Cookie: __Host-gm_session={session}\r\nOrigin: https://localhost\r\nX-CSRF-Token: {csrf}\r\n")
 }
-async fn read_until(stream: &mut TlsStream<TcpStream>, needle: &[u8]) -> Vec<u8> {
+async fn read_until(stream: &mut TlsStream<TcpStream>, needle: &[u8]) {
     let mut result = Vec::new();
     while !result.windows(needle.len()).any(|w| w == needle) {
         let mut block = [0; 4096];
@@ -117,7 +125,6 @@ async fn read_until(stream: &mut TlsStream<TcpStream>, needle: &[u8]) -> Vec<u8>
         assert!(n > 0);
         result.extend_from_slice(&block[..n]);
     }
-    result
 }
 
 #[tokio::test]
@@ -147,18 +154,12 @@ async fn password_flow() {
     let head = format!("POST /upload?id={id} HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100000\r\n{headers}\r\nx");
     uploading.write_all(head.as_bytes()).await.unwrap();
     let (mut client, driver) = h.h2(0).await;
-    let request = |path: &str, token: &str| {
-        Request::builder()
-            .uri(format!("https://localhost{path}"))
-            .header("cookie", format!("__Host-gm_session={token}"))
-            .header("origin", "https://localhost")
-            .body(())
-            .unwrap()
-    };
-    let download = request("/download?bytes=1000000", &session);
+    let download = h2_request("GET", "/download?bytes=1000000", Some(&session));
     let (response, _) = client.send_request(download, true).unwrap();
     let mut stalled = response.await.unwrap().into_body();
-    let (response, _) = client.send_request(request("/login", &session), true).unwrap();
+    let (response, _) = client
+        .send_request(h2_request("GET", "/login", Some(&session)), true)
+        .unwrap();
     assert_eq!(response.await.unwrap().status(), 403); // native listener has no UI authority
     let mut ws_request = "wss://localhost/ws/ping".into_client_request().unwrap();
     let ws_headers = ws_request.headers_mut();
@@ -177,14 +178,14 @@ async fn password_flow() {
             Message::Close(Some(frame)) => assert_eq!(frame.reason, "authentication required"),
             message => panic!("unexpected {message:?}"),
         }
-        let mut bytes = Vec::new();
-        let _ = progress.read_to_end(&mut bytes).await;
-        let mut bytes = Vec::new();
-        let _ = uploading.read_to_end(&mut bytes).await;
+        let _ = progress.read_to_end(&mut Vec::new()).await;
+        let _ = uploading.read_to_end(&mut Vec::new()).await;
     };
     let revoked = tokio::time::timeout(Duration::from_secs(1), revoked).await;
     revoked.expect("revocation cancels every owned transport promptly");
-    let (response, _) = client.send_request(request("/download?bytes=0", &other), true).unwrap();
+    let (response, _) = client
+        .send_request(h2_request("GET", "/download?bytes=0", Some(&other)), true)
+        .unwrap();
     assert_eq!(response.await.unwrap().status(), 200);
     let (ok, _) = h.request("GET", "/probe", &credentials(&other, &other_csrf), "").await;
     assert!(ok.starts_with("HTTP/1.1 200"));
@@ -201,23 +202,19 @@ async fn approval_pages_require_client_evidence_behind_a_trusted_proxy() {
     use sha2::{Digest, Sha256};
 
     let h = Harness::start(vec!["127.0.0.0/8".parse().unwrap()]).await;
+    // The CLI and browser approval pages for `challenge`.
+    let pages = |challenge: &str| {
+        let browser = format!("/auth/browser?challenge={challenge}&client_origin=https://client.example");
+        [format!("/auth/cli?challenge={challenge}"), browser]
+    };
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(b"approval verifier"));
     // As in Go, the CLI page sends a signed-out caller to sign in before it reads the address.
-    for (path, without_evidence) in [
-        (format!("/auth/cli?challenge={challenge}"), "HTTP/1.1 303"),
-        (
-            format!("/auth/browser?challenge={challenge}&client_origin=https://client.example"),
-            "HTTP/1.1 403",
-        ),
-    ] {
+    for (path, without_evidence) in pages(&challenge).into_iter().zip(["HTTP/1.1 303", "HTTP/1.1 403"]) {
         let (unresolved, body) = h.request("GET", &path, "", "").await;
         assert!(unresolved.starts_with(without_evidence), "{unresolved}");
+        let body = String::from_utf8(body).unwrap();
         if without_evidence.ends_with("403") {
-            assert!(
-                String::from_utf8(body)
-                    .unwrap()
-                    .contains("Too many approvals are open.")
-            );
+            assert!(body.contains("Too many approvals are open."));
         }
         let (allowed, _) = h.request("GET", &path, "X-Real-IP: 192.0.2.1\r\n", "").await;
         assert!(allowed.starts_with("HTTP/1.1 303"), "{allowed}");
@@ -226,28 +223,27 @@ async fn approval_pages_require_client_evidence_behind_a_trusted_proxy() {
     let client = "X-Real-IP: 192.0.2.1\r\n";
     let (session, csrf) = h.login(client).await;
     let signed_in = credentials(&session, &csrf);
-    for path in [
-        format!("/auth/cli?challenge={challenge}"),
-        format!("/auth/browser?challenge={challenge}&client_origin=https://client.example"),
-    ] {
-        let (denied, body) = h.request("GET", &path, &signed_in, "").await;
+    // A refusal card shows `message` and no request value.
+    let card = |body: Vec<u8>, message: &str, challenge: &str| {
         let body = String::from_utf8(body).unwrap();
+        assert!(body.contains(message) && !body.contains(challenge));
+        assert!(!body.contains("client.example") && !body.contains(&csrf));
+    };
+    for path in pages(&challenge) {
+        let (denied, body) = h.request("GET", &path, &signed_in, "").await;
         assert!(
             denied.starts_with("HTTP/1.1 403") && denied.contains("content-type: text/html"),
             "{path}: {denied}"
         );
-        assert!(body.contains("Too many approvals are open.") && !body.contains(&challenge));
-        assert!(!body.contains("client.example") && !body.contains(&csrf));
+        card(body, "Too many approvals are open.", &challenge);
     }
     for path in [
         "/auth/cli?challenge=invalid".to_owned(),
         format!("/auth/browser?challenge={challenge}&client_origin=http://client.example"),
     ] {
         let (denied, body) = h.request("GET", &path, &format!("{client}{signed_in}"), "").await;
-        let body = String::from_utf8(body).unwrap();
         assert!(denied.starts_with("HTTP/1.1 403"));
-        assert!(body.contains("This approval link is not valid.") && !body.contains(&challenge));
-        assert!(!body.contains("client.example") && !body.contains(&csrf));
+        card(body, "This approval link is not valid.", &challenge);
     }
     // Use a fresh address: the earlier anonymous browser approval still holds its original client's slot.
     let client = "X-Real-IP: 198.51.100.1\r\n";
@@ -258,9 +254,7 @@ async fn approval_pages_require_client_evidence_behind_a_trusted_proxy() {
         let (headers, body) = h.request("GET", &path, &format!("{client}{signed_in}"), "").await;
         assert!(headers.starts_with(if index < 8 { "HTTP/1.1 200" } else { "HTTP/1.1 403" }));
         if index == 8 {
-            let body = String::from_utf8(body).unwrap();
-            assert!(body.contains("Too many approvals are open.") && !body.contains(&challenge));
-            assert!(!body.contains(&csrf));
+            card(body, "Too many approvals are open.", &challenge);
         }
     }
     h.stop().await;
@@ -306,12 +300,8 @@ async fn native_listeners_authorize_routes_they_do_not_mount_before_404() {
     let (mut client, driver) = h.h2(65_535).await;
     // The native HTTP/2 listener mounts neither WebSockets nor WebTransport.
     for path in ["/ws/ping", "/wt/download"] {
-        for session in [None, Some(&session)] {
-            let mut request = Request::get(format!("https://localhost{path}")).header("origin", "https://localhost");
-            if let Some(session) = session {
-                request = request.header("cookie", format!("__Host-gm_session={session}"));
-            }
-            let (response, _) = client.send_request(request.body(()).unwrap(), true).unwrap();
+        for session in [None, Some(session.as_str())] {
+            let (response, _) = client.send_request(h2_request("GET", path, session), true).unwrap();
             let response = response.await.unwrap();
             let expected = if session.is_some() { 404 } else { 403 };
             assert_eq!(response.status(), expected, "{path}");
@@ -353,25 +343,13 @@ async fn socket_tickets_are_minted_only_where_mounted_and_only_for_post() {
         ("GET", targets[1], 405),
         ("POST", targets[1], 200),
     ] {
-        let request = Request::builder()
-            .method(method)
-            .uri(format!("https://localhost{route}?target={target}"))
-            .header("cookie", format!("__Host-gm_session={session}"))
-            .header("origin", "https://localhost")
-            .header("x-csrf-token", &csrf)
-            .body(())
-            .unwrap();
+        let mut request = h2_request(method, &format!("{route}?target={target}"), Some(&session));
+        request.headers_mut().insert("x-csrf-token", csrf.parse().unwrap());
         client = client.ready().await.unwrap();
         let (response, _) = client.send_request(request, true).unwrap();
         let response = response.await.unwrap();
         assert_eq!(response.status(), expected, "{method} {route}");
-        let mut body = response.into_body();
-        let mut bytes = Vec::new();
-        while let Some(chunk) = body.data().await {
-            let chunk = chunk.unwrap();
-            body.flow_control().release_capacity(chunk.len()).unwrap();
-            bytes.extend_from_slice(&chunk);
-        }
+        let bytes = http2::body(response.into_body()).await;
         let minted =
             serde_json::from_slice::<serde_json::Value>(&bytes).is_ok_and(|ticket| ticket["token"].is_string());
         assert_eq!(minted, expected == 200, "{method} {route}");

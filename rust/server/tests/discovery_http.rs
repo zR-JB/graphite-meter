@@ -5,10 +5,8 @@ use std::sync::Arc;
 fn respond(discovery: &Discovery, path: &str) -> http::Response<bytes::Bytes> {
     let request = Request::get(path).header("host", "meter.example:80").body(()).unwrap();
     let route = graphite_meter_core::route::lookup(request.uri().path()).expect("a discovery route");
-    discovery
-        .respond(route, &request, "192.0.2.8:54321".parse().unwrap())
-        .unwrap()
-        .unwrap()
+    let peer = "192.0.2.8:54321".parse().unwrap();
+    discovery.respond(route, &request, peer).unwrap().unwrap()
 }
 
 #[test]

@@ -31,6 +31,13 @@ impl Owner {
     }
 }
 
+/// A store, the owner "a" and a fresh upload ID.
+fn upload() -> (UploadStore, Owner, String) {
+    let store = UploadStore::new().unwrap();
+    let id = store.mint().unwrap();
+    (store, Owner::principal("a"), id)
+}
+
 #[test]
 fn token_age_is_checked_only_when_creating_an_aggregate() {
     let mut store = UploadStore::new().unwrap();
@@ -59,9 +66,7 @@ fn token_age_is_checked_only_when_creating_an_aggregate() {
 
 #[test]
 fn observing_and_finishing_do_not_refresh_idle_retention() {
-    let store = UploadStore::new().unwrap();
-    let owner = Owner::principal("a");
-    let id = store.mint().unwrap();
+    let (store, owner, id) = upload();
     drop(store.begin(&id, &owner).unwrap());
     let aggregate = store.aggregate(&id);
     let old = Instant::now() - Duration::from_secs(80);
@@ -183,10 +188,11 @@ fn delegated_owners_share_capacity_but_not_access() {
 fn global_capacity_is_bounded() {
     let store = UploadStore::new().unwrap();
     for index in 0..MAX_LIVE_UPLOADS {
-        let mut lane = store
-            .begin(&store.mint().unwrap(), &Owner::principal(index.to_string()))
-            .unwrap();
-        lane.record(1);
+        let id = store.mint().unwrap();
+        store
+            .begin(&id, &Owner::principal(index.to_string()))
+            .unwrap()
+            .record(1);
     }
     let newcomer = Owner::principal("new-client");
     let id = store.mint().unwrap();
@@ -197,9 +203,7 @@ fn global_capacity_is_bounded() {
 
 #[tokio::test(start_paused = true)]
 async fn concurrent_lanes_credit_each_received_chunk_once() {
-    let store = UploadStore::new().unwrap();
-    let owner = Owner::principal("a");
-    let id = store.mint().unwrap();
+    let (store, owner, id) = upload();
     let runtime = tokio::runtime::Handle::current();
     std::thread::scope(|scope| {
         for _ in 0..8 {
@@ -226,9 +230,7 @@ async fn concurrent_lanes_credit_each_received_chunk_once() {
 
 #[tokio::test(start_paused = true)]
 async fn completion_waits_for_lane_drop_and_replays_receiver_totals() {
-    let store = UploadStore::new().unwrap();
-    let owner = Owner::principal("a");
-    let id = store.mint().unwrap();
+    let (store, owner, id) = upload();
     let mut subscription = store.subscribe(&id, &owner).unwrap();
     assert_eq!(subscription.next().await, Some(UploadProgress::Ready));
     let mut first = store.begin(&id, &owner).unwrap();
@@ -260,9 +262,7 @@ async fn completion_waits_for_lane_drop_and_replays_receiver_totals() {
 
 #[tokio::test]
 async fn replacing_a_subscriber_and_dropping_stale_claim_preserves_current_claim() {
-    let store = UploadStore::new().unwrap();
-    let owner = Owner::principal("a");
-    let id = store.mint().unwrap();
+    let (store, owner, id) = upload();
     let mut first = store.subscribe(&id, &owner).unwrap();
     first.next().await;
     let mut second = store.subscribe(&id, &owner).unwrap();
@@ -280,9 +280,7 @@ async fn replacing_a_subscriber_and_dropping_stale_claim_preserves_current_claim
 
 #[tokio::test]
 async fn retention_preserves_active_lanes_and_expires_observers() {
-    let store = UploadStore::new().unwrap();
-    let owner = Owner::principal("a");
-    let id = store.mint().unwrap();
+    let (store, owner, id) = upload();
     let mut lane = store.begin(&id, &owner).unwrap();
     lane.record(42);
     let mut observer = store.subscribe(&id, &owner).unwrap();
@@ -314,9 +312,7 @@ async fn lifecycle_changes_wake_without_waiting_for_progress_tick() {
         sync::atomic::{AtomicBool, Ordering},
         task::{Context, Poll, Waker},
     };
-    let store = UploadStore::new().unwrap();
-    let owner = Owner::principal("a");
-    let id = store.mint().unwrap();
+    let (store, owner, id) = upload();
     let mut lane = store.begin(&id, &owner).unwrap();
     lane.record(25);
     let mut subscription = store.subscribe(&id, &owner).unwrap();

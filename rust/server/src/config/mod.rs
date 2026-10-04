@@ -103,7 +103,7 @@ impl AuthMode {
 }
 
 // Deliberately no Debug: resolved secrets must not reach diagnostic config dumps.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct AuthConfig {
     pub explicit: bool,
     pub mode: AuthMode,
@@ -118,24 +118,6 @@ pub struct AuthConfig {
     pub oidc_secret_file: String,
     pub oidc_allowed_groups: Vec<String>,
     pub oidc_provider_name: String,
-}
-impl Default for AuthConfig {
-    fn default() -> Self {
-        Self {
-            explicit: false,
-            mode: AuthMode::Off,
-            unknown_mode: false,
-            public_url: String::new(),
-            password_hash: String::new(),
-            password_hash_file: String::new(),
-            oidc_issuer: String::new(),
-            oidc_client_id: String::new(),
-            oidc_client_secret: String::new(),
-            oidc_secret_file: String::new(),
-            oidc_allowed_groups: Vec::new(),
-            oidc_provider_name: "Authelia".into(),
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -186,7 +168,10 @@ impl Default for Config {
             max_operation_duration: Duration::from_secs(300),
             max_session_duration: Duration::from_secs(7200),
             max_stage_duration: graphite_meter_core::discovery::DEFAULT_STAGE_LIMIT,
-            auth: AuthConfig::default(),
+            auth: AuthConfig {
+                oidc_provider_name: "Authelia".into(),
+                ..AuthConfig::default()
+            },
         }
     }
 }

@@ -66,18 +66,13 @@ impl SessionStore {
         if !state.contains(&lease.session) || !lease.active_at(now) {
             return Err(TicketError::NoSession);
         }
-        if state
-            .tickets
-            .values()
-            .filter(|ticket| ticket.lease.session.0.hash == lease.session.0.hash)
-            .count()
-            >= MAX_SESSION_TICKETS
-        {
+        let siblings = |ticket: &&StoredTicket| ticket.lease.session.0.hash == lease.session.0.hash;
+        if state.tickets.values().filter(siblings).count() >= MAX_SESSION_TICKETS {
             return Err(TicketError::Capacity);
         }
         let token = format!("gmw_{}", random_token::<32>().map_err(|_| TicketError::RandomUnavailable)?);
         let deadline = (now + TICKET_LIFETIME).min(lease.session.0.deadline);
-        let expires = (SystemTime::now() + deadline.saturating_duration_since(now)).min(lease.session().expires());
+        let expires = (SystemTime::now() + deadline.saturating_duration_since(now)).min(lease.session().expires);
         state.tickets.insert(
             token_hash(&token),
             StoredTicket {
@@ -191,11 +186,8 @@ mod tests {
         let (old, session) = store.create("subject", "name", "local", None).unwrap();
         let (_, lease) = store.issue_browser_grant(&session, AUDIENCE).unwrap();
         let target = "https://meter.example/wt/ping";
-        assert!(
-            store
-                .mint_ticket(&lease, PUBLIC, target, AUDIENCE, Kind::WebTransport)
-                .is_ok()
-        );
+        let minted = store.mint_ticket(&lease, PUBLIC, target, AUDIENCE, Kind::WebTransport);
+        assert!(minted.is_ok());
         store.create("subject", "name", "local", Some(&old)).unwrap();
         let state = store.0.lock().unwrap();
         assert!(state.grants.is_empty());

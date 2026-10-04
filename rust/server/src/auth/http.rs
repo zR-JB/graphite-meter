@@ -128,9 +128,7 @@ impl Service {
     /// measurement streaming stays with the dispatcher and its lease. A controller path no route claims is not found.
     pub async fn handle(&self, authorized: &AuthorizedRequest<Bytes>) -> Response<Bytes> {
         let request = authorized.request();
-        if let Authorization::Authenticated(lease) = authorized.authorization()
-            && !lease.is_active()
-        {
+        if principal(authorized).is_some_and(|lease| !lease.is_active()) {
             return response(StatusCode::FORBIDDEN);
         }
         let path = request.uri().path();
@@ -346,7 +344,7 @@ impl Service {
             return response(StatusCode::FORBIDDEN);
         };
         let session = lease.session();
-        let body = json!({"name":session.name(), "provider":lease.provider(), "expires":rfc3339(session.expires()), "csrf":session.csrf(), "remainingMs":remaining_ms(session.expires()), "maximumLifetimeMs":SESSION_LIFETIME.as_millis() as u64});
+        let body = json!({"name":session.name, "provider":lease.provider(), "expires":rfc3339(session.expires), "csrf":session.csrf, "remainingMs":remaining_ms(session.expires), "maximumLifetimeMs":SESSION_LIFETIME.as_millis() as u64});
         json(StatusCode::OK, body)
     }
 
@@ -362,7 +360,7 @@ impl Service {
                 return response(StatusCode::FORBIDDEN);
             }
             if value(&form, "scope") == "all" {
-                state.revoke_subject(lease.session().subject());
+                state.revoke_subject(&lease.session().subject);
             } else {
                 state.remove(&lease.session.0.hash);
             }
@@ -432,7 +430,7 @@ impl Service {
                     return sign_in();
                 };
                 let origin = view.browser_origin.as_deref().unwrap_or_default();
-                let page = pages::approval_page(&view.code, session.session().csrf(), challenge, origin);
+                let page = pages::approval_page(&view.code, &session.session().csrf, challenge, origin);
                 html(StatusCode::OK, page)
             }
             Err(ApprovalError::GrantCapacity) => capacity_page(),
@@ -482,7 +480,7 @@ impl Service {
         let mut result = match exchange {
             Ok(Exchange::Pending) => json(StatusCode::ACCEPTED, json!({"status":"pending"})),
             Ok(Exchange::Issued { token, lease }) => {
-                let expires = lease.session().expires();
+                let expires = lease.session().expires;
                 if browser {
                     let body = json!({"token":token, "expires":unix_ms(expires), "remainingMs":remaining_ms(expires), "maximumLifetimeMs":SESSION_LIFETIME.as_millis() as u64});
                     json(StatusCode::OK, body)
@@ -536,7 +534,7 @@ impl Service {
         (lease.is_active()
             && !lease.is_bearer()
             && text(authorized.request().headers(), "origin") == Some(self.policy.public_origin())
-            && constant_equal(lease.session().csrf(), value(&form, "csrf")))
+            && constant_equal(&lease.session().csrf, value(&form, "csrf")))
         .then_some((form, lease))
     }
 }
@@ -637,24 +635,22 @@ fn clear_cookie(response: &mut Response<Bytes>, name: &str, same_site: &str) {
 /// Go's issueSessionCookies.
 fn session_cookies(response: &mut Response<Bytes>, token: &str, lease: &SessionLease) {
     let session = lease.session();
-    set_cookie(response, "__Host-gm_session", token, session.expires(), "Strict");
-    set_cookie(response, "__Host-gm_csrf", session.csrf(), session.expires(), "Strict");
+    set_cookie(response, "__Host-gm_session", token, session.expires, "Strict");
+    set_cookie(response, "__Host-gm_csrf", &session.csrf, session.expires, "Strict");
     clear_cookie(response, "__Host-gm_login", "Strict");
 }
 fn unix_ms(time: SystemTime) -> u64 {
     time.duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
 }
 fn remaining_ms(expires: SystemTime) -> u64 {
-    expires
-        .duration_since(SystemTime::now())
-        .unwrap_or_default()
-        .as_millis() as u64
+    let remaining = expires.duration_since(SystemTime::now());
+    remaining.unwrap_or_default().as_millis() as u64
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::{
-        oidc::tests::{discovered, query_fields, ready},
+        oidc::tests::{self as oidc_tests, discovered, query_fields, ready},
         policy::{Connection, Listener},
     };
     use super::*;
@@ -693,15 +689,7 @@ mod tests {
     }
 
     fn oidc_config() -> AuthConfig {
-        AuthConfig {
-            mode: AuthMode::Oidc,
-            public_url: PUBLIC.into(),
-            oidc_issuer: "https://identity.example".into(),
-            oidc_client_id: "meter".into(),
-            oidc_client_secret: "provider-secret".into(),
-            oidc_allowed_groups: vec!["operators".into()],
-            ..AuthConfig::default()
-        }
+        oidc_tests::config("https://identity.example", "meter", "provider-secret")
     }
 
     fn oidc_service(oidc: Oidc) -> Service {
@@ -977,10 +965,10 @@ mod tests {
             let (_, sibling) = service.sessions.create("subject", "name", "local", None).unwrap();
             let (_, other) = service.sessions.create("other", "name", "local", None).unwrap();
             let cookie = format!("__Host-gm_session={token}");
-            let fields = [("csrf", current.session().csrf()), ("scope", scope)];
+            let fields = [("csrf", current.session().csrf.as_str()), ("scope", scope)];
             let logged_out = post(&service, "/auth/logout", &[("cookie", &cookie)], &fields).await;
             let line = service.log.window(&mut [0; Counter::COUNT]).unwrap();
-            assert!(!line.contains(&token) && !line.contains(current.session().csrf()));
+            assert!(!line.contains(&token) && !line.contains(&current.session().csrf));
             assert_eq!(logged_out.status(), StatusCode::SEE_OTHER);
             let cleared = logged_out.headers().get_all(header::SET_COOKIE);
             let cleared: Vec<_> = cleared.iter().map(|value| value.to_str().unwrap()).collect();

@@ -13,7 +13,7 @@ use tokio_tungstenite::{
         protocol::{
             Role,
             frame::{
-                Frame,
+                CloseFrame, Frame,
                 coding::{CloseCode, Data, OpCode},
             },
         },
@@ -106,6 +106,14 @@ async fn receive(socket: &mut WebSocketStream<DuplexStream>) -> Result<Message, 
         .ok_or("connection ended without a frame")??)
 }
 
+/// The close frame that must come next.
+async fn closed(socket: &mut WebSocketStream<DuplexStream>) -> Result<CloseFrame, TestError> {
+    match receive(socket).await? {
+        Message::Close(Some(frame)) => Ok(frame),
+        message => Err(format!("expected a close frame, not {message:?}").into()),
+    }
+}
+
 #[tokio::test]
 async fn ping_accepts_text_binary_and_fragmented_messages() -> Result<(), TestError> {
     let (mut socket, stop, task) = session().await;
@@ -127,10 +135,7 @@ async fn ping_accepts_text_binary_and_fragmented_messages() -> Result<(), TestEr
     socket.send(Message::Ping(b"control".to_vec().into())).await?;
     assert_eq!(receive(&mut socket).await?, Message::Pong(b"control".to_vec().into()));
     stop.send(CloseReason::Finished).unwrap();
-    let Message::Close(Some(frame)) = receive(&mut socket).await? else {
-        panic!("expected close frame");
-    };
-    assert_eq!(frame.code, CloseCode::Normal);
+    assert_eq!(closed(&mut socket).await?.code, CloseCode::Normal);
     task.await?;
     Ok(())
 }
@@ -139,17 +144,12 @@ async fn ping_accepts_text_binary_and_fragmented_messages() -> Result<(), TestEr
 async fn oversized_messages_and_revocation_send_distinct_close_codes() -> Result<(), TestError> {
     let (mut socket, _stop, task) = session().await;
     socket.send(Message::Text("a".repeat(2049).into())).await?;
-    let Message::Close(Some(frame)) = receive(&mut socket).await? else {
-        panic!("expected size refusal");
-    };
-    assert_eq!(frame.code, CloseCode::Size);
+    assert_eq!(closed(&mut socket).await?.code, CloseCode::Size);
     task.await?;
 
     let (mut socket, stop, task) = session().await;
     stop.send(CloseReason::Revoked).unwrap();
-    let Message::Close(Some(frame)) = receive(&mut socket).await? else {
-        panic!("expected authentication close");
-    };
+    let frame = closed(&mut socket).await?;
     assert_eq!(frame.code, CloseCode::Policy);
     assert_eq!(frame.reason, "authentication required");
     task.await?;
@@ -165,10 +165,7 @@ async fn control_frames_do_not_extend_the_idle_bound() -> Result<(), TestError> 
     socket.send(Message::Ping(Vec::new().into())).await?;
     assert!(receive(&mut socket).await?.is_pong());
     tokio::time::advance(Duration::from_secs(10)).await;
-    let Message::Close(Some(frame)) = receive(&mut socket).await? else {
-        panic!("expected idle close");
-    };
-    assert_eq!(frame.reason, "idle");
+    assert_eq!(closed(&mut socket).await?.reason, "idle");
     task.await?;
     Ok(())
 }
@@ -188,14 +185,12 @@ async fn blocked_reply_and_close_cannot_hold_session_forever() -> Result<(), Tes
 #[tokio::test]
 async fn quiet_upgraded_websocket_ends_with_idle_code() -> Result<(), TestError> {
     use graphite_meter_server::config::{Config, NativeKind};
-    use graphite_meter_server::http::HttpServer;
-    use std::sync::Arc;
     use tokio::net::TcpStream;
     let config = Config {
         max_operation_duration: Duration::from_secs(180),
         ..Config::default()
     };
-    let server = native::serve(Arc::new(HttpServer::new(config.validated()?)?), NativeKind::H1, None).await;
+    let server = native::serve(native::server(config), NativeKind::H1, None).await;
     let address = server.address;
     let (mut socket, _) =
         tokio_tungstenite::client_async(format!("ws://{address}/ws/ping"), TcpStream::connect(address).await?).await?;
@@ -217,9 +212,7 @@ async fn quiet_upgraded_websocket_ends_with_idle_code() -> Result<(), TestError>
 async fn lifetime_caps_a_quiet_websocket_before_its_idle_bound() -> Result<(), TestError> {
     let (mut socket, _stop, task) = session_with(8192, Duration::from_secs(10)).await;
     tokio::time::advance(Duration::from_secs(10)).await;
-    let Message::Close(Some(frame)) = receive(&mut socket).await? else {
-        panic!("expected lifetime close");
-    };
+    let frame = closed(&mut socket).await?;
     assert_eq!(u16::from(frame.code), 4002);
     assert_eq!(frame.reason, "lifetime");
     task.await?;

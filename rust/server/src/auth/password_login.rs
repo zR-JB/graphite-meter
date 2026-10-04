@@ -117,11 +117,8 @@ impl PasswordLogin {
 
     pub fn device_cookie(&self, now: SystemTime) -> (String, SystemTime) {
         let expires = now + DEVICE_LIFETIME;
-        let seconds = expires
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            .to_be_bytes();
+        let since_epoch = expires.duration_since(UNIX_EPOCH).unwrap_or_default();
+        let seconds = since_epoch.as_secs().to_be_bytes();
         let mut tag = self.device.clone();
         tag.update(&seconds);
         let value = [seconds.as_slice(), &tag.finalize().into_bytes()].concat();
@@ -134,10 +131,7 @@ impl PasswordLogin {
             return false;
         }
         let (expires, tag) = raw.split_at(8);
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = UNIX_EPOCH.elapsed().unwrap_or_default().as_secs();
         let mut expected = self.device.clone();
         expected.update(expires);
         now < u64::from_be_bytes(expires.try_into().expect("eight bytes")) && expected.verify_slice(tag).is_ok()

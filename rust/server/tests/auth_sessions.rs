@@ -13,17 +13,17 @@ fn credentials_are_random_and_metadata_is_stable() {
     let (token, lease) = store.create("subject", "Display name", "local", None).unwrap();
     let (other, second) = store.create("subject", "Display name", "local", None).unwrap();
     assert_eq!(URL_SAFE_NO_PAD.decode(&token).unwrap().len(), 32);
-    assert_eq!(URL_SAFE_NO_PAD.decode(lease.session().csrf()).unwrap().len(), 32);
-    assert_eq!(URL_SAFE_NO_PAD.decode(lease.session().id()).unwrap().len(), 16);
+    assert_eq!(URL_SAFE_NO_PAD.decode(&lease.session().csrf).unwrap().len(), 32);
+    assert_eq!(URL_SAFE_NO_PAD.decode(&lease.session().id).unwrap().len(), 16);
     assert_ne!(token, other);
-    assert_ne!(lease.session().csrf(), second.session().csrf());
-    assert_ne!(lease.session().id(), second.session().id());
+    assert_ne!(lease.session().csrf, second.session().csrf);
+    assert_ne!(lease.session().id, second.session().id);
     let found = store.lookup(&token).unwrap();
-    assert_eq!(found.session().subject(), "subject");
-    assert_eq!(found.session().name(), "Display name");
-    assert_eq!(found.session().provider(), "local");
-    assert_eq!(found.session().id(), lease.session().id());
-    assert_eq!(found.session().expires(), lease.session().expires());
+    assert_eq!(found.session().subject, "subject");
+    assert_eq!(found.session().name, "Display name");
+    assert_eq!(found.session().provider, "local");
+    assert_eq!(found.session().id, lease.session().id);
+    assert_eq!(found.session().expires, lease.session().expires);
     assert!(store.lookup("wrong").is_none());
 }
 

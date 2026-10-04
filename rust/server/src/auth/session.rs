@@ -23,37 +23,18 @@ pub enum SessionError {
 /// Session metadata excludes the bearer token. No Debug implementation: CSRF is secret.
 pub struct Session {
     pub(super) hash: TokenHash,
-    id: String,
-    subject: String,
-    name: String,
-    provider: String,
-    csrf: String,
-    expires: SystemTime,
+    pub id: String,
+    pub subject: String,
+    pub name: String,
+    pub provider: String,
+    pub csrf: String,
+    pub expires: SystemTime,
     created: Instant,
     pub(super) deadline: Instant,
     revoked: watch::Sender<bool>,
 }
 
 impl Session {
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-    pub fn subject(&self) -> &str {
-        &self.subject
-    }
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-    pub fn provider(&self) -> &str {
-        &self.provider
-    }
-    pub fn csrf(&self) -> &str {
-        &self.csrf
-    }
-    pub fn expires(&self) -> SystemTime {
-        self.expires
-    }
-
     pub(super) fn active_at(&self, now: Instant) -> bool {
         now < self.deadline && !*self.revoked.borrow()
     }

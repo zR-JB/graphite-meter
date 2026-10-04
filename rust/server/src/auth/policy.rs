@@ -314,7 +314,7 @@ impl Policy {
         origin == self.public
             && (route.is_none()
                 || text(request.headers(), "x-csrf-token")
-                    .is_some_and(|csrf| constant_equal(lease.session().csrf(), csrf)))
+                    .is_some_and(|csrf| constant_equal(&lease.session().csrf, csrf)))
     }
 
     fn browser_preflight(&self, headers: &HeaderMap) -> Result<HeaderMap, Refusal> {

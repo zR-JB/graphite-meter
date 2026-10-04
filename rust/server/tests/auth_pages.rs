@@ -99,12 +99,10 @@ fn oidc_csp_widens_only_form_action_to_validated_origin() {
 #[tokio::test]
 async fn application_response_restricts_resources_and_hashes_embedded_inline_assets() {
     use graphite_meter_server::config::{Config, NativeKind};
-    use graphite_meter_server::http::HttpServer;
-    use std::{sync::Arc, time::Duration};
+    use std::time::Duration;
 
     tokio::time::timeout(Duration::from_secs(5), async {
-        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-        let listener = native::serve(server, NativeKind::H1, None).await;
+        let listener = native::serve(native::server(Config::default()), NativeKind::H1, None).await;
         let address = listener.address;
         let socket = tokio::net::TcpStream::connect(address).await.unwrap();
         let (headers, body) = http1::exchange(socket, "GET", "/", &address.to_string(), "", b"").await;

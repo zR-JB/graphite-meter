@@ -1,5 +1,9 @@
 //! Native TCP listener fixture; callers retain protocol-specific clients and assertions.
-use graphite_meter_server::{ServerError, config::NativeKind, http::HttpServer};
+use graphite_meter_server::{
+    ServerError,
+    config::{Config, NativeKind},
+    http::HttpServer,
+};
 use std::{net::SocketAddr, sync::Arc};
 use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
 
@@ -26,6 +30,11 @@ impl Drop for NativeServer {
     fn drop(&mut self) {
         self.task.abort();
     }
+}
+
+/// A server for `config`, which must validate.
+pub fn server(config: Config) -> Arc<HttpServer> {
+    Arc::new(HttpServer::new(config.validated().unwrap()).unwrap())
 }
 
 pub async fn serve(server: Arc<HttpServer>, kind: NativeKind, tls: Option<Arc<rustls::ServerConfig>>) -> NativeServer {

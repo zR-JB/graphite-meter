@@ -20,11 +20,7 @@ async fn h3_routes_and_stalled_stream_deadline_preserve_siblings() {
 async fn exercise() -> Result<(), TestError> {
     let mut transport = noq::TransportConfig::default();
     transport.stream_receive_window(4096_u32.into());
-    let config = Config {
-        max_operation_duration: Duration::from_millis(250),
-        ..Config::default()
-    };
-    let (server, driver, requests) = serve_quic(config, transport).await?;
+    let (server, driver, requests) = serve_quic(quic::lasting(Duration::from_millis(250)), transport).await?;
     for path in ["/preflight", "/servers", "/ws/session", "/ws/ping"] {
         let (response, _) = send(&requests, "GET", path, Bytes::new()).await?;
         assert_eq!(response.status(), 404, "{path}");

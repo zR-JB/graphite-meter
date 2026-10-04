@@ -55,12 +55,12 @@ impl AuthLease {
         self.grant.as_ref().and_then(|grant| grant.origin.as_deref())
     }
     pub fn provider(&self) -> &str {
-        self.provider.unwrap_or(self.session().provider())
+        self.provider.unwrap_or(&self.session().provider)
     }
     pub fn owner(&self) -> crate::upload::Owner {
         match &self.grant {
-            Some(grant) => crate::upload::Owner::delegated(self.session().subject(), &grant.id),
-            None => crate::upload::Owner::login(self.session().subject(), self.session().id()),
+            Some(grant) => crate::upload::Owner::delegated(&self.session().subject, &grant.id),
+            None => crate::upload::Owner::login(&self.session().subject, &self.session().id),
         }
     }
     pub fn is_active(&self) -> bool {
@@ -124,10 +124,8 @@ impl SessionStore {
 
 impl State {
     pub(super) fn grant_count(&self, session: &SessionLease) -> usize {
-        self.grants
-            .values()
-            .filter(|grant| grant.session.0.hash == session.0.hash)
-            .count()
+        let children = |grant: &&AuthLease| grant.session.0.hash == session.0.hash;
+        self.grants.values().filter(children).count()
     }
 
     pub(super) fn issue_grant(
@@ -224,7 +222,7 @@ mod tests {
         assert_eq!(cli.owner().client_keys()[1], cookie.owner().client_keys()[1]);
         assert_ne!(first.owner(), second.owner());
         assert_eq!(first.owner().client_keys()[1], cookie.owner().client_keys()[1]);
-        assert_eq!(first.session().id(), second.session().id());
+        assert_eq!(first.session().id, second.session().id);
         let found = store.lookup_bearer(&first_token).unwrap();
         assert_eq!(found.browser_origin(), Some(ORIGIN));
         assert!(store.lookup_bearer(&cli_token).is_some());

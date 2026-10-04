@@ -7,7 +7,6 @@ mod native;
 mod support;
 
 use graphite_meter_server::config::{Config, NativeKind};
-use graphite_meter_server::http::HttpServer;
 use rustls::{
     ClientConfig, RootCertStore, ServerConfig, SupportedProtocolVersion,
     pki_types::{CertificateDer, PrivateKeyDer, ServerName, pem::PemObject},
@@ -19,7 +18,9 @@ use tokio::{
 };
 use tokio_rustls::{TlsConnector, client::TlsStream};
 
-fn configs(identity: &support::Identity) -> (Arc<ServerConfig>, RootCertStore) {
+/// A TLS 1.3 server configuration for a fresh identity, and roots that trust it.
+fn configs() -> (Arc<ServerConfig>, RootCertStore) {
+    let identity = support::Identity::generate();
     let certificate = CertificateDer::from_pem_file(identity.directory().join("identity.pem")).unwrap();
     let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key")).unwrap();
     let mut roots = RootCertStore::empty();
@@ -44,15 +45,13 @@ fn connector(roots: RootCertStore, version: &'static SupportedProtocolVersion) -
 }
 
 async fn listen(config: Config, kind: NativeKind, tls: Arc<ServerConfig>) -> native::NativeServer {
-    let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-    native::serve(server, kind, Some(tls)).await
+    native::serve(native::server(config), kind, Some(tls)).await
 }
 
 async fn handshake(address: SocketAddr, connector: &TlsConnector) -> std::io::Result<TlsStream<TcpStream>> {
     let socket = TcpStream::connect(address).await.unwrap();
-    connector
-        .connect(ServerName::try_from("localhost").unwrap(), socket)
-        .await
+    let name = ServerName::try_from("localhost").unwrap();
+    connector.connect(name, socket).await
 }
 
 async fn connect(address: SocketAddr, connector: &TlsConnector) -> TlsStream<TcpStream> {
@@ -76,8 +75,7 @@ async fn request(
 #[tokio::test]
 async fn validated_tls13_serves_probe_after_rejected_tls12() {
     tokio::time::timeout(Duration::from_secs(10), async {
-        let identity = support::Identity::generate();
-        let (tls, roots) = configs(&identity);
+        let (tls, roots) = configs();
         let good = connector(roots.clone(), &rustls::version::TLS13);
         let old = connector(roots, &rustls::version::TLS12);
         let listener = listen(Config::default(), NativeKind::H1Tls, tls).await;
@@ -96,8 +94,7 @@ async fn validated_tls13_serves_probe_after_rejected_tls12() {
 #[tokio::test]
 async fn tls_stalled_download_keeps_deadline_through_encrypted_writes() {
     tokio::time::timeout(Duration::from_secs(5), async {
-        let identity = support::Identity::generate();
-        let (tls, roots) = configs(&identity);
+        let (tls, roots) = configs();
         let connector = connector(roots, &rustls::version::TLS13);
         let config = Config {
             max_operation_duration: Duration::from_millis(300),
@@ -105,10 +102,8 @@ async fn tls_stalled_download_keeps_deadline_through_encrypted_writes() {
         };
         let listener = listen(config, NativeKind::H1Tls, tls).await;
         let mut stalled = connect(listener.address, &connector).await;
-        stalled
-            .write_all(b"GET /download?bytes=68719476736 HTTP/1.1\r\nHost: localhost\r\n\r\n")
-            .await
-            .unwrap();
+        let download = b"GET /download?bytes=68719476736 HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        stalled.write_all(download).await.unwrap();
         let mut headers = Vec::new();
         while !headers.ends_with(b"\r\n\r\n") {
             headers.push(stalled.read_u8().await.unwrap());
@@ -132,8 +127,7 @@ async fn tls_stalled_download_keeps_deadline_through_encrypted_writes() {
 #[tokio::test]
 async fn shutdown_joins_incomplete_tls_handshake_and_releases_connection() {
     tokio::time::timeout(Duration::from_secs(5), async {
-        let identity = support::Identity::generate();
-        let (tls, _) = configs(&identity);
+        let (tls, _) = configs();
         let config = Config {
             max_connections: 1,
             max_connections_per_client: 1,
@@ -159,8 +153,7 @@ async fn shutdown_joins_incomplete_tls_handshake_and_releases_connection() {
 #[tokio::test]
 async fn h3_tcp_companion_serves_probe_and_control_routes_and_advertises_the_effective_public_port() {
     tokio::time::timeout(Duration::from_secs(5), async {
-        let identity = support::Identity::generate();
-        let (tls, roots) = configs(&identity);
+        let (tls, roots) = configs();
         let connector = connector(roots, &rustls::version::TLS13);
         for (origin, port) in [("", None), ("https://localhost:9443", Some(9443)), ("https://localhost", Some(443))] {
             let mut config = Config::default();

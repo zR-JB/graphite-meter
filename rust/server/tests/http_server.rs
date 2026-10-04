@@ -5,17 +5,27 @@ mod http1;
 mod native;
 
 use graphite_meter_server::config::{Config, NativeKind};
-use graphite_meter_server::http::HttpServer;
 use serde_json::Value;
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, time::Duration};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,
 };
 
 async fn listen(config: Config) -> native::NativeServer {
-    let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-    native::serve(server, NativeKind::H1, None).await
+    native::serve(native::server(config), NativeKind::H1, None).await
+}
+
+fn lasting(operation: Duration) -> Config {
+    Config { max_operation_duration: operation, ..Config::default() }
+}
+
+/// Trusts a proxy on any loopback address.
+fn proxied() -> Config {
+    Config {
+        trusted_proxies: vec!["127.0.0.0/8".parse().unwrap()],
+        ..Config::default()
+    }
 }
 
 #[tokio::test]
@@ -54,24 +64,14 @@ async fn real_http1_serves_discovery_and_streams_exact_download_then_joins_shutd
 #[tokio::test]
 async fn stalled_download_releases_capacity_at_request_deadline() {
     tokio::time::timeout(Duration::from_secs(5), async {
-        let mut config = Config {
-            max_operation_duration: Duration::from_millis(500),
-            ..Config::default()
-        };
+        let mut config = lasting(Duration::from_millis(500));
         config.limits.operations_per_client = 1;
         config.limits.sessions_per_client = 1;
         let listener = listen(config).await;
-        let mut stalled = TcpStream::connect(listener.address).await.unwrap();
-        stalled
-            .write_all(b"GET /download?bytes=68719476736 HTTP/1.1\r\nHost: localhost\r\n\r\n")
-            .await
-            .unwrap();
         // Read only the headers; leave the large response blocked in TCP.
-        let mut headers = Vec::new();
-        while !headers.ends_with(b"\r\n\r\n") {
-            headers.push(stalled.read_u8().await.unwrap());
-        }
-        assert!(headers.starts_with(b"HTTP/1.1 200"));
+        let download = "GET /download?bytes=68719476736 HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        let (stalled, headers) = sent(listener.address, download).await;
+        assert!(headers.starts_with("HTTP/1.1 200"));
         // The stalled download holds this client's only permit.
         let (download, _) = request(listener.address, "GET", "/download?bytes=1", "", b"").await;
         assert!(download.starts_with("HTTP/1.1 429"), "{download}");
@@ -111,11 +111,7 @@ async fn oversized_http1_headers_are_rejected() {
 #[tokio::test]
 async fn http1_upload_refusals_preserve_owner_and_unread_body_boundaries() {
     tokio::time::timeout(Duration::from_secs(10), async {
-        let listener = listen(Config {
-            trusted_proxies: vec!["127.0.0.0/8".parse().unwrap()],
-            ..Config::default()
-        })
-        .await;
+        let listener = listen(proxied()).await;
         let address = listener.address;
         let id = upload_id(address, "192.0.2.1").await;
         let path = format!("/upload?id={id}");
@@ -143,11 +139,7 @@ async fn http1_upload_refusals_preserve_owner_and_unread_body_boundaries() {
 #[tokio::test]
 async fn ambiguous_proxy_evidence_owns_no_upload() {
     tokio::time::timeout(Duration::from_secs(10), async {
-        let listener = listen(Config {
-            trusted_proxies: vec!["127.0.0.0/8".parse().unwrap()],
-            ..Config::default()
-        })
-        .await;
+        let listener = listen(proxied()).await;
         let address = listener.address;
         // The proxy forwards a client on its own address, such as a local health check.
         let id = upload_id(address, "127.0.0.1").await;
@@ -171,11 +163,7 @@ async fn ambiguous_proxy_evidence_owns_no_upload() {
 #[tokio::test]
 async fn stalled_upload_read_releases_capacity_and_keeps_received_bytes() {
     tokio::time::timeout(Duration::from_secs(5), async {
-        let listener = listen(Config {
-            max_operation_duration: Duration::from_millis(200),
-            ..Config::default()
-        })
-        .await;
+        let listener = listen(lasting(Duration::from_millis(200))).await;
         let id = upload_id(listener.address, "").await;
         let mut stalled = TcpStream::connect(listener.address).await.unwrap();
         let head = format!("POST /upload?id={id} HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100000\r\n\r\nabc");
@@ -290,11 +278,7 @@ async fn keepalive_idle_uses_fifteen_seconds_and_releases_connection_capacity() 
 
 #[tokio::test]
 async fn active_http1_progress_survives_an_idle_interval() {
-    let listener = listen(Config {
-        max_operation_duration: Duration::from_secs(180),
-        ..Config::default()
-    })
-    .await;
+    let listener = listen(lasting(Duration::from_secs(180))).await;
     let id = upload_id(listener.address, "").await;
     let progress = format!("GET /upload/progress?id={id} HTTP/1.1\r\nHost: localhost\r\n\r\n");
     let (mut progress, headers) = sent(listener.address, &progress).await;

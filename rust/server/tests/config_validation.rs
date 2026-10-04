@@ -38,28 +38,22 @@ fn authentication_constrains_advertised_origins_and_secret_sources() {
     let error = memory.validate().unwrap_err().to_string();
     assert!(error.contains("QUIC endpoint buffers"), "{error}");
     let invalid_cases: [InvalidConfigCase; 10] = [
-        ("insecure auth origin", |config| config.auth.public_url = "http://meter.example".into()),
-        ("explicit default auth port", |config| {
-            config.auth.public_url = "https://meter.example:443".into()
+        ("insecure auth origin", |c| c.auth.public_url = "http://meter.example".into()),
+        ("explicit default auth port", |c| c.auth.public_url = "https://meter.example:443".into()),
+        ("two password sources", |c| c.auth.password_hash_file = "test-secret-file".into()),
+        ("cleartext native advertisement", |c| c.advertised_native = None),
+        ("different advertised hostname", |c| {
+            c.public.throughput[0] = "https://other.example".into()
         }),
-        ("two password sources", |config| {
-            config.auth.password_hash_file = "test-secret-file".into()
+        ("OIDC secret in password mode", |c| c.auth.oidc_client_secret = "test-secret".into()),
+        ("missing password source", |c| c.auth.password_hash.clear()),
+        ("provider name with control character", |c| {
+            c.auth.oidc_provider_name = "invalid\nprovider".into()
         }),
-        ("cleartext native advertisement", |config| config.advertised_native = None),
-        ("different advertised hostname", |config| {
-            config.public.throughput[0] = "https://other.example".into()
+        ("provider name with bidi control", |c| {
+            c.auth.oidc_provider_name = "invalid\u{202e}provider".into()
         }),
-        ("OIDC secret in password mode", |config| {
-            config.auth.oidc_client_secret = "test-secret".into()
-        }),
-        ("missing password source", |config| config.auth.password_hash.clear()),
-        ("provider name with control character", |config| {
-            config.auth.oidc_provider_name = "invalid\nprovider".into()
-        }),
-        ("provider name with bidi control", |config| {
-            config.auth.oidc_provider_name = "invalid\u{202e}provider".into()
-        }),
-        ("credentials with auth disabled", |config| config.auth.mode = AuthMode::Off),
+        ("credentials with auth disabled", |c| c.auth.mode = AuthMode::Off),
     ];
     for (name, invalidate) in invalid_cases {
         let mut config = password();

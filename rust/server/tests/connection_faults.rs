@@ -1,3 +1,6 @@
+#[path = "support/http2.rs"]
+mod http2;
+
 #[path = "support/native.rs"]
 mod native;
 
@@ -10,11 +13,10 @@ mod test_link;
 use bytes::Bytes;
 use graphite_meter_http3::{self as http3, Code, webtransport::Session};
 use graphite_meter_server::config::{Config, NativeKind};
-use graphite_meter_server::http::HttpServer;
-use http::{Request, Version};
-use quic::{QuicServer, TestError, body, json, requests};
+use http::Request;
+use quic::{QuicServer, TestError, body, json, lasting, requests};
 use rustls::{
-    ClientConfig, ServerConfig,
+    ServerConfig,
     pki_types::ServerName,
     server::{ClientHello, ResolvesServerCert},
     sign::CertifiedKey,
@@ -30,23 +32,10 @@ use std::{
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
-struct Tls {
-    server: ServerConfig,
-    client: ClientConfig,
-}
-impl Tls {
-    fn new() -> Self {
-        let (server, client) = quic::test_tls::configs("localhost", &[&rustls::version::TLS13], &[b"h2"]).unwrap();
-        Self { server, client }
-    }
-    fn server(&self, resolver: Arc<dyn ResolvesServerCert>) -> ServerConfig {
-        let mut server = self.server.clone();
-        server.cert_resolver = resolver;
-        server
-    }
-    fn client(&self) -> TlsConnector {
-        TlsConnector::from(Arc::new(self.client.clone()))
-    }
+/// A TLS 1.3 server configuration offering HTTP/2, and a connector that trusts it.
+fn tls() -> (ServerConfig, TlsConnector) {
+    let (server, client) = quic::test_tls::configs("localhost", &[&rustls::version::TLS13], &[b"h2"]).unwrap();
+    (server, TlsConnector::from(Arc::new(client)))
 }
 
 #[derive(Debug)]
@@ -60,9 +49,8 @@ impl ResolvesServerCert for PanicOnce {
     }
 }
 
-async fn h2_client(tls: &Tls, address: SocketAddr) -> Result<h2::client::SendRequest<Bytes>, TestError> {
+async fn h2_client(tls: &TlsConnector, address: SocketAddr) -> Result<h2::client::SendRequest<Bytes>, TestError> {
     let stream = tls
-        .client()
         .connect(ServerName::try_from("localhost")?, TcpStream::connect(address).await?)
         .await?;
     let (client, connection) = h2::client::handshake(stream).await?;
@@ -70,37 +58,20 @@ async fn h2_client(tls: &Tls, address: SocketAddr) -> Result<h2::client::SendReq
     Ok(client)
 }
 
-fn request(method: &str, path: &str) -> Request<()> {
-    Request::builder()
-        .method(method)
-        .uri(format!("https://localhost{path}"))
-        .version(Version::HTTP_2)
-        .body(())
-        .unwrap()
-}
-
 async fn serve_h2(tls: ServerConfig, config: Config) -> native::NativeServer {
-    native::serve(
-        Arc::new(HttpServer::new(config.validated().unwrap()).unwrap()),
-        NativeKind::H2,
-        Some(Arc::new(tls)),
-    )
-    .await
+    native::serve(native::server(config), NativeKind::H2, Some(Arc::new(tls))).await
 }
 
 #[tokio::test]
 async fn one_connection_panic_leaves_the_listener_serving() -> Result<(), TestError> {
-    let tls = Tls::new();
-    let server = serve_h2(
-        tls.server(Arc::new(PanicOnce(AtomicBool::new(false), tls.server.cert_resolver.clone()))),
-        Config { max_connections_per_client: 1, ..Config::default() },
-    )
-    .await;
+    let (mut tls, connector) = tls();
+    tls.cert_resolver = Arc::new(PanicOnce(AtomicBool::new(false), tls.cert_resolver.clone()));
+    let server = serve_h2(tls, Config { max_connections_per_client: 1, ..Config::default() }).await;
     let address = server.address;
-    assert!(h2_client(&tls, address).await.is_err(), "first handshake must fail");
+    assert!(h2_client(&connector, address).await.is_err(), "first handshake must fail");
     let mut client = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            if let Ok(client) = h2_client(&tls, address).await {
+            if let Ok(client) = h2_client(&connector, address).await {
                 break client;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -109,48 +80,29 @@ async fn one_connection_panic_leaves_the_listener_serving() -> Result<(), TestEr
     .await
     .map_err(|_| "listener stopped after one connection panicked")?;
     client = client.ready().await?;
-    let (response, _) = client.send_request(request("GET", "/probe"), true)?;
+    let (response, _) = client.send_request(http2::request("GET", "/probe"), true)?;
     assert_eq!(response.await?.status(), 200);
     assert!(!server.task.is_finished(), "listener ended");
     server.shutdown().await;
     Ok(())
 }
 
-async fn h2_body(response: http::Response<h2::RecvStream>) -> Result<Vec<u8>, TestError> {
-    let mut body = response.into_body();
-    let mut bytes = Vec::new();
-    while let Some(chunk) = body.data().await {
-        let chunk = chunk?;
-        body.flow_control().release_capacity(chunk.len())?;
-        bytes.extend_from_slice(&chunk);
-    }
-    Ok(bytes)
-}
-
 #[tokio::test]
 async fn h2_upload_is_not_window_bound_on_a_delayed_link() -> Result<(), TestError> {
-    let tls = Tls::new();
-    let server = serve_h2(
-        tls.server(tls.server.cert_resolver.clone()),
-        Config {
-            max_operation_duration: Duration::from_secs(10),
-            ..Config::default()
-        },
-    )
-    .await;
-    let address = server.address;
+    let (tls, connector) = tls();
+    let server = serve_h2(tls, lasting(Duration::from_secs(10))).await;
     let one_way = Duration::from_millis(20);
-    let link = test_link::Link::tcp(address, one_way).await?;
-    let mut client = h2_client(&tls, link.address).await?;
+    let link = test_link::Link::tcp(server.address, one_way).await?;
+    let mut client = h2_client(&connector, link.address).await?;
     client = client.ready().await?;
-    let (session, _) = client.send_request(request("POST", "/upload/session"), true)?;
-    let session: serde_json::Value = serde_json::from_slice(&h2_body(session.await?).await?)?;
+    let (session, _) = client.send_request(http2::request("POST", "/upload/session"), true)?;
+    let session: serde_json::Value = serde_json::from_slice(&http2::body(session.await?.into_body()).await)?;
     let id = session["uploadId"].as_str().ok_or("upload id")?.to_owned();
 
     let mut remaining = Bytes::from(vec![7_u8; 2 * 1024 * 1024]);
     client = client.ready().await?;
     let started = tokio::time::Instant::now();
-    let (response, mut upload) = client.send_request(request("POST", &format!("/upload?id={id}")), false)?;
+    let (response, mut upload) = client.send_request(http2::request("POST", &format!("/upload?id={id}")), false)?;
     while !remaining.is_empty() {
         upload.reserve_capacity(remaining.len().min(256 * 1024));
         let capacity = std::future::poll_fn(|cx| upload.poll_capacity(cx))
@@ -161,7 +113,7 @@ async fn h2_upload_is_not_window_bound_on_a_delayed_link() -> Result<(), TestErr
     }
     let response = response.await?;
     let elapsed = started.elapsed();
-    let reply: serde_json::Value = serde_json::from_slice(&h2_body(response).await?)?;
+    let reply: serde_json::Value = serde_json::from_slice(&http2::body(response.into_body()).await)?;
     assert_eq!(reply["bytes"], 2 * 1024 * 1024);
     let round_trips = elapsed.as_secs_f64() / (2.0 * one_way.as_secs_f64());
     eprintln!("h2 2 MiB upload: {elapsed:?} = {round_trips:.1} RTT");
@@ -178,10 +130,7 @@ async fn upload_id(requests: &http3::client::SendRequest) -> Result<String, Test
 
 #[tokio::test]
 async fn h3_upload_is_not_floor_window_bound_on_a_delayed_link() -> Result<(), TestError> {
-    let server = quic::serve(Config {
-        max_operation_duration: Duration::from_secs(10),
-        ..Config::default()
-    })?;
+    let server = quic::serve(lasting(Duration::from_secs(10)))?;
     let link = test_link::Link::udp(server.address, Duration::from_millis(20)).await?;
     let quic = client(&server, true)?.connect(link.address, "localhost")?.await?;
     let (driving, requests) = requests(quic.clone());
@@ -299,17 +248,12 @@ async fn download_rate(webtransport: bool, one_way: Duration) -> Result<f64, Tes
         .connect_with(config, target, "localhost")?
         .await?;
     let (driving, requests) = requests(quic.clone());
-    let path = if webtransport { "wt/download" } else { "download" };
-    let request = Request::get(format!("https://localhost/{path}?bytes=4294967296")).body(())?;
     let (mut lane, mut body, _session) = if webtransport {
-        let (session, _) = Session::connect(&requests, request)
-            .await?
-            .map_err(|refused| format!("{refused:?}"))?;
+        let session = connect(&requests, "/wt/download?bytes=4294967296").await?;
         (Some(session.accept_uni().await.ok_or("missing download stream")?), None, Some(session))
     } else {
-        let (mut send, mut recv) = requests.send_request(request).await?.split();
-        send.finish().await?;
-        assert_eq!(recv.response().await?.status(), 200);
+        let (response, recv) = quic::send(&requests, "GET", "/download?bytes=4294967296", Bytes::new()).await?;
+        assert_eq!(response.status(), 200);
         (None, Some(recv), None)
     };
     let started = tokio::time::Instant::now();
@@ -349,10 +293,8 @@ async fn download_rate(webtransport: bool, one_way: Duration) -> Result<f64, Tes
 /// Opens a WebTransport session on `requests`.
 async fn connect(requests: &http3::client::SendRequest, path: &str) -> Result<Session, TestError> {
     let request = Request::get(format!("https://localhost{path}")).body(())?;
-    Ok(Session::connect(requests, request)
-        .await?
-        .map_err(|refused| format!("{refused:?}"))?
-        .0)
+    let connected = Session::connect(requests, request).await?;
+    Ok(connected.map_err(|refused| format!("{refused:?}"))?.0)
 }
 
 /// Opens a WebTransport session on its own connection.
