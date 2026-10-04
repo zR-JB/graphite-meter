@@ -1,18 +1,32 @@
-//! HTTP/3 and WebTransport over the noq QUIC fork, for both roles.
-// The IO layer that uses the protocol modules follows them.
+//! HTTP/3 and WebTransport over the noq QUIC fork, for both roles: sans-IO protocol modules and one
+//! driver per connection that runs them.
+// WebTransport, which uses the remaining protocol items, follows.
 #![allow(dead_code)]
 
+mod budget;
 mod capsule;
+pub mod client;
 mod code;
 mod control;
+mod driver;
+mod error;
 mod fields;
 mod frame;
+mod incoming;
 mod message;
 mod qpack;
+pub mod server;
 mod settings;
+mod stream;
 mod varint;
 
-pub use code::{Code, WtCode};
+pub use {
+    budget::Budget,
+    code::{Code, WtCode},
+    driver::CONNECTION_BYTES,
+    error::Error,
+    stream::{RecvHalf, RequestStream, SendHalf},
+};
 
 #[cfg(test)]
 fn hex(text: &str) -> Vec<u8> {

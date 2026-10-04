@@ -1,0 +1,57 @@
+//! The client role: a driver to run, and a handle that sends requests.
+use crate::{
+    driver::{Driver, Role, Shared},
+    error::Error,
+    fields, frame,
+    stream::{self, RequestStream},
+};
+use std::sync::Arc;
+
+pub fn new(quic: noq::Connection) -> (Connection, SendRequest) {
+    let driver = Driver::new(quic, None, Role::Client);
+    let requests = SendRequest(driver.shared.clone());
+    (Connection(driver), requests)
+}
+
+/// Must be driven while requests run; dropping it closes the connection.
+pub struct Connection(Driver);
+
+impl Connection {
+    /// Runs until the connection closes; `Ok` when it closed gracefully.
+    pub async fn drive(&mut self) -> Result<(), Error> {
+        self.0.next().await.map(drop)
+    }
+}
+
+#[derive(Clone)]
+pub struct SendRequest(pub(crate) Arc<Shared>);
+
+impl SendRequest {
+    /// Whether the server sent GOAWAY, after which this connection takes no new request.
+    pub fn going_away(&self) -> bool {
+        self.0.going_away()
+    }
+
+    /// Opens a request stream and sends the head, within the server's field section limit.
+    pub async fn send_request(&self, request: http::Request<()>) -> Result<RequestStream, Error> {
+        if self.0.going_away() {
+            return Err(Error::GoingAway);
+        }
+        self.open(request.into_parts().0, None).await
+    }
+
+    /// Sends a request head; `protocol` makes it an extended CONNECT.
+    pub(crate) async fn open(
+        &self,
+        parts: http::request::Parts,
+        protocol: Option<&str>,
+    ) -> Result<RequestStream, Error> {
+        let head = fields::encode_request(&parts, protocol, self.0.peer_field_limit()).map_err(|_| Error::Refused)?;
+        let charges = stream::charges(&self.0.budget).ok_or(Error::Refused)?;
+        let (send, recv) = self.0.quic.open_bi().await?;
+        let mut stream = RequestStream::new(&self.0, send, recv, charges);
+        stream.recv.method = parts.method;
+        stream.send.frame(frame::HEADERS, head.into()).await?;
+        Ok(stream)
+    }
+}
