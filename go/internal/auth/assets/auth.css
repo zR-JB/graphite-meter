@@ -76,7 +76,7 @@
   --hit: 44px;
 
   --canvas: light-dark(oklch(0.962 0.004 258), oklch(0.17 0.008 258));
-  --surface-1: light-dark(oklch(0.995 0.002 258), oklch(0.215 0.009 258));
+  --surface-1: light-dark(oklch(0.995 0.002 258), oklch(0.205 0.009 258));
   --surface-2: light-dark(oklch(0.975 0.003 258), oklch(0.25 0.01 258));
   --sheet-solid: light-dark(oklch(0.985 0.003 258), oklch(0.195 0.009 258));
   --sheet: var(--sheet-solid);
