@@ -2,9 +2,12 @@
 mod support;
 
 use bytes::Bytes;
-use graphite_meter_http3::{Code, Error};
+use graphite_meter_http3::{Code, Error, server};
 use std::{
+    future::{Future, poll_fn},
+    pin::pin,
     sync::{Arc, atomic::Ordering},
+    task::Poll,
     time::Duration,
 };
 use support::*;
@@ -170,6 +173,20 @@ async fn each_role_sends_its_settings() -> Result<(), TestError> {
     Ok(())
 }
 
+/// A peer that grants unidirectional stream credit only after the handshake still gets the SETTINGS.
+#[tokio::test]
+async fn our_control_stream_opens_once_stream_credit_arrives() -> Result<(), TestError> {
+    let setup = Setup { uni_streams: Some(0), ..PLAIN };
+    let Served { peers, .. } = pair(setup).await?.serve(|_, _| async {});
+    yields().await;
+    peers.client.set_max_concurrent_uni_streams(3_u32.into());
+    let mut control = tokio::time::timeout(Duration::from_secs(5), peers.client.accept_uni()).await??;
+    let mut kind = [0xff];
+    control.read_exact(&mut kind).await?;
+    assert_eq!(kind, [0x00], "a control stream");
+    Ok(())
+}
+
 #[tokio::test]
 async fn settings_the_server_refuses() -> Result<(), TestError> {
     let many: Vec<_> = (0..65).map(|index| (0x21 + 0x1f * index, 0)).collect();
@@ -276,9 +293,8 @@ async fn a_budget_refusal_rejects_only_the_new_request() -> Result<(), TestError
     Ok(())
 }
 
-/// A head the budget cannot hold once its stream was admitted was never processed, so it gets
-/// H3_REQUEST_REJECTED both ways, not the 431 of a head over the size limit: whole, the decoded head is
-/// refused, and in parts the stream cannot buffer the rest.
+/// An admitted stream whose head the budget cannot hold, whole or in parts, was never processed: it gets
+/// H3_REQUEST_REJECTED both ways, not the 431 of a head over the size limit.
 #[tokio::test]
 async fn a_head_over_the_budget_rejects_the_admitted_request() -> Result<(), TestError> {
     let head = request_head(&[]);
@@ -364,6 +380,34 @@ async fn deadlines_close_idle_and_draining_connections_and_stale_heads() -> Resu
     );
     jump(Duration::from_secs(6)).await;
     assert_eq!((driver.await?, serving.await?), (Ok(()), Ok(())));
+    assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
+    Ok(())
+}
+
+/// A request that ends before the driver's next pass still restarts the 15 s idle period.
+#[tokio::test]
+async fn a_request_finished_between_passes_restarts_the_idle_period() -> Result<(), TestError> {
+    let peers = pair(PLAIN).await?;
+    let mut connection = server::Connection::new(peers.server.clone(), Some(peers.budget.clone()));
+    // One pass starts the idle period; the connection then waits unpolled.
+    let waiting = poll_fn(|cx| Poll::Ready(pin!(connection.next()).poll(cx).is_pending())).await;
+    assert!(waiting);
+    jump(Duration::from_secs(10)).await;
+    let (mut send, mut recv) = peers.bi(&request_head(&[])).await?;
+    send.finish()?;
+    let (request, stream) = connection.next().await?.ok_or("a request")?.resolve().await?;
+    respond(request, stream).await;
+    assert_eq!(raw_stream(&mut recv).await.1, Ok(()));
+    let serving = tokio::spawn(async move {
+        while connection.next().await?.is_some() {}
+        Ok::<_, Error>(())
+    });
+    yields().await;
+    jump(Duration::from_secs(14)).await;
+    yields().await;
+    assert!(peers.server.close_reason().is_none(), "closed within 15 s of the request");
+    jump(Duration::from_secs(2)).await;
+    assert_eq!(serving.await?, Ok(()));
     assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
     Ok(())
 }

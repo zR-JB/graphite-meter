@@ -249,6 +249,14 @@ impl SendHalf {
         (self.header, self.payload) = (Header::new(kind, payload.len() as u64), payload);
     }
 
+    /// Queues a frame after the pending one, which may be partly written.
+    pub(crate) fn queue_after(&mut self, kind: u64, payload: &[u8]) {
+        let mut frames = Vec::from(&self.payload[..]);
+        frame::put_header(kind, payload.len() as u64, &mut frames);
+        frames.extend_from_slice(payload);
+        self.payload = frames.into();
+    }
+
     pub(crate) async fn frame(&mut self, kind: u64, payload: Bytes) -> Result<(), Error> {
         poll_fn(|cx| self.poll_ready(cx)).await?;
         self.queue(kind, payload);

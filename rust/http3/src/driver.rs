@@ -1,6 +1,5 @@
-//! One driver per connection, for both roles: our control stream, the peer's streams, request
-//! admission, datagram routing, the sessions' CONNECT streams, GOAWAY, and the deadlines that close the
-//! connection.
+//! One driver per connection, for both roles: control streams, peer streams, request admission, datagrams,
+//! the sessions' CONNECT streams, GOAWAY, and the deadlines that close the connection.
 use crate::{
     budget::{Budget, Charge},
     capsule,
@@ -153,6 +152,7 @@ impl Driver {
             Role::Server => &settings::SERVER,
             Role::Client => &settings::CLIENT,
         };
+        let opening = quic.clone();
         let shared = Arc::new(Shared {
             quic,
             budget,
@@ -167,7 +167,12 @@ impl Driver {
         Self {
             shared,
             control: Control {
-                stream: None,
+                stream: ControlStream::Opening(Box::pin(async move {
+                    match opening.open_uni().await {
+                        Ok(stream) => stream,
+                        Err(_) => std::future::pending().await,
+                    }
+                })),
                 pending: settings::control_stream(ours),
                 written: 0,
             },
@@ -243,7 +248,7 @@ impl Driver {
             }
             tokio::select! {
                 biased;
-                code = poll_fn(|cx| self.control.poll(cx, &shared.quic)) => return Err(shared.close(code)),
+                code = poll_fn(|cx| self.control.poll(cx)) => return Err(shared.close(code)),
                 stream = shared.quic.accept_uni() => self.incoming.admit(stream?, &shared.budget),
                 read = poll_fn(|cx| self.incoming.poll(cx, &shared)) => match read {
                     Ok((session, stream, first)) => route(&shared, session, stream, first),
@@ -284,6 +289,8 @@ impl Driver {
         self.next_request = self.next_request.max(id + 4);
         match stream::charges(&self.shared.budget) {
             Some(charges) if self.goaway.is_none_or(|goaway| id < goaway) => {
+                // A request that ends before the next pass still restarts the idle period.
+                self.idle_since = None;
                 Some(RequestStream::new(&self.shared, send, recv, charges))
             }
             _ => {
@@ -330,23 +337,29 @@ impl Drop for Driver {
 
 /// Our control stream: SETTINGS first, GOAWAY on shutdown.
 struct Control {
-    /// The stream, and its STOP_SENDING, which the peer must never send (RFC 9114 §6.2.1).
-    stream: Option<(noq::SendStream, Pin<Box<noq::Stopped>>)>,
+    stream: ControlStream,
     pending: Vec<u8>,
     written: usize,
 }
 
+enum ControlStream {
+    /// Kept across passes, as noq wakes only a waiting open; it never resolves once the connection closed.
+    Opening(Pin<Box<dyn Future<Output = noq::SendStream> + Send>>),
+    /// With its STOP_SENDING, which the peer must never send (RFC 9114 §6.2.1).
+    Open(noq::SendStream, Pin<Box<noq::Stopped>>),
+}
+
 impl Control {
     /// Opens the stream and writes what is queued; `Ready` with the code the connection closes with.
-    fn poll(&mut self, cx: &mut Context<'_>, quic: &noq::Connection) -> Poll<Code> {
-        if self.stream.is_none() {
-            let Ok(stream) = ready!(pin!(quic.open_uni()).poll(cx)) else {
-                return Poll::Pending;
-            };
+    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<Code> {
+        if let ControlStream::Opening(opening) = &mut self.stream {
+            let stream = ready!(opening.as_mut().poll(cx));
             let stopped = Box::pin(stream.stopped());
-            self.stream = Some((stream, stopped));
+            self.stream = ControlStream::Open(stream, stopped);
         }
-        let (stream, stopped) = self.stream.as_mut().expect("opened");
+        let ControlStream::Open(stream, stopped) = &mut self.stream else {
+            unreachable!("opened above")
+        };
         if let Poll::Ready(Ok(Some(_))) = stopped.as_mut().poll(cx) {
             return Poll::Ready(Code::H3_CLOSED_CRITICAL_STREAM);
         }

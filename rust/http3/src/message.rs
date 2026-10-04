@@ -68,8 +68,7 @@ impl Message {
             *self = Self::new(self.limit, true);
             return Ok(None);
         }
-        // A client ignores content-length in a successful response to CONNECT (RFC 9110 §9.3.6), and
-        // these never have content, whatever it says (RFC 9114 §4.1.2).
+        // A successful CONNECT ignores content-length (RFC 9110 §9.3.6); these have no content (RFC 9114 §4.1.2).
         self.owed = if *method == http::Method::CONNECT && status.is_success() {
             None
         } else if *method == http::Method::HEAD

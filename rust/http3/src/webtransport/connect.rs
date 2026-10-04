@@ -85,24 +85,23 @@ pub(crate) struct Connect {
     peer_closed: bool,
     /// This side ended the session, so a sessions-only connection lingers for its CLOSE.
     closed_here: bool,
+    _charge: Charge,
 }
 
 impl Connect {
-    pub(super) fn new(id: u64, stream: RequestStream, phase: watch::Sender<Phase>) -> Self {
-        let (capsules, input) = (capsule::Reader::default(), Bytes::new());
-        let (peer_finished, peer_closed, closed_here) = (false, false, false);
-        let received = (0, 0);
+    pub(super) fn new(id: u64, stream: RequestStream, phase: watch::Sender<Phase>, charge: Charge) -> Self {
         Self {
             id,
             stream,
-            capsules,
-            input,
-            received,
+            capsules: capsule::Reader::default(),
+            input: Bytes::new(),
+            received: (0, 0),
             phase,
             deadline: None,
-            peer_finished,
-            peer_closed,
-            closed_here,
+            peer_finished: false,
+            peer_closed: false,
+            closed_here: false,
+            _charge: charge,
         }
     }
 
@@ -144,15 +143,12 @@ impl Connect {
 
     /// Starts the close once the session ended or this side asked; returns when the wait for FIN ends.
     fn close(&mut self, now: Instant, shared: &Shared) -> Option<Instant> {
-        let phase = self.phase.borrow().clone();
-        if !phase.is_ended() {
+        if !self.phase.borrow().is_ended() {
             let (code, reason) = shared.sessions().requested_close(self.id)?;
-            // Queueing replaces a frame not yet written, so an unsent head keeps its place and no CLOSE follows it.
-            if matches!(phase, Phase::Open) {
-                self.stream
-                    .send
-                    .queue(frame::DATA, capsule::close(code, &reason).into());
-            }
+            // An unwritten 200 head goes first.
+            self.stream
+                .send
+                .queue_after(frame::DATA, &capsule::close(code, &reason));
             self.end(Ok((code, reason)));
             self.closed_here = true;
         }

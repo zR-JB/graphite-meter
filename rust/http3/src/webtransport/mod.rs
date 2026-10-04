@@ -67,7 +67,6 @@ pub struct Session {
     streams: Mutex<mpsc::Receiver<RecvStream>>,
     datagrams: Mutex<mpsc::Receiver<Bytes>>,
     phase: watch::Receiver<Phase>,
-    _charge: Charge,
 }
 
 /// A payload encoded for one session, sent repeatedly without copying it.
@@ -85,9 +84,8 @@ impl PreparedDatagram<'_> {
 }
 
 impl Session {
-    /// Server: accepts an authorized WebTransport CONNECT, answering with `headers` either way. A peer that
-    /// has not shown WebTransport, HTTP datagrams and the datagram transport parameter within 5 s gets
-    /// 400; a second session on the connection gets H3_REQUEST_REJECTED, as from Go.
+    /// Server: accepts an authorized CONNECT with `headers`. A peer without WebTransport and datagrams
+    /// within 5 s gets 400; a second session on the connection gets H3_REQUEST_REJECTED.
     pub async fn accept(mut stream: RequestStream, headers: http::HeaderMap) -> Result<Self, Error> {
         let shared = stream.shared().clone();
         let mut response = http::Response::new(());
@@ -114,9 +112,8 @@ impl Session {
         Self::register(stream, Code::H3_REQUEST_REJECTED, Phase::Opening)
     }
 
-    /// Client: opens a session in the server's dialect, with the response that accepted it. A refusal
-    /// returns its response; after the server's GOAWAY none is sent. The server's SETTINGS are awaited as
-    /// long as the caller waits, as webtransport-go awaits them.
+    /// Client: opens a session in the server's dialect once its SETTINGS arrive, with the accepting response;
+    /// a refusal returns its response, and after the server's GOAWAY nothing is sent.
     pub async fn connect(
         requests: &SendRequest,
         request: http::Request<()>,
@@ -156,7 +153,7 @@ impl Session {
             return Err(Error::Refused);
         };
         let (phase, watching) = watch::channel(opened);
-        let (streams, datagrams) = sessions.register(Connect::new(id, stream, phase));
+        let (streams, datagrams) = sessions.register(Connect::new(id, stream, phase, charge));
         drop(sessions);
         shared.wake();
         Ok(Self {
@@ -165,7 +162,6 @@ impl Session {
             streams: Mutex::new(streams),
             datagrams: Mutex::new(datagrams),
             phase: watching,
-            _charge: charge,
             shared,
         })
     }

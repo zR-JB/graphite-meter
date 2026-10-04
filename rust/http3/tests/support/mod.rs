@@ -42,13 +42,14 @@ impl noq::SharedBudget for Budget {
     }
 }
 
-/// How the peers connect: the server budget's limit; the client's stream and connection receive windows,
-/// reliable reset offer and datagram transport parameter; and the SETTINGS a raw client sends, if it is raw.
+/// How the peers connect: the server budget's limit; the client's receive windows, unidirectional stream
+/// limit, reliable reset offer and datagram parameter; and the SETTINGS a raw client sends, if it is raw.
 #[derive(Clone, Copy)]
 pub struct Setup {
     pub limit: usize,
     pub window: Option<u32>,
     pub connection_window: Option<u32>,
+    pub uni_streams: Option<u32>,
     pub reliable_reset: bool,
     pub datagrams: bool,
     pub settings: Option<&'static [(u64, u64)]>,
@@ -58,6 +59,7 @@ pub const PLAIN: Setup = Setup {
     limit: usize::MAX,
     window: None,
     connection_window: None,
+    uni_streams: None,
     reliable_reset: true,
     datagrams: true,
     settings: None,
@@ -88,6 +90,9 @@ fn transport(setup: &Setup) -> Arc<noq::TransportConfig> {
     }
     if let Some(window) = setup.connection_window {
         transport.receive_window(window.into());
+    }
+    if let Some(streams) = setup.uni_streams {
+        transport.max_concurrent_uni_streams(streams.into());
     }
     if !setup.datagrams {
         transport.datagram_receive_buffer_size(None);

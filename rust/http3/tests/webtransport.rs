@@ -392,6 +392,63 @@ async fn a_peer_withholding_stream_credit_cannot_hold_a_session() -> Result<(), 
     Ok(())
 }
 
+/// A close while the 200 head waits for connection credit follows the head, so the peer reads its code.
+#[tokio::test]
+async fn a_close_before_the_head_is_written_follows_it() -> Result<(), TestError> {
+    let accepted = Arc::new(Notify::new());
+    let accepting = accepted.clone();
+    let setup = Setup { connection_window: Some(0), ..DRAFT02 };
+    let Served { peers, mut outcomes, .. } = pair(setup).await?.sessions(move |session| {
+        let accepting = accepting.clone();
+        async move {
+            accepting.notify_one();
+            session.close(2, "lifetime").await;
+        }
+    });
+    let (mut connect, response) = peers.connect().await?;
+    accepted.notified().await;
+    yields().await;
+    peers.client.set_receive_window(noq::VarInt::from_u32(1 << 20));
+    let (bytes, end) = tokio::time::timeout(Duration::from_millis(900), response).await??;
+    let closed = bytes.starts_with(&[0x01]) && bytes.ends_with(&close_capsule(2, "lifetime"));
+    assert!(closed && end.is_ok(), "200, CLOSE, then FIN");
+    connect.finish()?;
+    assert_eq!(stopped(&connect).await, None);
+    assert_eq!(outcomes.recv().await, Some(()));
+    Ok(())
+}
+
+/// A lane cancelled before its association header is written gets a plain reset once 10 s pass.
+#[tokio::test]
+async fn a_cancelled_lane_gives_up_its_header_after_10_seconds() -> Result<(), TestError> {
+    let cancel = Arc::new(Notify::new());
+    let cancelled = cancel.clone();
+    let setup = Setup { window: Some(1), ..DRAFT02 };
+    let Served { peers, .. } = pair(setup).await?.sessions(move |session| {
+        let cancelled = cancelled.clone();
+        async move {
+            tokio::select! {
+                _ = session.open_uni() => panic!("the header outran its stream credit"),
+                () = cancelled.notified() => {}
+            }
+            let _ = session.closed().await;
+        }
+    });
+    let (_connect, _response) = peers.connect().await?;
+    let _server_control = peers.client.accept_uni().await?;
+    let mut lane = peers.client.accept_uni().await?;
+    cancel.notify_one();
+    yields().await;
+    jump(Duration::from_secs(9)).await;
+    let early = tokio::time::timeout(Duration::from_millis(100), lane.received_reset()).await;
+    assert!(early.is_err(), "reset before the deadline");
+    jump(Duration::from_secs(2)).await;
+    let (bytes, end) = raw_stream(&mut lane).await;
+    assert_eq!(end, Err(WtCode(0).to_http()));
+    assert!(bytes.len() < 3, "RESET_STREAM_AT kept a header that never completed");
+    Ok(())
+}
+
 #[tokio::test]
 async fn shutdown_closes_every_session_before_the_connection() -> Result<(), TestError> {
     let Served { peers, serving, stop, .. } = pair(PLAIN).await?.sessions(until_closed);

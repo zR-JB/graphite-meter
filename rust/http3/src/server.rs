@@ -46,9 +46,8 @@ impl Request {
         self.0.abort(Code::H3_REQUEST_REJECTED);
     }
 
-    /// Reads and checks the head. A head over 4 KiB gets 431 and CONNECT for anything but WebTransport
-    /// gets 400; both then fail with `Refused`. A head the budget cannot hold is refused with
-    /// H3_REQUEST_REJECTED, which lets the client send it again.
+    /// Reads and checks the head: over 4 KiB gets 431 and a CONNECT for anything but WebTransport 400, both
+    /// `Refused`; one the budget cannot hold gets H3_REQUEST_REJECTED, so the client may retry.
     pub async fn resolve(self) -> Result<(http::Request<()>, RequestStream), Error> {
         let mut stream = self.0;
         match tokio::time::timeout(HEADER_TIMEOUT, head(&mut stream)).await {
