@@ -9,6 +9,7 @@
       {"atMs": 1000, "down": {"a": 1000, "b": 3000}, "up": {}}
     ],
     "result": {"down": {"bytesPerSec": 4000, "peakBytesPerSec": 4000}, "up": null},
+    "totalBytes": {"down": 4000, "up": 0},
     "intervals": [
       {"reason": "stage-start", "complete": true,
        "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": 4000, "upBytesPerSec": null}}
@@ -24,9 +25,48 @@
       {"atMs": 2000, "down": {}, "up": {"a": {"id": "r1", "bytes": 3000, "nanos": 3000000000}}}
     ],
     "result": {"down": null, "up": {"bytesPerSec": 1000, "peakBytesPerSec": 1000}},
+    "totalBytes": {"down": 0, "up": 2000},
     "intervals": [
       {"reason": "stage-start", "complete": true,
        "window": {"startMs": 0, "endMs": 2000, "downBytesPerSec": null, "upBytesPerSec": 1000}}
+    ]
+  },
+  {
+    "name": "a checkpoint one receiver missed is skipped and the next one spans the gap",
+    "stage": "upload",
+    "participants": ["a", "b"],
+    "boundaries": [
+      {"atMs": 0, "down": {}, "up": {"a": {"id": "r1", "bytes": 0, "nanos": 1000000000},
+                                     "b": {"id": "s1", "bytes": 0, "nanos": 1000000000}}},
+      {"atMs": 500, "down": {}, "up": {"a": {"id": "r1", "bytes": 500, "nanos": 1500000000},
+                                       "b": {"id": "s1", "bytes": 1000, "nanos": 1500000000}}},
+      {"atMs": 1000, "down": {}, "up": {"a": {"id": "r1", "bytes": 1000, "nanos": 2000000000}, "b": null}},
+      {"atMs": 2500, "down": {}, "up": {"a": {"id": "r1", "bytes": 2500, "nanos": 3500000000},
+                                        "b": {"id": "s1", "bytes": 5000, "nanos": 3500000000}}}
+    ],
+    "result": {"down": null, "up": {"bytesPerSec": 3000, "peakBytesPerSec": 3000}},
+    "totalBytes": {"down": 0, "up": 7500},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 2500, "downBytesPerSec": null, "upBytesPerSec": 3000}}
+    ]
+  },
+  {
+    "name": "an observed upload maximum is credited once, with or without its checkpoint",
+    "stage": "upload",
+    "participants": ["a"],
+    "boundaries": [
+      {"atMs": 0, "down": {}, "up": {"a": {"id": "r1", "bytes": 100, "nanos": 1000000000}}},
+      {"atMs": 1000, "down": {}, "up": {"a": {"id": "r1", "bytes": 300, "nanos": 2000000000}},
+       "observedUp": {"a": {"id": "r1", "maximum": 500}}},
+      {"atMs": 2000, "down": {}, "up": {"a": {"id": "r1", "bytes": 800, "nanos": 3000000000}}},
+      {"atMs": 2500, "down": {}, "up": {"a": null}, "observedUp": {"a": {"id": "r1", "maximum": 1000}}}
+    ],
+    "result": {"down": null, "up": {"bytesPerSec": 350, "peakBytesPerSec": 500}},
+    "totalBytes": {"down": 0, "up": 900},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 2000, "downBytesPerSec": null, "upBytesPerSec": 350}}
     ]
   },
   {
@@ -40,6 +80,7 @@
       {"atMs": 3000, "down": {}, "up": {"a": {"id": "r2", "bytes": 1500, "nanos": 1500000000}}}
     ],
     "result": {"down": null, "up": {"bytesPerSec": 1000, "peakBytesPerSec": 1000}},
+    "totalBytes": {"down": 0, "up": 3500},
     "intervals": [
       {"reason": "stage-start", "complete": false,
        "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": null, "upBytesPerSec": 2000}},
@@ -58,6 +99,7 @@
       {"atMs": 2000, "down": {"a": 4000}, "up": {}}
     ],
     "result": {"down": {"bytesPerSec": 2000, "peakBytesPerSec": 2000}, "up": null},
+    "totalBytes": {"down": 4000, "up": 0},
     "intervals": [
       {"reason": "stage-start", "complete": true,
        "window": {"startMs": 0, "endMs": 2000, "downBytesPerSec": 2000, "upBytesPerSec": null}}
@@ -75,6 +117,7 @@
     ],
     "result": {"down": {"bytesPerSec": 3000, "peakBytesPerSec": 3000},
                "up": {"bytesPerSec": 2000, "peakBytesPerSec": 2000}},
+    "totalBytes": {"down": 3300, "up": 2000},
     "intervals": [
       {"reason": "stage-start", "complete": true,
        "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": 3000, "upBytesPerSec": 2000}}
@@ -91,6 +134,7 @@
       {"atMs": 2000, "down": {}, "up": {"a": {"id": "r1", "bytes": 4000, "nanos": 3000000000}}}
     ],
     "result": {"down": null, "up": {"bytesPerSec": 1500, "peakBytesPerSec": 2000}},
+    "totalBytes": {"down": 0, "up": 3000},
     "intervals": [
       {"reason": "stage-start", "complete": true,
        "window": {"startMs": 0, "endMs": 2000, "downBytesPerSec": null, "upBytesPerSec": 1500}}
@@ -106,6 +150,7 @@
       {"atMs": 1000, "down": {}, "up": {"a": {"id": "r1", "bytes": 2000, "nanos": 2000000000}}}
     ],
     "result": {"down": null, "up": {"bytesPerSec": 2000, "peakBytesPerSec": 2000}},
+    "totalBytes": {"down": 0, "up": 2000},
     "intervals": [
       {"reason": "stage-start", "complete": true,
        "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": null, "upBytesPerSec": 2000}}
@@ -120,6 +165,24 @@
       {"atMs": 1000, "down": {}, "up": {"a": {"id": "r1", "bytes": 1000, "nanos": 1500000000}}}
     ],
     "result": {"down": null, "up": null},
+    "totalBytes": {"down": 0, "up": 1000},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": null, "upBytesPerSec": 2000}}
+    ]
+  },
+  {
+    "name": "one receiver clock under 800 ms withholds the uploads' headline",
+    "stage": "upload",
+    "participants": ["a", "b"],
+    "boundaries": [
+      {"atMs": 0, "down": {}, "up": {"a": {"id": "r1", "bytes": 0, "nanos": 1000000000},
+                                     "b": {"id": "s1", "bytes": 0, "nanos": 1000000000}}},
+      {"atMs": 1000, "down": {}, "up": {"a": {"id": "r1", "bytes": 1000, "nanos": 2000000000},
+                                        "b": {"id": "s1", "bytes": 750, "nanos": 1750000000}}}
+    ],
+    "result": {"down": null, "up": null},
+    "totalBytes": {"down": 0, "up": 1750},
     "intervals": [
       {"reason": "stage-start", "complete": true,
        "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": null, "upBytesPerSec": 2000}}
@@ -134,6 +197,7 @@
       {"atMs": 1000, "down": {"a": 0}, "up": {}}
     ],
     "result": {"down": null, "up": null},
+    "totalBytes": {"down": 0, "up": 0},
     "intervals": [
       {"reason": "stage-start", "complete": true,
        "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": 0, "upBytesPerSec": null}}
@@ -158,6 +222,11 @@
       {"atMs": 2750, "down": {"a": 2750, "b": 2750, "c": 2750}, "up": {}}
     ],
     "result": {"down": {"bytesPerSec": 4000, "peakBytesPerSec": 4000}, "up": null},
+    "totalBytes": {"down": 10250, "up": 0},
+    "servers": {
+      "a": {"down": {"bytesPerSec": 1000, "peakBytesPerSec": 1000}, "up": null},
+      "d": {"down": {"bytesPerSec": 1000, "peakBytesPerSec": 1000}, "up": null}
+    },
     "intervals": [
       {"reason": "stage-start", "complete": true,
        "window": {"startMs": 0, "endMs": 2000, "downBytesPerSec": 4000, "upBytesPerSec": null}},
@@ -185,6 +254,11 @@
       {"atMs": 3000, "down": {"a": 3000}, "up": {}}
     ],
     "result": {"down": {"bytesPerSec": 1000, "peakBytesPerSec": 1000}, "up": null},
+    "totalBytes": {"down": 6000, "up": 0},
+    "servers": {
+      "a": {"down": {"bytesPerSec": 1000, "peakBytesPerSec": 1000}, "up": null},
+      "b": {"down": {"bytesPerSec": 3000, "peakBytesPerSec": 3000}, "up": null}
+    },
     "intervals": [
       {"reason": "stage-start", "complete": true,
        "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": 4000, "upBytesPerSec": null}},
@@ -220,6 +294,7 @@
     ],
     "result": {"down": {"bytesPerSec": 1000, "peakBytesPerSec": 1000},
                "up": {"bytesPerSec": 1000, "peakBytesPerSec": 1000}},
+    "totalBytes": {"down": 5750, "up": 4750},
     "intervals": [
       {"reason": "stage-start", "complete": true,
        "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": 3000, "upBytesPerSec": 3000}},
@@ -238,6 +313,7 @@
       {"atMs": 1250, "final": true, "down": {"a": 1250, "b": 2000}, "up": {}}
     ],
     "result": {"down": {"bytesPerSec": 3000, "peakBytesPerSec": 3000}, "up": null},
+    "totalBytes": {"down": 3250, "up": 0},
     "intervals": [
       {"reason": "stage-start", "complete": true,
        "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": 3000, "upBytesPerSec": null}}
@@ -254,6 +330,11 @@
                                         "b": {"id": "s1", "bytes": 6200, "nanos": 2100000000}}}
     ],
     "result": {"down": null, "up": {"bytesPerSec": 4000, "peakBytesPerSec": 4000}},
+    "totalBytes": {"down": 0, "up": 7000},
+    "servers": {
+      "a": {"down": null, "up": {"bytesPerSec": 1000, "peakBytesPerSec": 1000}},
+      "b": {"down": null, "up": {"bytesPerSec": 3000, "peakBytesPerSec": 3000}}
+    },
     "intervals": [
       {"reason": "stage-start", "complete": true,
        "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": null, "upBytesPerSec": 4000}}
@@ -273,6 +354,7 @@
       {"atMs": 1500, "down": {"a": 3000, "b": 1500}, "up": {}}
     ],
     "result": {"down": {"bytesPerSec": 3000, "peakBytesPerSec": 3000}, "up": null},
+    "totalBytes": {"down": 4500, "up": 0},
     "intervals": [
       {"reason": "stage-start", "complete": true,
        "window": {"startMs": 0, "endMs": 1500, "downBytesPerSec": 3000, "upBytesPerSec": null}}
@@ -289,6 +371,7 @@
       {"atMs": 1250, "down": {"a": 3000}, "up": {}}
     ],
     "result": {"down": {"bytesPerSec": 2400, "peakBytesPerSec": 2400}, "up": null},
+    "totalBytes": {"down": 3000, "up": 0},
     "intervals": [
       {"reason": "stage-start", "complete": true,
        "window": {"startMs": 0, "endMs": 1250, "downBytesPerSec": 2400, "upBytesPerSec": null}}
@@ -304,6 +387,11 @@
       {"atMs": 2000, "down": {"a": 4000, "b": 4000}, "up": {}}
     ],
     "result": {"down": {"bytesPerSec": 4000, "peakBytesPerSec": 4000}, "up": null},
+    "totalBytes": {"down": 8000, "up": 0},
+    "servers": {
+      "a": {"down": {"bytesPerSec": 2000, "peakBytesPerSec": 3000}, "up": null},
+      "b": {"down": {"bytesPerSec": 2000, "peakBytesPerSec": 3000}, "up": null}
+    },
     "intervals": [
       {"reason": "stage-start", "complete": true,
        "window": {"startMs": 0, "endMs": 2000, "downBytesPerSec": 4000, "upBytesPerSec": null}}
@@ -319,10 +407,31 @@
       {"atMs": 1500, "down": {}, "up": {"a": {"id": "r1", "bytes": 3000, "nanos": 1500000000}}}
     ],
     "result": {"down": null, "up": null},
+    "totalBytes": {"down": 0, "up": 2000},
     "intervals": [
       {"reason": "stage-start", "complete": false,
        "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": null, "upBytesPerSec": 1000}},
       {"reason": "evidence-resumed", "complete": true, "window": null}
+    ]
+  },
+  {
+    "name": "a regressing download counter resumes evidence without crediting replayed bytes",
+    "stage": "download",
+    "participants": ["a"],
+    "boundaries": [
+      {"atMs": 0, "down": {"a": 100}, "up": {}},
+      {"atMs": 1000, "down": {"a": 1100}, "up": {}},
+      {"atMs": 1500, "down": {"a": 500}, "up": {}},
+      {"atMs": 2000, "down": {"a": 1000}, "up": {}},
+      {"atMs": 3500, "down": {"a": 1500}, "up": {}}
+    ],
+    "result": {"down": {"bytesPerSec": 500, "peakBytesPerSec": 1000}, "up": null},
+    "totalBytes": {"down": 1400, "up": 0},
+    "intervals": [
+      {"reason": "stage-start", "complete": false,
+       "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": 1000, "upBytesPerSec": null}},
+      {"reason": "evidence-resumed", "complete": true,
+       "window": {"startMs": 1500, "endMs": 3500, "downBytesPerSec": 500, "upBytesPerSec": null}}
     ]
   },
   {
@@ -334,6 +443,7 @@
       {"atMs": 1000, "down": {}, "up": {"a": {"id": "r2", "bytes": 5000, "nanos": 1000000000}}}
     ],
     "result": {"down": null, "up": null},
+    "totalBytes": {"down": 0, "up": 5000},
     "intervals": [
       {"reason": "stage-start", "complete": false, "window": null},
       {"reason": "evidence-resumed", "complete": true, "window": null}
@@ -352,6 +462,7 @@
                                         "b": {"id": "s2", "bytes": 1500, "nanos": 1500000000}}}
     ],
     "result": {"down": null, "up": {"bytesPerSec": 2000, "peakBytesPerSec": 2000}},
+    "totalBytes": {"down": 0, "up": 2500},
     "intervals": [
       {"reason": "stage-start", "complete": false, "window": null},
       {"reason": "evidence-resumed", "complete": true,

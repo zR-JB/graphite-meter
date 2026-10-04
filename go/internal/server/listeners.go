@@ -346,6 +346,7 @@ type quicUse struct {
 	unused             *time.Timer
 	mu                 sync.Mutex
 	active             int
+	tracked            bool
 	sessions, requests bool
 	linger             time.Duration // lets a server-ended session's close capsule reach its peer first
 }
@@ -404,20 +405,21 @@ func (u *quicUse) closeIfIdle(unused bool) {
 	}
 }
 
-// webTransportSession marks r's QUIC connection as carrying a session; ended says who closed it, cut closes it.
+// webTransportSession tracks r's connection before upgrade; ended records a successful session's close, cut closes it.
 func webTransportSession(r *http.Request) (ended func(byPeer bool), cut func()) {
 	u, ok := r.Context().Value(quicUseKey{}).(*quicUse)
 	if !ok {
 		return func(bool) {}, func() {}
 	}
 	u.mu.Lock()
-	if !u.sessions {
+	if !u.tracked {
 		u.conns.trackSession(u.conn)
+		u.tracked = true
 	}
-	u.sessions = true
 	u.mu.Unlock()
 	return func(byPeer bool) {
 		u.mu.Lock()
+		u.sessions = true
 		u.linger = 0
 		if !byPeer {
 			u.linger = wtCloseLinger

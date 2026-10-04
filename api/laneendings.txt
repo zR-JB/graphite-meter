@@ -1,4 +1,4 @@
-# Graphite Meter — lane ending pin (shared across Go / TS), see wire.md#lane-endings.
+# Graphite Meter — lane ending pin (shared across Go / TS / Rust), see wire.md#lane-endings.
 #
 # Format (one ending per non-comment, non-blank line):
 #   <name> | <WebSocket close code> | <WebTransport session error code> | <reason>

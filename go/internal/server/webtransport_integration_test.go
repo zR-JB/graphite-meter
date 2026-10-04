@@ -883,17 +883,29 @@ func TestGoClientRunsMultipleLanesOverWebTransport(t *testing.T) {
 		clientCfg.UploadDuration = 300 * time.Millisecond
 		clientCfg.TransferStreams = goclient.TransferStreamPolicy{Forced: streams}
 		ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+		defer cancel()
+		controller := goclient.NewController(ctx)
+		defer controller.Close()
+		prepared, err := controller.NewPreparation(clientCfg, nil).PrepareRun()
+		if err != nil {
+			t.Fatalf("prepare at %d lanes: %v", streams, err)
+		}
+		clientCfg.ServerIDs = prepared.SelectedIDs()
+		// Stage events are queued, so their callbacks cannot fence preparation from the run.
+		countSessionsFromNow(t, e.admission)
+		if !prepared.FreshFor(clientCfg) {
+			t.Fatal("preparation is no longer reusable after its sessions closed")
+		}
 		results := map[string]goclient.Result{}
-		counting := false
-		err := goclient.Run(ctx, clientCfg, func(ev goclient.Event) {
-			if ev.Kind == goclient.EventStage && ev.Phase == goclient.PhasePreparing && !counting {
-				counting = true
-				countSessionsFromNow(t, e.admission)
+		for ev := range controller.Start(clientCfg, prepared) {
+			if ev.Kind == goclient.EventDone {
+				err = ev.Err
 			}
 			if ev.Kind == goclient.EventResult && ev.Result != nil {
 				results[string(ev.Stage)] = *ev.Result
 			}
-		})
+		}
+		controller.Close()
 		cancel()
 		if err != nil || results["download"].TotalBytes == 0 || results["upload"].TotalBytes == 0 {
 			t.Fatalf("run at %d lanes: %v, %+v", streams, err, results)
@@ -907,15 +919,12 @@ func TestGoClientRunsMultipleLanesOverWebTransport(t *testing.T) {
 
 // countSessionsFromNow waits out the preparation's verify session, then restarts the session peak.
 func countSessionsFromNow(t *testing.T, a *requestAdmission) {
-	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
-		if _, sessions := a.stats(); sessions.active == 0 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Error("the preparation's sessions never closed")
-			return
-		}
-	}
+	t.Helper()
+	// A lost peer-close signal may take the five-second verify linger plus the one-second close linger.
+	testkit.Eventually(t, 10*time.Second, "the preparation's sessions close", func() bool {
+		_, sessions := a.stats()
+		return sessions.active == 0
+	})
 	a.mu.Lock()
 	a.sessions.peak = 0
 	a.mu.Unlock()

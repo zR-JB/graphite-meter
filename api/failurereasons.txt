@@ -1,4 +1,4 @@
-# Graphite Meter — failure reason pin (shared across Go / TS).
+# Graphite Meter — failure reason pin (shared across Go / TS / Rust).
 #
 # Format (one reason per non-comment, non-blank line):
 #   <reason> | <label>

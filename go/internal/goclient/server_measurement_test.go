@@ -176,13 +176,19 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 				ID           string
 				Bytes, Nanos uint64
 			}
+			ObservedUp map[string]struct {
+				ID      string
+				Maximum uint64
+			}
 		}
 		Intervals []struct {
 			Reason   IntervalReason
 			Complete bool
 			Window   *window
 		}
-		Result results
+		Result     results
+		TotalBytes struct{ Down, Up uint64 }
+		Servers    map[string]results
 	}
 	if err := json.Unmarshal(data, &cases, json.MatchCaseInsensitiveNames(true)); err != nil {
 		t.Fatal(err)
@@ -198,7 +204,10 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 				a.dropout(live, time.Duration(b.AtMs)*time.Millisecond)
 			}
 			boundary := nativeBoundary(int(b.AtMs), b.Down, map[string]*ReceiverSnapshot{})
-			boundary.final = b.Final
+			boundary.final, boundary.observedUp = b.Final, map[string]uploadLedger{}
+			for id, o := range b.ObservedUp {
+				boundary.observedUp[id] = uploadLedger{o.ID, o.Maximum}
+			}
 			for id, r := range b.Up {
 				if r != nil {
 					boundary.up[id] = &ReceiverSnapshot{ID: r.ID, Bytes: r.Bytes, Nanos: r.Nanos}
@@ -206,15 +215,26 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 			}
 			a.observe(boundary)
 		}
-		reported := func(dir Direction) *reported {
-			if result := a.result(dir); !result.Unavailable {
+		reported := func(result Result) *reported {
+			if !result.Unavailable {
 				return &reported{result.MeanBps, result.PeakBps}
 			}
 			return nil
 		}
-		if got := (results{reported(Down), reported(Up)}); !reflect.DeepEqual(got, c.Result) {
+		if got := (results{reported(a.result(Down)), reported(a.result(Up))}); !reflect.DeepEqual(got, c.Result) {
 			t.Errorf("%s: result down=%+v up=%+v, want down=%+v up=%+v", c.Name, got.Down, got.Up,
 				c.Result.Down, c.Result.Up)
+		}
+		totals := struct{ Down, Up uint64 }{a.result(Down).TotalBytes, a.result(Up).TotalBytes}
+		if totals != c.TotalBytes {
+			t.Errorf("%s: total bytes %+v, want %+v", c.Name, totals, c.TotalBytes)
+		}
+		for id, want := range c.Servers {
+			got := results{reported(a.serverResult(id, Down)), reported(a.serverResult(id, Up))}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("%s: server %s down=%+v up=%+v, want down=%+v up=%+v", c.Name, id, got.Down, got.Up,
+					want.Down, want.Up)
+			}
 		}
 		if len(a.intervals) != len(c.Intervals) {
 			t.Errorf("%s: %d intervals, want %d", c.Name, len(a.intervals), len(c.Intervals))
