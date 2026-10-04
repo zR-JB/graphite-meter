@@ -166,10 +166,8 @@ mod tests {
         drop(first);
         assert!(connections.idle().now_or_never().is_none(), "a connection remains");
         drop(second);
-        assert!(
-            connections.idle().now_or_never().is_some(),
-            "the close before the wait counts"
-        );
+        let idle = connections.idle().now_or_never();
+        assert!(idle.is_some(), "the close before the wait counts");
         assert!(connections.idle().now_or_never().is_none());
     }
 }

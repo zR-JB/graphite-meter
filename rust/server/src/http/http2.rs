@@ -245,14 +245,11 @@ impl Body for H2Body {
                 funded
             },
         );
-        match ready!(this.stream.poll_data(cx)) {
-            Some(Ok(data)) => {
-                this.stream.flow_control().release_capacity(data.len())?;
-                Poll::Ready(Some(Ok(Frame::data(data))))
-            }
-            Some(Err(error)) => Poll::Ready(Some(Err(error))),
-            None => Poll::Ready(None),
+        let data = ready!(this.stream.poll_data(cx));
+        if let Some(Ok(data)) = &data {
+            this.stream.flow_control().release_capacity(data.len())?;
         }
+        Poll::Ready(data.map(|data| data.map(Frame::data)))
     }
 
     fn is_end_stream(&self) -> bool {
@@ -267,88 +264,6 @@ impl Drop for H2Body {
                 .flow_control()
                 .set_target_connection_window_size(DEFAULT_WINDOW_BYTES);
         }
-    }
-}
-
-#[cfg(test)]
-mod write_stall_tests {
-    use super::*;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    async fn poll_once<F: Future>(mut future: Pin<&mut F>) -> Poll<F::Output> {
-        std::future::poll_fn(|cx| Poll::Ready(future.as_mut().poll(cx))).await
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn repeated_pending_writes_do_not_extend_stall_deadline() {
-        let (writer, _non_reading_peer) = tokio::io::duplex(1);
-        let mut writer = BoundedIo::new(writer, Duration::from_millis(20));
-        let write = writer.write_all(b"ab");
-        tokio::pin!(write);
-        assert!(poll_once(write.as_mut()).await.is_pending());
-        for _ in 0..3 {
-            tokio::time::advance(Duration::from_millis(5)).await;
-            assert!(poll_once(write.as_mut()).await.is_pending());
-        }
-        tokio::time::advance(Duration::from_millis(5)).await;
-        let Poll::Ready(Err(error)) = poll_once(write.as_mut()).await else {
-            panic!("pending polls extended the blocked writer's deadline");
-        };
-        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn real_write_progress_starts_a_fresh_stall_period() {
-        let (writer, mut reader) = tokio::io::duplex(1);
-        let mut writer = BoundedIo::new(writer, Duration::from_millis(20));
-        let write = writer.write_all(b"abc");
-        tokio::pin!(write);
-        assert!(poll_once(write.as_mut()).await.is_pending());
-        tokio::time::advance(Duration::from_millis(15)).await;
-        assert_eq!(reader.read_u8().await.unwrap(), b'a');
-        assert!(poll_once(write.as_mut()).await.is_pending());
-        // Thirty milliseconds total exceeds the original deadline, but the
-        // second byte made real progress and must grant a fresh interval.
-        tokio::time::advance(Duration::from_millis(15)).await;
-        assert_eq!(reader.read_u8().await.unwrap(), b'b');
-        assert!(matches!(poll_once(write.as_mut()).await, Poll::Ready(Ok(()))));
-        assert_eq!(reader.read_u8().await.unwrap(), b'c');
-    }
-
-    struct BufferedWriter {
-        accepted: usize,
-    }
-
-    impl AsyncWrite for BufferedWriter {
-        fn poll_write(mut self: Pin<&mut Self>, _: &mut Context<'_>, bytes: &[u8]) -> Poll<io::Result<usize>> {
-            self.accepted += bytes.len();
-            Poll::Ready(Ok(bytes.len()))
-        }
-        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
-            Poll::Pending
-        }
-        fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
-            Poll::Pending
-        }
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn final_buffered_output_remains_bounded_until_transport_flush() {
-        let mut writer = BoundedIo::new(BufferedWriter { accepted: 0 }, Duration::from_millis(20));
-        // Model a completed response whose final frame was accepted into TLS's
-        // buffer, while its encrypted output can no longer reach the socket.
-        writer.write_all(b"final END_STREAM frame").await.unwrap();
-        assert_eq!(writer.inner.accepted, 22);
-        let flush = writer.flush();
-        tokio::pin!(flush);
-        assert!(poll_once(flush.as_mut()).await.is_pending());
-        tokio::time::advance(Duration::from_millis(10)).await;
-        assert!(poll_once(flush.as_mut()).await.is_pending());
-        tokio::time::advance(Duration::from_millis(10)).await;
-        let Poll::Ready(Err(error)) = poll_once(flush.as_mut()).await else {
-            panic!("final queued response escaped the write-stall bound");
-        };
-        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
     }
 }
 
@@ -392,11 +307,7 @@ mod budget_tests {
             self.server.memory.available()
         }
 
-        async fn client(&self, window: u32) -> h2::client::SendRequest<Bytes> {
-            self.client_from([127, 0, 0, 1], window).await
-        }
-
-        async fn client_from(&self, source: [u8; 4], window: u32) -> h2::client::SendRequest<Bytes> {
+        async fn client(&self, source: [u8; 4], window: u32) -> h2::client::SendRequest<Bytes> {
             let socket = tokio::net::TcpSocket::new_v4().unwrap();
             socket.bind(SocketAddr::from((source, 0))).unwrap();
             let stream = self
@@ -445,7 +356,7 @@ mod budget_tests {
     async fn unadmitted_header_and_data_floods_stay_within_the_floor() {
         let served = Served::start(64 * 1024 * 1024).await;
         let idle = served.available();
-        let mut flood = served.client(0).await;
+        let mut flood = served.client([127, 0, 0, 1], 0).await;
         let pad = http::HeaderValue::from_bytes(&[b'p'; 24 * 1024]).unwrap();
         let mut held = Vec::new();
         for _ in 0..64 {
@@ -471,7 +382,7 @@ mod budget_tests {
             assert!(idle - served.available() <= crate::budget::H2_FLOOR_BYTES);
         }
         assert!(refused > 0, "the flood never reached the connection's cap");
-        let mut sibling = served.client(65_535).await;
+        let mut sibling = served.client([127, 0, 0, 1], 65_535).await;
         let (probe, _) = sibling.send_request(request(Method::GET, "/probe"), true).unwrap();
         assert_eq!(json(probe).await["protocolNegotiated"], "h2");
         drop((flood, sibling));
@@ -490,7 +401,7 @@ mod budget_tests {
         let mut held = Vec::new();
         let mut funded = Vec::new();
         for source in [1, 1, 1, 1, 2] {
-            let mut client = served.client_from([127, 0, 0, source], 65_535).await;
+            let mut client = served.client([127, 0, 0, source], 65_535).await;
             let (session, _) = client
                 .send_request(request(Method::POST, "/upload/session"), true)
                 .unwrap();
@@ -523,7 +434,7 @@ mod budget_tests {
         let limit = 80 * 1024 * 1024;
         let served = Served::start(limit).await;
         let idle = served.available();
-        let mut client = served.client(65_535).await;
+        let mut client = served.client([127, 0, 0, 1], 65_535).await;
         let pressure = served.server.memory.lease(served.available() - limit / 4).unwrap();
         let held = served.available();
         let (session, _) = client

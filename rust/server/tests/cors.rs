@@ -29,37 +29,26 @@ fn cookie_and_bearer_preflights_have_distinct_credential_boundaries() {
     access.apply_measurement(&mut response);
     assert!(!response.contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS));
     assert_eq!(response[header::ACCESS_CONTROL_ALLOW_ORIGIN], "https://ui.example");
-    assert_eq!(
-        response[header::ACCESS_CONTROL_ALLOW_HEADERS],
-        "Authorization, Content-Type"
-    );
+    let allowed = &response[header::ACCESS_CONTROL_ALLOW_HEADERS];
+    assert_eq!(allowed, "Authorization, Content-Type");
 }
 
 #[test]
 fn refused_preflights_cannot_authorize_a_browser_request() {
     let public = HeaderValue::from_static("https://meter.example");
+    const DOWNLOAD: Option<Route> = Some(Route::Download);
+    const METER: &str = "https://meter.example";
+    const UI: &str = "https://ui.example";
     for (origin, method, headers, secure, route) in [
-        ("https://meter.example", "GET", "", false, Some(Route::Download)),
-        ("https://meter.example", "DELETE", "", true, Some(Route::Download)),
-        ("https://meter.example", "GET", "x-evil", true, Some(Route::Download)),
-        ("https://meter.example", "GET", "", true, None),
-        ("https://ui.example", "GET", "", true, Some(Route::Download)),
-        ("http://ui.example", "GET", "authorization", true, Some(Route::Download)),
-        (
-            "https://ui.example/",
-            "GET",
-            "authorization",
-            true,
-            Some(Route::Download),
-        ),
-        (
-            "https://ui.example",
-            "GET",
-            "authorization,x-csrf-token",
-            true,
-            Some(Route::Download),
-        ),
-        ("https://ui.example", "GET", "authorization", true, Some(Route::Servers)),
+        (METER, "GET", "", false, DOWNLOAD),
+        (METER, "DELETE", "", true, DOWNLOAD),
+        (METER, "GET", "x-evil", true, DOWNLOAD),
+        (METER, "GET", "", true, None),
+        (UI, "GET", "", true, DOWNLOAD),
+        ("http://ui.example", "GET", "authorization", true, DOWNLOAD),
+        ("https://ui.example/", "GET", "authorization", true, DOWNLOAD),
+        (UI, "GET", "authorization,x-csrf-token", true, DOWNLOAD),
+        (UI, "GET", "authorization", true, Some(Route::Servers)),
     ] {
         let request = request(origin, method, headers);
         assert!(
@@ -80,9 +69,7 @@ fn repeated_preflight_fields_cannot_choose_a_more_privileged_interpretation() {
         let mut headers = request("https://meter.example", "POST", "Content-Type");
         let duplicate = headers.get(&name).unwrap().clone();
         headers.append(name, duplicate);
-        assert!(
-            authenticated_preflight(&public, true, Some(Route::Upload), &headers).is_none(),
-            "repeated preflight field was accepted"
-        );
+        let access = authenticated_preflight(&public, true, Some(Route::Upload), &headers);
+        assert!(access.is_none(), "repeated preflight field was accepted");
     }
 }

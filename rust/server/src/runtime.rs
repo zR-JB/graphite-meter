@@ -31,17 +31,14 @@ pub async fn run(config: ValidatedConfig, shutdown: impl Future<Output = ()>) ->
     let server = Arc::new(HttpServer::new(config)?);
     let config = server.config.clone();
     server.initialize_auth().await?;
-    let tls = if [NativeKind::H1Tls, NativeKind::H2, NativeKind::H3]
+    let secure = [NativeKind::H1Tls, NativeKind::H2, NativeKind::H3]
         .into_iter()
-        .any(|kind| !config.listener(kind).address.is_empty())
-    {
-        let server = server.clone();
-        Some(Certificates::load(&config, SystemTime::now(), move |bytes| {
-            server.cover_handshake(bytes)
-        })?)
-    } else {
-        None
-    };
+        .any(|kind| !config.listener(kind).address.is_empty());
+    let handshakes = server.clone();
+    let budget = move |bytes| handshakes.cover_handshake(bytes);
+    let tls = secure
+        .then(|| Certificates::load(&config, SystemTime::now(), budget))
+        .transpose()?;
     let mut listeners = Vec::new();
     let mut quic = None;
     for kind in NativeKind::ALL {
@@ -91,42 +88,21 @@ pub async fn run(config: ValidatedConfig, shutdown: impl Future<Output = ()>) ->
         services.extend(quic.serve(&server, &stopped));
     }
     if let Some(tls) = tls {
-        let stopped = stopped.clone();
-        services.push(Box::pin(async move {
-            tls.watch(cancelled(stopped), |result| {
-                if let Err(error) = result {
-                    crate::log!("[gm:tls] renewal rejected; keeping last valid certificate: {error}");
-                }
-            })
-            .await
-        }));
+        services.push(Box::pin(tls.watch(cancelled(stopped.clone()), |result| {
+            if let Err(error) = result {
+                crate::log!("[gm:tls] renewal rejected; keeping last valid certificate: {error}");
+            }
+        })));
     }
     if config.auth.mode != AuthMode::Off {
         let server = server.clone();
-        let stopped = stopped.clone();
-        services.push(Box::pin(async move {
-            tokio::select! {
-                _ = cancelled(stopped) => {},
-                _ = server.security_log() => {},
-            }
-            Ok(())
-        }));
+        services.push(until_stopped(&stopped, async move { server.security_log().await }));
     }
-    {
-        let server = server.clone();
-        let stopped = stopped.clone();
-        services.push(Box::pin(async move {
-            tokio::select! {
-                _ = cancelled(stopped) => {},
-                _ = release_idle_memory(&server) => {},
-            }
-            Ok(())
-        }));
-    }
+    let idle = server.clone();
+    services.push(until_stopped(&stopped, async move { release_idle_memory(&idle).await }));
     if config.verbose {
         let server = server.clone();
-        let stopped = stopped.clone();
-        services.push(Box::pin(async move {
+        services.push(until_stopped(&stopped, async move {
             let mut transfer_tick = tokio::time::interval(TRANSFER_LOG_INTERVAL);
             let mut admission_tick = tokio::time::interval(ADMISSION_LOG_INTERVAL);
             transfer_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -136,7 +112,6 @@ pub async fn run(config: ValidatedConfig, shutdown: impl Future<Output = ()>) ->
             let mut last = tokio::time::Instant::now();
             loop {
                 tokio::select! {
-                    _ = cancelled(stopped.clone()) => break,
                     now = transfer_tick.tick() => {
                         server.log_transfers(now.duration_since(last));
                         last = now;
@@ -144,7 +119,6 @@ pub async fn run(config: ValidatedConfig, shutdown: impl Future<Output = ()>) ->
                     _ = admission_tick.tick() => server.log_admission(),
                 }
             }
-            Ok(())
         }));
     }
     tokio::pin!(shutdown);
@@ -177,6 +151,18 @@ async fn release_idle_memory(server: &HttpServer) {
 
 async fn cancelled(mut stopped: watch::Receiver<bool>) {
     let _ = stopped.wait_for(|value| *value).await;
+}
+
+/// Runs `work` until the server stops.
+fn until_stopped(stopped: &watch::Receiver<bool>, work: impl Future<Output = ()> + Send + 'static) -> Service {
+    let stopped = cancelled(stopped.clone());
+    Box::pin(async move {
+        tokio::select! {
+            _ = stopped => {},
+            _ = work => {},
+        }
+        Ok(())
+    })
 }
 
 /// HTTP/3 on the caller's runtime, or on shards on half of the pool's runtimes.

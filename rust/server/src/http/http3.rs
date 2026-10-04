@@ -33,13 +33,9 @@ impl HttpServer {
                 credit,
                 funding: UploadFunding::new(operations.clone()),
             };
-            let accepted = Accepted {
-                peer,
-                tls: true,
-                topology: topology::QUIC.topology,
-            };
+            let request = request.map(|()| body);
             let response = self
-                .respond_incoming(request.map(|()| body), accepted, &operations, None)
+                .respond_incoming(request, Accepted::quic(peer), &operations, None)
                 .await?;
             let large = response
                 .body()

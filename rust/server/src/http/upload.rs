@@ -52,7 +52,7 @@ impl HttpServer {
                     Ok(permit) => self.operation(Some(permit), false),
                     Err(refusal) => return *refusal,
                 };
-                let mut response = if request.method() == Method::DELETE {
+                let response = if request.method() == Method::DELETE {
                     match self.uploads.finish(&id, owner) {
                         Ok(()) => empty_response(StatusCode::NO_CONTENT),
                         Err(error) => refusal(error),
@@ -65,17 +65,15 @@ impl HttpServer {
                             .expect("static progress response"),
                         Err(error) => refusal(error),
                     };
-                    response.headers_mut().insert(
+                    let headers = response.headers_mut();
+                    headers.insert(
                         header::CACHE_CONTROL,
                         HeaderValue::from_static("no-store, no-transform"),
                     );
-                    response
-                        .headers_mut()
-                        .insert("x-accel-buffering", HeaderValue::from_static("no"));
+                    headers.insert("x-accel-buffering", HeaderValue::from_static("no"));
                     response
                 };
-                attach_operation(&mut response, operation);
-                response
+                with_operation(response, operation)
             }
             _ => text_response(StatusCode::NOT_FOUND),
         }
@@ -100,11 +98,7 @@ impl HttpServer {
         lock(operations).push(operation.clone());
         let mut lane = match self.uploads.begin(&query(&request, "id").unwrap_or_default(), owner) {
             Ok(lane) => lane,
-            Err(error) => {
-                let mut response = refusal(error);
-                attach_operation(&mut response, operation);
-                return Ok(response);
-            }
+            Err(error) => return Ok(with_operation(refusal(error), operation)),
         };
         let mut body = request.into_body();
         let deadline = lock(&operation).deadline.deadline();
@@ -118,11 +112,7 @@ impl HttpServer {
             let frame = match frame {
                 Ok(Some(frame)) => frame.map_err(io::Error::other)?,
                 Ok(None) => break,
-                Err(_) if idle < deadline => {
-                    let mut response = refusal(UploadRefusal::Idle);
-                    attach_operation(&mut response, operation);
-                    return Ok(response);
-                }
+                Err(_) if idle < deadline => return Ok(with_operation(refusal(UploadRefusal::Idle), operation)),
                 Err(_) => return Err(io::ErrorKind::TimedOut.into()),
             };
             if let Ok(data) = frame.into_data() {
@@ -134,15 +124,15 @@ impl HttpServer {
         }
         let bytes = lane.bytes();
         drop(lane);
-        let mut response = json_response(serde_json::json!({"bytes": bytes}).to_string());
-        attach_operation(&mut response, operation);
-        Ok(response)
+        let response = json_response(serde_json::json!({"bytes": bytes}).to_string());
+        Ok(with_operation(response, operation))
     }
 }
 
-fn attach_operation(response: &mut Response<ResponseBody>, operation: Arc<Mutex<Operation>>) {
+fn with_operation(mut response: Response<ResponseBody>, operation: Arc<Mutex<Operation>>) -> Response<ResponseBody> {
     lock(&operation).body_complete = response.body().is_end_stream();
     response.body_mut().operation = Some(operation);
+    response
 }
 
 type ProgressStream = Pin<Box<dyn Stream<Item = UploadProgress> + Send>>;

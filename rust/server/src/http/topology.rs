@@ -130,6 +130,15 @@ pub(crate) struct Accepted {
 }
 
 impl Accepted {
+    /// A connection the QUIC endpoint accepted from `peer`.
+    pub(crate) const fn quic(peer: SocketAddr) -> Self {
+        Self {
+            peer,
+            tls: true,
+            topology: QUIC.topology,
+        }
+    }
+
     /// The authentication policy's view of the same connection.
     pub(crate) const fn connection(self) -> Connection {
         Connection {
@@ -143,63 +152,37 @@ impl Accepted {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use graphite_meter_core::route::{ALL, Route::*};
+    use graphite_meter_core::route::ALL;
 
-    fn mounted(topology: Topology) -> Vec<Route> {
-        ALL.into_iter().filter(|&route| topology.mounts(route)).collect()
+    /// The paths of the routes `topology` mounts, in Go's route order.
+    fn mounted(topology: Topology) -> String {
+        let paths: Vec<_> = ALL
+            .into_iter()
+            .filter(|&route| topology.mounts(route))
+            .map(Route::path)
+            .collect();
+        paths.join(" ")
     }
 
     /// Go's `newMux` mounts these for each listener's topology (go/internal/server/listeners.go and mount.go).
     #[test]
     fn each_listener_mounts_the_routes_of_its_go_topology() {
-        let ui = [
-            Preflight,
-            Probe,
-            Download,
-            Upload,
-            UploadSession,
-            UploadProgress,
-            WtSession,
-            WsSession,
-            Ping,
-            Servers,
-            UploadCheckpoint,
-        ];
+        let ui = "/preflight /probe /download /upload /upload/session /upload/progress /wt/session /ws/session \
+                  /ws/ping /servers /upload/checkpoint";
+        let transfers = "/probe /download /upload /upload/session /upload/progress /wt/session";
         for authenticated in [false, true] {
             assert_eq!(mounted(tcp(NativeKind::H1, authenticated).topology), ui);
             assert_eq!(mounted(tcp(NativeKind::H1Tls, authenticated).topology), ui);
+            let h2 = mounted(tcp(NativeKind::H2, authenticated).topology);
+            assert_eq!(h2, format!("{transfers} /upload/checkpoint"));
+            let companion = mounted(tcp(NativeKind::H3, authenticated).topology);
             assert_eq!(
-                mounted(tcp(NativeKind::H2, authenticated).topology),
-                [
-                    Probe,
-                    Download,
-                    Upload,
-                    UploadSession,
-                    UploadProgress,
-                    WtSession,
-                    UploadCheckpoint
-                ]
-            );
-            assert_eq!(
-                mounted(tcp(NativeKind::H3, authenticated).topology),
-                [Probe, UploadSession, UploadProgress, WtSession, UploadCheckpoint]
+                companion,
+                "/probe /upload/session /upload/progress /wt/session /upload/checkpoint"
             );
         }
-        assert_eq!(
-            mounted(QUIC.topology),
-            [
-                Probe,
-                Download,
-                Upload,
-                UploadSession,
-                UploadProgress,
-                WtSession,
-                WtDownload,
-                WtUpload,
-                WtPing,
-                UploadCheckpoint
-            ]
-        );
+        let quic = format!("{transfers} /wt/download /wt/upload /wt/ping /upload/checkpoint");
+        assert_eq!(mounted(QUIC.topology), quic);
         // Only the UI listeners serve the app and the authentication pages, and only QUIC WebTransport.
         let listeners = NativeKind::ALL.map(|kind| tcp(kind, false).topology.listener());
         assert_eq!(listeners.map(|listener| listener.ui), [true, true, false, false]);

@@ -158,14 +158,9 @@ impl HttpServer {
 
     fn with_memory(config: ValidatedConfig, bytes: usize) -> Result<Self, ServerError> {
         let config = Arc::new(config);
-        let auth = if config.auth.mode == AuthMode::Off {
-            None
-        } else {
-            Some(crate::auth::http::Service::new(
-                &config.auth,
-                config.trusted_proxies.clone(),
-            )?)
-        };
+        let auth = (config.auth.mode != AuthMode::Off)
+            .then(|| crate::auth::http::Service::new(&config.auth, config.trusted_proxies.clone()))
+            .transpose()?;
         let assets = crate::assets::Assets::new(auth.is_some(), config.result_history_default);
         let admission = Admission::new(config.limits);
         let discovery = Discovery::new(config.clone(), admission.clone())?;
@@ -176,20 +171,11 @@ impl HttpServer {
         );
         let memory = budget::MemoryBudget::new(bytes);
         // A window on each QUIC connection a client may hold, as Go grants every connection its window.
-        let quic_per_client = config
-            .max_connections_per_client
-            .min(config.max_connections)
-            .min(QUIC_PER_CLIENT);
-        let shared = config
-            .auth
-            .mode
-            .password()
-            .then(|| Owner::principal_key(LOCAL_OPERATOR));
-        let client_credit = budget::ClientCredit::new(
-            quic_per_client.saturating_mul(QUIC_CREDIT_BYTES),
-            shared,
-            memory.clone(),
-        );
+        let per_client = config.max_connections_per_client.min(config.max_connections);
+        let share = per_client.min(QUIC_PER_CLIENT).saturating_mul(QUIC_CREDIT_BYTES);
+        let password = config.auth.mode.password();
+        let shared = password.then(|| Owner::principal_key(LOCAL_OPERATOR));
+        let client_credit = budget::ClientCredit::new(share, shared, memory.clone());
         let download_memory = memory
             .lease(DOWNLOAD_BLOCK_BYTES)
             .ok_or("server memory budget cannot cover the download block")?;
@@ -360,11 +346,7 @@ impl HttpServer {
         )))));
         // Wrap the TLS stream, not its raw socket: a successful flush must also
         // drain encrypted records before releasing the response's capacity.
-        let mut io = BoundedIo::new(stream, IDLE_BOUND);
-        io.http1 = Some(Http1Deadlines {
-            operations: operations.clone(),
-            lifecycle: lifecycle.clone(),
-        });
+        let io = BoundedIo::http1(stream, operations.clone(), lifecycle.clone());
         let service = service_fn(move |request: Request<hyper::body::Incoming>| {
             let server = self.clone();
             let operations = operations.clone();
@@ -382,12 +364,9 @@ impl HttpServer {
                 if let Some(port) = bootstrap_port
                     && response.extensions().get::<crate::probe::Answer>().is_some()
                 {
-                    response
-                        .headers_mut()
-                        .insert(header::ALT_SVC, format!("h3=\":{port}\"").parse().expect("valid port"));
-                    response
-                        .headers_mut()
-                        .insert(header::CONNECTION, http::HeaderValue::from_static("close"));
+                    let headers = response.headers_mut();
+                    headers.insert(header::ALT_SVC, format!("h3=\":{port}\"").parse().expect("valid port"));
+                    close(headers);
                 }
                 let admitted = response.body().operation.as_ref().is_some_and(|operation| {
                     let mut operation = lock(operation);
@@ -492,9 +471,7 @@ impl HttpServer {
         if let Some(text) = unreadable.or(body.then_some("request body not accepted")) {
             let mut response = text_body(StatusCode::BAD_REQUEST, text);
             if http1 {
-                response
-                    .headers_mut()
-                    .insert(header::CONNECTION, http::HeaderValue::from_static("close"));
+                close(response.headers_mut());
             }
             return Some(response);
         }
@@ -607,13 +584,7 @@ impl HttpServer {
             }
             request => request.into_parts(),
         };
-        let origin = lease.as_ref().and_then(|_| {
-            request
-                .headers()
-                .get(header::ORIGIN)
-                .filter(|origin| !origin.is_empty())
-                .cloned()
-        });
+        let origin = lease.as_ref().and_then(|_| origin(&request));
         let owner = self.owner(&request, lease.as_ref(), accepted.peer);
         let measurement = route.is_some();
         let upload = route == Some(Route::Upload) && request.method() == Method::POST;
@@ -677,12 +648,7 @@ impl HttpServer {
             Authorization::Authenticated(lease) => Some(lease.clone()),
             _ => None,
         };
-        let origin = authorized
-            .request()
-            .headers()
-            .get(header::ORIGIN)
-            .filter(|origin| !origin.is_empty())
-            .cloned();
+        let origin = origin(authorized.request());
         let logout = AuthRoute::lookup(authorized.request().method(), authorized.request().uri().path())
             == Some(AuthRoute::Logout);
         let execute = async {
@@ -691,9 +657,7 @@ impl HttpServer {
             let request = authorized.request();
             // The rest of an oversized body would read as the next request.
             if request.body().len() > crate::auth::http::FORM_BYTES && request.version() <= http::Version::HTTP_11 {
-                response
-                    .headers_mut()
-                    .insert(header::CONNECTION, http::HeaderValue::from_static("close"));
+                close(response.headers_mut());
             }
             Ok::<_, io::Error>(response)
         };
@@ -820,54 +784,49 @@ impl HttpServer {
         reason: crate::auth::policy::Refusal,
         connection: Connection,
     ) -> Response<ResponseBody> {
-        let policy = self.auth.as_ref().expect("auth enabled").policy();
+        let auth = self.auth.as_ref().expect("auth enabled");
+        let policy = auth.policy();
         let mut response = Response::new(ResponseBody::empty());
         *response.status_mut() = StatusCode::FORBIDDEN;
-        *response.headers_mut() = crate::auth::pages::security_headers(None).expect("static auth CSP");
+        let headers = response.headers_mut();
+        *headers = crate::auth::pages::security_headers(None).expect("static auth CSP");
         // As Go's, only a refusal after the connection is trusted carries HSTS.
         let secure = reason != crate::auth::policy::Refusal::Ambiguous
             && policy.trust(request, connection.peer, connection.tls).secure;
-        crate::auth::pages::harden(response.headers_mut(), secure);
-        if reason == crate::auth::policy::Refusal::AuthenticationRequired {
-            if request.version() <= http::Version::HTTP_11 {
-                response
-                    .headers_mut()
-                    .insert(header::CONNECTION, http::HeaderValue::from_static("close"));
+        crate::auth::pages::harden(headers, secure);
+        if reason != crate::auth::policy::Refusal::AuthenticationRequired {
+            return response;
+        }
+        if request.version() <= http::Version::HTTP_11 {
+            close(headers);
+        }
+        let public = policy.public_origin();
+        headers.insert("graphite-meter-auth", http::HeaderValue::from_static("required"));
+        headers.insert("graphite-meter-browser-auth", http::HeaderValue::from_static("1"));
+        let login: http::HeaderValue = format!("{public}{}", AuthRoute::Login.path())
+            .parse()
+            .expect("validated public origin");
+        headers.insert("graphite-meter-auth-url", login.clone());
+        let redirect = (connection.listener.ui && request.method() == Method::GET && request.uri().path() == "/")
+            .then(|| response::redirect_link(StatusCode::TEMPORARY_REDIRECT, login.to_str().unwrap_or_default()));
+        if redirect.is_some() {
+            headers.insert(header::LOCATION, login);
+            let html = http::HeaderValue::from_static("text/html; charset=utf-8");
+            headers.insert(header::CONTENT_TYPE, html);
+        }
+        if let Some(origin) = request.headers().get(header::ORIGIN) {
+            if origin == public {
+                Access::Cookie(origin).apply_response(headers);
+            } else if route::lookup(request.uri().path()).is_some()
+                && origin.to_str().is_ok_and(crate::auth::secure_browser_origin)
+            {
+                Access::Bearer(origin).apply_response(headers);
             }
-            let public = policy.public_origin();
-            response
-                .headers_mut()
-                .insert("graphite-meter-auth", http::HeaderValue::from_static("required"));
-            response
-                .headers_mut()
-                .insert("graphite-meter-browser-auth", http::HeaderValue::from_static("1"));
-            let login: http::HeaderValue = format!("{public}{}", AuthRoute::Login.path())
-                .parse()
-                .expect("validated public origin");
-            response.headers_mut().insert("graphite-meter-auth-url", login.clone());
-            if connection.listener.ui && request.method() == Method::GET && request.uri().path() == "/" {
-                self.auth
-                    .as_ref()
-                    .expect("auth enabled")
-                    .debug(format_args!("unauthenticated UI root redirected to login"));
-                *response.status_mut() = StatusCode::TEMPORARY_REDIRECT;
-                let link = response::redirect_link(StatusCode::TEMPORARY_REDIRECT, login.to_str().unwrap_or_default());
-                response.headers_mut().insert(header::LOCATION, login);
-                response.headers_mut().insert(
-                    header::CONTENT_TYPE,
-                    http::HeaderValue::from_static("text/html; charset=utf-8"),
-                );
-                *response.body_mut() = Bytes::from(link).into();
-            }
-            if let Some(origin) = request.headers().get(header::ORIGIN) {
-                if origin == public {
-                    Access::Cookie(origin).apply_response(response.headers_mut());
-                } else if route::lookup(request.uri().path()).is_some()
-                    && origin.to_str().is_ok_and(crate::auth::secure_browser_origin)
-                {
-                    Access::Bearer(origin).apply_response(response.headers_mut());
-                }
-            }
+        }
+        if let Some(link) = redirect {
+            auth.debug(format_args!("unauthenticated UI root redirected to login"));
+            *response.status_mut() = StatusCode::TEMPORARY_REDIRECT;
+            *response.body_mut() = Bytes::from(link).into();
         }
         response
     }
@@ -942,6 +901,20 @@ fn ticket(route: Option<Route>) -> bool {
     matches!(route, Some(Route::WsSession | Route::WtSession))
 }
 
+/// A request's Origin, unless it is empty.
+fn origin<B>(request: &Request<B>) -> Option<http::HeaderValue> {
+    request
+        .headers()
+        .get(header::ORIGIN)
+        .filter(|origin| !origin.is_empty())
+        .cloned()
+}
+
+/// Ends an HTTP/1 connection after this response.
+fn close(headers: &mut http::HeaderMap) {
+    headers.insert(header::CONNECTION, http::HeaderValue::from_static("close"));
+}
+
 async fn lease_ended(lease: Option<AuthLease>) {
     match lease {
         Some(lease) => lease.ended().await,
@@ -1003,6 +976,12 @@ impl<T> BoundedIo<T> {
         }
     }
 
+    fn http1(inner: T, operations: Operations, lifecycle: Arc<Mutex<Http1Lifecycle>>) -> Self {
+        let mut io = Self::new(inner, IDLE_BOUND);
+        io.http1 = Some(Http1Deadlines { operations, lifecycle });
+        io
+    }
+
     fn check_deadlines(&mut self, cx: &mut Context<'_>) -> io::Result<()> {
         if let Some(http1) = &self.http1 {
             http1.check_deadlines(cx)?;
@@ -1028,6 +1007,19 @@ impl<T> BoundedIo<T> {
             Poll::Pending
         }
     }
+
+    /// A write that moved bytes starts a fresh stall period.
+    fn written(&mut self, cx: &mut Context<'_>, result: Poll<io::Result<usize>>) -> Poll<io::Result<usize>> {
+        match result {
+            Poll::Ready(result) => {
+                if matches!(result, Ok(count) if count > 0) {
+                    self.stalled = None;
+                }
+                Poll::Ready(result)
+            }
+            Poll::Pending => self.pending_write(cx).map_ok(|()| 0),
+        }
+    }
 }
 
 impl<T: AsyncRead + Unpin> AsyncRead for BoundedIo<T> {
@@ -1050,15 +1042,8 @@ impl<T: AsyncRead + Unpin> AsyncRead for BoundedIo<T> {
 impl<T: AsyncWrite + Unpin> AsyncWrite for BoundedIo<T> {
     fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, bytes: &[u8]) -> Poll<io::Result<usize>> {
         self.check_deadlines(cx)?;
-        match Pin::new(&mut self.inner).poll_write(cx, bytes) {
-            Poll::Ready(result) => {
-                if matches!(result, Ok(count) if count > 0) {
-                    self.stalled = None;
-                }
-                Poll::Ready(result)
-            }
-            Poll::Pending => self.pending_write(cx).map_ok(|()| 0),
-        }
+        let result = Pin::new(&mut self.inner).poll_write(cx, bytes);
+        self.written(cx, result)
     }
 
     fn poll_write_vectored(
@@ -1067,15 +1052,8 @@ impl<T: AsyncWrite + Unpin> AsyncWrite for BoundedIo<T> {
         bytes: &[io::IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
         self.check_deadlines(cx)?;
-        match Pin::new(&mut self.inner).poll_write_vectored(cx, bytes) {
-            Poll::Ready(result) => {
-                if matches!(result, Ok(count) if count > 0) {
-                    self.stalled = None;
-                }
-                Poll::Ready(result)
-            }
-            Poll::Pending => self.pending_write(cx).map_ok(|()| 0),
-        }
+        let result = Pin::new(&mut self.inner).poll_write_vectored(cx, bytes);
+        self.written(cx, result)
     }
 
     fn is_write_vectored(&self) -> bool {
@@ -1100,9 +1078,11 @@ impl<T: AsyncWrite + Unpin> AsyncWrite for BoundedIo<T> {
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         self.check_deadlines(cx)?;
-        match Pin::new(&mut self.inner).poll_shutdown(cx) {
-            Poll::Ready(result) => Poll::Ready(result),
-            Poll::Pending => self.pending_write(cx),
+        let result = Pin::new(&mut self.inner).poll_shutdown(cx);
+        if result.is_pending() {
+            self.pending_write(cx)
+        } else {
+            result
         }
     }
 }
@@ -1213,37 +1193,64 @@ mod tests {
     use crate::config::Config;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    /// A request through the whole pipeline, on a clear HTTP/1.1 connection of its own from `peer`.
-    async fn respond_from(server: &HttpServer, peer: &str, method: Method, path: &str) -> Response<ResponseBody> {
-        let accepted = Accepted {
-            peer: peer.parse().unwrap(),
-            ..h1()
-        };
-        respond_on(server, accepted, method, path).await
+    fn server(config: Config) -> HttpServer {
+        HttpServer::new(config.validated().unwrap()).unwrap()
     }
 
-    /// A request through the whole pipeline, on a connection of its own that `accepted` describes.
-    async fn respond_on(server: &HttpServer, accepted: Accepted, method: Method, path: &str) -> Response<ResponseBody> {
+    /// A request through the whole pipeline, on a connection of its own that `accepted` describes, and the
+    /// operations that connection holds.
+    async fn exchange(
+        server: &HttpServer,
+        accepted: Accepted,
+        method: Method,
+        path: &str,
+    ) -> (Response<ResponseBody>, Operations) {
         let request = Request::builder()
             .method(method)
             .uri(path)
             .header(header::HOST, "localhost:7246")
             .body(String::new())
             .unwrap();
-        let operations = Arc::new(Mutex::new(Vec::new()));
-        server
-            .respond_incoming(request, accepted, &operations, None)
-            .await
-            .unwrap()
+        let operations = Operations::default();
+        let response = server.respond_incoming(request, accepted, &operations, None).await;
+        (response.unwrap(), operations)
     }
 
-    async fn respond(server: &HttpServer, method: Method, path: &str) -> Response<ResponseBody> {
-        respond_from(server, "127.0.0.1:31000", method, path).await
+    async fn respond_on(server: &HttpServer, accepted: Accepted, method: Method, path: &str) -> Response<ResponseBody> {
+        exchange(server, accepted, method, path).await.0
+    }
+
+    /// A request through the whole pipeline, on a clear HTTP/1.1 connection of its own from `peer`.
+    async fn respond_from(server: &HttpServer, peer: &str, method: Method, path: &str) -> Response<ResponseBody> {
+        let peer = peer.parse().unwrap();
+        respond_on(server, Accepted { peer, ..h1() }, method, path).await
+    }
+
+    pub(in crate::http) async fn respond(server: &HttpServer, method: Method, path: &str) -> Response<ResponseBody> {
+        respond_on(server, h1(), method, path).await
+    }
+
+    /// `request` on an HTTP/1 connection of its own that `accepted` describes, and everything the server answers.
+    async fn served(server: &Arc<HttpServer>, accepted: Accepted, bootstrap: Option<u16>, request: &str) -> String {
+        let (mut client, served) = tokio::io::duplex(1 << 16);
+        let serving = tokio::spawn(server.clone().serve_http1_connection(served, accepted, bootstrap));
+        client.write_all(request.as_bytes()).await.unwrap();
+        let mut answer = String::new();
+        tokio::time::timeout(Duration::from_secs(5), client.read_to_string(&mut answer))
+            .await
+            .expect("the connection stayed open")
+            .unwrap();
+        serving.await.unwrap();
+        answer
     }
 
     async fn next_data(body: &mut ResponseBody) -> Option<Bytes> {
         let frame = std::future::poll_fn(|cx| Pin::new(&mut *body).poll_frame(cx)).await?;
         Some(frame.unwrap().into_data().unwrap())
+    }
+
+    fn deadlines<T>(inner: T, operations: Operations, lifecycle: Http1Lifecycle) -> BoundedIo<T> {
+        BoundedIo::http1(inner, operations, Arc::new(Mutex::new(lifecycle)))
     }
 
     fn h1() -> Accepted {
@@ -1254,41 +1261,33 @@ mod tests {
         }
     }
 
+    fn secure(kind: NativeKind, authenticated: bool) -> Accepted {
+        Accepted {
+            tls: true,
+            topology: topology::tcp(kind, authenticated).topology,
+            ..h1()
+        }
+    }
+
     /// As Go's bootstrap probe, its refusal of an ambiguous client also names the QUIC port and ends the connection.
     #[tokio::test]
     async fn the_bootstrap_probe_names_its_quic_port_to_an_ambiguous_client() {
-        let config = Config {
+        let server = Arc::new(server(Config {
             trusted_proxies: vec!["127.0.0.0/8".parse().unwrap()],
             ..Config::default()
-        };
-        let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let accepted = Accepted {
-            tls: true,
-            topology: topology::tcp(NativeKind::H3, false).topology,
-            ..h1()
-        };
-        let (mut client, served) = tokio::io::duplex(1 << 16);
-        let serving = tokio::spawn(server.serve_http1_connection(served, accepted, Some(7249)));
-        client
-            .write_all(b"GET /probe HTTP/1.1\r\nHost: localhost\r\n\r\n")
-            .await
-            .unwrap();
-        let mut answer = String::new();
-        tokio::time::timeout(Duration::from_secs(5), client.read_to_string(&mut answer))
-            .await
-            .expect("the connection stayed open")
-            .unwrap();
+        }));
+        let request = "GET /probe HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        let answer = served(&server, secure(NativeKind::H3, false), Some(7249), request).await;
         assert!(answer.starts_with("HTTP/1.1 400"), "{answer}");
         assert!(answer.contains("alt-svc: h3=\":7249\"\r\n"), "{answer}");
         assert!(answer.contains("connection: close\r\n"), "{answer}");
-        serving.await.unwrap();
     }
 
     /// As Go's server reads HTTP/1, a request names one valid host, which HTTP/1.0 may leave out, and `OPTIONS *` is
     /// the server's own.
     #[tokio::test]
     async fn http1_requests_name_one_valid_host() {
-        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
+        let server = Arc::new(server(Config::default()));
         for (request, refusal) in [
             ("GET /probe HTTP/1.1\r\n", Some(": missing required Host header")),
             ("GET /probe HTTP/1.1\r\nHost: a\r\nHost: b\r\n", Some("")),
@@ -1296,21 +1295,16 @@ mod tests {
             ("GET /probe HTTP/1.0\r\n", None),
             ("OPTIONS * HTTP/1.1\r\nHost: a\r\n", None),
         ] {
-            let (mut client, served) = tokio::io::duplex(1 << 16);
-            let serving = tokio::spawn(server.clone().serve_http1_connection(served, h1(), None));
             let request = format!("{request}Connection: close\r\n\r\n");
-            client.write_all(request.as_bytes()).await.unwrap();
-            let mut answer = String::new();
-            client.read_to_string(&mut answer).await.unwrap();
+            let answer = served(&server, h1(), None, &request).await;
             // A refusal's body is Go's text.
             let expected = refusal.map_or(" 200 OK\r\n".into(), |text| format!("\r\n\r\n400 Bad Request{text}\n"));
             assert!(answer.contains(&expected), "{request}: {answer}");
-            serving.await.unwrap();
         }
     }
 
     /// Password authentication for https://localhost, which advertises no clear listener.
-    fn password() -> ValidatedConfig {
+    pub(in crate::http) fn password() -> ValidatedConfig {
         let mut config = Config {
             advertised_native: Some(Default::default()),
             ..Config::default()
@@ -1343,14 +1337,10 @@ mod tests {
         let mut config = Config::default();
         config.limits.sessions_per_client = 1;
         config.limits.operations_per_client = 1;
-        let server = HttpServer::new(config.validated().unwrap()).unwrap();
+        let server = server(config);
         let id = server.uploads.mint().unwrap();
         // A listener without the app refuses a method no route allows, as Go's mux does.
-        let h2 = Accepted {
-            tls: true,
-            topology: topology::tcp(NativeKind::H2, false).topology,
-            ..h1()
-        };
+        let h2 = secure(NativeKind::H2, false);
 
         let download = respond_on(&server, h2, Method::POST, "/download?bytes=1048576").await;
         assert_eq!(download.status(), StatusCode::METHOD_NOT_ALLOWED);
@@ -1400,10 +1390,9 @@ mod tests {
                 .body(UnreadBody)
                 .unwrap();
             let response = server
-                .respond_incoming(request, accepted, &Arc::new(Mutex::new(Vec::new())), None)
-                .await
-                .unwrap();
-            assert_eq!(response.status(), status);
+                .respond_incoming(request, accepted, &Operations::default(), None)
+                .await;
+            assert_eq!(response.unwrap().status(), status);
         }
         assert_eq!(server.uploads.retained(), 0);
         drop(admitted);
@@ -1413,11 +1402,10 @@ mod tests {
     /// its CORS answer, and only its measurement is refused.
     #[tokio::test]
     async fn an_unresolved_proxied_client_is_answered_its_preflight() {
-        let config = Config {
+        let server = server(Config {
             trusted_proxies: vec!["127.0.0.0/8".parse().unwrap()],
             ..Config::default()
-        };
-        let server = HttpServer::new(config.validated().unwrap()).unwrap();
+        });
         let refused = respond(&server, Method::GET, "/download?bytes=1").await;
         assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
         let preflight = respond(&server, Method::OPTIONS, "/download").await;
@@ -1427,7 +1415,7 @@ mod tests {
 
     #[tokio::test]
     async fn download_length_preserves_go_parsing_and_head_headers() {
-        let server = HttpServer::new(Config::default().validated().unwrap()).unwrap();
+        let server = server(Config::default());
         for (query, expected) in [
             ("", 25 * 1024 * 1024),
             ("bytes=0", 0),
@@ -1440,11 +1428,8 @@ mod tests {
             ("bytes=5;x&bytes=6", 6),
         ] {
             let response = respond(&server, Method::HEAD, &format!("/download?{query}")).await;
-            assert_eq!(
-                response.headers()[header::CONTENT_LENGTH],
-                expected.to_string(),
-                "{query}"
-            );
+            let length = &response.headers()[header::CONTENT_LENGTH];
+            assert_eq!(length, &expected.to_string(), "{query}");
             assert!(response.body().is_end_stream());
         }
     }
@@ -1454,22 +1439,11 @@ mod tests {
         let mut config = Config::default();
         config.limits.operations_per_client = 1;
         config.limits.sessions_per_client = 1;
-        let server = HttpServer::new(config.validated().unwrap()).unwrap();
-        let request = Request::get("/download?bytes=1").header(header::HOST, "localhost");
-        let request = request.body(String::new()).unwrap();
-        let operations = Arc::new(Mutex::new(Vec::new()));
-        let mut response = server.respond_incoming(request, h1(), &operations, None).await.unwrap();
+        let server = server(config);
+        let (mut response, operations) = exchange(&server, h1(), Method::GET, "/download?bytes=1").await;
         // The connection holds the reply's operation, as it did the moment the reply was answered.
-        let mut io = BoundedIo::new(tokio::io::sink(), IDLE_BOUND);
-        io.http1 = Some(Http1Deadlines {
-            operations,
-            lifecycle: Arc::new(Mutex::new(Http1Lifecycle::Upgraded)),
-        });
-        let frame = std::future::poll_fn(|cx| Pin::new(response.body_mut()).poll_frame(cx))
-            .await
-            .unwrap()
-            .unwrap();
-        let data = frame.into_data().unwrap();
+        let mut io = deadlines(tokio::io::sink(), operations, Http1Lifecycle::Upgraded);
+        let data = next_data(response.body_mut()).await.unwrap();
         drop(response);
         let download = async || respond(&server, Method::GET, "/download?bytes=1").await.status();
         assert_eq!(download().await, StatusCode::TOO_MANY_REQUESTS);
@@ -1481,31 +1455,16 @@ mod tests {
 
     #[tokio::test]
     async fn last_frame_write_deadline_survives_body_drop() {
-        let server = HttpServer::new(
-            Config {
-                max_operation_duration: Duration::from_millis(20),
-                ..Config::default()
-            }
-            .validated()
-            .unwrap(),
-        )
-        .unwrap();
-        let request = Request::get("/download?bytes=2").header(header::HOST, "localhost");
-        let request = request.body(String::new()).unwrap();
-        let operations = Arc::new(Mutex::new(Vec::new()));
-        let mut response = server.respond_incoming(request, h1(), &operations, None).await.unwrap();
-        let (writer, _non_reading_peer) = tokio::io::duplex(1);
-        let mut io = BoundedIo::new(writer, IDLE_BOUND);
-        io.http1 = Some(Http1Deadlines {
-            operations,
-            lifecycle: Arc::new(Mutex::new(Http1Lifecycle::Upgraded)),
+        let server = server(Config {
+            max_operation_duration: Duration::from_millis(20),
+            ..Config::default()
         });
-        let frame = std::future::poll_fn(|cx| Pin::new(response.body_mut()).poll_frame(cx))
-            .await
-            .unwrap()
-            .unwrap();
+        let (mut response, operations) = exchange(&server, h1(), Method::GET, "/download?bytes=2").await;
+        let (writer, _non_reading_peer) = tokio::io::duplex(1);
+        let mut io = deadlines(writer, operations, Http1Lifecycle::Upgraded);
+        let data = next_data(response.body_mut()).await.unwrap();
         drop(response);
-        let error = tokio::time::timeout(Duration::from_secs(1), io.write_all(&frame.into_data().unwrap()))
+        let error = tokio::time::timeout(Duration::from_secs(1), io.write_all(&data))
             .await
             .unwrap()
             .unwrap_err();
@@ -1519,7 +1478,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn a_socket_that_stops_listening_ends_its_service() {
-        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
+        let server = Arc::new(server(Config::default()));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         // Linux closes a listening socket that is shut down, and accept then fails with EINVAL.
         socket2::SockRef::from(&listener)
@@ -1537,7 +1496,7 @@ mod tests {
     /// As Go's Shutdown closes its listeners, a connection during the drain is refused, not accepted to go unserved.
     #[tokio::test]
     async fn a_stopping_listener_refuses_connections_during_its_drain() {
-        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
+        let server = Arc::new(server(Config::default()));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
@@ -1561,12 +1520,11 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn http1_control_exchanges_end_fifteen_seconds_after_they_start() {
-        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-        let accepted = h1();
+        let server = Arc::new(server(Config::default()));
         // A small pipe the peer drains a little at a time: the reply always moves, well within the write-stall bound.
         let (client, served) = tokio::io::duplex(16);
         let started = tokio::time::Instant::now();
-        let serving = tokio::spawn(server.serve_http1_connection(served, accepted, None));
+        let serving = tokio::spawn(server.serve_http1_connection(served, h1(), None));
         let (mut reader, mut writer) = tokio::io::split(client);
         writer
             .write_all(b"GET /servers HTTP/1.1\r\nHost: localhost\r\n\r\n")
@@ -1589,16 +1547,87 @@ mod tests {
         drop(writer);
     }
 
+    async fn poll_once<F: Future>(mut future: Pin<&mut F>) -> Poll<F::Output> {
+        std::future::poll_fn(|cx| Poll::Ready(future.as_mut().poll(cx))).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn repeated_pending_writes_do_not_extend_stall_deadline() {
+        let (writer, _non_reading_peer) = tokio::io::duplex(1);
+        let mut writer = BoundedIo::new(writer, Duration::from_millis(20));
+        let write = writer.write_all(b"ab");
+        tokio::pin!(write);
+        assert!(poll_once(write.as_mut()).await.is_pending());
+        for _ in 0..3 {
+            tokio::time::advance(Duration::from_millis(5)).await;
+            assert!(poll_once(write.as_mut()).await.is_pending());
+        }
+        tokio::time::advance(Duration::from_millis(5)).await;
+        let Poll::Ready(Err(error)) = poll_once(write.as_mut()).await else {
+            panic!("pending polls extended the blocked writer's deadline");
+        };
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn real_write_progress_starts_a_fresh_stall_period() {
+        let (writer, mut reader) = tokio::io::duplex(1);
+        let mut writer = BoundedIo::new(writer, Duration::from_millis(20));
+        let write = writer.write_all(b"abc");
+        tokio::pin!(write);
+        assert!(poll_once(write.as_mut()).await.is_pending());
+        tokio::time::advance(Duration::from_millis(15)).await;
+        assert_eq!(reader.read_u8().await.unwrap(), b'a');
+        assert!(poll_once(write.as_mut()).await.is_pending());
+        // Thirty milliseconds total exceeds the original deadline, but the
+        // second byte made real progress and must grant a fresh interval.
+        tokio::time::advance(Duration::from_millis(15)).await;
+        assert_eq!(reader.read_u8().await.unwrap(), b'b');
+        assert!(matches!(poll_once(write.as_mut()).await, Poll::Ready(Ok(()))));
+        assert_eq!(reader.read_u8().await.unwrap(), b'c');
+    }
+
+    struct BufferedWriter {
+        accepted: usize,
+    }
+
+    impl AsyncWrite for BufferedWriter {
+        fn poll_write(mut self: Pin<&mut Self>, _: &mut Context<'_>, bytes: &[u8]) -> Poll<io::Result<usize>> {
+            self.accepted += bytes.len();
+            Poll::Ready(Ok(bytes.len()))
+        }
+        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Pending
+        }
+        fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Pending
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn final_buffered_output_remains_bounded_until_transport_flush() {
+        let mut writer = BoundedIo::new(BufferedWriter { accepted: 0 }, Duration::from_millis(20));
+        // Model a completed response whose final frame was accepted into TLS's
+        // buffer, while its encrypted output can no longer reach the socket.
+        writer.write_all(b"final END_STREAM frame").await.unwrap();
+        assert_eq!(writer.inner.accepted, 22);
+        let flush = writer.flush();
+        tokio::pin!(flush);
+        assert!(poll_once(flush.as_mut()).await.is_pending());
+        tokio::time::advance(Duration::from_millis(10)).await;
+        assert!(poll_once(flush.as_mut()).await.is_pending());
+        tokio::time::advance(Duration::from_millis(10)).await;
+        let Poll::Ready(Err(error)) = poll_once(flush.as_mut()).await else {
+            panic!("final queued response escaped the write-stall bound");
+        };
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn partial_headers_receive_a_fresh_fifteen_second_deadline() {
         let (reader, mut peer) = tokio::io::duplex(64);
-        let mut reader = BoundedIo::new(reader, IDLE_BOUND);
-        reader.http1 = Some(Http1Deadlines {
-            operations: Arc::new(Mutex::new(Vec::new())),
-            lifecycle: Arc::new(Mutex::new(Http1Lifecycle::Idle(Box::pin(tokio::time::sleep(
-                Duration::from_secs(15),
-            ))))),
-        });
+        let idle = Http1Lifecycle::Idle(Box::pin(tokio::time::sleep(Duration::from_secs(15))));
+        let mut reader = deadlines(reader, Operations::default(), idle);
         tokio::time::advance(Duration::from_secs(14)).await;
         let partial = b"GET /probe HTTP/1.1\r\nHost:";
         peer.write_all(partial).await.unwrap();
@@ -1609,33 +1638,19 @@ mod tests {
         let mut byte = [0];
         let read = reader.read(&mut byte);
         tokio::pin!(read);
-        std::future::poll_fn(|cx| {
-            assert!(read.as_mut().poll(cx).is_pending());
-            Poll::Ready(())
-        })
-        .await;
+        assert!(poll_once(read.as_mut()).await.is_pending());
         tokio::time::advance(Duration::from_secs(1)).await;
         assert_eq!(read.await.unwrap_err().kind(), io::ErrorKind::TimedOut);
     }
 
     #[tokio::test(start_paused = true)]
     async fn upgrade_headers_keep_a_deadline_until_their_flush() {
-        let lifecycle = Arc::new(Mutex::new(Http1Lifecycle::UpgradePending(Box::pin(
-            tokio::time::sleep(Duration::from_millis(20)),
-        ))));
+        let pending = Http1Lifecycle::UpgradePending(Box::pin(tokio::time::sleep(Duration::from_millis(20))));
         let (writer, _stopped_reader) = tokio::io::duplex(1);
-        let mut writer = BoundedIo::new(writer, IDLE_BOUND);
-        writer.http1 = Some(Http1Deadlines {
-            operations: Arc::new(Mutex::new(Vec::new())),
-            lifecycle,
-        });
+        let mut writer = deadlines(writer, Operations::default(), pending);
         let write = writer.write_all(b"HTTP/1.1 101 Switching Protocols");
         tokio::pin!(write);
-        std::future::poll_fn(|cx| {
-            assert!(write.as_mut().poll(cx).is_pending());
-            Poll::Ready(())
-        })
-        .await;
+        assert!(poll_once(write.as_mut()).await.is_pending());
         tokio::time::advance(Duration::from_millis(20)).await;
         assert_eq!(write.await.unwrap_err().kind(), io::ErrorKind::TimedOut);
     }
@@ -1644,7 +1659,7 @@ mod tests {
     /// served, to its trailing slash; only a GET's answer links the destination.
     #[tokio::test]
     async fn unclean_paths_are_redirected_as_go_s_mux_redirects_them() {
-        let server = HttpServer::new(Config::default().validated().unwrap()).unwrap();
+        let server = server(Config::default());
         for (method, path, location) in [
             (Method::GET, "//probe", "/probe"),
             (Method::POST, "/upload//session?id=x", "/upload/session?id=x"),
@@ -1662,15 +1677,9 @@ mod tests {
         let head = respond(&server, Method::HEAD, "//probe").await;
         assert_eq!(head.headers()[header::CONTENT_TYPE], "text/html; charset=utf-8");
         assert!(head.body().is_end_stream());
-        let h2 = Accepted {
-            tls: true,
-            topology: topology::tcp(NativeKind::H2, false).topology,
-            ..h1()
-        };
-        assert_eq!(
-            respond_on(&server, h2, Method::GET, "/auth").await.status(),
-            StatusCode::NOT_FOUND
-        );
+        let h2 = secure(NativeKind::H2, false);
+        let unmounted = respond_on(&server, h2, Method::GET, "/auth").await;
+        assert_eq!(unmounted.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -1678,7 +1687,7 @@ mod tests {
         let mut config = Config::default();
         config.limits.operations_per_client = 2;
         config.limits.sessions_per_client = 1;
-        let server = HttpServer::new(config.validated().unwrap()).unwrap();
+        let server = server(config);
         let peer = "[2001:db8:1::1]:31000";
         let neighbor = "[2001:db8:1::2]:31000";
         let foreign = "[2001:db8:2::1]:31000";
@@ -1689,10 +1698,8 @@ mod tests {
         let path = format!("/upload/progress?id={id}");
         let mut first = respond_from(&server, peer, Method::GET, &path).await;
         let ready = next_data(first.body_mut()).await.unwrap();
-        assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&ready).unwrap()["type"],
-            "ready"
-        );
+        let ready: serde_json::Value = serde_json::from_slice(&ready).unwrap();
+        assert_eq!(ready["type"], "ready");
         let second = respond_from(&server, neighbor, Method::GET, &path).await;
         assert_eq!(second.status(), StatusCode::OK, "same IPv6 /64 shares upload ownership");
         let download = respond_from(&server, peer, Method::GET, "/download?bytes=1").await;
@@ -1717,25 +1724,13 @@ mod tests {
     #[tokio::test]
     async fn the_http3_companion_authorizes_and_hardens_before_its_404() {
         let server = Arc::new(HttpServer::new(password()).unwrap());
-        let accepted = Accepted {
-            peer: "127.0.0.1:31000".parse().unwrap(),
-            tls: true,
-            topology: topology::tcp(NativeKind::H3, true).topology,
-        };
         for path in ["/", "/download?bytes=1"] {
-            let (mut client, served) = tokio::io::duplex(1 << 16);
-            let serving = tokio::spawn(server.clone().serve_http1_connection(served, accepted, Some(7249)));
             let request = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
-            client.write_all(request.as_bytes()).await.unwrap();
-            let mut answer = String::new();
-            client.read_to_string(&mut answer).await.unwrap();
+            let answer = served(&server, secure(NativeKind::H3, true), Some(7249), &request).await;
             assert!(answer.starts_with("HTTP/1.1 403"), "{answer}");
             assert!(answer.contains("graphite-meter-auth: required\r\n"), "{answer}");
-            assert!(
-                answer.contains("strict-transport-security: max-age=31536000\r\n"),
-                "{answer}"
-            );
-            serving.await.unwrap();
+            let hsts = "strict-transport-security: max-age=31536000\r\n";
+            assert!(answer.contains(hsts), "{answer}");
         }
     }
 

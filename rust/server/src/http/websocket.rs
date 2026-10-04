@@ -91,6 +91,10 @@ mod tests {
         answer
     }
 
+    async fn within<T>(future: impl Future<Output = T>) -> T {
+        tokio::time::timeout(Duration::from_secs(2), future).await.unwrap()
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn http_upgrade_retains_admission_and_shutdown_owns_the_socket() {
         let mut config = Config::default();
@@ -103,19 +107,13 @@ mod tests {
         let task = tokio::spawn(server.clone().serve(NativeKind::H1, listener, None, async {
             let _ = stopped.await;
         }));
-        let (mut socket, response) = tokio_tungstenite::client_async(
-            format!("ws://{address}/ws/ping"),
-            TcpStream::connect(address).await.unwrap(),
-        )
-        .await
-        .unwrap();
+        let url = format!("ws://{address}/ws/ping");
+        let (mut socket, response) = tokio_tungstenite::client_async(url, TcpStream::connect(address).await.unwrap())
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
         socket.send(Message::Text("PING,23".into())).await.unwrap();
-        let pong = tokio::time::timeout(Duration::from_secs(2), socket.next())
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
+        let pong = within(socket.next()).await.unwrap().unwrap();
         assert_eq!(decode_pong(pong.to_text().unwrap()).unwrap().id, 23);
         // The upgraded socket holds its client's only permit.
         let download = "GET /download?bytes=1 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
@@ -123,40 +121,18 @@ mod tests {
         assert!(refused.starts_with("HTTP/1.1 429"), "{refused}");
         let wrong = "POST /ws/ping HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
         let answer = exchange(address, wrong).await;
-        assert!(
-            answer.starts_with("HTTP/1.1 405") && answer.contains("allow: GET, HEAD"),
-            "{answer}"
-        );
+        let refused = answer.starts_with("HTTP/1.1 405") && answer.contains("allow: GET, HEAD");
+        assert!(refused, "{answer}");
 
         stop.send(()).unwrap();
-        tokio::time::timeout(Duration::from_secs(2), task)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-        let close = tokio::time::timeout(Duration::from_secs(2), socket.next())
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-        let Message::Close(Some(close)) = close else {
+        within(task).await.unwrap().unwrap();
+        let Message::Close(Some(close)) = within(socket.next()).await.unwrap().unwrap() else {
             panic!("expected shutdown close")
         };
         assert_eq!(u16::from(close.code), 1001);
         assert_eq!(close.reason, "shutdown");
         // Shutdown released the socket's permit: the pipeline admits the client's next download.
-        let accepted = Accepted {
-            peer: address,
-            tls: false,
-            topology: topology::tcp(NativeKind::H1, false).topology,
-        };
-        let request = Request::get("/download?bytes=1").header(header::HOST, "localhost");
-        let request = request.body(String::new()).unwrap();
-        let operations = Arc::new(Mutex::new(Vec::new()));
-        let response = server
-            .respond_incoming(request, accepted, &operations, None)
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let download = super::super::tests::respond(&server, Method::GET, "/download?bytes=1").await;
+        assert_eq!(download.status(), StatusCode::OK);
     }
 }

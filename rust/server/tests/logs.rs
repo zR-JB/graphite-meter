@@ -118,15 +118,11 @@ fn a_peers_handshake_close_reason_cannot_forge_log_lines() {
     reader.join().unwrap();
     let rest: Vec<_> = received.try_iter().collect();
     let failure = timestamped(&failure).unwrap();
-    assert!(
-        failure.starts_with("[gm:h3] QUIC handshake error from 127.0.0.1: "),
-        "{failure}"
-    );
+    let error = "[gm:h3] QUIC handshake error from 127.0.0.1: ";
+    assert!(failure.starts_with(error), "{failure}");
     // The peer's words stay in its one line, quoted, with their controls escaped.
-    assert!(
-        failure.contains(r"\n2026/01/01 00:00:00 [gm:auth] forged line"),
-        "{failure}"
-    );
+    let quoted = r"\n2026/01/01 00:00:00 [gm:auth] forged line";
+    assert!(failure.contains(quoted), "{failure}");
     assert!(!failure.contains('\u{1b}'), "{failure:?}");
     assert!(!rest.iter().any(|line| line.contains("forged")), "{rest:?}");
 }

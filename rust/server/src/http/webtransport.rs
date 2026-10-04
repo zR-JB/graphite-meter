@@ -42,13 +42,8 @@ impl HttpServer {
         credit: ReceiveCredit,
         peer: SocketAddr,
     ) -> io::Result<()> {
-        let accepted = Accepted {
-            peer,
-            tls: true,
-            topology: topology::QUIC.topology,
-        };
         // A CONNECT has no body to end.
-        let (request, route) = match self.gate(request, accepted, true) {
+        let (request, route) = match self.gate(request, Accepted::quic(peer), true) {
             Ok(passed) => passed,
             Err(response) => return answer(stream, *response).await,
         };

@@ -2,7 +2,7 @@
 
 use crate::timeouts::{IDLE_BOUND, WS_CLOSE};
 use futures_util::{SinkExt, StreamExt};
-use http::{Method, Request, Response, StatusCode, header};
+use http::{HeaderValue, Method, Request, Response, StatusCode, header};
 use std::future::Future;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::{
@@ -29,7 +29,7 @@ pub fn handshake<B>(request: &Request<B>, allowed_origin: Option<&str>) -> Respo
         && !origin.is_empty()
         && origin.as_bytes() != allowed.as_bytes()
     {
-        return refusal(StatusCode::FORBIDDEN);
+        return refusal(StatusCode::FORBIDDEN, &[]);
     }
     // Go accepts token lists spread across repeated upgrade headers. Normalize
     // those lists for Tungstenite, which expects a single Upgrade value. Its
@@ -44,9 +44,7 @@ pub fn handshake<B>(request: &Request<B>, allowed_origin: Option<&str>) -> Respo
                 .to_str()
                 .is_ok_and(|value| value.split(',').any(|part| part.trim().eq_ignore_ascii_case(token)))
         }) {
-            normalized
-                .headers_mut()
-                .insert(name, http::HeaderValue::from_static(token));
+            normalized.headers_mut().insert(name, HeaderValue::from_static(token));
         }
     }
     match create_response_with_body(&normalized, || ()) {
@@ -54,41 +52,28 @@ pub fn handshake<B>(request: &Request<B>, allowed_origin: Option<&str>) -> Respo
             ProtocolError::WrongHttpVersion
             | ProtocolError::MissingConnectionUpgradeHeader
             | ProtocolError::MissingUpgradeWebSocketHeader,
-        )) => {
-            let mut response = refusal(StatusCode::UPGRADE_REQUIRED);
-            response
-                .headers_mut()
-                .insert(header::CONNECTION, "Upgrade".parse().unwrap());
-            response
-                .headers_mut()
-                .insert(header::UPGRADE, "websocket".parse().unwrap());
-            response
-        }
-        _ if request.method() != Method::GET => {
-            let mut response = refusal(StatusCode::METHOD_NOT_ALLOWED);
-            response
-                .headers_mut()
-                .insert(header::ALLOW, http::HeaderValue::from_static("GET"));
-            response
-        }
+        )) => refusal(
+            StatusCode::UPGRADE_REQUIRED,
+            &[(header::CONNECTION, "Upgrade"), (header::UPGRADE, "websocket")],
+        ),
+        _ if request.method() != Method::GET => refusal(StatusCode::METHOD_NOT_ALLOWED, &[(header::ALLOW, "GET")]),
         Err(Error::Protocol(ProtocolError::MissingSecWebSocketVersionHeader)) => {
-            let mut response = refusal(StatusCode::BAD_REQUEST);
-            response
-                .headers_mut()
-                .insert(header::SEC_WEBSOCKET_VERSION, "13".parse().unwrap());
-            response
+            refusal(StatusCode::BAD_REQUEST, &[(header::SEC_WEBSOCKET_VERSION, "13")])
         }
         _ if request.headers().get_all(header::SEC_WEBSOCKET_KEY).iter().count() > 1 => {
-            refusal(StatusCode::BAD_REQUEST)
+            refusal(StatusCode::BAD_REQUEST, &[])
         }
         Ok(response) => response,
-        Err(_) => refusal(StatusCode::BAD_REQUEST),
+        Err(_) => refusal(StatusCode::BAD_REQUEST, &[]),
     }
 }
 
-fn refusal(status: StatusCode) -> Response<()> {
+fn refusal(status: StatusCode, headers: &[(header::HeaderName, &'static str)]) -> Response<()> {
     let mut response = Response::new(());
     *response.status_mut() = status;
+    for (name, value) in headers {
+        response.headers_mut().insert(name, HeaderValue::from_static(value));
+    }
     response
 }
 
@@ -134,17 +119,19 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let mut idle = tokio::time::Instant::now() + IDLE_BOUND;
+    // The bound that passed first ends the session.
+    let expired = |idle| {
+        Ok(if idle <= deadline {
+            CloseReason::Idle
+        } else {
+            CloseReason::Lifetime
+        })
+    };
     loop {
         let message = match tokio::time::timeout_at(idle.min(deadline), socket.next()).await {
             Ok(Some(message)) => message,
             Ok(None) => return Ok(CloseReason::Finished),
-            Err(_) => {
-                return Ok(if idle <= deadline {
-                    CloseReason::Idle
-                } else {
-                    CloseReason::Lifetime
-                });
-            }
+            Err(_) => return expired(idle),
         };
         match message? {
             message @ (Message::Text(_) | Message::Binary(_)) => {
@@ -152,13 +139,7 @@ where
                 if let Some(reply) = crate::ping::reply(&message.into_data()) {
                     match tokio::time::timeout_at(idle.min(deadline), socket.send(Message::Text(reply.into()))).await {
                         Ok(result) => result?,
-                        Err(_) => {
-                            return Ok(if idle <= deadline {
-                                CloseReason::Idle
-                            } else {
-                                CloseReason::Lifetime
-                            });
-                        }
+                        Err(_) => return expired(idle),
                     }
                 }
             }

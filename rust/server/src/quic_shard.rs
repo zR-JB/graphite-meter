@@ -285,16 +285,12 @@ mod tests {
         assert!(second.validate(cid).is_err(), "another shard's connection ID");
         let mut renamed = cid;
         renamed[0] = 2;
-        assert!(
-            second.validate(renamed).is_err(),
-            "a shard byte alone does not validate"
-        );
+        let renamed = second.validate(renamed);
+        assert!(renamed.is_err(), "a shard byte alone does not validate");
         let mut forged = cid;
         forged[HASHED_CID_BYTES] ^= 1;
-        assert!(
-            first.validate(forged).is_err(),
-            "a signature that does not match its nonce"
-        );
+        let forged = first.validate(forged);
+        assert!(forged.is_err(), "a signature that does not match its nonce");
         assert!(first.validate(ConnectionId::new(&cid[..HASHED_CID_BYTES])).is_err());
         assert_eq!(first.cid_lifetime(), None);
     }
@@ -316,12 +312,8 @@ mod tests {
             let mut buf = packet.clone();
             let mut meta = received(buf.len(), buf.len());
             router.route(1, &mut buf, &mut meta);
-            assert_eq!(
-                meta.len,
-                if stays { packet.len() } else { 0 },
-                "{:02x?}",
-                &packet[..2.min(packet.len())]
-            );
+            let (kept, head) = (if stays { packet.len() } else { 0 }, &packet[..2.min(packet.len())]);
+            assert_eq!(meta.len, kept, "{head:02x?}");
             assert_eq!(buf, packet);
         }
         let forwarded = drain(&mut inboxes[2]);
@@ -345,16 +337,9 @@ mod tests {
         assert_eq!(meta.len, 30);
         assert_eq!(meta.stride, 10);
         assert_eq!(buf[..30], [short(0, 10), long, short(0, 10)].concat());
-        let two = drain(&mut inboxes[2]);
-        let three = drain(&mut inboxes[3]);
-        assert_eq!(
-            two.iter().map(|f| &*f.datagram).collect::<Vec<_>>(),
-            [&short(2, 10)[..]]
-        );
-        assert_eq!(
-            three.iter().map(|f| &*f.datagram).collect::<Vec<_>>(),
-            [&short(3, 6)[..]]
-        );
+        let (two, three) = (drain(&mut inboxes[2]), drain(&mut inboxes[3]));
+        assert_eq!((two.len(), &*two[0].datagram), (1, &short(2, 10)[..]));
+        assert_eq!((three.len(), &*three[0].datagram), (1, &short(3, 6)[..]));
         assert_eq!((three[0].meta.len, three[0].meta.stride), (6, 6));
 
         // A short last segment moves up behind the kept ones.
@@ -420,11 +405,8 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(
-            arrived[0],
-            (PEER, short(0, 20)),
-            "the forwarded datagram, with its peer, first"
-        );
+        let forwarded = (PEER, short(0, 20));
+        assert_eq!(arrived[0], forwarded, "the forwarded datagram, with its peer, first");
         assert_eq!(arrived[1], (local.local_addr().unwrap(), short(0, 30)));
     }
 }

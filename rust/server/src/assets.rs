@@ -52,16 +52,15 @@ impl Assets {
                 },
             )
             .concat();
+        let auth = if auth_enabled {
+            "<meta name=\"graphite-meter-auth\" content=\"enabled\">"
+        } else {
+            ""
+        };
+        let history = format!("<meta name=\"graphite-meter-result-history-default\" content=\"{history_default}\">");
         let index = index.map(|entry| {
-            let mut marker = String::new();
-            if auth_enabled {
-                marker.push_str("<meta name=\"graphite-meter-auth\" content=\"enabled\">");
-            }
-            let history_marker =
-                format!("<meta name=\"graphite-meter-result-history-default\" content=\"{history_default}\">");
-            marker.push_str(&history_marker);
             let html = std::str::from_utf8(entry.bytes).expect("build validated UTF-8 index");
-            Bytes::from(html.replacen("</head>", &format!("{marker}</head>"), 1))
+            Bytes::from(html.replacen("</head>", &format!("{auth}{history}</head>"), 1))
         });
         Self {
             entries,
@@ -175,10 +174,9 @@ fn content(headers: &HeaderMap, content_type: &str, body: Bytes) -> Response<Byt
         Some(Err(true)) if size == 0 => Vec::new(),
         Some(Err(true)) => {
             let mut response = text(StatusCode::RANGE_NOT_SATISFIABLE, "invalid range: failed to overlap");
-            response.headers_mut().insert(
-                header::CONTENT_RANGE,
-                HeaderValue::from_str(&format!("bytes */{size}")).expect("numeric range"),
-            );
+            response
+                .headers_mut()
+                .insert(header::CONTENT_RANGE, header_value(&format!("bytes */{size}")));
             return response;
         }
         Some(Err(false)) | None => return text(StatusCode::RANGE_NOT_SATISFIABLE, "invalid range"),
@@ -187,19 +185,15 @@ fn content(headers: &HeaderMap, content_type: &str, body: Bytes) -> Response<Byt
         |start: u64, length: u64| format!("bytes {start}-{}/{size}", start as i128 + length as i128 - 1);
     let mut response = Response::new(body.clone());
     let headers = response.headers_mut();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_str(content_type).expect("known type"),
-    );
+    headers.insert(header::CONTENT_TYPE, header_value(content_type));
     match ranges[..] {
         [] => {}
         [(start, length)] => {
             *response.body_mut() = body.slice(start as usize..(start + length) as usize);
             *response.status_mut() = StatusCode::PARTIAL_CONTENT;
-            response.headers_mut().insert(
-                header::CONTENT_RANGE,
-                HeaderValue::from_str(&content_range(start, length)).expect("numeric range"),
-            );
+            response
+                .headers_mut()
+                .insert(header::CONTENT_RANGE, header_value(&content_range(start, length)));
         }
         _ => {
             let mut random = [0_u8; 30];
@@ -222,7 +216,7 @@ fn content(headers: &HeaderMap, content_type: &str, body: Bytes) -> Response<Byt
             *response.status_mut() = StatusCode::PARTIAL_CONTENT;
             response.headers_mut().insert(
                 header::CONTENT_TYPE,
-                HeaderValue::from_str(&format!("multipart/byteranges; boundary={boundary}")).expect("hex boundary"),
+                header_value(&format!("multipart/byteranges; boundary={boundary}")),
             );
         }
     }
@@ -232,6 +226,10 @@ fn content(headers: &HeaderMap, content_type: &str, body: Bytes) -> Response<Byt
     headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     headers.insert(header::CONTENT_LENGTH, HeaderValue::from(length));
     response
+}
+
+fn header_value(text: &str) -> HeaderValue {
+    HeaderValue::from_str(text).expect("a valid header value")
 }
 
 /// Go's `parseRange`: `(start, length)` pairs, or whether the failure is only a lack of overlap.
@@ -309,19 +307,11 @@ mod tests {
         assert_eq!(head.headers()["content-length"], get.body().len().to_string());
         let policy = assets.page_policy(&[]);
         for tag in ["script", "style"] {
-            let content = body
-                .split_once(&format!("<{tag}>"))
-                .unwrap()
-                .1
-                .split_once(&format!("</{tag}>"))
-                .unwrap()
-                .0;
+            let content = body.split_once(&format!("<{tag}>")).unwrap().1;
+            let content = content.split_once(&format!("</{tag}>")).unwrap().0;
             let hash = STANDARD.encode(Sha256::digest(content.as_bytes()));
-            assert!(
-                policy
-                    .split("; ")
-                    .any(|directive| directive == format!("{tag}-src 'self' 'sha256-{hash}'"))
-            );
+            let expected = format!("{tag}-src 'self' 'sha256-{hash}'");
+            assert!(policy.split("; ").any(|directive| directive == expected));
         }
         assert!(!policy.contains("unsafe-inline"));
     }
@@ -341,11 +331,8 @@ mod tests {
             "/assets\\app.js",
             "assets/app.js",
         ] {
-            assert_eq!(
-                assets.serve(&Method::GET, path, &HeaderMap::new()).status(),
-                StatusCode::NOT_FOUND,
-                "{path}"
-            );
+            let response = assets.serve(&Method::GET, path, &HeaderMap::new());
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
         }
         let js = assets.serve(&Method::GET, "/assets/app.js", &HeaderMap::new());
         assert_eq!(js.status(), StatusCode::OK);
@@ -377,13 +364,9 @@ mod tests {
         assert_eq!(part.status(), StatusCode::PARTIAL_CONTENT);
         assert_eq!(part.headers()["content-range"], "bytes 0-3/10");
         assert_eq!(part.body(), "expo");
-        assert_eq!(
-            get("/assets/app.js", &[(header::IF_NONE_MATCH, "*")]).status(),
-            StatusCode::NOT_MODIFIED
-        );
-        assert_eq!(
-            get("/assets/app.js", &[(header::IF_MATCH, "\"v1\"")]).status(),
-            StatusCode::PRECONDITION_FAILED
-        );
+        let unmodified = get("/assets/app.js", &[(header::IF_NONE_MATCH, "*")]);
+        assert_eq!(unmodified.status(), StatusCode::NOT_MODIFIED);
+        let mismatched = get("/assets/app.js", &[(header::IF_MATCH, "\"v1\"")]);
+        assert_eq!(mismatched.status(), StatusCode::PRECONDITION_FAILED);
     }
 }

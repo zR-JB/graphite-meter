@@ -1,3 +1,9 @@
+#[path = "support/http1.rs"]
+mod http1;
+
+#[path = "support/native.rs"]
+mod native;
+
 use base64::{Engine, engine::general_purpose::STANDARD};
 use graphite_meter_server::auth::pages::{
     LoginPage, PENDING_SCRIPT, STYLES, THEME_SCRIPT, approval_page, continue_page, done_page, security_headers,
@@ -13,6 +19,24 @@ fn inline_blocks<'a>(html: &'a str, tag: &str) -> Vec<&'a str> {
         .collect()
 }
 
+fn hash(asset: &str) -> String {
+    format!("'sha256-{}'", STANDARD.encode(Sha256::digest(asset.as_bytes())))
+}
+
+/// A login page offering both methods, with every field the caller's.
+fn login<'a>(text: &'a str, notice: &'a str, status: &'a str) -> LoginPage<'a> {
+    LoginPage {
+        csrf: text,
+        provider: text,
+        challenge: text,
+        password: true,
+        oidc: true,
+        oidc_ready: true,
+        notice,
+        status,
+    }
+}
+
 #[test]
 fn fields_are_escaped_for_html_attributes_and_urls() {
     let hostile = "A&B <i>\"x\"</i> 'y'+z\0";
@@ -20,17 +44,7 @@ fn fields_are_escaped_for_html_attributes_and_urls() {
     let approval = approval_page(hostile, hostile, hostile, hostile);
     assert!(approval.contains(escaped));
     assert!(!approval.contains(hostile));
-    let login = LoginPage {
-        csrf: hostile,
-        provider: hostile,
-        challenge: hostile,
-        password: true,
-        oidc: true,
-        oidc_ready: true,
-        notice: "password",
-        status: "signed_out",
-    }
-    .render();
+    let login = login(hostile, "password", "signed_out").render();
     assert!(login.contains(escaped) && !login.contains(hostile));
     let continued = continue_page("a b&c+d/é\"<>'\n", true);
     assert!(continued.contains("a%20b%26c%2bd%2f%c3%a9%22%3c%3e%27%0a"));
@@ -38,18 +52,8 @@ fn fields_are_escaped_for_html_attributes_and_urls() {
 
 #[test]
 fn every_inline_asset_matches_csp_hash_of_actual_rendered_bytes() {
-    let login = LoginPage {
-        csrf: "csrf-token",
-        provider: "Authelia",
-        challenge: "challenge",
-        password: true,
-        oidc: true,
-        oidc_ready: true,
-        notice: "",
-        status: "",
-    };
     let pages = [
-        (login.render(), true),
+        (login("csrf-token", "", "").render(), true),
         (approval_page("1234", "csrf", "challenge", ""), true),
         (done_page(true), false),
         (continue_page("", false), false),
@@ -60,26 +64,21 @@ fn every_inline_asset_matches_csp_hash_of_actual_rendered_bytes() {
         let styles = inline_blocks(&html, "style");
         assert_eq!(styles, [STYLES]);
         let scripts = inline_blocks(&html, "script");
-        assert_eq!(
-            scripts,
-            if pending {
-                vec![THEME_SCRIPT, PENDING_SCRIPT]
-            } else {
-                vec![THEME_SCRIPT]
-            }
-        );
+        let expected: &[&str] = if pending {
+            &[THEME_SCRIPT, PENDING_SCRIPT]
+        } else {
+            &[THEME_SCRIPT]
+        };
+        assert_eq!(scripts, expected);
         for asset in styles.into_iter().chain(scripts) {
-            let expected = format!("'sha256-{}'", STANDARD.encode(Sha256::digest(asset.as_bytes())));
-            assert!(csp.contains(&expected));
+            assert!(csp.contains(&hash(asset)));
         }
     }
     assert_eq!(headers["cache-control"], "no-store");
     assert_eq!(headers["referrer-policy"], "same-origin");
     assert_eq!(headers["x-content-type-options"], "nosniff");
-    assert_eq!(
-        headers["permissions-policy"],
-        "camera=(), microphone=(), geolocation=()"
-    );
+    let permissions = &headers["permissions-policy"];
+    assert_eq!(permissions, "camera=(), microphone=(), geolocation=()");
     assert!(!csp.contains("unsafe-inline"));
     assert_eq!(csp.matches("font-src 'self'").count(), 1);
 }
@@ -106,28 +105,14 @@ async fn application_response_restricts_resources_and_hashes_embedded_inline_ass
     use graphite_meter_server::config::{Config, NativeKind};
     use graphite_meter_server::http::HttpServer;
     use std::{sync::Arc, time::Duration};
-    use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt},
-        net::{TcpListener, TcpStream},
-        sync::oneshot,
-    };
 
     tokio::time::timeout(Duration::from_secs(5), async {
         let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let (stop, stopped) = oneshot::channel();
-        let serving = tokio::spawn(server.serve(NativeKind::H1, listener, None, async {
-            let _ = stopped.await;
-        }));
-        let mut socket = TcpStream::connect(address).await.unwrap();
-        socket
-            .write_all(format!("GET / HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n").as_bytes())
-            .await
-            .unwrap();
-        let mut response = String::new();
-        socket.read_to_string(&mut response).await.unwrap();
-        let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+        let listener = native::serve(server, NativeKind::H1, None).await;
+        let address = listener.address;
+        let socket = tokio::net::TcpStream::connect(address).await.unwrap();
+        let (headers, body) = http1::exchange(socket, "GET", "/", &address.to_string(), "", b"").await;
+        let body = String::from_utf8(body).unwrap();
         let policy = headers
             .lines()
             .find_map(|line| line.strip_prefix("content-security-policy: "))
@@ -142,24 +127,18 @@ async fn application_response_restricts_resources_and_hashes_embedded_inline_ass
             "form-action 'self'",
             "frame-ancestors 'none'",
         ] {
-            assert!(
-                policy.split("; ").any(|actual| actual == directive),
-                "missing {directive}: {policy}"
-            );
+            let found = policy.split("; ").any(|actual| actual == directive);
+            assert!(found, "missing {directive}: {policy}");
         }
         for tag in ["script", "style"] {
             let mut expected = format!("{tag}-src 'self'");
-            for inline in inline_blocks(body, tag) {
-                expected.push_str(&format!(
-                    " 'sha256-{}'",
-                    STANDARD.encode(Sha256::digest(inline.as_bytes()))
-                ));
+            for inline in inline_blocks(&body, tag) {
+                expected = expected + " " + &hash(inline);
             }
             assert!(policy.split("; ").any(|actual| actual == expected), "{policy}");
         }
         assert!(!policy.contains("unsafe-inline"));
-        stop.send(()).unwrap();
-        serving.await.unwrap().unwrap();
+        listener.shutdown().await;
     })
     .await
     .unwrap();

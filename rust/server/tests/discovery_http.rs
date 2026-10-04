@@ -2,16 +2,8 @@ use graphite_meter_server::{admission::Admission, config::Config, discovery::Dis
 use http::{Request, StatusCode};
 use std::sync::Arc;
 
-fn request(path: &str, method: &str) -> Request<()> {
-    Request::builder()
-        .uri(path)
-        .method(method)
-        .header("host", "meter.example:80")
-        .body(())
-        .unwrap()
-}
-
-fn respond(discovery: &Discovery, request: Request<()>) -> http::Response<bytes::Bytes> {
+fn respond(discovery: &Discovery, path: &str) -> http::Response<bytes::Bytes> {
+    let request = Request::get(path).header("host", "meter.example:80").body(()).unwrap();
     let route = graphite_meter_core::route::lookup(request.uri().path()).expect("a discovery route");
     discovery
         .respond(route, &request, "192.0.2.8:54321".parse().unwrap())
@@ -35,16 +27,10 @@ fn oversized_published_catalogue_is_withheld_while_preflight_answers() {
             ..ServerEntry::default()
         });
     }
-    let discovery = Discovery::new(
-        Arc::new(config.validated().unwrap()),
-        Admission::new(Default::default()),
-    )
-    .unwrap();
-    let servers = respond(&discovery, request("/servers", "GET"));
+    let config = Arc::new(config.validated().unwrap());
+    let discovery = Discovery::new(config, Admission::new(Default::default())).unwrap();
+    let servers = respond(&discovery, "/servers");
     assert_eq!(servers.status(), StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(servers.body(), "server catalogue unavailable\n");
-    assert_eq!(
-        respond(&discovery, request("/preflight", "GET")).status(),
-        StatusCode::OK
-    );
+    assert_eq!(respond(&discovery, "/preflight").status(), StatusCode::OK);
 }

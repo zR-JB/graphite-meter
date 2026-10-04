@@ -43,14 +43,10 @@ async fn handshake(
     let acceptor = TlsAcceptor::from(config);
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     let name = ServerName::try_from("localhost")?;
-    let (client, server) = tokio::time::timeout(Duration::from_secs(5), async {
-        tokio::try_join!(connector.connect(name, client_io), acceptor.accept(server_io),)
-    })
-    .await??;
-    assert_eq!(
-        server.get_ref().1.protocol_version(),
-        Some(rustls::ProtocolVersion::TLSv1_3)
-    );
+    let handshakes = async { tokio::try_join!(connector.connect(name, client_io), acceptor.accept(server_io)) };
+    let (client, server) = tokio::time::timeout(Duration::from_secs(5), handshakes).await??;
+    let version = server.get_ref().1.protocol_version();
+    assert_eq!(version, Some(rustls::ProtocolVersion::TLSv1_3));
     Ok(client.get_ref().1.peer_certificates().unwrap()[0].clone())
 }
 
@@ -87,17 +83,10 @@ async fn renewal_is_atomic_and_failed_reloads_keep_the_previous_identity() -> Re
     fs::write(&config.tls_cert, b"incomplete certificate replacement")?;
     assert!(manager.reload(SystemTime::now()).is_err());
     assert_eq!(handshake(tls.clone(), &roots).await?, replacement);
-    fs::write(
-        &config.tls_cert,
-        fs::read_to_string(second.directory().join("identity.pem"))?.repeat(80),
-    )?;
-    assert!(
-        manager
-            .reload(SystemTime::now())
-            .unwrap_err()
-            .to_string()
-            .ends_with("handshake bytes exceed the budget")
-    );
+    let long_chain = fs::read_to_string(second.directory().join("identity.pem"))?.repeat(80);
+    fs::write(&config.tls_cert, long_chain)?;
+    let refused = manager.reload(SystemTime::now()).unwrap_err().to_string();
+    assert!(refused.ends_with("handshake bytes exceed the budget"), "{refused}");
     assert_eq!(handshake(tls, &roots).await?, replacement);
     Certificates::load(&config, SystemTime::now(), |_| Ok(()))?;
     Ok(())

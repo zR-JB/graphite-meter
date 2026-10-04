@@ -24,35 +24,26 @@ const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Access identity and shared client admission budget are separate values.
 /// A browser grant narrows access without creating another subject budget.
+/// The owner's client keys, narrowest first.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Owner {
-    client_keys: Vec<String>,
-}
+pub struct Owner(Vec<String>);
 
 impl Owner {
     pub fn anonymous(address: std::net::IpAddr) -> Self {
-        Self {
-            client_keys: crate::client_address::client_keys(address),
-        }
+        Self(crate::client_address::client_keys(address))
     }
 
     /// Ambiguous proxy evidence names no client; like Go's empty owner, it can create or reach no upload.
     pub fn unresolved() -> Self {
-        Self {
-            client_keys: Vec::new(),
-        }
+        Self(Vec::new())
     }
 
     pub fn login(subject: &str, session: &str) -> Self {
-        Self {
-            client_keys: vec![format!("login:{session}"), Self::principal_key(subject)],
-        }
+        Self(vec![format!("login:{session}"), Self::principal_key(subject)])
     }
 
     pub fn delegated(subject: &str, grant_id: &str) -> Self {
-        Self {
-            client_keys: vec![format!("grant:{grant_id}"), Self::principal_key(subject)],
-        }
+        Self(vec![format!("grant:{grant_id}"), Self::principal_key(subject)])
     }
 
     /// The key every login and grant of `subject` shares.
@@ -61,7 +52,7 @@ impl Owner {
     }
 
     pub fn client_keys(&self) -> &[String] {
-        &self.client_keys
+        &self.0
     }
 }
 
@@ -102,11 +93,7 @@ struct Aggregate {
 }
 impl Aggregate {
     fn authorize(&self, owner: &Owner) -> Result<(), UploadRefusal> {
-        if &self.owner != owner {
-            Err(UploadRefusal::OwnerMismatch)
-        } else {
-            Ok(())
-        }
+        (&self.owner == owner).then_some(()).ok_or(UploadRefusal::OwnerMismatch)
     }
     fn checkpoint(&self) -> UploadCheckpoint {
         UploadCheckpoint {
@@ -144,12 +131,9 @@ impl UploadStore {
         Some(format!("gmu_{}", URL_SAFE_NO_PAD.encode(raw)))
     }
     fn valid(&self, id: &str) -> bool {
-        let Some(encoded) = id.strip_prefix("gmu_") else {
+        let Some(encoded) = id.strip_prefix("gmu_").filter(|encoded| encoded.len() == 75) else {
             return false;
         };
-        if encoded.len() != 75 {
-            return false;
-        }
         let mut raw = [0; 56];
         if URL_SAFE_NO_PAD.decode_slice(encoded, &mut raw) != Ok(raw.len()) {
             return false;
@@ -398,22 +382,13 @@ impl UploadSubscription {
                     self.ready = true;
                     return Some(UploadProgress::Ready);
                 }
+                let UploadCheckpoint { bytes, nanos } = state.checkpoint();
                 if state.finished && state.lanes == 0 {
                     self.ended = true;
-                    let c = state.checkpoint();
-                    return Some(UploadProgress::Complete {
-                        bytes: c.bytes,
-                        nanos: c.nanos,
-                    });
+                    return Some(UploadProgress::Complete { bytes, nanos });
                 }
-                if ticked && !state.finished {
-                    let checkpoint = state.checkpoint();
-                    if checkpoint.nanos > 0 {
-                        return Some(UploadProgress::Progress {
-                            bytes: checkpoint.bytes,
-                            nanos: checkpoint.nanos,
-                        });
-                    }
+                if ticked && !state.finished && nanos > 0 {
+                    return Some(UploadProgress::Progress { bytes, nanos });
                 }
             }
             tokio::select! {

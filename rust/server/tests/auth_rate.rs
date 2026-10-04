@@ -12,33 +12,24 @@ fn address(number: u32) -> IpAddr {
 async fn address_limits_are_separate_and_expire_exactly_at_sixty_seconds() {
     let limiter = AttemptLimiter::default();
     let client = address(1);
-    for (budget, limit) in [
-        (Budget::Password, 5),
-        (Budget::OidcExchange, 10),
-        (Budget::OidcStart, 10),
-        (Budget::BrowserApproval, 10),
-    ] {
+    let budgets = [
+        Budget::Password,
+        Budget::OidcExchange,
+        Budget::OidcStart,
+        Budget::BrowserApproval,
+    ];
+    for (budget, limit) in budgets.into_iter().zip([5, 10, 10, 10]) {
         for _ in 0..limit {
             assert!(limiter.allow(budget, client));
         }
         assert!(!limiter.allow(budget, client));
     }
     tokio::time::advance(Duration::from_secs(60) - Duration::from_nanos(1)).await;
-    for budget in [
-        Budget::Password,
-        Budget::OidcExchange,
-        Budget::OidcStart,
-        Budget::BrowserApproval,
-    ] {
+    for budget in budgets {
         assert!(!limiter.allow(budget, client));
     }
     tokio::time::advance(Duration::from_nanos(1)).await;
-    for budget in [
-        Budget::Password,
-        Budget::OidcExchange,
-        Budget::OidcStart,
-        Budget::BrowserApproval,
-    ] {
+    for budget in budgets {
         assert!(limiter.allow(budget, client));
     }
 }
@@ -98,7 +89,8 @@ async fn address_keys_unmap_ipv4_and_group_ipv6_by_64_bit_prefix() {
 #[tokio::test(start_paused = true)]
 async fn each_address_map_is_bounded_and_reclaims_only_expired_keys() {
     let limiter = AttemptLimiter::default();
-    for budget in [Budget::OidcExchange, Budget::BrowserApproval] {
+    let budgets = [Budget::OidcExchange, Budget::BrowserApproval];
+    for budget in budgets {
         for id in 1..=2048 {
             assert!(limiter.allow(budget, address(id)));
         }
@@ -106,12 +98,12 @@ async fn each_address_map_is_bounded_and_reclaims_only_expired_keys() {
         assert!(limiter.allow(budget, address(1)));
     }
     tokio::time::advance(Duration::from_secs(59)).await;
-    for budget in [Budget::OidcExchange, Budget::BrowserApproval] {
+    for budget in budgets {
         assert!(!limiter.allow(budget, address(2049)));
         assert!(limiter.allow(budget, address(1)));
     }
     tokio::time::advance(Duration::from_secs(1)).await;
-    for budget in [Budget::OidcExchange, Budget::BrowserApproval] {
+    for budget in budgets {
         assert!(limiter.allow(budget, address(2049)));
         // The live key survives reclamation with its one recent attempt.
         for _ in 0..9 {

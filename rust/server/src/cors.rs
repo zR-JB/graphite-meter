@@ -15,9 +15,17 @@ pub enum Access<'a> {
 
 impl Access<'_> {
     pub fn apply_response(self, headers: &mut HeaderMap) {
-        let origin = match self {
-            Self::Public => HeaderValue::from_static("*"),
-            Self::Cookie(origin) | Self::Bearer(origin) => origin.clone(),
+        let (origin, exposed) = match self {
+            Self::Public => (HeaderValue::from_static("*"), "X-Graphite-Upload-Refusal, Retry-After"),
+            Self::Cookie(origin) => (
+                origin.clone(),
+                "X-Graphite-Upload-Refusal, Retry-After, Graphite-Meter-Auth, Graphite-Meter-Auth-URL",
+            ),
+            Self::Bearer(origin) => (
+                origin.clone(),
+                "X-Graphite-Upload-Refusal, Retry-After, Graphite-Meter-Auth, Graphite-Meter-Auth-URL, \
+                 Graphite-Meter-Browser-Auth",
+            ),
         };
         headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin.clone());
         headers.insert("timing-allow-origin", origin);
@@ -25,34 +33,11 @@ impl Access<'_> {
         // Replacing a policy must not retain a broader previous credential grant.
         headers.remove(header::ACCESS_CONTROL_ALLOW_CREDENTIALS);
         headers.remove(header::ACCESS_CONTROL_EXPOSE_HEADERS);
-        match self {
-            Self::Public => {
-                headers.insert(
-                    header::ACCESS_CONTROL_EXPOSE_HEADERS,
-                    HeaderValue::from_static("X-Graphite-Upload-Refusal, Retry-After"),
-                );
-            }
-            Self::Cookie(_) => {
-                headers.insert(
-                    header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
-                    HeaderValue::from_static("true"),
-                );
-                headers.insert(
-                    header::ACCESS_CONTROL_EXPOSE_HEADERS,
-                    HeaderValue::from_static(
-                        "X-Graphite-Upload-Refusal, Retry-After, Graphite-Meter-Auth, Graphite-Meter-Auth-URL",
-                    ),
-                );
-            }
-            Self::Bearer(_) => {
-                headers.insert(
-                    header::ACCESS_CONTROL_EXPOSE_HEADERS,
-                    HeaderValue::from_static(
-                        "X-Graphite-Upload-Refusal, Retry-After, Graphite-Meter-Auth, Graphite-Meter-Auth-URL, Graphite-Meter-Browser-Auth",
-                    ),
-                );
-            }
+        if matches!(self, Self::Cookie(_)) {
+            let credentials = HeaderValue::from_static("true");
+            headers.insert(header::ACCESS_CONTROL_ALLOW_CREDENTIALS, credentials);
         }
+        headers.insert(header::ACCESS_CONTROL_EXPOSE_HEADERS, HeaderValue::from_static(exposed));
         if !matches!(self, Self::Public) {
             headers.append(header::VARY, HeaderValue::from_static("Origin"));
         }
@@ -61,19 +46,14 @@ impl Access<'_> {
     pub fn apply_measurement(self, headers: &mut HeaderMap) {
         self.apply_response(headers);
         headers.insert(header::ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("7200"));
-        headers.insert(
-            header::ACCESS_CONTROL_ALLOW_METHODS,
-            HeaderValue::from_static("GET, POST, DELETE, OPTIONS"),
-        );
-        let allowed_headers = match self {
+        let methods = HeaderValue::from_static("GET, POST, DELETE, OPTIONS");
+        headers.insert(header::ACCESS_CONTROL_ALLOW_METHODS, methods);
+        let allowed = match self {
             Self::Public => "*",
             Self::Cookie(_) => "Authorization, Content-Type, X-CSRF-Token",
             Self::Bearer(_) => "Authorization, Content-Type",
         };
-        headers.insert(
-            header::ACCESS_CONTROL_ALLOW_HEADERS,
-            HeaderValue::from_static(allowed_headers),
-        );
+        headers.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static(allowed));
     }
 }
 

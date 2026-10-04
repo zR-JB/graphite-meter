@@ -120,12 +120,8 @@ impl Certificates {
     /// Failure leaves the previous identity intact, including across partial
     /// certificate/key replacement. Existing TLS connections are unaffected.
     pub fn reload(&self, now: SystemTime) -> Result<bool, ConfigError> {
-        let replacement = Arc::new(read_identity(
-            &self.certificate_path,
-            &self.key_path,
-            &self.advertised_names,
-            now,
-        )?);
+        let replacement = read_identity(&self.certificate_path, &self.key_path, &self.advertised_names, now)?;
+        let replacement = Arc::new(replacement);
         (self.budget)(handshake_bytes(&replacement.cert))?;
         let mut current = sync::write(&self.current);
         let changed = current.cert != replacement.cert;

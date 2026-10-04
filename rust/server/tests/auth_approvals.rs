@@ -3,9 +3,13 @@ use graphite_meter_core::approval::challenge;
 use graphite_meter_server::auth::{
     ApprovalError, ApprovalKind, Challenge, Exchange, ExchangeError, SessionStore, valid_challenge,
 };
-use std::sync::{Arc, Barrier};
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    sync::{Arc, Barrier},
+};
 
 const AUDIENCE: &str = "https://client.example";
+const CLIENT: IpAddr = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1));
 
 /// The challenge of `verifier`, validated as the store takes one.
 fn valid(verifier: &str) -> Challenge {
@@ -19,18 +23,11 @@ fn cli_exchange_requires_approval_is_single_use_and_keeps_parent_identity() {
     let verifier = "v".repeat(32);
     let challenge = challenge(&verifier);
     let valid = valid(&verifier);
-    let view = store
-        .begin_cli_approval(&session, &valid, "192.0.2.1".parse().unwrap())
-        .unwrap();
+    let view = store.begin_cli_approval(&session, &valid, CLIENT).unwrap();
     assert_eq!(view.code, "24NPFPCT");
     assert!(view.browser_origin.is_none());
-    assert_eq!(
-        store
-            .begin_cli_approval(&session, &valid, "192.0.2.1".parse().unwrap())
-            .unwrap()
-            .code,
-        view.code
-    );
+    let again = store.begin_cli_approval(&session, &valid, CLIENT).unwrap();
+    assert_eq!(again.code, view.code);
     assert!(matches!(store.exchange_cli(&verifier).unwrap(), Exchange::Pending));
     assert!(matches!(
         store.approve(&session, &challenge, ApprovalKind::Browser),
@@ -55,9 +52,7 @@ fn browser_reservation_attaches_once_preserves_redirect_and_separates_audiences(
     let verifier = "v".repeat(32);
     let challenge = challenge(&verifier);
     let valid = valid(&verifier);
-    store
-        .begin_browser_approval(&valid, AUDIENCE, None, "192.0.2.1".parse().unwrap())
-        .unwrap();
+    store.begin_browser_approval(&valid, AUDIENCE, None, CLIENT).unwrap();
     assert!(
         store
             .browser_approval_redirect(&challenge)
@@ -69,19 +64,14 @@ fn browser_reservation_attaches_once_preserves_redirect_and_separates_audiences(
         Exchange::Pending
     ));
     assert!(matches!(
-        store.begin_browser_approval(
-            &valid,
-            "https://wrong.example",
-            Some(&session),
-            "192.0.2.1".parse().unwrap()
-        ),
+        store.begin_browser_approval(&valid, "https://wrong.example", Some(&session), CLIENT),
         Err(ApprovalError::InvalidApproval)
     ));
     store
-        .begin_browser_approval(&valid, AUDIENCE, Some(&session), "192.0.2.1".parse().unwrap())
+        .begin_browser_approval(&valid, AUDIENCE, Some(&session), CLIENT)
         .unwrap();
     assert!(matches!(
-        store.begin_browser_approval(&valid, AUDIENCE, Some(&other), "192.0.2.1".parse().unwrap()),
+        store.begin_browser_approval(&valid, AUDIENCE, Some(&other), CLIENT),
         Err(ApprovalError::InvalidApproval)
     ));
     assert!(matches!(
@@ -107,16 +97,16 @@ fn approval_caps_and_revocation_are_bounded_and_reclaimable() {
     let (_, session) = store.create("subject", "Name", "local", None).unwrap();
     for i in 0..8 {
         store
-            .begin_cli_approval(&session, &valid(&format!("cli-{i}")), "192.0.2.1".parse().unwrap())
+            .begin_cli_approval(&session, &valid(&format!("cli-{i}")), CLIENT)
             .unwrap();
     }
     assert!(matches!(
-        store.begin_cli_approval(&session, &valid("ninth"), "192.0.2.1".parse().unwrap()),
+        store.begin_cli_approval(&session, &valid("ninth"), CLIENT),
         Err(ApprovalError::Capacity)
     ));
     store.revoke(&session);
     assert!(matches!(store.exchange_cli("cli-0").unwrap(), Exchange::Pending));
-    let client = |network, i: usize| std::net::IpAddr::V4(std::net::Ipv4Addr::new(network, 0, 2, (i / 8) as u8));
+    let client = |network, i: usize| IpAddr::V4(Ipv4Addr::new(network, 0, 2, (i / 8) as u8));
     for i in 0..128 {
         store
             .begin_browser_approval(&valid(&format!("browser-{i}")), AUDIENCE, None, client(192, i))
@@ -139,7 +129,7 @@ fn approval_caps_and_revocation_are_bounded_and_reclaimable() {
     ));
     assert!(
         store
-            .begin_browser_approval(&valid("browser-0"), AUDIENCE, None, "192.0.2.1".parse().unwrap())
+            .begin_browser_approval(&valid("browser-0"), AUDIENCE, None, CLIENT)
             .is_ok()
     );
 }
@@ -153,9 +143,7 @@ fn validation_preserves_cli_and_browser_verifier_differences() {
     assert!(valid_challenge(&(challenge("v") + "=")).is_none());
     let challenge = challenge("");
     let valid = valid("");
-    store
-        .begin_cli_approval(&session, &valid, "192.0.2.1".parse().unwrap())
-        .unwrap();
+    store.begin_cli_approval(&session, &valid, CLIENT).unwrap();
     store.approve(&session, &challenge, ApprovalKind::Cli).unwrap();
     assert!(matches!(store.exchange_cli("").unwrap(), Exchange::Issued { .. }));
     assert!(matches!(
@@ -167,7 +155,7 @@ fn validation_preserves_cli_and_browser_verifier_differences() {
         Err(ExchangeError::InvalidVerifier)
     ));
     assert!(matches!(
-        SessionStore::new().begin_cli_approval(&session, &valid, "192.0.2.1".parse().unwrap()),
+        SessionStore::new().begin_cli_approval(&session, &valid, CLIENT),
         Err(ApprovalError::NoSession)
     ));
 }
@@ -180,7 +168,7 @@ fn concurrent_exchange_issues_exactly_one_grant() {
     let challenge = challenge(&verifier);
     let valid = valid(&verifier);
     store
-        .begin_browser_approval(&valid, AUDIENCE, Some(&session), "192.0.2.1".parse().unwrap())
+        .begin_browser_approval(&valid, AUDIENCE, Some(&session), CLIENT)
         .unwrap();
     store.approve(&session, &challenge, ApprovalKind::Browser).unwrap();
     let barrier = Arc::new(Barrier::new(8));
@@ -215,9 +203,7 @@ fn logout_and_exchange_are_serializable_and_cannot_leave_a_valid_credential() {
         let verifier = "v".repeat(32);
         let challenge = challenge(&verifier);
         let valid = valid(&verifier);
-        store
-            .begin_cli_approval(&session, &valid, "192.0.2.1".parse().unwrap())
-            .unwrap();
+        store.begin_cli_approval(&session, &valid, CLIENT).unwrap();
         store.approve(&session, &challenge, ApprovalKind::Cli).unwrap();
         let barrier = Barrier::new(2);
         let exchange = std::thread::scope(|scope| {

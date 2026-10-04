@@ -43,19 +43,23 @@ fn connector(roots: RootCertStore, version: &'static SupportedProtocolVersion) -
     TlsConnector::from(Arc::new(client))
 }
 
-async fn connect(address: SocketAddr, connector: &TlsConnector) -> TlsStream<TcpStream> {
-    let stream = connector
-        .connect(
-            ServerName::try_from("localhost").unwrap(),
-            TcpStream::connect(address).await.unwrap(),
-        )
+async fn listen(config: Config, kind: NativeKind, tls: Arc<ServerConfig>) -> native::NativeServer {
+    let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
+    native::serve(server, kind, Some(tls)).await
+}
+
+async fn handshake(address: SocketAddr, connector: &TlsConnector) -> std::io::Result<TlsStream<TcpStream>> {
+    let socket = TcpStream::connect(address).await.unwrap();
+    connector
+        .connect(ServerName::try_from("localhost").unwrap(), socket)
         .await
-        .unwrap();
-    assert_eq!(
-        stream.get_ref().1.protocol_version(),
-        Some(rustls::ProtocolVersion::TLSv1_3)
-    );
-    assert_eq!(stream.get_ref().1.alpn_protocol(), Some(b"http/1.1".as_slice()));
+}
+
+async fn connect(address: SocketAddr, connector: &TlsConnector) -> TlsStream<TcpStream> {
+    let stream = handshake(address, connector).await.unwrap();
+    let connection = stream.get_ref().1;
+    assert_eq!(connection.protocol_version(), Some(rustls::ProtocolVersion::TLSv1_3));
+    assert_eq!(connection.alpn_protocol(), Some(b"http/1.1".as_slice()));
     stream
 }
 
@@ -76,16 +80,8 @@ async fn validated_tls13_serves_probe_after_rejected_tls12() {
         let (tls, roots) = configs(&identity);
         let good = connector(roots.clone(), &rustls::version::TLS13);
         let old = connector(roots, &rustls::version::TLS12);
-        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-        let listener = native::serve(server, NativeKind::H1Tls, Some(tls)).await;
-        assert!(
-            old.connect(
-                ServerName::try_from("localhost").unwrap(),
-                TcpStream::connect(listener.address).await.unwrap()
-            )
-            .await
-            .is_err()
-        );
+        let listener = listen(Config::default(), NativeKind::H1Tls, tls).await;
+        assert!(handshake(listener.address, &old).await.is_err());
         let (headers, body) = request(listener.address, &good, "GET", "/probe", b"").await;
         assert!(headers.starts_with("HTTP/1.1 200"));
         assert!(headers.contains("access-control-allow-origin: *"));
@@ -107,8 +103,7 @@ async fn tls_stalled_download_keeps_deadline_through_encrypted_writes() {
             max_operation_duration: Duration::from_millis(300),
             ..Config::default()
         };
-        let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let listener = native::serve(server, NativeKind::H1Tls, Some(tls)).await;
+        let listener = listen(config, NativeKind::H1Tls, tls).await;
         let mut stalled = connect(listener.address, &connector).await;
         stalled
             .write_all(b"GET /download?bytes=68719476736 HTTP/1.1\r\nHost: localhost\r\n\r\n")
@@ -119,16 +114,12 @@ async fn tls_stalled_download_keeps_deadline_through_encrypted_writes() {
             headers.push(stalled.read_u8().await.unwrap());
         }
         assert!(headers.starts_with(b"HTTP/1.1 200"));
-        let (_, probe) = request(listener.address, &connector, "GET", "/probe", b"").await;
-        assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&probe).unwrap()["load"]["active"],
-            1
-        );
-        loop {
+        let active = async || {
             let (_, probe) = request(listener.address, &connector, "GET", "/probe", b"").await;
-            if serde_json::from_slice::<serde_json::Value>(&probe).unwrap()["load"]["active"] == 0 {
-                break;
-            }
+            serde_json::from_slice::<serde_json::Value>(&probe).unwrap()["load"]["active"].clone()
+        };
+        assert_eq!(active().await, 1);
+        while active().await != 0 {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         drop(stalled);
@@ -148,8 +139,7 @@ async fn shutdown_joins_incomplete_tls_handshake_and_releases_connection() {
             max_connections_per_client: 1,
             ..Config::default()
         };
-        let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-        let mut listener = native::serve(server, NativeKind::H1Tls, Some(tls)).await;
+        let mut listener = listen(config, NativeKind::H1Tls, tls).await;
         let mut pending = TcpStream::connect(listener.address).await.unwrap();
         pending.write_all(b"\x16\x03\x01").await.unwrap();
         // Exhaustion proves the first socket acquired its permit before TLS.
@@ -179,8 +169,7 @@ async fn h3_tcp_companion_serves_probe_and_control_routes_and_advertises_the_eff
         ] {
             let mut config = Config::default();
             config.native[NativeKind::H3 as usize].public_origin = origin.into();
-            let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
-            let listener = native::serve(server, NativeKind::H3, Some(tls.clone())).await;
+            let listener = listen(config, NativeKind::H3, tls.clone()).await;
             let (headers, body) = request(listener.address, &connector, "GET", "/probe", b"").await;
             assert!(headers.starts_with("HTTP/1.1 200"));
             assert!(headers.contains(&format!("alt-svc: h3=\":{}\"", port.unwrap_or(listener.address.port()))));
@@ -188,26 +177,11 @@ async fn h3_tcp_companion_serves_probe_and_control_routes_and_advertises_the_eff
             let probe: serde_json::Value = serde_json::from_slice(&body).unwrap();
             assert_eq!(probe["protocolNegotiated"], "http/1.1");
             let (headers, body) = request(listener.address, &connector, "POST", "/upload/session", b"").await;
-            assert!(
-                headers.starts_with("HTTP/1.1 200") && !headers.contains("alt-svc:"),
-                "{headers}"
-            );
+            let fresh = headers.starts_with("HTTP/1.1 200") && !headers.contains("alt-svc:");
+            assert!(fresh, "{headers}");
             let session: serde_json::Value = serde_json::from_slice(&body).unwrap();
             let id = session["uploadId"].as_str().unwrap();
-            for (method, path, status) in [
-                ("POST", format!("/upload/checkpoint?id={id}"), "400"),
-                ("DELETE", format!("/upload/progress?id={id}"), "400"),
-                ("POST", "/wt/session".into(), "200"),
-                ("GET", "/upload/session".into(), "405"),
-            ] {
-                let (headers, _) = request(listener.address, &connector, method, &path, b"").await;
-                assert!(
-                    headers.starts_with(&format!("HTTP/1.1 {status}")),
-                    "{method} {path}: {headers}"
-                );
-                assert!(!headers.contains("alt-svc:"));
-            }
-            for path in [
+            let not_found = [
                 "/",
                 "/login",
                 "/preflight",
@@ -215,13 +189,22 @@ async fn h3_tcp_companion_serves_probe_and_control_routes_and_advertises_the_eff
                 "/download",
                 "/upload",
                 "/ws/ping",
-            ] {
-                let (headers, _) = request(listener.address, &connector, "GET", path, b"").await;
-                assert!(headers.starts_with("HTTP/1.1 404"), "{path}: {headers}");
+            ];
+            for (method, path, status) in [
+                ("POST", format!("/upload/checkpoint?id={id}"), "400"),
+                ("DELETE", format!("/upload/progress?id={id}"), "400"),
+                ("POST", "/wt/session".into(), "200"),
+                ("GET", "/upload/session".into(), "405"),
+                ("OPTIONS", "/probe".into(), "204"),
+            ]
+            .into_iter()
+            .chain(not_found.map(|path| ("GET", path.into(), "404")))
+            {
+                let (headers, _) = request(listener.address, &connector, method, &path, b"").await;
+                let expected = format!("HTTP/1.1 {status}");
+                assert!(headers.starts_with(&expected), "{method} {path}: {headers}");
                 assert!(!headers.contains("alt-svc:"));
             }
-            let (headers, _) = request(listener.address, &connector, "OPTIONS", "/probe", b"").await;
-            assert!(headers.starts_with("HTTP/1.1 204") && !headers.contains("alt-svc:"));
             listener.shutdown().await;
         }
     })

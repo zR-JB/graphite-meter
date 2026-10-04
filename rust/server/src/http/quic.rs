@@ -58,20 +58,10 @@ impl HttpServer {
     ) -> Result<QuicEndpoint, ServerError> {
         let udp = bind_udp(address, 1)?;
         let endpoint_config = noq::EndpointConfig::default();
-        let bytes = budget::endpoint_bytes(
-            &endpoint_config,
-            1,
-            self.config.max_connections,
-            udp.kernel_bytes,
-            udp.socket.max_receive_segments().get(),
-        )
-        .ok_or("QUIC endpoint buffer size overflow")?;
-        budget::check(
-            &self.config,
-            self.memory.limit,
-            self.handshake_bytes.load(Ordering::Relaxed),
-            Some(bytes),
-        )?;
+        let bytes = self
+            .endpoint_bytes(&endpoint_config, 1, &udp)
+            .ok_or("QUIC endpoint buffer size overflow")?;
+        self.check_endpoints(bytes)?;
         let config = self.quic_config(tls, 1)?;
         let quic = self.endpoint(endpoint_config, &config, udp.socket, udp.runtime, bytes)?;
         self.memory.reserved.store(bytes, Ordering::Relaxed);
@@ -99,23 +89,11 @@ impl HttpServer {
         // The others join the first socket's port, which the OS picks for port 0.
         let address = first.socket.local_addr()?;
         let endpoint_config = noq::EndpointConfig::default();
-        let handshake_bytes = self.handshake_bytes.load(Ordering::Relaxed);
-        let shard_bytes = |shards, udp: &Udp| {
-            let segments = udp.socket.max_receive_segments().get();
-            budget::endpoint_bytes(
-                &endpoint_config,
-                shards,
-                self.config.max_connections,
-                udp.kernel_bytes,
-                segments,
-            )
-        };
-        let check = |total| budget::check(&self.config, self.memory.limit, handshake_bytes, Some(total));
         // The first socket stands for the others until they are bound; the check below counts each.
         let covered = |shards: usize| {
-            shard_bytes(shards, &first)
+            self.endpoint_bytes(&endpoint_config, shards, &first)
                 .and_then(|bytes| bytes.checked_mul(shards))
-                .is_some_and(|total| check(total).is_ok())
+                .is_some_and(|total| self.check_endpoints(total).is_ok())
         };
         let Some(shards) = (2..=runtimes.len()).rev().find(|&shards| covered(shards)) else {
             return Ok(None);
@@ -126,14 +104,14 @@ impl HttpServer {
         }
         let bytes = sockets
             .iter()
-            .map(|udp| shard_bytes(shards, udp))
+            .map(|udp| self.endpoint_bytes(&endpoint_config, shards, udp))
             .collect::<Option<Vec<_>>>()
             .ok_or(OVERFLOW)?;
         let total = bytes
             .iter()
             .try_fold(0_usize, |total, &bytes| total.checked_add(bytes))
             .ok_or(OVERFLOW)?;
-        check(total)?;
+        self.check_endpoints(total)?;
         let config = self.quic_config(tls, shards)?;
         let (router, inboxes) =
             quic_shard::Router::new(shards, budget::packet_bytes(&endpoint_config).ok_or(OVERFLOW)?);
@@ -147,6 +125,18 @@ impl HttpServer {
         }
         self.memory.reserved.store(total, Ordering::Relaxed);
         Ok(Some(endpoints))
+    }
+
+    /// What one of `shards` endpoints on `udp` holds of the budget.
+    fn endpoint_bytes(&self, config: &noq::EndpointConfig, shards: usize, udp: &Udp) -> Option<usize> {
+        let segments = udp.socket.max_receive_segments().get();
+        budget::endpoint_bytes(config, shards, self.config.max_connections, udp.kernel_bytes, segments)
+    }
+
+    /// The budget must cover every connection's floor beside endpoints holding `bytes` in all.
+    fn check_endpoints(&self, bytes: usize) -> Result<(), ConfigError> {
+        let handshake_bytes = self.handshake_bytes.load(Ordering::Relaxed);
+        budget::check(&self.config, self.memory.limit, handshake_bytes, Some(bytes))
     }
 
     /// An endpoint on `socket`, whose buffers hold `bytes` of the budget for as long as it runs.
@@ -536,17 +526,12 @@ impl SendWindow {
         // Read the aggregate first so a concurrent send on the initial path
         // cannot look like traffic on another path.
         let all_sent = connection.stats().udp_tx.bytes;
-        let Some(path) = connection.path_stats(noq::PathId::ZERO) else {
-            self.last = None;
-            self.low_demand_since = None;
+        // A second path invalidates this path's throughput estimate.
+        let path = connection.path_stats(noq::PathId::ZERO);
+        let Some(path) = path.filter(|path| all_sent <= path.udp_tx.bytes) else {
+            (self.last, self.low_demand_since) = (None, None);
             return;
         };
-        // A second path invalidates this path's throughput estimate.
-        if all_sent > path.udp_tx.bytes {
-            self.last = None;
-            self.low_demand_since = None;
-            return;
-        }
         let now = tokio::time::Instant::now();
         let sent = path.udp_tx.bytes;
         if let Some((last, previous)) = self.last {
@@ -578,8 +563,7 @@ impl SendWindow {
     }
 
     fn release(&mut self, connection: &noq::Connection) {
-        self.last = None;
-        self.low_demand_since = None;
+        (self.last, self.low_demand_since) = (None, None);
         if self.limit != QUIC_MIN_SEND_WINDOW {
             self.limit = QUIC_MIN_SEND_WINDOW;
             connection.set_send_window(QUIC_MIN_SEND_WINDOW);
@@ -600,12 +584,16 @@ fn desired_send_window(sent: u64, rtt: Duration, elapsed: Duration) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_SEND_WINDOW, QUIC_MIN_SEND_WINDOW, SendWindow};
+    use super::*;
     use crate::{
         budget::{QUIC_RECEIVE_WINDOW_FLOOR, connection_floor, noq_floor},
         config::Config,
     };
-    use std::{sync::Arc, time::Duration};
+
+    /// `test`'s output; it must finish within `seconds`.
+    async fn within<T>(seconds: u64, test: impl Future<Output = T>) -> T {
+        tokio::time::timeout(Duration::from_secs(seconds), test).await.unwrap()
+    }
 
     fn tls() -> (Arc<rustls::ServerConfig>, noq::ClientConfig) {
         tls_offering(vec![b"h3".to_vec()])
@@ -621,7 +609,7 @@ mod tests {
         (Arc::new(tls), client)
     }
 
-    fn held_udp_socket(address: std::net::SocketAddr) -> Option<std::path::PathBuf> {
+    fn held_udp_socket(address: SocketAddr) -> Option<std::path::PathBuf> {
         let port = format!(":{:04X}", address.port());
         (0..100).find_map(|_| {
             let sockets: Vec<_> = std::fs::read_to_string("/proc/net/udp")
@@ -640,7 +628,7 @@ mod tests {
         })
     }
 
-    async fn settled(memory: &super::MemoryBudget, peers: &[&noq::Connection]) -> usize {
+    async fn settled(memory: &MemoryBudget, peers: &[&noq::Connection]) -> usize {
         let activity = || {
             let datagrams = peers.iter().map(|peer| {
                 let stats = peer.stats();
@@ -662,49 +650,104 @@ mod tests {
         }
     }
 
-    type Requests = graphite_meter_http3::client::SendRequest;
+    type Requests = http3::client::SendRequest;
 
     fn requests(quic: noq::Connection) -> Requests {
-        let (mut driver, requests) = graphite_meter_http3::client::new(quic);
+        let (mut driver, requests) = http3::client::new(quic);
         tokio::spawn(async move { driver.drive().await });
         requests
     }
 
-    async fn download(requests: &Requests, bytes: u64) -> Result<usize, graphite_meter_http3::Error> {
-        let request = http::Request::get(format!("https://localhost/download?bytes={bytes}"))
-            .body(())
-            .unwrap();
+    /// Sends `request` with `body` and reads a 200 reply's body.
+    async fn send(requests: &Requests, request: Request<()>, body: &'static [u8]) -> Result<Vec<u8>, http3::Error> {
         let (mut send, mut recv) = requests.send_request(request).await?.split();
+        if !body.is_empty() {
+            send.send_data(Bytes::from_static(body)).await?;
+        }
         send.finish().await?;
-        assert_eq!(recv.response().await?.status(), http::StatusCode::OK);
-        let mut received = 0;
+        assert_eq!(recv.response().await?.status(), StatusCode::OK);
+        let mut received = Vec::new();
         while let Some(data) = recv.data().await? {
-            received += data.len();
+            received.extend_from_slice(&data);
         }
         Ok(received)
     }
 
-    fn serve(
-        server: &Arc<super::HttpServer>,
-        tls: Arc<rustls::ServerConfig>,
-    ) -> (
-        std::net::SocketAddr,
-        tokio::sync::oneshot::Sender<()>,
-        tokio::task::JoinHandle<Result<(), super::ServerError>>,
-    ) {
-        let quic = server.quic_endpoint(tls, "127.0.0.1:0".parse().unwrap()).unwrap();
+    async fn download(requests: &Requests, bytes: u64) -> Result<usize, http3::Error> {
+        let request = Request::get(format!("https://localhost/download?bytes={bytes}"));
+        Ok(send(requests, request.body(()).unwrap(), b"").await?.len())
+    }
+
+    async fn upload_id(requests: &Requests) -> String {
+        let request = Request::post("https://localhost/upload/session").body(()).unwrap();
+        let body = send(requests, request, b"").await.unwrap();
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap()["uploadId"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    /// An admitted upload of `body`, which funds its connection's receive window.
+    async fn upload(requests: &Requests, body: &'static [u8]) {
+        let id = upload_id(requests).await;
+        let request = Request::post(format!("https://localhost/upload?id={id}"));
+        send(requests, request.body(()).unwrap(), body).await.unwrap();
+    }
+
+    struct Served {
+        address: SocketAddr,
+        stop: tokio::sync::oneshot::Sender<()>,
+        task: tokio::task::JoinHandle<Result<(), ServerError>>,
+    }
+
+    impl Served {
+        async fn stop(self) {
+            self.stop.send(()).unwrap();
+            self.task.await.unwrap().unwrap();
+        }
+    }
+
+    fn serve(server: &Arc<HttpServer>, tls: Arc<rustls::ServerConfig>) -> Served {
+        serve_on(
+            server,
+            server.quic_endpoint(tls, "127.0.0.1:0".parse().unwrap()).unwrap(),
+        )
+    }
+
+    fn serve_on(server: &Arc<HttpServer>, quic: QuicEndpoint) -> Served {
         let address = quic.local_addr().unwrap();
         let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-        let serving = tokio::spawn(server.clone().serve_quic(quic, async {
+        let task = tokio::spawn(server.clone().serve_quic(quic, async {
             let _ = stopped.await;
         }));
-        (address, stop, serving)
+        Served { address, stop, task }
+    }
+
+    /// A default server serving HTTP/3, and a client configuration that trusts it.
+    fn start() -> (Arc<HttpServer>, Served, noq::ClientConfig) {
+        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
+        let (tls, client) = tls();
+        let served = serve(&server, tls);
+        (server, served, client)
+    }
+
+    /// An endpoint whose sockets hold none of the budget.
+    fn unbudgeted(server: &HttpServer, config: noq::ServerConfig) -> QuicEndpoint {
+        QuicEndpoint {
+            endpoint: noq::Endpoint::server(config.clone(), "127.0.0.1:0".parse().unwrap()).unwrap(),
+            config,
+            clients: server.client_credit.clone(),
+        }
+    }
+
+    fn client() -> noq::Endpoint {
+        noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap()
     }
 
     async fn h3_client(
         client: &noq::Endpoint,
         config: noq::ClientConfig,
-        address: std::net::SocketAddr,
+        address: SocketAddr,
     ) -> (noq::Connection, Requests) {
         let quic = client
             .connect_with(config, address, "localhost")
@@ -714,35 +757,24 @@ mod tests {
         (quic.clone(), requests(quic))
     }
 
-    async fn upload_id(requests: &Requests) -> String {
-        let request = http::Request::post("https://localhost/upload/session")
-            .body(())
-            .unwrap();
-        let (mut send, mut recv) = requests.send_request(request).await.unwrap().split();
-        send.finish().await.unwrap();
-        assert_eq!(recv.response().await.unwrap().status(), http::StatusCode::OK);
-        let mut body = Vec::new();
-        while let Some(data) = recv.data().await.unwrap() {
-            body.extend_from_slice(&data);
-        }
-        serde_json::from_slice::<serde_json::Value>(&body).unwrap()["uploadId"]
-            .as_str()
-            .unwrap()
-            .to_owned()
-    }
-
-    #[tokio::test]
-    async fn endpoint_leaves_every_connection_floor_and_refunds_on_drop() {
-        use super::*;
+    fn four_connections() -> ValidatedConfig {
         let config = Config {
             max_connections: 4,
             max_connections_per_client: 4,
             ..Config::default()
-        }
-        .validated()
-        .unwrap();
-        let floor = connection_floor(0);
-        let floors = 4 * (floor + noq_floor(&config.limits).unwrap());
+        };
+        config.validated().unwrap()
+    }
+
+    /// Four connections' floors.
+    fn floors(config: &ValidatedConfig) -> usize {
+        4 * (connection_floor(0) + noq_floor(&config.limits).unwrap())
+    }
+
+    #[tokio::test]
+    async fn endpoint_leaves_every_connection_floor_and_refunds_on_drop() {
+        let config = four_connections();
+        let (floor, floors) = (connection_floor(0), floors(&config));
         let (tls, client_config) = tls();
         let address = "127.0.0.1:0".parse().unwrap();
         let measured = HttpServer::with_memory(config.clone(), 1 << 30).unwrap();
@@ -751,10 +783,8 @@ mod tests {
         let minimum = idle - measured.memory.available() + floors + DOWNLOAD_BLOCK_BYTES;
         drop(endpoint);
         let small = HttpServer::with_memory(config.clone(), minimum - 1).unwrap();
-        assert!(
-            small.cover_handshake(minimum).is_ok(),
-            "chain charged QUIC floors without an endpoint"
-        );
+        let covered = small.cover_handshake(minimum);
+        assert!(covered.is_ok(), "chain charged QUIC floors without an endpoint");
         small.cover_handshake(0).unwrap();
         let available = small.memory.available();
         let Err(error) = small.quic_endpoint(tls.clone(), address) else {
@@ -770,10 +800,8 @@ mod tests {
         let Err(error) = server.cover_handshake(1) else {
             panic!("certificate chain admitted without room in every connection floor");
         };
-        assert!(
-            error.to_string().contains(&format!("at least {}", minimum + 4)),
-            "{error}"
-        );
+        let at_least = format!("at least {}", minimum + 4);
+        assert!(error.to_string().contains(&at_least), "{error}");
         let client = noq::Endpoint::client(address).unwrap();
         client.set_default_client_config(client_config);
         let mut connections = Vec::new();
@@ -794,19 +822,17 @@ mod tests {
         let address = endpoint.local_addr().unwrap();
         let socket = held_udp_socket(address).unwrap();
         drop(endpoint);
-        tokio::time::timeout(Duration::from_secs(5), async {
+        within(5, async {
             while server.memory.available() != available {
                 tokio::task::yield_now().await;
             }
         })
-        .await
-        .unwrap();
+        .await;
         assert_ne!(held_udp_socket(address), Some(socket));
     }
 
     #[tokio::test]
     async fn retained_udp_sender_keeps_socket_budget_until_last_drop() {
-        use super::*;
         use noq::AsyncUdpSocket;
         let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let runtime = noq::default_runtime().unwrap();
@@ -833,7 +859,7 @@ mod tests {
             segment_size: None,
             src_ip: None,
         };
-        tokio::time::timeout(Duration::from_secs(5), async {
+        within(5, async {
             std::future::poll_fn(|cx| sender.as_mut().poll_send(&transmit, cx))
                 .await
                 .unwrap();
@@ -842,8 +868,7 @@ mod tests {
             assert_eq!(&payload[..length], b"retained");
             assert_eq!(peer, address);
         })
-        .await
-        .unwrap();
+        .await;
         assert!(std::net::UdpSocket::bind(address).is_err());
         let socket = held_udp_socket(address).unwrap();
         drop(sender);
@@ -857,9 +882,9 @@ mod tests {
         let config =
             noq::ServerConfig::with_crypto(Arc::new(noq::crypto::rustls::QuicServerConfig::try_from(tls).unwrap()));
         let server = noq::Endpoint::server(config, "127.0.0.1:0".parse().unwrap()).unwrap();
-        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let client = client();
         client.set_default_client_config(client_config);
-        tokio::time::timeout(Duration::from_secs(5), async {
+        within(5, async {
             let (client, server) = tokio::join!(
                 client.connect(server.local_addr().unwrap(), "localhost").unwrap(),
                 async { server.accept().await.unwrap().await.unwrap() },
@@ -872,7 +897,7 @@ mod tests {
             requests.read_exact(&mut ping).await.unwrap();
             assert_eq!(&ping, b"ping");
 
-            let budget = super::MemoryBudget::new(usize::MAX);
+            let budget = MemoryBudget::new(usize::MAX);
             let mut window = SendWindow::new();
             server.set_send_window(window.grow(MAX_SEND_WINDOW, &budget).unwrap());
             window.update(&server, &budget);
@@ -897,13 +922,11 @@ mod tests {
             assert_eq!(&ping, b"live");
             client.close(0_u32.into(), b"done");
         })
-        .await
-        .unwrap();
+        .await;
     }
 
     #[tokio::test]
     async fn receive_credit_is_reserved_on_grant_and_never_accumulates() {
-        use super::*;
         use futures_util::FutureExt;
         let server = HttpServer::new(Config::default().validated().unwrap()).unwrap();
         let (tls, mut client_config) = tls();
@@ -912,10 +935,10 @@ mod tests {
         client_config.transport_config(Arc::new(transport));
         let quic = server.quic_endpoint(tls, "127.0.0.1:0".parse().unwrap()).unwrap();
         let address = quic.local_addr().unwrap();
-        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let client = client();
         client.set_default_client_config(client_config);
         let floor = connection_floor(0);
-        tokio::time::timeout(Duration::from_secs(20), async {
+        within(20, async {
             let connect = || async {
                 let (peer, credit) = tokio::join!(client.connect(address, "localhost").unwrap(), async {
                     let incoming = quic.endpoint.accept().await.unwrap();
@@ -950,7 +973,7 @@ mod tests {
                     peer.accept_uni().await.unwrap().read_to_end(1).await.unwrap();
                 }
             };
-            let clients = crate::client_address::client_keys("127.0.0.1".parse().unwrap());
+            let clients = client_address::client_keys("127.0.0.1".parse().unwrap());
             let (peer, credit) = connect().await;
             let silent = settled(&server.memory, &[&peer]).await;
             assert_eq!(fill(&peer).await, QUIC_RECEIVE_WINDOW_FLOOR as usize);
@@ -960,11 +983,8 @@ mod tests {
                 "unadmitted reassembly"
             );
             assert!(credit.fund(&clients), "no grant without pressure");
-            assert_eq!(
-                idle - server.memory.available(),
-                QUIC_CREDIT_BYTES,
-                "grant charged when made"
-            );
+            let charged = idle - server.memory.available();
+            assert_eq!(charged, QUIC_CREDIT_BYTES, "grant charged when made");
             round_trip(&peer, &credit).await;
             // Unread, the window stays where autotuning starts it.
             let initial = crate::budget::QUIC_INITIAL_RECEIVE_WINDOW - QUIC_RECEIVE_WINDOW_FLOOR;
@@ -988,20 +1008,17 @@ mod tests {
             peer.close(0_u32.into(), b"done");
             fresh.close(0_u32.into(), b"done");
         })
-        .await
-        .unwrap();
+        .await;
     }
 
     #[tokio::test]
     async fn cancelled_handshake_holds_its_floor_until_noq_drops_the_connection() {
-        use super::*;
-        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-        let ((identity, _), (_, distrusting)) = (tls(), tls());
-        let (address, stop, serving) = serve(&server, identity);
+        let (server, served, _) = start();
+        let (_, distrusting) = tls();
         let floor = connection_floor(0);
         let idle = server.memory.available();
-        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
-        let connecting = client.connect_with(distrusting, address, "localhost").unwrap();
+        let client = client();
+        let connecting = client.connect_with(distrusting, served.address, "localhost").unwrap();
         assert!(connecting.await.is_err());
         tokio::time::pause();
         for _ in 0..QUIC_HANDSHAKE.as_millis() / 25 {
@@ -1011,10 +1028,8 @@ mod tests {
             tokio::time::advance(Duration::from_millis(50)).await;
         }
         assert_eq!(server.connections.stats().active, 0, "handshake never timed out");
-        assert!(
-            idle - server.memory.available() >= floor,
-            "floor refunded before Noq dropped the connection"
-        );
+        let held = idle - server.memory.available();
+        assert!(held >= floor, "floor refunded before Noq dropped the connection");
         for _ in 0..120 {
             if server.memory.available() == idle {
                 break;
@@ -1023,33 +1038,28 @@ mod tests {
         }
         assert_eq!(server.memory.available(), idle);
         tokio::time::resume();
-        stop.send(()).unwrap();
-        serving.await.unwrap().unwrap();
+        served.stop().await;
     }
 
     /// As quic-go's, a handshake has ten seconds in all.
     #[tokio::test]
     async fn a_handshake_has_ten_seconds_in_all() {
-        use super::*;
-        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-        let (tls, client_config) = tls();
-        let (address, stop, serving) = serve(&server, tls);
+        let (server, served, client_config) = start();
         // A client's first Initial, from a socket that never answers the server.
         let silent = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let client = client();
         let _connecting = client
             .connect_with(client_config, silent.local_addr().unwrap(), "localhost")
             .unwrap();
         let mut initial = [0; 1500];
         let length = silent.recv(&mut initial).await.unwrap();
-        silent.send_to(&initial[..length], address).await.unwrap();
-        tokio::time::timeout(Duration::from_secs(5), async {
+        silent.send_to(&initial[..length], served.address).await.unwrap();
+        within(5, async {
             while server.connections.stats().active == 0 {
                 tokio::task::yield_now().await;
             }
         })
-        .await
-        .unwrap();
+        .await;
         tokio::time::pause();
         let wait = async |seconds| {
             for _ in 0..seconds * 10 {
@@ -1058,46 +1068,27 @@ mod tests {
         };
         // Real time passed since the handshake began, so the first check leaves it a margin.
         wait(8).await;
-        assert_eq!(
-            server.connections.stats().active,
-            1,
-            "the handshake ended before ten seconds"
-        );
+        let active = || server.connections.stats().active;
+        assert_eq!(active(), 1, "the handshake ended before ten seconds");
         wait(3).await;
-        assert_eq!(
-            server.connections.stats().active,
-            0,
-            "the handshake outlived ten seconds"
-        );
+        assert_eq!(active(), 0, "the handshake outlived ten seconds");
         tokio::time::resume();
-        stop.send(()).unwrap();
-        serving.await.unwrap().unwrap();
+        served.stop().await;
     }
 
     #[tokio::test]
     async fn probes_do_not_keep_leftover_credit_from_a_peer_that_blocks_goaway() {
-        use super::*;
-        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-        let (tls, mut client_config) = tls();
+        let (server, served, mut client_config) = start();
         let mut transport = noq::TransportConfig::default();
         transport.receive_window(4096_u32.into());
         client_config.transport_config(Arc::new(transport));
-        let (address, stop, serving) = serve(&server, tls);
-        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
-        let (quic, _requests, _unread) = tokio::time::timeout(Duration::from_secs(10), async {
-            let (quic, requests) = h3_client(&client, client_config, address).await;
-            let id = upload_id(&requests).await;
-            let request = http::Request::post(format!("https://localhost/upload?id={id}"))
-                .body(())
-                .unwrap();
-            let (mut send, mut recv) = requests.send_request(request).await.unwrap().split();
-            send.send_data(Bytes::from_static(b"granted")).await.unwrap();
-            send.finish().await.unwrap();
-            assert_eq!(recv.response().await.unwrap().status(), StatusCode::OK);
-            while recv.data().await.unwrap().is_some() {}
+        let client = client();
+        let (quic, _requests, _unread) = within(10, async {
+            let (quic, requests) = h3_client(&client, client_config, served.address).await;
+            upload(&requests, b"granted").await;
             let mut unread = Vec::new();
             for _ in 0..32 {
-                let request = http::Request::get("https://localhost/probe").body(()).unwrap();
+                let request = Request::get("https://localhost/probe").body(()).unwrap();
                 let (mut send, recv) = requests.send_request(request).await.unwrap().split();
                 send.finish().await.unwrap();
                 unread.push((send, recv));
@@ -1105,8 +1096,7 @@ mod tests {
             settled(&server.memory, &[&quic]).await;
             (quic, requests, unread)
         })
-        .await
-        .unwrap();
+        .await;
         // Stop short of the close, so Noq drains in real time and the client sees it.
         tokio::time::pause();
         tokio::time::sleep(CONTROL + SHUTDOWN_GRACE - Duration::from_secs(1)).await;
@@ -1117,23 +1107,12 @@ mod tests {
             }
             outcome => panic!("unread probes kept leftover credit: {outcome:?}"),
         }
-        stop.send(()).unwrap();
-        serving.await.unwrap().unwrap();
+        served.stop().await;
     }
 
     #[tokio::test]
     async fn authenticated_controls_take_no_receive_credit_and_webtransport_is_hardened() {
-        use super::*;
-        let mut config = Config {
-            advertised_native: Some(Default::default()),
-            ..Config::default()
-        };
-        config.public.both.push("self".into());
-        config.auth.mode = crate::config::AuthMode::Password;
-        config.auth.public_url = "https://localhost".into();
-        config.auth.password_hash =
-            "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0".into();
-        let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
+        let server = Arc::new(HttpServer::new(super::super::tests::password()).unwrap());
         let sessions = server.auth.as_ref().unwrap().sessions();
         let (_, session) = sessions.create("subject", "Name", "local", None).unwrap();
         let (token, _grant) = sessions.issue_cli_grant(&session).unwrap();
@@ -1141,30 +1120,22 @@ mod tests {
         let mut transport = noq::TransportConfig::default();
         transport.stream_receive_window(16_u32.into());
         client_config.transport_config(Arc::new(transport));
-        let (address, stop, serving) = serve(&server, tls);
-        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
-        tokio::time::timeout(Duration::from_secs(10), async {
-            let (quic, requests) = h3_client(&client, client_config, address).await;
+        let served = serve(&server, tls);
+        let client = client();
+        let authorized = |path: &str| {
+            Request::get(format!("https://localhost{path}"))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::ORIGIN, "")
+                .body(())
+                .unwrap()
+        };
+        within(10, async {
+            let (quic, requests) = h3_client(&client, client_config, served.address).await;
             let idle = server.memory.available();
-            let request = http::Request::get("https://localhost/probe")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .header(header::ORIGIN, "")
-                .body(())
-                .unwrap();
-            let (mut send, mut recv) = requests.send_request(request).await.unwrap().split();
-            send.finish().await.unwrap();
-            assert_eq!(recv.response().await.unwrap().status(), StatusCode::OK);
-            while recv.data().await.unwrap().is_some() {}
-            assert!(
-                server.memory.available() > idle - QUIC_CREDIT_BYTES / 2,
-                "granted without a permit"
-            );
-            let request = http::Request::get("https://localhost/wt/ping")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .header(header::ORIGIN, "")
-                .body(())
-                .unwrap();
-            let (session, response) = http3::webtransport::Session::connect(&requests, request)
+            send(&requests, authorized("/probe"), b"").await.unwrap();
+            let available = server.memory.available();
+            assert!(available > idle - QUIC_CREDIT_BYTES / 2, "granted without a permit");
+            let (session, response) = http3::webtransport::Session::connect(&requests, authorized("/wt/ping"))
                 .await
                 .unwrap()
                 .expect("an authorized session");
@@ -1176,44 +1147,31 @@ mod tests {
             session.close(0, "").await;
             quic.close(0_u32.into(), b"done");
         })
-        .await
-        .unwrap();
-        stop.send(()).unwrap();
-        serving.await.unwrap().unwrap();
+        .await;
+        served.stop().await;
     }
 
     #[tokio::test]
     async fn transfers_complete_from_their_floors_when_the_budget_is_exhausted() {
-        use super::*;
-        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-        let (tls, client_config) = tls();
-        let endpoint = server.quic_endpoint(tls, "127.0.0.1:0".parse().unwrap()).unwrap();
-        let address = endpoint.local_addr().unwrap();
-        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-        let serving = tokio::spawn(server.clone().serve_quic(endpoint, async {
-            let _ = stopped.await;
-        }));
-        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let (server, served, client_config) = start();
+        let client = client();
         client.set_default_client_config(client_config);
-        tokio::time::timeout(Duration::from_secs(10), async {
-            let peers = [(); 2].map(|()| client.connect(address, "localhost").unwrap());
+        within(10, async {
+            let peers = [(); 2].map(|()| client.connect(served.address, "localhost").unwrap());
             let peers = futures_util::future::try_join_all(peers).await.unwrap();
             // New requests need layer state from the budget, so both start before it runs out. The larger body is
             // four times the server's first send window, so most of it moves after the budget runs out.
             let mut bodies = Vec::new();
             for (peer, bytes) in peers.iter().zip([4 * QUIC_MIN_SEND_WINDOW as usize, 13]) {
-                let request = http::Request::get(format!("https://localhost/download?bytes={bytes}"))
-                    .body(())
-                    .unwrap();
-                let (mut send, mut recv) = requests(peer.clone()).send_request(request).await.unwrap().split();
+                let request = Request::get(format!("https://localhost/download?bytes={bytes}")).body(());
+                let sent = requests(peer.clone()).send_request(request.unwrap()).await;
+                let (mut send, mut recv) = sent.unwrap().split();
                 send.finish().await.unwrap();
                 assert_eq!(recv.response().await.unwrap().status(), StatusCode::OK);
                 bodies.push((recv, bytes));
             }
-            let filler = server
-                .memory
-                .lease(settled(&server.memory, &peers.iter().collect::<Vec<_>>()).await)
-                .unwrap();
+            let filler = settled(&server.memory, &peers.iter().collect::<Vec<_>>()).await;
+            let filler = server.memory.lease(filler).unwrap();
             for (mut recv, bytes) in bodies {
                 let mut received = 0;
                 while let Some(data) = recv.data().await.unwrap() {
@@ -1224,39 +1182,28 @@ mod tests {
             assert!(peers.iter().all(|peer| peer.close_reason().is_none()));
             drop(filler);
         })
-        .await
-        .unwrap();
-        stop.send(()).unwrap();
-        serving.await.unwrap().unwrap();
+        .await;
+        served.stop().await;
     }
 
     #[tokio::test]
     async fn one_client_holds_at_most_its_share_of_receive_credit() {
-        use super::*;
         // A client's share is a window on each QUIC connection it may hold, as Go grants each its window. While its
         // other connections hold all of it but one window, one more fits it and the next does not.
-        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-        let keys = crate::client_address::client_keys([127, 0, 0, 1].into());
+        let (server, served, client_config) = start();
+        let keys = client_address::client_keys([127, 0, 0, 1].into());
         let others = (crate::connections::QUIC_PER_CLIENT - 1) * QUIC_CREDIT_BYTES;
         let _others = server.client_credit.claim(&keys, others).unwrap();
-        let (tls, client_config) = tls();
-        let (address, stop, serving) = serve(&server, tls);
-        tokio::time::timeout(Duration::from_secs(20), async {
+        within(20, async {
             let mut held = Vec::new();
             let mut charged = Vec::new();
             for source in [1, 1, 2] {
                 let client = noq::Endpoint::client(SocketAddr::from(([127, 0, 0, source], 0))).unwrap();
-                let (quic, requests) = h3_client(&client, client_config.clone(), address).await;
+                let (quic, requests) = h3_client(&client, client_config.clone(), served.address).await;
                 let id = upload_id(&requests).await;
                 let before = settled(&server.memory, &[&quic]).await;
-                let request = http::Request::post(format!("https://localhost/upload?id={id}"))
-                    .body(())
-                    .unwrap();
-                let (mut send, mut recv) = requests.send_request(request).await.unwrap().split();
-                send.send_data(Bytes::from_static(b"funded")).await.unwrap();
-                send.finish().await.unwrap();
-                assert_eq!(recv.response().await.unwrap().status(), StatusCode::OK);
-                while recv.data().await.unwrap().is_some() {}
+                let request = Request::post(format!("https://localhost/upload?id={id}"));
+                send(&requests, request.body(()).unwrap(), b"funded").await.unwrap();
                 charged.push(before - settled(&server.memory, &[&quic]).await);
                 held.push((client, quic, requests));
             }
@@ -1268,29 +1215,22 @@ mod tests {
                 quic.close(0_u32.into(), b"done");
             }
         })
-        .await
-        .unwrap();
-        stop.send(()).unwrap();
-        serving.await.unwrap().unwrap();
+        .await;
+        served.stop().await;
     }
 
     #[tokio::test]
     async fn stalled_http3_replies_end_at_the_control_and_idle_bounds() {
-        use super::*;
-        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-        let (tls, mut client_config) = tls();
+        let (server, served, mut client_config) = start();
         let mut transport = noq::TransportConfig::default();
         // Too little stream credit for any reply's head; pings keep the stalled connection open.
         transport.stream_receive_window(64_u32.into());
         transport.keep_alive_interval(Some(Duration::from_secs(5)));
         client_config.transport_config(Arc::new(transport));
-        let (address, stop, serving) = serve(&server, tls);
-        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
-        let (quic, requests) = tokio::time::timeout(Duration::from_secs(5), h3_client(&client, client_config, address))
-            .await
-            .unwrap();
+        let client = client();
+        let (quic, requests) = within(5, h3_client(&client, client_config, served.address)).await;
         let open = async |path: &str| {
-            let request = http::Request::get(format!("https://localhost{path}")).body(()).unwrap();
+            let request = Request::get(format!("https://localhost{path}")).body(()).unwrap();
             let (mut send, recv) = requests.send_request(request).await.unwrap().split();
             send.finish().await.unwrap();
             (send, recv)
@@ -1322,22 +1262,13 @@ mod tests {
         );
         assert_eq!(server.admission.load().0, 0);
         quic.close(0_u32.into(), b"done");
-        stop.send(()).unwrap();
-        serving.await.unwrap().unwrap();
+        served.stop().await;
     }
 
     #[tokio::test]
     async fn silent_connections_from_few_sources_leave_budget_for_new_clients() {
-        use super::*;
-        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
-        let (tls, client_config) = tls();
-        let endpoint = server.quic_endpoint(tls, "127.0.0.1:0".parse().unwrap()).unwrap();
-        let address = endpoint.local_addr().unwrap();
-        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-        let serving = tokio::spawn(server.clone().serve_quic(endpoint, async {
-            let _ = stopped.await;
-        }));
-        tokio::time::timeout(Duration::from_secs(8), async {
+        let (server, served, client_config) = start();
+        within(8, async {
             let idle = server.memory.available();
             let mut clients = Vec::new();
             let mut connecting = Vec::new();
@@ -1346,7 +1277,7 @@ mod tests {
                 client.set_default_client_config(client_config.clone());
                 if source <= 10 {
                     for _ in 0..8 {
-                        connecting.push(client.connect(address, "localhost").unwrap());
+                        connecting.push(client.connect(served.address, "localhost").unwrap());
                     }
                 }
                 clients.push(client);
@@ -1362,34 +1293,27 @@ mod tests {
             eprintln!("{} silent connections charge {charged} bytes", silent.len());
             let floor = connection_floor(0) + noq_floor(&server.config.limits).unwrap();
             assert!(charged <= silent.len() * floor);
-            let fresh = clients[9].connect(address, "localhost").unwrap().await.unwrap();
+            let fresh = clients[9].connect(served.address, "localhost").unwrap().await.unwrap();
             assert_eq!(download(&requests(fresh), 13).await.unwrap(), 13);
         })
-        .await
-        .unwrap();
-        stop.send(()).unwrap();
-        serving.await.unwrap().unwrap();
+        .await;
+        served.stop().await;
     }
 
     /// Go's and browsers' post-quantum ClientHello spans Initials that arrive while the handshake waits to be
     /// accepted; one of many endpoints keeps them all.
     #[tokio::test]
     async fn a_waiting_handshake_keeps_every_initial_on_one_of_many_endpoints() {
-        use super::*;
         let server = HttpServer::new(Config::default().validated().unwrap()).unwrap();
         // Protocols the server does not speak spread this ClientHello over six Initials.
         let unspoken = (0..256).map(|index| format!("unspoken-protocol-{index:03}").into_bytes());
         let (tls, client_config) = tls_offering(unspoken.chain([b"h3".to_vec()]).collect());
-        let config = server.quic_config(tls, 16).unwrap();
-        let endpoint = QuicEndpoint {
-            endpoint: noq::Endpoint::server(config.clone(), "127.0.0.1:0".parse().unwrap()).unwrap(),
-            config,
-            clients: server.client_credit.clone(),
-        };
-        let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
-        let address = endpoint.local_addr().unwrap();
-        let connecting = client.connect_with(client_config, address, "localhost").unwrap();
-        tokio::time::timeout(Duration::from_secs(10), async {
+        let endpoint = unbudgeted(&server, server.quic_config(tls, 16).unwrap());
+        let client = client();
+        let connecting = client
+            .connect_with(client_config, endpoint.local_addr().unwrap(), "localhost")
+            .unwrap();
+        within(10, async {
             let incoming = endpoint.endpoint.accept().await.unwrap();
             tokio::time::sleep(Duration::from_millis(100)).await;
             let floor = server.memory.lease(connection_floor(0)).unwrap();
@@ -1398,14 +1322,12 @@ mod tests {
             let (connected, _accepted) = (connected.unwrap(), accepted.unwrap());
             assert_eq!(connected.stats().lost_packets, 0, "an Initial was dropped");
         })
-        .await
-        .unwrap();
+        .await;
     }
 
     #[cfg(target_os = "linux")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn four_workers_run_two_shards_that_follow_rebound_clients() {
-        use super::*;
         let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
         let (tls, client_config) = tls();
         let bound = crate::runtime::Quic::bind(&server, tls, "127.0.0.1:0".parse().unwrap()).unwrap();
@@ -1420,7 +1342,7 @@ mod tests {
         let grew = |before: Vec<u64>| handshakes().zip(before).position(|(now, then)| now > then).unwrap();
         let (stop, stopped) = tokio::sync::watch::channel(false);
         let serving = tokio::spawn(futures_util::future::try_join_all(bound.serve(&server, &stopped)));
-        tokio::time::timeout(Duration::from_secs(30), async {
+        within(30, async {
             // Distinct sources stand for distinct clients, whose 4-tuples the kernel spreads over the shards.
             let transfers = (2..10).map(|source| {
                 let config = client_config.clone();
@@ -1434,7 +1356,7 @@ mod tests {
             });
             assert_eq!(futures_util::future::join_all(transfers).await, [1 << 20; 8]);
 
-            let client = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+            let client = client();
             let before = handshakes().collect();
             let (quic, requests) = h3_client(&client, client_config.clone(), address).await;
             let home = grew(before);
@@ -1459,8 +1381,7 @@ mod tests {
             }
             quic.close(0_u32.into(), b"done");
         })
-        .await
-        .unwrap();
+        .await;
         stop.send_replace(true);
         serving.await.unwrap().unwrap();
     }
@@ -1470,15 +1391,8 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 40)]
     async fn an_idle_server_with_many_shards_is_not_under_pressure() {
-        use super::*;
-        let config = Config {
-            max_connections: 4,
-            max_connections_per_client: 4,
-            ..Config::default()
-        }
-        .validated()
-        .unwrap();
-        let floors = 4 * (connection_floor(0) + noq_floor(&config.limits).unwrap()) + DOWNLOAD_BLOCK_BYTES;
+        let config = four_connections();
+        let floors = floors(&config) + DOWNLOAD_BLOCK_BYTES;
         let (tls, _) = tls();
         let bind = |memory| {
             let server = HttpServer::with_memory(config.clone(), memory).unwrap();
@@ -1498,15 +1412,8 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn the_buffer_budget_caps_quic_shards() {
-        use super::*;
-        let config = Config {
-            max_connections: 4,
-            max_connections_per_client: 4,
-            ..Config::default()
-        }
-        .validated()
-        .unwrap();
-        let floors = 4 * (connection_floor(0) + noq_floor(&config.limits).unwrap()) + DOWNLOAD_BLOCK_BYTES;
+        let config = four_connections();
+        let floors = floors(&config) + DOWNLOAD_BLOCK_BYTES;
         let (tls, _) = tls();
         let runtimes: Vec<_> = (0..4)
             .map(|_| {
@@ -1533,12 +1440,10 @@ mod tests {
 
     #[tokio::test]
     async fn mixed_transport_exhaustion_preserves_existing_connections() {
-        use super::*;
         use rustls::pki_types::ServerName;
-        use tokio::net::TcpStream;
         use tokio_rustls::TlsConnector;
 
-        tokio::time::timeout(Duration::from_secs(10), async {
+        within(10, async {
             let (mut tls, mut client_tls) =
                 crate::test_tls::configs("localhost", &[&rustls::version::TLS13], &[b"h2"]).unwrap();
             let config = Config {
@@ -1575,76 +1480,40 @@ mod tests {
             }
             link.inject(crate::test_link::Fault::None);
             tls.alpn_protocols = vec![b"h3".to_vec()];
-            let config = server.quic_config(Arc::new(tls), 1).unwrap();
-            let endpoint = QuicEndpoint {
-                endpoint: noq::Endpoint::server(config.clone(), "127.0.0.1:0".parse().unwrap()).unwrap(),
-                config,
-                clients: server.client_credit.clone(),
-            };
-            let quic_address = endpoint.local_addr().unwrap();
-            let (stop_h3, stopped_h3) = tokio::sync::oneshot::channel();
-            let h3_server = tokio::spawn(server.clone().serve_quic(endpoint, async {
-                let _ = stopped_h3.await;
-            }));
+            let h3 = serve_on(
+                &server,
+                unbudgeted(&server, server.quic_config(Arc::new(tls), 1).unwrap()),
+            );
             let connector = TlsConnector::from(Arc::new(client_tls.clone()));
-            let stream = connector
-                .connect(
-                    ServerName::try_from("localhost").unwrap(),
-                    TcpStream::connect(address).await.unwrap(),
-                )
-                .await
-                .unwrap();
-            let (mut h2, driver) = h2::client::handshake(stream).await.unwrap();
+            let tls_handshake = async || {
+                let socket = TcpStream::connect(address).await.unwrap();
+                connector
+                    .connect(ServerName::try_from("localhost").unwrap(), socket)
+                    .await
+            };
+            let (mut h2, driver) = h2::client::handshake(tls_handshake().await.unwrap()).await.unwrap();
             let h2_driver = tokio::spawn(driver);
             client_tls.alpn_protocols = vec![b"h3".to_vec()];
-            let client_endpoint = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+            let client_endpoint = client();
             client_endpoint.set_default_client_config(noq::ClientConfig::new(Arc::new(
                 noq::crypto::rustls::QuicClientConfig::try_from(client_tls).unwrap(),
             )));
-            let unloaded = crate::test_link::Link::udp(quic_address, Duration::ZERO).await.unwrap();
-            let quic = client_endpoint
-                .connect(unloaded.address, "localhost")
-                .unwrap()
-                .await
-                .unwrap();
+            let connect = async |address| client_endpoint.connect(address, "localhost").unwrap().await;
+            let unloaded = crate::test_link::Link::udp(h3.address, Duration::ZERO).await.unwrap();
+            let quic = connect(unloaded.address).await.unwrap();
             assert_eq!(unloaded.retries(), 0, "Retry below a quarter of the memory budget");
-            let request = || {
-                Request::builder()
-                    .uri("https://localhost/download?bytes=4")
-                    .body(())
-                    .unwrap()
-            };
+            let request = || Request::get("https://localhost/download?bytes=4").body(()).unwrap();
             // The layer charges a request's state as it arrives, so this one starts before the budget runs out.
             let (mut send, mut recv) = requests(quic.clone()).send_request(request()).await.unwrap().split();
             send.finish().await.unwrap();
             assert_eq!(recv.response().await.unwrap().status(), StatusCode::OK);
-            let second = client_endpoint
-                .connect(quic_address, "localhost")
-                .unwrap()
-                .await
-                .unwrap();
+            let second = connect(h3.address).await.unwrap();
             let exhausted = server.memory.lease(server.memory.available()).unwrap();
-            let pressured = crate::test_link::Link::udp(quic_address, Duration::ZERO).await.unwrap();
-            assert!(
-                client_endpoint
-                    .connect(pressured.address, "localhost")
-                    .unwrap()
-                    .await
-                    .is_err()
-            );
-            assert!(
-                pressured.retries() > 0,
-                "no Retry under memory pressure below the connection threshold"
-            );
-            assert!(
-                connector
-                    .connect(
-                        ServerName::try_from("localhost").unwrap(),
-                        TcpStream::connect(address).await.unwrap()
-                    )
-                    .await
-                    .is_err()
-            );
+            let pressured = crate::test_link::Link::udp(h3.address, Duration::ZERO).await.unwrap();
+            assert!(connect(pressured.address).await.is_err());
+            let retried = pressured.retries() > 0;
+            assert!(retried, "no Retry under memory pressure below the connection threshold");
+            assert!(tls_handshake().await.is_err());
             std::future::poll_fn(|cx| h2.poll_ready(cx)).await.unwrap();
             let (response, _) = h2.send_request(request(), true).unwrap();
             let mut response = response.await.unwrap();
@@ -1663,15 +1532,13 @@ mod tests {
             assert_eq!(bytes, 4);
             assert!(quic.close_reason().is_none() && second.close_reason().is_none());
             stop_h2.send(()).unwrap();
-            stop_h3.send(()).unwrap();
-            h2_server.await.unwrap().unwrap();
-            h3_server.await.unwrap().unwrap();
+            let (h2_stopped, ()) = tokio::join!(h2_server, h3.stop());
+            h2_stopped.unwrap().unwrap();
             h2_driver.abort();
             let _ = h2_driver.await;
             drop((send, recv, exhausted, second, h2));
             client_endpoint.close(0_u32.into(), b"done");
         })
-        .await
-        .unwrap();
+        .await;
     }
 }

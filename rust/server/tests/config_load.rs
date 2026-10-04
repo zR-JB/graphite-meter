@@ -19,21 +19,13 @@ fn defaults_and_presence_are_distinct() {
     assert_eq!(c.server_name, "edge");
     assert_eq!(c.auth.mode, AuthMode::Off);
     let c = load(&[("GM_MAX_STAGE_DURATION", "3h")], &[]).unwrap();
-    assert_eq!(
-        (c.max_operation_duration.as_secs(), c.max_session_duration.as_secs()),
-        (10_860, 10_860)
-    );
-    assert_eq!(
-        load(&[("GM_MAX_STAGE_DURATION", "2h")], &["-max-stage-duration=24h"])
-            .unwrap()
-            .max_stage_duration,
-        Duration::from_secs(86_400)
-    );
+    let lifetimes = (c.max_operation_duration.as_secs(), c.max_session_duration.as_secs());
+    assert_eq!(lifetimes, (10_860, 10_860));
+    let c = load(&[("GM_MAX_STAGE_DURATION", "2h")], &["-max-stage-duration=24h"]).unwrap();
+    assert_eq!(c.max_stage_duration, Duration::from_secs(86_400));
     for duration in ["999ms", "25h"] {
-        assert_eq!(
-            failure(&[], &[&format!("-max-stage-duration={duration}")]),
-            "GM_MAX_STAGE_DURATION must be from 1s to 24h"
-        );
+        let refused = failure(&[], &[&format!("-max-stage-duration={duration}")]);
+        assert_eq!(refused, "GM_MAX_STAGE_DURATION must be from 1s to 24h");
     }
     assert!(load(&[("GM_AUTH_MODE", " off "), ("GM_AUTH_UNKNOWN", "ignored")], &[]).is_ok());
     for name in [
@@ -133,10 +125,8 @@ fn the_authentication_origin_is_canonical_once_validated() {
     for (public, canonical) in [(":08443", ":8443"), (":0443", "")] {
         let public = format!("https://meter.example{public}");
         let env = [env.as_slice(), &[("GM_AUTH_PUBLIC_URL", public.as_str())]].concat();
-        assert_eq!(
-            load(&env, &[]).unwrap().auth.public_url,
-            format!("https://meter.example{canonical}")
-        );
+        let canonical = format!("https://meter.example{canonical}");
+        assert_eq!(load(&env, &[]).unwrap().auth.public_url, canonical);
     }
 }
 

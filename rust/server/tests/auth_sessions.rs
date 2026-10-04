@@ -2,6 +2,11 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use graphite_meter_server::auth::{SessionError, SessionStore};
 use std::time::Duration;
 
+/// `future`'s output, which must arrive within a second.
+async fn settled<T>(future: impl std::future::Future<Output = T>) -> T {
+    tokio::time::timeout(Duration::from_secs(1), future).await.unwrap()
+}
+
 #[test]
 fn credentials_are_random_and_metadata_is_stable() {
     let store = SessionStore::new();
@@ -31,13 +36,8 @@ async fn rotation_revokes_only_supplied_login_and_notifies_existing_and_late_wai
     let waiting = tokio::spawn(async move { active.ended().await });
     tokio::task::yield_now().await;
     let (replacement, new) = store.create("subject", "name", "local", Some(&old)).unwrap();
-    tokio::time::timeout(Duration::from_secs(1), waiting)
-        .await
-        .unwrap()
-        .unwrap();
-    tokio::time::timeout(Duration::from_secs(1), lease.ended())
-        .await
-        .unwrap();
+    settled(waiting).await.unwrap();
+    settled(lease.ended()).await;
     assert!(store.lookup(&old).is_none());
     assert!(store.lookup(&replacement).is_some());
     assert!(store.lookup(&sibling).is_some());
@@ -77,9 +77,7 @@ async fn store_shutdown_revokes_leases_but_dropping_a_clone_does_not() {
     drop(store);
     assert!(lease.is_active());
     drop(clone);
-    tokio::time::timeout(Duration::from_secs(1), lease.ended())
-        .await
-        .unwrap();
+    settled(lease.ended()).await;
     assert!(!lease.is_active());
 }
 
@@ -90,6 +88,6 @@ async fn revocation_cannot_be_lost_between_creating_and_polling_waiters() {
         let (_, lease) = store.create("subject", "name", "local", None).unwrap();
         let ended = lease.ended();
         assert!(store.revoke(&lease));
-        tokio::time::timeout(Duration::from_secs(1), ended).await.unwrap();
+        settled(ended).await;
     }
 }

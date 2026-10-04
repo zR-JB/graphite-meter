@@ -39,25 +39,16 @@ fn upgrade_validates_origin_and_key_without_negotiating_compression() {
         .unwrap();
     let response = handshake(&request, Some("https://meter.example"));
     assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
-    assert_eq!(
-        response.headers()[header::SEC_WEBSOCKET_ACCEPT],
-        "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
-    );
-    assert!(!response.headers().contains_key(header::SEC_WEBSOCKET_EXTENSIONS));
-    assert_eq!(
-        handshake(&request, Some("https://other.example")).status(),
-        StatusCode::FORBIDDEN
-    );
+    let headers = response.headers();
+    assert_eq!(headers[header::SEC_WEBSOCKET_ACCEPT], "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
+    assert!(!headers.contains_key(header::SEC_WEBSOCKET_EXTENSIONS));
+    let foreign = handshake(&request, Some("https://other.example"));
+    assert_eq!(foreign.status(), StatusCode::FORBIDDEN);
     assert_eq!(handshake(&request, None).status(), StatusCode::SWITCHING_PROTOCOLS);
-    request
-        .headers_mut()
-        .insert(header::CONNECTION, "keep-alive".parse().unwrap());
-    request
-        .headers_mut()
-        .append(header::CONNECTION, "UpGrAdE".parse().unwrap());
-    request
-        .headers_mut()
-        .insert(header::UPGRADE, "other, WebSocket".parse().unwrap());
+    let headers = request.headers_mut();
+    headers.insert(header::CONNECTION, "keep-alive".parse().unwrap());
+    headers.append(header::CONNECTION, "UpGrAdE".parse().unwrap());
+    headers.insert(header::UPGRADE, "other, WebSocket".parse().unwrap());
     assert_eq!(handshake(&request, None).status(), StatusCode::SWITCHING_PROTOCOLS);
     request
         .headers_mut()
@@ -93,23 +84,28 @@ fn upgrade_checks_run_in_go_s_order() {
     assert_eq!(response.headers()[header::SEC_WEBSOCKET_VERSION], "13");
 }
 
-async fn session() -> (
+type Session = (
     WebSocketStream<DuplexStream>,
     oneshot::Sender<CloseReason>,
     JoinHandle<()>,
-) {
-    let (client, server) = tokio::io::duplex(8192);
+);
+
+/// A ping session over a pipe that buffers `buffer` bytes, which lives `lifetime` or until its sender stops it.
+async fn session_with(buffer: usize, lifetime: Duration) -> Session {
+    let (client, server) = tokio::io::duplex(buffer);
     let (stop, stopped) = oneshot::channel();
-    let task = tokio::spawn(serve_ping(
-        server,
-        tokio::time::Instant::now() + Duration::from_secs(120),
-        async { stopped.await.unwrap_or(CloseReason::Finished) },
-    ));
+    let task = tokio::spawn(serve_ping(server, tokio::time::Instant::now() + lifetime, async {
+        stopped.await.unwrap_or(CloseReason::Finished)
+    }));
     (
         WebSocketStream::from_raw_socket(client, Role::Client, None).await,
         stop,
         task,
     )
+}
+
+async fn session() -> Session {
+    session_with(8192, Duration::from_secs(120)).await
 }
 
 async fn receive(socket: &mut WebSocketStream<DuplexStream>) -> Result<Message, TestError> {
@@ -189,14 +185,7 @@ async fn control_frames_do_not_extend_the_idle_bound() -> Result<(), TestError> 
 async fn blocked_reply_and_close_cannot_hold_session_forever() -> Result<(), TestError> {
     // A one-byte output buffer blocks the response while the client stops
     // reading. The deadline must interrupt the send as well as the read loop.
-    let (client, server) = tokio::io::duplex(1);
-    let (stop, stopped) = oneshot::channel();
-    let task = tokio::spawn(serve_ping(
-        server,
-        tokio::time::Instant::now() + Duration::from_secs(120),
-        async { stopped.await.unwrap() },
-    ));
-    let mut socket = WebSocketStream::from_raw_socket(client, Role::Client, None).await;
+    let (mut socket, stop, task) = session_with(1, Duration::from_secs(120)).await;
     socket.send(Message::Text("PING,1".into())).await?;
     tokio::task::yield_now().await;
     stop.send(CloseReason::Finished).unwrap();
@@ -210,15 +199,11 @@ async fn quiet_upgraded_websocket_ends_with_idle_code() -> Result<(), TestError>
     use graphite_meter_server::http::HttpServer;
     use std::sync::Arc;
     use tokio::net::TcpStream;
-    let server = Arc::new(HttpServer::new(
-        Config {
-            max_operation_duration: Duration::from_secs(180),
-            ..Config::default()
-        }
-        .validated()
-        .unwrap(),
-    )?);
-    let server = native::serve(server, NativeKind::H1, None).await;
+    let config = Config {
+        max_operation_duration: Duration::from_secs(180),
+        ..Config::default()
+    };
+    let server = native::serve(Arc::new(HttpServer::new(config.validated()?)?), NativeKind::H1, None).await;
     let address = server.address;
     let (mut socket, _) =
         tokio_tungstenite::client_async(format!("ws://{address}/ws/ping"), TcpStream::connect(address).await?).await?;
@@ -240,10 +225,7 @@ async fn quiet_upgraded_websocket_ends_with_idle_code() -> Result<(), TestError>
 
 #[tokio::test(start_paused = true)]
 async fn lifetime_caps_a_quiet_websocket_before_its_idle_bound() -> Result<(), TestError> {
-    let (client, server) = tokio::io::duplex(8192);
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    let task = tokio::spawn(serve_ping(server, deadline, std::future::pending()));
-    let mut socket = WebSocketStream::from_raw_socket(client, Role::Client, None).await;
+    let (mut socket, _stop, task) = session_with(8192, Duration::from_secs(10)).await;
     tokio::time::advance(Duration::from_secs(10)).await;
     let Message::Close(Some(frame)) = receive(&mut socket).await? else {
         panic!("expected lifetime close");

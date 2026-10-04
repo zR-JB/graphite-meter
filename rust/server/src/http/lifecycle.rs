@@ -169,10 +169,8 @@ mod tests {
             let mut lifecycle = ConnectionLifecycle::new(work.clone(), fresh_grace);
             assert!(poll(&mut lifecycle, false).await.is_pending());
             advance(CONTROL * 2).await;
-            assert!(
-                poll(&mut lifecycle, false).await.is_pending(),
-                "uncredited idle connection closed"
-            );
+            let pending = poll(&mut lifecycle, false).await.is_pending();
+            assert!(pending, "uncredited idle connection closed");
             drop(work.admit());
             assert!(poll(&mut lifecycle, true).await.is_pending());
             advance(CONTROL).await;
@@ -194,10 +192,8 @@ mod tests {
             lifecycle.stop();
             assert!(lifecycle.go_away());
             advance(SHUTDOWN_GRACE - Duration::from_millis(1)).await;
-            assert!(
-                poll(&mut lifecycle, false).await.is_pending(),
-                "shutdown cut active work before its grace"
-            );
+            let pending = poll(&mut lifecycle, false).await.is_pending();
+            assert!(pending, "shutdown cut active work before its grace");
             advance(Duration::from_millis(1)).await;
             assert_eq!(poll(&mut lifecycle, false).await, Poll::Ready(Event::Close));
         }

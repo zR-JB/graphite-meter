@@ -154,13 +154,9 @@ fn native_origin(kind: NativeKind, host: &str, address: &str) -> Result<String, 
     } else {
         host.to_owned()
     };
-    let port = address
-        .rsplit_once(':')
-        .map(|(_, port)| port)
-        .filter(|port| !port.is_empty());
-    let origin = match port {
-        Some(port) => format!("{scheme}://{host}:{port}"),
-        None => format!("{scheme}://{host}"),
+    let origin = match address.rsplit_once(':') {
+        Some((_, port)) if !port.is_empty() => format!("{scheme}://{host}:{port}"),
+        _ => format!("{scheme}://{host}"),
     };
     target_origin(&origin)?;
     Ok(origin)

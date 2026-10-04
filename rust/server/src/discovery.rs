@@ -39,27 +39,19 @@ struct HostResponses {
 impl Discovery {
     pub fn new(config: Arc<ValidatedConfig>, admission: Admission) -> Result<Self, ConfigError> {
         let preflight = Preflight::new(config.clone())?;
-        let page_host = if config.auth.mode == AuthMode::Off {
-            None
-        } else {
-            Some(
+        let page_host = match config.auth.mode {
+            AuthMode::Off => None,
+            _ => Some(
                 target_origin(&config.auth.public_url)?
                     .ok_or("missing authentication origin")?
                     .host,
-            )
+            ),
         };
-        let public = &config.public;
+        let public = config.public.lists().into_iter().flat_map(|(_, origins)| origins);
         let origins = ["http://localhost", config.auth.public_url.as_str()]
             .into_iter()
             .chain(NativeKind::ALL.map(|kind| config.listener(kind).public_origin.as_str()))
-            .chain(
-                public
-                    .both
-                    .iter()
-                    .chain(&public.throughput)
-                    .chain(&public.latency)
-                    .map(String::as_str),
-            );
+            .chain(public.map(String::as_str));
         let mut configured = HashMap::new();
         for origin in origins {
             if let Ok(Some(origin)) = target_origin(origin)

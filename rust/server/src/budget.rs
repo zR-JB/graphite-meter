@@ -111,13 +111,12 @@ pub(crate) fn endpoint_bytes(
 
 /// The configured budget, before any socket exists: one endpoint's buffers without its kernel's.
 pub(crate) fn check_configured(config: &Config) -> Result<(), ConfigError> {
-    let endpoint = if config.listener(NativeKind::H3).address.is_empty() {
-        None
-    } else {
-        Some(
+    let endpoint = match config.listener(NativeKind::H3).address.as_str() {
+        "" => None,
+        _ => Some(
             endpoint_bytes(&noq::EndpointConfig::default(), 1, config.max_connections, 0, 1)
                 .ok_or("QUIC endpoint buffer size overflow")?,
-        )
+        ),
     };
     check(config, config.max_buffer_bytes, 0, endpoint)
 }
@@ -133,10 +132,9 @@ pub(crate) fn check(
         Some(_) => connection_floor(handshake_bytes).saturating_add(noq_floor(&config.limits)?),
         None => 0,
     };
-    let h2 = if config.listener(NativeKind::H2).address.is_empty() {
-        0
-    } else {
-        H2_FLOOR_BYTES
+    let h2 = match config.listener(NativeKind::H2).address.as_str() {
+        "" => 0,
+        _ => H2_FLOOR_BYTES,
     };
     let (floor, endpoint_bytes) = (quic.max(h2), quic_endpoint_bytes.unwrap_or(0));
     let minimum =
@@ -209,14 +207,14 @@ impl MemoryBudget {
                 .compare_exchange(held_back, !held_back, Ordering::Relaxed, Ordering::Relaxed)
                 .is_ok()
         {
+            let change = if held_back {
+                "resumed"
+            } else {
+                "held back by memory pressure"
+            };
+            let in_use = self.used.load(Ordering::Relaxed);
             crate::log!(
-                "[gm:memory] window growth {}: {} of {} buffer bytes in use",
-                if held_back {
-                    "resumed"
-                } else {
-                    "held back by memory pressure"
-                },
-                self.used.load(Ordering::Relaxed),
+                "[gm:memory] window growth {change}: {in_use} of {} buffer bytes in use",
                 self.limit
             );
         }
@@ -356,32 +354,19 @@ mod tests {
         assert!(claim("2001:db8:1:3::1").is_none(), "its /56 holds twice the share");
         held.push(claim("2001:db8:1:100::1").unwrap());
         held.push(claim("2001:db8:1:101::1").unwrap());
-        assert!(
-            claim("2001:db8:1:200::1").is_none(),
-            "its /48 holds four times the share"
-        );
+        let fourth = claim("2001:db8:1:200::1");
+        assert!(fourth.is_none(), "its /48 holds four times the share");
         assert!(claim("2001:db8:2::1").is_some());
         drop(first);
         held.push(claim("2001:db8:1:1::2").unwrap());
-        let logins = [
-            ["login:a", "principal:p"],
-            ["login:b", "principal:p"],
-            ["login:c", "principal:p"],
-        ]
-        .map(|keys| keys.map(String::from));
+        let logins = ["a", "b", "c"].map(|login| [format!("login:{login}"), "principal:p".into()]);
         held.push(credit.claim(&logins[0], 1 << 20).unwrap());
         held.push(credit.claim(&logins[1], 1 << 20).unwrap());
-        assert!(
-            credit.claim(&logins[2], 1 << 20).is_none(),
-            "a principal holds twice a login's share"
-        );
+        let third = credit.claim(&logins[2], 1 << 20);
+        assert!(third.is_none(), "a principal holds twice a login's share");
         for login in ["login:d", "login:e", "login:f"] {
-            let keys = [login, "principal:shared"].map(String::from);
-            held.push(
-                credit
-                    .claim(&keys, 1 << 20)
-                    .expect("the shared principal bounds no login"),
-            );
+            let claim = credit.claim(&[login, "principal:shared"].map(String::from), 1 << 20);
+            held.push(claim.expect("the shared principal bounds no login"));
         }
         drop(held);
         let held = credit.held.lock().unwrap();

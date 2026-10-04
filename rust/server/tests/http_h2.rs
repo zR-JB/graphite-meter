@@ -108,6 +108,14 @@ async fn collect(mut body: RecvStream) -> Vec<u8> {
     bytes
 }
 
+fn parse(body: &[u8]) -> serde_json::Value {
+    serde_json::from_slice(body).unwrap()
+}
+
+async fn json(client: &mut SendRequest<Bytes>, method: &str, path: &str) -> serde_json::Value {
+    parse(&collect(response(client, method, path).await.into_body()).await)
+}
+
 #[tokio::test]
 async fn validated_h2_serves_probe_and_mounts_only_native_routes() {
     tokio::time::timeout(Duration::from_secs(10), async {
@@ -122,8 +130,7 @@ async fn validated_h2_serves_probe_and_mounts_only_native_routes() {
         assert_eq!(probe.headers()["cache-control"], "no-store");
         assert!(!probe.headers().contains_key("alt-svc"));
         assert!(!probe.headers().contains_key("connection"));
-        let value: serde_json::Value = serde_json::from_slice(&collect(probe.into_body()).await).unwrap();
-        assert_eq!(value["protocolNegotiated"], "h2");
+        assert_eq!(parse(&collect(probe.into_body()).await)["protocolNegotiated"], "h2");
         for path in ["/preflight", "/servers", "/ws/session", "/ws/ping"] {
             let reply = response(&mut harness.client, "GET", path).await;
             assert_eq!(reply.status(), 404, "{path}");
@@ -138,8 +145,7 @@ async fn validated_h2_serves_probe_and_mounts_only_native_routes() {
 async fn expired_flow_controlled_stream_does_not_cancel_healthy_sibling() {
     tokio::time::timeout(Duration::from_secs(5), async {
         let mut harness = Harness::start(Duration::from_millis(400)).await;
-        let reply = response(&mut harness.client, "POST", "/upload/session").await;
-        let session: serde_json::Value = serde_json::from_slice(&collect(reply.into_body()).await).unwrap();
+        let session = json(&mut harness.client, "POST", "/upload/session").await;
         let id = session["uploadId"].as_str().unwrap();
         let stalled = response(&mut harness.client, "GET", "/download?bytes=68719476736").await;
         assert_eq!(stalled.status(), 200);
@@ -152,8 +158,7 @@ async fn expired_flow_controlled_stream_does_not_cancel_healthy_sibling() {
             .send_request(request("POST", &format!("/upload?id={id}")), false)
             .unwrap();
         healthy_upload.send_data(Bytes::from_static(b"abc"), false).unwrap();
-        let checkpoint = response(&mut harness.client, "POST", &format!("/upload/checkpoint?id={id}")).await;
-        let checkpoint: serde_json::Value = serde_json::from_slice(&collect(checkpoint.into_body()).await).unwrap();
+        let checkpoint = json(&mut harness.client, "POST", &format!("/upload/checkpoint?id={id}")).await;
         assert_eq!(checkpoint["bytes"], 3);
         advance_clock(Duration::from_millis(250)).await;
         loop {
@@ -171,11 +176,8 @@ async fn expired_flow_controlled_stream_does_not_cancel_healthy_sibling() {
             .await
             .expect("healthy upload was cancelled with its sibling");
         assert_eq!(reply.status(), 200);
-        let value: serde_json::Value = serde_json::from_slice(&collect(reply.into_body()).await).unwrap();
-        assert_eq!(value["bytes"], 6);
-        let probe = response(&mut harness.client, "GET", "/probe").await;
-        let probe: serde_json::Value = serde_json::from_slice(&collect(probe.into_body()).await).unwrap();
-        assert_eq!(probe["load"]["active"], 0);
+        assert_eq!(parse(&collect(reply.into_body()).await)["bytes"], 6);
+        assert_eq!(json(&mut harness.client, "GET", "/probe").await["load"]["active"], 0);
         harness.close().await;
     })
     .await
@@ -225,12 +227,8 @@ async fn fifteen_seconds_idle_closes_h2_and_releases_connection_capacity() {
         .unwrap()
         .unwrap();
     let mut replacement = TcpStream::connect(harness.address).await.unwrap();
-    assert!(
-        tokio::time::timeout(Duration::from_millis(50), replacement.read(&mut [0; 1]))
-            .await
-            .is_err(),
-        "idle connection retained the sole connection permit"
-    );
+    let read = tokio::time::timeout(Duration::from_millis(50), replacement.read(&mut [0; 1])).await;
+    assert!(read.is_err(), "idle connection retained the sole connection permit");
     drop(replacement);
     harness.server.shutdown().await;
 }
@@ -238,36 +236,24 @@ async fn fifteen_seconds_idle_closes_h2_and_releases_connection_capacity() {
 #[tokio::test]
 async fn active_progress_is_not_idle_and_gets_a_fresh_idle_period_when_finished() {
     let mut harness = Harness::start(Duration::from_secs(180)).await;
-    let reply = response(&mut harness.client, "POST", "/upload/session").await;
-    let session: serde_json::Value = serde_json::from_slice(&collect(reply.into_body()).await).unwrap();
-    let id = session["uploadId"].as_str().unwrap();
-    let path = format!("/upload/progress?id={id}");
-    let reply = response(&mut harness.client, "GET", &path).await;
-    let mut progress = reply.into_body();
+    let session = json(&mut harness.client, "POST", "/upload/session").await;
+    let path = format!("/upload/progress?id={}", session["uploadId"].as_str().unwrap());
+    let mut progress = response(&mut harness.client, "GET", &path).await.into_body();
     let ready = progress.data().await.unwrap().unwrap();
     progress.flow_control().release_capacity(ready.len()).unwrap();
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&ready).unwrap()["type"],
-        "ready"
-    );
+    assert_eq!(parse(&ready)["type"], "ready");
     advance_clock(Duration::from_secs(61)).await;
-    assert!(
-        !harness.driver.is_finished(),
-        "active stream was mistaken for an idle connection"
-    );
-    let probe = response(&mut harness.client, "GET", "/probe").await;
-    let probe: serde_json::Value = serde_json::from_slice(&collect(probe.into_body()).await).unwrap();
-    assert_eq!(probe["load"]["active"], 1);
+    let idle = harness.driver.is_finished();
+    assert!(!idle, "active stream was mistaken for an idle connection");
+    assert_eq!(json(&mut harness.client, "GET", "/probe").await["load"]["active"], 1);
     let finished = response(&mut harness.client, "DELETE", &path).await;
     assert_eq!(finished.status(), 204);
     collect(finished.into_body()).await;
     let completed = collect(progress).await;
     assert!(std::str::from_utf8(&completed).unwrap().contains("complete"));
     advance_clock(Duration::from_secs(14)).await;
-    assert!(
-        !harness.driver.is_finished(),
-        "active lifetime was charged to idle timeout"
-    );
+    let idle = harness.driver.is_finished();
+    assert!(!idle, "active lifetime was charged to idle timeout");
     advance_clock(Duration::from_secs(2)).await;
     tokio::time::timeout(Duration::from_secs(2), &mut harness.driver)
         .await
@@ -376,14 +362,9 @@ async fn admitted_work_keeps_leftover_credit_and_unacknowledged_shutdown_does_no
     let mut peer = connect(&harness.connector, socket).await;
     peer.write_all(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n").await.unwrap();
     frame(&mut peer, 4, 0, 0, &[]).await;
-    let session = exchange(&mut peer, 1, 0x83, "/upload/session", b"").await;
-    let session: serde_json::Value = serde_json::from_slice(&session).unwrap();
+    let session = parse(&exchange(&mut peer, 1, 0x83, "/upload/session", b"").await);
     let path = format!("/upload?id={}", session["uploadId"].as_str().unwrap());
-    let upload = exchange(&mut peer, 3, 0x83, &path, b"abc").await;
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&upload).unwrap()["bytes"],
-        3
-    );
+    assert_eq!(parse(&exchange(&mut peer, 3, 0x83, &path, b"abc").await)["bytes"], 3);
     advance_clock(Duration::from_secs(10)).await;
     let download = held_download(&mut peer, 5, 2).await;
     assert_eq!(download, DOWNLOAD_BYTES, "leftover credit cut an admitted download");

@@ -1,4 +1,4 @@
-use graphite_meter_core::discovery::Protocol;
+use graphite_meter_core::discovery::{Protocol, ThroughputTarget};
 use graphite_meter_server::{
     config::Config,
     preflight::{Preflight, connect_origins},
@@ -16,17 +16,10 @@ fn public_roles_merge_default_ports_and_csp_includes_socket_schemes() {
     config.public.latency = vec!["https://meter.example:443".into()];
     let preflight = Preflight::new(Arc::new(config.validated().unwrap())).unwrap();
     let document = preflight.build("meter.example").unwrap();
-    assert_eq!(document.capabilities.throughput.len(), 2);
-    assert_eq!(document.capabilities.latency.len(), 2);
-    assert!(
-        document
-            .capabilities
-            .throughput
-            .iter()
-            .all(|target| target.protocol == Protocol::Negotiated)
-    );
-    assert_eq!(
-        connect_origins(&document),
-        ["https://meter.example", "wss://meter.example"]
-    );
+    let capabilities = &document.capabilities;
+    assert_eq!((capabilities.throughput.len(), capabilities.latency.len()), (2, 2));
+    let negotiated = |target: &ThroughputTarget| target.protocol == Protocol::Negotiated;
+    assert!(capabilities.throughput.iter().all(negotiated));
+    let origins = connect_origins(&document);
+    assert_eq!(origins, ["https://meter.example", "wss://meter.example"]);
 }

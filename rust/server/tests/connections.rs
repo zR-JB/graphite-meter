@@ -3,21 +3,12 @@ use graphite_meter_server::connections::Connections;
 #[test]
 fn ipv6_subnets_and_mapped_ipv4_share_the_expected_budget() {
     let capacity = Connections::new(4, 1, Vec::new());
-    let first = capacity
-        .acquire("[2001:db8:1::1]:1000".parse().unwrap(), false)
-        .unwrap();
-    assert!(
-        capacity
-            .acquire("[2001:db8:1::2]:2000".parse().unwrap(), false)
-            .is_none()
-    );
-    let other = capacity
-        .acquire("[2001:db8:2::1]:1000".parse().unwrap(), false)
-        .unwrap();
-    let mapped = capacity
-        .acquire("[::ffff:198.51.100.1]:1000".parse().unwrap(), false)
-        .unwrap();
-    assert!(capacity.acquire("198.51.100.1:2000".parse().unwrap(), false).is_none());
+    let acquire = |peer: &str| capacity.acquire(peer.parse().unwrap(), false);
+    let first = acquire("[2001:db8:1::1]:1000").unwrap();
+    assert!(acquire("[2001:db8:1::2]:2000").is_none());
+    let other = acquire("[2001:db8:2::1]:1000").unwrap();
+    let mapped = acquire("[::ffff:198.51.100.1]:1000").unwrap();
+    assert!(acquire("198.51.100.1:2000").is_none());
     assert_eq!(capacity.stats().active, 3);
     drop((first, other, mapped));
     assert_eq!(capacity.stats().active, 0);
@@ -55,8 +46,9 @@ fn buffered_connections_share_wider_ipv6_budgets_and_release_them() {
             permits.push(capacity.acquire(peer, true).unwrap());
         }
     }
-    assert!(capacity.acquire("[2001:db8:1:2::1]:9".parse().unwrap(), true).is_none());
-    assert!(capacity.acquire("[2001:db8:2::1]:9".parse().unwrap(), true).is_some());
+    let acquire = |peer: &str| capacity.acquire(peer.parse().unwrap(), true);
+    assert!(acquire("[2001:db8:1:2::1]:9").is_none());
+    assert!(acquire("[2001:db8:2::1]:9").is_some());
     drop(permits);
-    assert!(capacity.acquire("[2001:db8:1:2::1]:9".parse().unwrap(), true).is_some());
+    assert!(acquire("[2001:db8:1:2::1]:9").is_some());
 }

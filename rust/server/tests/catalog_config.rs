@@ -70,10 +70,8 @@ fn rejects_unsafe_ambiguous_and_duplicate_json() {
         "https://example.net#x",
         "https://example.net//",
     ] {
-        assert!(
-            parse(serde_json::to_string(&[origin]).unwrap().as_bytes()).is_err(),
-            "{origin}"
-        );
+        let catalog = serde_json::to_string(&[origin]).unwrap();
+        assert!(parse(catalog.as_bytes()).is_err(), "{origin}");
     }
 }
 

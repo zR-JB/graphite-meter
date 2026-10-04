@@ -137,10 +137,8 @@ fn the_password_command_compares_before_it_validates() {
     ] {
         let result = command(input);
         let stderr = String::from_utf8_lossy(&result.stderr);
-        assert!(
-            stderr.starts_with("Password: Confirm password: ") && stderr.contains(error),
-            "{stderr}"
-        );
+        let prompted = stderr.starts_with("Password: Confirm password: ") && stderr.contains(error);
+        assert!(prompted, "{stderr}");
         assert_eq!(result.status.success(), error.is_empty(), "{stderr}");
         assert_eq!(result.stdout.is_empty(), !error.is_empty());
     }
