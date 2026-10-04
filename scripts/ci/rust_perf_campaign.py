@@ -160,8 +160,9 @@ def parse(case: tuple, output: str) -> dict:
     loaded = re.search(r'^Loaded (?:down|up)\s{2,}(.+)$', output, re.MULTILINE)
     if loaded:
         median, _added, p95, _jitter, timeouts = re.split(r'\s{2,}', loaded[1].strip())[:5]
-        seconds = lambda text: float(text.split()[0]) * (1 if text.endswith(' s') else 1e-3)
-        result.update(loadedMedianMs=seconds(median) * 1e3, loadedP95Ms=seconds(p95) * 1e3, probeTimeouts=timeouts)
+        # A dash stands for a figure no probe answered.
+        ms = lambda text: float(text.split()[0]) * (1e3 if text.endswith(' s') else 1) if text[0].isdigit() else None
+        result.update(loadedMedianMs=ms(median), loadedP95Ms=ms(p95), probeTimeouts=timeouts)
     return result
 
 
@@ -229,8 +230,8 @@ def summarize(rows: list[dict], path: Path) -> None:
             table.setdefault(case, {})[variant] = {
                 'ok': f'{len(ok)}/{len(runs)}',
                 'gbps': median(lambda run: run.get('gbps', 0)),
-                'loadedMedianMs': median(lambda run: run.get('loadedMedianMs', 0)),
-                'loadedP95Ms': median(lambda run: run.get('loadedP95Ms', 0)),
+                'loadedMedianMs': median(lambda run: run.get('loadedMedianMs') or 0),
+                'loadedP95Ms': median(lambda run: run.get('loadedP95Ms') or 0),
                 'probesPerSecond': median(lambda run: run.get('probesPerSecond', 0)),
                 'serverPeakMiB': median(lambda run: run['server']['peakRss'] / mib),
                 'serverEndMiB': median(lambda run: run['server']['endRss'] / mib),
