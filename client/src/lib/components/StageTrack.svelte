@@ -130,7 +130,11 @@
   ) as Record<StageKey, Handoff<ReturnType<typeof look>>>;
 </script>
 
-<div class="stage-track" style:--chips={segments.length}>
+<div
+  class="stage-track"
+  style:--chips={segments.length}
+  style:--cols={segments.length > 3 ? 2 : segments.length}
+>
   {@render children?.()}
   <div class="chips" role="group" aria-label="Test stages">
     <span class="legend caps" aria-hidden="true">Test stages</span>
@@ -370,11 +374,14 @@
     display: none;
   }
   /* Narrow rows: two chips to a line, the running one with the time into its stage alone. */
+  /* A phone keeps up to three chips on one line and sets four as two and two; a chip too narrow for its glyph
+     keeps its name and its time. */
   @container viz (max-width: 430px) {
     .chips {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
     }
     .chip {
+      container-type: inline-size;
       padding: 8px;
     }
     .chip-tag .full {
@@ -382,6 +389,21 @@
     }
     .chip-tag .short {
       display: inline;
+    }
+  }
+  @container (max-width: 124px) {
+    .chip-ico {
+      display: none;
+    }
+    .chip-label {
+      font-size: var(--type-xs);
+    }
+    .chip-tag.time {
+      font-size: 10px;
+    }
+    .chip-tag:not(.time) {
+      padding-inline: 3px;
+      font-size: 9px;
     }
   }
 </style>

@@ -239,19 +239,13 @@
       gap: var(--space-2);
     }
   }
+  /* A phone stacks the cards in stage order, each whole from Start, so nothing moves as the stages run. */
   @container results (max-width: 520px) {
+    .result-cards {
+      grid-template-columns: minmax(0, 1fr);
+    }
     .wire .delta {
       display: none;
-    }
-    .running .card:not(.active, .recovering) > :is(.line, .strip, .facts),
-    .card:is(.pending, .not-run) > :is(.line, .strip, .facts) {
-      display: none;
-    }
-    .running .card:is(.active, .recovering) {
-      order: -1;
-    }
-    .result-cards > :global(:last-child:nth-child(odd)) {
-      grid-column: 1 / -1;
     }
   }
   /* A card is a panel ruled in its stage's hue along the top; the running card's edge strengthens. In its row it
