@@ -28,5 +28,5 @@ lto = false
 codegen-units = 16
 
 [patch.crates-io]
-h2 = { git = "https://github.com/zR-JB/h2", rev = "238744966508e206bbcc81f13994d9637b8449d0" }
+h2 = { git = "https://github.com/zR-JB/h2", rev = "c1f366b7925c2dbeae99cbb02083ed983f569b40" }
 noq = { git = "https://github.com/zR-JB/noq", rev = "c694c869afc71095b267b9481730885f035395ac" }

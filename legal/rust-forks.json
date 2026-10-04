@@ -84,11 +84,11 @@
   {
     "fork": "https://github.com/zR-JB/h2",
     "branch": "graphite-meter/h2-v0.4.19",
-    "rev": "238744966508e206bbcc81f13994d9637b8449d0",
+    "rev": "c1f366b7925c2dbeae99cbb02083ed983f569b40",
     "upstream": "https://github.com/hyperium/h2",
     "baseTag": "v0.4.19",
     "base": "d57d1b852fec9dda6d42d3454502006d52104da8",
-    "diffSha256": "abe7db1c7d26be956438d300035b528de44cc3c2481ddbe4a621b21e74bbba12",
+    "diffSha256": "f7fec8a0ae49e9ab7bab858329cff619987ee69966ab32c37976b837aca4d6f3",
     "modifiedPackages": [
       "h2"
     ],
@@ -110,6 +110,7 @@
       "src/proto/connection.rs",
       "src/proto/streams/buffer.rs",
       "src/proto/streams/counts.rs",
+      "src/proto/streams/flow_control.rs",
       "src/proto/streams/mod.rs",
       "src/proto/streams/prioritize.rs",
       "src/proto/streams/recv.rs",
@@ -148,7 +149,8 @@
       {"subject": "Gate the Graphite Meter fork on Rust 1.99.0", "purpose": "Runs the fork workflow on Rust 1.99.0 and allows the fetch_update deprecation the older MSRV requires.", "origin": "graphite-meter"},
       {"subject": "Reject GOAWAY frames with a non-zero stream identifier (#951)", "purpose": "Treats a GOAWAY on a non-zero stream as a connection protocol error, as RFC 9113 requires.", "origin": "hyperium/h2#951 d4a37fcac2c382746b6ff3509d8bd5871235ab37"},
       {"subject": "fix: rare race during shutdown (#956)", "purpose": "Fixes a rare race between connection shutdown and stream state.", "origin": "hyperium/h2#956 e43124bb5579bae0306d4a8f70dc127a640534c4"},
-      {"subject": "fix(client): reject responses without `:status` (#959)", "purpose": "Refuses a response head that lacks the :status pseudo-header.", "origin": "hyperium/h2#959 3c5f61c9bac3b9ab9b24031a3bb90d8b58eccb9a"}
+      {"subject": "fix(client): reject responses without `:status` (#959)", "purpose": "Refuses a response head that lacks the :status pseudo-header.", "origin": "hyperium/h2#959 3c5f61c9bac3b9ab9b24031a3bb90d8b58eccb9a"},
+      {"subject": "Refresh large receive windows once a mebibyte is unclaimed", "purpose": "Caps the WINDOW_UPDATE threshold at 1 MiB so a large receive window stays nearly full over a long path, as Go refreshes after 4 KiB.", "origin": "graphite-meter"}
     ],
     "metadataFiles": [
       ".github/workflows/graphite-meter.yml"
