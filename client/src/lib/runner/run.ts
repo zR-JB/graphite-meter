@@ -578,11 +578,28 @@ export class Run {
       server.stage?.measure();
     }
     if (!isTransfer(activity.stage)) return;
-    this.#live.reset(
-      Object.fromEntries(this.#ids().map((id) => [id, 0])),
-      this.#clock.read(),
-    );
+    // The warmup's bytes stay out of the live rate: the download count carries on from here, and a receiver's
+    // count is asked for afresh, so the first upload window starts at the measurement rather than at the last
+    // record heard during the warmup.
+    this.#live.reset(this.#counts(), this.#clock.read());
     this.#aggregate.begin(activity.stage, this.#ids(), this.#now());
+    if (activity.transfer.includes("up")) {
+      const participants = this.#stageParticipants(activity);
+      const epoch = this.#epoch;
+      for (const server of participants) server.up = null;
+      void Promise.allSettled(
+        participants.map(async (server) => {
+          const checkpoint = await server.stage
+            ?.checkpoint(this.#boundaryAbort.signal)
+            .catch(() => null);
+          if (epoch !== this.#epoch || !this.#measuring || !checkpoint) return;
+          this.#hear(server, checkpoint);
+          this.#live.receiver(server.server.id, checkpoint, this.#clock.read());
+        }),
+      ).then(() => {
+        if (epoch === this.#epoch && this.#measuring) this.#boundary();
+      });
+    }
     this.#boundary();
   }
 

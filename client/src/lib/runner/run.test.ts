@@ -142,8 +142,15 @@ async function harness(
           calls.push(`discard:${peer.id}`);
           peer.discard?.(host, incomplete);
         },
+        // A receiver that is absent, or silent at this moment, answers no checkpoint either.
         checkpoint: () =>
-          peer.checkpoint?.(measuring) ?? Promise.resolve(receiver()),
+          peer.checkpoint?.(measuring) ??
+          Promise.resolve(
+            peer.receives === false ||
+              peer.silent?.(activity, performance.now() - started, "up")
+              ? null
+              : receiver(),
+          ),
         replaceUpload: peer.replaceUpload,
       };
       return stage;
