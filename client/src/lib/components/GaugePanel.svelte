@@ -256,7 +256,7 @@
   bind:clientWidth={panelWidth}
 >
   <div class="instrument">
-    <div class="dial panel" class:hung>
+    <div class="dial" class:hung>
       {#if indicatedServers.length > 1}
         <div class="server-indicator">
           <ServerLens servers={indicatedServers} {participants} />
@@ -267,6 +267,7 @@
         bind:clientHeight={gaugeHeight}
         class="gauge-face"
         style:--gauge-center-offset={`${layout.center.y - layout.height / 2}px`}
+        style:--face-min="{Math.min(gaugeWidth, gaugeHeight)}px"
       >
         <GaugeDial
           input={dialState}
@@ -291,7 +292,11 @@
           </div>
         {/if}
         <div class="metric-wrap" style:opacity={hero.opacity}>
-          <div class="hero" class:terminal={!!terminal}>
+          <div
+            class="hero"
+            class:terminal={!!terminal}
+            class:short={gaugeHeight < 180}
+          >
             {#if terminal}
               <div
                 class="terminal-readout"
@@ -349,7 +354,7 @@
     </div>
 
     {#if store.latencyEnabled}
-      <div class="latency-panel panel"><LatencyProfile /></div>
+      <div class="latency-panel"><LatencyProfile /></div>
     {/if}
 
     <!-- The run key over the stage chips, under the lanes beside the dial. -->
@@ -443,18 +448,12 @@
     flex-direction: column;
     min-width: 0;
     min-height: 0;
-    padding: var(--space-4) var(--space-5);
   }
   .results {
     grid-area: results;
     display: grid;
     min-width: 0;
     min-height: 0;
-  }
-  @container viz (max-width: 520px) {
-    .latency-panel {
-      padding: var(--space-3) var(--space-4);
-    }
   }
   .server-indicator {
     position: absolute;
@@ -474,8 +473,8 @@
     position: relative;
     flex: 1 1 auto;
     min-height: 0;
-    /* The hero number scales with cqmin, the dimension that sizes the ring. */
-    container-type: size;
+    /* The hero's type scales with --face-min, the measured dimension that sizes the ring: measured, not a
+       container query, which a flex item answers late. */
   }
   .gauge-ticks,
   .metric-wrap {
@@ -518,15 +517,16 @@
   .terminal-number {
     max-width: 100%;
     color: var(--text);
-    font-family: var(--font-mono);
-    font-weight: 500;
+    font-family: var(--font-sans);
+    font-weight: 300;
     font-variant-numeric: lining-nums tabular-nums;
     line-height: 1;
+    letter-spacing: -0.025em;
     white-space: nowrap;
   }
   .gauge-value {
     min-width: 5ch;
-    font-size: clamp(22px, 13cqmin, 56px);
+    font-size: clamp(24px, calc(var(--face-min) * 0.17), 76px);
     text-align: center;
   }
   /* "—" waits quietly where the value arrives, like the cards'. */
@@ -555,13 +555,13 @@
      value stood. */
   .terminal-direction {
     position: absolute;
-    bottom: calc(100% + clamp(8px, 3.5cqmin, 14px));
+    bottom: calc(100% + clamp(10px, var(--face-min) * 0.04, 16px));
     display: flex;
     align-items: center;
     gap: 6px;
     color: var(--text-muted);
-    font: 500 clamp(var(--type-xs), 3.4cqmin, var(--type-body)) / 1
-      var(--font-sans);
+    font: var(--w-strong) clamp(var(--type-xs), var(--face-min) * 0.036, 14px) /
+      1 var(--font-sans);
     white-space: nowrap;
   }
   .terminal-direction .tone-icon {
@@ -572,21 +572,21 @@
     width: 10px;
     height: 10px;
   }
-  @container (max-height: 180px) {
-    .terminal-direction {
-      display: none;
-    }
+  /* Decided from the measured face, not a container query: a size-contained flex item answers one late. */
+  .hero.short .terminal-direction {
+    display: none;
   }
   .terminal-number {
-    font-size: clamp(26px, 13cqmin, 56px);
+    font-size: clamp(30px, calc(var(--face-min) * 0.17), 76px);
   }
   /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. One size and line height for both, so the result
      lands where the live value stood. */
   .terminal-unit,
   .gauge-unit {
     color: var(--text-muted);
-    font: 500 clamp(var(--type-xs), 3.6cqmin, var(--type-sm)) / var(--type-md)
-      var(--font-mono);
+    font: var(--w-normal)
+      clamp(var(--type-sm), var(--face-min) * 0.04, var(--type-lg)) /
+      var(--type-md) var(--font-sans);
   }
   /* Empty, it keeps its line, so "—" sits where the value arrives. */
   .gauge-unit {

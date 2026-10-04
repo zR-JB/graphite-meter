@@ -92,6 +92,11 @@
 
 /* Docked sheets open and close by gliding their column, so the page makes room instead of jumping.
    Only the shell reads them, so a glide never restyles what it contains. */
+@property --wash {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 0%;
+}
 @property --dock-left {
   syntax: "<length>";
   inherits: false;
@@ -644,7 +649,31 @@
     letter-spacing: var(--track-caps);
     text-transform: uppercase;
   }
-  /* A panel: one fill step above the canvas in a hairline, for the dial, the lanes and a result. */
+  /* A stage's area is its light on the page: a rule in its hue and a wash that fades out, no box. The lanes
+     read this way; the kept results are panels. */
+  .stage-area {
+    --wash: 0%;
+    border-top: 2px solid
+      color-mix(in oklab, var(--tone) var(--rule, 100%), transparent);
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--tone) var(--wash), transparent),
+      transparent 78%
+    );
+    transition:
+      --wash var(--dur-graph) var(--ease-out),
+      border-color var(--dur-graph) var(--ease-out);
+  }
+  .stage-area:is(.complete, .partial, .failed, .stopped) {
+    --wash: 9%;
+  }
+  .stage-area:is(.active, .recovering) {
+    --wash: 16%;
+  }
+  .stage-area:is(.pending, .not-run) {
+    --rule: 30%;
+  }
+  /* A panel: one fill step above the canvas in a hairline, for a kept result. */
   .panel {
     border: var(--hairline) solid var(--border);
     border-radius: var(--r-surface);
@@ -1181,7 +1210,6 @@
   }
   /* Segments share spare width but never shrink below their word. */
   .segmented > button {
-    flex: 1 1 auto;
     min-width: 0;
     padding-inline: var(--space-2);
     overflow: hidden;

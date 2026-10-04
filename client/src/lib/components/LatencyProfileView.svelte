@@ -261,7 +261,11 @@
     `left:${from}%;width:${Math.max(0, to - from)}%`;
 </script>
 
-<section class="latency-card {light}" data-tone="latency" aria-label={label}>
+<section
+  class="latency-card stage-area {light}"
+  data-tone="latency"
+  aria-label={label}
+>
   <header class="card-head">
     <span class="tone-icon" aria-hidden="true"
       ><Icon name={STAGE.latency.icon} /></span
@@ -495,12 +499,14 @@
 
 <style>
   /* In its panel: the head at the top, then the idle figures beside the ruled lanes, centred in what is left. */
+  /* The lanes are the latency stage's area on the page (`.stage-area`): its rule, its wash, no box. */
   .latency-card {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     gap: var(--space-3);
     min-width: 0;
     height: 100%;
+    padding: var(--space-3) var(--space-4) var(--space-3);
     container: latency / inline-size;
   }
   .card-head {

@@ -66,9 +66,9 @@ export function gaugeLayout(
         : Infinity,
     ),
   );
-  const arcWidth = Math.max(6, radius * 0.085);
-  const tickInner = radius + arcWidth * 0.5 + 6;
-  const tickOuter = tickInner + Math.max(5, radius * 0.05);
+  const arcWidth = Math.max(6, radius * 0.13);
+  const tickInner = radius + arcWidth * 0.5 + 3;
+  const tickOuter = tickInner + radius * 0.08;
   // Center the visible 270-degree sweep, including its label clearance.
   const center = {
     x: safeWidth / 2,
