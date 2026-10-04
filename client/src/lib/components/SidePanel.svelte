@@ -5,7 +5,6 @@
   import type { Snippet } from "svelte";
   import { resize } from "../actions/resize";
   import { sheetDrag } from "../actions/sheetDrag";
-  import { keyHint, tooltip } from "../actions/tooltip";
   import { activeModal } from "../actions/focus";
 
   interface Props {
@@ -96,7 +95,6 @@
         <button
           class="btn btn-icon btn-quiet"
           aria-label={`Close ${title}`}
-          {@attach tooltip(() => `Close${keyHint("Esc")}`)}
           onclick={onClose}
         >
           <Icon name="close" />

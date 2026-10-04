@@ -2,7 +2,6 @@
   import { untrack } from "svelte";
   import Dialog from "./Dialog.svelte";
   import Icon from "./Icon.svelte";
-  import { keyHint, tooltip } from "../actions/tooltip";
   import { loadLegal, retryLegal } from "../legal/loader";
   import type { LegalAbout } from "../legal/types";
 
@@ -60,7 +59,6 @@
         class="btn btn-icon btn-quiet"
         type="button"
         aria-label="Close About & legal"
-        {@attach tooltip(() => `Close${keyHint("Esc")}`)}
         onclick={onClose}><Icon name="close" /></button
       >
     </div>
