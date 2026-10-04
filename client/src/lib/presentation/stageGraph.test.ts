@@ -104,8 +104,8 @@ test("a reply below the idle median sits below its line; the track clamps at its
     lanes: [[]],
     latency: [
       { t: 2000, ms: 5 },
-      { t: 2000, ms: 30 },
-      { t: 2000, ms: 500 },
+      { t: 2400, ms: 30 },
+      { t: 2800, ms: 500 },
       { t: 9000, ms: 30 },
     ],
   });
@@ -115,4 +115,20 @@ test("a reply below the idle median sits below its line; the track clamps at its
   expect(above).toBeLessThan(graph.baselineY!);
   expect(capped).toBe(1.5);
   expect(graph.lines).toEqual([""]);
+});
+
+test("replies in one column of the width draw as one bar at their mean, marked when any went over the top", () => {
+  const graph = stageGraphGeometry({
+    ...base,
+    lanes: [[]],
+    latency: [
+      { t: 3000, ms: 10 },
+      { t: 3010, ms: 30 },
+      { t: 3500, ms: 10 },
+      { t: 3510, ms: 500 },
+    ],
+  });
+  expect(graph.dots).toHaveLength(2);
+  expect(graph.dots[0]).toMatchObject({ ms: 20, over: false });
+  expect(graph.dots[1]).toMatchObject({ y: 1.5, over: true });
 });

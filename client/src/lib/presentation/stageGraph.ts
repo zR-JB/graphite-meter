@@ -119,14 +119,29 @@ export function stageGraphGeometry(
     trackHeight -
     1.5 -
     Math.min(1, Math.max(0, ms / (input.latencyTop || 1))) * (trackHeight - 3);
-  const dots = input.latency
-    .filter((point) => point.t >= start && point.t <= start + span)
-    .map((point) => ({
-      ...point,
-      x: x(point.t),
-      y: trackY(point.ms),
-      over: point.ms > (input.latencyTop || 1),
-    }));
+  // Replies bin to the width like the lanes, so every stage's track has bars of one pitch whatever its length; a
+  // bin reads its buckets' mean and keeps the mark of any bucket over the top.
+  const top = input.latencyTop || 1;
+  const sums = new Float64Array(columns);
+  const counts = new Uint16Array(columns);
+  const overs = new Uint8Array(columns);
+  for (const point of input.latency) {
+    if (point.t < start || point.t > start + span) continue;
+    const i = Math.min(
+      columns - 1,
+      Math.floor(((point.t - start) / (span || 1)) * columns),
+    );
+    sums[i] += point.ms;
+    counts[i]++;
+    if (point.ms > top) overs[i] = 1;
+  }
+  const dots = [...counts.keys()]
+    .filter((i) => counts[i])
+    .map((i) => {
+      const t = start + ((i + 0.5) / columns) * span;
+      const ms = sums[i] / counts[i];
+      return { t, ms, x: x(t), y: trackY(ms), over: overs[i] === 1 };
+    });
   return {
     lines,
     area: areaOf(lines[0] ?? "", points[0] ?? [], plotHeight),
