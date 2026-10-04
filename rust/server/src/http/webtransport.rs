@@ -326,9 +326,12 @@ async fn download_lane(
     }
 }
 
+/// Reads up to a batch of chunks per wake, so the idle timer, the activity clock and the shared count are
+/// updated once per batch rather than once per packet.
 async fn upload_lane(mut stream: RecvStream, mut lane: UploadLane, activity: Activity) -> Result<(), Failure> {
-    while let Ok(Ok(Some(chunk))) = tokio::time::timeout(IDLE_BOUND, stream.read_chunk()).await {
-        lane.record(chunk.len());
+    let mut chunks = [const { Bytes::new() }; 32];
+    while let Ok(Ok(Some(count))) = tokio::time::timeout(IDLE_BOUND, stream.read_chunks(&mut chunks)).await {
+        lane.record(chunks[..count].iter().map(Bytes::len).sum());
         touch(&activity);
     }
     Ok(())

@@ -183,19 +183,31 @@ impl RecvStream {
 
     /// The next chunk, `None` at the stream's end.
     pub async fn read_chunk(&mut self) -> Result<Option<Bytes>, Error> {
+        let mut chunk = [Bytes::new()];
+        Ok(self
+            .read_chunks(&mut chunk)
+            .await?
+            .map(|_| std::mem::take(&mut chunk[0])))
+    }
+
+    /// Fills `chunks` with the next chunks under one lock of the connection: how many, `None` at the stream's end.
+    pub async fn read_chunks(&mut self, chunks: &mut [Bytes]) -> Result<Option<usize>, Error> {
         let (first, stream) = (&mut self.first, &mut self.stream);
         let read = async {
             match std::mem::take(first) {
-                first if first.is_empty() => stream.read_chunk(usize::MAX).await,
-                first => Ok(Some(first)),
+                first if first.is_empty() => stream.read_many_chunks(chunks).await,
+                first => {
+                    chunks[0] = first;
+                    Ok(Some(1))
+                }
             }
         };
-        let Ok(chunk) = unless_ended(self.session.as_ref(), read).await else {
+        let Ok(read) = unless_ended(self.session.as_ref(), read).await else {
             self.stop(Code::WT_SESSION_GONE);
             return Err(Error::Refused);
         };
-        self.done |= !matches!(chunk, Ok(Some(_)));
-        Ok(chunk?)
+        self.done |= !matches!(read, Ok(Some(_)));
+        Ok(read?)
     }
 
     /// Stops the stream with `code`, or once its session ended with WT_SESSION_GONE.
