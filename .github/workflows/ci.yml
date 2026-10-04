@@ -505,11 +505,70 @@ jobs:
           python3 -m scripts.ci.release stage-rust
           python3 -m scripts.ci.release check-rust
 
+  rust-campaign-build:
+    name: Temporary Go/Rust campaign binaries
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    steps:
+      - name: Checkout repository with the baseline commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false, fetch-depth: 0}
+      - name: Set up pinned Python, Go and Rust without build caches
+        uses: ./.github/actions/setup-project
+        with: {go: 'true', rust: 'true', cache: 'false'}
+      - name: Install musl headers and compiler
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+      - name: Build baseline and candidate release binaries
+        run: python3 -m scripts.ci.rust_perf_campaign build
+      - name: Upload campaign binaries
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rust-campaign-bin
+          path: rust/target/campaign/bin
+          if-no-files-found: error
+          retention-days: 3
+
+  rust-campaign:
+    name: Temporary Go/Rust campaign (${{ matrix.study }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    needs: [plan, rust-campaign-build]
+    if: needs.plan.outputs.rust == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        study: [server, client]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up pinned mise and Python
+        uses: ./.github/actions/setup-project
+      - name: Download campaign binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: rust-campaign-bin
+          path: rust/target/campaign/bin
+      - name: Measure every transport across Go, baseline and candidate
+        env:
+          STUDY: ${{ matrix.study }}
+        run: chmod +x rust/target/campaign/bin/* && python3 -m scripts.ci.rust_perf_campaign measure "$STUDY"
+      - name: Upload measurements and logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rust-campaign-${{ matrix.study }}
+          path: rust/target/campaign/results-${{ matrix.study }}
+          if-no-files-found: error
+          retention-days: 3
+
   gate:
     name: Gate
     runs-on: ubuntu-24.04
     if: always()
-    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-e2e-build, rust-e2e, rust-release-tui, rust-release-server, rust-release]
+    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-e2e-build, rust-e2e, rust-release-tui, rust-campaign-build, rust-campaign, rust-release-server, rust-release]
     steps:
       - name: Require every selected job
         env:
