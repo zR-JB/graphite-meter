@@ -3,6 +3,7 @@
 build: release musl Rust binaries for BASE and the checkout, static Go binaries.
 measure server|client: vary that side over go/base/cand against the candidate Rust counterpart on loopback.
 measure wan-server|wan-client PROFILE: the same across one shaped link, with loaded latency (run as root).
+profile: perf of the symbolized candidate and of Go on both sides of HTTP/1.1 transfers.
 """
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ from rust.tests.process_fixture import Fixture, unused_port
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / 'rust/target/campaign'
 BIN = OUT / 'bin'
-BASE = 'aa5e1d8015bc225726278c7fc84b652ad87caa1b'
+BASE = '4b4ce453ea94dccdd46e6d83f7f6912c6abf76bd'
 MUSL = 'x86_64-unknown-linux-musl'
 VARIANTS = ('go', 'base', 'cand')
 TRANSFERS = [(protocol, direction, transport) for protocol, transport in
@@ -32,7 +33,8 @@ TRANSFERS = [(protocol, direction, transport) for protocol, transport in
               ('http3', 'webtransport')) for direction in ('download', 'upload')]
 LATENCY = ('websocket', 'webtransport')
 REPEATS, STREAMS, SECONDS, IDLE = 5, 4, 10, 3
-# Round trip ms, delay variation ms each way, Mbit/s each way, loss % each way; queues hold about 100 ms.
+# Round trip ms, delay variation ms each way, Mbit/s each way, loss % each way; the queue limit is sized for
+# 100 ms of full-size packets.
 PROFILES = {'cable': (30, 0, 300, 0), 'far': (200, 0, 1000, 0), 'wifi': (20, 5, 150, 0.5), 'mobile': (70, 20, 30, 2)}
 SERVER_ADDRESS, CLIENT_ADDRESS, CLIENT_NS = '10.77.0.1', '10.77.0.2', 'gm-client'
 # Linux's default congestion control, with TCP buffers that never limit a 1 Gbit/s, 300 ms path.
@@ -59,11 +61,12 @@ def build() -> None:
     if not source.exists():
         subprocess.run(['git', 'worktree', 'add', '--detach', str(source), BASE], cwd=ROOT, check=True)
     run(['rustup', 'target', 'add', MUSL], ROOT / 'rust', environment, OUT / 'target.log')
-    for label, tree in (('base', source), ('cand', ROOT)):
+    symbols = {'CARGO_PROFILE_RELEASE_DEBUG': '2', 'CARGO_PROFILE_RELEASE_STRIP': 'none'}
+    for label, tree, extra in (('base', source, {}), ('cand', ROOT, {}), ('prof', ROOT, symbols)):
         # Legal notice embedding requires each workspace's build outputs under its own target directory.
-        target = tree / 'rust/target/campaign-build'
+        target = tree / f'rust/target/campaign-build-{label}'
         run(['cargo', 'build', '--locked', '--release', '--target', MUSL, '-p', 'graphite-meter-server',
-             '-p', 'graphite-meter-client'], tree / 'rust', {**environment, 'CARGO_TARGET_DIR': str(target)},
+             '-p', 'graphite-meter-client'], tree / 'rust', {**environment, **extra, 'CARGO_TARGET_DIR': str(target)},
             OUT / f'build-{label}.log')
         for side in ('server', 'client'):
             shutil.copy2(target / MUSL / 'release' / f'graphite-meter-{side}', BIN / f'{label}-{side}')
@@ -217,6 +220,50 @@ def measure(study: str, profile: str | None) -> None:
     shutil.rmtree(fixture.directory, ignore_errors=True)
 
 
+def profile() -> None:
+    results = OUT / 'results-profile'
+    results.mkdir(parents=True, exist_ok=True)
+    fixture = Fixture('campaign-')
+    _, cert, key = fixture.identity()
+    ports = {'http1': unused_port(), 'http2': unused_port(), 'http3': unused_port(socket.SOCK_DGRAM)}
+    environment = {key: value for key, value in os.environ.items() if not key.startswith(('GM_', 'MIMALLOC_'))}
+    environment.update(GM_AUTH_MODE='off', GM_H1_ADDR=f'127.0.0.1:{ports["http1"]}',
+                       GM_H2_ADDR=f'127.0.0.1:{ports["http2"]}', GM_H3_ADDR=f'127.0.0.1:{ports["http3"]}',
+                       GM_TLS_CERT=str(cert), GM_TLS_KEY=str(key))
+    # The profiled side is varied; its counterpart is the candidate.
+    cells = [('client', 'download', variant) for variant in ('prof', 'go')]
+    cells += [('server', 'upload', variant) for variant in ('prof', 'go')]
+    for side, direction, variant in cells:
+        for repeat in range(2):
+            name = f'profile-{side}-{direction}-{variant}-{repeat}'
+            server = BIN / (f'{variant}-server' if side == 'server' else 'cand-server')
+            client = BIN / (f'{variant}-client' if side == 'client' else 'cand-client')
+            process = start(server, environment, environment['GM_H1_ADDR'], results / f'{name}-server.log')
+            try:
+                running = subprocess.Popen(client_command(client, ports, ('http1', direction, 'fetch-stream'),
+                                                          '127.0.0.1'), env=environment, stdout=subprocess.PIPE,
+                                           stderr=subprocess.STDOUT, text=True)
+                time.sleep(2)
+                pid = running.pid if side == 'client' else process.pid
+                data = results / f'{name}.data'
+                subprocess.run(['sudo', '-n', 'perf', 'record', '-F', '999', '-g', '-p', str(pid), '-o', str(data),
+                                '--', 'sleep', '6'], capture_output=True, timeout=30, check=False)
+                output = running.communicate(timeout=60)[0]
+            finally:
+                stop(process)
+            report = subprocess.run(['sudo', '-n', 'perf', 'report', '-i', str(data), '--stdio', '--no-children',
+                                     '--sort', 'dso,symbol', '--percent-limit', '0.4', '-g', 'none'],
+                                    capture_output=True, text=True, timeout=300, check=False).stdout
+            syscalls = subprocess.run(['sudo', '-n', 'perf', 'report', '-i', str(data), '--stdio', '--no-children',
+                                       '--sort', 'symbol', '--percent-limit', '0.4', '-g', 'caller,0.5,callee',
+                                       '--symbol-filter', 'entry_SYSCALL'],
+                                      capture_output=True, text=True, timeout=300, check=False).stdout
+            rate = re.search(r'(?:Download|Upload)\s+[^\n]*', output)
+            (results / f'{name}.txt').write_text((rate[0] if rate else output[-500:]) + '\n' + report + syscalls)
+            data.unlink(missing_ok=True)
+    shutil.rmtree(fixture.directory, ignore_errors=True)
+
+
 def summarize(rows: list[dict], path: Path) -> None:
     mib = 2 ** 20
     summary = {}
@@ -245,4 +292,9 @@ def summarize(rows: list[dict], path: Path) -> None:
 
 
 if __name__ == '__main__':
-    build() if sys.argv[1] == 'build' else measure(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
+    if sys.argv[1] == 'build':
+        build()
+    elif sys.argv[1] == 'profile':
+        profile()
+    else:
+        measure(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)

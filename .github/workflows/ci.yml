@@ -560,6 +560,8 @@ jobs:
           - {study: client, profile: mobile}
           - {study: wan-server, profile: loopback}
           - {study: wan-client, profile: loopback}
+        include:
+          - {study: profile, profile: loopback}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -571,6 +573,9 @@ jobs:
         with:
           name: rust-campaign-bin
           path: rust/target/campaign/bin
+      - name: Install perf for the profile
+        if: matrix.study == 'profile'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends linux-tools-generic
       - name: Install link shaping tools
         if: matrix.profile != 'loopback'
         run: |
@@ -583,7 +588,9 @@ jobs:
           PROFILE: ${{ matrix.profile }}
         run: |
           chmod +x rust/target/campaign/bin/*
-          if [ "$PROFILE" = loopback ]; then
+          if [ "$STUDY" = profile ]; then
+            python3 -m scripts.ci.rust_perf_campaign profile
+          elif [ "$PROFILE" = loopback ]; then
             python3 -m scripts.ci.rust_perf_campaign measure "$STUDY"
           else
             sudo env "PATH=$PATH" python3 -m scripts.ci.rust_perf_campaign measure "$STUDY" "$PROFILE"
