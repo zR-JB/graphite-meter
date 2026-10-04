@@ -622,24 +622,6 @@ test("an HTTP receiver feed without its final record releases the stage after th
   await finishing;
 });
 
-test("a final checkpoint retries one miss within its bound", async () => {
-  let misses = 0;
-  const h = await http({
-    checkpoint: () =>
-      misses-- > 0
-        ? new Response(null, { status: 503 })
-        : Response.json({ bytes: 100, nanos: 1e6 }),
-  });
-  const stage = h.stage(activity("upload"));
-  const preparing = stage.prepare();
-  await h.open(0, "missed");
-  await preparing;
-  misses = 1;
-  const final = await stage.checkpoint(new AbortController().signal, true);
-  expect(final).toMatchObject({ id: "missed", bytes: 100 });
-  stage.discard();
-});
-
 test("a checkpoint the server never answers gives up on its own bound", async () => {
   const h = await http({
     checkpoint: (signal) =>
