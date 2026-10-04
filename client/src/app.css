@@ -1169,58 +1169,12 @@
   }
 
   .segmented {
-    position: relative;
-    isolation: isolate;
     display: flex;
     gap: 2px;
     min-height: var(--control-h);
     padding: 2px;
     border-radius: var(--r-chrome);
     background: var(--track);
-    anchor-scope: --segment;
-  }
-  /* The thumb: one plate on the chosen segment, anchored to it, so it slides between segments of any width;
-     the words sit on top of it. */
-  .segmented::after {
-    content: "";
-    position: absolute;
-    z-index: -1;
-    position-anchor: --segment;
-    inset: anchor(top) anchor(right) anchor(bottom) anchor(left);
-    border-radius: calc(var(--r-chrome) - 1px);
-    background: var(--surface-1);
-    box-shadow:
-      inset 0 0 0 var(--hairline) var(--border-strong),
-      0 1px 2px light-dark(oklch(0.25 0.02 255 / 0.08), oklch(0 0 0 / 0.3));
-    transition:
-      left var(--dur-graph) var(--ease-out),
-      right var(--dur-graph) var(--ease-out);
-  }
-  .segmented
-    > button:is(
-      [aria-pressed="true"],
-      [aria-checked="true"],
-      [aria-selected="true"],
-      [aria-current]:not([aria-current="false"]),
-      :has(> input:checked)
-    ) {
-    anchor-name: --segment;
-  }
-  /* Without anchors the chosen segment keeps a wash instead of a thumb. */
-  @supports not (anchor-name: --segment) {
-    .segmented::after {
-      display: none;
-    }
-    .segmented
-      > button:is(
-        [aria-pressed="true"],
-        [aria-checked="true"],
-        [aria-selected="true"],
-        [aria-current]:not([aria-current="false"]),
-        :has(> input:checked)
-      ) {
-      background-color: var(--selected-wash);
-    }
   }
   /* After the base rule, which would otherwise keep it at control height. */
   @media (pointer: coarse) {
@@ -1252,10 +1206,12 @@
   .segmented > button:focus-visible {
     outline-offset: -2px;
   }
+  /* The plate moves to the chosen segment as a change of fill, word and shadow in one step. */
   .segmented > button {
     transition:
-      var(--transition-control),
-      color var(--dur-graph) var(--ease-out);
+      background-color var(--dur-slide) var(--ease-out),
+      box-shadow var(--dur-slide) var(--ease-out),
+      color var(--dur-slide) var(--ease-out);
   }
   /* The hover wash is an image layer, so it adds to a selected fill instead of replacing it. */
   @media (hover: hover) {
@@ -1271,6 +1227,10 @@
       [aria-current]:not([aria-current="false"]),
       :has(> input:checked)
     ) {
+    background-color: var(--surface-1);
+    box-shadow:
+      inset 0 0 0 var(--hairline) var(--border-strong),
+      0 1px 2px light-dark(oklch(0.25 0.02 255 / 0.08), oklch(0 0 0 / 0.3));
     color: var(--brand-strong);
   }
 
