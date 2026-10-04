@@ -611,6 +611,19 @@ test("a stable feed completes early and each result arrives before the next stag
   expect(stageResult).toBeLessThan(upload);
 });
 
+test("a stable upload completes early on its own", async () => {
+  const h = await harness(
+    two(),
+    { upload: true },
+    { uploadMs: 6_000 },
+    { adaptive: true },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.stages.upload).toBe("complete");
+  expect(result.durationMs).toBeLessThan(6_000);
+});
+
 test("the live stage track shows the statuses the run settles, one-lane bidirectional included", async () => {
   const { store } = await import("../state/store.svelte");
   const h = await harness(
