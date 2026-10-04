@@ -130,7 +130,7 @@
     {@const look = view.shown}
     <button
       type="button"
-      class="seg seg--{s.state}"
+      class="chip chip--{s.state}"
       class:on={s.selected}
       class:done={look.state === "complete"}
       data-tone={s.key}
@@ -145,28 +145,28 @@
       disabled={s.locked}
       onclick={() => controller.toggleStage(s.key)}
     >
-      <span class="seg-key" aria-hidden="true">
+      <span class="chip-key" aria-hidden="true">
         {#if look.state === "complete"}<Icon name="check" />{/if}
       </span>
-      <span class="seg-label">{s.label}</span>
+      <span class="chip-label">{s.label}</span>
       {#if look.text}
         <span
-          class="seg-res"
+          class="chip-res"
           class:value={look.state === "complete" || look.state === "partial"}
           data-tone={look.live
             ? undefined
             : (STATUS_TONE as Record<string, Tone>)[look.state]}
           style:opacity={view.opacity}
-          >{look.text}{#if look.unit}<span class="seg-unit">{look.unit}</span
+          >{look.text}{#if look.unit}<span class="chip-unit">{look.unit}</span
             >{/if}</span
         >
       {/if}
-      <span class="seg-bar" aria-hidden="true">
+      <span class="chip-bar" aria-hidden="true">
         <span
-          class="seg-fill"
+          class="chip-fill"
           data-tone={look.tone}
-          class:seg-fill--warmup={look.state === "warmup"}
-          class:seg-fill--failed={look.state === "failed"}
+          class:chip-fill--warmup={look.state === "warmup"}
+          class:chip-fill--failed={look.state === "failed"}
           class:is-partial={look.state === "partial"}
           class:is-stalled={look.state === "recovering"}
           class:is-live={look.live}
@@ -185,7 +185,7 @@
 
   /* A key: a flat plate with a check box, the stage's name and, at its end, its result; along its base a bar in
      the stage's hue once the stage has settled. */
-  .seg {
+  .chip {
     position: relative;
     display: flex;
     align-items: center;
@@ -202,22 +202,22 @@
     transition: var(--transition-control);
   }
   @media (hover: hover) {
-    .seg:hover:not(:disabled) {
+    .chip:hover:not(:disabled) {
       border-color: var(--border-strong);
     }
   }
   /* One off stays operable, so it reads soft rather than dimmed; only a locked key dims. */
-  .seg:not(.on) {
+  .chip:not(.on) {
     color: var(--text-soft);
   }
-  .seg:disabled {
+  .chip:disabled {
     cursor: default;
   }
-  .seg--disabled:disabled {
+  .chip--disabled:disabled {
     opacity: 0.5;
   }
   /* The box is the switch: ink square while on, the hue's check once measured. */
-  .seg-key {
+  .chip-key {
     display: grid;
     flex: none;
     place-items: center;
@@ -227,26 +227,26 @@
     border-radius: 1px;
     color: var(--tone);
   }
-  .on .seg-key {
+  .on .chip-key {
     border-color: var(--brand);
   }
-  .on .seg-key::after {
+  .on .chip-key::after {
     content: "";
     width: 7px;
     height: 7px;
     background: var(--brand);
   }
-  .done .seg-key {
+  .done .chip-key {
     border-color: var(--tone);
   }
-  .done .seg-key::after {
+  .done .chip-key::after {
     display: none;
   }
-  .seg-key :global(svg) {
+  .chip-key :global(svg) {
     width: 10px;
     height: 10px;
   }
-  .seg-label {
+  .chip-label {
     flex: 1 1 auto;
     min-width: 0;
     overflow: hidden;
@@ -254,36 +254,36 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .seg-res {
+  .chip-res {
     flex: none;
     color: var(--text-muted);
     font: var(--role-figure-sm);
     line-height: 1;
     white-space: nowrap;
   }
-  .seg-res.value {
+  .chip-res.value {
     color: var(--text);
   }
-  .seg-res[data-tone] {
+  .chip-res[data-tone] {
     color: var(--tone-ink);
   }
-  .seg-unit {
+  .chip-unit {
     margin-left: 0.5ch;
     color: var(--text-muted);
   }
   /* A narrower row keeps the figure and drops its unit, which the dial names. */
   @container viz (max-width: 1180px) {
-    .seg-unit {
+    .chip-unit {
       display: none;
     }
   }
-  .seg-bar {
+  .chip-bar {
     position: absolute;
     inset: auto 0 0;
     height: 2px;
     overflow: hidden;
   }
-  .seg-fill {
+  .chip-fill {
     position: absolute;
     inset: 0;
     background: var(--tone);
@@ -293,22 +293,22 @@
       transform var(--dur-graph) var(--ease-out),
       background-color var(--dur-graph) var(--ease-out);
   }
-  .seg-fill.is-live {
+  .chip-fill.is-live {
     transition: background-color var(--dur-graph) var(--ease-out);
   }
   /* A finished stage keeps its hue; partial is hatched like the dial's dashed arc. */
-  .seg-fill.is-partial {
+  .chip-fill.is-partial {
     background: repeating-linear-gradient(
       90deg,
       var(--tone) 0 6px,
       transparent 6px 9px
     );
   }
-  .seg-fill--failed {
+  .chip-fill--failed {
     background: var(--err);
     opacity: 0.45;
   }
-  .seg-fill.is-stalled {
+  .chip-fill.is-stalled {
     animation: stall-pulse var(--dur-pulse) var(--ease-out) infinite;
   }
   @keyframes stall-pulse {
@@ -316,13 +316,13 @@
       opacity: 0.4;
     }
   }
-  .seg-fill--warmup {
+  .chip-fill--warmup {
     width: 45%;
     background: color-mix(in oklab, var(--tone) 55%, transparent);
     animation: warmup-sweep var(--dur-pulse) var(--ease-out) infinite;
   }
   @media (prefers-reduced-motion: reduce) {
-    .seg-fill--warmup {
+    .chip-fill--warmup {
       width: 100%;
       opacity: 0.55;
     }
@@ -336,12 +336,12 @@
     }
   }
   @container viz (max-width: 720px) {
-    .seg {
+    .chip {
       padding: 0 10px;
     }
   }
   @container viz (max-width: 430px) {
-    .seg {
+    .chip {
       display: grid;
       grid-template-columns: auto minmax(0, 1fr);
       grid-template-rows: auto auto;
@@ -349,10 +349,10 @@
       column-gap: 8px;
       align-content: center;
     }
-    .seg-key {
+    .chip-key {
       grid-row: 1 / 3;
     }
-    .seg-res {
+    .chip-res {
       grid-column: 2;
       justify-self: start;
       font-size: var(--type-xs);
