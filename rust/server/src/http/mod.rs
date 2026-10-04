@@ -84,7 +84,7 @@ pub struct HttpServer {
     pub(crate) config: Arc<ValidatedConfig>,
     discovery: Discovery,
     admission: Admission,
-    connections: Connections,
+    pub(crate) connections: Connections,
     stopping: tokio::sync::watch::Sender<bool>,
     memory: Arc<budget::MemoryBudget>,
     client_credit: Arc<budget::ClientCredit>,

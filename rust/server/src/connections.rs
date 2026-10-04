@@ -28,6 +28,7 @@ struct Inner {
     client_max: usize,
     trusted: Vec<IpNet>,
     counts: Mutex<Counts>,
+    idle: tokio::sync::Notify,
 }
 
 #[derive(Clone)]
@@ -47,6 +48,7 @@ impl Connections {
             client_max,
             trusted,
             counts: Mutex::default(),
+            idle: tokio::sync::Notify::new(),
         }))
     }
 
@@ -99,12 +101,20 @@ impl Connections {
     pub fn stats(&self) -> Stats {
         lock(&self.0.counts).stats
     }
+
+    /// Resolves once the last connection has closed, also when that happened before the call.
+    pub async fn idle(&self) {
+        self.0.idle.notified().await;
+    }
 }
 
 impl Drop for Permit {
     fn drop(&mut self) {
         let mut counts = lock(&self.owner.0.counts);
         counts.stats.active -= 1;
+        if counts.stats.active == 0 {
+            self.owner.0.idle.notify_one();
+        }
         counts.clients.release(&self.keys);
         if self.quic {
             counts.quic.release(&self.keys);
@@ -142,5 +152,24 @@ mod tests {
         let proxy = "192.0.2.1:1".parse().unwrap();
         let _proxied = connections.acquire(proxy, true).unwrap();
         assert!(!connections.holds_quic(proxy));
+    }
+
+    #[tokio::test]
+    async fn idle_follows_the_last_connection_closing() {
+        use futures_util::FutureExt;
+        let connections = super::Connections::new(64, 64, vec![]);
+        let peer = "192.0.2.1:1".parse().unwrap();
+        let (first, second) = (
+            connections.acquire(peer, false).unwrap(),
+            connections.acquire(peer, true).unwrap(),
+        );
+        drop(first);
+        assert!(connections.idle().now_or_never().is_none(), "a connection remains");
+        drop(second);
+        assert!(
+            connections.idle().now_or_never().is_some(),
+            "the close before the wait counts"
+        );
+        assert!(connections.idle().now_or_never().is_none());
     }
 }

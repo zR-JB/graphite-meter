@@ -21,6 +21,8 @@ type Service = Pin<Box<dyn Future<Output = Result<(), ServerError>> + Send>>;
 /// Verbose logs report transfer rates each second and admission, as Go's, each thirty.
 const TRANSFER_LOG_INTERVAL: Duration = Duration::from_secs(1);
 const ADMISSION_LOG_INTERVAL: Duration = Duration::from_secs(30);
+/// How long the server stays without connections before it returns freed memory.
+const IDLE_RELEASE: Duration = Duration::from_secs(2);
 
 /// Bind every configured socket before serving any request. A bind failure
 /// drops all previously opened sockets. Every running service is owned here;
@@ -110,6 +112,17 @@ pub async fn run(config: ValidatedConfig, shutdown: impl Future<Output = ()>) ->
             Ok(())
         }));
     }
+    {
+        let server = server.clone();
+        let stopped = stopped.clone();
+        services.push(Box::pin(async move {
+            tokio::select! {
+                _ = cancelled(stopped) => {},
+                _ = release_idle_memory(&server) => {},
+            }
+            Ok(())
+        }));
+    }
     if config.verbose {
         let server = server.clone();
         let stopped = stopped.clone();
@@ -149,6 +162,17 @@ pub async fn run(config: ValidatedConfig, shutdown: impl Future<Output = ()>) ->
         }
     }
     result
+}
+
+/// mimalloc returns freed pages to the OS only while a thread allocates, which an idle server does not.
+async fn release_idle_memory(server: &HttpServer) {
+    loop {
+        server.connections.idle().await;
+        tokio::time::sleep(IDLE_RELEASE).await;
+        if server.connections.stats().active == 0 {
+            release_memory(&server.pool);
+        }
+    }
 }
 
 async fn cancelled(mut stopped: watch::Receiver<bool>) {
@@ -244,6 +268,20 @@ impl Quic {
                 .collect(),
         }
     }
+}
+
+/// Returns freed allocator pages to the OS on the calling thread and on every pool thread.
+fn release_memory(pool: &Pool) {
+    release_freed_memory();
+    for runtime in &pool.runtimes {
+        runtime.spawn(async { release_freed_memory() });
+    }
+}
+
+/// mimalloc's collection covers only the calling thread's heap, and purges every arena.
+fn release_freed_memory() {
+    #[cfg(target_env = "musl")]
+    rustfs_mimalloc::heap::Heap::main().collect(true);
 }
 
 async fn bind(address: &str) -> std::io::Result<TcpListener> {
