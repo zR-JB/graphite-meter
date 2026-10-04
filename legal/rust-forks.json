@@ -83,11 +83,11 @@
   {
     "fork": "https://github.com/zR-JB/h2",
     "branch": "graphite-meter/h2-v0.4.19",
-    "rev": "81631f0916ecaaf550dadebe941b947a9e4c1a13",
+    "rev": "238744966508e206bbcc81f13994d9637b8449d0",
     "upstream": "https://github.com/hyperium/h2",
     "baseTag": "v0.4.19",
     "base": "d57d1b852fec9dda6d42d3454502006d52104da8",
-    "diffSha256": "5ddb79d056c4bf77749b6e3f3d2ed515861b12ef7b97ca7f77eb871badf41852",
+    "diffSha256": "abe7db1c7d26be956438d300035b528de44cc3c2481ddbe4a621b21e74bbba12",
     "modifiedPackages": [
       "h2"
     ],
@@ -99,7 +99,9 @@
       "src/codec/framed_write.rs",
       "src/codec/mod.rs",
       "src/frame/data.rs",
+      "src/frame/go_away.rs",
       "src/frame/headers.rs",
+      "src/frame/mod.rs",
       "src/hpack/decoder.rs",
       "src/hpack/header.rs",
       "src/hpack/table.rs",
@@ -121,6 +123,7 @@
       "tests/h2-support/src/util.rs",
       "tests/h2-tests/Cargo.toml",
       "tests/h2-tests/tests/client_request.rs",
+      "tests/h2-tests/tests/codec_read.rs",
       "tests/h2-tests/tests/flow_control.rs",
       "tests/h2-tests/tests/informational_responses.rs",
       "tests/h2-tests/tests/receive_budget_wire.rs",
@@ -141,7 +144,10 @@
       {"subject": "Refund receive window credit when the connection ends", "purpose": "Refunds charged receive credit on EOF, drop and connection error even while handlers hold stream handles.", "origin": "graphite-meter"},
       {"subject": "Exempt empty final DATA from the send allowance", "purpose": "Lets a response finish with an empty END_STREAM frame under allowance pressure.", "origin": "graphite-meter"},
       {"subject": "Restore is_released's doc comment", "purpose": "Moves a misplaced doc comment back to its function.", "origin": "graphite-meter"},
-      {"subject": "Gate the Graphite Meter fork on Rust 1.99.0", "purpose": "Runs the fork workflow on Rust 1.99.0 and allows the fetch_update deprecation the older MSRV requires.", "origin": "graphite-meter"}
+      {"subject": "Gate the Graphite Meter fork on Rust 1.99.0", "purpose": "Runs the fork workflow on Rust 1.99.0 and allows the fetch_update deprecation the older MSRV requires.", "origin": "graphite-meter"},
+      {"subject": "Reject GOAWAY frames with a non-zero stream identifier (#951)", "purpose": "Treats a GOAWAY on a non-zero stream as a connection protocol error, as RFC 9113 requires.", "origin": "hyperium/h2#951 d4a37fcac2c382746b6ff3509d8bd5871235ab37"},
+      {"subject": "fix: rare race during shutdown (#956)", "purpose": "Fixes a rare race between connection shutdown and stream state.", "origin": "hyperium/h2#956 e43124bb5579bae0306d4a8f70dc127a640534c4"},
+      {"subject": "fix(client): reject responses without `:status` (#959)", "purpose": "Refuses a response head that lacks the :status pseudo-header.", "origin": "hyperium/h2#959 3c5f61c9bac3b9ab9b24031a3bb90d8b58eccb9a"}
     ],
     "metadataFiles": [
       ".github/workflows/graphite-meter.yml"
