@@ -1717,8 +1717,10 @@
 }
 /* A morph names the console's panels only while it runs, so a theme change reveals the page as one surface. Each
    panel glides from its old box to its new one; its old and new looks keep their size and cross over, so text
-   never stretches; an arriving panel rises in and a leaving one sinks out. */
+   never stretches; an arriving panel rises in and a leaving one sinks out. Only the panels are captured: the
+   page around them stays live, as it would show its new state at once anyway. */
 :root:active-view-transition-type(morph) {
+  view-transition-name: none;
   & .gauge-panel .dial {
     view-transition-name: dial;
   }
