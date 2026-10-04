@@ -1,5 +1,5 @@
 //! Connections through CONNECT tunnels, HTTP proxies in absolute form and SOCKS5, against in-test peers.
-use graphite_meter_net::{ConnectError, Connection, Connector, Proxy, RequestForm, Verify, client_config};
+use graphite_meter_net::{Alpn, ConnectError, Connection, Connector, Proxy, RequestForm, Verify};
 use graphite_meter_proto::origin::Origin;
 use graphite_meter_testkit::Identity;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
@@ -17,14 +17,9 @@ fn connector(variable: &str, proxy: &str, verify: Verify) -> Connector {
 }
 
 async fn connect(connector: &Connector, target: &str) -> Result<Connection, ConnectError> {
-    let target = Origin::parse(target).unwrap();
-    match target.scheme.name() {
-        "https" => {
-            let tls = client_config(Verify::Insecure, rustls::DEFAULT_VERSIONS, &[b"h2", b"http/1.1"]).await;
-            connector.connect(&target, Some(&Arc::new(tls))).await
-        }
-        _ => connector.connect(&target, None).await,
-    }
+    connector
+        .connect(&Origin::parse(target).unwrap(), Alpn::Negotiated)
+        .await
 }
 
 /// A peer on a loopback port that runs `serve` on its one connection.
@@ -67,7 +62,7 @@ async fn https_tunnels_through_connect_with_credentials_and_tls_inside() {
         (head, alpn)
     })
     .await;
-    let connector = connector("HTTPS_PROXY", &format!("http://user:s%40cret@{address}"), Verify::Trusted);
+    let connector = connector("HTTPS_PROXY", &format!("http://user:s%40cret@{address}"), Verify::Insecure);
     let mut connection = connect(&connector, "https://meter.test:8443").await.unwrap();
     assert_eq!((connection.alpn.as_deref(), &connection.form), (Some(&b"h2"[..]), &RequestForm::Origin));
     let mut inside = [0; 6];
@@ -131,7 +126,7 @@ async fn a_connect_response_with_bare_line_feeds_opens_the_tunnel() {
         accept(stream, &[]).await
     })
     .await;
-    let connector = connector("HTTPS_PROXY", &address.to_string(), Verify::Trusted);
+    let connector = connector("HTTPS_PROXY", &address.to_string(), Verify::Insecure);
     connect(&connector, "https://meter.test").await.unwrap();
 }
 

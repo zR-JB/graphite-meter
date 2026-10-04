@@ -1,16 +1,15 @@
 //! Connections to HTTP(S) targets: direct, through a CONNECT tunnel, in absolute form or through SOCKS5.
 use crate::{
-    Verify, client_config, dial,
+    Alpn, Verify, client_config, dial,
     proxy::{Proxy, UnusableProxy, Upstream},
     socks,
 };
 use graphite_meter_proto::origin::{Host, Origin, Scheme};
-use rustls::{ClientConfig, pki_types::ServerName};
-use std::{fmt, io, sync::Arc, time::Duration};
+use rustls::pki_types::ServerName;
+use std::{fmt, io, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
-    sync::OnceCell,
 };
 use tokio_rustls::TlsConnector;
 
@@ -90,31 +89,26 @@ impl From<UnusableProxy> for ConnectError {
     }
 }
 
-/// Opens connections through the environment's proxies, verifying an HTTPS proxy as `verify` says.
+/// Opens connections through the environment's proxies, verifying HTTPS targets and proxies as `verify` says.
 pub struct Connector {
     proxy: Proxy,
     verify: Verify,
-    /// TLS to an HTTPS proxy, built on first use; it offers no ALPN, so the proxy answers in HTTP/1.1.
-    hop: OnceCell<TlsConnector>,
 }
 
 impl Connector {
     pub fn new(proxy: Proxy, verify: Verify) -> Self {
-        Self { proxy, verify, hop: OnceCell::new() }
+        Self { proxy, verify }
     }
 
-    /// Connects to `target`, through TLS configured by `tls` exactly when it is HTTPS.
-    pub async fn connect(&self, target: &Origin, tls: Option<&Arc<ClientConfig>>) -> Result<Connection, ConnectError> {
-        if (target.scheme == Scheme::Https) != tls.is_some() {
-            let mismatch = "TLS configuration does not match the target scheme";
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, mismatch).into());
-        }
+    /// Connects to `target`, offering `alpn` in its TLS handshake when it is HTTPS.
+    pub async fn connect(&self, target: &Origin, alpn: Alpn) -> Result<Connection, ConnectError> {
+        let tls = target.scheme == Scheme::Https;
         let (stream, form) = match self.proxy.route(target)? {
             None => (Box::new(reach(&target.host, target.port).await?) as Box<dyn Stream>, RequestForm::Origin),
             Some(upstream) => {
                 let (host, port) = upstream.address();
                 let stream = reach(host, port).await?;
-                let handshake = self.through(upstream, stream, target, tls.is_some());
+                let handshake = self.through(upstream, stream, target, tls);
                 tokio::time::timeout(PROXY_TIMEOUT, handshake)
                     .await
                     .unwrap_or_else(|_| {
@@ -123,10 +117,11 @@ impl Connector {
                     })?
             }
         };
-        let Some(tls) = tls else {
+        if !tls {
             return Ok(Connection { stream, alpn: None, form });
-        };
-        let stream = secure(&TlsConnector::from(tls.clone()), &target.host, stream).await?;
+        }
+        let config = client_config(self.verify, alpn).await;
+        let stream = secure(&TlsConnector::from(config), &target.host, stream).await?;
         let alpn = stream.get_ref().1.alpn_protocol().map(<[u8]>::to_vec);
         Ok(Connection { stream: Box::new(stream), alpn, form })
     }
@@ -147,7 +142,10 @@ impl Connector {
             Upstream::Http { origin, authorization } => (origin, authorization),
         };
         let stream: Box<dyn Stream> = match origin.scheme {
-            Scheme::Https => Box::new(secure(self.hop().await, &origin.host, stream).await?),
+            Scheme::Https => {
+                let hop = TlsConnector::from(client_config(self.verify, Alpn::None).await);
+                Box::new(secure(&hop, &origin.host, stream).await?)
+            }
             Scheme::Http => Box::new(stream),
         };
         if tls {
@@ -155,14 +153,6 @@ impl Connector {
         } else {
             Ok((stream, RequestForm::Absolute { authorization: authorization.clone() }))
         }
-    }
-
-    async fn hop(&self) -> &TlsConnector {
-        let build = || async {
-            let config = client_config(self.verify, rustls::DEFAULT_VERSIONS, &[]).await;
-            TlsConnector::from(Arc::new(config))
-        };
-        self.hop.get_or_init(build).await
     }
 }
 

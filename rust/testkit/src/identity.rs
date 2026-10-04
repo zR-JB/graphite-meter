@@ -8,8 +8,10 @@ const CA: &str = "-subj /CN=graphite-meter-test-ca -addext basicConstraints=crit
                   -addext keyUsage=critical,keyCertSign";
 const LEAF: &str = "-subj /CN=localhost -addext subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1 \
                     -addext basicConstraints=critical,CA:FALSE -addext extendedKeyUsage=serverAuth";
+const INTERMEDIATE: &str = "-subj /CN=localhost -addext subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1 \
+                            -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign";
 
-/// A CA and the leaf it signed, as PEM: for `localhost`, `127.0.0.1` and `::1` unless self-signed.
+/// A CA and the certificate it signed, as PEM: for `localhost`, `127.0.0.1` and `::1` unless self-signed.
 pub struct Identity {
     pub ca: String,
     pub certificate: String,
@@ -17,12 +19,22 @@ pub struct Identity {
 }
 
 impl Identity {
+    /// A CA and a server certificate it signed.
     pub fn generate() -> Result<Self, Error> {
+        Self::signed(LEAF)
+    }
+
+    /// A CA and a CA certificate it signed, which no TLS client takes as a server's own.
+    pub fn intermediate() -> Result<Self, Error> {
+        Self::signed(INTERMEDIATE)
+    }
+
+    fn signed(subject: &str) -> Result<Self, Error> {
         let scratch = Scratch::new()?;
         let [ca, ca_key, leaf, key] =
             ["ca.pem", "ca.key", "leaf.pem", "leaf.key"].map(|name| scratch.path().join(name));
         openssl(CA, &[("-keyout", &ca_key), ("-out", &ca)])?;
-        openssl(LEAF, &[("-CA", &ca), ("-CAkey", &ca_key), ("-keyout", &key), ("-out", &leaf)])?;
+        openssl(subject, &[("-CA", &ca), ("-CAkey", &ca_key), ("-keyout", &key), ("-out", &leaf)])?;
         let read = std::fs::read_to_string;
         Ok(Self { ca: read(ca)?, certificate: read(leaf)?, key: read(key)? })
     }

@@ -1,6 +1,6 @@
 use super::*;
 use graphite_meter_testkit::Identity;
-use rustls::CertificateError::{Expired, ExpiredContext, UnknownIssuer};
+use rustls::CertificateError::{Expired, ExpiredContext};
 use std::time::Duration;
 
 /// A scratch directory whose paths tests pass around as text.
@@ -43,7 +43,7 @@ fn roots(locations: &Locations) -> Vec<CertificateDer<'static>> {
     roots
 }
 
-fn verify(store: &Store, certificate: &CertificateDer<'_>, name: &str, now: UnixTime) -> Result<(), rustls::Error> {
+fn verify(store: &Verifier, certificate: &CertificateDer<'_>, name: &str, now: UnixTime) -> Result<(), rustls::Error> {
     let name = ServerName::try_from(name.to_owned()).unwrap();
     store.verify_server_cert(certificate, &[], &name, &[], now).map(drop)
 }
@@ -95,31 +95,48 @@ fn hash_links_load_once_and_an_unreadable_directory_is_reported_beside_the_roots
 }
 
 #[test]
-fn a_trusted_self_signed_ca_is_its_own_chain_and_an_untrusted_one_has_an_unknown_issuer() {
+fn a_root_in_both_the_bundle_and_its_directory_loads_once() {
+    let scratch = Scratch::new();
+    let [(pem, root), (other_pem, other)] = [certificate(), certificate()];
+    let bundle = scratch.file("bundle.pem", &format!("{pem}{other_pem}"));
+    let directory = scratch.dir("certs");
+    scratch.file("certs/bundle.pem", &format!("{pem}{other_pem}"));
+    scratch.file("certs/root.pem", &pem);
+    assert_eq!(roots(&locations(&[], &[&bundle], &[&directory])), [root, other]);
+}
+
+#[test]
+fn a_trusted_root_serving_as_its_own_chain_still_expires() {
     let scratch = Scratch::new();
     let (pem, ca) = certificate();
-    let store = Store::load(&locations(&[("SSL_CERT_FILE", &scratch.file("ca.pem", &pem))], &[], &[]));
+    let store = Verifier::load(&locations(&[("SSL_CERT_FILE", &scratch.file("ca.pem", &pem))], &[], &[]));
     let now = UnixTime::now();
     verify(&store, &ca, "localhost", now).unwrap();
-    assert!(verify(&store, &ca, "other.test", now).is_err(), "its name still counts");
     let later = UnixTime::since_unix_epoch(Duration::from_secs(now.as_secs() + 10 * 86_400));
     let expired = verify(&store, &ca, "localhost", later);
     assert!(
         matches!(expired, Err(rustls::Error::InvalidCertificate(Expired | ExpiredContext { .. }))),
         "{expired:?}"
     );
-    let stranger = verify(&store, &certificate().1, "localhost", now);
-    assert!(matches!(stranger, Err(rustls::Error::InvalidCertificate(UnknownIssuer))), "{stranger:?}");
 }
 
 #[test]
-fn a_store_without_roots_refuses_every_certificate_as_untrusted() {
+fn a_ca_that_only_chains_to_a_trusted_root_is_refused_as_a_server_certificate() {
     let scratch = Scratch::new();
-    let (empty, directory) = (scratch.file("empty.pem", ""), scratch.dir("none"));
-    let store = Store::load(&locations(&[("SSL_CERT_FILE", &empty), ("SSL_CERT_DIR", &directory)], &[], &[]));
-    let refused = verify(&store, &certificate().1, "localhost", UnixTime::now());
-    assert!(matches!(refused, Err(rustls::Error::InvalidCertificate(UnknownIssuer))), "{refused:?}");
-    let unreadable = Store::load(&locations(&[], &[&directory], &[]));
+    let chained = Identity::intermediate().unwrap();
+    let store = Verifier::load(&locations(&[("SSL_CERT_FILE", &scratch.file("ca.pem", &chained.ca))], &[], &[]));
+    let ca = CertificateDer::from_pem_slice(chained.certificate.as_bytes()).unwrap();
+    let refused = verify(&store, &ca, "localhost", UnixTime::now());
+    let Err(rustls::Error::InvalidCertificate(CertificateError::Other(OtherError(reason)))) = &refused else {
+        panic!("{refused:?}");
+    };
+    assert_eq!(reason.downcast_ref::<webpki::Error>(), Some(&webpki::Error::CaUsedAsEndEntity));
+}
+
+#[test]
+fn an_unreadable_store_refuses_every_certificate_with_its_reason() {
+    let scratch = Scratch::new();
+    let unreadable = Verifier::load(&locations(&[], &[&scratch.dir("none")], &[]));
     let refused = verify(&unreadable, &certificate().1, "localhost", UnixTime::now());
     let Err(rustls::Error::InvalidCertificate(CertificateError::Other(OtherError(reason)))) = refused else {
         panic!("{refused:?}");

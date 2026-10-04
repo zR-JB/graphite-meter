@@ -5,12 +5,12 @@ use rustls::{
         TLS13_AES_128_GCM_SHA256 as AES_128, TLS13_AES_256_GCM_SHA384 as AES_256,
         TLS13_CHACHA20_POLY1305_SHA256 as CHACHA,
     },
-    ClientConfig, DigitallySignedStruct, SignatureScheme, SupportedProtocolVersion,
-    client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
-    crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature},
-    pki_types::{CertificateDer, ServerName, UnixTime},
+    ClientConfig, SupportedProtocolVersion,
+    client::danger::ServerCertVerifier,
+    crypto::CryptoProvider,
 };
 use std::sync::{Arc, LazyLock};
+use tokio::sync::OnceCell;
 
 /// Go's TLS 1.3 client order with AES hardware.
 const AES_FIRST: [rustls::CipherSuite; 3] = [AES_128, AES_256, CHACHA];
@@ -55,15 +55,37 @@ pub enum Verify {
     Insecure,
 }
 
-/// A client configuration offering `versions` and `alpn`.
-pub async fn client_config(
-    verify: Verify,
-    versions: &[&'static SupportedProtocolVersion],
-    alpn: &[&[u8]],
-) -> ClientConfig {
-    let verifier = match verify {
-        Verify::Trusted => trust::verifier().await,
-        Verify::Insecure => Arc::new(Insecure),
+/// The protocols a client's TLS handshake offers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Alpn {
+    /// None, for an HTTPS proxy's hop, so the proxy answers CONNECT in HTTP/1.1.
+    None,
+    Http1,
+    Http2,
+    /// HTTP/2 or HTTP/1.1, as the server chooses.
+    Negotiated,
+    /// HTTP/3, over TLS 1.3 only.
+    Http3,
+}
+
+/// The client configuration for `verify` and `alpn`, built once so its connections share one session cache.
+pub async fn client_config(verify: Verify, alpn: Alpn) -> Arc<ClientConfig> {
+    static CONFIGS: [[OnceCell<Arc<ClientConfig>>; 5]; 2] = [const { [const { OnceCell::const_new() }; 5] }; 2];
+    let build = || async { trust::verifier(verify).await.map(|verifier| configure(verifier, alpn)) };
+    match CONFIGS[verify as usize][alpn as usize].get_or_try_init(build).await {
+        Ok(config) => config.clone(),
+        // A trust load that did not finish refuses this connection; the next call loads again.
+        Err(cut_short) => configure(trust::refusing(cut_short), alpn),
+    }
+}
+
+fn configure(verifier: Arc<dyn ServerCertVerifier>, alpn: Alpn) -> Arc<ClientConfig> {
+    let (versions, protocols): (&[&SupportedProtocolVersion], &[&[u8]]) = match alpn {
+        Alpn::None => (rustls::DEFAULT_VERSIONS, &[]),
+        Alpn::Http1 => (rustls::DEFAULT_VERSIONS, &[b"http/1.1"]),
+        Alpn::Http2 => (rustls::DEFAULT_VERSIONS, &[b"h2"]),
+        Alpn::Negotiated => (rustls::DEFAULT_VERSIONS, &[b"h2", b"http/1.1"]),
+        Alpn::Http3 => (&[&rustls::version::TLS13], &[b"h3"]),
     };
     let mut config = ClientConfig::builder_with_provider(provider())
         .with_protocol_versions(versions)
@@ -71,44 +93,6 @@ pub async fn client_config(
         .dangerous()
         .with_custom_certificate_verifier(verifier)
         .with_no_client_auth();
-    config.alpn_protocols = alpn.iter().map(|protocol| protocol.to_vec()).collect();
-    config
-}
-
-#[derive(Debug)]
-struct Insecure;
-
-impl ServerCertVerifier for Insecure {
-    fn verify_server_cert(
-        &self,
-        _: &CertificateDer<'_>,
-        _: &[CertificateDer<'_>],
-        _: &ServerName<'_>,
-        _: &[u8],
-        _: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        Ok(ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        message: &[u8],
-        certificate: &CertificateDer<'_>,
-        signature: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        verify_tls12_signature(message, certificate, signature, &provider().signature_verification_algorithms)
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        message: &[u8],
-        certificate: &CertificateDer<'_>,
-        signature: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        verify_tls13_signature(message, certificate, signature, &provider().signature_verification_algorithms)
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        provider().signature_verification_algorithms.supported_schemes()
-    }
+    config.alpn_protocols = protocols.iter().map(|protocol| protocol.to_vec()).collect();
+    Arc::new(config)
 }

@@ -1,5 +1,5 @@
 //! The trust store for server certificates, loaded once on first use from the places Go 1.27 reads.
-use crate::crypto::provider;
+use crate::crypto::{Verify, provider};
 use rustls::{
     CertificateError, DigitallySignedStruct, OtherError, RootCertStore, SignatureScheme,
     client::{
@@ -35,23 +35,26 @@ const DIRECTORIES: &[&str] = &["/etc/ssl/certs", "/etc/pki/tls/certs"];
 
 type Reason = Arc<dyn Error + Send + Sync>;
 
-/// The verifier every verified connection shares, loaded on a blocking thread by the first caller. A store
-/// that cannot be loaded fails each connection it would verify, not the process.
-pub(crate) async fn verifier() -> Arc<dyn ServerCertVerifier> {
-    static VERIFIER: tokio::sync::OnceCell<Arc<dyn ServerCertVerifier>> = tokio::sync::OnceCell::const_new();
-    let load = || async {
-        let lookup = |name: &str| std::env::var_os(name);
-        tokio::task::spawn_blocking(move || system(lookup))
-            .await
-            .unwrap_or_else(|error| Arc::new(Store::Empty(Some(Arc::new(error)))))
-    };
-    VERIFIER.get_or_init(load).await.clone()
+/// The verifier for `verify`; the trusted one loads on a blocking thread and is kept once a load finishes, and a
+/// store that cannot be read fails each connection it would verify, not the process.
+pub(crate) async fn verifier(verify: Verify) -> Result<Arc<dyn ServerCertVerifier>, tokio::task::JoinError> {
+    static TRUSTED: tokio::sync::OnceCell<Arc<dyn ServerCertVerifier>> = tokio::sync::OnceCell::const_new();
+    if verify == Verify::Insecure {
+        return Ok(Arc::new(Verifier::Insecure));
+    }
+    let load = || tokio::task::spawn_blocking(|| system(|name| std::env::var_os(name)));
+    TRUSTED.get_or_try_init(load).await.cloned()
+}
+
+/// A verifier that refuses every certificate for `reason`.
+pub(crate) fn refusing(reason: impl Error + Send + Sync + 'static) -> Arc<dyn ServerCertVerifier> {
+    Arc::new(Verifier::Empty(Some(Arc::new(reason))))
 }
 
 /// The roots `SSL_CERT_FILE` and `SSL_CERT_DIR` name, each replacing its own part of the default lists.
 #[cfg(target_os = "linux")]
 fn system(lookup: impl Fn(&str) -> Option<OsString>) -> Arc<dyn ServerCertVerifier> {
-    Arc::new(Store::load(&Locations::from_lookup(lookup, FILES, DIRECTORIES)))
+    Arc::new(Verifier::load(&Locations::from_lookup(lookup, FILES, DIRECTORIES)))
 }
 
 /// The platform verifier, or only the roots `SSL_CERT_FILE` and `SSL_CERT_DIR` name when either is set.
@@ -59,11 +62,11 @@ fn system(lookup: impl Fn(&str) -> Option<OsString>) -> Arc<dyn ServerCertVerifi
 fn system(lookup: impl Fn(&str) -> Option<OsString>) -> Arc<dyn ServerCertVerifier> {
     let set = |name| lookup(name).is_some_and(|value: OsString| !value.is_empty());
     if set("SSL_CERT_FILE") || set("SSL_CERT_DIR") {
-        return Arc::new(Store::load(&Locations::from_lookup(lookup, &[], &[])));
+        return Arc::new(Verifier::load(&Locations::from_lookup(lookup, &[], &[])));
     }
     match rustls_platform_verifier::Verifier::new(provider()) {
         Ok(verifier) => Arc::new(verifier),
-        Err(error) => Arc::new(Store::Empty(Some(Arc::new(error)))),
+        Err(error) => refusing(error),
     }
 }
 
@@ -87,7 +90,7 @@ impl Locations {
         }
     }
 
-    /// The roots, and the first failure other than a missing path, which matters only when none loaded.
+    /// The roots, each once, and the first failure other than a missing path, which matters only when none loaded.
     fn roots(&self) -> (Vec<CertificateDer<'static>>, Option<io::Error>) {
         let mut failure = None;
         let mut keep = |error: io::Error| {
@@ -101,7 +104,7 @@ impl Locations {
             .iter()
             .find_map(|file| fs::read(file).map_err(&mut keep).ok())
         {
-            roots.extend(certificates(&data));
+            add(&mut roots, &data);
         }
         for directory in &self.directories {
             let Ok(entries) = fs::read_dir(directory).map_err(&mut keep) else {
@@ -112,11 +115,20 @@ impl Locations {
                 if !same_directory_link(&entry, &path)
                     && let Ok(data) = fs::read(&path)
                 {
-                    roots.extend(certificates(&data));
+                    add(&mut roots, &data);
                 }
             }
         }
         (roots, failure)
+    }
+}
+
+/// Adds the roots in `data` that `roots` lacks; Debian's bundle also lies in its directory, once more behind links.
+fn add(roots: &mut Vec<CertificateDer<'static>>, data: &[u8]) {
+    for root in certificates(data) {
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
     }
 }
 
@@ -142,24 +154,31 @@ fn certificates(data: &[u8]) -> impl Iterator<Item = CertificateDer<'static>> + 
     blocks.flat_map(|block| CertificateDer::pem_slice_iter(block).filter_map(Result::ok))
 }
 
-/// webpki over the loaded roots, taking a leaf that is itself a trusted root as its own chain.
+/// How server certificates are checked; handshake signatures are checked in every case.
 #[derive(Debug)]
-enum Store {
+enum Verifier {
+    /// webpki over the loaded roots, taking a leaf that is itself a trusted root as its own chain.
     Roots {
         webpki: Arc<WebPkiServerVerifier>,
         roots: Vec<CertificateDer<'static>>,
     },
     /// No root loaded: every certificate fails, with the reason the store could not be read if one is known.
     Empty(Option<Reason>),
+    /// Every certificate passes.
+    Insecure,
 }
 
-impl Store {
+impl Verifier {
     fn load(locations: &Locations) -> Self {
         let (roots, failure) = locations.roots();
         let mut store = RootCertStore::empty();
         store.add_parsable_certificates(roots.iter().cloned());
         if store.is_empty() {
-            return Self::Empty(failure.map(|error| Arc::new(RootsUnavailable(error)) as Reason));
+            let unavailable = |error: io::Error| {
+                let reason = format!("no trusted root certificates could be loaded: {error}");
+                Arc::new(io::Error::new(error.kind(), reason)) as Reason
+            };
+            return Self::Empty(failure.map(unavailable));
         }
         match WebPkiServerVerifier::builder_with_provider(Arc::new(store), provider()).build() {
             Ok(webpki) => Self::Roots { webpki, roots },
@@ -168,7 +187,7 @@ impl Store {
     }
 }
 
-impl ServerCertVerifier for Store {
+impl ServerCertVerifier for Verifier {
     fn verify_server_cert(
         &self,
         end_entity: &CertificateDer<'_>,
@@ -181,6 +200,7 @@ impl ServerCertVerifier for Store {
             Self::Roots { webpki, roots } => (webpki, roots),
             Self::Empty(Some(reason)) => return Err(CertificateError::Other(OtherError(reason.clone())).into()),
             Self::Empty(None) => return Err(CertificateError::UnknownIssuer.into()),
+            Self::Insecure => return Ok(ServerCertVerified::assertion()),
         };
         let result = webpki.verify_server_cert(end_entity, intermediates, server_name, ocsp, now);
         let Err(rustls::Error::InvalidCertificate(CertificateError::Other(OtherError(error)))) = &result else {
@@ -220,21 +240,6 @@ impl ServerCertVerifier for Store {
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
         provider().signature_verification_algorithms.supported_schemes()
-    }
-}
-
-#[derive(Debug)]
-struct RootsUnavailable(io::Error);
-
-impl std::fmt::Display for RootsUnavailable {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "no trusted root certificates could be loaded: {}", self.0)
-    }
-}
-
-impl Error for RootsUnavailable {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        Some(&self.0)
     }
 }
 
