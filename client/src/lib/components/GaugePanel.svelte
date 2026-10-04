@@ -195,14 +195,16 @@
         display: rateDisplay(liveRates),
         unit: gaugeUnit,
         arcs,
+        live: store.isRunning ? store.phaseStage : null,
       };
     },
-    ({ terminal, display }) =>
+    // A new stage hands the figure and its name off together.
+    ({ terminal, display, live }) =>
       terminal
         ? `${terminal.phase}:${terminal.value}`
-        : `${display.value === MISSING}:${display.unit}`,
+        : `${live}:${display.value === MISSING}:${display.unit}`,
   );
-  const { terminal, display } = $derived(hero.shown);
+  const { terminal, display, live } = $derived(hero.shown);
   // The dial beats only on idle replies, so a stall shows as stillness.
   const reply = $derived(
     phase === "latency"
@@ -318,12 +320,22 @@
                 {/if}
               </div>
             {:else}
-              <span
-                class="gauge-value"
-                class:quiet={display.value === MISSING}
-                aria-hidden="true">{display.value}</span
-              >
-              <span class="gauge-unit" aria-hidden="true">{display.unit}</span>
+              <div class="terminal-readout" aria-hidden="true">
+                <!-- The running stage names itself over its figure, as the result does. -->
+                {#if live}
+                  <span class="terminal-direction" data-tone={live}>
+                    <span class="tone-icon" aria-hidden="true"
+                      ><Icon name={STAGE[live].icon} /></span
+                    >
+                    {STAGE[live].label}
+                  </span>
+                {/if}
+                <span
+                  class="gauge-value"
+                  class:quiet={display.value === MISSING}>{display.value}</span
+                >
+                <span class="gauge-unit">{display.unit}</span>
+              </div>
             {/if}
             <span class="sr-only">{spoken.value} {spoken.unit}</span>
           </div>
