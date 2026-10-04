@@ -2,11 +2,12 @@
 use graphite_meter_net::{ConnectError, Connection, Connector, Proxy, RequestForm, Verify, client_config};
 use graphite_meter_proto::origin::Origin;
 use graphite_meter_testkit::Identity;
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     task::JoinHandle,
+    time::Instant,
 };
 use tokio_rustls::{TlsAcceptor, server::TlsStream};
 
@@ -112,6 +113,78 @@ async fn a_refused_connect_fails_with_the_proxy_s_status() {
     assert!(matches!(&refused, ConnectError::Refused(reason) if reason.contains("407")), "{refused:?}");
 }
 
+/// A proxy that answers the CONNECT head it reads with `response` and returns the head.
+async fn answering(response: Vec<u8>) -> (SocketAddr, JoinHandle<String>) {
+    peer(|mut stream| async move {
+        let head = read_head(&mut stream).await;
+        let _ = stream.write_all(&response).await;
+        head
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_connect_response_with_bare_line_feeds_opens_the_tunnel() {
+    let (address, _proxy) = peer(|mut stream| async move {
+        read_head(&mut stream).await;
+        stream.write_all(b"HTTP/1.1 200 OK\nVia: tiny\n\n").await.unwrap();
+        accept(stream, &[]).await
+    })
+    .await;
+    let connector = connector("HTTPS_PROXY", &address.to_string(), Verify::Trusted);
+    connect(&connector, "https://meter.test").await.unwrap();
+}
+
+#[tokio::test]
+async fn a_malformed_or_oversized_connect_response_is_refused() {
+    let oversized = [&b"HTTP/1.1 200 OK\r\nX-Padding: "[..], &[b'a'; 64 * 1024]].concat();
+    for (response, reason) in [
+        (b"HTTP/1.1 OK\r\n\r\n".to_vec(), "proxy sent a malformed CONNECT response"),
+        (b"SSH-2.0-OpenSSH_9.9\n\n".to_vec(), "proxy sent a malformed CONNECT response"),
+        (oversized, "proxy sent an oversized CONNECT response"),
+    ] {
+        let (address, _proxy) = answering(response).await;
+        let connector = connector("HTTPS_PROXY", &address.to_string(), Verify::Trusted);
+        let refused = connect(&connector, "https://meter.test").await.err().unwrap();
+        assert!(matches!(&refused, ConnectError::Refused(text) if text == reason), "{refused:?}");
+    }
+}
+
+#[tokio::test]
+async fn an_ipv6_target_is_bracketed_in_the_connect_authority() {
+    let (address, proxy) = answering(b"HTTP/1.1 403 Forbidden\r\n\r\n".to_vec()).await;
+    let connector = connector("HTTPS_PROXY", &address.to_string(), Verify::Trusted);
+    connect(&connector, "https://[2001:db8::1]:8443").await.err().unwrap();
+    assert_eq!(
+        proxy.await.unwrap(),
+        "CONNECT [2001:db8::1]:8443 HTTP/1.1\r\nHost: [2001:db8::1]:8443\r\n\r\n"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_proxy_that_accepts_and_stays_silent_fails_after_a_minute() {
+    for scheme in ["http", "https", "socks5"] {
+        let (address, _proxy) = peer(|stream| async move {
+            std::future::pending::<()>().await;
+            drop(stream);
+        })
+        .await;
+        let connector = connector("HTTPS_PROXY", &format!("{scheme}://{address}"), Verify::Trusted);
+        let started = Instant::now();
+        let refused = connect(&connector, "https://meter.test").await.err().unwrap();
+        let ConnectError::Unreachable(error) = &refused else {
+            panic!("{scheme}: {refused:?}");
+        };
+        // Paused time may jump while the loopback connect is in flight, though never past the dial's 9 s.
+        let elapsed = started.elapsed();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut, "{scheme}");
+        assert!(
+            (Duration::from_secs(60)..Duration::from_secs(69)).contains(&elapsed),
+            "{scheme}: {elapsed:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn cleartext_goes_to_an_http_proxy_in_absolute_form_carrying_its_credentials() {
     let (address, proxy) = peer(|mut stream| async move { read_head(&mut stream).await }).await;
@@ -119,6 +192,9 @@ async fn cleartext_goes_to_an_http_proxy_in_absolute_form_carrying_its_credentia
     let mut connection = connect(&connector, "http://meter.test:8080").await.unwrap();
     let authorization = Some("Basic dXNlcjpzZWNyZXQ=".to_owned());
     assert_eq!((connection.alpn, &connection.form), (None, &RequestForm::Absolute { authorization }));
+    let proxy_variable = |name: &str| (name == "HTTP_PROXY").then(|| format!("user:secret@{address}"));
+    let printed = format!("{:?} {:?}", connection.form, Proxy::from_lookup(proxy_variable));
+    assert!(!printed.contains("dXNlcjpzZWNyZXQ") && !printed.contains("secret"), "{printed}");
     connection
         .stream
         .write_all(b"GET http://meter.test:8080/ HTTP/1.1\r\n\r\n")
@@ -185,12 +261,13 @@ async fn socks(method: u8, status: u8) -> (SocketAddr, JoinHandle<Vec<u8>>) {
 }
 
 #[tokio::test]
-async fn socks5_sends_addresses_as_ip_and_fails_closed() {
+async fn socks5h_sends_addresses_as_ip_and_names_as_names_and_fails_closed() {
     let v6 = "2001:db8::1".parse::<std::net::Ipv6Addr>().unwrap().octets();
     for (target, address) in [
         ("http://192.0.2.1", vec![1, 192, 0, 2, 1, 0, 80]),
         ("http://[::ffff:192.0.2.1]:81", vec![1, 192, 0, 2, 1, 0, 81]),
         ("http://[2001:db8::1]", [&[4][..], &v6[..], &[0, 80][..]].concat()),
+        ("http://meter.test", [&[3, 10][..], b"meter.test", &[0, 80][..]].concat()),
     ] {
         let (proxy, sent) = socks(0, 0).await;
         connect(&connector("HTTP_PROXY", &format!("socks5h://{proxy}"), Verify::Trusted), target)

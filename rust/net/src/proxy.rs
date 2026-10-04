@@ -40,6 +40,16 @@ pub enum Upstream {
     Socks { host: Host, port: u16, login: Option<(Vec<u8>, Vec<u8>)> },
 }
 
+impl Upstream {
+    /// The proxy's own host and port.
+    pub(crate) fn address(&self) -> (&Host, u16) {
+        match self {
+            Self::Http { origin, .. } => (&origin.host, origin.port),
+            Self::Socks { host, port, .. } => (host, *port),
+        }
+    }
+}
+
 impl fmt::Display for Upstream {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

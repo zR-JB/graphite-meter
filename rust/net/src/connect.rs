@@ -6,15 +6,18 @@ use crate::{
 };
 use graphite_meter_proto::origin::{Host, Origin, Scheme};
 use rustls::{ClientConfig, pki_types::ServerName};
-use std::{fmt, io, sync::Arc};
+use std::{fmt, io, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    net::TcpStream,
     sync::OnceCell,
 };
 use tokio_rustls::TlsConnector;
 
 /// The longest CONNECT response head a proxy may send.
 const MAX_HEAD_BYTES: usize = 64 * 1024;
+/// The longest a proxy may take past the TCP connect: Go's bound for CONNECT.
+const PROXY_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub trait Stream: AsyncRead + AsyncWrite + Send + Unpin {}
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> Stream for T {}
@@ -27,8 +30,8 @@ pub struct Connection {
     pub form: RequestForm,
 }
 
-/// How requests on a connection name their target.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// How requests on a connection name their target; it prints without credentials.
+#[derive(Clone, PartialEq, Eq)]
 pub enum RequestForm {
     /// `GET /path`, to the target itself.
     Origin,
@@ -36,11 +39,24 @@ pub enum RequestForm {
     Absolute { authorization: Option<String> },
 }
 
+impl fmt::Debug for RequestForm {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Origin => formatter.write_str("Origin"),
+            Self::Absolute { authorization } => formatter
+                .debug_struct("Absolute")
+                .field("authorization", &authorization.as_ref().map(|_| "<redacted>"))
+                .finish(),
+        }
+    }
+}
+
 /// Why a connection could not be opened, decided where it failed.
 #[derive(Debug)]
 pub enum ConnectError {
     Proxy(UnusableProxy),
-    /// The target or its proxy resolved to nothing or accepted no connection within the dial timeout.
+    /// The target or its proxy resolved to nothing or accepted no connection within the dial timeout, or the
+    /// proxy did not finish its handshake within its bound.
     Unreachable(io::Error),
     /// The proxy refused the connection or broke its protocol.
     Refused(String),
@@ -93,23 +109,18 @@ impl Connector {
             let mismatch = "TLS configuration does not match the target scheme";
             return Err(io::Error::new(io::ErrorKind::InvalidInput, mismatch).into());
         }
-        let (stream, form): (Box<dyn Stream>, _) = match self.proxy.route(target)? {
-            None => (Box::new(reach(&target.host, target.port).await?), RequestForm::Origin),
-            Some(Upstream::Socks { host, port, login }) => {
-                let mut stream = reach(host, *port).await?;
-                socks::connect(&mut stream, login.as_ref(), &target.host, target.port).await?;
-                (Box::new(stream), RequestForm::Origin)
-            }
-            Some(Upstream::Http { origin, authorization }) => {
-                let stream = reach(&origin.host, origin.port).await?;
-                let stream: Box<dyn Stream> = match origin.scheme {
-                    Scheme::Https => Box::new(secure(self.hop().await, &origin.host, stream).await?),
-                    Scheme::Http => Box::new(stream),
-                };
-                match tls {
-                    Some(_) => (tunnel(stream, target, authorization.as_deref()).await?, RequestForm::Origin),
-                    None => (stream, RequestForm::Absolute { authorization: authorization.clone() }),
-                }
+        let (stream, form) = match self.proxy.route(target)? {
+            None => (Box::new(reach(&target.host, target.port).await?) as Box<dyn Stream>, RequestForm::Origin),
+            Some(upstream) => {
+                let (host, port) = upstream.address();
+                let stream = reach(host, port).await?;
+                let handshake = self.through(upstream, stream, target, tls.is_some());
+                tokio::time::timeout(PROXY_TIMEOUT, handshake)
+                    .await
+                    .unwrap_or_else(|_| {
+                        let silent = io::Error::new(io::ErrorKind::TimedOut, "proxy handshake timed out");
+                        Err(ConnectError::Unreachable(silent))
+                    })?
             }
         };
         let Some(tls) = tls else {
@@ -118,6 +129,32 @@ impl Connector {
         let stream = secure(&TlsConnector::from(tls.clone()), &target.host, stream).await?;
         let alpn = stream.get_ref().1.alpn_protocol().map(<[u8]>::to_vec);
         Ok(Connection { stream: Box::new(stream), alpn, form })
+    }
+
+    /// The proxy's part on `stream`: its TLS for an HTTPS proxy, then SOCKS5, a CONNECT tunnel or nothing.
+    async fn through(
+        &self,
+        upstream: &Upstream,
+        mut stream: TcpStream,
+        target: &Origin,
+        tls: bool,
+    ) -> Result<(Box<dyn Stream>, RequestForm), ConnectError> {
+        let (origin, authorization) = match upstream {
+            Upstream::Socks { login, .. } => {
+                socks::connect(&mut stream, login.as_ref(), &target.host, target.port).await?;
+                return Ok((Box::new(stream), RequestForm::Origin));
+            }
+            Upstream::Http { origin, authorization } => (origin, authorization),
+        };
+        let stream: Box<dyn Stream> = match origin.scheme {
+            Scheme::Https => Box::new(secure(self.hop().await, &origin.host, stream).await?),
+            Scheme::Http => Box::new(stream),
+        };
+        if tls {
+            Ok((tunnel(stream, target, authorization.as_deref()).await?, RequestForm::Origin))
+        } else {
+            Ok((stream, RequestForm::Absolute { authorization: authorization.clone() }))
+        }
     }
 
     async fn hop(&self) -> &TlsConnector {
@@ -129,7 +166,7 @@ impl Connector {
     }
 }
 
-async fn reach(host: &Host, port: u16) -> Result<tokio::net::TcpStream, ConnectError> {
+async fn reach(host: &Host, port: u16) -> Result<TcpStream, ConnectError> {
     dial::dial(host, port).await.map_err(ConnectError::Unreachable)
 }
 
@@ -163,6 +200,7 @@ async fn tunnel(
     }
     request.push_str("\r\n");
     stream.write_all(request.as_bytes()).await?;
+    stream.flush().await?;
     let head = read_head(&mut stream).await?;
     let status = head.lines().next().unwrap_or_default();
     let (version, rest) = status.split_once(' ').unwrap_or_default();
@@ -176,10 +214,11 @@ async fn tunnel(
     Ok(stream)
 }
 
-/// A response head, read byte by byte so the tunnel's first bytes stay unread.
+/// A response head ending in an empty line, with or without CRs, read byte by byte so the tunnel's first bytes
+/// stay unread.
 async fn read_head(stream: &mut Box<dyn Stream>) -> Result<String, ConnectError> {
     let mut head = Vec::new();
-    while !head.ends_with(b"\r\n\r\n") {
+    while !(head.ends_with(b"\n\n") || head.ends_with(b"\n\r\n")) {
         if head.len() == MAX_HEAD_BYTES {
             return Err(ConnectError::Refused("proxy sent an oversized CONNECT response".into()));
         }
