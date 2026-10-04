@@ -1,5 +1,6 @@
 <script lang="ts">
   import StageGraph from "./StageGraph.svelte";
+  import LatencyTrace from "./LatencyTrace.svelte";
   import {
     cardFacts,
     cardNoData,
@@ -57,8 +58,6 @@
           : reason,
       )
       .join(", ");
-  // Latency has its own card; this row holds the transfers.
-  const transfers = $derived(cards.filter((card) => card.key !== "latency"));
   const ceiling = $derived(scale?.ceiling ?? 0);
   const baseline = $derived(scale?.baseline ?? null);
   const latencyTop = $derived(scale?.latencyTop ?? 0);
@@ -66,7 +65,7 @@
 
 <div class="result-summary">
   <div class="result-cards" class:running data-tip-group {@attach tipGroup}>
-    {#each transfers as card (card.key)}
+    {#each cards as card (card.key)}
       {@const graph = card.graph}
       {@const quiet = card.status === "pending" || card.status === "not-run"}
       {@const tone = STATUS_TONE[card.status as keyof typeof STATUS_TONE]}
@@ -83,7 +82,7 @@
       >
         <header class="card-head">
           <span class="swatch" aria-hidden="true"></span>
-          <h3 class="caption" use:tooltipAction={cardTip(card)}>
+          <h3 class="card-title" use:tooltipAction={cardTip(card)}>
             {STAGE[card.key].label}
           </h3>
           {#if tone || card.status === "active"}<span class="state"
@@ -127,6 +126,8 @@
               {wire.value}
               <span class="delta">{wire.overhead}</span></span
             >
+          {:else if card.key === "latency" && !quiet}
+            <span class="label">Idle median</span>
           {/if}
           {#if noData && !quiet}
             <span class="no-data"
@@ -135,7 +136,16 @@
             >
           {/if}
         </div>
-        {#if graph && scale}
+        {#if graph && scale && card.key === "latency"}
+          <div class="graph-slot">
+            <LatencyTrace
+              points={graph.latency}
+              start={graph.start}
+              span={graph.span}
+              {baseline}
+            />
+          </div>
+        {:else if graph && scale}
           <div class="graph-slot">
             <StageGraph
               tone={card.key as "download" | "upload" | "bidirectional"}
@@ -191,21 +201,23 @@
     width: 100%;
     container: results / inline-size;
   }
+  /* Four cards fit a 1024 px screen; cards keep their own height, never the row's. */
   .result-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    align-items: start;
     gap: var(--space-4);
   }
   /* A card is its stage's frame (`.stage-area`). Stretched by a taller neighbour, its rows stay put and the
      room falls below them. */
   .card {
     display: grid;
-    grid-template-rows: 20px auto 18px;
+    grid-template-rows: 20px auto 16px;
     grid-auto-rows: auto;
     align-content: start;
-    gap: 6px;
+    gap: var(--space-1);
     min-width: 0;
-    padding: var(--space-3) var(--space-4) var(--space-4);
+    padding: var(--space-3) 14px 14px;
   }
   /* A phone stacks the cards, so an empty line has nothing to align with. */
   @container results (max-width: 520px) {
@@ -257,8 +269,8 @@
     align-items: baseline;
     gap: 8px;
     min-width: 0;
-    margin-top: var(--space-1);
-    font: var(--role-readout);
+    margin-top: 2px;
+    font: 500 26px / 1 var(--font-mono);
     white-space: nowrap;
   }
   /* A strut one value tall, so a bidirectional pair's smaller figures sit on its baseline and keep the card's height. */
@@ -294,7 +306,7 @@
     min-width: 0;
     overflow: hidden;
     color: var(--text-muted);
-    font: var(--w-normal) var(--type-sm) / 18px var(--font-sans);
+    font: var(--w-normal) var(--type-sm) / 16px var(--font-sans);
     white-space: nowrap;
   }
   .reason,
@@ -322,10 +334,11 @@
     font-weight: var(--w-strong);
   }
   /* A strip, not a chart: the stage's shape and its latency track, under the figures. */
+  /* A strip, not a chart: it grows a little with the screen and stops. */
   .graph-slot {
-    height: clamp(72px, 9svh, 96px);
+    height: clamp(56px, 10svh, 112px);
     min-height: 0;
-    margin-top: var(--space-1);
+    margin-block: var(--space-2) var(--space-1);
   }
   /* A card with no data yet keeps its graph's room but draws nothing in it: only its rule, name and "—". */
   .card:is(.pending, .not-run) > .graph-slot {
@@ -347,7 +360,7 @@
     justify-content: space-between;
     gap: var(--space-3);
     min-width: 0;
-    padding-block: 5px;
+    padding-block: 4px;
   }
   .facts > div + div {
     border-top: var(--hairline) solid var(--border-subtle);

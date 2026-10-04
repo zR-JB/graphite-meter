@@ -254,9 +254,17 @@ function latencyCard(card: SummaryCard, evidence: SummaryEvidence) {
     ...card,
     num: fmtMs(reportedMs),
     unit: "ms",
-    rows: [{ label: "Jitter", value: formatLatency(jitterMs) }, ...added],
+    rows: [
+      { label: "Jitter", value: formatLatency(jitterMs) },
+      ...stability(latency.stabilityPct ?? null),
+      ...added,
+    ],
   };
 }
+
+/** What a transfer's load added to the idle median, on the transfer's own card. */
+const addedLatency = (ms: number | null | undefined): SummaryRow[] =>
+  ms == null ? [] : [{ label: "Added latency", value: `${fmtAddedMs(ms)} ms` }];
 
 function bidirectionalCard(
   card: SummaryCard,
@@ -299,6 +307,7 @@ function bidirectionalCard(
           ? Math.min(lanes.down.stabilityPct, lanes.up.stabilityPct)
           : null,
       ),
+      ...addedLatency(evidence.added?.bidirectional),
       ...noData(Math.max(lanes?.down?.quietMs ?? 0, lanes?.up?.quietMs ?? 0)),
     ],
   };
@@ -345,6 +354,7 @@ export function summaryCards(
             ? []
             : [{ label: "Peak", value: formatRate(peak, units) }]),
           ...stability(complete ? result.stabilityPct : null),
+          ...addedLatency(evidence.added?.[key]),
           ...noData(result.quietMs),
         ],
       },
@@ -352,18 +362,22 @@ export function summaryCards(
   });
 }
 
-// Facts read the same way on every card: what the link peaked at, how steady it was, what moved.
-const TRANSFER_FACTS = ["Peak", "Stability", "Transferred"];
+// Facts read the same way on every card: what the link peaked at, how steady it was, what moved, and what the
+// load cost in latency; the latency card reads its idle population the same way.
+const TRANSFER_FACTS = ["Peak", "Stability", "Transferred", "Added latency"];
 const FACTS: Record<TransportRole, string[]> = {
-  latency: [],
+  latency: ["Jitter", "Range", "Stability", "Timeouts"],
   download: TRANSFER_FACTS,
   upload: TRANSFER_FACTS,
-  bidirectional: ["Stability", "Down + up", "Transferred"],
+  bidirectional: ["Stability", "Down + up", "Transferred", "Added latency"],
 };
 const FACT_TIPS: Record<string, string> = {
   Peak: JARGON.peak,
   Stability: JARGON.rateStability,
   Transferred: JARGON.transferred,
+  "Added latency": JARGON.addedLatency,
+  Jitter: JARGON.jitter,
+  Range: JARGON.latencyRange,
 };
 
 /** A card's facts in every state, "—" until known, so a value arriving never moves the instrument. */
@@ -372,7 +386,10 @@ export const cardFacts = (card: SummaryCard): SummaryRow[] =>
     label,
     value: MISSING,
     ...card.rows.find((row) => row.label === label),
-    tip: FACT_TIPS[label],
+    tip:
+      card.key === "latency" && label === "Stability"
+        ? JARGON.latencyStability
+        : FACT_TIPS[label],
   }));
 
 /** Time without data after a stall, which the card's line carries so it never adds a row. */

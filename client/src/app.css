@@ -589,15 +589,9 @@
   .panel-head > :last-child:not(:first-child) {
     margin-inline-start: auto;
   }
-  .caption {
+  .card-title {
     color: var(--text);
     font: var(--role-title);
-    white-space: nowrap;
-  }
-  /* A fact's label over its figure. */
-  .fact-label {
-    color: var(--text-soft);
-    font: var(--role-label);
     white-space: nowrap;
   }
   /* A measured value: mono, so figures sit in columns and a changing digit never moves its neighbours. */

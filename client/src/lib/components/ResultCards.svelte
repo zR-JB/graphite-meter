@@ -6,8 +6,17 @@
 <script lang="ts">
   import ResultSummary from "./ResultSummary.svelte";
   import { store } from "../state/store.svelte";
-  import { fmtBytes, fmtMs, formatRate, resultRate } from "../format";
+  import {
+    fmtAddedMs,
+    fmtBytes,
+    fmtMs,
+    formatLatency,
+    formatRate,
+    resultRate,
+  } from "../format";
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
+  import { replies } from "../presentation/stageGraph";
+  import { formatTimeouts } from "./latencyProfile";
   import type { LiveReadout } from "../presentation/liveReadout.svelte";
   import { announce } from "../presentation/announcer.svelte";
   import { handoff } from "../presentation/motion.svelte";
@@ -84,6 +93,53 @@
       retainedGraphs,
     ));
   });
+  // The idle replies span the planned stage while it may still run, then the time they took.
+  const latencyTrace = $derived.by<CardGraph>(() => {
+    const points = replies(store.latency, "latency");
+    const start = points[0]?.t ?? 0;
+    const measured = (points.at(-1)?.t ?? start) - start;
+    const settled = !running("latency") && status("latency") !== "pending";
+    const plan = (store.run?.config ?? store.config).duration.latencyMs;
+    return {
+      lanes: [],
+      latency: points,
+      start,
+      span: Math.max(measured, settled ? 0 : plan) || 1,
+    };
+  });
+  // The idle population's facts come from its lane, live and settled alike; the result keeps only the median
+  // and jitter.
+  const idleLane = $derived(
+    store.latencyLanes.find((lane) => lane.key === "latency"),
+  );
+  const latencyFacts = (): SummaryRow[] => {
+    const lane = idleLane;
+    if (!lane) return [];
+    return [
+      { label: "Jitter", value: formatLatency(lane.jitter) },
+      {
+        label: "Range",
+        value:
+          lane.min == null || lane.max == null
+            ? MISSING
+            : `${fmtMs(lane.min)}–${fmtMs(lane.max)} ms`,
+      },
+      { label: "Timeouts", value: formatTimeouts(lane.timeoutRatio) },
+    ];
+  };
+  // A transfer's load over the idle median while it runs; the result settles it.
+  const addedLatency = (key: Transfer): SummaryRow[] => {
+    const lane = store.latencyLanes.find((lane) => lane.key === key);
+    const idle = idleLane?.center;
+    return lane?.center == null || idle == null
+      ? []
+      : [
+          {
+            label: "Added latency",
+            value: `${fmtAddedMs(lane.center - idle)} ms`,
+          },
+        ];
+  };
   // The running card's leading edge moves on the frame clock; the other graphs stay put.
   const head = $derived.by(() => {
     const key = live.phase;
@@ -130,11 +186,21 @@
     Record<Stage, { source: SummaryCard; view: SummaryCard }>
   > = {};
   function withGraph(card: SummaryCard): SummaryCard {
-    const graph = graphs[card.key as Transfer] ?? null;
+    const graph =
+      card.key === "latency"
+        ? latencyTrace
+        : (graphs[card.key as Transfer] ?? null);
     const previous = retainedCards[card.key];
     if (previous?.source === card && previous.view.graph === graph)
       return previous.view;
-    const view = { ...card, graph };
+    const view = {
+      ...card,
+      graph,
+      rows:
+        card.key === "latency"
+          ? [...latencyFacts(), ...card.rows]
+          : [...card.rows, ...addedLatency(card.key as Transfer)],
+    };
     retainedCards[card.key] = { source: card, view };
     return view;
   }

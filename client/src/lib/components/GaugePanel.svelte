@@ -12,7 +12,6 @@
   import StageTrack from "./StageTrack.svelte";
   import ServerLens from "./ServerLens.svelte";
   import RunButton from "./RunButton.svelte";
-  import LatencyProfile from "./LatencyProfile.svelte";
   import ResultCards from "./ResultCards.svelte";
   import { fmtSpeed } from "../format";
   import { gaugeLatency as latencyGauge } from "../presentation/scales";
@@ -272,13 +271,6 @@
 >
   <div class="instrument">
     <div class="dial panel" class:hung>
-      {#if indicatedServers.length > 1}
-        <header class="panel-head dial-head">
-          <div class="server-indicator">
-            <ServerLens servers={indicatedServers} {participants} />
-          </div>
-        </header>
-      {/if}
       <div
         bind:clientWidth={gaugeWidth}
         bind:clientHeight={gaugeHeight}
@@ -363,13 +355,19 @@
       </div>
     </div>
 
-    {#if store.latencyEnabled}
-      <div class="latency-slot"><LatencyProfile /></div>
-    {/if}
-
-    <div class="run-bar">
+    <!-- The run sheet: one row per stage, and under them the one action, with the servers it runs against. -->
+    <div class="run-sheet panel">
       <StageTrack />
-      <RunButton />
+      <div class="run-row">
+        <RunButton />
+        <div class="server-indicator">
+          {#if indicatedServers.length > 1}
+            <ServerLens servers={indicatedServers} {participants} />
+          {:else if indicatedServers[0]}
+            <span>{indicatedServers[0].name}</span>
+          {/if}
+        </div>
+      </div>
     </div>
 
     <div class="results"><ResultCards live={liveReadout} /></div>
@@ -381,51 +379,33 @@
     container: viz / inline-size;
     height: 100%;
   }
-  /* The dial and latency share the top; the run bar and the transfer cards keep their height, the top takes the rest. */
+  /* The head band: the dial and the run sheet at one height, the sheet's; the cards keep theirs under it. */
   .instrument {
     display: grid;
-    height: 100%;
+    align-content: start;
     gap: var(--space-4);
     grid-template:
-      "dial" minmax(260px, 40svh)
-      "run" auto
+      "dial" minmax(240px, 36svh)
+      "sheet" auto
       "results" auto
-      "latency" auto
       / minmax(0, 1fr);
   }
   @container viz (min-width: 760px) {
     .instrument {
       grid-template:
-        "dial latency" minmax(min-content, 1fr)
-        "run run" auto
+        "dial sheet" auto
         "results results" auto
-        / max(240px, (100% - 2 * var(--space-4)) / 3) minmax(0, 1fr);
+        / max(280px, 30%) minmax(0, 1fr);
     }
-    .instrument:not(:has(.latency-slot)) {
-      grid-template:
-        "dial" minmax(220px, 1fr)
-        "run" auto
-        "results" auto
-        / minmax(0, 1fr);
+    .dial {
+      min-height: 320px;
     }
   }
-  /* Portrait, the dial is bound by its width, so it and the latency card share the width evenly. */
-  @media (orientation: portrait) {
-    @container viz (min-width: 760px) {
-      .instrument:has(.latency-slot) {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-    }
-  }
-  /* A phone keeps the dial compact, so the running stage's card shares the first screen with it; while the
-     latency stage runs, its card is the one under the run button. */
+  /* A phone keeps the dial compact, so the running stage's card shares the first screen with it. */
   @container viz (max-width: 520px) {
     .instrument {
-      grid-template-rows: clamp(240px, 34svh, 300px) repeat(3, auto);
-      row-gap: var(--space-2);
-    }
-    .gauge-panel[data-stage="latency"] .instrument {
-      grid-template-areas: "dial" "run" "latency" "results";
+      grid-template-rows: clamp(220px, 30svh, 280px) repeat(2, auto);
+      row-gap: var(--space-3);
     }
   }
   /* The dial's frame: its head, the face, and the note under the ring; the face ends on the frame's edge, so a
@@ -438,57 +418,53 @@
     min-width: 0;
     min-height: 0;
   }
-  .dial-head {
-    flex: none;
-    justify-content: end;
-    padding: var(--space-2) var(--space-2) 0;
-  }
-  /* Framed like the dial and as tall; its content centres in the frame. A tight screen scrolls rather than
-     overlapping the run bar. */
-  .latency-slot {
-    grid-area: latency;
-    display: grid;
-    min-width: 0;
-  }
   .results {
     grid-area: results;
     min-width: 0;
   }
-  /* The key row: one key per stage, and the one action that runs them, as tall as the keys, at the row's end. */
-  .run-bar {
-    grid-area: run;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: stretch;
+  /* The rows at the top, the action at the bottom, whatever the frame's height. */
+  .run-sheet {
+    grid-area: sheet;
+    display: flex;
+    flex-direction: column;
     gap: var(--space-3);
     min-width: 0;
+    padding: var(--space-3) var(--space-4) var(--space-4);
   }
-  .run-bar > :global(.run-button) {
-    height: auto;
-    min-height: 54px;
-    min-width: 200px;
-  }
-  /* A phone stacks them: the keys in two columns, then the run button across them. */
-  @container viz (max-width: 520px) {
-    .run-bar {
-      grid-template-columns: minmax(0, 1fr);
-      gap: var(--space-2);
-    }
-    .run-bar > :global(.run-button) {
-      min-height: var(--hit);
-    }
+  .run-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin-top: auto;
+    padding-top: var(--space-2);
   }
   .server-indicator {
     display: flex;
-    flex: none;
+    min-width: 0;
     align-items: center;
     gap: 6px;
     color: var(--text-soft);
     font: var(--w-normal) var(--type-sm) / 1.4 var(--font-sans);
   }
+  .server-indicator > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .server-indicator :global(svg) {
     width: 14px;
     height: 14px;
+  }
+  /* A phone's action spans the sheet, at a thumb's height, with the server under it. */
+  @container viz (max-width: 520px) {
+    .run-row {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .run-row > :global(.run-button) {
+      min-height: var(--hit);
+    }
   }
   .gauge-face {
     position: relative;

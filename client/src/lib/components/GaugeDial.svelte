@@ -10,7 +10,7 @@
     phase: ResultArcPhase;
     fraction: number;
     dashed: boolean;
-    /** The headline result fills the arc; every result marks the rim. */
+    /** The headline result's arc lies over the others'. */
     primary: boolean;
     description: string;
   }
@@ -128,8 +128,7 @@
   });
 </script>
 
-<!-- A result is a mark on the rim in its stage's hue; one moved outward off a close neighbour sits a step
-     further out, and a partial one is dashed. -->
+<!-- Flat in the stage's hue; a head moved inward off a close neighbour hangs on a stalk of its hue, and a partial one is a ring. -->
 {#snippet head(
   fraction: number,
   radius: number,
@@ -137,18 +136,24 @@
   hollow = false,
   lane = 0,
 )}
-  {@const from = radius + layout.arcWidth / 2 + 3 + lane * 2}
   <g transform={`translate(${layout.center.x} ${layout.center.y})`}>
     <g
       class="head result"
       style:transform={`rotate(${angleForFraction(fraction, layout.arcStart, layout.arcSweep)}rad)`}
     >
-      <path
-        d={`M ${from} 0 H ${from + 8}`}
-        stroke={color}
-        stroke-width="2.5"
-        stroke-linecap="round"
-        stroke-dasharray={hollow ? "1 3" : undefined}
+      {#if lane !== 0}
+        <path
+          d={`M ${layout.radius} 0 H ${radius}`}
+          stroke={color}
+          stroke-width="2"
+        />
+      {/if}
+      <circle
+        cx={radius}
+        r={hollow ? headRadius - 1 : headRadius}
+        fill={hollow ? "none" : color}
+        stroke={hollow ? color : undefined}
+        stroke-width={hollow ? 2 : undefined}
       />
     </g>
   </g>
@@ -187,7 +192,7 @@
         viewBox={`0 0 ${layout.width} ${layout.height}`}
       >
         <g fill="none" stroke-linecap="round">
-          {#each results.filter((result) => result.primary) as result (result.phase)}
+          {#each results.toSorted((a, b) => Number(a.primary) - Number(b.primary)) as result (result.phase)}
             <mask
               id={`${shadeId}-${result.phase}`}
               maskUnits="userSpaceOnUse"
@@ -239,8 +244,8 @@
         class="head-target"
         aria-hidden="true"
         tabindex="-1"
-        style:left={`${layout.center.x + Math.cos(angle) * (result.radius + layout.arcWidth / 2 + 7)}px`}
-        style:top={`${layout.center.y + Math.sin(angle) * (result.radius + layout.arcWidth / 2 + 7)}px`}
+        style:left={`${layout.center.x + Math.cos(angle) * result.radius}px`}
+        style:top={`${layout.center.y + Math.sin(angle) * result.radius}px`}
         {@attach tooltip(() => result.description)}
       ></span>
     {/each}
