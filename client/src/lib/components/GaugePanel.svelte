@@ -195,6 +195,7 @@
             store.scales.gaugeBytesPerSec,
           ),
           dashed: arc.dashed,
+          primary: arc === headlineArc,
           description: `${arc.label}${arc.dashed ? ` · ${OUTCOME.partial}` : ""}\n${fmtSpeed(gaugeRate(arc.bytesPerSec))} ${gaugeUnit}`,
         }))
       : [],
@@ -271,14 +272,13 @@
 >
   <div class="instrument">
     <div class="dial panel" class:hung>
-      <header class="panel-head dial-head">
-        <span class="kicker">{msTicksActive ? "Latency" : "Throughput"}</span>
-        {#if indicatedServers.length > 1}
+      {#if indicatedServers.length > 1}
+        <header class="panel-head dial-head">
           <div class="server-indicator">
             <ServerLens servers={indicatedServers} {participants} />
           </div>
-        {/if}
-      </header>
+        </header>
+      {/if}
       <div
         bind:clientWidth={gaugeWidth}
         bind:clientHeight={gaugeHeight}
@@ -315,10 +315,7 @@
                 class:partial={terminal.dashed}
                 aria-hidden="true"
               >
-                <span
-                  class="terminal-direction kicker"
-                  data-tone={terminal.direction}
-                >
+                <span class="terminal-direction" data-tone={terminal.direction}>
                   <span class="swatch"></span>
                   {STAGE[terminal.direction].label}
                 </span>
@@ -370,8 +367,7 @@
       <div class="latency-slot"><LatencyProfile /></div>
     {/if}
 
-    <div class="run-bar panel">
-      <span class="kicker run-label">Stages</span>
+    <div class="run-bar">
       <StageTrack />
       <RunButton />
     </div>
@@ -389,7 +385,7 @@
   .instrument {
     display: grid;
     height: 100%;
-    gap: var(--space-3);
+    gap: var(--space-4);
     grid-template:
       "dial" minmax(260px, 40svh)
       "run" auto
@@ -403,7 +399,7 @@
         "dial latency" minmax(min-content, 1fr)
         "run run" auto
         "results results" auto
-        / max(240px, (100% - 2 * var(--space-3)) / 3) minmax(0, 1fr);
+        / max(240px, (100% - 2 * var(--space-4)) / 3) minmax(0, 1fr);
     }
     .instrument:not(:has(.latency-slot)) {
       grid-template:
@@ -444,7 +440,8 @@
   }
   .dial-head {
     flex: none;
-    padding: var(--space-1) var(--space-2) 0 var(--space-3);
+    justify-content: end;
+    padding: var(--space-2) var(--space-2) 0;
   }
   /* Framed like the dial and as tall; its content centres in the frame. A tight screen scrolls rather than
      overlapping the run bar. */
@@ -457,32 +454,28 @@
     grid-area: results;
     min-width: 0;
   }
-  /* The control strip: what runs next, and the one action that runs it, at the line's end. */
+  /* The key row: one key per stage, and the one action that runs them, as tall as the keys, at the row's end. */
   .run-bar {
     grid-area: run;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: stretch;
+    gap: var(--space-3);
     min-width: 0;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-2) var(--space-3);
-    padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
   }
   .run-bar > :global(.run-button) {
-    margin-inline-start: auto;
+    height: auto;
+    min-height: 54px;
+    min-width: 200px;
   }
-  /* A phone stacks them: the chips' row, then the run button across it. */
+  /* A phone stacks them: the keys in two columns, then the run button across them. */
   @container viz (max-width: 520px) {
     .run-bar {
-      display: grid;
       grid-template-columns: minmax(0, 1fr);
       gap: var(--space-2);
-      padding: var(--space-2);
     }
     .run-bar > :global(.run-button) {
-      margin-inline-start: 0;
-    }
-    .run-label {
-      display: none;
+      min-height: var(--hit);
     }
   }
   .server-indicator {
@@ -579,15 +572,18 @@
     gap: var(--space-1);
     max-width: 100%;
   }
-  /* The stage the result names, engraved over it. */
+  /* The stage the result names, under its unit, out of the readout's flow so the result lands where the live
+     value stood. */
   .terminal-direction {
     position: absolute;
-    bottom: calc(100% + clamp(8px, 3.5cqmin, 14px));
+    top: calc(100% + var(--space-2));
     display: flex;
     align-items: center;
     gap: 6px;
     color: var(--text-muted);
-    font-size: clamp(var(--type-2xs), 2.8cqmin, var(--type-xs));
+    font: var(--w-normal) clamp(var(--type-xs), 3cqmin, var(--type-sm)) / 1
+      var(--font-sans);
+    white-space: nowrap;
   }
   @container (max-height: 180px) {
     .terminal-direction {
@@ -610,10 +606,10 @@
     min-height: 1lh;
     margin-top: var(--space-1);
   }
-  /* Under the readout, out of its flow, so the value stays where it landed. */
+  /* Under the stage's name, out of the readout's flow, so the value stays where it landed. */
   .terminal-partial {
     position: absolute;
-    top: calc(100% + var(--space-1));
+    top: calc(100% + var(--space-2) + var(--type-sm) + var(--space-1));
     color: var(--tone-ink);
     font-size: var(--type-xs);
   }

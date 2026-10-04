@@ -183,13 +183,12 @@
   /* The readout voice: every measured value, axis and counter is mono, so figures align and read as data. */
   --role-figure: 500 var(--type-md) / 1.3 var(--font-mono);
   --role-figure-sm: 500 var(--type-sm) / 1.3 var(--font-mono);
-  /* A frame's engraved label: small mono capitals, tracked. */
-  --role-kicker: 500 var(--type-2xs) / 1 var(--font-mono);
   /* Centred beside a larger word, a smaller one sits half their size gap high; that gap as its top margin sets it
      on the larger word's baseline, e.g. margin-top: calc(var(--type-md) - var(--type-sm)). */
   --track-tight: -0.02em;
   --track-wide: 0.1em;
   --track-figure: -0.02em;
+  --role-readout: 500 28px / 1 var(--font-mono);
 
   --z-toast: 40;
   --z-scrim: 50;
@@ -214,8 +213,12 @@
        for the terminal client (see DESIGN.md). */
   /* Dark fills stay above the levels where OLED pixels switch off and smear. */
   --canvas: light-dark(oklch(0.962 0.004 258), oklch(0.17 0.008 258));
-  /* A framed area of the instrument: one step above the page. */
-  --panel: light-dark(oklch(0.985 0.002 258), oklch(0.192 0.009 258));
+  /* A framed area of the instrument: one step above the page, with an edge that stays quiet on a dark page. */
+  --panel: light-dark(oklch(0.985 0.002 258), oklch(0.2 0.009 258));
+  --panel-edge: light-dark(
+    oklch(0.3 0.02 255 / 0.12),
+    oklch(0.92 0.02 255 / 0.07)
+  );
   --surface-1: light-dark(oklch(0.995 0.002 258), oklch(0.215 0.009 258));
   --surface-2: light-dark(oklch(0.975 0.003 258), oklch(0.25 0.01 258));
   --surface-inset: light-dark(oklch(0.948 0.005 258), oklch(0.15 0.008 258));
@@ -273,10 +276,15 @@
   --hover-wash: color-mix(in oklab, var(--text) 6%, transparent);
   --selected-wash: color-mix(in oklab, var(--text) 10%, transparent);
 
-  /* Material is flat: hairlines separate, fills step. Only what floats casts a shadow, one ink whose depth
-     differs per theme, because a dark canvas needs a denser shadow to read at all. */
+  /* Material: fills step and hairlines separate; a frame on the page carries a soft shadow, what floats a deeper
+     one. One ink whose depth differs per theme, because a dark canvas needs a denser shadow to read at all. */
   --shade: light-dark(oklch(0.25 0.02 255), oklch(0.08 0.01 255));
   --glass: var(--surface-2);
+  --elev-card:
+    0 1px 2px
+      light-dark(oklch(0.25 0.02 255 / 0.05), oklch(0.08 0.01 255 / 0.3)),
+    0 6px 16px -8px
+      light-dark(oklch(0.25 0.02 255 / 0.12), oklch(0.08 0.01 255 / 0.5));
   --elev-tooltip:
     0 1px 2px
       light-dark(oklch(0.25 0.02 255 / 0.1), oklch(0.08 0.01 255 / 0.35)),
@@ -563,13 +571,14 @@
     line-height: 1.5;
   }
 
-  /* A framed area of the instrument: a hairline, one fill step above the page, square corners. */
+  /* A framed area of the instrument: one fill step above the page in a quiet edge, lifted by a soft shadow. */
   .panel {
-    border: var(--hairline) solid var(--border);
+    border: var(--hairline) solid var(--panel-edge);
     border-radius: var(--r-surface);
     background: var(--panel);
+    box-shadow: var(--elev-card);
   }
-  /* A frame's head: its engraved label, and whatever operates the frame at the line's end. */
+  /* A frame's head: its name, and whatever operates the frame at the line's end. */
   .panel-head {
     display: flex;
     align-items: center;
@@ -580,11 +589,15 @@
   .panel-head > :last-child:not(:first-child) {
     margin-inline-start: auto;
   }
-  .kicker {
+  .caption {
+    color: var(--text);
+    font: var(--role-title);
+    white-space: nowrap;
+  }
+  /* A fact's label over its figure. */
+  .fact-label {
     color: var(--text-soft);
-    font: var(--role-kicker);
-    letter-spacing: var(--track-wide);
-    text-transform: uppercase;
+    font: var(--role-label);
     white-space: nowrap;
   }
   /* A measured value: mono, so figures sit in columns and a changing digit never moves its neighbours. */
@@ -757,7 +770,7 @@
      indicator: a wash from the rule while it runs, a trace of it once measured, none while it waits. */
   .stage-area {
     --wash: 0%;
-    border: var(--hairline) solid var(--border);
+    border: var(--hairline) solid var(--panel-edge);
     border-top: 2px solid
       color-mix(in oklab, var(--tone) var(--rule, 100%), transparent);
     border-radius: var(--r-surface);
@@ -768,6 +781,7 @@
         transparent 56%
       ),
       var(--panel);
+    box-shadow: var(--elev-card);
     transition:
       --wash var(--dur-graph) var(--ease-out),
       border-color var(--dur-graph) var(--ease-out);
@@ -781,10 +795,12 @@
   .stage-area:is(.pending, .not-run) {
     --rule: 30%;
   }
-  /* A latency track: each reply bucket a dot in its stage's hue over the dashed idle median. */
+  /* A latency track: each reply bucket a bar in its stage's hue from the dashed idle median. */
   .reply {
-    fill: var(--tone);
-    opacity: 0.7;
+    stroke: var(--tone);
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    opacity: 0.75;
   }
   .reply-median {
     stroke: color-mix(in oklab, var(--phase-latency) 55%, transparent);

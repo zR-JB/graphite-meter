@@ -83,7 +83,7 @@
       >
         <header class="card-head">
           <span class="swatch" aria-hidden="true"></span>
-          <h3 class="kicker" use:tooltipAction={cardTip(card)}>
+          <h3 class="caption" use:tooltipAction={cardTip(card)}>
             {STAGE[card.key].label}
           </h3>
           {#if tone || card.status === "active"}<span class="state"
@@ -194,7 +194,7 @@
   .result-cards {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: var(--space-3);
+    gap: var(--space-4);
   }
   /* A card is its stage's frame (`.stage-area`). Stretched by a taller neighbour, its rows stay put and the
      room falls below them. */
@@ -205,7 +205,7 @@
     align-content: start;
     gap: 6px;
     min-width: 0;
-    padding: var(--space-2) var(--space-3) var(--space-3);
+    padding: var(--space-3) var(--space-4) var(--space-4);
   }
   /* A phone stacks the cards, so an empty line has nothing to align with. */
   @container results (max-width: 520px) {
@@ -233,10 +233,7 @@
     gap: var(--space-2);
     min-width: 0;
   }
-  /* The frame's engraved name, in the title's ink. */
   h3 {
-    color: var(--text);
-    font-size: var(--type-xs);
     line-height: 20px;
   }
   .state {
@@ -260,7 +257,8 @@
     align-items: baseline;
     gap: 8px;
     min-width: 0;
-    font: 500 clamp(22px, 2.2vw, 32px) / 1 var(--font-mono);
+    margin-top: var(--space-1);
+    font: var(--role-readout);
     white-space: nowrap;
   }
   /* A strut one value tall, so a bidirectional pair's smaller figures sit on its baseline and keep the card's height. */
@@ -277,7 +275,7 @@
     gap: 2px;
   }
   .pair .num {
-    font-size: clamp(18px, 1.7vw, 26px);
+    font-size: 22px;
   }
   .arrow {
     color: var(--tone);
@@ -323,55 +321,46 @@
     color: var(--err);
     font-weight: var(--w-strong);
   }
+  /* A strip, not a chart: the stage's shape and its latency track, under the figures. */
   .graph-slot {
-    height: clamp(56px, 10svh, 120px);
+    height: clamp(72px, 9svh, 96px);
     min-height: 0;
+    margin-top: var(--space-1);
   }
   /* A card with no data yet keeps its graph's room but draws nothing in it: only its rule, name and "—". */
   .card:is(.pending, .not-run) > .graph-slot {
     visibility: hidden;
   }
+  /* Facts are rows: a label at the left, its figure at the right, a hairline between rows. */
   .facts {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 5.25rem), 1fr));
-    gap: var(--space-2) var(--space-3);
-    padding-top: var(--space-2);
-    border-top: var(--hairline) solid var(--border);
+    margin-top: var(--space-1);
+    border-top: var(--hairline) solid var(--border-subtle);
   }
-  /* Under the dial on a landscape page, which fits one screen down to 1024 x 768, a card's rows sit closer. */
-  @media (orientation: landscape) {
-    @container viz (min-width: 760px) {
-      .card {
-        gap: var(--space-1);
-      }
-      .facts {
-        column-gap: var(--space-2);
-      }
-    }
-  }
-  /* Until one fact is known the row keeps its place unseen, so the first values never move the instrument. */
+  /* Until one fact is known the rows keep their place unseen, so the first values never move the instrument. */
   .facts.unknown {
     visibility: hidden;
   }
   .facts > div {
-    display: grid;
-    gap: 3px;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
     min-width: 0;
+    padding-block: 5px;
   }
-  /* A fact is an engraved label over its figure. */
+  .facts > div + div {
+    border-top: var(--hairline) solid var(--border-subtle);
+  }
   .facts dt {
-    width: fit-content;
-    max-width: 100%;
     overflow: hidden;
     color: var(--text-soft);
-    font: var(--role-kicker);
-    letter-spacing: var(--track-wide);
+    font: var(--role-label);
     text-overflow: ellipsis;
-    text-transform: uppercase;
     white-space: nowrap;
   }
   .facts dd {
-    font: var(--role-figure);
+    font: var(--role-figure-sm);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }

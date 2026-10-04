@@ -992,11 +992,8 @@
     padding: 6px var(--space-3);
     border-radius: var(--r-well);
     color: var(--text-muted);
-    font: var(--role-kicker);
-    letter-spacing: var(--track-wide);
-    line-height: 1.3;
+    font: var(--w-strong) var(--type-sm) / 1.3 var(--font-sans);
     text-align: end;
-    text-transform: uppercase;
     white-space: nowrap;
     transition: var(--transition-control);
   }
@@ -1059,21 +1056,13 @@
     display: block;
     color: var(--text-soft);
     font: 500 var(--type-2xs) / 1.4 var(--font-mono);
-    letter-spacing: 0;
-    text-transform: none;
   }
   /* A day spaces its heading as a .group, but its gap must not open the table's columns. */
   .day {
     column-gap: 0;
   }
-  /* A day's heading is engraved over its rows. */
   .day > h3 {
     grid-column: 1 / -1;
-    color: var(--text-soft);
-    font: var(--role-kicker);
-    letter-spacing: var(--track-wide);
-    line-height: 20px;
-    text-transform: uppercase;
   }
   /* The list is page, not plate: a day's rows sit between two rules, with hairlines between them. */
   ol {

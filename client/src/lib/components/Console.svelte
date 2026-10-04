@@ -929,9 +929,9 @@
     grid-area: stage;
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
+    gap: var(--space-4);
     min-width: 0;
-    padding: var(--space-3) var(--space-4);
+    padding: var(--space-4) var(--space-5) var(--space-5);
     overflow-y: auto;
     /* Keep stage scrolling from chaining out to the document. */
     overscroll-behavior: contain;
@@ -960,8 +960,8 @@
   }
   @media (max-height: 800px) {
     .measurement-stage {
-      gap: var(--space-2);
-      padding-block: var(--space-1);
+      gap: var(--space-3);
+      padding-block: var(--space-3);
     }
   }
   .status {

@@ -298,7 +298,7 @@
 >
   <header class="card-head">
     <span class="swatch" aria-hidden="true"></span>
-    <h3 class="kicker" use:tooltipAction={JARGON.latency}>
+    <h3 class="caption" use:tooltipAction={JARGON.latency}>
       {STAGE.latency.label}
     </h3>
     <span class="aside"
@@ -314,7 +314,7 @@
           >
           {#if idle.center != null}<span class="unit">ms</span>{/if}
         </div>
-        <span class="caption" class:failure={failure && idle.center == null}
+        <span class="sub" class:failure={failure && idle.center == null}
           >{failure && idle.center == null ? failure : "Idle median"}</span
         >
         {#if trace}
@@ -334,7 +334,13 @@
                     y2={drawn.baselineY}
                   />{/if}
                 {#each drawn.dots as dot, index (index)}
-                  <circle class="reply" cx={dot.x} cy={dot.y} r="1.6" />
+                  <line
+                    class="reply"
+                    x1={dot.x}
+                    x2={dot.x}
+                    y1={drawn.baselineY ?? traceHeight}
+                    y2={dot.y}
+                  />
                 {/each}
               </svg>
             {/if}
@@ -558,7 +564,7 @@
     grid-template-rows: auto minmax(0, 1fr);
     gap: var(--space-2);
     min-width: 0;
-    padding: var(--space-2) var(--space-3) var(--space-3);
+    padding: var(--space-3) var(--space-4) var(--space-4);
     container: latency / inline-size;
   }
   .card-head {
@@ -569,8 +575,6 @@
     min-height: 20px;
   }
   h3 {
-    color: var(--text);
-    font-size: var(--type-xs);
     line-height: 20px;
   }
   .aside {
@@ -601,7 +605,7 @@
     white-space: nowrap;
   }
   .num {
-    font: 500 clamp(22px, 2.2vw, 32px) / 1 var(--font-mono);
+    font: var(--role-readout);
     font-variant-numeric: tabular-nums;
     letter-spacing: var(--track-figure);
   }
@@ -612,11 +616,11 @@
     color: var(--text-muted);
     font: 500 var(--type-sm) / 1 var(--font-mono);
   }
-  .caption {
+  .sub {
     color: var(--text-soft);
     font: var(--w-normal) var(--type-sm) / 1.4 var(--font-sans);
   }
-  .caption.failure {
+  .sub.failure {
     color: var(--err);
     font-weight: var(--w-strong);
   }
@@ -650,12 +654,10 @@
   .facts dt {
     width: fit-content;
     color: var(--text-soft);
-    font: var(--role-kicker);
-    letter-spacing: var(--track-wide);
-    text-transform: uppercase;
+    font: var(--role-label);
   }
   .facts dd {
-    font: var(--role-figure);
+    font: var(--role-figure-sm);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
@@ -673,7 +675,7 @@
     grid-template-columns:
       repeat(4, max-content) [track] minmax(120px, 1fr)
       minmax(64px, max-content);
-    grid-template-rows: auto repeat(var(--lanes), 40px) auto;
+    grid-template-rows: auto repeat(var(--lanes), 34px) auto;
     column-gap: var(--space-3);
     min-width: 0;
     isolation: isolate;
@@ -688,10 +690,8 @@
   .lane-head {
     padding-bottom: var(--space-1);
     color: var(--text-soft);
-    font: var(--role-kicker);
-    letter-spacing: var(--track-wide);
+    font: var(--w-normal) var(--type-xs) / 1 var(--font-sans);
     text-align: end;
-    text-transform: uppercase;
   }
   /* Rows are ruled, so the table reads as a grid with the axis ticks running up through it. */
   .lane + .lane {

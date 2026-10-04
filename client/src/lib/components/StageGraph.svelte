@@ -229,7 +229,13 @@
             y2={graph.baselineY}
           />{/if}
         {#each graph.dots as dot, index (index)}
-          <circle class="reply" cx={dot.x} cy={dot.y} r="1.6" />
+          <line
+            class="reply"
+            x1={dot.x}
+            x2={dot.x}
+            y1={graph.baselineY ?? TRACK}
+            y2={dot.y}
+          />
         {/each}
         {#if hover}<line
             class="cursor"
