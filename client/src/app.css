@@ -1740,6 +1740,18 @@
   & .gauge-panel .card[data-tone="bidirectional"] {
     view-transition-name: card-bidirectional;
   }
+  /* History: the list glides to its share as a result opens beside it and back as it closes; the result rises
+     in and sinks out, and a phone's result replaces the list the same way. The console and History are separate
+     surfaces, so switching between them sinks one out and rises the other in. */
+  & .history-list {
+    view-transition-name: history-list;
+  }
+  & .detail-pane {
+    view-transition-name: history-detail;
+  }
+  & .history-head {
+    view-transition-name: history-head;
+  }
   &::view-transition-group(*) {
     animation-duration: var(--dur-stage);
     animation-timing-function: var(--ease-settle);

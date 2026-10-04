@@ -192,7 +192,9 @@ of keyframes in `app.css` (`rise`, `row-in`, `pop`, `grow-x`, `glint`), each wit
 - A change that reshapes the console, a stage switched on or off, morphs it (`morph()`, a view transition of type
   `morph`): the dial, the lanes, the controls and each card glide from their old boxes to their new ones on the
   compositor, a panel that stays shows only its new look as it glides, an arriving card rises in and a leaving one
-  sinks out. The panels carry their transition names only while a morph runs.
+  sinks out. Opening or closing a result in History, or switching between the console and History, morphs the
+  same way: the list glides to its share beside the result and back. The panels carry their transition names
+  only while a morph runs.
 - Live values and the running strip's leading edge move on the single frame clock in
   `presentation/motion.svelte.ts`; a glide smooths only the rendering.
 - A view hands off by a class: the old fades out in 90 ms and the new in over 180 (`.handoff`, `.handoff-out`,
