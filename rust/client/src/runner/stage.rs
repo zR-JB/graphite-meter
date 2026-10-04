@@ -26,7 +26,7 @@ use graphite_meter_core::{
         FINAL_CHECKPOINT_BUDGET, MeasurementResult, SAMPLE_INTERVAL, Stage as TransferStage,
     },
 };
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, io::ErrorKind::TimedOut, sync::Arc, time::Duration};
 use tokio::{
     sync::{mpsc, watch},
     task::JoinSet,
@@ -72,10 +72,10 @@ struct Member {
 }
 
 impl Member {
-    fn new(id: String, stop: watch::Sender<bool>, latency: Option<watch::Sender<Stop>>, starting: bool) -> Self {
+    fn new(id: String, latency: Option<watch::Sender<Stop>>, starting: bool) -> Self {
         Self {
             id,
-            stop,
+            stop: watch::Sender::new(false),
             latency,
             starting,
             dialled: false,
@@ -158,6 +158,8 @@ struct HostLatency {
 }
 
 type Start<'a> = BoxFuture<'a, (String, Result<Lanes, Error>)>;
+/// The checkpoints a boundary missed, by server.
+type Misses = BTreeMap<String, Error>;
 
 /// What Go's coordinator keeps across a run's stages: the start every boundary and failure is timed
 /// from, and one aggregate account, so the interval history is capped per run.
@@ -251,39 +253,31 @@ impl<'a> StageRun<'a> {
             window: None,
         };
         for server in servers {
-            let (stop, stopped) = watch::channel(false);
             let latency = (stage == Stage::Latency || config.loaded_latency)
                 .then(|| run.spawn_latency(server, operation_limit))
                 .transpose()?;
-            if run.transfer.is_some() {
-                let id = server.entry.id.clone();
-                let start = start_transfer(stage, server, config, operation_limit, stopped);
+            let member = Member::new(server.entry.id.clone(), latency, run.transfer.is_some());
+            if member.starting {
+                let id = member.id.clone();
+                let start = start_transfer(stage, server, config, operation_limit, member.stop.subscribe());
                 run.starts.push(start.map(move |started| (id, started)).boxed());
             }
-            let (id, starting) = (server.entry.id.clone(), run.transfer.is_some());
-            run.members.push(Member::new(id, stop, latency, starting));
+            run.members.push(member);
         }
         Ok(run)
     }
 
-    fn spawn_latency(
-        &mut self,
-        server: &PreparedServer,
-        operation_limit: Duration,
-    ) -> Result<watch::Sender<Stop>, Error> {
+    fn spawn_latency(&mut self, server: &PreparedServer, limit: Duration) -> Result<watch::Sender<Stop>, Error> {
         let target = server.latency.clone().ok_or("missing selected latency target")?;
         let id = server.entry.id.clone();
         let http = server.client.clone();
         let (stop, stopped) = watch::channel(Stop::Running);
         // A session settles at most its window of probes at once, 2, 4 or 16; the rest is headroom
         // for observations queued during receiver checkpoints.
-        let (observations, receiver) = mpsc::channel(1024);
-        self.events.push(
-            futures_util::stream::unfold((id.clone(), receiver), |(id, mut receiver)| async {
-                receiver.recv().await.map(|event| ((id.clone(), event), (id, receiver)))
-            })
-            .boxed(),
-        );
+        let (observations, mut receiver) = mpsc::channel(1024);
+        let events = futures_util::stream::poll_fn(move |context| receiver.poll_recv(context));
+        let tag = id.clone();
+        self.events.push(events.map(move |event| (tag.clone(), event)).boxed());
         self.hosts.insert(id.clone(), HostLatency::default());
         let (interval, window) = match self.stage {
             Stage::Latency if self.config.ping_interval.is_zero() => (Duration::ZERO, 4),
@@ -291,7 +285,7 @@ impl<'a> StageRun<'a> {
             _ => (self.config.loaded_ping_interval, 2),
         };
         self.latency.spawn(async move {
-            let timing = (interval, operation_limit, window);
+            let timing = (interval, limit, window);
             let result = crate::latency::run(&http, &target, timing, observations, stopped.clone()).await;
             // A session ends Ok past Running only once the stage stopped it or its window ended,
             // which ends it as Go's probes.ended does (latency.go:252-253).
@@ -307,9 +301,13 @@ impl<'a> StageRun<'a> {
 
     async fn run(&mut self, servers: &[PreparedServer]) -> Result<(), Error> {
         self.ready().await?;
-        self.warmup(servers).await?;
-        self.open_window().await?;
-        self.measure_window().await?;
+        let members = servers
+            .iter()
+            .filter(|server| self.members.iter().any(|member| member.id == server.entry.id));
+        let warmup = planned_warmup(self.config, members);
+        self.serve(Phase::Warmup, Instant::now() + warmup).await?;
+        let end = self.open_window().await?;
+        self.serve(Phase::Measuring, end).await?;
         self.finish_window().await
     }
 
@@ -327,21 +325,13 @@ impl<'a> StageRun<'a> {
                 _ = health.tick() => self.check_health()?,
                 () = tokio::time::sleep_until(ready_by), if !expired => {
                     expired = true;
-                    let late: Vec<_> = self
-                        .members
-                        .iter()
-                        .filter(|member| member.starting || member.dialling())
-                        .map(|member| (member.id.clone(), member.starting))
-                        .collect();
+                    let late = self.members.iter().filter(|member| member.starting || member.dialling());
+                    let late: Vec<_> = late.map(|member| (member.id.clone(), member.starting)).collect();
                     let mut removed = false;
                     for (id, starting) in late {
-                        let error: Error = std::io::Error::new(
-                            std::io::ErrorKind::TimedOut,
-                            "server resources were not ready within 10 seconds",
-                        )
-                        .into();
+                        let error = std::io::Error::new(TimedOut, "server resources were not ready within 10 seconds");
                         let scope = if starting { FailureScope::Throughput } else { FailureScope::Latency };
-                        removed |= self.fail(&id, scope, error, ready_by);
+                        removed |= self.fail(&id, scope, error.into(), ready_by);
                     }
                     self.settle(removed)?;
                 },
@@ -363,10 +353,7 @@ impl<'a> StageRun<'a> {
                 member.lanes = lanes;
                 Ok(())
             }
-            Err(error) => {
-                let removed = self.fail(id, FailureScope::Throughput, error, Instant::now());
-                self.settle(removed)
-            }
+            Err(error) => self.depart(vec![(id.to_owned(), error)]),
         }
     }
 
@@ -376,28 +363,7 @@ impl<'a> StageRun<'a> {
         });
     }
 
-    async fn warmup(&mut self, servers: &[PreparedServer]) -> Result<(), Error> {
-        let members = servers
-            .iter()
-            .filter(|server| self.members.iter().any(|member| member.id == server.entry.id));
-        let warmup = planned_warmup(self.config, members);
-        self.snapshots.send_modify(|snapshot| snapshot.phase = Phase::Warmup);
-        let end = Instant::now() + warmup;
-        // Lanes are checked as often as in the window, so a loss is noticed when it happens, as
-        // Go's stage handles each outcome as it arrives (stage.go:240-260).
-        let mut health = tokio::time::interval(SAMPLE_INTERVAL);
-        loop {
-            self.check_health()?;
-            tokio::select! {
-                () = tokio::time::sleep_until(end) => return Ok(()),
-                _ = health.tick() => {}
-                Some(event) = self.events.next(), if !self.events.is_empty() => self.observe_latency(event),
-                Some(joined) = self.latency.join_next(), if !self.latency.is_empty() => self.latency_ended(joined)?,
-            }
-        }
-    }
-
-    async fn open_window(&mut self) -> Result<(), Error> {
+    async fn open_window(&mut self) -> Result<Instant, Error> {
         let initial = match self.transfer {
             Some(_) => {
                 let (initial, misses) = self.collect(CHECKPOINT_BUDGET, None).await.expect("no stage end");
@@ -431,12 +397,14 @@ impl<'a> StageRun<'a> {
             // Go's probes.open (latency.go:233): the window's end bounds a lost channel's redial.
             member.stop_latency(Stop::Window(end));
         }
-        Ok(())
+        Ok(end)
     }
 
-    async fn measure_window(&mut self) -> Result<(), Error> {
-        let (started, end) = self.window.expect("window opened");
-        self.snapshots.send_modify(|snapshot| snapshot.phase = Phase::Measuring);
+    /// Serves latency sessions and checks lanes each interval of `phase` until `end`, so a loss is
+    /// noticed when it happens, as Go's stage handles each outcome as it arrives (stage.go:240-260);
+    /// in the window, each interval also takes a sample.
+    async fn serve(&mut self, phase: Phase, end: Instant) -> Result<(), Error> {
+        self.snapshots.send_modify(|snapshot| snapshot.phase = phase);
         let mut sample = tokio::time::interval(SAMPLE_INTERVAL);
         sample.set_missed_tick_behavior(MissedTickBehavior::Skip);
         sample.tick().await;
@@ -448,6 +416,7 @@ impl<'a> StageRun<'a> {
                 Some(event) = self.events.next(), if !self.events.is_empty() => self.observe_latency(event),
                 Some(joined) = self.latency.join_next(), if !self.latency.is_empty() => self.latency_ended(joined)?,
                 scheduled = sample.tick() => {
+                    let Some((started, _)) = self.window else { continue };
                     let stalled = scheduled.elapsed() > CLIENT_STALL;
                     let window = match self.transfer {
                         Some(_) => {
@@ -491,25 +460,14 @@ impl<'a> StageRun<'a> {
                 break;
             }
         }
-        let retrying = self
-            .members
-            .iter()
-            .filter_map(|member| {
-                let lanes = [
-                    member.lanes.down.as_ref().map(Download::retrying),
-                    member.lanes.up.as_ref().map(Upload::retrying),
-                ];
-                lanes
-                    .into_iter()
-                    .zip(member.moved)
-                    .find_map(|(failure, moved)| {
-                        failure
-                            .flatten()
-                            .filter(|_| ended.saturating_duration_since(moved) >= STALL_QUIET)
-                    })
-                    .map(|failure| (member.id.clone(), failure))
-            })
-            .collect();
+        let quiet = |moved: Instant| ended.saturating_duration_since(moved) >= STALL_QUIET;
+        let mut retrying = Vec::new();
+        for member in &self.members {
+            let (down, up) = (member.lanes.down.as_ref(), member.lanes.up.as_ref());
+            let down = down.and_then(Download::retrying).filter(|_| quiet(member.moved[0]));
+            let up = up.and_then(Upload::retrying).filter(|_| quiet(member.moved[1]));
+            retrying.extend(down.or(up).map(|failure| (member.id.clone(), failure)));
+        }
         self.depart(retrying)
     }
 
@@ -639,11 +597,7 @@ impl<'a> StageRun<'a> {
 
     /// Snapshots every local counter before waiting on any remote clock; parallel checkpoints keep one server's
     /// RTT from shifting its peers. With `until`, the stage end abandons the checkpoints.
-    async fn collect(
-        &mut self,
-        budget: Duration,
-        until: Option<Instant>,
-    ) -> Option<(Boundary, BTreeMap<String, Error>)> {
+    async fn collect(&mut self, budget: Duration, until: Option<Instant>) -> Option<(Boundary, Misses)> {
         let mut boundary = self.local_boundary();
         let checkpoints = futures_util::future::join_all(self.members.iter().filter_map(|member| {
             let up = member.lanes.up.as_ref()?;
@@ -661,23 +615,15 @@ impl<'a> StageRun<'a> {
         let mut misses = BTreeMap::new();
         for (id, result) in results {
             match result {
-                Ok(snapshot) => {
-                    boundary.up.insert(id, snapshot);
-                }
-                Err(error) => {
-                    misses.insert(id, error);
-                }
+                Ok(snapshot) => _ = boundary.up.insert(id, snapshot),
+                Err(error) => _ = misses.insert(id, error),
             }
         }
         Some((boundary, misses))
     }
 
     /// Shared silence belongs to the link; a quiet member leaves while another moves, or at the stage end.
-    fn observe_boundary(
-        &mut self,
-        boundary: Boundary,
-        mut misses: BTreeMap<String, Error>,
-    ) -> Result<Option<AggregateWindow>, Error> {
+    fn observe_boundary(&mut self, boundary: Boundary, mut misses: Misses) -> Result<Option<AggregateWindow>, Error> {
         let final_boundary = boundary.final_boundary;
         let collected = self.ledger.started + Duration::from_nanos(boundary.at_nanos);
         let directions: &[Direction] = match self.transfer {
@@ -686,11 +632,9 @@ impl<'a> StageRun<'a> {
             _ => &[Direction::Down, Direction::Up],
         };
         let accounting = &mut self.ledger.accounting;
-        let before: Vec<[u64; 2]> = self
-            .members
-            .iter()
-            .map(|member| [Direction::Down, Direction::Up].map(|direction| accounting.bytes(&member.id, direction)))
-            .collect();
+        let bytes =
+            |member: &Member| [Direction::Down, Direction::Up].map(|direction| accounting.bytes(&member.id, direction));
+        let before: Vec<_> = self.members.iter().map(bytes).collect();
         let window = accounting.observe(boundary);
         for (member, before) in self.members.iter_mut().zip(before) {
             for direction in directions {
@@ -716,8 +660,7 @@ impl<'a> StageRun<'a> {
             if let Some(error) = member.missed(misses.remove(&member.id), final_boundary, up_moving) {
                 departures.push((member.id.clone(), error));
             } else if stalled {
-                let stalled: Error = Box::new(Failure::Measurement(FailureReason::Timeout));
-                departures.push((member.id.clone(), stalled));
+                departures.push((member.id.clone(), Box::new(Failure::Measurement(FailureReason::Timeout))));
             }
         }
         self.depart(departures)?;
@@ -727,15 +670,14 @@ impl<'a> StageRun<'a> {
     fn publish(&mut self, started: Instant, window: Option<&AggregateWindow>) {
         let elapsed = started.elapsed();
         let hosts = &mut self.hosts;
+        let bits = |bytes_per_sec: f64| bytes_per_sec * 8.0;
         self.snapshots.send_modify(|snapshot| {
             sample_hosts(hosts, snapshot);
             snapshot.latest = Point {
                 elapsed,
                 sample_count: 1,
-                down_bps: window
-                    .and_then(|window| window.down_bytes_per_sec)
-                    .map(|rate| rate * 8.0),
-                up_bps: window.and_then(|window| window.up_bytes_per_sec).map(|rate| rate * 8.0),
+                down_bps: window.and_then(|window| window.down_bytes_per_sec).map(bits),
+                up_bps: window.and_then(|window| window.up_bytes_per_sec).map(bits),
             };
         });
     }
@@ -754,11 +696,8 @@ impl<'a> StageRun<'a> {
             }
         }
         let confirm = result.is_ok() && !stopped;
-        let lanes = self
-            .members
-            .iter_mut()
-            .map(|member| std::mem::take(&mut member.lanes).close(confirm));
-        futures_util::future::join_all(lanes).await;
+        let lanes = self.members.iter_mut().map(|member| std::mem::take(&mut member.lanes));
+        futures_util::future::join_all(lanes.map(|lanes| lanes.close(confirm))).await;
         while let Some(joined) = self.latency.join_next().await {
             if confirm {
                 let _ = self.latency_ended(joined);
@@ -787,30 +726,32 @@ impl<'a> StageRun<'a> {
         let ended = end.min(now);
         let accounting = &self.ledger.accounting;
         let measured = self.transfer.filter(|_| measuring);
+        let (down, up) = measured.map_or((false, false), |stage| (stage.needs_down(), stage.needs_up()));
         let mut result = StageResult {
             stage: self.stage,
             elapsed: ended.saturating_duration_since(started),
-            down: measured
-                .filter(|stage| stage.needs_down())
-                .map(|_| accounting.result(Direction::Down)),
-            up: measured
-                .filter(|stage| stage.needs_up())
-                .map(|_| accounting.result(Direction::Up)),
+            down: down.then(|| accounting.result(Direction::Down)),
+            up: up.then(|| accounting.result(Direction::Up)),
             stopped,
             ..StageResult::default()
         };
         let missing = result.lacks_throughput();
         // The run's account holds earlier stages; a stage that never opened its window has no results there.
-        let own = |id: &str, direction| {
-            if measuring {
-                accounting.server_result(id, direction)
-            } else {
-                MeasurementResult::unavailable(direction, 0)
-            }
+        let own = |id: &str, direction| match measuring {
+            true => accounting.server_result(id, direction),
+            false => MeasurementResult::unavailable(direction, 0),
+        };
+        let contribution = |transfer: TransferStage, id: &String| ServerContribution {
+            id: id.clone(),
+            down: transfer.needs_down().then(|| own(id, Direction::Down)),
+            up: transfer.needs_up().then(|| own(id, Direction::Up)),
+        };
+        result.server_results = match self.transfer {
+            Some(transfer) => self.participants.iter().map(|id| contribution(transfer, id)).collect(),
+            None => Vec::new(),
         };
         let at = self.ledger.since_start(now);
-        let hosts = &mut self.hosts;
-        let (transfer, members, participants) = (self.transfer, &self.members, &self.participants);
+        let (hosts, members) = (&mut self.hosts, &self.members);
         self.snapshots.send_modify(|snapshot| {
             if measuring {
                 sample_hosts(hosts, snapshot);
@@ -841,27 +782,12 @@ impl<'a> StageRun<'a> {
                     if missing && !throughput_failed {
                         snapshot.failure(&member.id, FailureScope::Throughput, insufficient, at);
                     }
-                    let unmeasured = result
-                        .server_latencies
-                        .iter()
-                        .any(|host| host.id == member.id && host.median().is_none());
-                    if result.stage == Stage::Latency && unmeasured {
+                    let host = result.server_latencies.iter().find(|host| host.id == member.id);
+                    if result.stage == Stage::Latency && host.is_some_and(|host| host.median().is_none()) {
                         snapshot.failure(&member.id, FailureScope::Latency, insufficient, at);
                     }
                 }
             }
-            result.server_results = transfer
-                .map(|transfer| {
-                    participants
-                        .iter()
-                        .map(|id| ServerContribution {
-                            id: id.clone(),
-                            down: transfer.needs_down().then(|| own(id, Direction::Down)),
-                            up: transfer.needs_up().then(|| own(id, Direction::Up)),
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
             snapshot.results.push(result);
             snapshot.intervals.clone_from(accounting.intervals());
             snapshot.omitted_intervals = accounting.omitted_intervals();
@@ -927,59 +853,46 @@ fn observe(
     window: Option<(Instant, Instant)>,
     (id, event): (String, Observation),
 ) {
-    if let (Some(host), Some((start, end))) = (hosts.get_mut(&id), window) {
-        // Go's chart takes every reply and timeout of a probe the window measures.
-        let charted = match event {
-            Observation::Sample { sent, rtt, .. } => {
-                host.timeouts = 0;
-                Some((sent, sent + rtt, rtt.as_secs_f64() * 1000.0))
-            }
-            Observation::Lost { sent, outcome: ProbeOutcome::Timeout } => {
-                host.timeouts += 1;
-                Some((sent, Instant::now(), f64::NAN))
-            }
-            Observation::Lost { .. } | Observation::ConnectionBoundary => None,
-        };
-        if let Some((_, at, ms)) = charted.filter(|(sent, ..)| (start..end).contains(sent)) {
-            crate::model::ServerLatency::step(&mut host.steps, at, ms);
+    let (Some(host), Some((start, end))) = (hosts.get_mut(&id), window) else {
+        return;
+    };
+    let (sent, charted) = match event {
+        Observation::ConnectionBoundary => {
+            host.accumulator.break_continuity();
+            return;
         }
-        observe_latency(event, start, end, &mut host.accumulator, &mut host.latest);
+        Observation::Sample { sent, rtt, .. } => {
+            host.timeouts = 0;
+            (sent, Some((sent + rtt, rtt.as_secs_f64() * 1000.0)))
+        }
+        Observation::Lost { sent, outcome: ProbeOutcome::Timeout } => {
+            host.timeouts += 1;
+            (sent, Some((Instant::now(), f64::NAN)))
+        }
+        Observation::Lost { sent, .. } => (sent, None),
+    };
+    // Only probes the window sent count; Go's chart takes every reply and timeout of them.
+    if !(start..end).contains(&sent) {
+        return;
+    }
+    if let Some((at, ms)) = charted {
+        crate::model::ServerLatency::step(&mut host.steps, at, ms);
+    }
+    if let Observation::Sample { rtt, .. } = event {
+        host.latest = Some(rtt.as_secs_f64() * 1000.0);
+    }
+    if let Some(outcome) = event.outcome() {
+        host.accumulator.record(outcome);
     }
 }
 
 fn sample_hosts(hosts: &mut BTreeMap<String, HostLatency>, snapshot: &mut Snapshot) {
+    let mut unknown = HostLatency::default();
     for host in &mut snapshot.server_latencies {
-        host.timeouts = hosts.get(&host.id).map_or(0, |state| state.timeouts);
-        host.latest_ms = hosts.get_mut(&host.id).and_then(|state| state.latest.take());
-        host.steps = hosts
-            .get_mut(&host.id)
-            .map(|state| std::mem::take(&mut state.steps))
-            .unwrap_or_default();
-    }
-}
-
-fn observe_latency(
-    event: Observation,
-    start: Instant,
-    end: Instant,
-    accumulator: &mut LatencyAccumulator,
-    latest: &mut Option<f64>,
-) {
-    let sent = match event {
-        Observation::ConnectionBoundary => {
-            accumulator.break_continuity();
-            return;
-        }
-        Observation::Sample { sent, .. } | Observation::Lost { sent, .. } => sent,
-    };
-    if sent < start || sent >= end {
-        return;
-    }
-    if let Observation::Sample { rtt, .. } = event {
-        *latest = Some(rtt.as_secs_f64() * 1000.0);
-    }
-    if let Some(outcome) = event.outcome() {
-        accumulator.record(outcome);
+        let state = hosts.get_mut(&host.id).unwrap_or(&mut unknown);
+        host.timeouts = state.timeouts;
+        host.latest_ms = state.latest.take();
+        host.steps = std::mem::take(&mut state.steps);
     }
 }
 

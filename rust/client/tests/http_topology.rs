@@ -47,8 +47,7 @@ async fn serve_bidirectional(
             let route = (request.method().clone(), request.uri().path().to_owned());
             let body = match (route.0.as_str(), route.1.as_str()) {
                 ("GET", "/servers") => json(serde_json::json!({
-                    "defaultSelection": ["self"],
-                    "servers": [{"id": "self", "url": ".", "name": "fixture"}]
+                    "defaultSelection": ["self"], "servers": [{"id": "self", "url": ".", "name": "fixture"}]
                 })),
                 ("GET", "/preflight") => json(serde_json::json!({
                     "generation": "fixture",
@@ -92,10 +91,8 @@ async fn serve_bidirectional(
 /// headers, as Go's roles start together.
 #[tokio::test]
 async fn bidirectional_upload_lanes_start_while_downloads_wait_for_headers() -> Result<(), Error> {
-    use graphite_meter_client::{
-        config::Config,
-        model::{Snapshot, Stage},
-    };
+    use graphite_meter_client::config::Config;
+    use graphite_meter_client::model::{Snapshot, Stage};
     let _ = graphite_meter_client::crypto::provider().install_default();
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let origin = format!("http://{}", listener.local_addr()?);
@@ -132,6 +129,7 @@ async fn bidirectional_upload_lanes_start_while_downloads_wait_for_headers() -> 
 
 #[tokio::test]
 async fn pooled_connections_expire_without_another_request_and_preserve_active_bodies() -> Result<(), Error> {
+    use futures_util::StreamExt;
     use http_body_util::{BodyExt, StreamBody};
     use hyper::body::Frame;
     use std::convert::Infallible;
@@ -147,16 +145,10 @@ async fn pooled_connections_expire_without_another_request_and_preserve_active_b
             let server = tokio::spawn(async move {
                 let (socket, _) = listener.accept().await.unwrap();
                 let service = service_fn(move |_| {
-                    let receiver = receiver.lock().unwrap().take().unwrap();
-                    async move {
-                        let stream = futures_util::stream::unfold(receiver, |mut receiver| async {
-                            receiver
-                                .recv()
-                                .await
-                                .map(|chunk| (Ok::<_, Infallible>(Frame::data(chunk)), receiver))
-                        });
-                        Ok::<_, Infallible>(Response::new(StreamBody::new(Box::pin(stream))))
-                    }
+                    let mut receiver = receiver.lock().unwrap().take().unwrap();
+                    let chunks = futures_util::stream::poll_fn(move |context| receiver.poll_recv(context));
+                    let frames = chunks.map(|chunk| Ok::<_, Infallible>(Frame::data(chunk)));
+                    std::future::ready(Ok::<_, Infallible>(Response::new(StreamBody::new(frames))))
                 });
                 if protocol == Protocol::Http1 {
                     hyper::server::conn::http1::Builder::new()

@@ -749,11 +749,7 @@ pub(crate) fn ms(nanos: u64) -> String {
 /// Go's fmtCount: thousands separated by commas.
 fn count(value: usize) -> String {
     let digits = value.to_string();
-    let groups = digits
-        .as_bytes()
-        .rchunks(3)
-        .rev()
-        .map(|group| String::from_utf8_lossy(group));
+    let groups = digits.as_bytes().rchunks(3).rev().map(String::from_utf8_lossy);
     groups.collect::<Vec<_>>().join(",")
 }
 

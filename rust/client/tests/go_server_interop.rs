@@ -11,28 +11,11 @@ use graphite_meter_core::{
     catalog::ServerEntry,
     discovery::{LatencyTransport, Protocol, ThroughputTransport},
 };
-use std::{path::PathBuf, process::Stdio, time::Duration};
+use std::{process::Stdio, time::Duration};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::watch;
 
-#[derive(Clone, Copy)]
-struct Case {
-    name: &'static str,
-    protocol: Protocol,
-    throughput: ThroughputTransport,
-    latency: LatencyTransport,
-}
-
-impl Case {
-    /// HTTP/3 measures over WebTransport, HTTP/1.1 and HTTP/2 over fetch streams and WebSocket.
-    fn new(name: &'static str, protocol: Protocol) -> Self {
-        let (throughput, latency) = match protocol {
-            Protocol::Http3 => (ThroughputTransport::WebTransport, LatencyTransport::WebTransport),
-            _ => (ThroughputTransport::FetchStream, LatencyTransport::WebSocket),
-        };
-        Self { name, protocol, throughput, latency }
-    }
-}
+const STAGES: [Stage; 4] = [Stage::Latency, Stage::Download, Stage::Upload, Stage::Bidirectional];
 
 #[tokio::test]
 #[ignore = "requires Go server fixture; run rust/tests/client_interop.py"]
@@ -40,12 +23,12 @@ async fn go_server_completes_native_transport_stages() -> Result<(), Error> {
     let url = std::env::var("GM_GO_INTEROP_URL")
         .map_err(|_| "GM_GO_INTEROP_URL is required; run rust/tests/client_interop.py")?;
     let _ = graphite_meter_client::crypto::provider().install_default();
-    for case in [
-        Case::new("WebTransport stream", Protocol::Http3),
-        Case::new("HTTPS HTTP/1.1 fetch stream", Protocol::Http1),
-        Case::new("HTTP/2 fetch stream", Protocol::Http2),
+    for (name, protocol) in [
+        ("WebTransport stream", Protocol::Http3),
+        ("HTTPS HTTP/1.1 fetch stream", Protocol::Http1),
+        ("HTTP/2 fetch stream", Protocol::Http2),
     ] {
-        run_case(&url, case, Http::new(false)?).await?;
+        run_case(&url, name, protocol, Http::new(false)?).await?;
     }
     Ok(())
 }
@@ -68,10 +51,7 @@ async fn go_server_completes_approved_native_stages() -> Result<(), Error> {
         return Err("the server did not ask for sign-in".into());
     };
     let pending = http.begin_authorization(&origin, &login_url)?;
-    let helper = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .ok_or("missing Rust workspace directory")?
-        .join("tests/approve_native.py");
+    let helper = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/approve_native.py");
     let mut approval = tokio::process::Command::new("python3")
         .arg(helper)
         .stdin(Stdio::piped())
@@ -79,40 +59,42 @@ async fn go_server_completes_approved_native_stages() -> Result<(), Error> {
         .stderr(Stdio::piped())
         .spawn()?;
     let input = serde_json::to_vec(&[&url, &pending.browser_url, &std::env::var("SSL_CERT_FILE")?])?;
-    approval
-        .stdin
-        .take()
-        .ok_or("missing approval input")?
-        .write_all(&input)
-        .await?;
+    let mut stdin = approval.stdin.take().ok_or("missing approval input")?;
+    stdin.write_all(&input).await?;
+    drop(stdin);
     let approved = approval.wait_with_output().await?;
     if !approved.status.success() {
         return Err(format!("browser approval fixture failed: {}", String::from_utf8_lossy(&approved.stderr)).into());
     }
     http.poll_authorization(pending).await?;
-    for case in [
-        Case::new("approved WebTransport stream", Protocol::Http3),
-        Case::new("approved HTTPS HTTP/1.1 fetch stream", Protocol::Http1),
+    for (name, protocol) in [
+        ("approved WebTransport stream", Protocol::Http3),
+        ("approved HTTPS HTTP/1.1 fetch stream", Protocol::Http1),
     ] {
-        run_case(&url, case, http.clone()).await?;
+        run_case(&url, name, protocol, http.clone()).await?;
     }
     Ok(())
 }
 
-async fn run_case(url: &str, case: Case, http: Http) -> Result<(), Error> {
+async fn run_case(url: &str, name: &str, protocol: Protocol, http: Http) -> Result<(), Error> {
+    // HTTP/3 measures over WebTransport, HTTP/1.1 and HTTP/2 over fetch streams and WebSocket.
+    let (throughput, latency) = match protocol {
+        Protocol::Http3 => (ThroughputTransport::WebTransport, LatencyTransport::WebTransport),
+        _ => (ThroughputTransport::FetchStream, LatencyTransport::WebSocket),
+    };
     let config = Config {
         url: url.into(),
-        stages: vec![Stage::Latency, Stage::Download, Stage::Upload, Stage::Bidirectional],
-        throughput_protocol: Some(case.protocol),
-        throughput_transport: Some(case.throughput),
-        latency_transport: Some(case.latency),
+        stages: STAGES.to_vec(),
+        throughput_protocol: Some(protocol),
+        throughput_transport: Some(throughput),
+        latency_transport: Some(latency),
         warmup: Duration::from_millis(100),
         latency_duration: Duration::from_secs(1),
         // Allow checkpoint/scheduling delay beyond the 800ms evidence minimum in hosted CI.
         download_duration: Duration::from_secs(3),
         // Exercise the reported fetch-upload boundary at the TUI's default
         // duration; the other transports keep this CI replay short.
-        upload_duration: if case.protocol == Protocol::Http1 {
+        upload_duration: if protocol == Protocol::Http1 {
             Config::default().upload_duration
         } else {
             Duration::from_secs(3)
@@ -129,25 +111,15 @@ async fn run_case(url: &str, case: Case, http: Http) -> Result<(), Error> {
     drop(cancel_tx);
 
     let snapshot = snapshots.borrow();
-    assert_eq!(snapshot.phase, Phase::Complete, "{}: {snapshot:#?}", case.name);
-    assert!(snapshot.error.is_none(), "{}: {:?}", case.name, snapshot.error);
+    assert_eq!(snapshot.phase, Phase::Complete, "{name}: {snapshot:#?}");
+    assert!(snapshot.error.is_none(), "{name}: {:?}", snapshot.error);
     assert!(snapshot.servers.iter().any(|server| {
-        server
-            .throughput
-            .as_ref()
-            .is_some_and(|target| target.protocol == case.protocol && target.transport == case.throughput)
-            && server
-                .latency
-                .as_ref()
-                .is_some_and(|target| target.transport == case.latency)
+        let measured = server.throughput.as_ref().map(|path| (path.protocol, path.transport));
+        let probed = server.latency.as_ref().map(|path| path.transport);
+        measured == Some((protocol, throughput)) && probed == Some(latency)
     }));
     assert_eq!(snapshot.results.len(), 4);
-    for (result, stage) in
-        snapshot
-            .results
-            .iter()
-            .zip([Stage::Latency, Stage::Download, Stage::Upload, Stage::Bidirectional])
-    {
+    for (result, stage) in snapshot.results.iter().zip(STAGES) {
         assert_eq!(result.stage, stage);
         assert_eq!(
             snapshot.stage_status(result),
@@ -166,6 +138,6 @@ async fn run_case(url: &str, case: Case, http: Http) -> Result<(), Error> {
             assert!(result.up_bytes() > 0, "{} received no upload", stage.name());
         }
     }
-    println!("Rust client completed all four stages using {} against Go server", case.name);
+    println!("Rust client completed all four stages using {name} against Go server");
     Ok(())
 }

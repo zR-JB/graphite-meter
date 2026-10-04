@@ -77,15 +77,6 @@ impl Drop for Operation {
     }
 }
 
-async fn completed(
-    operation: &mut Option<Operation>,
-) -> Result<Result<Option<runner::PreparedRun>, Error>, tokio::task::JoinError> {
-    match operation {
-        Some(operation) => (&mut operation.task).await,
-        None => std::future::pending().await,
-    }
-}
-
 pub async fn run(config: Config, interrupts: mpsc::Receiver<()>) -> Result<(Option<Snapshot>, ui::Exit), Error> {
     let (snapshots, receiver) = watch::channel(Snapshot::default());
     let (commands, mut incoming) = mpsc::channel(8);
@@ -95,34 +86,24 @@ pub async fn run(config: Config, interrupts: mpsc::Receiver<()>) -> Result<(Opti
         let terminal = ui::run(config, receiver, commands, interrupts);
         tokio::pin!(terminal);
         loop {
-            let stopping = controller.stopping();
-            tokio::select! {
+            let handled = tokio::select! {
                 result = &mut terminal => break result,
-                Some(command) = incoming.recv() => {
-                    let replaced = match command {
-                        Command::Run(config) => controller.replace(Work::Run(config)),
-                        Command::Verify(config) => controller.replace(Work::Verify(config)),
-                        Command::Cancel => {
-                            controller.cancel();
-                            Ok(())
-                        }
-                        Command::OpenBrowser => {
-                            controller.open_browser();
-                            Ok(())
-                        }
-                    };
-                    if let Err(error) = replaced {
-                        break Err(error);
+                Some(command) = incoming.recv() => match command {
+                    Command::Run(config) => controller.replace(Work::Run(config)),
+                    Command::Verify(config) => controller.replace(Work::Verify(config)),
+                    Command::Cancel => {
+                        controller.cancel();
+                        Ok(())
                     }
-                }
-                result = completed(&mut controller.operation) => {
-                    if let Err(error) = controller.finished(result) {
-                        break Err(error);
+                    Command::OpenBrowser => {
+                        controller.open_browser();
+                        Ok(())
                     }
-                }
-                _ = deadline(stopping) => {
-                    controller.abort();
-                }
+                },
+                result = controller.step() => result,
+            };
+            if let Err(error) = handled {
+                break Err(error);
             }
         }
     }; // Drop the UI and restore the terminal before shutdown/reporting.
@@ -154,11 +135,10 @@ pub async fn run_once(config: Config, mut interrupts: mpsc::Receiver<()>) -> Res
         }
     };
     if let Some(result) = result {
-        result
-    } else {
-        controller.cancel();
-        controller.finish().await
+        return result;
     }
+    controller.cancel();
+    controller.finish().await
 }
 
 struct Controller {
@@ -178,13 +158,24 @@ impl Controller {
 
     async fn wait(&mut self) -> Result<(), Error> {
         while self.operation.is_some() {
-            let stopping = self.stopping();
-            tokio::select! {
-                result = completed(&mut self.operation) => self.finished(result)?,
-                _ = deadline(stopping) => self.abort(),
-            }
+            self.step().await?;
         }
         Ok(())
+    }
+
+    /// Handles the operation's completion, or aborts it once its stop is overdue; pending without one.
+    async fn step(&mut self) -> Result<(), Error> {
+        let Some(operation) = &mut self.operation else {
+            return std::future::pending().await;
+        };
+        let stopping = operation.stopping;
+        tokio::select! {
+            result = &mut operation.task => self.finished(result),
+            () = deadline(stopping) => {
+                self.abort();
+                Ok(())
+            }
+        }
     }
 
     fn new(config: &Config, snapshots: watch::Sender<Snapshot>, interactive: bool) -> Result<Self, Error> {
@@ -208,15 +199,8 @@ impl Controller {
         if !running {
             self.prepared = None;
         }
-        let servers = if self
-            .prepared
-            .as_ref()
-            .is_some_and(|prepared| prepared.fresh_for(work.config()))
-        {
-            self.snapshots.borrow().servers.clone()
-        } else {
-            Vec::new()
-        };
+        let fresh = self.prepared.as_ref().is_some_and(|run| run.fresh_for(work.config()));
+        let servers = if fresh { self.snapshots.borrow().servers.clone() } else { Vec::new() };
         self.snapshots.send_replace(Snapshot {
             servers,
             phase: if running { Phase::Preparing } else { Phase::Checking },
@@ -232,22 +216,20 @@ impl Controller {
         Ok(())
     }
     fn replace(&mut self, work: Work) -> Result<(), Error> {
-        if self.operation.is_none() {
-            self.launch(work)
-        } else {
-            let operation = self.operation.as_mut().unwrap();
-            if matches!(work, Work::Run(_)) && operation.purpose == Purpose::Check {
-                // As in Go, the run starts at once: stopping the replaced check is its
-                // preparation, and stopping the run before launch reads as stopped.
-                operation.purpose = Purpose::PreparingRun;
-                operation.started = Instant::now();
-                self.snapshots
-                    .send_replace(Snapshot { phase: Phase::Preparing, ..Snapshot::default() });
-            }
-            operation.pending = Some(work);
-            self.request_cancel();
-            Ok(())
+        let Some(operation) = &mut self.operation else {
+            return self.launch(work);
+        };
+        if matches!(work, Work::Run(_)) && operation.purpose == Purpose::Check {
+            // As in Go, the run starts at once: stopping the replaced check is its
+            // preparation, and stopping the run before launch reads as stopped.
+            operation.purpose = Purpose::PreparingRun;
+            operation.started = Instant::now();
+            self.snapshots
+                .send_replace(Snapshot { phase: Phase::Preparing, ..Snapshot::default() });
         }
+        operation.pending = Some(work);
+        self.request_cancel();
+        Ok(())
     }
     fn cancel(&mut self) {
         if let Some(operation) = &mut self.operation {
@@ -260,10 +242,6 @@ impl Controller {
             operation.cancel();
             self.snapshots.send_modify(|snapshot| snapshot.auth = None);
         }
-    }
-
-    fn stopping(&self) -> Option<Instant> {
-        self.operation.as_ref().and_then(|operation| operation.stopping)
     }
 
     fn abort(&mut self) {
@@ -311,10 +289,8 @@ impl Controller {
                         });
                         snapshot.auth = None;
                     });
-                    if running && signed_out && self.interactive {
-                        operation
-                            .pending
-                            .get_or_insert_with(|| Work::Verify(self.config.clone()));
+                    if running && signed_out && self.interactive && operation.pending.is_none() {
+                        operation.pending = Some(Work::Verify(self.config.clone()));
                     }
                 }
             }
@@ -326,10 +302,7 @@ impl Controller {
         }
         let pending = operation.pending.take();
         drop(operation);
-        if let Some(work) = pending {
-            self.launch(work)?;
-        }
-        Ok(())
+        pending.map_or(Ok(()), |work| self.launch(work))
     }
     fn open_browser(&self) {
         let Some(prompt) = self.snapshots.borrow().auth.clone() else {
@@ -362,9 +335,8 @@ async fn execute(
         }
         let result = match &work {
             Work::Run(config) => {
-                runner::run(config.clone(), http.clone(), snapshots.clone(), cancel.clone(), prepared.take())
-                    .await
-                    .map(|()| None)
+                let run = runner::run(config.clone(), http.clone(), snapshots.clone(), cancel.clone(), prepared.take());
+                run.await.map(|()| None)
             }
             Work::Verify(config) => tokio::select! {
                 biased;
@@ -375,9 +347,8 @@ async fn execute(
                 }),
             },
         };
-        let error = match result {
-            Ok(prepared) => return Ok(prepared),
-            Err(error) => error,
+        let Err(error) = result else {
+            return result;
         };
         if snapshots.borrow().measured() && matches!(work, Work::Run(_)) {
             return Err(error);
@@ -501,8 +472,7 @@ mod tests {
         controller.replace(Work::Run(Config::default())).unwrap();
         assert_eq!(controller.snapshots.borrow().phase, Phase::Preparing);
         // The check ending is the run's preparation, not a stopped run.
-        let check = completed(&mut controller.operation).await;
-        controller.finished(check).unwrap();
+        controller.step().await.unwrap();
         assert!(controller.finished.is_none());
         assert!(controller.operation.is_some(), "the run launched");
         controller.stop().await;
@@ -522,18 +492,14 @@ mod tests {
         let mut controller = controller(&config, Phase::default());
         let snapshots = controller.snapshots.clone();
         controller.operation = Some(Operation::new(Purpose::Run, |_| async move {
-            snapshots.send_modify(|snapshot| {
-                snapshot
-                    .results
-                    .push(crate::model::StageResult { elapsed: Duration::from_secs(1), ..Default::default() })
-            });
+            let measured = crate::model::StageResult { elapsed: Duration::from_secs(1), ..Default::default() };
+            snapshots.send_modify(|snapshot| snapshot.results.push(measured));
             Err(Box::new(Failure::SignIn {
                 origin: "https://meter.test".into(),
                 login_url: "https://meter.test/login".into(),
             }) as Error)
         }));
-        let result = completed(&mut controller.operation).await;
-        controller.finished(result).unwrap();
+        controller.step().await.unwrap();
         let finished = controller.finished.as_ref().map(|run| run.phase);
         assert_eq!(finished, Some(Phase::Incomplete));
         assert_eq!(controller.snapshots.borrow().phase, Phase::Checking);
@@ -565,8 +531,7 @@ mod tests {
         });
         let mut controller = controller(&config, Phase::default());
         controller.launch(Work::Run(config))?;
-        let result = completed(&mut controller.operation).await;
-        controller.finished(result)?;
+        controller.step().await?;
         let phase = controller.snapshots.borrow().phase;
         controller.stop().await;
         server.abort();
@@ -580,8 +545,7 @@ mod tests {
             let mut controller = controller(&Config::default(), Phase::default());
             controller.operation =
                 Some(Operation::new(purpose, |_| async { Err(Box::new(Failure::ApprovalExpired) as Error) }));
-            let result = completed(&mut controller.operation).await;
-            controller.finished(result).unwrap();
+            controller.step().await.unwrap();
             assert_eq!(controller.snapshots.borrow().error.as_deref(), Some(SIGN_IN_EXPIRED));
         }
     }

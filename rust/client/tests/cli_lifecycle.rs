@@ -1,23 +1,21 @@
 use futures_util::{SinkExt, StreamExt};
 use graphite_meter_client::Error;
+use graphite_meter_core::wire;
 use std::{process::Stdio, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
     process::Command,
 };
+use tokio_tungstenite::tungstenite::Message;
 
+/// Reads the request head `stream` sends, through its blank line.
 async fn read_header(stream: &mut tokio::net::TcpStream) -> Result<(), Error> {
-    let mut header = Vec::with_capacity(512);
-    while header.len() < 4096 {
-        let mut byte = [0];
-        stream.read_exact(&mut byte).await?;
-        header.push(byte[0]);
-        if header.ends_with(b"\r\n\r\n") {
-            return Ok(());
-        }
+    let mut header = Vec::new();
+    while !header.ends_with(b"\r\n\r\n") {
+        header.push(stream.read_u8().await?);
     }
-    Err("oversized request header".into())
+    Ok(())
 }
 
 /// The text without its SGR colour sequences.
@@ -36,12 +34,24 @@ fn unpainted(text: &str) -> String {
     plain
 }
 
-fn client(origin: &str) -> Command {
+/// The client with `args`, its stdin closed.
+fn binary(args: &[&str]) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_graphite-meter-client"));
-    let flags = "--report -stages latency -latency-duration 1s -warmup 0 -ping 80ms";
-    command.args(["-url", origin]).args(flags.split(' '));
-    command.stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+    command.args(args).stdin(Stdio::null()).kill_on_drop(true);
     command
+}
+
+/// A one-second latency report of `origin`.
+fn client(origin: &str) -> Command {
+    let mut command = binary(&["-url", origin]);
+    command.args("--report -stages latency -latency-duration 1s -warmup 0 -ping 80ms".split(' '));
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    command
+}
+
+/// What `command` printed, once it exits within 8 seconds.
+async fn finish(command: &mut Command) -> Result<std::process::Output, Error> {
+    Ok(tokio::time::timeout(Duration::from_secs(8), command.output()).await??)
 }
 
 /// A catalogue of one latency server, admitting stages up to `max_stage_ms` (0 for the default); with
@@ -67,23 +77,16 @@ async fn latency_peer(
                         return Ok::<_, Error>(());
                     }
                     if let Some(end) = request[..size].windows(2).position(|pair| pair == b"\r\n") {
-                        break std::str::from_utf8(&request[..end])?
-                            .split_whitespace()
-                            .nth(1)
-                            .ok_or("missing path")?
-                            .to_owned();
+                        let line = std::str::from_utf8(&request[..end])?;
+                        break line.split_whitespace().nth(1).ok_or("missing path")?.to_owned();
                     }
                     tokio::task::yield_now().await;
                 };
                 if path == "/ws/ping" {
                     let mut socket = tokio_tungstenite::accept_async(stream).await?;
-                    while let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) = socket.next().await {
-                        let id = graphite_meter_core::wire::decode_ping(&text)?;
-                        socket
-                            .send(tokio_tungstenite::tungstenite::Message::Text(
-                                graphite_meter_core::wire::encode_pong(id, 0).into(),
-                            ))
-                            .await?;
+                    while let Some(Ok(Message::Text(text))) = socket.next().await {
+                        let id = wire::decode_ping(&text)?;
+                        socket.send(Message::Text(wire::encode_pong(id, 0).into())).await?;
                     }
                     return Ok(());
                 }
@@ -104,12 +107,9 @@ async fn latency_peer(
                     "/probe" => serde_json::json!({"clientIp":"127.0.0.1","clientIpVersion":4,"clientIpSource":"socket","protocolNegotiated":"http/1.1"}),
                     _ => return Err("unexpected route".into()),
                 }.to_string();
-                stream
-                    .write_all(
-                        format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
-                            .as_bytes(),
-                    )
-                    .await?;
+                let response =
+                    format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                stream.write_all(response.as_bytes()).await?;
                 Ok(())
             });
         }
@@ -121,11 +121,7 @@ async fn latency_peer(
 async fn report_refuses_a_stage_longer_than_its_server_admits() -> Result<(), Error> {
     for (limit, duration, message) in [(1000, "2s", "1s"), (0, "1h", "5m")] {
         let (origin, peer) = latency_peer(false, limit).await?;
-        let output = tokio::time::timeout(
-            Duration::from_secs(5),
-            client(&origin).args(["-latency-duration", duration]).output(),
-        )
-        .await??;
+        let output = finish(client(&origin).args(["-latency-duration", duration])).await?;
         peer.abort();
         assert_eq!(output.status.code(), Some(1));
         let report = String::from_utf8(output.stderr)?;
@@ -146,13 +142,13 @@ mod test_identity;
 async fn an_empty_trust_store_fails_only_tls_connections() -> Result<(), Error> {
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
     let nowhere = "/nonexistent/graphite-meter-roots";
-    let run = |origin: &str| {
+    let rootless = |origin: &str| {
         let mut command = client(origin);
         command.env("SSL_CERT_FILE", nowhere).env("SSL_CERT_DIR", nowhere);
-        tokio::time::timeout(Duration::from_secs(5), command.output())
+        command
     };
     let (origin, peer) = latency_peer(false, 0).await?;
-    let cleartext = run(&origin).await??;
+    let cleartext = finish(&mut rootless(&origin)).await?;
     peer.abort();
     assert_eq!(cleartext.status.code(), Some(0), "{}", String::from_utf8_lossy(&cleartext.stderr));
     let _ = graphite_meter_client::crypto::provider().install_default();
@@ -170,7 +166,7 @@ async fn an_empty_trust_store_fails_only_tls_connections() -> Result<(), Error> 
             tokio::spawn(async move { acceptor.accept(socket).await.map(drop) });
         }
     });
-    let secure = run(&origin).await??;
+    let secure = finish(&mut rootless(&origin)).await?;
     peer.abort();
     assert_eq!(secure.status.code(), Some(1));
     assert_eq!(
@@ -205,13 +201,7 @@ async fn all_proxy_is_not_read() -> Result<(), Error> {
 #[tokio::test]
 async fn sign_in_refused_after_measuring_ends_incomplete() -> Result<(), Error> {
     let (origin, peer) = latency_peer(true, 0).await?;
-    let output = tokio::time::timeout(
-        Duration::from_secs(8),
-        client(&origin)
-            .args(["-stages", "latency,download", "-download-duration", "1s"])
-            .output(),
-    )
-    .await??;
+    let output = finish(client(&origin).args(["-stages", "latency,download", "-download-duration", "1s"])).await?;
     peer.abort();
     let report = String::from_utf8(output.stdout)?;
     assert_eq!(output.status.code(), Some(1), "{report}");
@@ -230,13 +220,8 @@ async fn report_signal_exit_codes_and_failure_keep_the_final_outcome() -> Result
         let origin = format!("http://{}", listener.local_addr()?);
         let child = client(&origin).spawn()?;
         let (_pending, _) = listener.accept().await?;
-        assert!(
-            Command::new("kill")
-                .args([signal, &child.id().ok_or("child exited")?.to_string()])
-                .status()
-                .await?
-                .success()
-        );
+        let pid = child.id().ok_or("child exited")?.to_string();
+        assert!(Command::new("kill").args([signal, &pid]).status().await?.success());
         let output = tokio::time::timeout(Duration::from_secs(5), child.wait_with_output()).await??;
         assert_eq!(output.status.code(), Some(code));
         assert!(output.stdout.is_empty());
@@ -255,7 +240,7 @@ async fn report_signal_exit_codes_and_failure_keep_the_final_outcome() -> Result
             .await?;
         Ok::<_, Error>(())
     });
-    let output = tokio::time::timeout(Duration::from_secs(5), client(&origin).output()).await??;
+    let output = finish(&mut client(&origin)).await?;
     peer.await??;
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
@@ -263,7 +248,7 @@ async fn report_signal_exit_codes_and_failure_keep_the_final_outcome() -> Result
     assert!(stderr.starts_with("graphite-meter-client: Test could not start: "), "{stderr}");
     let (origin, peer) = latency_peer(true, 0).await?;
     peer.abort();
-    let output = tokio::time::timeout(Duration::from_secs(5), client(&origin).output()).await??;
+    let output = finish(&mut client(&origin)).await?;
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         String::from_utf8(output.stderr)?,
@@ -276,15 +261,11 @@ async fn report_signal_exit_codes_and_failure_keep_the_final_outcome() -> Result
 async fn terminal(origin: &str, mode: &str, answer: &str, stdin: &str) -> Result<serde_json::Value, Error> {
     let port = origin
         .strip_prefix("http://127.0.0.1:")
-        .ok_or("expected a loopback origin")?
-        .parse::<u16>()?;
+        .ok_or("expected a loopback origin")?;
+    let binary = std::path::Path::new(env!("CARGO_BIN_EXE_graphite-meter-client"));
     let output = Command::new("python3")
-        .current_dir(
-            std::path::Path::new(env!("CARGO_BIN_EXE_graphite-meter-client"))
-                .parent()
-                .ok_or("missing binary directory")?,
-        )
-        .args(["-c", include_str!("pty.py"), &port.to_string(), mode, answer, stdin])
+        .current_dir(binary.parent().ok_or("missing binary directory")?)
+        .args(["-c", include_str!("pty.py"), port, mode, answer, stdin])
         .output()
         .await?;
     assert!(output.status.success(), "{mode}: {}", String::from_utf8_lossy(&output.stderr));
@@ -353,23 +334,11 @@ async fn tui_asks_the_terminal_for_its_background_like_the_go_client() -> Result
     Ok(())
 }
 
-async fn flags(args: &[&str]) -> Result<std::process::Output, Error> {
-    Ok(tokio::time::timeout(
-        Duration::from_secs(5),
-        Command::new(env!("CARGO_BIN_EXE_graphite-meter-client"))
-            .args(args)
-            .stdin(Stdio::null())
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await??)
-}
-
 /// Go checks origins when it prepares the run, so a malformed one fails the run, not the flags.
 #[tokio::test]
 async fn malformed_origins_fail_the_path_check_like_go() -> Result<(), Error> {
     for url in ["ftp://meter.example", "https://user:secret@example.com"] {
-        let output = flags(&["-report", "-url", url]).await?;
+        let output = finish(&mut binary(&["-report", "-url", url])).await?;
         assert_eq!(output.status.code(), Some(1), "{url}");
         assert!(output.stdout.is_empty(), "{url}");
         assert_eq!(
@@ -385,23 +354,23 @@ async fn malformed_origins_fail_the_path_check_like_go() -> Result<(), Error> {
 /// a true -legal, in either form, prints the notices first.
 #[tokio::test]
 async fn version_and_legal_act_as_go_reads_them() -> Result<(), Error> {
-    let version = flags(&["-version", "foo"]).await?;
+    let version = finish(&mut binary(&["-version", "foo"])).await?;
     assert_eq!(version.status.code(), Some(0));
     assert!(version.stdout.starts_with(b"graphite-meter-client "));
     assert!(String::from_utf8_lossy(&version.stdout).contains("-rust"));
-    let legal = flags(&["--legal"]).await?;
+    let legal = finish(&mut binary(&["--legal"])).await?;
     for args in [
         &["-legal"][..],
         &["-legal=true", "foo"],
         &["--legal=1", "-warmup", "9s"],
         &["-version", "--legal"],
     ] {
-        let output = flags(args).await?;
+        let output = finish(&mut binary(args)).await?;
         assert_eq!(output.status.code(), legal.status.code(), "{args:?}");
         assert_eq!((&output.stdout, &output.stderr), (&legal.stdout, &legal.stderr), "{args:?}");
     }
     for args in [&["-legal=false", "-version"][..], &["--legal=0", "-version"]] {
-        assert_eq!(flags(args).await?.stdout, version.stdout, "{args:?}");
+        assert_eq!(finish(&mut binary(args)).await?.stdout, version.stdout, "{args:?}");
     }
     Ok(())
 }

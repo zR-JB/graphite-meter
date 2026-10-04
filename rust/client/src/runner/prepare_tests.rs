@@ -33,10 +33,9 @@ async fn request_path(stream: &TcpStream) -> Result<Option<String>, Error> {
 /// The fixture's JSON for `path` at `origin`; None for a route it does not serve.
 fn answer(path: &str, origin: &str, mode: FixtureMode) -> Option<Value> {
     Some(match (path, mode) {
-        ("/servers", _) => json!({
-            "defaultSelection": ["self"],
-            "servers": [{"id": "self", "url": ".", "name": "fixture"}]
-        }),
+        ("/servers", _) => {
+            json!({"defaultSelection": ["self"], "servers": [{"id": "self", "url": ".", "name": "fixture"}]})
+        }
         ("/preflight", FixtureMode::Latency) => json!({
             "generation": "fixture",
             "capabilities": {
@@ -56,10 +55,7 @@ fn answer(path: &str, origin: &str, mode: FixtureMode) -> Option<Value> {
         }),
         // The server reports its own hop, which may differ from the client's.
         ("/probe", _) => json!({
-            "clientIp": "127.0.0.1",
-            "clientIpVersion": 4,
-            "clientIpSource": "socket",
-            "protocolNegotiated": "http/1.1"
+            "clientIp": "127.0.0.1", "clientIpVersion": 4, "clientIpSource": "socket", "protocolNegotiated": "http/1.1"
         }),
         _ => return None,
     })
@@ -104,11 +100,6 @@ fn download(url: String) -> Config {
     }
 }
 
-/// A path check of `config` within the preparation timeout.
-async fn check(config: &Config, http: &Http, snapshots: &watch::Sender<Snapshot>) -> Result<Preparation, Error> {
-    prepare(config, http, snapshots, Instant::now() + PREPARATION_TIMEOUT).await
-}
-
 #[tokio::test]
 async fn a_slow_server_fails_alone_at_the_shared_deadline() -> Result<(), Error> {
     let (fast, fast_origin) = crate::fixtures::listener().await?;
@@ -122,27 +113,22 @@ async fn a_slow_server_fails_alone_at_the_shared_deadline() -> Result<(), Error>
     })
     .to_string();
     let origin = fast_origin.clone();
+    // The slow server's listener stays bound and never accepts, so its requests wait unanswered.
     let server = tokio::spawn(async move {
-        let mut held = Vec::new();
-        loop {
-            tokio::select! {
-                Ok((stream, _)) = fast.accept() => {
-                    let (origin, catalog) = (origin.clone(), catalog.clone());
-                    tokio::spawn(async move {
-                        match request_path(&stream).await {
-                            Ok(Some(path)) if path == "/servers" => respond(stream, &catalog).await,
-                            _ => serve(stream, origin, FixtureMode::Negotiated).await,
-                        }
-                    });
+        while let Ok((stream, _)) = fast.accept().await {
+            let (origin, catalog) = (origin.clone(), catalog.clone());
+            tokio::spawn(async move {
+                match request_path(&stream).await {
+                    Ok(Some(path)) if path == "/servers" => respond(stream, &catalog).await,
+                    _ => serve(stream, origin, FixtureMode::Negotiated).await,
                 }
-                Ok((stream, _)) = slow.accept() => held.push(stream),
-            }
+            });
         }
     });
     let config = download(fast_origin);
     let (snapshots, _) = watch::channel(Snapshot::default());
     let deadline = Instant::now() + Duration::from_secs(1);
-    let Preparation { servers, failures } = prepare(&config, &Http::new(false)?, &snapshots, deadline).await?;
+    let (servers, failures) = prepare(&config, &Http::new(false)?, &snapshots, deadline).await?;
     server.abort();
     assert_eq!(servers.len(), 1);
     assert_eq!(failures[0].id, "slow");
@@ -163,7 +149,7 @@ async fn automatic_latency_uses_websocket_when_advertised_quic_cannot_reply() ->
     let http = Http::new(false)?;
     let config = Config { stages: vec![Stage::Latency], ..download(origin) };
     let (snapshots, _) = watch::channel(Snapshot::default());
-    let prepared = check(&config, &http, &snapshots).await?;
+    let prepared = prepare_run(&config, &http, &snapshots).await?;
     let latency = prepared.servers[0].latency.as_ref().ok_or("no latency path")?;
     assert_eq!(latency.transport, LatencyTransport::WebSocket);
 
@@ -171,7 +157,7 @@ async fn automatic_latency_uses_websocket_when_advertised_quic_cannot_reply() ->
         latency_transport: Some(LatencyTransport::WebTransport),
         ..config
     };
-    assert!(check(&forced, &http, &snapshots).await.is_err());
+    assert!(prepare_run(&forced, &http, &snapshots).await.is_err());
     fixture.abort();
     Ok(())
 }
@@ -207,7 +193,7 @@ async fn negotiated_protocol_behind_a_reverse_proxy_is_the_clients_own() -> Resu
     });
     let config = Config { insecure: true, ..download(origin) };
     let (snapshots, _) = watch::channel(Snapshot::default());
-    let prepared = check(&config, &Http::new(true)?, &snapshots).await;
+    let prepared = prepare_run(&config, &Http::new(true)?, &snapshots).await;
     proxy.abort();
     let throughput = prepared?.servers.remove(0).throughput.ok_or("no throughput path")?;
     assert_eq!(throughput.protocol, Protocol::Http2);

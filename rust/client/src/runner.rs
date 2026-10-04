@@ -7,13 +7,13 @@ use crate::{
     selection,
     transport::Transport,
 };
-use futures_util::{StreamExt, stream::FuturesUnordered};
-use graphite_meter_core::route::Route;
 use graphite_meter_core::{
     catalog::ServerEntry,
     discovery::{
         Capabilities, LatencyTarget, LatencyTransport, Probe, Protocol, ThroughputTarget, ThroughputTransport,
     },
+    duration::short_duration,
+    route::Route,
 };
 use http::Method;
 use std::{
@@ -57,15 +57,12 @@ pub async fn prepare_run(
     snapshots: &watch::Sender<Snapshot>,
 ) -> Result<PreparedRun, Error> {
     let verified_at = Instant::now();
-    let preparation = prepare(config, http, snapshots, Instant::now() + PREPARATION_TIMEOUT).await?;
-    if !preparation.failures.is_empty() {
-        return Err(preferred(preparation.failures));
+    let (servers, failures) = prepare(config, http, snapshots, verified_at + PREPARATION_TIMEOUT).await?;
+    if !failures.is_empty() {
+        return Err(preferred(failures));
     }
-    Ok(PreparedRun {
-        servers: preparation.servers,
-        key: config.preparation_key(),
-        verified_at,
-    })
+    let key = config.preparation_key();
+    Ok(PreparedRun { servers, key, verified_at })
 }
 
 #[derive(Debug)]
@@ -75,17 +72,10 @@ struct ServerError {
     source: Error,
 }
 
-struct Preparation {
-    servers: Vec<PreparedServer>,
-    failures: Vec<ServerError>,
-}
-
 /// The controller approves one origin per retry, so prefer a sign-in challenge.
 fn preferred(mut failures: Vec<ServerError>) -> Error {
-    let index = failures
-        .iter()
-        .position(|failure| crate::failure::sign_in(failure.source.as_ref()).is_some())
-        .unwrap_or(0);
+    let signs_in = |failure: &ServerError| crate::failure::sign_in(failure.source.as_ref()).is_some();
+    let index = failures.iter().position(signs_in).unwrap_or(0);
     failures.swap_remove(index).into()
 }
 
@@ -101,78 +91,62 @@ impl std::error::Error for ServerError {
     }
 }
 
-/// One deadline covers the catalogue and every server, so a slow server fails alone.
+/// The servers that passed their checks and those that failed. One deadline covers the catalogue and
+/// every server, so a slow server fails alone.
 async fn prepare(
     config: &Config,
     http: &Http,
     snapshots: &watch::Sender<Snapshot>,
     deadline: Instant,
-) -> Result<Preparation, Error> {
+) -> Result<(Vec<PreparedServer>, Vec<ServerError>), Error> {
     let late = || -> Error {
         std::io::Error::new(std::io::ErrorKind::TimedOut, "the path check did not finish within 12 seconds").into()
     };
     config.validate()?;
     snapshots.send_modify(|snapshot| snapshot.error = None);
-    let discovery = tokio::time::timeout_at(deadline, http.discover(&config.url))
-        .await
-        .map_err(|_| late())??;
-    if let Some(left_out) = discovery
-        .rejected
-        .iter()
-        .find(|entry| config.servers.contains(&entry.id))
-    {
+    let discovery = tokio::time::timeout_at(deadline, http.discover(&config.url));
+    let discovery = discovery.await.map_err(|_| late())??;
+    let chosen = &config.servers;
+    if let Some(left_out) = discovery.rejected.iter().find(|entry| chosen.contains(&entry.id)) {
         return Err(format!("the catalogue's server {:?} was left out: {}", left_out.id, left_out.error).into());
     }
     let selected = selection::servers(&discovery.catalog, config)?;
-    snapshots.send_modify(|snapshot| {
-        snapshot.servers = discovery
-            .catalog
-            .servers
-            .iter()
-            .map(|entry| ServerSummary {
-                id: entry.id.clone(),
-                name: entry.name.clone(),
-                location: entry.location.clone(),
-                origin: entry.url.clone(),
-                ..ServerSummary::default()
-            })
-            .collect();
-    });
+    let summary = |entry: &ServerEntry| ServerSummary {
+        id: entry.id.clone(),
+        name: entry.name.clone(),
+        location: entry.location.clone(),
+        origin: entry.url.clone(),
+        ..ServerSummary::default()
+    };
+    let summaries = discovery.catalog.servers.iter().map(summary).collect();
+    snapshots.send_modify(|snapshot| snapshot.servers = summaries);
     // Results publish as they arrive; catalogue order stays for lane planning and error selection.
-    let mut checks = selected
-        .iter()
-        .enumerate()
-        .map(|(index, entry)| async move {
-            let mut offered = None;
-            let check = tokio::time::timeout_at(deadline, prepare_server(config, http, entry, &mut offered));
-            let result = check.await.map_err(|_| late()).and_then(|result| result);
-            (index, offered, result)
-        })
-        .collect::<FuturesUnordered<_>>();
-    let mut results: Vec<_> = (0..selected.len()).map(|_| None).collect();
-    while let Some((index, offered, result)) = checks.next().await {
-        let entry = selected[index];
+    let checks = selected.iter().map(|entry| async move {
+        let mut offered = None;
+        let check = tokio::time::timeout_at(deadline, prepare_server(config, http, entry, &mut offered));
+        let result = check.await.map_err(|_| late()).and_then(|result| result);
         snapshots.send_modify(|snapshot| {
-            if let Some(summary) = snapshot.servers.iter_mut().find(|summary| summary.id == entry.id) {
-                summary.offered = offered;
-                match &result {
-                    Ok(server) => {
-                        summary.throughput.clone_from(&server.throughput);
-                        summary.latency.clone_from(&server.latency);
-                    }
-                    Err(error) => {
-                        summary.error = Some(crate::failure::text(error.as_ref()));
-                        summary.sign_in = crate::failure::sign_in(error.as_ref()).is_some();
-                    }
+            let Some(summary) = snapshot.servers.iter_mut().find(|summary| summary.id == entry.id) else {
+                return;
+            };
+            summary.offered = offered;
+            match &result {
+                Ok(server) => {
+                    summary.throughput.clone_from(&server.throughput);
+                    summary.latency.clone_from(&server.latency);
+                }
+                Err(error) => {
+                    summary.error = Some(crate::failure::text(error.as_ref()));
+                    summary.sign_in = crate::failure::sign_in(error.as_ref()).is_some();
                 }
             }
         });
-        results[index] = Some(result);
-    }
+        (entry, result)
+    });
     let mut prepared = Vec::with_capacity(selected.len());
     let mut failures = Vec::new();
-    for (entry, result) in selected.iter().zip(results) {
-        match result.expect("every selected verification completed") {
+    for (entry, result) in futures_util::future::join_all(checks).await {
+        match result {
             Ok(server) => prepared.push(server),
             Err(source) => failures.push(ServerError { id: entry.id.clone(), label: entry.name.clone(), source }),
         }
@@ -180,7 +154,7 @@ async fn prepare(
     if prepared.is_empty() {
         return Err(preferred(failures));
     }
-    Ok(Preparation { servers: prepared, failures })
+    Ok((prepared, failures))
 }
 
 /// Checks one server's paths; `offered` keeps what its discovery advertised, even if a later step fails.
@@ -196,50 +170,41 @@ async fn prepare_server(
     *offered = Some(preflight.capabilities.clone());
     let client = http.for_server(entry, &preflight)?;
     let throughput_path = async {
-        let mut throughput = transfers
-            .then(|| selection::throughput(config, entry, &preflight, config.throughput_transport))
-            .transpose()?;
+        if !transfers {
+            return Ok((None, None));
+        }
+        let mut target = selection::throughput(config, entry, &preflight, config.throughput_transport)?;
         if config.stages.iter().any(|stage| stage.uploads()) && !preflight.capabilities.upload_checkpoint {
             return Err("selected server does not support authoritative upload checkpoints".into());
         }
-        if let Some(target) = &throughput
-            && target.transport != ThroughputTransport::FetchStream
-        {
-            match verify_throughput_webtransport(&client, target).await {
+        if target.transport != ThroughputTransport::FetchStream {
+            match verify_throughput_webtransport(&client, &target).await {
                 Ok(()) => {}
                 Err(error)
                     if crate::failure::sign_in(error.as_ref()).is_none() && config.throughput_transport.is_none() =>
                 {
                     let fetch = Some(ThroughputTransport::FetchStream);
-                    let fallback = selection::throughput(config, entry, &preflight, fetch).map_err(|fallback| {
+                    target = selection::throughput(config, entry, &preflight, fetch).map_err(|fallback| {
                         format!("fetch-stream selection failed ({fallback}); advertised WebTransport is unavailable: {error}")
                     })?;
-                    throughput = Some(fallback);
                 }
                 Err(error) => return Err(error),
             }
         }
-        let transport = if let Some(target) = &mut throughput {
-            let connection = Transport::connect(client.clone(), &target.base_url, target.protocol).await?;
-            if target.protocol == Protocol::Negotiated {
-                target.protocol = client.probe(&target.base_url, Protocol::Negotiated).await?;
-            } else {
-                let probe: Probe = connection.json(Method::GET, Route::Probe, &[]).await?;
-                probe.validate()?;
-            }
-            Some(Arc::new(connection))
+        let connection = Transport::connect(client.clone(), &target.base_url, target.protocol).await?;
+        if target.protocol == Protocol::Negotiated {
+            target.protocol = client.probe(&target.base_url, Protocol::Negotiated).await?;
         } else {
-            None
-        };
-        Ok::<_, Error>((throughput, transport))
+            let probe: Probe = connection.json(Method::GET, Route::Probe, &[]).await?;
+            probe.validate()?;
+        }
+        Ok::<_, Error>((Some(target), Some(Arc::new(connection))))
     };
     let latency_path = async {
-        let Some(mut target) = needs_latency
-            .then(|| selection::latency(config, entry, &preflight, config.latency_transport))
-            .transpose()?
-        else {
+        if !needs_latency {
             return Ok((None, Duration::ZERO));
-        };
+        }
+        let mut target = selection::latency(config, entry, &preflight, config.latency_transport)?;
         let rtt = match crate::latency::verify(&client, &target).await {
             Err(error)
                 if target.transport == LatencyTransport::WebTransport
@@ -286,31 +251,27 @@ pub async fn run(
     let (mut prepared, lost) = match prepared.filter(|prepared| prepared.fresh_for(&config)) {
         Some(prepared) => (prepared.servers, 0),
         None => {
-            let preparation = tokio::select! {
+            let (servers, failures) = tokio::select! {
                 result = prepare(&config, &http, &snapshots, Instant::now() + PREPARATION_TIMEOUT) => result?,
                 _ = cancel.wait_for(|value| *value) => return Ok(()),
             };
             snapshots.send_modify(|snapshot| {
                 snapshot.stage = config.stages.first().copied();
                 // Go records these as its run starts, at zero.
-                for failure in &preparation.failures {
+                for failure in &failures {
                     let reason = crate::failure::reason(failure.source.as_ref(), true);
                     snapshot.failure(&failure.id, FailureScope::Throughput, reason, Duration::ZERO);
                 }
             });
-            (preparation.servers, preparation.failures.len())
+            (servers, failures.len())
         }
     };
     if let Some(server) = prepared.iter().min_by_key(|server| server.stage_limit) {
         for stage in &config.stages {
             if config.duration(*stage) > server.stage_limit {
-                return Err(format!(
-                    "{} allows stages up to {}; shorten the {} stage",
-                    server.entry.name,
-                    graphite_meter_core::duration::short_duration(server.stage_limit),
-                    stage.name().to_ascii_lowercase(),
-                )
-                .into());
+                let (name, limit) = (&server.entry.name, short_duration(server.stage_limit));
+                let stage = stage.name().to_ascii_lowercase();
+                return Err(format!("{name} allows stages up to {limit}; shorten the {stage} stage").into());
             }
         }
     }
