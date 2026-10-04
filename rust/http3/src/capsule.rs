@@ -105,17 +105,10 @@ mod tests {
         bytes.extend(capsule(0x17 + 41 * 3, b"grease"));
         bytes.extend(capsule(0x78ae, b""));
         bytes.extend(close(0xf123_4567, "done"));
-        let expected = vec![Capsule::Close {
-            code: 0xf123_4567,
-            reason: "done".into(),
-        }];
+        let expected = vec![Capsule::Close { code: 0xf123_4567, reason: "done".into() }];
         for split in 0..=bytes.len() {
             let (first, second) = bytes.split_at(split);
-            assert_eq!(
-                read_all([first.to_vec(), second.to_vec()]),
-                Ok((expected.clone(), true)),
-                "split {split}"
-            );
+            assert_eq!(read_all([first.to_vec(), second.to_vec()]), Ok((expected.clone(), true)), "split {split}");
         }
         assert_eq!(read_all(bytes.iter().map(|&byte| vec![byte])), Ok((expected, true)));
     }
@@ -147,13 +140,7 @@ mod tests {
         let text = format!("{}€tail", "a".repeat(MAX_REASON - 1));
         assert_eq!(
             read_all([close(1, &text)]),
-            Ok((
-                vec![Capsule::Close {
-                    code: 1,
-                    reason: "a".repeat(MAX_REASON - 1)
-                }],
-                true
-            ))
+            Ok((vec![Capsule::Close { code: 1, reason: "a".repeat(MAX_REASON - 1) }], true))
         );
         let bytes = close(7, "bye");
         for end in 1..bytes.len() {
@@ -167,10 +154,7 @@ mod tests {
             let mut bytes = Vec::new();
             varint::put(quarter, &mut bytes);
             bytes.extend_from_slice(b"PING,42");
-            assert_eq!(
-                datagram(bytes.into()),
-                Ok((quarter * 4, Bytes::from_static(b"PING,42")))
-            );
+            assert_eq!(datagram(bytes.into()), Ok((quarter * 4, Bytes::from_static(b"PING,42"))));
         }
         for invalid in [&b""[..], b"\x40", b"\xd0\x00\x00\x00\x00\x00\x00\x00"] {
             assert_eq!(datagram(Bytes::from_static(invalid)), Err(Code::H3_DATAGRAM_ERROR));

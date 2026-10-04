@@ -106,10 +106,7 @@ impl SessionSlot {
         let (http, target) = (http.clone(), target.to_owned());
         home.spawn(async move {
             let deadline = Instant::now() + REDIAL_WINDOW;
-            restore("WebTransport session", deadline, || {
-                Session::dial(&http, &target, REDIAL_WINDOW)
-            })
-            .await
+            restore("WebTransport session", deadline, || Session::dial(&http, &target, REDIAL_WINDOW)).await
         })
         .await?
     }

@@ -39,10 +39,7 @@ impl Harness {
         let config = Config {
             trusted_proxies,
             advertised_native: Some(Default::default()),
-            public: graphite_meter_server::config::PublicOrigins {
-                both: vec!["self".into()],
-                ..Default::default()
-            },
+            public: graphite_meter_server::config::PublicOrigins { both: vec!["self".into()], ..Default::default() },
             auth: AuthConfig {
                 mode: AuthMode::Password,
                 public_url: "https://localhost".into(),
@@ -54,11 +51,7 @@ impl Harness {
         let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
         let h1 = native::serve(server.clone(), NativeKind::H1Tls, Some(Arc::new(tls.clone()))).await;
         let h2 = native::serve(server, NativeKind::H2, Some(Arc::new(tls))).await;
-        Self {
-            connector,
-            h2_connector,
-            listeners: [h1, h2],
-        }
+        Self { connector, h2_connector, listeners: [h1, h2] }
     }
     async fn tls(connector: &TlsConnector, address: SocketAddr) -> TlsStream<TcpStream> {
         let tcp = TcpStream::connect(address).await.unwrap();
@@ -93,10 +86,7 @@ impl Harness {
             .finish();
         let (headers,_)=self.request("POST","/auth/password",&format!("{client}Cookie: __Host-gm_login={nonce}\r\nOrigin: https://localhost\r\nContent-Type: application/x-www-form-urlencoded\r\n"),&body).await;
         assert!(headers.starts_with("HTTP/1.1 303"), "{headers}");
-        (
-            cookie(&headers, "__Host-gm_session"),
-            cookie(&headers, "__Host-gm_csrf"),
-        )
+        (cookie(&headers, "__Host-gm_session"), cookie(&headers, "__Host-gm_csrf"))
     }
     async fn stop(mut self) {
         for listener in &mut self.listeners {

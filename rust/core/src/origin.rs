@@ -93,11 +93,7 @@ pub fn target_origin(raw: &str) -> Result<Option<Origin>, OriginError> {
     {
         return Err(OriginError);
     }
-    Ok(Some(Origin {
-        scheme,
-        host: host.to_owned(),
-        port: port.map(str::to_owned),
-    }))
+    Ok(Some(Origin { scheme, host: host.to_owned(), port: port.map(str::to_owned) }))
 }
 
 pub fn canonical_origin(raw: &str) -> Result<String, OriginError> {
@@ -195,11 +191,7 @@ fn punycode(input: &[char]) -> Option<String> {
     const T_MIN: u32 = 1;
     const T_MAX: u32 = 26;
     fn digit(value: u32) -> char {
-        char::from(if value < 26 {
-            b'a' + value as u8
-        } else {
-            b'0' + (value - 26) as u8
-        })
+        char::from(if value < 26 { b'a' + value as u8 } else { b'0' + (value - 26) as u8 })
     }
     fn adapt(delta: u32, points: u32, first: bool) -> u32 {
         let mut delta = delta / if first { 700 } else { 2 };

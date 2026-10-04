@@ -88,10 +88,7 @@ async fn run(config: graphite_meter_client::config::Config, report_only: bool) -
         crossterm::terminal::disable_raw_mode()?;
     }
     let (finished, exit) = match headless {
-        true => (
-            Some(controller::run_once(config, interrupts).await?),
-            Default::default(),
-        ),
+        true => (Some(controller::run_once(config, interrupts).await?), Default::default()),
         false => controller::run(config, interrupts).await?,
     };
     let width = columns().map_or(report::WIDTH, |(columns, _)| usize::from(columns).max(40));

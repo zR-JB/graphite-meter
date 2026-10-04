@@ -25,11 +25,7 @@ pub fn generate_identity(host: &str) -> Result<(String, String), Box<dyn std::er
         ])
         .output()?;
     if !output.status.success() {
-        return Err(format!(
-            "test identity generation failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-        .into());
+        return Err(format!("test identity generation failed: {}", String::from_utf8_lossy(&output.stderr)).into());
     }
     let pem = String::from_utf8(output.stdout)?;
     let key_end = pem

@@ -317,22 +317,14 @@ impl Snapshot {
         if self.failures.iter().any(known) {
             return;
         }
-        self.failures.push(ServerFailure {
-            server_id: id.into(),
-            stage,
-            scope,
-            reason,
-            at,
-        });
+        self.failures
+            .push(ServerFailure { server_id: id.into(), stage, scope, reason, at });
     }
 
     /// A stage opens for the servers `ids`, with no samples yet.
     pub(crate) fn open_stage(&mut self, stage: Stage, ids: impl Iterator<Item = String>) {
         (self.phase, self.stage, self.latest) = (Phase::Preparing, Some(stage), Point::default());
-        let latency = |id| ServerLatency {
-            id,
-            ..ServerLatency::default()
-        };
+        let latency = |id| ServerLatency { id, ..ServerLatency::default() };
         self.server_latencies = ids.map(latency).collect();
     }
 }

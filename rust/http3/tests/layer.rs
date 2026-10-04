@@ -85,10 +85,7 @@ async fn peers_with(
     Ok(Peers {
         server: accepted?,
         client: client?,
-        budget: Arc::new(Budget {
-            used: AtomicUsize::new(0),
-            limit: AtomicUsize::new(limit),
-        }),
+        budget: Arc::new(Budget { used: AtomicUsize::new(0), limit: AtomicUsize::new(limit) }),
         _endpoints: [server, client_endpoint],
     })
 }
@@ -188,10 +185,7 @@ async fn responses_without_content_may_declare_a_length() -> Result<(), TestErro
     }
     settled(&peers.budget).await;
     peers.client.close(0_u32.into(), b"done");
-    assert!(
-        driver.await?.is_ok() && serving.await?.is_ok(),
-        "a peer close code 0 is graceful"
-    );
+    assert!(driver.await?.is_ok() && serving.await?.is_ok(), "a peer close code 0 is graceful");
     Ok(())
 }
 
@@ -217,10 +211,7 @@ async fn abandoned_streams_carry_the_codes_table() -> Result<(), TestError> {
     });
     let (driver, requests) = client(&peers);
     let (mut send, mut recv) = requests.send_request(get("/unread")).await?.split();
-    assert_eq!(
-        recv.response().await.map(|response| response.status()),
-        Ok(http::StatusCode::OK)
-    );
+    assert_eq!(recv.response().await.map(|response| response.status()), Ok(http::StatusCode::OK));
     assert_eq!(body(&mut recv).await, Ok(b"done".to_vec()));
     let stopped = loop {
         if let Err(error) = send.send_data(Bytes::from(vec![0; 64 * 1024])).await {
@@ -287,12 +278,7 @@ fn section(fields: &[(&str, &str)]) -> Vec<u8> {
 }
 
 fn request_head(fields: &[(&str, &str)]) -> Vec<u8> {
-    let head = [
-        (":method", "GET"),
-        (":scheme", "https"),
-        (":authority", "localhost"),
-        (":path", "/"),
-    ];
+    let head = [(":method", "GET"), (":scheme", "https"), (":authority", "localhost"), (":path", "/")];
     let mut all: Vec<_> = head
         .iter()
         .filter(|(name, _)| !fields.iter().any(|(field, _)| field == name))
@@ -314,11 +300,7 @@ async fn uni(quic: &noq::Connection, bytes: &[u8], finish: bool) -> Result<noq::
 
 /// The error this side reports for a connection it closed with `code`.
 fn closed(code: Code) -> Error {
-    Error::Connection {
-        local: true,
-        code,
-        reason: Bytes::new(),
-    }
+    Error::Connection { local: true, code, reason: Bytes::new() }
 }
 
 async fn closed_with(quic: &noq::Connection) -> Code {
@@ -355,10 +337,7 @@ async fn protocol_violations_close_the_connection_with_their_code() -> Result<()
         (open([varint(0x54), varint(2)].concat()), Code::H3_ID_ERROR),
         (request(frame(0x00, b"body")), Code::H3_FRAME_UNEXPECTED),
         (after_head(frame(0x04, &[])), Code::H3_FRAME_UNEXPECTED),
-        (
-            request(frame(0x01, &[0x01, 0x00, 0xd1])),
-            Code::QPACK_DECOMPRESSION_FAILED,
-        ),
+        (request(frame(0x01, &[0x01, 0x00, 0xd1])), Code::QPACK_DECOMPRESSION_FAILED),
     ];
     for (index, ((uni_streams, bidi), code)) in cases.into_iter().enumerate() {
         let peers = peers(usize::MAX).await?;
@@ -475,21 +454,12 @@ async fn refusals_stay_on_their_stream() -> Result<(), TestError> {
         (request_head(&many), Ok(status_431), Some(Code::H3_EXCESSIVE_LOAD)),
         ([varint(0x41), varint(0)].concat(), Err(wt), Some(wt)),
         (
-            [
-                request_head(&[(":method", "POST"), ("content-length", "5")]),
-                frame(0x00, b"abcdefgh"),
-            ]
-            .concat(),
+            [request_head(&[(":method", "POST"), ("content-length", "5")]), frame(0x00, b"abcdefgh")].concat(),
             Err(Code::H3_REQUEST_CANCELLED),
             Some(Code::H3_MESSAGE_ERROR),
         ),
     ];
-    let get = [
-        (":method", "GET"),
-        (":scheme", "https"),
-        (":authority", "meter.example"),
-        (":path", "/"),
-    ];
+    let get = [(":method", "GET"), (":scheme", "https"), (":authority", "meter.example"), (":path", "/")];
     let with = |extra: &[(&'static str, &'static str)]| [&get[..], extra].concat();
     let connect = |fields: &[(&'static str, &'static str)]| [&[(":method", "CONNECT")][..], fields].concat();
     let malformed = [
@@ -535,10 +505,7 @@ async fn refusals_stay_on_their_stream() -> Result<(), TestError> {
             assert_eq!(stopped(&send).await, stop, "case {index}");
         }
     }
-    assert!(
-        peers.client.close_reason().is_none(),
-        "refusals leave the connection open"
-    );
+    assert!(peers.client.close_reason().is_none(), "refusals leave the connection open");
     settled(&peers.budget).await;
     drop(serving);
     Ok(())
@@ -554,10 +521,7 @@ async fn a_budget_refusal_rejects_only_the_new_request() -> Result<(), TestError
     });
     let (driver, requests) = client(&peers);
     let (_send, mut recv) = requests.send_request(get("/")).await?.split();
-    assert_eq!(
-        recv.response().await.err(),
-        Some(Error::Reset(Code::H3_REQUEST_REJECTED))
-    );
+    assert_eq!(recv.response().await.err(), Some(Error::Reset(Code::H3_REQUEST_REJECTED)));
     peers.budget.limit.store(usize::MAX, Ordering::Relaxed);
     let (_send, mut recv) = requests.send_request(get("/")).await?.split();
     assert_eq!(recv.response().await?.status(), http::StatusCode::OK);
@@ -572,12 +536,7 @@ async fn a_budget_refusal_rejects_only_the_new_request() -> Result<(), TestError
 /// head is refused, and in parts the stream cannot buffer the rest.
 #[tokio::test]
 async fn a_head_over_the_budget_rejects_the_admitted_request() -> Result<(), TestError> {
-    let section = section(&[
-        (":method", "GET"),
-        (":scheme", "https"),
-        (":authority", "localhost"),
-        (":path", "/"),
-    ]);
+    let section = section(&[(":method", "GET"), (":scheme", "https"), (":authority", "localhost"), (":path", "/")]);
     let header = [varint(0x01), varint(section.len() as u64)].concat();
     for part in [&section[..], &section[..1]] {
         let peers = peers(usize::MAX).await?;
@@ -884,10 +843,7 @@ async fn sessions_end_with_their_connection() -> Result<(), TestError> {
     let (session, _) = Session::connect(&requests, connect_request()).await?.expect("accepted");
     driver.abort();
     assert!(driver.await.is_err_and(|error| error.is_cancelled()));
-    assert_eq!(
-        session_end(&session).await,
-        (true, true, Err(closed(Code::H3_NO_ERROR)))
-    );
+    assert_eq!(session_end(&session).await, (true, true, Err(closed(Code::H3_NO_ERROR))));
     drop(serving);
     Ok(())
 }
@@ -974,10 +930,7 @@ async fn closing_sends_close_then_fin_and_waits_for_the_peer() -> Result<(), Tes
     let _control = uni(&peers.client, &settings(&DRAFT02), false).await?;
     let (mut connect, response) = raw_connect(&peers.client, "/wt").await?;
     let (bytes, end) = response.await?;
-    assert!(
-        bytes.ends_with(&close_capsule(2, "lifetime")) && end.is_ok(),
-        "CLOSE, then FIN"
-    );
+    assert!(bytes.ends_with(&close_capsule(2, "lifetime")) && end.is_ok(), "CLOSE, then FIN");
     connect.finish()?;
     assert_eq!(stopped(&connect).await, None);
     settled(&peers.budget).await;
@@ -992,10 +945,7 @@ async fn closing_sends_close_then_fin_and_waits_for_the_peer() -> Result<(), Tes
     let _control = uni(&peers.client, &settings(&DRAFT02), false).await?;
     let (connect, response) = raw_connect(&peers.client, "/wt").await?;
     let (bytes, end) = response.await?;
-    assert!(
-        bytes.ends_with(&close_capsule(4, "shutdown")) && end.is_ok(),
-        "CLOSE, then FIN"
-    );
+    assert!(bytes.ends_with(&close_capsule(4, "shutdown")) && end.is_ok(), "CLOSE, then FIN");
     jump(Duration::from_millis(900)).await;
     assert!(!stopped_yet(&connect).await, "STOP_SENDING before the second");
     jump(Duration::from_millis(200)).await;
@@ -1193,21 +1143,13 @@ async fn one_session_per_connection_and_streams_wait_for_theirs() -> Result<(), 
     send.finish()?;
     assert!(response_bytes(&mut recv).await.is_ok());
     // A stream for session 12 arrives before its CONNECT and waits.
-    let early = uni(
-        &peers.client,
-        &[varint(0x54), varint(12), b"early".to_vec()].concat(),
-        false,
-    )
-    .await?;
+    let early = uni(&peers.client, &[varint(0x54), varint(12), b"early".to_vec()].concat(), false).await?;
     let (_first, _first_response) = raw_connect(&peers.client, "/wt").await?;
     assert_eq!(sessions.recv().await, Some(0));
     let (second, mut second_response) = peers.client.open_bi().await?;
     let mut second = second;
     second.write_all(&connect_head("/wt")).await?;
-    assert_eq!(
-        response_bytes(&mut second_response).await,
-        Err(Code::H3_REQUEST_REJECTED)
-    );
+    assert_eq!(response_bytes(&mut second_response).await, Err(Code::H3_REQUEST_REJECTED));
     assert_eq!(stopped(&second).await, Some(Code::H3_REQUEST_REJECTED));
     release.notify_one();
     assert_eq!(sessions.recv().await, Some(1000));

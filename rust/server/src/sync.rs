@@ -17,10 +17,7 @@ pub(crate) fn write<T: ?Sized>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
 
 fn recover<T: ?Sized, G>(result: LockResult<G>, clear: impl FnOnce()) -> G {
     result.unwrap_or_else(|poisoned| {
-        crate::log!(
-            "[gm:server] {} recovered after a panic and may be inaccurate",
-            std::any::type_name::<T>()
-        );
+        crate::log!("[gm:server] {} recovered after a panic and may be inaccurate", std::any::type_name::<T>());
         clear();
         poisoned.into_inner()
     })

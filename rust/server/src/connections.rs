@@ -91,11 +91,7 @@ impl Connections {
         if quic {
             counts.quic.hold(&keys);
         }
-        Some(Permit {
-            owner: self.clone(),
-            keys,
-            quic,
-        })
+        Some(Permit { owner: self.clone(), keys, quic })
     }
 
     pub fn stats(&self) -> Stats {
@@ -159,10 +155,7 @@ mod tests {
         use futures_util::FutureExt;
         let connections = super::Connections::new(64, 64, vec![]);
         let peer = "192.0.2.1:1".parse().unwrap();
-        let (first, second) = (
-            connections.acquire(peer, false).unwrap(),
-            connections.acquire(peer, true).unwrap(),
-        );
+        let (first, second) = (connections.acquire(peer, false).unwrap(), connections.acquire(peer, true).unwrap());
         drop(first);
         assert!(connections.idle().now_or_never().is_none(), "a connection remains");
         drop(second);

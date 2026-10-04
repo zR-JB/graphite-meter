@@ -19,10 +19,7 @@ pub fn configs(
     let mut server = ServerConfig::builder_with_provider(provider.clone())
         .with_protocol_versions(versions)?
         .with_no_client_auth()
-        .with_single_cert(
-            vec![certificate.clone()],
-            PrivateKeyDer::from_pem_slice(key.as_bytes())?,
-        )?;
+        .with_single_cert(vec![certificate.clone()], PrivateKeyDer::from_pem_slice(key.as_bytes())?)?;
     let mut roots = RootCertStore::empty();
     roots.add(certificate)?;
     let mut client = ClientConfig::builder_with_provider(provider)

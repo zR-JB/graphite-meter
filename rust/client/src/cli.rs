@@ -184,10 +184,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, Error> 
     let transports = [LatencyTransport::WebSocket, LatencyTransport::WebTransport];
     config.latency_transport = choice("latency transport", latency, &transports)?;
     config.validate_ceiling()?;
-    Ok(Action::Run {
-        config: Box::new(config),
-        report: parsed.report,
-    })
+    Ok(Action::Run { config: Box::new(config), report: parsed.report })
 }
 
 /// Go reads an empty path choice as auto and a choice by its wire name, and refuses an unknown one

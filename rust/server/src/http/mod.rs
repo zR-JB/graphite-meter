@@ -141,12 +141,7 @@ impl HttpServer {
 
     pub fn cover_handshake(&self, handshake_bytes: usize) -> Result<(), ConfigError> {
         let endpoint = self.memory.reserved.load(Ordering::Relaxed);
-        budget::check(
-            &self.config,
-            self.memory.limit,
-            handshake_bytes,
-            (endpoint != 0).then_some(endpoint),
-        )?;
+        budget::check(&self.config, self.memory.limit, handshake_bytes, (endpoint != 0).then_some(endpoint))?;
         self.handshake_bytes.store(handshake_bytes, Ordering::Relaxed);
         Ok(())
     }
@@ -164,11 +159,8 @@ impl HttpServer {
         let assets = crate::assets::Assets::new(auth.is_some(), config.result_history_default);
         let admission = Admission::new(config.limits);
         let discovery = Discovery::new(config.clone(), admission.clone())?;
-        let connections = Connections::new(
-            config.max_connections,
-            config.max_connections_per_client,
-            config.trusted_proxies.clone(),
-        );
+        let connections =
+            Connections::new(config.max_connections, config.max_connections_per_client, config.trusted_proxies.clone());
         let memory = budget::MemoryBudget::new(bytes);
         // A window on each QUIC connection a client may hold, as Go grants every connection its window.
         let per_client = config.max_connections_per_client.min(config.max_connections);
@@ -341,9 +333,7 @@ impl HttpServer {
         let operations = Arc::new(Mutex::new(Vec::new()));
         let upgrade = Arc::new(Mutex::new(None));
         let pending_upgrade = upgrade.clone();
-        let lifecycle = Arc::new(Mutex::new(Http1Lifecycle::Headers(Box::pin(tokio::time::sleep(
-            CONTROL,
-        )))));
+        let lifecycle = Arc::new(Mutex::new(Http1Lifecycle::Headers(Box::pin(tokio::time::sleep(CONTROL)))));
         // Wrap the TLS stream, not its raw socket: a successful flush must also
         // drain encrypted records before releasing the response's capacity.
         let io = BoundedIo::http1(stream, operations.clone(), lifecycle.clone());
@@ -968,12 +958,7 @@ struct BoundedIo<T> {
 
 impl<T> BoundedIo<T> {
     fn new(inner: T, timeout: Duration) -> Self {
-        Self {
-            inner,
-            timeout,
-            stalled: None,
-            http1: None,
-        }
+        Self { inner, timeout, stalled: None, http1: None }
     }
 
     fn http1(inner: T, operations: Operations, lifecycle: Arc<Mutex<Http1Lifecycle>>) -> Self {
@@ -1079,11 +1064,7 @@ impl<T: AsyncWrite + Unpin> AsyncWrite for BoundedIo<T> {
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         self.check_deadlines(cx)?;
         let result = Pin::new(&mut self.inner).poll_shutdown(cx);
-        if result.is_pending() {
-            self.pending_write(cx)
-        } else {
-            result
-        }
+        if result.is_pending() { self.pending_write(cx) } else { result }
     }
 }
 
@@ -1144,10 +1125,7 @@ impl Http1Deadlines {
                 }
                 false
             }
-            Http1Lifecycle::Active {
-                control: Some(deadline),
-                ..
-            } => deadline.as_mut().poll(cx).is_ready(),
+            Http1Lifecycle::Active { control: Some(deadline), .. } => deadline.as_mut().poll(cx).is_ready(),
             _ => false,
         };
         drop(lifecycle);

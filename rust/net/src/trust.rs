@@ -93,10 +93,7 @@ pub(crate) fn verifying(roots: Vec<CertificateDer<'static>>, error: Option<io::E
         return untrusted(error.map(|error| Arc::new(RootsUnavailable(error)) as _));
     }
     match WebPkiServerVerifier::builder_with_provider(Arc::new(store), provider()).build() {
-        Ok(webpki) => Arc::new(Verifier {
-            webpki: Ok(webpki),
-            roots,
-        }),
+        Ok(webpki) => Arc::new(Verifier { webpki: Ok(webpki), roots }),
         Err(error) => untrusted(Some(Arc::new(error))),
     }
 }
@@ -254,8 +251,5 @@ impl std::error::Error for RootsUnavailable {
 }
 
 fn untrusted(reason: Option<Arc<dyn std::error::Error + Send + Sync>>) -> Arc<dyn ServerCertVerifier> {
-    Arc::new(Verifier {
-        webpki: Err(reason),
-        roots: Vec::new(),
-    })
+    Arc::new(Verifier { webpki: Err(reason), roots: Vec::new() })
 }

@@ -75,10 +75,7 @@ impl SessionStore {
         {
             return Err(TicketError::Capacity);
         }
-        let token = format!(
-            "gmw_{}",
-            random_token::<32>().map_err(|_| TicketError::RandomUnavailable)?
-        );
+        let token = format!("gmw_{}", random_token::<32>().map_err(|_| TicketError::RandomUnavailable)?);
         let deadline = (now + TICKET_LIFETIME).min(lease.session.0.deadline);
         let expires = (SystemTime::now() + deadline.saturating_duration_since(now)).min(lease.session().expires());
         state.tickets.insert(
@@ -122,11 +119,7 @@ fn socket_target(raw: &str) -> Option<(String, String, Kind)> {
     }
     let path = unescape(&format!("/{path}"), false)?;
     let route = route::lookup(&path)?;
-    Some((
-        format!("{}{path}", canonical_origin(&origin).ok()?),
-        parsed.host,
-        route.kind(),
-    ))
+    Some((format!("{}{path}", canonical_origin(&origin).ok()?), parsed.host, route.kind()))
 }
 
 /// Go's `url.QueryUnescape` for a form value, where '+' is a space, or its `PathUnescape`.

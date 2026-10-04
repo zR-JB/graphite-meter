@@ -24,11 +24,7 @@ fn every_ring_algorithm_verifies_against_the_matching_key_only() {
         let verified = check(json!({"alg": alg, "kid": kid})).unwrap();
         let payload: Value = serde_json::from_slice(&verified.payload).unwrap();
         assert_eq!(payload["sub"], "operator", "{alg}");
-        for header in [
-            json!({"alg": alg}),
-            json!({"alg": alg, "kid": ""}),
-            json!({"alg": alg, "kid": null}),
-        ] {
+        for header in [json!({"alg": alg}), json!({"alg": alg, "kid": ""}), json!({"alg": alg, "kid": null})] {
             assert!(check(header.clone()).is_ok(), "{header}");
         }
     }
@@ -42,15 +38,9 @@ fn every_ring_algorithm_verifies_against_the_matching_key_only() {
         (json!({"alg": "ES512", "kid": "p256"}), Reject::Algorithm),
         (json!({"alg": "none"}), Reject::Algorithm),
         (json!({"kid": "rsa"}), Reject::Algorithm),
-        (
-            json!({"alg": "RS256", "kid": "rsa", "crit": ["exp"]}),
-            Reject::Malformed,
-        ),
+        (json!({"alg": "RS256", "kid": "rsa", "crit": ["exp"]}), Reject::Malformed),
         (json!({"alg": "RS256", "kid": "rsa", "cty": "JWT"}), Reject::Malformed),
-        (
-            json!({"alg": "RS256", "kid": "rsa", "typ": "at+jwt"}),
-            Reject::Malformed,
-        ),
+        (json!({"alg": "RS256", "kid": "rsa", "typ": "at+jwt"}), Reject::Malformed),
         (json!({"alg": "RS256", "kid": 7}), Reject::Malformed),
     ];
     for (header, reject) in refused {
@@ -136,14 +126,7 @@ fn id_token_claims_bind_issuer_audience_nonce_time_and_access_token() {
     let mut payload = base.to_string().into_bytes();
     payload.pop();
     payload.extend_from_slice(b",\"preferred_username\":\"J\xf6rg\"}");
-    let latin1 = id_token(
-        Verified {
-            alg: Alg::RS256,
-            payload,
-        },
-        &expected,
-    )
-    .map(|claims| claims.preferred_username);
+    let latin1 = id_token(Verified { alg: Alg::RS256, payload }, &expected).map(|claims| claims.preferred_username);
     assert_eq!(latin1, Ok(Some("J\u{fffd}rg".into())));
     for (alg, kid, digest) in [
         ("RS256", "rsa", &ring::digest::SHA256),
@@ -186,20 +169,14 @@ fn id_token_claims_bind_issuer_audience_nonce_time_and_access_token() {
         (json!({"exp": now as f64 + 0.5}), Reject::Claims),
         (json!({"nbf": true}), Reject::Claims),
         (json!({"_claim_names": {"groups": "a"}}), Reject::Claims),
-        (
-            json!({"_claim_names": {"groups": ""}, "_claim_sources": {"": {}}}),
-            Reject::Claims,
-        ),
+        (json!({"_claim_names": {"groups": ""}, "_claim_sources": {"": {}}}), Reject::Claims),
         (json!({"_claim_sources": {"a": {"access_token": 7}}}), Reject::Claims),
         (json!({"nbf": now + 301}), Reject::Claims),
         (json!({"sub": 7}), Reject::Claims),
         (json!({"nonce": "other"}), Reject::Nonce),
         (json!({"nonce": null}), Reject::Nonce),
         (json!({"name": 7}), Reject::Nonce),
-        (
-            json!({"at_hash": at_hash(&ring::digest::SHA384)}),
-            Reject::AccessTokenHash,
-        ),
+        (json!({"at_hash": at_hash(&ring::digest::SHA384)}), Reject::AccessTokenHash),
     ] {
         assert_eq!(check("RS256", "rsa", changes.clone()).err(), Some(reject), "{changes}");
     }

@@ -12,10 +12,7 @@ pub(crate) struct Charge {
 
 impl Charge {
     pub(crate) fn new(budget: &Budget, bytes: usize) -> Option<Self> {
-        let mut charge = Self {
-            budget: budget.clone(),
-            bytes: 0,
-        };
+        let mut charge = Self { budget: budget.clone(), bytes: 0 };
         charge.resize(bytes).then_some(charge)
     }
 

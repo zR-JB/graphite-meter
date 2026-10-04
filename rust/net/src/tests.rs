@@ -109,10 +109,7 @@ fn upstreams_default_to_http_carry_decoded_credentials_and_refuse_unknown_scheme
     let socks = socks.route(&origin("https://meter.example")).unwrap().as_ref().unwrap();
     assert_eq!(socks.origin.authority(), "proxy.example:1080");
     assert!(socks.authorization.is_none());
-    assert_eq!(
-        socks.socks.as_ref().unwrap().user,
-        Some((b"u:r".to_vec(), b"p@ss\xff".to_vec()))
-    );
+    assert_eq!(socks.socks.as_ref().unwrap().user, Some((b"u:r".to_vec(), b"p@ss\xff".to_vec())));
     let socks4 = Proxy::new("", "socks4://proxy.example:1080", "");
     assert!(socks4.route(&origin("https://meter.example")).unwrap().is_err());
     assert!(Proxy::new("", "", "").route(&origin("https://meter.example")).is_none());
@@ -132,10 +129,7 @@ fn environment_proxies_follow_go_variables() {
     }
     let (http, https) = (origin("http://meter.example"), origin("https://meter.example"));
     let via = |proxy: &Proxy, target: &Origin| proxy.route(target).map(|route| route.as_ref().unwrap().origin.key());
-    let everything = from(&[
-        ("ALL_PROXY", "http://all.example:3128"),
-        ("all_proxy", "http://all.example:3128"),
-    ]);
+    let everything = from(&[("ALL_PROXY", "http://all.example:3128"), ("all_proxy", "http://all.example:3128")]);
     assert_eq!((via(&everything, &http), via(&everything, &https)), (None, None));
     let spelled = from(&[
         ("HTTP_PROXY", "http://upper.example:3128"),
@@ -208,10 +202,7 @@ async fn socks5_logs_in_and_connects_by_name_then_speaks_origin_form() {
         for (expected, reply) in [
             (&b"\x05\x02\x00\x02"[..], &b"\x05\x02"[..]),
             (&b"\x01\x04user\x04p@ss"[..], &b"\x01\x00"[..]),
-            (
-                &b"\x05\x01\x00\x03\x0ameter.test\x1f\x90"[..],
-                &b"\x05\x00\x00\x03\x05proxy\x04\x38"[..],
-            ),
+            (&b"\x05\x01\x00\x03\x0ameter.test\x1f\x90"[..], &b"\x05\x00\x00\x03\x05proxy\x04\x38"[..]),
         ] {
             let mut sent = vec![0; expected.len()];
             client.read_exact(&mut sent).await.unwrap();
@@ -275,11 +266,7 @@ async fn socks5_sends_addresses_as_go_does_and_fails_closed() {
         let (proxy, sent) = socks_peer(0, 0).await;
         let proxy = Proxy::new(&format!("socks5h://{proxy}"), "", "");
         connect(&proxy, &origin(target), None, no_hop()).await.unwrap();
-        assert_eq!(
-            sent.await.unwrap(),
-            [&[5, 1, 0, 5, 1, 0][..], &address[..]].concat(),
-            "{target}"
-        );
+        assert_eq!(sent.await.unwrap(), [&[5, 1, 0, 5, 1, 0][..], &address[..]].concat(), "{target}");
     }
     for (method, status, reason) in [
         (0xff, 0, "no acceptable authentication methods"),

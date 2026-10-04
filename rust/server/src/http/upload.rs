@@ -20,11 +20,7 @@ impl HttpServer {
             return lease.owner();
         }
         let client = client_address::resolve(peer, request.headers(), &self.config.trusted_proxies);
-        if client.usable {
-            Owner::anonymous(client.addr)
-        } else {
-            Owner::unresolved()
-        }
+        if client.usable { Owner::anonymous(client.addr) } else { Owner::unresolved() }
     }
 
     pub(super) fn upload_control(&self, route: Route, request: &Request<()>, owner: &Owner) -> Response<ResponseBody> {
@@ -66,10 +62,7 @@ impl HttpServer {
                         Err(error) => refusal(error),
                     };
                     let headers = response.headers_mut();
-                    headers.insert(
-                        header::CACHE_CONTROL,
-                        HeaderValue::from_static("no-store, no-transform"),
-                    );
+                    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store, no-transform"));
                     headers.insert("x-accel-buffering", HeaderValue::from_static("no"));
                     response
                 };

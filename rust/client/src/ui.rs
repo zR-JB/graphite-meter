@@ -138,12 +138,7 @@ impl Drop for Restore {
 
 fn restore() {
     let _ = disable_raw_mode();
-    let _ = execute!(
-        io::stdout(),
-        DisableBracketedPaste,
-        DisableMouseCapture,
-        LeaveAlternateScreen
-    );
+    let _ = execute!(io::stdout(), DisableBracketedPaste, DisableMouseCapture, LeaveAlternateScreen);
 }
 
 pub async fn run(
@@ -169,12 +164,7 @@ pub async fn run(
     // keys whenever it comes. The clear wipes whatever a terminal that ignores the query printed.
     #[cfg(unix)]
     io::stdout().write_all(crate::theme::QUERY)?;
-    execute!(
-        io::stdout(),
-        EnableBracketedPaste,
-        EnableMouseCapture,
-        Clear(ClearType::All)
-    )?;
+    execute!(io::stdout(), EnableBracketedPaste, EnableMouseCapture, Clear(ClearType::All))?;
     let (title, progress) = (String::new(), NO_PROGRESS.into());
     let mut chrome = Chrome { title, progress };
     let mut ui = Ui::new(config, snapshots.borrow_and_update().clone());

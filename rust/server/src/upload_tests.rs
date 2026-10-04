@@ -255,10 +255,7 @@ async fn completion_waits_for_lane_drop_and_replays_receiver_totals() {
     assert_eq!(store.checkpoint(&id, &owner).unwrap().bytes, 330);
     let mut replay = store.subscribe(&id, &owner).unwrap();
     assert_eq!(replay.next().await, Some(UploadProgress::Ready));
-    assert!(matches!(
-        replay.next().await,
-        Some(UploadProgress::Complete { bytes: 330, .. })
-    ));
+    assert!(matches!(replay.next().await, Some(UploadProgress::Complete { bytes: 330, .. })));
 }
 
 #[tokio::test]

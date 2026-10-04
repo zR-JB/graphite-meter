@@ -16,22 +16,12 @@ impl Config {
 
     fn validate_limits(&self) -> Result<(), ConfigError> {
         let operations = ("GM_MAX_ACTIVE_MEASUREMENTS", self.limits.operations);
-        let client_operations = (
-            "GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT",
-            self.limits.operations_per_client,
-        );
+        let client_operations = ("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", self.limits.operations_per_client);
         let sessions = ("GM_MAX_ACTIVE_SESSIONS", self.limits.sessions);
         let client_sessions = ("GM_MAX_SESSIONS_PER_CLIENT", self.limits.sessions_per_client);
         let connections = ("GM_MAX_CONNECTIONS", self.max_connections);
         let client_connections = ("GM_MAX_CONNECTIONS_PER_CLIENT", self.max_connections_per_client);
-        let limits = [
-            operations,
-            client_operations,
-            sessions,
-            client_sessions,
-            connections,
-            client_connections,
-        ];
+        let limits = [operations, client_operations, sessions, client_sessions, connections, client_connections];
         if let Some((name, _)) = limits.into_iter().find(|&(_, value)| value == 0) {
             return Err(format!("{name} must be greater than zero").into());
         }
@@ -104,9 +94,7 @@ impl Config {
                     .insert(key(raw), kind.protocol())
                     .is_some_and(|protocol| protocol != kind.protocol())
             {
-                return Err(
-                    format!("native origin {raw:?} is advertised with multiple deterministic protocols").into(),
-                );
+                return Err(format!("native origin {raw:?} is advertised with multiple deterministic protocols").into());
             }
         }
         for (name, values) in self.public.lists() {
@@ -116,7 +104,7 @@ impl Config {
                 }
                 if name != "GM_PUBLIC_LATENCY_ORIGINS" && deterministic.contains_key(&key(raw)) {
                     return Err(
-                        format!("origin {raw:?} cannot be both native deterministic and public negotiated").into(),
+                        format!("origin {raw:?} cannot be both native deterministic and public negotiated").into()
                     );
                 }
             }
@@ -145,12 +133,9 @@ impl Config {
         if self.native_advertised(NativeKind::H1) {
             return Err("clear HTTP/1.1 cannot be advertised when authentication is enabled".into());
         }
-        let natives = NativeKind::ALL[1..].iter().map(|&kind| {
-            (
-                kind.origin_env(),
-                std::slice::from_ref(&self.listener(kind).public_origin),
-            )
-        });
+        let natives = NativeKind::ALL[1..]
+            .iter()
+            .map(|&kind| (kind.origin_env(), std::slice::from_ref(&self.listener(kind).public_origin)));
         for (name, values) in self.public.lists().into_iter().chain(natives) {
             for raw in values.iter().filter(|raw| !raw.is_empty() && *raw != "self") {
                 // Read as Go's url.Parse reads it; whether it is an origin is checked with the others.
@@ -187,30 +172,28 @@ impl AuthConfig {
         let https_issuer =
             split_url(issuer).is_ok_and(|(origin, rest)| origin.scheme == "https" && !rest.contains('?'));
         let name = &self.oidc_provider_name;
-        Err(
-            if !self.password_hash.is_empty() && !self.password_hash_file.is_empty() {
-                "GM_AUTH_PASSWORD_HASH and GM_AUTH_PASSWORD_HASH_FILE are mutually exclusive"
-            } else if !self.oidc_client_secret.is_empty() && !self.oidc_secret_file.is_empty() {
-                "GM_AUTH_OIDC_CLIENT_SECRET and GM_AUTH_OIDC_CLIENT_SECRET_FILE are mutually exclusive"
-            } else if password && !password_source {
-                "password authentication requires exactly one password hash source"
-            } else if !password && password_source {
-                "password hash configured while password authentication is disabled"
-            } else if oidc && !oidc_complete {
-                "OIDC authentication requires issuer, client ID, one client secret source, and allowed groups"
-            } else if !oidc && oidc_settings {
-                "OIDC settings configured while OIDC authentication is disabled"
-            } else if oidc && !https_issuer {
-                "GM_AUTH_OIDC_ISSUER must be an HTTPS URL with no credentials, query, or fragment"
-            } else if oidc && name.trim().is_empty() {
-                "GM_AUTH_OIDC_PROVIDER_NAME must not be empty"
-            } else if name.len() > 64 || !name.chars().all(graphite_meter_core::text::display_character) {
-                "GM_AUTH_OIDC_PROVIDER_NAME must be at most 64 bytes of UTF-8 without control characters"
-            } else {
-                return Ok(());
-            }
-            .into(),
-        )
+        Err(if !self.password_hash.is_empty() && !self.password_hash_file.is_empty() {
+            "GM_AUTH_PASSWORD_HASH and GM_AUTH_PASSWORD_HASH_FILE are mutually exclusive"
+        } else if !self.oidc_client_secret.is_empty() && !self.oidc_secret_file.is_empty() {
+            "GM_AUTH_OIDC_CLIENT_SECRET and GM_AUTH_OIDC_CLIENT_SECRET_FILE are mutually exclusive"
+        } else if password && !password_source {
+            "password authentication requires exactly one password hash source"
+        } else if !password && password_source {
+            "password hash configured while password authentication is disabled"
+        } else if oidc && !oidc_complete {
+            "OIDC authentication requires issuer, client ID, one client secret source, and allowed groups"
+        } else if !oidc && oidc_settings {
+            "OIDC settings configured while OIDC authentication is disabled"
+        } else if oidc && !https_issuer {
+            "GM_AUTH_OIDC_ISSUER must be an HTTPS URL with no credentials, query, or fragment"
+        } else if oidc && name.trim().is_empty() {
+            "GM_AUTH_OIDC_PROVIDER_NAME must not be empty"
+        } else if name.len() > 64 || !name.chars().all(graphite_meter_core::text::display_character) {
+            "GM_AUTH_OIDC_PROVIDER_NAME must be at most 64 bytes of UTF-8 without control characters"
+        } else {
+            return Ok(());
+        }
+        .into())
     }
 }
 

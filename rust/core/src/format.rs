@@ -7,19 +7,11 @@ pub fn fixed_ms(value: f64) -> String {
 }
 
 pub fn latency_ms(value: f64) -> String {
-    if (0.0..0.1).contains(&value) {
-        "< 0.1".into()
-    } else {
-        fixed_ms(value)
-    }
+    if (0.0..0.1).contains(&value) { "< 0.1".into() } else { fixed_ms(value) }
 }
 
 pub fn added_ms(value: f64) -> String {
-    format!(
-        "{}{}",
-        if (value * 10.0).round() < 0.0 { "−" } else { "+" },
-        fixed_ms(value.abs())
-    )
+    format!("{}{}", if (value * 10.0).round() < 0.0 { "−" } else { "+" }, fixed_ms(value.abs()))
 }
 
 pub fn speed(value: f64) -> String {

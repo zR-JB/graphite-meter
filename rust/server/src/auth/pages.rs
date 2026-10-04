@@ -231,14 +231,8 @@ pub fn security_headers(authorization_origin: Option<&str>) -> Option<HeaderMap>
 pub fn harden(headers: &mut HeaderMap, secure: bool) {
     headers.insert("referrer-policy", HeaderValue::from_static("same-origin"));
     headers.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
-    headers.insert(
-        "permissions-policy",
-        HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
-    );
+    headers.insert("permissions-policy", HeaderValue::from_static("camera=(), microphone=(), geolocation=()"));
     if secure {
-        headers.insert(
-            http::header::STRICT_TRANSPORT_SECURITY,
-            HeaderValue::from_static("max-age=31536000"),
-        );
+        headers.insert(http::header::STRICT_TRANSPORT_SECURITY, HeaderValue::from_static("max-age=31536000"));
     }
 }

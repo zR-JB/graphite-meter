@@ -36,12 +36,7 @@ pub fn serve(config: Config) -> Result<QuicServer, TestError> {
         let _ = stopped.await;
     }));
     let client = noq::ClientConfig::new(Arc::new(noq::crypto::rustls::QuicClientConfig::try_from(client)?));
-    Ok(QuicServer {
-        address,
-        client,
-        stop,
-        task,
-    })
+    Ok(QuicServer { address, client, stop, task })
 }
 
 /// The task that drives `quic`'s HTTP/3 layer, and its request sender.

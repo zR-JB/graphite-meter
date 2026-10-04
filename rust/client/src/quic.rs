@@ -76,14 +76,7 @@ impl Connection {
             tasks.spawn(async move {
                 let _ = driver.drive().await;
             });
-            return Ok((
-                Self {
-                    endpoint,
-                    quic,
-                    driver: tasks,
-                },
-                requests,
-            ));
+            return Ok((Self { endpoint, quic, driver: tasks }, requests));
         }
         Err(last_error.unwrap_or_else(|| "QUIC hostname resolved to no addresses".into()))
     }
@@ -150,12 +143,7 @@ impl Http3Client {
         }
         let permit = self.permits.clone().acquire_owned().await?;
         let (send, recv) = self.requests.send_request(request).await?.split();
-        Ok(Http3Stream {
-            send,
-            recv,
-            _permit: permit,
-            _owner: self.clone(),
-        })
+        Ok(Http3Stream { send, recv, _permit: permit, _owner: self.clone() })
     }
 }
 
@@ -231,11 +219,7 @@ mod tests {
 
     #[test]
     fn only_a_violation_found_here_ends_a_transfer() {
-        let closed = |local, code| http3::Error::Connection {
-            local,
-            code,
-            reason: Bytes::new(),
-        };
+        let closed = |local, code| http3::Error::Connection { local, code, reason: Bytes::new() };
         let retried: Vec<Error> = vec![
             Box::new(http3::Error::Reset(WtCode(42).to_http())),
             Box::new(http3::Error::Stopped(Code::WT_SESSION_GONE)),

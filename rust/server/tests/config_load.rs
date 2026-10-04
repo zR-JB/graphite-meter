@@ -41,11 +41,7 @@ fn defaults_and_presence_are_distinct() {
     ] {
         assert!(failure(&[(name, "")], &[]).contains("authentication"), "{name}");
     }
-    for flag in [
-        "-auth-public-url=",
-        "-auth-oidc-allowed-groups=",
-        "-auth-oidc-provider-name=Authelia",
-    ] {
+    for flag in ["-auth-public-url=", "-auth-oidc-allowed-groups=", "-auth-oidc-provider-name=Authelia"] {
         assert!(failure(&[], &[flag]).contains("authentication"), "{flag}");
     }
 }

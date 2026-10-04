@@ -58,10 +58,7 @@ pub fn embed(share_browser_notices: bool) -> Result<()> {
         return Err("GM_RUST_LEGAL_DIR must be an absolute directory".into());
     }
     let directory = inside(&repo, configured)?;
-    for (name, expected) in [
-        ("package.txt", env::var("CARGO_PKG_NAME")?),
-        ("target.txt", env::var("TARGET")?),
-    ] {
+    for (name, expected) in [("package.txt", env::var("CARGO_PKG_NAME")?), ("target.txt", env::var("TARGET")?)] {
         let path = directory.join(name);
         println!("cargo:rerun-if-changed={}", path.display());
         if fs::read_to_string(path)? != expected {
@@ -112,10 +109,7 @@ pub fn embed(share_browser_notices: bool) -> Result<()> {
         None
     };
     // Compress the checked build input so rustc does not reopen a mutable source file.
-    fs::write(
-        output.join("LEGAL.zlib"),
-        miniz_oxide::deflate::compress_to_vec_zlib(text.as_bytes(), 9),
-    )?;
+    fs::write(output.join("LEGAL.zlib"), miniz_oxide::deflate::compress_to_vec_zlib(text.as_bytes(), 9))?;
     let development = text.starts_with(DEVELOPMENT);
     write_constants(&output, share_browser_notices, Some(text.len()), notices, development)
 }
@@ -135,9 +129,7 @@ fn write_constants(
     };
     // Each main.rs refers to the marker, so that no linker drops it.
     let marker = if development { DEVELOPMENT } else { "" };
-    generated.push_str(&format!(
-        "#[used]\npub static DEVELOPMENT_NOTICES: &str = {marker:?};\n"
-    ));
+    generated.push_str(&format!("#[used]\npub static DEVELOPMENT_NOTICES: &str = {marker:?};\n"));
     if share_browser_notices {
         generated.push_str(&format!("const LEGAL_NOTICES: Option<usize> = {notices:?};\n"));
     }

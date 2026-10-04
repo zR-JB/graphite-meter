@@ -3,23 +3,14 @@ use graphite_meter_core::latency::{LatencyAccumulator, ProbeOutcome, ReflectorTi
 const MS: i64 = 1_000_000;
 
 fn reply(stats: &mut LatencyAccumulator, rtt_nanos: i64, handling_nanos: u64) -> Option<u64> {
-    stats.record(ProbeOutcome::Reply {
-        rtt_nanos,
-        handling_nanos,
-    })
+    stats.record(ProbeOutcome::Reply { rtt_nanos, handling_nanos })
 }
 
 #[test]
 fn reflector_diagnostic_never_changes_raw_reply_population() {
     let mut raw = LatencyAccumulator::default();
     let mut timed = LatencyAccumulator::default();
-    for (rtt, handling) in [
-        (10, 2 * MS as u64),
-        (20, 0),
-        (30, u64::MAX),
-        (40, 41 * MS as u64),
-        (50, u64::MAX),
-    ] {
+    for (rtt, handling) in [(10, 2 * MS as u64), (20, 0), (30, u64::MAX), (40, 41 * MS as u64), (50, u64::MAX)] {
         reply(&mut raw, rtt * MS, u64::MAX);
         reply(&mut timed, rtt * MS, handling);
     }
@@ -57,16 +48,10 @@ fn reflector_diagnostic_never_changes_raw_reply_population() {
 #[test]
 fn reflector_duration_bounds_and_large_sums_are_exact() {
     let mut stats = LatencyAccumulator::default();
-    for (handling_nanos, expected) in [
-        (i64::MAX as u64, Some(i64::MAX as u64)),
-        (i64::MAX as u64 + 1, None),
-        (u64::MAX, None),
-    ] {
-        assert_eq!(
-            reply(&mut stats, i64::MAX, handling_nanos),
-            expected,
-            "handling {handling_nanos}"
-        );
+    for (handling_nanos, expected) in
+        [(i64::MAX as u64, Some(i64::MAX as u64)), (i64::MAX as u64 + 1, None), (u64::MAX, None)]
+    {
+        assert_eq!(reply(&mut stats, i64::MAX, handling_nanos), expected, "handling {handling_nanos}");
     }
     let snapshot = stats.snapshot();
     assert_eq!(snapshot.distribution.unwrap().p50, i64::MAX as u64);

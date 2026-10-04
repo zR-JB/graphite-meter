@@ -64,11 +64,7 @@ fn every_inline_asset_matches_csp_hash_of_actual_rendered_bytes() {
         let styles = inline_blocks(&html, "style");
         assert_eq!(styles, [STYLES]);
         let scripts = inline_blocks(&html, "script");
-        let expected: &[&str] = if pending {
-            &[THEME_SCRIPT, PENDING_SCRIPT]
-        } else {
-            &[THEME_SCRIPT]
-        };
+        let expected: &[&str] = if pending { &[THEME_SCRIPT, PENDING_SCRIPT] } else { &[THEME_SCRIPT] };
         assert_eq!(scripts, expected);
         for asset in styles.into_iter().chain(scripts) {
             assert!(csp.contains(&hash(asset)));

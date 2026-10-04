@@ -103,11 +103,7 @@ fn audiences_reject_paths_credentials_and_ambiguous_authorities() {
 #[test]
 fn absolute_urls_keep_ascii_paths_and_queries_without_credentials_or_fragments() {
     for (raw, expected_origin, expected_rest) in [
-        (
-            "HTTPS://Id.Example:8443/realms/x?a=b",
-            "https://id.example:8443",
-            "/realms/x?a=b",
-        ),
+        ("HTTPS://Id.Example:8443/realms/x?a=b", "https://id.example:8443", "/realms/x?a=b"),
         ("https://id.example?x=1", "https://id.example", "?x=1"),
         ("https://id.example", "https://id.example", ""),
         ("https://id.example/%C3%A4", "https://id.example", "/%C3%A4"),

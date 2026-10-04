@@ -273,12 +273,7 @@ pub(crate) struct Report<'a> {
 
 impl<'a> Report<'a> {
     pub fn new(snapshot: &'a Snapshot, shown: Option<&'a str>, width: usize, theme: Theme) -> Self {
-        Self {
-            snapshot,
-            shown,
-            width,
-            theme,
-        }
+        Self { snapshot, shown, width, theme }
     }
 
     /// Go's multipleRunServers.
@@ -318,11 +313,7 @@ impl<'a> Report<'a> {
     pub fn rates(&self, stage: Stage) -> String {
         let rates = directions(stage).filter_map(|direction| {
             let rate = self.measurement(stage, direction)?.mean_bytes_per_sec;
-            Some(format!(
-                "{} {}",
-                ARROWS[direction],
-                rate.map_or(MISSING.into(), format::rate)
-            ))
+            Some(format!("{} {}", ARROWS[direction], rate.map_or(MISSING.into(), format::rate)))
         });
         rates.collect::<Vec<_>>().join("  ")
     }

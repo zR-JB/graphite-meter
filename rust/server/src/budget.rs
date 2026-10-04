@@ -97,11 +97,7 @@ pub(crate) fn endpoint_bytes(
     receive_segments: usize,
 ) -> Option<usize> {
     let packet = packet_bytes(config)?;
-    let queue = if shards > 1 {
-        quic_shard::queue_bytes(packet)?
-    } else {
-        0
-    };
+    let queue = if shards > 1 { quic_shard::queue_bytes(packet)? } else { 0 };
     noq::receive_batch_bytes(packet, receive_segments)
         .checked_add(packet.checked_mul(max_connections.div_ceil(shards).checked_add(1)?)?)?
         .checked_add((QUIC_INCOMING_TOTAL_BYTES as usize).div_ceil(shards))?
@@ -172,10 +168,7 @@ impl MemoryBudget {
     }
 
     pub(crate) fn lease(self: &Arc<Self>, bytes: usize) -> Option<Lease> {
-        self.try_charge(bytes).then(|| Lease {
-            budget: self.clone(),
-            bytes,
-        })
+        self.try_charge(bytes).then(|| Lease { budget: self.clone(), bytes })
     }
 
     #[cfg(test)]
@@ -207,16 +200,9 @@ impl MemoryBudget {
                 .compare_exchange(held_back, !held_back, Ordering::Relaxed, Ordering::Relaxed)
                 .is_ok()
         {
-            let change = if held_back {
-                "resumed"
-            } else {
-                "held back by memory pressure"
-            };
+            let change = if held_back { "resumed" } else { "held back by memory pressure" };
             let in_use = self.used.load(Ordering::Relaxed);
-            crate::log!(
-                "[gm:memory] window growth {change}: {in_use} of {} buffer bytes in use",
-                self.limit
-            );
+            crate::log!("[gm:memory] window growth {change}: {in_use} of {} buffer bytes in use", self.limit);
         }
         headroom
     }
@@ -279,12 +265,7 @@ struct Held {
 
 impl ClientCredit {
     pub(crate) fn new(share: usize, shared: Option<String>, budget: Arc<MemoryBudget>) -> Arc<Self> {
-        Arc::new(Self {
-            share,
-            shared,
-            budget,
-            held: Mutex::default(),
-        })
+        Arc::new(Self { share, shared, budget, held: Mutex::default() })
     }
 
     /// Charges `bytes` to every key of an admitted client, or to none if any would pass its share.
@@ -301,11 +282,7 @@ impl ClientCredit {
         for key in &keys {
             *held.keys.entry(key.clone()).or_default() += bytes;
         }
-        Some(CreditClaim {
-            credit: self.clone(),
-            keys,
-            bytes,
-        })
+        Some(CreditClaim { credit: self.clone(), keys, bytes })
     }
 }
 

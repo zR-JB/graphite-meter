@@ -231,10 +231,7 @@ const RATE_AXIS: Axis = Axis {
         format!("{} {}", round_label(bits / 1e3_f64.powi(tier as i32)), units[tier])
     },
 };
-const MS_AXIS: Axis = Axis {
-    scale: 1e-6,
-    label: |ms| format!("{} ms", round_label(ms)),
-};
+const MS_AXIS: Axis = Axis { scale: 1e-6, label: |ms| format!("{} ms", round_label(ms)) };
 
 /// Go's niceCeil.
 fn nice_ceil(value: f64) -> f64 {
@@ -385,10 +382,7 @@ fn bar(fill: Style, value: f64, scale: f64, width: usize, theme: &Theme) -> Vec<
     let full = cells as usize;
     let part = EIGHTHS[((cells - full as f64) * 8.0) as usize];
     let rest = width - full - usize::from(!part.is_empty());
-    vec![
-        span(format!("{}{part}", "█".repeat(full)), fill),
-        span("░".repeat(rest), theme.muted),
-    ]
+    vec![span(format!("{}{part}", "█".repeat(full)), fill), span("░".repeat(rest), theme.muted)]
 }
 
 impl Ui {

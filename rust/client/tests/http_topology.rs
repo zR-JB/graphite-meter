@@ -120,9 +120,7 @@ async fn bidirectional_upload_lanes_start_while_downloads_wait_for_headers() -> 
     let (snapshots, _) = tokio::sync::watch::channel(Snapshot::default());
     let (cancel, cancelled) = tokio::sync::watch::channel(false);
     let http = Http::new(false)?;
-    let run = tokio::spawn(graphite_meter_client::runner::run(
-        config, http, snapshots, cancelled, None,
-    ));
+    let run = tokio::spawn(graphite_meter_client::runner::run(config, http, snapshots, cancelled, None));
     let started = tokio::time::timeout(Duration::from_secs(5), uploaded.wait_for(|up| *up)).await;
     cancel.send_replace(true);
     let _ = tokio::time::timeout(Duration::from_secs(5), run).await;
@@ -172,10 +170,7 @@ async fn pooled_connections_expire_without_another_request_and_preserve_active_b
             });
             let client = Http::new(false)?;
             let mut response = client.request(Method::GET, &target, protocol).await?;
-            assert_eq!(
-                response.body_mut().frame().await.unwrap()?.into_data().unwrap(),
-                b"first"[..]
-            );
+            assert_eq!(response.body_mut().frame().await.unwrap()?.into_data().unwrap(), b"first"[..]);
             let chunks = if active {
                 Some(chunks)
             } else {

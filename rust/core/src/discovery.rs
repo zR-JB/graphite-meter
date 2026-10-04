@@ -201,12 +201,7 @@ impl Preflight {
         Ok(value)
     }
     pub fn validate(&self) -> Result<(), DiscoveryError> {
-        let metadata = [
-            &self.server.name,
-            &self.server.location,
-            &self.engine_version,
-            &self.generation,
-        ];
+        let metadata = [&self.server.name, &self.server.location, &self.engine_version, &self.generation];
         if self.generation.is_empty() || !metadata.into_iter().all(|text| label(text)) {
             return Err(DiscoveryError::InvalidMetadata);
         }

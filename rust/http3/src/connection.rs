@@ -263,11 +263,7 @@ impl Connection {
     pub(crate) fn goaway(&mut self) {
         if !self.goaway_sent && !self.closed {
             self.goaway_sent = true;
-            frame::put_header(
-                frame::GOAWAY,
-                varint::len(self.next_request) as u64,
-                &mut self.control.pending,
-            );
+            frame::put_header(frame::GOAWAY, varint::len(self.next_request) as u64, &mut self.control.pending);
             varint::put(self.next_request, &mut self.control.pending);
             self.shared.state().wake();
         }
@@ -410,12 +406,8 @@ impl Connection {
             header: frame::StreamType::default(),
             deadline: Instant::now() + TYPE_TIMEOUT,
         };
-        self.streams.push(Uni {
-            stream,
-            input: Bytes::new(),
-            kind,
-            _charge: charge,
-        });
+        self.streams
+            .push(Uni { stream, input: Bytes::new(), kind, _charge: charge });
     }
 
     /// Refused past GOAWAY or over the budget: the new stream gets H3_REQUEST_REJECTED.
@@ -424,13 +416,9 @@ impl Connection {
         let late = self.goaway_sent && id >= self.next_request;
         self.next_request = self.next_request.max(id + 4);
         match stream::charges(&self.shared.budget) {
-            Some(charges) if !late => Some(RequestStream::new(
-                &self.shared,
-                send,
-                recv,
-                self.shared.role.field_limit(),
-                charges,
-            )),
+            Some(charges) if !late => {
+                Some(RequestStream::new(&self.shared, send, recv, self.shared.role.field_limit(), charges))
+            }
             _ => {
                 let _ = send.reset(Code::H3_REQUEST_REJECTED.into());
                 let _ = recv.stop(Code::H3_REQUEST_REJECTED.into());

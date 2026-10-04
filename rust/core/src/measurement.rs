@@ -354,12 +354,7 @@ impl AggregateMeasurements {
             return;
         }
         let latest = self.latest.clone();
-        self.restart(
-            stage,
-            survivors.to_vec(),
-            end.boundary.at_nanos,
-            IntervalReason::Dropout,
-        );
+        self.restart(stage, survivors.to_vec(), end.boundary.at_nanos, IntervalReason::Dropout);
         self.start(end.boundary.clone());
         if let Some(latest) = latest.filter(|latest| latest.at_nanos > end.boundary.at_nanos) {
             self.observe(latest);
@@ -470,10 +465,7 @@ impl AggregateMeasurements {
             }
             slot => {
                 let credit = if slot.is_some() { maximum } else { 0 };
-                *slot = Some(ObservedUpload {
-                    id: receiver_id.into(),
-                    maximum,
-                });
+                *slot = Some(ObservedUpload { id: receiver_id.into(), maximum });
                 credit
             }
         };

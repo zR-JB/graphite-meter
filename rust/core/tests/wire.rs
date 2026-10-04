@@ -92,13 +92,7 @@ fn progress_requires_exact_counters_and_rejects_duplicate_fields() {
     assert_eq!(checkpoint.ok(), Some(Counters { bytes: 1000, nanos: 1 }));
     assert!(decode_json::<Counters>(b"[1000,1]").is_err());
     let event = decode_upload_progress(br#"{"type":"complete","bytes":9007199254740991,"nanos":1E+2}"#).unwrap();
-    assert_eq!(
-        event,
-        UploadProgress::Complete {
-            bytes: MAX_UPLOAD_COUNTER,
-            nanos: 100
-        }
-    );
+    assert_eq!(event, UploadProgress::Complete { bytes: MAX_UPLOAD_COUNTER, nanos: 100 });
 }
 
 #[test]

@@ -12,10 +12,7 @@ use std::net::SocketAddr;
 
 const PUBLIC: &str = "https://meter.example";
 const CLIENT: &str = "https://client.example";
-const UI: Listener = Listener {
-    ui: true,
-    webtransport: false,
-};
+const UI: Listener = Listener { ui: true, webtransport: false };
 
 fn setup() -> (SessionStore, Policy) {
     let store = SessionStore::new();
@@ -30,10 +27,7 @@ fn grant(store: &SessionStore, session: &SessionLease, origin: Option<&str>) -> 
     let challenge = graphite_meter_core::approval::challenge(&verifier);
     let (valid, client) = (valid_challenge(&challenge).unwrap(), "192.0.2.1".parse().unwrap());
     let (begun, kind) = match origin {
-        Some(origin) => (
-            store.begin_browser_approval(&valid, origin, Some(session), client),
-            ApprovalKind::Browser,
-        ),
+        Some(origin) => (store.begin_browser_approval(&valid, origin, Some(session), client), ApprovalKind::Browser),
         None => (store.begin_cli_approval(session, &valid, client), ApprovalKind::Cli),
     };
     assert!(begun.is_ok());
@@ -74,11 +68,7 @@ fn bearer(request: &mut Request<()>, token: &str) {
 }
 
 fn evaluate(policy: &Policy, request: &Request<()>, listener: Listener) -> Result<Authorization, Refusal> {
-    let connection = Connection {
-        peer: peer(),
-        tls: true,
-        listener,
-    };
+    let connection = Connection { peer: peer(), tls: true, listener };
     let authorized = policy.authorize(request.clone(), connection);
     authorized
         .map(|authorized| authorized.authorization().clone())
@@ -249,10 +239,7 @@ fn webtransport_uses_no_cookie_and_burns_tickets_even_with_bearer() {
     let cli = grant(&store, &session, None);
     let target = "https://meter.example/wt/ping";
     let mint = || store.mint_ticket(&lease, PUBLIC, target, PUBLIC, Kind::WebTransport);
-    let listener = Listener {
-        ui: false,
-        webtransport: true,
-    };
+    let listener = Listener { ui: false, webtransport: true };
     let refusal = |req: &Request<()>| evaluate(&policy, req, listener).err();
     let mut req = request("CONNECT", "/wt/ping");
     cookie(&mut req, &token);
@@ -264,10 +251,7 @@ fn webtransport_uses_no_cookie_and_burns_tickets_even_with_bearer() {
     // A non-WT listener must not consume a CONNECT ticket.
     assert!(evaluate(&policy, &req, Listener::default()).is_ok());
     bearer(&mut req, &cli);
-    assert!(matches!(
-        evaluate(&policy, &req, listener),
-        Ok(Authorization::Authenticated(_))
-    ));
+    assert!(matches!(evaluate(&policy, &req, listener), Ok(Authorization::Authenticated(_))));
     assert!(store.consume_ticket(&ticket.token, target, PUBLIC).is_none());
     req.headers_mut().remove(header::AUTHORIZATION);
     assert_eq!(refusal(&req), Some(Refusal::AuthenticationRequired));
@@ -296,11 +280,7 @@ fn auth_pages_are_canonical_and_foreign_preflights_never_allow_cookies() {
     req = request("OPTIONS", "/upload");
     set(&mut req, header::ORIGIN, CLIENT);
     set(&mut req, header::ACCESS_CONTROL_REQUEST_METHOD, "POST");
-    set(
-        &mut req,
-        header::ACCESS_CONTROL_REQUEST_HEADERS,
-        "Authorization, Content-Type",
-    );
+    set(&mut req, header::ACCESS_CONTROL_REQUEST_HEADERS, "Authorization, Content-Type");
     let Ok(Authorization::Preflight(headers)) = evaluate(&policy, &req, UI) else {
         panic!("expected bearer preflight");
     };
@@ -341,10 +321,7 @@ fn repeated_security_headers_are_forbidden_before_anything_else() {
 fn only_the_two_sign_in_fonts_are_public_and_only_for_get_and_head() {
     let (_, policy) = setup();
     refused(&policy, &request("HEAD", "/login"), Refusal::AuthenticationRequired);
-    for path in [
-        "/fonts/ibm-plex-sans-var-latin1.woff2",
-        "/fonts/ibm-plex-mono-600-latin1.woff2",
-    ] {
+    for path in ["/fonts/ibm-plex-sans-var-latin1.woff2", "/fonts/ibm-plex-mono-600-latin1.woff2"] {
         for method in ["GET", "HEAD", "POST", "OPTIONS", "DELETE"] {
             let result = evaluate(&policy, &request(method, path), UI);
             assert_eq!(result.is_ok(), matches!(method, "GET" | "HEAD"), "{method} {path}");

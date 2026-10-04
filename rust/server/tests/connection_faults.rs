@@ -92,14 +92,8 @@ async fn serve_h2(tls: ServerConfig, config: Config) -> native::NativeServer {
 async fn one_connection_panic_leaves_the_listener_serving() -> Result<(), TestError> {
     let tls = Tls::new();
     let server = serve_h2(
-        tls.server(Arc::new(PanicOnce(
-            AtomicBool::new(false),
-            tls.server.cert_resolver.clone(),
-        ))),
-        Config {
-            max_connections_per_client: 1,
-            ..Config::default()
-        },
+        tls.server(Arc::new(PanicOnce(AtomicBool::new(false), tls.server.cert_resolver.clone()))),
+        Config { max_connections_per_client: 1, ..Config::default() },
     )
     .await;
     let address = server.address;
@@ -295,11 +289,7 @@ async fn quic_downloads_exceed_the_old_window_limit() -> Result<(), TestError> {
 async fn download_rate(webtransport: bool, one_way: Duration) -> Result<f64, TestError> {
     let server = quic::serve(Config::default())?;
     let link = test_link::Link::udp(server.address, one_way).await?;
-    let target = if one_way.is_zero() {
-        server.address
-    } else {
-        link.address
-    };
+    let target = if one_way.is_zero() { server.address } else { link.address };
     let mut config = server.client.clone();
     let mut transport = noq::TransportConfig::default();
     transport.stream_receive_window((64_u32 << 20).into());
@@ -315,11 +305,7 @@ async fn download_rate(webtransport: bool, one_way: Duration) -> Result<f64, Tes
         let (session, _) = Session::connect(&requests, request)
             .await?
             .map_err(|refused| format!("{refused:?}"))?;
-        (
-            Some(session.accept_uni().await.ok_or("missing download stream")?),
-            None,
-            Some(session),
-        )
+        (Some(session.accept_uni().await.ok_or("missing download stream")?), None, Some(session))
     } else {
         let (mut send, mut recv) = requests.send_request(request).await?.split();
         send.finish().await?;

@@ -65,10 +65,7 @@ impl Double {
         let headers = &request.headers;
         assert!(!headers.contains_key(header::PROXY_AUTHORIZATION));
         // As Go's client asks: naming itself, and with no Accept.
-        assert_eq!(
-            headers[header::USER_AGENT],
-            format!("graphite-meter/{}", crate::config::ENGINE_VERSION)
-        );
+        assert_eq!(headers[header::USER_AGENT], format!("graphite-meter/{}", crate::config::ENGINE_VERSION));
         assert!(!headers.contains_key(header::ACCEPT));
         let (twist, issuer) = (self.twist.lock().unwrap(), &self.issuer);
         let with = |mut value: Value, twist: &Option<Value>| {
@@ -180,10 +177,7 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Arc<D
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let issuer = format!("https://{host}:{}", listener.local_addr().unwrap().port());
     let mut oidc = client(&issuer, "meter", "s3cret~*");
-    oidc.http = ProviderHttp {
-        tls: TlsConnector::from(Arc::new(client_tls)),
-        proxy,
-    };
+    oidc.http = ProviderHttp { tls: TlsConnector::from(Arc::new(client_tls)), proxy };
     let double = Arc::new(Double {
         oidc,
         issuer,
@@ -360,12 +354,7 @@ async fn provider_members_read_as_go_reads_them() {
     let provider = provider_double("localhost", &["RS256"], Proxy::default()).await;
     let go_signs_in = json!({"SUB": "operator", "sub": null, "email_verified": "true", "groups": ["operators", null]});
     for (tokens, claims, userinfo, signs_in) in [
-        (
-            json!({"error": null, "expires_in": "300"}),
-            json!({"at_hash": null}),
-            go_signs_in,
-            true,
-        ),
+        (json!({"error": null, "expires_in": "300"}), json!({"at_hash": null}), go_signs_in, true),
         (json!({"expires_in": 300.5}), json!({}), json!({}), false),
         (json!({"token_type": 7}), json!({}), json!({}), false),
         (json!({}), json!({"_claim_names": {"groups": "a"}}), json!({}), false),
@@ -392,14 +381,8 @@ async fn discovery_refuses_only_an_authorization_endpoint_that_breaks_sign_in() 
     let issuer = provider.issuer.clone();
     for (metadata, discovered) in [
         // Sign-in pages name the authorization origin in their form-action; port 0 is no origin a browser can post to.
-        (
-            json!({"authorization_endpoint": "https://idp.example:0/authorize"}),
-            false,
-        ),
-        (
-            json!({"authorization_endpoint": format!("{issuer}/authorize#x")}),
-            false,
-        ),
+        (json!({"authorization_endpoint": "https://idp.example:0/authorize"}), false),
+        (json!({"authorization_endpoint": format!("{issuer}/authorize#x")}), false),
         // Go's TestOIDCDiscoveryToleratesMistypedOptionalMetadata, and fragments Go's client leaves out.
         (
             json!({"authorization_response_iss_parameter_supported": "yes", "token_endpoint": format!("{issuer}/token#x"),
@@ -550,10 +533,7 @@ async fn an_empty_response_issuer_is_absent_like_go() {
         let oidc = ready_with(advertised);
         let (started, fields) = start(&oidc, "192.0.2.3").await;
         let refused = oidc.take(&fields["state"], &started.browser, Some("")).err();
-        assert_eq!(
-            refused.map(|(reason, _)| reason),
-            advertised.then_some(Reason::ResponseIssuer)
-        );
+        assert_eq!(refused.map(|(reason, _)| reason), advertised.then_some(Reason::ResponseIssuer));
     }
 }
 

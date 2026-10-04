@@ -70,10 +70,7 @@ impl EchoGuard {
         let mut hidden = original.clone();
         hidden.local_modes.remove(LocalModes::ECHO | LocalModes::ECHONL);
         tcsetattr(&fd, OptionalActions::Now, &hidden)?;
-        Ok(Self {
-            fd,
-            original: Some(original),
-        })
+        Ok(Self { fd, original: Some(original) })
     }
 
     fn restore(&mut self) -> io::Result<()> {

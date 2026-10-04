@@ -121,10 +121,7 @@ impl HttpServer {
                 funding: UploadFunding::new(operations.clone()),
             });
             let response = self.respond_incoming(request, accepted, &operations, None).await?;
-            let mut sink = H2Reply {
-                respond: &mut reply,
-                stream: None,
-            };
+            let mut sink = H2Reply { respond: &mut reply, stream: None };
             write_reply(&mut sink, response, head).await
         };
         if self.guard(&operations, &work, exchange).await.is_err() {
@@ -312,10 +309,7 @@ mod budget_tests {
             socket.bind(SocketAddr::from((source, 0))).unwrap();
             let stream = self
                 .connector
-                .connect(
-                    ServerName::try_from("localhost").unwrap(),
-                    socket.connect(self.address).await.unwrap(),
-                )
+                .connect(ServerName::try_from("localhost").unwrap(), socket.connect(self.address).await.unwrap())
                 .await
                 .unwrap();
             let (client, connection) = h2::client::Builder::new()

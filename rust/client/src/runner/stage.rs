@@ -913,11 +913,7 @@ async fn start_transfer(
         (Err(error), up) => (None, up.ok().flatten(), Some(error)),
         (down, Err(error)) => (down.ok().flatten(), None, Some(error)),
     };
-    let lanes = Lanes {
-        down,
-        up,
-        ..Lanes::default()
-    };
+    let lanes = Lanes { down, up, ..Lanes::default() };
     let Some(error) = error else {
         return Ok(lanes);
     };
@@ -938,10 +934,7 @@ fn observe(
                 host.timeouts = 0;
                 Some((sent, sent + rtt, rtt.as_secs_f64() * 1000.0))
             }
-            Observation::Lost {
-                sent,
-                outcome: ProbeOutcome::Timeout,
-            } => {
+            Observation::Lost { sent, outcome: ProbeOutcome::Timeout } => {
                 host.timeouts += 1;
                 Some((sent, Instant::now(), f64::NAN))
             }

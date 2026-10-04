@@ -108,10 +108,7 @@ pub(crate) fn redirect_link(status: StatusCode, location: &str) -> String {
             character => link.push(character),
         }
     }
-    format!(
-        "<a href=\"{link}\">{}</a>.\n\n",
-        status.canonical_reason().unwrap_or_default()
-    )
+    format!("<a href=\"{link}\">{}</a>.\n\n", status.canonical_reason().unwrap_or_default())
 }
 
 /// Go's `cleanPath`: `path` without empty segments, keeping a trailing slash; `None` when it is clean already.

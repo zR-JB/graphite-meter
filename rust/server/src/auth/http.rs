@@ -135,11 +135,7 @@ impl Service {
         }
         let path = request.uri().path();
         // As Go's GET patterns, a page answers HEAD too; the policy has already refused one with no session.
-        let method = if request.method() == Method::HEAD {
-            &Method::GET
-        } else {
-            request.method()
-        };
+        let method = if request.method() == Method::HEAD { &Method::GET } else { request.method() };
         match AuthRoute::lookup(method, path) {
             Some(AuthRoute::Login) => self.login_page(request).await,
             Some(AuthRoute::OidcStart) => self.oidc_start(authorized).await,
@@ -514,10 +510,7 @@ impl Service {
         let origin = text(request.headers(), "origin").unwrap_or_default();
         let target = value(&query, "target");
         match self.sessions.mint_ticket(lease, public, target, origin, kind) {
-            Ok(ticket) => json(
-                StatusCode::OK,
-                json!({"token":ticket.token, "expires":unix_ms(ticket.expires)}),
-            ),
+            Ok(ticket) => json(StatusCode::OK, json!({"token":ticket.token, "expires":unix_ms(ticket.expires)})),
             Err(TicketError::InvalidTarget) => error_response(StatusCode::BAD_REQUEST),
             Err(TicketError::NoSession) => error_response(StatusCode::FORBIDDEN),
             Err(TicketError::Capacity) => {
@@ -570,10 +563,9 @@ fn secured(status: StatusCode, mut response: Response<Bytes>) -> Response<Bytes>
 }
 fn html(status: StatusCode, body: String) -> Response<Bytes> {
     let mut response = response(status);
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("text/html; charset=utf-8"),
-    );
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
     *response.body_mut() = body.into();
     response
 }
@@ -585,10 +577,7 @@ fn error_response(status: StatusCode) -> Response<Bytes> {
 }
 /// Go's http.Redirect, under the auth pages' headers.
 fn redirect(method: &Method, destination: &str) -> Response<Bytes> {
-    secured(
-        StatusCode::SEE_OTHER,
-        go_redirect(method, StatusCode::SEE_OTHER, destination),
-    )
+    secured(StatusCode::SEE_OTHER, go_redirect(method, StatusCode::SEE_OTHER, destination))
 }
 fn refusal_page(busy: bool) -> Response<Bytes> {
     html(StatusCode::FORBIDDEN, pages::refusal_page(busy))
@@ -638,10 +627,9 @@ fn set_cookie(response: &mut Response<Bytes>, name: &str, value: &str, expires: 
     let date = httpdate::fmt_http_date(expires);
     let value =
         format!("{name}={value}; Path=/; Expires={date}; Max-Age={age}{http_only}; Secure; SameSite={same_site}");
-    response.headers_mut().append(
-        header::SET_COOKIE,
-        HeaderValue::from_str(&value).expect("generated cookie"),
-    );
+    response
+        .headers_mut()
+        .append(header::SET_COOKIE, HeaderValue::from_str(&value).expect("generated cookie"));
 }
 fn clear_cookie(response: &mut Response<Bytes>, name: &str, same_site: &str) {
     set_cookie(response, name, "", UNIX_EPOCH + Duration::from_secs(1), same_site);
@@ -698,12 +686,7 @@ mod tests {
         let fields = form(&request(FORM, "challenge=example")).unwrap();
         assert_eq!(value(&fields, "password"), "");
         assert_eq!(value(&fields, "csrf"), "");
-        for body in [
-            "password=first&password=second",
-            "p%61ssword=a&password=b",
-            "csrf=a;b",
-            "csrf=%zz",
-        ] {
+        for body in ["password=first&password=second", "p%61ssword=a&password=b", "csrf=a;b", "csrf=%zz"] {
             assert!(form(&request(FORM, body)).is_err(), "{body}");
         }
         assert!(form(&request("text/plain", "password=secret")).is_err());
@@ -754,10 +737,7 @@ mod tests {
         let connection = Connection {
             peer: "192.0.2.1:1234".parse().unwrap(),
             tls: true,
-            listener: Listener {
-                ui: true,
-                webtransport: true,
-            },
+            listener: Listener { ui: true, webtransport: true },
         };
         let request = service
             .policy()
@@ -881,10 +861,7 @@ mod tests {
         assert!(policy.contains("form-action 'self';"), "{policy}");
         let started = start_oidc(&service, &set_cookie_value(&page, "__Host-gm_login")).await;
         let refused = location(&started);
-        assert_eq!(
-            refused, "/login?error=provider",
-            "a sign-in started with no usable provider"
-        );
+        assert_eq!(refused, "/login?error=provider", "a sign-in started with no usable provider");
     }
 
     #[tokio::test]
@@ -922,10 +899,8 @@ mod tests {
     #[tokio::test]
     async fn callback_replay_is_counted_without_recording_request_credentials() {
         let service = Service::new(&oidc_config(), vec![]).unwrap();
-        let callback = query_url(
-            "/auth/oidc/callback",
-            &[("state", &"a".repeat(43)), ("code", "private-provider-code")],
-        );
+        let callback =
+            query_url("/auth/oidc/callback", &[("state", &"a".repeat(43)), ("code", "private-provider-code")]);
         let response = get(&service, &callback, &[("cookie", "__Host-gm_oidc=private-cookie")]).await;
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
         assert_eq!(location(&response), "/login?error=failed");
@@ -953,13 +928,7 @@ mod tests {
             let first = sign_in("198.51.100.7", None).await.expect("first sign-in");
             let issued = first.headers().get_all(header::SET_COOKIE).iter().next_back();
             let issued = issued.unwrap().to_str().unwrap();
-            let parts = [
-                "__Host-gm_device=",
-                "; Max-Age=259199",
-                "; Secure",
-                "; SameSite=Strict",
-                "; HttpOnly",
-            ];
+            let parts = ["__Host-gm_device=", "; Max-Age=259199", "; Secure", "; SameSite=Strict", "; HttpOnly"];
             let attributes = parts.iter().all(|part| issued.contains(part));
             assert!(issued.starts_with(parts[0]) && attributes, "{issued}");
             let device = set_cookie_value(&first, "__Host-gm_device");

@@ -28,11 +28,7 @@ struct Harness {
 
 impl Harness {
     async fn start(duration: Duration) -> Self {
-        Self::start_config(Config {
-            max_operation_duration: duration,
-            ..Config::default()
-        })
-        .await
+        Self::start_config(Config { max_operation_duration: duration, ..Config::default() }).await
     }
 
     async fn start_config(config: Config) -> Self {
@@ -49,13 +45,7 @@ impl Harness {
             .await
             .unwrap();
         let driver = tokio::spawn(connection);
-        Self {
-            address,
-            connector,
-            client,
-            driver,
-            server,
-        }
+        Self { address, connector, client, driver, server }
     }
 
     async fn connect_from(&self, source: [u8; 4]) -> SendRequest<Bytes> {
@@ -379,15 +369,10 @@ async fn admitted_work_keeps_leftover_credit_and_unacknowledged_shutdown_does_no
     .await
     .expect("the server never sent its shutdown PING");
     let download = held_download(&mut peer, 11, 1).await;
-    assert_eq!(
-        download, DOWNLOAD_BYTES,
-        "the shutdown grace cut a download racing its GOAWAY"
-    );
+    assert_eq!(download, DOWNLOAD_BYTES, "the shutdown grace cut a download racing its GOAWAY");
     advance_clock(Duration::from_secs(5)).await;
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while next_frame(&mut peer).await.is_ok() {}
-    })
-    .await
-    .expect("an unacknowledged shutdown kept the upload's credit alive");
+    tokio::time::timeout(Duration::from_secs(2), async { while next_frame(&mut peer).await.is_ok() {} })
+        .await
+        .expect("an unacknowledged shutdown kept the upload's credit alive");
     harness.close().await;
 }

@@ -24,11 +24,7 @@ impl Pool {
                 Ok(handle)
             })
             .collect::<std::io::Result<_>>()?;
-        Ok(Self {
-            runtimes,
-            turn: AtomicUsize::new(0),
-            _running: running,
-        })
+        Ok(Self { runtimes, turn: AtomicUsize::new(0), _running: running })
     }
 
     /// The runtimes in turn, or the caller's when the pool has none.

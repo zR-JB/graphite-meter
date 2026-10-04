@@ -152,10 +152,7 @@ impl HttpServer {
             .memory
             .lease(bytes)
             .ok_or("server memory budget cannot cover QUIC endpoint buffers")?;
-        let socket = Box::new(BudgetedSocket {
-            socket,
-            lease: Arc::new(lease),
-        });
+        let socket = Box::new(BudgetedSocket { socket, lease: Arc::new(lease) });
         let endpoint = noq::Endpoint::new_with_abstract_socket(endpoint_config, Some(config.clone()), socket, runtime)?;
         Ok(QuicEndpoint {
             endpoint,
@@ -247,10 +244,8 @@ impl HttpServer {
         };
         self.stopping.send_replace(true);
         let drain_deadline = tokio::time::Instant::now() + SHUTDOWN_GRACE;
-        let _ = tokio::time::timeout_at(drain_deadline, async {
-            while connections.join_next().await.is_some() {}
-        })
-        .await;
+        let _ =
+            tokio::time::timeout_at(drain_deadline, async { while connections.join_next().await.is_some() {} }).await;
         quic.endpoint.close(Code::H3_NO_ERROR.into(), b"");
         connections.shutdown().await;
         let _ = tokio::time::timeout_at(drain_deadline, quic.endpoint.wait_idle()).await;
@@ -347,11 +342,7 @@ fn bind_udp(address: SocketAddr, sockets: usize) -> Result<Udp, ServerError> {
         .ok_or("UDP socket buffer size overflow")?;
     let runtime = noq::default_runtime().ok_or("no async runtime for QUIC")?;
     let socket = runtime.wrap_udp_socket(socket)?;
-    Ok(Udp {
-        socket,
-        runtime,
-        kernel_bytes,
-    })
+    Ok(Udp { socket, runtime, kernel_bytes })
 }
 
 #[derive(Debug)]
@@ -478,11 +469,7 @@ struct CreditState {
 
 impl ReceiveCredit {
     fn new(quic: noq::Connection, budget: Arc<ConnectionBudget>) -> Self {
-        Self(Arc::new(CreditState {
-            quic,
-            budget,
-            work: AdmittedWork::new(),
-        }))
+        Self(Arc::new(CreditState { quic, budget, work: AdmittedWork::new() }))
     }
 
     pub(super) fn quic(&self) -> &noq::Connection {
@@ -603,9 +590,7 @@ mod tests {
     fn tls_offering(alpn: Vec<Vec<u8>>) -> (Arc<rustls::ServerConfig>, noq::ClientConfig) {
         let (tls, mut client) = crate::test_tls::configs("localhost", &[&rustls::version::TLS13], &[b"h3"]).unwrap();
         client.alpn_protocols = alpn;
-        let client = noq::ClientConfig::new(Arc::new(
-            noq::crypto::rustls::QuicClientConfig::try_from(client).unwrap(),
-        ));
+        let client = noq::ClientConfig::new(Arc::new(noq::crypto::rustls::QuicClientConfig::try_from(client).unwrap()));
         (Arc::new(tls), client)
     }
 
@@ -708,10 +693,7 @@ mod tests {
     }
 
     fn serve(server: &Arc<HttpServer>, tls: Arc<rustls::ServerConfig>) -> Served {
-        serve_on(
-            server,
-            server.quic_endpoint(tls, "127.0.0.1:0".parse().unwrap()).unwrap(),
-        )
+        serve_on(server, server.quic_endpoint(tls, "127.0.0.1:0".parse().unwrap()).unwrap())
     }
 
     fn serve_on(server: &Arc<HttpServer>, quic: QuicEndpoint) -> Served {
@@ -806,14 +788,12 @@ mod tests {
         client.set_default_client_config(client_config);
         let mut connections = Vec::new();
         for _ in 0..4 {
-            let (peer, accepted) = tokio::join!(
-                client.connect(endpoint.local_addr().unwrap(), "localhost").unwrap(),
-                async {
+            let (peer, accepted) =
+                tokio::join!(client.connect(endpoint.local_addr().unwrap(), "localhost").unwrap(), async {
                     let incoming = endpoint.endpoint.accept().await.unwrap();
                     let (connecting, budget) = endpoint.accept(incoming, server.memory.lease(floor).unwrap()).unwrap();
                     (connecting.await.unwrap(), budget)
-                }
-            );
+                });
             connections.push((peer.unwrap(), accepted));
         }
         assert_eq!(server.memory.available(), 0);
@@ -844,10 +824,7 @@ mod tests {
             )
             .unwrap();
         let memory = MemoryBudget::new(64 * 1024);
-        let socket = BudgetedSocket {
-            socket,
-            lease: Arc::new(memory.lease(64 * 1024).unwrap()),
-        };
+        let socket = BudgetedSocket { socket, lease: Arc::new(memory.lease(64 * 1024).unwrap()) };
         let address = socket.local_addr().unwrap();
         let mut sender = socket.create_sender();
         drop(socket);
@@ -885,10 +862,10 @@ mod tests {
         let client = client();
         client.set_default_client_config(client_config);
         within(5, async {
-            let (client, server) = tokio::join!(
-                client.connect(server.local_addr().unwrap(), "localhost").unwrap(),
-                async { server.accept().await.unwrap().await.unwrap() },
-            );
+            let (client, server) =
+                tokio::join!(client.connect(server.local_addr().unwrap(), "localhost").unwrap(), async {
+                    server.accept().await.unwrap().await.unwrap()
+                },);
             let client = client.unwrap();
             let (mut request, mut response) = client.open_bi().await.unwrap();
             request.write_all(b"ping").await.unwrap();
@@ -910,10 +887,7 @@ mod tests {
                 tokio::time::resume();
                 window.update(&server, &budget);
                 if sample < 3 {
-                    assert_eq!(
-                        window.limit, MAX_SEND_WINDOW,
-                        "one quiet sample must not shrink an active window"
-                    );
+                    assert_eq!(window.limit, MAX_SEND_WINDOW, "one quiet sample must not shrink an active window");
                 }
             }
             assert_eq!(window.limit, QUIC_MIN_SEND_WINDOW);
@@ -978,10 +952,7 @@ mod tests {
             let silent = settled(&server.memory, &[&peer]).await;
             assert_eq!(fill(&peer).await, QUIC_RECEIVE_WINDOW_FLOOR as usize);
             let idle = settled(&server.memory, &[&peer]).await;
-            assert!(
-                silent - idle <= 3 * QUIC_RECEIVE_WINDOW_FLOOR as usize,
-                "unadmitted reassembly"
-            );
+            assert!(silent - idle <= 3 * QUIC_RECEIVE_WINDOW_FLOOR as usize, "unadmitted reassembly");
             assert!(credit.fund(&clients), "no grant without pressure");
             let charged = idle - server.memory.available();
             assert_eq!(charged, QUIC_CREDIT_BYTES, "grant charged when made");
@@ -1446,10 +1417,7 @@ mod tests {
         within(10, async {
             let (mut tls, mut client_tls) =
                 crate::test_tls::configs("localhost", &[&rustls::version::TLS13], &[b"h2"]).unwrap();
-            let config = Config {
-                max_connections_per_client: 128,
-                ..Config::default()
-            };
+            let config = Config { max_connections_per_client: 128, ..Config::default() };
             let floor = connection_floor(0) + noq_floor(&config.limits).unwrap();
             let server = HttpServer::with_memory(config.validated().unwrap(), 8 * (H2_FLOOR_BYTES + floor)).unwrap();
             let server = Arc::new(server);
@@ -1480,10 +1448,7 @@ mod tests {
             }
             link.inject(crate::test_link::Fault::None);
             tls.alpn_protocols = vec![b"h3".to_vec()];
-            let h3 = serve_on(
-                &server,
-                unbudgeted(&server, server.quic_config(Arc::new(tls), 1).unwrap()),
-            );
+            let h3 = serve_on(&server, unbudgeted(&server, server.quic_config(Arc::new(tls), 1).unwrap()));
             let connector = TlsConnector::from(Arc::new(client_tls.clone()));
             let tls_handshake = async || {
                 let socket = TcpStream::connect(address).await.unwrap();

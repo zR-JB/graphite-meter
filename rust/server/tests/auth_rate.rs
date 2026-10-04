@@ -12,12 +12,7 @@ fn address(number: u32) -> IpAddr {
 async fn address_limits_are_separate_and_expire_exactly_at_sixty_seconds() {
     let limiter = AttemptLimiter::default();
     let client = address(1);
-    let budgets = [
-        Budget::Password,
-        Budget::OidcExchange,
-        Budget::OidcStart,
-        Budget::BrowserApproval,
-    ];
+    let budgets = [Budget::Password, Budget::OidcExchange, Budget::OidcStart, Budget::BrowserApproval];
     for (budget, limit) in budgets.into_iter().zip([5, 10, 10, 10]) {
         for _ in 0..limit {
             assert!(limiter.allow(budget, client));

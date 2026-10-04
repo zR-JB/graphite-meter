@@ -166,11 +166,7 @@ impl Jwks {
                     ("OKP", Some("Ed25519")) => Material::Ed25519(bytes(key, "x").filter(|x| x.len() == 32)?),
                     _ => return None,
                 };
-                Some(Key {
-                    kid: text(key, "kid"),
-                    alg: text(key, "alg"),
-                    material,
-                })
+                Some(Key { kid: text(key, "kid"), alg: text(key, "alg"), material })
             })
             // Past the filters, so that keys no token can use cannot push out the signing key.
             .take(64)
@@ -232,10 +228,7 @@ pub(super) fn verify(token: &str, keys: &Jwks, allowed: &[Alg]) -> Result<Verifi
     if !candidates.any(|key| key.verifies(alg, message.as_bytes(), &signature)) {
         return Err(Reject::Signature);
     }
-    Ok(Verified {
-        alg,
-        payload: decode(payload)?,
-    })
+    Ok(Verified { alg, payload: decode(payload)? })
 }
 
 pub(super) struct IdClaims {
@@ -332,10 +325,7 @@ pub(super) fn id_token(verified: Verified, expected: &Expected<'_>) -> Result<Id
         Some(time) => {
             let time = go_number(time).ok_or(Reject::Claims)?;
             let float = time.as_f64().filter(|&time| time < i64::MAX as f64);
-            Ok(Some(go(time
-                .as_i64()
-                .or(float.map(|time| time as i64))
-                .unwrap_or(i64::MIN))))
+            Ok(Some(go(time.as_i64().or(float.map(|time| time as i64)).unwrap_or(i64::MIN))))
         }
     };
     let (expiry, not_before) = (time("exp")?.ok_or(Reject::Claims)?, time("nbf")?);

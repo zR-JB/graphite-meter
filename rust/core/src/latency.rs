@@ -94,10 +94,7 @@ impl LatencyAccumulator {
             ProbeOutcome::Timeout => self.timeouts += 1,
             ProbeOutcome::Unresolved => self.unresolved += 1,
             ProbeOutcome::SendFailure => self.send_failures += 1,
-            ProbeOutcome::Reply {
-                rtt_nanos,
-                handling_nanos,
-            } => {
+            ProbeOutcome::Reply { rtt_nanos, handling_nanos } => {
                 let Ok(rtt) = u64::try_from(rtt_nanos) else {
                     return None;
                 };
@@ -152,10 +149,7 @@ impl LatencyAccumulator {
             if self.count.is_multiple_of(2) {
                 p50 += (self.nth(self.count / 2 + 1) - p50) / 2;
             }
-            out.distribution = Some(Distribution {
-                p50,
-                p95: self.nth((95 * self.count).div_ceil(100)),
-            });
+            out.distribution = Some(Distribution { p50, p95: self.nth((95 * self.count).div_ceil(100)) });
         }
         out
     }

@@ -80,12 +80,11 @@ impl Signers {
             "ES256" => self.p256.sign(&self.rng, message.as_bytes()).unwrap().as_ref().to_vec(),
             "ES384" => self.p384.sign(&self.rng, message.as_bytes()).unwrap().as_ref().to_vec(),
             "EdDSA" => self.ed.sign(message.as_bytes()).as_ref().to_vec(),
-            "HS256" => ring::hmac::sign(
-                &ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &self.secret),
-                message.as_bytes(),
-            )
-            .as_ref()
-            .to_vec(),
+            "HS256" => {
+                ring::hmac::sign(&ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &self.secret), message.as_bytes())
+                    .as_ref()
+                    .to_vec()
+            }
             _ => Vec::new(),
         };
         format!("{message}.{}", B64.encode(signature))

@@ -73,33 +73,18 @@ pub struct Permit {
 
 impl Admission {
     pub fn new(limits: Limits) -> Self {
-        Self(Arc::new(Inner {
-            limits,
-            counts: Mutex::new(Counts::default()),
-        }))
+        Self(Arc::new(Inner { limits, counts: Mutex::new(Counts::default()) }))
     }
 
     /// Call after resolving the request or session client keys. Unmetered routes
     /// and CORS preflight do not acquire a permit.
     pub fn acquire(&self, session: bool, keys: &[String]) -> Result<Permit, Refusal> {
         let mut counts = lock(&self.0.counts);
-        let Counts {
-            stats,
-            requests_by_client,
-            sessions_by_client,
-        } = &mut *counts;
+        let Counts { stats, requests_by_client, sessions_by_client } = &mut *counts;
         let (held, limit, refused) = if session {
-            (
-                sessions_by_client,
-                self.0.limits.sessions_per_client,
-                &mut stats.sessions_refused_client,
-            )
+            (sessions_by_client, self.0.limits.sessions_per_client, &mut stats.sessions_refused_client)
         } else {
-            (
-                requests_by_client,
-                self.0.limits.operations_per_client,
-                &mut stats.refused_client,
-            )
+            (requests_by_client, self.0.limits.operations_per_client, &mut stats.refused_client)
         };
         // Match Go's refusal precedence: client exhaustion wins over global exhaustion.
         if held.full(keys, limit) {
@@ -120,11 +105,7 @@ impl Admission {
             stats.sessions += 1;
         }
         held.hold(keys);
-        Ok(Permit {
-            admission: self.clone(),
-            session,
-            clients: keys.to_vec(),
-        })
+        Ok(Permit { admission: self.clone(), session, clients: keys.to_vec() })
     }
 
     pub fn load(&self) -> (usize, usize) {
@@ -173,10 +154,7 @@ mod tests {
         assert_eq!(admission.acquire(false, &["a".into()]).err(), Some(Refusal::ClientFull));
         assert_eq!(admission.acquire(false, &["b".into()]).err(), Some(Refusal::GlobalFull));
         drop(request);
-        assert_eq!(
-            admission.acquire(true, &["b".into()]).err(),
-            Some(Refusal::SessionsFull)
-        );
+        assert_eq!(admission.acquire(true, &["b".into()]).err(), Some(Refusal::SessionsFull));
         assert_eq!(admission.acquire(true, &["a".into()]).err(), Some(Refusal::ClientFull));
         drop(session);
         assert_eq!(admission.load(), (0, 2));

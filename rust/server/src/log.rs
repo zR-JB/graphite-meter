@@ -66,11 +66,7 @@ fn utc(time: SystemTime) -> [u64; 6] {
     let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
     let month_index = (5 * day_of_year + 2) / 153;
     let day = day_of_year - (153 * month_index + 2) / 5 + 1;
-    let month = if month_index < 10 {
-        month_index + 3
-    } else {
-        month_index - 9
-    };
+    let month = if month_index < 10 { month_index + 3 } else { month_index - 9 };
     let year = year_of_era + era * 400 + u64::from(month <= 2);
     [year, month, day, seconds / 3600, seconds / 60 % 60, seconds % 60]
 }

@@ -106,11 +106,8 @@ async fn latency_peer(
                 }.to_string();
                 stream
                     .write_all(
-                        format!(
-                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                            body.len()
-                        )
-                        .as_bytes(),
+                        format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+                            .as_bytes(),
                     )
                     .await?;
                 Ok(())
@@ -133,9 +130,7 @@ async fn report_refuses_a_stage_longer_than_its_server_admits() -> Result<(), Er
         assert_eq!(output.status.code(), Some(1));
         let report = String::from_utf8(output.stderr)?;
         assert!(
-            report.contains(&format!(
-                "local peer allows stages up to {message}; shorten the latency stage"
-            )),
+            report.contains(&format!("local peer allows stages up to {message}; shorten the latency stage")),
             "{report}"
         );
     }
@@ -159,12 +154,7 @@ async fn an_empty_trust_store_fails_only_tls_connections() -> Result<(), Error> 
     let (origin, peer) = latency_peer(false, 0).await?;
     let cleartext = run(&origin).await??;
     peer.abort();
-    assert_eq!(
-        cleartext.status.code(),
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&cleartext.stderr)
-    );
+    assert_eq!(cleartext.status.code(), Some(0), "{}", String::from_utf8_lossy(&cleartext.stderr));
     let _ = graphite_meter_client::crypto::provider().install_default();
     let (certificate, key) = test_identity::generate_identity("localhost")?;
     let tls = rustls::ServerConfig::builder().with_no_client_auth().with_single_cert(
@@ -225,10 +215,7 @@ async fn sign_in_refused_after_measuring_ends_incomplete() -> Result<(), Error> 
     peer.abort();
     let report = String::from_utf8(output.stdout)?;
     assert_eq!(output.status.code(), Some(1), "{report}");
-    assert!(
-        report.starts_with("Graphite Meter  Incomplete  2 servers · "),
-        "{report}"
-    );
+    assert!(report.starts_with("Graphite Meter  Incomplete  2 servers · "), "{report}");
     assert!(report.contains("\ntwin peer · Download throughput · at 1."), "{report}");
     assert!(report.contains(" · Sign-in required\n"), "{report}");
     println!("{report}");
@@ -273,10 +260,7 @@ async fn report_signal_exit_codes_and_failure_keep_the_final_outcome() -> Result
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr)?;
-    assert!(
-        stderr.starts_with("graphite-meter-client: Test could not start: "),
-        "{stderr}"
-    );
+    assert!(stderr.starts_with("graphite-meter-client: Test could not start: "), "{stderr}");
     let (origin, peer) = latency_peer(true, 0).await?;
     peer.abort();
     let output = tokio::time::timeout(Duration::from_secs(5), client(&origin).output()).await??;
@@ -303,11 +287,7 @@ async fn terminal(origin: &str, mode: &str, answer: &str, stdin: &str) -> Result
         .args(["-c", include_str!("pty.py"), &port.to_string(), mode, answer, stdin])
         .output()
         .await?;
-    assert!(
-        output.status.success(),
-        "{mode}: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert!(output.status.success(), "{mode}: {}", String::from_utf8_lossy(&output.stderr));
     Ok(serde_json::from_slice(&output.stdout)?)
 }
 
@@ -329,11 +309,7 @@ async fn tui_quit_and_interrupt_exit_like_the_go_client() -> Result<(), Error> {
         ("confirmed-stop", 4, 1, true),
     ] {
         let target = if mode == "check-quit" { &silent_origin } else { &origin };
-        let stdin = if mode == "redirected-quit" {
-            "redirected"
-        } else {
-            "terminal"
-        };
+        let stdin = if mode == "redirected-quit" { "redirected" } else { "terminal" };
         let result = terminal(target, mode, "\x1b[?62c", stdin).await?;
         assert_eq!(result["step"], step);
         assert_eq!(result["code"], code);
@@ -347,11 +323,7 @@ async fn tui_quit_and_interrupt_exit_like_the_go_client() -> Result<(), Error> {
             .rsplit_once("\x1b[?1049l")
             .ok_or("the alternate screen stayed open")?;
         // The terminal gets the report in Go's colours.
-        assert_eq!(
-            unpainted(printed).contains("Graphite Meter  Stopped"),
-            report,
-            "{mode}: {printed:?}"
-        );
+        assert_eq!(unpainted(printed).contains("Graphite Meter  Stopped"), report, "{mode}: {printed:?}");
         assert_eq!(unpainted(printed) != printed, report, "{mode}: {printed:?}");
     }
     peer.abort();
@@ -366,17 +338,9 @@ async fn tui_asks_the_terminal_for_its_background_like_the_go_client() -> Result
     // The q in the unknown OSC would quit the TUI if the answers reached its keys. With stdin
     // redirected, the answer arrives on the terminal device, where the keys are read.
     for (answer, ink, stdin) in [
-        (
-            "\x1b]99;q\x07\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?62;22c",
-            "48;2;32;36;42m",
-            "terminal",
-        ),
+        ("\x1b]99;q\x07\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?62;22c", "48;2;32;36;42m", "terminal"),
         ("", "48;2;230;232;235m", "terminal"),
-        (
-            "\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?62;22c",
-            "48;2;32;36;42m",
-            "redirected",
-        ),
+        ("\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?62;22c", "48;2;32;36;42m", "redirected"),
     ] {
         let result = terminal(&silent_origin, "theme", answer, stdin).await?;
         let text = result["text"].as_str().unwrap();
@@ -434,11 +398,7 @@ async fn version_and_legal_act_as_go_reads_them() -> Result<(), Error> {
     ] {
         let output = flags(args).await?;
         assert_eq!(output.status.code(), legal.status.code(), "{args:?}");
-        assert_eq!(
-            (&output.stdout, &output.stderr),
-            (&legal.stdout, &legal.stderr),
-            "{args:?}"
-        );
+        assert_eq!((&output.stdout, &output.stderr), (&legal.stdout, &legal.stderr), "{args:?}");
     }
     for args in [&["-legal=false", "-version"][..], &["--legal=0", "-version"]] {
         assert_eq!(flags(args).await?.stdout, version.stdout, "{args:?}");

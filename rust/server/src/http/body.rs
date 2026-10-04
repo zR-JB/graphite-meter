@@ -29,11 +29,7 @@ enum Content {
     /// A document, in one frame.
     Bytes(Bytes),
     /// A download: `remaining` bytes of one immutable random block, repeated instead of allocated per write.
-    Download {
-        block: Bytes,
-        remaining: u64,
-        transfer: Option<Transfer>,
-    },
+    Download { block: Bytes, remaining: u64, transfer: Option<Transfer> },
     /// Upload progress records, until the upload completes.
     Progress(ProgressBody),
 }
@@ -46,10 +42,7 @@ impl From<Bytes> for ResponseBody {
 
 impl ResponseBody {
     fn new(content: Content) -> Self {
-        Self {
-            content,
-            operation: None,
-        }
+        Self { content, operation: None }
     }
 
     pub(super) fn empty() -> Self {
@@ -58,11 +51,7 @@ impl ResponseBody {
 
     /// A download's `remaining` bytes of `block`, which `transfer` meters.
     pub(super) fn download(block: Bytes, remaining: u64, transfer: Option<Transfer>) -> Self {
-        Self::new(Content::Download {
-            block,
-            remaining,
-            transfer,
-        })
+        Self::new(Content::Download { block, remaining, transfer })
     }
 
     pub(super) fn progress(progress: ProgressBody) -> Self {
@@ -105,11 +94,7 @@ impl Body for ResponseBody {
                 return frame;
             }
             Content::Bytes(bytes) => std::mem::take(bytes),
-            Content::Download {
-                block,
-                remaining,
-                transfer,
-            } => {
+            Content::Download { block, remaining, transfer } => {
                 let length = (*remaining).min(block.len() as u64) as usize;
                 *remaining -= length as u64;
                 if let Some(transfer) = transfer {
@@ -242,12 +227,7 @@ pub(super) struct UploadFunding {
 
 impl UploadFunding {
     pub(super) fn new(operations: Operations) -> Self {
-        Self {
-            operations,
-            clients: None,
-            retry_at: None,
-            funded: false,
-        }
+        Self { operations, clients: None, retry_at: None, funded: false }
     }
 
     /// While the upload is unfunded and `ready` holds, `grant` is asked with the keys the exchange's permit holds,

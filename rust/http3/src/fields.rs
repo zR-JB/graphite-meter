@@ -97,10 +97,7 @@ pub(crate) fn decode_request(section: &[u8], limit: u64) -> Result<Head<http::Re
             b":scheme" => set(&mut scheme, uri::Scheme::try_from(value)),
             b":authority" => set(&mut authority, uri::Authority::try_from(value)),
             b":path" => set(&mut path, uri::PathAndQuery::try_from(value)),
-            b":protocol" => set(
-                &mut protocol,
-                Ok::<_, ()>(matches!(value, b"webtransport" | b"webtransport-h3")),
-            ),
+            b":protocol" => set(&mut protocol, Ok::<_, ()>(matches!(value, b"webtransport" | b"webtransport-h3"))),
             _ if name.starts_with(b":") => Err(Invalid::Malformed),
             _ => return fields.regular(name, value),
         }?;
@@ -187,11 +184,7 @@ pub(crate) fn encode_request(
         (":path", uri.path_and_query().map_or("/", uri::PathAndQuery::as_str)),
         (":protocol", protocol.unwrap_or_default()),
     ];
-    encode(
-        &pseudo[..if protocol.is_some() { 5 } else { 4 }],
-        &request.headers,
-        limit,
-    )
+    encode(&pseudo[..if protocol.is_some() { 5 } else { 4 }], &request.headers, limit)
 }
 
 pub(crate) fn encode_response(response: &http::response::Parts, limit: Option<u64>) -> Result<Vec<u8>, Invalid> {
@@ -221,19 +214,12 @@ fn encode(pseudo: &[(&str, &str)], headers: &HeaderMap, limit: Option<u64>) -> R
 mod tests {
     use super::*;
 
-    const GET: [(&str, &str); 4] = [
-        (":method", "GET"),
-        (":scheme", "https"),
-        (":authority", "meter.example"),
-        (":path", "/"),
-    ];
+    const GET: [(&str, &str); 4] =
+        [(":method", "GET"), (":scheme", "https"), (":authority", "meter.example"), (":path", "/")];
 
     fn section(fields: &[(&str, &str)]) -> Vec<u8> {
         let mut section = Vec::new();
-        qpack::encode(
-            fields.iter().map(|(name, value)| (name.as_bytes(), value.as_bytes())),
-            &mut section,
-        );
+        qpack::encode(fields.iter().map(|(name, value)| (name.as_bytes(), value.as_bytes())), &mut section);
         section
     }
 
@@ -247,16 +233,9 @@ mod tests {
 
     #[test]
     fn requests_become_absolute_http3_requests() {
-        let head = decode_request(
-            &section(&with(&[("content-length", "7"), ("content-length", "7")])),
-            4096,
-        )
-        .unwrap();
+        let head = decode_request(&section(&with(&[("content-length", "7"), ("content-length", "7")])), 4096).unwrap();
         assert_eq!(head.message.uri(), "https://meter.example/");
-        assert_eq!(
-            (head.message.version(), head.content_length),
-            (Version::HTTP_3, Some(7))
-        );
+        assert_eq!((head.message.version(), head.content_length), (Version::HTTP_3, Some(7)));
         assert_eq!(
             head.size,
             GET.iter()
@@ -274,20 +253,10 @@ mod tests {
             ];
             assert_eq!(request(&connect).unwrap().method(), Method::CONNECT);
         }
-        let host = [
-            (":method", "GET"),
-            (":scheme", "https"),
-            (":path", "/p"),
-            ("host", "meter.example"),
-        ];
+        let host = [(":method", "GET"), (":scheme", "https"), (":path", "/p"), ("host", "meter.example")];
         assert_eq!(request(&host).unwrap().uri(), "https://meter.example/p");
         assert!(request(&with(&[("host", "meter.example"), ("te", "trailers")])).is_ok());
-        let options = [
-            (":method", "OPTIONS"),
-            (":scheme", "https"),
-            (":authority", "a"),
-            (":path", "*"),
-        ];
+        let options = [(":method", "OPTIONS"), (":scheme", "https"), (":authority", "a"), (":path", "*")];
         assert!(request(&options).is_ok());
     }
 
@@ -311,22 +280,11 @@ mod tests {
             (response.status(), response.headers()["x"].as_bytes()),
             (StatusCode::NO_CONTENT, &b"y"[..])
         );
-        for fields in [
-            &[("x", "y")][..],
-            &[(":status", "2000")],
-            &[(":status", "200"), (":path", "/")],
-        ] {
-            assert_eq!(
-                decode_response(&section(fields), 4096).err(),
-                Some(Invalid::Malformed),
-                "{fields:?}"
-            );
+        for fields in [&[("x", "y")][..], &[(":status", "2000")], &[(":status", "200"), (":path", "/")]] {
+            assert_eq!(decode_response(&section(fields), 4096).err(), Some(Invalid::Malformed), "{fields:?}");
         }
         assert_eq!(check_trailers(&section(&[("x-checksum", "1")]), 4096), Ok(()));
-        assert_eq!(
-            check_trailers(&section(&[(":status", "200")]), 4096),
-            Err(Invalid::Malformed)
-        );
+        assert_eq!(check_trailers(&section(&[(":status", "200")]), 4096), Err(Invalid::Malformed));
         assert_eq!(check_trailers(&section(&[("x", "y")]), 33), Err(Invalid::TooLarge));
     }
 

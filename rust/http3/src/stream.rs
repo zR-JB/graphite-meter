@@ -24,10 +24,7 @@ pub struct RequestStream {
 
 /// Charges for a request stream's two halves, so each can drop on its own.
 pub(crate) fn charges(budget: &Budget) -> Option<(Charge, Charge)> {
-    Some((
-        Charge::new(budget, size_of::<SendHalf>())?,
-        Charge::new(budget, size_of::<RecvHalf>())?,
-    ))
+    Some((Charge::new(budget, size_of::<SendHalf>())?, Charge::new(budget, size_of::<RecvHalf>())?))
 }
 
 impl RequestStream {
@@ -195,10 +192,7 @@ impl Drop for RecvHalf {
         // finished stream makes some clients report a reset after a complete response.
         if !self.done && self.input.is_empty() && self.message.finish().is_ok() {
             let mut cx = Context::from_waker(Waker::noop());
-            self.done = matches!(
-                pin!(self.stream.read_chunk(usize::MAX)).poll(&mut cx),
-                Poll::Ready(Ok(None))
-            );
+            self.done = matches!(pin!(self.stream.read_chunk(usize::MAX)).poll(&mut cx), Poll::Ready(Ok(None)));
         }
         self.stop(match self.shared.role {
             Role::Server => Code::H3_NO_ERROR,

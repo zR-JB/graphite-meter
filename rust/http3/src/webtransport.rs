@@ -119,12 +119,7 @@ impl Registry {
         let (streams, stream_receiver) = mpsc::channel(STREAM_QUEUE);
         let (datagrams, datagram_receiver) = mpsc::channel(DATAGRAM_QUEUE);
         let close = self.shutdown.clone();
-        self.active = Some(Active {
-            id,
-            streams,
-            datagrams,
-            close,
-        });
+        self.active = Some(Active { id, streams, datagrams, close });
         self.carried = true;
         for (deadline, session, stream) in std::mem::take(&mut self.pending) {
             if session == id {
@@ -187,13 +182,7 @@ pub struct RecvStream {
 
 impl RecvStream {
     pub(crate) fn new(stream: noq::RecvStream, first: Bytes, charge: Charge) -> Self {
-        Self {
-            stream,
-            first,
-            done: false,
-            session: None,
-            _charge: charge,
-        }
+        Self { stream, first, done: false, session: None, _charge: charge }
     }
 
     /// The next chunk, `None` at the stream's end.
@@ -253,11 +242,7 @@ impl SendStream {
             deadline: Instant::now(),
             _charge: None,
         };
-        let mut opened = Self {
-            lane: Some(lane),
-            shared: shared.clone(),
-            session,
-        };
+        let mut opened = Self { lane: Some(lane), shared: shared.clone(), session };
         let lane = opened.lane.as_mut().expect("open stream");
         while lane.written < lane.header_end {
             let header = &lane.header[usize::from(lane.written)..usize::from(lane.header_end)];
@@ -520,11 +505,7 @@ pub struct PreparedDatagram<'a> {
 impl PreparedDatagram<'_> {
     /// Sends the payload once the queue has room, refused if the session ends while waiting.
     pub async fn send_wait(&mut self) -> Result<(), Error> {
-        unless_ended(
-            Some(&mut self.ended),
-            self.session.shared.quic.send_datagram_wait(self.bytes.clone()),
-        )
-        .await??;
+        unless_ended(Some(&mut self.ended), self.session.shared.quic.send_datagram_wait(self.bytes.clone())).await??;
         Ok(())
     }
 }
@@ -607,10 +588,9 @@ impl Session {
         };
         if dialect == Dialect::Draft02 {
             // Draft 02 requires it; Go omits it.
-            response.headers_mut().insert(
-                "sec-webtransport-http3-draft",
-                http::HeaderValue::from_static("draft02"),
-            );
+            response
+                .headers_mut()
+                .insert("sec-webtransport-http3-draft", http::HeaderValue::from_static("draft02"));
         }
         // The driver writes it before any capsule.
         stream.send.queue_response(response)?;

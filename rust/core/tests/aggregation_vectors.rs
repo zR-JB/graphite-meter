@@ -94,11 +94,7 @@ fn rates_divide_by_seconds_as_go_durations_count_them() {
     let expected = f64::from_bits(0x41c3_de43_53c7_1c71);
     let (bytes, nanos) = (1_000_000_000, 1_500_000_007);
     let receiver = |bytes, nanos| {
-        let snapshot = ReceiverSnapshot {
-            id: "r".into(),
-            bytes,
-            nanos,
-        };
+        let snapshot = ReceiverSnapshot { id: "r".into(), bytes, nanos };
         [("a".to_owned(), snapshot)].into()
     };
     for (stage, direction) in [(Stage::Download, Direction::Down), (Stage::Upload, Direction::Up)] {
@@ -112,11 +108,7 @@ fn rates_divide_by_seconds_as_go_durations_count_them() {
                 ..Boundary::default()
             });
         }
-        assert_eq!(
-            engine.result(direction).mean_bytes_per_sec,
-            Some(expected),
-            "{direction:?}"
-        );
+        assert_eq!(engine.result(direction).mean_bytes_per_sec, Some(expected), "{direction:?}");
     }
 }
 

@@ -35,9 +35,5 @@ pub async fn serve(server: Arc<HttpServer>, kind: NativeKind, tls: Option<Arc<ru
     let task = tokio::spawn(server.serve(kind, listener, tls, async {
         let _ = stopped.await;
     }));
-    NativeServer {
-        address,
-        stop: Some(stop),
-        task,
-    }
+    NativeServer { address, stop: Some(stop), task }
 }

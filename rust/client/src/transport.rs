@@ -198,9 +198,7 @@ impl Transport {
     }
 
     pub(crate) async fn isolated_connection(&self) -> Result<Arc<Self>, Error> {
-        Ok(Arc::new(
-            Self::connect(self.http.clone(), &self.origin, self.protocol).await?,
-        ))
+        Ok(Arc::new(Self::connect(self.http.clone(), &self.origin, self.protocol).await?))
     }
 
     /// This HTTP/1.1 or HTTP/2 target for upload lanes, over connections of their own.
@@ -229,13 +227,7 @@ impl Transport {
             Protocol::Http3 => Some(Mutex::new(Arc::new(dial_h3(&home, &origin, &http).await?))),
             _ => None,
         };
-        Ok(Self {
-            http,
-            origin,
-            protocol,
-            h3,
-            home,
-        })
+        Ok(Self { http, origin, protocol, h3, home })
     }
 
     pub async fn webtransport_slot(
@@ -308,11 +300,7 @@ impl Transport {
             })
         })
         .await??;
-        Ok(Body {
-            inner,
-            deadline,
-            remaining: limit,
-        })
+        Ok(Body { inner, deadline, remaining: limit })
     }
 
     /// Stream a finite request without materializing its body. No sender counts

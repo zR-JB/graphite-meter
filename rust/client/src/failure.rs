@@ -35,20 +35,15 @@ pub enum Failure {
 impl fmt::Display for Failure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Http {
-                status,
-                refusal: Some(refusal),
-                ..
-            } => write!(formatter, "{} (HTTP {status})", refusal.message()),
+            Self::Http { status, refusal: Some(refusal), .. } => {
+                write!(formatter, "{} (HTTP {status})", refusal.message())
+            }
             Self::Http { status, from, .. } => write!(formatter, "HTTP {status} from {from}"),
             Self::SignIn { login_url, .. } if login_url.is_empty() => formatter.write_str("authentication required"),
             Self::SignIn { login_url, .. } => write!(formatter, "authentication required at {login_url}"),
             Self::ApprovalExpired => formatter.write_str("browser approval timed out"),
             Self::ApprovalUnreachable(error) => {
-                write!(
-                    formatter,
-                    "server unreachable while waiting for browser approval: {error}"
-                )
+                write!(formatter, "server unreachable while waiting for browser approval: {error}")
             }
             Self::Lane(ending) => formatter.write_str(ending.reason()),
             Self::Measurement(reason) => formatter.write_str(reason.label()),
@@ -115,9 +110,7 @@ pub(crate) fn source(target: &str) -> String {
 /// The wait a busy answer behind `error` asked for, if the server was busy.
 pub(crate) fn busy_wait(error: &(dyn std::error::Error + 'static)) -> Option<Duration> {
     causes(error).find_map(|cause| match cause.downcast_ref() {
-        Some(&Failure::Http {
-            status, retry_after, ..
-        }) if busy(status) => Some(retry_after),
+        Some(&Failure::Http { status, retry_after, .. }) if busy(status) => Some(retry_after),
         _ => None,
     })
 }
@@ -153,9 +146,7 @@ pub fn reason(error: &(dyn std::error::Error + 'static), preparing: bool) -> Fai
         match error.downcast_ref() {
             Some(Failure::Measurement(reason)) => return *reason,
             Some(Failure::SignIn { .. } | Failure::Lane(LaneEnding::Revoked)) => return FailureReason::SignInRequired,
-            Some(Failure::Http {
-                refusal: Some(refusal), ..
-            }) => return refusal.failure_reason(),
+            Some(Failure::Http { refusal: Some(refusal), .. }) => return refusal.failure_reason(),
             Some(&Failure::Http { status, .. }) if busy(status) => return FailureReason::ServerBusy,
             Some(Failure::Http { .. }) => return FailureReason::ProtocolError,
             Some(Failure::Lane(LaneEnding::Shutdown | LaneEnding::Finished)) => return FailureReason::ConnectionLost,

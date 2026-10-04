@@ -161,10 +161,7 @@ async fn automatic_latency_uses_websocket_when_advertised_quic_cannot_reply() ->
         }
     });
     let http = Http::new(false)?;
-    let config = Config {
-        stages: vec![Stage::Latency],
-        ..download(origin)
-    };
+    let config = Config { stages: vec![Stage::Latency], ..download(origin) };
     let (snapshots, _) = watch::channel(Snapshot::default());
     let prepared = check(&config, &http, &snapshots).await?;
     let latency = prepared.servers[0].latency.as_ref().ok_or("no latency path")?;
@@ -208,10 +205,7 @@ async fn negotiated_protocol_behind_a_reverse_proxy_is_the_clients_own() -> Resu
             });
         }
     });
-    let config = Config {
-        insecure: true,
-        ..download(origin)
-    };
+    let config = Config { insecure: true, ..download(origin) };
     let (snapshots, _) = watch::channel(Snapshot::default());
     let prepared = check(&config, &Http::new(true)?, &snapshots).await;
     proxy.abort();

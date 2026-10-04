@@ -73,11 +73,7 @@ impl Shares {
 
 pub fn resolve(peer: SocketAddr, headers: &HeaderMap, trusted: &[IpNet]) -> ClientAddress {
     let peer = peer.ip().to_canonical();
-    let mut client = ClientAddress {
-        addr: peer,
-        source: ClientIpSource::Socket,
-        usable: true,
-    };
+    let mut client = ClientAddress { addr: peer, source: ClientIpSource::Socket, usable: true };
     if !trusted.iter().any(|prefix| prefix.contains(&peer)) {
         return client;
     }

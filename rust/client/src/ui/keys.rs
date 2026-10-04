@@ -149,11 +149,7 @@ impl Ui {
             if !spans.is_empty() {
                 spans.push(span(" • ", self.theme.border));
             }
-            spans.extend([
-                span(binding.key, self.theme.text),
-                Span::raw(" "),
-                span(binding.desc, self.theme.muted),
-            ]);
+            spans.extend([span(binding.key, self.theme.text), Span::raw(" "), span(binding.desc, self.theme.muted)]);
         }
         Line::from(spans)
     }

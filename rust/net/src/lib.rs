@@ -41,11 +41,7 @@ where
     let stream: Box<dyn Stream> = match proxy.route(target) {
         None => Box::new(tcp(&target.host, port).await?),
         Some(Err(unusable)) => return Err(io::Error::new(io::ErrorKind::InvalidInput, unusable.clone())),
-        Some(Ok(Upstream {
-            origin,
-            socks: Some(socks),
-            ..
-        })) => {
+        Some(Ok(Upstream { origin, socks: Some(socks), .. })) => {
             let mut tcp = tcp(&origin.host, origin.port_number()).await?;
             socks.connect(&mut tcp, &target.host, port).await?;
             Box::new(tcp)
@@ -87,12 +83,7 @@ where
         }
         None => (stream, None),
     };
-    Ok(Connection {
-        stream,
-        alpn,
-        absolute_form,
-        proxy_authorization,
-    })
+    Ok(Connection { stream, alpn, absolute_form, proxy_authorization })
 }
 
 fn server_name(host: &str) -> io::Result<ServerName<'static>> {
@@ -423,11 +414,7 @@ impl Proxy {
 }
 
 fn upstream(raw: &str) -> Result<Upstream, &'static str> {
-    let raw = if raw.contains("://") {
-        raw.to_owned()
-    } else {
-        format!("http://{raw}")
-    };
+    let raw = if raw.contains("://") { raw.to_owned() } else { format!("http://{raw}") };
     let (scheme, rest) = raw.split_once("://").ok_or("invalid proxy URL")?;
     let authority = rest.split('/').next().unwrap_or_default();
     let (credentials, host) = match authority.rsplit_once('@') {
@@ -447,22 +434,14 @@ fn upstream(raw: &str) -> Result<Upstream, &'static str> {
         origin.port.get_or_insert_with(|| "1080".into());
         let decode = |part| percent_encoding::percent_decode_str(part).collect();
         let user = credentials.map(|(user, password)| (decode(user), decode(password)));
-        return Ok(Upstream {
-            origin,
-            authorization: None,
-            socks: Some(Socks { user }),
-        });
+        return Ok(Upstream { origin, authorization: None, socks: Some(Socks { user }) });
     }
     let decode = |part| percent_encoding::percent_decode_str(part).decode_utf8_lossy();
     let authorization = credentials.map(|(user, password)| {
         let credentials = format!("{}:{}", decode(user), decode(password));
         format!("Basic {}", STANDARD.encode(credentials))
     });
-    Ok(Upstream {
-        origin,
-        authorization,
-        socks: None,
-    })
+    Ok(Upstream { origin, authorization, socks: None })
 }
 
 /// One NO_PROXY entry as Go reads it; one Go keeps as a host name that no target matches is left out.

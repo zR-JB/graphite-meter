@@ -47,10 +47,7 @@ pub fn udp_socket_with(address: SocketAddr, sockets: usize) -> io::Result<(UdpSo
         #[cfg(target_os = "linux")]
         socket.set_reuse_port(true)?;
         #[cfg(not(target_os = "linux"))]
-        return Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "SO_REUSEPORT balances UDP only on Linux",
-        ));
+        return Err(io::Error::new(io::ErrorKind::Unsupported, "SO_REUSEPORT balances UDP only on Linux"));
     }
     socket.bind(&address.into())?;
     Ok((socket.into(), warning))
@@ -103,9 +100,9 @@ fn shortfall(name: &str, before: usize, after: usize, bytes: usize) -> Option<St
     let (wanted, got) = (bytes / 1024, after / 1024);
     match after {
         _ if after >= bytes => None,
-        _ if after == before => Some(format!(
-            "failed to increase {name} buffer size (wanted: {wanted} kiB, got {got} kiB)"
-        )),
+        _ if after == before => {
+            Some(format!("failed to increase {name} buffer size (wanted: {wanted} kiB, got {got} kiB)"))
+        }
         _ => Some(format!(
             "failed to sufficiently increase {name} buffer size (was: {} kiB, wanted: {wanted} kiB, got: {got} kiB)",
             before / 1024
@@ -133,11 +130,7 @@ mod tests {
             Some("failed to increase send buffer size (wanted: 3584 kiB, got 208 kiB)")
         );
         assert_eq!(shortfall("receive", 212_992, BUFFER_BYTES, BUFFER_BYTES), None);
-        assert_eq!(
-            [1, 2, 16].map(buffer_bytes),
-            [7 << 20, 7 << 19, 2 << 20],
-            "a floor past a few sockets"
-        );
+        assert_eq!([1, 2, 16].map(buffer_bytes), [7 << 20, 7 << 19, 2 << 20], "a floor past a few sockets");
     }
 
     #[test]

@@ -14,10 +14,7 @@ fn key(name: &str) -> KeyEvent {
         _ => (KeyModifiers::NONE, name),
     };
     let named = NAMED.iter().find(|(_, named)| *named == base);
-    KeyEvent::new(
-        named.map_or(KeyCode::Char(base.chars().next().unwrap()), |(code, _)| *code),
-        modifiers,
-    )
+    KeyEvent::new(named.map_or(KeyCode::Char(base.chars().next().unwrap()), |(code, _)| *code), modifiers)
 }
 
 fn press(ui: &mut Ui, commands: &mpsc::Sender<Command>, names: &[&str]) -> bool {
@@ -89,10 +86,7 @@ fn running(ids: &[&str]) -> Ui {
     let mut ui = setup();
     ui.config.stages.push(Stage::Bidirectional);
     (ui.live, ui.run) = (true, run::Run::new(ui.config.clone()));
-    let located = |id: &&str| ServerSummary {
-        location: "Somewhere".into(),
-        ..server(id)
-    };
+    let located = |id: &&str| ServerSummary { location: "Somewhere".into(), ..server(id) };
     ui.update(Snapshot {
         phase: Phase::Preparing,
         servers: ids.iter().map(located).collect(),
@@ -117,9 +111,7 @@ fn stage(ui: &mut Ui, stage: Stage, phase: Phase) {
 
 /// The run fails with an error.
 fn fail(ui: &mut Ui, error: &str) {
-    step(ui, |snapshot| {
-        (snapshot.phase, snapshot.error) = (Phase::Failed, Some(error.into()))
-    });
+    step(ui, |snapshot| (snapshot.phase, snapshot.error) = (Phase::Failed, Some(error.into())));
 }
 
 /// A server's lost connection in a stage's throughput.
@@ -196,10 +188,7 @@ fn sign_in_opens_cancels_and_expires_as_go_does() {
     sign_in(&mut ui, Phase::Checking, None);
     assert_eq!(ui.notice, "Signed in. Checking the authenticated paths…");
     // Escaping a sign-in returns to setup with the cancel notice, in setup or in a run.
-    for (live, phase, ended) in [
-        (false, Phase::Checking, Phase::Setup),
-        (true, Phase::Preparing, Phase::Cancelled),
-    ] {
+    for (live, phase, ended) in [(false, Phase::Checking, Phase::Setup), (true, Phase::Preparing, Phase::Cancelled)] {
         let mut ui = setup();
         ui.live = live;
         sign_in(&mut ui, phase, Some("782411"));
@@ -259,13 +248,7 @@ fn remote_errors_cannot_write_terminal_controls() {
         snapshot.servers[1].name = remote.into();
     });
     multi.popup = Popup::Details;
-    let views = [
-        screen(&mut failed),
-        screen(&mut partial),
-        screen(&mut run),
-        report,
-        screen(&mut multi),
-    ];
+    let views = [screen(&mut failed), screen(&mut partial), screen(&mut run), report, screen(&mut multi)];
     for (index, view) in views.into_iter().enumerate() {
         assert!(index > 3 || view.contains("closed"), "{view}");
         assert!(!view.contains(['\x07', '\r', '\u{9b}']), "{view:?}");

@@ -20,10 +20,7 @@ struct WorkState {
 
 impl AdmittedWork {
     pub(super) fn new() -> Self {
-        Self(Arc::new(Mutex::new(WorkState {
-            running: 0,
-            idle_since: Instant::now(),
-        })))
+        Self(Arc::new(Mutex::new(WorkState { running: 0, idle_since: Instant::now() })))
     }
 
     pub(super) fn admit(&self) -> Admitted {

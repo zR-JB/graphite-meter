@@ -28,11 +28,8 @@ pub(crate) const SERVER: [(u64, u64); 6] = [
     (WT_ENABLED, 1),
     (WT_MAX_SESSIONS_DRAFT13, varint::MAX),
 ];
-pub(crate) const CLIENT: [(u64, u64); 3] = [
-    (MAX_FIELD_SECTION_SIZE, CLIENT_FIELD_SECTION),
-    (H3_DATAGRAM, 1),
-    (WT_ENABLED, 1),
-];
+pub(crate) const CLIENT: [(u64, u64); 3] =
+    [(MAX_FIELD_SECTION_SIZE, CLIENT_FIELD_SECTION), (H3_DATAGRAM, 1), (WT_ENABLED, 1)];
 
 /// A control stream's first bytes: its stream type, then the SETTINGS frame.
 pub(crate) fn control_stream(settings: &[(u64, u64)]) -> Vec<u8> {
@@ -168,11 +165,7 @@ mod tests {
         assert_eq!(kind, frame::SETTINGS);
         let payload = &stream[stream.len() - length as usize..];
         let mut reader = Reader::new(length)?;
-        let mut peer = if payload.is_empty() {
-            reader.read(&mut &payload[..])?
-        } else {
-            None
-        };
+        let mut peer = if payload.is_empty() { reader.read(&mut &payload[..])? } else { None };
         // One byte at a time, so every setting straddles reads.
         for byte in payload.chunks(1) {
             assert!(peer.is_none());
@@ -192,14 +185,7 @@ mod tests {
             (0x2b603742, 1),
             (GREASE, 1),
         ];
-        let firefox = [
-            (0x01, 65536),
-            (0x07, 20),
-            (0x2b603742, 1),
-            (0xffd277, 1),
-            (0x33, 1),
-            (0x08, 1),
-        ];
+        let firefox = [(0x01, 65536), (0x07, 20), (0x2b603742, 1), (0xffd277, 1), (0x33, 1), (0x08, 1)];
         let go_client = [(0x06, 10 << 20), (0x33, 1), (0x2c7cf000, 1)];
         for (settings, dialect) in [
             (&chromium[..], Dialect::Draft02),
@@ -213,10 +199,7 @@ mod tests {
             assert_eq!(peer.webtransport(false), None, "no datagram transport parameter");
         }
         let server = parse(&SERVER).unwrap();
-        assert_eq!(
-            (server.max_field_section_size, server.connect_protocol),
-            (Some(4096), true)
-        );
+        assert_eq!((server.max_field_section_size, server.connect_protocol), (Some(4096), true));
         assert_eq!(parse(&firefox).unwrap().max_field_section_size, None);
     }
 
@@ -241,19 +224,9 @@ mod tests {
             (&[(0x33, 0)], false, Ok(())),
             (&[(0xffd277, 1)], false, Ok(())),
         ] {
-            assert_eq!(
-                parse(settings).unwrap().check(datagram_frames),
-                checked,
-                "{settings:x?}"
-            );
+            assert_eq!(parse(settings).unwrap().check(datagram_frames), checked, "{settings:x?}");
         }
-        for invalid in [
-            &[(0x08, 2)][..],
-            &[(0x33, 2)],
-            &[(0x02, 0)],
-            &[(0x00, 0)],
-            &[(GREASE, 1), (GREASE, 2)],
-        ] {
+        for invalid in [&[(0x08, 2)][..], &[(0x33, 2)], &[(0x02, 0)], &[(0x00, 0)], &[(GREASE, 1), (GREASE, 2)]] {
             assert_eq!(parse(invalid), Err(Code::H3_SETTINGS_ERROR), "{invalid:x?}");
         }
         let many: Vec<_> = (0..=MAX_IDS as u64).map(|index| (0x21 + 0x1f * index, 0)).collect();
@@ -263,10 +236,7 @@ mod tests {
         let mut reader = Reader::new(3).unwrap();
         assert_eq!(
             reader.read(&mut &[0x06, 0x40, 0x00][..]),
-            Ok(Some(Peer {
-                max_field_section_size: Some(0),
-                ..Peer::default()
-            }))
+            Ok(Some(Peer { max_field_section_size: Some(0), ..Peer::default() }))
         );
         let mut reader = Reader::new(3).unwrap();
         assert_eq!(reader.read(&mut &[0x06, 0x80, 0x00][..]), Err(Code::H3_FRAME_ERROR));

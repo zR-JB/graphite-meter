@@ -68,12 +68,7 @@ impl Link {
                 relays.spawn(relay(client, server, one_way, faults.clone()));
             }
         });
-        Ok(Self {
-            address,
-            fault,
-            retries: Arc::default(),
-            _tasks: tasks,
-        })
+        Ok(Self { address, fault, retries: Arc::default(), _tasks: tasks })
     }
 
     pub async fn udp(target: SocketAddr, one_way: Duration) -> io::Result<Self> {
@@ -143,12 +138,7 @@ impl Link {
                 }
             }
         });
-        Ok(Self {
-            address,
-            fault,
-            retries,
-            _tasks: tasks,
-        })
+        Ok(Self { address, fault, retries, _tasks: tasks })
     }
 }
 

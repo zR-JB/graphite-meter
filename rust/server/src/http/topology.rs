@@ -59,10 +59,7 @@ impl Topology {
 
     /// What the authentication policy knows of the listener.
     pub(crate) const fn listener(self) -> Listener {
-        Listener {
-            ui: self.spa,
-            webtransport: self.webtransport,
-        }
+        Listener { ui: self.spa, webtransport: self.webtransport }
     }
 }
 
@@ -93,19 +90,12 @@ pub(crate) const fn tcp(kind: NativeKind, authenticated: bool) -> ListenerSpec {
         NativeKind::H2 => ListenerSpec {
             role: "HTTPS HTTP/2: measurement probe, transfers, progress only",
             alpn: b"h2",
-            topology: Topology {
-                transfers: true,
-                ..NONE
-            },
+            topology: Topology { transfers: true, ..NONE },
         },
         NativeKind::H3 => ListenerSpec {
             role: "HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe, upload and ticket control",
             alpn: b"http/1.1",
-            topology: Topology {
-                control: true,
-                bootstrap: true,
-                ..NONE
-            },
+            topology: Topology { control: true, bootstrap: true, ..NONE },
         },
     }
 }
@@ -114,11 +104,7 @@ pub(crate) const fn tcp(kind: NativeKind, authenticated: bool) -> ListenerSpec {
 pub(crate) const QUIC: ListenerSpec = ListenerSpec {
     role: "HTTP/3: probe, transfers, progress, WebTransport",
     alpn: b"h3",
-    topology: Topology {
-        transfers: true,
-        webtransport: true,
-        ..NONE
-    },
+    topology: Topology { transfers: true, webtransport: true, ..NONE },
 };
 
 /// What the accepting listener knows of a request's connection, never anything a request claims.
@@ -132,11 +118,7 @@ pub(crate) struct Accepted {
 impl Accepted {
     /// A connection the QUIC endpoint accepted from `peer`.
     pub(crate) const fn quic(peer: SocketAddr) -> Self {
-        Self {
-            peer,
-            tls: true,
-            topology: QUIC.topology,
-        }
+        Self { peer, tls: true, topology: QUIC.topology }
     }
 
     /// The authentication policy's view of the same connection.
@@ -174,10 +156,7 @@ mod tests {
             let h2 = mounted(tcp(NativeKind::H2, authenticated).topology);
             assert_eq!(h2, format!("{transfers} /upload/checkpoint"));
             let companion = mounted(tcp(NativeKind::H3, authenticated).topology);
-            assert_eq!(
-                companion,
-                "/probe /upload/session /upload/progress /wt/session /upload/checkpoint"
-            );
+            assert_eq!(companion, "/probe /upload/session /upload/progress /wt/session /upload/checkpoint");
         }
         let quic = format!("{transfers} /wt/download /wt/upload /wt/ping /upload/checkpoint");
         assert_eq!(mounted(QUIC.topology), quic);

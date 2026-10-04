@@ -45,12 +45,10 @@ impl Assets {
     fn from_entries(entries: &'static [EmbeddedAsset], auth_enabled: bool, history_default: bool) -> Self {
         let index = entries.iter().find(|entry| entry.path == "index.html");
         let inline_policy = [("script", "script-src"), ("style", "style-src")]
-            .map(
-                |(tag, directive)| match index.and_then(|entry| inline_hash(entry.bytes, tag)) {
-                    Some(hash) => format!("; {directive} 'self' 'sha256-{hash}'"),
-                    None => format!("; {directive} 'self'"),
-                },
-            )
+            .map(|(tag, directive)| match index.and_then(|entry| inline_hash(entry.bytes, tag)) {
+                Some(hash) => format!("; {directive} 'self' 'sha256-{hash}'"),
+                None => format!("; {directive} 'self'"),
+            })
             .concat();
         let auth = if auth_enabled {
             "<meta name=\"graphite-meter-auth\" content=\"enabled\">"
@@ -62,11 +60,7 @@ impl Assets {
             let html = std::str::from_utf8(entry.bytes).expect("build validated UTF-8 index");
             Bytes::from(html.replacen("</head>", &format!("{auth}{history}</head>"), 1))
         });
-        Self {
-            entries,
-            index,
-            inline_policy,
-        }
+        Self { entries, index, inline_policy }
     }
 
     /// The shell's content security policy, connecting to `sources` beyond 'self'.
@@ -214,10 +208,9 @@ fn content(headers: &HeaderMap, content_type: &str, body: Bytes) -> Response<Byt
             parts.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
             *response.body_mut() = parts.into();
             *response.status_mut() = StatusCode::PARTIAL_CONTENT;
-            response.headers_mut().insert(
-                header::CONTENT_TYPE,
-                header_value(&format!("multipart/byteranges; boundary={boundary}")),
-            );
+            response
+                .headers_mut()
+                .insert(header::CONTENT_TYPE, header_value(&format!("multipart/byteranges; boundary={boundary}")));
         }
     }
     let length = response.body().len();

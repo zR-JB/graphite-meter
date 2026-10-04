@@ -53,10 +53,7 @@ fn ipv6_stays_in_discovery_but_not_csp() {
 
 #[test]
 fn rejects_duplicate_ids_and_equivalent_origins() {
-    for remote in [
-        entry("self", "https://remote.example"),
-        entry("other", "https://REMOTE.example:443"),
-    ] {
+    for remote in [entry("self", "https://remote.example"), entry("other", "https://REMOTE.example:443")] {
         let mut catalog = ServerCatalog::default();
         catalog.servers.push(entry("remote", "https://remote.example"));
         catalog.servers.push(remote);
@@ -139,18 +136,9 @@ fn a_received_catalogue_reads_null_as_empty() {
     assert_eq!(catalog.servers[1].additional_origins, [""]);
     let (received, rejected) = catalog.received().unwrap();
     let ids: Vec<_> = received.servers.iter().map(|entry| entry.id.as_str()).collect();
-    assert_eq!(
-        (ids, received.default_selection),
-        (vec!["self", "remote"], vec!["self".into()])
-    );
+    assert_eq!((ids, received.default_selection), (vec!["self", "remote"], vec!["self".into()]));
     let rejected: Vec<_> = rejected.iter().map(|left| (left.id.as_str(), left.error)).collect();
-    assert_eq!(
-        rejected,
-        [
-            ("listed", CatalogError::InvalidOrigin),
-            ("", CatalogError::InvalidIdentity)
-        ]
-    );
+    assert_eq!(rejected, [("listed", CatalogError::InvalidOrigin), ("", CatalogError::InvalidIdentity)]);
     let nothing: ServerCatalog = graphite_meter_core::wire::decode_json(br#"{"servers": null}"#).unwrap();
     assert_eq!(nothing.received().err(), Some(CatalogError::InvalidServers));
     let array = br#"[["self"],[["self",".","graphite-meter"]]]"#;

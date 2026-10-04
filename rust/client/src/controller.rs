@@ -241,10 +241,8 @@ impl Controller {
                 // preparation, and stopping the run before launch reads as stopped.
                 operation.purpose = Purpose::PreparingRun;
                 operation.started = Instant::now();
-                self.snapshots.send_replace(Snapshot {
-                    phase: Phase::Preparing,
-                    ..Snapshot::default()
-                });
+                self.snapshots
+                    .send_replace(Snapshot { phase: Phase::Preparing, ..Snapshot::default() });
             }
             operation.pending = Some(work);
             self.request_cancel();
@@ -300,11 +298,7 @@ impl Controller {
                     let signed_out = sign_in(error.as_ref()).is_some();
                     let expired = matches!(error.downcast_ref(), Some(Failure::ApprovalExpired));
                     self.snapshots.send_modify(|snapshot| {
-                        snapshot.phase = if snapshot.measured() {
-                            Phase::Incomplete
-                        } else {
-                            Phase::Failed
-                        };
+                        snapshot.phase = if snapshot.measured() { Phase::Incomplete } else { Phase::Failed };
                         let text = crate::failure::text(error.as_ref());
                         snapshot.error = Some(if expired {
                             SIGN_IN_EXPIRED.into()
@@ -367,15 +361,11 @@ async fn execute(
             return Ok(None);
         }
         let result = match &work {
-            Work::Run(config) => runner::run(
-                config.clone(),
-                http.clone(),
-                snapshots.clone(),
-                cancel.clone(),
-                prepared.take(),
-            )
-            .await
-            .map(|()| None),
+            Work::Run(config) => {
+                runner::run(config.clone(), http.clone(), snapshots.clone(), cancel.clone(), prepared.take())
+                    .await
+                    .map(|()| None)
+            }
             Work::Verify(config) => tokio::select! {
                 biased;
                 _ = cancel.wait_for(|cancelled| *cancelled) => return Ok(None),
@@ -456,10 +446,7 @@ mod tests {
     /// An interactive controller of `config` whose snapshot starts in `phase`.
     fn controller(config: &Config, phase: Phase) -> Controller {
         let _ = crate::crypto::provider().install_default();
-        let snapshots = watch::channel(Snapshot {
-            phase,
-            ..Snapshot::default()
-        });
+        let snapshots = watch::channel(Snapshot { phase, ..Snapshot::default() });
         Controller::new(config, snapshots.0, true).unwrap()
     }
 
@@ -502,11 +489,7 @@ mod tests {
             controller.stop().await;
             completed.await.unwrap();
             assert!(controller.operation.is_none());
-            let expected = if phase == Phase::Complete {
-                Phase::Complete
-            } else {
-                Phase::Cancelled
-            };
+            let expected = if phase == Phase::Complete { Phase::Complete } else { Phase::Cancelled };
             assert_eq!(controller.snapshots.borrow().phase, expected);
             assert_eq!(controller.snapshots.borrow().latest.up_bps, Some(42.0));
         }
@@ -535,18 +518,14 @@ mod tests {
 
     #[tokio::test]
     async fn a_sign_in_that_expires_after_measuring_checks_the_servers_again() {
-        let config = Config {
-            url: "http://127.0.0.1:1".into(),
-            ..Config::default()
-        };
+        let config = Config { url: "http://127.0.0.1:1".into(), ..Config::default() };
         let mut controller = controller(&config, Phase::default());
         let snapshots = controller.snapshots.clone();
         controller.operation = Some(Operation::new(Purpose::Run, |_| async move {
             snapshots.send_modify(|snapshot| {
-                snapshot.results.push(crate::model::StageResult {
-                    elapsed: Duration::from_secs(1),
-                    ..Default::default()
-                })
+                snapshot
+                    .results
+                    .push(crate::model::StageResult { elapsed: Duration::from_secs(1), ..Default::default() })
             });
             Err(Box::new(Failure::SignIn {
                 origin: "https://meter.test".into(),
@@ -568,10 +547,7 @@ mod tests {
     async fn a_sign_in_without_a_login_page_checks_the_servers_again() -> Result<(), Error> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let (listener, url) = crate::fixtures::listener().await?;
-        let config = Config {
-            url,
-            ..Config::default()
-        };
+        let config = Config { url, ..Config::default() };
         let server = tokio::spawn(async move {
             for _ in 0..8 {
                 let (mut stream, _) = listener.accept().await?;
@@ -602,9 +578,8 @@ mod tests {
     async fn an_expired_approval_asks_for_a_new_code_like_go() {
         for purpose in [Purpose::Check, Purpose::Run] {
             let mut controller = controller(&Config::default(), Phase::default());
-            controller.operation = Some(Operation::new(purpose, |_| async {
-                Err(Box::new(Failure::ApprovalExpired) as Error)
-            }));
+            controller.operation =
+                Some(Operation::new(purpose, |_| async { Err(Box::new(Failure::ApprovalExpired) as Error) }));
             let result = completed(&mut controller.operation).await;
             controller.finished(result).unwrap();
             assert_eq!(controller.snapshots.borrow().error.as_deref(), Some(SIGN_IN_EXPIRED));

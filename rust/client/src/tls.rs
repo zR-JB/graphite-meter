@@ -48,10 +48,7 @@ impl Configs {
             http2: tcp(&[b"h2"])?,
             negotiated: tcp(&[b"h2", b"http/1.1"])?,
             proxy: tcp(&[])?,
-            quic: Arc::new(QuicClientConfig::try_from(build(
-                &[&rustls::version::TLS13],
-                &[b"h3"],
-            )?)?),
+            quic: Arc::new(QuicClientConfig::try_from(build(&[&rustls::version::TLS13], &[b"h3"])?)?),
         })
     }
 }
@@ -111,12 +108,7 @@ impl ServerCertVerifier for InsecureVerifier {
         certificate: &CertificateDer<'_>,
         signature: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        verify_tls12_signature(
-            message,
-            certificate,
-            signature,
-            &self.provider.signature_verification_algorithms,
-        )
+        verify_tls12_signature(message, certificate, signature, &self.provider.signature_verification_algorithms)
     }
     fn verify_tls13_signature(
         &self,
@@ -124,12 +116,7 @@ impl ServerCertVerifier for InsecureVerifier {
         certificate: &CertificateDer<'_>,
         signature: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        verify_tls13_signature(
-            message,
-            certificate,
-            signature,
-            &self.provider.signature_verification_algorithms,
-        )
+        verify_tls13_signature(message, certificate, signature, &self.provider.signature_verification_algorithms)
     }
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
         self.provider.signature_verification_algorithms.supported_schemes()

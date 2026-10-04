@@ -70,12 +70,9 @@ pub fn parse(data: &[u8]) -> Result<ServerCatalog> {
             for byte in &digest[..16] {
                 write!(&mut id, "{byte:02x}")?;
             }
-            catalog.servers.push(ServerEntry {
-                id,
-                url,
-                name: origin.authority(),
-                ..ServerEntry::default()
-            });
+            catalog
+                .servers
+                .push(ServerEntry { id, url, name: origin.authority(), ..ServerEntry::default() });
         }
     } else {
         // Go accepts a root null as an empty catalogue, then inserts self.

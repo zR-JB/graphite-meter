@@ -154,12 +154,7 @@ pub(super) struct PathChoice {
 impl PathChoice {
     fn new(target: &str, transport: &str, label: String, note: String) -> Self {
         let (target, transport) = (target.into(), transport.into());
-        Self {
-            target,
-            transport,
-            label,
-            note,
-        }
+        Self { target, transport, label, note }
     }
 
     fn selects(&self, (target, transport): (&str, &str)) -> bool {
@@ -293,12 +288,7 @@ impl Ui {
             }
             Setting::Insecure => (checkbox(config.insecure), false),
         };
-        Row {
-            label,
-            value,
-            help,
-            inert,
-        }
+        Row { label, value, help, inert }
     }
 
     /// Go's singleDiscovery: the one checked server and the paths it advertised.
@@ -651,12 +641,7 @@ pub(super) struct Edit {
 
 impl Edit {
     fn new(setting: Setting, value: &str) -> Self {
-        let mut edit = Self {
-            setting,
-            chars: Vec::new(),
-            cursor: 0,
-            error: String::new(),
-        };
+        let mut edit = Self { setting, chars: Vec::new(), cursor: 0, error: String::new() };
         edit.insert(value);
         edit
     }

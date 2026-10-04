@@ -29,10 +29,7 @@ fn generate() -> Result<()> {
     let repo = legal::checkout()?;
     let output = legal::output_directory(&repo)?;
     let Some(configured) = env::var_os("GM_RUST_ASSET_DIR") else {
-        fs::write(
-            output.join("browser_assets.rs"),
-            "static EMBEDDED: &[EmbeddedAsset] = &[];\n",
-        )?;
+        fs::write(output.join("browser_assets.rs"), "static EMBEDDED: &[EmbeddedAsset] = &[];\n")?;
         return Ok(());
     };
     if configured.is_empty() {

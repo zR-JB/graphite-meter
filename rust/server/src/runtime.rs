@@ -263,10 +263,7 @@ async fn bind(address: &str) -> std::io::Result<TcpListener> {
     let address = std::net::SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, port));
     match socket.bind(&address.into()) {
         Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::AddrNotAvailable | std::io::ErrorKind::Unsupported
-            ) =>
+            if matches!(error.kind(), std::io::ErrorKind::AddrNotAvailable | std::io::ErrorKind::Unsupported) =>
         {
             TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port)).await
         }

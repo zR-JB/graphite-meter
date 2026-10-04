@@ -85,9 +85,7 @@ pub fn parse_go_duration(input: &str) -> Result<i64, DurationError> {
             b"" => return Err(DurationError(format!("time: missing unit in duration {input:?}"))),
             unit => {
                 let unit = String::from_utf8_lossy(unit);
-                return Err(DurationError(format!(
-                    "time: unknown unit {unit:?} in duration {input:?}"
-                )));
+                return Err(DurationError(format!("time: unknown unit {unit:?} in duration {input:?}")));
             }
         };
         rest = &rest[length..];
@@ -131,11 +129,7 @@ pub fn go_duration(duration: Duration) -> String {
             nanos / 60_000_000_000 % 60,
             decimal(nanos % 60_000_000_000, 1_000_000_000)
         ),
-        60_000_000_000.. => format!(
-            "{}m{}s",
-            nanos / 60_000_000_000,
-            decimal(nanos % 60_000_000_000, 1_000_000_000)
-        ),
+        60_000_000_000.. => format!("{}m{}s", nanos / 60_000_000_000, decimal(nanos % 60_000_000_000, 1_000_000_000)),
         _ => format!("{}s", decimal(nanos, 1_000_000_000)),
     }
 }

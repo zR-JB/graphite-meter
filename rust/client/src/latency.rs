@@ -28,23 +28,14 @@ type Socket = tokio_tungstenite::WebSocketStream<Box<dyn graphite_meter_net::Str
 #[derive(Clone, Copy, Debug)]
 pub enum Observation {
     ConnectionBoundary,
-    Sample {
-        sent: Instant,
-        rtt: Duration,
-        handling_nanos: u64,
-    },
-    Lost {
-        sent: Instant,
-        outcome: ProbeOutcome,
-    },
+    Sample { sent: Instant, rtt: Duration, handling_nanos: u64 },
+    Lost { sent: Instant, outcome: ProbeOutcome },
 }
 impl Observation {
     pub fn outcome(self) -> Option<ProbeOutcome> {
         Some(match self {
             Self::ConnectionBoundary => return None,
-            Self::Sample {
-                rtt, handling_nanos, ..
-            } => ProbeOutcome::Reply {
+            Self::Sample { rtt, handling_nanos, .. } => ProbeOutcome::Reply {
                 // run() bounds duration to the core's signed nanosecond clock range.
                 rtt_nanos: rtt.as_nanos() as i64,
                 handling_nanos,
@@ -166,10 +157,7 @@ fn lost(error: &Error) -> bool {
 /// Go's redialPingBus (latency.go:124-132): the channel dialled until `deadline`, paced as Go's
 /// restore paces it.
 async fn dial(http: &Http, target: &LatencyTarget, deadline: Instant) -> Result<Bus, Error> {
-    restore("latency channel", deadline, || {
-        connect(http, &target.base_url, target.transport)
-    })
-    .await
+    restore("latency channel", deadline, || connect(http, &target.base_url, target.transport)).await
 }
 
 /// A latency channel: a WebSocket, or a WebTransport session's datagrams.
@@ -501,9 +489,7 @@ mod tests {
             let mut attempts = Vec::new();
             let mut minimum = Duration::ZERO;
             for response in [
-                Some(format!(
-                    "HTTP/1.1 429 Too Many Requests\r\nRetry-After: {date}\r\n{empty}"
-                )),
+                Some(format!("HTTP/1.1 429 Too Many Requests\r\nRetry-After: {date}\r\n{empty}")),
                 Some(format!("HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\n{empty}")),
                 Some(format!("HTTP/1.1 404 Not Found\r\n{empty}")),
                 None,
@@ -612,9 +598,7 @@ mod tests {
                 std::future::pending().await
             }));
             let bus = connect(&Http::new(true)?, &origin, LatencyTransport::WebTransport).await?;
-            let Bus::WebTransport(session) = &bus else {
-                unreachable!()
-            };
+            let Bus::WebTransport(session) = &bus else { unreachable!() };
             tokio::time::timeout(Duration::from_secs(5), async {
                 while !session.is_closed() {
                     tokio::time::sleep(Duration::from_millis(1)).await;
@@ -681,20 +665,8 @@ mod tests {
         let (observations, receiver) = mpsc::channel(capacity);
         let (_stop, mut cancel) = watch::channel(Stop::Running);
         let started = Instant::now();
-        let (interval, end) = (
-            Duration::from_millis(interval),
-            started + Duration::from_millis(duration),
-        );
-        measure(
-            bus,
-            interval,
-            window,
-            end,
-            &mut Ledger::default(),
-            &observations,
-            &mut cancel,
-        )
-        .await?;
+        let (interval, end) = (Duration::from_millis(interval), started + Duration::from_millis(duration));
+        measure(bus, interval, window, end, &mut Ledger::default(), &observations, &mut cancel).await?;
         Ok((started, receiver))
     }
 

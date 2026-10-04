@@ -51,20 +51,16 @@ impl Preflight {
                 add_latency(&mut capabilities, &base);
             }
             if kind == NativeKind::H3 {
-                for transport in [
-                    ThroughputTransport::WebTransport,
-                    ThroughputTransport::WebTransportDatagram,
-                ] {
+                for transport in [ThroughputTransport::WebTransport, ThroughputTransport::WebTransportDatagram] {
                     capabilities.throughput.push(ThroughputTarget {
                         base_url: base.clone(),
                         transport,
                         protocol: Protocol::Http3,
                     });
                 }
-                capabilities.latency.push(LatencyTarget {
-                    base_url: base,
-                    transport: LatencyTransport::WebTransport,
-                });
+                capabilities
+                    .latency
+                    .push(LatencyTarget { base_url: base, transport: LatencyTransport::WebTransport });
             }
         }
         for raw in &config.public.both {
@@ -149,11 +145,7 @@ fn public_base(raw: &str) -> &str {
 
 fn native_origin(kind: NativeKind, host: &str, address: &str) -> Result<String, ConfigError> {
     let scheme = if kind == NativeKind::H1 { "http" } else { "https" };
-    let host = if host.contains(':') {
-        format!("[{host}]")
-    } else {
-        host.to_owned()
-    };
+    let host = if host.contains(':') { format!("[{host}]") } else { host.to_owned() };
     let origin = match address.rsplit_once(':') {
         Some((_, port)) if !port.is_empty() => format!("{scheme}://{host}:{port}"),
         _ => format!("{scheme}://{host}"),

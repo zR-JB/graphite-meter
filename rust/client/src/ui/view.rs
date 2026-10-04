@@ -231,12 +231,7 @@ impl Ui {
             self.setup_view(inner)
         };
         let footer = self.footer(inner, body.len() > body_height);
-        Layout {
-            top,
-            body,
-            body_height,
-            footer,
-        }
+        Layout { top, body, body_height, footer }
     }
 
     /// Go's render: the frame one column in from each side, or a request for more room.

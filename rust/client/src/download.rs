@@ -87,10 +87,8 @@ impl Download {
         let start = async {
             for first in (0..lanes).step_by(MAX_WEBTRANSPORT_STREAMS) {
                 let group = (lanes - first).min(MAX_WEBTRANSPORT_STREAMS);
-                let target = format!(
-                    "{}?bytes={WT_STREAM_BYTES}&streams={group}",
-                    url(&origin, Route::WtDownload, &[])
-                );
+                let target =
+                    format!("{}?bytes={WT_STREAM_BYTES}&streams={group}", url(&origin, Route::WtDownload, &[]));
                 let slot = Arc::new(SessionSlot::dial(http, target).await?);
                 for lane in first..first + group {
                     let (home, slot, ready) = (slot.home.clone(), slot.clone(), ready.clone());
@@ -346,11 +344,7 @@ mod tests {
             }));
             let (_stop, cancelled) = watch::channel(false);
             let (protocol, transport) = (Protocol::Http3, ThroughputTransport::WebTransport);
-            let target = ThroughputTarget {
-                base_url,
-                protocol,
-                transport,
-            };
+            let target = ThroughputTarget { base_url, protocol, transport };
             let http = Http::new(true)?;
             let download = Download::start_webtransport(&http, &target, 1, Duration::from_secs(30), cancelled).await?;
             let measured = download.bytes();
@@ -386,10 +380,7 @@ mod tests {
         let lane = receive_http_lane(&transport, 0, &bytes, &ready, Duration::from_secs(5), retry);
         let error = timeout(Duration::from_secs(5), lane).await?.unwrap_err();
         server.abort();
-        assert_eq!(
-            crate::failure::reason(error.as_ref(), false),
-            FailureReason::ProtocolError
-        );
+        assert_eq!(crate::failure::reason(error.as_ref(), false), FailureReason::ProtocolError);
         assert_eq!(served.load(Ordering::SeqCst), 1);
         assert!(started.elapsed() < Duration::from_secs(2));
         Ok(())

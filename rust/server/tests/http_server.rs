@@ -197,11 +197,7 @@ async fn stalled_upload_read_releases_capacity_and_keeps_received_bytes() {
 /// An exchange on its own connection, from the client a trusted proxy names in X-Real-IP unless `owner` is empty.
 async fn request(address: SocketAddr, method: &str, path: &str, owner: &str, body: &[u8]) -> (String, Vec<u8>) {
     let mut socket = TcpStream::connect(address).await.unwrap();
-    let owner = if owner.is_empty() {
-        String::new()
-    } else {
-        format!("X-Real-IP: {owner}\r\n")
-    };
+    let owner = if owner.is_empty() { String::new() } else { format!("X-Real-IP: {owner}\r\n") };
     http1::exchange(&mut socket, method, path, "localhost", &owner, body).await
 }
 
@@ -277,11 +273,8 @@ async fn keepalive_idle_uses_fifteen_seconds_and_releases_connection_capacity() 
         ..Config::default()
     })
     .await;
-    let (mut socket, headers) = sent(
-        listener.address,
-        "GET /download?bytes=0 HTTP/1.1\r\nHost: localhost\r\n\r\n",
-    )
-    .await;
+    let (mut socket, headers) =
+        sent(listener.address, "GET /download?bytes=0 HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
     assert!(headers.starts_with("HTTP/1.1 200"));
     advance_http1_clock(Duration::from_secs(14)).await;
     let read = tokio::time::timeout(Duration::from_millis(20), socket.read(&mut [0; 1])).await;

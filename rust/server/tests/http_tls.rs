@@ -162,11 +162,7 @@ async fn h3_tcp_companion_serves_probe_and_control_routes_and_advertises_the_eff
         let identity = support::Identity::generate();
         let (tls, roots) = configs(&identity);
         let connector = connector(roots, &rustls::version::TLS13);
-        for (origin, port) in [
-            ("", None),
-            ("https://localhost:9443", Some(9443)),
-            ("https://localhost", Some(443)),
-        ] {
+        for (origin, port) in [("", None), ("https://localhost:9443", Some(9443)), ("https://localhost", Some(443))] {
             let mut config = Config::default();
             config.native[NativeKind::H3 as usize].public_origin = origin.into();
             let listener = listen(config, NativeKind::H3, tls.clone()).await;
@@ -181,15 +177,7 @@ async fn h3_tcp_companion_serves_probe_and_control_routes_and_advertises_the_eff
             assert!(fresh, "{headers}");
             let session: serde_json::Value = serde_json::from_slice(&body).unwrap();
             let id = session["uploadId"].as_str().unwrap();
-            let not_found = [
-                "/",
-                "/login",
-                "/preflight",
-                "/servers",
-                "/download",
-                "/upload",
-                "/ws/ping",
-            ];
+            let not_found = ["/", "/login", "/preflight", "/servers", "/download", "/upload", "/ws/ping"];
             for (method, path, status) in [
                 ("POST", format!("/upload/checkpoint?id={id}"), "400"),
                 ("DELETE", format!("/upload/progress?id={id}"), "400"),

@@ -82,24 +82,15 @@ impl Theme {
                 _ => None,
             }
         };
-        let fg = |tone: Tone| Style {
-            fg: color(tone),
-            ..Style::new()
-        };
+        let fg = |tone: Tone| Style { fg: color(tone), ..Style::new() };
         let badge = fg(BADGE).add_modifier(Modifier::BOLD);
-        let on = |tone: Tone| Style {
-            bg: color(tone),
-            ..badge
-        };
+        let on = |tone: Tone| Style { bg: color(tone), ..badge };
         let text = fg(TEXT);
         let accent = fg(INK);
         Self {
             title: on(INK),
             pill: on(SOFT),
-            selected: Style {
-                bg: color(SELECTED),
-                ..text.add_modifier(Modifier::BOLD)
-            },
+            selected: Style { bg: color(SELECTED), ..text.add_modifier(Modifier::BOLD) },
             text,
             value: text.add_modifier(Modifier::BOLD),
             muted: fg(SOFT),
@@ -320,11 +311,7 @@ fn rgb(color: &str) -> Option<[u8; 3]> {
         return None;
     }
     let component = |part: &str| {
-        let value = if hex(part) {
-            u32::from_str_radix(part, 16).unwrap_or(u32::MAX)
-        } else {
-            0
-        };
+        let value = if hex(part) { u32::from_str_radix(part, 16).unwrap_or(u32::MAX) } else { 0 };
         (if value > 0xff { value >> 8 } else { value }) as u8
     };
     Some([0, 1, 2].map(|index| component(components[index])))
@@ -339,10 +326,7 @@ mod tests {
     #[test]
     fn device_attributes_end_the_answers_and_only_whole_background_answers_count() {
         for (answers, expected) in [
-            (
-                &b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?62;22c"[..],
-                (Some(false), true),
-            ),
+            (&b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?62;22c"[..], (Some(false), true)),
             (b"\x1b[A\x1b]11;rgb:0000/0000/0000\x07\x1b[?6c", (Some(true), true)),
             (b"\x1b]10;rgb:ffff/ffff/ffff\x07\x1b[?6c", (None, true)),
             (b"\x1b]11;rgb:ffff/ffff/ffff\x1bx\x1b[?6c", (None, true)),

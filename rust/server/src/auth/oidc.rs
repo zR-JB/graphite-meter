@@ -69,11 +69,8 @@ impl Provider {
         // Go's client leaves out a fragment. One on the authorization endpoint stays refused: Go appends the
         // sign-in query to it, where no provider reads it.
         let fetched = |name| text(name).map(|url| url.split('#').next().unwrap_or_default().to_owned());
-        let (token, userinfo, jwks_uri) = (
-            fetched("token_endpoint")?,
-            fetched("userinfo_endpoint")?,
-            fetched("jwks_uri")?,
-        );
+        let (token, userinfo, jwks_uri) =
+            (fetched("token_endpoint")?, fetched("userinfo_endpoint")?, fetched("jwks_uri")?);
         let authorization = text("authorization_endpoint")?.to_owned();
         for endpoint in [&authorization, &token, &userinfo, &jwks_uri] {
             valid_url(endpoint)?;
@@ -310,11 +307,9 @@ impl Oidc {
         {
             return Err(Reason::UserInfoOrSubject);
         }
-        let (Some(groups), Some(name), Some(username)) = (
-            info.strings("groups"),
-            info.text("name"),
-            info.text("preferred_username"),
-        ) else {
+        let (Some(groups), Some(name), Some(username)) =
+            (info.strings("groups"), info.text("name"), info.text("preferred_username"))
+        else {
             return Err(Reason::UserInfoClaims);
         };
         if !groups
@@ -347,10 +342,7 @@ impl Oidc {
             "" => "OIDC user",
             name => name,
         };
-        Ok(Identity {
-            subject: format!("oidc:{subject}"),
-            name: name.to_owned(),
-        })
+        Ok(Identity { subject: format!("oidc:{subject}"), name: name.to_owned() })
     }
     async fn exchange(&self, provider: &Provider, code: &str, verifier: &str) -> Result<Tokens, ConfigError> {
         let (id, secret) = (escape(&self.config.oidc_client_id), escape(&self.secret));
@@ -471,10 +463,8 @@ impl Members {
     }
     /// A string field, which a null leaves as it was; None where a member is another type.
     fn text(&self, name: &'static str) -> Option<&str> {
-        self.named(name).try_fold(
-            "",
-            |text, value| if value.is_null() { Some(text) } else { value.as_str() },
-        )
+        self.named(name)
+            .try_fold("", |text, value| if value.is_null() { Some(text) } else { value.as_str() })
     }
     /// A list of strings, which a null empties; a null element is empty.
     fn strings(&self, name: &'static str) -> Option<Vec<&str>> {

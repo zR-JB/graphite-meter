@@ -26,12 +26,7 @@ const HASHED_CID_BYTES: usize = 8;
 
 /// A factory for `EndpointConfig::cid_generator` whose connection IDs name `shard`.
 pub(crate) fn cid_generator(shard: u8) -> Arc<dyn Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync> {
-    Arc::new(move || {
-        Box::new(ShardCids {
-            shard,
-            hash: RandomState::new(),
-        })
-    })
+    Arc::new(move || Box::new(ShardCids { shard, hash: RandomState::new() }))
 }
 
 /// A shard index followed by noq's default hashed connection ID: a random nonce and a keyed SipHash signature.
@@ -110,10 +105,7 @@ impl Router {
                 (queue, Inbox(inbox))
             })
             .unzip();
-        let router = Self {
-            queues: queues.into(),
-            max_datagram,
-        };
+        let router = Self { queues: queues.into(), max_datagram };
         (router, inboxes)
     }
 
@@ -155,10 +147,7 @@ impl Router {
         }
         let mut meta = *meta;
         (meta.len, meta.stride) = (datagram.len(), datagram.len());
-        let forwarded = Forwarded {
-            meta,
-            datagram: datagram.into(),
-        };
+        let forwarded = Forwarded { meta, datagram: datagram.into() };
         let _ = self.queues[shard].try_send(forwarded);
     }
 }
@@ -174,12 +163,7 @@ pub(crate) struct ShardSocket {
 
 impl ShardSocket {
     pub(crate) fn new(socket: Box<dyn AsyncUdpSocket>, shard: usize, router: Router, inbox: Inbox) -> Self {
-        Self {
-            socket,
-            shard,
-            router,
-            inbox,
-        }
+        Self { socket, shard, router, inbox }
     }
 }
 
@@ -224,11 +208,7 @@ impl AsyncUdpSocket for ShardSocket {
                 _ => {}
             }
         }
-        if filled == 0 {
-            Poll::Pending
-        } else {
-            Poll::Ready(Ok(filled))
-        }
+        if filled == 0 { Poll::Pending } else { Poll::Ready(Ok(filled)) }
     }
 
     fn local_addr(&self) -> io::Result<std::net::SocketAddr> {

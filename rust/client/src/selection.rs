@@ -72,10 +72,7 @@ fn throughput_candidate(
         })
         .collect::<Vec<_>>();
     let selected = config.throughput_origin.as_deref();
-    let Some(target) = choose("throughput", &candidates, selected, &entry.url, |target| {
-        &target.base_url
-    })?
-    else {
+    let Some(target) = choose("throughput", &candidates, selected, &entry.url, |target| &target.base_url)? else {
         return Ok(None);
     };
     let mut target = (*target).clone();
@@ -163,10 +160,7 @@ mod tests {
         };
         assert!(throughput(&config, &entry, &preflight, None).is_err());
         preflight.capabilities.throughput[0].protocol = Protocol::Negotiated;
-        assert_eq!(
-            throughput(&config, &entry, &preflight, None).unwrap().protocol,
-            Protocol::Http3
-        );
+        assert_eq!(throughput(&config, &entry, &preflight, None).unwrap().protocol, Protocol::Http3);
         preflight.capabilities.throughput[0].base_url = "https://foreign.example".into();
         assert!(throughput(&config, &entry, &preflight, None).is_err());
         // As Go's prepareRun (prepare.go:113-115), an explicit origin needs a single server.

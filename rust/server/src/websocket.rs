@@ -104,14 +104,8 @@ where
         },
     };
     // Close frames must not let an unresponsive peer retain capacity forever.
-    let _ = tokio::time::timeout(
-        WS_CLOSE,
-        socket.close(Some(CloseFrame {
-            code: close.0,
-            reason: close.1.into(),
-        })),
-    )
-    .await;
+    let _ =
+        tokio::time::timeout(WS_CLOSE, socket.close(Some(CloseFrame { code: close.0, reason: close.1.into() }))).await;
 }
 
 async fn exchange<S>(socket: &mut WebSocketStream<S>, deadline: tokio::time::Instant) -> Result<CloseReason, Error>
@@ -120,13 +114,7 @@ where
 {
     let mut idle = tokio::time::Instant::now() + IDLE_BOUND;
     // The bound that passed first ends the session.
-    let expired = |idle| {
-        Ok(if idle <= deadline {
-            CloseReason::Idle
-        } else {
-            CloseReason::Lifetime
-        })
-    };
+    let expired = |idle| Ok(if idle <= deadline { CloseReason::Idle } else { CloseReason::Lifetime });
     loop {
         let message = match tokio::time::timeout_at(idle.min(deadline), socket.next()).await {
             Ok(Some(message)) => message,

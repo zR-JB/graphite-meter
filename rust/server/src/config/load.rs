@@ -178,10 +178,8 @@ fn load_env(
             apply(config, setting, &value, lifetime_set).map_err(|error| format!("{}: {error}", setting.0))?;
         }
     }
-    config.server_catalog = crate::catalog::load(
-        text("GM_SERVER_CATALOG")?.as_deref(),
-        text("GM_SERVER_CATALOG_FILE")?.as_deref(),
-    )?;
+    config.server_catalog =
+        crate::catalog::load(text("GM_SERVER_CATALOG")?.as_deref(), text("GM_SERVER_CATALOG_FILE")?.as_deref())?;
     Ok(())
 }
 
@@ -245,9 +243,7 @@ fn trusted_proxies(config: &mut Config, value: &str) -> Result<(), String> {
         .map(|raw| {
             let prefix = prefix(raw).map_err(|error| format!("{raw:?}: netip.ParsePrefix({raw:?}): {error}"))?;
             if prefix.prefix_len() == 0 {
-                return Err(format!(
-                    "{raw:?} trusts every address; list the proxy's actual CIDR instead"
-                ));
+                return Err(format!("{raw:?} trusts every address; list the proxy's actual CIDR instead"));
             }
             Ok(prefix.trunc())
         })
@@ -303,11 +299,7 @@ fn write_usage(usage: &mut dyn Write) -> std::io::Result<()> {
     flags.sort_by_key(|setting| setting.1);
     for Setting(env, flag, text, kind) in flags {
         let mut parts = text.split('`');
-        let (before, name, after) = (
-            parts.next().unwrap_or_default(),
-            parts.next(),
-            parts.next().unwrap_or_default(),
-        );
+        let (before, name, after) = (parts.next().unwrap_or_default(), parts.next(), parts.next().unwrap_or_default());
         let default = match kind {
             Text(field) => field(&mut defaults).clone(),
             Number(field) => field(&mut defaults).to_string(),

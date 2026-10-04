@@ -154,10 +154,7 @@ impl Policy {
             && single_header(request.headers(), "x-forwarded-proto") == Some("https")
             && single_header(request.headers(), "x-forwarded-host")
                 .is_some_and(|host| equal_host(host, &self.authority));
-        Trust {
-            secure: forwarded,
-            canonical: forwarded,
-        }
+        Trust { secure: forwarded, canonical: forwarded }
     }
 
     pub fn client_address(&self, headers: &HeaderMap, peer: SocketAddr) -> Option<IpAddr> {
@@ -171,11 +168,7 @@ impl Policy {
         connection: Connection,
     ) -> Result<AuthorizedRequest<B>, Box<RejectedRequest<B>>> {
         match self.evaluate(&request, connection) {
-            Ok(authorization) => Ok(AuthorizedRequest {
-                request,
-                authorization,
-                connection,
-            }),
+            Ok(authorization) => Ok(AuthorizedRequest { request, authorization, connection }),
             Err(reason) => Err(Box::new(RejectedRequest { request, reason })),
         }
     }
@@ -235,10 +228,7 @@ impl Policy {
             return Err(Refusal::Forbidden);
         }
         let sign_in_font = matches!(request.method(), &Method::GET | &Method::HEAD)
-            && matches!(
-                path,
-                "/fonts/ibm-plex-sans-var-latin1.woff2" | "/fonts/ibm-plex-mono-600-latin1.woff2"
-            );
+            && matches!(path, "/fonts/ibm-plex-sans-var-latin1.woff2" | "/fonts/ibm-plex-mono-600-latin1.woff2");
         if listener.ui
             && (sign_in_font || AuthRoute::lookup(request.method(), path).is_some_and(|route| route.public(self.mode)))
         {
@@ -342,10 +332,7 @@ impl Policy {
         let mut response = HeaderMap::new();
         Access::Bearer(origin).apply_response(&mut response);
         response.insert(header::ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static("POST"));
-        response.insert(
-            header::ACCESS_CONTROL_ALLOW_HEADERS,
-            HeaderValue::from_static("Content-Type"),
-        );
+        response.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static("Content-Type"));
         response.insert(header::ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("7200"));
         Ok(response)
     }

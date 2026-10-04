@@ -49,11 +49,7 @@ impl AuthLease {
         self.bearer
     }
     pub fn access<'a>(&self, origin: &'a HeaderValue) -> Access<'a> {
-        if self.bearer {
-            Access::Bearer(origin)
-        } else {
-            Access::Cookie(origin)
-        }
+        if self.bearer { Access::Bearer(origin) } else { Access::Cookie(origin) }
     }
     pub fn browser_origin(&self) -> Option<&str> {
         self.grant.as_ref().and_then(|grant| grant.origin.as_deref())

@@ -45,10 +45,7 @@ pub struct AttemptLimiter {
 
 impl AttemptLimiter {
     pub(super) fn with_log(log: Arc<SecurityLog>) -> Self {
-        Self {
-            state: Mutex::default(),
-            log,
-        }
+        Self { state: Mutex::default(), log }
     }
 
     pub fn allow(&self, budget: Budget, address: IpAddr) -> bool {
@@ -62,10 +59,7 @@ impl AttemptLimiter {
             Budget::OidcStart => (2, OIDC_START_ADDRESS_LIMIT, Ceiling::StartAddress),
             Budget::BrowserApproval => (3, APPROVAL_ADDRESS_LIMIT, Ceiling::ApprovalAddress),
         };
-        let State {
-            addresses,
-            failed_passwords,
-        } = &mut *state;
+        let State { addresses, failed_passwords } = &mut *state;
         let addresses = &mut addresses[slot];
         let known = matches!(budget, Budget::KnownDevice);
         for key in &keys {

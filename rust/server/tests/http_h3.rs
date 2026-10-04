@@ -46,10 +46,7 @@ async fn exercise() -> Result<(), TestError> {
             Ok(None) => panic!("flow-controlled transfer must be reset at its deadline"),
         }
     }
-    assert_eq!(
-        body(&requests, "GET", "/download?bytes=13", Bytes::new()).await?.len(),
-        13
-    );
+    assert_eq!(body(&requests, "GET", "/download?bytes=13", Bytes::new()).await?.len(), 13);
     server.stop().await?;
     driver.abort();
     Ok(())
@@ -59,14 +56,7 @@ async fn exercise() -> Result<(), TestError> {
 async fn serve_quic(
     config: Config,
     transport: noq::TransportConfig,
-) -> Result<
-    (
-        QuicServer,
-        tokio::task::JoinHandle<Result<(), graphite_meter_http3::Error>>,
-        SendRequest,
-    ),
-    TestError,
-> {
+) -> Result<(QuicServer, tokio::task::JoinHandle<Result<(), graphite_meter_http3::Error>>, SendRequest), TestError> {
     let server = quic::serve(config)?;
     let mut config = server.client.clone();
     config.transport_config(Arc::new(transport));

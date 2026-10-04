@@ -27,10 +27,7 @@ const EXPIRY_WARNING: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 /// With chain bytes C in N certificates: five server flights of C + 5N + 609 plus a C + 48N clone.
 pub fn handshake_bytes(chain: &[CertificateDer<'_>]) -> usize {
-    let (bytes, count) = (
-        chain.iter().map(|certificate| certificate.len()).sum::<usize>(),
-        chain.len(),
-    );
+    let (bytes, count) = (chain.iter().map(|certificate| certificate.len()).sum::<usize>(), chain.len());
     5 * (bytes + 5 * count + 609) + bytes + 48 * count
 }
 
@@ -156,10 +153,7 @@ fn log_certificate(identity: &CertifiedKey, now: SystemTime) {
     let remaining = expires.duration_since(now).expect("validated certificate validity");
     if remaining < EXPIRY_WARNING {
         let hours = Duration::from_secs(remaining.as_secs().saturating_add(1800) / 3600 * 3600);
-        crate::log!(
-            "[gm:tls] warning: certificate expires in {}",
-            crate::config::go_duration(hours)
-        );
+        crate::log!("[gm:tls] warning: certificate expires in {}", crate::config::go_duration(hours));
     }
 }
 
@@ -247,9 +241,9 @@ fn der(input: &[u8]) -> Option<(u8, &[u8], &[u8])> {
 
 fn der_time(tag: u8, value: &[u8]) -> Option<SystemTime> {
     let number = |digits: &[u8]| {
-        digits.iter().try_fold(0_u64, |total, digit| {
-            digit.is_ascii_digit().then(|| total * 10 + u64::from(digit - b'0'))
-        })
+        digits
+            .iter()
+            .try_fold(0_u64, |total, digit| digit.is_ascii_digit().then(|| total * 10 + u64::from(digit - b'0')))
     };
     let (year, rest) = match (tag, value.len()) {
         (0x17, 13) => {

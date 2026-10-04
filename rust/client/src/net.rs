@@ -302,10 +302,7 @@ impl Connections {
                 .handshake(io)
                 .await?;
             tokio::spawn(driver);
-            Ok(Sender::H2(Http2 {
-                id: self.ids.fetch_add(1, Ordering::Relaxed),
-                sender,
-            }))
+            Ok(Sender::H2(Http2 { id: self.ids.fetch_add(1, Ordering::Relaxed), sender }))
         } else {
             let (sender, driver) = http1::handshake(io).await?;
             tokio::spawn(driver);
@@ -473,10 +470,7 @@ impl Http {
     }
     /// This client for upload lanes: the same credentials, over connections of their own.
     pub(crate) fn for_upload_lanes(&self) -> Self {
-        Self {
-            lanes: Lanes::Upload,
-            ..self.clone()
-        }
+        Self { lanes: Lanes::Upload, ..self.clone() }
     }
     /// The same credentials over a pool of its own. Each check and run takes one, as Go's client
     /// takes new transports for them, so none reuses a connection an earlier one left idle, which
@@ -572,10 +566,7 @@ impl Http {
                 None => String::new(),
             };
             self.grants.lock().expect("client grants poisoned").remove(&issuer);
-            return Err(Box::new(Failure::SignIn {
-                origin: issuer,
-                login_url,
-            }));
+            return Err(Box::new(Failure::SignIn { origin: issuer, login_url }));
         }
         if !status.is_success() {
             return Err(Box::new(Failure::Http {
@@ -835,11 +826,7 @@ mod tests {
                     };
                     assert!(head.starts_with(expected), "{head}");
                     assert!(head.contains("cache-control: no-store\r\n"), "{head}");
-                    assert_eq!(
-                        head.contains("proxy-authorization: Basic dXNlcjpzZWNyZXQ="),
-                        proxied,
-                        "{head}"
-                    );
+                    assert_eq!(head.contains("proxy-authorization: Basic dXNlcjpzZWNyZXQ="), proxied, "{head}");
                     stream.write_all(crate::fixtures::ok("ok").as_bytes()).await.unwrap();
                 }
             });
@@ -891,10 +878,8 @@ mod tests {
             });
             let mut http = http(true);
             http.set_proxy(Proxy::new(&proxy, &proxy, ""));
-            let response = tokio::time::timeout(
-                Duration::from_secs(5),
-                http.request(Method::GET, url, Protocol::Negotiated),
-            );
+            let response =
+                tokio::time::timeout(Duration::from_secs(5), http.request(Method::GET, url, Protocol::Negotiated));
             assert_eq!(bounded_body(response.await??).await?, b"ok", "{url}");
             peer.await??;
         }
@@ -913,10 +898,8 @@ mod tests {
                     .iter()
                     .find(|(route, _)| *route == path)
                     .map_or("{}", |(_, body)| body.as_str());
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                    body.len()
-                );
+                let response =
+                    format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
                 let _ = stream.write_all(response.as_bytes()).await;
             }
         });
@@ -948,11 +931,7 @@ mod tests {
                 "latency": []
             }
         });
-        let origin = json_peer(vec![
-            ("/servers", catalog.to_string()),
-            ("/preflight", preflight.to_string()),
-        ])
-        .await?;
+        let origin = json_peer(vec![("/servers", catalog.to_string()), ("/preflight", preflight.to_string())]).await?;
         let http = http(false);
         let discovery = http.discover(&origin).await?;
         let urls: Vec<_> = discovery
@@ -961,18 +940,8 @@ mod tests {
             .iter()
             .map(|entry| entry.url.as_str())
             .collect();
-        assert_eq!(
-            urls,
-            [
-                origin.as_str(),
-                "https://remote.example:8443",
-                "https://xn--bcher-kva.example"
-            ]
-        );
-        assert_eq!(
-            discovery.catalog.servers[2].additional_origins,
-            ["https://xn--mnchen-3ya.example"]
-        );
+        assert_eq!(urls, [origin.as_str(), "https://remote.example:8443", "https://xn--bcher-kva.example"]);
+        assert_eq!(discovery.catalog.servers[2].additional_origins, ["https://xn--mnchen-3ya.example"]);
         assert_eq!(discovery.catalog.default_selection, ["self", "international"]);
         use graphite_meter_core::catalog::CatalogError;
         let rejected: Vec<_> = discovery
@@ -992,10 +961,7 @@ mod tests {
         let mut entry = discovery.catalog.servers[0].clone();
         entry.additional_origins = discovery.catalog.servers[2].additional_origins.clone();
         let preflight = http.preflight(&entry).await?;
-        assert_eq!(
-            preflight.capabilities.throughput[0].base_url,
-            "https://xn--mnchen-3ya.example"
-        );
+        assert_eq!(preflight.capabilities.throughput[0].base_url, "https://xn--mnchen-3ya.example");
         Ok(())
     }
 
@@ -1049,15 +1015,9 @@ mod tests {
     async fn approval_polls_through_network_errors_until_the_token_arrives() -> Result<()> {
         let url = token_endpoint(&["drop", ACCEPTED, ISSUED]).await?;
         let http = http(false);
-        tokio::time::timeout(
-            Duration::from_secs(10),
-            http.poll_authorization(pending(url, AUTHORIZATION_TIMEOUT)),
-        )
-        .await??;
-        assert_eq!(
-            http.authorization("https://meter.test/download").unwrap(),
-            "Bearer fixture"
-        );
+        tokio::time::timeout(Duration::from_secs(10), http.poll_authorization(pending(url, AUTHORIZATION_TIMEOUT)))
+            .await??;
+        assert_eq!(http.authorization("https://meter.test/download").unwrap(), "Bearer fixture");
         Ok(())
     }
 
@@ -1069,16 +1029,10 @@ mod tests {
             .poll_authorization(pending(answered, Duration::from_millis(1500)))
             .await
             .unwrap_err();
-        assert!(
-            matches!(expired.downcast_ref(), Some(Failure::ApprovalExpired)),
-            "{expired}"
-        );
+        assert!(matches!(expired.downcast_ref(), Some(Failure::ApprovalExpired)), "{expired}");
         let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await?.local_addr()?;
         let unreachable = http
-            .poll_authorization(pending(
-                format!("http://{closed}/auth/cli/token"),
-                Duration::from_millis(1500),
-            ))
+            .poll_authorization(pending(format!("http://{closed}/auth/cli/token"), Duration::from_millis(1500)))
             .await
             .unwrap_err();
         assert!(
@@ -1087,30 +1041,20 @@ mod tests {
                 .starts_with("server unreachable while waiting for browser approval: "),
             "{unreachable}"
         );
-        assert_eq!(
-            crate::failure::text(unreachable.as_ref()),
-            "Server could not be reached"
-        );
+        assert_eq!(crate::failure::text(unreachable.as_ref()), "Server could not be reached");
         Ok(())
     }
 
     #[test]
     fn request_destinations_preserve_validated_ascii_host_identity() {
         let http = http(false);
-        for origin in [
-            "https://xn--bcher-kva.example",
-            "https://meter.example.",
-            "https://127.0.0.1",
-        ] {
+        for origin in ["https://xn--bcher-kva.example", "https://meter.example.", "https://127.0.0.1"] {
             let request = http
                 .builder(Method::GET, &format!("{origin}/probe"))
                 .unwrap()
                 .body(())
                 .unwrap();
-            assert_eq!(
-                request.uri().host(),
-                Some(target_origin(origin).unwrap().unwrap().host.as_str())
-            );
+            assert_eq!(request.uri().host(), Some(target_origin(origin).unwrap().unwrap().host.as_str()));
         }
         for origin in [
             "https://1.2.3",
@@ -1121,10 +1065,7 @@ mod tests {
             "https://meter.example:0",
             "https://meter.example:000",
         ] {
-            assert!(
-                http.builder(Method::GET, &format!("{origin}/probe")).is_err(),
-                "accepted {origin}"
-            );
+            assert!(http.builder(Method::GET, &format!("{origin}/probe")).is_err(), "accepted {origin}");
         }
     }
 
@@ -1219,10 +1160,7 @@ mod tests {
 
         let mut headers = http::HeaderMap::new();
         headers.insert("graphite-meter-auth", HeaderValue::from_static("required"));
-        headers.insert(
-            "graphite-meter-auth-url",
-            HeaderValue::from_static("https://meter.example:7247/login"),
-        );
+        headers.insert("graphite-meter-auth-url", HeaderValue::from_static("https://meter.example:7247/login"));
         let error = first_client
             .check_status(&target, StatusCode::FORBIDDEN, &headers)
             .unwrap_err();

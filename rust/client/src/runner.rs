@@ -109,11 +109,7 @@ async fn prepare(
     deadline: Instant,
 ) -> Result<Preparation, Error> {
     let late = || -> Error {
-        std::io::Error::new(
-            std::io::ErrorKind::TimedOut,
-            "the path check did not finish within 12 seconds",
-        )
-        .into()
+        std::io::Error::new(std::io::ErrorKind::TimedOut, "the path check did not finish within 12 seconds").into()
     };
     config.validate()?;
     snapshots.send_modify(|snapshot| snapshot.error = None);
@@ -125,11 +121,7 @@ async fn prepare(
         .iter()
         .find(|entry| config.servers.contains(&entry.id))
     {
-        return Err(format!(
-            "the catalogue's server {:?} was left out: {}",
-            left_out.id, left_out.error
-        )
-        .into());
+        return Err(format!("the catalogue's server {:?} was left out: {}", left_out.id, left_out.error).into());
     }
     let selected = selection::servers(&discovery.catalog, config)?;
     snapshots.send_modify(|snapshot| {
@@ -182,20 +174,13 @@ async fn prepare(
     for (entry, result) in selected.iter().zip(results) {
         match result.expect("every selected verification completed") {
             Ok(server) => prepared.push(server),
-            Err(source) => failures.push(ServerError {
-                id: entry.id.clone(),
-                label: entry.name.clone(),
-                source,
-            }),
+            Err(source) => failures.push(ServerError { id: entry.id.clone(), label: entry.name.clone(), source }),
         }
     }
     if prepared.is_empty() {
         return Err(preferred(failures));
     }
-    Ok(Preparation {
-        servers: prepared,
-        failures,
-    })
+    Ok(Preparation { servers: prepared, failures })
 }
 
 /// Checks one server's paths; `offered` keeps what its discovery advertised, even if a later step fails.

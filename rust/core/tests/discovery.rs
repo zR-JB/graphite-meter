@@ -18,15 +18,9 @@ fn shared_goldens_round_trip_without_local_fields() {
         serde_json::to_value(&preflight).unwrap(),
         serde_json::from_slice::<Value>(PREFLIGHT).unwrap()
     );
-    assert_eq!(
-        preflight.capabilities.throughput[3].transport,
-        ThroughputTransport::WebTransportDatagram
-    );
+    assert_eq!(preflight.capabilities.throughput[3].transport, ThroughputTransport::WebTransportDatagram);
     let evidence = Probe::decode(PROBE).unwrap();
-    assert_eq!(
-        serde_json::to_value(&evidence).unwrap(),
-        serde_json::from_slice::<Value>(PROBE).unwrap()
-    );
+    assert_eq!(serde_json::to_value(&evidence).unwrap(), serde_json::from_slice::<Value>(PROBE).unwrap());
     assert_eq!(evidence.protocol_negotiated, ProtocolNegotiated::Http3);
 }
 
@@ -131,16 +125,10 @@ fn validates_stage_limits_and_both_origin_fields() {
     }
     let mut legacy = base.clone();
     legacy["capabilities"].as_object_mut().unwrap().remove("maxStageMs");
-    assert_eq!(
-        decode_preflight_value(&legacy).unwrap().capabilities.stage_limit(),
-        DEFAULT_STAGE_LIMIT
-    );
+    assert_eq!(decode_preflight_value(&legacy).unwrap().capabilities.stage_limit(), DEFAULT_STAGE_LIMIT);
     let mut value = base.clone();
     value["capabilities"]["throughput"][0]["baseUrl"] = json!("https://host/path");
-    assert_eq!(
-        decode_preflight_value(&value).err(),
-        Some(DiscoveryError::InvalidOrigin)
-    );
+    assert_eq!(decode_preflight_value(&value).err(), Some(DiscoveryError::InvalidOrigin));
     let mut direct = Preflight::decode(PREFLIGHT).unwrap();
     direct.capabilities.latency[0].base_url = "https://host/path".into();
     assert_eq!(direct.validate(), Err(DiscoveryError::InvalidOrigin));
@@ -190,20 +178,14 @@ fn catalogue_checks_all_discovery_lanes() {
     let mut preflight = Preflight::decode(PREFLIGHT).unwrap();
     entry.validate_discovery(&preflight).unwrap();
     preflight.capabilities.latency[0].base_url = "https://other.example".into();
-    assert_eq!(
-        entry.validate_discovery(&preflight),
-        Err(DiscoveryError::UnapprovedOrigin)
-    );
+    assert_eq!(entry.validate_discovery(&preflight), Err(DiscoveryError::UnapprovedOrigin));
     let allowed = ServerEntry {
         additional_origins: vec!["https://other.example".into()],
         ..entry
     };
     allowed.validate_discovery(&preflight).unwrap();
     preflight.generation.clear();
-    assert_eq!(
-        allowed.validate_discovery(&preflight),
-        Err(DiscoveryError::InvalidMetadata)
-    );
+    assert_eq!(allowed.validate_discovery(&preflight), Err(DiscoveryError::InvalidMetadata));
 }
 
 #[test]
@@ -211,10 +193,7 @@ fn newer_servers_targets_are_skipped_but_counted_as_sent() {
     let golden: Value = serde_json::from_slice(FORWARD).unwrap();
     let document = &golden["document"];
     let decoded = decode_preflight_value(document).unwrap().capabilities;
-    assert_eq!(
-        json!({"throughput": decoded.throughput, "latency": decoded.latency}),
-        golden["decoded"]
-    );
+    assert_eq!(json!({"throughput": decoded.throughput, "latency": decoded.latency}), golden["decoded"]);
     for list in ["throughput", "latency"] {
         let mut value = document.clone();
         let targets = value["capabilities"][list].as_array_mut().unwrap();
@@ -224,11 +203,7 @@ fn newer_servers_targets_are_skipped_but_counted_as_sent() {
         value["capabilities"][list].as_array_mut().unwrap().push(skipped);
         assert!(decode_preflight_value(&value).is_err(), "{list}");
     }
-    for (list, field) in [
-        ("throughput", "transport"),
-        ("throughput", "protocol"),
-        ("latency", "transport"),
-    ] {
+    for (list, field) in [("throughput", "transport"), ("throughput", "protocol"), ("latency", "transport")] {
         let mut empty = document.clone();
         empty["capabilities"][list][1][field] = json!("");
         let mut missing = document.clone();

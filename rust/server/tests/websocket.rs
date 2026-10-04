@@ -84,11 +84,7 @@ fn upgrade_checks_run_in_go_s_order() {
     assert_eq!(response.headers()[header::SEC_WEBSOCKET_VERSION], "13");
 }
 
-type Session = (
-    WebSocketStream<DuplexStream>,
-    oneshot::Sender<CloseReason>,
-    JoinHandle<()>,
-);
+type Session = (WebSocketStream<DuplexStream>, oneshot::Sender<CloseReason>, JoinHandle<()>);
 
 /// A ping session over a pipe that buffers `buffer` bytes, which lives `lifetime` or until its sender stops it.
 async fn session_with(buffer: usize, lifetime: Duration) -> Session {
@@ -97,11 +93,7 @@ async fn session_with(buffer: usize, lifetime: Duration) -> Session {
     let task = tokio::spawn(serve_ping(server, tokio::time::Instant::now() + lifetime, async {
         stopped.await.unwrap_or(CloseReason::Finished)
     }));
-    (
-        WebSocketStream::from_raw_socket(client, Role::Client, None).await,
-        stop,
-        task,
-    )
+    (WebSocketStream::from_raw_socket(client, Role::Client, None).await, stop, task)
 }
 
 async fn session() -> Session {
@@ -214,9 +206,7 @@ async fn quiet_upgraded_websocket_ends_with_idle_code() -> Result<(), TestError>
     let close = tokio::time::timeout(Duration::from_secs(1), socket.next())
         .await?
         .unwrap()?;
-    let Message::Close(Some(close)) = close else {
-        panic!("expected idle close")
-    };
+    let Message::Close(Some(close)) = close else { panic!("expected idle close") };
     assert_eq!(u16::from(close.code), 4001);
     assert_eq!(close.reason, "idle");
     server.shutdown().await;

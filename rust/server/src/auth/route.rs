@@ -106,11 +106,7 @@ mod tests {
             let method = Method::from_bytes(route.method().as_bytes()).unwrap();
             assert_eq!(AuthRoute::lookup(&method, route.path()), Some(route));
             assert!(claims(route.path()));
-            let other = if method == Method::GET {
-                Method::POST
-            } else {
-                Method::GET
-            };
+            let other = if method == Method::GET { Method::POST } else { Method::GET };
             assert_eq!(AuthRoute::lookup(&other, route.path()), None);
             assert_eq!(AuthRoute::lookup(&method, &format!("{}/", route.path())), None);
         }

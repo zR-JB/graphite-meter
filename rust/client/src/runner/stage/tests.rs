@@ -377,9 +377,7 @@ async fn prepared_download(id: &str, origin: &str, http: &Http) -> Result<Prepar
             transport: ThroughputTransport::FetchStream,
             protocol: Protocol::Http1,
         }),
-        http: Some(Arc::new(
-            Transport::connect(http.clone(), origin, Protocol::Http1).await?,
-        )),
+        http: Some(Arc::new(Transport::connect(http.clone(), origin, Protocol::Http1).await?)),
         latency: None,
         idle_rtt: Duration::ZERO,
         stage_limit: graphite_meter_core::discovery::DEFAULT_STAGE_LIMIT,
@@ -460,10 +458,8 @@ async fn a_stopped_bidirectional_start_drains_its_started_download() -> Result<(
         uploading.notified().await;
         stop.send_replace(true);
     };
-    let (result, ()) = tokio::time::timeout(Duration::from_secs(5), async {
-        tokio::join!(start, stop_while_uploading)
-    })
-    .await?;
+    let (result, ()) =
+        tokio::time::timeout(Duration::from_secs(5), async { tokio::join!(start, stop_while_uploading) }).await?;
     assert!(result.is_err());
     let mut draining = active.subscribe();
     tokio::time::timeout(Duration::from_secs(1), draining.wait_for(|count| *count == 0))
@@ -521,11 +517,7 @@ fn only_probes_sent_inside_the_stage_count_including_drained_replies() {
     ] {
         let (mut accumulator, mut latest) = (LatencyAccumulator::default(), None);
         let rtt = Duration::from_millis(20);
-        let sample = Observation::Sample {
-            sent,
-            rtt,
-            handling_nanos: 0,
-        };
+        let sample = Observation::Sample { sent, rtt, handling_nanos: 0 };
         observe_latency(sample, start, end, &mut accumulator, &mut latest);
         let summary = accumulator.snapshot();
         assert_eq!((summary.count, summary.unresolved, latest), (count, 0, latest_ms));
@@ -558,18 +550,12 @@ fn host_latency_populations_and_continuity_are_independent() {
     // Go's live view counts the probes in a row that timed out.
     for _ in 0..2 {
         let sent = start + Duration::from_millis(20);
-        let timeout = Observation::Lost {
-            sent,
-            outcome: ProbeOutcome::Timeout,
-        };
+        let timeout = Observation::Lost { sent, outcome: ProbeOutcome::Timeout };
         observe(&mut hosts, window, ("far".into(), timeout));
     }
     let mut snapshot = Snapshot {
         server_latencies: ["near", "far"]
-            .map(|id| ServerLatency {
-                id: id.into(),
-                ..ServerLatency::default()
-            })
+            .map(|id| ServerLatency { id: id.into(), ..ServerLatency::default() })
             .into(),
         ..Snapshot::default()
     };
@@ -737,10 +723,7 @@ async fn a_receiver_that_forgets_its_upload_is_replaced() -> Result<(), Error> {
     assert!(result?.is_empty());
     let resumed = graphite_meter_core::measurement::IntervalReason::EvidenceResumed;
     let intervals = &snapshot.intervals;
-    assert!(
-        intervals.iter().any(|interval| interval.reason == resumed),
-        "{intervals:?}"
-    );
+    assert!(intervals.iter().any(|interval| interval.reason == resumed), "{intervals:?}");
     assert!(snapshot.results[0].up_bps().is_some());
     Ok(())
 }
@@ -751,10 +734,7 @@ async fn a_receiver_forgotten_twice_takes_its_server_out() -> Result<(), Error> 
     let (result, snapshot) = forgetful_receiver(21).await?;
     assert!(result.is_err());
     let failure = sole_failure(&snapshot);
-    assert_eq!(
-        (failure.scope, failure.reason),
-        (FailureScope::Throughput, FailureReason::ProtocolError)
-    );
+    assert_eq!((failure.scope, failure.reason), (FailureScope::Throughput, FailureReason::ProtocolError));
     Ok(())
 }
 
@@ -803,19 +783,13 @@ async fn a_removal_at_the_final_boundary_collects_a_fresh_one_for_the_rest() -> 
     assert_eq!(result?, ["near"]);
     let snapshot = fixture.snapshots.borrow();
     let failure = sole_failure(&snapshot);
-    assert_eq!(
-        (failure.server_id.as_str(), failure.reason),
-        ("near", FailureReason::SignInRequired)
-    );
+    assert_eq!((failure.server_id.as_str(), failure.reason), ("near", FailureReason::SignInRequired));
     let intervals = &snapshot.intervals;
     let (first, last) = (&intervals[0], intervals.back().unwrap());
     assert_eq!(last.participants, ["far"]);
     // The fresh boundary starts once far's first final checkpoint has answered, 100 ms after the stage end.
     let fresh = fixture.config.upload_duration + Duration::from_millis(50);
-    assert!(
-        last.end_nanos - first.start_nanos >= fresh.as_nanos() as u64,
-        "{intervals:?}"
-    );
+    assert!(last.end_nanos - first.start_nanos >= fresh.as_nanos() as u64, "{intervals:?}");
     Ok(())
 }
 
@@ -876,10 +850,7 @@ async fn intervals_and_failures_share_the_run_clock() -> Result<(), Error> {
     let [download, upload] = intervals[..] else {
         panic!("{details}");
     };
-    assert!(
-        download.starts_with("Download ") && download.contains(" · near, far · "),
-        "{details}"
-    );
+    assert!(download.starts_with("Download ") && download.contains(" · near, far · "), "{details}");
     let upload = upload
         .strip_prefix("Upload ")
         .and_then(|line| line.split_once('–'))
@@ -947,11 +918,7 @@ async fn a_latency_stage_charts_the_replies_its_drain_collects() -> Result<(), E
     fixture.run().await?;
     let snapshot = fixture.snapshots.borrow();
     // As Go charts replies through the drain, the stage's last sample comes after its 1 s window.
-    assert!(
-        snapshot.latest.elapsed >= Duration::from_secs(1),
-        "{:?}",
-        snapshot.latest
-    );
+    assert!(snapshot.latest.elapsed >= Duration::from_secs(1), "{:?}", snapshot.latest);
     Ok(())
 }
 
@@ -980,10 +947,7 @@ async fn a_stop_during_readiness_sends_the_upload_delete() -> Result<(), Error> 
 // window can pass during its TLS setup, and a probe's 250 ms deadline before its loopback pong arrives.
 #[tokio::test]
 async fn a_stop_records_the_evidence_its_stage_lacked() -> Result<(), Error> {
-    for (stage, scope) in [
-        (Stage::Download, FailureScope::Throughput),
-        (Stage::Latency, FailureScope::Latency),
-    ] {
+    for (stage, scope) in [(Stage::Download, FailureScope::Throughput), (Stage::Latency, FailureScope::Latency)] {
         let mut fixture = Fixture::new(&["peer"], 2000).await?;
         fixture.latency();
         fixture.config.ping_interval = Duration::from_millis(100);

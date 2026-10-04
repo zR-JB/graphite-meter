@@ -59,10 +59,7 @@ fn browser_reservation_attaches_once_preserves_redirect_and_separates_audiences(
             .unwrap()
             .contains("client_origin=https%3A%2F%2Fclient.example")
     );
-    assert!(matches!(
-        store.exchange_browser(&verifier, AUDIENCE).unwrap(),
-        Exchange::Pending
-    ));
+    assert!(matches!(store.exchange_browser(&verifier, AUDIENCE).unwrap(), Exchange::Pending));
     assert!(matches!(
         store.begin_browser_approval(&valid, "https://wrong.example", Some(&session), CLIENT),
         Err(ApprovalError::InvalidApproval)
@@ -146,14 +143,8 @@ fn validation_preserves_cli_and_browser_verifier_differences() {
     store.begin_cli_approval(&session, &valid, CLIENT).unwrap();
     store.approve(&session, &challenge, ApprovalKind::Cli).unwrap();
     assert!(matches!(store.exchange_cli("").unwrap(), Exchange::Issued { .. }));
-    assert!(matches!(
-        store.exchange_cli(&"x".repeat(129)).unwrap(),
-        Exchange::Pending
-    ));
-    assert!(matches!(
-        store.exchange_browser("short", AUDIENCE),
-        Err(ExchangeError::InvalidVerifier)
-    ));
+    assert!(matches!(store.exchange_cli(&"x".repeat(129)).unwrap(), Exchange::Pending));
+    assert!(matches!(store.exchange_browser("short", AUDIENCE), Err(ExchangeError::InvalidVerifier)));
     assert!(matches!(
         SessionStore::new().begin_cli_approval(&session, &valid, CLIENT),
         Err(ApprovalError::NoSession)
@@ -180,10 +171,7 @@ fn concurrent_exchange_issues_exactly_one_grant() {
                 let verifier = &verifier;
                 scope.spawn(move || {
                     barrier.wait();
-                    matches!(
-                        store.exchange_browser(verifier, AUDIENCE).unwrap(),
-                        Exchange::Issued { .. }
-                    )
+                    matches!(store.exchange_browser(verifier, AUDIENCE).unwrap(), Exchange::Issued { .. })
                 })
             })
             .collect();

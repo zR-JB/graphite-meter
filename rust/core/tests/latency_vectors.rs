@@ -15,10 +15,7 @@ fn latency_vectors() {
                 accumulator.record(ProbeOutcome::Timeout);
             } else {
                 let rtt_nanos = (outcome["rttMs"].as_f64().unwrap() * 1e6) as i64;
-                accumulator.record(ProbeOutcome::Reply {
-                    rtt_nanos,
-                    handling_nanos: 0,
-                });
+                accumulator.record(ProbeOutcome::Reply { rtt_nanos, handling_nanos: 0 });
             }
             if let Some(rtt) = outcome["rttMs"].as_f64() {
                 estimator.observe((rtt * 1e6) as u64);

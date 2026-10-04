@@ -25,11 +25,7 @@ fn catalog_and_preflight_reject_controlled_labels_without_rejecting_unicode() {
             let mut value = catalog.clone();
             value["servers"][0][field] = json!(label);
             let parsed: ServerCatalog = serde_json::from_slice(&serde_json::to_vec(&value).unwrap()).unwrap();
-            let expected = if valid {
-                Ok(())
-            } else {
-                Err(CatalogError::InvalidIdentity)
-            };
+            let expected = if valid { Ok(()) } else { Err(CatalogError::InvalidIdentity) };
             assert_eq!(parsed.validate(), expected, "catalog {field}: {label:?}");
             if valid {
                 assert_eq!(serde_json::to_value(parsed).unwrap()["servers"][0][field], label);
@@ -40,16 +36,9 @@ fn catalog_and_preflight_reject_controlled_labels_without_rejecting_unicode() {
             *value.pointer_mut(pointer).unwrap() = json!(label);
             let parsed = Preflight::decode(&serde_json::to_vec(&value).unwrap());
             if valid {
-                assert_eq!(
-                    serde_json::to_value(parsed.unwrap()).unwrap().pointer(pointer).unwrap(),
-                    &json!(label)
-                );
+                assert_eq!(serde_json::to_value(parsed.unwrap()).unwrap().pointer(pointer).unwrap(), &json!(label));
             } else {
-                assert_eq!(
-                    parsed.unwrap_err(),
-                    DiscoveryError::InvalidMetadata,
-                    "preflight {pointer}: {label:?}"
-                );
+                assert_eq!(parsed.unwrap_err(), DiscoveryError::InvalidMetadata, "preflight {pointer}: {label:?}");
             }
         }
     }

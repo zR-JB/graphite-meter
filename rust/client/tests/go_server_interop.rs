@@ -30,12 +30,7 @@ impl Case {
             Protocol::Http3 => (ThroughputTransport::WebTransport, LatencyTransport::WebTransport),
             _ => (ThroughputTransport::FetchStream, LatencyTransport::WebSocket),
         };
-        Self {
-            name,
-            protocol,
-            throughput,
-            latency,
-        }
+        Self { name, protocol, throughput, latency }
     }
 }
 
@@ -92,11 +87,7 @@ async fn go_server_completes_approved_native_stages() -> Result<(), Error> {
         .await?;
     let approved = approval.wait_with_output().await?;
     if !approved.status.success() {
-        return Err(format!(
-            "browser approval fixture failed: {}",
-            String::from_utf8_lossy(&approved.stderr)
-        )
-        .into());
+        return Err(format!("browser approval fixture failed: {}", String::from_utf8_lossy(&approved.stderr)).into());
     }
     http.poll_authorization(pending).await?;
     for case in [
@@ -134,11 +125,7 @@ async fn run_case(url: &str, case: Case, http: Http) -> Result<(), Error> {
     };
     let (snapshots, _snapshot_rx) = watch::channel(Snapshot::default());
     let (cancel_tx, cancel) = watch::channel(false);
-    tokio::time::timeout(
-        Duration::from_secs(40),
-        runner::run(config, http, snapshots.clone(), cancel, None),
-    )
-    .await??;
+    tokio::time::timeout(Duration::from_secs(40), runner::run(config, http, snapshots.clone(), cancel, None)).await??;
     drop(cancel_tx);
 
     let snapshot = snapshots.borrow();
@@ -179,9 +166,6 @@ async fn run_case(url: &str, case: Case, http: Http) -> Result<(), Error> {
             assert!(result.up_bytes() > 0, "{} received no upload", stage.name());
         }
     }
-    println!(
-        "Rust client completed all four stages using {} against Go server",
-        case.name
-    );
+    println!("Rust client completed all four stages using {} against Go server", case.name);
     Ok(())
 }

@@ -108,14 +108,7 @@ impl Upload {
         } else {
             (Arc::new(transport.for_upload_lanes()), transport)
         };
-        let plan = Plan {
-            transport,
-            control,
-            lanes,
-            http,
-            cancel,
-            replaced,
-        };
+        let plan = Plan { transport, control, lanes, http, cancel, replaced };
         match Self::begin(plan.clone()).await {
             Err(error) if plan.replaces(&error) => Self::begin(plan).await,
             started => started,
@@ -185,12 +178,8 @@ impl Upload {
                 session = self.plan.transport.webtransport_slot(Route::WtUpload, &query) => session?,
             }));
         }
-        let (transport, id, feed, session) = (
-            self.plan.control.clone(),
-            self.id.clone(),
-            state.clone(),
-            self.session.clone(),
-        );
+        let (transport, id, feed, session) =
+            (self.plan.control.clone(), self.id.clone(), state.clone(), self.session.clone());
         self.progress.spawn(async move {
             if let Err(error) = progress_feed(&transport, &id, &feed, session).await {
                 fail(&feed, error);
@@ -220,19 +209,12 @@ impl Upload {
     /// Lane `index`, which ends with the lanes, the stage or the receiver; its flag rises as it sends.
     fn spawn_lane(&mut self, index: usize, state: &watch::Sender<State>, block: &Bytes) -> Arc<AtomicBool> {
         let active = Arc::new(AtomicBool::new(false));
-        let (transport, id, state, block) = (
-            self.plan.transport.clone(),
-            self.id.clone(),
-            state.clone(),
-            block.clone(),
-        );
+        let (transport, id, state, block) =
+            (self.plan.transport.clone(), self.id.clone(), state.clone(), block.clone());
         let (session, sending, (stagger, limit)) =
             (self.session.clone(), active.clone(), self.plan.http.unwrap_or_default());
-        let (mut stop, mut cancelled, mut health) = (
-            self.stop_lanes.subscribe(),
-            self.plan.cancel.clone(),
-            self.state.clone(),
-        );
+        let (mut stop, mut cancelled, mut health) =
+            (self.stop_lanes.subscribe(), self.plan.cancel.clone(), self.state.clone());
         let retry = TransferRetry::new(self.retrying.clone(), index);
         let home = session
             .as_ref()
@@ -262,10 +244,10 @@ impl Upload {
         active
     }
     pub fn observed(&self) -> Option<ObservedUpload> {
-        self.state.borrow().latest.map(|value| ObservedUpload {
-            id: self.id.clone(),
-            maximum: value.bytes,
-        })
+        self.state
+            .borrow()
+            .latest
+            .map(|value| ObservedUpload { id: self.id.clone(), maximum: value.bytes })
     }
     pub(crate) fn retrying(&self) -> Option<Error> {
         self.retrying.failure()
@@ -311,19 +293,11 @@ impl Upload {
                 return Err(wire::WireError::InvalidReceiverCheckpoint.into());
             }
             self.health()?;
-            return Ok(ReceiverSnapshot {
-                id: self.id.clone(),
-                bytes: count.bytes,
-                nanos: count.nanos,
-            });
+            return Ok(ReceiverSnapshot { id: self.id.clone(), bytes: count.bytes, nanos: count.nanos });
         }
     }
     pub async fn finish(mut self, confirm: bool) -> Result<(), Error> {
-        let bound = if confirm {
-            CONTROL_TIMEOUT
-        } else {
-            Duration::from_secs(1)
-        };
+        let bound = if confirm { CONTROL_TIMEOUT } else { Duration::from_secs(1) };
         let result = tokio::time::timeout(bound, async {
             let _ = self.stop_lanes.send(true);
             while let Some(result) = self.lanes.join_next().await {
@@ -381,10 +355,7 @@ async fn send_lane(
                     moved.store(true, Ordering::Relaxed);
                 }
                 let size = remaining.min(block.len() as u64) as usize;
-                Some((
-                    Ok::<_, Error>(block.slice(..size)),
-                    (block, remaining - size as u64, active, moved),
-                ))
+                Some((Ok::<_, Error>(block.slice(..size)), (block, remaining - size as u64, active, moved)))
             },
         );
         let query = [("cb", &*cache_buster()), ("id", id), ("lane", &*lane)];
@@ -436,11 +407,7 @@ struct Feed {
 
 impl Feed {
     fn new(source: Source) -> Self {
-        Self {
-            source,
-            line: Vec::new(),
-            chunk: Bytes::new(),
-        }
+        Self { source, line: Vec::new(), chunk: Bytes::new() }
     }
 
     /// Go's openUploadFeed (upload.go:299-318): open once the receiver answers `ready`.
@@ -563,10 +530,7 @@ fn apply_event(event: UploadProgress, state: &watch::Sender<State>) -> Result<bo
             let refusal = UploadRefusal::from_name(&code);
             // A withdrawn grant asks for sign-in, as Go's uploadRefusal (failure.go:69-70).
             if refusal == Some(UploadRefusal::Revoked) {
-                return Err(Box::new(Failure::SignIn {
-                    origin: String::new(),
-                    login_url: String::new(),
-                }));
+                return Err(Box::new(Failure::SignIn { origin: String::new(), login_url: String::new() }));
             }
             return Err(Box::new(Failure::Http {
                 status: refusal.map_or(400, |refusal| refusal.status()),
@@ -814,14 +778,7 @@ mod tests {
             while let Ok((socket, _)) = listener.accept().await {
                 let lanes = Arc::new(AtomicBool::new(false));
                 let (inner, write) = socket.into_split();
-                let io = tokio::io::join(
-                    Gate {
-                        inner,
-                        lanes: lanes.clone(),
-                        armed: armed.clone(),
-                    },
-                    write,
-                );
+                let io = tokio::io::join(Gate { inner, lanes: lanes.clone(), armed: armed.clone() }, write);
                 let service = service_fn(move |request: http::Request<hyper::body::Incoming>| {
                     let lanes = lanes.clone();
                     async move {
