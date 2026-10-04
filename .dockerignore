@@ -35,3 +35,4 @@ go/internal/static/dist
 **/*.pkcs8
 **/*.jks
 **/*.keystore
+rust/target
