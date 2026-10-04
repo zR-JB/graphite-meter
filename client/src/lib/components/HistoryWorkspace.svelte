@@ -876,6 +876,7 @@
   /* Reserving the list's scrollbar gutter, a notice ends on the rows' edge. */
   .notices {
     display: grid;
+    flex: none;
     gap: var(--space-1);
     padding: var(--space-3) var(--panel-pad) 0;
     overflow: hidden;
