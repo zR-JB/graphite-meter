@@ -5,7 +5,7 @@
   import { BUILD } from "../buildenv";
   import { handoff, type Handoff } from "../presentation/motion.svelte";
   import type { Phase } from "../runner/contract";
-  import { CONNECTIVITY, STATUS_LABEL_CH } from "../presentation/vocabulary";
+  import { CONNECTIVITY } from "../presentation/vocabulary";
 
   let { status: label }: { status: Handoff<{ phase: Phase; label: string }> } =
     $props();
@@ -38,7 +38,6 @@
 <span
   class="label"
   style:opacity={label.opacity}
-  style:min-width="{STATUS_LABEL_CH}ch"
   {@attach refused
     ? tooltip(() => store.startError || store.startBlocker)
     : null}>{label.shown.label}</span
@@ -77,7 +76,7 @@
     font-weight: var(--w-strong);
   }
   .elapsed {
-    margin-left: var(--space-3);
+    margin-left: var(--space-2);
   }
   .readout {
     display: inline-block;

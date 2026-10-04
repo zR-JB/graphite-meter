@@ -304,16 +304,6 @@ export const phaseLabel = (phase: Phase, outcome: Outcome = "complete") =>
   phase === "complete" ? OUTCOME[outcome] : PHASE[phase];
 
 const CHECKING_SIGN_IN = "Checking sign-in";
-/** Characters of the longest statusLabel, so the footer never shifts. */
-export const STATUS_LABEL_CH = Math.max(
-  ...[
-    ...Object.values(PHASE),
-    ...Object.values(OUTCOME),
-    BLOCKED,
-    START_FAILED,
-    CHECKING_SIGN_IN,
-  ].map((label) => label.length),
-);
 
 export function statusLabel(
   preparation: PreparationState["status"],
