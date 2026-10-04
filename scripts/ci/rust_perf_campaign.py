@@ -25,7 +25,7 @@ from rust.tests.process_fixture import Fixture, unused_port
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / 'rust/target/campaign'
 BIN = OUT / 'bin'
-BASE = '4b4ce453ea94dccdd46e6d83f7f6912c6abf76bd'
+BASE = '8f76b6705d373e1be4e8cad9d4e168b3601c2d0a'
 MUSL = 'x86_64-unknown-linux-musl'
 VARIANTS = ('go', 'base', 'cand')
 TRANSFERS = [(protocol, direction, transport) for protocol, transport in
