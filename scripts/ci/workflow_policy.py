@@ -44,13 +44,11 @@ ORDERED = {
         "SOURCE_SHA: ${{ steps.request.outputs.remote_sha }}\n",
         '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', "uses: docker/build-push-action@",
         'python3 -m scripts.ci.verify_release_assets "$VERSION"',
-        # Only the expected source offer and Rust artifacts leave the exports, with a listing that cannot
-        # list itself.
+        # Only the expected source offer and Rust artifacts leave the exports, with a self-free listing.
         "run: python3 -m scripts.ci.release stage-source\n",
         "run: python3 -m scripts.ci.release stage-rust\n",
     ),
-    # CI builds, stages and verifies the prerelease source offer and the Rust exports as a release request
-    # and the release do.
+    # CI builds, stages and verifies the prerelease source offer and Rust exports as releases do.
     "workflows/ci.yml": (
         "--target third-party-source", "run: python3 -m scripts.ci.release stage-source\n",
         "run: mise run rust-check\n", "run: python3 -m scripts.legal.check_git_sources --verify\n",
@@ -87,22 +85,17 @@ CONTEXT = {
         "REPOSITORY": "github.repository", "TAG": "needs.verify.outputs.tag",
         "SOURCE_SHA": "needs.verify.outputs.sha", "MAIN_SHA": "needs.verify.outputs.main_sha",
         "PR": "needs.verify.outputs.pr", "RUST": "needs.verify.outputs.rust",
-        "OCI_SHA256": "needs.verify.outputs.oci_sha256",
-        "RUST_OCI_SHA256": "needs.verify.outputs.rust_oci_sha256",
+        "OCI_SHA256": "needs.verify.outputs.oci_sha256", "RUST_OCI_SHA256": "needs.verify.outputs.rust_oci_sha256",
         "ASSETS_SHA256": "needs.verify.outputs.assets_sha256",
     },
     "run: python3 -m scripts.ci.release publish": {
-        "REPOSITORY": "github.repository", "TARGET_SHA": "github.sha",
-        "TAG": "needs.verify.outputs.tag",
-        "SOURCE_SHA": "needs.verify.outputs.sha", "PR": "needs.verify.outputs.pr",
-        "RUST": "needs.verify.outputs.rust",
+        "REPOSITORY": "github.repository", "TARGET_SHA": "github.sha", "TAG": "needs.verify.outputs.tag",
+        "SOURCE_SHA": "needs.verify.outputs.sha", "PR": "needs.verify.outputs.pr", "RUST": "needs.verify.outputs.rust",
     },
 }
 CHECKOUT_REFS = {"workflows/release-request.yml": ("github.sha", "needs.build.outputs.sha")}
-IMAGE_BUILD = (
-    "no-cache: true\n", "provenance: mode=max\n", "github-token: ''\n",
-    "GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}\n",
-)
+IMAGE_BUILD = ("no-cache: true\n", "provenance: mode=max\n", "github-token: ''\n",
+               "GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}\n")
 FORBIDDEN = {
     "actions/setup-buildx/action.yml": ("allow-insecure-entitlement",),
     "workflows/release.yml": ("head_sha", "pull_request.head", "mise run", "secrets["),
@@ -255,10 +248,8 @@ def check_ci(root: Path) -> None:
 
 
 def check_run_commands(root: Path) -> None:
-    """No workflow, image build or release script, nor any task or scripts/ shell script they run, builds with
-    the unreviewed notices of `scripts.legal.rust --development`, which only the development tasks use, or lets
-    rustup replace itself while it installs a toolchain. Python modules are not followed: scripts.legal.rust
-    defines the flag, and package_rust.py, the one that runs it, is read."""
+    """No workflow, image build, release script or task or scripts/*.sh they run builds with unreviewed
+    `--development` notices or lets rustup replace itself; of the Python modules only package_rust.py is read."""
     tasks = tomllib.loads(read(root, "mise.toml"))["tasks"]
     texts = [path.read_text(encoding="utf-8") for path in sorted((root / ".github").rglob("*.y*ml"))]
     texts += [read(root, name) for name in ("container/Dockerfile", "container/Dockerfile.rust", "scripts/package_rust.py")]
@@ -303,10 +294,9 @@ def check_paths(root: Path) -> None:
     filters = path_filters(read(root, ".github/ci-paths.yml"))
     image = [source + "x" if source.endswith("/") else source for line in re.findall(
         r"(?m)^COPY (?!--)(.+)$", read(root, "container/Dockerfile.rust")) for source in line.split()[:-1]]
-    for name, inputs in (("rust", [".dockerignore", *image]),):
-        if missing := [path for path in inputs
-                       if not any(PurePosixPath(path).full_match(glob) for glob in filters.get(name, []))]:
-            fail(f".github/ci-paths.yml {name} misses {missing}")
+    if missing := [path for path in [".dockerignore", *image]
+                   if not any(PurePosixPath(path).full_match(glob) for glob in filters.get("rust", []))]:
+        fail(f".github/ci-paths.yml rust misses {missing}")
 
 
 def check_build_context(root: Path) -> None:

@@ -127,11 +127,8 @@ def require_dispatch_run(
     repository: str, owner: str, main_sha: str, run_id: int, workflow: str, title: str,
     artifacts: dict[str, tuple[str, int]],
 ) -> None:
-    """Bind a request run to its workflow, inputs, main, one attempt, the owner and artifacts.
-
-    `artifacts` maps each name to the job that writes it and a size limit. An artifact must have been
-    written while its job ran, so a job that runs the requested source natively cannot replace another's.
-    """
+    """Bind a request run to its workflow, inputs, main, one attempt, the owner and `artifacts`, each named
+    with its size limit and the job it must have been written during, so no other job can replace it."""
     workflow_id = gh.int_field(gh.expect_object(gh.api(f"repos/{repository}/actions/workflows/{workflow}"),
                                           workflow), "id", workflow)
     run = gh.expect_object(gh.api(f"repos/{repository}/actions/runs/{run_id}"), "request run")

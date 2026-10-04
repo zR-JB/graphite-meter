@@ -223,10 +223,8 @@ def rust_files(version: str, package: str, platform: str) -> set[str]:
 
 
 def rust_statements(version: str, server: list[str], tui: list[str]) -> dict[str, set[str]]:
-    """BuildKit's provenance statement of each Docker export, named as released, and the files it attests.
-
-    Each server platform is its own export; one export holds every TUI.
-    """
+    """Each Docker export's provenance statement, named as released, and the files it attests: one export per
+    server platform, one for every TUI."""
     statements = {f"graphite-meter-server_{version}_{platform.replace('/', '_')}_rust.provenance.json":
                   rust_files(version, "graphite-meter-server", platform) for platform in server}
     if tui:
@@ -243,9 +241,7 @@ def expected_rust_artifacts(version: str, server: list[str], tui: list[str]) -> 
 def stage_rust(export: Path, dist: Path, version: str, server: list[str], tui: list[str]) -> None:
     """Copy exactly the Docker-built artifacts and their provenance statements out of `export`, then checksum them.
 
-    BuildKit writes a statement as provenance.json beside the files it attests, in one directory per platform
-    when an export has several; everything else in the export stays behind.
-    """
+    BuildKit writes each statement as provenance.json beside the files it attests; everything else stays behind."""
     statements = rust_statements(version, server, tui)
     wanted = set().union(*statements.values())
     dist.mkdir(parents=True, exist_ok=True)
@@ -295,10 +291,9 @@ def verify_rust_source(path: Path, package: str, target: str, root: Path = Path(
     """Verify a Rust build's source offer against the release commit's files, which `root` holds."""
     names = archive_names(path)
     inventory = expect_object(decode_json(read_archive_text(path, "inventory.json"), path.name), path.name)
+    identity = {"package": package, "profile": "release", "target": target}
     if int_field(inventory, "schemaVersion", path.name) != 1 or any(
-            inventory.get(key) != value for key, value in {
-        "package": package, "profile": "release", "target": target,
-    }.items()):
+            inventory.get(key) != value for key, value in identity.items()):
         fail(f"{path.name} has invalid Rust build identity")
     lock = inventory.get("cargoLockSha256")
     if not isinstance(lock, str) or re.fullmatch(r"[0-9a-f]{64}", lock) is None:
@@ -393,16 +388,6 @@ def verify_rust_provenance(dist: Path, name: str, files: set[str], commit: str, 
         fail(f"{name} records source {source}, not {commit}")
 
 
-def verify_rust_artifacts(dist: Path, version: str, server: list[str], tui: list[str],
-                          root: Path = Path(".")) -> None:
-    targets = rust_tui_targets(TARGETS)
-    for platform in server:
-        source, = rust_files(version, "graphite-meter-server", platform)
-        verify_rust_source(dist / source, "graphite-meter-server", targets[platform], root)
-    for platform in tui:
-        verify_rust_client_archive(dist, version, platform, targets[platform], root)
-
-
 def verify_rust(parts: list[Path], assets: Path, version: str, server: list[str], tui: list[str],
                 commit: str, repository: str, root: Path = Path(".")) -> None:
     """Merge the untrusted Rust artifacts into `assets` and verify them against `commit`'s files in `root`."""
@@ -410,7 +395,12 @@ def verify_rust(parts: list[Path], assets: Path, version: str, server: list[str]
     require_same("Rust artifacts", expected_rust_artifacts(version, server, tui), names)
     for name, files in rust_statements(version, server, tui).items():
         verify_rust_provenance(assets, name, files, commit, repository)
-    verify_rust_artifacts(assets, version, server, tui, root)
+    targets = rust_tui_targets(TARGETS)
+    for platform in server:
+        source, = rust_files(version, "graphite-meter-server", platform)
+        verify_rust_source(assets / source, "graphite-meter-server", targets[platform], root)
+    for platform in tui:
+        verify_rust_client_archive(assets, version, platform, targets[platform], root)
 
 
 def verify_artifacts(version: str, dist: Path) -> None:

@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class RustFreshnessTests(CheckoutTests):
-    def test_staging_preserves_identical_assets_and_rust_notices_but_removes_deleted_assets(self) -> None:
+    def test_staging_keeps_unchanged_assets_and_rust_notices_and_follows_every_asset_change(self) -> None:
         source, target = self.root / 'source', self.root / 'target'
         for path, data in ((source / 'index.html', b'page'), (source / 'obsolete.js', b'old'),
                            (source / 'legal/about.json', b'Go'), (target / 'legal/about.json', b'Rust')):
@@ -40,6 +40,17 @@ class RustFreshnessTests(CheckoutTests):
         (source / 'obsolete.js').unlink()
         self.assertTrue(stage_browser(source, target))
         self.assertFalse((target / 'obsolete.js').exists())
+        write_changed(source / 'asset', b'file')
+        stage_browser(source, target)
+        (source / 'asset').unlink()
+        write_changed(source / 'asset/nested/data', b'nested')
+        self.assertTrue(stage_browser(source, target))
+        self.assertEqual((target / 'asset/nested/data').read_bytes(), b'nested')
+        shutil.rmtree(source / 'asset')
+        write_changed(source / 'asset', b'file again')
+        self.assertTrue(stage_browser(source, target))
+        self.assertEqual((target / 'asset').read_bytes(), b'file again')
+        self.assertFalse(stage_browser(source, target))
         (source / 'escape').symlink_to(target, target_is_directory=True)
         with self.assertRaisesRegex(LegalError, 'symbolic links'):
             stage_browser(source, target)
@@ -54,21 +65,6 @@ class RustFreshnessTests(CheckoutTests):
             with self.assertRaisesRegex(LegalError, 'unreviewed dependency'):
                 main()
         self.assertFalse((output / 'LEGAL.txt').exists())
-
-    def test_staging_allows_assets_to_change_between_files_and_directories(self) -> None:
-        source, target = self.root / 'source', self.root / 'target'
-        write_changed(source / 'index.html', b'page')
-        write_changed(source / 'asset', b'file')
-        stage_browser(source, target)
-        (source / 'asset').unlink()
-        write_changed(source / 'asset/nested/data', b'nested')
-        self.assertTrue(stage_browser(source, target))
-        self.assertEqual((target / 'asset/nested/data').read_bytes(), b'nested')
-        shutil.rmtree(source / 'asset')
-        write_changed(source / 'asset', b'file again')
-        self.assertTrue(stage_browser(source, target))
-        self.assertEqual((target / 'asset').read_bytes(), b'file again')
-        self.assertFalse(stage_browser(source, target))
 
     def test_review_template_cannot_retain_an_earlier_successful_report(self) -> None:
         from scripts.legal.rust import main
@@ -213,16 +209,11 @@ class RustArtifactTests(unittest.TestCase):
 
     def messages(self) -> list[dict]:
         return [
-            {'reason': 'compiler-artifact', 'package_id': 'dependency',
-             'target': {'name': 'dependency', 'kind': ['lib']},
-             'profile': {'test': False}, 'features': ['b', 'a'],
-             'fresh': True, 'executable': None},
-            {'reason': 'build-script-executed', 'package_id': 'dependency',
-             'linked_libs': ['static=crypto']},
-            {'reason': 'compiler-artifact', 'package_id': 'application',
-             'target': {'name': 'application', 'kind': ['bin']},
-             'profile': {'test': False}, 'features': [],
-             'fresh': True, 'executable': '/target/application'},
+            {'reason': 'compiler-artifact', 'package_id': 'dependency', 'target': {'name': 'dependency', 'kind': ['lib']},
+             'profile': {'test': False}, 'features': ['b', 'a'], 'fresh': True, 'executable': None},
+            {'reason': 'build-script-executed', 'package_id': 'dependency', 'linked_libs': ['static=crypto']},
+            {'reason': 'compiler-artifact', 'package_id': 'application', 'target': {'name': 'application', 'kind': ['bin']},
+             'profile': {'test': False}, 'features': [], 'fresh': True, 'executable': '/target/application'},
             {'reason': 'build-finished', 'success': True},
         ]
 
@@ -251,15 +242,13 @@ class RustPackageTests(CheckoutTests):
         from scripts.package_rust import build
 
         supplement = ROOT / 'legal/rust-platform-debian-bookworm.json'
-        with patch('subprocess.run', side_effect=AssertionError('built')):
-            with self.assertRaisesRegex(ValueError, 'no TUI target for plan9/amd64'):
-                build('1.2.3', 'plan9/amd64', self.root, supplement)
-            with self.assertRaisesRegex(ValueError, 'no TUI target for darwin/arm64'):
-                build('1.2.3', 'darwin/arm64', self.root, supplement)
-            with self.assertRaisesRegex(ControlPlaneError, 'is outside'):
-                build('1.2.3', 'linux/amd64', Path('/'), supplement)
-            with self.assertRaisesRegex(ValueError, 'invalid release version'):
-                build('1.2.3;id', 'linux/amd64', self.root, supplement)
+        for version, platform, output, error, message in (
+                ('1.2.3', 'plan9/amd64', self.root, ValueError, 'no TUI target for plan9/amd64'),
+                ('1.2.3', 'darwin/arm64', self.root, ValueError, 'no TUI target for darwin/arm64'),
+                ('1.2.3', 'linux/amd64', Path('/'), ControlPlaneError, 'is outside'),
+                ('1.2.3;id', 'linux/amd64', self.root, ValueError, 'invalid release version')):
+            with patch('subprocess.run', side_effect=AssertionError('built')), self.assertRaisesRegex(error, message):
+                build(version, platform, output, supplement)
 
     @unittest.skipUnless(os.name == 'posix', 'the fake executable is a shell script')
     def test_a_build_for_this_system_and_architecture_reports_its_version(self) -> None:
@@ -276,6 +265,7 @@ class RustPackageTests(CheckoutTests):
             (self.root / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, self.root / name)
         ran, reported = self.root / 'ran', {'version': '1.2.3-rust'}
+        supplement = ROOT / 'legal/rust-platform-debian-bookworm.json'
 
         def legal_build(command: list[str], **options: Any) -> object:
             if command[0] != sys.executable:
@@ -296,24 +286,22 @@ class RustPackageTests(CheckoutTests):
             return None
 
         with patch.object(package, 'REPO', self.root), patch('subprocess.run', side_effect=legal_build):
-            package.build('1.2.3', other, self.root / 'dist', ROOT / 'legal/rust-platform-debian-bookworm.json')
+            package.build('1.2.3', other, self.root / 'dist', supplement)
             self.assertFalse(ran.exists())
-            package.build('1.2.3', host_platform(), self.root / 'dist', ROOT / 'legal/rust-platform-debian-bookworm.json')
+            package.build('1.2.3', host_platform(), self.root / 'dist', supplement)
             self.assertTrue(ran.exists())
             reported['version'] = '1.2.2-rust'
             with self.assertRaisesRegex(ValueError, "reports 'graphite-meter-client 1.2.2-rust'"):
-                package.build('1.2.3', host_platform(), self.root / 'dist', ROOT / 'legal/rust-platform-debian-bookworm.json')
+                package.build('1.2.3', host_platform(), self.root / 'dist', supplement)
 
 
-class RustLegalReportTests(unittest.TestCase):
+class RustReportTests(unittest.TestCase):
     def test_a_development_report_opens_by_saying_that_no_review_covers_it(self) -> None:
         sections = 'THIRD-PARTY SOFTWARE NOTICES\n'
         report = legal_report(ROOT, 'development', sections, development=True)
         self.assertTrue(report.startswith(b'UNREVIEWED DEVELOPMENT BUILD\n\n'))
         self.assertEqual(report, DEVELOPMENT_NOTICE.encode() + legal_report(ROOT, 'development', sections))
 
-
-class RustDevelopmentTests(unittest.TestCase):
     def test_only_a_development_build_goes_without_a_target_and_a_platform_record(self) -> None:
         for args, error in ((['--out', 'x'], '--target is required'),
                             (['--development', '--supplement', 'legal/rust-platform-debian-bookworm.json', '--out', 'x'],
@@ -327,9 +315,6 @@ class RustDevelopmentTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn(error, result.stderr)
 
-
-
-class RustImageTests(unittest.TestCase):
     def test_the_server_image_adds_what_go_image_adds_to_its_server(self) -> None:
         go = [Provenance.parse(item) for item in array(read_json(ROOT / 'legal/provenance.json'))]
         expected = {(entry.ecosystem, entry.name) for entry in go if 'container' in entry.artifactScopes
@@ -357,7 +342,6 @@ class RustPlatformTests(CheckoutTests):
         resource = {'url': 'https://example.invalid/immutable/LICENSE', 'sha256': sha256(b'reviewed license')}
         self.enterContext(patch('scripts.legal.rust_platform.rust_channel', return_value='pinned'))
         resources = {'rustVersion': 'pinned', relative: resource}
-        (self.root / 'legal/rust-notice-sources.json').write_text(json.dumps(resources))
         entry: dict[str, Json] = {'notices': {relative: 'runtime/LICENSE'}}
         (self.root / 'legal/rust-notice-sources.json').write_text(json.dumps(resources | {'rustVersion': 'old'}))
         with self.assertRaisesRegex(LegalError, 'require review for Rust'):
@@ -418,7 +402,6 @@ class RustPlatformTests(CheckoutTests):
         with patch('subprocess.check_output', return_value=listing):
             self.assertEqual(imports(Path('/build/graphite-meter-client'), 'aarch64-apple-darwin'),
                              {'/usr/lib/libSystem.B.dylib'} | relative)
-
 
 
 class RustPlatformRecordTests(CheckoutTests):
@@ -600,8 +583,7 @@ class RustBuildTests(CheckoutTests):
             'rust/rust-toolchain.toml': (ROOT / 'rust/rust-toolchain.toml').read_text(),
         }
         for name, content in files.items():
-            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
-            (self.root / name).write_text(content)
+            write_changed(self.root / name, content.encode())
         channel = rust_channel(ROOT)
         rustc = subprocess.check_output(['rustup', 'which', '--toolchain', channel, 'rustc'], text=True).strip()
         host = next(line.split()[1] for line in subprocess.check_output([rustc, '-vV'], text=True).splitlines()

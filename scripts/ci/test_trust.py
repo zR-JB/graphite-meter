@@ -344,8 +344,7 @@ class RequestTests(unittest.TestCase):
 
     def test_artifacts_are_bound_to_the_request_workflow_jobs(self) -> None:
         workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/release-request.yml").read_text()
-        for name in (BUILD_JOB,):
-            self.assertEqual(workflow.count(f"    name: {name}\n"), 1)
+        self.assertEqual(workflow.count(f"    name: {BUILD_JOB}\n"), 1)
 
     def test_handoff_directories_hold_exact_regular_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

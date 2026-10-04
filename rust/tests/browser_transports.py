@@ -86,6 +86,16 @@ async function session(path, run) {
   await within(wt.ready, 5000);
   try { return await run(wt); } finally { wt.close(); await wt.closed.catch(() => {}); }
 }
+async function downloaded(bytes) {
+  const url = base + "/download?bytes=" + bytes;
+  return { bytes: await drain((await fetched(url)).body), protocol: await protocol(url) };
+}
+async function closed(stop) {
+  const wt = new WebTransport(base + "/wt/ping", options);
+  await within(wt.ready, 5000);
+  if (stop) await fetch("/stop", { method: "POST" });
+  return await within(wt.closed, 10000);
+}
 async function* records(readable) {
   const reader = readable.pipeThrough(new TextDecoderStream()).getReader();
   for (let buffered = ""; ; ) {
@@ -97,10 +107,7 @@ async function* records(readable) {
   }
 }
 const transport = {
-  async download() {
-    const url = base + "/download?bytes=1048576";
-    return { bytes: await drain((await fetched(url)).body), protocol: await protocol(url) };
-  },
+  download: () => downloaded(1048576),
   async upload() {
     const url = base + "/upload?id=" + await uploadId();
     const response = await fetched(url, { method: "POST", body: new Uint8Array(1048576) });
@@ -128,25 +135,10 @@ const transport = {
       if (record.type === "progress" && record.bytes >= 65536) return record.bytes;
     }
   }),
-  async wt_close() {
-    const wt = new WebTransport(base + "/wt/ping", options);
-    await within(wt.ready, 5000);
-    return await within(wt.closed, 10000);
-  },
-  async wt_shutdown() {
-    const wt = new WebTransport(base + "/wt/ping", options);
-    await within(wt.ready, 5000);
-    await fetch("/stop", { method: "POST" });
-    return await within(wt.closed, 10000);
-  },
+  wt_close: () => closed(false),
+  wt_shutdown: () => closed(true),
 };
-const negative = {
-  webtransport: async () => typeof WebTransport,
-  async download() {
-    const url = base + "/download?bytes=65536";
-    return { bytes: await drain((await fetched(url)).body), protocol: await protocol(url) };
-  },
-};
+const negative = { webtransport: async () => typeof WebTransport, download: () => downloaded(65536) };
 (async () => {
   const report = { ua: navigator.userAgent, checks: {} };
   for (const [name, check] of Object.entries(query.has("negative") ? negative : transport)) {

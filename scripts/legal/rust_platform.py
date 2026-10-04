@@ -141,11 +141,8 @@ def notice(entry: dict[str, Json] | None, *, target: str, sysroot: Path,
 
 def candidate(entry: dict[str, Json] | None, *, target: str, sysroot: Path,
               inputs: set[str], libraries: set[str]) -> tuple[dict[str, object], str]:
-    """This build's unreviewed native/import record and canonical notice listing.
-
-    It keeps the reviewed native inputs this build did not link while they exist, such as import
-    libraries only unoptimized builds take, so re-approving it retains their coverage.
-    """
+    """This build's unreviewed native/import record and canonical notice listing; it keeps reviewed native inputs
+    this build did not link while they exist, such as import libraries only unoptimized builds take."""
     rlib = rlibs(sysroot, target)
     native = inputs - rlib | {path for path in strings(entry or {}, 'nativeInputs') if source(path, sysroot).exists()}
     listing, _ = fingerprint(set(notice_names(entry, sysroot)), sysroot)

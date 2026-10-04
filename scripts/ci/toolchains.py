@@ -117,9 +117,7 @@ def rust_downloads(manifest: bytes) -> dict[tuple[str, str], dict[str, object]]:
 
 
 def check_rust_manifest(installed: Path, manifest: bytes, root: Path = ROOT) -> None:
-    """Require the pinned channel `manifest` and the one rustup installed to name the same archives.
-
-    rustup rewrites the manifest it installs, so the copies are compared by what rustup verifies."""
+    """Require the pinned channel `manifest` and the rewritten one rustup installed to name the same archives."""
     if hashlib.sha256(manifest).hexdigest() != pin("rust.manifest", root):
         raise ValueError("the Rust channel manifest does not match mise.toml's rust_manifest_sha256")
     if rust_downloads(installed.read_bytes()) != rust_downloads(manifest):

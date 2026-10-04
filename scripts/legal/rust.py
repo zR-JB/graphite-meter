@@ -256,12 +256,11 @@ def discover(repo: Path, metadata: dict, messages: list[dict], package: str, rev
         except LegalError as error:
             failures.append(f'{component.name} {component.version}: {error}')
         components.append(component)
-        revision = ''
         vcs = directory / '.cargo_vcs_info.json'
-        if vcs.exists():
-            revision = json.loads(vcs.read_text()).get('git', {}).get('sha1', '')
-        if item['source'] and item['source'].startswith('git+'):
-            revision = item['source'].rsplit('#', 1)[-1]
+        if source.startswith('git+'):
+            revision = source.rsplit('#', 1)[-1]
+        else:
+            revision = json.loads(vcs.read_text()).get('git', {}).get('sha1', '') if vcs.exists() else ''
         inventory.append({'component': component.json(), 'repository': item.get('repository') or '',
                           'upstreamRevision': revision, **build})
     components.sort(key=lambda item: (item.name, item.version, item.source))
@@ -412,15 +411,14 @@ def build(args: argparse.Namespace) -> None:
     else:
         extra = checked_platform_notice(record, facts)
     staged_assets = None
+    browser_components: list[Component] = []
+    shared_notices = None
     if args.package == 'graphite-meter-server' and os.environ.get('GM_RUST_ASSET_DIR'):
         source_assets = (repo / 'rust/server' / os.environ['GM_RUST_ASSET_DIR']).resolve()
         if not source_assets.is_relative_to(repo):
             raise LegalError('GM_RUST_ASSET_DIR must name a directory inside the repository')
         staged_assets = output / 'browser-assets'
         stage_browser(source_assets, staged_assets)
-    browser_components: list[Component] = []
-    shared_notices = None
-    if args.package == 'graphite-meter-server' and os.environ.get('GM_RUST_ASSET_DIR'):
         if browser_scan is None:
             raise LegalError('server with browser assets requires the matching production --browser-scan')
         browser_reviews = [Review.parse(item) for item in array(read_json(repo / 'legal/reviewed-components.json'))]
@@ -437,7 +435,6 @@ def build(args: argparse.Namespace) -> None:
             (output / 'IMAGE_NOTICES.txt').write_bytes(legal_report(
                 repo, args.version, notices(components + browser_components + image_components) + '\n' + extra,
                 args.development))
-        assert staged_assets is not None
         legal_assets = staged_assets / 'legal'
         legal_assets.mkdir(exist_ok=True)
         write_changed(legal_assets / 'LICENSE.txt', (repo / 'LICENSE').read_bytes())

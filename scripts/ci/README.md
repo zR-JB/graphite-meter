@@ -17,19 +17,17 @@ mise run workflow-check    # actionlint, zizmor, workflow_policy.py, tool pins
 mise run pipeline-test     # ty type check, control-plane and legal tests
 ```
 
-`mise run check` is the deterministic developer gate; `mise run ci` runs the tasks
-of the Go, browser, release and container CI jobs locally, and the policy fails if one of
-its steps has no CI job. The Rust jobs are not part of it: they run `rust-check`,
-`rust-check-targets`, the interop scripts with `rust-delayed-downloads`, Docker builds of
-`container/Dockerfile.rust`.
-`Gate` is the only required status and needs every job. Path filters (`.github/ci-paths.yml`)
-narrow PR runs only; every push to main runs every job. `advisories.yml`
-rechecks Rust dependencies against the live RustSec database daily. The Rust
-release job exports what a release request's Docker builds export, then stages
-and verifies it with `release.py stage-rust` and `check-rust`, the code a
-release request and the release run. Rust distributes Linux/Windows artifacts;
-Go retains its macOS targets. CI caches third-party Cargo layers and disables fat LTO
-for Rust package checks; distributed builds use full release settings without those caches.
+`mise run check` is the deterministic developer gate; `mise run ci` runs the tasks of the Go,
+browser, release and container CI jobs locally, and the policy fails if one of its steps has no CI
+job. The Rust jobs instead run `rust-check`, `rust-check-targets`, the interop scripts with
+`rust-delayed-downloads` and Docker builds of `container/Dockerfile.rust`. `Gate` is the only
+required status and needs every job. Path filters (`.github/ci-paths.yml`) narrow PR runs only;
+every push to main runs every job. `advisories.yml` rechecks Rust dependencies against the live
+RustSec database daily. The Rust release job stages and verifies what a release request's Docker
+builds export with `release.py stage-rust` and `check-rust`, the code the release runs. Rust
+distributes Linux/Windows artifacts; Go retains its macOS targets. CI caches third-party Cargo layers
+and disables fat LTO for Rust package checks; distributed builds use full release settings without
+those caches.
 
 ## Releases
 
@@ -48,14 +46,14 @@ deployment when the Release run asks.
    builds the native archives, the third-party source archive and the OCI
    image from main; a prerelease builds the image and the source archive of its
    third-party components, which BuildKit fetches as the exact remote commit
-   without a token. The `rust` input adds the
-   experimental Rust Linux image and Linux/Windows archives, built the same way.
+   without a token. The `rust` input adds the experimental Rust Linux image and
+   Linux/Windows archives, built the same way.
 2. **Trusted verification.** `release.yml` runs main's tooling on
    `workflow_run` for main dispatches only and never executes the requested
    source. It binds `request.json` to the run title, the owner, the first
    attempt and bounded artifacts, each written while the job that builds it
-   ran. It verifies the image and archives as data, and
-   requires either every main CI job and CodeQL for a stable release or, for a
+   ran. It verifies the image and archives as data, and requires either every
+   main CI job and CodeQL for a stable release or, for a
    prerelease, an open PR containing current main with identical `.github`,
    `.githooks`, `scripts` and mise trees, its newest CI Gate and CodeQL check.
    Publish mode also requires `ghcr-release` to have reviewers and main-only
@@ -68,12 +66,11 @@ deployment when the Release run asks.
    at the highest published releases, which also repairs aliases a cancelled
    run left behind.
 
-The default `GITHUB_TOKEN` has no write scope in any workflow. The verified
-handoff, one artifact with a directory each for the image, the Rust image and the
-native archives, is retained 35 days to cover the approval window; the recheck fails closed.
-GitHub's automatic source archives provide the project source; every release
-adds the Go builds' third-party source archive, one for each Rust build, and a
-source-availability note.
+The default `GITHUB_TOKEN` has no write scope in any workflow. The verified handoff, one artifact
+with a directory each for the image, the Rust image and the native archives, is retained 35 days to
+cover the approval window; the recheck fails closed. GitHub's automatic source archives provide the
+project source; every release adds the Go builds' third-party source archive, one for each Rust
+build, and a source-availability note.
 
 OCI builds request `provenance: mode=max`, pin the privileged binfmt image and
 keep BuildKit's insecure entitlements disabled. The Dockerfile may not select a
@@ -84,23 +81,19 @@ commit of this repository, and copies every blob inside a network-less Skopeo
 container whose only mount is the read-only archive. The untrusted build writes
 that provenance, so it shows which source was built but does not authenticate
 it. Build arguments carry no secrets because max provenance records them.
-The Rust archives' Docker exports keep BuildKit's statement of each export and
-release it as `graphite-meter-server_VERSION_linux_ARCH_rust.provenance.json` or
-`graphite-meter-client_VERSION_rust.provenance.json`; `release.py stage-rust`
-stages only those and the expected archives. Verification requires each
-statement to attest exactly its export's files as released and to name the
-release commit, as for the images.
-A prerelease's Rust archives must match its PR head's `Cargo.lock`, fork and
-provenance records, `LICENSE` and `COPYRIGHT`, which the PR's CI checked.
-Rust release builds refuse a toolchain that rustup installed from any channel
-manifest but the one whose SHA-256 `mise.toml` pins (`rust_manifest_sha256`):
-`package_rust.py` and the image's server build compare the URL and SHA-256 of
-every package archive, in every compression, in the installed manifest with the
-pinned one before they add targets or build, since rustup rewrites the copy it
-keeps. Every toolchain install passes `--no-self-update`, so the rustup that
-installs and reports the toolchain is the builder image's or the runner's, not
-one it fetched meanwhile. A new `rust/rust-toolchain.toml` channel needs the
-SHA-256 of its `channel-rust-<version>.toml`.
+The Rust archives' Docker exports keep BuildKit's statement of each export and release it as
+`graphite-meter-server_VERSION_linux_ARCH_rust.provenance.json` or
+`graphite-meter-client_VERSION_rust.provenance.json`; `release.py stage-rust` stages only those and
+the expected archives. Verification requires each statement to attest exactly its export's files as
+released and to name the release commit, as for the images. A prerelease's Rust archives must match
+its PR head's `Cargo.lock`, fork and provenance records, `LICENSE` and `COPYRIGHT`, which the PR's
+CI checked. Rust release builds refuse a toolchain that rustup installed from any channel manifest
+but the one whose SHA-256 `mise.toml` pins (`rust_manifest_sha256`): `package_rust.py` and the
+image's server build compare the URL and SHA-256 of every package archive, in every compression, in
+the installed manifest with the pinned one before they add targets or build, since rustup rewrites
+the copy it keeps. Every toolchain install passes `--no-self-update`, so the rustup that installs
+and reports the toolchain is the builder image's or the runner's, not one it fetched meanwhile. A
+new `rust/rust-toolchain.toml` channel needs the SHA-256 of its `channel-rust-<version>.toml`.
 
 ### Owner setup
 
@@ -144,10 +137,10 @@ The hook refuses commits to `main` and whitespace errors, and scans the index
 with the pinned Gitleaks. `precommit.py` selects the mise checks for the staged
 paths, counting both sides of a rename; `api/`, `mise.toml` and `mise.lock`
 select the full `check`. The checks run on the exact staged tree in a disposable
-worktree with frozen client dependencies. `rust/` selects no check: without a
-Cargo build in that worktree, `rust-check` would compile the whole workspace for
-every commit, so run it yourself; CI runs it for every change to `rust/`. `workflow-check`
-refuses tracked TLS key and certificate names and PEM material.
+worktree with frozen client dependencies. `rust/` selects no check: without a Cargo build in that
+worktree, `rust-check` would compile the whole workspace for every commit, so run it yourself; CI
+runs it for every change to `rust/`. `workflow-check` refuses tracked TLS key and certificate names
+and PEM material.
 
 ## Python and dependencies
 

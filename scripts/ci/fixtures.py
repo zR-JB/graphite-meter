@@ -115,8 +115,7 @@ def statement(repository: str, revision: str, *, remote: bool, subjects: Mapping
 
 def write_oci(path: Path, repository: str, revision: str, *, remote: bool, tamper: bool = False, predicate: str = SLSA,
               notices: bytes | None = b"THIRD-PARTY SOFTWARE NOTICES\n", server: bytes = b"\x7fELF server") -> JsonObject:
-    """Write BuildKit-shaped images, which ship `server` and `notices` unless None, and their provenance into an
-    OCI archive; return its index."""
+    """Write BuildKit images of `server` and any `notices`, with provenance, as an OCI archive; return its index."""
     blobs: dict[str, bytes] = {}
 
     def add(value: object) -> str:

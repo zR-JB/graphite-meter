@@ -43,7 +43,7 @@ from .trust import (
 
 N = SEMVER_NUMBER
 TAG_RE = re.compile(rf"v{N}\.{N}\.{N}(-(?:alpha|beta|rc)\.{N})?")
-OCI = "graphite-meter.oci.tar"
+OCI, RUST_OCI = "graphite-meter.oci.tar", "graphite-meter-rust.oci.tar"
 OCI_LIMIT = 1024 * 1024 * 1024
 ASSETS_LIMIT = 2 * OCI_LIMIT
 # The release request's jobs, which each artifact must come from: the build runs the requested source
@@ -225,7 +225,7 @@ def verify_request(request_dir: Path) -> tuple[Release, bool]:
                             gh.str_field(request, "sourceSha", "request"),
                             gh.int_field(request, "pr", "request"), gh.str_field(request, "rust", "request"))
     if release.rust_server:
-        request_files |= {"graphite-meter-rust.oci.tar", "graphite-meter-rust.oci.tar.sha256"}
+        request_files |= {RUST_OCI, f"{RUST_OCI}.sha256"}
     exact_files(candidate, request_files)
     if request["mode"] not in ("validate", "publish"):
         gh.fail("request mode must be validate or publish")
@@ -259,6 +259,16 @@ def fetch_files(repository: str, sha: str, directory: Path) -> Path:
     return directory
 
 
+def verify_request_oci(path: Path, version: str, sha: str) -> tuple[str, str]:
+    """Check a request's OCI archive against its checksum file and verify it; return its digest and manifest."""
+    if path.stat().st_size > OCI_LIMIT:
+        gh.fail(f"{path.name} exceeds {OCI_LIMIT} bytes")
+    digest = gh.file_sha256(path)
+    if (path.parent / f"{path.name}.sha256").read_text(encoding="utf-8") != f"{digest}  {path.name}\n":
+        gh.fail(f"{path.name} does not match the request checksum")
+    return digest, verify_oci.verify(version, sha, path)
+
+
 def command_verify() -> None:
     request_dir, handoff = gh.runner_path("REQUEST_DIR"), gh.runner_path("HANDOFF_DIR")
     release, publish = verify_request(request_dir)
@@ -266,22 +276,10 @@ def command_verify() -> None:
         require_protected_environment(env("REPOSITORY"))
     run_id, assets = env_int("REQUEST_RUN_ID"), request_dir / "verified-assets"
     candidate = request_dir / f"release-request-{run_id}"
-    if (candidate / OCI).stat().st_size > OCI_LIMIT:
-        gh.fail(f"OCI archive exceeds {OCI_LIMIT} bytes")
-    digest = gh.file_sha256(candidate / OCI)
-    if (candidate / f"{OCI}.sha256").read_text(encoding="utf-8") != f"{digest}  {OCI}\n":
-        gh.fail("OCI archive does not match the request checksum")
-    manifest = verify_oci.verify(release.version, release.sha, candidate / OCI)
+    digest, manifest = verify_request_oci(candidate / OCI, release.version, release.sha)
     rust_digest = rust_manifest = ""
     if release.rust_server:
-        rust_archive = candidate / "graphite-meter-rust.oci.tar"
-        if rust_archive.stat().st_size > OCI_LIMIT:
-            gh.fail("Rust OCI archive exceeds size limit")
-        rust_digest = gh.file_sha256(rust_archive)
-        checksum = (candidate / "graphite-meter-rust.oci.tar.sha256").read_text(encoding="utf-8")
-        if checksum != f"{rust_digest}  graphite-meter-rust.oci.tar\n":
-            gh.fail("Rust OCI archive does not match the request checksum")
-        rust_manifest = verify_oci.verify(release.version + "-rust", release.sha, rust_archive)
+        rust_digest, rust_manifest = verify_request_oci(candidate / RUST_OCI, release.version + "-rust", release.sha)
     offer = request_dir / f"release-assets-{run_id}"
     if release.stable:
         verify_release_assets.verify_artifacts(release.version, offer)
@@ -308,7 +306,7 @@ def command_verify() -> None:
     shutil.copyfile(candidate / OCI, handoff / "image" / OCI)
     if release.rust_server:
         (handoff / "rust-image").mkdir()
-        shutil.copyfile(candidate / "graphite-meter-rust.oci.tar", handoff / "rust-image" / OCI)
+        shutil.copyfile(candidate / RUST_OCI, handoff / "rust-image" / OCI)
     shutil.copytree(assets, handoff / "assets")
     gh.append_output(
         tag=release.tag, version=release.version, stable=str(release.stable).lower(),
@@ -500,10 +498,8 @@ def command_check_rust() -> None:
     server, tui = verify_release_assets.rust_builds(env("RUST"))
     staged = gh.runner_path("RUST_ASSETS")
     with tempfile.TemporaryDirectory(dir=staged.parent) as merged:
-        verify_release_assets.verify_rust(
-            [staged], Path(merged) / "assets", env("VERSION"), server,
-            tui, env_sha("GITHUB_SHA"),
-            env("GITHUB_REPOSITORY"))
+        verify_release_assets.verify_rust([staged], Path(merged) / "assets", env("VERSION"), server, tui,
+                                          env_sha("GITHUB_SHA"), env("GITHUB_REPOSITORY"))
     print(f"Rust release artifacts verified: {sorted(path.name for path in staged.iterdir())}")
 
 

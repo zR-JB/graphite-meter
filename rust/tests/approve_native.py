@@ -24,7 +24,6 @@ if not re.fullmatch(r"[A-Za-z0-9_-]{43}", challenge):
     raise SystemExit("approval fixture received no valid challenge")
 
 cookies = http.cookiejar.CookieJar()
-context = ssl.create_default_context(cafile=ca_path)
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -33,11 +32,8 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 opener = urllib.request.build_opener(
-    urllib.request.ProxyHandler({}),
-    urllib.request.HTTPSHandler(context=context),
-    urllib.request.HTTPCookieProcessor(cookies),
-    NoRedirect(),
-)
+    urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=ca_path)),
+    urllib.request.HTTPCookieProcessor(cookies), NoRedirect())
 
 
 def request(method, url, form=None, expected=200):
@@ -65,11 +61,7 @@ request("GET", base + "/login")
 nonce = cookie("__Host-gm_login")
 if not nonce:
     raise SystemExit("login fixture received no nonce cookie")
-request(
-    "POST", base + "/auth/password",
-    {"csrf": nonce, "password": "correct horse battery staple"},
-    expected=303,
-)
+request("POST", base + "/auth/password", {"csrf": nonce, "password": "correct horse battery staple"}, expected=303)
 csrf = cookie("__Host-gm_csrf")
 if not cookie("__Host-gm_session") or not csrf:
     raise SystemExit("password fixture received no session or CSRF cookie")

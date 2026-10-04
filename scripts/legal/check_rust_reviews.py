@@ -1,14 +1,11 @@
 """Check review coverage for the shipped Rust targets.
 
-    python3 -m scripts.legal.check_rust_reviews [--format]
-
-Each supported Linux/Windows package and target is resolved as its release build is (cargo tree over normal and
-build edges, with that target's features), so crates only a release build compiles, such as the
-Windows TUI's, count as well. Registry reviews cover the same name and source across versions;
-the artifact collector still checks actual license expressions, modifications and legal-file bytes.
-Git reviews bind the exact version and revision. Unused approved reviews may remain. --format
-rewrites the file in the layout the legal tools write. The Linux crate budget is a separate
-project dependency policy, not a license requirement.
+Each supported Linux/Windows package and target is resolved as its release build is (cargo tree over normal
+and build edges, with that target's features), so crates only a release build compiles, such as the Windows
+TUI's, count as well. Registry reviews cover the same name and source across versions; the artifact collector
+still checks actual license expressions, modifications and legal-file bytes. Git reviews bind the exact
+version and revision. Unused approved reviews may remain. The Linux crate budget is a separate project
+dependency policy, not a license requirement.
 
 Every shipped target also needs an approved platform record in the --supplement file its builder
 reads, so a release request cannot reach a target nobody reviewed. Local development needs no
@@ -37,11 +34,9 @@ BUDGET = {('graphite-meter-server', 'x86_64-unknown-linux-musl'): 143,
 def shipped(targets: str) -> list[tuple[str, str]]:
     """Rust ships Linux/Windows TUIs and Linux servers; Go retains the macOS targets."""
     pairs = []
-    for line in targets.splitlines():
-        platform, target = line.split()
-        if not platform.startswith(('linux/', 'windows/')):
-            continue
-        pairs.append(('graphite-meter-client', target))
+    for platform, target in map(str.split, targets.splitlines()):
+        if platform.startswith(('linux/', 'windows/')):
+            pairs.append(('graphite-meter-client', target))
         if platform.startswith('linux/'):
             pairs.append(('graphite-meter-server', target))
     return pairs

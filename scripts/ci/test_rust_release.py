@@ -9,12 +9,13 @@ import os
 import shutil
 import tempfile
 import unittest
+from itertools import product
 from pathlib import Path
 from unittest.mock import patch
 
 from ..legal.model import manual_files, manual_sources
 from ..legal.rust import DEVELOPMENT, DEVELOPMENT_NOTICE
-from .fixtures import statement, write_archive
+from .fixtures import outcome, statement, write_archive
 from .github_api import ControlPlaneError as VerificationError, JsonObject, file_sha256 as sha256_file, write_checksums
 from .toolchains import rust_tui_targets
 from .verify_release_assets import (
@@ -173,18 +174,14 @@ class RustServerReleaseTests(unittest.TestCase):
                 path = Path(temporary) / "source.tar.gz"
                 write_source(path, metadata, extra)
                 with patch("subprocess.Popen", side_effect=AssertionError("artifact execution")):
-                    if mutation in {"valid", "cargo_fixture", "image_component"}:
-                        verify_rust_source(path, "graphite-meter-server", target)
-                    else:
-                        with self.assertRaises(VerificationError):
-                            verify_rust_source(path, "graphite-meter-server", target)
+                    outcome(self, None if mutation in {"valid", "cargo_fixture", "image_component"} else "",
+                            lambda: verify_rust_source(path, "graphite-meter-server", target))
 
 
 class RustStagingTests(unittest.TestCase):
     """A request's exports are staged as release-request.yml does and verified as release.py does."""
 
     SERVER, TUI = rust_builds("both")
-    DOCKER = TUI
 
     def test_ci_checks_its_exports_with_the_release_commands(self) -> None:
         from .release import COMMANDS
@@ -209,7 +206,7 @@ class RustStagingTests(unittest.TestCase):
         for remove, error in ((arm64, "lacks"), (arm64 / source, "attests no single expected Rust export")):
             with self.subTest(error=error), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
-                write_exports(root / "export", self.SERVER, self.DOCKER)
+                write_exports(root / "export", self.SERVER, self.TUI)
                 path = root / "export" / remove
                 shutil.rmtree(path) if path.is_dir() else path.unlink()
                 with self.assertRaisesRegex(VerificationError, error):
@@ -218,7 +215,7 @@ class RustStagingTests(unittest.TestCase):
     def test_each_statement_binds_exactly_its_files_to_the_release_commit(self) -> None:
         server, source = self.SERVER[:1], rust_files("1.2.3", "graphite-meter-server", self.SERVER[0])
         name = f"graphite-meter-server_1.2.3_{server[0].replace('/', '_')}_rust.provenance.json"
-        archive = tui_archive("1.2.3", self.DOCKER[0], "_rust")[0]
+        archive = tui_archive("1.2.3", self.TUI[0], "_rust")[0]
 
         def restate(staged: Path, **change: object) -> None:
             subjects = {file: sha256_file(staged / file) for file in source}
@@ -240,20 +237,13 @@ class RustStagingTests(unittest.TestCase):
         ):
             with self.subTest(error=error), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
-                write_exports(root / "export", server, self.DOCKER)
-                stage_rust(root / "export", root / "staged", "1.2.3", server, self.DOCKER)
+                write_exports(root / "export", server, self.TUI)
+                stage_rust(root / "export", root / "staged", "1.2.3", server, self.TUI)
                 if edit is not None:
                     edit(root / "staged")
                     write_checksums(root / "staged")
-
-                def verify() -> None:
-                    verify_rust([root / "staged"], root / "assets", "1.2.3", server, self.DOCKER, COMMIT, REPOSITORY)
-
-                if error is None:
-                    verify()
-                else:
-                    with self.assertRaisesRegex(VerificationError, error):
-                        verify()
+                outcome(self, error, lambda: verify_rust([root / "staged"], root / "assets", "1.2.3", server,
+                                                         self.TUI, COMMIT, REPOSITORY))
 
 
 class RustPrereleaseSourceTests(unittest.TestCase):
@@ -287,49 +277,40 @@ class RustPrereleaseSourceTests(unittest.TestCase):
 class RustRequestBoundaryTests(unittest.TestCase):
     def test_dispatch_selection_cannot_be_forged_in_the_artifact(self) -> None:
         from .fixtures import git_head, github
-        from .release import OCI, Release, request_title, verify_request
-        from .test_trust import (MAIN, HEAD, REPO, REQUEST_RUN, ARTIFACTS,
-                                artifacts, dispatch_run, trusted)
+        from .release import OCI, RUST_OCI, Release, request_title, verify_request
+        from .test_trust import MAIN, HEAD, REPO, REQUEST_RUN, ARTIFACTS, artifacts, dispatch_run, trusted
 
-        for stable in (True, False):
-            for selection in ("none", "server", "tui", "both"):
-                for forged in (False, True):
-                    with self.subTest(stable=stable, selection=selection, forged=forged), \
-                            tempfile.TemporaryDirectory() as temporary:
-                        root = Path(temporary)
-                        request = root / "request"
-                        candidate = request / "release-request-4242"
-                        candidate.mkdir(parents=True)
-                        release = Release("v1.2.3" if stable else "v1.2.3-rc.1",
-                                          MAIN if stable else HEAD, 0 if stable else 101, selection)
-                        files = {OCI, f"{OCI}.sha256"}
-                        if release.rust_server:
-                            files |= {"graphite-meter-rust.oci.tar", "graphite-meter-rust.oci.tar.sha256"}
-                        for name in files:
-                            (candidate / name).write_text("untrusted data")
-                        (candidate / "request.json").write_text(json.dumps({
-                            "schemaVersion": 3, "repository": REPO, "tag": release.tag,
-                            "sourceSha": release.sha, "pr": release.pr, "mode": "validate",
-                            "requestRunId": 4242, "requestRunAttempt": 1, "rust": selection,
-                        }))
-                        names = [candidate.name, "release-assets-4242"]
-                        names += ["release-rust-assets-4242"] * (selection != "none")
-                        for name in names[1:]:
-                            (request / name).mkdir()
-                        dispatched = Release(release.tag, release.sha, release.pr,
-                                             "tui" if selection == "none" else "none") if forged else release
-                        responses = trusted(stable, "validate") | {
-                            REQUEST_RUN: dispatch_run(31337, 4242, request_title("validate", dispatched, MAIN)),
-                            ARTIFACTS: artifacts(*names),
-                        }
-                        environment = {
-                            "REPOSITORY": REPO, "REPOSITORY_OWNER": "zR-JB", "PUBLISHER_SHA": MAIN,
-                            "WORKFLOW_REF": f"{REPO}/.github/workflows/release.yml@refs/heads/main",
-                            "REQUEST_RUN_ID": "4242",
-                        } | git_head(root, MAIN)
-                        with patch.dict(os.environ, environment), github(responses):
-                            if forged:
-                                with self.assertRaisesRegex(VerificationError, "dispatch inputs"):
-                                    verify_request(request)
-                            else:
-                                self.assertEqual(verify_request(request), (release, False))
+        for stable, selection, forged in product((True, False), ("none", "server", "tui", "both"), (False, True)):
+            with self.subTest(stable=stable, selection=selection, forged=forged), \
+                    tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                request = root / "request"
+                candidate = request / "release-request-4242"
+                candidate.mkdir(parents=True)
+                release = Release("v1.2.3" if stable else "v1.2.3-rc.1",
+                                  MAIN if stable else HEAD, 0 if stable else 101, selection)
+                files = {OCI, f"{OCI}.sha256"} | ({RUST_OCI, f"{RUST_OCI}.sha256"} if release.rust_server else set())
+                for name in files:
+                    (candidate / name).write_text("untrusted data")
+                (candidate / "request.json").write_text(json.dumps({
+                    "schemaVersion": 3, "repository": REPO, "tag": release.tag, "sourceSha": release.sha,
+                    "pr": release.pr, "mode": "validate", "requestRunId": 4242, "requestRunAttempt": 1,
+                    "rust": selection,
+                }))
+                names = [candidate.name, "release-assets-4242"]
+                names += ["release-rust-assets-4242"] * (selection != "none")
+                for name in names[1:]:
+                    (request / name).mkdir()
+                dispatched = Release(release.tag, release.sha, release.pr,
+                                     "tui" if selection == "none" else "none") if forged else release
+                responses = trusted(stable, "validate") | {
+                    REQUEST_RUN: dispatch_run(31337, 4242, request_title("validate", dispatched, MAIN)),
+                    ARTIFACTS: artifacts(*names),
+                }
+                environment = {
+                    "REPOSITORY": REPO, "REPOSITORY_OWNER": "zR-JB", "PUBLISHER_SHA": MAIN,
+                    "WORKFLOW_REF": f"{REPO}/.github/workflows/release.yml@refs/heads/main", "REQUEST_RUN_ID": "4242",
+                } | git_head(root, MAIN)
+                with patch.dict(os.environ, environment), github(responses):
+                    result = outcome(self, "dispatch inputs" if forged else None, lambda: verify_request(request))
+                    self.assertEqual(result, None if forged else (release, False))

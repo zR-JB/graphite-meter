@@ -23,6 +23,26 @@ def unused_port(kind: int = socket.SOCK_STREAM) -> int:
         return listener.getsockname()[1]
 
 
+def unused_ports(*kinds: int) -> list[int]:
+    """Distinct free loopback ports, one of each socket kind."""
+    ports: list[int] = []
+    while len(set(ports)) != len(kinds):
+        ports = [unused_port(kind) for kind in kinds]
+    return ports
+
+
+def password_auth(environment: dict[str, str], public_url: str) -> dict[str, str]:
+    return environment | {"GM_AUTH_MODE": "password", "GM_AUTH_PUBLIC_URL": public_url,
+                          "GM_AUTH_PASSWORD_HASH": PASSWORD_HASH}
+
+
+def record(result: subprocess.CompletedProcess, log: Path, label: str = "") -> None:
+    """Keep and print a finished peer's output, then fail if the peer failed."""
+    log.write_text(result.stdout + result.stderr)
+    print(label + result.stdout + result.stderr, end="", flush=True)
+    result.check_returncode()
+
+
 class Fixture:
     """Retained evidence and isolated trust/build inputs for one real-peer run."""
 
@@ -45,22 +65,18 @@ class Fixture:
         ca, cert, key = directory / "ca.pem", directory / "cert.pem", directory / "key.pem"
         ca_key, request, extensions = directory / "ca.key", directory / "server.csr", directory / "server.ext"
         ec = ["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes"]
-        subprocess.run([
-            "openssl", "req", "-x509", *ec, "-days", "10", "-subj", "/CN=Graphite Meter loopback test CA",
-            "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign",
-            "-keyout", str(ca_key), "-out", str(ca),
-        ], check=True, capture_output=True)
-        subprocess.run([
-            "openssl", "req", *ec, "-subj", "/CN=localhost", "-keyout", str(key), "-out", str(request),
-        ], check=True, capture_output=True)
         extensions.write_text(
             "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\n"
-            "extendedKeyUsage=serverAuth\nsubjectAltName=IP:127.0.0.1,IP:127.0.0.2,DNS:localhost\n"
-        )
-        subprocess.run([
-            "openssl", "x509", "-req", "-in", str(request), "-CA", str(ca), "-CAkey", str(ca_key),
-            "-set_serial", "1", "-days", "10", "-out", str(cert), "-extfile", str(extensions),
-        ], check=True, capture_output=True)
+            "extendedKeyUsage=serverAuth\nsubjectAltName=IP:127.0.0.1,IP:127.0.0.2,DNS:localhost\n")
+        for command in (
+            ["req", "-x509", *ec, "-days", "10", "-subj", "/CN=Graphite Meter loopback test CA",
+             "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign",
+             "-keyout", ca_key, "-out", ca],
+            ["req", *ec, "-subj", "/CN=localhost", "-keyout", key, "-out", request],
+            ["x509", "-req", "-in", request, "-CA", ca, "-CAkey", ca_key, "-set_serial", "1", "-days", "10",
+             "-out", cert, "-extfile", extensions],
+        ):
+            subprocess.run(["openssl", *map(str, command)], check=True, capture_output=True)
         return ca, cert, key
 
 
