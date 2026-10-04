@@ -599,6 +599,15 @@
         /><circle cx="12" cy="12" r="2.1" fill="currentColor" /></svg
       ><span class="brand-label">Graphite&nbsp;Meter</span></button
     >
+    <button
+      class="btn btn-icon key"
+      aria-label="Settings"
+      aria-expanded={settingsOpen}
+      {@attach tooltip(() => `Settings — test and display${keyHint("S")}`)}
+      onclick={(event) =>
+        togglePanel("settings", event.currentTarget as HTMLElement)}
+      ><Icon name="settings" /></button
+    >
     <div class="connectivity"><ConnectivityIndicator /></div>
     <div class="topbar-spacer"></div>
     {#if awayRunIndicator}<button
@@ -621,15 +630,6 @@
         </span>
       </button>{/if}
     {#if AccountControl}<AccountControl />{/if}
-    <button
-      class="btn btn-icon key"
-      aria-label="Settings"
-      aria-expanded={settingsOpen}
-      {@attach tooltip(() => `Settings — test and display${keyHint("S")}`)}
-      onclick={(event) =>
-        togglePanel("settings", event.currentTarget as HTMLElement)}
-      ><Icon name="settings" /></button
-    >
     {#if store.savingResults}<button
         class="btn btn-icon key direct-history"
         type="button"

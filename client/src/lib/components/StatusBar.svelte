@@ -70,14 +70,14 @@
   span {
     white-space: nowrap;
   }
-  /* The phase word holds the left edge; the figures stand against the right, each in a cell as wide as its
-     longest value, so a changing figure never moves its neighbours. */
+  /* The phase word and its figures read as one line from the left edge, each figure in a cell as wide as its
+     longest value, so a counting figure never moves its neighbours; the build alone stands at the right. */
   .label {
     color: var(--text);
     font-weight: var(--w-strong);
   }
   .elapsed {
-    margin-left: auto;
+    margin-left: var(--space-3);
   }
   .readout {
     display: inline-block;
@@ -89,7 +89,7 @@
     text-align: end;
   }
   .build {
-    margin-left: var(--space-5);
+    margin-left: auto;
     color: var(--text-soft);
   }
   .remaining[data-tone] {
