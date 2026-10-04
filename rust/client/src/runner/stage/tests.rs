@@ -946,6 +946,8 @@ async fn intervals_and_failures_share_the_run_clock() -> Result<(), Error> {
         panic!("{:?}", snapshot.failures);
     };
     assert_eq!((failure.server_id.as_str(), failure.stage), ("far", Stage::Upload));
+    // As Go's final() emits them, the final boundary's rates come after the upload's 1 s window.
+    assert!(snapshot.latest.elapsed >= Duration::from_secs(1) && snapshot.latest.up_bps.is_some());
     // Go times both from the run's start: two warmups, the download window and the checkpoint budget.
     assert!(failure.at >= Duration::from_secs(3), "{:?}", failure.at);
     let report = crate::report::Report::new(&snapshot, None, crate::report::WIDTH, Default::default());
@@ -1016,6 +1018,26 @@ async fn latency_stage_losses_drop_one_server_and_the_run_continues() -> Result<
         "a server lost before its latency channel dialled stayed in the run"
     );
     assert_eq!(download.server_results[0].id, "far");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_latency_stage_charts_the_replies_its_drain_collects() -> Result<(), Error> {
+    let mut fixture = Fixture::new(&["near"], 1000).await?;
+    fixture.latency();
+    fixture.config.stages = vec![Stage::Latency];
+    fixture.config.latency_duration = Duration::from_secs(1);
+    fixture.config.ping_interval = Duration::from_millis(100);
+    fixture.config.insecure = true;
+    fixture.snapshots.send_replace(listing(&fixture.servers));
+    fixture.run().await?;
+    let snapshot = fixture.snapshots.borrow();
+    // As Go charts replies through the drain, the stage's last sample comes after its 1 s window.
+    assert!(
+        snapshot.latest.elapsed >= Duration::from_secs(1),
+        "{:?}",
+        snapshot.latest
+    );
     Ok(())
 }
 

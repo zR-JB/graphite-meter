@@ -494,7 +494,9 @@ impl<'a> StageRun<'a> {
                 continue;
             }
             boundary.final_boundary = true;
-            self.observe_boundary(boundary, misses)?;
+            let window = self.observe_boundary(boundary, misses)?;
+            // As Go's final() observes it, the final sample's rates and the replies so far reach the chart.
+            self.publish(self.window.expect("window opened").0, window.as_ref());
             if self.members.len() == remaining {
                 break;
             }
@@ -778,6 +780,10 @@ impl<'a> StageRun<'a> {
         }
         while let Some(Some(event)) = self.events.next().now_or_never() {
             observe(&mut self.hosts, self.window, event);
+        }
+        // A latency stage's last sample carries its last replies, and those drained past its end, as Go charts them.
+        if let Some((started, _)) = self.window.filter(|_| confirm && self.transfer.is_none()) {
+            self.publish(started, None);
         }
         self.record(stopped);
         while self.retired.join_next().await.is_some() {}
