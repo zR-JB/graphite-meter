@@ -166,8 +166,11 @@ connection destruction. Until an admitted upload reads
 on the connection, its receive window is 64 KiB, so a silent or unauthenticated
 peer can make Noq hold at most 192 KiB of reassembly. The first grant reserves
 the rest of Go's 48 MiB connection window until Noq drops the connection, and
-Noq charges the connection's buffers to it first. The window never shrinks, so
-the peer never holds more credit than is reserved; streams get Go's 32 MiB.
+Noq charges the connection's buffers to it first. As in quic-go, the window
+opens at 768 KiB and doubles, up to 48 MiB, while the server reads half of it
+within two round trips, so buffered data follows what the reader sustains. The
+window never shrinks, so the peer never holds more credit than is reserved;
+streams get Go's 32 MiB. The client's connections autotune the same way.
 Transmit windows adapt between 2 MiB and 16 MiB. Neither window grows once three
 quarters of the budget is used, so pressure slows new transfers instead of
 closing running ones; one log line reports when growth is held back, and one
@@ -328,7 +331,9 @@ default through the native `MI_DEFAULT_ALLOW_THP=0` compile setting. Set
 huge-page policy, including its 2 MiB minimum purge size. Other purge settings
 retain upstream defaults. Target-specific CFLAGS supplied by a build caller
 override Cargo's defaults; include `-DMI_DEFAULT_ALLOW_THP=0` when adding flags
-to retain this policy.
+to retain this policy. mimalloc returns freed pages to the OS only while the
+freeing thread allocates, so two seconds after its last connection closes the
+server collects every runtime thread's heap.
 
 The current 12-pair server study found lower sampled peak RSS in every workload,
 with small workload-dependent speed changes. The TUI uses the same native
