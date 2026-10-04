@@ -437,7 +437,7 @@ run = [
   "cd .. && python3 -m scripts.legal.check_rust_reviews",
   "cargo deny --locked check",
   "cargo clippy --workspace --all-targets --locked -- -D warnings",
-  "cargo nextest run --workspace --all-targets --locked --no-fail-fast --no-tests=warn",
+  "cargo nextest run --workspace --all-targets --locked --no-fail-fast",
 ]
 
 [tasks.rust-check-targets]
