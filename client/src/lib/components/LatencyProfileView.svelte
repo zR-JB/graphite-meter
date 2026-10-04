@@ -470,7 +470,7 @@
     gap: var(--space-3);
     min-width: 0;
     height: 100%;
-    padding: var(--space-3) var(--space-4) var(--space-3);
+    padding: var(--space-3) var(--space-4) var(--space-5);
     container: latency / inline-size;
   }
   .card-head {

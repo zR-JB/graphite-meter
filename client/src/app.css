@@ -675,7 +675,7 @@
     background: linear-gradient(
       180deg,
       color-mix(in oklab, var(--tone) var(--wash), transparent),
-      transparent 78%
+      transparent 180px
     );
     transition:
       --wash var(--dur-graph) var(--ease-out),
