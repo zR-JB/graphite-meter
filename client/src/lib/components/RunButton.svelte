@@ -89,8 +89,9 @@
     .run-button:hover:not(.pending, [aria-disabled="true"]) .skin {
       background: var(--brand-strong);
     }
+    /* The wash lies over the Stop skin's own fill, so the ink skin under it never shows through. */
     .run-button:hover:not(.pending, [aria-disabled="true"]) .skin.stop {
-      background: var(--hover-wash);
+      background: linear-gradient(var(--hover-wash) 0 0), var(--surface-1);
     }
   }
   .run-button:active {
