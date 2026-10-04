@@ -62,6 +62,7 @@ impl Download {
                     return Err("invalid download lane stagger".into());
                 }
                 Source::Http(transport, stagger) => {
+                    let transport = transport.download_lanes();
                     for lane in 0..lanes {
                         let (transport, ready) = (transport.clone(), ready.clone());
                         owner.spawn(&transport.lane_home(), lane, &lane_cancel, move |bytes, retry| async move {

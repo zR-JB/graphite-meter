@@ -184,6 +184,15 @@ async fn dial_h3(home: &Handle, origin: &str, http: &Http) -> Result<Http3Client
 }
 
 impl Transport {
+    /// Download lanes' target, over HTTP/1.1 or HTTP/2 on connections the lanes dial on their own threads.
+    pub(crate) fn download_lanes(self: &Arc<Self>) -> Arc<Self> {
+        if self.h3.is_some() {
+            return self.clone();
+        }
+        let (http, origin, protocol) = (self.http.for_download_lanes(), self.origin.clone(), self.protocol);
+        Arc::new(Self { http, origin, protocol, h3: None, home: self.home.clone() })
+    }
+
     /// Upload lanes' target and their control requests', on connections apart, as Go's upload transport.
     pub(crate) async fn upload_split(self: Arc<Self>) -> Result<(Arc<Self>, Arc<Self>), Error> {
         let (http, origin, protocol) = (self.http.clone(), self.origin.clone(), self.protocol);

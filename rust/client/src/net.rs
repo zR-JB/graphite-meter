@@ -74,11 +74,13 @@ struct Connections {
 }
 type Key = (String, Protocol, Lanes);
 
-/// Upload lanes keep connections of their own, as Go's upload transport, so nothing queues behind them.
+/// Transfer lanes keep connections of their own, as Go's upload transport, so nothing queues behind them. A
+/// lane dials them on its own thread, where their drivers then run, so no chunk crosses threads.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 enum Lanes {
     #[default]
     Shared,
+    Download,
     Upload,
 }
 
@@ -451,6 +453,10 @@ impl Http {
             grants: Arc::new(Mutex::new(HashMap::new())),
             scope: None,
         })
+    }
+    /// This client for download lanes: the same credentials, over connections of their own.
+    pub(crate) fn for_download_lanes(&self) -> Self {
+        Self { lanes: Lanes::Download, ..self.clone() }
     }
     /// This client for upload lanes: the same credentials, over connections of their own.
     pub(crate) fn for_upload_lanes(&self) -> Self {
