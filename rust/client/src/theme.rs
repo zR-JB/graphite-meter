@@ -85,8 +85,7 @@ impl Theme {
         let fg = |tone: Tone| Style { fg: color(tone), ..Style::new() };
         let badge = fg(BADGE).add_modifier(Modifier::BOLD);
         let on = |tone: Tone| Style { bg: color(tone), ..badge };
-        let text = fg(TEXT);
-        let accent = fg(INK);
+        let (text, accent) = (fg(TEXT), fg(INK));
         Self {
             title: on(INK),
             pill: on(SOFT),
@@ -206,10 +205,7 @@ fn environment(term: &str, color_term: &str, true_color_terminal: bool) -> Profi
     if named || true_color_terminal || direct || term.ends_with("direct") {
         return Profile::TrueColor;
     }
-    match term.ends_with("256color") {
-        true => profile.max(Profile::Ansi256),
-        false => profile,
-    }
+    if term.ends_with("256color") { profile.max(Profile::Ansi256) } else { profile }
 }
 
 /// Reads the OSC 11 answer body (`11;rgb:…`) the TUI's keys carried: whether it named the background.
@@ -232,9 +228,7 @@ async fn answer(input: impl std::os::fd::AsFd, output: &mut impl std::io::Write,
         let mut chunk = [0; 1024];
         while answers.len() < 4096 {
             let Ok(mut ready) = input.readable().await else { return };
-            let Ok(read @ 1..) = ready.get_inner().read(&mut chunk) else {
-                return;
-            };
+            let Ok(read @ 1..) = ready.get_inner().read(&mut chunk) else { return };
             ready.clear_ready();
             answers.extend_from_slice(&chunk[..read]);
             let (answer, ended) = scan(&answers);

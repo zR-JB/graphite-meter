@@ -1,7 +1,7 @@
 //! Go's run view (view.go and ui.go): the stage track, the timeline's charts and the results.
 use super::{
     Ui, path_summary,
-    view::{TWO_COLUMN_MIN, columns, join, panel},
+    view::{TWO_COLUMN_MIN, join, panel},
 };
 use crate::{
     config::Config,
@@ -104,11 +104,8 @@ pub(super) struct Run {
 impl Run {
     pub(super) fn new(config: Config) -> Self {
         let now = Instant::now();
-        let planned_span = config
-            .stages
-            .iter()
-            .map(|stage| (config.duration(*stage) + config.warmup).as_secs_f64())
-            .sum();
+        let stage_time = |stage: &Stage| (config.duration(*stage) + config.warmup).as_secs_f64();
+        let planned_span = config.stages.iter().map(stage_time).sum();
         Self {
             config,
             started: Some(now),
@@ -263,10 +260,8 @@ fn chart(lines: &[Series], marks: &[Mark], axis: Axis, time: f64, width: usize, 
     let (cols, rows) = (width.saturating_sub(CHART_AXIS).max(4), height.saturating_sub(2).max(2));
     let (t0, t1) = (0.0, time.max(1.0));
     // f64::max passes over the gaps.
-    let peak = lines
-        .iter()
-        .flat_map(|(_, points, _)| points.iter().map(|point| point.3));
-    let peak = peak.fold(0.0_f64, f64::max);
+    let points = lines.iter().flat_map(|(_, points, _)| points.iter());
+    let peak = points.map(|point| point.3).fold(0.0_f64, f64::max);
     let top = nice_ceil(peak * axis.scale * 1.05) / axis.scale;
     let (dot_width, dot_height) = (cols * 2, rows * 4);
     let (mut dots, mut owner) = (vec![0u8; cols * rows], vec![0usize; cols * rows]);
@@ -388,23 +383,16 @@ fn bar(fill: Style, value: f64, scale: f64, width: usize, theme: &Theme) -> Vec<
 impl Ui {
     /// Go's runView: while live, or without results, the stage view; after a run, its results.
     pub(super) fn run_view(&self, width: usize, height: usize) -> Text {
-        let Some((snapshot, run)) = self.shown() else {
-            return Vec::new();
-        };
+        let Some((snapshot, run)) = self.shown() else { return Vec::new() };
         let theme = &self.theme;
-        let results = match snapshot.phase.live() {
-            true => Vec::new(),
-            false => Report::new(snapshot, self.latency_server(), width - 4, *theme)
-                .results("Latency")
-                .view(),
-        };
-        if results.is_empty() {
+        let report = Report::new(snapshot, self.latency_server(), width - 4, *theme);
+        let results = report.results("Latency").view();
+        if snapshot.phase.live() || results.is_empty() {
             return self.stage_view(snapshot, run, width, height);
         }
-        let mut title = "Results".to_owned();
-        if let Some(id) = self.latency_server().filter(|_| self.several()) {
-            title = format!("{title} · latency to {}", server_name(snapshot, id));
-        }
+        let focus = self.latency_server().filter(|_| self.several());
+        let title =
+            focus.map_or("Results".to_owned(), |id| format!("Results · latency to {}", server_name(snapshot, id)));
         let widest = results.iter().map(Line::width).max().unwrap_or(0);
         let results_width = widest.max(title.width() + 2) + 4;
         let bottom = if width >= TWO_COLUMN_MIN && width.saturating_sub(1 + results_width) >= 30 {
@@ -424,27 +412,21 @@ impl Ui {
     /// Go's stageView: the Test panel beside or above the timeline.
     fn stage_view(&self, snapshot: &Snapshot, run: &Run, width: usize, height: usize) -> Text {
         let theme = &self.theme;
-        let (mut left, mut right, side) = columns(width);
-        if side {
-            (left, right) = (width * 2 / 5, width - 1 - width * 2 / 5);
-        }
-        let live = snapshot.phase.live();
+        let side = width >= TWO_COLUMN_MIN;
+        let left = if side { width * 2 / 5 } else { width };
         let test = self.test_view(snapshot, run, left - 4, !side);
         let test_height = test.len() + 2;
-        let mut live_height = height;
-        if !side {
-            live_height = live_height.saturating_sub(test_height);
+        let live_height = if side { height } else { height.saturating_sub(test_height) };
+        if !snapshot.phase.live() && live_height < 9 {
+            return panel("Test", self.test_view(snapshot, run, width - 4, !side), width, 0, theme);
         }
-        if side && (live || live_height >= 9) {
-            let live_height = live_height.max(test_height).max(9);
-            let timeline = self.timeline_panel(snapshot, run, right, live_height);
-            return join(panel("Test", test, left, live_height, theme), timeline, true);
-        }
-        if live || live_height >= 9 {
-            let timeline = self.timeline_panel(snapshot, run, right, live_height.max(7));
-            return join(panel("Test", test, left, 0, theme), timeline, false);
-        }
-        panel("Test", self.test_view(snapshot, run, width - 4, !side), width, 0, theme)
+        // Side by side, both panels take the taller height.
+        let [test_height, live_height] = match side {
+            true => [live_height.max(test_height).max(9); 2],
+            false => [0, live_height.max(7)],
+        };
+        let timeline = self.timeline_panel(snapshot, run, if side { width - 1 - left } else { width }, live_height);
+        join(panel("Test", test, left, test_height, theme), timeline, side)
     }
 
     /// Go's timelinePanel.
@@ -463,10 +445,7 @@ impl Ui {
         if compact {
             return track;
         }
-        let mut out = self.test_fields(snapshot, run, width);
-        out.push(Line::default());
-        out.extend(track);
-        out
+        [self.test_fields(snapshot, run, width), vec![Line::default()], track].concat()
     }
 
     /// Go's testFields: the run's servers and paths, then its stream and timing settings.
@@ -527,6 +506,7 @@ impl Ui {
             let mut line = vec![span(format!("{:<14}", stage.name()), hue)];
             let result = snapshot.results.iter().rfind(|result| result.stage == *stage);
             let current = snapshot.stage == Some(*stage);
+            let stopped = span(format!("○ {}", StageStatus::Stopped.label()), theme.muted);
             match result.map(|result| snapshot.stage_status(result)) {
                 Some(StageStatus::Complete) => {
                     let (headline, planned) = (report.headline(*stage), span(words::setting(duration), theme.muted));
@@ -539,9 +519,7 @@ impl Ui {
                     line.push(span("! ", theme.warn));
                     line.extend(headline.into_iter().chain(gap).chain([span("Partial", theme.muted)]));
                 }
-                Some(StageStatus::Stopped) => {
-                    line.push(span(format!("○ {}", StageStatus::Stopped.label()), theme.muted))
-                }
+                Some(StageStatus::Stopped) => line.push(stopped),
                 Some(status) => line.extend([span("✗ ", theme.err), span(status.label(), theme.muted)]),
                 None if current && live => match snapshot.phase {
                     Phase::Warmup => {
@@ -559,7 +537,7 @@ impl Ui {
                     }
                     _ => line.extend([self.spinner(), span(" checking paths", theme.muted)]),
                 },
-                None if current => line.push(span(format!("○ {}", StageStatus::Stopped.label()), theme.muted)),
+                None if current => line.push(stopped),
                 None if !live => line.push(span(format!("{MISSING} {}", StageStatus::Skipped.label()), theme.muted)),
                 None => line.push(span(format!("○ {}", words::setting(duration)), theme.muted)),
             }
@@ -587,10 +565,7 @@ impl Ui {
             .iter()
             .flat_map(|(index, trace)| stage_series(&trace.points, &run.marks, theme, *index == 1))
             .collect();
-        let mut out = Vec::new();
-        if live {
-            out.extend(self.readings(snapshot, run, stage, width));
-        }
+        let mut out = if live { self.readings(snapshot, run, stage, width) } else { Vec::new() };
         if stage == Stage::Bidirectional || !live && run.marks.iter().any(|(_, stage)| *stage == Stage::Bidirectional) {
             out.push(line("↓ solid · ↑ dashed", theme.muted));
         }
@@ -603,14 +578,11 @@ impl Ui {
         let rtt = stage_series(rtt.map_or(&[], |trace| &trace.points), &run.marks, theme, false);
         let rates = |height| chart(&series, &run.marks, RATE_AXIS, time, width, height, theme);
         let rtts = |height| chart(&rtt, &run.marks, MS_AXIS, time, width, height, theme);
-        if chart_height < 5 {
-        } else if directions.is_empty() {
-            out.extend(rtts(chart_height));
-        } else if loaded && chart_height >= 12 {
-            out.extend(rates(chart_height - 5));
-            out.extend(rtts(5));
-        } else {
-            out.extend(rates(chart_height));
+        match chart_height {
+            0..5 => {}
+            _ if directions.is_empty() => out.extend(rtts(chart_height)),
+            12.. if loaded => out.extend([rates(chart_height - 5), rtts(5)].concat()),
+            _ => out.extend(rates(chart_height)),
         }
         out
     }

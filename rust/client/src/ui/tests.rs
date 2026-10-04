@@ -21,19 +21,16 @@ fn press(ui: &mut Ui, commands: &mpsc::Sender<Command>, names: &[&str]) -> bool 
     names.iter().any(|name| ui.key(key(name), commands))
 }
 
-/// The screen `ui` draws, one string per row.
-fn rows(ui: &mut Ui) -> Vec<String> {
+/// The screen `ui` draws, a line per row.
+fn screen(ui: &mut Ui) -> String {
     let (width, height) = ui.size;
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal.draw(|frame| ui.draw(frame)).unwrap();
     let cells = terminal.backend().buffer().content().chunks(usize::from(width));
-    cells
+    let rows: Vec<String> = cells
         .map(|row| row.iter().map(|cell| cell.symbol()).collect())
-        .collect()
-}
-
-fn screen(ui: &mut Ui) -> String {
-    rows(ui).join("\n")
+        .collect();
+    rows.join("\n")
 }
 
 /// Go's testModel: setup at 120×40 with its paths ready.
@@ -104,11 +101,6 @@ fn step(ui: &mut Ui, change: impl FnOnce(&mut Snapshot)) {
     ui.update(snapshot);
 }
 
-/// The run moves to a stage's phase.
-fn stage(ui: &mut Ui, stage: Stage, phase: Phase) {
-    step(ui, |snapshot| (snapshot.stage, snapshot.phase) = (Some(stage), phase));
-}
-
 /// The run fails with an error.
 fn fail(ui: &mut Ui, error: &str) {
     step(ui, |snapshot| (snapshot.phase, snapshot.error) = (Phase::Failed, Some(error.into())));
@@ -161,11 +153,11 @@ fn sign_in_opens_cancels_and_expires_as_go_does() {
     assert_eq!(opened.count(), 4, "every press opens the page");
     assert!(ui.edit.is_none() && ui.opened && ui.status_label() == "Checking sign-in");
     assert!(ui.short_help().iter().all(|binding| binding.desc != CHANGE.desc));
-    let screen = rows(&mut ui);
+    let screen = screen(&mut ui);
     for want in ["Sign in to http", "Match this code │ ABCD │", "Waiting for approval…"] {
-        assert!(screen.iter().any(|row| row.contains(want)), "{want}: {screen:#?}");
+        assert!(screen.contains(want), "{want}: {screen}");
     }
-    assert!(screen.contains(&format!(" {SIGN_IN_URL:<119}"))); // the link sits outside a frame
+    assert!(screen.contains(&format!("\n {SIGN_IN_URL:<119}\n"))); // the link sits outside a frame
     press(&mut ui, &commands, &["esc"]);
     assert!(matches!(sent.try_recv(), Ok(Command::Cancel)));
     sign_in(&mut ui, Phase::Setup, None);
@@ -206,7 +198,9 @@ fn sign_in_opens_cancels_and_expires_as_go_does() {
 fn run_keys_stop_quit_and_return_as_go_does() {
     let (commands, mut sent) = mpsc::channel(32);
     let mut ui = running(&["a"]);
-    stage(&mut ui, Stage::Latency, Phase::Measuring);
+    step(&mut ui, |snapshot| {
+        (snapshot.stage, snapshot.phase) = (Some(Stage::Latency), Phase::Measuring)
+    });
     press(&mut ui, &commands, &["x", "esc"]);
     assert!(ui.stop_prompt && ui.notice == "Stop the test? esc confirms, any other key continues.");
     press(&mut ui, &commands, &["x"]);
@@ -227,7 +221,7 @@ fn run_keys_stop_quit_and_return_as_go_does() {
     assert_eq!(ui.notice, "");
     assert!(ui.exit().shown.is_some());
     press(&mut ui, &commands, &["esc"]);
-    assert!(!ui.live && ui.prepare() == Prepare::Checking); // esc returns to a freshly checked setup
+    assert!(!ui.live && ui.prepare() == PathState::Checking); // esc returns to a freshly checked setup
     assert!(ui.exit().shown.is_none(), "Go prints no report after a return to setup");
 }
 

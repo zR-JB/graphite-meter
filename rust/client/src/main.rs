@@ -105,12 +105,11 @@ async fn run(config: graphite_meter_client::config::Config, report_only: bool) -
     let last = finished.map(|snapshot| snapshot.phase);
     let signal = caught.load(Ordering::Relaxed);
     let interrupted = exit.interrupted || signal != 0 && (exit.running || last == Some(Phase::Cancelled));
-    Ok(if interrupted {
-        if signal == 143 { 143 } else { 130 }
-    } else if last.is_none_or(|phase| phase == Phase::Complete) {
-        0
-    } else {
-        1
+    Ok(match () {
+        _ if interrupted && signal == 143 => 143,
+        _ if interrupted => 130,
+        _ if last.is_none_or(|phase| phase == Phase::Complete) => 0,
+        _ => 1,
     })
 }
 

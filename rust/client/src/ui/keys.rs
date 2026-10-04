@@ -78,9 +78,7 @@ pub(super) fn name(key: KeyEvent) -> String {
         name.extend(key.modifiers.contains(held).then_some(prefix));
     }
     // Bubble Tea names a shifted letter by its capital, which no binding matches.
-    if key.code.as_char().is_some_and(char::is_uppercase) {
-        name.push_str("shift+");
-    }
+    name.extend(key.code.as_char().is_some_and(char::is_uppercase).then_some("shift+"));
     name + &base
 }
 
@@ -97,37 +95,25 @@ pub(super) fn delta(name: &str) -> isize {
 impl Ui {
     /// Go's ShortHelp: the footer's bindings in this state.
     pub(super) fn short_help(&self) -> Vec<Binding> {
+        let (row, latency) = (self.current(), self.several().then_some(LATENCY_SERVER));
+        let run = |keys: &[Binding]| [keys, latency.as_slice(), &[HELP, QUIT]].concat();
         match self.popup {
-            Popup::Details => return vec![SCROLL, CLOSE, QUIT],
-            Popup::Servers => return vec![ROWS, TOGGLE_SERVER, APPLY, DISCARD, QUIT],
-            Popup::None => {}
+            Popup::Details => vec![SCROLL, CLOSE, QUIT],
+            Popup::Servers => vec![ROWS, TOGGLE_SERVER, APPLY, DISCARD, QUIT],
+            _ if self.edit.is_some() => vec![CURSOR, APPLY, DISCARD, ABORT],
+            _ if self.stop_prompt => vec![CONFIRM_STOP, QUIT],
+            _ if self.running() => run(&[STOP, DETAILS]),
+            _ if self.shown().is_some() => run(&[RUN_AGAIN, SETUP, DETAILS]),
+            _ if self.snapshot.auth.is_some() => vec![OPEN_SIGN_IN, CANCEL_SIGN_IN, QUIT],
+            _ if row == Setting::Start => vec![CHANGE.hint("start test"), ROWS, HELP, QUIT],
+            _ => {
+                let mut bindings = vec![START, ROWS];
+                bindings.extend(row.adjusts().then_some(ADJUST));
+                bindings.extend(matches!(row, Setting::Stage(_)).then_some(TOGGLE));
+                bindings.extend([CHANGE.hint(row.enter_verb()), HELP, QUIT]);
+                bindings
+            }
         }
-        if self.edit.is_some() {
-            return vec![CURSOR, APPLY, DISCARD, ABORT];
-        }
-        if self.stop_prompt {
-            return vec![CONFIRM_STOP, QUIT];
-        }
-        if self.shown().is_some() || self.running() {
-            let mut bindings = match self.running() {
-                true => vec![STOP, DETAILS],
-                false => vec![RUN_AGAIN, SETUP, DETAILS],
-            };
-            bindings.extend(self.several().then_some(LATENCY_SERVER));
-            return [bindings, vec![HELP, QUIT]].concat();
-        }
-        if self.snapshot.auth.is_some() {
-            return vec![OPEN_SIGN_IN, CANCEL_SIGN_IN, QUIT];
-        }
-        let row = self.current();
-        if row == Setting::Start {
-            return vec![CHANGE.hint("start test"), ROWS, HELP, QUIT];
-        }
-        let mut bindings = vec![START, ROWS];
-        bindings.extend(row.adjusts().then_some(ADJUST));
-        bindings.extend(matches!(row, Setting::Stage(_)).then_some(TOGGLE));
-        bindings.extend([CHANGE.hint(row.enter_verb()), HELP, QUIT]);
-        bindings
     }
 
     /// Go's FullHelp: setup's every key, or the short help, in columns of three.
@@ -146,9 +132,7 @@ impl Ui {
     pub(super) fn short_view(&self, bindings: &[Binding]) -> Line<'static> {
         let mut spans = Vec::new();
         for binding in bindings {
-            if !spans.is_empty() {
-                spans.push(span(" • ", self.theme.border));
-            }
+            spans.extend((!spans.is_empty()).then(|| span(" • ", self.theme.border)));
             spans.extend([span(binding.key, self.theme.text), Span::raw(" "), span(binding.desc, self.theme.muted)]);
         }
         Line::from(spans)
@@ -162,9 +146,7 @@ impl Ui {
             let key_width = column.iter().map(|binding| binding.key.width()).max().unwrap_or(0);
             let desc_width = column.iter().map(|binding| binding.desc.width()).max().unwrap_or(0);
             for (row, line) in lines.iter_mut().enumerate() {
-                if index > 0 {
-                    line.spans.push(span("    ", self.theme.border));
-                }
+                line.spans.extend((index > 0).then(|| span("    ", self.theme.border)));
                 let (key, desc) = column.get(row).map_or(("", ""), |binding| (binding.key, binding.desc));
                 line.spans.extend(cell(key, self.theme.text, key_width));
                 line.spans.push(Span::raw(" "));

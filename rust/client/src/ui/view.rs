@@ -1,6 +1,6 @@
 //! Go's view.go: the header, scrolled body and footer, and the setup, sign-in, chooser and details views.
 use super::{
-    FRESHNESS, Popup, Prepare, Ui,
+    FRESHNESS, PathState, Popup, Ui,
     keys::PAGE,
     path_summary,
     setup::{ROWS, Setting},
@@ -29,23 +29,6 @@ pub(super) struct Layout {
     pub body: Text,
     pub body_height: usize,
     footer: Text,
-}
-
-/// Go's readiness of a checked server, in the order of its label.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum PathState {
-    Ready,
-    Checking,
-    Stale,
-    Failed,
-    SignIn,
-}
-
-impl PathState {
-    /// Go's pathLabels.
-    fn label(self) -> &'static str {
-        ["Ready", "Checking", "Recheck needed", "Failed", "Sign in"][self as usize]
-    }
 }
 
 /// Go's panel: a rounded frame with its title in the top border; a height pads or clips the body.
@@ -202,33 +185,24 @@ impl Ui {
         let height = usize::from(self.size.1).max(MIN_HEIGHT);
         let inner = usize::from(self.size.0).max(MIN_WIDTH) - 2;
         let mut top = self.header(inner);
-        if height > 24 {
-            top.push(Line::default());
-        }
+        top.extend((height > 24).then(Line::default));
         let footer = self.footer(inner, false).len();
         let body_height = height.saturating_sub(top.len() + footer).max(1);
         let theme = &self.theme;
-        let body = if self.popup == Popup::Details {
-            let details = match self.shown() {
-                Some((snapshot, _)) if snapshot.started() => {
-                    Report::new(snapshot, self.latency_server(), inner - 4, *theme).details(true)
-                }
-                _ => vec![line("Waiting for the first server report…", theme.muted)],
-            };
-            panel("Details", details, inner, 0, theme)
-        } else if self.popup == Popup::Servers {
-            let (title, content) = self.chooser_view(inner - 4, body_height.saturating_sub(2));
-            panel(&title, content, inner, 0, theme)
-        } else if self.snapshot.auth.is_some() && self.shown().is_none() {
-            let (title, content) = self.sign_in_view();
-            let mut body = panel(&title, content, inner, 0, theme);
-            body.push(Line::default());
-            body.extend(self.sign_in_link(inner));
-            body
-        } else if self.shown().is_some() {
-            self.run_view(inner, body_height)
-        } else {
-            self.setup_view(inner)
+        let body = match self.popup {
+            Popup::Details => {
+                let details = match self.shown() {
+                    Some((snapshot, _)) if snapshot.started() => {
+                        Report::new(snapshot, self.latency_server(), inner - 4, *theme).details(true)
+                    }
+                    _ => vec![line("Waiting for the first server report…", theme.muted)],
+                };
+                panel("Details", details, inner, 0, theme)
+            }
+            Popup::Servers => self.chooser_view(inner, body_height),
+            _ if self.snapshot.auth.is_some() && self.shown().is_none() => self.sign_in_view(inner),
+            _ if self.shown().is_some() => self.run_view(inner, body_height),
+            Popup::None => self.setup_view(inner),
         };
         let footer = self.footer(inner, body.len() > body_height);
         Layout { top, body, body_height, footer }
@@ -252,10 +226,9 @@ impl Ui {
         let offset = self.body.min(layout.body.len().saturating_sub(layout.body_height));
         let mut body: Text = layout.body.into_iter().skip(offset).take(layout.body_height).collect();
         body.resize(layout.body_height, Line::default());
-        let inner = width - 2;
         let mut lines = layout.top;
         // The viewport cuts its lines to its width.
-        lines.extend(body.into_iter().map(|line| truncate(line, inner, "")));
+        lines.extend(body.into_iter().map(|line| truncate(line, width - 2, "")));
         lines.extend(layout.footer);
         for line in &mut lines {
             line.spans.insert(0, Span::raw(" "));
@@ -297,50 +270,38 @@ impl Ui {
 
     /// Go's statusLabel: the run's stage or outcome, or setup's state.
     pub(super) fn status_label(&self) -> &'static str {
-        if self.live {
-            if self.running() {
-                return crate::report::status(&self.snapshot);
-            }
-            if let Some((snapshot, _)) = self.shown() {
-                return crate::report::outcome(snapshot.phase);
-            }
+        if self.running() {
+            return crate::report::status(&self.snapshot);
         }
-        if self.config.validate().is_err() {
-            BLOCKED
-        } else if self.snapshot.auth.is_some() && self.opened {
-            CHECKING_SIGN_IN
-        } else if self.prepare() == Prepare::SignIn {
-            PathState::SignIn.label()
-        } else if self.prepare() == Prepare::Failed && self.ready_servers().next().is_none() {
-            START_FAILED
-        } else {
-            NOT_STARTED
+        if let Some((snapshot, _)) = self.shown() {
+            return crate::report::outcome(snapshot.phase);
+        }
+        match self.prepare() {
+            _ if self.config.validate().is_err() => BLOCKED,
+            _ if self.snapshot.auth.is_some() && self.opened => CHECKING_SIGN_IN,
+            PathState::SignIn => PathState::SignIn.label(),
+            PathState::Failed if self.ready_servers().next().is_none() => START_FAILED,
+            _ => NOT_STARTED,
         }
     }
 
     /// Go's footer: the notice, an error or the row's help, over the key hints that fit.
     fn footer(&self, width: usize, overflow: bool) -> Text {
         let theme = &self.theme;
-        let run_error = self
-            .shown()
-            .and_then(|(snapshot, _)| snapshot.error.as_deref())
-            .filter(|_| !self.running());
-        let notice = match &self.edit {
-            Some(edit) if !edit.error.is_empty() => line(edit.error.clone(), theme.err),
-            _ if run_error.is_some() => line(run_error.unwrap_or_default().to_owned(), theme.err),
-            _ if self.notice.is_empty()
-                && self.shown().is_none()
-                && self.popup == Popup::None
-                && self.snapshot.auth.is_none() =>
-            {
+        let finished = self.shown().filter(|_| !self.running());
+        let run_error = finished.and_then(|(snapshot, _)| snapshot.error.as_deref());
+        let quiet = self.notice.is_empty() && self.popup == Popup::None;
+        let notice = match (&self.edit, run_error) {
+            (Some(edit), _) if !edit.error.is_empty() => line(edit.error.clone(), theme.err),
+            (_, Some(error)) => line(error.to_owned(), theme.err),
+            _ if quiet && self.shown().is_none() && self.snapshot.auth.is_none() => {
                 line(self.row(self.current()).help, theme.muted)
             }
             _ => line(self.notice.clone(), theme.muted),
         };
         if self.help {
-            let mut lines = vec![notice];
-            lines.extend(self.full_view(&self.full_help()));
-            return lines.into_iter().map(|line| fit(line, width)).collect();
+            let lines = std::iter::once(notice).chain(self.full_view(&self.full_help()));
+            return lines.map(|line| fit(line, width)).collect();
         }
         let mut bindings = self.short_help();
         if overflow && self.popup == Popup::None && self.edit.is_none() && self.snapshot.auth.is_none() {
@@ -360,11 +321,8 @@ impl Ui {
         let (rows, _) = self.setup_list(left - 4);
         let plan = self.plan_view(right - 4);
         let height = if side { rows.len().max(plan.len()) + 2 } else { 0 };
-        join(
-            panel("Setup", rows, left, height, &self.theme),
-            panel("Servers", plan, right, height, &self.theme),
-            side,
-        )
+        let setup = panel("Setup", rows, left, height, &self.theme);
+        join(setup, panel("Servers", plan, right, height, &self.theme), side)
     }
 
     /// Go's setupList: the grouped rows, and the line the cursor's row is on.
@@ -405,9 +363,7 @@ impl Ui {
             };
             // One span, as Go pads inside the label's style: a focused row's highlight covers the padding.
             let label = plain(&pad(fit(Line::from(row.label), label_width), label_width));
-            let mut line = Line::from(span(label, theme.text));
-            line.spans.push(Span::raw("  "));
-            line.spans.extend(value.spans);
+            let mut line = Line::from([vec![span(label, theme.text), Span::raw("  ")], value.spans].concat());
             if focused {
                 line = under(fit(line, width.saturating_sub(2)), theme.selected);
             }
@@ -423,13 +379,11 @@ impl Ui {
         let total = stages
             .iter()
             .map(|stage| self.config.duration(*stage) + self.config.warmup);
-        match self.config.validate() {
-            Err(error) => vec![span(error.to_string(), theme.warn)],
-            Ok(()) if self.prepare() == Prepare::SignIn => {
-                vec![span("sign in first; v requests a new code", theme.warn)]
-            }
-            Ok(()) if self.prepare() == Prepare::Checking => vec![self.spinner(), span(" checking paths", theme.muted)],
-            Ok(()) => {
+        match (self.config.validate(), self.prepare()) {
+            (Err(error), _) => vec![span(error.to_string(), theme.warn)],
+            (Ok(()), PathState::SignIn) => vec![span("sign in first; v requests a new code", theme.warn)],
+            (Ok(()), PathState::Checking) => vec![self.spinner(), span(" checking paths", theme.muted)],
+            (Ok(()), _) => {
                 let rounded = Duration::from_secs((total.sum::<Duration>().as_secs_f64() + 0.5) as u64);
                 let note = format!("{} stages · about {}", stages.len(), words::setting(rounded));
                 vec![span(note, theme.muted)]
@@ -441,7 +395,7 @@ impl Ui {
     fn plan_view(&self, width: usize) -> Text {
         let theme = &self.theme;
         let mut lines = Vec::new();
-        if self.prepare() == Prepare::Checking && self.prepared.is_empty() {
+        if self.prepare() == PathState::Checking && self.prepared.is_empty() {
             lines.push(Line::from(vec![self.spinner(), span(" Checking paths…", theme.muted)]));
         }
         let rows = self.readiness();
@@ -454,24 +408,20 @@ impl Ui {
                 PathState::Stale | PathState::SignIn => span("○", theme.warn),
                 PathState::Failed => span("✗", theme.err),
             };
-            let name = pad(Line::from(label_of(server)), name_width);
-            let mut row = vec![glyph, Span::raw(" ")];
-            row.extend(name.spans);
-            row.extend([Span::raw("  "), span(state.label(), theme.text)]);
-            lines.push(Line::from(row));
+            let name = plain(&pad(Line::from(label_of(server)), name_width));
+            lines.push(Line::from(vec![glyph, Span::raw(format!(" {name}  ")), span(state.label(), theme.text)]));
             if let Some(detail) = server.error.as_deref().filter(|_| state == PathState::Failed) {
                 let wrapped = wrap(detail, width.max(4).saturating_sub(2));
                 lines.extend(wrapped.into_iter().map(|text| line(format!("  {text}"), theme.warn)));
             }
         }
         // Go's prepareFailed error, when no server shows its own.
-        let failed = self.prepare() == Prepare::Failed && !self.checked().any(|server| server.error.is_some());
+        let failed = self.prepare() == PathState::Failed && !self.checked().any(|server| server.error.is_some());
         if let Some(error) = self.check_error.as_deref().filter(|_| failed) {
             lines.extend(wrap(error, width.max(4)).into_iter().map(|text| line(text, theme.warn)));
         }
-        if self.can_use_available() && self.snapshot.auth.is_none() {
-            lines.push(line("u Use available servers", theme.muted));
-        }
+        let offer = self.can_use_available() && self.snapshot.auth.is_none();
+        lines.extend(offer.then(|| line("u Use available servers", theme.muted)));
         // Go's pathSummaries: each distinct path the check chose, muted once it is no longer fresh,
         // which as Go's FreshFor needs these settings checked lately and every server ready.
         let fresh = self.checked_key == Some(self.config.preparation_key())
@@ -493,18 +443,14 @@ impl Ui {
 
     /// Go's readiness, borrowed from the last settled check without materializing rows.
     pub(super) fn readiness(&self) -> impl Iterator<Item = (&ServerSummary, PathState)> + Clone {
-        let (checking, stale) = (self.prepare() == Prepare::Checking, self.stale());
+        let (checking, stale) = (self.prepare() == PathState::Checking, self.stale());
         self.checked().map(move |server| {
-            let state = if checking {
-                PathState::Checking
-            } else if server.sign_in {
-                PathState::SignIn
-            } else if server.error.is_some() {
-                PathState::Failed
-            } else if stale {
-                PathState::Stale
-            } else {
-                PathState::Ready
+            let state = match () {
+                _ if checking => PathState::Checking,
+                _ if server.sign_in => PathState::SignIn,
+                _ if server.error.is_some() => PathState::Failed,
+                _ if stale => PathState::Stale,
+                _ => PathState::Ready,
             };
             (server, state)
         })
@@ -522,12 +468,10 @@ impl Ui {
         self.ready_servers().count() > 0 && self.ready_servers().count() < self.readiness().count()
     }
 
-    /// Go's signInView: the code to match and how long the approval waits.
-    fn sign_in_view(&self) -> (String, Text) {
+    /// Go's signInView: the code to match and how long the approval waits, over the sign-in link.
+    fn sign_in_view(&self, width: usize) -> Text {
         let theme = &self.theme;
-        let Some(auth) = &self.snapshot.auth else {
-            return (String::new(), Vec::new());
-        };
+        let Some(auth) = &self.snapshot.auth else { return Vec::new() };
         let challenged = self.snapshot.servers.iter().find(|server| server.sign_in);
         let issuer = challenged.map_or(&self.config.url, |server| &server.name);
         let status = match self.opened {
@@ -551,7 +495,10 @@ impl Ui {
             edge(["╰", "╯"]),
             line(format!("waited {waited} · expires in {expires}"), theme.muted),
         ];
-        (format!("Sign in to {issuer}"), lines)
+        let mut body = panel(&format!("Sign in to {issuer}"), lines, width, 0, theme);
+        body.push(Line::default());
+        body.extend(self.sign_in_link(width));
+        body
     }
 
     /// Go's signInLink: the page's address outside any frame, hard-wrapped, as a link.
@@ -563,41 +510,29 @@ impl Ui {
     }
 
     /// Go's serverChooserView: the catalogue's servers around the cursor, each over its address.
-    fn chooser_view(&self, width: usize, height: usize) -> (String, Text) {
+    fn chooser_view(&self, width: usize, height: usize) -> Text {
         let theme = &self.theme;
-        let capacity = (height.saturating_sub(4) / 2).max(2);
+        let capacity = (height.saturating_sub(6) / 2).max(2);
         let servers = &self.prepared;
         let last = servers.len().saturating_sub(capacity);
         let start = self.server_row.saturating_sub(capacity / 2).min(last);
         let states = self.readiness();
         let mut lines = Vec::new();
         for (index, server) in servers.iter().enumerate().skip(start).take(capacity) {
-            let mut label = format!(" {}", label_of(server));
-            if let Some((_, state)) = states.clone().find(|(checked, _)| checked.id == server.id) {
-                label = format!("{label} · {}", state.label());
-            }
+            let state = states.clone().find(|(checked, _)| checked.id == server.id);
+            let state = state.map_or(String::new(), |(_, state)| format!(" · {}", state.label()));
             let (focused, chosen) = (index == self.server_row, self.draft.contains(&server.id));
-            let mut row = Line::from(vec![self.checkbox(chosen), Span::raw(label)]);
+            let mut row = Line::from(vec![self.checkbox(chosen), Span::raw(format!(" {}{state}", label_of(server)))]);
             if focused {
                 row = under(row, theme.selected);
             }
             row.spans.insert(0, Span::raw(if focused { "› " } else { "  " }));
-            lines.push(fit(row, width));
-            lines.push(fit(line(format!("    {}", server.origin), theme.muted), width));
+            lines.push(fit(row, width - 4));
+            lines.push(fit(line(format!("    {}", server.origin), theme.muted), width - 4));
         }
-        (format!("Test servers · {} selected", self.draft.len()), lines)
+        panel(&format!("Test servers · {} selected", self.draft.len()), lines, width, 0, theme)
     }
-}
 
-/// Go's serverLabel: the name, then the location.
-pub(super) fn label_of(server: &ServerSummary) -> String {
-    match server.location.as_str() {
-        "" => server.name.clone(),
-        location => format!("{} · {location}", server.name),
-    }
-}
-
-impl Ui {
     /// The body's scroll offset and its last offset, and the rows it shows.
     fn viewport(&self) -> (usize, usize, usize) {
         let layout = self.layout();
@@ -631,5 +566,13 @@ impl Ui {
     /// Whether the checked paths are older than Go's preparation freshness.
     pub(super) fn stale(&self) -> bool {
         self.checked_at.is_some_and(|at| at.elapsed() > FRESHNESS)
+    }
+}
+
+/// Go's serverLabel: the name, then the location.
+pub(super) fn label_of(server: &ServerSummary) -> String {
+    match server.location.as_str() {
+        "" => server.name.clone(),
+        location => format!("{} · {location}", server.name),
     }
 }

@@ -140,11 +140,10 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, Error> 
             return Ok(Action::Help);
         }
         // The name is checked before a value is read.
-        let defined = FLAGS.iter().find(|(defined, ..)| *defined == name);
-        match &defined
-            .ok_or_else(|| FlagError(format!("flag provided but not defined: -{name}")))?
-            .3
-        {
+        let Some((.., flag)) = FLAGS.iter().find(|(defined, ..)| *defined == name) else {
+            return Err(FlagError(format!("flag provided but not defined: -{name}")).into());
+        };
+        match flag {
             Toggle(toggle) => {
                 let value = inline.unwrap_or("true");
                 let refused = format!("invalid boolean value {} for -{name}: parse error", quote(value));

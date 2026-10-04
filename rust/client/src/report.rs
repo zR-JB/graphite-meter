@@ -165,15 +165,12 @@ pub(crate) fn render(snapshot: &Snapshot, width: usize, theme: Theme) -> Option<
         return None;
     }
     let report = Report::new(snapshot, snapshot.latency_focus.as_deref(), width, theme);
-    let mut heading = "Latency".to_owned();
-    if let Some(focus) = snapshot.latency_focus.as_deref().filter(|_| report.several()) {
-        heading = format!("Latency to {}", server_name(snapshot, focus));
-    }
+    let focus = snapshot.latency_focus.as_deref().filter(|_| report.several());
+    let heading = focus.map_or("Latency".to_owned(), |focus| format!("Latency to {}", server_name(snapshot, focus)));
     let results = report.results(&heading);
     let mut blocks = vec![vec![report.header()]];
     if !(results.throughput.is_empty() && results.latency.is_empty() && results.failures.is_empty()) {
-        blocks.extend([report.throughput(), results.latency, results.failures]);
-        blocks.push(report.notes(results.added));
+        blocks.extend([report.throughput(), results.latency, results.failures, report.notes(results.added)]);
     }
     if report.several() {
         blocks.push(report.details(false));
@@ -199,11 +196,8 @@ fn trim_end(mut line: Line<'static>) -> Line<'static> {
 
 /// The run's servers as Go's run details list them: every selected server the check reached.
 pub(crate) fn run_servers(snapshot: &Snapshot) -> Vec<&ServerSummary> {
-    snapshot
-        .servers
-        .iter()
-        .filter(|server| server.has_check_result())
-        .collect()
+    let servers = snapshot.servers.iter();
+    servers.filter(|server| server.has_check_result()).collect()
 }
 
 /// A server's catalogue name, or its ID when the catalogue lacks it.
@@ -320,11 +314,8 @@ impl<'a> Report<'a> {
 
     /// Go's headline: a finished stage's rates, and an idle stage's median.
     pub fn headline(&self, stage: Stage) -> Vec<Span<'static>> {
-        let rates = self.rates(stage);
-        let mut spans = Vec::new();
-        if !rates.is_empty() {
-            spans.push(span(rates, self.theme.value));
-        }
+        let (rates, mut spans) = (self.rates(stage), Vec::new());
+        spans.extend((!rates.is_empty()).then(|| span(rates, self.theme.value)));
         let median = self.population(stage).and_then(ServerLatencyResult::median);
         if let Some(median) = median.filter(|_| stage == Stage::Latency) {
             spans.extend((!spans.is_empty()).then(|| Span::raw("  ")));
@@ -352,9 +343,8 @@ impl<'a> Report<'a> {
                 for direction in directions(*stage) {
                     let label = direction_label(*stage, direction);
                     let measurement = self.measurement(*stage, direction);
-                    if let Some(measurement) =
-                        measurement.filter(|it| it.mean_bytes_per_sec.is_some() || it.total_bytes > 0)
-                    {
+                    let measured = measurement.filter(|it| it.mean_bytes_per_sec.is_some() || it.total_bytes > 0);
+                    if let Some(measurement) = measured {
                         out.notes
                             .extend(self.note(&label, &throughput_facts(measurement, false)));
                     }
@@ -402,9 +392,7 @@ impl<'a> Report<'a> {
         if !self.measured() {
             return Results::default();
         }
-        if out.added {
-            out.notes.push(line(ADDED_NOTE, theme.muted));
-        }
+        out.notes.extend(out.added.then(|| line(ADDED_NOTE, theme.muted)));
         if !throughput.is_empty() {
             let scope = if self.several() { "All servers" } else { "" };
             out.throughput = self.grid(&["Throughput", scope], throughput);
@@ -452,9 +440,7 @@ impl<'a> Report<'a> {
         facts.push(clock(self.snapshot.duration));
         let results = self.snapshot.results.iter();
         let total: u64 = results.map(|result| result.down_bytes() + result.up_bytes()).sum();
-        if total > 0 {
-            facts.push(format::bytes(total));
-        }
+        facts.extend((total > 0).then(|| format::bytes(total)));
         let phase = self.snapshot.phase;
         let mut tone = Style::new().add_modifier(Modifier::BOLD);
         tone.fg = self.theme.outcome(phase).bg;
@@ -515,9 +501,7 @@ impl<'a> Report<'a> {
     pub fn notes(&self, added: bool) -> Text {
         let (mut notes, mut timing) = (Vec::new(), Vec::new());
         for stage in &self.snapshot.plan {
-            let Some(population) = self.population(*stage) else {
-                continue;
-            };
+            let Some(population) = self.population(*stage) else { continue };
             let summary = population.summary;
             let issues = summary.timeouts > 0 || summary.unresolved > 0 || summary.send_failures > 0;
             if population.ending.is_some() || issues {
@@ -535,9 +519,7 @@ impl<'a> Report<'a> {
         if !timing.is_empty() {
             notes.extend(self.note("Server handling of the mean round trip", &timing));
         }
-        if added {
-            notes.push(line(ADDED_NOTE, self.theme.muted));
-        }
+        notes.extend(added.then(|| line(ADDED_NOTE, self.theme.muted)));
         notes
     }
 
@@ -626,11 +608,9 @@ impl<'a> Report<'a> {
                 parts.retain(|part| !part.is_empty());
                 lines.push(line(parts.join(" · "), theme.muted));
             }
-            if run.omitted_intervals > 0 {
-                let omitted = run.omitted_intervals;
-                let text = format!("{omitted} older intervals omitted; byte totals retain the full run");
-                lines.push(line(text, theme.muted));
-            }
+            let omitted = run.omitted_intervals;
+            let text = format!("{omitted} older intervals omitted; byte totals retain the full run");
+            lines.extend((omitted > 0).then(|| line(text, theme.muted)));
         }
         lines.into_iter().map(|line| fit(line, self.width)).collect()
     }
@@ -710,12 +690,8 @@ fn latency_facts(population: &ServerLatencyResult) -> Vec<String> {
     let summary = population.summary;
     let mut facts = vec![format!("{} replies", count(summary.count))];
     facts.extend(population.elapsed.filter(|elapsed| !elapsed.is_zero()).map(clock));
-    if summary.unresolved > 0 {
-        facts.push(format!("unfinished probes {}", count(summary.unresolved)));
-    }
-    if summary.send_failures > 0 {
-        facts.push(format!("failed sends {}", count(summary.send_failures)));
-    }
+    facts.extend((summary.unresolved > 0).then(|| format!("unfinished probes {}", count(summary.unresolved))));
+    facts.extend((summary.send_failures > 0).then(|| format!("failed sends {}", count(summary.send_failures))));
     facts
 }
 
@@ -732,12 +708,9 @@ fn throughput_facts(measurement: &MeasurementResult, brief: bool) -> Vec<String>
     facts.push(format::bytes(measurement.total_bytes));
     let elapsed = measurement.elapsed_nanos.filter(|elapsed| *elapsed > 0);
     facts.extend(elapsed.map(|elapsed| clock(Duration::from_nanos(elapsed))));
-    if measurement.samples > 0 && !brief {
-        facts.push(format!("{} samples", count(measurement.samples)));
-    }
-    if measurement.direction == graphite_meter_core::measurement::Direction::Up {
-        facts.push("receiver-timed".to_owned());
-    }
+    facts.extend((measurement.samples > 0 && !brief).then(|| format!("{} samples", count(measurement.samples))));
+    let up = measurement.direction == graphite_meter_core::measurement::Direction::Up;
+    facts.extend(up.then(|| "receiver-timed".to_owned()));
     facts
 }
 

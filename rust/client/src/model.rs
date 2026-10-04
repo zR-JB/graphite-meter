@@ -236,10 +236,8 @@ pub struct Snapshot {
 impl Snapshot {
     /// Failed when a planned result is missing (a present focus's median included), partial after a failure.
     pub fn stage_status(&self, result: &StageResult) -> StageStatus {
-        let focus = result
-            .server_latencies
-            .iter()
-            .find(|host| Some(&host.id) == self.latency_focus.as_ref());
+        let mut hosts = result.server_latencies.iter();
+        let focus = hosts.find(|host| Some(&host.id) == self.latency_focus.as_ref());
         let unfocused = focus.is_none_or(|host| host.median().is_none() || !self.participants.contains(&host.id));
         if result.stopped {
             StageStatus::Stopped
@@ -267,18 +265,13 @@ impl Snapshot {
 
     /// A run ends: stopped, incomplete when a stage lacks a planned result, or partial after a failure.
     pub(crate) fn finish_run(&mut self, stopped: bool) {
-        let missing = self
-            .results
-            .iter()
-            .any(|result| self.stage_status(result) == StageStatus::Failed);
-        self.phase = if stopped {
-            Phase::Cancelled
-        } else if missing {
-            Phase::Incomplete
-        } else if !self.failures.is_empty() {
-            Phase::Partial
-        } else {
-            Phase::Complete
+        let mut results = self.results.iter();
+        let missing = results.any(|result| self.stage_status(result) == StageStatus::Failed);
+        self.phase = match () {
+            _ if stopped => Phase::Cancelled,
+            _ if missing => Phase::Incomplete,
+            _ if !self.failures.is_empty() => Phase::Partial,
+            _ => Phase::Complete,
         };
     }
 
@@ -314,11 +307,10 @@ impl Snapshot {
         let Some(stage) = self.stage else { return };
         let known =
             |failure: &ServerFailure| failure.server_id == id && failure.stage == stage && failure.scope == scope;
-        if self.failures.iter().any(known) {
-            return;
+        if !self.failures.iter().any(known) {
+            let failure = ServerFailure { server_id: id.into(), stage, scope, reason, at };
+            self.failures.push(failure);
         }
-        self.failures
-            .push(ServerFailure { server_id: id.into(), stage, scope, reason, at });
     }
 
     /// A stage opens for the servers `ids`, with no samples yet.

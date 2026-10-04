@@ -65,19 +65,27 @@ enum Popup {
     Details,
 }
 
-/// Go's prepareState.
+/// Go's prepareState, and the readiness of a checked server in the order of its label.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Prepare {
-    Checking,
+enum PathState {
     Ready,
-    SignIn,
+    Checking,
+    Stale,
     Failed,
+    SignIn,
+}
+
+impl PathState {
+    /// Go's pathLabels.
+    fn label(self) -> &'static str {
+        ["Ready", "Checking", "Recheck needed", "Failed", "Sign in"][self as usize]
+    }
 }
 
 /// Go's terminal progress bar (OSC 9;4) when it shows none.
 const NO_PROGRESS: &str = "\x1b]9;4;0\x07";
 
-/// The window title, progress bar and sign-in link Go's TUI writes beside its frame, cleared on exit.
+/// Go's window title, progress bar and sign-in link; dropping it clears them and restores the terminal.
 struct Chrome {
     title: String,
     progress: String,
@@ -98,9 +106,6 @@ impl Chrome {
                     sequences.push_str(&format!("\x1b[{};2H\x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\", row + 1));
                 }
             }
-        }
-        if sequences.is_empty() {
-            return Ok(());
         }
         let mut stdout = io::stdout().lock();
         stdout.write_all(sequences.as_bytes())?;
@@ -125,13 +130,6 @@ impl Drop for Chrome {
     fn drop(&mut self) {
         let sequences = self.update(String::new(), NO_PROGRESS.into());
         let _ = io::stdout().lock().write_all(sequences.as_bytes());
-    }
-}
-
-/// Return paths, cancellation and partial initialization all restore the terminal.
-struct Restore;
-impl Drop for Restore {
-    fn drop(&mut self) {
         restore();
     }
 }
@@ -151,7 +149,7 @@ pub async fn run(
     if !io::stdout().is_terminal() {
         return Err("interactive mode requires a terminal on stdout".into());
     }
-    let _restore = Restore;
+    let mut chrome = Chrome { title: String::new(), progress: NO_PROGRESS.into() };
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         restore();
@@ -165,8 +163,6 @@ pub async fn run(
     #[cfg(unix)]
     io::stdout().write_all(crate::theme::QUERY)?;
     execute!(io::stdout(), EnableBracketedPaste, EnableMouseCapture, Clear(ClearType::All))?;
-    let (title, progress) = (String::new(), NO_PROGRESS.into());
-    let mut chrome = Chrome { title, progress };
     let mut ui = Ui::new(config, snapshots.borrow_and_update().clone());
     let mut events = EventStream::new();
     let mut refresh = tokio::time::interval(Duration::from_millis(33));
@@ -313,8 +309,7 @@ impl Ui {
     fn update(&mut self, mut snapshot: Snapshot) {
         match (&self.snapshot.auth, &snapshot.auth) {
             (before, Some(auth)) if before.as_ref().is_none_or(|before| before.code != auth.code) => {
-                self.opened = false;
-                self.body = 0;
+                (self.opened, self.body) = (false, 0);
                 self.notice = "Check the code, then press enter to open the sign-in page.".into();
             }
             (Some(_), None) if snapshot.phase.busy() && !self.signed_out => {
@@ -324,8 +319,7 @@ impl Ui {
         }
         // In Go's event order: the run starts, its servers fail, then it finishes, which clears the notice.
         if self.live && !self.quitting && !self.snapshot.started() && snapshot.started() {
-            self.notice = "Test started. Press esc to stop.".into();
-            (self.body, self.previous) = (0, None);
+            (self.notice, self.body, self.previous) = ("Test started. Press esc to stop.".into(), 0, None);
         }
         let failed = snapshot.failures.iter().skip(self.snapshot.failures.len()).last();
         if let Some(failure) = failed.filter(|_| !self.quitting) {
@@ -336,23 +330,18 @@ impl Ui {
             self.notice.clear();
         }
         self.awaiting = false;
-        if snapshot.auth.is_some() || !snapshot.phase.live() {
-            self.stop_prompt = false;
-        }
+        self.stop_prompt &= snapshot.auth.is_none() && snapshot.phase.live();
         let was_live = self.live;
-        if snapshot.phase == Phase::Checking && !self.starting {
-            self.live = false;
-        }
+        self.live &= snapshot.phase != Phase::Checking || self.starting;
         self.starting &= snapshot.phase == Phase::Checking;
         self.latency_pick = self.latency_pick.take().filter(|id| snapshot.participants.contains(id));
         // As Go's startFailed, a run that never starts leaves the last results, or setup, in place.
         let unstarted = matches!(snapshot.phase, Phase::Failed | Phase::Cancelled) && !snapshot.started();
         if self.live && !self.quitting && unstarted {
-            if snapshot.phase == Phase::Cancelled {
-                self.notice = "Test stopped before it started.".into();
-            } else {
-                self.notice = snapshot.error.take().unwrap_or_default();
-            }
+            self.notice = match snapshot.phase {
+                Phase::Cancelled => "Test stopped before it started.".into(),
+                _ => snapshot.error.take().unwrap_or_default(),
+            };
             // Go checks again after a failed start, which the results it keeps hide until esc checks anew, so
             // only setup checks here; a stopped start leaves a check it replaced spinning.
             if self.previous.is_none() && (snapshot.phase != Phase::Cancelled || self.check_started.is_some()) {
@@ -382,14 +371,11 @@ impl Ui {
 
     /// Go's handlePreparation: a settled check's servers, and whether it failed or needs a sign-in.
     fn settle(&mut self) {
-        if self.live {
-            return;
-        }
-        if self.snapshot.phase == Phase::Checking {
+        if !self.live && self.snapshot.phase == Phase::Checking {
             self.check_started.get_or_insert_with(Instant::now);
-            return;
         }
-        if self.awaiting || self.recheck.is_some() || !matches!(self.snapshot.phase, Phase::Setup | Phase::Failed) {
+        let settled = matches!(self.snapshot.phase, Phase::Setup | Phase::Failed);
+        if self.live || self.awaiting || self.recheck.is_some() || !settled {
             return;
         }
         self.prepared.clone_from(&self.snapshot.servers);
@@ -405,15 +391,12 @@ impl Ui {
     }
 
     /// Go's prepare state.
-    fn prepare(&self) -> Prepare {
-        if self.signed_out || self.snapshot.auth.is_some() && !self.live {
-            Prepare::SignIn
-        } else if self.checking() {
-            Prepare::Checking
-        } else if self.check_error.is_some() {
-            Prepare::Failed
-        } else {
-            Prepare::Ready
+    fn prepare(&self) -> PathState {
+        match () {
+            _ if self.signed_out || self.snapshot.auth.is_some() && !self.live => PathState::SignIn,
+            _ if self.checking() => PathState::Checking,
+            _ if self.check_error.is_some() => PathState::Failed,
+            _ => PathState::Ready,
         }
     }
 
@@ -438,13 +421,11 @@ impl Ui {
 
     /// Go's m.run: the run the view shows, which a run again keeps until the new one starts.
     fn shown(&self) -> Option<(&Snapshot, &Run)> {
-        if !self.live {
-            return None;
+        match self.snapshot.started() {
+            _ if !self.live => None,
+            true => Some((&self.snapshot, &self.run)),
+            false => self.previous.as_ref().map(|(snapshot, run)| (snapshot, run)),
         }
-        if self.snapshot.started() {
-            return Some((&self.snapshot, &self.run));
-        }
-        self.previous.as_ref().map(|(snapshot, run)| (snapshot, run))
     }
 
     /// Go's multipleRunServers.
@@ -467,14 +448,12 @@ impl Ui {
     /// Go's animating: the spinner and the clocks move.
     fn animating(&self) -> bool {
         self.running()
-            || self.shown().is_none() && (self.prepare() == Prepare::Checking || self.snapshot.auth.is_some())
+            || self.shown().is_none() && (self.prepare() == PathState::Checking || self.snapshot.auth.is_some())
     }
 
     fn mouse(&mut self, kind: MouseEventKind) -> bool {
-        if self.edit.is_some() || self.snapshot.auth.is_some() || self.stop_prompt {
-            return false;
-        }
         let key = match kind {
+            _ if self.edit.is_some() || self.snapshot.auth.is_some() || self.stop_prompt => return false,
             MouseEventKind::ScrollUp => "up",
             MouseEventKind::ScrollDown => "down",
             _ => return false,
@@ -500,15 +479,9 @@ impl Ui {
     }
 
     fn exit(&self) -> Exit {
-        let shown = self
-            .shown()
-            .filter(|_| !self.running())
-            .map(|(snapshot, _)| snapshot.clone());
-        Exit {
-            interrupted: self.interrupted,
-            running: self.running(),
-            shown,
-        }
+        let running = self.running();
+        let shown = self.shown().filter(|_| !running).map(|(snapshot, _)| snapshot.clone());
+        Exit { interrupted: self.interrupted, running, shown }
     }
 
     /// Go's quit: a run stops first.
@@ -556,10 +529,9 @@ impl Ui {
 
     /// Sends a settled re-check.
     fn recheck(&mut self, commands: &mpsc::Sender<Command>) -> bool {
-        if self.recheck.is_none_or(|at| at > Instant::now()) {
+        if self.recheck.take_if(|at| *at <= Instant::now()).is_none() {
             return false;
         }
-        self.recheck = None;
         if self.send(Command::Verify(self.config.clone()), commands) {
             self.check_started = Some(Instant::now());
         }
@@ -594,9 +566,9 @@ impl Ui {
         plain || name == "ctrl+g"
     }
 
-    /// Go's handleKey; true quits.
+    /// Go's handleKey, and its recheckIfPathsChanged after any key; true quits.
     fn key(&mut self, key: KeyEvent, commands: &mpsc::Sender<Command>) -> bool {
-        let (name, popup) = (keys::name(key), self.popup);
+        let (name, popup, before) = (keys::name(key), self.popup, self.config.preparation_key());
         match popup {
             _ if self.answer(key, &name) => {}
             _ if ABORT.matches(&name) => return self.interrupt(commands),
@@ -620,10 +592,13 @@ impl Ui {
             Popup::None if PAGE.matches(&name) || self.shown().is_some() && SCROLL.matches(&name) => self.scroll(&name),
             Popup::None if self.snapshot.auth.is_some() && self.shown().is_none() => self.sign_in_key(&name, commands),
             Popup::None if self.live => self.run_key(&name, commands),
-            Popup::None if self.prepare() == Prepare::SignIn && START.matches(&name) => {
+            Popup::None if self.prepare() == PathState::SignIn && START.matches(&name) => {
                 self.notice = format!("{BLOCKED}: sign in first. Press v to request a new code.");
             }
             Popup::None => self.setup_key(&name, commands),
+        }
+        if self.config.preparation_key() != before {
+            self.recheck_soon();
         }
         false
     }
@@ -632,15 +607,11 @@ impl Ui {
     fn edit_key(&mut self, name: &str, key: KeyEvent) {
         let Some(edit) = &mut self.edit else { return };
         if DISCARD.matches(name) {
-            self.edit = None;
-            self.notice = "Edit canceled.".into();
+            (self.edit, self.notice) = (None, "Edit canceled.".into());
         } else if APPLY.matches(name) {
-            let (setting, text, before) = (edit.setting, edit.text(), self.config.clone());
+            let (setting, text) = (edit.setting, edit.text());
             match self.commit_edit(setting, &text) {
-                Ok(()) => {
-                    self.edit = None;
-                    self.recheck_if_changed(&before);
-                }
+                Ok(()) => self.edit = None,
                 Err(error) => {
                     self.notice.clone_from(&error);
                     if let Some(edit) = &mut self.edit {
@@ -659,8 +630,7 @@ impl Ui {
     /// Go's handleSignInKey.
     fn sign_in_key(&mut self, name: &str, commands: &mpsc::Sender<Command>) {
         if OPEN_SIGN_IN.matches(name) && self.send(Command::OpenBrowser, commands) {
-            self.opened = true;
-            self.notice = "Sign-in page opened in the browser.".into();
+            (self.opened, self.notice) = (true, "Sign-in page opened in the browser.".into());
         } else if CANCEL_SIGN_IN.matches(name) && self.send(Command::Cancel, commands) {
             (self.signed_out, self.live) = (true, false);
             self.notice = "Sign-in canceled. Press v to request a new code.".into();
@@ -683,11 +653,9 @@ impl Ui {
             let focus = snapshot.latency_focus.clone();
             self.latency_pick = (Some(&next) != focus.as_ref()).then_some(next);
         } else if self.running() && STOP.matches(name) {
-            self.stop_prompt = true;
-            self.notice = "Stop the test? esc confirms, any other key continues.".into();
+            (self.stop_prompt, self.notice) = (true, "Stop the test? esc confirms, any other key continues.".into());
         } else if finished && SETUP.matches(name) {
-            (self.live, self.row, self.body) = (false, 0, 0);
-            self.notice.clear();
+            (self.live, self.row, self.body, self.notice) = (false, 0, 0, String::new());
             self.recheck_soon();
         } else if finished && RUN_AGAIN.matches(name) {
             self.start(commands);
@@ -698,37 +666,31 @@ impl Ui {
     fn setup_key(&mut self, name: &str, commands: &mpsc::Sender<Command>) {
         let row = self.current();
         if self.reset_prompt && !(CHANGE.matches(name) && row == Setting::Reset) {
-            self.reset_prompt = false;
-            self.notice = "Settings kept.".into();
+            (self.reset_prompt, self.notice) = (false, "Settings kept.".into());
             return;
         }
-        if ROWS.matches(name) {
-            self.navigate(name);
-        } else if ADJUST.matches(name) {
-            self.adjust(row, delta(name));
-        } else if let Some(on) = row.flag(&self.config).filter(|_| TOGGLE.matches(name)) {
-            let before = self.config.clone();
-            self.set_flag(row, !on);
-            self.recheck_if_changed(&before);
-        } else if CHANGE.matches(name) {
-            self.activate(row, commands);
-        } else if START.matches(name) {
-            self.start(commands);
-        } else if RECHECK.matches(name) {
-            self.recheck_soon();
-        } else if SERVERS.matches(name) {
-            self.open_servers();
-        } else if AVAILABLE.matches(name) && self.can_use_available() {
-            self.config.servers = self.ready_servers().map(str::to_owned).collect();
-            self.notice = "Using the available servers.".into();
-            self.recheck_soon();
-        } else if AUTOMATIC.matches(name) {
-            let config = &mut self.config;
-            (config.throughput_origin, config.throughput_protocol) = (None, None);
-            (config.latency_origin, config.latency_transport) = (None, None);
-            config.throughput_transport = None;
-            self.notice = "Automatic paths applied to every selected server.".into();
-            self.recheck_soon();
+        match row.flag(&self.config) {
+            _ if ROWS.matches(name) => self.navigate(name),
+            _ if ADJUST.matches(name) => self.adjust(row, delta(name)),
+            Some(on) if TOGGLE.matches(name) => self.set_flag(row, !on),
+            _ if CHANGE.matches(name) => self.activate(row, commands),
+            _ if START.matches(name) => self.start(commands),
+            _ if RECHECK.matches(name) => self.recheck_soon(),
+            _ if SERVERS.matches(name) => self.open_servers(),
+            _ if AVAILABLE.matches(name) && self.can_use_available() => {
+                self.config.servers = self.ready_servers().map(str::to_owned).collect();
+                self.notice = "Using the available servers.".into();
+                self.recheck_soon();
+            }
+            _ if AUTOMATIC.matches(name) => {
+                let config = &mut self.config;
+                (config.throughput_origin, config.throughput_protocol, config.throughput_transport) =
+                    (None, None, None);
+                (config.latency_origin, config.latency_transport) = (None, None);
+                self.notice = "Automatic paths applied to every selected server.".into();
+                self.recheck_soon();
+            }
+            _ => {}
         }
     }
 

@@ -1,7 +1,7 @@
 //! Go's setup list (setup.go): its settings, what each row shows, and what its keys change.
-use super::{Command, MAX_TEXT, Popup, Prepare, Ui};
+use super::{Command, MAX_TEXT, PathState, Popup, Ui};
 use crate::{
-    config::{Config, MAX_STREAMS},
+    config::{Config, MAX_STREAMS, STAGE_BOUND},
     model::{ServerSummary, Stage},
     report::{cell, plain, span},
     vocabulary::{self as words, CADENCES, MISSING, wire},
@@ -9,7 +9,7 @@ use crate::{
 use graphite_meter_core::{
     catalog::MAX_SELECTED_SERVERS,
     discovery::{
-        Capabilities,
+        Capabilities, LatencyTarget,
         Protocol::{self, Http1, Http2, Http3},
         ThroughputTarget, ThroughputTransport,
     },
@@ -21,8 +21,6 @@ use ratatui_core::text::{Line, Span};
 use std::{ops::RangeInclusive, time::Duration};
 use tokio::sync::mpsc;
 
-const STAGE_BOUND: RangeInclusive<Duration> =
-    graphite_meter_core::discovery::MIN_STAGE_LIMIT..=graphite_meter_core::discovery::MAX_STAGE_LIMIT;
 const WARMUP_BOUND: RangeInclusive<Duration> = Duration::ZERO..=Duration::from_secs(4);
 
 /// A setup row. `Path(true)` and `Cadence(true)` are the latency path and the loaded cadence.
@@ -44,8 +42,8 @@ pub(super) enum Setting {
     Reset,
 }
 
-/// Go's setupGroups in order: the heading of the group a row starts, the row, its label, which its
-/// notices repeat, and its help; a path's help goes on to its choices. Advanced hides the rows after it.
+/// Go's setupGroups in order: the heading of the group a row starts, the row, its label, which its notices
+/// repeat, and its help; a path's help goes on to its choices, a stage's to its keys. Advanced hides the rows after it.
 #[rustfmt::skip]
 pub(super) const ROWS: [(Option<&str>, Setting, &str, &str); 19] = [
     (Some(""), Setting::Start, "Start test", "Runs the checked stages in order. r starts from any row."),
@@ -54,13 +52,10 @@ pub(super) const ROWS: [(Option<&str>, Setting, &str, &str); 19] = [
     (None, Setting::Path(false), "Throughput path", "How transfers reach the server"),
     (None, Setting::Protocol, "HTTP version", "Where the path negotiates. ←/→ Automatic, HTTP/1.1, HTTP/2, HTTP/3."),
     (None, Setting::Path(true), "Latency path", "How probes travel"),
-    (Some("Stages"), Setting::Stage(Stage::Latency), "Latency",
-        "Idle round trips. ←/→ step it (1 s–24 h; a server may allow less), space on/off."),
-    (None, Setting::Stage(Stage::Download), "Download", "Server to client. ←/→ step it (1 s–24 h; a server may allow less), space on/off."),
-    (None, Setting::Stage(Stage::Upload), "Upload",
-        "Client to server, receiver-timed. ←/→ step it (1 s–24 h; a server may allow less), space on/off."),
-    (None, Setting::Stage(Stage::Bidirectional), "Bidirectional",
-        "Download and upload at once. ←/→ step it (1 s–24 h; a server may allow less), space on/off."),
+    (Some("Stages"), Setting::Stage(Stage::Latency), "Latency", "Idle round trips."),
+    (None, Setting::Stage(Stage::Download), "Download", "Server to client."),
+    (None, Setting::Stage(Stage::Upload), "Upload", "Client to server, receiver-timed."),
+    (None, Setting::Stage(Stage::Bidirectional), "Bidirectional", "Download and upload at once."),
     (None, Setting::LoadedLatency, "Loaded latency",
         "Round trips during transfers: the latency load adds. space on/off."),
     (Some(""), Setting::Advanced, "Advanced", "Warmup, probe cadence, streams and TLS. ←/→ shows or hides."),
@@ -178,9 +173,7 @@ fn path(config: &Config, latency: bool) -> (String, String) {
 /// Go's shortOrigin: a target on the catalogue's host is its port.
 fn short_origin(base: &str, target: &str) -> String {
     let host = |origin: &str| target_origin(origin).ok().flatten();
-    let Some(parsed) = host(target) else {
-        return target.to_owned();
-    };
+    let Some(parsed) = host(target) else { return target.to_owned() };
     match &parsed.port {
         Some(port) if host(base).is_some_and(|base| base.host.eq_ignore_ascii_case(&parsed.host)) => format!(":{port}"),
         _ => parsed.authority(),
@@ -191,16 +184,14 @@ fn short_origin(base: &str, target: &str) -> String {
 fn discovered(offered: &Capabilities, latency: bool) -> Vec<PathChoice> {
     let new = |url: &str, transport: String, label| PathChoice::new(url, &transport, label, String::new());
     if latency {
-        let paths = offered.latency.iter();
-        return paths
-            .map(|path| new(&path.base_url, wire(Some(path.transport)), words::latency_path(path)))
-            .collect();
+        let choice = |path: &LatencyTarget| new(&path.base_url, wire(Some(path.transport)), words::latency_path(path));
+        return offered.latency.iter().map(choice).collect();
     }
     let datagrams = ThroughputTransport::WebTransportDatagram;
+    let choice =
+        |path: &ThroughputTarget| new(&path.base_url, wire(Some(path.transport)), words::throughput_path(path));
     let paths = offered.throughput.iter().filter(|path| path.transport != datagrams);
-    paths
-        .map(|path| new(&path.base_url, wire(Some(path.transport)), words::throughput_path(path)))
-        .collect()
+    paths.map(choice).collect()
 }
 
 impl Ui {
@@ -218,10 +209,7 @@ impl Ui {
 
     /// Go's checkbox.
     pub(super) fn checkbox(&self, on: bool) -> Span<'static> {
-        match on {
-            true => span("●", self.theme.accent),
-            false => span("○", self.theme.muted),
-        }
+        if on { span("●", self.theme.accent) } else { span("○", self.theme.muted) }
     }
 
     /// Go's setting.row: the row's label, value, help and whether its value is inert.
@@ -240,7 +228,7 @@ impl Ui {
                 let (rows, ready) = (self.checked().count(), self.ready_servers().count());
                 let summary = match () {
                     _ if rows == 0 => String::new(),
-                    _ if self.prepare() == Prepare::Checking => " · checking".into(),
+                    _ if self.prepare() == PathState::Checking => " · checking".into(),
                     _ if ready == rows => " · ready".into(),
                     _ => format!(" · {ready} of {rows} ready"),
                 };
@@ -270,6 +258,7 @@ impl Ui {
                 (Line::from(version), fixed.is_some())
             }
             Setting::Stage(stage) => {
+                help = format!("{help} ←/→ step it (1 s–24 h; a server may allow less), space on/off.");
                 let on = config.stages.contains(&stage);
                 let duration = Span::raw(format!(" {}", words::setting(config.duration(stage))));
                 (Line::from(vec![self.checkbox(on), duration]), !on)
@@ -310,13 +299,10 @@ impl Ui {
             false => server.throughput.as_ref().map(|target| &target.base_url),
         };
         let note = resolved.map(|origin| format!("→ {}", short_origin(&self.config.url, origin)));
-        let automatic = PathChoice::new("auto", "auto", "Automatic".into(), note.unwrap_or_default());
-        let mut choices = vec![automatic];
+        let mut choices = vec![PathChoice::new("auto", "auto", "Automatic".into(), note.unwrap_or_default())];
         for mut path in discovered(offered, latency) {
-            if !choices
-                .iter()
-                .any(|known| known.selects((&path.target, &path.transport)))
-            {
+            let target = (path.target.as_str(), path.transport.as_str());
+            if !choices.iter().any(|known| known.selects(target)) {
                 path.note = short_origin(&self.config.url, &path.target);
                 choices.push(path);
             }
@@ -327,8 +313,7 @@ impl Ui {
     /// Go's sharedPaths: Automatic and each transport, noting the servers that lack it.
     fn shared_paths(&self, latency: bool) -> Vec<PathChoice> {
         let kinds = [if latency { "websocket" } else { "fetch-stream" }, "webtransport"];
-        let automatic = PathChoice::new("auto", "auto", "Automatic".into(), "each server".into());
-        let mut choices = vec![automatic];
+        let mut choices = vec![PathChoice::new("auto", "auto", "Automatic".into(), "each server".into())];
         for kind in kinds {
             let lacking = self.checked().filter(|server| {
                 let paths = server.offered.as_ref().map(|offered| discovered(offered, latency));
@@ -348,21 +333,17 @@ impl Ui {
     fn fixed_protocol(&self) -> Option<Protocol> {
         let (target, transport) = path(&self.config, false);
         let (_, offered) = self.single_discovery()?;
-        let picked = offered
-            .throughput
-            .iter()
-            .find(|offered| wire(Some(offered.transport)) == transport && same_origin(&offered.base_url, &target));
-        picked
-            .map(|target| target.protocol)
-            .filter(|protocol| *protocol != Protocol::Negotiated)
+        let mut paths = offered.throughput.iter();
+        let picked =
+            paths.find(|path| wire(Some(path.transport)) == transport && same_origin(&path.base_url, &target))?;
+        Some(picked.protocol).filter(|protocol| *protocol != Protocol::Negotiated)
     }
 
     /// Go's activate: Enter or space on a row.
     pub(super) fn activate(&mut self, setting: Setting, commands: &mpsc::Sender<Command>) {
-        let before = self.config.clone();
         match setting {
-            Setting::Start => return self.start(commands),
-            Setting::Servers => return self.open_servers(),
+            Setting::Start => self.start(commands),
+            Setting::Servers => self.open_servers(),
             Setting::Reset if !self.reset_prompt => {
                 self.reset_prompt = true;
                 self.notice = "Press enter again to reset every setting; any other key keeps them.".into();
@@ -382,12 +363,10 @@ impl Ui {
                 None => self.cycle(setting, 1),
             },
         }
-        self.recheck_if_changed(&before);
     }
 
     /// Go's adjust: ←/→ steps a duration or a choice and switches a flag on or off.
     pub(super) fn adjust(&mut self, setting: Setting, step: isize) {
-        let before = self.config.clone();
         if let Some((bound, mut unit)) = setting.bound() {
             let value = duration(&mut self.config, setting);
             if matches!(setting, Setting::Stage(_)) {
@@ -399,10 +378,7 @@ impl Ui {
                     _ => 300,
                 });
             }
-            let moved = match step > 0 {
-                true => *value + unit,
-                false => value.saturating_sub(unit),
-            };
+            let moved = if step > 0 { *value + unit } else { value.saturating_sub(unit) };
             *value = moved.clamp(*bound.start(), *bound.end());
             self.notice = format!("{} {}.", setting.label(), words::setting(*value));
         } else if setting.flag(&self.config).is_some() {
@@ -410,7 +386,6 @@ impl Ui {
         } else {
             self.cycle(setting, step);
         }
-        self.recheck_if_changed(&before);
     }
 
     /// Go's setFlag with its notice.
@@ -441,14 +416,13 @@ impl Ui {
                 let at = choices.iter().position(|choice| choice.selects((&target, &transport)));
                 let choice = &choices[at.map_or(0, |at| next(Some(at), choices.len()))];
                 let origin = Some(choice.target.clone()).filter(|target| target != "auto");
-                let transport = serde_json::Value::from(choice.transport.as_str());
+                let json = serde_json::Value::from(choice.transport.as_str());
                 let config = &mut self.config;
                 if latency {
-                    (config.latency_origin, config.latency_transport) =
-                        (origin, serde_json::from_value(transport).ok());
+                    (config.latency_origin, config.latency_transport) = (origin, serde_json::from_value(json).ok());
                 } else {
-                    config.throughput_transport = serde_json::from_value(transport).ok();
-                    config.throughput_origin = origin;
+                    (config.throughput_origin, config.throughput_transport) =
+                        (origin, serde_json::from_value(json).ok());
                     if self.fixed_protocol().is_some() {
                         self.config.throughput_protocol = None;
                     }
@@ -466,10 +440,9 @@ impl Ui {
                 self.notice = format!("HTTP version: {}.", words::protocol(config.throughput_protocol));
             }
             Setting::Cadence(loaded) => {
-                let config = &mut self.config;
                 let interval = match loaded {
-                    true => &mut config.loaded_ping_interval,
-                    false => &mut config.ping_interval,
+                    true => &mut self.config.loaded_ping_interval,
+                    false => &mut self.config.ping_interval,
                 };
                 let at = CADENCES.iter().position(|(.., preset)| preset == interval);
                 *interval = CADENCES[next(at, CADENCES.len())].2;
@@ -507,13 +480,6 @@ impl Ui {
         self.notice = format!("Stream count: {}.", words::streams(&self.config, Some(&h1)));
     }
 
-    /// Go's recheckIfPathsChanged.
-    pub(super) fn recheck_if_changed(&mut self, before: &Config) {
-        if before.preparation_key() != self.config.preparation_key() {
-            self.recheck_soon();
-        }
-    }
-
     /// Go's beginEdit.
     pub(super) fn begin_edit(&mut self, setting: Setting, value: String) {
         self.edit = Some(Edit::new(setting, &value));
@@ -528,9 +494,7 @@ impl Ui {
             self.set_streams(count.ok_or(format!("streams must be a whole number from 1 to {MAX_STREAMS}"))?);
             return Ok(());
         }
-        let Some((bound, _)) = setting.bound() else {
-            return self.set_catalogue(raw);
-        };
+        let Some((bound, _)) = setting.bound() else { return self.set_catalogue(raw) };
         let raw = raw
             .parse::<f64>()
             .map_or_else(|_| raw.to_owned(), |seconds| format!("{seconds}s"));
@@ -549,10 +513,8 @@ impl Ui {
 
     /// Go's catalogueRow.parse: a missing scheme is http for a loopback host and https otherwise.
     fn set_catalogue(&mut self, raw: &str) -> Result<(), String> {
-        let raw = match raw.contains("://") {
-            true => raw.to_owned(),
-            false => format!("{}{raw}", default_scheme(raw)),
-        };
+        let scheme = if raw.contains("://") { "" } else { default_scheme(raw) };
+        let raw = format!("{scheme}{raw}");
         let canonical =
             catalog_origin(&raw).map_err(|_| "use an http:// or https:// origin, for example https://meter.example")?;
         if canonical != self.config.url {
@@ -566,11 +528,9 @@ impl Ui {
     /// Go's openServerChooser.
     pub(super) fn open_servers(&mut self) {
         if self.checking() {
-            self.open_chooser = true;
-            self.notice = "Test servers open when the path check finishes.".into();
+            (self.open_chooser, self.notice) = (true, "Test servers open when the path check finishes.".into());
         } else if self.prepared.is_empty() {
-            self.open_chooser = true;
-            self.notice = "Loading servers…".into();
+            (self.open_chooser, self.notice) = (true, "Loading servers…".into());
             self.recheck_soon();
         } else if !self.can_choose_servers() {
             self.notice = "This catalogue offers one server.".into();
@@ -590,8 +550,7 @@ impl Ui {
     pub(super) fn chooser_key(&mut self, name: &str) {
         use super::keys::{APPLY, DISCARD, ROWS, TOGGLE_SERVER, delta};
         if DISCARD.matches(name) {
-            self.popup = Popup::None;
-            self.notice = "Server selection unchanged.".into();
+            (self.popup, self.notice) = (Popup::None, "Server selection unchanged.".into());
         } else if ROWS.matches(name) {
             let last = self.prepared.len().saturating_sub(1);
             self.server_row = self.server_row.saturating_add_signed(delta(name)).min(last);
@@ -652,10 +611,8 @@ impl Edit {
 
     /// Typed or pasted text; tabs and line breaks become spaces, as textinput sanitizes them.
     pub(super) fn insert(&mut self, text: &str) {
-        let spaced = text
-            .chars()
-            .map(|c| if matches!(c, '\t' | '\n' | '\r') { ' ' } else { c });
-        let shown = spaced.filter(|character| terminal_character(*character));
+        let spaced = |c| if matches!(c, '\t' | '\n' | '\r') { ' ' } else { c };
+        let shown = text.chars().map(spaced).filter(|c| terminal_character(*c));
         for character in shown.take(MAX_TEXT.saturating_sub(self.chars.len())) {
             self.chars.insert(self.cursor, character);
             self.cursor += 1;
@@ -670,12 +627,8 @@ impl Edit {
         let spaces = after.iter().take_while(|c| c.is_whitespace()).count();
         let word_end = self.cursor + spaces + after[spaces..].iter().take_while(|c| !c.is_whitespace()).count();
         let spaces = before.iter().rev().take_while(|c| c.is_whitespace()).count();
-        let word = before[..before.len() - spaces]
-            .iter()
-            .rev()
-            .take_while(|c| !c.is_whitespace())
-            .count();
-        let word_start = self.cursor - spaces - word;
+        let word = before[..before.len() - spaces].iter().rev();
+        let word_start = self.cursor - spaces - word.take_while(|c| !c.is_whitespace()).count();
         match name {
             "right" | "ctrl+f" => self.cursor = (self.cursor + 1).min(length),
             "left" | "ctrl+b" => self.cursor = self.cursor.saturating_sub(1),

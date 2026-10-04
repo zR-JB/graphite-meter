@@ -1,8 +1,11 @@
 use crate::{Error, model::Stage};
-use graphite_meter_core::discovery::{LatencyTransport, Protocol, ThroughputTarget, ThroughputTransport};
-use std::time::Duration;
+use graphite_meter_core::discovery::{
+    LatencyTransport, MAX_STAGE_LIMIT, MIN_STAGE_LIMIT, Protocol, ThroughputTarget, ThroughputTransport,
+};
+use std::{ops::RangeInclusive, time::Duration};
 
 pub const MAX_STREAMS: usize = 14;
+pub(crate) const STAGE_BOUND: RangeInclusive<Duration> = MIN_STAGE_LIMIT..=MAX_STAGE_LIMIT;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
@@ -62,14 +65,8 @@ impl Config {
         let latency = std::mem::take(&mut key.loaded_latency) || key.stages.contains(&Stage::Latency);
         let upload = key.stages.iter().any(|stage| stage.uploads());
         let transfer = key.stages.iter().any(|stage| stage.downloads() || stage.uploads());
-        key.stages = [
-            latency.then_some(Stage::Latency),
-            transfer.then_some(Stage::Download),
-            upload.then_some(Stage::Upload),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
+        key.stages = vec![Stage::Latency, Stage::Download, Stage::Upload];
+        key.stages.retain(|stage| [latency, transfer, upload][*stage as usize]);
         key.warmup = Duration::ZERO;
         key.latency_duration = Duration::ZERO;
         key.download_duration = Duration::ZERO;
@@ -112,24 +109,13 @@ impl Config {
             return Err("warmup must be from 0s to 4s".into());
         }
         // Go checks every stage's duration, including stages that are off.
-        let durations = [
-            ("latency", self.latency_duration),
-            ("download", self.download_duration),
-            ("upload", self.upload_duration),
-            ("bidirectional", self.bidirectional_duration),
-        ];
-        for (stage, duration) in durations {
-            if !(graphite_meter_core::discovery::MIN_STAGE_LIMIT..=graphite_meter_core::discovery::MAX_STAGE_LIMIT)
-                .contains(&duration)
-            {
-                return Err(format!("{stage} duration must be from 1s to 24h").into());
+        for stage in [Stage::Latency, Stage::Download, Stage::Upload, Stage::Bidirectional] {
+            if !STAGE_BOUND.contains(&self.duration(stage)) {
+                return Err(format!("{} duration must be from 1s to 24h", stage.name().to_lowercase()).into());
             }
         }
-        let cadences = [self.ping_interval, self.loaded_ping_interval];
-        if cadences
-            .iter()
-            .any(|interval| !interval.is_zero() && *interval < Duration::from_millis(80))
-        {
+        let fast = |interval: Duration| !interval.is_zero() && interval < Duration::from_millis(80);
+        if fast(self.ping_interval) || fast(self.loaded_ping_interval) {
             return Err("latency cadence must be reply-driven or at least 80ms".into());
         }
         if self.streams > MAX_STREAMS {
