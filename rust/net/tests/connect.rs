@@ -1,0 +1,222 @@
+//! Connections through CONNECT tunnels, HTTP proxies in absolute form and SOCKS5, against in-test peers.
+use graphite_meter_net::{ConnectError, Connection, Connector, Proxy, RequestForm, Verify, client_config};
+use graphite_meter_proto::origin::Origin;
+use graphite_meter_testkit::Identity;
+use std::{net::SocketAddr, sync::Arc};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    task::JoinHandle,
+};
+use tokio_rustls::{TlsAcceptor, server::TlsStream};
+
+fn connector(variable: &str, proxy: &str, verify: Verify) -> Connector {
+    let (variable, proxy) = (variable.to_owned(), proxy.to_owned());
+    Connector::new(Proxy::from_lookup(move |name| (name == variable).then(|| proxy.clone())), verify)
+}
+
+async fn connect(connector: &Connector, target: &str) -> Result<Connection, ConnectError> {
+    let target = Origin::parse(target).unwrap();
+    match target.scheme.name() {
+        "https" => {
+            let tls = client_config(Verify::Insecure, rustls::DEFAULT_VERSIONS, &[b"h2", b"http/1.1"]).await;
+            connector.connect(&target, Some(&Arc::new(tls))).await
+        }
+        _ => connector.connect(&target, None).await,
+    }
+}
+
+/// A peer on a loopback port that runs `serve` on its one connection.
+async fn peer<F, T>(serve: impl FnOnce(TcpStream) -> F + Send + 'static) -> (SocketAddr, JoinHandle<T>)
+where
+    F: Future<Output = T> + Send,
+    T: Send + 'static,
+{
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    (address, tokio::spawn(async move { serve(listener.accept().await.unwrap().0).await }))
+}
+
+/// An HTTP/1.1 head, read byte by byte so nothing after it is consumed.
+async fn read_head(stream: &mut (impl AsyncRead + Unpin)) -> String {
+    let mut head = Vec::new();
+    while !head.ends_with(b"\r\n\r\n") {
+        head.push(stream.read_u8().await.unwrap());
+    }
+    String::from_utf8(head).unwrap()
+}
+
+/// Accepts TLS offering `alpn` and returns what the client offered and the stream.
+async fn accept<S: AsyncRead + AsyncWrite + Unpin>(stream: S, alpn: &[&[u8]]) -> (Option<Vec<u8>>, TlsStream<S>) {
+    let acceptor = TlsAcceptor::from(Arc::new(Identity::generate().unwrap().server(alpn)));
+    let stream = acceptor.accept(stream).await.unwrap();
+    (stream.get_ref().1.alpn_protocol().map(<[u8]>::to_vec), stream)
+}
+
+#[tokio::test]
+async fn https_tunnels_through_connect_with_credentials_and_tls_inside() {
+    let (address, proxy) = peer(|mut stream| async move {
+        let head = read_head(&mut stream).await;
+        stream
+            .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
+            .await
+            .unwrap();
+        let (alpn, mut tls) = accept(stream, &[b"h2"]).await;
+        tls.write_all(b"inside").await.unwrap();
+        (head, alpn)
+    })
+    .await;
+    let connector = connector("HTTPS_PROXY", &format!("http://user:s%40cret@{address}"), Verify::Trusted);
+    let mut connection = connect(&connector, "https://meter.test:8443").await.unwrap();
+    assert_eq!((connection.alpn.as_deref(), &connection.form), (Some(&b"h2"[..]), &RequestForm::Origin));
+    let mut inside = [0; 6];
+    connection.stream.read_exact(&mut inside).await.unwrap();
+    let (head, alpn) = proxy.await.unwrap();
+    assert_eq!(
+        head,
+        "CONNECT meter.test:8443 HTTP/1.1\r\nHost: meter.test:8443\r\nProxy-Authorization: Basic dXNlcjpzQGNyZXQ=\r\n\r\n"
+    );
+    assert_eq!((&inside, alpn.as_deref()), (b"inside", Some(&b"h2"[..])));
+}
+
+#[tokio::test]
+async fn an_https_proxy_offers_no_alpn_and_is_verified_unless_insecure() {
+    let (address, proxy) = peer(|stream| async move {
+        let (alpn, mut tls) = accept(stream, &[b"h2", b"http/1.1"]).await;
+        let head = read_head(&mut tls).await;
+        tls.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await.unwrap();
+        accept(tls, &[]).await;
+        (alpn, head)
+    })
+    .await;
+    let insecure = connector("HTTPS_PROXY", &format!("https://localhost:{}", address.port()), Verify::Insecure);
+    let _open = connect(&insecure, "https://meter.test").await.unwrap();
+    let (alpn, head) = proxy.await.unwrap();
+    assert_eq!((alpn, head.lines().next()), (None, Some("CONNECT meter.test:443 HTTP/1.1")));
+    let (address, _proxy) = peer(|stream| async move { accept(stream, &[]).await }).await;
+    let verified = connector("HTTPS_PROXY", &format!("https://localhost:{}", address.port()), Verify::Trusted);
+    let refused = connect(&verified, "https://meter.test").await.err().unwrap();
+    assert!(matches!(refused, ConnectError::Tls(rustls::Error::InvalidCertificate(_))), "{refused:?}");
+}
+
+#[tokio::test]
+async fn a_refused_connect_fails_with_the_proxy_s_status() {
+    let (address, _proxy) = peer(|mut stream| async move {
+        read_head(&mut stream).await;
+        let refusal = b"HTTP/1.1 407 Proxy Authentication Required\r\ncontent-length: 0\r\n\r\n";
+        stream.write_all(refusal).await.unwrap();
+    })
+    .await;
+    let refused = connect(&connector("HTTPS_PROXY", &address.to_string(), Verify::Trusted), "https://meter.test").await;
+    let refused = refused.err().unwrap();
+    assert!(matches!(&refused, ConnectError::Refused(reason) if reason.contains("407")), "{refused:?}");
+}
+
+#[tokio::test]
+async fn cleartext_goes_to_an_http_proxy_in_absolute_form_carrying_its_credentials() {
+    let (address, proxy) = peer(|mut stream| async move { read_head(&mut stream).await }).await;
+    let connector = connector("http_proxy", &format!("user:secret@{address}"), Verify::Trusted);
+    let mut connection = connect(&connector, "http://meter.test:8080").await.unwrap();
+    let authorization = Some("Basic dXNlcjpzZWNyZXQ=".to_owned());
+    assert_eq!((connection.alpn, &connection.form), (None, &RequestForm::Absolute { authorization }));
+    connection
+        .stream
+        .write_all(b"GET http://meter.test:8080/ HTTP/1.1\r\n\r\n")
+        .await
+        .unwrap();
+    assert!(proxy.await.unwrap().starts_with("GET http://meter.test:8080/ "));
+}
+
+#[tokio::test]
+async fn an_unusable_proxy_fails_the_connection_naming_its_variable() {
+    let refused = connect(&connector("HTTPS_PROXY", "ftp://proxy.test", Verify::Trusted), "https://meter.test").await;
+    let refused = refused.err().unwrap().to_string();
+    assert_eq!(
+        refused,
+        "HTTPS_PROXY is not a usable proxy: only HTTP, HTTPS and SOCKS5 proxies are supported"
+    );
+}
+
+#[tokio::test]
+async fn socks5_logs_in_and_passes_the_host_name_then_speaks_origin_form() {
+    let (address, proxy) = peer(|mut stream| async move {
+        for (expected, reply) in [
+            (&b"\x05\x02\x00\x02"[..], &b"\x05\x02"[..]),
+            (&b"\x01\x04user\x04p@ss"[..], &b"\x01\x00"[..]),
+            (&b"\x05\x01\x00\x03\x0ameter.test\x1f\x90"[..], &b"\x05\x00\x00\x03\x05proxy\x04\x38"[..]),
+        ] {
+            let mut sent = vec![0; expected.len()];
+            stream.read_exact(&mut sent).await.unwrap();
+            assert_eq!(sent, expected);
+            stream.write_all(reply).await.unwrap();
+        }
+        read_head(&mut stream).await
+    })
+    .await;
+    let connector = connector("HTTP_PROXY", &format!("socks5://user:p%40ss@{address}"), Verify::Trusted);
+    let mut connection = connect(&connector, "http://meter.test:8080").await.unwrap();
+    assert_eq!(connection.form, RequestForm::Origin);
+    connection.stream.write_all(b"GET / HTTP/1.1\r\n\r\n").await.unwrap();
+    assert!(proxy.await.unwrap().starts_with("GET / HTTP/1.1"));
+}
+
+/// Answers a SOCKS5 greeting with `method` and a CONNECT with `status`, returning what it was sent.
+async fn socks(method: u8, status: u8) -> (SocketAddr, JoinHandle<Vec<u8>>) {
+    peer(move |mut stream| async move {
+        let mut sent = vec![0; 3];
+        stream.read_exact(&mut sent).await.unwrap();
+        stream.write_all(&[5, method]).await.unwrap();
+        if method == 0 {
+            let mut request = vec![0; 5];
+            stream.read_exact(&mut request).await.unwrap();
+            let rest = match request[3] {
+                1 => 3,
+                4 => 15,
+                _ => usize::from(request[4]),
+            };
+            request.resize(5 + rest + 2, 0);
+            stream.read_exact(&mut request[5..]).await.unwrap();
+            sent.extend(request);
+            stream.write_all(&[5, status, 0, 1, 0, 0, 0, 0, 0, 0]).await.unwrap();
+        }
+        sent
+    })
+    .await
+}
+
+#[tokio::test]
+async fn socks5_sends_addresses_as_ip_and_fails_closed() {
+    let v6 = "2001:db8::1".parse::<std::net::Ipv6Addr>().unwrap().octets();
+    for (target, address) in [
+        ("http://192.0.2.1", vec![1, 192, 0, 2, 1, 0, 80]),
+        ("http://[::ffff:192.0.2.1]:81", vec![1, 192, 0, 2, 1, 0, 81]),
+        ("http://[2001:db8::1]", [&[4][..], &v6[..], &[0, 80][..]].concat()),
+    ] {
+        let (proxy, sent) = socks(0, 0).await;
+        connect(&connector("HTTP_PROXY", &format!("socks5h://{proxy}"), Verify::Trusted), target)
+            .await
+            .unwrap();
+        assert_eq!(sent.await.unwrap(), [&[5, 1, 0, 5, 1, 0][..], &address[..]].concat(), "{target}");
+    }
+    for (method, status, reason) in [
+        (0xff, 0, "no acceptable authentication methods"),
+        (2, 0, "unsupported authentication method 2"),
+        (0, 5, "unknown error connection refused"),
+    ] {
+        let (proxy, _) = socks(method, status).await;
+        let connector = connector("HTTP_PROXY", &format!("socks5://{proxy}"), Verify::Trusted);
+        let refused = connect(&connector, "http://meter.test").await.err().unwrap();
+        assert_eq!(refused.to_string(), format!("socks connect: {reason}"));
+    }
+}
+
+#[tokio::test]
+async fn loopback_targets_never_take_the_proxy() {
+    let (address, target) = peer(|mut stream| async move { read_head(&mut stream).await }).await;
+    let connector = connector("HTTP_PROXY", "http://proxy.invalid:1", Verify::Trusted);
+    let mut connection = connect(&connector, &format!("http://localhost:{}", address.port()))
+        .await
+        .unwrap();
+    connection.stream.write_all(b"GET / HTTP/1.1\r\n\r\n").await.unwrap();
+    assert!(target.await.unwrap().starts_with("GET / "));
+}
