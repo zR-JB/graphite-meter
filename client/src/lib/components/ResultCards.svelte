@@ -170,17 +170,16 @@
     ).map(withGraph),
   );
 
+  // Lost latency probes are marked on the latency card's rows; nothing is added under the cards mid-run.
+  const issues = $derived(
+    store.serverDetails
+      ? serverIssues(store.serverDetails, shown).filter(
+          (issue) => issue.throughput.length,
+        )
+      : [],
+  );
   const view = handoff(
-    () => ({
-      run: store.runSeq,
-      cards,
-      // Lost latency probes are marked on the latency card's rows; nothing is added under the cards mid-run.
-      issues: store.serverDetails
-        ? serverIssues(store.serverDetails, shown).filter(
-            (issue) => issue.throughput.length,
-          )
-        : [],
-    }),
+    () => ({ run: store.runSeq, cards, issues }),
     (view) => view.run,
   );
 
@@ -219,10 +218,29 @@
     ];
   }
   // Peak and Stability so far, read from the stage's series by the second, as the settled figures are: the
-  // card fills in while the stage runs and the result replaces the estimate.
+  // card fills in while the stage runs and the result replaces the estimate. They change with the series, not
+  // the frame, so a stage's rows are kept until its rate series or the units change.
+  const retainedShapes: Partial<
+    Record<
+      Transfer,
+      { graph: CardGraph; units: typeof units; rows: SummaryRow[] }
+    >
+  > = {};
   function liveShape(key: Transfer, withPeak: boolean): SummaryRow[] {
     const graph = graphs[key];
     if (!graph) return [];
+    const kept = retainedShapes[key];
+    if (
+      kept?.units === units &&
+      kept.graph.start === graph.start &&
+      graph.lanes.every((lane, i) => lane === kept.graph.lanes[i])
+    )
+      return kept.rows;
+    const rows = shapeRows(graph, withPeak);
+    retainedShapes[key] = { graph, units, rows };
+    return rows;
+  }
+  function shapeRows(graph: CardGraph, withPeak: boolean): SummaryRow[] {
     const perLane = graph.lanes.map((lane) => {
       const seconds = new Map<number, { sum: number; n: number }>();
       for (const { t, v } of lane) {
