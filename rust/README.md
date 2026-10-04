@@ -259,18 +259,18 @@ not trusted instead of the whole client.
 
 Each path check and run opens connections of its own, as Go's client takes new
 transports, and TCP connections probe an idle peer after 30 seconds as Go's
-dialer does; a run within 30 seconds of its check keeps that check's
-connections for its control requests. Transfer lanes dial connections of their
-own on the threads they run on. Unlike Go, an HTTP/2 connection that reads nothing for 30 seconds
-is pinged and closed when the ping goes unanswered for 20 seconds, and one whose
-request gets no response headers within 10 seconds takes no further requests.
-A request without a body that fails on a reused connection before its response
-is sent once more over a new connection, also a POST, where Go replays only
+dialer does; a run within 30 seconds of its check keeps that check's connections
+for its control requests. Transfer lanes dial connections of their own, where
+they run. Unlike Go, an HTTP/2 connection that reads nothing for 30 seconds is
+pinged and closed when the ping goes unanswered for 20 seconds, and one whose
+request gets no response headers within 10 seconds takes no further requests. A
+request without a body that fails on a reused connection before its response is
+sent once more over a new connection, also a POST, where Go replays only
 idempotent requests. Go dials a lost latency channel again at once; Rust first
-waits 500 ms after a channel lost within 500 ms of opening, as after a lane
-that failed at once, so a server that ends every channel as it opens is not
-dialled in a tight loop. Near the window's end, where that wait would reach it,
-Rust dials at once as Go does.
+waits 500 ms after a channel lost within 500 ms of opening, as after a lane that
+failed at once, so a server that ends every channel as it opens is not dialled
+in a tight loop. Near the window's end, where that wait would reach it, Rust
+dials at once as Go does.
 
 OIDC verifies RS/PS 256–512, ES256/384 and EdDSA with ring. HS*, none and ES512
 are rejected; RSA keys must be 2048–8192 bits. As with go-oidc, ID tokens require
