@@ -37,7 +37,7 @@ pub(crate) struct Connection {
 
 impl Connection {
     /// Tries each address in turn; a silent one gets 3 s, so it cannot spend the whole attempt. One that answers
-    /// finishes its handshake within the caller's deadline: on a lossy path lost handshake packets take seconds.
+    /// gets quic-go's 5 s more to finish: on a lossy path lost handshake packets take seconds.
     pub(crate) async fn dial(origin: &Origin, insecure: bool) -> Result<(Self, http3::client::SendRequest), Error> {
         let mut config = quinn::ClientConfig::new(crate::tls::quic(insecure).await?);
         let mut transport = quinn::TransportConfig::default();
@@ -62,7 +62,7 @@ impl Connection {
             let mut connecting = endpoint.0.connect_with(config.clone(), address, &origin.host)?;
             let connected = async {
                 timeout(Duration::from_secs(3), connecting.handshake_data()).await??;
-                Ok::<_, Error>(connecting.await?)
+                Ok::<_, Error>(timeout(Duration::from_secs(5), connecting).await??)
             };
             let quic = match connected.await {
                 Ok(quic) => quic,
