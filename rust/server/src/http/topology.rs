@@ -152,11 +152,9 @@ impl Accepted {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use graphite_meter_core::route::ALL;
-
     /// The paths of the routes `topology` mounts, in Go's route order.
     fn mounted(topology: Topology) -> String {
-        let paths: Vec<_> = ALL
+        let paths: Vec<_> = Route::ALL
             .into_iter()
             .filter(|&route| topology.mounts(route))
             .map(Route::path)

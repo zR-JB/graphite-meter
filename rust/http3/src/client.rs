@@ -2,7 +2,7 @@
 use crate::{
     connection::{self, Role, Shared},
     error::Error,
-    fields,
+    fields, frame,
     stream::{self, RequestStream},
 };
 use std::{future::poll_fn, sync::Arc};
@@ -41,13 +41,21 @@ impl SendRequest {
         if self.0.going_away() {
             return Err(Error::GoingAway);
         }
-        let (parts, ()) = request.into_parts();
-        let head = fields::encode_request(&parts, None, self.0.peer_field_limit()).map_err(|_| Error::Refused)?;
+        self.open(request.into_parts().0, None).await
+    }
+
+    /// Sends a request head; `protocol` makes it an extended CONNECT.
+    pub(crate) async fn open(
+        &self,
+        parts: http::request::Parts,
+        protocol: Option<&str>,
+    ) -> Result<RequestStream, Error> {
+        let head = fields::encode_request(&parts, protocol, self.0.peer_field_limit()).map_err(|_| Error::Refused)?;
         let charges = stream::charges(&self.0.budget).ok_or(Error::Refused)?;
         let (send, recv) = self.0.quic.open_bi().await?;
         let mut stream = RequestStream::new(&self.0, send, recv, Role::Client.field_limit(), charges);
         stream.recv.method = parts.method;
-        stream.send.send_request(head).await?;
+        stream.send.frame(frame::HEADERS, head.into()).await?;
         Ok(stream)
     }
 }

@@ -6,6 +6,28 @@ fn origin(raw: &str) -> Origin {
     target_origin(raw).unwrap().unwrap()
 }
 
+/// An HTTP/1.1 head, read byte by byte so nothing after it is consumed.
+async fn read_head(stream: &mut (impl AsyncRead + Unpin)) -> String {
+    let mut head = Vec::new();
+    while !head.ends_with(b"\r\n\r\n") {
+        head.push(stream.read_u8().await.unwrap());
+    }
+    String::from_utf8(head).unwrap()
+}
+
+/// Sends `GET /probe` for `host` over the connection and expects success.
+async fn probe(connection: Connection, host: &str) {
+    let (mut sender, driver) = hyper::client::conn::http1::handshake(TokioIo::new(connection.stream))
+        .await
+        .unwrap();
+    tokio::spawn(driver);
+    let request = http::Request::get("/probe")
+        .header(http::header::HOST, host)
+        .body(String::new())
+        .unwrap();
+    assert!(sender.send_request(request).await.unwrap().status().is_success());
+}
+
 /// The HTTPS proxy hop's connector, for a proxy that is not HTTPS.
 fn no_hop() -> std::future::Ready<Result<TlsConnector, &'static str>> {
     std::future::ready(Err("no HTTPS proxy"))
@@ -165,10 +187,7 @@ async fn refused_connect_fails_closed() {
     let address = listener.local_addr().unwrap();
     let peer = tokio::spawn(async move {
         let (mut client, _) = listener.accept().await.unwrap();
-        let mut head = Vec::new();
-        while !head.ends_with(b"\r\n\r\n") {
-            head.push(client.read_u8().await.unwrap());
-        }
+        read_head(&mut client).await;
         client
             .write_all(b"HTTP/1.1 407 Proxy Authentication Required\r\ncontent-length: 0\r\n\r\n")
             .await
@@ -199,15 +218,12 @@ async fn socks5_logs_in_and_connects_by_name_then_speaks_origin_form() {
             assert_eq!(sent, expected);
             client.write_all(reply).await.unwrap();
         }
-        let mut head = Vec::new();
-        while !head.ends_with(b"\r\n\r\n") {
-            head.push(client.read_u8().await.unwrap());
-        }
+        let head = read_head(&mut client).await;
         client
             .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n")
             .await
             .unwrap();
-        String::from_utf8(head).unwrap()
+        head
     });
     let proxy = Proxy::new(&format!("socks5://user:p%40ss@{address}"), "", "");
     let connection = connect(&proxy, &origin("http://meter.test:8080"), None, no_hop())
@@ -215,15 +231,7 @@ async fn socks5_logs_in_and_connects_by_name_then_speaks_origin_form() {
         .unwrap();
     assert!(!connection.absolute_form);
     assert!(connection.proxy_authorization.is_none());
-    let (mut sender, driver) = hyper::client::conn::http1::handshake(TokioIo::new(connection.stream))
-        .await
-        .unwrap();
-    tokio::spawn(driver);
-    let request = http::Request::get("/probe")
-        .header(http::header::HOST, "meter.test:8080")
-        .body(String::new())
-        .unwrap();
-    assert!(sender.send_request(request).await.unwrap().status().is_success());
+    probe(connection, "meter.test:8080").await;
     let head = peer.await.unwrap();
     assert!(head.starts_with("GET /probe HTTP/1.1\r\n"), "{head}");
     assert!(!head.contains("proxy-authorization"), "{head}");
@@ -464,11 +472,7 @@ async fn https_targets_verify_tls_inside_http_and_https_proxy_tunnels() {
             } else {
                 Box::new(socket)
             };
-            let mut head = Vec::new();
-            while !head.ends_with(b"\r\n\r\n") {
-                head.push(stream.read_u8().await.unwrap());
-            }
-            let head = String::from_utf8(head).unwrap();
+            let head = read_head(&mut stream).await;
             assert!(head.starts_with("CONNECT localhost.:443 HTTP/1.1\r\n"), "{head}");
             assert!(head.contains("proxy-authorization: Basic dXNlcjpzZWNyZXQ="));
             stream
@@ -476,11 +480,7 @@ async fn https_targets_verify_tls_inside_http_and_https_proxy_tunnels() {
                 .await
                 .unwrap();
             let mut stream = acceptor.accept(stream).await.unwrap();
-            let mut head = Vec::new();
-            while !head.ends_with(b"\r\n\r\n") {
-                head.push(stream.read_u8().await.unwrap());
-            }
-            let head = String::from_utf8(head).unwrap();
+            let head = read_head(&mut stream).await;
             assert!(head.starts_with("GET /probe HTTP/1.1\r\n"));
             assert!(!head.contains("proxy-authorization"));
             stream
@@ -496,15 +496,7 @@ async fn https_targets_verify_tls_inside_http_and_https_proxy_tunnels() {
                 .unwrap();
             assert!(!connection.absolute_form);
             assert!(connection.proxy_authorization.is_none());
-            let (mut sender, driver) = hyper::client::conn::http1::handshake(TokioIo::new(connection.stream))
-                .await
-                .unwrap();
-            tokio::spawn(driver);
-            let request = http::Request::get("/probe")
-                .header(http::header::HOST, "localhost.")
-                .body(String::new())
-                .unwrap();
-            assert!(sender.send_request(request).await.unwrap().status().is_success());
+            probe(connection, "localhost.").await;
             peer.await.unwrap();
         })
         .await

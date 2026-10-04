@@ -126,13 +126,7 @@ pub(crate) fn decode(input: &[u8], output: &mut Vec<u8>) -> Result<(), Invalid> 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn hex(text: &str) -> Vec<u8> {
-        (0..text.len())
-            .step_by(2)
-            .map(|index| u8::from_str_radix(&text[index..index + 2], 16).unwrap())
-            .collect()
-    }
+    use crate::hex;
 
     #[test]
     fn rfc7541_examples() {

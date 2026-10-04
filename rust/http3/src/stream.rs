@@ -260,7 +260,7 @@ impl SendHalf {
         (self.header_end, self.header_written, self.payload) = ((16 - remaining) as u8, 0, payload);
     }
 
-    async fn frame(&mut self, kind: u64, payload: Bytes) -> Result<(), Error> {
+    pub(crate) async fn frame(&mut self, kind: u64, payload: Bytes) -> Result<(), Error> {
         poll_fn(|cx| self.poll_ready(cx)).await?;
         self.queue(kind, payload);
         poll_fn(|cx| self.poll_ready(cx)).await
@@ -282,10 +282,6 @@ impl SendHalf {
         poll_fn(|cx| self.poll_ready(cx)).await?;
         self.queue_response(response)?;
         poll_fn(|cx| self.poll_ready(cx)).await
-    }
-
-    pub(crate) async fn send_request(&mut self, head: Vec<u8>) -> Result<(), Error> {
-        self.frame(frame::HEADERS, head.into()).await
     }
 
     /// Ends the stream once pending frames are written; a stream that already ended stays so.

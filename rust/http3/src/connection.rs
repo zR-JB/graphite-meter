@@ -120,21 +120,13 @@ impl Shared {
             self.state().closed.get_or_insert(code);
             self.quic.close(code.into(), b"");
         }
-        Error::Connection {
-            local: true,
-            code,
-            reason: Bytes::new(),
-        }
+        Error::local(code)
     }
 
     /// Why the connection ended, for what outlives it; this side's own close keeps its code.
     pub(crate) fn close_error(&self) -> Error {
         match (self.quic.close_reason(), self.state().closed) {
-            (Some(noq::ConnectionError::LocallyClosed), Some(code)) => Error::Connection {
-                local: true,
-                code,
-                reason: Bytes::new(),
-            },
+            (Some(noq::ConnectionError::LocallyClosed), Some(code)) => Error::local(code),
             (reason, _) => reason.map_or(Error::Refused, Error::from),
         }
     }
@@ -307,11 +299,7 @@ impl Connection {
         Poll::Ready(match result {
             Err(Error::Transport(noq::ConnectionError::LocallyClosed)) => match self.shared.state().closed {
                 Some(Code::H3_NO_ERROR) | None => Ok(None),
-                Some(code) => Err(Error::Connection {
-                    local: true,
-                    code,
-                    reason: Bytes::new(),
-                }),
+                Some(code) => Err(Error::local(code)),
             },
             Err(error) if error.graceful() => Ok(None),
             result => result,

@@ -32,7 +32,7 @@ where
     H: Future<Output = Result<TlsConnector, E>>,
     E: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
-    if (target.scheme == "https") != tls.is_some() {
+    if !matches!((target.scheme.as_str(), tls), ("https", Some(_)) | ("http", None)) {
         return Err(io::Error::other("TLS configuration does not match the target scheme"));
     }
     let port = target.port_number();
@@ -79,25 +79,20 @@ where
             }
         }
     };
-    match (target.scheme.as_str(), tls) {
-        ("https", Some(tls)) => {
+    let (stream, alpn): (Box<dyn Stream>, _) = match tls {
+        Some(tls) => {
             let stream = tls.connect(server_name(&target.host)?, stream).await?;
             let alpn = stream.get_ref().1.alpn_protocol().map(<[u8]>::to_vec);
-            Ok(Connection {
-                stream: Box::new(stream),
-                alpn,
-                absolute_form,
-                proxy_authorization,
-            })
+            (Box::new(stream), alpn)
         }
-        ("http", None) => Ok(Connection {
-            stream,
-            alpn: None,
-            absolute_form,
-            proxy_authorization,
-        }),
-        _ => Err(io::Error::other("TLS configuration does not match the target scheme")),
-    }
+        None => (stream, None),
+    };
+    Ok(Connection {
+        stream,
+        alpn,
+        absolute_form,
+        proxy_authorization,
+    })
 }
 
 fn server_name(host: &str) -> io::Result<ServerName<'static>> {
@@ -436,7 +431,7 @@ fn upstream(raw: &str) -> Result<Upstream, &'static str> {
     let (scheme, rest) = raw.split_once("://").ok_or("invalid proxy URL")?;
     let authority = rest.split('/').next().unwrap_or_default();
     let (credentials, host) = match authority.rsplit_once('@') {
-        Some((credentials, host)) => (Some(credentials), host),
+        Some((credentials, host)) => (Some(credentials.split_once(':').unwrap_or((credentials, ""))), host),
         None => (None, authority),
     };
     let socks = matches!(scheme.to_ascii_lowercase().as_str(), "socks5" | "socks5h");
@@ -450,28 +445,18 @@ fn upstream(raw: &str) -> Result<Upstream, &'static str> {
     if socks {
         origin.scheme = "socks5".into();
         origin.port.get_or_insert_with(|| "1080".into());
-        let user = credentials.map(|credentials| {
-            let (user, password) = credentials.split_once(':').unwrap_or((credentials, ""));
-            let decode = |part| percent_encoding::percent_decode_str(part).collect();
-            (decode(user), decode(password))
-        });
+        let decode = |part| percent_encoding::percent_decode_str(part).collect();
+        let user = credentials.map(|(user, password)| (decode(user), decode(password)));
         return Ok(Upstream {
             origin,
             authorization: None,
             socks: Some(Socks { user }),
         });
     }
-    let decode = |part: &str| {
-        percent_encoding::percent_decode_str(part)
-            .decode_utf8_lossy()
-            .into_owned()
-    };
-    let authorization = credentials.map(|credentials| {
-        let (user, password) = credentials.split_once(':').unwrap_or((credentials, ""));
-        format!(
-            "Basic {}",
-            STANDARD.encode(format!("{}:{}", decode(user), decode(password)))
-        )
+    let decode = |part| percent_encoding::percent_decode_str(part).decode_utf8_lossy();
+    let authorization = credentials.map(|(user, password)| {
+        let credentials = format!("{}:{}", decode(user), decode(password));
+        format!("Basic {}", STANDARD.encode(credentials))
     });
     Ok(Upstream {
         origin,

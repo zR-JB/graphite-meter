@@ -11,7 +11,7 @@ use std::{
     task::Poll,
     time::Duration,
 };
-use tokio::sync::Notify;
+use tokio::sync::{Notify, mpsc};
 
 #[path = "../../test_tls.rs"]
 mod test_tls;
@@ -142,6 +142,17 @@ async fn body(stream: &mut graphite_meter_http3::RecvHalf) -> Result<Vec<u8>, Er
         body.extend_from_slice(&chunk);
     }
     Ok(body)
+}
+
+/// Yields until the layer holds more than `above` bytes of the budget, and returns how many.
+async fn charged(budget: &Budget, above: usize) -> usize {
+    loop {
+        let used = budget.used.load(Ordering::Relaxed);
+        if used > above {
+            return used;
+        }
+        tokio::task::yield_now().await;
+    }
 }
 
 async fn settled(budget: &Budget) {
@@ -322,12 +333,10 @@ async fn protocol_violations_close_the_connection_with_their_code() -> Result<()
     let request = |bytes: Vec<u8>| (None, Some(bytes));
     let after_head = |bytes: Vec<u8>| request([request_head(&[]), bytes].concat());
     let streams = |streams: Vec<(Vec<u8>, bool)>| (Some(streams), None);
-    let control = |bytes: Vec<u8>| streams(vec![([&CONTROL[..], &bytes].concat(), false)]);
+    let open = |bytes: Vec<u8>| streams(vec![(bytes, false)]);
+    let control = |bytes: Vec<u8>| open([&CONTROL[..], &bytes].concat());
     let cases = [
-        (
-            streams(vec![([&[0x00][..], &frame(0x07, &[4])].concat(), false)]),
-            Code::H3_MISSING_SETTINGS,
-        ),
+        (open([vec![0], frame(0x07, &[4])].concat()), Code::H3_MISSING_SETTINGS),
         (
             streams(vec![(CONTROL.to_vec(), false), (CONTROL.to_vec(), false)]),
             Code::H3_STREAM_CREATION_ERROR,
@@ -338,27 +347,12 @@ async fn protocol_violations_close_the_connection_with_their_code() -> Result<()
         (control(frame(0x41, &[])), Code::H3_FRAME_ERROR),
         (after_head(frame(0x41, &[])), Code::H3_FRAME_ERROR),
         (request(frame(0x41, &[0])), Code::H3_ID_ERROR),
-        (
-            streams(vec![(
-                [&[0x00][..], &frame(0x04, &[0x21, 0x00, 0x21, 0x01])].concat(),
-                false,
-            )]),
-            Code::H3_SETTINGS_ERROR,
-        ),
-        (
-            streams(vec![(vec![0x02, 0xc1, 0x01, 0x61], false)]),
-            Code::QPACK_ENCODER_STREAM_ERROR,
-        ),
-        (
-            streams(vec![(vec![0x03, 0x80], false)]),
-            Code::QPACK_DECODER_STREAM_ERROR,
-        ),
-        (streams(vec![(vec![0x01, 0x00], false)]), Code::H3_STREAM_CREATION_ERROR),
+        (open(settings(&[(0x21, 0), (0x21, 1)])), Code::H3_SETTINGS_ERROR),
+        (open(vec![0x02, 0xc1, 0x01, 0x61]), Code::QPACK_ENCODER_STREAM_ERROR),
+        (open(vec![0x03, 0x80]), Code::QPACK_DECODER_STREAM_ERROR),
+        (open(vec![0x01, 0x00]), Code::H3_STREAM_CREATION_ERROR),
         // A session ID must be a client-initiated bidirectional stream's.
-        (
-            streams(vec![([varint(0x54), varint(2)].concat(), false)]),
-            Code::H3_ID_ERROR,
-        ),
+        (open([varint(0x54), varint(2)].concat()), Code::H3_ID_ERROR),
         (request(frame(0x00, b"body")), Code::H3_FRAME_UNEXPECTED),
         (after_head(frame(0x04, &[])), Code::H3_FRAME_UNEXPECTED),
         (
@@ -499,43 +493,34 @@ async fn refusals_stay_on_their_stream() -> Result<(), TestError> {
     let with = |extra: &[(&'static str, &'static str)]| [&get[..], extra].concat();
     let connect = |fields: &[(&'static str, &'static str)]| [&[(":method", "CONNECT")][..], fields].concat();
     let malformed = [
-        (with(&[("Upper", "x")]), false),
-        (with(&[("x", "a\nb")]), false),
-        ([&[("x", "1")][..], &get].concat(), false),
-        (with(&[(":status", "200")]), false),
-        (with(&[(":path", "/again")]), false),
-        (with(&[("connection", "close")]), false),
-        (with(&[("te", "gzip")]), false),
-        (with(&[("content-length", "7"), ("content-length", "8")]), false),
-        (with(&[("content-length", "+7")]), false),
-        (with(&[("host", "other.example")]), false),
-        (with(&[(":protocol", "webtransport")]), false),
-        (get[1..].to_vec(), false),
-        (vec![get[0], get[1], get[3]], false),
-        (vec![get[0], get[2], get[3]], false),
-        (vec![get[0], get[1], get[2], (":path", "relative")], false),
-        (vec![get[0], get[1], get[2], (":path", "")], false),
-        (
-            vec![get[0], get[1], (":authority", "user@meter.example"), get[3]],
-            false,
-        ),
-        (connect(&[(":authority", "meter.example:443")]), true),
-        (connect(&[(":protocol", "websocket"), get[1], get[2], get[3]]), true),
-        (connect(&[(":protocol", "webtransport"), get[1], get[2]]), false),
-        (
-            connect(&[(":protocol", "webtransport"), get[1], get[2], (":path", "")]),
-            false,
-        ),
-        (connect(&[get[1], get[2], get[3]]), false),
+        with(&[("Upper", "x")]),
+        with(&[("x", "a\nb")]),
+        [&[("x", "1")][..], &get].concat(),
+        with(&[(":status", "200")]),
+        with(&[(":path", "/again")]),
+        with(&[("connection", "close")]),
+        with(&[("te", "gzip")]),
+        with(&[("content-length", "7"), ("content-length", "8")]),
+        with(&[("content-length", "+7")]),
+        with(&[("host", "other.example")]),
+        with(&[(":protocol", "webtransport")]),
+        get[1..].to_vec(),
+        vec![get[0], get[1], get[3]],
+        vec![get[0], get[2], get[3]],
+        vec![get[0], get[1], get[2], (":path", "relative")],
+        vec![get[0], get[1], get[2], (":path", "")],
+        vec![get[0], get[1], (":authority", "user@meter.example"), get[3]],
+        connect(&[(":protocol", "webtransport"), get[1], get[2]]),
+        connect(&[(":protocol", "webtransport"), get[1], get[2], (":path", "")]),
+        connect(&[get[1], get[2], get[3]]),
     ];
-    cases.extend(malformed.into_iter().map(|(fields, unsupported)| {
-        let (response, stop) = if unsupported {
-            (Ok(status_400.clone()), None)
-        } else {
-            (Err(Code::H3_MESSAGE_ERROR), Some(Code::H3_MESSAGE_ERROR))
-        };
-        (frame(0x01, &section(&fields)), response, stop)
-    }));
+    let error = Code::H3_MESSAGE_ERROR;
+    cases.extend(malformed.map(|fields| (frame(0x01, &section(&fields)), Err(error), Some(error))));
+    let unsupported = [
+        connect(&[(":authority", "meter.example:443")]),
+        connect(&[(":protocol", "websocket"), get[1], get[2], get[3]]),
+    ];
+    cases.extend(unsupported.map(|fields| (frame(0x01, &section(&fields)), Ok(status_400.clone()), None)));
     let peers = peers(usize::MAX).await?;
     let (serving, _) = serve(&peers, |_, stream| async move {
         let _ = stream.split().1.data().await;
@@ -600,10 +585,7 @@ async fn a_head_over_the_budget_rejects_the_admitted_request() -> Result<(), Tes
         let (mut send, mut recv) = peers.client.open_bi().await?;
         send.write_all(&header).await?;
         // Admitted: from here the budget holds only the stream's two halves.
-        while peers.budget.used.load(Ordering::Relaxed) == 0 {
-            tokio::task::yield_now().await;
-        }
-        let used = peers.budget.used.load(Ordering::Relaxed);
+        let used = charged(&peers.budget, 0).await;
         peers.budget.limit.store(used, Ordering::Relaxed);
         send.write_all(part).await?;
         assert_eq!(response_bytes(&mut recv).await, Err(Code::H3_REQUEST_REJECTED));
@@ -674,9 +656,7 @@ async fn deadlines_close_idle_and_draining_connections_and_stale_heads() -> Resu
     let (mut send, mut recv) = peers.client.open_bi().await?;
     send.write_all(&frame(0x01, &[0; 10])[..4]).await?;
     // Jump only once the server holds the stream and has started its header deadline.
-    while peers.budget.used.load(Ordering::Relaxed) == 0 {
-        tokio::task::yield_now().await;
-    }
+    charged(&peers.budget, 0).await;
     tokio::task::yield_now().await;
     jump(Duration::from_secs(11)).await;
     assert_eq!(response_bytes(&mut recv).await, Err(Code::H3_REQUEST_INCOMPLETE));
@@ -741,25 +721,27 @@ async fn raw_connect(
     Ok((send, tokio::spawn(async move { raw_stream(&mut recv).await })))
 }
 
-/// Accepts every CONNECT as a session and runs `scenario` on it; other requests get an empty 200.
-fn serve_sessions<F, H>(peers: &Peers, scenario: H) -> (Serving, Arc<Notify>)
+/// Accepts every CONNECT as a session and runs `scenario` on it, passing on what it returns; other
+/// requests get an empty 200.
+fn serve_sessions<F, H>(peers: &Peers, scenario: H) -> (Serving, Arc<Notify>, mpsc::UnboundedReceiver<F::Output>)
 where
     H: Fn(Session) -> F + Send + Sync + 'static,
-    F: Future<Output = ()> + Send + 'static,
+    F: Future<Output: Send> + Send + 'static,
 {
-    let scenario = Arc::new(scenario);
-    serve(peers, move |request, stream| {
-        let scenario = scenario.clone();
+    let (scenario, (outcomes, outcome)) = (Arc::new(scenario), mpsc::unbounded_channel());
+    let (serving, stop) = serve(peers, move |request, stream| {
+        let (scenario, outcomes) = (scenario.clone(), outcomes.clone());
         async move {
             if request.method() != http::Method::CONNECT {
                 let mut send = stream.split().0;
                 send.send_response(http::Response::new(())).await.unwrap();
                 send.finish().await.unwrap();
             } else if let Ok(session) = Session::accept(stream, http::HeaderMap::new()).await {
-                scenario(session).await;
+                let _ = outcomes.send(scenario(session).await);
             }
         }
-    })
+    });
+    (serving, stop, outcome)
 }
 
 /// A raw stream's bytes, and how it ended: FIN, a reset code, or the connection's end as code 0.
@@ -782,7 +764,7 @@ async fn cancelled_lanes_keep_their_association_header() -> Result<(), TestError
         let peers = peers_with(usize::MAX, window, reliable_reset, true).await?;
         let cancel = Arc::new(Notify::new());
         let cancelled = cancel.clone();
-        let (serving, _) = serve_sessions(&peers, move |session| {
+        let (serving, _, _) = serve_sessions(&peers, move |session| {
             let cancelled = cancelled.clone();
             async move {
                 if window.is_some() {
@@ -834,7 +816,7 @@ fn connect_request() -> http::Request<()> {
 #[tokio::test]
 async fn prepared_datagrams_repeat_and_the_last_session_ends_its_connection() -> Result<(), TestError> {
     let peers = peers(usize::MAX).await?;
-    let (serving, _) = serve_sessions(&peers, |session| async move {
+    let (serving, _, _) = serve_sessions(&peers, |session| async move {
         for _ in 0..2 {
             let reply = session.read_datagram().await.unwrap();
             session.send_datagram(&[&b"echo "[..], &reply].concat()).unwrap();
@@ -878,13 +860,7 @@ async fn sessions_end_with_their_connection() -> Result<(), TestError> {
     // The server's connection goes away: each side's session ends with it, though the client
     // still holds its stopped driver.
     let peers = peers(usize::MAX).await?;
-    let (endings, mut ended) = tokio::sync::mpsc::unbounded_channel();
-    let (serving, _) = serve_sessions(&peers, move |session| {
-        let endings = endings.clone();
-        async move {
-            let _ = endings.send(session_end(&session).await);
-        }
-    });
+    let (serving, _, mut ended) = serve_sessions(&peers, |session| async move { session_end(&session).await });
     let (mut driver, requests) = client::new(peers.client.clone());
     let driving = tokio::spawn(async move { (driver.drive().await, driver) });
     let (session, _) = Session::connect(&requests, connect_request()).await?.expect("accepted");
@@ -903,9 +879,7 @@ async fn sessions_end_with_their_connection() -> Result<(), TestError> {
 
     // Dropping the driver ends its session too.
     let peers = self::peers(usize::MAX).await?;
-    let (serving, _) = serve_sessions(&peers, |session| async move {
-        let _ = session.closed().await;
-    });
+    let (serving, _, _) = serve_sessions(&peers, |session| async move { session.closed().await });
     let (driver, requests) = client(&peers);
     let (session, _) = Session::connect(&requests, connect_request()).await?.expect("accepted");
     driver.abort();
@@ -968,7 +942,7 @@ async fn stopped_yet(send: &noq::SendStream) -> bool {
 async fn closing_sends_close_then_fin_and_waits_for_the_peer() -> Result<(), TestError> {
     // The server ends the session; our client's FIN ends the wait long before 1 s.
     let peers = peers(usize::MAX).await?;
-    let (serving, _) = serve_sessions(&peers, |session| async move {
+    let (serving, _, _) = serve_sessions(&peers, |session| async move {
         let started = std::time::Instant::now();
         session.close(2, "lifetime").await;
         assert!(started.elapsed() < Duration::from_millis(900));
@@ -984,7 +958,7 @@ async fn closing_sends_close_then_fin_and_waits_for_the_peer() -> Result<(), Tes
 
     // The peer ends it: the server only finishes its side, and the connection closes at once.
     let peers = self::peers(usize::MAX).await?;
-    let (serving, _) = serve_sessions(&peers, |session| async move {
+    let (serving, _, _) = serve_sessions(&peers, |session| async move {
         assert_eq!(session.closed().await.unwrap(), (7, "bye".into()));
         session.close(1, "unused").await;
     });
@@ -996,7 +970,7 @@ async fn closing_sends_close_then_fin_and_waits_for_the_peer() -> Result<(), Tes
     // A raw peer answering with FIN never sees STOP_SENDING, and the connection lingers a second
     // so the CLOSE arrives before CONNECTION_CLOSE.
     let peers = self::peers(usize::MAX).await?;
-    let (serving, _) = serve_sessions(&peers, |session| async move { session.close(2, "lifetime").await });
+    let (serving, _, _) = serve_sessions(&peers, |session| async move { session.close(2, "lifetime").await });
     let _control = uni(&peers.client, &settings(&DRAFT02), false).await?;
     let (mut connect, response) = raw_connect(&peers.client, "/wt").await?;
     let (bytes, end) = response.await?;
@@ -1014,7 +988,7 @@ async fn closing_sends_close_then_fin_and_waits_for_the_peer() -> Result<(), Tes
 
     // A silent peer gets STOP_SENDING WT_SESSION_GONE only once the second passes.
     let peers = self::peers(usize::MAX).await?;
-    let (serving, _) = serve_sessions(&peers, |session| async move { session.close(4, "shutdown").await });
+    let (serving, _, _) = serve_sessions(&peers, |session| async move { session.close(4, "shutdown").await });
     let _control = uni(&peers.client, &settings(&DRAFT02), false).await?;
     let (connect, response) = raw_connect(&peers.client, "/wt").await?;
     let (bytes, end) = response.await?;
@@ -1033,13 +1007,7 @@ async fn closing_sends_close_then_fin_and_waits_for_the_peer() -> Result<(), Tes
 #[tokio::test]
 async fn data_after_the_peers_close_is_a_message_error() -> Result<(), TestError> {
     let peers = peers(usize::MAX).await?;
-    let (endings, mut ended) = tokio::sync::mpsc::unbounded_channel();
-    let (serving, _) = serve_sessions(&peers, move |session| {
-        let endings = endings.clone();
-        async move {
-            let _ = endings.send(session.closed().await);
-        }
-    });
+    let (serving, _, mut ended) = serve_sessions(&peers, |session| async move { session.closed().await });
     let _control = uni(&peers.client, &settings(&DRAFT02), false).await?;
     // A plain request first, so the connection outlives the session and the stream's end shows.
     let (mut send, mut recv) = peers.client.open_bi().await?;
@@ -1064,23 +1032,19 @@ async fn data_after_the_peers_close_is_a_message_error() -> Result<(), TestError
 async fn an_ended_session_ends_its_streams_and_datagrams() -> Result<(), TestError> {
     // The client's 16-byte window holds the server's write.
     let peers = peers_with(usize::MAX, Some(16), true, true).await?;
-    let (outcomes, mut outcome) = tokio::sync::mpsc::unbounded_channel();
-    let (serving, _) = serve_sessions(&peers, move |session| {
-        let outcomes = outcomes.clone();
-        async move {
-            let (mut lane, mut own) = (session.accept_uni().await.unwrap(), session.open_uni().await.unwrap());
-            let mut datagram = session.prepare_datagram(b"late").unwrap();
-            let waiting = tokio::join!(lane.read_chunk(), own.write_chunk(Bytes::from_static(&[0; 64])));
-            let _ = outcomes.send(vec![
-                waiting.0.err(),
-                waiting.1.err(),
-                lane.read_chunk().await.err(),
-                own.write_all(b"late").await.err(),
-                session.send_datagram(b"late").err(),
-                datagram.send_wait().await.err(),
-                session.open_uni().await.err(),
-            ]);
-        }
+    let (serving, _, mut outcome) = serve_sessions(&peers, |session| async move {
+        let (mut lane, mut own) = (session.accept_uni().await.unwrap(), session.open_uni().await.unwrap());
+        let mut datagram = session.prepare_datagram(b"late").unwrap();
+        let waiting = tokio::join!(lane.read_chunk(), own.write_chunk(Bytes::from_static(&[0; 64])));
+        vec![
+            waiting.0.err(),
+            waiting.1.err(),
+            lane.read_chunk().await.err(),
+            own.write_all(b"late").await.err(),
+            session.send_datagram(b"late").err(),
+            datagram.send_wait().await.err(),
+            session.open_uni().await.err(),
+        ]
     });
     let _control = uni(&peers.client, &settings(&DRAFT02), false).await?;
     // A plain request first, so the connection outlives the session and cannot wake them instead.
@@ -1119,15 +1083,14 @@ async fn a_session_stream_over_the_budget_is_refused_as_unbuffered() -> Result<(
 async fn a_peer_withholding_stream_credit_cannot_hold_a_session() -> Result<(), TestError> {
     // No stream credit: the 200 head never leaves, yet the close ends within its drain.
     let peers = peers_with(usize::MAX, Some(0), true, true).await?;
-    let (accepted, closed) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
-    let (serving, _) = serve_sessions(&peers, {
-        let (accepted, closed) = (accepted.clone(), closed.clone());
+    let accepted = Arc::new(Notify::new());
+    let (serving, _, mut closed) = serve_sessions(&peers, {
+        let accepted = accepted.clone();
         move |session| {
-            let (accepted, closed) = (accepted.clone(), closed.clone());
+            let accepted = accepted.clone();
             async move {
                 accepted.notify_one();
                 session.close(2, "lifetime").await;
-                closed.notify_one();
             }
         }
     });
@@ -1138,17 +1101,15 @@ async fn a_peer_withholding_stream_credit_cannot_hold_a_session() -> Result<(), 
         tokio::task::yield_now().await;
     }
     jump(Duration::from_millis(1100)).await;
-    tokio::time::timeout(Duration::from_secs(5), closed.notified()).await?;
+    tokio::time::timeout(Duration::from_secs(5), closed.recv()).await?;
     assert_eq!(response.await?, (Vec::new(), Err(Code::WT_SESSION_GONE)));
     drop(serving);
 
     // Nor can it hold the refusal of a CONNECT that never showed WebTransport SETTINGS.
     let peers = peers_with(usize::MAX, Some(0), true, true).await?;
-    let (serving, _) = serve_sessions(&peers, |_| async { panic!("accepted without SETTINGS") });
+    let (serving, _, _) = serve_sessions(&peers, |_| async { panic!("accepted without SETTINGS") });
     let (_connect, response) = raw_connect(&peers.client, "/wt").await?;
-    while peers.budget.used.load(Ordering::Relaxed) == 0 {
-        tokio::task::yield_now().await;
-    }
+    charged(&peers.budget, 0).await;
     jump(Duration::from_millis(5100)).await;
     for _ in 0..10 {
         tokio::task::yield_now().await;
@@ -1162,9 +1123,7 @@ async fn a_peer_withholding_stream_credit_cannot_hold_a_session() -> Result<(), 
 #[tokio::test]
 async fn shutdown_closes_every_session_before_the_connection() -> Result<(), TestError> {
     let peers = peers(usize::MAX).await?;
-    let (serving, stop) = serve_sessions(&peers, |session| async move {
-        let _ = session.closed().await;
-    });
+    let (serving, stop, _) = serve_sessions(&peers, |session| async move { session.closed().await });
     let (driver, requests) = client(&peers);
     let (session, _) = Session::connect(&requests, connect_request()).await?.expect("accepted");
     stop.notify_one();
@@ -1176,18 +1135,10 @@ async fn shutdown_closes_every_session_before_the_connection() -> Result<(), Tes
     assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
 
     let peers = self::peers(usize::MAX).await?;
-    let (endings, mut ended) = tokio::sync::mpsc::unbounded_channel();
-    let (serving, stop) = serve_sessions(&peers, move |session| {
-        let endings = endings.clone();
-        async move {
-            let _ = endings.send(session.closed().await);
-        }
-    });
+    let (serving, stop, mut ended) = serve_sessions(&peers, |session| async move { session.closed().await });
     // Admitted before GOAWAY, this CONNECT waits for SETTINGS and is accepted only after it.
     let (mut connect, response) = raw_connect(&peers.client, "/wt").await?;
-    while peers.budget.used.load(Ordering::Relaxed) == 0 {
-        tokio::task::yield_now().await;
-    }
+    charged(&peers.budget, 0).await;
     stop.notify_one();
     let mut control = peers.client.accept_uni().await?;
     let mut received = Vec::new();
@@ -1219,7 +1170,7 @@ async fn one_session_per_connection_and_streams_wait_for_theirs() -> Result<(), 
     let peers = peers(usize::MAX).await?;
     let release = Arc::new(Notify::new());
     let (sessions_tx, mut sessions) = tokio::sync::mpsc::unbounded_channel();
-    let (serving, _) = serve_sessions(&peers, {
+    let (serving, _, _) = serve_sessions(&peers, {
         let release = release.clone();
         move |session| {
             let (release, sessions_tx) = (release.clone(), sessions_tx.clone());
@@ -1269,9 +1220,7 @@ async fn one_session_per_connection_and_streams_wait_for_theirs() -> Result<(), 
     // A stream for a session that never comes is refused after 5 s.
     let before = peers.budget.used.load(Ordering::Relaxed);
     let orphan = uni(&peers.client, &[varint(0x54), varint(64)].concat(), false).await?;
-    while peers.budget.used.load(Ordering::Relaxed) <= before {
-        tokio::task::yield_now().await;
-    }
+    charged(&peers.budget, before).await;
     jump(Duration::from_secs(6)).await;
     assert_eq!(stopped(&orphan).await, Some(Code::WT_BUFFERED_STREAM_REJECTED));
     release.notify_one();
@@ -1317,9 +1266,7 @@ async fn webtransport_needs_the_peer_signal_and_datagrams() -> Result<(), TestEr
         (&[], false, false),
     ] {
         let peers = peers(usize::MAX).await?;
-        let (serving, _) = serve_sessions(&peers, |session| async move {
-            let _ = session.closed().await;
-        });
+        let (serving, _, _) = serve_sessions(&peers, |session| async move { session.closed().await });
         let _control = uni(&peers.client, &settings(pairs), false).await?;
         let (mut send, mut recv) = peers.client.open_bi().await?;
         send.write_all(&connect_head("/wt")).await?;
@@ -1335,12 +1282,10 @@ async fn webtransport_needs_the_peer_signal_and_datagrams() -> Result<(), TestEr
 
     // Without the peer's SETTINGS the CONNECT waits 5 s, then gets 400.
     let peers = peers(usize::MAX).await?;
-    let (serving, _) = serve_sessions(&peers, |_| async {});
+    let (serving, _, _) = serve_sessions(&peers, |_| async {});
     let (mut send, mut recv) = peers.client.open_bi().await?;
     send.write_all(&connect_head("/wt")).await?;
-    while peers.budget.used.load(Ordering::Relaxed) == 0 {
-        tokio::task::yield_now().await;
-    }
+    charged(&peers.budget, 0).await;
     tokio::task::yield_now().await;
     jump(Duration::from_secs(6)).await;
     assert_eq!(first_frame(&mut recv).await?, bad_request);

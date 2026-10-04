@@ -103,28 +103,14 @@ fn progress_requires_exact_counters_and_rejects_duplicate_fields() {
 
 #[test]
 fn progress_encoding_keeps_explicit_zero_and_rejects_inexact_counters() {
-    for kind in ["progress", "complete"] {
-        let event = if kind == "progress" {
-            UploadProgress::Progress { bytes: 0, nanos: 0 }
-        } else {
-            UploadProgress::Complete { bytes: 0, nanos: 0 }
-        };
-        let encoded = encode_upload_progress(&event).unwrap();
+    let progress = |bytes, nanos| UploadProgress::Progress { bytes, nanos };
+    let complete = |bytes, nanos| UploadProgress::Complete { bytes, nanos };
+    for event in [progress, complete] {
+        let encoded = encode_upload_progress(&event(0, 0)).unwrap();
         let raw: Value = serde_json::from_str(&encoded).unwrap();
         assert_eq!(raw["bytes"], 0);
         assert_eq!(raw["nanos"], 0);
-        let event = if kind == "progress" {
-            UploadProgress::Progress {
-                bytes: MAX_UPLOAD_COUNTER + 1,
-                nanos: 0,
-            }
-        } else {
-            UploadProgress::Complete {
-                bytes: MAX_UPLOAD_COUNTER + 1,
-                nanos: 0,
-            }
-        };
-        assert!(encode_upload_progress(&event).is_err());
+        assert!(encode_upload_progress(&event(MAX_UPLOAD_COUNTER + 1, 0)).is_err());
     }
     let encoded = encode_upload_progress(&UploadProgress::Ready).unwrap();
     assert!(!encoded.contains("bytes"));
@@ -179,7 +165,7 @@ fn vocabularies_match_shared_pins_by_name() {
 #[test]
 fn routes_match_shared_pin_exactly() {
     let routes = pin(include_str!("../../../api/routes.txt"));
-    assert_eq!(routes.len(), route::ALL.len());
+    assert_eq!(routes.len(), route::Route::ALL.len());
     for row in routes {
         let route = route::lookup(row[1]).expect("pinned route is mounted");
         assert_eq!([route.name(), route.path(), route.kind().as_str()], row[..]);

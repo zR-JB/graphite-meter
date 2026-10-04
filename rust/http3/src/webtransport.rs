@@ -7,9 +7,9 @@ use crate::{
     code::{Code, WtCode},
     connection::Shared,
     error::Error,
-    fields, frame,
+    frame,
     settings::Dialect,
-    stream::{self, RecvHalf, RequestStream, SendHalf},
+    stream::{RecvHalf, RequestStream, SendHalf},
     varint,
 };
 use bytes::Bytes;
@@ -233,11 +233,8 @@ impl Drop for RecvStream {
 /// peers that support RESET_STREAM_AT still receive; it is never finished by accident. Once its
 /// session ended, writes are refused, a waiting one too, and the reset carries WT_SESSION_GONE.
 pub struct SendStream {
-    stream: Option<noq::SendStream>,
-    header: [u8; 16],
-    header_end: u8,
-    written: u8,
-    code: Code,
+    /// The reset it gets when dropped, until it is finished.
+    lane: Option<PendingReset>,
     shared: Arc<Shared>,
     session: Ended,
 }
@@ -246,22 +243,25 @@ impl SendStream {
     async fn open(shared: &Arc<Shared>, id: u64, session: Ended) -> Result<Self, Error> {
         let mut header = [0; 16];
         let mut rest = &mut header[..];
-        varint::put(frame::WEBTRANSPORT_STREAM, &mut rest);
-        varint::put(id, &mut rest);
-        let header_end = (16 - rest.len()) as u8;
-        let stream = shared.quic.open_uni().await?;
-        let mut opened = Self {
-            stream: Some(stream),
+        frame::put_header(frame::WEBTRANSPORT_STREAM, id, &mut rest);
+        let lane = PendingReset {
+            header_end: (16 - rest.len()) as u8,
+            stream: shared.quic.open_uni().await?,
             header,
-            header_end,
             written: 0,
             code: LANE_CANCELLED.to_http(),
+            deadline: Instant::now(),
+            _charge: None,
+        };
+        let mut opened = Self {
+            lane: Some(lane),
             shared: shared.clone(),
             session,
         };
-        while opened.written < opened.header_end {
-            let header = &opened.header[usize::from(opened.written)..usize::from(opened.header_end)];
-            opened.written += opened.stream.as_mut().expect("open stream").write(header).await? as u8;
+        let lane = opened.lane.as_mut().expect("open stream");
+        while lane.written < lane.header_end {
+            let header = &lane.header[usize::from(lane.written)..usize::from(lane.header_end)];
+            lane.written += lane.stream.write(header).await? as u8;
         }
         Ok(opened)
     }
@@ -271,7 +271,7 @@ impl SendStream {
         if self.session.borrow().is_some() {
             return Err(Error::Refused);
         }
-        Ok((self.stream.as_mut().expect("open stream"), &mut self.session))
+        Ok((&mut self.lane.as_mut().expect("open stream").stream, &mut self.session))
     }
 
     pub async fn write_all(&mut self, bytes: &[u8]) -> Result<(), Error> {
@@ -293,32 +293,28 @@ impl SendStream {
     /// Refused once the session ended, when the stream is reset instead.
     pub fn finish(mut self) -> Result<(), Error> {
         self.stream()?;
-        let mut stream = self.stream.take().expect("open stream");
-        stream.finish().map_err(|_| Error::Stopped(Code::H3_REQUEST_CANCELLED))
+        let mut lane = self.lane.take().expect("open stream");
+        lane.stream
+            .finish()
+            .map_err(|_| Error::Stopped(Code::H3_REQUEST_CANCELLED))
     }
 
     pub fn reset(mut self, code: WtCode) {
-        self.code = code.to_http();
+        self.lane.as_mut().expect("open stream").code = code.to_http();
     }
 }
 
 impl Drop for SendStream {
     fn drop(&mut self) {
-        let Some(stream) = self.stream.take() else { return };
-        let gone = self.session.borrow().is_some();
-        let mut pending = PendingReset {
-            stream,
-            header: self.header,
-            header_end: self.header_end,
-            written: self.written,
-            code: if gone { Code::WT_SESSION_GONE } else { self.code },
-            deadline: Instant::now() + RESET_DEADLINE,
-            _charge: None,
-        };
-        if pending.written == pending.header_end {
-            pending.cancel();
+        let Some(mut lane) = self.lane.take() else { return };
+        if self.session.borrow().is_some() {
+            lane.code = Code::WT_SESSION_GONE;
+        }
+        if lane.written == lane.header_end {
+            lane.cancel();
         } else {
-            self.shared.defer_reset(pending);
+            lane.deadline = Instant::now() + RESET_DEADLINE;
+            self.shared.defer_reset(lane);
         }
     }
 }
@@ -646,13 +642,7 @@ impl Session {
             }
             Dialect::Draft15 => "webtransport-h3",
         };
-        let head =
-            fields::encode_request(&parts, Some(protocol), shared.peer_field_limit()).map_err(|_| Error::Refused)?;
-        let charges = stream::charges(&shared.budget).ok_or(Error::Refused)?;
-        let (send, recv) = shared.quic.open_bi().await?;
-        let mut stream = RequestStream::new(shared, send, recv, shared.role.field_limit(), charges);
-        stream.recv.method = parts.method;
-        stream.send.send_request(head).await?;
+        let mut stream = requests.open(parts, Some(protocol)).await?;
         let response = stream.recv.response().await?;
         if !response.status().is_success() {
             return Ok(Err(response));

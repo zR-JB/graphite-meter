@@ -4,7 +4,6 @@ use crate::{
     code::Code,
     frame::{self, Piece},
     settings::{self, Peer},
-    varint,
 };
 use bytes::Bytes;
 
@@ -22,8 +21,8 @@ pub(crate) struct Reader {
     settings: Option<settings::Reader>,
     started: bool,
     kind: u64,
-    value: [u8; 8],
-    used: usize,
+    /// The one varint a GOAWAY, MAX_PUSH_ID or CANCEL_PUSH frame holds.
+    value: frame::Varint,
     /// The lowest stream ID of the server's GOAWAYs.
     goaway: Option<u64>,
 }
@@ -52,7 +51,6 @@ impl Reader {
                 }
                 Piece::Header { kind, length } => {
                     self.kind = kind;
-                    self.used = 0;
                     match kind {
                         frame::MAX_PUSH_ID if client => return Err(Code::H3_FRAME_UNEXPECTED),
                         frame::GOAWAY | frame::MAX_PUSH_ID | frame::CANCEL_PUSH if !(1..=8).contains(&length) => {
@@ -73,21 +71,21 @@ impl Reader {
                             event(Event::Settings(peer))?;
                         }
                     } else if matches!(self.kind, frame::GOAWAY | frame::MAX_PUSH_ID | frame::CANCEL_PUSH) {
-                        self.value[self.used..self.used + payload.len()].copy_from_slice(&payload);
-                        self.used += payload.len();
-                        if self.frames.remaining() == 0 {
-                            let value = match varint::decode(&self.value[..self.used]) {
-                                Some((value, size)) if size == self.used => value,
-                                _ => return Err(Code::H3_FRAME_ERROR),
-                            };
-                            // A server's GOAWAY names request streams; a client's names push IDs, and we never push.
-                            if self.kind == frame::GOAWAY && client {
-                                if !value.is_multiple_of(4) || self.goaway.is_some_and(|previous| value > previous) {
-                                    return Err(Code::H3_ID_ERROR);
-                                }
-                                self.goaway = Some(value);
-                                event(Event::Goaway(value))?;
+                        let value = self.value.read(&mut payload);
+                        // The varint must end exactly where the frame does.
+                        if !payload.is_empty() || value.is_some() != (self.frames.remaining() == 0) {
+                            return Err(Code::H3_FRAME_ERROR);
+                        }
+                        // A server's GOAWAY names request streams; a client's names push IDs, and we never push.
+                        if let Some(value) = value
+                            && self.kind == frame::GOAWAY
+                            && client
+                        {
+                            if !value.is_multiple_of(4) || self.goaway.is_some_and(|previous| value > previous) {
+                                return Err(Code::H3_ID_ERROR);
                             }
+                            self.goaway = Some(value);
+                            event(Event::Goaway(value))?;
                         }
                     }
                 }

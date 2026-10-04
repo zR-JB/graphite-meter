@@ -2,9 +2,9 @@ use graphite_meter_core::latency::{LatencyAccumulator, ProbeOutcome, ReflectorTi
 
 const MS: i64 = 1_000_000;
 
-fn reply(stats: &mut LatencyAccumulator, rtt_ms: i64, handling_nanos: u64) -> Option<u64> {
+fn reply(stats: &mut LatencyAccumulator, rtt_nanos: i64, handling_nanos: u64) -> Option<u64> {
     stats.record(ProbeOutcome::Reply {
-        rtt_nanos: rtt_ms * MS,
+        rtt_nanos,
         handling_nanos,
     })
 }
@@ -20,8 +20,8 @@ fn reflector_diagnostic_never_changes_raw_reply_population() {
         (40, 41 * MS as u64),
         (50, u64::MAX),
     ] {
-        reply(&mut raw, rtt, u64::MAX);
-        reply(&mut timed, rtt, handling);
+        reply(&mut raw, rtt * MS, u64::MAX);
+        reply(&mut timed, rtt * MS, handling);
     }
     timed.record(ProbeOutcome::Timeout);
     raw.record(ProbeOutcome::Timeout);
@@ -37,15 +37,12 @@ fn reflector_diagnostic_never_changes_raw_reply_population() {
     snapshot.reflector_timing = None;
     assert_eq!(snapshot, raw.snapshot());
     let captured = timed.snapshot();
-    reply(&mut timed, 100, 20 * MS as u64);
+    reply(&mut timed, 100 * MS, 20 * MS as u64);
     assert_eq!(captured.reflector_timing.unwrap().count, 2);
     let mut rounded = LatencyAccumulator::default();
     for _ in 0..10_000 {
         for rtt_nanos in [0, 499, 500, 1_001, 1_499, 1_500] {
-            rounded.record(ProbeOutcome::Reply {
-                rtt_nanos,
-                handling_nanos: 0,
-            });
+            reply(&mut rounded, rtt_nanos, 0);
         }
     }
     let summary = rounded.snapshot();
@@ -66,10 +63,7 @@ fn reflector_duration_bounds_and_large_sums_are_exact() {
         (u64::MAX, None),
     ] {
         assert_eq!(
-            stats.record(ProbeOutcome::Reply {
-                rtt_nanos: i64::MAX,
-                handling_nanos,
-            }),
+            reply(&mut stats, i64::MAX, handling_nanos),
             expected,
             "handling {handling_nanos}"
         );
@@ -80,14 +74,7 @@ fn reflector_duration_bounds_and_large_sums_are_exact() {
     assert_eq!(snapshot.jitter, Some(0));
 
     for (rtt_nanos, expected) in [(0, Some(0)), (-1, None)] {
-        assert_eq!(
-            stats.record(ProbeOutcome::Reply {
-                rtt_nanos,
-                handling_nanos: 0
-            }),
-            expected,
-            "RTT {rtt_nanos}"
-        );
+        assert_eq!(reply(&mut stats, rtt_nanos, 0), expected, "RTT {rtt_nanos}");
     }
     assert_eq!(stats.snapshot().count, 4);
 }

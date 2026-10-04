@@ -59,8 +59,7 @@ pub(crate) fn close(code: u32, reason: &str) -> Vec<u8> {
         end -= 1;
     }
     let mut capsule = Vec::with_capacity(end + 12);
-    varint::put(CLOSE, &mut capsule);
-    varint::put(4 + end as u64, &mut capsule);
+    frame::put_header(CLOSE, 4 + end as u64, &mut capsule);
     capsule.put_u32(code);
     capsule.extend_from_slice(&reason.as_bytes()[..end]);
     capsule
@@ -83,10 +82,8 @@ mod tests {
 
     fn capsule(kind: u64, body: &[u8]) -> Vec<u8> {
         let mut bytes = Vec::new();
-        varint::put(kind, &mut bytes);
-        varint::put(body.len() as u64, &mut bytes);
-        bytes.extend_from_slice(body);
-        bytes
+        frame::put_header(kind, body.len() as u64, &mut bytes);
+        [bytes, body.to_vec()].concat()
     }
 
     fn read_all(chunks: impl IntoIterator<Item = Vec<u8>>) -> Result<(Vec<Capsule>, bool), Code> {
@@ -126,8 +123,7 @@ mod tests {
     #[test]
     fn unknown_bodies_are_not_retained() {
         let mut header = Vec::new();
-        varint::put(0x21, &mut header);
-        varint::put(varint::MAX, &mut header);
+        frame::put_header(0x21, varint::MAX, &mut header);
         let mut reader = Reader::default();
         assert_eq!(reader.read(&mut Bytes::from(header)), Ok(None));
         for _ in 0..64 {

@@ -81,14 +81,7 @@ fn audiences_reject_paths_credentials_and_ambiguous_authorities() {
         "https://[fe80::1%25eth0]",
         " https://a",
         "https://a\n",
-    ] {
-        assert!(canonical_origin(raw).is_err(), "accepted {raw:?}");
-    }
-}
-
-#[test]
-fn origins_reject_hosts_that_http_url_parsing_reinterprets() {
-    for raw in [
+        // Hosts that HTTP URL parsing reinterprets.
         "https://1.2.3",
         "https://0x7f.1",
         "https://0x7f000001",

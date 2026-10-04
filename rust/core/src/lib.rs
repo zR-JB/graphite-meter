@@ -1,6 +1,22 @@
 //! Shared Graphite Meter protocol and measurement contracts.
 #![forbid(unsafe_code)]
 
+/// A fieldless enum whose variants are listed once, each with its row, and all of them in `ALL`.
+macro_rules! vocabulary {
+    (pub enum $name:ident -> $row:ty { $($variant:ident => $value:expr,)+ }) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum $name { $($variant,)+ }
+
+        impl $name {
+            pub const ALL: [Self; [$(stringify!($variant)),+].len()] = [$(Self::$variant),+];
+
+            const fn row(self) -> $row {
+                match self { $(Self::$variant => $value,)+ }
+            }
+        }
+    };
+}
+
 pub mod approval;
 pub mod catalog;
 pub mod discovery;

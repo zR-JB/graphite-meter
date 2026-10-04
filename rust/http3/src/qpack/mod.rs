@@ -183,13 +183,7 @@ fn put_string(text: &[u8], bits: u32, pattern: u8, output: &mut Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn hex(text: &str) -> Vec<u8> {
-        (0..text.len())
-            .step_by(2)
-            .map(|index| u8::from_str_radix(&text[index..index + 2], 16).unwrap())
-            .collect()
-    }
+    use crate::hex;
 
     type Lines = Vec<(Vec<u8>, Vec<u8>)>;
 

@@ -25,15 +25,12 @@ fn catalog_and_preflight_reject_controlled_labels_without_rejecting_unicode() {
             let mut value = catalog.clone();
             value["servers"][0][field] = json!(label);
             let parsed: ServerCatalog = serde_json::from_slice(&serde_json::to_vec(&value).unwrap()).unwrap();
-            assert_eq!(
-                parsed.validate(),
-                if valid {
-                    Ok(())
-                } else {
-                    Err(CatalogError::InvalidIdentity)
-                },
-                "catalog {field}: {label:?}"
-            );
+            let expected = if valid {
+                Ok(())
+            } else {
+                Err(CatalogError::InvalidIdentity)
+            };
+            assert_eq!(parsed.validate(), expected, "catalog {field}: {label:?}");
             if valid {
                 assert_eq!(serde_json::to_value(parsed).unwrap()["servers"][0][field], label);
             }

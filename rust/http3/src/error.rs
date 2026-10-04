@@ -26,6 +26,15 @@ pub enum Error {
 }
 
 impl Error {
+    /// This side closed the connection with `code`.
+    pub(crate) fn local(code: Code) -> Self {
+        Self::Connection {
+            local: true,
+            code,
+            reason: Bytes::new(),
+        }
+    }
+
     /// Both codes end a connection gracefully: the Go server stops with 0.
     pub(crate) fn graceful(&self) -> bool {
         matches!(

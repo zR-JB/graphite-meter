@@ -25,62 +25,26 @@ pub enum Admission {
     Session,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Route {
-    Preflight,
-    Probe,
-    Download,
-    Upload,
-    UploadSession,
-    UploadProgress,
-    WtSession,
-    WsSession,
-    Ping,
-    WtDownload,
-    WtUpload,
-    WtPing,
-    Servers,
-    UploadCheckpoint,
+vocabulary! {
+    pub enum Route -> (&'static str, &'static str, Kind, Admission, &'static [&'static str]) {
+        Preflight => ("preflight", "/preflight", Kind::Http, Admission::Unmetered, &["GET"]),
+        Probe => ("probe", "/probe", Kind::Http, Admission::Unmetered, &["GET"]),
+        Download => ("download", "/download", Kind::Http, Admission::Request, &["GET"]),
+        Upload => ("upload", "/upload", Kind::Http, Admission::Request, &["POST"]),
+        UploadSession => ("uploadSession", "/upload/session", Kind::Http, Admission::Unmetered, &["POST"]),
+        UploadProgress => ("uploadProgress", "/upload/progress", Kind::Http, Admission::Request, &["GET", "DELETE"]),
+        WtSession => ("wtSession", "/wt/session", Kind::Http, Admission::Unmetered, &["POST"]),
+        WsSession => ("wsSession", "/ws/session", Kind::Http, Admission::Unmetered, &["POST"]),
+        Ping => ("ping", "/ws/ping", Kind::WebSocket, Admission::Request, &["GET"]),
+        WtDownload => ("wtDownload", "/wt/download", Kind::WebTransport, Admission::Session, &["CONNECT"]),
+        WtUpload => ("wtUpload", "/wt/upload", Kind::WebTransport, Admission::Session, &["CONNECT"]),
+        WtPing => ("wtPing", "/wt/ping", Kind::WebTransport, Admission::Request, &["CONNECT"]),
+        Servers => ("servers", "/servers", Kind::Http, Admission::Unmetered, &["GET"]),
+        UploadCheckpoint => ("uploadCheckpoint", "/upload/checkpoint", Kind::Http, Admission::Unmetered, &["POST"]),
+    }
 }
 
-pub const ALL: [Route; 14] = [
-    Route::Preflight,
-    Route::Probe,
-    Route::Download,
-    Route::Upload,
-    Route::UploadSession,
-    Route::UploadProgress,
-    Route::WtSession,
-    Route::WsSession,
-    Route::Ping,
-    Route::WtDownload,
-    Route::WtUpload,
-    Route::WtPing,
-    Route::Servers,
-    Route::UploadCheckpoint,
-];
-
 impl Route {
-    const fn row(self) -> (&'static str, &'static str, Kind, Admission, &'static [&'static str]) {
-        use {Admission::*, Kind::*};
-        match self {
-            Self::Preflight => ("preflight", "/preflight", Http, Unmetered, &["GET"]),
-            Self::Probe => ("probe", "/probe", Http, Unmetered, &["GET"]),
-            Self::Download => ("download", "/download", Http, Request, &["GET"]),
-            Self::Upload => ("upload", "/upload", Http, Request, &["POST"]),
-            Self::UploadSession => ("uploadSession", "/upload/session", Http, Unmetered, &["POST"]),
-            Self::UploadProgress => ("uploadProgress", "/upload/progress", Http, Request, &["GET", "DELETE"]),
-            Self::WtSession => ("wtSession", "/wt/session", Http, Unmetered, &["POST"]),
-            Self::WsSession => ("wsSession", "/ws/session", Http, Unmetered, &["POST"]),
-            Self::Ping => ("ping", "/ws/ping", WebSocket, Request, &["GET"]),
-            Self::WtDownload => ("wtDownload", "/wt/download", WebTransport, Session, &["CONNECT"]),
-            Self::WtUpload => ("wtUpload", "/wt/upload", WebTransport, Session, &["CONNECT"]),
-            Self::WtPing => ("wtPing", "/wt/ping", WebTransport, Request, &["CONNECT"]),
-            Self::Servers => ("servers", "/servers", Http, Unmetered, &["GET"]),
-            Self::UploadCheckpoint => ("uploadCheckpoint", "/upload/checkpoint", Http, Unmetered, &["POST"]),
-        }
-    }
-
     pub const fn name(self) -> &'static str {
         self.row().0
     }
@@ -105,5 +69,5 @@ impl Route {
 
 /// Matches the entire path, without URL decoding or slash normalization.
 pub fn lookup(path: &str) -> Option<Route> {
-    ALL.into_iter().find(|route| route.path() == path)
+    Route::ALL.into_iter().find(|route| route.path() == path)
 }

@@ -71,23 +71,15 @@ fn system() -> Arc<dyn ServerCertVerifier> {
 }
 
 /// On macOS and Windows, Go since 1.27 verifies with the platform unless SSL_CERT_FILE or
-/// SSL_CERT_DIR is set, and then trusts only the roots they name.
-#[cfg(any(target_vendor = "apple", windows))]
+/// SSL_CERT_DIR is set, and then trusts only the roots they name. Platforms the client does not
+/// ship for keep the platform verifier's own rules.
+#[cfg(not(target_os = "linux"))]
 fn system() -> Arc<dyn ServerCertVerifier> {
     let (file, directories) = (variable("SSL_CERT_FILE"), variable("SSL_CERT_DIR"));
-    if file.is_none() && directories.is_none() {
-        return match rustls_platform_verifier::Verifier::new(provider()) {
-            Ok(verifier) => Arc::new(verifier),
-            Err(error) => untrusted(Some(Arc::new(error))),
-        };
+    if cfg!(any(target_vendor = "apple", windows)) && (file.is_some() || directories.is_some()) {
+        let (roots, error) = on_disk_roots(file.as_deref(), directories.as_deref(), &[], &[]);
+        return verifying(roots, error);
     }
-    let (roots, error) = on_disk_roots(file.as_deref(), directories.as_deref(), &[], &[]);
-    verifying(roots, error)
-}
-
-/// Platforms the client does not ship for keep the platform verifier's own rules.
-#[cfg(not(any(target_os = "linux", target_vendor = "apple", windows)))]
-fn system() -> Arc<dyn ServerCertVerifier> {
     match rustls_platform_verifier::Verifier::new(provider()) {
         Ok(verifier) => Arc::new(verifier),
         Err(error) => untrusted(Some(Arc::new(error))),
