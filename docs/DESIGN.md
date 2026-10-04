@@ -321,7 +321,7 @@ of keyframes in `app.css` (`rise`, `row-in`, `pop`, `grow-x`, `glint`), each wit
 - **Facts** (`dl.kv`): label/value pairs; a qualifier that belongs to a value is an `.aside`, never joined with a dot.
 - **Tooltip and readout**: a readout is a light plate (`.inspect-card`, a hairline, 3 px corners); a tip is
   ink (`--brand`, inverse text, 3 px corners, no arrow), so it never reads as part of the instrument, and it
-  fades in over 120 ms. A tip opens once the pointer has rested on its word for 0.3 s (jargon 0.2 s, 60 ms just
+  fades in over 120 ms. A tip opens once the pointer has rested on its word for 0.45 s (jargon 0.32 s, 0.12 s just
   after another closed); a hand moving faster than 0.2 px/ms starts the rest over, a reading hand's drift does
   not, so a pointer passing by or dragging opens none. A dotted underline marks jargon inside a line of text
   (a card's "wire", "no data"); a row's or a control's label carries its tip on the help cursor alone, so rows

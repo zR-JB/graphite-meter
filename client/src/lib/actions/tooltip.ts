@@ -6,9 +6,9 @@ const ACTIONABLE_SELECTOR =
   "button, a, label, summary, [role='switch'], [role='tab']";
 let uid = 0;
 // A hand at rest on the word opens its tip; jargon answers sooner, the next tip after a short rest, never at once.
-const REST_MS = 300;
-const TERM_REST_MS = 200;
-const WARM_REST_MS = 60;
+const REST_MS = 450;
+const TERM_REST_MS = 320;
+const WARM_REST_MS = 120;
 const CLOSE_MS = 100;
 const SWEEP_PX_PER_MS = 0.2;
 const LONG_PRESS_MS = 450;
