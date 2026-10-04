@@ -99,7 +99,12 @@ impl Link {
         let (reader, open) = (front.clone(), faults.clone());
         tasks.spawn(async move {
             let mut buffer = vec![0; 65536];
-            while let Ok((count, from)) = reader.recv_from(&mut buffer).await {
+            loop {
+                let (count, from) = match reader.recv_from(&mut buffer).await {
+                    Ok(received) => received,
+                    Err(error) if transient(&error) => continue,
+                    Err(_) => break,
+                };
                 client.send_replace(Some(from));
                 if *open.borrow() == Fault::None {
                     let _ = up
@@ -111,7 +116,12 @@ impl Link {
         let (reader, open, counted) = (back.clone(), faults.clone(), retries.clone());
         tasks.spawn(async move {
             let mut buffer = vec![0; 65536];
-            while let Ok(count) = reader.recv(&mut buffer).await {
+            loop {
+                let count = match reader.recv(&mut buffer).await {
+                    Ok(count) => count,
+                    Err(error) if transient(&error) => continue,
+                    Err(_) => break,
+                };
                 if buffer[0] & RETRY == RETRY {
                     counted.fetch_add(1, Ordering::Relaxed);
                 }
@@ -142,6 +152,11 @@ impl Link {
         });
         Ok(Self { address, fault, retries, _tasks: tasks })
     }
+}
+
+/// A receive error an earlier send's ICMP reply raised, such as an unbound target; the socket still works.
+fn transient(error: &io::Error) -> bool {
+    matches!(error.kind(), io::ErrorKind::ConnectionRefused | io::ErrorKind::ConnectionReset)
 }
 
 async fn relay(mut client: TcpStream, mut server: TcpStream, delay: Duration, mut faults: watch::Receiver<Fault>) {
