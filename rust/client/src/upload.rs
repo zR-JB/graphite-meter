@@ -16,7 +16,6 @@ use graphite_meter_http3::webtransport::RecvStream;
 use http::Method;
 use serde::Deserialize;
 use std::{
-    convert::Infallible,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -129,6 +128,19 @@ impl Upload {
         let _ = self.finish(false).await;
         Self::begin(plan).await
     }
+    /// Receiver `id`, which `state` reports, before its feed and lanes start.
+    fn new(plan: Plan, id: String, state: watch::Receiver<State>) -> Self {
+        Self {
+            plan,
+            id,
+            state,
+            stop_lanes: watch::Sender::new(false),
+            lanes: JoinSet::new(),
+            progress: JoinSet::new(),
+            session: None,
+            retrying: Retrying::default(),
+        }
+    }
     /// Mints a receiver and starts its progress feed and lanes; ready once the receiver counts.
     async fn begin(plan: Plan) -> Result<Self, Error> {
         #[derive(Deserialize)]
@@ -153,16 +165,7 @@ impl Upload {
         let mut block = vec![0_u8; 64 * 1024];
         getrandom::fill(&mut block).map_err(|_| "secure randomness unavailable")?;
         let (state_tx, state) = watch::channel(State::default());
-        let mut owner = Self {
-            plan,
-            id: minted.upload_id,
-            state,
-            stop_lanes: watch::Sender::new(false),
-            lanes: JoinSet::new(),
-            progress: JoinSet::new(),
-            session: None,
-            retrying: Retrying::default(),
-        };
+        let mut owner = Self::new(plan, minted.upload_id, state);
         match owner.run(&state_tx, Bytes::from(block)).await {
             Ok(()) => Ok(owner),
             Err(error) => {
@@ -246,7 +249,7 @@ impl Upload {
                             tokio::time::sleep(stagger * index as u32).await;
                         }
                         match session {
-                            Some(session) => send_wt_reconnecting(&session, block, sending, retry).await,
+                            Some(session) => send_wt_lane(&session, block, sending, retry).await,
                             None => send_lane(&transport, &id, index, block, sending, retry, limit).await,
                         }
                     } => if let Err(error) = result {
@@ -281,16 +284,11 @@ impl Upload {
         Ok(())
     }
     pub async fn checkpoint(&self, budget: Duration) -> Result<ReceiverSnapshot, Error> {
-        let deadline = Instant::now() + budget;
+        let (deadline, query, control) = (Instant::now() + budget, [("id", self.id.as_str())], &self.plan.control);
         loop {
             self.health()?;
-            let response = tokio::time::timeout_at(
-                deadline,
-                self.plan
-                    .control
-                    .json::<wire::Counters>(Method::POST, Route::UploadCheckpoint, &[("id", &self.id)]),
-            )
-            .await;
+            let checkpoint = control.json::<wire::Counters>(Method::POST, Route::UploadCheckpoint, &query);
+            let response = tokio::time::timeout_at(deadline, checkpoint).await;
             let count = match response {
                 Ok(Ok(count)) => count,
                 Ok(Err(error)) if crate::failure::sign_in(error.as_ref()).is_none() => {
@@ -331,17 +329,9 @@ impl Upload {
             while let Some(result) = self.lanes.join_next().await {
                 result?;
             }
-            let mut response = self
-                .plan
-                .control
-                .receive(
-                    Method::DELETE,
-                    Route::UploadProgress,
-                    &[("id", &self.id)],
-                    64 * 1024,
-                    CONTROL_TIMEOUT,
-                )
-                .await?;
+            let (control, query, limit) = (&self.plan.control, [("id", self.id.as_str())], 64 * 1024);
+            let delete = control.receive(Method::DELETE, Route::UploadProgress, &query, limit, CONTROL_TIMEOUT);
+            let mut response = delete.await?;
             while response.chunk().await?.is_some() {}
             let state = self
                 .state
@@ -455,16 +445,9 @@ impl Feed {
 
     /// Go's openUploadFeed (upload.go:299-318): open once the receiver answers `ready`.
     async fn open(transport: &Transport, id: &str, state: &watch::Sender<State>) -> Result<Self, Error> {
-        let body = transport
-            .receive(
-                Method::GET,
-                Route::UploadProgress,
-                &[("id", id)],
-                u64::MAX,
-                FEED_LIFETIME,
-            )
-            .await?;
-        let mut feed = Self::new(Source::Http(body));
+        let query = [("id", id)];
+        let body = transport.receive(Method::GET, Route::UploadProgress, &query, u64::MAX, FEED_LIFETIME);
+        let mut feed = Self::new(Source::Http(body.await?));
         loop {
             let event = feed.next().await?;
             let ready = matches!(event, UploadProgress::Ready);
@@ -515,27 +498,8 @@ fn fail(state: &watch::Sender<State>, error: Error) {
     });
 }
 
+/// Streams of `MAX_TRANSFER_BYTES`, one after another, on the slot's live session.
 async fn send_wt_lane(
-    session: &crate::webtransport::Session,
-    block: Bytes,
-    active: &AtomicBool,
-    moved: &mut bool,
-) -> Result<Infallible, Error> {
-    loop {
-        let mut stream = session.open_uni().await?;
-        let mut remaining = MAX_TRANSFER_BYTES;
-        while remaining > 0 {
-            let size = remaining.min(block.len() as u64) as usize;
-            stream.write_chunk(block.slice(..size)).await?;
-            remaining -= size as u64;
-            active.store(true, Ordering::Release);
-            *moved = true;
-        }
-        stream.finish()?;
-    }
-}
-
-async fn send_wt_reconnecting(
     slot: &SessionSlot,
     block: Bytes,
     active: Arc<AtomicBool>,
@@ -546,8 +510,22 @@ async fn send_wt_reconnecting(
         let block = block.clone();
         async move {
             let mut moved = false;
-            let Err(error) = send_wt_lane(&session, block, active, &mut moved).await;
-            (Err(error), moved)
+            let sent: Result<(), Error> = async {
+                loop {
+                    let mut stream = session.open_uni().await?;
+                    let mut remaining = MAX_TRANSFER_BYTES;
+                    while remaining > 0 {
+                        let size = remaining.min(block.len() as u64) as usize;
+                        stream.write_chunk(block.slice(..size)).await?;
+                        remaining -= size as u64;
+                        active.store(true, Ordering::Release);
+                        moved = true;
+                    }
+                    stream.finish()?;
+                }
+            }
+            .await;
+            (sent, moved)
         }
     })
     .await
@@ -622,7 +600,7 @@ mod tests {
     const OPERATION_LIMIT: Duration = Duration::from_secs(60);
     /// HTTP lanes that start together and last the operation limit.
     const HTTP_LANES: Option<(Duration, Duration)> = Some((Duration::ZERO, OPERATION_LIMIT));
-    use graphite_meter_core::{discovery::Protocol, failure::FailureReason};
+    use graphite_meter_core::{discovery::Protocol, failure::FailureReason, measurement::CHECKPOINT_BUDGET};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -636,22 +614,12 @@ mod tests {
     /// The progress feed of a WebTransport receiver that writes `records` on its first stream, and
     /// the state it left; nothing answers the HTTP feed a failing one falls back to.
     async fn webtransport_feed(records: String) -> Result<(Result<(), Error>, State), Error> {
-        let _ = crate::crypto::provider().install_default();
         let (endpoint, origin) = crate::fixtures::h3_endpoint()?;
-        let server = tokio::spawn(async move {
-            let quic = endpoint.accept().await.ok_or("endpoint closed")?.await?;
-            let mut connection = graphite_meter_http3::server::Connection::new(quic, None);
-            let (_, stream) = connection.next().await?.ok_or("no CONNECT")?.resolve().await?;
-            let feed = async {
-                let session =
-                    graphite_meter_http3::webtransport::Session::accept(stream, http::HeaderMap::new()).await?;
-                let mut stream = session.open_uni().await?;
-                stream.write_all(records.as_bytes()).await?;
-                std::future::pending::<Result<(), Error>>().await
-            };
-            let (fed, ()) = tokio::join!(feed, async { while let Ok(Some(_)) = connection.next().await {} });
-            fed
-        });
+        let server = tokio::spawn(crate::fixtures::webtransport_peer(endpoint, |session| async move {
+            let mut stream = session.open_uni().await?;
+            stream.write_all(records.as_bytes()).await?;
+            std::future::pending().await
+        }));
         let http = crate::net::Http::new(true)?;
         let slot = SessionSlot::dial(&http, format!("{origin}/wt/upload?id=test-session")).await?;
         let closed = format!("http://{}", TcpListener::bind("127.0.0.1:0").await?.local_addr()?);
@@ -683,16 +651,13 @@ mod tests {
     }
 
     /// An HTTP/3 upload the server answers early, then stops reading, returns that answer, read
-    /// once its body can no longer be sent, as Go's round trip returns the response: here busy,
-    /// where the stopped stream read as a lost connection. A request that lets caches keep its
-    /// answer is refused as invalid instead.
+    /// once its body can no longer be sent, as Go's round trip returns the response: here busy. A
+    /// request that lets caches keep its answer is refused as invalid instead.
     #[tokio::test]
     async fn an_http3_upload_answered_early_returns_the_answer() -> Result<(), Error> {
-        let _ = crate::crypto::provider().install_default();
         let (endpoint, origin) = crate::fixtures::h3_endpoint()?;
         let server = tokio::spawn(async move {
-            let quic = endpoint.accept().await.ok_or("endpoint closed")?.await?;
-            let mut connection = graphite_meter_http3::server::Connection::new(quic, None);
+            let mut connection = crate::fixtures::h3_connection(&endpoint).await?;
             let (request, stream) = connection.next().await?.ok_or("no request")?.resolve().await?;
             let (mut send, mut recv) = stream.split();
             recv.data().await?;
@@ -719,9 +684,7 @@ mod tests {
     #[tokio::test]
     async fn checkpoint_retries_a_refusal_and_keeps_its_cause_past_the_budget() -> Result<(), Error> {
         use std::sync::atomic::AtomicUsize;
-        let _ = crate::crypto::provider().install_default();
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let origin = format!("http://{}", listener.local_addr()?);
+        let (listener, origin) = crate::fixtures::listener().await?;
         let refusals = Arc::new(AtomicUsize::new(usize::MAX));
         let remaining = refusals.clone();
         let server = tokio::spawn(async move {
@@ -742,48 +705,31 @@ mod tests {
                     continue;
                 }
                 // Go's decodeCounters takes any exact integer, in exponent form too.
-                let body = br#"{"bytes":1.23e2,"nanos":456}"#;
-                let headers = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
-                stream.write_all(headers.as_bytes()).await?;
-                stream.write_all(body).await?;
+                let counters = crate::fixtures::ok(r#"{"bytes":1.23e2,"nanos":456}"#);
+                stream.write_all(counters.as_bytes()).await?;
                 return Ok::<_, Error>(refused);
             }
         });
         let transport = Arc::new(transport(&origin, Protocol::Http1).await?);
         let (state_sender, state) = watch::channel(State::default());
-        let (stop_lanes, _) = watch::channel(false);
-        let upload = Upload {
-            plan: Plan {
-                transport: transport.clone(),
-                control: transport,
-                lanes: 1,
-                http: None,
-                cancel: watch::channel(false).1,
-                replaced: Arc::default(),
-            },
-            id: "test-session".into(),
-            state,
-            stop_lanes,
-            lanes: JoinSet::new(),
-            progress: JoinSet::new(),
-            session: None,
-            retrying: Retrying::default(),
+        let plan = Plan {
+            transport: transport.clone(),
+            control: transport,
+            lanes: 1,
+            http: None,
+            cancel: watch::channel(false).1,
+            replaced: Arc::default(),
         };
+        let upload = Upload::new(plan, "test-session".into(), state);
         // A budget ending during a request times out; the cause survives when it ends between attempts.
         let mut reasons = Vec::new();
-        while reasons.len() < 3 && reasons.last() != Some(&graphite_meter_core::failure::FailureReason::ServerBusy) {
+        while reasons.len() < 3 && reasons.last() != Some(&FailureReason::ServerBusy) {
             let refused = upload.checkpoint(CHECKPOINT_RETRY).await.unwrap_err();
             reasons.push(crate::failure::reason(refused.as_ref(), false));
         }
-        assert_eq!(
-            reasons.last(),
-            Some(&graphite_meter_core::failure::FailureReason::ServerBusy),
-            "{reasons:?}"
-        );
+        assert_eq!(reasons.last(), Some(&FailureReason::ServerBusy), "{reasons:?}");
         refusals.store(1, Ordering::SeqCst);
-        let snapshot = upload
-            .checkpoint(graphite_meter_core::measurement::CHECKPOINT_BUDGET)
-            .await?;
+        let snapshot = upload.checkpoint(CHECKPOINT_BUDGET).await?;
         let retried = Instant::now();
         assert_eq!((snapshot.bytes, snapshot.nanos), (123, 456));
         assert!(state_sender.borrow().latest.is_none());
@@ -791,9 +737,9 @@ mod tests {
         Ok(())
     }
 
-    /// A connection that stops reading once armed, if it carried an upload lane.
+    /// A connection's reading half that stops once armed, if the connection carried an upload lane.
     struct Gate {
-        inner: tokio::net::TcpStream,
+        inner: tokio::net::tcp::OwnedReadHalf,
         lanes: Arc<AtomicBool>,
         armed: Arc<AtomicBool>,
     }
@@ -809,33 +755,11 @@ mod tests {
             std::pin::Pin::new(&mut self.inner).poll_read(context, buffer)
         }
     }
-    impl tokio::io::AsyncWrite for Gate {
-        fn poll_write(
-            mut self: std::pin::Pin<&mut Self>,
-            context: &mut std::task::Context<'_>,
-            data: &[u8],
-        ) -> std::task::Poll<std::io::Result<usize>> {
-            std::pin::Pin::new(&mut self.inner).poll_write(context, data)
-        }
-        fn poll_flush(
-            mut self: std::pin::Pin<&mut Self>,
-            context: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<std::io::Result<()>> {
-            std::pin::Pin::new(&mut self.inner).poll_flush(context)
-        }
-        fn poll_shutdown(
-            mut self: std::pin::Pin<&mut Self>,
-            context: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<std::io::Result<()>> {
-            std::pin::Pin::new(&mut self.inner).poll_shutdown(context)
-        }
-    }
 
     /// Upload lanes keep their own HTTP/2 connection, as Go's upload transport: a checkpoint
     /// never queues behind their unsent bodies, here a peer that stops reading the lanes.
     #[tokio::test]
     async fn checkpoints_never_queue_behind_http2_upload_lanes() -> Result<(), Error> {
-        let _ = crate::crypto::provider().install_default();
         let armed = Arc::new(AtomicBool::new(false));
         let (transport, server) = receiver(armed.clone()).await?;
         let (_stop, cancel) = watch::channel(false);
@@ -845,9 +769,7 @@ mod tests {
         )
         .await??;
         armed.store(true, Ordering::SeqCst);
-        let checkpoint = upload
-            .checkpoint(graphite_meter_core::measurement::CHECKPOINT_BUDGET)
-            .await;
+        let checkpoint = upload.checkpoint(CHECKPOINT_BUDGET).await;
         drop(upload);
         server.abort();
         let snapshot = checkpoint?;
@@ -859,7 +781,6 @@ mod tests {
     /// the stopped stage closes within the controller's 5 s grace (controller.rs:19).
     #[tokio::test]
     async fn a_stop_ends_an_http3_start_while_its_control_connection_dials() -> Result<(), Error> {
-        let _ = crate::crypto::provider().install_default();
         let (endpoint, origin) = crate::fixtures::h3_endpoint()?;
         // Only the lanes' connection completes its handshake; the control connection's never does.
         let server = tokio::spawn(async move {
@@ -886,17 +807,21 @@ mod tests {
         use http_body_util::{BodyExt, Full, StreamBody, combinators::BoxBody};
         use hyper::{body::Frame, service::service_fn};
         use hyper_util::rt::{TokioExecutor, TokioIo};
+        use std::convert::Infallible;
         type Payload = BoxBody<Bytes, Infallible>;
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let origin = format!("http://{}", listener.local_addr()?);
+        let (listener, origin) = crate::fixtures::listener().await?;
         let server = tokio::spawn(async move {
             while let Ok((socket, _)) = listener.accept().await {
                 let lanes = Arc::new(AtomicBool::new(false));
-                let io = Gate {
-                    inner: socket,
-                    lanes: lanes.clone(),
-                    armed: armed.clone(),
-                };
+                let (inner, write) = socket.into_split();
+                let io = tokio::io::join(
+                    Gate {
+                        inner,
+                        lanes: lanes.clone(),
+                        armed: armed.clone(),
+                    },
+                    write,
+                );
                 let service = service_fn(move |request: http::Request<hyper::body::Incoming>| {
                     let lanes = lanes.clone();
                     async move {
@@ -939,9 +864,7 @@ mod tests {
 
     #[tokio::test]
     async fn progress_feed_ignores_malformed_unknown_and_stale_records() -> Result<(), Error> {
-        let _ = crate::crypto::provider().install_default();
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let origin = format!("http://{}", listener.local_addr()?);
+        let (listener, origin) = crate::fixtures::listener().await?;
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await?;
             let count = stream.read(&mut [0_u8; 4096]).await?;
@@ -955,9 +878,7 @@ mod tests {
                 "{\"type\":\"complete\",\"bytes\":11,\"nanos\":19}\n",
                 "{\"type\":\"complete\",\"bytes\":12,\"nanos\":30}\n",
             );
-            let headers = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
-            stream.write_all(headers.as_bytes()).await?;
-            stream.write_all(body.as_bytes()).await?;
+            stream.write_all(crate::fixtures::ok(body).as_bytes()).await?;
             Ok::<_, Error>(())
         });
         let transport = transport(&origin, Protocol::Http1).await?;

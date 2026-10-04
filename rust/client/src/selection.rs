@@ -144,7 +144,6 @@ fn choose<'a, T>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use graphite_meter_core::discovery::{Capabilities, ServerInfo};
 
     #[test]
     fn explicit_origin_cannot_override_protocol_or_discovery_authority() {
@@ -153,21 +152,10 @@ mod tests {
             url: "https://meter.example".into(),
             ..Default::default()
         };
-        let mut preflight = Preflight {
-            server: ServerInfo::default(),
-            engine_version: String::new(),
-            generation: "one".into(),
-            capabilities: Capabilities {
-                max_stage_ms: 0,
-                upload_checkpoint: true,
-                latency: vec![],
-                throughput: vec![ThroughputTarget {
-                    base_url: entry.url.clone(),
-                    transport: ThroughputTransport::FetchStream,
-                    protocol: Protocol::Http2,
-                }],
-            },
-        };
+        let targets = serde_json::json!([{"baseUrl": entry.url, "transport": "fetch-stream", "protocol": "http2"}]);
+        let capabilities = serde_json::json!({"uploadCheckpoint": true, "throughput": targets, "latency": []});
+        let preflight = serde_json::json!({"generation": "one", "capabilities": capabilities});
+        let mut preflight = Preflight::decode(preflight.to_string().as_bytes()).unwrap();
         let mut config = Config {
             throughput_origin: Some(entry.url.clone()),
             throughput_protocol: Some(Protocol::Http3),

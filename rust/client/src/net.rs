@@ -192,6 +192,26 @@ fn replayable(request: &Request<Body>) -> Option<Request<Body>> {
     Some(copy)
 }
 
+/// `request` as an HTTP/1.1 connection carries it: with its Host, in origin form unless it goes to a
+/// proxy in absolute form, which takes the proxy's credentials instead.
+fn for_http1(request: &mut Request<Body>, connection: &Http1) -> Result<()> {
+    let host = HeaderValue::from_str(request.uri().authority().ok_or("missing authority")?.as_str())?;
+    request.headers_mut().insert(HOST, host);
+    if !connection.absolute_form {
+        *request.uri_mut() = request
+            .uri()
+            .path_and_query()
+            .map_or("/", |path| path.as_str())
+            .parse()?;
+    } else if let Some(authorization) = &connection.proxy_authorization {
+        request
+            .headers_mut()
+            .insert(http::header::PROXY_AUTHORIZATION, authorization.clone());
+    }
+    *request.version_mut() = Version::HTTP_11;
+    Ok(())
+}
+
 fn stream_reset(error: &hyper::Error) -> bool {
     std::error::Error::source(error)
         .and_then(|source| source.downcast_ref::<h2::Error>())
@@ -243,23 +263,29 @@ impl Connections {
         }
     }
 
-    async fn dial(&self, origin: &str, protocol: Protocol) -> Result<Sender> {
+    /// A connection to `origin`, through the proxy the environment names for it, if any.
+    async fn connect(&self, origin: &str, tls: Option<&TlsConnector>) -> Result<graphite_meter_net::Connection> {
         let target = target_origin(origin)?.ok_or("missing origin")?;
+        let hop = crate::tls::tcp(self.insecure, Alpn::Proxy);
+        Ok(connect(&self.proxy, &target, tls, hop).await?)
+    }
+
+    async fn dial(&self, origin: &str, protocol: Protocol) -> Result<Sender> {
         let alpn = match protocol {
             Protocol::Http1 => Alpn::Http1,
             Protocol::Http2 => Alpn::Http2,
             _ => Alpn::Negotiated,
         };
-        let tls = match target.scheme.as_str() {
-            "https" => Some(crate::tls::tcp(self.insecure, alpn).await?),
-            _ => None,
+        let https = origin.starts_with("https:");
+        let tls = match https {
+            true => Some(crate::tls::tcp(self.insecure, alpn).await?),
+            false => None,
         };
-        let hop = crate::tls::tcp(self.insecure, Alpn::Proxy);
-        let connection = connect(&self.proxy, &target, tls.as_ref(), hop).await?;
+        let connection = self.connect(origin, tls.as_ref()).await?;
         let h2 = !connection.absolute_form
             && match connection.alpn.as_deref() {
                 Some(alpn) => alpn == b"h2",
-                None => target.scheme == "http" && protocol == Protocol::Http2,
+                None => !https && protocol == Protocol::Http2,
             };
         if protocol == Protocol::Http2 && !h2 {
             return Err("server or proxy does not support HTTP/2".into());
@@ -333,15 +359,13 @@ impl Connections {
             .or_default()
             .clone();
         let replay = replayable(&request);
-        match (
-            self.attempt(request, &origin, protocol, &pool, deadline, true).await,
-            replay,
-        ) {
+        let first = self.attempt(request, &origin, protocol, &pool, deadline, true).await;
+        Ok(match (first, replay) {
             (Err(Attempt::Reused(_)), Some(request)) => {
-                Ok(self.attempt(request, &origin, protocol, &pool, deadline, false).await?)
+                self.attempt(request, &origin, protocol, &pool, deadline, false).await?
             }
-            (result, _) => Ok(result?),
-        }
+            (result, _) => result?,
+        })
     }
 
     async fn attempt(
@@ -369,29 +393,7 @@ impl Connections {
                 (response, Some(shared.id))
             }
             Sender::H1(mut connection) => {
-                let authority = request
-                    .uri()
-                    .authority()
-                    .ok_or_else(|| Attempt::Failed("missing authority".into()))?
-                    .clone();
-                let host = HeaderValue::from_str(authority.as_str()).map_err(|error| Attempt::Failed(error.into()))?;
-                request.headers_mut().insert(HOST, host);
-                if connection.absolute_form {
-                    if let Some(authorization) = &connection.proxy_authorization {
-                        request
-                            .headers_mut()
-                            .insert(http::header::PROXY_AUTHORIZATION, authorization.clone());
-                    }
-                } else {
-                    let path = request
-                        .uri()
-                        .path_and_query()
-                        .map_or("/", |path| path.as_str())
-                        .parse()
-                        .map_err(|error: http::uri::InvalidUri| Attempt::Failed(error.into()))?;
-                    *request.uri_mut() = path;
-                }
-                *request.version_mut() = Version::HTTP_11;
+                for_http1(&mut request, &connection).map_err(Attempt::Failed)?;
                 let response = until(deadline, connection.sender.send_request(request)).await;
                 if matches!(response, Ok(Ok(_))) {
                     let mut pool = pool.lock().expect("connection pool poisoned");
@@ -486,9 +488,7 @@ impl Http {
         }
     }
     pub async fn dial(&self, origin: &str, tls: Option<&TlsConnector>) -> Result<graphite_meter_net::Connection> {
-        let target = target_origin(origin)?.ok_or("missing origin")?;
-        let hop = crate::tls::tcp(self.insecure, Alpn::Proxy);
-        Ok(connect(&self.connections.proxy, &target, tls, hop).await?)
+        self.connections.connect(origin, tls).await
     }
     #[cfg(test)]
     pub(crate) fn set_proxy(&mut self, proxy: Proxy) {
@@ -601,13 +601,14 @@ impl Http {
         Ok(())
     }
     pub async fn json<T: DeserializeOwned>(&self, method: Method, target: &str, protocol: Protocol) -> Result<T> {
-        let bytes = self.control(method, target, protocol).await?;
+        let (_, bytes) = self.control(method, target, protocol).await?;
         Ok(decode_json(&bytes)?)
     }
-    async fn control(&self, method: Method, target: &str, protocol: Protocol) -> Result<Vec<u8>> {
+    /// A control request's body, and the HTTP version it came over.
+    async fn control(&self, method: Method, target: &str, protocol: Protocol) -> Result<(Version, Vec<u8>)> {
         tokio::time::timeout(CONTROL_TIMEOUT, async {
             let response = self.request(method, target, protocol).await?;
-            bounded_body(response).await
+            Ok((response.version(), bounded_body(response).await?))
         })
         .await?
     }
@@ -621,9 +622,8 @@ impl Http {
     }
     pub async fn preflight(&self, entry: &ServerEntry) -> Result<Preflight> {
         let origin = canonical_origin(&entry.url)?;
-        let bytes = self
-            .control(Method::GET, &url(&origin, Route::Preflight, &[]), Protocol::Negotiated)
-            .await?;
+        let preflight_url = url(&origin, Route::Preflight, &[]);
+        let (_, bytes) = self.control(Method::GET, &preflight_url, Protocol::Negotiated).await?;
         let mut preflight = Preflight::decode_received(&bytes)?;
         preflight.resolve_self(&origin);
         entry.validate_discovery(&preflight)?;
@@ -634,12 +634,7 @@ impl Http {
     /// proxy may speak differently, so it stays evidence for diagnostics only.
     pub async fn probe(&self, origin: &str, protocol: Protocol) -> Result<Protocol> {
         let target = url(&canonical_origin(origin)?, Route::Probe, &[]);
-        let (version, bytes) = tokio::time::timeout(CONTROL_TIMEOUT, async {
-            let response = self.request(Method::GET, &target, protocol).await?;
-            let version = response.version();
-            Ok::<_, Error>((version, bounded_body(response).await?))
-        })
-        .await??;
+        let (version, bytes) = self.control(Method::GET, &target, protocol).await?;
         Probe::decode(&bytes)?;
         match version {
             Version::HTTP_11 => Ok(Protocol::Http1),
@@ -813,7 +808,6 @@ fn validated_login(source: &str, raw: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use graphite_meter_core::discovery::{Capabilities, Protocol, ThroughputTarget, ThroughputTransport};
 
     fn http(insecure: bool) -> Http {
         let _ = crate::crypto::provider().install_default();
@@ -822,23 +816,18 @@ mod tests {
 
     #[tokio::test]
     async fn cleartext_proxy_requests_reuse_absolute_form_and_keep_credentials_on_proxy() -> Result<()> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::io::AsyncWriteExt;
         for proxied in [false, true] {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-            let address = listener.local_addr()?;
+            let (listener, origin) = crate::fixtures::listener().await?;
             let target = if proxied {
                 "http://meter.test/probe".to_owned()
             } else {
-                format!("http://{address}/probe")
+                format!("{origin}/probe")
             };
             let peer = tokio::spawn(async move {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 for _ in 0..2 {
-                    let mut head = Vec::new();
-                    while !head.ends_with(b"\r\n\r\n") {
-                        head.push(stream.read_u8().await.unwrap());
-                    }
-                    let head = String::from_utf8(head).unwrap();
+                    let head = crate::fixtures::read_head(&mut stream).await.unwrap();
                     let expected = if proxied {
                         "GET http://meter.test/probe HTTP/1.1\r\n"
                     } else {
@@ -851,14 +840,11 @@ mod tests {
                         proxied,
                         "{head}"
                     );
-                    stream
-                        .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok")
-                        .await
-                        .unwrap();
+                    stream.write_all(crate::fixtures::ok("ok").as_bytes()).await.unwrap();
                 }
             });
             let mut http = http(false);
-            http.set_proxy(Proxy::new(&format!("http://user:secret@{address}"), "", ""));
+            http.set_proxy(Proxy::new(&origin.replacen("//", "//user:secret@", 1), "", ""));
             tokio::time::timeout(Duration::from_secs(5), async {
                 for _ in 0..2 {
                     let response = http.request(Method::GET, &target, Protocol::Http1).await?;
@@ -876,14 +862,8 @@ mod tests {
     /// -insecure skips verification for cleartext and HTTPS targets alike, as Go's addTLS does.
     #[tokio::test]
     async fn https_proxy_hops_offer_no_protocol_and_follow_insecure() -> Result<()> {
-        use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
-        async fn head(stream: &mut (impl AsyncRead + Unpin)) -> std::io::Result<String> {
-            let mut head = Vec::new();
-            while !head.ends_with(b"\r\n\r\n") {
-                head.push(stream.read_u8().await?);
-            }
-            Ok(String::from_utf8_lossy(&head).into_owned())
-        }
+        use crate::fixtures::{ok, read_head};
+        use tokio::io::AsyncWriteExt;
         let acceptor = |alpn: &[&[u8]]| {
             let tls = crate::fixtures::server_tls(rustls::DEFAULT_VERSIONS, alpn)?;
             Ok::<_, Error>(tokio_rustls::TlsAcceptor::from(Arc::new(tls)))
@@ -899,14 +879,13 @@ mod tests {
                 if stream.get_ref().1.alpn_protocol().is_some() {
                     return Ok::<_, Error>(());
                 }
-                let ok = b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok";
-                if head(&mut stream).await?.starts_with("CONNECT meter.test:443 ") {
+                if read_head(&mut stream).await?.starts_with("CONNECT meter.test:443 ") {
                     stream.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n").await?;
                     let mut inner = target.accept(stream).await?;
-                    head(&mut inner).await?;
-                    inner.write_all(ok).await?;
+                    read_head(&mut inner).await?;
+                    inner.write_all(ok("ok").as_bytes()).await?;
                 } else {
-                    stream.write_all(ok).await?;
+                    stream.write_all(ok("ok").as_bytes()).await?;
                 }
                 Ok(())
             });
@@ -924,17 +903,11 @@ mod tests {
 
     /// Serves each request's path from `bodies`, one request per connection.
     async fn json_peer(bodies: Vec<(&'static str, String)>) -> Result<String> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-        let origin = format!("http://{}", listener.local_addr()?);
+        use tokio::io::AsyncWriteExt;
+        let (listener, origin) = crate::fixtures::listener().await?;
         tokio::spawn(async move {
             while let Ok((mut stream, _)) = listener.accept().await {
-                let mut head = Vec::new();
-                while !head.ends_with(b"\r\n\r\n") {
-                    let Ok(byte) = stream.read_u8().await else { break };
-                    head.push(byte);
-                }
-                let head = String::from_utf8_lossy(&head);
+                let head = crate::fixtures::read_head(&mut stream).await.unwrap_or_default();
                 let path = head.split_whitespace().nth(1).unwrap_or_default();
                 let body = bodies
                     .iter()
@@ -1033,20 +1006,14 @@ mod tests {
     /// Answers polls in turn, repeating the last answer; "drop" closes the connection unanswered.
     async fn token_endpoint(answers: &'static [&'static str]) -> Result<String> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-        let url = format!("http://{}/auth/cli/token", listener.local_addr()?);
+        let (listener, origin) = crate::fixtures::listener().await?;
         let polls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         tokio::spawn(async move {
             while let Ok((mut stream, _)) = listener.accept().await {
                 let polls = polls.clone();
                 tokio::spawn(async move {
-                    loop {
-                        let mut head = Vec::new();
-                        while !head.ends_with(b"\r\n\r\n") {
-                            let Ok(byte) = stream.read_u8().await else { return };
-                            head.push(byte);
-                        }
-                        let head = String::from_utf8_lossy(&head).to_ascii_lowercase();
+                    while let Ok(head) = crate::fixtures::read_head(&mut stream).await {
+                        let head = head.to_ascii_lowercase();
                         let length = head
                             .lines()
                             .find_map(|line| line.strip_prefix("content-length:"))
@@ -1064,7 +1031,7 @@ mod tests {
                 });
             }
         });
-        Ok(url)
+        Ok(format!("{origin}/auth/cli/token"))
     }
 
     fn pending(token_url: String, window: Duration) -> PendingAuthorization {
@@ -1233,20 +1200,11 @@ mod tests {
             name: id.into(),
             ..ServerEntry::default()
         };
-        let preflight = |target: &str| Preflight {
-            server: Default::default(),
-            engine_version: String::new(),
-            generation: "fixture".into(),
-            capabilities: Capabilities {
-                max_stage_ms: 0,
-                upload_checkpoint: false,
-                throughput: vec![ThroughputTarget {
-                    base_url: target.into(),
-                    transport: ThroughputTransport::FetchStream,
-                    protocol: Protocol::Http2,
-                }],
-                latency: Vec::new(),
-            },
+        let preflight = |target: &str| {
+            let throughput = serde_json::json!([{"baseUrl": target, "transport": "fetch-stream", "protocol": "http2"}]);
+            let capabilities = serde_json::json!({"throughput": throughput, "latency": []});
+            let preflight = serde_json::json!({"generation": "fixture", "capabilities": capabilities});
+            Preflight::decode(preflight.to_string().as_bytes()).unwrap()
         };
         let first_client = http.for_server(&entry("first", first), &preflight(second)).unwrap();
         let second_client = http.for_server(&entry("second", second), &preflight(second)).unwrap();

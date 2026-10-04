@@ -222,19 +222,14 @@ async fn prepare_server(
         {
             match verify_throughput_webtransport(&client, target).await {
                 Ok(()) => {}
-                Err(error) if crate::failure::sign_in(error.as_ref()).is_some() => {
-                    return Err(error);
-                }
-                Err(error) if config.throughput_transport.is_none() => {
-                    throughput = Some(
-                    selection::throughput(config, entry, &preflight, Some(ThroughputTransport::FetchStream))
-                    .map_err(|fallback_error| -> Error {
-                        format!(
-                            "fetch-stream selection failed ({fallback_error}); advertised WebTransport is unavailable: {error}"
-                        )
-                        .into()
-                    })?,
-                );
+                Err(error)
+                    if crate::failure::sign_in(error.as_ref()).is_none() && config.throughput_transport.is_none() =>
+                {
+                    let fetch = Some(ThroughputTransport::FetchStream);
+                    let fallback = selection::throughput(config, entry, &preflight, fetch).map_err(|fallback| {
+                        format!("fetch-stream selection failed ({fallback}); advertised WebTransport is unavailable: {error}")
+                    })?;
+                    throughput = Some(fallback);
                 }
                 Err(error) => return Err(error),
             }

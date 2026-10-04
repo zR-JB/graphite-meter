@@ -23,6 +23,22 @@ struct Case {
     latency: LatencyTransport,
 }
 
+impl Case {
+    /// HTTP/3 measures over WebTransport, HTTP/1.1 and HTTP/2 over fetch streams and WebSocket.
+    fn new(name: &'static str, protocol: Protocol) -> Self {
+        let (throughput, latency) = match protocol {
+            Protocol::Http3 => (ThroughputTransport::WebTransport, LatencyTransport::WebTransport),
+            _ => (ThroughputTransport::FetchStream, LatencyTransport::WebSocket),
+        };
+        Self {
+            name,
+            protocol,
+            throughput,
+            latency,
+        }
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires Go server fixture; run rust/tests/client_interop.py"]
 async fn go_server_completes_native_transport_stages() -> Result<(), Error> {
@@ -30,32 +46,13 @@ async fn go_server_completes_native_transport_stages() -> Result<(), Error> {
         .map_err(|_| "GM_GO_INTEROP_URL is required; run rust/tests/client_interop.py")?;
     let _ = graphite_meter_client::crypto::provider().install_default();
     for case in [
-        Case {
-            name: "WebTransport stream",
-            protocol: Protocol::Http3,
-            throughput: ThroughputTransport::WebTransport,
-            latency: LatencyTransport::WebTransport,
-        },
-        Case {
-            name: "HTTPS HTTP/1.1 fetch stream",
-            protocol: Protocol::Http1,
-            throughput: ThroughputTransport::FetchStream,
-            latency: LatencyTransport::WebSocket,
-        },
-        Case {
-            name: "HTTP/2 fetch stream",
-            protocol: Protocol::Http2,
-            throughput: ThroughputTransport::FetchStream,
-            latency: LatencyTransport::WebSocket,
-        },
+        Case::new("WebTransport stream", Protocol::Http3),
+        Case::new("HTTPS HTTP/1.1 fetch stream", Protocol::Http1),
+        Case::new("HTTP/2 fetch stream", Protocol::Http2),
     ] {
-        run_case(&url, case).await?;
+        run_case(&url, case, Http::new(false)?).await?;
     }
     Ok(())
-}
-
-async fn run_case(url: &str, case: Case) -> Result<(), Error> {
-    run_case_with_http(url, case, Http::new(false)?).await
 }
 
 #[tokio::test]
@@ -103,25 +100,15 @@ async fn go_server_completes_approved_native_stages() -> Result<(), Error> {
     }
     http.poll_authorization(pending).await?;
     for case in [
-        Case {
-            name: "approved WebTransport stream",
-            protocol: Protocol::Http3,
-            throughput: ThroughputTransport::WebTransport,
-            latency: LatencyTransport::WebTransport,
-        },
-        Case {
-            name: "approved HTTPS HTTP/1.1 fetch stream",
-            protocol: Protocol::Http1,
-            throughput: ThroughputTransport::FetchStream,
-            latency: LatencyTransport::WebSocket,
-        },
+        Case::new("approved WebTransport stream", Protocol::Http3),
+        Case::new("approved HTTPS HTTP/1.1 fetch stream", Protocol::Http1),
     ] {
-        run_case_with_http(&url, case, http.clone()).await?;
+        run_case(&url, case, http.clone()).await?;
     }
     Ok(())
 }
 
-async fn run_case_with_http(url: &str, case: Case, http: Http) -> Result<(), Error> {
+async fn run_case(url: &str, case: Case, http: Http) -> Result<(), Error> {
     let config = Config {
         url: url.into(),
         stages: vec![Stage::Latency, Stage::Download, Stage::Upload, Stage::Bidirectional],

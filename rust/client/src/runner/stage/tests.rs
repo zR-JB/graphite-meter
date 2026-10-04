@@ -61,6 +61,7 @@ impl Fixture {
                 download_duration: Duration::from_millis(millis),
                 upload_duration: Duration::from_millis(millis),
                 bidirectional_duration: Duration::from_millis(millis),
+                insecure: true,
                 ..transfer_config()
             },
             servers: Vec::new(),
@@ -227,9 +228,7 @@ async fn download_peer_with_gate(
                             // Mode 20 forgets the upload id until the next mint, mode 21 for good.
                             let _ = flag.compare_exchange(20, 0, Ordering::SeqCst, Ordering::SeqCst);
                             let body = format!(r#"{{"uploadId":"test-session-{}"}}"#, mints.fetch_add(1, Ordering::SeqCst));
-                            let header = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
-                            let _ = stream.write_all(header.as_bytes()).await;
-                            let _ = stream.write_all(body.as_bytes()).await;
+                            let _ = stream.write_all(crate::fixtures::ok(&body).as_bytes()).await;
                             return;
                         }
                         if request.starts_with(b"GET /upload/progress") {
@@ -301,9 +300,7 @@ async fn download_peer_with_gate(
                                 _ => checkpoints.fetch_add(1 << 16, Ordering::SeqCst),
                             };
                             let body = format!(r#"{{"bytes":{bytes},"nanos":{}}}"#, receiver_clock.elapsed().as_nanos() + 1);
-                            let header = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
-                            let _ = stream.write_all(header.as_bytes()).await;
-                            let _ = stream.write_all(body.as_bytes()).await;
+                            let _ = stream.write_all(crate::fixtures::ok(&body).as_bytes()).await;
                             return;
                         }
                         if !first_request.swap(true, Ordering::SeqCst)
@@ -400,6 +397,15 @@ fn heartbeat() -> JoinHandle<()> {
     })
 }
 
+/// The snapshot's one failure.
+#[track_caller]
+fn sole_failure(snapshot: &Snapshot) -> &crate::model::ServerFailure {
+    let [failure] = &snapshot.failures[..] else {
+        panic!("{:?}", snapshot.failures);
+    };
+    failure
+}
+
 /// `stage` beside `waiter`, which waits for one of its phases or failures: a stage that ends before
 /// that fails the test at this bound instead of hanging it.
 async fn joined<A, B>(stage: impl Future<Output = A>, waiter: impl Future<Output = B>) -> Result<(A, B), Error> {
@@ -408,9 +414,7 @@ async fn joined<A, B>(stage: impl Future<Output = A>, waiter: impl Future<Output
 
 #[tokio::test]
 async fn a_stopped_bidirectional_start_drains_its_started_download() -> Result<(), Error> {
-    let _ = crate::crypto::provider().install_default();
-    let listener = TcpListener::bind("127.0.0.1:0").await?;
-    let origin = format!("http://{}", listener.local_addr()?);
+    let (listener, origin) = crate::fixtures::listener().await?;
     let active = watch::channel(0_usize).0;
     let uploading = Arc::new(tokio::sync::Notify::new());
     let active_server = active.clone();
@@ -448,9 +452,7 @@ async fn a_stopped_bidirectional_start_drains_its_started_download() -> Result<(
         url: origin,
         stages: vec![Stage::Bidirectional],
         warmup: Duration::from_millis(10),
-        streams: 1,
-        loaded_latency: false,
-        ..Config::default()
+        ..transfer_config()
     };
     let (stop, stopped) = watch::channel(false);
     let start = start_transfer(Stage::Bidirectional, &server, &config, Duration::from_secs(60), stopped);
@@ -478,31 +480,19 @@ async fn first_stage_setup_failure_keeps_survivors_and_its_sign_in_cause() -> Re
     fixture.snapshots.send_replace(listing(&fixture.servers));
     let (servers, config, snapshots) = (&fixture.servers, &fixture.config, &fixture.snapshots);
     let observed = snapshots.subscribe();
-    let cancelled = fixture.stop.subscribe();
+    let stop = fixture.stop.subscribe();
     fixture.modes[0].store(3, Ordering::SeqCst);
     let mut ledger = RunLedger::new();
-    let first = measure(
-        Stage::Download,
-        config,
-        servers,
-        snapshots,
-        cancelled.clone(),
-        &mut ledger,
-    )
-    .await?;
+    let first = measure(Stage::Download, config, servers, snapshots, stop.clone(), &mut ledger).await?;
     assert_eq!(first, vec!["near"]);
-    assert_eq!(
-        observed.borrow().failures[0].reason,
-        graphite_meter_core::failure::FailureReason::SignInRequired,
-        "{:?}",
-        observed.borrow().failures
-    );
+    let failures = observed.borrow().failures.clone();
+    assert_eq!(failures[0].reason, FailureReason::SignInRequired, "{failures:?}");
     let first_bytes = observed.borrow().results[0].down_bytes();
     assert!(first_bytes > 0);
 
     // A stalled first peer must not consume the next peer's startup budget.
     fixture.modes[0].store(2, Ordering::SeqCst);
-    let second = measure(Stage::Download, config, servers, snapshots, cancelled, &mut ledger).await?;
+    let second = measure(Stage::Download, config, servers, snapshots, stop, &mut ledger).await?;
     assert_eq!(second, vec!["near"]);
     let snapshot = observed.borrow();
     assert_eq!(snapshot.results.len(), 2);
@@ -529,19 +519,14 @@ fn only_probes_sent_inside_the_stage_count_including_drained_replies() {
         (end, 0, None),
         (end - Duration::from_millis(10), 1, Some(20.0)),
     ] {
-        let mut accumulator = LatencyAccumulator::default();
-        let mut latest = None;
-        observe_latency(
-            Observation::Sample {
-                sent,
-                rtt: Duration::from_millis(20),
-                handling_nanos: 0,
-            },
-            start,
-            end,
-            &mut accumulator,
-            &mut latest,
-        );
+        let (mut accumulator, mut latest) = (LatencyAccumulator::default(), None);
+        let rtt = Duration::from_millis(20);
+        let sample = Observation::Sample {
+            sent,
+            rtt,
+            handling_nanos: 0,
+        };
+        observe_latency(sample, start, end, &mut accumulator, &mut latest);
         let summary = accumulator.snapshot();
         assert_eq!((summary.count, summary.unresolved, latest), (count, 0, latest_ms));
         if count == 0 {
@@ -553,24 +538,15 @@ fn only_probes_sent_inside_the_stage_count_including_drained_replies() {
 #[test]
 fn host_latency_populations_and_continuity_are_independent() {
     let start = Instant::now();
-    let end = start + Duration::from_secs(1);
-    let mut hosts = BTreeMap::from([
-        ("near".to_owned(), HostLatency::default()),
-        ("far".to_owned(), HostLatency::default()),
-    ]);
+    let window = Some((start, start + Duration::from_secs(1)));
+    let mut hosts = BTreeMap::from(["near", "far"].map(|id| (id.to_owned(), HostLatency::default())));
     for (id, rtt_ms) in [("near", 2), ("far", 200), ("near", 4), ("far", 220)] {
-        observe(
-            &mut hosts,
-            Some((start, end)),
-            (
-                id.into(),
-                Observation::Sample {
-                    sent: start + Duration::from_millis(10),
-                    rtt: Duration::from_millis(rtt_ms),
-                    handling_nanos: 0,
-                },
-            ),
-        );
+        let sample = Observation::Sample {
+            sent: start + Duration::from_millis(10),
+            rtt: Duration::from_millis(rtt_ms),
+            handling_nanos: 0,
+        };
+        observe(&mut hosts, window, (id.into(), sample));
     }
     let near = hosts["near"].accumulator.snapshot();
     let far = hosts["far"].accumulator.snapshot();
@@ -578,31 +554,23 @@ fn host_latency_populations_and_continuity_are_independent() {
     assert_eq!(far.count, 2);
     assert_eq!(near.jitter, Some(2_000_000));
     assert_eq!(far.jitter, Some(20_000_000));
-    observe(
-        &mut hosts,
-        Some((start, end)),
-        ("near".into(), Observation::ConnectionBoundary),
-    );
+    observe(&mut hosts, window, ("near".into(), Observation::ConnectionBoundary));
     // Go's live view counts the probes in a row that timed out.
     for _ in 0..2 {
         let sent = start + Duration::from_millis(20);
         let timeout = Observation::Lost {
             sent,
-            outcome: graphite_meter_core::latency::ProbeOutcome::Timeout,
+            outcome: ProbeOutcome::Timeout,
         };
-        observe(&mut hosts, Some((start, end)), ("far".into(), timeout));
+        observe(&mut hosts, window, ("far".into(), timeout));
     }
     let mut snapshot = Snapshot {
-        server_latencies: vec![
-            ServerLatency {
-                id: "near".into(),
+        server_latencies: ["near", "far"]
+            .map(|id| ServerLatency {
+                id: id.into(),
                 ..ServerLatency::default()
-            },
-            ServerLatency {
-                id: "far".into(),
-                ..ServerLatency::default()
-            },
-        ],
+            })
+            .into(),
         ..Snapshot::default()
     };
     sample_hosts(&mut hosts, &mut snapshot);
@@ -621,7 +589,6 @@ async fn loaded_latency_failure_keeps_every_http_participant() -> Result<(), Err
         let mut fixture = Fixture::new(&["near", "far", "quiet"], 1200).await?;
         fixture.config.warmup = Duration::from_millis(500);
         fixture.config.loaded_latency = true;
-        fixture.config.insecure = true;
         fixture.latency();
         fixture.modes[2].store(8, Ordering::SeqCst);
         // A channel ended as revoked is not dialled again (latency.go:248-249).
@@ -636,12 +603,8 @@ async fn loaded_latency_failure_keeps_every_http_participant() -> Result<(), Err
         assert_eq!(stage.server_results.len(), 3);
         assert!(stage.server_results.iter().all(|host| host.down_bytes() > 0));
         assert!(snapshot.failures.iter().any(|failure| failure.server_id == "near"));
-        assert!(
-            snapshot
-                .intervals
-                .iter()
-                .all(|interval| interval.participants.len() == 3)
-        );
+        let mut participants = snapshot.intervals.iter().map(|interval| interval.participants.len());
+        assert!(participants.all(|count| count == 3));
         let [near, far, quiet] =
             ["near", "far", "quiet"].map(|id| stage.server_latencies.iter().find(|host| host.id == id).unwrap());
         assert!(near.ending.is_some());
@@ -677,10 +640,7 @@ async fn silent_direction_removes_its_server_but_a_silent_lane_does_not() -> Res
     let snapshot = fixture.snapshots.borrow();
     let result = &snapshot.results[0];
     assert_eq!(snapshot.failures.len(), 1);
-    assert_eq!(
-        snapshot.failures[0].reason,
-        graphite_meter_core::failure::FailureReason::Timeout
-    );
+    assert_eq!(snapshot.failures[0].reason, FailureReason::Timeout);
     assert!(result.server_results[0].down_bps().is_some());
     assert!(result.server_results[0].up_bps().is_some());
     Ok(())
@@ -712,7 +672,7 @@ async fn shared_download_silence_keeps_a_sole_server_and_multiple_servers_until_
 
 /// A lane still retrying at the final boundary removes its quiet server: a busy download, and
 /// upload lanes answered busy as they send, which made no progress as Go's uploadLane counts it
-/// (upload.go:118-128), where they once went on retrying and the stage completed with the server.
+/// (upload.go:118-128).
 /// The 1.5 s window leaves the quiet server 500 ms before the 2 s stall rule would remove it first.
 #[tokio::test]
 async fn a_lane_still_retrying_at_the_final_boundary_removes_its_quiet_server() -> Result<(), Error> {
@@ -742,27 +702,15 @@ async fn a_lane_refused_just_before_the_stage_end_takes_its_server_out() -> Resu
     let fixture = Fixture::new(&["near", "far"], 1500).await?;
 
     // No sample falls between the refusal and the stage end.
-    let result = fixture
-        .fault(
-            Stage::Upload,
-            fixture.config.upload_duration - Duration::from_millis(100),
-            0,
-            15,
-        )
-        .await?;
+    let before_end = fixture.config.upload_duration - Duration::from_millis(100);
+    let result = fixture.fault(Stage::Upload, before_end, 0, 15).await?;
     heartbeat.abort();
     assert_eq!(result?, ["near"]);
     let snapshot = fixture.snapshots.borrow();
-    let [failure] = &snapshot.failures[..] else {
-        panic!("{:?}", snapshot.failures);
-    };
+    let failure = sole_failure(&snapshot);
     assert_eq!(
         (failure.server_id.as_str(), failure.scope, failure.reason),
-        (
-            "near",
-            FailureScope::Throughput,
-            graphite_meter_core::failure::FailureReason::ProtocolError
-        )
+        ("near", FailureScope::Throughput, FailureReason::ProtocolError)
     );
     assert_eq!(snapshot.stage_status(&snapshot.results[0]), StageStatus::Partial);
     Ok(())
@@ -775,7 +723,6 @@ async fn a_lane_refused_just_before_the_stage_end_takes_its_server_out() -> Resu
 /// before its evidence arrives.
 async fn forgetful_receiver(forget: u8) -> Result<(Result<Vec<String>, Error>, Snapshot), Error> {
     let fixture = Fixture::new(&["peer"], 3000).await?;
-
     let result = fixture.fault(Stage::Upload, Duration::ZERO, 0, forget).await?;
     let snapshot = fixture.snapshots.borrow().clone();
     Ok((result, snapshot))
@@ -803,15 +750,10 @@ async fn a_receiver_that_forgets_its_upload_is_replaced() -> Result<(), Error> {
 async fn a_receiver_forgotten_twice_takes_its_server_out() -> Result<(), Error> {
     let (result, snapshot) = forgetful_receiver(21).await?;
     assert!(result.is_err());
-    let [failure] = &snapshot.failures[..] else {
-        panic!("{:?}", snapshot.failures);
-    };
+    let failure = sole_failure(&snapshot);
     assert_eq!(
         (failure.scope, failure.reason),
-        (
-            FailureScope::Throughput,
-            graphite_meter_core::failure::FailureReason::ProtocolError
-        )
+        (FailureScope::Throughput, FailureReason::ProtocolError)
     );
     Ok(())
 }
@@ -827,16 +769,10 @@ async fn a_receiver_without_a_first_checkpoint_fails_its_preparation() -> Result
     heartbeat.abort();
     assert_eq!(result?, ["far"]);
     let snapshot = fixture.snapshots.borrow();
-    let [failure] = &snapshot.failures[..] else {
-        panic!("{:?}", snapshot.failures);
-    };
+    let failure = sole_failure(&snapshot);
     assert_eq!(
         (failure.server_id.as_str(), failure.scope, failure.reason),
-        (
-            "far",
-            FailureScope::Throughput,
-            graphite_meter_core::failure::FailureReason::PreparationFailed
-        )
+        ("far", FailureScope::Throughput, FailureReason::PreparationFailed)
     );
     Ok(())
 }
@@ -861,23 +797,15 @@ async fn a_removal_at_the_final_boundary_collects_a_fresh_one_for_the_rest() -> 
     fixture.modes[1].store(17, Ordering::SeqCst);
 
     // After the last sample's checkpoints, before the final boundary's.
-    let result = fixture
-        .fault(
-            Stage::Upload,
-            fixture.config.upload_duration - Duration::from_millis(100),
-            0,
-            3,
-        )
-        .await?;
+    let before_end = fixture.config.upload_duration - Duration::from_millis(100);
+    let result = fixture.fault(Stage::Upload, before_end, 0, 3).await?;
     heartbeat.abort();
     assert_eq!(result?, ["near"]);
     let snapshot = fixture.snapshots.borrow();
-    let [failure] = &snapshot.failures[..] else {
-        panic!("{:?}", snapshot.failures);
-    };
+    let failure = sole_failure(&snapshot);
     assert_eq!(
         (failure.server_id.as_str(), failure.reason),
-        ("near", graphite_meter_core::failure::FailureReason::SignInRequired)
+        ("near", FailureReason::SignInRequired)
     );
     let intervals = &snapshot.intervals;
     let (first, last) = (&intervals[0], intervals.back().unwrap());
@@ -893,17 +821,7 @@ async fn a_removal_at_the_final_boundary_collects_a_fresh_one_for_the_rest() -> 
 
 #[test]
 fn checkpoints_skip_two_misses_reset_on_success_and_keep_final_misses() {
-    let mut member = Member {
-        id: "peer".into(),
-        stop: watch::channel(false).0,
-        latency: None,
-        starting: false,
-        dialled: false,
-        latency_failed: false,
-        lanes: Lanes::default(),
-        checkpoint_misses: 0,
-        moved: [Instant::now(); 2],
-    };
+    let mut member = Member::new("peer".into(), watch::channel(false).0, None, false);
     let refused = || -> Option<Error> { Some("refused".into()) };
     for final_boundary in [false, false, true] {
         assert!(member.missed(refused(), final_boundary, true).is_none());
@@ -927,7 +845,6 @@ async fn intervals_and_failures_share_the_run_clock() -> Result<(), Error> {
     let mut fixture = Fixture::new(&["near", "far"], 1000).await?;
     fixture.config.stages = vec![Stage::Download, Stage::Upload];
     fixture.config.warmup = Duration::from_millis(500);
-    fixture.config.insecure = true;
     let (far_mode, mut observed) = (fixture.modes[1].clone(), fixture.snapshots.subscribe());
     // Far refuses the upload's checkpoints, so it fails as the upload window opens.
     let drive_fault = tokio::spawn(async move {
@@ -942,9 +859,7 @@ async fn intervals_and_failures_share_the_run_clock() -> Result<(), Error> {
     tokio::time::timeout(Duration::from_secs(30), drive_fault).await??;
     heartbeat.abort();
     let snapshot = fixture.snapshots.borrow();
-    let [failure] = &snapshot.failures[..] else {
-        panic!("{:?}", snapshot.failures);
-    };
+    let failure = sole_failure(&snapshot);
     assert_eq!((failure.server_id.as_str(), failure.stage), ("far", Stage::Upload));
     // As Go's final() emits them, the final boundary's rates come after the upload's 1 s window.
     assert!(snapshot.latest.elapsed >= Duration::from_secs(1) && snapshot.latest.up_bps.is_some());
@@ -991,7 +906,6 @@ async fn latency_stage_losses_drop_one_server_and_the_run_continues() -> Result<
     fixture.latency();
     fixture.servers[0].latency.as_mut().unwrap().base_url = unresponsive_url;
     fixture.config.stages = vec![Stage::Latency, Stage::Download];
-    fixture.config.insecure = true;
     fixture.snapshots.send_replace(listing(&fixture.servers));
     let mut observed = fixture.snapshots.subscribe();
     let far_loses_later = async {
@@ -1073,7 +987,6 @@ async fn a_stop_records_the_evidence_its_stage_lacked() -> Result<(), Error> {
         let mut fixture = Fixture::new(&["peer"], 2000).await?;
         fixture.latency();
         fixture.config.ping_interval = Duration::from_millis(100);
-        fixture.config.insecure = true;
         fixture.modes[0].store(8, Ordering::SeqCst);
 
         let stop_early = async {
@@ -1087,17 +1000,10 @@ async fn a_stop_records_the_evidence_its_stage_lacked() -> Result<(), Error> {
         assert!(result?.is_empty());
         let snapshot = fixture.snapshots.borrow();
         assert!(snapshot.results[0].stopped);
-        let [failure] = &snapshot.failures[..] else {
-            panic!("{stage:?}: {:?}", snapshot.failures);
-        };
+        let failure = sole_failure(&snapshot);
         assert_eq!(
             (failure.server_id.as_str(), failure.stage, failure.scope, failure.reason),
-            (
-                "peer",
-                stage,
-                scope,
-                graphite_meter_core::failure::FailureReason::InsufficientEvidence
-            )
+            ("peer", stage, scope, FailureReason::InsufficientEvidence)
         );
     }
     Ok(())
@@ -1105,22 +1011,14 @@ async fn a_stop_records_the_evidence_its_stage_lacked() -> Result<(), Error> {
 
 /// A channel lost once the window has ended, before the stage drains, ends its session as the
 /// window's end does, with no failure, as Go's probes.ended leads to finish(nil) (latency.go:252-253).
-/// The stage tells each session its window as it opens (latency.go:233), without which the channel
-/// was dialled again, and counts the session stopped, where it once failed the server there.
+/// The stage tells each session its window as it opens (latency.go:233) and counts the session stopped.
 #[tokio::test]
 async fn a_loss_after_the_window_end_ends_the_session_with_no_failure() -> Result<(), Error> {
     let mut fixture = Fixture::new(&["peer"], 300).await?;
     fixture.latency();
     fixture.config.ping_interval = Duration::from_millis(20);
-    fixture.config.insecure = true;
-    let mut ledger = RunLedger::new();
-    let mut run = StageRun::open(
-        Stage::Latency,
-        &fixture.config,
-        &fixture.servers,
-        &fixture.snapshots,
-        &mut ledger,
-    )?;
+    let (mut ledger, config, servers) = (RunLedger::new(), &fixture.config, &fixture.servers);
+    let mut run = StageRun::open(Stage::Latency, config, servers, &fixture.snapshots, &mut ledger)?;
     run.ready().await?;
     run.open_window().await?;
     // The peer ends the channel as idle 30 ms after the window's end, and no drain follows.
@@ -1130,11 +1028,8 @@ async fn a_loss_after_the_window_end_ends_the_session_with_no_failure() -> Resul
     let ended = tokio::time::timeout(Duration::from_secs(5), run.latency.join_next()).await?;
     run.latency_ended(ended.ok_or("no latency session")?)?;
     drop(run);
-    assert!(
-        fixture.snapshots.borrow().failures.is_empty(),
-        "{:?}",
-        fixture.snapshots.borrow().failures
-    );
+    let snapshot = fixture.snapshots.borrow();
+    assert!(snapshot.failures.is_empty(), "{:?}", snapshot.failures);
     Ok(())
 }
 

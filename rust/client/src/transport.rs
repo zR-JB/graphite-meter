@@ -178,6 +178,13 @@ pub struct Transport {
     home: Handle,
 }
 
+/// When a request lasting `duration` from now ends.
+fn deadline(duration: Duration) -> Result<Instant, Error> {
+    Ok(Instant::now()
+        .checked_add(duration)
+        .ok_or("request duration is too large")?)
+}
+
 /// Dials on `home`, which then runs the connection's endpoint and drivers.
 async fn dial_h3(home: &Handle, origin: &str, http: &Http) -> Result<Http3Client, Error> {
     let (uri, insecure) = (origin.parse()?, http.insecure);
@@ -259,21 +266,26 @@ impl Transport {
 
     /// Ends an HTTP/3 request's body and checks the server's answer.
     async fn answer_h3(&self, stream: &mut Http3Stream, target: &str) -> Result<(), Error> {
-        self.answered(stream.finish().await, stream, target).await?;
-        let response = stream.response().await?;
+        self.answered(stream.send.finish().await, stream, target).await?;
+        let response = stream.recv.response().await?;
         self.http.check_status(target, response.status(), response.headers())
     }
 
     /// `sent`, or why an HTTP/3 request's body could not be sent: a server that answers early stops
     /// reading it, so its answer, read for a second, names the refusal, as Go's round trip returns
     /// it; otherwise the send's error.
-    async fn answered(&self, sent: Result<(), Error>, stream: &mut Http3Stream, target: &str) -> Result<(), Error> {
+    async fn answered(
+        &self,
+        sent: Result<(), http3::Error>,
+        stream: &mut Http3Stream,
+        target: &str,
+    ) -> Result<(), Error> {
         let Err(error) = sent else { return Ok(()) };
-        let Ok(Ok(response)) = tokio::time::timeout(Duration::from_secs(1), stream.response()).await else {
-            return Err(error);
+        let Ok(Ok(response)) = tokio::time::timeout(Duration::from_secs(1), stream.recv.response()).await else {
+            return Err(error.into());
         };
         let refusal = self.http.check_status(target, response.status(), response.headers());
-        Err(refusal.err().unwrap_or(error))
+        Err(refusal.err().unwrap_or_else(|| error.into()))
     }
 
     pub async fn receive(
@@ -284,10 +296,7 @@ impl Transport {
         limit: u64,
         duration: Duration,
     ) -> Result<Body, Error> {
-        let target = url(&self.origin, route, query);
-        let deadline = Instant::now()
-            .checked_add(duration)
-            .ok_or("request duration is too large")?;
+        let (target, deadline) = (url(&self.origin, route, query), deadline(duration)?);
         let inner = timeout_at(deadline, async {
             let request = Request::builder().method(method.clone());
             Ok::<_, Error>(match self.open_h3(request, &target).await? {
@@ -319,22 +328,17 @@ impl Transport {
     where
         S: Stream<Item = Result<Bytes, Error>> + Send + 'static,
     {
-        let target = url(&self.origin, route, query);
-        let deadline = Instant::now()
-            .checked_add(duration)
-            .ok_or("request duration is too large")?;
+        let (target, deadline) = (url(&self.origin, route, query), deadline(duration)?);
+        let octets = |request: http::request::Builder| {
+            let request = request.header(http::header::CONTENT_TYPE, "application/octet-stream");
+            request.header(http::header::CONTENT_LENGTH, length)
+        };
         timeout_at(deadline, async {
-            let request = Request::builder()
-                .method(Method::POST)
-                .header(http::header::CONTENT_TYPE, "application/octet-stream")
-                .header(http::header::CONTENT_LENGTH, length);
-            let Some(mut stream) = self.open_h3(request, &target).await? else {
-                let request = self
-                    .http
-                    .builder(Method::POST, &target)?
-                    .header(http::header::CONTENT_TYPE, "application/octet-stream")
-                    .header(http::header::CONTENT_LENGTH, length)
-                    .body(crate::net::streaming(body))?;
+            let Some(mut stream) = self
+                .open_h3(octets(Request::builder().method(Method::POST)), &target)
+                .await?
+            else {
+                let request = octets(self.http.builder(Method::POST, &target)?).body(crate::net::streaming(body))?;
                 let response = self.http.send(request, self.protocol, None).await?;
                 crate::net::bounded_body(response).await?;
                 return Ok(());
@@ -347,7 +351,7 @@ impl Transport {
                     .checked_add(chunk.len() as u64)
                     .filter(|sent| *sent <= length)
                     .ok_or("request body exceeds content length")?;
-                self.answered(stream.send_data(chunk).await, &mut stream, &target)
+                self.answered(stream.send.send_data(chunk).await, &mut stream, &target)
                     .await?;
             }
             if sent != length {
@@ -416,7 +420,7 @@ impl Body {
                         }
                     }
                 },
-                BodyInner::H3(stream) => stream.recv_data().await,
+                BodyInner::H3(stream) => Ok::<_, Error>(stream.recv.data().await?),
             }
         })
         .await??;
@@ -437,14 +441,12 @@ mod tests {
     /// Request bounds live at the common HTTP boundary; an owned body keeps its H3 driver alive.
     #[tokio::test]
     async fn native_streaming_and_body_limits() -> Result<(), Error> {
-        let _ = crate::crypto::provider().install_default();
         let (endpoint, origin) = crate::fixtures::h3_endpoint()?;
         let server = tokio::spawn(async move {
             let mut rejected = tokio::task::JoinSet::new();
             let incoming = endpoint.accept().await.ok_or("endpoint closed")?;
             rejected.spawn(async move { incoming.await });
-            let connection = endpoint.accept().await.ok_or("endpoint closed")?.await?;
-            let mut h3 = http3::server::Connection::new(connection, None);
+            let mut h3 = crate::fixtures::h3_connection(&endpoint).await?;
             // Echo, bounded echo, upload reply, oversized reply, truncated upload and download.
             for (method, bytes, declared) in [
                 (Method::GET, 12, None),
@@ -461,14 +463,8 @@ mod tests {
                 while let Some(chunk) = recv.data().await? {
                     payload.extend_from_slice(&chunk);
                 }
-                assert_eq!(
-                    payload,
-                    if method == Method::POST {
-                        &b"native upload"[..]
-                    } else {
-                        &[]
-                    }
-                );
+                let expected: &[u8] = if method == Method::POST { b"native upload" } else { b"" };
+                assert_eq!(payload, expected);
                 let mut response = http::Response::builder().status(200);
                 if let Some(length) = declared {
                     response = response.header(http::header::CONTENT_LENGTH, length);
@@ -489,11 +485,10 @@ mod tests {
         let text = crate::failure::text(refused.map(drop).unwrap_err().as_ref());
         assert!(text.starts_with("Certificate not trusted: "), "{text}");
         let transport = Transport::connect(Http::new(true)?, &origin, Protocol::Http3).await?;
+        let download =
+            |limit, millis| transport.receive(Method::GET, Route::Download, &[], limit, Duration::from_millis(millis));
         for limit in [100, 3] {
-            let mut body = transport
-                .receive(Method::GET, Route::Download, &[], limit, Duration::from_secs(5))
-                .await?;
-            let result = body.chunk().await;
+            let result = download(limit, 5000).await?.chunk().await;
             if limit == 100 {
                 assert_eq!(result?.ok_or("missing echo")?.len(), 12);
             } else {
@@ -503,9 +498,8 @@ mod tests {
         for expected in [None, Some("exceeds byte limit"), Some("truncated")] {
             let body =
                 futures_util::stream::iter([Ok(Bytes::from_static(b"native ")), Ok(Bytes::from_static(b"upload"))]);
-            let result = transport
-                .send(Route::Upload, &[], body, 13, Duration::from_secs(5))
-                .await;
+            let (length, limit) = (13, Duration::from_secs(5));
+            let result = transport.send(Route::Upload, &[], body, length, limit).await;
             match expected {
                 None => result?,
                 Some("truncated") => assert_eq!(
@@ -515,27 +509,16 @@ mod tests {
                 Some(text) => assert!(result.unwrap_err().to_string().contains(text)),
             }
         }
-        let mut short = transport
-            .receive(Method::GET, Route::Download, &[], 100, Duration::from_secs(5))
-            .await?;
+        let mut short = download(100, 5000).await?;
         assert_eq!(short.chunk().await?.ok_or("missing partial download")?.len(), 1);
         assert!(short.chunk().await?.is_none());
         drop(short);
         // Waiting for the connection slot spends the same request budget as reading its body.
         let slot = transport.h3.as_ref().ok_or("not HTTP/3")?.lock().await;
-        let locked = transport
-            .receive(Method::GET, Route::Download, &[], 100, Duration::from_millis(20))
-            .await;
-        assert!(
-            locked
-                .err()
-                .ok_or("lock escaped deadline")?
-                .is::<tokio::time::error::Elapsed>()
-        );
+        let locked = download(100, 20).await.err().ok_or("lock escaped deadline")?;
+        assert!(locked.is::<tokio::time::error::Elapsed>());
         drop(slot);
-        let mut hanging = transport
-            .receive(Method::GET, Route::Download, &[], 100, Duration::from_millis(100))
-            .await?;
+        let mut hanging = download(100, 100).await?;
         drop(transport);
         assert!(hanging.chunk().await.unwrap_err().is::<tokio::time::error::Elapsed>());
         drop(hanging);

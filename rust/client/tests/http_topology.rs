@@ -7,9 +7,12 @@ use http::{Method, Response};
 use http_body_util::Full;
 use hyper::{body::Bytes, service::service_fn};
 use hyper_util::rt::{TokioExecutor, TokioIo};
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
 };
 use tokio::net::TcpListener;
 
@@ -109,23 +112,20 @@ async fn bidirectional_upload_lanes_start_while_downloads_wait_for_headers() -> 
         url: origin,
         stages: vec![Stage::Bidirectional],
         loaded_latency: false,
-        warmup: std::time::Duration::ZERO,
-        bidirectional_duration: std::time::Duration::from_secs(1),
+        warmup: Duration::ZERO,
+        bidirectional_duration: Duration::from_secs(1),
         streams: 1,
         ..Config::default()
     };
     let (snapshots, _) = tokio::sync::watch::channel(Snapshot::default());
     let (cancel, cancelled) = tokio::sync::watch::channel(false);
+    let http = Http::new(false)?;
     let run = tokio::spawn(graphite_meter_client::runner::run(
-        config,
-        Http::new(false)?,
-        snapshots,
-        cancelled,
-        None,
+        config, http, snapshots, cancelled, None,
     ));
-    let started = tokio::time::timeout(std::time::Duration::from_secs(5), uploaded.wait_for(|up| *up)).await;
+    let started = tokio::time::timeout(Duration::from_secs(5), uploaded.wait_for(|up| *up)).await;
     cancel.send_replace(true);
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), run).await;
+    let _ = tokio::time::timeout(Duration::from_secs(5), run).await;
     server.abort();
     started.map_err(|_| "upload lanes waited for download readiness")??;
     assert!(downloads.load(Ordering::SeqCst) > 0);
@@ -136,7 +136,7 @@ async fn bidirectional_upload_lanes_start_while_downloads_wait_for_headers() -> 
 async fn pooled_connections_expire_without_another_request_and_preserve_active_bodies() -> Result<(), Error> {
     use http_body_util::{BodyExt, StreamBody};
     use hyper::body::Frame;
-    use std::{convert::Infallible, time::Duration};
+    use std::convert::Infallible;
 
     let _ = graphite_meter_client::crypto::provider().install_default();
     for protocol in [Protocol::Http1, Protocol::Http2] {

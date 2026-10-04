@@ -15,7 +15,7 @@ use graphite_meter_core::{
     route::Route,
     wire,
 };
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, time::Duration};
 use tokio::{
     sync::{mpsc, watch},
     time::Instant,
@@ -172,42 +172,22 @@ async fn dial(http: &Http, target: &LatencyTarget, deadline: Instant) -> Result<
     .await
 }
 
+/// A latency channel: a WebSocket, or a WebTransport session's datagrams.
 enum Bus {
     WebSocket(Box<Socket>),
-    WebTransport(Arc<crate::webtransport::Session>),
-}
-enum Writer {
-    WebSocket(futures_util::stream::SplitSink<Socket, Message>),
-    WebTransport(Arc<crate::webtransport::Session>),
-}
-enum Reader {
-    WebSocket(futures_util::stream::SplitStream<Socket>),
-    WebTransport(Arc<crate::webtransport::Session>),
+    WebTransport(Box<crate::webtransport::Session>),
 }
 impl Bus {
-    fn split(self) -> (Writer, Reader) {
-        match self {
-            Self::WebSocket(socket) => {
-                let (writer, reader) = (*socket).split();
-                (Writer::WebSocket(writer), Reader::WebSocket(reader))
-            }
-            Self::WebTransport(session) => (Writer::WebTransport(session.clone()), Reader::WebTransport(session)),
-        }
-    }
-}
-impl Writer {
     async fn send(&mut self, text: String) -> Result<(), Error> {
         match self {
-            Self::WebSocket(writer) => writer.send(Message::Text(text.into())).await?,
+            Self::WebSocket(socket) => socket.send(Message::Text(text.into())).await?,
             Self::WebTransport(session) => session.send_datagram(text.as_bytes()).await?,
         }
         Ok(())
     }
-    async fn close(self, reader: Reader) {
-        if let (Self::WebSocket(writer), Reader::WebSocket(reader)) = (self, reader)
-            && let Ok(mut socket) = writer.reunite(reader)
-        {
-            let _ = tokio::time::timeout(Duration::from_millis(250), socket.close(None)).await;
+    async fn close(self) {
+        if let Self::WebSocket(mut socket) = self {
+            let _ = tokio::time::timeout(Duration::from_millis(250), (*socket).close(None)).await;
         }
     }
     /// The lane ending the server closed a WebTransport session with, once it has.
@@ -217,11 +197,9 @@ impl Writer {
             Self::WebSocket(_) => None,
         }
     }
-}
-impl Reader {
     async fn next(&mut self) -> Option<Result<Message, Error>> {
         match self {
-            Self::WebSocket(reader) => reader.next().await.map(|result| result.map_err(Into::into)),
+            Self::WebSocket(socket) => socket.next().await.map(|result| result.map_err(Into::into)),
             Self::WebTransport(session) => match session.recv_datagram().await {
                 Ok(bytes) => Some(Ok(match String::from_utf8(bytes.to_vec()) {
                     Ok(text) => Message::Text(text.into()),
@@ -239,7 +217,7 @@ impl Reader {
 pub(crate) async fn verify(http: &Http, target: &LatencyTarget) -> Result<Duration, Error> {
     let attempt = async {
         // One dial, as Go's verifyLatency (latency.go:85-97).
-        let (mut writer, mut reader) = connect(http, &target.base_url, target.transport).await?.split();
+        let mut bus = connect(http, &target.base_url, target.transport).await?;
         let result = async {
             let reply_window = match target.transport {
                 LatencyTransport::WebTransport => Duration::from_millis(750),
@@ -247,19 +225,17 @@ pub(crate) async fn verify(http: &Http, target: &LatencyTarget) -> Result<Durati
             };
             loop {
                 let sent = Instant::now();
-                writer.send(wire::encode_ping(0)).await?;
+                bus.send(wire::encode_ping(0)).await?;
                 let reply = tokio::time::timeout(reply_window, async {
                     loop {
-                        match reader.next().await {
+                        match bus.next().await {
                             Some(Ok(Message::Text(text))) => {
                                 if wire::decode_pong(&text).is_ok_and(|pong| pong.id == 0) {
                                     return Ok(sent.elapsed());
                                 }
                             }
                             Some(Ok(Message::Close(frame))) => return Err(closed(frame)),
-                            None => {
-                                return Err("latency channel closed before replying".into());
-                            }
+                            None => return Err("latency channel closed before replying".into()),
                             Some(Err(error)) => return Err(error),
                             _ => {}
                         }
@@ -274,7 +250,7 @@ pub(crate) async fn verify(http: &Http, target: &LatencyTarget) -> Result<Durati
             }
         }
         .await;
-        writer.close(reader).await;
+        bus.close().await;
         result
     };
     tokio::time::timeout(Duration::from_secs(3), attempt)
@@ -287,7 +263,7 @@ async fn connect(http: &Http, origin: &str, transport: LatencyTransport) -> Resu
         LatencyTransport::WebTransport => {
             let target = crate::net::url(&canonical_origin(origin)?, Route::WtPing, &[]);
             let session = crate::webtransport::Session::dial(http, &target, Duration::from_secs(10)).await?;
-            Bus::WebTransport(Arc::new(session))
+            Bus::WebTransport(Box::new(session))
         }
     })
 }
@@ -336,19 +312,18 @@ async fn connect_ws(http: &Http, origin: &str) -> Result<Socket, Error> {
             return Err("WebSocket upgrade was not accepted".into());
         }
         let headers = response.headers();
-        let upgrade = headers.get(http::header::UPGRADE).and_then(|value| value.to_str().ok());
-        let connection = headers
-            .get(http::header::CONNECTION)
-            .and_then(|value| value.to_str().ok());
-        if !upgrade.is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
-            || !connection.is_some_and(|value| {
-                value
-                    .split(',')
-                    .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))
-            })
-            || !headers
-                .get("sec-websocket-accept")
-                .is_some_and(|value| value == key.as_str())
+        let header = |name: &str| {
+            headers
+                .get(name)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+        };
+        let connection = header("connection").split(',');
+        if !header("upgrade").eq_ignore_ascii_case("websocket")
+            || !connection
+                .map(str::trim)
+                .any(|token| token.eq_ignore_ascii_case("upgrade"))
+            || header("sec-websocket-accept") != key
             || headers.contains_key("sec-websocket-protocol")
             || headers.contains_key("sec-websocket-extensions")
         {
@@ -377,7 +352,7 @@ fn closed(frame: Option<CloseFrame>) -> Error {
 }
 
 async fn measure(
-    socket: Bus,
+    mut bus: Bus,
     interval: Duration,
     window: usize,
     end: Instant,
@@ -385,7 +360,6 @@ async fn measure(
     observations: &mpsc::Sender<Observation>,
     cancel: &mut watch::Receiver<Stop>,
 ) -> Result<(), Error> {
-    let (mut writer, mut reader) = socket.split();
     let mut pending = BTreeMap::<u32, (Instant, Instant)>::new();
     let mut late = BTreeMap::<u32, Instant>::new();
     let mut next_id = 0_u32;
@@ -434,17 +408,17 @@ async fn measure(
                 let Some(next) = next_id.checked_add(1) else { break Err("latency probe identifier exhausted".into()); };
                 next_id = next;
                 pending.insert(id, (sent, sent + timeout));
-                if !matches!(tokio::time::timeout(Duration::from_secs(1), writer.send(wire::encode_ping(id))).await, Ok(Ok(()))) {
+                if !matches!(tokio::time::timeout(Duration::from_secs(1), bus.send(wire::encode_ping(id))).await, Ok(Ok(()))) {
                     pending.remove(&id);
                     if let Err(error) = emit(observations, Observation::Lost { sent, outcome: ProbeOutcome::SendFailure }) { break Err(error); }
                     // Only the session's first probe ends it (latency.go:218-220), with the ending the server closed
                     // it with, if any; a later one's failure is counted and the reader decides (latency.go:265-268).
                     if id == 0 && !ledger.answered {
-                        break Err(writer.ending().map_or_else(|| Failure::Disconnected("latency channel send failed").into(), |ending| Failure::Lane(ending).into()));
+                        break Err(bus.ending().map_or_else(|| Failure::Disconnected("latency channel send failed").into(), |ending| Failure::Lane(ending).into()));
                     }
                 }
             }
-            message = reader.next() => {
+            message = bus.next() => {
                 let received = Instant::now();
                 match message {
                     Some(Ok(Message::Text(text))) => {
@@ -474,16 +448,11 @@ async fn measure(
             }
         }
     };
+    let outcome = ProbeOutcome::Unresolved;
     for (_, (sent, _)) in pending {
-        emit(
-            observations,
-            Observation::Lost {
-                sent,
-                outcome: ProbeOutcome::Unresolved,
-            },
-        )?;
+        emit(observations, Observation::Lost { sent, outcome })?;
     }
-    writer.close(reader).await;
+    bus.close().await;
     result
 }
 
@@ -509,19 +478,13 @@ async fn stopped(cancel: &mut watch::Receiver<Stop>, at_least: Stop) -> Stop {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt},
-        net::TcpListener,
-    };
+    use std::sync::Arc;
+    use tokio::{io::AsyncWriteExt, net::TcpListener};
 
     async fn websocket_listener() -> Result<(TcpListener, LatencyTarget), Error> {
-        let _ = crate::crypto::provider().install_default();
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let target = LatencyTarget {
-            base_url: format!("http://{}", listener.local_addr()?),
-            transport: LatencyTransport::WebSocket,
-        };
-        Ok((listener, target))
+        let (listener, base_url) = crate::fixtures::listener().await?;
+        let transport = LatencyTransport::WebSocket;
+        Ok((listener, LatencyTarget { base_url, transport }))
     }
 
     #[tokio::test]
@@ -533,32 +496,22 @@ mod tests {
         let whole_second = Duration::from_secs((now + date_lead).as_secs() + 1);
         tokio::time::sleep(whole_second - date_lead - now).await;
         let date = httpdate::fmt_http_date(std::time::UNIX_EPOCH + whole_second);
-        let refusal = format!(
-            "HTTP/1.1 429 Too Many Requests\r\nRetry-After: {date}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-        );
+        let empty = "Content-Length: 0\r\nConnection: close\r\n\r\n";
         let peer = tokio::spawn(async move {
             let mut attempts = Vec::new();
             let mut minimum = Duration::ZERO;
             for response in [
-                Some(refusal.as_str()),
-                Some(
-                    "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                ),
-                Some("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+                Some(format!(
+                    "HTTP/1.1 429 Too Many Requests\r\nRetry-After: {date}\r\n{empty}"
+                )),
+                Some(format!("HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\n{empty}")),
+                Some(format!("HTTP/1.1 404 Not Found\r\n{empty}")),
                 None,
             ] {
                 let (mut stream, _) = listener.accept().await?;
                 attempts.push(Instant::now());
                 if let Some(response) = response {
-                    let mut request = Vec::new();
-                    loop {
-                        let mut byte = [0];
-                        stream.read_exact(&mut byte).await?;
-                        request.push(byte[0]);
-                        if request.ends_with(b"\r\n\r\n") {
-                            break;
-                        }
-                    }
+                    crate::fixtures::read_head(&mut stream).await?;
                     if attempts.len() == 1 {
                         minimum = httpdate::parse_http_date(&date)?
                             .duration_since(std::time::SystemTime::now())
@@ -591,8 +544,7 @@ mod tests {
     /// unless the ending revokes the grant (TestLaneEndingsNameTheirReason, latency_test.go:67-110)
     /// or no probe was ever answered (probeLedger.interrupt, latency_test.go:134-148); once the
     /// window has ended, a loss ends the session cleanly (latency.go:252). A channel lost as it
-    /// opened, with less of the window left than the pause after such a loss, is dialled again at
-    /// once, where the pause once ran to the window's end and failed a redial the server would take.
+    /// opened, with less of the window left than the pause after such a loss, is dialled again at once.
     #[tokio::test]
     async fn a_lost_channel_is_dialled_again_as_go_dials_it() -> Result<(), Error> {
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -646,28 +598,19 @@ mod tests {
 
     /// A WebTransport session the server closes as revoked reads as that lane ending, as a
     /// WebSocket's close frame does, so it asks for sign-in and is not dialled again
-    /// (latency.go:33-47, failure.go:83-95). Here the close arrives before a due probe, whose failed
-    /// send once decided the outcome: the session's first probe reports the session's ending, and
-    /// a later one's failure is counted while the reader decides, as Go's (latency.go:218-220, 265-268).
+    /// (latency.go:33-47, failure.go:83-95). Here the close arrives before a due probe: the session's
+    /// first probe reports its ending, and a later one's failure is counted while the reader decides,
+    /// as Go's (latency.go:218-220, 265-268).
     #[tokio::test]
     async fn a_webtransport_session_closed_as_revoked_is_not_dialled_again() -> Result<(), Error> {
-        use graphite_meter_http3::{server::Connection, webtransport::Session};
-        let _ = crate::crypto::provider().install_default();
         let mut seen = Vec::new();
         for answered in [false, true] {
             let (endpoint, origin) = crate::fixtures::h3_endpoint()?;
-            let server = tokio::spawn(async move {
-                let mut connection = Connection::new(endpoint.accept().await.ok_or("closed")?.await?, None);
-                let (_, stream) = connection.next().await?.ok_or("no CONNECT")?.resolve().await?;
-                let revoke = async {
-                    let session = Session::accept(stream, http::HeaderMap::new()).await?;
-                    let revoked = LaneEnding::Revoked;
-                    session.close(revoked.webtransport_code(), revoked.reason()).await;
-                    std::future::pending::<Result<(), Error>>().await
-                };
-                let (revoked, ()) = tokio::join!(revoke, async { while let Ok(Some(_)) = connection.next().await {} });
-                revoked
-            });
+            let server = tokio::spawn(crate::fixtures::webtransport_peer(endpoint, |session| async move {
+                let revoked = LaneEnding::Revoked;
+                session.close(revoked.webtransport_code(), revoked.reason()).await;
+                std::future::pending().await
+            }));
             let bus = connect(&Http::new(true)?, &origin, LatencyTransport::WebTransport).await?;
             let Bus::WebTransport(session) = &bus else {
                 unreachable!()
@@ -738,11 +681,15 @@ mod tests {
         let (observations, receiver) = mpsc::channel(capacity);
         let (_stop, mut cancel) = watch::channel(Stop::Running);
         let started = Instant::now();
+        let (interval, end) = (
+            Duration::from_millis(interval),
+            started + Duration::from_millis(duration),
+        );
         measure(
             bus,
-            Duration::from_millis(interval),
+            interval,
             window,
-            started + Duration::from_millis(duration),
+            end,
             &mut Ledger::default(),
             &observations,
             &mut cancel,
@@ -755,12 +702,9 @@ mod tests {
         let (_, mut receiver) = collect(bus, interval, duration, 16, 16).await?;
         let (mut replies, mut timeouts) = (0, 0);
         while let Ok(event) = receiver.try_recv() {
-            match event {
-                Observation::Sample { .. } => replies += 1,
-                Observation::Lost {
-                    outcome: ProbeOutcome::Timeout,
-                    ..
-                } => timeouts += 1,
+            match event.outcome() {
+                Some(ProbeOutcome::Reply { .. }) => replies += 1,
+                Some(ProbeOutcome::Timeout) => timeouts += 1,
                 _ => panic!("unexpected outcome"),
             }
         }
@@ -817,15 +761,8 @@ mod tests {
         let mut ledger = Ledger::default();
         ledger.observe(Duration::from_secs(9));
         let started = Instant::now();
-        let session = measure(
-            bus,
-            Duration::from_millis(100),
-            16,
-            started + Duration::from_secs(60),
-            &mut ledger,
-            &observations,
-            &mut cancel,
-        );
+        let (interval, end) = (Duration::from_millis(100), started + Duration::from_secs(60));
+        let session = measure(bus, interval, 16, end, &mut ledger, &observations, &mut cancel);
         let stop_later = async {
             tokio::time::sleep(Duration::from_millis(350)).await;
             stop.send_replace(Stop::Now);
@@ -835,13 +772,7 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(1), "{:?}", started.elapsed());
         let mut unresolved = 0;
         while let Ok(event) = receiver.try_recv() {
-            assert!(matches!(
-                event,
-                Observation::Lost {
-                    outcome: ProbeOutcome::Unresolved,
-                    ..
-                }
-            ));
+            assert!(matches!(event.outcome(), Some(ProbeOutcome::Unresolved)));
             unresolved += 1;
         }
         assert_eq!(unresolved, 4);
@@ -879,17 +810,11 @@ mod tests {
 
     #[tokio::test]
     async fn websocket_proxy_uses_absolute_form_and_validates_upgrade() -> Result<(), Error> {
-        let _ = crate::crypto::provider().install_default();
         for valid in [false, true] {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-            let address = listener.local_addr()?;
+            let (listener, origin) = crate::fixtures::listener().await?;
             let peer = tokio::spawn(async move {
                 let (mut stream, _) = listener.accept().await.unwrap();
-                let mut head = Vec::new();
-                while !head.ends_with(b"\r\n\r\n") {
-                    head.push(stream.read_u8().await.unwrap());
-                }
-                let head = String::from_utf8(head).unwrap();
+                let head = crate::fixtures::read_head(&mut stream).await.unwrap();
                 assert!(head.starts_with("GET http://meter.test/ws/ping HTTP/1.1\r\n"), "{head}");
                 assert!(head.contains("proxy-authorization: Basic dXNlcjpzZWNyZXQ="), "{head}");
                 let key = head
@@ -914,11 +839,8 @@ mod tests {
                 }
             });
             let mut http = Http::new(false)?;
-            http.set_proxy(graphite_meter_net::Proxy::new(
-                &format!("http://user:secret@{address}"),
-                "",
-                "",
-            ));
+            let proxy = origin.replacen("//", "//user:secret@", 1);
+            http.set_proxy(graphite_meter_net::Proxy::new(&proxy, "", ""));
             tokio::time::timeout(Duration::from_secs(5), async {
                 let result = connect_ws(&http, "http://meter.test").await;
                 if valid {

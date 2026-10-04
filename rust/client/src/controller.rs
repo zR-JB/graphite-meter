@@ -50,6 +50,21 @@ struct Operation {
 }
 
 impl Operation {
+    fn new<F>(purpose: Purpose, run: impl FnOnce(watch::Receiver<bool>) -> F) -> Self
+    where
+        F: Future<Output = Result<Option<runner::PreparedRun>, Error>> + Send + 'static,
+    {
+        let (cancel, cancelled) = watch::channel(false);
+        Self {
+            task: tokio::spawn(run(cancelled)),
+            cancel,
+            purpose,
+            pending: None,
+            started: Instant::now(),
+            stopping: None,
+        }
+    }
+
     fn cancel(&mut self) {
         self.cancel.send_replace(true);
         self.stopping.get_or_insert(Instant::now() + CANCEL_GRACE);
@@ -207,21 +222,13 @@ impl Controller {
             phase: if running { Phase::Preparing } else { Phase::Checking },
             ..Snapshot::default()
         });
-        let (cancel, cancelled) = watch::channel(false);
         // Grants carry over; connections belong to this check or run alone.
-        let http = self.http.fresh();
-        let snapshots = self.snapshots.clone();
-        let prepared = self.prepared.take();
-        let interactive = self.interactive;
-        let started = Instant::now();
-        self.operation = Some(Operation {
-            task: tokio::spawn(async move { execute(work, http, snapshots, cancelled, prepared, interactive).await }),
-            cancel,
-            purpose: if running { Purpose::Run } else { Purpose::Check },
-            pending: None,
-            started,
-            stopping: None,
-        });
+        let (http, snapshots) = (self.http.fresh(), self.snapshots.clone());
+        let (prepared, interactive) = (self.prepared.take(), self.interactive);
+        let purpose = if running { Purpose::Run } else { Purpose::Check };
+        self.operation = Some(Operation::new(purpose, move |cancelled| {
+            execute(work, http, snapshots, cancelled, prepared, interactive)
+        }));
         Ok(())
     }
     fn replace(&mut self, work: Work) -> Result<(), Error> {
@@ -446,19 +453,24 @@ fn browser(url: &str) -> Result<Child, Error> {
 mod tests {
     use super::*;
 
-    fn operation<F>(controller: &mut Controller, purpose: Purpose, run: impl FnOnce(watch::Receiver<bool>) -> F)
-    where
-        F: std::future::Future<Output = Result<Option<runner::PreparedRun>, Error>> + Send + 'static,
-    {
-        let (cancel, cancelled) = watch::channel(false);
-        controller.operation = Some(Operation {
-            task: tokio::spawn(run(cancelled)),
-            cancel,
-            purpose,
-            pending: None,
-            started: Instant::now(),
-            stopping: None,
+    /// An interactive controller of `config` whose snapshot starts in `phase`.
+    fn controller(config: &Config, phase: Phase) -> Controller {
+        let _ = crate::crypto::provider().install_default();
+        let snapshots = watch::channel(Snapshot {
+            phase,
+            ..Snapshot::default()
         });
+        Controller::new(config, snapshots.0, true).unwrap()
+    }
+
+    /// A controller whose path check runs until it is cancelled.
+    fn checking() -> Controller {
+        let mut controller = controller(&Config::default(), Phase::Checking);
+        controller.operation = Some(Operation::new(Purpose::Check, |mut cancelled| async move {
+            let _ = cancelled.wait_for(|cancelled| *cancelled).await;
+            Ok(None)
+        }));
+        controller
     }
 
     #[tokio::test]
@@ -466,35 +478,27 @@ mod tests {
         let mut controller = checking();
         controller.stop().await;
         let (held, released) = tokio::sync::oneshot::channel::<()>();
-        operation(&mut controller, Purpose::Check, |_| async move {
+        controller.operation = Some(Operation::new(Purpose::Check, |_| async move {
             let _held = held;
             std::future::pending().await
-        });
+        }));
         drop(controller);
-        assert!(
-            tokio::time::timeout(Duration::from_secs(1), released)
-                .await
-                .unwrap()
-                .is_err()
-        );
+        let released = tokio::time::timeout(Duration::from_secs(1), released).await;
+        assert!(released.unwrap().is_err());
     }
 
     #[tokio::test]
     async fn shutdown_joins_operation_before_returning_its_partial_result() {
-        let _ = crate::crypto::provider().install_default();
         for phase in [Phase::Measuring, Phase::Cancelled, Phase::Complete] {
-            let (snapshots, _) = watch::channel(Snapshot {
-                phase,
-                ..Snapshot::default()
-            });
-            let mut controller = Controller::new(&Config::default(), snapshots.clone(), true).unwrap();
+            let mut controller = controller(&Config::default(), phase);
+            let snapshots = controller.snapshots.clone();
             let (joined, completed) = tokio::sync::oneshot::channel();
-            operation(&mut controller, Purpose::Run, |mut cancelled_signal| async move {
+            controller.operation = Some(Operation::new(Purpose::Run, |mut cancelled_signal| async move {
                 let _ = cancelled_signal.wait_for(|cancelled| *cancelled).await;
                 snapshots.send_modify(|snapshot| snapshot.latest.up_bps = Some(42.0));
                 let _ = joined.send(());
                 Ok(None)
-            });
+            }));
             controller.stop().await;
             completed.await.unwrap();
             assert!(controller.operation.is_none());
@@ -506,21 +510,6 @@ mod tests {
             assert_eq!(controller.snapshots.borrow().phase, expected);
             assert_eq!(controller.snapshots.borrow().latest.up_bps, Some(42.0));
         }
-    }
-
-    /// A controller whose path check runs until it is cancelled.
-    fn checking() -> Controller {
-        let _ = crate::crypto::provider().install_default();
-        let (snapshots, _) = watch::channel(Snapshot {
-            phase: Phase::Checking,
-            ..Snapshot::default()
-        });
-        let mut controller = Controller::new(&Config::default(), snapshots, true).unwrap();
-        operation(&mut controller, Purpose::Check, |mut cancelled| async move {
-            let _ = cancelled.wait_for(|cancelled| *cancelled).await;
-            Ok(None)
-        });
-        controller
     }
 
     #[tokio::test]
@@ -540,22 +529,19 @@ mod tests {
         controller.cancel();
         controller.wait().await.unwrap();
         assert_eq!(controller.snapshots.borrow().phase, Phase::Cancelled);
-        assert_eq!(
-            controller.finished.as_ref().map(|run| run.phase),
-            Some(Phase::Cancelled)
-        );
+        let finished = controller.finished.as_ref().map(|run| run.phase);
+        assert_eq!(finished, Some(Phase::Cancelled));
     }
 
     #[tokio::test]
     async fn a_sign_in_that_expires_after_measuring_checks_the_servers_again() {
-        let _ = crate::crypto::provider().install_default();
         let config = Config {
             url: "http://127.0.0.1:1".into(),
             ..Config::default()
         };
-        let (snapshots, _) = watch::channel(Snapshot::default());
-        let mut controller = Controller::new(&config, snapshots.clone(), true).unwrap();
-        operation(&mut controller, Purpose::Run, |_| async move {
+        let mut controller = controller(&config, Phase::default());
+        let snapshots = controller.snapshots.clone();
+        controller.operation = Some(Operation::new(Purpose::Run, |_| async move {
             snapshots.send_modify(|snapshot| {
                 snapshot.results.push(crate::model::StageResult {
                     elapsed: Duration::from_secs(1),
@@ -566,13 +552,11 @@ mod tests {
                 origin: "https://meter.test".into(),
                 login_url: "https://meter.test/login".into(),
             }) as Error)
-        });
+        }));
         let result = completed(&mut controller.operation).await;
         controller.finished(result).unwrap();
-        assert_eq!(
-            controller.finished.as_ref().map(|run| run.phase),
-            Some(Phase::Incomplete)
-        );
+        let finished = controller.finished.as_ref().map(|run| run.phase);
+        assert_eq!(finished, Some(Phase::Incomplete));
         assert_eq!(controller.snapshots.borrow().phase, Phase::Checking);
         controller.stop().await;
     }
@@ -583,10 +567,9 @@ mod tests {
     #[tokio::test]
     async fn a_sign_in_without_a_login_page_checks_the_servers_again() -> Result<(), Error> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let _ = crate::crypto::provider().install_default();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let (listener, url) = crate::fixtures::listener().await?;
         let config = Config {
-            url: format!("http://{}", listener.local_addr()?),
+            url,
             ..Config::default()
         };
         let server = tokio::spawn(async move {
@@ -596,7 +579,7 @@ mod tests {
                 let count = stream.read(&mut request).await?;
                 let answer = if request[..count].starts_with(b"GET /servers ") {
                     let body = r#"{"defaultSelection":["self"],"servers":[{"id":"self","url":".","name":"self"}]}"#;
-                    format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}", body.len())
+                    crate::fixtures::ok(body)
                 } else {
                     "HTTP/1.1 403 Forbidden\r\nGraphite-Meter-Auth: required\r\nContent-Length: 0\r\n\r\n".into()
                 };
@@ -604,8 +587,7 @@ mod tests {
             }
             Ok::<_, Error>(())
         });
-        let (snapshots, _) = watch::channel(Snapshot::default());
-        let mut controller = Controller::new(&config, snapshots, true)?;
+        let mut controller = controller(&config, Phase::default());
         controller.launch(Work::Run(config))?;
         let result = completed(&mut controller.operation).await;
         controller.finished(result)?;
@@ -618,15 +600,11 @@ mod tests {
 
     #[tokio::test]
     async fn an_expired_approval_asks_for_a_new_code_like_go() {
-        let _ = crate::crypto::provider().install_default();
-        for running in [false, true] {
-            let (snapshots, _) = watch::channel(Snapshot::default());
-            let mut controller = Controller::new(&Config::default(), snapshots, true).unwrap();
-            operation(
-                &mut controller,
-                if running { Purpose::Run } else { Purpose::Check },
-                |_| async { Err(Box::new(Failure::ApprovalExpired) as Error) },
-            );
+        for purpose in [Purpose::Check, Purpose::Run] {
+            let mut controller = controller(&Config::default(), Phase::default());
+            controller.operation = Some(Operation::new(purpose, |_| async {
+                Err(Box::new(Failure::ApprovalExpired) as Error)
+            }));
             let result = completed(&mut controller.operation).await;
             controller.finished(result).unwrap();
             assert_eq!(controller.snapshots.borrow().error.as_deref(), Some(SIGN_IN_EXPIRED));

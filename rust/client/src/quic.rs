@@ -1,9 +1,8 @@
 //! HTTP/3 requests over the pinned Noq transport, with an explicitly owned driver.
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use bytes::Bytes;
 use graphite_meter_http3::{self as http3, RecvHalf, SendHalf};
-use http::{Request, Response, Uri};
+use http::{Request, Uri};
 use tokio::{
     sync::{OwnedSemaphorePermit, Semaphore},
     task::JoinSet,
@@ -160,29 +159,12 @@ impl Http3Client {
     }
 }
 
+/// A request's halves, which keep its connection and its place among the connection's requests.
 pub struct Http3Stream {
-    send: SendHalf,
-    recv: RecvHalf,
+    pub(crate) send: SendHalf,
+    pub(crate) recv: RecvHalf,
     _permit: OwnedSemaphorePermit,
     _owner: Arc<Http3Client>,
-}
-
-impl Http3Stream {
-    pub async fn send_data(&mut self, bytes: Bytes) -> Result<(), Error> {
-        Ok(self.send.send_data(bytes).await?)
-    }
-
-    pub async fn finish(&mut self) -> Result<(), Error> {
-        Ok(self.send.finish().await?)
-    }
-
-    pub async fn response(&mut self) -> Result<Response<()>, Error> {
-        Ok(self.recv.response().await?)
-    }
-
-    pub async fn recv_data(&mut self) -> Result<Option<Bytes>, Error> {
-        Ok(self.recv.data().await?)
-    }
 }
 
 #[derive(PartialEq, Eq)]
@@ -221,6 +203,7 @@ impl Origin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
     use http3::{Code, WtCode};
     #[test]
     fn request_authority_is_fixed_and_never_accepts_credentials() {

@@ -72,6 +72,20 @@ struct Member {
 }
 
 impl Member {
+    fn new(id: String, stop: watch::Sender<bool>, latency: Option<watch::Sender<Stop>>, starting: bool) -> Self {
+        Self {
+            id,
+            stop,
+            latency,
+            starting,
+            dialled: false,
+            latency_failed: false,
+            lanes: Lanes::default(),
+            checkpoint_misses: 0,
+            moved: [Instant::now(); 2],
+        }
+    }
+
     fn dialling(&self) -> bool {
         self.latency.is_some() && !self.dialled && !self.latency_failed
     }
@@ -214,7 +228,6 @@ impl<'a> StageRun<'a> {
             .ok_or("stage duration overflow")?;
         let ids = servers.iter().map(|server| server.entry.id.clone());
         snapshots.send_modify(|snapshot| snapshot.open_stage(stage, ids));
-        let opened = Instant::now();
         let mut run = Self {
             stage,
             transfer: match stage {
@@ -247,17 +260,8 @@ impl<'a> StageRun<'a> {
                 let start = start_transfer(stage, server, config, operation_limit, stopped);
                 run.starts.push(start.map(move |started| (id, started)).boxed());
             }
-            run.members.push(Member {
-                id: server.entry.id.clone(),
-                stop,
-                latency,
-                starting: run.transfer.is_some(),
-                dialled: false,
-                latency_failed: false,
-                lanes: Lanes::default(),
-                checkpoint_misses: 0,
-                moved: [opened; 2],
-            });
+            let (id, starting) = (server.entry.id.clone(), run.transfer.is_some());
+            run.members.push(Member::new(id, stop, latency, starting));
         }
         Ok(run)
     }
@@ -281,28 +285,14 @@ impl<'a> StageRun<'a> {
             .boxed(),
         );
         self.hosts.insert(id.clone(), HostLatency::default());
-        let idle = self.stage == Stage::Latency;
-        let interval = if idle {
-            self.config.ping_interval
-        } else {
-            self.config.loaded_ping_interval
-        };
-        let window = if !idle {
-            2
-        } else if interval.is_zero() {
-            4
-        } else {
-            16
+        let (interval, window) = match self.stage {
+            Stage::Latency if self.config.ping_interval.is_zero() => (Duration::ZERO, 4),
+            Stage::Latency => (self.config.ping_interval, 16),
+            _ => (self.config.loaded_ping_interval, 2),
         };
         self.latency.spawn(async move {
-            let result = crate::latency::run(
-                &http,
-                &target,
-                (interval, operation_limit, window),
-                observations,
-                stopped.clone(),
-            )
-            .await;
+            let timing = (interval, operation_limit, window);
+            let result = crate::latency::run(&http, &target, timing, observations, stopped.clone()).await;
             // A session ends Ok past Running only once the stage stopped it or its window ended,
             // which ends it as Go's probes.ended does (latency.go:252-253).
             LatencyCompletion {

@@ -38,28 +38,15 @@ fn unpainted(text: &str) -> String {
 
 fn client(origin: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_graphite-meter-client"));
-    command.args([
-        "--report",
-        "-url",
-        origin,
-        "-stages",
-        "latency",
-        "-latency-duration",
-        "1s",
-        "-warmup",
-        "0",
-        "-ping",
-        "80ms",
-    ]);
+    let flags = "--report -stages latency -latency-duration 1s -warmup 0 -ping 80ms";
+    command.args(["-url", origin]).args(flags.split(' '));
     command.stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     command
 }
 
-async fn latency_peer(revoked_download: bool) -> Result<(String, tokio::task::JoinHandle<()>), Error> {
-    latency_peer_with_limit(revoked_download, 0).await
-}
-
-async fn latency_peer_with_limit(
+/// A catalogue of one latency server, admitting stages up to `max_stage_ms` (0 for the default); with
+/// `revoked_download`, a twin joins and downloads ask for sign-in.
+async fn latency_peer(
     revoked_download: bool,
     max_stage_ms: i64,
 ) -> Result<(String, tokio::task::JoinHandle<()>), Error> {
@@ -136,7 +123,7 @@ async fn latency_peer_with_limit(
 #[tokio::test]
 async fn report_refuses_a_stage_longer_than_its_server_admits() -> Result<(), Error> {
     for (limit, duration, message) in [(1000, "2s", "1s"), (0, "1h", "5m")] {
-        let (origin, peer) = latency_peer_with_limit(false, limit).await?;
+        let (origin, peer) = latency_peer(false, limit).await?;
         let output = tokio::time::timeout(
             Duration::from_secs(5),
             client(&origin).args(["-latency-duration", duration]).output(),
@@ -169,7 +156,7 @@ async fn an_empty_trust_store_fails_only_tls_connections() -> Result<(), Error> 
         command.env("SSL_CERT_FILE", nowhere).env("SSL_CERT_DIR", nowhere);
         tokio::time::timeout(Duration::from_secs(5), command.output())
     };
-    let (origin, peer) = latency_peer(false).await?;
+    let (origin, peer) = latency_peer(false, 0).await?;
     let cleartext = run(&origin).await??;
     peer.abort();
     assert_eq!(
@@ -210,16 +197,7 @@ async fn an_empty_trust_store_fails_only_tls_connections() -> Result<(), Error> 
 async fn all_proxy_is_not_read() -> Result<(), Error> {
     let proxy = TcpListener::bind("127.0.0.1:0").await?;
     let mut command = client("http://meter.invalid");
-    for name in [
-        "HTTP_PROXY",
-        "http_proxy",
-        "HTTPS_PROXY",
-        "https_proxy",
-        "NO_PROXY",
-        "no_proxy",
-        "all_proxy",
-        "REQUEST_METHOD",
-    ] {
+    for name in "HTTP_PROXY http_proxy HTTPS_PROXY https_proxy NO_PROXY no_proxy all_proxy REQUEST_METHOD".split(' ') {
         command.env_remove(name);
     }
     command.env("ALL_PROXY", format!("http://{}", proxy.local_addr()?));
@@ -236,7 +214,7 @@ async fn all_proxy_is_not_read() -> Result<(), Error> {
 
 #[tokio::test]
 async fn sign_in_refused_after_measuring_ends_incomplete() -> Result<(), Error> {
-    let (origin, peer) = latency_peer(true).await?;
+    let (origin, peer) = latency_peer(true, 0).await?;
     let output = tokio::time::timeout(
         Duration::from_secs(8),
         client(&origin)
@@ -299,7 +277,7 @@ async fn report_signal_exit_codes_and_failure_keep_the_final_outcome() -> Result
         stderr.starts_with("graphite-meter-client: Test could not start: "),
         "{stderr}"
     );
-    let (origin, peer) = latency_peer(true).await?;
+    let (origin, peer) = latency_peer(true, 0).await?;
     peer.abort();
     let output = tokio::time::timeout(Duration::from_secs(5), client(&origin).output()).await??;
     assert_eq!(output.status.code(), Some(1));
@@ -336,7 +314,7 @@ async fn terminal(origin: &str, mode: &str, answer: &str, stdin: &str) -> Result
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn tui_quit_and_interrupt_exit_like_the_go_client() -> Result<(), Error> {
-    let (origin, peer) = latency_peer(false).await?;
+    let (origin, peer) = latency_peer(false, 0).await?;
 
     let silent = TcpListener::bind("127.0.0.1:0").await?;
     let silent_origin = format!("http://{}", silent.local_addr()?);

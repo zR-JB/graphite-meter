@@ -259,16 +259,29 @@ mod tests {
     use crate::fixtures::h3_endpoint;
     use crate::transport::TRANSFER_RETRY_BACKOFF;
     use graphite_meter_core::discovery::Protocol;
-    use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt},
-        net::TcpListener,
-    };
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// One lane from `origin` over `protocol`, until it received `bytes` or failed.
+    async fn receive(origin: &str, protocol: Protocol, bytes: u64) -> Result<(), Error> {
+        let http = Http::new(protocol == Protocol::Http3)?;
+        let transport = Arc::new(Transport::connect(http, origin, protocol).await?);
+        let (_stop, cancelled) = watch::channel(false);
+        let mut download = Download::start(transport, 1, Duration::from_secs(5), Duration::ZERO, cancelled).await?;
+        let received = timeout(Duration::from_secs(5), async {
+            while download.bytes() < bytes {
+                download.health()?;
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            Ok::<_, Error>(())
+        })
+        .await;
+        download.stop().await;
+        received?
+    }
 
     #[tokio::test]
     async fn http_lane_preserves_received_bytes_across_partial_responses() -> Result<(), Error> {
-        let _ = crate::crypto::provider().install_default();
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let origin = format!("http://{}", listener.local_addr()?);
+        let (listener, origin) = crate::fixtures::listener().await?;
         let server = tokio::spawn(async move {
             let mut closed = tokio::time::Instant::now();
             for (attempt, lasts) in [Duration::ZERO, 2 * TRANSFER_RETRY_BACKOFF, Duration::ZERO]
@@ -294,18 +307,7 @@ mod tests {
             }
             Ok::<_, Error>(())
         });
-        let transport = Arc::new(Transport::connect(Http::new(false)?, &origin, Protocol::Http1).await?);
-        let (_stop, cancelled) = watch::channel(false);
-        let mut download = Download::start(transport, 1, Duration::from_secs(5), Duration::ZERO, cancelled).await?;
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while download.bytes() < 3072 {
-                download.health()?;
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-            Ok::<_, Error>(())
-        })
-        .await??;
-        download.stop().await;
+        receive(&origin, Protocol::Http1, 3072).await?;
         server.await??;
         Ok(())
     }
@@ -314,11 +316,9 @@ mod tests {
     /// (download.go:74): here every answer declares 64 GiB and ends after 8 bytes.
     #[tokio::test]
     async fn http3_lane_asks_again_after_a_body_cut_short() -> Result<(), Error> {
-        let _ = crate::crypto::provider().install_default();
         let (endpoint, origin) = h3_endpoint()?;
         let server = tokio::spawn(async move {
-            let quic = endpoint.accept().await.ok_or("endpoint closed")?.await?;
-            let mut connection = graphite_meter_http3::server::Connection::new(quic, None);
+            let mut connection = crate::fixtures::h3_connection(&endpoint).await?;
             while let Some(request) = connection.next().await? {
                 let (_, stream) = request.resolve().await?;
                 let (mut send, _recv) = stream.split();
@@ -329,63 +329,33 @@ mod tests {
             }
             Ok::<_, Error>(())
         });
-        let transport = Arc::new(Transport::connect(Http::new(true)?, &origin, Protocol::Http3).await?);
-        let (_stop, cancelled) = watch::channel(false);
-        let mut download = Download::start(transport, 1, Duration::from_secs(5), Duration::ZERO, cancelled).await?;
-        let asked_again = timeout(Duration::from_secs(5), async {
-            while download.bytes() < 24 {
-                download.health()?;
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-            Ok::<_, Error>(())
-        })
-        .await;
-        download.stop().await;
+        let asked_again = receive(&origin, Protocol::Http3, 24).await;
         server.abort();
-        asked_again?
+        asked_again
     }
 
     #[tokio::test]
     async fn webtransport_download_counts_payload_without_stream_headers() -> Result<(), Error> {
-        use graphite_meter_http3::{server::Connection, webtransport::Session as PeerSession};
         timeout(Duration::from_secs(5), async {
-            let _ = crate::crypto::provider().install_default();
-            let (endpoint, origin) = h3_endpoint()?;
-            let mut servers = JoinSet::new();
-            servers.spawn(async move {
-                let quic = endpoint.accept().await.ok_or("endpoint closed")?.await?;
-                let mut connection = Connection::new(quic, None);
-                let (_, stream) = connection.next().await?.ok_or("missing CONNECT")?.resolve().await?;
-                let payload = async {
-                    let session = PeerSession::accept(stream, http::HeaderMap::new()).await?;
-                    let mut lane = session.open_uni().await?;
-                    lane.write_all(b"progress").await?;
-                    // Leave the stream open so cancellation, rather than EOF, ends the lane.
-                    std::future::pending::<Result<(), Error>>().await
-                };
-                let driver = async {
-                    while connection.next().await?.is_some() {}
-                    Ok::<_, Error>(())
-                };
-                tokio::try_join!(payload, driver)?;
-                Ok::<_, Error>(())
-            });
+            let (endpoint, base_url) = h3_endpoint()?;
+            let server = tokio::spawn(crate::fixtures::webtransport_peer(endpoint, |session| async move {
+                let mut lane = session.open_uni().await?;
+                lane.write_all(b"progress").await?;
+                // Leave the stream open so cancellation, rather than EOF, ends the lane.
+                std::future::pending().await
+            }));
             let (_stop, cancelled) = watch::channel(false);
-            let download = Download::start_webtransport(
-                &Http::new(true)?,
-                &ThroughputTarget {
-                    base_url: origin,
-                    protocol: Protocol::Http3,
-                    transport: ThroughputTransport::WebTransport,
-                },
-                1,
-                Duration::from_secs(30),
-                cancelled,
-            )
-            .await?;
+            let (protocol, transport) = (Protocol::Http3, ThroughputTransport::WebTransport);
+            let target = ThroughputTarget {
+                base_url,
+                protocol,
+                transport,
+            };
+            let http = Http::new(true)?;
+            let download = Download::start_webtransport(&http, &target, 1, Duration::from_secs(30), cancelled).await?;
             let measured = download.bytes();
             download.stop().await;
-            servers.shutdown().await;
+            server.abort();
             assert_eq!(measured, 8, "WebTransport counted stream framing as payload");
             Ok::<_, Error>(())
         })
@@ -395,9 +365,7 @@ mod tests {
     /// A refusal ends the lane immediately, without another request or the retry window.
     #[tokio::test]
     async fn http_lane_stops_at_a_refusal() -> Result<(), Error> {
-        let _ = crate::crypto::provider().install_default();
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let origin = format!("http://{}", listener.local_addr()?);
+        let (listener, origin) = crate::fixtures::listener().await?;
         let served = Arc::new(AtomicU64::new(0));
         let seen = served.clone();
         let server = tokio::spawn(async move {
