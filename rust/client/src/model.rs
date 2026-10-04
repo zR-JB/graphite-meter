@@ -1,4 +1,8 @@
-use graphite_meter_core::discovery::{Capabilities, LatencyTarget, ThroughputTarget};
+use graphite_meter_core::{
+    discovery::{Capabilities, LatencyTarget, ThroughputTarget},
+    failure::FailureReason,
+    measurement::{self as core, AggregationInterval, MeasurementResult},
+};
 use std::{collections::VecDeque, time::Duration};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -10,24 +14,19 @@ pub enum Stage {
     Bidirectional,
 }
 
-impl From<graphite_meter_core::measurement::Stage> for Stage {
-    fn from(stage: graphite_meter_core::measurement::Stage) -> Self {
+impl From<core::Stage> for Stage {
+    fn from(stage: core::Stage) -> Self {
         match stage {
-            graphite_meter_core::measurement::Stage::Download => Self::Download,
-            graphite_meter_core::measurement::Stage::Upload => Self::Upload,
-            graphite_meter_core::measurement::Stage::Bidirectional => Self::Bidirectional,
+            core::Stage::Download => Self::Download,
+            core::Stage::Upload => Self::Upload,
+            core::Stage::Bidirectional => Self::Bidirectional,
         }
     }
 }
 
 impl Stage {
     pub fn name(self) -> &'static str {
-        match self {
-            Self::Latency => "Latency",
-            Self::Download => "Download",
-            Self::Upload => "Upload",
-            Self::Bidirectional => "Bidirectional",
-        }
+        ["Latency", "Download", "Upload", "Bidirectional"][self as usize]
     }
     pub fn downloads(self) -> bool {
         matches!(self, Self::Download | Self::Bidirectional)
@@ -73,8 +72,8 @@ pub struct Point {
 pub struct StageResult {
     pub stage: Stage,
     pub elapsed: Duration,
-    pub down: Option<graphite_meter_core::measurement::MeasurementResult>,
-    pub up: Option<graphite_meter_core::measurement::MeasurementResult>,
+    pub down: Option<MeasurementResult>,
+    pub up: Option<MeasurementResult>,
     pub stopped: bool,
     pub server_latencies: Vec<ServerLatencyResult>,
     pub server_results: Vec<ServerContribution>,
@@ -110,20 +109,14 @@ pub enum StageStatus {
 
 impl StageStatus {
     pub fn label(self) -> &'static str {
-        match self {
-            Self::Complete => "Complete",
-            Self::Partial => "Partial",
-            Self::Failed => "Failed",
-            Self::Stopped => "Stopped",
-            Self::Skipped => "Skipped",
-        }
+        ["Complete", "Partial", "Failed", "Stopped", "Skipped"][self as usize]
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ending {
     Stopped,
-    Failed(graphite_meter_core::failure::FailureReason),
+    Failed(FailureReason),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -137,15 +130,15 @@ pub struct ServerFailure {
     pub server_id: String,
     pub stage: Stage,
     pub scope: FailureScope,
-    pub reason: graphite_meter_core::failure::FailureReason,
+    pub reason: FailureReason,
     pub at: Duration,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct ServerContribution {
     pub id: String,
-    pub down: Option<graphite_meter_core::measurement::MeasurementResult>,
-    pub up: Option<graphite_meter_core::measurement::MeasurementResult>,
+    pub down: Option<MeasurementResult>,
+    pub up: Option<MeasurementResult>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -206,19 +199,14 @@ pub struct ServerSummary {
 }
 
 impl ServerSummary {
-    pub fn checked(&self) -> bool {
-        self.throughput.is_some() || self.latency.is_some()
-    }
-
     pub fn has_check_result(&self) -> bool {
-        self.checked() || self.error.is_some()
+        self.throughput.is_some() || self.latency.is_some() || self.error.is_some()
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuthPrompt {
     pub deadline: tokio::time::Instant,
-    pub origin: String,
     pub browser_url: String,
     pub code: String,
 }
@@ -237,7 +225,7 @@ pub struct Snapshot {
     pub failures: Vec<ServerFailure>,
     /// The run's aggregation intervals as Go's run details hold them: timed from the run's start,
     /// the latest 128 of the run, and how many older ones were dropped.
-    pub intervals: VecDeque<graphite_meter_core::measurement::AggregationInterval>,
+    pub intervals: VecDeque<AggregationInterval>,
     pub omitted_intervals: usize,
     pub participants: Vec<String>,
     pub latency_focus: Option<String>,
@@ -248,19 +236,16 @@ pub struct Snapshot {
 impl Snapshot {
     /// Failed when a planned result is missing (a present focus's median included), partial after a failure.
     pub fn stage_status(&self, result: &StageResult) -> StageStatus {
-        let stage = result.stage;
+        let focus = result
+            .server_latencies
+            .iter()
+            .find(|host| Some(&host.id) == self.latency_focus.as_ref());
+        let unfocused = focus.is_none_or(|host| host.median().is_none() || !self.participants.contains(&host.id));
         if result.stopped {
             StageStatus::Stopped
-        } else if result.lacks_throughput()
-            || stage == Stage::Latency
-                && result
-                    .server_latencies
-                    .iter()
-                    .find(|host| Some(&host.id) == self.latency_focus.as_ref())
-                    .is_none_or(|host| host.median().is_none() || !self.participants.contains(&host.id))
-        {
+        } else if result.lacks_throughput() || result.stage == Stage::Latency && unfocused {
             StageStatus::Failed
-        } else if self.failures.iter().any(|failure| failure.stage == stage) {
+        } else if self.failures.iter().any(|failure| failure.stage == result.stage) {
             StageStatus::Partial
         } else {
             StageStatus::Complete
@@ -312,43 +297,24 @@ impl Snapshot {
     }
 
     pub(crate) fn refocus(&mut self) {
-        if self
-            .latency_focus
-            .as_ref()
-            .is_some_and(|focus| self.participants.contains(focus))
-        {
+        let focus = self.latency_focus.as_ref();
+        if focus.is_some_and(|focus| self.participants.contains(focus)) {
             return;
         }
         let idle = self.results.iter().find(|result| result.stage == Stage::Latency);
-        let survivor = self.participants.iter().find(|participant| {
-            idle.is_some_and(|idle| {
-                idle.server_latencies
-                    .iter()
-                    .any(|host| host.id == **participant && host.median().is_some())
-            })
-        });
-        if let Some(survivor) = survivor {
+        let hosts = idle.map_or(&[][..], |idle| &idle.server_latencies);
+        let measured = |id: &&String| hosts.iter().any(|host| host.id == **id && host.median().is_some());
+        if let Some(survivor) = self.participants.iter().find(measured) {
             self.latency_focus = Some(survivor.clone());
         }
     }
 
-    /// Records a server's first failure in a stage and scope, for `reason`; `at` is the time since
-    /// the run started.
-    pub fn failure(
-        &mut self,
-        id: &str,
-        scope: FailureScope,
-        reason: graphite_meter_core::failure::FailureReason,
-        at: Duration,
-    ) {
-        let Some(stage) = self.stage else {
-            return;
-        };
-        if self
-            .failures
-            .iter()
-            .any(|failure| failure.server_id == id && failure.stage == stage && failure.scope == scope)
-        {
+    /// Records a server's first failure in the stage and scope; `at` is the time since the run started.
+    pub fn failure(&mut self, id: &str, scope: FailureScope, reason: FailureReason, at: Duration) {
+        let Some(stage) = self.stage else { return };
+        let known =
+            |failure: &ServerFailure| failure.server_id == id && failure.stage == stage && failure.scope == scope;
+        if self.failures.iter().any(known) {
             return;
         }
         self.failures.push(ServerFailure {

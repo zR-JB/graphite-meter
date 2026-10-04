@@ -13,22 +13,11 @@ fn key(name: &str) -> KeyEvent {
         Some(("alt", base)) => (KeyModifiers::ALT, base),
         _ => (KeyModifiers::NONE, name),
     };
-    let code = match base {
-        "enter" => KeyCode::Enter,
-        "esc" => KeyCode::Esc,
-        "space" => KeyCode::Char(' '),
-        "tab" => KeyCode::Tab,
-        "shift+tab" => KeyCode::BackTab,
-        "up" => KeyCode::Up,
-        "down" => KeyCode::Down,
-        "left" => KeyCode::Left,
-        "right" => KeyCode::Right,
-        "pgdown" => KeyCode::PageDown,
-        "home" => KeyCode::Home,
-        "backspace" => KeyCode::Backspace,
-        base => KeyCode::Char(base.chars().next().unwrap()),
-    };
-    KeyEvent::new(code, modifiers)
+    let named = NAMED.iter().find(|(_, named)| *named == base);
+    KeyEvent::new(
+        named.map_or(KeyCode::Char(base.chars().next().unwrap()), |(code, _)| *code),
+        modifiers,
+    )
 }
 
 fn press(ui: &mut Ui, commands: &mpsc::Sender<Command>, names: &[&str]) -> bool {
@@ -57,42 +46,41 @@ fn setup() -> Ui {
     ui
 }
 
-fn target(id: &str) -> (ThroughputTarget, LatencyTarget) {
+/// A catalogue server whose check reached both its paths.
+fn server(id: &str) -> ServerSummary {
     let origin = format!("https://{id}.example");
-    (
-        ThroughputTarget {
-            base_url: origin.clone(),
-            transport: ThroughputTransport::FetchStream,
-            protocol: Protocol::Http2,
-        },
-        LatencyTarget {
-            base_url: origin,
-            transport: LatencyTransport::WebSocket,
-        },
-    )
+    let throughput = ThroughputTarget {
+        base_url: origin.clone(),
+        transport: ThroughputTransport::FetchStream,
+        protocol: Protocol::Http2,
+    };
+    let latency = LatencyTarget {
+        base_url: origin.clone(),
+        transport: LatencyTransport::WebSocket,
+    };
+    ServerSummary {
+        id: id.into(),
+        name: id.to_uppercase(),
+        origin,
+        throughput: Some(throughput),
+        latency: Some(latency),
+        ..ServerSummary::default()
+    }
 }
 
 /// Go's preparedFixture: a catalogue server per state, ready without an error; "sign in" needs one.
 fn prepare(ui: &mut Ui, states: &[Option<&str>]) {
-    ui.prepared = states
-        .iter()
-        .enumerate()
-        .map(|(index, state)| {
-            let id = char::from(b'a' + index as u8).to_string();
-            let (throughput, latency) = target(&id);
-            let ready = state.is_none();
-            ServerSummary {
-                name: id.to_uppercase(),
-                origin: format!("https://{id}.example"),
-                throughput: ready.then_some(throughput),
-                latency: ready.then_some(latency),
-                error: state.map(str::to_owned),
-                sign_in: *state == Some("sign in"),
-                id,
-                ..ServerSummary::default()
-            }
-        })
-        .collect();
+    let prepared = states.iter().zip('a'..).map(|(state, id)| {
+        let (server, ready) = (server(&id.to_string()), state.is_none());
+        ServerSummary {
+            throughput: server.throughput.filter(|_| ready),
+            latency: server.latency.filter(|_| ready),
+            error: state.map(str::to_owned),
+            sign_in: *state == Some("sign in"),
+            ..server
+        }
+    });
+    ui.prepared = prepared.collect();
     (ui.checked_at, ui.checked_key) = (Some(Instant::now()), Some(ui.config.preparation_key()));
 }
 
@@ -101,23 +89,13 @@ fn running(ids: &[&str]) -> Ui {
     let mut ui = setup();
     ui.config.stages.push(Stage::Bidirectional);
     (ui.live, ui.run) = (true, run::Run::new(ui.config.clone()));
-    let servers = ids
-        .iter()
-        .map(|id| {
-            let (throughput, latency) = target(id);
-            ServerSummary {
-                id: (*id).into(),
-                name: id.to_uppercase(),
-                location: "Somewhere".into(),
-                throughput: Some(throughput),
-                latency: Some(latency),
-                ..ServerSummary::default()
-            }
-        })
-        .collect();
+    let located = |id: &&str| ServerSummary {
+        location: "Somewhere".into(),
+        ..server(id)
+    };
     ui.update(Snapshot {
         phase: Phase::Preparing,
-        servers,
+        servers: ids.iter().map(located).collect(),
         participants: ids.iter().map(|id| (*id).into()).collect(),
         latency_focus: Some(ids[0].into()),
         plan: ui.config.stages.clone(),
@@ -155,13 +133,16 @@ fn lost(id: &str, stage: Stage) -> ServerFailure {
     }
 }
 
-fn prompt(code: &str, url: &str) -> AuthPrompt {
-    AuthPrompt {
+const SIGN_IN_URL: &str = "https://meter.example/auth/cli";
+
+/// The controller moves to `phase`, showing a sign-in code or none.
+fn sign_in(ui: &mut Ui, phase: Phase, code: Option<&str>) {
+    let auth = code.map(|code| AuthPrompt {
         deadline: Instant::now() + crate::net::AUTHORIZATION_TIMEOUT,
-        origin: "https://meter.example".into(),
         code: code.into(),
-        browser_url: url.into(),
-    }
+        browser_url: SIGN_IN_URL.into(),
+    });
+    step(ui, |snapshot| (snapshot.phase, snapshot.auth) = (phase, auth));
 }
 
 #[test]
@@ -181,10 +162,7 @@ fn a_late_background_answer_never_becomes_keys() {
 fn sign_in_opens_cancels_and_expires_as_go_does() {
     let (commands, mut sent) = mpsc::channel(32);
     let mut ui = setup();
-    let url = "https://meter.example/auth/cli";
-    step(&mut ui, |snapshot| {
-        (snapshot.phase, snapshot.auth) = (Phase::Checking, Some(prompt("ABCD", url)))
-    });
+    sign_in(&mut ui, Phase::Checking, Some("ABCD"));
     assert_eq!(ui.notice, "Check the code, then press enter to open the sign-in page.");
     press(&mut ui, &commands, &["enter", "space", "o", "enter"]);
     let opened = std::iter::from_fn(|| sent.try_recv().ok()).filter(|command| matches!(command, Command::OpenBrowser));
@@ -195,12 +173,10 @@ fn sign_in_opens_cancels_and_expires_as_go_does() {
     for want in ["Sign in to http", "Match this code │ ABCD │", "Waiting for approval…"] {
         assert!(screen.iter().any(|row| row.contains(want)), "{want}: {screen:#?}");
     }
-    assert!(screen.contains(&format!(" {url:<119}"))); // the link sits outside a frame
+    assert!(screen.contains(&format!(" {SIGN_IN_URL:<119}"))); // the link sits outside a frame
     press(&mut ui, &commands, &["esc"]);
     assert!(matches!(sent.try_recv(), Ok(Command::Cancel)));
-    step(&mut ui, |snapshot| {
-        (snapshot.auth, snapshot.phase) = (None, Phase::Setup)
-    });
+    sign_in(&mut ui, Phase::Setup, None);
     assert_eq!(ui.status_label(), "Sign in");
     assert!(ui.notice.contains('v'), "{}", ui.notice);
     press(&mut ui, &commands, &["r"]);
@@ -208,9 +184,7 @@ fn sign_in_opens_cancels_and_expires_as_go_does() {
     // An expired approval asks for a new code.
     ui.recheck_soon();
     ui.recheck = None;
-    step(&mut ui, |snapshot| {
-        (snapshot.auth, snapshot.phase) = (Some(prompt("EFGH", url)), Phase::Checking)
-    });
+    sign_in(&mut ui, Phase::Checking, Some("EFGH"));
     step(&mut ui, |snapshot| {
         (snapshot.auth, snapshot.phase, snapshot.error) = (None, Phase::Failed, Some(SIGN_IN_EXPIRED.into()));
     });
@@ -218,10 +192,8 @@ fn sign_in_opens_cancels_and_expires_as_go_does() {
     assert!(ui.notice.contains("expired"), "{}", ui.notice);
     // An approval that succeeds checks the paths again.
     let mut ui = setup();
-    step(&mut ui, |snapshot| {
-        (snapshot.auth, snapshot.phase) = (Some(prompt("ABCD", url)), Phase::Checking)
-    });
-    step(&mut ui, |snapshot| snapshot.auth = None);
+    sign_in(&mut ui, Phase::Checking, Some("ABCD"));
+    sign_in(&mut ui, Phase::Checking, None);
     assert_eq!(ui.notice, "Signed in. Checking the authenticated paths…");
     // Escaping a sign-in returns to setup with the cancel notice, in setup or in a run.
     for (live, phase, ended) in [
@@ -230,13 +202,11 @@ fn sign_in_opens_cancels_and_expires_as_go_does() {
     ] {
         let mut ui = setup();
         ui.live = live;
-        step(&mut ui, |snapshot| {
-            (snapshot.phase, snapshot.auth) = (phase, Some(prompt("782411", url)))
-        });
+        sign_in(&mut ui, phase, Some("782411"));
         press(&mut ui, &commands, &["esc"]);
         assert!(matches!(sent.try_recv(), Ok(Command::Cancel)));
         for phase in [phase, ended] {
-            step(&mut ui, |snapshot| (snapshot.phase, snapshot.auth) = (phase, None));
+            sign_in(&mut ui, phase, None);
             assert_eq!(ui.notice, "Sign-in canceled. Press v to request a new code.");
         }
         assert!(!ui.live);

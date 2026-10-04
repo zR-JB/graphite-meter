@@ -33,8 +33,7 @@ use tokio::{
     time::Instant,
 };
 
-/// How the interface ended: whether an interrupt stopped a run, whether one still runs, and the
-/// finished run it shows, which Go's final report prints.
+/// How the interface ended, with the finished run Go's final report prints.
 #[derive(Clone, Debug, Default)]
 pub struct Exit {
     pub interrupted: bool,
@@ -75,24 +74,18 @@ enum Prepare {
     Failed,
 }
 
-/// Go's terminal progress bar (OSC 9;4): indeterminate while paths are checked, then the share of stage time done.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Progress {
-    Checking,
-    Done(u8),
-}
+/// Go's terminal progress bar (OSC 9;4) when it shows none.
+const NO_PROGRESS: &str = "\x1b]9;4;0\x07";
 
-/// The window title, progress bar and sign-in link Go's TUI writes beside its frame; the title
-/// and bar are cleared on exit.
-#[derive(Default)]
+/// The window title, progress bar and sign-in link Go's TUI writes beside its frame, cleared on exit.
 struct Chrome {
     title: String,
-    progress: Option<Progress>,
+    progress: String,
 }
 
 impl Chrome {
     fn show(&mut self, ui: &Ui, drawn: &ratatui_core::buffer::Buffer) -> io::Result<()> {
-        let mut sequences = self.update(ui.title(), ui.progress());
+        let mut sequences = self.update(format!("Graphite Meter · {}", ui.status_label()), ui.progress());
         if let Some(auth) = &ui.snapshot.auth {
             let url: String = auth.browser_url.chars().filter(|c| c.is_ascii_graphic()).collect();
             // The drawn rows that hold Go's signInLink, hard-wrapped at the frame's inner width.
@@ -114,18 +107,14 @@ impl Chrome {
         stdout.flush()
     }
 
-    fn update(&mut self, title: String, progress: Option<Progress>) -> String {
+    fn update(&mut self, title: String, progress: String) -> String {
         let mut sequences = String::new();
         if title != self.title {
             sequences.push_str(&format!("\x1b]2;{title}\x07"));
             self.title = title;
         }
         if progress != self.progress {
-            sequences.push_str(&match progress {
-                None => "\x1b]9;4;0\x07".to_owned(),
-                Some(Progress::Checking) => "\x1b]9;4;3\x07".to_owned(),
-                Some(Progress::Done(percent)) => format!("\x1b]9;4;1;{percent}\x07"),
-            });
+            sequences.push_str(&progress);
             self.progress = progress;
         }
         sequences
@@ -134,28 +123,27 @@ impl Chrome {
 
 impl Drop for Chrome {
     fn drop(&mut self) {
-        let sequences = self.update(String::new(), None);
+        let sequences = self.update(String::new(), NO_PROGRESS.into());
         let _ = io::stdout().lock().write_all(sequences.as_bytes());
     }
 }
 
 /// Return paths, cancellation and partial initialization all restore the terminal.
 struct Restore;
-impl Restore {
-    fn terminal() {
-        let _ = disable_raw_mode();
-        let _ = execute!(
-            io::stdout(),
-            DisableBracketedPaste,
-            DisableMouseCapture,
-            LeaveAlternateScreen
-        );
-    }
-}
 impl Drop for Restore {
     fn drop(&mut self) {
-        Self::terminal();
+        restore();
     }
+}
+
+fn restore() {
+    let _ = disable_raw_mode();
+    let _ = execute!(
+        io::stdout(),
+        DisableBracketedPaste,
+        DisableMouseCapture,
+        LeaveAlternateScreen
+    );
 }
 
 pub async fn run(
@@ -171,7 +159,7 @@ pub async fn run(
     let _restore = Restore;
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        Restore::terminal();
+        restore();
         hook(info);
     }));
     enable_raw_mode()?;
@@ -187,7 +175,8 @@ pub async fn run(
         EnableMouseCapture,
         Clear(ClearType::All)
     )?;
-    let mut chrome = Chrome::default();
+    let (title, progress) = (String::new(), NO_PROGRESS.into());
+    let mut chrome = Chrome { title, progress };
     let mut ui = Ui::new(config, snapshots.borrow_and_update().clone());
     let mut events = EventStream::new();
     let mut refresh = tokio::time::interval(Duration::from_millis(33));
@@ -511,18 +500,12 @@ impl Ui {
         }
     }
 
-    fn title(&self) -> String {
-        format!("Graphite Meter · {}", self.status_label())
-    }
-
-    /// Go's View progress bar.
-    fn progress(&self) -> Option<Progress> {
-        if !self.running() {
-            return None;
-        }
-        match self.snapshot.started() && self.snapshot.phase.live() {
-            true => Some(Progress::Done(self.run.progress(&self.snapshot))),
-            false => Some(Progress::Checking),
+    /// Go's View progress bar: indeterminate while paths are checked, then the share of stage time done.
+    fn progress(&self) -> String {
+        match (self.running(), self.snapshot.started() && self.snapshot.phase.live()) {
+            (false, _) => NO_PROGRESS.into(),
+            (true, false) => "\x1b]9;4;3\x07".into(),
+            (true, true) => format!("\x1b]9;4;1;{}\x07", self.run.progress(&self.snapshot)),
         }
     }
 

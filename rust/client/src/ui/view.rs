@@ -1,5 +1,4 @@
-//! Go's view.go: the header, the scrolled body and the footer, and the setup, sign-in, chooser
-//! and details views.
+//! Go's view.go: the header, scrolled body and footer, and the setup, sign-in, chooser and details views.
 use super::{
     FRESHNESS, Popup, Prepare, Ui,
     keys::PAGE,
@@ -148,8 +147,7 @@ pub(super) fn wrap(text: &str, limit: usize) -> Vec<String> {
     out.lines
 }
 
-/// x/ansi's wrap state: the lines so far, the line being written, and the word and the spaces
-/// before it that wait for room.
+/// x/ansi's wrap state: the lines so far, the current line, and the pending word and the spaces before it.
 #[derive(Default)]
 struct Wrapped {
     lines: Vec<String>,
@@ -199,8 +197,7 @@ impl Ui {
         span(SPINNER[self.spin % SPINNER.len()], self.theme.accent)
     }
 
-    /// Go's layout in Go's size, the terminal at least 40×12: the header, the view in the body,
-    /// and the footer.
+    /// Go's layout at no less than 40×12: the header, the view in the body, and the footer.
     pub(super) fn layout(&self) -> Layout {
         let height = usize::from(self.size.1).max(MIN_HEIGHT);
         let inner = usize::from(self.size.0).max(MIN_WIDTH) - 2;
@@ -399,10 +396,9 @@ impl Ui {
     fn setting_line(&self, setting: Setting, focused: bool, label_width: usize, width: usize) -> Line<'static> {
         let theme = &self.theme;
         let mut line = if setting == Setting::Start {
-            let button = if focused {
-                vec![span(" Start test ", theme.title)]
-            } else {
-                vec![Span::raw(" "), span("Start test", theme.heading), Span::raw(" ")]
+            let button = match focused {
+                true => vec![span(" Start test ", theme.title)],
+                false => vec![Span::raw(" "), span("Start test", theme.heading), Span::raw(" ")],
             };
             Line::from([button, vec![Span::raw("  ")], self.start_note()].concat())
         } else {
@@ -528,10 +524,7 @@ impl Ui {
 
     /// Go's canUseAvailable: some, not all, servers are ready after a check.
     pub(super) fn can_use_available(&self) -> bool {
-        self.ready_servers().next().is_some()
-            && self
-                .readiness()
-                .any(|(_, state)| !matches!(state, PathState::Ready | PathState::Stale))
+        self.ready_servers().count() > 0 && self.ready_servers().count() < self.readiness().count()
     }
 
     /// Go's signInView: the code to match and how long the approval waits.
@@ -610,14 +603,19 @@ pub(super) fn label_of(server: &ServerSummary) -> String {
 }
 
 impl Ui {
-    /// Go's scrollBody: pages, the ends, or a line.
-    pub(super) fn scroll(&mut self, name: &str) {
+    /// The body's scroll offset and its last offset, and the rows it shows.
+    fn viewport(&self) -> (usize, usize, usize) {
         let layout = self.layout();
         let bottom = layout.body.len().saturating_sub(layout.body_height);
-        let offset = self.body.min(bottom);
+        (self.body.min(bottom), bottom, layout.body_height)
+    }
+
+    /// Go's scrollBody: pages, the ends, or a line.
+    pub(super) fn scroll(&mut self, name: &str) {
+        let (offset, bottom, height) = self.viewport();
         self.body = match name {
-            "pgup" => offset.saturating_sub(layout.body_height),
-            "pgdown" => (offset + layout.body_height).min(bottom),
+            "pgup" => offset.saturating_sub(height),
+            "pgdown" => (offset + height).min(bottom),
             "home" => 0,
             "end" => bottom,
             name if super::keys::reverse(name) => offset.saturating_sub(1),
@@ -630,11 +628,8 @@ impl Ui {
         let last = self.rows().len() - 1;
         self.row = self.row.saturating_add_signed(super::keys::delta(name)).min(last);
         self.notice.clear();
-        let (_, selected) = self.setup_list(usize::from(self.size.0));
-        let (layout, line) = (self.layout(), 1 + selected);
-        let bottom = layout.body.len().saturating_sub(layout.body_height);
-        let offset = self.body.min(bottom);
-        let visible = (offset..offset + layout.body_height).contains(&line);
+        let (line, (offset, bottom, height)) = (1 + self.setup_list(usize::from(self.size.0)).1, self.viewport());
+        let visible = (offset..offset + height).contains(&line);
         self.body = if visible { offset } else { line.min(bottom) };
     }
 

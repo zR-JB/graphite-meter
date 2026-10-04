@@ -43,10 +43,9 @@ pub fn setting(duration: Duration) -> String {
             let minutes = (duration.as_nanos() + 30_000_000_000) / 60_000_000_000;
             (minutes / 60, minutes % 60, "h", "min")
         };
-        if small == 0 {
-            format!("{large} {unit}")
-        } else {
-            format!("{large} {unit} {small} {rest}")
+        match small {
+            0 => format!("{large} {unit}"),
+            _ => format!("{large} {unit} {small} {rest}"),
         }
     }
 }
@@ -74,12 +73,7 @@ pub fn population_label(stage: Stage) -> String {
 
 /// Go's compactPopulation.
 pub fn compact_population(stage: Stage) -> &'static str {
-    match stage {
-        Stage::Latency => "Idle",
-        Stage::Download => "Loaded down",
-        Stage::Upload => "Loaded up",
-        Stage::Bidirectional => "Loaded bi-dir",
-    }
+    ["Idle", "Loaded down", "Loaded up", "Loaded bi-dir"][stage as usize]
 }
 
 /// A transport's wire name, which Go's settings and labels use; none is "auto".

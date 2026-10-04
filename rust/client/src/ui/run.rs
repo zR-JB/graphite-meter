@@ -1,5 +1,4 @@
-//! Go's run view (view.go and ui.go): the stage track, the timeline's charts over the run's time,
-//! and the results with the test's settings.
+//! Go's run view (view.go and ui.go): the stage track, the timeline's charts and the results.
 use super::{
     Ui, path_summary,
     view::{TWO_COLUMN_MIN, columns, join, panel},
@@ -28,10 +27,15 @@ const CHART_AXIS: usize = 11;
 const BRAILLE: [[u8; 2]; 4] = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]];
 const EIGHTHS: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
 
+/// A trace's point: its time, mean, sample count and peak.
+type Point = (f64, f64, usize, f64);
+/// A stage's start on the run's clock.
+type Mark = (f64, Stage);
+
 /// Go's trace: samples averaged within a step, which doubles as the history coarsens; NaN is a gap.
 #[derive(Clone, Debug, Default)]
 pub(super) struct Trace {
-    points: Vec<(f64, f64, usize, f64)>,
+    points: Vec<Point>,
     step: f64,
 }
 
@@ -77,8 +81,7 @@ impl Trace {
     }
 }
 
-/// What Go's runState keeps for the view: the run's clock, stage marks, the traces its charts
-/// draw, the latest round trips and the smoothed rates.
+/// What Go's runState keeps for the view: clock, stage marks, chart traces, latest round trips and eased rates.
 #[derive(Clone, Default)]
 pub(super) struct Run {
     pub config: Config,
@@ -86,7 +89,7 @@ pub(super) struct Run {
     ended: Option<Instant>,
     eased: Option<Instant>,
     planned_span: f64,
-    marks: Vec<(f64, Stage)>,
+    marks: Vec<Mark>,
     /// The download and upload rates.
     traces: [Trace; 2],
     rtt: HashMap<String, Trace>,
@@ -163,11 +166,7 @@ impl Run {
     /// Go's frame tick: the shown rates ease towards the latest.
     pub(super) fn ease(&mut self, snapshot: &Snapshot) {
         let now = Instant::now();
-        let dt = self
-            .eased
-            .replace(now)
-            .map_or(0.0, |previous| now.saturating_duration_since(previous).as_secs_f64());
-        let weight = 1.0 - (-dt / 0.12).exp();
+        let weight = 1.0 - (-clock(self.eased.replace(now), now) / 0.12).exp();
         let targets = [snapshot.latest.down_bps, snapshot.latest.up_bps];
         for (shown, target) in self.shown.iter_mut().zip(targets) {
             *shown = target.map(|target| shown.map_or(target, |value| value + (target - value) * weight));
@@ -181,12 +180,10 @@ impl Run {
 
     /// Go's span: the run's time so far, or until it ended.
     fn span(&self) -> f64 {
+        let now = clock(self.started, self.ended.unwrap_or_else(Instant::now));
         match self.ended {
-            Some(ended) => clock(self.started, ended).ceil().max(1.0),
-            None => self
-                .planned_span
-                .max((clock(self.started, Instant::now()) / 10.0).ceil() * 10.0)
-                .max(1.0),
+            Some(_) => now.ceil().max(1.0),
+            None => self.planned_span.max((now / 10.0).ceil() * 10.0).max(1.0),
         }
     }
 
@@ -250,40 +247,24 @@ fn nice_ceil(value: f64) -> f64 {
 }
 
 /// A chart line: its stage's style and its points.
-type Series<'a> = (Style, &'a [(f64, f64, usize, f64)], bool);
+type Series<'a> = (Style, &'a [Point], bool);
 
 /// Go's stageSeries: the points after each mark, in its stage's style.
-fn stage_series<'a>(
-    mut points: &'a [(f64, f64, usize, f64)],
-    marks: &[(f64, Stage)],
-    theme: &Theme,
-    upload: bool,
-) -> Vec<Series<'a>> {
+fn stage_series<'a>(mut points: &'a [Point], marks: &[Mark], theme: &Theme, upload: bool) -> Vec<Series<'a>> {
     let mut out = vec![(Style::new(), &points[..0], false); marks.len()];
     for (index, (at, stage)) in marks.iter().enumerate().rev() {
         let start = points.partition_point(|point| point.0 < *at);
-        out[index] = (
-            theme.trace(*stage),
-            &points[start..],
-            upload && *stage == Stage::Bidirectional,
-        );
+        let dashed = upload && *stage == Stage::Bidirectional;
+        out[index] = (theme.trace(*stage), &points[start..], dashed);
         points = &points[..start];
     }
     out
 }
 
 /// Go's chart: braille lines over a scale, a time ruler with the stage marks, and the span.
-fn chart(
-    lines: &[Series],
-    marks: &[(f64, Stage)],
-    axis: Axis,
-    span_: f64,
-    width: usize,
-    height: usize,
-    theme: &Theme,
-) -> Text {
+fn chart(lines: &[Series], marks: &[Mark], axis: Axis, time: f64, width: usize, height: usize, theme: &Theme) -> Text {
     let (cols, rows) = (width.saturating_sub(CHART_AXIS).max(4), height.saturating_sub(2).max(2));
-    let (t0, t1) = (0.0, span_.max(1.0));
+    let (t0, t1) = (0.0, time.max(1.0));
     // f64::max passes over the gaps.
     let peak = lines
         .iter()
@@ -354,31 +335,19 @@ fn chart(
             span(format!("{scale:>width$}", width = CHART_AXIS - 1), theme.muted),
             span("│", theme.border),
         ];
-        let mut column = 0;
-        while column < cols {
-            let first = row * cols + column;
-            let mut end = first;
-            while end < (row + 1) * cols && owner[end] == owner[first] && (dots[end] == 0) == (dots[first] == 0) {
-                end += 1;
-            }
-            if dots[first] == 0 {
-                spans.push(if row == rows / 2 && rows >= 6 {
-                    span("┄".repeat(end - first), theme.border)
-                } else {
-                    Span::raw(" ".repeat(end - first))
-                });
-            } else {
-                let glyphs: String = dots[first..end]
-                    .iter()
-                    .map(|bits| char::from_u32(0x2800 + u32::from(*bits)).unwrap_or(' '))
-                    .collect();
-                spans.push(span(glyphs, lines[owner[first]].0));
-            }
-            column += end - first;
+        // One span per run of cells that share a series, or are all blank.
+        let cells: Vec<usize> = (row * cols..(row + 1) * cols).collect();
+        for run in cells.chunk_by(|a, b| owner[*a] == owner[*b] && (dots[*a] == 0) == (dots[*b] == 0)) {
+            let glyph = |cell: &usize| char::from_u32(0x2800 + u32::from(dots[*cell])).unwrap_or(' ');
+            spans.push(match dots[run[0]] {
+                0 if row == rows / 2 && rows >= 6 => span("┄".repeat(run.len()), theme.border),
+                0 => Span::raw(" ".repeat(run.len())),
+                _ => span(run.iter().map(glyph).collect::<String>(), lines[owner[run[0]]].0),
+            });
         }
         out.push(Line::from(spans));
     }
-    let mut ruler: Vec<char> = "─".repeat(cols).chars().collect();
+    let mut ruler = vec!['─'; cols];
     let end: String = words::clock(Duration::from_secs_f64(t1)).chars().take(cols).collect();
     let end_at = cols.saturating_sub(end.chars().count());
     let column = |at: f64| (((at - t0) / (t1 - t0) * cols as f64) as isize).min(cols as isize - 1);
@@ -486,10 +455,10 @@ impl Ui {
 
     /// Go's timelinePanel.
     fn timeline_panel(&self, snapshot: &Snapshot, run: &Run, width: usize, height: usize) -> Text {
-        let mut title = "Timeline".to_owned();
-        if snapshot.phase.live() {
-            title = format!("{title} · {}", self.status_label());
-        }
+        let title = match snapshot.phase.live() {
+            true => format!("Timeline · {}", self.status_label()),
+            false => "Timeline".into(),
+        };
         let live = self.live_view(snapshot, run, width - 4, height - 2);
         panel(&title, live, width, height, &self.theme)
     }
@@ -511,13 +480,11 @@ impl Ui {
         let theme = &self.theme;
         let label = |name: &str| span(format!("{name:<11}"), theme.text);
         if !snapshot.started() {
-            let mut line = vec![label("Servers")];
-            if snapshot.phase.live() {
-                line.extend([self.spinner(), span(" Checking paths…", theme.muted)]);
-            } else {
-                line.push(span(MISSING, theme.muted));
-            }
-            return vec![Line::from(line)];
+            let value = match snapshot.phase.live() {
+                true => vec![self.spinner(), span(" Checking paths…", theme.muted)],
+                false => vec![span(MISSING, theme.muted)],
+            };
+            return vec![Line::from([vec![label("Servers")], value].concat())];
         }
         let servers = run_servers(snapshot);
         let throughputs = path_summary(servers.iter().copied(), false);
@@ -532,12 +499,9 @@ impl Ui {
             names.push_str(" (all servers)");
             streams = format!("per server · {streams}");
         }
-        let timing = format!(
-            "warmup {} · latency cadence {} · loaded cadence {}",
-            words::setting(run.config.warmup),
-            words::cadence(run.config.ping_interval),
-            words::cadence(run.config.loaded_ping_interval)
-        );
+        let [idle, loaded] = [run.config.ping_interval, run.config.loaded_ping_interval].map(words::cadence);
+        let warmup = words::setting(run.config.warmup);
+        let timing = format!("warmup {warmup} · latency cadence {idle} · loaded cadence {loaded}");
         let mut lines = Vec::new();
         for (name, value) in [
             ("Servers", names),
@@ -582,15 +546,14 @@ impl Ui {
                     line.extend(headline.into_iter().chain(gap).chain([span("Partial", theme.muted)]));
                 }
                 Some(StageStatus::Stopped) => {
-                    line.extend([span("○ ", theme.muted), span(StageStatus::Stopped.label(), theme.muted)])
+                    line.push(span(format!("○ {}", StageStatus::Stopped.label()), theme.muted))
                 }
                 Some(status) => line.extend([span("✗ ", theme.err), span(status.label(), theme.muted)]),
                 None if current && live => match snapshot.phase {
-                    Phase::Warmup => line.extend([
-                        self.spinner(),
-                        span(" warmup ", theme.muted),
-                        span(words::clock(run.elapsed()), theme.value),
-                    ]),
+                    Phase::Warmup => {
+                        let clock = span(words::clock(run.elapsed()), theme.value);
+                        line.extend([self.spinner(), span(" warmup ", theme.muted), clock]);
+                    }
                     Phase::Measuring => {
                         let (elapsed, total) = (run.elapsed(), duration.as_secs_f64());
                         line.extend(bar(hue, elapsed.as_secs_f64(), total, bar_width, theme));
@@ -602,9 +565,7 @@ impl Ui {
                     }
                     _ => line.extend([self.spinner(), span(" checking paths", theme.muted)]),
                 },
-                None if current => {
-                    line.extend([span("○ ", theme.muted), span(StageStatus::Stopped.label(), theme.muted)])
-                }
+                None if current => line.push(span(format!("○ {}", StageStatus::Stopped.label()), theme.muted)),
                 None if !live => line.push(span(format!("{MISSING} {}", StageStatus::Skipped.label()), theme.muted)),
                 None => line.push(span(format!("○ {}", words::setting(duration)), theme.muted)),
             }
@@ -624,16 +585,9 @@ impl Ui {
         let Some(stage) = stage.filter(|_| !live || snapshot.phase != Phase::Preparing) else {
             return vec![Line::from(vec![self.spinner(), span(" Checking paths…", theme.muted)])];
         };
-        let mut directions = Vec::new();
-        for (index, (moves, trace)) in [stage.downloads(), stage.uploads()]
-            .into_iter()
-            .zip(&run.traces)
-            .enumerate()
-        {
-            if if live { moves } else { !trace.points.is_empty() } {
-                directions.push((index, trace));
-            }
-        }
+        let moves = [stage.downloads(), stage.uploads()];
+        let shown = |(index, trace): &(usize, &Trace)| if live { moves[*index] } else { !trace.points.is_empty() };
+        let directions: Vec<_> = run.traces.iter().enumerate().filter(shown).collect();
         let loaded = !directions.is_empty() && run.config.loaded_latency;
         let series: Vec<_> = directions
             .iter()
@@ -654,13 +608,13 @@ impl Ui {
         let rtt = self.latency_server().and_then(|id| run.rtt.get(id));
         let rtt = stage_series(rtt.map_or(&[], |trace| &trace.points), &run.marks, theme, false);
         let rates = |height| chart(&series, &run.marks, RATE_AXIS, time, width, height, theme);
-        let rtts = |marks: &[(f64, Stage)], height| chart(&rtt, marks, MS_AXIS, time, width, height, theme);
+        let rtts = |height| chart(&rtt, &run.marks, MS_AXIS, time, width, height, theme);
         if chart_height < 5 {
         } else if directions.is_empty() {
-            out.extend(rtts(&run.marks, chart_height));
+            out.extend(rtts(chart_height));
         } else if loaded && chart_height >= 12 {
             out.extend(rates(chart_height - 5));
-            out.extend(rtts(&run.marks, 5));
+            out.extend(rtts(5));
         } else {
             out.extend(rates(chart_height));
         }

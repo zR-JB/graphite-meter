@@ -402,7 +402,6 @@ async fn execute(
             snapshot.error = None;
             snapshot.auth = Some(AuthPrompt {
                 deadline: pending.deadline,
-                origin: origin.clone(),
                 browser_url: pending.browser_url.clone(),
                 code: pending.code.clone(),
             });

@@ -310,8 +310,7 @@ impl Ui {
         }
     }
 
-    /// Go's pathChoices: Automatic, then each advertised path of the one checked server, or
-    /// each transport the selected servers share.
+    /// Go's pathChoices: Automatic, then the one checked server's paths, or the transports the servers share.
     pub(super) fn path_choices(&self, latency: bool) -> Vec<PathChoice> {
         let Some((server, offered)) = self.single_discovery() else {
             return self.shared_paths(latency);
@@ -338,12 +337,8 @@ impl Ui {
     /// Go's sharedPaths: Automatic and each transport, noting the servers that lack it.
     fn shared_paths(&self, latency: bool) -> Vec<PathChoice> {
         let kinds = [if latency { "websocket" } else { "fetch-stream" }, "webtransport"];
-        let mut choices = vec![PathChoice::new(
-            "auto",
-            "auto",
-            "Automatic".into(),
-            "each server".into(),
-        )];
+        let automatic = PathChoice::new("auto", "auto", "Automatic".into(), "each server".into());
+        let mut choices = vec![automatic];
         for kind in kinds {
             let lacking = self.checked().filter(|server| {
                 let paths = server.offered.as_ref().map(|offered| discovered(offered, latency));
@@ -359,8 +354,7 @@ impl Ui {
         choices
     }
 
-    /// Go's protocolView's fixed version: the HTTP version of the one path the settings pick,
-    /// when that path does not negotiate one.
+    /// Go's protocolView's fixed version: the HTTP version of the picked path when it does not negotiate one.
     fn fixed_protocol(&self) -> Option<Protocol> {
         let (target, transport) = path(&self.config, false);
         let (_, offered) = self.single_discovery()?;
@@ -415,10 +409,9 @@ impl Ui {
                     _ => 300,
                 });
             }
-            let moved = if step > 0 {
-                *value + unit
-            } else {
-                value.saturating_sub(unit)
+            let moved = match step > 0 {
+                true => *value + unit,
+                false => value.saturating_sub(unit),
             };
             *value = moved.clamp(*bound.start(), *bound.end());
             self.notice = format!("{} {}.", setting.label(), words::setting(*value));
@@ -484,10 +477,9 @@ impl Ui {
             }
             Setting::Cadence(loaded) => {
                 let config = &mut self.config;
-                let interval = if loaded {
-                    &mut config.loaded_ping_interval
-                } else {
-                    &mut config.ping_interval
+                let interval = match loaded {
+                    true => &mut config.loaded_ping_interval,
+                    false => &mut config.ping_interval,
                 };
                 let at = CADENCES.iter().position(|(.., preset)| preset == interval);
                 *interval = CADENCES[next(at, CADENCES.len())].2;
@@ -538,8 +530,7 @@ impl Ui {
         self.notice = "Enter applies, esc cancels.".into();
     }
 
-    /// Go's commitEdit: a duration row reads a Go duration, where a bare number is seconds, and
-    /// the catalogue and stream rows parse theirs.
+    /// Go's commitEdit: durations read Go's syntax, a bare number as seconds; the other rows parse theirs.
     pub(super) fn commit_edit(&mut self, setting: Setting, raw: &str) -> Result<(), String> {
         let raw = raw.trim();
         if setting == Setting::Streams {
@@ -741,18 +732,14 @@ impl Edit {
             room -= cell(before[start]);
         }
         let before: String = before[start..].iter().collect();
-        let after: String = rest
-            .iter()
-            .skip(1)
-            .scan(room, |room, ch| {
-                let cells = cell(*ch);
-                if cells > *room {
-                    return None;
-                }
-                *room -= cells;
-                Some(*ch)
-            })
-            .collect();
+        let mut after = String::new();
+        for ch in rest.iter().skip(1) {
+            if cell(*ch) > room {
+                break;
+            }
+            room -= cell(*ch);
+            after.push(*ch);
+        }
         let under = under.to_string();
         let theme = &ui.theme;
         let spans = [(before, theme.value), (under, theme.cursor), (after, theme.value)];

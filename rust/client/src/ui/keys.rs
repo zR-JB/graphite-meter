@@ -56,33 +56,27 @@ impl Binding {
     }
 }
 
+/// The keys Bubble Tea names by a word.
+#[rustfmt::skip]
+pub(super) const NAMED: [(KeyCode, &str); 15] = [
+    (KeyCode::Up, "up"), (KeyCode::Down, "down"), (KeyCode::Left, "left"), (KeyCode::Right, "right"),
+    (KeyCode::Enter, "enter"), (KeyCode::Esc, "esc"), (KeyCode::Tab, "tab"), (KeyCode::BackTab, "shift+tab"),
+    (KeyCode::Backspace, "backspace"), (KeyCode::Delete, "delete"), (KeyCode::Home, "home"), (KeyCode::End, "end"),
+    (KeyCode::PageUp, "pgup"), (KeyCode::PageDown, "pgdown"), (KeyCode::Char(' '), "space"),
+];
+
 /// A press as Bubble Tea names it, such as "down", "shift+tab", "ctrl+c" or "q".
 pub(super) fn name(key: KeyEvent) -> String {
-    let base = match key.code {
-        KeyCode::Up => "up".into(),
-        KeyCode::Down => "down".into(),
-        KeyCode::Left => "left".into(),
-        KeyCode::Right => "right".into(),
-        KeyCode::Enter => "enter".into(),
-        KeyCode::Esc => "esc".into(),
-        KeyCode::Tab => "tab".into(),
-        KeyCode::BackTab => return "shift+tab".into(),
-        KeyCode::Backspace => "backspace".into(),
-        KeyCode::Delete => "delete".into(),
-        KeyCode::Home => "home".into(),
-        KeyCode::End => "end".into(),
-        KeyCode::PageUp => "pgup".into(),
-        KeyCode::PageDown => "pgdown".into(),
-        KeyCode::Char(' ') => "space".into(),
-        KeyCode::Char(character) => character.to_lowercase().collect::<String>(),
+    let base = match (NAMED.iter().find(|(code, _)| *code == key.code), key.code) {
+        (Some((KeyCode::BackTab, name)), _) => return (*name).into(),
+        (Some((_, name)), _) => (*name).into(),
+        (None, KeyCode::Char(character)) => character.to_lowercase().collect::<String>(),
         _ => return String::new(),
     };
-    let held = [(KeyModifiers::CONTROL, "ctrl+"), (KeyModifiers::ALT, "alt+")];
-    let mut name: String = held
-        .iter()
-        .filter(|held| key.modifiers.contains(held.0))
-        .map(|held| held.1)
-        .collect();
+    let mut name = String::new();
+    for (held, prefix) in [(KeyModifiers::CONTROL, "ctrl+"), (KeyModifiers::ALT, "alt+")] {
+        name.extend(key.modifiers.contains(held).then_some(prefix));
+    }
     // Bubble Tea names a shifted letter by its capital, which no binding matches.
     if key.code.as_char().is_some_and(char::is_uppercase) {
         name.push_str("shift+");

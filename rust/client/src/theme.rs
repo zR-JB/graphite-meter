@@ -1,7 +1,7 @@
 //! Go's TUI styles (theme.go) over the graphite palette, in the colour profile Go's
 //! colorprofile.Detect picks, with the indexed and ANSI colours it converts each tone to.
 
-use crate::model::Stage;
+use crate::model::{Phase, Stage};
 use ratatui_core::style::{Color, Modifier, Style};
 #[cfg(unix)]
 use std::time::Duration;
@@ -147,16 +147,13 @@ impl Theme {
     }
 
     /// The badge of a run's outcome.
-    pub fn outcome(&self, phase: crate::model::Phase) -> Style {
-        use crate::model::Phase;
-        if phase == Phase::Cancelled {
-            return self.pill;
+    pub fn outcome(&self, phase: Phase) -> Style {
+        match phase {
+            Phase::Cancelled => self.pill,
+            Phase::Complete => self.outcomes[0],
+            Phase::Partial | Phase::Incomplete => self.outcomes[1],
+            _ => self.outcomes[2],
         }
-        self.outcomes[match phase {
-            Phase::Complete => 0,
-            Phase::Partial | Phase::Incomplete => 1,
-            _ => 2,
-        }]
     }
 }
 
@@ -224,8 +221,7 @@ fn environment(term: &str, color_term: &str, true_color_terminal: bool) -> Profi
     }
 }
 
-/// Takes the body of the TUI's OSC 11 answer (`11;rgb:…`), which its keys carried: whether it named
-/// the background.
+/// Reads the OSC 11 answer body (`11;rgb:…`) the TUI's keys carried: whether it named the background.
 pub(crate) fn answered(body: &str) -> bool {
     body.strip_prefix("11;")
         .is_some_and(|color| DARK.set(!bright(color.as_bytes())).is_ok())
