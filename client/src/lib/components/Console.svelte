@@ -642,15 +642,6 @@
         ><Icon name="history" /><span class="key-label">History</span></button
       >{/if}
     <button
-      class="btn btn-icon direct-theme"
-      aria-label={`Theme: ${THEME[store.theme].label}`}
-      {@attach tooltip(
-        () =>
-          `Theme: ${THEME[store.theme].label}${keyHint("T")} — cycles light, dark and auto`,
-      )}
-      onclick={toggleTheme}><Icon name={THEME[store.theme].icon} /></button
-    >
-    <button
       class="btn key direct-endpoint"
       aria-label="Details"
       aria-expanded={telemetryOpen}
@@ -658,6 +649,15 @@
       onclick={(event) =>
         togglePanel("endpoint", event.currentTarget as HTMLElement)}
       ><Icon name="info" /><span class="key-label">Details</span></button
+    >
+    <button
+      class="btn btn-icon direct-theme"
+      aria-label={`Theme: ${THEME[store.theme].label}`}
+      {@attach tooltip(
+        () =>
+          `Theme: ${THEME[store.theme].label}${keyHint("T")} — cycles light, dark and auto`,
+      )}
+      onclick={toggleTheme}><Icon name={THEME[store.theme].icon} /></button
     >
     <div class="topbar-more">
       <TopbarMore
@@ -818,7 +818,7 @@
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    padding-inline: var(--space-4);
+    padding-inline: var(--gutter);
     border-bottom: var(--hairline) solid var(--border);
     container: topbar / inline-size;
   }
@@ -949,7 +949,7 @@
     flex-direction: column;
     gap: var(--space-3);
     min-width: 0;
-    padding: var(--space-4) var(--space-5) var(--space-5);
+    padding: var(--space-4) var(--gutter) var(--space-5);
     overflow-y: auto;
     /* Keep stage scrolling from chaining out to the document. */
     overscroll-behavior: contain;
@@ -984,7 +984,7 @@
   }
   @media (max-width: 1023px) {
     .stage:not(.history-stage) {
-      padding: var(--space-3) var(--space-4) var(--space-4);
+      padding: var(--space-3) var(--gutter) var(--space-4);
     }
   }
   .status {
@@ -994,7 +994,7 @@
     gap: var(--space-3);
     min-width: 0;
     overflow: hidden;
-    padding: 0 var(--space-4) env(safe-area-inset-bottom, 0px);
+    padding: 0 var(--gutter) env(safe-area-inset-bottom, 0px);
     border-top: var(--hairline) solid var(--border);
     background: var(--surface-1);
     color: var(--text-soft);
@@ -1010,12 +1010,12 @@
   @media (max-width: 759px) {
     /* History brings its own 16 px gutter. */
     .stage:not(.history-stage) {
-      padding-inline: var(--space-4);
+      padding-inline: var(--gutter);
     }
     /* 44 px targets put their 16 px icons on the page's 16 px gutter. */
     .topbar {
       gap: var(--space-1);
-      padding-inline: calc(var(--space-4) - (var(--hit) - var(--icon)) / 2);
+      padding-inline: calc(var(--gutter) - (var(--hit) - var(--icon)) / 2);
     }
     .brand-label,
     .live-copy,

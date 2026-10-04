@@ -564,21 +564,29 @@
     color: var(--err);
     font-weight: var(--w-strong);
   }
+  /* The idle figures are ruled rows under the headline, a quiet label and its figure on one line. */
   .facts {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-3) var(--space-4);
-    margin-top: var(--space-4);
+    grid-template-columns: minmax(0, 1fr);
+    margin-top: var(--space-3);
+    border-top: var(--hairline) solid var(--border-subtle);
   }
   .facts > div {
-    display: grid;
-    gap: 3px;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+    height: 24px;
     min-width: 0;
+  }
+  .facts > div + div {
+    border-top: var(--hairline) solid var(--border-subtle);
   }
   .facts dt {
     width: fit-content;
     color: var(--text-soft);
     font: var(--role-label);
+    line-height: 1;
   }
   .facts dd {
     font: var(--role-figure-sm);
@@ -872,8 +880,16 @@
       grid-column: 2;
       grid-row: 1 / 3;
       grid-template-columns: repeat(4, max-content);
+      gap: 0 var(--space-4);
       margin: 0;
       padding: 0;
+      border: 0;
+    }
+    .idle .facts > div,
+    .idle .facts > div + div {
+      display: grid;
+      gap: 4px;
+      height: auto;
       border: 0;
     }
   }

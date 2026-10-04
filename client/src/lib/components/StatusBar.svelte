@@ -70,19 +70,19 @@
   span {
     white-space: nowrap;
   }
-  /* Fixed widths and a trailing countdown keep changing text from moving the strip. */
+  /* Each cell starts on a fixed edge and grows to the right, so a changing figure never moves its neighbours. */
   .label {
     color: var(--text);
     font-weight: var(--w-strong);
   }
   .readout {
     display: inline-block;
-    min-width: 6ch;
+    min-width: 7ch;
     color: var(--text-muted);
     font: var(--role-figure-sm);
     line-height: 1;
     font-variant-numeric: tabular-nums;
-    text-align: end;
+    text-align: start;
   }
   .build {
     margin-left: auto;

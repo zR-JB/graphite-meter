@@ -42,8 +42,6 @@
   const visible = $derived(input.showValue && target !== null);
   // A head is flat in its hue and a little wider than its arc, so it and its beat read at any size.
   const headRadius = $derived(layout.arcWidth / 2 + 2);
-  // A mark starts clear of the ring's outer edge.
-  const markFrom = $derived(layout.radius + layout.arcWidth / 2 + 4);
   // The beat swells the head by a fifth; its box leaves that room.
   const headExtent = $derived(Math.ceil(headRadius * 1.2) + 1);
   // Readout frames change the handoff object while the result arcs stay put.
@@ -128,37 +126,35 @@
   });
 </script>
 
-<!-- The headline's head is a bead in its hue at its arc's end; every other result is a mark on the rim outside
-     the ring, so nothing sits in the headline's arc. A partial result's bead is a ring, its mark dotted. -->
+<!-- Every result's arc lies on the ring, the longest underneath, so each shows from where the next shorter one
+     ends; its head is a bead in its hue at its arc's end. One moved inward off a close neighbour hangs on a stalk
+     of its hue, and a partial one is a ring. -->
 {#snippet head(
   fraction: number,
   radius: number,
   color: string,
   hollow = false,
-  primary = false,
+  lane = 0,
 )}
   <g transform={`translate(${layout.center.x} ${layout.center.y})`}>
     <g
       class="head result"
       style:transform={`rotate(${angleForFraction(fraction, layout.arcStart, layout.arcSweep)}rad)`}
     >
-      {#if primary}
-        <circle
-          cx={radius}
-          r={hollow ? headRadius - 1 : headRadius}
-          fill={hollow ? "none" : color}
-          stroke={hollow ? color : "var(--surface-1)"}
-          stroke-width={hollow ? 2 : 1.5}
-        />
-      {:else}
+      {#if lane !== 0}
         <path
-          d={`M ${markFrom} 0 H ${markFrom + 7}`}
+          d={`M ${layout.radius} 0 H ${radius}`}
           stroke={color}
-          stroke-width="2.5"
-          stroke-linecap="round"
-          stroke-dasharray={hollow ? "0.5 3" : undefined}
+          stroke-width="2"
         />
       {/if}
+      <circle
+        cx={radius}
+        r={hollow ? headRadius - 1 : headRadius}
+        fill={hollow ? "none" : color}
+        stroke={hollow ? color : undefined}
+        stroke-width={hollow ? 2 : undefined}
+      />
     </g>
   </g>
 {/snippet}
@@ -200,7 +196,7 @@
         viewBox={`0 0 ${layout.width} ${layout.height}`}
       >
         <g fill="none" stroke-linecap="round">
-          {#each results.filter((result) => result.primary) as result (result.phase)}
+          {#each results as result (result.phase)}
             <mask
               id={`${shadeId}-${result.phase}`}
               maskUnits="userSpaceOnUse"
@@ -233,10 +229,10 @@
         {#each results.toReversed() as result (result.phase)}
           {@render head(
             result.fraction,
-            layout.radius,
+            result.radius,
             `var(--phase-${result.phase})`,
             result.dashed,
-            result.primary,
+            result.lane,
           )}
         {/each}
       </svg>
@@ -252,8 +248,8 @@
         class="head-target"
         aria-hidden="true"
         tabindex="-1"
-        style:left={`${layout.center.x + Math.cos(angle) * (result.primary ? layout.radius : markFrom + 4)}px`}
-        style:top={`${layout.center.y + Math.sin(angle) * (result.primary ? layout.radius : markFrom + 4)}px`}
+        style:left={`${layout.center.x + Math.cos(angle) * result.radius}px`}
+        style:top={`${layout.center.y + Math.sin(angle) * result.radius}px`}
         {@attach tooltip(() => result.description)}
       ></span>
     {/each}

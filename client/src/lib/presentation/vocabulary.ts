@@ -106,6 +106,7 @@ export const STATUS = {
   partial: "Partial",
   failed: "Failed",
   "not-run": "Skipped",
+  off: "Not in this run",
   running: "Running",
   recovering: "Recovering",
   upcoming: "Upcoming",

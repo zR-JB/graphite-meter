@@ -192,6 +192,8 @@
   --row-h: 42px;
   --kv-label: 6.75rem;
   --panel-pad: var(--space-4);
+  /* The console's side gutter: the bars' text and the panels' edges share it. */
+  --gutter: var(--space-5);
   --row-inset: var(--space-3);
   --check: 18px;
   --hit: 44px;
@@ -310,6 +312,11 @@
 @media (prefers-reduced-motion: reduce) {
   :root {
     --dur-sheet: 0ms;
+  }
+}
+@media (max-width: 1023px) {
+  :root {
+    --gutter: var(--space-4);
   }
 }
 @media (prefers-contrast: more) {
@@ -511,6 +518,87 @@
     select,
     input:where([type="number"], [type="text"], [type="search"]) {
       height: var(--hit);
+    }
+  }
+  @supports (appearance: base-select) {
+    select,
+    ::picker(select) {
+      appearance: base-select;
+    }
+    select {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+    }
+    select::picker-icon {
+      flex: none;
+      width: 7px;
+      height: 7px;
+      margin-left: auto;
+      margin-top: -3px;
+      border: solid var(--text-soft);
+      border-width: 0 1.5px 1.5px 0;
+      rotate: 45deg;
+      content: "";
+      transition: rotate var(--dur-hover) var(--ease-out);
+    }
+    select:open::picker-icon {
+      margin-top: 3px;
+      rotate: 225deg;
+    }
+    ::picker(select) {
+      min-width: anchor-size(width);
+      margin: 4px 0;
+      padding: 4px;
+      border: var(--hairline) solid var(--border-strong);
+      border-radius: var(--r-surface);
+      background: var(--surface-2);
+      box-shadow: var(--elev-float);
+      opacity: 0;
+      transition:
+        opacity var(--dur-hover) var(--ease-out),
+        overlay var(--dur-hover) allow-discrete,
+        display var(--dur-hover) allow-discrete;
+    }
+    select:open::picker(select) {
+      opacity: 1;
+    }
+    @starting-style {
+      select:open::picker(select) {
+        opacity: 0;
+      }
+    }
+    option {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      min-height: var(--control-h);
+      padding: 0 10px;
+      border-radius: var(--r-chrome);
+      color: var(--text);
+      font: var(--role-row);
+      transition: var(--transition-control);
+    }
+    @media (pointer: coarse) {
+      option {
+        min-height: var(--hit);
+      }
+    }
+    @media (hover: hover) {
+      option:hover {
+        background: var(--hover-wash);
+      }
+    }
+    option:checked {
+      background: var(--selected-wash);
+    }
+    option:disabled {
+      opacity: 0.5;
+    }
+    option::checkmark {
+      order: 1;
+      margin-left: auto;
+      color: var(--text-muted);
     }
   }
   select:focus-visible,
@@ -1077,6 +1165,10 @@
   }
 
   .segmented {
+    --n: 2;
+    --i: 0;
+    position: relative;
+    isolation: isolate;
     display: flex;
     gap: 2px;
     min-height: var(--control-h);
@@ -1084,15 +1176,51 @@
     border-radius: var(--r-chrome);
     background: var(--track);
   }
+  /* The thumb: one plate the width of a segment, slid to the chosen one; the words sit on top of it. */
+  .segmented::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 2px auto 2px 2px;
+    width: calc((100% - 4px - (var(--n) - 1) * 2px) / var(--n));
+    border-radius: calc(var(--r-chrome) - 1px);
+    background: var(--surface-1);
+    box-shadow:
+      inset 0 0 0 var(--hairline) var(--border-strong),
+      0 1px 2px light-dark(oklch(0.25 0.02 255 / 0.08), oklch(0 0 0 / 0.3));
+    translate: calc(var(--i) * (100% + 2px)) 0;
+    transition: translate var(--dur-graph) var(--ease-out);
+  }
+  .segmented:has(> :nth-child(3):last-child) {
+    --n: 3;
+  }
+  .segmented:has(> :nth-child(4):last-child) {
+    --n: 4;
+  }
+  .segmented:has(
+    > :nth-child(2):is([aria-pressed="true"], [aria-checked="true"])
+  ) {
+    --i: 1;
+  }
+  .segmented:has(
+    > :nth-child(3):is([aria-pressed="true"], [aria-checked="true"])
+  ) {
+    --i: 2;
+  }
+  .segmented:has(
+    > :nth-child(4):is([aria-pressed="true"], [aria-checked="true"])
+  ) {
+    --i: 3;
+  }
   /* After the base rule, which would otherwise keep it at control height. */
   @media (pointer: coarse) {
     .segmented {
       min-height: var(--hit);
     }
   }
-  /* Segments share spare width but never shrink below their word. */
+  /* Segments share the width equally, so the thumb's slide is one segment's width. */
   .segmented > button {
-    flex: 1 0 auto;
+    flex: 1 1 0;
     min-width: 0;
     padding-inline: var(--space-2);
     overflow: hidden;
@@ -1131,7 +1259,6 @@
       [aria-current]:not([aria-current="false"]),
       :has(> input:checked)
     ) {
-    background-color: var(--selected-wash);
     color: var(--brand-strong);
   }
 
@@ -1177,7 +1304,6 @@
   }
 
   .float,
-  .tooltip,
   .inspect-card {
     background: var(--surface-2);
   }
@@ -1208,6 +1334,16 @@
     letter-spacing: 0;
     text-transform: none;
     pointer-events: none;
+  }
+  /* A tip is ink: the one dark plate on a light page and the one light plate on a dark one, so it never reads as
+     part of the instrument. */
+  .tooltip {
+    padding: 5px 8px;
+    border: 0;
+    background: var(--brand);
+    color: var(--text-inverse);
+    box-shadow: 0 2px 8px -2px
+      light-dark(oklch(0.2 0.01 258 / 0.35), oklch(0 0 0 / 0.5));
   }
   .inspect-card {
     position: absolute;

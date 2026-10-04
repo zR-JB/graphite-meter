@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
   import StageGraph from "./StageGraph.svelte";
-  import LatencyTrace from "./LatencyTrace.svelte";
+  import { latencyScale } from "../presentation/scales";
   import {
     cardFacts,
     cardNoData,
@@ -29,6 +29,7 @@
     issues = [],
     scope = "",
     running = false,
+    columns = null,
   }: {
     cards: SummaryCard[];
     /** Strips share one rate and latency scale so their heights compare. */
@@ -46,7 +47,14 @@
     scope?: string;
     /** A run is under way: on a phone only the running card stays open. */
     running?: boolean;
+    /** The stage keys' columns; a stage with a key and no card keeps its column with a quiet placeholder. */
+    columns?: SummaryCard["key"][] | null;
   } = $props();
+  const column = (key: SummaryCard["key"]) =>
+    columns ? columns.indexOf(key) + 1 : null;
+  const off = $derived(
+    columns?.filter((key) => !cards.some((card) => card.key === key)) ?? [],
+  );
   // A failed transfer's reason sits on its card's line, named by server when several ran, so it never adds a row.
   const attributed = $derived((details?.selection.length ?? 1) > 1 && !scope);
   const listed = $derived(issues.filter((issue) => !issue.throughput.length));
@@ -67,7 +75,10 @@
     card.rows.find((row) => row.label === "Jitter")?.value ?? null;
 </script>
 
-<div class="result-summary" style:--cards={Math.min(4, cards.length)}>
+<div
+  class="result-summary"
+  style:--cards={columns ? columns.length : Math.min(4, cards.length)}
+>
   <div class="result-cards" class:running data-tip-group {@attach tipGroup}>
     {#each cards as card (card.key)}
       {@const graph = card.graph}
@@ -83,6 +94,7 @@
         class="card {card.status}"
         data-tone={card.key}
         style:--fade={fade}
+        data-col={column(card.key)}
       >
         <span class="face" use:tooltipAction={cardTip(card)}>
           <span class="name">
@@ -147,11 +159,17 @@
         </span>
         {#if graph && scale && card.key === "latency"}
           <div class="strip">
-            <LatencyTrace
-              points={graph.latency}
+            <StageGraph
+              tone="latency"
+              lanes={[]}
+              latency={graph.latency}
               start={graph.start}
               span={graph.span}
+              ceiling={1}
               {baseline}
+              latencyTop={latencyScale(graph.latency.map((point) => point.ms))}
+              rate={scale.rate}
+              label="Idle latency over time"
             />
           </div>
         {:else if graph && scale}
@@ -190,6 +208,17 @@
         {#if card.accessible}<span class="sr-only">{card.accessible}</span>{/if}
       </article>
     {/each}
+    {#each off as key (key)}
+      <article class="card off" data-tone={key} data-col={column(key)}>
+        <span class="name">
+          <span class="tone-icon" aria-hidden="true"
+            ><Icon name={STAGE[key].icon} /></span
+          >
+          <h3>{STAGE[key].label}</h3>
+        </span>
+        <span class="off-note">{STATUS.off}</span>
+      </article>
+    {/each}
   </div>
   {#if listed.length}
     <dl class="issues enter" class:attributed aria-label="Issues">
@@ -204,29 +233,50 @@
 </div>
 
 <style>
-  /* One card per stage across the instrument's width; the strips share one scale, so a stage's shape compares. */
+  /* One card per stage in the keys' columns; the strips share one scale, so a stage's shape compares. */
   .result-summary {
     display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
     gap: var(--space-2);
     width: 100%;
+    height: 100%;
     container: results / inline-size;
   }
   .result-cards {
     display: grid;
     grid-template-columns: repeat(var(--cards), minmax(0, 1fr));
     gap: var(--space-4);
+    min-height: 0;
   }
   @container results (max-width: 1100px) {
     .result-cards {
       gap: var(--space-3);
     }
   }
-  /* A phone keeps two across; the running card leads and the others fold to their name and value. */
-  @container results (max-width: 520px) {
+  /* A narrow console keeps two across; a phone leads with the running card and folds the others to their name
+     and value. */
+  @container results (max-width: 720px) {
     .result-cards {
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: var(--space-2);
     }
+  }
+  /* Above a narrow console each card takes its key's column; narrower, they flow two across. */
+  @container results (min-width: 721px) {
+    .card[data-col="1"] {
+      grid-column: 1;
+    }
+    .card[data-col="2"] {
+      grid-column: 2;
+    }
+    .card[data-col="3"] {
+      grid-column: 3;
+    }
+    .card[data-col="4"] {
+      grid-column: 4;
+    }
+  }
+  @container results (max-width: 520px) {
     .running .card:not(.active, .recovering) > :is(.line, .strip, .facts),
     .card:is(.pending, .not-run) > :is(.line, .strip, .facts) {
       display: none;
@@ -237,17 +287,9 @@
     .result-cards > :global(:last-child:nth-child(odd)) {
       grid-column: 1 / -1;
     }
-    .result-cards .facts {
-      grid-template-columns: minmax(0, 1fr);
-      gap: 3px;
-    }
-    .result-cards .facts > div {
-      display: flex;
-      justify-content: space-between;
-      gap: var(--space-2);
-    }
   }
-  /* A card is a panel ruled in its stage's hue along the top; the running card's rule and edge strengthen. */
+  /* A card is a panel ruled in its stage's hue along the top; the running card's edge strengthens. In its row it
+     takes the row's height up to a limit, its strip growing with it. */
   .card {
     --edge: var(--border);
     position: relative;
@@ -255,6 +297,7 @@
     align-content: start;
     gap: var(--space-1);
     min-width: 0;
+    max-height: 300px;
     padding: 10px var(--space-4) var(--space-3);
     overflow: hidden;
     border: var(--hairline) solid var(--edge);
@@ -263,12 +306,23 @@
     background: var(--surface-1);
     transition: var(--transition-control);
   }
+  .card:has(> .strip) {
+    grid-template-rows: auto auto minmax(68px, 1fr) auto;
+  }
   .card:is(.active, .recovering) {
     --edge: color-mix(in oklab, var(--tone) 55%, var(--border));
   }
-  .card:is(.pending, .not-run) {
+  .card:is(.pending, .not-run, .off) {
     --edge: var(--border-subtle);
     border-top-color: color-mix(in oklab, var(--tone) 45%, transparent);
+  }
+  /* A stage with a key and no card keeps its column: its name, and why there is nothing under it. */
+  .card.off {
+    gap: var(--space-2);
+  }
+  .off-note {
+    color: var(--text-soft);
+    font: var(--w-normal) var(--type-sm) / 16px var(--font-sans);
   }
   .face {
     display: grid;
@@ -386,53 +440,50 @@
     color: var(--err);
     font-weight: var(--w-strong);
   }
-  /* The strip: the stage's shape and its latency replies, on a field tinted in the stage's hue. */
+  /* The strip: the stage's shape and its latency replies, on a field tinted in the stage's hue; it grows with
+     the card up to a limit. */
   .strip {
-    height: 68px;
-    min-height: 0;
+    min-height: 68px;
+    max-height: 120px;
     margin-top: var(--space-1);
     padding: 6px 8px 0;
     border-radius: var(--r-well);
     background: color-mix(in oklab, var(--tone) 7%, var(--surface-1));
   }
-  /* Three facts across the card, each a quiet label over its figure; "—" until known, so nothing moves. */
+  /* The facts are ruled rows, a quiet label and its figure on one line; "—" until known, so nothing moves. */
   .facts {
     display: grid;
-    grid-template-columns: repeat(3, auto);
-    justify-content: space-between;
-    gap: var(--space-3);
+    grid-template-columns: minmax(0, 1fr);
     min-width: 0;
     margin-top: var(--space-2);
+    border-top: var(--hairline) solid var(--border-subtle);
     color: var(--text);
     font: var(--role-figure-sm);
-    line-height: 16px;
   }
   .facts.unknown {
     visibility: hidden;
   }
   .facts > div {
-    display: grid;
-    gap: 2px;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+    height: 22px;
     min-width: 0;
     white-space: nowrap;
   }
+  .facts > div + div {
+    border-top: var(--hairline) solid var(--border-subtle);
+  }
   .facts dt {
-    width: fit-content;
     color: var(--text-soft);
-    font: var(--w-normal) var(--type-xs) / 14px var(--font-sans);
+    font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
   }
   .facts dd {
     font-variant-numeric: tabular-nums;
   }
   .facts dd.quiet {
     color: var(--text-soft);
-  }
-  /* A narrower card keeps its three facts by taking them a size down. */
-  @container results (max-width: 1100px) {
-    .facts {
-      gap: var(--space-2);
-      font-size: var(--type-xs);
-    }
   }
   .issues {
     display: grid;

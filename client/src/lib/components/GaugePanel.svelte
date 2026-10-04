@@ -11,6 +11,8 @@
     throughputValueAtFraction,
   } from "./gaugeScale";
   import StageTrack from "./StageTrack.svelte";
+  import { stageShown } from "./stageTrack";
+  import { planned, STAGES } from "../runner/schedule";
   import ServerLens from "./ServerLens.svelte";
   import RunButton from "./RunButton.svelte";
   import LatencyProfile from "./LatencyProfile.svelte";
@@ -33,6 +35,12 @@
   import { handoff } from "../presentation/motion.svelte";
   import { MediaQuery } from "svelte/reactivity";
 
+  // The stages with a key, in order: the columns the keys and the cards share.
+  const columns = $derived(
+    STAGES.filter((key) =>
+      stageShown(key, planned(store.config, key), store.stagePresentation[key]),
+    ),
+  );
   const indicatedServers = $derived(
     store.serverDetails?.selection ??
       catalogSelection(store.serverCatalog, store.selectedServers),
@@ -362,19 +370,21 @@
           </div>
         {/if}
       </div>
+      <div class="run-slot"><RunButton /></div>
     </div>
 
     {#if store.latencyEnabled}
       <div class="latency-panel panel"><LatencyProfile /></div>
     {/if}
 
-    <!-- The transport row: one key per stage, and the run key at its end. -->
-    <div class="transport">
+    <!-- One key per stage, each over its stage's card. -->
+    <div class="transport" style:--columns={columns.length}>
       <StageTrack />
-      <div class="run-slot"><RunButton /></div>
     </div>
 
-    <div class="results"><ResultCards live={liveReadout} /></div>
+    <div class="results" style:--columns={columns.length}>
+      <ResultCards live={liveReadout} {columns} />
+    </div>
   </div>
 </section>
 
@@ -383,11 +393,11 @@
     container: viz / inline-size;
     height: 100%;
   }
-  /* The dial's panel beside the latency panel; under them the transport row and the cards, all on the console's
-     width. On a landscape screen the console takes the column's height and the top row takes the spare height,
-     so the ring grows with the screen; the cards keep their size. */
+  /* The dial's panel beside the latency panel; under them the keys, then the cards, in one set of columns. On a
+     landscape screen the console takes the column's height: the spare height goes to the top row first, so the
+     ring grows with the screen, and to the cards' strips second. */
   .instrument {
-    --dial-height: clamp(260px, 32svh, 320px);
+    --dial-height: clamp(320px, 40svh, 380px);
     display: grid;
     gap: var(--space-4);
     grid-template:
@@ -406,21 +416,21 @@
   }
   @container viz (min-width: 760px) {
     .instrument {
-      --dial-height: 300px;
+      --dial-height: 340px;
       --dial-width: clamp(300px, 30cqw, 560px);
       height: 100%;
       max-height: 1100px;
       grid-template:
-        "dial latency" minmax(var(--dial-height), 1fr)
+        "dial latency" minmax(var(--dial-height), 1.3fr)
         "transport transport" auto
-        "results results" auto
+        "results results" minmax(auto, 1fr)
         / var(--dial-width) minmax(0, 1fr);
     }
     .instrument:not(:has(.latency-panel)) {
       grid-template:
-        "dial dial" minmax(var(--dial-height), 1fr)
+        "dial dial" minmax(var(--dial-height), 1.3fr)
         "transport transport" auto
-        "results results" auto
+        "results results" minmax(auto, 1fr)
         / var(--dial-width) minmax(0, 1fr);
     }
   }
@@ -429,8 +439,8 @@
       gap: var(--space-3);
     }
   }
-  /* The dial's panel: the face, and the note under the ring; the face ends on the panel's edge, so a hung note
-     measures from it. */
+  /* The dial's panel: the face, the note under the ring, and the run key at the foot; the face ends on the note,
+     so a hung note measures from it. */
   .dial {
     grid-area: dial;
     position: relative;
@@ -439,6 +449,12 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
+  }
+  .run-slot {
+    display: flex;
+    flex: none;
+    justify-content: center;
+    padding: 0 var(--space-3) var(--space-3);
   }
   .latency-panel {
     grid-area: latency;
@@ -450,28 +466,27 @@
   }
   .results {
     grid-area: results;
+    display: grid;
     min-width: 0;
+    min-height: 0;
   }
+  /* The keys' columns are the cards' columns and gaps, at every width. */
   .transport {
     grid-area: transport;
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
+    display: grid;
+    grid-template-columns: repeat(var(--columns, 4), minmax(0, 1fr));
+    gap: var(--space-4);
     min-width: 0;
   }
-  .run-slot {
-    flex: 0 0 220px;
-    min-width: 0;
-  }
-  @container viz (max-width: 1180px) {
-    .run-slot {
-      flex-basis: 190px;
+  @container viz (max-width: 1100px) {
+    .transport {
+      gap: var(--space-3);
     }
   }
-  /* Narrow rows: the keys two to a line and the run key on its own line under them. */
   @container viz (max-width: 720px) {
-    .run-slot {
-      flex-basis: 100%;
+    .transport {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--space-2);
     }
   }
   @container viz (max-width: 520px) {

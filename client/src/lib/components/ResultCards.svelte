@@ -29,7 +29,10 @@
 
   type Stage = (typeof CARD_ORDER)[number];
 
-  let { live }: { live: LiveReadout } = $props();
+  let {
+    live,
+    columns = null,
+  }: { live: LiveReadout; columns?: Stage[] | null } = $props();
 
   const shown = $derived(store.resultScope);
   const details = $derived(store.result?.multiServer);
@@ -268,6 +271,7 @@
 
 <ResultSummary
   cards={view.shown.cards}
+  {columns}
   {scale}
   {head}
   fade={view.opacity}

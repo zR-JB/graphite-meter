@@ -63,7 +63,7 @@
 
 <style>
   /* Graphite: the one primary action is ink, like every selected control; Stop steps back to an outline. The key
-     takes the transport row's end: its label at the left, the estimate or time left at the right. */
+     sits under the ring on the dial's panel: its label at the left, the estimate at the right. */
   .run-button {
     position: relative;
     isolation: isolate;
@@ -73,6 +73,7 @@
     justify-content: space-between;
     gap: var(--space-2);
     width: 100%;
+    max-width: 320px;
     height: 46px;
     padding-inline: 14px;
     border: 0;
@@ -98,6 +99,13 @@
   }
   .run-button:active {
     transform: scale(0.985);
+  }
+  /* A phone's key spans its panel at a thumb's height. */
+  @container viz (max-width: 520px) {
+    .run-button {
+      max-width: none;
+      height: var(--hit);
+    }
   }
   .skin {
     position: absolute;

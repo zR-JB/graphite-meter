@@ -6,11 +6,10 @@ const ACTIONABLE_SELECTOR =
   "button, a, label, summary, [role='switch'], [role='tab']";
 let uid = 0;
 // A hand at rest on the word opens its tip; jargon answers sooner, the next tip after a short rest, never at once.
-const REST_PX = 8;
-const REST_MS = 400;
-const TERM_REST_MS = 250;
-const WARM_REST_MS = 120;
-const CLOSE_MS = 150;
+const REST_MS = 300;
+const TERM_REST_MS = 200;
+const WARM_REST_MS = 60;
+const CLOSE_MS = 100;
 const LONG_PRESS_MS = 450;
 // A finger that drifts further is scrolling, not pressing.
 const SLOP_PX = 10;
@@ -111,8 +110,6 @@ function createTooltip(node: HTMLElement, initial: string, marked: boolean) {
   let pressTimer = 0;
   // Where a finger landed, until it lifts, drifts away or the page takes it to scroll.
   let press: { x: number; y: number } | null = null;
-  // Where a mouse or pen settled on the word; a move beyond REST_PX restarts the rest from there.
-  let rest: { x: number; y: number } | null = null;
   // A long press showed the tip; the click it ends in is not a tap on the control.
   let pressed = false;
   // A touch showed the tip; the next tap closes it.
@@ -176,7 +173,7 @@ function createTooltip(node: HTMLElement, initial: string, marked: boolean) {
     target.dataset.side = box.top >= at.top ? "below" : "above";
   }
   function show(touch = false, byKeyboard = false) {
-    clearTimeout(openTimer);
+    cancelOpen();
     clearTimeout(closeTimer);
     if (bubble || !text || !node.isConnected) return;
     keyboard = byKeyboard;
@@ -232,7 +229,7 @@ function createTooltip(node: HTMLElement, initial: string, marked: boolean) {
     }
   }
   function hide() {
-    clearTimeout(openTimer);
+    cancelOpen();
     clearTimeout(closeTimer);
     endPress();
     touchOpen = false;
@@ -268,23 +265,26 @@ function createTooltip(node: HTMLElement, initial: string, marked: boolean) {
     clearTimeout(closeTimer);
     settle(event);
   }
-  // Hover intent: only a hand that stays near one point opens the tip; a sweep keeps moving it, a drag never counts.
-  function settle(event: PointerEvent) {
-    if (!hovers(event) || event.buttons || bubble || clicked) return;
-    const { clientX: x, clientY: y } = event;
-    if (rest && Math.hypot(x - rest.x, y - rest.y) <= REST_PX) return;
-    rest = { x, y };
+  function cancelOpen() {
     clearTimeout(openTimer);
-    // Not motion: hover intent is judged by rest time; a reading hand drifts within REST_PX.
+    openTimer = 0;
+  }
+  // Hover intent: a hand on the word for a moment opens the tip; a drag never counts, and a sweep leaves first.
+  function settle(event: PointerEvent) {
+    if (!hovers(event) || event.buttons || bubble || clicked || openTimer)
+      return;
+    // Not motion: hover intent is a moment on the word.
     openTimer = window.setTimeout(
-      () => show(),
+      () => {
+        openTimer = 0;
+        show();
+      },
       isWarm() ? WARM_REST_MS : marked ? TERM_REST_MS : REST_MS,
     );
   }
   function onLeave(event: PointerEvent) {
     if (!hovers(event)) return;
-    clearTimeout(openTimer);
-    rest = null;
+    cancelOpen();
     clicked = false;
     // Not motion: a slip off a small word keeps its tip a moment.
     if (bubble && !touchOpen) closeTimer = window.setTimeout(hide, CLOSE_MS);
@@ -317,7 +317,7 @@ function createTooltip(node: HTMLElement, initial: string, marked: boolean) {
         }, LONG_PRESS_MS);
       return;
     }
-    clearTimeout(openTimer);
+    cancelOpen();
     clicked = true;
     if (asks) show();
     else hide();

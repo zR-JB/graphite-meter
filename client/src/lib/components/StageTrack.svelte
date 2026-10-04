@@ -16,7 +16,7 @@
     STATUS_TONE,
     type Tone,
   } from "../presentation/vocabulary";
-  import { formatLatency, resultRate } from "../format";
+  import { fmtDuration, formatLatency, resultRate } from "../format";
   import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
   import type { StageKey } from "../state/store.svelte";
   import { planned, STAGES } from "../runner/schedule";
@@ -84,7 +84,8 @@
       stageShown(s.key, s.selected, store.stagePresentation[s.key]),
     ),
   );
-  // A key's end: the stage's result once measured, its state word while it runs or waits.
+  // A key's end: the stage's result once measured, the time into the stage while it runs, its state word while
+  // it waits. The card under the key draws the stage's progress, so the key's bar shows only how it settled.
   const look = (key: StageKey) => {
     const s = model.find((s) => s.key === key)!;
     const live = s.state === "active" && store.phaseBudgetMs > 0;
@@ -92,25 +93,32 @@
     const figure = done ? resultFigure(key) : null;
     return {
       state: s.state,
-      text: figure?.num ?? s.reason,
+      live,
+      text: figure
+        ? figure.num
+        : live
+          ? `${fmtDuration(store.phaseClock.current, 1)} / ${fmtDuration(store.phaseBudgetMs, 0)}`
+          : s.reason,
       unit: figure?.unit ?? "",
       tone: s.state === "recovering" ? STATUS_TONE.recovering : key,
-      live,
       progress:
         s.state === "warmup" || s.state === "failed"
           ? 1
           : live
-            ? store.phaseClock.current / store.phaseBudgetMs
+            ? 0
             : s.fill / 100,
     };
   };
-  // A result or word fades in with its state, so a key never blinks between words.
+  // A result or word fades in with its state; the running time counts in place.
   const looks = Object.fromEntries(
     STAGES.map((key) => [
       key,
       handoff(
         () => look(key),
-        (shown) => `${shown.state}:${shown.text}:${shown.unit}`,
+        (shown) =>
+          shown.live
+            ? `${shown.state}:live`
+            : `${shown.state}:${shown.text}:${shown.unit}`,
       ),
     ]),
   ) as Record<StageKey, Handoff<ReturnType<typeof look>>>;
@@ -137,12 +145,6 @@
       disabled={s.locked}
       onclick={() => controller.toggleStage(s.key)}
     >
-      <span
-        class="seg-tint"
-        class:is-live={look.live}
-        style:--progress={look.progress}
-        aria-hidden="true"
-      ></span>
       <span class="seg-key" aria-hidden="true">
         {#if look.state === "complete"}<Icon name="check" />{/if}
       </span>
@@ -151,7 +153,9 @@
         <span
           class="seg-res"
           class:value={look.state === "complete" || look.state === "partial"}
-          data-tone={(STATUS_TONE as Record<string, Tone>)[look.state]}
+          data-tone={look.live
+            ? undefined
+            : (STATUS_TONE as Record<string, Tone>)[look.state]}
           style:opacity={view.opacity}
           >{look.text}{#if look.unit}<span class="seg-unit">{look.unit}</span
             >{/if}</span
@@ -174,22 +178,20 @@
 </div>
 
 <style>
-  /* The keys sit in the transport row beside the run key; the row lays them out. */
+  /* The keys take the cards' columns, so each stands over its stage's card; the row lays them out. */
   .stage-track {
     display: contents;
   }
 
   /* A key: a flat plate with a check box, the stage's name and, at its end, its result; along its base a bar in
-     the stage's hue that fills as the stage runs and stays full once measured. */
+     the stage's hue once the stage has settled. */
   .seg {
     position: relative;
     display: flex;
-    flex: 1 1 0;
     align-items: center;
     gap: 10px;
     height: 46px;
     min-width: 0;
-    max-width: 360px;
     padding: 0 12px;
     overflow: hidden;
     border: var(--hairline) solid var(--border);
@@ -262,6 +264,9 @@
   .seg-res.value {
     color: var(--text);
   }
+  .seg-res[data-tone] {
+    color: var(--tone-ink);
+  }
   .seg-unit {
     margin-left: 0.5ch;
     color: var(--text-muted);
@@ -271,22 +276,6 @@
     .seg-unit {
       display: none;
     }
-  }
-  .seg-res[data-tone] {
-    color: var(--tone-ink);
-  }
-  /* While a stage runs its key fills with a tint of its hue from the left. */
-  .seg-tint {
-    position: absolute;
-    inset: 0;
-    border-right: 2px solid var(--tone);
-    background: color-mix(in oklab, var(--tone) 9%, transparent);
-    transform: scaleX(var(--progress, 0));
-    transform-origin: left center;
-    visibility: hidden;
-  }
-  .seg-tint.is-live {
-    visibility: visible;
   }
   .seg-bar {
     position: absolute;
@@ -346,11 +335,8 @@
       translate: 240%;
     }
   }
-  /* Narrow rows: two keys to a line, the name over its result. */
   @container viz (max-width: 720px) {
     .seg {
-      flex-basis: calc(50% - var(--space-1));
-      max-width: none;
       padding: 0 10px;
     }
   }
