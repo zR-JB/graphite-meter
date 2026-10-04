@@ -259,6 +259,7 @@ dependencies = [
  "graphite-meter-proto",
  "graphite-meter-testkit",
  "ipnet",
+ "noq",
  "percent-encoding",
  "rustix",
  "rustls",

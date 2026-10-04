@@ -10,6 +10,7 @@ publish.workspace = true
 base64.workspace = true
 graphite-meter-proto.workspace = true
 ipnet.workspace = true
+noq.workspace = true
 percent-encoding.workspace = true
 rustls.workspace = true
 socket2.workspace = true
@@ -25,6 +26,7 @@ rustls-platform-verifier.workspace = true
 
 [dev-dependencies]
 graphite-meter-testkit.workspace = true
+noq = { workspace = true, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
 
 [lints]

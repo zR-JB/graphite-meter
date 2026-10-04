@@ -3,6 +3,7 @@ mod connect;
 mod crypto;
 mod dial;
 mod proxy;
+pub mod quic;
 mod runtime;
 mod socks;
 mod trust;
