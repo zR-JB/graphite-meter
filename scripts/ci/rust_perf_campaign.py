@@ -45,7 +45,7 @@ def build() -> None:
     BIN.mkdir(parents=True, exist_ok=True)
     environment = {key: value for key, value in os.environ.items()
                    if not key.startswith(('GM_', 'CARGO_PROFILE_', 'MIMALLOC_')) and not key.endswith('RUSTFLAGS')}
-    environment.update(CARGO_INCREMENTAL='0', CARGO_TARGET_DIR=str(OUT / 'build'),
+    environment.update(CARGO_INCREMENTAL='0',
                        CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER='x86_64-linux-gnu-gcc',
                        CC_x86_64_unknown_linux_musl='musl-gcc', GM_ENGINE_VERSION='0.0.0-campaign')
     source = OUT / 'base-src'
@@ -53,10 +53,13 @@ def build() -> None:
         subprocess.run(['git', 'worktree', 'add', '--detach', str(source), BASE], cwd=ROOT, check=True)
     run(['rustup', 'target', 'add', MUSL], ROOT / 'rust', environment, OUT / 'target.log')
     for label, tree in (('base', source), ('cand', ROOT)):
+        # Legal notice embedding requires each workspace's build outputs under its own target directory.
+        target = tree / 'rust/target/campaign-build'
         run(['cargo', 'build', '--locked', '--release', '--target', MUSL, '-p', 'graphite-meter-server',
-             '-p', 'graphite-meter-client'], tree / 'rust', environment, OUT / f'build-{label}.log')
+             '-p', 'graphite-meter-client'], tree / 'rust', {**environment, 'CARGO_TARGET_DIR': str(target)},
+            OUT / f'build-{label}.log')
         for side in ('server', 'client'):
-            shutil.copy2(OUT / 'build' / MUSL / 'release' / f'graphite-meter-{side}', BIN / f'{label}-{side}')
+            shutil.copy2(target / MUSL / 'release' / f'graphite-meter-{side}', BIN / f'{label}-{side}')
     go = {**environment, 'CGO_ENABLED': '0', 'GOTOOLCHAIN': 'local'}
     for side, package in (('server', './cmd/graphite-meter'), ('client', './cmd/graphite-meter-client')):
         run(['go', 'build', '-trimpath', '-o', str(BIN / f'go-{side}'), package], ROOT / 'go', go,
