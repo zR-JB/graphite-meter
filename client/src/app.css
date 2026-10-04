@@ -176,7 +176,6 @@
   --role-label: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
   /* Figures are mono at one weight: a readout, a card's or lane's figure, a fact. */
   --role-readout: 500 28px / 1 var(--font-mono);
-  --role-figure: 500 var(--type-md) / 1.3 var(--font-mono);
   --role-figure-sm: 500 var(--type-sm) / 1.3 var(--font-mono);
   /* Centred beside a larger word, a smaller one sits half their size gap high; that gap as its top margin sets it
      on the larger word's baseline, e.g. margin-top: calc(var(--type-md) - var(--type-sm)). */
@@ -247,9 +246,7 @@
   --phase-complete: var(--ok);
 
   --ok: light-dark(oklch(0.5 0.095 155), oklch(0.8 0.1 155));
-  --ok-soft: color-mix(in oklab, var(--ok) 14%, transparent);
   --warn: light-dark(oklch(0.53 0.095 85), oklch(0.86 0.1 92));
-  --warn-soft: color-mix(in oklab, var(--warn) 14%, transparent);
   --err: light-dark(oklch(0.52 0.14 25), oklch(0.74 0.12 22));
   --err-soft: color-mix(in oklab, var(--err) 14%, transparent);
 

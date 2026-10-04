@@ -338,7 +338,6 @@ export class IdleKeepalive {
         this.#scheduleRespawn(intervalMs);
       },
     );
-    // Report immediately (there is no keepalive warmup window).
     worker.postMessage({ type: "measure" });
     this.#worker = worker;
   }

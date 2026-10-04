@@ -190,10 +190,6 @@ export function drawStageGraph(
   };
 }
 
-export function stageGraph(input: StageGraphInput): StageGraph {
-  return drawStageGraph(stageGraphGeometry(input), input.head);
-}
-
 /** The bin and reply nearest a time, for the readout under the pointer. */
 export function nearestAt<T extends { t: number }>(
   points: readonly T[],

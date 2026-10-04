@@ -18,8 +18,8 @@ stage has one hue that is the same on every surface.
 - **Colour is data.** Stage hues name stages, status tones name states, and everything a person operates is ink:
   the run key, selections, checks, switches, focus.
 - **Type is engineered.** IBM Plex Sans for words and labels; IBM Plex Mono at one weight for every figure
-  (`--role-readout`, `--role-figure`, `--role-figure-sm`): the readout, a card's or lane's figure, a fact, the
-  status strip, units, ticks and key caps. All figures are tabular.
+  (`--role-readout`, `--role-figure-sm`): the readout, a card's or lane's figure, a fact, the status strip, units,
+  ticks and key caps. All figures are tabular.
 - **Motion comes from the measurement.** Live values glide on one frame clock, the running key and strip grow on
   it, sheets glide with the column they open, and changed times roll. Nothing decorates, and nothing above the
   result cards moves from Start to the result.
@@ -102,7 +102,7 @@ tokens in sRGB (`go/cmd/graphite-meter-client/theme.go`). Its light stage text c
 | ------------------------------------------------------- | --------- | ------------------------ | ---------------------------------- |
 | Dial readout                                            | Plex Mono | fluid, 22–40 px          | 500                                |
 | Card and latency headline (`--role-readout`)            | Plex Mono | 26–28 px                 | 500                                |
-| Figure (`--role-figure`, `--role-figure-sm`)            | Plex Mono | 14 / 12 px               | 500                                |
+| Figure (`--role-figure-sm`)                             | Plex Mono | 12 px                    | 500                                |
 | Sheet and dialog title (`--role-panel-title`)           | Plex Sans | `--type-lg`              | 600                                |
 | Card, lane and group title (`--role-title`)             | Plex Sans | 13 px                    | 600                                |
 | Key name                                                | Plex Sans | 13 px                    | 500                                |

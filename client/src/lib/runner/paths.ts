@@ -532,7 +532,6 @@ export function planServerStreams(
   return plan;
 }
 
-/** Rejects a plan with no stage, or whose streams cannot fit, before any connection opens. */
 /** The longest stage every selected server admits, and the server that sets it; an undiscovered one does not limit it. */
 export function stageLimit(
   views: readonly {
@@ -550,6 +549,7 @@ export function stageLimit(
   return limit;
 }
 
+/** Rejects a plan with no stage, or whose streams cannot fit, before any connection opens. */
 export function validatePlan(
   config: RunnerConfig,
   servers: readonly PlanServer[],

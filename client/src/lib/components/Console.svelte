@@ -961,12 +961,12 @@
     min-height: min-content;
     align-self: center;
   }
-  .measurement-stage :global(:is(.gauge-face, .latency-slot, .results)),
+  .measurement-stage :global(:is(.gauge-face, .results)),
   .status :global(:is(.elapsed, .transferred)) {
     transition: filter var(--dur-slide) var(--ease-out);
   }
   /* A failed start leaves the previous run on screen, dimmed; filter, as these fade by inline opacity. */
-  .previous :global(:is(.gauge-face, .latency-slot, .results)),
+  .previous :global(:is(.gauge-face, .results)),
   .previous ~ .status :global(:is(.elapsed, .transferred)) {
     filter: opacity(0.45);
   }
