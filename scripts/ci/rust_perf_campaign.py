@@ -35,8 +35,10 @@ REPEATS, STREAMS, SECONDS, IDLE = 5, 4, 10, 3
 
 def run(command: list[str], cwd: Path, environment: dict[str, str], log: Path, timeout: int = 3600) -> None:
     with log.open('w') as output:
-        subprocess.run(command, cwd=cwd, env=environment, stdout=output, stderr=subprocess.STDOUT,
-                       check=True, timeout=timeout)
+        status = subprocess.run(command, cwd=cwd, env=environment, stdout=output, stderr=subprocess.STDOUT,
+                                timeout=timeout).returncode
+    if status:
+        sys.exit(f'{command} failed with {status}:\n' + '\n'.join(log.read_text().splitlines()[-80:]))
 
 
 def build() -> None:
