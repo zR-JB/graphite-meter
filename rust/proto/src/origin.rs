@@ -1,5 +1,6 @@
 //! HTTP(S) origins in canonical form: the form browsers write in an `Origin` header.
 
+use crate::idna;
 use serde::{Serialize, Serializer};
 use std::{
     fmt,
@@ -100,6 +101,21 @@ impl Origin {
         }
     }
 
+    /// Parses an origin received in a catalogue or preflight, whose international host becomes the punycode Go
+    /// dials.
+    pub fn parse_received(text: &str) -> Result<Self, OriginError> {
+        if text.is_ascii() {
+            return Self::parse(text);
+        }
+        if text.len() > MAX_ORIGIN_BYTES {
+            return Err(OriginError);
+        }
+        let (scheme, authority) = text.split_once("://").ok_or(OriginError)?;
+        let (host, port) = authority.split_at(authority.find(':').unwrap_or(authority.len()));
+        let host = idna::to_ascii(host).ok_or(OriginError)?;
+        Self::parse(&format!("{scheme}://{host}{port}"))
+    }
+
     /// Splits a URL into its origin and the rest, which begins at its path, query or fragment.
     pub fn split(url: &str) -> Result<(Self, &str), OriginError> {
         let (scheme, rest) = url.split_once("://").ok_or(OriginError)?;
@@ -151,7 +167,7 @@ impl Serialize for Origin {
     }
 }
 
-/// A target's `baseUrl` or a catalogue `url`.
+/// A received target's `baseUrl` or catalogue `url`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BaseUrl {
     /// `.`: the origin that served the document.
@@ -163,7 +179,7 @@ impl BaseUrl {
     pub fn parse(text: &str) -> Result<Self, OriginError> {
         match text {
             "." => Ok(Self::Served),
-            _ => Origin::parse(text).map(Self::Origin),
+            _ => Origin::parse_received(text).map(Self::Origin),
         }
     }
 

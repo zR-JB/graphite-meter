@@ -231,5 +231,5 @@ impl SentEntry {
 
 /// A catalogue origin, which may end in one slash.
 fn received_origin(text: &str) -> Result<Origin, CatalogError> {
-    Origin::parse(text.strip_suffix('/').unwrap_or(text)).map_err(|_| CatalogError::Origin)
+    Origin::parse_received(text.strip_suffix('/').unwrap_or(text)).map_err(|_| CatalogError::Origin)
 }

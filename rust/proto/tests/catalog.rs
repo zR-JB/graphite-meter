@@ -133,6 +133,8 @@ fn a_received_entry_that_stays_invalid_is_left_out_alone() {
             {"id": "dot", "url": "."},
             {"id": "many", "url": "https://many.example", "additionalOrigins": vec!["https://x.example"; 33]},
             {"id": "extra", "url": "https://extra.example", "additionalOrigins": ["https://x.example/path"]},
+            {"id": "bell", "url": "https://bell.example", "name": "Bell\u{7}"},
+            {"id": "münchen", "url": "https://münchen.example"},
         ],
     });
     let (catalog, rejected) = received(document).unwrap();
@@ -151,6 +153,8 @@ fn a_received_entry_that_stays_invalid_is_left_out_alone() {
             ("dot", CatalogError::Origin),
             ("many", CatalogError::AdditionalOrigins),
             ("extra", CatalogError::Origin),
+            ("bell", CatalogError::Identity),
+            ("münchen", CatalogError::Identity),
         ]
     );
 }
@@ -191,4 +195,20 @@ fn discovery_may_use_the_entry_host_on_any_port_or_an_exact_additional_origin() 
     assert!(!approves(&["https://transfer.example.net"]), "additional origins match exactly");
     assert!(!approves(&["https://sub.fra.example.net"]));
     assert!(!approves(&[".", "https://other.example"]));
+}
+
+#[test]
+fn received_catalogue_hosts_become_punycode() {
+    let document = json!({
+        "defaultSelection": ["self"],
+        "servers": [
+            {"id": "self", "url": "."},
+            {"id": "munich", "url": "https://München.example/", "additionalOrigins": ["https://straße.example:8443/"]},
+        ],
+    });
+    let (catalog, rejected) = received(document).unwrap();
+    assert!(rejected.is_empty());
+    let munich = serde_json::to_value(&catalog.servers[1]).unwrap();
+    assert_eq!(munich["url"], "https://xn--mnchen-3ya.example");
+    assert_eq!(munich["additionalOrigins"], json!(["https://xn--strae-oqa.example:8443"]));
 }

@@ -1,6 +1,6 @@
 //! Upload progress records and receiver counters (`api/upload.md`).
 
-use crate::{json, refusal::UploadRefusal, token};
+use crate::{json, refusal::UploadRefusal, text, token};
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 /// The largest counter both clients represent exactly.
@@ -78,7 +78,7 @@ pub enum Record {
     Progress(Counters),
     /// The final observation, after finalization and lane drain.
     Complete(Counters),
-    /// An explicit refusal; an empty field was absent.
+    /// An explicit refusal; an empty field was absent, and decoding cleans both as Go does.
     Error {
         #[serde(skip_serializing_if = "String::is_empty")]
         code: String,
@@ -115,6 +115,7 @@ impl Record {
             "complete" => Ok(Self::Complete(serde_json::from_slice(line)?)),
             "error" => {
                 let Detail { code, message } = serde_json::from_slice(line)?;
+                let (code, message) = (text::clean(&code, 64, text::safe), text::clean(&message, 256, text::safe));
                 Ok(Self::Error { code, message })
             }
             _ => Err(serde_json::Error::custom("unknown upload progress record")),

@@ -48,14 +48,18 @@ macro_rules! named {
     };
 }
 
+pub mod approval;
 pub mod bus;
 pub mod catalog;
 pub mod discovery;
+pub mod duration;
+pub mod idna;
 pub mod json;
 pub mod lane;
 pub mod origin;
 pub mod reason;
 pub mod refusal;
 pub mod route;
+pub mod text;
 pub mod token;
 pub mod upload;

@@ -153,6 +153,17 @@ fn metadata_holds_at_most_256_bytes_and_a_generation() {
     assert!(preflight_with("/generation", json!("")).is_err());
     assert!(Preflight::decode(&edited(preflight(), "/generation", None)).is_err());
     assert!(preflight_with("/engineVersion", json!("")).is_ok());
+    for unsafe_text in ["bell\u{7}", "\u{202e}reversed", "line\nbreak"] {
+        assert!(preflight_with("/server/location", json!(unsafe_text)).is_err(), "{unsafe_text:?}");
+    }
+}
+
+#[test]
+fn international_target_hosts_become_punycode() {
+    let target = json!({"baseUrl": "https://MÜNCHEN.example:7249", "transport": "webtransport", "protocol": "http3"});
+    let decoded = preflight_with("/capabilities/throughput", json!([target])).unwrap();
+    let base_url = &decoded.capabilities.throughput[0].base_url;
+    assert_eq!(serde_json::to_value(base_url).unwrap(), "https://xn--mnchen-3ya.example:7249");
 }
 
 #[test]

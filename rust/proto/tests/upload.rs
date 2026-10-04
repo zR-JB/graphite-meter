@@ -43,6 +43,20 @@ fn records_encode_as_one_object_and_a_newline() {
 }
 
 #[test]
+fn refusal_details_reach_the_reader_cleaned() {
+    let long = "m".repeat(300);
+    let line =
+        serde_json::to_vec(&serde_json::json!({"type": "error", "code": "in\u{202e}valid", "message": long})).unwrap();
+    let Record::Error { code, message } = Record::decode(&line).unwrap() else {
+        panic!("an error record")
+    };
+    assert_eq!(code, "in valid");
+    assert_eq!(message, "m".repeat(255) + "…");
+    let line = serde_json::to_vec(&serde_json::json!({"type": "error", "code": "c".repeat(70)})).unwrap();
+    assert!(matches!(Record::decode(&line).unwrap(), Record::Error { code, .. } if code == "c".repeat(63) + "…"));
+}
+
+#[test]
 fn heartbeats_malformed_and_unknown_records_are_no_observations() {
     for line in [
         "",

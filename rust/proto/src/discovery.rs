@@ -1,6 +1,6 @@
 //! Discovery and probe documents (`api/discovery.md`, `preflight.schema.json`, `probe.schema.json`).
 
-use crate::{json, origin::BaseUrl};
+use crate::{json, origin::BaseUrl, text};
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use std::{net::IpAddr, ops::RangeInclusive, time::Duration};
 
@@ -8,7 +8,7 @@ use std::{net::IpAddr, ops::RangeInclusive, time::Duration};
 pub const MAX_RESPONSE_BYTES: usize = 64 << 10;
 /// Each target list holds at most this many targets, counted as sent.
 pub const MAX_TARGETS: usize = 32;
-/// Server names, locations, engine versions and generations hold at most this many bytes.
+/// Server names, locations, engine versions and generations hold at most this many bytes of safe text.
 pub const MAX_METADATA_BYTES: usize = 256;
 /// The stage limit of a server that advertises none.
 pub const DEFAULT_STAGE_LIMIT: Duration = Duration::from_secs(300);
@@ -134,8 +134,8 @@ impl Capabilities {
     }
 }
 
-pub(crate) fn is_metadata(text: &str) -> bool {
-    text.len() <= MAX_METADATA_BYTES
+pub(crate) fn is_metadata(metadata: &str) -> bool {
+    metadata.len() <= MAX_METADATA_BYTES && metadata.chars().all(text::safe)
 }
 
 fn throughput_targets<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<ThroughputTarget>, D::Error> {

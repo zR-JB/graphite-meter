@@ -119,3 +119,84 @@ fn a_dot_base_url_names_the_origin_that_served_the_document() {
     assert_eq!(serde_json::to_string(&BaseUrl::Served).unwrap(), "\".\"");
     assert_eq!(serde_json::to_string(&other).unwrap(), "\"https://speed.example:7249\"");
 }
+
+#[test]
+fn received_international_hosts_become_the_punycode_go_dials() {
+    for (text, expected) in [
+        ("https://BÜCHER.example", "https://xn--bcher-kva.example"),
+        ("https://münchen.example:7248", "https://xn--mnchen-3ya.example:7248"),
+        ("https://straße.example", "https://xn--strae-oqa.example"),
+        ("https://例え.テスト", "https://xn--r8jz45g.xn--zckzah"),
+        ("https://παράδειγμα.δοκιμή", "https://xn--hxajbheg2az3al.xn--jxalpdlp"),
+        ("https://ПРИМЕР.испытание", "https://xn--e1afmkfd.xn--80akhbyknj4f"),
+        ("https://실례.테스트", "https://xn--9n2bp8q.xn--9t4b11yi5a"),
+        ("https://مثال.إختبار", "https://xn--mgbh0fb.xn--kgbechtv"),
+        ("https://עברית.example.", "https://xn--5dbqzzl.example."),
+        ("https://ყველა.example", "https://xn--lodhcv6d.example"),
+        ("https://ÄÖÜ.example", "https://xn--4ca0bs.example"),
+        ("https://σς.example", "https://xn--3xab.example"),
+        ("https://ı.example", "https://xn--cfa.example"),
+        ("https://ȸ.example", "https://xn--uma.example"),
+        ("https://日本語.jp", "https://xn--wgv71a119e.jp"),
+        ("https://가.example", "https://xn--o39a.example"),
+        ("https://ア.example", "https://xn--cck.example"),
+        ("https://café", "https://xn--caf-dma"),
+        ("https://Ж1.example", "https://xn--1-ktb.example"),
+        ("https://ü1-2.example", "https://xn--1-2-goa.example"),
+        ("https://1ü", "https://xn--1-eha"),
+        ("https://ab-ü", "https://xn--ab--joa"),
+        ("https://xn--bcher-kva.ü", "https://xn--bcher-kva.xn--tda"),
+        ("https://中国\u{3002}example", "https://xn--fiqs8s.example"),
+        ("https://ü\u{ff0e}example", "https://xn--tda.example"),
+    ] {
+        let received = Origin::parse_received(text).map(|origin| origin.to_string());
+        assert_eq!(received.as_deref(), Ok(expected), "{text}");
+        assert!(Origin::parse(text).is_err(), "configured origins keep ASCII hosts: {text}");
+    }
+    assert_eq!(
+        Origin::parse_received("https://Meter.example").unwrap().to_string(),
+        "https://meter.example"
+    );
+}
+
+#[test]
+fn received_hosts_go_refuses_or_idna_would_map_are_refused() {
+    let go_refuses = [
+        "-bücher.example",
+        "ü-.example",
+        "ab--ü.example",
+        "aא.example",
+        "אa.example",
+        "١٢٣.example",
+        "bü cher.example",
+        "ü_x.example",
+        "ä.b_c.example",
+        "ü..example",
+    ];
+    // Go maps, composes or keeps these; only letters IDNA keeps as they are convert.
+    let mapped = [
+        "ｍｅｔｅｒ.example",
+        "ℌeter.example",
+        "ﬁle.example",
+        "ĳssel.example",
+        "ǅ.example",
+        "ʰ.example",
+        "ⅷ.example",
+        "ｱ.example",
+        "ㄱ.example",
+        "e\u{301}.example",
+        "İstanbul.example",
+        "שׁ.example",
+        "ש1.example",
+        "💩.example",
+        "bü--cher.example",
+    ];
+    for host in go_refuses.into_iter().chain(mapped) {
+        assert!(Origin::parse_received(&format!("https://{host}")).is_err(), "accepted {host}");
+    }
+    for text in ["https://ü@meter.example", "https://bücher.example/path", "https://bücher.example:x"] {
+        assert!(Origin::parse_received(text).is_err(), "accepted {text}");
+    }
+    let long = format!("https://ü.{}.example", "a".repeat(2040));
+    assert!(Origin::parse_received(&long).is_err());
+}
