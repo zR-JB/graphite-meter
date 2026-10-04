@@ -244,6 +244,15 @@
     .result-cards {
       grid-template-columns: minmax(0, 1fr);
     }
+    .card {
+      padding: 8px var(--space-3) 10px;
+    }
+    .strip {
+      min-height: 56px;
+    }
+    .facts > div {
+      height: 20px;
+    }
     .wire .delta {
       display: none;
     }

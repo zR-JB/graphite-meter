@@ -100,7 +100,7 @@ tokens in sRGB (`go/cmd/graphite-meter-client/theme.go`). Its light stage text c
 
 | Role                                                    | Family    | Size                     | Weight                             |
 | ------------------------------------------------------- | --------- | ------------------------ | ---------------------------------- |
-| Dial readout                                            | Plex Mono | fluid, 22–40 px          | 500                                |
+| Dial readout                                            | Plex Sans | fluid, 24–76 px          | 300                                |
 | Card and latency headline (`--role-readout`)            | Plex Mono | 26–28 px                 | 500                                |
 | Figure (`--role-figure-sm`)                             | Plex Mono | 12 px                    | 500                                |
 | Sheet and dialog title (`--role-panel-title`)           | Plex Sans | `--type-lg`              | 600                                |
@@ -176,18 +176,19 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
 
 ## Components
 
-- **Console** (`GaugePanel`): the dial's panel, 300 px wide and up to 560 with the console, beside the latency
-  panel with the controls under it, the run key over the stage chips, centred in the room the lanes leave; the
-  dial is as tall as the lanes and the controls together, so the ring has more height than the lanes; under both
-  one card per stage across the console. Without the latency stage the dial stands centred and wider with the
-  controls under it. A complete run fits 1024 × 768 without scrolling. On a phone the dial keeps about two fifths
+- **Console** (`GaugePanel`): the dial on the page, in no panel, 300 px wide and up to 560 with the console,
+  beside the latency lanes with the controls under them, the run key over the stage chips, centred in the room
+  the lanes leave; the dial is as tall as its ring wants or as the lanes and the controls together; under both
+  one card per stage across the console. What is measured live lies on the page (dial, lanes, keys); what is
+  kept is a card. Without the latency stage the dial stands centred and wider with the controls under it. A complete run fits 1024 × 768 without scrolling. On a phone the dial keeps about two fifths
   of the screen with the controls under it, up to three chips to a row (four as two and two, a narrow chip
   without its glyph), the cards one to a row in stage order, each whole from Start so nothing moves as the
   stages run, and the lanes come last.
-  The dial is a 270° ring with an arc a twelfth of its radius wide, short ticks and five labels; every result's
+  The dial is a 270° ring with an arc 0.13 of its radius wide, ticks and five labels; every result's
   arc lies on the ring, the longest underneath, so each shows from where the next shorter one ends, and ends in
   a bead in its hue; a bead moved inward off a close neighbour hangs on a stalk; the stage's mark and name sit
-  over the number. The ring and its readout grow with the screen: on a landscape screen the
+  over the number, which is light Plex Sans at 0.17 of the face's smaller side (24–76 px), every size of the
+  face's type taken from its measured box, never from a container query, which a flex item answers late. The ring and its readout grow with the screen: on a landscape screen the
   console's rows are as tall as their content, the dial as tall as its ring wants (0.86 of its width) or as the
   lanes and the controls together, so the spare height stays on the canvas under the cards. Every "—" that waits for a value is `--text-soft`; a measured value is full ink. The note under the
   dial holds the phase's note or a failure, and while no data or no reply arrives, for how long; on a landscape
@@ -196,11 +197,10 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
 - **Top bar and status strip**: 48 px on the canvas and 28 px in `--surface-1`, each with a hairline, their
   text on the console's gutter (`--gutter`, 24 px, 16 under 1024 px), so the brand, the panels' edges and the
   status word share one line. The bar carries the brand, whose hexagon is the latency hue as the favicon's
-  is, the connection dot, and at the right Settings, History, Details and the theme, so no key stands beside the
-  brand's wide target; a key is a 32 px square glyph plate with a hairline. The brand's hover dims its word, no
-  plate. The strip reads the status word at the left and, against the right, the elapsed time, the bytes moved,
-  the time left while a stage runs and the build; each figure ends on a fixed edge in a cell as wide as its
-  longest value.
+  is, a Settings key, the connection dot, and at the right History, Details and the theme; a key is a 32 px
+  square glyph plate with a hairline. The brand's hover dims its word, no plate. The strip reads from the left
+  the status word, the elapsed time, the bytes moved and the time left while a stage runs, each figure in a cell
+  as wide as its longest value, and the build alone at the right.
 - **Server lens** (`ServerLens`, `ServerScope quiet`): with several servers, one quiet field in the dial's corner
   (All servers or one), as wide as the choice it shows, drives the cards and which server's latency is shown once
   the run finishes. History's detail has its own.
@@ -235,7 +235,8 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   idle replies over the stage, kept as the record (History has no series). A mouse, a tap, a sideways drag or arrow keys show a readout on a
   transfer's strip at once: time into the stage, the rate, and the latency replies measured then. A vertical swipe
   scrolls past; a drag's readout leaves with the finger.
-- **Latency lanes** (`LatencyProfileView`): in the panel beside the dial, under the head (mark, Latency, "Idle and
+- **Latency lanes** (`LatencyProfileView`): the latency stage's area beside the dial (`.stage-area`: a 2 px rule
+  in its hue along the top and a wash of it that fades out, no box), under the head (mark, Latency, "Idle and
   under load"): the idle median as the headline over "Idle median" with Jitter, Range, Stability and Timeouts as
   label-over-figure pairs under it (beside it on a narrow panel); then one 32 px ruled row per population, each
   led by its mark: name, median, jitter, timeouts (the share of resolved probes that got no reply, which is not
@@ -258,7 +259,8 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   narrower than its words, with the time and name under it; Custom adds a − time + stepper (`Stepper`) per stage
   and for warmup. Steps grow with the time (0.5 s, 1 s, 10 s, 1 min, 5 min) and land on their grid; a click edits the
   time as text (`90`, `2h`, `1 h 30 min`, `1:30:00`), which rounds to the time shown, and Escape drops the edit. The
-  field takes the keyboard like a spin button; − and + serve pointers and stay put at a limit. The stream limit is
+  field takes the keyboard like a spin button; − and + serve pointers, repeat while held (after 0.4 s, every
+  70 ms) and stay put at a limit. The stream limit is
   the same `Stepper` over a whole number. In a settings row a control stands at its label's end while the row
   holds both and against the right edge under it when it wraps; a cadence's segments then take the row's width.
   The servers' stage
@@ -280,7 +282,7 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   read, with Remove them, which deletes only those, or Dismiss. The detail repeats the result cards (three across or
   one to a row, never two and an orphan) and the latency lanes on the same 12 px text edge as its head, then each
   server's facts. From 821 px it sits beside the list, and the hairline between them is a handle like a docked
-  sheet's edge: the list keeps its share of the width (40 % by default), never under 360 px, and the detail never
+  sheet's edge: the list keeps its share of the width (50 % by default), never under 360 px, and the detail never
   under 460 px.
 - **Facts** (`dl.kv`): label/value pairs; a qualifier that belongs to a value is an `.aside`, never joined with a dot.
 - **Tooltip and readout**: a readout is a light plate (`.inspect-card`, a hairline, 3 px corners); a tip is
@@ -289,7 +291,8 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   after another closed); a hand moving faster than 0.2 px/ms starts the rest over, a reading hand's drift does
   not, so a pointer passing by or dragging opens none. A dotted underline marks jargon inside a line of text
   (a card's "wire", "no data"); a row's or a control's label carries its tip on the help cursor alone, so rows
-  and sheets read clean. It also opens on keyboard focus, on a
+  and sheets read clean. No tip restates what its control already shows: a Close key and a connection path's
+  row carry none. It also opens on keyboard focus, on a
   click or tap on jargon or an explained fact, or on a long press on a control; never after a click on a control. It
   stays while the pointer is on its word, closes a moment after it leaves, and one tip shows at a time. A scroll or a
   tap elsewhere closes a pointer's tip; a tap on the tip closes it without reaching what lies beneath. A tip the
@@ -305,7 +308,7 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
 | `.btn`                   | 32 (bar 28)    | 3                  | control           | hairline; quiet: hover, press and open washes       |
 | Run key                  | 48             | 3                  | 14 px 600         | ink fill, `--text-inverse`; running: quiet plate    |
 | Stage chip               | 172 × 46       | 3                  | 12 px 700, figure | bar in hue; live: time and hue edge; done: check    |
-| `.segmented`             | 32             | 3 track, 2 segment | control           | the chosen segment is a plate: fill, edge, shadow   |
+| `.segmented`             | 32             | 3 track, 2 segment | control           | equal segments; the chosen one a plate with a shadow |
 | Switch                   | 22 × 38        | full               | row label         | off: check edge; on: ink track                      |
 | Check, radio             | 18             | 2, full            | —                 | ink fill or ring                                    |
 | `.inspect-card`, tooltip | content        | 3                  | 12 px / 1.4       | `--surface-2`, `--elev-tooltip`                     |
