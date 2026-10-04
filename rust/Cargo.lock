@@ -198,6 +198,8 @@ version = "0.0.0"
 name = "graphite-meter-http3"
 version = "0.0.0"
 dependencies = [
+ "bytes",
+ "http",
  "noq",
 ]
 
