@@ -42,10 +42,10 @@ const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 const CONTROL_LIMIT: usize = 64 * 1024;
 const IDLE_PER_ORIGIN: usize = 32;
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
-// The server's upload windows, as Go's h2ReceiveWindowPer*: a reader that falls behind buffers at most the
-// connection's 16 MiB, and a 100 ms path still carries 1.3 Gbit/s. hyper's defaults cap it at a few hundred Mbit/s.
-const H2_STREAM_WINDOW: u32 = 8 << 20;
-const H2_CONNECTION_WINDOW: u32 = 16 << 20;
+// Go's client receive buffers: all download lanes share one connection, which carries 5 Gbit/s over a 100 ms path.
+// The connection's lanes read on its own thread, so they keep up with it and the windows stay on the wire.
+const H2_STREAM_WINDOW: u32 = 32 << 20;
+const H2_CONNECTION_WINDOW: u32 = 64 << 20;
 /// The largest DATA frame the client accepts, as the server: larger frames cost less CPU per byte.
 const H2_FRAME_BYTES: u32 = 64 * 1024;
 /// Each HTTP/1 connection reads into one fixed buffer, Go's lane buffer size; hyper's adaptive buffer grows to
