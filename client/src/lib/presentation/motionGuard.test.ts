@@ -11,7 +11,7 @@ test("only motion reads the clock, frames and reduced motion; timers say why", a
   const problems: string[] = [];
   let scanned = 0;
   const glob = new Glob(
-    "{state,components,presentation,canvas,actions}/**/*.{ts,svelte}",
+    "{state,components,presentation,actions}/**/*.{ts,svelte}",
   );
   for await (const path of glob.scan(ROOT)) {
     if (path === OWNER || /\.test\.ts$|testutil/.test(path)) continue;

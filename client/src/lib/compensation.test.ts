@@ -19,7 +19,7 @@ test("the automatic TCP model reports its conservative option range", () => {
   expect(estimate.upperBytesPerSec * 8).toBeLessThan(2_500_000_000);
 });
 
-test("HTTP/1 TLS retains its record overhead regression", () => {
+test("HTTP/1 over TLS adds its record overhead", () => {
   const clear = estimateCompensation(1_000_000, "http/1.1", false);
   const tls = estimateCompensation(1_000_000, "http/1.1", true);
   expect(tls.totalMultiplier / clear.totalMultiplier).toBeCloseTo(

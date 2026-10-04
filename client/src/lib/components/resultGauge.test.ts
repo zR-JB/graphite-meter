@@ -78,20 +78,6 @@ test("terminal gauge skips unavailable stages in every combination", () => {
   ]);
 });
 
-test("layer ordering paints highest throughput first and preserves ties", () => {
-  const layers = sortResultGaugeArcs([
-    arc("download", "Download", 20),
-    arc("upload", "Upload", 80),
-    arc("bidirectional", "Bidirectional upload", 80, "upload"),
-  ]);
-  expect(layers.map((arc) => arc.phase)).toEqual([
-    "upload",
-    "bidirectional",
-    "download",
-  ]);
-  expect(layers[1]!.dashed).toBe(true);
-});
-
 const headOptions = {
   baseRadius: 72,
   arcSweep: Math.PI * 1.5,

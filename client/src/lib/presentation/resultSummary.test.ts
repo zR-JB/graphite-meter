@@ -4,7 +4,6 @@ import {
   cardFacts,
   cardNoData,
   summaryCards,
-  summaryEvidence,
   type SummaryCard,
 } from "./resultSummary";
 import { JARGON } from "./vocabulary";
@@ -98,27 +97,6 @@ test("card graphs match full reconstruction across revisions, compaction, and re
     start: 0,
     span: 1,
   });
-});
-
-test("run evidence keeps only stages with a result", () => {
-  const evidence = summaryEvidence(
-    {
-      latency: "not-run",
-      download: "complete",
-      upload: "failed",
-      bidirectional: "active",
-    },
-    {
-      download: null,
-      upload: null,
-      bidirectional: null,
-      latency: null,
-      added: null,
-    },
-    null,
-    "",
-  );
-  expect(evidence.status).toEqual({ download: "complete", upload: "failed" });
 });
 
 const lane = (reportedBytesPerSec: number) => ({

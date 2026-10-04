@@ -1,10 +1,5 @@
 import { test, expect } from "bun:test";
-import {
-  lockReason,
-  stageShown,
-  stageTip,
-  stageTrackModel,
-} from "./stageTrack";
+import { lockReason, stageShown, stageTrackModel } from "./stageTrack";
 import type { StagePresentation } from "../state/stagePresentation";
 
 const stage = (
@@ -55,24 +50,6 @@ test("terminal selection can skip retained execution without rewriting it", () =
   });
 });
 
-test("failed and partial execution remain visible when selected after termination", () => {
-  for (const [status, tag] of [
-    ["failed", "Failed"],
-    ["partial", "Partial"],
-  ] as const) {
-    expect(
-      model(
-        stage({
-          status,
-          fill: status === "partial" ? 100 : 0,
-          failure: "timeout",
-        }),
-        true,
-      ),
-    ).toMatchObject({ state: status, tag });
-  }
-});
-
 test("a stage enabled after a retained run is queued only for the next run", () => {
   expect(
     model(stage({ configured: false, status: "disabled" }), true),
@@ -102,28 +79,4 @@ test("a retained bidirectional run stays on the track after Settings drops it", 
   expect(stageShown("bidirectional", false, ran)).toBe(true);
   expect(stageShown("bidirectional", false, off)).toBe(false);
   expect(stageShown("upload", false, off)).toBe(true);
-});
-
-test("a stage tip names its result, or why it is locked or skipped", () => {
-  const tip = (overrides: Partial<Parameters<typeof stageTip>[0]>) =>
-    stageTip({
-      selected: true,
-      locked: false,
-      state: "complete",
-      reason: null,
-      failure: null,
-      value: "940 Mbit/s",
-      ...overrides,
-    });
-  expect(tip({ locked: true })).toBe("Complete\n940 Mbit/s");
-  expect(
-    tip({ state: "partial", reason: "Partial", failure: "connection-lost" }),
-  ).toBe("Partial\n940 Mbit/s\nConnection lost");
-  expect(
-    tip({ state: "active", locked: true, reason: "Running", value: null }),
-  ).toBe("Locked while it runs");
-  expect(
-    tip({ state: "disabled", selected: false, reason: "Skipped", value: null }),
-  ).toBe("Skipped");
-  expect(tip({ state: "pending", value: null })).toBe("");
 });

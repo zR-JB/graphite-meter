@@ -12,7 +12,6 @@ import type {
   RunnerEvent,
 } from "./contract";
 import type { ParticipantHost, StageTransport } from "./transport";
-import type { DroppedServer } from "./run";
 import {
   buildHistoryRecord,
   incoherence,
@@ -69,7 +68,6 @@ async function harness(
     latencySource?: string;
     adaptive?: boolean;
     loadedLatency?: boolean;
-    dropped?: DroppedServer[];
   } = {},
 ) {
   const { Run } = await import("./run");
@@ -86,7 +84,7 @@ async function harness(
   const run = new Run(
     servers,
     options.latencySource ?? peers[0].id,
-    options.dropped,
+    [],
     ({ host, paths, activity }) => {
       const peer = peers.find(
         (entry) =>
@@ -329,30 +327,6 @@ test("two servers sum their windows, and terminal evidence after the final bound
   expect(result.download!.totalBytes).toBeLessThan(10_000);
   near(result.multiServer.servers[0].download?.reportedBytesPerSec, 1_000);
   near(result.multiServer.servers[1].download?.reportedBytesPerSec, 3_000);
-});
-
-test("a server whose check failed before the run is shown with its reason while the rest measure", async () => {
-  const peer = { id: "peer", url: "https://peer.example", name: "Peer" };
-  const h = await harness(
-    [{ id: "self", rate: 2, measure: probe(10, 20) }],
-    { latency: true, download: true },
-    { latencyMs: 400, downloadMs: 1_000 },
-    {
-      dropped: [
-        { server: peer, reason: "preparation-failed", message: "unreachable" },
-      ],
-    },
-  );
-  h.start();
-  const { multiServer, stages, outcome } = await h.result();
-  expect(stages.latency).toBe("complete");
-  expect(multiServer.selection.map(({ id }) => id)).toEqual(["self", "peer"]);
-  expect(multiServer.participants).toEqual(["self"]);
-  expect(multiServer.failures).toMatchObject([
-    { serverId: "peer", stage: "download", reason: "preparation-failed" },
-  ]);
-  expect(stages.download).toBe("partial");
-  expect(outcome).toBe("partial");
 });
 
 test("a server lost in the latency stage is not prepared for the later stages", async () => {

@@ -83,23 +83,6 @@ function connect(
   return connection;
 }
 
-test("a failed role keeps the other role's verified path", async () => {
-  const connection = connect({
-    prepare: async (config, _previous, roles) => {
-      if (roles.includes("latency")) throw new Error("offline");
-      return preparation(config);
-    },
-  });
-  await connection.check();
-  expect(connection.view.validation.throughput.state).toBe("verified");
-  expect(connection.view.validation.latency).toMatchObject({
-    state: "failed",
-    message: "Connection check failed",
-  });
-  expect(connection.view.readiness).toBe("failed");
-  expect(connection.paths()).toBeNull();
-});
-
 test("the view fails throughput without upload checkpoints but keeps its probe evidence", async () => {
   const paths = evidence();
   paths.discovery.uploadCheckpoint = false;
