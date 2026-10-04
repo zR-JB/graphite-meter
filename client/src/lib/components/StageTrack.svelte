@@ -189,6 +189,7 @@
     gap: 10px;
     height: 46px;
     min-width: 0;
+    max-width: 360px;
     padding: 0 12px;
     overflow: hidden;
     border: var(--hairline) solid var(--border);
@@ -278,6 +279,7 @@
   .seg-tint {
     position: absolute;
     inset: 0;
+    border-right: 2px solid var(--tone);
     background: color-mix(in oklab, var(--tone) 9%, transparent);
     transform: scaleX(var(--progress, 0));
     transform-origin: left center;
@@ -289,7 +291,7 @@
   .seg-bar {
     position: absolute;
     inset: auto 0 0;
-    height: 3px;
+    height: 2px;
     overflow: hidden;
   }
   .seg-fill {
@@ -348,6 +350,7 @@
   @container viz (max-width: 720px) {
     .seg {
       flex-basis: calc(50% - var(--space-1));
+      max-width: none;
       padding: 0 10px;
     }
   }

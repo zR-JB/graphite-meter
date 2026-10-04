@@ -169,18 +169,11 @@ function createTooltip(node: HTMLElement, initial: string, marked: boolean) {
     target.style.top = `${above ? at.top - height - GAP_PX : at.bottom + GAP_PX}px`;
     target.style.left = `${Math.max(GAP_PX, Math.min(left, innerWidth - width - GAP_PX))}px`;
   }
-  // The arrow points at the term wherever the bubble had to sit; measured about the centre, so the entry scale cancels.
+  // Which side of the term the bubble settled on.
   function aim(target: HTMLElement) {
-    target.style.removeProperty("--arrow-x");
     const at = node.getBoundingClientRect();
     const box = target.getBoundingClientRect();
-    const width = target.offsetWidth;
     target.dataset.side = box.top >= at.top ? "below" : "above";
-    const x = at.left + at.width / 2 - (box.left + box.width / 2 - width / 2);
-    target.style.setProperty(
-      "--arrow-x",
-      `${Math.min(Math.max(x, 12), width - 12)}px`,
-    );
   }
   function show(touch = false, byKeyboard = false) {
     clearTimeout(openTimer);

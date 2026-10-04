@@ -154,15 +154,11 @@
   .panel-layer > :global(dialog.panel[open]) {
     display: flex;
   }
-  /* Docked, nothing clips the resize handle that straddles the edge; the body clips its own corners. */
+  /* Docked, nothing clips the resize handle that straddles the edge. */
   .docked > :global(dialog.panel) {
     overflow: visible;
   }
-  .docked .panel-body {
-    border-radius: 0 0 calc(var(--r-surface) - var(--hairline))
-      calc(var(--r-surface) - var(--hairline));
-  }
-  /* Docked, the sheet keeps its width and hugs its column's inner edge, so the column's glide is its slide:
+  /* Docked, the sheet is its column, flush with the bars, cut from the stage by one hairline; the column's glide is its slide:
      the sheet and the page it makes room in move in the same layout pass, with no second animation to
      fall behind on a slow machine. Closed, the column is 0 wide and the sheet hangs off the viewport's
      edge; it stays displayed for the glide out, then closes. */
@@ -170,9 +166,11 @@
     grid-area: rightdock;
     justify-self: start;
     position: relative;
-    width: calc(var(--dock-w) - var(--space-3));
+    width: var(--dock-w);
     height: auto;
-    margin: 0 var(--space-3) var(--space-3) 0;
+    margin: 0;
+    border-width: 0 0 0 var(--hairline);
+    border-radius: 0;
     background: var(--sheet-solid);
     box-shadow: none;
     transition:
@@ -182,7 +180,7 @@
   .docked > :global(dialog.panel.left) {
     grid-area: leftdock;
     justify-self: end;
-    margin: 0 0 var(--space-3) var(--space-3);
+    border-width: 0 var(--hairline) 0 0;
   }
   .panel-layer:not(.docked) > :global(dialog.panel) {
     --closed: translateX(calc(100% + var(--space-4)));

@@ -80,7 +80,6 @@
     trackWidth: number;
   } | null>(null);
   let keyboardLane = $state<LatencyProfileViewLane["key"] | null>(null);
-  let cardWidth = $state(0);
 
   const hoverLane = $derived(
     hover ? (lanes.find((lane) => lane.key === hover!.key) ?? null) : null,
@@ -89,22 +88,10 @@
     hoverLane && hover ? metricValue(hoverLane, hover.metric) : null,
   );
 
-  const CARD_GAP = 12;
-  const CARD_PAD = 6;
   // Markers keep this margin, so one at either end of the scale stays whole.
   const EDGE = 7;
   const atPct = (pct: number, width: number) =>
     EDGE + (pct / 100) * (width - 2 * EDGE);
-  const cardLeft = $derived.by(() => {
-    if (!hover) return 0;
-    const anchorPx = atPct(hover.anchorPct, hover.trackWidth);
-    const desired =
-      hover.anchorPct <= 50
-        ? anchorPx + CARD_GAP
-        : anchorPx - cardWidth - CARD_GAP;
-    const maxLeft = Math.max(CARD_PAD, hover.trackWidth - cardWidth - CARD_PAD);
-    return Math.min(Math.max(CARD_PAD, desired), maxLeft);
-  });
 
   function setHover(
     lane: LatencyProfileViewLane,
@@ -463,17 +450,6 @@
                 class="guide"
                 style:left={`${atPct(pos(hoverValue, scale), hover.trackWidth)}px`}
               ></span>
-              <span
-                class="inspect-card hover-card"
-                bind:clientWidth={cardWidth}
-                style:left={`${cardLeft}px`}
-              >
-                <span class="hover-head">
-                  <span>{metricLabel(hover.metric)}</span>
-                  <strong>{fmtMs(hoverValue)} ms</strong>
-                </span>
-                <span class="hover-meaning">{metricMeaning(hover.metric)}</span>
-              </span>
             {/if}
           </div>
           <span
@@ -496,16 +472,29 @@
           >
         {/each}
       </div>
+      <!-- The marker under the pointer reads in a line of its own under the axis, never over a plot. -->
+      <div class="reading" aria-hidden="true">
+        {#if hoverLane && hover && hoverValue != null}
+          <span class="reading-lane" data-tone={hoverLane.key}
+            >{hoverLane.label}</span
+          >
+          <span class="reading-metric">{metricLabel(hover.metric)}</span>
+          <strong>{fmtMs(hoverValue)} ms</strong>
+          <span class="reading-meaning">{metricMeaning(hover.metric)}</span>
+        {/if}
+      </div>
     </div>
   </div>
 </section>
 
 <style>
-  /* In its panel: the head, then the idle figures beside the ruled lanes. */
+  /* In its panel: the head at the top, then the idle figures beside the ruled lanes, centred in what is left. */
   .latency-card {
     display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
     gap: var(--space-3);
     min-width: 0;
+    height: 100%;
     container: latency / inline-size;
   }
   .card-head {
@@ -607,10 +596,11 @@
   .lanes {
     display: grid;
     align-self: center;
+    max-height: 100%;
     grid-template-columns:
       repeat(4, max-content) [track] minmax(120px, 1fr)
       minmax(64px, max-content);
-    grid-template-rows: auto repeat(var(--lanes), 32px) auto;
+    grid-template-rows: auto repeat(var(--lanes), minmax(36px, 52px)) auto auto;
     column-gap: var(--space-3);
     min-width: 0;
     isolation: isolate;
@@ -836,36 +826,33 @@
     background: color-mix(in srgb, var(--text) 54%, transparent);
     pointer-events: none;
   }
-  /* Centred by auto margins, not a translate, so its text stays on whole pixels. */
-  .hover-card {
-    z-index: 10;
-    inset-block: 0;
-    display: grid;
-    gap: 2px;
-    height: fit-content;
-    min-width: 156px;
-    max-width: min(238px, 76vw);
-    margin-block: auto;
-    padding-block: var(--space-1);
-  }
-  .hover-head {
+  /* One line kept under the axis from Start, so a reading arriving never moves the rows. */
+  .reading {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
+    grid-column: 1 / -1;
+    align-items: baseline;
+    gap: var(--space-2);
+    height: 20px;
     min-width: 0;
-  }
-  .hover-head span,
-  .hover-meaning {
+    margin-top: var(--space-1);
     overflow: hidden;
     color: var(--text-soft);
-    text-overflow: ellipsis;
+    font: var(--w-normal) var(--type-sm) / 20px var(--font-sans);
     white-space: nowrap;
   }
-  .hover-head strong {
-    font: var(--w-strong) var(--type-sm) var(--font-sans);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
+  .reading-lane {
+    color: var(--tone-ink);
+    font-weight: var(--w-strong);
+  }
+  .reading strong {
+    color: var(--text);
+    font: var(--role-figure-sm);
+    line-height: 20px;
+  }
+  .reading-meaning {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   /* Narrower cards put the idle facts above the rows. */
   @container latency (max-width: 720px) {

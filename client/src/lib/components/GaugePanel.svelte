@@ -383,8 +383,9 @@
     container: viz / inline-size;
     height: 100%;
   }
-  /* The dial's panel beside the latency panel, which sets the row's height; under them the transport row and
-     the cards, all on the instrument's width. */
+  /* The dial's panel beside the latency panel; under them the transport row and the cards, all on the console's
+     width. On a landscape screen the console takes the column's height and the top row takes the spare height,
+     so the ring grows with the screen; the cards keep their size. */
   .instrument {
     --dial-height: clamp(260px, 32svh, 320px);
     display: grid;
@@ -406,23 +407,21 @@
   @container viz (min-width: 760px) {
     .instrument {
       --dial-height: 300px;
+      --dial-width: clamp(300px, 30cqw, 560px);
+      height: 100%;
+      max-height: 1100px;
       grid-template:
-        "dial latency" minmax(var(--dial-height), auto)
+        "dial latency" minmax(var(--dial-height), 1fr)
         "transport transport" auto
         "results results" auto
-        / 300px minmax(0, 1fr);
+        / var(--dial-width) minmax(0, 1fr);
     }
     .instrument:not(:has(.latency-panel)) {
       grid-template:
-        "dial dial" var(--dial-height)
+        "dial dial" minmax(var(--dial-height), 1fr)
         "transport transport" auto
         "results results" auto
-        / 300px minmax(0, 1fr);
-    }
-  }
-  @container viz (min-width: 1180px) {
-    .instrument {
-      grid-template-columns: 320px minmax(0, 1fr);
+        / var(--dial-width) minmax(0, 1fr);
     }
   }
   @container viz (max-width: 520px) {
@@ -445,7 +444,6 @@
     grid-area: latency;
     display: flex;
     flex-direction: column;
-    justify-content: center;
     min-width: 0;
     min-height: 0;
     padding: var(--space-4) var(--space-5);
@@ -551,7 +549,7 @@
   }
   .gauge-value {
     min-width: 5ch;
-    font-size: clamp(22px, 13cqmin, 40px);
+    font-size: clamp(22px, 13cqmin, 56px);
     text-align: center;
   }
   /* "—" waits quietly where the value arrives, like the cards'. */
@@ -603,7 +601,7 @@
     }
   }
   .terminal-number {
-    font-size: clamp(26px, 13cqmin, 40px);
+    font-size: clamp(26px, 13cqmin, 56px);
   }
   /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. One size and line height for both, so the result
      lands where the live value stood. */

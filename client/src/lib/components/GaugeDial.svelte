@@ -42,6 +42,8 @@
   const visible = $derived(input.showValue && target !== null);
   // A head is flat in its hue and a little wider than its arc, so it and its beat read at any size.
   const headRadius = $derived(layout.arcWidth / 2 + 2);
+  // A mark starts clear of the ring's outer edge.
+  const markFrom = $derived(layout.radius + layout.arcWidth / 2 + 4);
   // The beat swells the head by a fifth; its box leaves that room.
   const headExtent = $derived(Math.ceil(headRadius * 1.2) + 1);
   // Readout frames change the handoff object while the result arcs stay put.
@@ -126,34 +128,37 @@
   });
 </script>
 
-<!-- A head is a bead in its stage's hue at its arc's end, cut from its neighbours by a ring of the panel; one moved
-     inward off a close neighbour hangs on a stalk of its hue, and a partial one is a ring. -->
+<!-- The headline's head is a bead in its hue at its arc's end; every other result is a mark on the rim outside
+     the ring, so nothing sits in the headline's arc. A partial result's bead is a ring, its mark dotted. -->
 {#snippet head(
   fraction: number,
   radius: number,
   color: string,
   hollow = false,
-  lane = 0,
+  primary = false,
 )}
   <g transform={`translate(${layout.center.x} ${layout.center.y})`}>
     <g
       class="head result"
       style:transform={`rotate(${angleForFraction(fraction, layout.arcStart, layout.arcSweep)}rad)`}
     >
-      {#if lane !== 0}
+      {#if primary}
+        <circle
+          cx={radius}
+          r={hollow ? headRadius - 1 : headRadius}
+          fill={hollow ? "none" : color}
+          stroke={hollow ? color : "var(--surface-1)"}
+          stroke-width={hollow ? 2 : 1.5}
+        />
+      {:else}
         <path
-          d={`M ${layout.radius} 0 H ${radius}`}
+          d={`M ${markFrom} 0 H ${markFrom + 7}`}
           stroke={color}
-          stroke-width="2"
+          stroke-width="2.5"
+          stroke-linecap="round"
+          stroke-dasharray={hollow ? "0.5 3" : undefined}
         />
       {/if}
-      <circle
-        cx={radius}
-        r={hollow ? headRadius - 1 : headRadius}
-        fill={hollow ? "none" : color}
-        stroke={hollow ? color : "var(--surface-1)"}
-        stroke-width={hollow ? 2 : 1.5}
-      />
     </g>
   </g>
 {/snippet}
@@ -171,7 +176,11 @@
     viewBox={`0 0 ${layout.width} ${layout.height}`}
   >
     <g fill="none" stroke-linecap="round">
-      <path d={track} stroke="var(--border)" stroke-width={layout.arcWidth} />
+      <path
+        d={track}
+        stroke="var(--border-strong)"
+        stroke-width={layout.arcWidth}
+      />
       <g stroke="var(--border-strong)" stroke-width="1" stroke-opacity=".7">
         {#each layout.majorTicks as tick (tick.angle)}
           <path
@@ -191,7 +200,7 @@
         viewBox={`0 0 ${layout.width} ${layout.height}`}
       >
         <g fill="none" stroke-linecap="round">
-          {#each results.toSorted((a, b) => Number(a.primary) - Number(b.primary)) as result (result.phase)}
+          {#each results.filter((result) => result.primary) as result (result.phase)}
             <mask
               id={`${shadeId}-${result.phase}`}
               maskUnits="userSpaceOnUse"
@@ -224,10 +233,10 @@
         {#each results.toReversed() as result (result.phase)}
           {@render head(
             result.fraction,
-            result.radius,
+            layout.radius,
             `var(--phase-${result.phase})`,
             result.dashed,
-            result.lane,
+            result.primary,
           )}
         {/each}
       </svg>
@@ -243,8 +252,8 @@
         class="head-target"
         aria-hidden="true"
         tabindex="-1"
-        style:left={`${layout.center.x + Math.cos(angle) * result.radius}px`}
-        style:top={`${layout.center.y + Math.sin(angle) * result.radius}px`}
+        style:left={`${layout.center.x + Math.cos(angle) * (result.primary ? layout.radius : markFrom + 4)}px`}
+        style:top={`${layout.center.y + Math.sin(angle) * (result.primary ? layout.radius : markFrom + 4)}px`}
         {@attach tooltip(() => result.description)}
       ></span>
     {/each}

@@ -237,6 +237,15 @@
     .result-cards > :global(:last-child:nth-child(odd)) {
       grid-column: 1 / -1;
     }
+    .result-cards .facts {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 3px;
+    }
+    .result-cards .facts > div {
+      display: flex;
+      justify-content: space-between;
+      gap: var(--space-2);
+    }
   }
   /* A card is a panel ruled in its stage's hue along the top; the running card's rule and edge strengthen. */
   .card {

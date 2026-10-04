@@ -125,7 +125,7 @@
   --font-mono:
     "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 
-  --topbar-h: 44px;
+  --topbar-h: 40px;
   --statusbar-h: 28px;
 
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -1199,12 +1199,12 @@
 
   .tooltip,
   .inspect-card {
-    padding: var(--space-2) var(--space-3);
+    padding: 6px var(--space-2);
     border: var(--hairline) solid var(--border-strong);
     border-radius: var(--r-chrome);
     color: var(--text);
     box-shadow: var(--elev-tooltip);
-    font: var(--w-normal) var(--type-sm) / 1.4 var(--font-sans);
+    font: var(--w-normal) var(--type-sm) / 1.35 var(--font-sans);
     letter-spacing: 0;
     text-transform: none;
     pointer-events: none;
@@ -1334,7 +1334,7 @@
     inset: auto;
     width: max-content;
     max-width: min(300px, calc(100vw - 16px));
-    margin: 8px;
+    margin: 6px;
     overflow: visible;
     position-area: block-start;
     /* Cut by the viewport, a tip flips below, then aligns to its word's edge; max-content keeps it from squeezing. */
@@ -1348,11 +1348,7 @@
     white-space: pre-line;
     overflow-wrap: anywhere;
     opacity: 0;
-    scale: 0.95;
-    transform-origin: var(--arrow-x, 50%) 100%;
-    transition:
-      opacity var(--dur-slide) var(--ease-out),
-      scale var(--dur-slide) var(--ease-out);
+    transition: opacity var(--dur-hover) var(--ease-out);
   }
   /* Without anchor positioning, tooltip.ts places the bubble itself. */
   @supports not (position-area: block-start) {
@@ -1363,32 +1359,8 @@
   .tooltip[data-titled]::first-line {
     font-weight: var(--w-strong);
   }
-  .tooltip[data-side="below"] {
-    transform-origin: var(--arrow-x, 50%) 0;
-  }
   .tooltip[data-show="true"] {
     opacity: 1;
-    scale: none;
-  }
-  /* The arrow is the bubble's own material, so it never reads as a second one. */
-  .tooltip::before {
-    position: absolute;
-    top: calc(100% - var(--hairline));
-    left: var(--arrow-x, 50%);
-    width: 8px;
-    height: 8px;
-    border: inherit;
-    border-width: 0 var(--hairline) var(--hairline) 0;
-    background: inherit;
-    content: "";
-    clip-path: polygon(100% 0, 100% 100%, 0 100%);
-    translate: -50% -50%;
-    rotate: 45deg;
-  }
-  .tooltip[data-side="below"]::before {
-    top: var(--hairline);
-    border-width: var(--hairline) 0 0 var(--hairline);
-    clip-path: polygon(0 0, 100% 0, 0 100%);
   }
 
   .enter,

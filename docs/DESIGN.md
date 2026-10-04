@@ -126,8 +126,9 @@ titles and controls, 700 only for `.caps`.
   field), `--r-chrome` 3 px (buttons, keys), `--r-surface` 4 px (panels, cards, sheets, dialogs, popovers),
   `--r-full` for dots and switches.
 - **Panels** are 420 px by default (360–720, resizable). They dock from 1200 px, two side by side from 1520 px, and
-  below that the last one opened stays. Docked, a sheet floats 12 px inside its column; below 1200 px it is a
-  flyout of the same width, and on a portrait phone a bottom sheet. A docked sheet's inner edge is a handle
+  below that the last one opened stays. Docked, a sheet is its column: flush with the bars, cut from the stage
+  by one hairline, no corner; below 1200 px it is a flyout of the same width, and on a portrait phone a bottom
+  sheet. A docked sheet's inner edge is a handle
   (`.resize-handle`): drag it or step it 16 px with the arrows (48 with Shift), Home and End reach its limits, Enter
   or a double-click resets it, and a 2 px ink line lights the edge on hover or focus.
 - **One text edge per sheet.** Plates sit on `--panel-pad` (16 px); text sits `--row-inset` (12 px) inside a plate,
@@ -179,13 +180,14 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   console's width. A complete run fits 1024 × 768 without scrolling. On a phone the dial keeps about a third of
   the screen, the keys sit two to a row with the run key under them on its own line, the cards two to a row with
   the running card first, and the lanes come last. The dial is a 270° ring with an arc a twelfth of its radius
-  wide, short ticks and five labels; the headline result fills the arc over the others' and every stage's result
-  is a bead at its arc's end, cut from its neighbours by a ring of the panel; the stage's mark and name sit over
-  the number. Every "—" that waits for a value is `--text-soft`; a measured value is full ink. The note under the
+  wide, short ticks and five labels; the headline result fills the arc and ends in a bead in its hue, and every
+  other stage's result is a mark on the rim outside the ring, so nothing sits in the headline's arc; the stage's
+  mark and name sit over the number. The ring and its readout grow with the screen: on a landscape screen the
+  console takes the column's height and the top row takes the spare height, while the cards keep their size. Every "—" that waits for a value is `--text-soft`; a measured value is full ink. The note under the
   dial holds the phase's note or a failure, and while no data or no reply arrives, for how long; on a landscape
   screen it hangs just under the ring. Every rate on the page reads in the dial's unit, zero included. Nothing
   above the cards moves from Start to the result.
-- **Top bar and status strip**: 44 px and 28 px, each a bar in `--surface-1` with a hairline. The bar carries the
+- **Top bar and status strip**: 40 px on the canvas and 28 px in `--surface-1`, each with a hairline. The bar carries the
   brand, a Settings key, the connection dot and spark, and at the right History, the theme and Details; a key is
   its glyph and word, the word dropped on a phone. The strip reads the status word, the elapsed time, the bytes
   moved, the time left while a stage runs, the build, and the key hints at the right.
@@ -198,8 +200,9 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   runs, recovers or is skipped; along its base a 3 px bar in the stage's hue fills as the stage runs and stays
   full once measured (hatched for a partial stage, failed in `--err`), and while it runs the key tints in its hue
   from the left. The box takes the hue's check once complete. One off stays operable, so it reads soft, and only
-  a locked key dims. The run key is the one solid control, ink, its label at the left and the estimate or time
-  left at the right; Stop steps back to an outline with a square. Nothing on the row moves between states.
+  a locked key dims. A key is at most 360 px wide, so the row reads as a toolbar on a wide screen. The run key is the one solid
+  control, ink, its label at the left and the estimate or time left at the right; Stop steps back to an outline
+  with a square. Nothing on the row moves between states.
 - **Result card** (`ResultSummary`): one panel per stage, ruled 2 px in its hue along the top: the stage's mark
   and name with a status word at the line's end when not complete; the readout, one line tall (bidirectional: ↓
   and ↑ as a pair on one baseline); one quiet line (the wire rate with its overhead, the latency card's jitter, a
@@ -227,8 +230,9 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   the boxes fill it; a whisker past it runs on to the edge, ends in an arrowhead and names its value. The axis
   sits under the last row and its ticks run up through the rows as gridlines behind the plots; the idle median
   is one line from its tick through the loaded rows, and each loaded row's added-latency span starts from it. A
-  pointer anywhere on a row's plot reads the marker nearest it and follows the pointer from marker to marker. A
-  narrow panel drops jitter, never timeouts; a phone gives each population its figures, then its plot. A failed
+  pointer anywhere on a row's plot reads the marker nearest it and follows the pointer from marker to marker; the
+  reading (population, marker, value, meaning) stands in a line of its own under the axis, kept from Start, never
+  over a plot. A narrow panel drops jitter, never timeouts; a phone gives each population its figures, then its plot. A failed
   stage names its reason under the headline.
 - **Sheet** (`SidePanel`, `.sheet`): the title, quiet head actions, grouped plates. **Choice list** (`.choices`): rows
   with a name and a second line saying what the choice does (`PATH_NOTE`) or why it is unavailable, cut with an
@@ -255,7 +259,8 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   sheet's edge: the list keeps its share of the width (40 % by default), never under 360 px, and the detail never
   under 460 px.
 - **Facts** (`dl.kv`): label/value pairs; a qualifier that belongs to a value is an `.aside`, never joined with a dot.
-- **Tooltip and readout** share one opaque shell (`.inspect-card`). A tip opens when the pointer rests on its word:
+- **Tooltip and readout** share one opaque plate (`.inspect-card`): a hairline, 3 px corners, no arrow, no
+  entry motion but a short fade. A tip opens when the pointer rests on its word:
   within 8 px of where it settled for 0.4 s (jargon 0.25 s, 0.12 s while another tip shows or for 0.6 s after one
   closes), so a pointer passing by, sweeping across or dragging opens none. It also opens on keyboard focus, on a
   click or tap on jargon or an explained fact, or on a long press on a control; never after a click on a control. It

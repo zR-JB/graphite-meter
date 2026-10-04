@@ -822,20 +822,22 @@
     border-bottom: var(--hairline) solid var(--border);
     container: topbar / inline-size;
   }
-  /* A key names itself: its glyph and word, on the bar's own plate. */
+  /* A key names itself: its glyph and word, a plate on the bar. */
+  .topbar :global(.btn) {
+    --control-h: 26px;
+    background-color: var(--surface-1);
+  }
   .key {
-    --control-h: 28px;
+    gap: 6px;
     padding-inline: 9px;
     color: var(--text);
     font: 500 var(--type-sm) / 1 var(--font-sans);
   }
-  .key :global(svg) {
+  .key :global(svg),
+  .direct-theme :global(svg) {
     width: 13px;
     height: 13px;
     color: var(--text-muted);
-  }
-  .direct-theme {
-    --control-h: 28px;
   }
   /* The measurement column scrolls under the bar, so its rule strengthens as content passes beneath, as a sheet's head's does. */
   @supports (animation-timeline: scroll()) {
@@ -862,8 +864,9 @@
     min-height: var(--control-h);
     padding: 0 6px;
     margin-left: -6px;
+    margin-right: 2px;
     border-radius: var(--r-chrome);
-    font: var(--w-strong) var(--type-md) / 1.4 var(--font-sans);
+    font: var(--w-strong) var(--type-body) / 1.4 var(--font-sans);
     letter-spacing: -0.01em;
     transition: var(--transition-control);
   }
