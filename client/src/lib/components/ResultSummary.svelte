@@ -155,7 +155,7 @@
               ceiling={1}
               {baseline}
               latencyTop={latencyTrackScale(
-                graph.latency.map((point) => point.ms),
+                graph.latency.map((point) => point.hi),
               )}
               rate={scale.rate}
               label="Idle latency over time"
@@ -421,8 +421,10 @@
     color: var(--text);
     font: var(--role-figure-sm);
   }
+  /* A card that has measured nothing yet shows its facts' names with dashes, quietly, so the page is laid out
+     from Start and every "—" marks where a value arrives. */
   .facts.unknown {
-    visibility: hidden;
+    opacity: 0.7;
   }
   .facts > div {
     display: flex;

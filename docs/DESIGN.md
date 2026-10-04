@@ -100,7 +100,7 @@ tokens in sRGB (`go/cmd/graphite-meter-client/theme.go`). Its light stage text c
 
 | Role                                                    | Family    | Size                     | Weight                             |
 | ------------------------------------------------------- | --------- | ------------------------ | ---------------------------------- |
-| Dial readout                                            | Plex Sans | fluid, 24–76 px          | 300                                |
+| Dial readout                                            | Plex Mono | fluid, 24–76 px          | 500                                |
 | Card and latency headline (`--role-readout`)            | Plex Mono | 26–28 px                 | 500                                |
 | Figure (`--role-figure-sm`)                             | Plex Mono | 12 px                    | 500                                |
 | Sheet and dialog title (`--role-panel-title`)           | Plex Sans | `--type-lg`              | 600                                |
@@ -168,9 +168,9 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
 - A docked sheet hugs its column's inner edge, so the column's glide (`--dock-left`, `--dock-right`) is its slide:
   sheet and page move in one layout pass, in and out, and a dragged handle moves them without the glide. A changed
   time rolls like a counter (`Roll`, 320 ms): up as it grows, down as it shrinks.
-- The dial's head is a bead in its hue, a little wider than the arc. While the latency stage runs, it beats on
-  each idle reply, one `--dur-pulse` at a time: it swells a little and settles while a hairline ring in its hue
-  spreads from it and fades, and the footer counts the replies so far; without replies it holds still.
+- The dial's head is a bead in its hue, a little wider than the arc. While the latency stage runs, each idle
+  reply rings out from it, one `--dur-pulse` at a time: a faint hairline ring in its hue widens to twice the
+  head and fades, eased out, while the head itself holds still; without replies nothing rings.
 - A radio's ring closes in and a check draws in (180 ms); a row that appears in a sheet unfolds from its own height.
 - Reduced motion keeps colour and opacity changes; sheets, rolls and glides jump to their end state.
 
@@ -187,10 +187,12 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   The dial is a 270° ring with an arc 0.13 of its radius wide, ticks and five labels; every result's
   arc lies on the ring, the longest underneath, so each shows from where the next shorter one ends, and ends in
   a bead in its hue; a bead moved inward off a close neighbour hangs on a stalk; the stage's mark and name sit
-  over the number, which is light Plex Sans at 0.17 of the face's smaller side (24–76 px), every size of the
+  over the number, which is Plex Mono 500 at 0.17 of the face's smaller side (24–76 px), every size of the
   face's type taken from its measured box, never from a container query, which a flex item answers late. The ring and its readout grow with the screen: on a landscape screen the
   console's rows are as tall as their content, the dial as tall as its ring wants (0.86 of its width) or as the
-  lanes and the controls together, so the spare height stays on the canvas under the cards. Every "—" that waits for a value is `--text-soft`; a measured value is full ink. The note under the
+  lanes and the controls together, and a tall screen's spare height goes into even air above, between and below
+  the sections, never under the cards alone; the lanes start a step (32 px) under the dial's top, nearer the
+  ring's crown than its box. Every "—" that waits for a value is `--text-soft`; a measured value is full ink. The note under the
   dial holds the phase's note or a failure, and while no data or no reply arrives, for how long; on a landscape
   screen it hangs just under the ring. Every rate on the page reads in the dial's unit, zero included. Nothing
   above the cards moves from Start to the result.
@@ -222,16 +224,16 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   tinted in the hue; then the facts as ruled rows, a quiet label and its figure on one line: Peak, Stability,
   Transferred (bidirectional: Stability, Down + up, Transferred; latency: the idle stage's Stability, Range,
   Replies and Timeouts), "—" until known, so the card keeps its height from Start to
-  the result. The running card's edge takes its hue. A card with no data yet keeps its strip's room
+  the result; a card that has measured nothing yet shows them quietly. The running card's edge takes its hue. A card with no data yet keeps its strip's room
   but draws nothing in it; a saved result has no strip; a card that has not run, or is done while the run goes
   on, folds on a phone to its name and value. The card's hover lists every fact as pairs.
 - **Strip** (`StageGraph`): 68 px on the card's field, up to 120 with the console's height. A transfer's strip is the rate from zero to
   the shared ceiling (`store.scales.chartBytesPerSec`), a dashed second lane for bidirectional upload, and a 20 px
-  latency track below: one bar per 4 px column of the width, the mean of its reply buckets, so every stage's
-  track has bars of one pitch whatever its length, from the dashed idle median, its length being time over the
-  median. The track's top is the ladder tier above 2.5× the p75 of the run's replies, so the body of the replies
-  keeps its shape; a reply past it is clamped at the edge and ends in an arrowhead, and its readout names the
-  value. The latency card's strip is the same track alone at the strip's height, with the same readout: the
+  latency track below: one bar per 4 px column of the width, spanning its reply buckets' fastest to slowest
+  reply, so a bucket's spread shows at a glance and every stage's track has bars of one pitch whatever its
+  length, over the dashed idle median. The track's top is the ladder tier above 2.5× the p75 of the run's
+  slowest replies, so the body of the replies keeps its shape; a reply past it is clamped at the edge and ends in
+  an arrowhead, and the readout names a bucket's median and, when its replies spread, their range. The latency card's strip is the same track alone at the strip's height, with the same readout: the
   idle replies over the stage, kept as the record (History has no series). A mouse, a tap, a sideways drag or arrow keys show a readout on a
   transfer's strip at once: time into the stage, the rate, and the latency replies measured then. A vertical swipe
   scrolls past; a drag's readout leaves with the finger.
