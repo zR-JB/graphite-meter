@@ -232,8 +232,13 @@
     void [groups, columns];
     let alive = true;
     let stop: (() => void) | null = null;
+    // The fold depends on the width alone; unfolding to measure shows a scrollbar, and the height it takes
+    // resizes the list again.
+    let measuredWidth = -1;
     const measure = () => {
       stop = null;
+      if (node.clientWidth === measuredWidth) return;
+      measuredWidth = node.clientWidth;
       node.classList.remove("compact");
       node.classList.toggle("compact", node.scrollWidth > node.clientWidth);
     };
@@ -242,7 +247,10 @@
     };
     const observer = new ResizeObserver(fit);
     observer.observe(node);
-    void document.fonts.ready.then(fit);
+    void document.fonts.ready.then(() => {
+      measuredWidth = -1;
+      fit();
+    });
     return () => {
       alive = false;
       observer.disconnect();
