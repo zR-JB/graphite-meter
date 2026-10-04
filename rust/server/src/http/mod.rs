@@ -1478,7 +1478,9 @@ mod tests {
     #[tokio::test]
     async fn a_stopping_listener_refuses_connections_during_its_drain() {
         let server = Arc::new(server(Config::default()));
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        // On an address of its own, the closed listener's port cannot pass to another test's listener.
+        let own = if cfg!(target_os = "linux") { "127.77.0.1:0" } else { "127.0.0.1:0" };
+        let listener = TcpListener::bind(own).await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
         let serving = tokio::spawn(server.clone().serve(NativeKind::H1, listener, None, async {
