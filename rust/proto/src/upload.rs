@@ -1,6 +1,6 @@
 //! Upload progress records and receiver counters (`api/upload.md`).
 
-use crate::{json, refusal::UploadRefusal};
+use crate::{json, refusal::UploadRefusal, token};
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 /// The largest counter both clients represent exactly.
@@ -11,6 +11,24 @@ pub const MAX_RECORD_BYTES: usize = 64 << 10;
 
 /// A blank line: the feed is alive, with no observation.
 pub const HEARTBEAT: &str = "\n";
+
+/// `POST /upload/session`'s answer: the ID of a new upload aggregate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Session {
+    pub upload_id: String,
+}
+
+impl Session {
+    /// Reads the answer, refusing an upload ID that is empty or longer than 8192 bytes.
+    pub fn decode(data: &[u8]) -> Result<Self, serde_json::Error> {
+        let session: Self = json::decode(data)?;
+        match token::valid(&session.upload_id) {
+            true => Ok(session),
+            false => Err(serde_json::Error::custom("invalid upload ID")),
+        }
+    }
+}
 
 /// One receiver observation: payload bytes and nanoseconds since the first accepted chunk.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
