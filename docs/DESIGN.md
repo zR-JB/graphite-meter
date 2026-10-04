@@ -175,13 +175,21 @@ of keyframes in `app.css` (`rise`, `row-in`, `pop`, `grow-x`, `glint`), each wit
   span, `--ease-spring` for a control's state or a mark popping on). A reading never overshoots.
 - Arrival: the console rises into place in reading order a beat apart, the dial, the lanes, the controls, then
   the cards left to right (`rise`, 8 px).
+- A run is one story told on the dial, and nothing passes through an empty console on the way. Start: the run
+  key's skin turns to Stop on the press while its label crosses over; the previous result rewinds, every arc
+  draining back to zero together as its beads drop off (`result-drain`, 320 ms), while the lanes and the cards keep
+  their frames and only their figures clear. Each stage: during its warmup the ring's track takes a faint tint of
+  its hue and the console's light from above (`--ambient`) shifts to it; when it starts measuring, the needle rises
+  from zero (520 ms, eased out); when it ends, the needle drains back to zero (300 ms) and blends into the next
+  stage's hue on the way down. End: the last needle drains, and the result sweep starts as it reaches zero.
 - A stage starting is one wave from the chips down: the chip's edge and bar first, the dial's figure and the
   stage's name hand off together, the population's row in the lanes washes in its hue a beat later on its own layer,
   and two beats after the chip the card's edge eases in and its glow arrives in one step (a blurred shadow is
   never faded frame by frame).
 - A stage settling: its chip's check pops on the spring; its card lays its facts down one row after another
   (`row-in`, 40 ms apart); a measured span in the lanes grows from its middle the first time it is drawn.
-- The result replays the run on the dial as one sweep from zero over 0.9 s (`--sweep`): every result's arc shows
+- The result replays the run on the dial as one sweep from zero over 0.9 s (`--sweep`), once the last needle has
+  drained (`--drain`): every result's arc shows
   up to the shared front, so the front changes hue as it passes each shorter result, and each bead pops on the
   spring as the front reaches it. The run key, once it reads Start or Run again, is crossed by a sheen once.
 - A press never moves what it presses: a key's or a chip's hit box stays put, so a press near its edge still
@@ -189,10 +197,11 @@ of keyframes in `app.css` (`rise`, `row-in`, `pop`, `grow-x`, `glint`), each wit
   give a little (0.975, 0.96).
 - A theme change opens the new theme as a circle from the theme key (a view transition of type `theme`, 420 ms),
   and the key's new glyph turns into place on the spring. The page stays clickable while it runs.
-- A change that reshapes the console, a stage switched on or off, morphs it (`morph()`, a view transition of type
-  `morph`): the dial, the lanes, the controls and each card glide from their old boxes to their new ones on the
-  compositor, a panel that stays shows only its new look as it glides, an arriving card rises in and a leaving one
-  sinks out. The panels carry their transition names only while a morph runs.
+- A change that reshapes the console, a stage switched on or off, applies in the frame of the click that asked
+  for it, and then moves (`flip()`): every element marked `data-flip` (the dial, the lanes, the controls, each card
+  and each lane row) glides from its old place to its new one on the compositor, a wider one opens from its old
+  width, an arriving one rises in and a leaving one sinks out from where it stood. Nothing waits for a snapshot of
+  the old page, so the click is answered at once.
 - Live values and the running strip's leading edge move on the single frame clock in
   `presentation/motion.svelte.ts`; a glide smooths only the rendering.
 - A view hands off by a class: the old fades out in 90 ms and the new in over 180 (`.handoff`, `.handoff-out`,

@@ -11,7 +11,7 @@
     normalizeStreamCount,
   } from "../../runner/paths";
   import { tooltip } from "../../actions/tooltip";
-  import { morph, reveal } from "../../presentation/motion.svelte";
+  import { flip, reveal } from "../../presentation/motion.svelte";
   import Icon from "../Icon.svelte";
   import Switch from "../Switch.svelte";
   import ServerSelection from "../ServerSelection.svelte";
@@ -198,7 +198,7 @@
     return from < 3_600_000 ? 60_000 : 300_000;
   }
   function setBidirectional(enabled: boolean) {
-    morph(() =>
+    flip(() =>
       controller.configureRun({
         stages: { ...store.config.stages, bidirectional: enabled },
       }),

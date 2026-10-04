@@ -5,6 +5,8 @@
     showValue: boolean;
     /** The latest idle reply's time while the latency stage runs; the head beats on each new one. */
     reply?: number | null;
+    /** The stage the run is in, warmup included; the ring takes its hue. */
+    stage?: string | null;
   }
   interface ResultArc {
     phase: ResultArcPhase;
@@ -16,6 +18,11 @@
   }
   /** The result sweep's length, as in the stylesheet's `result-sweep`. */
   const SWEEP_MS = 900;
+  /** A stage's needle rises from zero and drains back to it over these. */
+  const RISE_MS = 520;
+  const DRAIN_MS = 300;
+  /** A result's arcs drain back to zero over this as the next run starts, as in `result-drain`. */
+  export const RESULT_DRAIN_MS = 320;
 </script>
 
 <script lang="ts">
@@ -68,7 +75,9 @@
   );
   const extent = $derived(layout.radius + layout.arcWidth / 2 + 1);
   const diameter = $derived(extent * 2);
-  // The needle follows the readout, glides across a rescale, holds its pose while hidden and is revealed at the value.
+  // The needle follows the readout and glides across a rescale. A stage's first value rises from zero, and when
+  // its value ends the needle drains back to zero in its own hue, so one stage hands the ring to the next through
+  // zero rather than through a fade.
   const sweep = new Smoothed();
   onDestroy(() => sweep.dispose());
   let accent = $state("var(--phase-latency)");
@@ -77,23 +86,40 @@
   $effect(() => {
     const next = (target ?? 0) * 270;
     const current = `${input.scaleBytesPerSec}:${input.latencyScaleMs}`;
-    const tone = `var(--phase-${input.phase})`;
-    if (!visible) revealed = false;
-    else
-      untrack(() => {
+    // Between runs the needle keeps the hue of the stage it last showed.
+    const hue =
+      input.stage ??
+      (["latency", "download", "upload", "bidirectional"].includes(input.phase)
+        ? input.phase
+        : null);
+    untrack(() => {
+      if (hue) accent = `var(--phase-${hue})`;
+      if (!visible) {
+        if (revealed)
+          sweep.set(
+            0,
+            motion ? { over: DRAIN_MS, ease: true } : { snap: true },
+          );
+        revealed = false;
+        return;
+      }
+      if (!revealed && motion && sweep.current < 0.5)
+        sweep.set(next, { over: RISE_MS, ease: true });
+      else
         sweep.set(
           next,
           !motion || !revealed
             ? { snap: true }
             : current === course
               ? { finish: true }
-              : { over: 360 },
+              : { over: 360, ease: true },
         );
-        accent = tone;
-        revealed = true;
-        course = current;
-      });
+      revealed = true;
+      course = current;
+    });
   });
+  // A draining needle stays on the ring until it reaches zero.
+  const lit = $derived(visible || (motion && sweep.current > 0.5));
   // One pulse at a time, each started by a reply: a steady link beats, a stalled one holds still.
   let beat = $state<number | null>(null);
   let beating = false;
@@ -152,7 +178,7 @@
       {/if}
       <circle
         class="bead"
-        style:--at="{(1 - Math.cbrt(1 - fraction)) * SWEEP_MS}ms"
+        style:--at="{(1 - Math.cbrt(1 - fraction)) * SWEEP_MS + DRAIN_MS}ms"
         cx={radius}
         r={hollow ? headRadius - 1 : headRadius}
         fill={hollow ? "none" : color}
@@ -167,6 +193,8 @@
   {@attach inView((value) => (seen = value))}
   class="gauge-dial"
   class:motion
+  style:--ring={input.stage ? `var(--phase-${input.stage})` : null}
+  style:--drain="{DRAIN_MS}ms"
 >
   <svg
     class="dial-art"
@@ -176,11 +204,7 @@
     viewBox={`0 0 ${layout.width} ${layout.height}`}
   >
     <g fill="none" stroke-linecap="round">
-      <path
-        d={track}
-        stroke="var(--border-strong)"
-        stroke-width={layout.arcWidth}
-      />
+      <path class="track" d={track} stroke-width={layout.arcWidth} />
       <g stroke="var(--border-strong)" stroke-width="1" stroke-opacity=".7">
         {#each layout.majorTicks as tick (tick.angle)}
           <path
@@ -258,7 +282,7 @@
       ></span>
     {/each}
   {/if}
-  <div class="live" class:visible aria-hidden="true">
+  <div class="live" class:visible={lit} aria-hidden="true">
     <div
       class="sweep-ring"
       style:left={`${layout.center.x - extent}px`}
@@ -362,6 +386,23 @@
   .motion .live {
     transition: opacity var(--dur-slide) var(--ease-out);
   }
+  /* The ring's track takes a faint tint of the running stage, from its warmup on; the needle's hue follows the
+     stage too, so a draining needle blends into the next stage's hue on its way down. */
+  .track {
+    stroke: color-mix(
+      in oklab,
+      var(--ring, var(--border-strong)) 22%,
+      var(--border-strong)
+    );
+  }
+  .motion .track {
+    transition: stroke 700ms var(--ease-out);
+  }
+  .motion .live :is(path, circle) {
+    transition:
+      stroke var(--dur-stage) var(--ease-out),
+      fill var(--dur-stage) var(--ease-out);
+  }
   .sweep-ring {
     position: absolute;
     transform: rotate(225deg);
@@ -414,17 +455,30 @@
   }
   /* A reply rings out from the head: a faint hairline ring widens to twice the head and fades over one pulse,
      eased out, so a steady link is seen to answer while the head itself holds still. */
-  /* The result replays the run as one sweep from zero: every arc shows up to the shared front, so the front
-     changes hue as it passes each shorter result, and each bead lands on the spring as the front reaches it.
-     Once, as the result arrives; the bead's moment follows the sweep's ease-out-cubic (SWEEP_MS). */
+  /* The result replays the run as one sweep from zero once the last needle has drained (--drain): every arc
+     shows up to the shared front, so the front changes hue as it passes each shorter result, and each bead lands
+     on the spring as the front reaches it. Once, as the result arrives; the bead's moment follows the sweep's
+     ease-out-cubic (SWEEP_MS). */
   @media (prefers-reduced-motion: no-preference) {
     .result-arc {
-      animation: result-sweep 900ms cubic-bezier(0.33, 1, 0.68, 1) backwards;
+      animation: result-sweep 900ms cubic-bezier(0.33, 1, 0.68, 1) var(--drain)
+        backwards;
     }
     .bead {
       transform-box: fill-box;
       transform-origin: center;
       animation: pop 400ms var(--ease-spring) var(--at) backwards;
+    }
+    /* A new run rewinds the result: every arc drains back to zero together and the beads drop off, then the
+       first stage rises from the empty ring (RESULT_DRAIN_MS). */
+    .result-layer.handoff-out {
+      opacity: 1;
+    }
+    .result-layer.handoff-out .result-arc {
+      animation: result-drain 320ms cubic-bezier(0.55, 0, 0.75, 0.2) forwards;
+    }
+    .result-layer.handoff-out .bead {
+      animation: bead-out 200ms var(--ease-out) forwards;
     }
   }
   @keyframes result-sweep {
@@ -433,6 +487,20 @@
     }
     to {
       --sweep: 1;
+    }
+  }
+  @keyframes result-drain {
+    from {
+      --sweep: 1;
+    }
+    to {
+      --sweep: 0;
+    }
+  }
+  @keyframes bead-out {
+    to {
+      opacity: 0;
+      scale: 0.3;
     }
   }
   .ripple {

@@ -96,6 +96,12 @@
   inherits: false;
   initial-value: 1;
 }
+/* The running stage's hue lighting the console; a typed colour, so a stage change glides between hues. */
+@property --ambient {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
 /* How much of its hue a stage area's wash carries; a typed percentage, so it transitions. */
 @property --wash {
   syntax: "<percentage>";
@@ -1714,62 +1720,6 @@
 }
 :root:active-view-transition-type(theme)::view-transition-new(root) {
   animation: theme-reveal 420ms var(--ease-out);
-}
-/* A morph names the console's panels only while it runs, so a theme change reveals the page as one surface. Each
-   panel glides from its old box to its new one; its old and new looks keep their size and cross over, so text
-   never stretches; an arriving panel rises in and a leaving one sinks out. */
-:root:active-view-transition-type(morph) {
-  & .gauge-panel .dial {
-    view-transition-name: dial;
-  }
-  & .gauge-panel .latency-panel {
-    view-transition-name: lanes;
-  }
-  & .gauge-panel .controls {
-    view-transition-name: controls;
-  }
-  & .gauge-panel .card[data-tone="latency"] {
-    view-transition-name: card-latency;
-  }
-  & .gauge-panel .card[data-tone="download"] {
-    view-transition-name: card-download;
-  }
-  & .gauge-panel .card[data-tone="upload"] {
-    view-transition-name: card-upload;
-  }
-  & .gauge-panel .card[data-tone="bidirectional"] {
-    view-transition-name: card-bidirectional;
-  }
-  &::view-transition-group(*) {
-    animation-duration: var(--dur-stage);
-    animation-timing-function: var(--ease-settle);
-  }
-  &::view-transition-old(*),
-  &::view-transition-new(*) {
-    height: 100%;
-    object-fit: none;
-    object-position: left top;
-  }
-  /* A panel on both sides shows only its new look as it glides, so no text ever shows twice. */
-  &::view-transition-old(*):not(:only-child) {
-    animation: none;
-    opacity: 0;
-  }
-  &::view-transition-new(*):not(:only-child) {
-    animation: none;
-  }
-  &::view-transition-new(*):only-child {
-    animation: rise var(--dur-stage) var(--ease-settle) backwards;
-  }
-  &::view-transition-old(*):only-child {
-    animation: sink var(--dur-handoff-in) var(--ease-out) forwards;
-  }
-}
-@keyframes sink {
-  to {
-    opacity: 0;
-    translate: 0 6px;
-  }
 }
 @keyframes theme-reveal {
   from {

@@ -3,7 +3,10 @@
   import Icon from "./Icon.svelte";
   import { onDestroy, untrack } from "svelte";
   import { store } from "../state/store.svelte";
-  import GaugeDial, { type GaugeDialState } from "./GaugeDial.svelte";
+  import GaugeDial, {
+    RESULT_DRAIN_MS,
+    type GaugeDialState,
+  } from "./GaugeDial.svelte";
   import { GAUGE_LABEL_FRACTIONS, gaugeLayout } from "./gaugeLayout";
   import {
     fmtGaugeTick,
@@ -30,7 +33,7 @@
   } from "../presentation/vocabulary";
   import { announceChanges } from "../presentation/announcer.svelte";
   import { tooltipAction } from "../actions/tooltip";
-  import { handoff } from "../presentation/motion.svelte";
+  import { HANDOFF_OUT_MS, handoff } from "../presentation/motion.svelte";
   import { MediaQuery } from "svelte/reactivity";
 
   const indicatedServers = $derived(
@@ -203,6 +206,8 @@
       terminal
         ? `${terminal.phase}:${terminal.value}`
         : `${live}:${display.value === MISSING}:${display.unit}`,
+    // A result leaves as its arcs drain back to zero (GaugeDial), so the next run starts from an empty ring.
+    (leaving) => (leaving.arcs.length ? RESULT_DRAIN_MS : HANDOFF_OUT_MS),
   );
   const { terminal, display, live } = $derived(hero.shown);
   // The dial beats only on idle replies, so a stall shows as stillness.
@@ -216,6 +221,7 @@
     phase,
     reply,
     showValue: !unusableStage,
+    stage: store.isRunning ? store.phaseStage : null,
     valueBytesPerSec: liveRates ? liveRates.down + liveRates.up : 0,
     scaleBytesPerSec: store.scales.gaugeBytesPerSec,
     throughputEvidence: liveRates !== null,
@@ -262,7 +268,7 @@
   bind:clientWidth={panelWidth}
 >
   <div class="instrument">
-    <div class="dial" class:hung>
+    <div class="dial" class:hung data-flip="dial">
       {#if indicatedServers.length > 1}
         <div class="server-indicator">
           <ServerLens servers={indicatedServers} {participants} />
@@ -370,11 +376,13 @@
     </div>
 
     {#if store.latencyEnabled}
-      <div class="latency-panel"><LatencyProfile /></div>
+      <div class="latency-panel" data-flip="lanes"><LatencyProfile /></div>
     {/if}
 
     <!-- The run key over the stage chips, under the lanes beside the dial. -->
-    <div class="controls"><StageTrack><RunButton /></StageTrack></div>
+    <div class="controls" data-flip="controls">
+      <StageTrack><RunButton /></StageTrack>
+    </div>
 
     <div class="results"><ResultCards live={liveReadout} /></div>
   </div>

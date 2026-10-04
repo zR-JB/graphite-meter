@@ -28,18 +28,87 @@ function releaseClock(): void {
 /** Reduced motion: every value still updates, in one frame rather than an animation. */
 export const still = () => prefersReducedMotion.current;
 
-/** A change that reshapes the console: its named panels glide from their old boxes to their new ones on the
-    compositor (a "morph" view transition), an arriving one rises in and a leaving one sinks out. */
-export function morph(update: () => void): void {
-  if (still() || globalThis.document?.hidden || !document.startViewTransition)
-    return update();
-  document.startViewTransition({
-    update: () => {
-      update();
-      flushSync();
-    },
-    types: ["morph"],
-  });
+const FLIP_MS = 380;
+const GHOST_MS = 140;
+const FLIP_EASE = "cubic-bezier(0.22, 1.2, 0.36, 1)";
+const boxes = () =>
+  new Map(
+    Array.from(document.querySelectorAll<HTMLElement>("[data-flip]"), (el) => [
+      el.dataset.flip!,
+      { el, box: el.getBoundingClientRect() },
+    ]),
+  );
+
+/** A change that reshapes the console applies at once, in the frame of the click that asked for it. Then every
+    element marked `data-flip` that stayed glides from its old place to its new one, an arriving one rises in,
+    and a leaving one sinks out from where it stood: all on the compositor. */
+export function flip(update: () => void): void {
+  if (still() || globalThis.document?.hidden) {
+    update();
+    return;
+  }
+  const before = boxes();
+  update();
+  flushSync();
+  const after = boxes();
+  for (const [key, { el, box }] of after) {
+    const old = before.get(key);
+    if (!old) {
+      el.animate(
+        [
+          { opacity: 0, translate: "0 8px" },
+          { opacity: 1, translate: "0 0" },
+        ],
+        { duration: FLIP_MS, easing: FLIP_EASE, fill: "backwards" },
+      );
+      continue;
+    }
+    const dx = old.box.left - box.left;
+    const dy = old.box.top - box.top;
+    if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5)
+      el.animate([{ translate: `${dx}px ${dy}px` }, { translate: "0 0" }], {
+        duration: FLIP_MS,
+        easing: FLIP_EASE,
+      });
+    // A wider element opens from its old width rather than jumping to the new one.
+    const grew = box.width - old.box.width;
+    if (grew >= 1)
+      el.animate(
+        [
+          { clipPath: `inset(0 ${grew}px 0 0 round var(--r-surface))` },
+          { clipPath: "inset(0 0 0 0 round var(--r-surface))" },
+        ],
+        { duration: FLIP_MS, easing: "cubic-bezier(0.16, 1, 0.3, 1)" },
+      );
+  }
+  for (const [key, { el, box }] of before) {
+    if (after.has(key) || el.isConnected) continue;
+    // A leaving element is already gone from the page; a copy at its old place sinks out in its stead.
+    const ghost = el.cloneNode(true) as HTMLElement;
+    ghost.removeAttribute("data-flip");
+    ghost.setAttribute("aria-hidden", "true");
+    ghost.inert = true;
+    Object.assign(ghost.style, {
+      position: "fixed",
+      left: `${box.left}px`,
+      top: `${box.top}px`,
+      width: `${box.width}px`,
+      height: `${box.height}px`,
+      margin: "0",
+      pointerEvents: "none",
+      zIndex: "1",
+    });
+    document.body.append(ghost);
+    ghost
+      .animate(
+        [
+          { opacity: 1, translate: "0 0" },
+          { opacity: 0, translate: "0 6px" },
+        ],
+        { duration: GHOST_MS, easing: "ease-in", fill: "forwards" },
+      )
+      .finished.finally(() => ghost.remove());
+  }
 }
 
 function request(): void {
@@ -92,6 +161,8 @@ interface Correction {
   max?: number;
   /** A fixed glide instead of the interval between samples; later samples retarget within it at its pace. */
   over?: number;
+  /** A fixed glide eases out (cubic) instead of keeping a constant pace: a move the user watches start and land. */
+  ease?: boolean;
   /** Once no fixed glide is under way, snap instead of gliding over the sample interval. */
   finish?: boolean;
   snap?: boolean;
@@ -108,6 +179,7 @@ export class Smoothed {
   #at = -Infinity;
   #glide = 100;
   #fixed = false;
+  #ease = false;
   #stop: (() => void) | null = null;
 
   /** The last sample. */
@@ -121,8 +193,9 @@ export class Smoothed {
     const truth = this.#rate
       ? Math.min(this.#max, this.#to + this.#rate * since)
       : this.#to;
-    // The offset from the sample fades linearly, so a clock keeps its own pace.
-    const fade = Math.max(0, 1 - since / this.#glide);
+    // The offset from the sample fades linearly, so a clock keeps its own pace; an eased glide settles into place.
+    const left = Math.max(0, 1 - since / this.#glide);
+    const fade = this.#ease ? left ** 3 : left;
     return fade > 0 ? truth + (this.#from - this.#to) * fade : truth;
   }
 
@@ -140,6 +213,8 @@ export class Smoothed {
       (correction.finish && !within);
     this.#from = snap ? value : this.at(now);
     this.#fixed = correction.over !== undefined || (within && !snap);
+    this.#ease =
+      correction.over !== undefined ? !!correction.ease : within && this.#ease;
     if (correction.over !== undefined) this.#glide = correction.over;
     else if (within) this.#glide = left;
     else if (gap < SAMPLE_GAP_MS)
@@ -199,11 +274,12 @@ export class Smoothed {
   };
 }
 
-const HANDOFF_OUT_MS = 90;
+export const HANDOFF_OUT_MS = 90;
 
 /** A new key fades the shown view out and the new one in; a key shorter than the fade-out never shows. The
     fades are the stylesheet's (`.handoff`, `.handoff-out`, on the compositor); this only flips `out` on the frame
-    clock and swaps the view once the fade-out has run. */
+    clock and swaps the view once the fade-out has run, `outMs` after it began; a view that leaves with a longer
+    move of its own (`outMs` of the leaving view) keeps the stage that long. */
 export class Handoff<T> {
   shown: T = $state.raw() as T;
   /** True while the shown view fades out before the next one takes its place. */
@@ -213,8 +289,14 @@ export class Handoff<T> {
   #keyOf: (value: T) => unknown;
   #stop: (() => void) | null = null;
   #outAt = 0;
+  #outMs: number | ((leaving: T) => number);
 
-  constructor(value: T, keyOf: (value: T) => unknown = (value) => value) {
+  constructor(
+    value: T,
+    keyOf: (value: T) => unknown = (value) => value,
+    outMs: number | ((leaving: T) => number) = HANDOFF_OUT_MS,
+  ) {
+    this.#outMs = outMs;
     this.shown = this.#latest = value;
     this.#keyOf = keyOf;
     this.#key = keyOf(value);
@@ -243,7 +325,9 @@ export class Handoff<T> {
 
   #frame = (now: number): boolean => {
     this.#outAt ||= now;
-    if (now - this.#outAt < HANDOFF_OUT_MS && !still()) return true;
+    const outMs =
+      typeof this.#outMs === "number" ? this.#outMs : this.#outMs(this.shown);
+    if (now - this.#outAt < outMs && !still()) return true;
     this.#swap();
     return false;
   };
@@ -257,8 +341,9 @@ export class Handoff<T> {
 export function handoff<T>(
   get: () => T,
   keyOf?: (value: T) => unknown,
+  outMs?: number | ((leaving: T) => number),
 ): Handoff<T> {
-  const view = new Handoff(untrack(get), keyOf);
+  const view = new Handoff(untrack(get), keyOf, outMs);
   $effect.pre(() => {
     const value = get();
     untrack(() => view.set(value));

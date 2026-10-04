@@ -754,6 +754,7 @@
   {:else}
     <section
       class="stage measurement-stage"
+      data-stage={store.isRunning ? store.phaseStage : undefined}
       class:previous={store.previousRun}
       aria-label="Measurement workspace"
       tabindex="-1"
@@ -982,9 +983,48 @@
     gap: var(--space-3);
     min-width: 0;
     padding: var(--space-4) var(--gutter) var(--space-5);
-    overflow-y: auto;
+    /* A panel gliding to its new place may pass the edge; it never scrolls the stage sideways. */
+    overflow: clip auto;
     /* Keep stage scrolling from chaining out to the document. */
     overscroll-behavior: contain;
+  }
+  /* While a run is under way the console is lit from above in the running stage's hue, and the light shifts to
+     each stage's hue as it begins, warmup included. One gradient, repainted only while the hue moves. */
+  .measurement-stage {
+    position: relative;
+    isolation: isolate;
+  }
+  .measurement-stage::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 0 0 auto;
+    height: 70%;
+    background: radial-gradient(
+      70% 80% at 30% 0%,
+      color-mix(in oklab, var(--ambient) 11%, transparent),
+      transparent 75%
+    );
+    opacity: 0;
+    transition:
+      opacity 900ms var(--ease-out),
+      --ambient 900ms var(--ease-out);
+    pointer-events: none;
+  }
+  .measurement-stage[data-stage]::before {
+    opacity: 1;
+  }
+  .measurement-stage[data-stage="latency"] {
+    --ambient: var(--phase-latency);
+  }
+  .measurement-stage[data-stage="download"] {
+    --ambient: var(--phase-download);
+  }
+  .measurement-stage[data-stage="upload"] {
+    --ambient: var(--phase-upload);
+  }
+  .measurement-stage[data-stage="bidirectional"] {
+    --ambient: var(--phase-bidirectional);
   }
   .history-stage {
     padding: 0;
