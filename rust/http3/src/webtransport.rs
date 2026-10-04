@@ -381,6 +381,8 @@ pub(crate) struct Connect {
     bytes: u64,
     chunks: u64,
     ended: watch::Sender<Option<Result<(u32, String), Error>>>,
+    /// Rises once the head is in QUIC's stream buffer.
+    head: watch::Sender<bool>,
     /// Once the session ended: when the wait for the peer's FIN gives up.
     deadline: Option<Instant>,
     peer_finished: bool,
@@ -402,7 +404,10 @@ impl Connect {
                     flushed = false;
                     None
                 }
-                Poll::Ready(written) => written.err(),
+                Poll::Ready(written) => {
+                    self.head.send_if_modified(|head| !std::mem::replace(head, true));
+                    written.err()
+                }
             },
             read => read.err(),
         };
@@ -505,6 +510,7 @@ pub struct Session {
     streams: Mutex<mpsc::Receiver<RecvStream>>,
     datagrams: Mutex<mpsc::Receiver<Bytes>>,
     ended: Ended,
+    head: watch::Receiver<bool>,
     _charge: Charge,
 }
 
@@ -553,6 +559,7 @@ impl Session {
         let prefix_len = 8 - rest.len();
         let (send, recv) = stream.split();
         let (ended, ending) = watch::channel(None);
+        let (head, written) = watch::channel(false);
         let connect = Connect {
             id,
             send,
@@ -562,6 +569,7 @@ impl Session {
             bytes: 0,
             chunks: 0,
             ended,
+            head,
             deadline: None,
             peer_finished: false,
             peer_closed: false,
@@ -576,6 +584,7 @@ impl Session {
             streams: Mutex::new(streams),
             datagrams: Mutex::new(datagrams),
             ended: ending,
+            head: written,
             _charge: charge,
         })
     }
@@ -665,10 +674,13 @@ impl Session {
     }
 
     /// Refused once the session ended: the drafts allow no new stream after its CLOSE.
+    /// A stream waits for the head: its data would wait unread for the response and could take the
+    /// connection credit the response needs.
     pub async fn open_uni(&self) -> Result<SendStream, Error> {
-        if self.ended.borrow().is_some() {
-            return Err(Error::Refused);
-        }
+        let mut head = self.head.clone();
+        unless_ended(Some(&mut self.ended.clone()), head.wait_for(|written| *written))
+            .await?
+            .map_err(|_| Error::Refused)?;
         SendStream::open(&self.shared, self.id, self.ended.clone()).await
     }
 
