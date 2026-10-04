@@ -42,6 +42,31 @@
 
   const text = $derived(format(value));
   const clamp = (next: number) => Math.min(max, Math.max(min, next));
+  const HOLD_MS = 400;
+  const REPEAT_MS = 70;
+  let hold = 0;
+  // A held key steps once, pauses, then repeats until it lifts or the value meets its limit.
+  function press(event: PointerEvent, direction: 1 | -1) {
+    if (event.button !== 0) return;
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    nudge(direction);
+    const tick = () => {
+      if (direction > 0 ? value >= max : value <= min) return release();
+      nudge(direction);
+      // Not motion: a key held down repeats its step.
+      hold = window.setTimeout(tick, REPEAT_MS);
+    };
+    // Not motion: a key held down repeats its step after a pause.
+    hold = window.setTimeout(tick, HOLD_MS);
+  }
+  function release() {
+    clearTimeout(hold);
+    hold = 0;
+  }
+  // A keyboard's activation arrives as a click without a pointer; a pointer's click follows its press.
+  const keyed = (event: MouseEvent, direction: 1 | -1) => {
+    if (event.detail === 0) nudge(direction);
+  };
   // A step lands on the step grid, so 10.5 s steps to 11 s or 10 s.
   function nudge(direction: 1 | -1) {
     const size = step(value, direction);
@@ -83,7 +108,12 @@
     aria-label="{verbs[0]} {label}"
     aria-disabled={value <= min}
     {disabled}
-    onclick={() => nudge(-1)}>−</button
+    onpointerdown={(event) => press(event, -1)}
+    onpointerup={release}
+    onpointercancel={release}
+    onlostpointercapture={release}
+    oncontextmenu={(event) => event.preventDefault()}
+    onclick={(event) => keyed(event, -1)}>−</button
   >
   <span class="field">
     <input
@@ -113,7 +143,12 @@
     aria-label="{verbs[1]} {label}"
     aria-disabled={value >= max}
     {disabled}
-    onclick={() => nudge(1)}>+</button
+    onpointerdown={(event) => press(event, 1)}
+    onpointerup={release}
+    onpointercancel={release}
+    onlostpointercapture={release}
+    oncontextmenu={(event) => event.preventDefault()}
+    onclick={(event) => keyed(event, 1)}>+</button
   >
 </span>
 
@@ -135,6 +170,8 @@
     width: var(--control-h);
     border-radius: calc(var(--r-chrome) - 2px);
     font: var(--w-normal) var(--type-lg) / 1 var(--font-sans);
+    touch-action: manipulation;
+    user-select: none;
   }
   .stepper .btn:focus-visible {
     outline-offset: -2px;
