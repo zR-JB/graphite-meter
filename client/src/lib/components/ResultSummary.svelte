@@ -280,12 +280,50 @@
   .card:has(> .strip) {
     grid-template-rows: auto auto minmax(68px, 1fr) auto;
   }
-  /* The running card lifts a little on a glow in its hue, a static shadow repainted only when the stage changes. */
+  /* The running card lifts a little on a glow in its hue. A stage starting reaches its card last in its wave: the
+     edge eases in two beats after the chip and the glow arrives with it in one step, a single repaint rather than
+     a blurred shadow redrawn on every frame of a fade. */
   .card:is(.active, .recovering) {
     --edge: color-mix(in oklab, var(--tone) 55%, var(--border));
     box-shadow:
       var(--elev-tile),
       0 12px 32px -16px color-mix(in oklab, var(--tone) 60%, transparent);
+    transition:
+      border-color var(--dur-stage) var(--ease-out) calc(2 * var(--beat)),
+      box-shadow 0s linear calc(2 * var(--beat));
+  }
+  /* The cards arrive after the console, one beat apart, left to right. */
+  @media (prefers-reduced-motion: no-preference) {
+    .card {
+      animation: rise var(--dur-stage) var(--ease-out) backwards;
+      animation-delay: calc(3 * var(--beat));
+    }
+    .card:nth-child(2) {
+      animation-delay: calc(4 * var(--beat));
+    }
+    .card:nth-child(3) {
+      animation-delay: calc(5 * var(--beat));
+    }
+    .card:nth-child(4) {
+      animation-delay: calc(6 * var(--beat));
+    }
+    /* A stage that settles lays its facts down one row after another under the figure. */
+    .card:is(.complete, .partial, .stopped, .failed) .facts > div {
+      animation: row-in 360ms var(--ease-out) backwards;
+      animation-delay: calc(var(--n, 0) * 40ms + var(--beat));
+    }
+    .facts > div:nth-child(2) {
+      --n: 1;
+    }
+    .facts > div:nth-child(3) {
+      --n: 2;
+    }
+    .facts > div:nth-child(4) {
+      --n: 3;
+    }
+    .facts > div:nth-child(5) {
+      --n: 4;
+    }
   }
   .card:is(.pending, .not-run) {
     --edge: var(--border-subtle);
@@ -328,10 +366,13 @@
   .facts,
   .strip,
   .status {
-    transition: opacity var(--dur-handoff-in) var(--ease-out);
+    transition:
+      opacity var(--dur-handoff-in) var(--ease-out),
+      translate var(--dur-handoff-in) var(--ease-out);
   }
   .handoff-out > :is(.line, .facts, .strip, .status) {
     opacity: 0;
+    translate: 0 3px;
     transition-duration: var(--dur-handoff-out);
   }
   .headline {

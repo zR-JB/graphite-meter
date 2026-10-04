@@ -102,6 +102,8 @@
   inherits: false;
   initial-value: 0%;
 }
+/* Docked sheets open and close by gliding their column, so the page makes room instead of jumping.
+   Only the shell reads them, so a glide never restyles what it contains. */
 @property --dock-left {
   syntax: "<length>";
   inherits: false;
@@ -144,6 +146,9 @@
   --dur-hover: 120ms;
   --dur-handoff-out: 90ms;
   --dur-handoff-in: 180ms;
+  /* A stage event travels as one wave: chip, dial, lanes, card, a beat apart, over one stage tempo. */
+  --dur-stage: 520ms;
+  --beat: 60ms;
   --dur-slide: 180ms;
   --dur-sheet: 420ms;
   --dur-graph: 280ms;
@@ -705,10 +710,14 @@
   /* A hand-off's fades: the view leaves in 90 ms and the next arrives over 180, on the compositor; the frame
      clock only flips the class. */
   .handoff {
-    transition: opacity var(--dur-handoff-in) var(--ease-out);
+    transition:
+      opacity var(--dur-handoff-in) var(--ease-out),
+      translate var(--dur-handoff-in) var(--ease-out);
   }
+  /* A view that carries a figure sinks a few pixels as it leaves and rises into place as the next arrives. */
   .handoff-out {
     opacity: 0;
+    translate: 0 var(--rise, 0);
     transition-duration: var(--dur-handoff-out);
   }
   /* A stage's mark: its glyph in a small plate washed in its hue. */
@@ -750,7 +759,16 @@
     font: var(--role-control);
     text-decoration: none;
     white-space: nowrap;
-    transition: var(--transition-control);
+    transition:
+      var(--transition-control),
+      scale var(--dur-graph) var(--ease-spring);
+  }
+  /* A key gives under a press and springs back as it lifts. */
+  @media (prefers-reduced-motion: no-preference) {
+    .btn:active:not(:disabled, [aria-disabled="true"]) {
+      scale: 0.94;
+      transition-duration: var(--dur-hover);
+    }
   }
   .btn :where(svg) {
     width: var(--icon);
@@ -1636,4 +1654,63 @@
 :root[data-pointer]
   label:has(> :is([type="radio"], [type="checkbox"]):focus-visible) {
   outline: none;
+}
+
+/* The motion vocabulary. Every move is transform or opacity on the compositor, or a one-time paint; a loop runs
+   only while the thing it describes is live. Reduced motion lands every one at its end state (above). */
+/* Arriving: a section rises a few pixels into place. */
+@keyframes rise {
+  from {
+    opacity: 0;
+    translate: 0 8px;
+  }
+}
+/* A settled figure's row slides in from under its label's line. */
+@keyframes row-in {
+  from {
+    opacity: 0;
+    translate: 0 4px;
+  }
+}
+/* A mark that confirms something (a check, a result's bead) pops in on the spring. */
+@keyframes pop {
+  from {
+    opacity: 0;
+    scale: 0.4;
+  }
+}
+/* A measured span grows from its middle. */
+@keyframes grow-x {
+  from {
+    scale: 0 1;
+  }
+}
+/* A sheen crosses a surface once. */
+@keyframes glint {
+  from {
+    translate: -120% 0;
+  }
+  to {
+    translate: 320% 0;
+  }
+}
+
+/* A theme change opens the new theme as a circle from the key that asked for it. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-new(root) {
+  animation: theme-reveal 560ms var(--ease-out);
+}
+@keyframes theme-reveal {
+  from {
+    clip-path: circle(0 at var(--reveal-x, 100%) var(--reveal-y, 0));
+  }
+  to {
+    clip-path: circle(
+      var(--reveal-r, 150vmax) at var(--reveal-x, 100%) var(--reveal-y, 0)
+    );
+  }
 }

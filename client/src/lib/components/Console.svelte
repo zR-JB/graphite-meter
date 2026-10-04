@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
   import { observeWidth } from "../actions/observeWidth";
-  import { onMount, tick, type Component } from "svelte";
+  import { flushSync, onMount, tick, type Component } from "svelte";
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   const { cancelPendingStart, hasPendingStart, returnToStart, toggleRun } =
@@ -18,7 +18,7 @@
   import LegalDialog from "./LegalDialog.svelte";
   import TopbarMore from "./TopbarMore.svelte";
   import { statusLabel, THEME } from "../presentation/vocabulary";
-  import { handoff } from "../presentation/motion.svelte";
+  import { handoff, still } from "../presentation/motion.svelte";
   import { keyHint as tipKey, tooltip } from "../actions/tooltip";
   import { canFocus, activeModal } from "../actions/focus";
   import { MediaQuery } from "svelte/reactivity";
@@ -213,10 +213,29 @@
   // Tips name a key only while the page shortcuts act on it.
   const keyHint = (key: string) => tipKey(key, store.keyShortcuts);
 
+  // The new theme opens as a circle from the theme key, or the bar's corner when the key is out of view.
   function toggleTheme() {
     const next =
       THEME_CYCLE[(THEME_CYCLE.indexOf(store.theme) + 1) % THEME_CYCLE.length];
-    store.prefer({ theme: next });
+    const apply = () => {
+      store.prefer({ theme: next });
+      flushSync();
+    };
+    if (still() || !document.startViewTransition) return apply();
+    const key = document
+      .querySelector<HTMLElement>(".direct-theme")
+      ?.getBoundingClientRect();
+    const shown = key && key.width > 0;
+    const x = shown ? key.left + key.width / 2 : innerWidth;
+    const y = shown ? key.top + key.height / 2 : 0;
+    const root = document.documentElement.style;
+    root.setProperty("--reveal-x", `${x}px`);
+    root.setProperty("--reveal-y", `${y}px`);
+    root.setProperty(
+      "--reveal-r",
+      `${Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y))}px`,
+    );
+    document.startViewTransition(apply);
   }
 
   // The grid and resize controls share one resolution of the saved widths.

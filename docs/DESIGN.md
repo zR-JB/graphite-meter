@@ -162,14 +162,36 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
 
 ## Motion
 
+Motion takes the user through the run without touching it: nothing moves that the measurement does not cause,
+nothing moves twice for one cause, and every move is transform or opacity or a paint that runs once per event;
+nothing loops while a stage runs, so a slow device's frames stay even. A one-time animation fills backwards only,
+so once it has run it leaves no effect for the browser to reapply on every restyle. The vocabulary is a handful
+of keyframes in `app.css` (`rise`, `row-in`, `pop`, `grow-x`, `glint`), each with one meaning.
+
 - Tokens: `--dur-hover` 120 ms, `--dur-slide` 180 ms (popovers, dialogs, tips), `--dur-sheet` 420 ms (sheets and
-  their column), `--dur-graph` 280 ms (bars, keys, scale changes), `--dur-pulse` 1.1 s (a live indicator only).
-  Easing is `--ease-out` for anything the user triggered.
+  their column), `--dur-graph` 280 ms (bars, keys, scale changes), `--dur-stage` 520 ms (a stage event's wave),
+  `--beat` 60 ms (the step of a wave), `--dur-pulse` 1.1 s (a live indicator only). Easing is `--ease-out` for
+  anything the run or the user caused; `--ease-spring` only for a control's small state change.
+- Arrival: the console rises into place in reading order a beat apart, the dial, the lanes, the controls, then
+  the cards left to right (`rise`, 8 px).
+- A stage starting is one wave from the chips down: the chip's edge and bar first, the dial's figure and the
+  stage's name hand off together, the population's row in the lanes washes in its hue a beat later on its own layer,
+  and two beats after the chip the card's edge eases in and its glow arrives in one step (a blurred shadow is
+  never faded frame by frame).
+- A stage settling: its chip's check pops on the spring; its card lays its facts down one row after another
+  (`row-in`, 40 ms apart); a measured span in the lanes grows from its middle the first time it is drawn.
+- The result replays the run on the dial as one sweep from zero over 1.2 s (`--sweep`): every result's arc shows
+  up to the shared front, so the front changes hue as it passes each shorter result, and each bead pops on the
+  spring as the front reaches it. The run key, once it reads Start or Run again, is crossed by a sheen once.
+- A key gives under a press (0.94) and springs back; a chip gives less (0.97).
+- A theme change opens the new theme as a circle from the theme key (a view transition, 560 ms).
 - Live values and the running strip's leading edge move on the single frame clock in
   `presentation/motion.svelte.ts`; a glide smooths only the rendering.
 - A view hands off by a class: the old fades out in 90 ms and the new in over 180 (`.handoff`, `.handoff-out`,
   `--dur-handoff-out`, `--dur-handoff-in`); the frame clock flips the class once at the start and once at the
-  swap, so the fade itself runs on the compositor and no element writes its opacity per frame.
+  swap, so the fade itself runs on the compositor and no element writes its opacity per frame. A view that
+  carries a figure (`--rise`: the dial's 6 px, a card's 3 px) sinks as it leaves and rises as the next arrives.
+  A stage's hue changes with its stage, never by a crossfade: the re-armed needle tells the change.
 - A docked sheet hugs its column's inner edge, so the column's glide (`--dock-left`, `--dock-right`) is its slide:
   sheet and page move in one layout pass, in and out, and a dragged handle moves them without the glide. A changed
   time rolls like a counter (`Roll`, 320 ms): up as it grows, down as it shrinks.
@@ -179,9 +201,9 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
 - A radio's ring closes in and a check draws in (180 ms, `--ease-spring`, a touch of overshoot); the switch's knob
   slides on the same spring; a row that appears in a sheet unfolds from its own height. The instrument's own
   motion, the ring and the strips, never overshoots.
-- While a stage runs, its card lifts on a glow in its hue and its population's row in the lanes takes a faint
-  wash of it: one fill change per stage, never per frame.
-- Reduced motion keeps colour and opacity changes; sheets, rolls and glides jump to their end state.
+- While a stage runs, its card lifts on a glow in its hue and its population's row in the lanes takes a wash of
+  it, edge to edge with the area's rule: one change per stage, never per frame.
+- Reduced motion keeps colour and opacity changes; every animation lands at its end state, and loops do not run.
 
 ## Components
 
@@ -249,8 +271,8 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   transfer's strip at once: time into the stage, the rate, and the latency replies measured then. A vertical swipe
   scrolls past; a drag's readout leaves with the finger.
 - **Latency lanes** (`LatencyProfileView`): the latency stage's area beside the dial (`.stage-area`: a 2 px rule
-  in its hue along the top and a wash of it that fades out, no box), under the head (mark, Latency, "Idle and
-  under load"; a failed idle stage names its reason there): one 32 px ruled row per population, each
+  in its hue along the top and a wash of it that fades out, no box), under the head (mark, Latency, and the server
+  when several ran; a failed idle stage names its reason there): one 32 px ruled row per population, each
   led by its mark: name, median, jitter, timeouts (the share of resolved probes that got no reply, which is not
   packet loss), box plot (P10–P90 box over its min–max whisker, median tick, latest reply as a dot while live) and
   the added latency in its ink, from the medians until the run saves it, "—" without evidence. Figures are as

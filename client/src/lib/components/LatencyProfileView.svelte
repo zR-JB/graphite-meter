@@ -543,12 +543,31 @@
   .lane + .lane {
     border-top: var(--hairline) solid var(--border-subtle);
   }
-  /* The population under load takes a faint wash of its hue while its stage runs: one fill change per stage. */
+  /* The population under load takes a wash of its hue across the whole area, edge to edge with the area's rule;
+     it fades in on its own layer a beat after its chip, so the row never repaints for it. */
   .lane {
-    transition: background-color var(--dur-graph) var(--ease-out);
+    position: relative;
   }
-  .lane[data-active="true"] {
-    background: color-mix(in oklab, var(--tone) 6%, transparent);
+  .lane::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 0 calc(-1 * var(--space-4));
+    background: color-mix(in oklab, var(--tone) 7%, transparent);
+    opacity: 0;
+    transition: opacity var(--dur-graph) var(--ease-out);
+    pointer-events: none;
+  }
+  .lane[data-active="true"]::before {
+    opacity: 1;
+    transition: opacity var(--dur-stage) var(--ease-out) var(--beat);
+  }
+  /* A measured span grows from its middle the first time it is drawn. */
+  @media (prefers-reduced-motion: no-preference) {
+    .band,
+    .range {
+      animation: grow-x var(--dur-stage) var(--ease-out) backwards;
+    }
   }
   /* Every figure in a row on the median's baseline (app.css, --role-label). */
   .lane-name {

@@ -229,7 +229,9 @@
     box-shadow: var(--elev-tile);
     color: var(--text);
     text-align: start;
-    transition: var(--transition-control);
+    transition:
+      var(--transition-control),
+      scale var(--dur-graph) var(--ease-spring);
   }
   @media (hover: hover) {
     .chip:hover:not(:disabled) {
@@ -273,6 +275,15 @@
   }
   .chip-fill.is-live {
     transition: background-color var(--dur-graph) var(--ease-out);
+  }
+  /* A finished stage's check pops in on the spring, and a press gives under the finger. */
+  @media (prefers-reduced-motion: no-preference) {
+    .chip-check {
+      animation: pop 420ms var(--ease-spring) backwards;
+    }
+    .chip:active:not(:disabled) {
+      scale: 0.97;
+    }
   }
   /* A finished stage keeps its hue; partial is hatched like the dial's dashed arc. */
   .chip-fill.is-partial {
