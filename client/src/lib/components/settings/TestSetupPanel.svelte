@@ -10,15 +10,14 @@
     BROWSER_CONNECTION_BUDGET,
     normalizeStreamCount,
   } from "../../runner/paths";
-  import { term, tooltip } from "../../actions/tooltip";
+  import { tooltip } from "../../actions/tooltip";
   import { reveal } from "../../presentation/motion.svelte";
   import Icon from "../Icon.svelte";
   import Switch from "../Switch.svelte";
   import ServerSelection from "../ServerSelection.svelte";
   import ConnectionPicker from "./ConnectionPicker.svelte";
   import DurationStrip from "./DurationStrip.svelte";
-  import TimeStepper from "./TimeStepper.svelte";
-  import CountStepper from "./CountStepper.svelte";
+  import Stepper from "./Stepper.svelte";
   import Roll from "../Roll.svelte";
   import {
     BLOCKED,
@@ -33,6 +32,7 @@
   import {
     fmtDuration,
     fmtStageTime,
+    parseDuration,
     rateUnit,
     rateValueAt,
     rawRateFrom,
@@ -228,6 +228,11 @@
   ].join("\n");
 
   const forced = $derived(store.config.transferStreams.mode === "forced");
+  // A typed stream count is a whole number.
+  const parseCount = (text: string) => {
+    const count = Number(text.trim());
+    return text.trim() && Number.isInteger(count) ? count : null;
+  };
   const queuedStreams = $derived(
     forced &&
       store.config.transferStreams.count > BROWSER_CONNECTION_BUDGET &&
@@ -305,12 +310,17 @@
 {/snippet}
 
 {#snippet stepper(key: DurationKey, label: string)}
-  <TimeStepper
+  <Stepper
     {label}
-    ms={store.config.duration[key]}
+    value={store.config.duration[key]}
     min={DURATION_LIMITS[key][0]}
     max={maxMs(key)}
     step={(ms, direction) => stepMs(key, ms, direction)}
+    format={fmtStageTime}
+    parse={parseDuration}
+    unit={1000}
+    verbs={["Shorten", "Lengthen"]}
+    noun="time"
     disabled={store.preparing}
     onChange={(ms) => applyDuration(key, ms)}
   />
@@ -409,7 +419,7 @@
         <span
           class="stage-name"
           data-tone="warmup"
-          {@attach term(() => JARGON.warmup)}>{WARMUP_LABEL}</span
+          {@attach tooltip(() => JARGON.warmup)}>{WARMUP_LABEL}</span
         >
         {#if durationMode === "custom"}
           {@render stepper("warmupMs", "warmup")}
@@ -577,18 +587,23 @@
       )}
       <div class="units">
         <span
-          {@attach term(() =>
+          {@attach tooltip(() =>
             forced ? JARGON.forcedStreamCount : JARGON.autoStreamCount,
           )}
           >{forced
             ? "Streams per server and direction"
             : "HTTP/1.1 stream limit per direction"}</span
         >
-        <CountStepper
+        <Stepper
           label={forced ? "streams" : "stream limit"}
           value={store.config.transferStreams.count}
           min={1}
           max={128}
+          step={() => 1}
+          format={String}
+          parse={parseCount}
+          verbs={["Fewer", "More"]}
+          fieldMin="3ch"
           disabled={running || store.preparing}
           onChange={(count) => {
             const accepted = streams({ count: normalizeStreamCount(count) });
@@ -726,15 +741,21 @@
   .units {
     column-gap: var(--space-2);
   }
-  /* A cadence's segments stand under their label, so the two rows read alike. */
-  .cadence {
-    row-gap: 6px;
-  }
+  /* A control stands at its label's end while the row holds both, and against the right edge when it wraps
+     under the label; a cadence's segments then take the row's width. */
+  .units > span,
   .cadence > span {
-    flex-basis: 100%;
-  }
-  .units > span {
+    flex: 1 0 auto;
     margin-inline-end: auto;
+  }
+  .units > :not(span) {
+    margin-inline-start: auto;
+  }
+  .cadence {
+    row-gap: var(--space-2);
+  }
+  .cadence > .segmented {
+    flex: 1 1 240px;
   }
   /* A narrow sheet stacks every stepper row and the units row alike, so no row wraps where its neighbour does not. */
   @container settings (max-width: 320px) {

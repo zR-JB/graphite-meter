@@ -1,53 +1,67 @@
 <script lang="ts">
   import Roll from "../Roll.svelte";
-  import { fmtStageTime, parseDuration } from "../../format";
 
   interface Props {
-    /** What the time belongs to, as it reads mid-sentence: "Latency stage", "warmup". */
+    /** What the value belongs to, as it reads mid-sentence: "Latency stage", "warmup", "stream limit". */
     label: string;
-    ms: number;
+    value: number;
     min: number;
     max: number;
-    /** The step size from `ms` in `direction`; steps grow with the time. */
-    step: (ms: number, direction: 1 | -1) => number;
+    /** The step size from `value` in `direction`. */
+    step: (value: number, direction: 1 | -1) => number;
+    format: (value: number) => string;
+    /** A typed value, or null when the text is not one. */
+    parse: (text: string) => number | null;
+    /** The spoken value's unit in `value`'s: 1000 for milliseconds read as seconds. */
+    unit?: number;
+    /** The keys' verbs: "Shorten warmup", "Lengthen warmup". */
+    verbs?: [string, string];
+    /** What the field holds, after the label in its name: "Warmup time". */
+    noun?: string;
+    /** The field's least width. */
+    fieldMin?: string;
     disabled?: boolean;
-    /** Applies a time; false when the run refuses it. */
-    onChange: (ms: number) => boolean;
+    /** Applies a value; false when the run refuses it. */
+    onChange: (value: number) => boolean;
   }
   let {
     label,
-    ms,
+    value,
     min,
     max,
     step,
+    format,
+    parse,
+    unit = 1,
+    verbs = ["Decrease", "Increase"],
+    noun = "",
+    fieldMin = "5.5rem",
     disabled = false,
     onChange,
   }: Props = $props();
-  const text = $derived(fmtStageTime(ms));
-  const clamp = (value: number) => Math.min(max, Math.max(min, value));
 
+  const text = $derived(format(value));
+  const clamp = (next: number) => Math.min(max, Math.max(min, next));
   // A step lands on the step grid, so 10.5 s steps to 11 s or 10 s.
   function nudge(direction: 1 | -1) {
-    const size = step(ms, direction);
+    const size = step(value, direction);
     const next =
       direction > 0
-        ? Math.floor(ms / size) * size + size
-        : Math.ceil(ms / size) * size - size;
+        ? Math.floor(value / size) * size + size
+        : Math.ceil(value / size) * size - size;
     onChange(clamp(next));
   }
-  // Typed times read as seconds unless they name a unit: 90, 2.5, 2h, 1 h 30 min, 1:30:00.
-  // They round to the time the stepper shows, and the limits apply last so a server's is never passed.
+  // A typed value rounds to what the stepper would show, and the limits apply last so a server's is never passed.
   function commit(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
-    const typed = parseDuration(input.value);
-    const next =
-      typed === null ? ms : clamp(parseDuration(fmtStageTime(typed))!);
-    input.value = fmtStageTime(next === ms || onChange(next) ? next : ms);
+    const typed = parse(input.value);
+    const next = typed === null ? value : clamp(parse(format(typed)) ?? value);
+    input.value = format(next === value || onChange(next) ? next : value);
   }
   function onKey(event: KeyboardEvent) {
     const input = event.currentTarget as HTMLInputElement;
-    // Escape drops a typed time; the sheet closes on the next one. A capture
-    // listener sits on the field itself, so this runs before the sheet's own.
+    // Escape drops a typed value; the sheet closes on the next one. A capture listener sits on the field itself,
+    // so this runs before the sheet's own.
     if (event.key === "Escape" && input.value !== text) {
       input.value = text;
       event.preventDefault();
@@ -61,13 +75,13 @@
 </script>
 
 <!-- The field takes the keyboard, as a spin button does; − and + serve pointers and stay put at a limit. -->
-<span class="stepper">
+<span class="stepper" style:--field-min={fieldMin}>
   <button
     type="button"
     class="btn btn-icon btn-quiet"
     tabindex="-1"
-    aria-label="Shorten {label}"
-    aria-disabled={ms <= min}
+    aria-label="{verbs[0]} {label}"
+    aria-disabled={value <= min}
     {disabled}
     onclick={() => nudge(-1)}>−</button
   >
@@ -79,34 +93,36 @@
       spellcheck="false"
       value={text}
       {disabled}
-      aria-label="{label[0].toUpperCase()}{label.slice(1)} time"
-      aria-valuemin={min / 1000}
-      aria-valuemax={max / 1000}
-      aria-valuenow={ms / 1000}
+      aria-label="{label[0].toUpperCase()}{label.slice(1)}{noun
+        ? ` ${noun}`
+        : ''}"
+      aria-valuemin={min / unit}
+      aria-valuemax={max / unit}
+      aria-valuenow={value / unit}
       aria-valuetext={text}
-      aria-invalid={ms > max}
+      aria-invalid={value > max}
       onchange={commit}
       onkeydowncapture={onKey}
     />
-    <span class="shown" aria-hidden="true"><Roll {text} rank={ms} /></span>
+    <span class="shown" aria-hidden="true"><Roll {text} rank={value} /></span>
   </span>
   <button
     type="button"
     class="btn btn-icon btn-quiet"
     tabindex="-1"
-    aria-label="Lengthen {label}"
-    aria-disabled={ms >= max}
+    aria-label="{verbs[1]} {label}"
+    aria-disabled={value >= max}
     {disabled}
     onclick={() => nudge(1)}>+</button
   >
 </span>
 
 <style>
-  /* − time +: the time rolls like the strip's; a click edits it as text. */
+  /* − value +: the value rolls like the strip's; a click edits it as text. */
   .stepper {
     --control-h: 28px;
     display: inline-grid;
-    grid-template-columns: auto minmax(5.5rem, max-content) auto;
+    grid-template-columns: auto minmax(var(--field-min), max-content) auto;
     align-items: center;
     padding: 2px;
     border-radius: var(--r-chrome);
@@ -132,8 +148,8 @@
     align-self: center;
     text-align: center;
   }
-  /* The shown time sizes the field; the input only fills it, on top to take clicks and typing.
-     While edited it is an ordinary focused field; otherwise only the rolled time shows. */
+  /* The shown value sizes the field; the input only fills it, on top to take clicks and typing.
+     While edited it is an ordinary focused field; otherwise only the rolled value shows. */
   .field input {
     z-index: 1;
     width: 0;
