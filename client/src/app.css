@@ -1162,7 +1162,7 @@
     translate: 0 -1px;
     rotate: -45deg;
     scale: 0;
-    transition: scale var(--dur-slide) var(--ease-out);
+    transition: scale var(--dur-slide) var(--ease-spring);
   }
   input.check[type="checkbox"]:checked::after {
     scale: 1;
