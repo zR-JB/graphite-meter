@@ -16,7 +16,7 @@
     STATUS_TONE,
     type Tone,
   } from "../presentation/vocabulary";
-  import { formatLatency, formatRate } from "../format";
+  import { formatLatency, resultRate } from "../format";
   import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
   import type { StageKey } from "../state/store.svelte";
   import { planned, STAGES } from "../runner/schedule";
@@ -24,10 +24,13 @@
 
   const controller = getApplicationController();
 
-  function resultValue(key: StageKey): string | null {
+  // A stage's result as a figure and its unit; the latency stage's keeps its unit with the figure.
+  function resultFigure(key: StageKey): { num: string; unit: string } | null {
     if (key === "latency") {
       const latency = store.stageResults.latency;
-      return latency ? formatLatency(latency.reportedMs) : null;
+      return latency
+        ? { num: formatLatency(latency.reportedMs), unit: "" }
+        : null;
     }
     const bytes =
       key === "bidirectional"
@@ -38,17 +41,21 @@
         : store.stageResults[key]?.reportedBytesPerSec;
     return bytes == null
       ? null
-      : formatRate(bytes, {
+      : resultRate(bytes, {
           base: store.unitBase,
           kind: store.unitKind,
           tier: store.scales.unitIndex,
         });
   }
+  const resultValue = (key: StageKey) => {
+    const figure = resultFigure(key);
+    return figure ? `${figure.num} ${figure.unit}`.trim() : null;
+  };
 
   const model = $derived(
     STAGES.map((key) => {
       const execution = store.stagePresentation[key];
-      // The run skips a stage without a duration, so the chip does too.
+      // The run skips a stage without a duration, so the key does too.
       const selected = planned(store.config, key);
       const locked = !store.canToggleStage(key);
       const model = stageTrackModel({ selected, locked, execution });
@@ -77,13 +84,16 @@
       stageShown(s.key, s.selected, store.stagePresentation[s.key]),
     ),
   );
-  // The bar along a chip's top: the stage's progress while it runs, how it settled after.
+  // A key's end: the stage's result once measured, its state word while it runs or waits.
   const look = (key: StageKey) => {
     const s = model.find((s) => s.key === key)!;
     const live = s.state === "active" && store.phaseBudgetMs > 0;
+    const done = s.state === "complete" || s.state === "partial";
+    const figure = done ? resultFigure(key) : null;
     return {
       state: s.state,
-      reason: s.reason,
+      text: figure?.num ?? s.reason,
+      unit: figure?.unit ?? "",
       tone: s.state === "recovering" ? STATUS_TONE.recovering : key,
       live,
       progress:
@@ -94,24 +104,19 @@
             : s.fill / 100,
     };
   };
-  // A tag or check fades in with its state, so a chip never blinks between words.
+  // A result or word fades in with its state, so a key never blinks between words.
   const looks = Object.fromEntries(
     STAGES.map((key) => [
       key,
       handoff(
         () => look(key),
-        (shown) => `${shown.state}:${shown.reason}`,
+        (shown) => `${shown.state}:${shown.text}:${shown.unit}`,
       ),
     ]),
   ) as Record<StageKey, Handoff<ReturnType<typeof look>>>;
 </script>
 
-<fieldset class="stage-track" class:quad={segments.length === 4}>
-  <legend class="caps"
-    >Test stages<span class="sr-only">
-      — toggle to include or skip</span
-    ></legend
-  >
+<div class="stage-track" role="group" aria-label="Test stages">
   {#each segments as s (s.key)}
     {@const view = looks[s.key]}
     {@const look = view.shown}
@@ -119,6 +124,7 @@
       type="button"
       class="seg seg--{s.state}"
       class:on={s.selected}
+      class:done={look.state === "complete"}
       data-tone={s.key}
       role="switch"
       aria-checked={s.selected}
@@ -131,6 +137,26 @@
       disabled={s.locked}
       onclick={() => controller.toggleStage(s.key)}
     >
+      <span
+        class="seg-tint"
+        class:is-live={look.live}
+        style:--progress={look.progress}
+        aria-hidden="true"
+      ></span>
+      <span class="seg-key" aria-hidden="true">
+        {#if look.state === "complete"}<Icon name="check" />{/if}
+      </span>
+      <span class="seg-label">{s.label}</span>
+      {#if look.text}
+        <span
+          class="seg-res"
+          class:value={look.state === "complete" || look.state === "partial"}
+          data-tone={(STATUS_TONE as Record<string, Tone>)[look.state]}
+          style:opacity={view.opacity}
+          >{look.text}{#if look.unit}<span class="seg-unit">{look.unit}</span
+            >{/if}</span
+        >
+      {/if}
       <span class="seg-bar" aria-hidden="true">
         <span
           class="seg-fill"
@@ -143,75 +169,42 @@
           style:--progress={look.progress}
         ></span>
       </span>
-      <span class="seg-row">
-        <span class="seg-main">
-          <span class="seg-ico"><Icon name={s.icon} /></span>
-          <span class="seg-label">{s.label}</span>
-        </span>
-        {#if look.reason}
-          <span
-            class="seg-tag"
-            data-tone={(STATUS_TONE as Record<string, Tone>)[look.state]}
-            style:opacity={view.opacity}>{look.reason}</span
-          >
-        {:else if look.state === "complete"}
-          <span class="seg-ico seg-check" style:opacity={view.opacity}
-            ><Icon name="check" /></span
-          >
-        {/if}
-      </span>
     </button>
   {/each}
-</fieldset>
+</div>
 
 <style>
+  /* The keys sit in the transport row beside the run key; the row lays them out. */
   .stage-track {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: var(--space-2);
-  }
-  .stage-track.quad {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-  legend {
-    margin-bottom: var(--space-2);
-  }
-  @container viz (max-width: 430px) {
-    .stage-track.quad {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
+    display: contents;
   }
 
-  /* A chip is a plate with its stage's bar along the top: a switch before the run, the run's progress during it. */
+  /* A key: a flat plate with a check box, the stage's name and, at its end, its result; along its base a bar in
+     the stage's hue that fills as the stage runs and stays full once measured. */
   .seg {
+    position: relative;
     display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
+    flex: 1 1 0;
+    align-items: center;
+    gap: 10px;
     height: 46px;
-    padding: var(--space-2);
+    min-width: 0;
+    padding: 0 12px;
     overflow: hidden;
     border: var(--hairline) solid var(--border);
     border-radius: var(--r-chrome);
-    background: var(--surface-2);
-    box-shadow: var(--elev-tile);
-    color: var(--text-muted);
+    background: var(--surface-1);
+    color: var(--text);
     text-align: start;
     transition: var(--transition-control);
   }
   @media (hover: hover) {
     .seg:hover:not(:disabled) {
       border-color: var(--border-strong);
-      color: var(--text);
     }
   }
-  /* A stage in the run takes the ink edge and wash a selected tile takes; one off stays operable, so it reads soft
-     rather than dimmed, and only a locked chip dims. */
-  .seg.on {
-    border-color: var(--brand-line);
-    background: var(--brand-soft);
-    color: var(--text);
-  }
-  .seg--disabled {
+  /* One off stays operable, so it reads soft rather than dimmed; only a locked key dims. */
+  .seg:not(.on) {
     color: var(--text-soft);
   }
   .seg:disabled {
@@ -220,19 +213,88 @@
   .seg--disabled:disabled {
     opacity: 0.5;
   }
-
-  .seg-bar {
-    position: relative;
+  /* The box is the switch: ink square while on, the hue's check once measured. */
+  .seg-key {
+    display: grid;
     flex: none;
-    height: 5px;
+    place-items: center;
+    width: 13px;
+    height: 13px;
+    border: 1px solid var(--field-edge);
+    border-radius: 1px;
+    color: var(--tone);
+  }
+  .on .seg-key {
+    border-color: var(--brand);
+  }
+  .on .seg-key::after {
+    content: "";
+    width: 7px;
+    height: 7px;
+    background: var(--brand);
+  }
+  .done .seg-key {
+    border-color: var(--tone);
+  }
+  .done .seg-key::after {
+    display: none;
+  }
+  .seg-key :global(svg) {
+    width: 10px;
+    height: 10px;
+  }
+  .seg-label {
+    flex: 1 1 auto;
+    min-width: 0;
     overflow: hidden;
-    border-radius: var(--r-full);
-    background: var(--surface-inset);
+    font: 500 var(--type-body) / 1 var(--font-sans);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .seg-res {
+    flex: none;
+    color: var(--text-muted);
+    font: var(--role-figure-sm);
+    line-height: 1;
+    white-space: nowrap;
+  }
+  .seg-res.value {
+    color: var(--text);
+  }
+  .seg-unit {
+    margin-left: 0.5ch;
+    color: var(--text-muted);
+  }
+  /* A narrower row keeps the figure and drops its unit, which the dial names. */
+  @container viz (max-width: 1180px) {
+    .seg-unit {
+      display: none;
+    }
+  }
+  .seg-res[data-tone] {
+    color: var(--tone-ink);
+  }
+  /* While a stage runs its key fills with a tint of its hue from the left. */
+  .seg-tint {
+    position: absolute;
+    inset: 0;
+    background: color-mix(in oklab, var(--tone) 9%, transparent);
+    transform: scaleX(var(--progress, 0));
+    transform-origin: left center;
+    visibility: hidden;
+  }
+  .seg-tint.is-live {
+    visibility: visible;
+  }
+  .seg-bar {
+    position: absolute;
+    inset: auto 0 0;
+    height: 3px;
+    overflow: hidden;
   }
   .seg-fill {
     position: absolute;
     inset: 0;
-    border-radius: inherit;
     background: var(--tone);
     transform: scaleX(var(--progress, 0));
     transform-origin: left center;
@@ -282,107 +344,29 @@
       translate: 240%;
     }
   }
-
-  .seg-row,
-  .seg-main {
-    display: flex;
-    align-items: center;
-    gap: var(--space-1);
-    min-width: 0;
-  }
-  .seg-row {
-    min-height: 18px;
-  }
-  .seg-main {
-    flex: 1 1 auto;
-  }
-  .seg-ico {
-    display: grid;
-    flex: none;
-    place-items: center;
-  }
-  .seg-ico :global(svg) {
-    width: 15px;
-    height: 15px;
-  }
-  .seg-label {
-    min-width: 0;
-    overflow: hidden;
-    font-size: var(--type-sm);
-    font-weight: var(--w-heavy);
-    letter-spacing: var(--track-tight);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .seg-check {
-    margin-left: auto;
-    color: var(--ok);
-  }
-  .seg-tag {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    height: 18px;
-    margin-left: auto;
-    padding: 0 6px;
-    border: var(--hairline) solid var(--border-subtle);
-    border-radius: var(--r-well);
-    background: var(--surface-inset);
-    color: var(--text-soft);
-    font: var(--w-heavy) var(--type-2xs) / 1 var(--font-mono);
-    letter-spacing: var(--track-caps);
-    text-transform: uppercase;
-  }
-  .seg-tag[data-tone] {
-    border-color: var(--tone-line);
-    color: var(--tone-ink);
-  }
-  /* Narrow chips: a tag word takes its own line; a lone check stays beside the label. */
-  @container viz (max-width: 680px) {
+  /* Narrow rows: two keys to a line, the name over its result. */
+  @container viz (max-width: 720px) {
     .seg {
-      gap: 3px;
-      padding: 6px;
+      flex-basis: calc(50% - var(--space-1));
+      padding: 0 10px;
     }
-    .seg-bar {
-      height: 3px;
-    }
-    .seg-row:has(> .seg-tag) {
+  }
+  @container viz (max-width: 430px) {
+    .seg {
       display: grid;
-      grid-template-rows: 14px 12px;
-      gap: 2px;
-      align-content: start;
+      grid-template-columns: auto minmax(0, 1fr);
+      grid-template-rows: auto auto;
+      row-gap: 2px;
+      column-gap: 8px;
+      align-content: center;
     }
-    .seg-main {
-      gap: 3px;
+    .seg-key {
+      grid-row: 1 / 3;
     }
-    .seg-ico :global(svg) {
-      width: 12px;
-      height: 12px;
-    }
-    .seg-label {
-      overflow: visible;
+    .seg-res {
+      grid-column: 2;
+      justify-self: start;
       font-size: var(--type-xs);
-      line-height: 14px;
-    }
-    .seg-tag {
-      justify-self: start;
-      min-width: 0;
-      height: 12px;
-      margin: 0;
-      padding: 0;
-      border: 0;
-      background: none;
-      font: var(--w-normal) var(--type-2xs) / 1 var(--font-sans);
-      letter-spacing: 0;
-      text-transform: none;
-    }
-    .seg-check {
-      justify-self: start;
-      margin: 0;
-    }
-    .seg-check :global(svg) {
-      width: 10px;
-      height: 10px;
     }
   }
 </style>

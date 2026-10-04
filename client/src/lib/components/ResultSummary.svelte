@@ -204,24 +204,28 @@
 </div>
 
 <style>
-  /* Cards sit centred under the chips, one per stage, at a width that keeps four across a 1024 px screen. */
+  /* One card per stage across the instrument's width; the strips share one scale, so a stage's shape compares. */
   .result-summary {
     display: grid;
     gap: var(--space-2);
     width: 100%;
-    max-width: calc(var(--cards) * 300px);
-    margin-inline: auto;
     container: results / inline-size;
   }
   .result-cards {
     display: grid;
     grid-template-columns: repeat(var(--cards), minmax(0, 1fr));
-    gap: var(--space-2);
+    gap: var(--space-4);
+  }
+  @container results (max-width: 1100px) {
+    .result-cards {
+      gap: var(--space-3);
+    }
   }
   /* A phone keeps two across; the running card leads and the others fold to their name and value. */
   @container results (max-width: 520px) {
     .result-cards {
       grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--space-2);
     }
     .running .card:not(.active, .recovering) > :is(.line, .strip, .facts),
     .card:is(.pending, .not-run) > :is(.line, .strip, .facts) {
@@ -234,55 +238,51 @@
       grid-column: 1 / -1;
     }
   }
-  /* A card is a plate washed in its stage's hue from the middle down; the strip sits in that wash. The running
-     card takes its hue as its edge. */
+  /* A card is a panel ruled in its stage's hue along the top; the running card's rule and edge strengthen. */
   .card {
     --edge: var(--border);
     position: relative;
     display: grid;
     align-content: start;
-    gap: 3px;
+    gap: var(--space-1);
     min-width: 0;
-    padding: var(--space-2) var(--space-3) 10px;
+    padding: 10px var(--space-4) var(--space-3);
     overflow: hidden;
     border: var(--hairline) solid var(--edge);
-    border-radius: var(--r-chrome);
-    background:
-      linear-gradient(transparent 40%, var(--tone-wash)), var(--surface-1);
-    box-shadow: var(--elev-tile);
+    border-top: 2px solid var(--tone);
+    border-radius: var(--r-surface);
+    background: var(--surface-1);
     transition: var(--transition-control);
   }
   .card:is(.active, .recovering) {
-    --edge: color-mix(in oklab, var(--tone) 70%, var(--border));
-    box-shadow:
-      var(--elev-tile),
-      0 0 0 3px var(--tone-wash);
+    --edge: color-mix(in oklab, var(--tone) 55%, var(--border));
   }
   .card:is(.pending, .not-run) {
     --edge: var(--border-subtle);
+    border-top-color: color-mix(in oklab, var(--tone) 45%, transparent);
   }
   .face {
     display: grid;
-    gap: 3px;
+    gap: var(--space-1);
     min-width: 0;
   }
   .name {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-2);
     min-width: 0;
-    height: 22px;
-    color: var(--tone-ink);
-    font: var(--w-strong) var(--type-sm) / 1 var(--font-sans);
+    height: 20px;
+    color: var(--text);
+    font: var(--role-title);
     white-space: nowrap;
   }
   .name .tone-icon {
-    width: 20px;
-    height: 20px;
+    width: 18px;
+    height: 18px;
   }
   .name .tone-icon :global(svg) {
-    width: 11px;
-    height: 11px;
+    width: 10px;
+    height: 10px;
   }
   .status {
     display: inline-flex;
@@ -302,10 +302,10 @@
   .headline {
     display: flex;
     align-items: baseline;
-    gap: 5px;
+    gap: 6px;
     min-width: 0;
-    font: var(--w-strong) 24px / 26px var(--font-display);
-    letter-spacing: var(--track-tight);
+    font: var(--role-readout);
+    font-size: 26px;
     white-space: nowrap;
   }
   /* A strut one value tall, so a bidirectional pair's smaller figures sit on its baseline and keep the card's height. */
@@ -318,21 +318,25 @@
   .pair {
     display: inline-flex;
     align-items: baseline;
-    gap: 1px;
+    gap: 2px;
   }
   .pair .num {
-    font-size: 19px;
+    font-size: 20px;
+  }
+  .pair + .pair {
+    margin-left: 4px;
   }
   .arrow {
-    color: var(--tone);
-    font: var(--w-normal) var(--type-body) / 1 var(--font-sans);
+    color: var(--text-soft);
+    font: var(--w-normal) var(--type-md) / 1 var(--font-sans);
   }
   .quiet .num {
     color: var(--text-soft);
   }
   .unit {
-    color: var(--text-soft);
-    font: var(--w-heavy) var(--type-xs) var(--font-mono);
+    color: var(--text-muted);
+    font: var(--role-figure-sm);
+    line-height: 1;
   }
   /* One quiet line: the wire rate, a failure's reason, the latency card's jitter; after a stall, no data. */
   .line {
@@ -340,10 +344,10 @@
     align-items: baseline;
     gap: var(--space-2);
     min-width: 0;
-    height: 15px;
+    height: 16px;
     overflow: hidden;
-    color: var(--text-muted);
-    font: var(--w-normal) var(--type-xs) / 15px var(--font-sans);
+    color: var(--text-soft);
+    font: var(--w-normal) var(--type-sm) / 16px var(--font-sans);
     white-space: nowrap;
   }
   .reason,
@@ -352,53 +356,74 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .wire,
+  .no-data {
+    font: var(--role-figure-sm);
+    line-height: 16px;
+    color: var(--text-muted);
+  }
   .label {
     color: var(--text-soft);
+    font: var(--w-normal) var(--type-sm) / 16px var(--font-sans);
   }
   .no-data {
     flex: none;
     margin-left: auto;
   }
   .delta {
-    color: var(--tone-ink);
-    font-weight: var(--w-strong);
+    color: var(--text);
   }
   .reason {
     color: var(--err);
     font-weight: var(--w-strong);
   }
-  /* The strip: the stage's shape and its latency replies, in the plate's wash. */
+  /* The strip: the stage's shape and its latency replies, on a field tinted in the stage's hue. */
   .strip {
-    height: 64px;
+    height: 68px;
     min-height: 0;
-    margin-block: 3px 2px;
+    margin-top: var(--space-1);
+    padding: 6px 8px 0;
+    border-radius: var(--r-well);
+    background: color-mix(in oklab, var(--tone) 7%, var(--surface-1));
   }
-  /* Facts on one line, each a quiet label and its figure; "—" until known, so nothing moves. */
+  /* Three facts across the card, each a quiet label over its figure; "—" until known, so nothing moves. */
   .facts {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2px var(--space-3);
+    display: grid;
+    grid-template-columns: repeat(3, auto);
+    justify-content: space-between;
+    gap: var(--space-3);
     min-width: 0;
-    min-height: 15px;
-    color: var(--text-muted);
-    font: var(--w-normal) var(--type-xs) / 15px var(--font-sans);
+    margin-top: var(--space-2);
+    color: var(--text);
+    font: var(--role-figure-sm);
+    line-height: 16px;
   }
   .facts.unknown {
     visibility: hidden;
   }
   .facts > div {
-    display: inline-flex;
-    gap: 4px;
+    display: grid;
+    gap: 2px;
+    min-width: 0;
     white-space: nowrap;
   }
   .facts dt {
+    width: fit-content;
     color: var(--text-soft);
+    font: var(--w-normal) var(--type-xs) / 14px var(--font-sans);
   }
   .facts dd {
     font-variant-numeric: tabular-nums;
   }
   .facts dd.quiet {
     color: var(--text-soft);
+  }
+  /* A narrower card keeps its three facts by taking them a size down. */
+  @container results (max-width: 1100px) {
+    .facts {
+      gap: var(--space-2);
+      font-size: var(--type-xs);
+    }
   }
   .issues {
     display: grid;

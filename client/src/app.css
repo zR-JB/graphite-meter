@@ -125,7 +125,7 @@
   --font-mono:
     "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 
-  --topbar-h: 52px;
+  --topbar-h: 44px;
   --statusbar-h: 28px;
 
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -149,9 +149,9 @@
   --space-6: 32px;
 
   /* Radii rise with elevation and stay concentric: inner parts, controls and plates, housings and sheets. */
-  --r-well: 4px;
-  --r-chrome: 6px;
-  --r-surface: 8px;
+  --r-well: 2px;
+  --r-chrome: 3px;
+  --r-surface: 4px;
   --r-full: 999px;
   /* A row's wash sits 2 px inside its plate, on a radius concentric with the plate's. */
   --r-row: calc(var(--r-chrome) - var(--hairline) - 2px);
@@ -174,6 +174,10 @@
   --role-caption: var(--w-normal) var(--type-xs) / 1.5 var(--font-sans);
   --role-panel-title: var(--w-strong) var(--type-lg) / 1.25 var(--font-display);
   --role-label: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
+  /* Figures are mono at one weight: a readout, a card's or lane's figure, a fact. */
+  --role-readout: 500 28px / 1 var(--font-mono);
+  --role-figure: 500 var(--type-md) / 1.3 var(--font-mono);
+  --role-figure-sm: 500 var(--type-sm) / 1.3 var(--font-mono);
   /* Centred beside a larger word, a smaller one sits half their size gap high; that gap as its top margin sets it
      on the larger word's baseline, e.g. margin-top: calc(var(--type-md) - var(--type-sm)). */
   --track-tight: -0.02em;
@@ -207,7 +211,6 @@
   --surface-1: light-dark(oklch(0.995 0.002 258), oklch(0.215 0.009 258));
   --surface-2: light-dark(oklch(0.975 0.003 258), oklch(0.25 0.01 258));
   --surface-inset: light-dark(oklch(0.948 0.005 258), oklch(0.15 0.008 258));
-  --sheen: linear-gradient(180deg, var(--surface-2), transparent);
   /* What floats over the instrument: sheets, popovers and menus. Opaque: a blur costs every frame on a slow GPU. */
   --sheet-solid: light-dark(oklch(0.985 0.003 258), oklch(0.195 0.009 258));
   --sheet: var(--sheet-solid);
@@ -262,24 +265,7 @@
   --hover-wash: color-mix(in oklab, var(--text) 6%, transparent);
   --selected-wash: color-mix(in oklab, var(--text) 10%, transparent);
 
-  /* Material is machined: a well is recessed with an inner shadow, a plate is raised with a lit top edge, and
-     what floats casts the deeper shadow. One ink whose depth differs per theme, because a dark canvas needs a
-     denser shadow to read at all. */
-  --shade: light-dark(oklch(0.25 0.02 255), oklch(0.08 0.01 255));
-  --edge-light: light-dark(oklch(1 0 0 / 0.8), oklch(1 0 0 / 0.06));
-  --glass: var(--surface-2);
-  --elev-tile: inset 0 var(--hairline) 0 var(--edge-light);
-  --elev-recess: inset 0 1px 2px
-    color-mix(in oklab, var(--shade) 6%, transparent);
-  --elev-inset:
-    inset 0 1px 2px color-mix(in oklab, var(--shade) 11%, transparent),
-    inset 0 6px 14px color-mix(in oklab, var(--shade) 6%, transparent);
-  --elev-raised:
-    var(--elev-tile),
-    0 1px 2px
-      light-dark(oklch(0.25 0.02 255 / 0.06), oklch(0.05 0.01 255 / 0.35)),
-    0 8px 24px -12px
-      light-dark(oklch(0.25 0.02 255 / 0.16), oklch(0.05 0.01 255 / 0.6));
+  /* Only what floats casts a shadow; panels and keys are flat fills with a hairline. */
   --elev-tooltip:
     0 1px 2px
       light-dark(oklch(0.25 0.02 255 / 0.1), oklch(0.08 0.01 255 / 0.35)),
@@ -573,19 +559,11 @@
     letter-spacing: var(--track-caps);
     text-transform: uppercase;
   }
-  /* A plate: a raised card with a lit top edge, for an object on the page such as a result. */
-  .surface {
+  /* A panel: one fill step above the canvas in a hairline, for the dial, the lanes and a result. */
+  .panel {
     border: var(--hairline) solid var(--border);
     border-radius: var(--r-surface);
     background: var(--surface-1);
-    box-shadow: var(--elev-raised);
-  }
-  /* A housing: the recessed well the dial, the lanes and a strip sit in. One level only; never a box in a box. */
-  .well {
-    border: var(--hairline) solid var(--border);
-    border-radius: var(--r-surface);
-    background: var(--surface-inset);
-    box-shadow: var(--elev-inset);
   }
   /* A stage's mark: its glyph in a small plate washed in its hue. */
   .tone-icon {
@@ -619,9 +597,7 @@
     border: var(--hit-pad) solid transparent;
     border-radius: calc(var(--r-chrome) + var(--hit-pad));
     background: var(--surface-2) padding-box;
-    box-shadow:
-      inset 0 0 0 var(--hairline) var(--btn-line),
-      var(--elev-tile);
+    box-shadow: inset 0 0 0 var(--hairline) var(--btn-line);
     color: var(--text-muted);
     font: var(--role-control);
     text-decoration: none;
@@ -1203,7 +1179,7 @@
   .float,
   .tooltip,
   .inspect-card {
-    background: var(--glass);
+    background: var(--surface-2);
   }
   .float {
     border: var(--hairline) solid var(--border-strong);

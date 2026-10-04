@@ -126,7 +126,7 @@
   });
 </script>
 
-<!-- A head is a bead in its stage's hue at its arc's end, cut from its neighbours by a ring of the well; one moved
+<!-- A head is a bead in its stage's hue at its arc's end, cut from its neighbours by a ring of the panel; one moved
      inward off a close neighbour hangs on a stalk of its hue, and a partial one is a ring. -->
 {#snippet head(
   fraction: number,
@@ -151,7 +151,7 @@
         cx={radius}
         r={hollow ? headRadius - 1 : headRadius}
         fill={hollow ? "none" : color}
-        stroke={hollow ? color : "var(--surface-inset)"}
+        stroke={hollow ? color : "var(--surface-1)"}
         stroke-width={hollow ? 2 : 1.5}
       />
     </g>

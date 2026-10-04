@@ -47,14 +47,10 @@
   class="elapsed"
   class:secondary={left.shown.show}
   style:opacity={counters.opacity}
-  ><span class="readout">{fmtDuration(counters.shown.elapsedMs)}</span><span
-    class="caption">&nbsp;elapsed</span
-  ></span
+  ><span class="readout">{fmtDuration(counters.shown.elapsedMs)}</span></span
 >
 <span class="transferred" style:opacity={counters.opacity}
-  ><span class="readout">{counters.shown.bytes}</span><span class="caption"
-    >&nbsp;transferred</span
-  ></span
+  ><span class="readout">{counters.shown.bytes}</span></span
 >
 {#if left.shown.show}
   <span
@@ -62,9 +58,9 @@
     data-tone={left.shown.recovering ? CONNECTIVITY.recovering.tone : undefined}
     style:opacity={left.opacity}
   >
-    {#if left.shown.recovering}{CONNECTIVITY.recovering.label}<span
-        class="caption">, {fmtDuration(left.shown.ms)} left</span
-      >{:else}<span class="readout">{fmtDuration(left.shown.ms)}</span>
+    {#if left.shown.recovering}{CONNECTIVITY.recovering.label}, {fmtDuration(
+        left.shown.ms,
+      )} left{:else}<span class="readout">{fmtDuration(left.shown.ms)}</span>
       left{/if}
   </span>
 {/if}
@@ -83,6 +79,8 @@
     display: inline-block;
     min-width: 6ch;
     color: var(--text-muted);
+    font: var(--role-figure-sm);
+    line-height: 1;
     font-variant-numeric: tabular-nums;
     text-align: end;
   }
@@ -101,7 +99,6 @@
   }
   /* A phone's strip keeps one time in one place; each card shows what its stage transferred. */
   @container status (max-width: 520px) {
-    .caption,
     .transferred {
       display: none;
     }

@@ -600,13 +600,13 @@
       ><span class="brand-label">Graphite&nbsp;Meter</span></button
     >
     <button
-      class="btn btn-icon btn-quiet"
+      class="btn key"
       aria-label="Settings"
       aria-expanded={settingsOpen}
       {@attach tooltip(() => `Settings — test and display${keyHint("S")}`)}
       onclick={(event) =>
         togglePanel("settings", event.currentTarget as HTMLElement)}
-      ><Icon name="settings" /></button
+      ><Icon name="settings" /><span class="key-label">Settings</span></button
     >
     <div class="connectivity"><ConnectivityIndicator /></div>
     <div class="topbar-spacer"></div>
@@ -631,7 +631,7 @@
       </button>{/if}
     {#if AccountControl}<AccountControl />{/if}
     {#if store.savingResults}<button
-        class="btn btn-icon btn-quiet direct-history"
+        class="btn key direct-history"
         type="button"
         aria-label="History"
         aria-current={historyOpen ? "page" : undefined}
@@ -639,10 +639,10 @@
         {@attach tooltip(() => `History — saved results${keyHint("H")}`)}
         onclick={(event) =>
           toggleHistoryFromPointer(event.currentTarget as HTMLElement)}
-        ><Icon name="history" /></button
+        ><Icon name="history" /><span class="key-label">History</span></button
       >{/if}
     <button
-      class="btn btn-icon btn-quiet direct-theme"
+      class="btn btn-icon direct-theme"
       aria-label={`Theme: ${THEME[store.theme].label}`}
       {@attach tooltip(
         () =>
@@ -651,13 +651,13 @@
       onclick={toggleTheme}><Icon name={THEME[store.theme].icon} /></button
     >
     <button
-      class="btn btn-icon btn-quiet direct-endpoint"
+      class="btn key direct-endpoint"
       aria-label="Details"
       aria-expanded={telemetryOpen}
       {@attach tooltip(() => `Details — server and connection${keyHint("D")}`)}
       onclick={(event) =>
         togglePanel("endpoint", event.currentTarget as HTMLElement)}
-      ><Icon name="info" /></button
+      ><Icon name="info" /><span class="key-label">Details</span></button
     >
     <div class="topbar-more">
       <TopbarMore
@@ -818,9 +818,24 @@
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    padding-inline: var(--space-4) var(--space-2);
-    border-bottom: var(--hairline) solid var(--border-subtle);
+    padding-inline: var(--space-4);
+    border-bottom: var(--hairline) solid var(--border);
     container: topbar / inline-size;
+  }
+  /* A key names itself: its glyph and word, on the bar's own plate. */
+  .key {
+    --control-h: 28px;
+    padding-inline: 9px;
+    color: var(--text);
+    font: 500 var(--type-sm) / 1 var(--font-sans);
+  }
+  .key :global(svg) {
+    width: 13px;
+    height: 13px;
+    color: var(--text-muted);
+  }
+  .direct-theme {
+    --control-h: 28px;
   }
   /* The measurement column scrolls under the bar, so its rule strengthens as content passes beneath, as a sheet's head's does. */
   @supports (animation-timeline: scroll()) {
@@ -931,7 +946,7 @@
     flex-direction: column;
     gap: var(--space-3);
     min-width: 0;
-    padding: var(--space-3) var(--space-4) var(--space-4);
+    padding: var(--space-4) var(--space-5) var(--space-5);
     overflow-y: auto;
     /* Keep stage scrolling from chaining out to the document. */
     overscroll-behavior: contain;
@@ -964,6 +979,11 @@
       padding-block: var(--space-3);
     }
   }
+  @media (max-width: 1023px) {
+    .stage:not(.history-stage) {
+      padding: var(--space-3) var(--space-4) var(--space-4);
+    }
+  }
   .status {
     grid-area: status;
     display: flex;
@@ -973,8 +993,9 @@
     overflow: hidden;
     padding: 0 var(--space-4) env(safe-area-inset-bottom, 0px);
     border-top: var(--hairline) solid var(--border);
+    background: var(--surface-1);
     color: var(--text-soft);
-    font: 500 var(--type-xs) var(--font-mono);
+    font: var(--w-normal) var(--type-sm) var(--font-sans);
     font-variant-numeric: tabular-nums;
     container: status / inline-size;
   }
@@ -994,8 +1015,13 @@
       padding-inline: calc(var(--space-4) - (var(--hit) - var(--icon)) / 2);
     }
     .brand-label,
-    .live-copy {
+    .live-copy,
+    .key-label {
       display: none;
+    }
+    .key {
+      padding: 0;
+      width: var(--hit);
     }
     .brand-btn {
       justify-content: center;

@@ -501,12 +501,11 @@
 </section>
 
 <style>
-  /* Inside its housing: the head, then the idle figures beside the ruled lanes. */
+  /* In its panel: the head, then the idle figures beside the ruled lanes. */
   .latency-card {
     display: grid;
-    gap: var(--space-2);
+    gap: var(--space-3);
     min-width: 0;
-    padding: var(--space-1) var(--space-1) var(--space-2);
     container: latency / inline-size;
   }
   .card-head {
@@ -523,12 +522,12 @@
     white-space: nowrap;
   }
   .card-head .tone-icon {
-    width: 20px;
-    height: 20px;
+    width: 18px;
+    height: 18px;
   }
   .card-head .tone-icon :global(svg) {
-    width: 11px;
-    height: 11px;
+    width: 10px;
+    height: 10px;
   }
   .aside {
     min-width: 0;
@@ -541,7 +540,7 @@
   .body {
     display: grid;
     align-self: center;
-    grid-template-columns: minmax(176px, 0.62fr) minmax(0, 2fr);
+    grid-template-columns: minmax(176px, auto) minmax(0, 1fr);
     gap: var(--space-5);
   }
   .idle {
@@ -558,9 +557,8 @@
     white-space: nowrap;
   }
   .num {
-    font: var(--w-strong) 24px / 1 var(--font-display);
+    font: var(--role-readout);
     font-variant-numeric: tabular-nums;
-    letter-spacing: var(--track-tight);
   }
   .quiet .num {
     color: var(--text-soft);
@@ -580,10 +578,8 @@
   .facts {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-2) var(--space-3);
-    margin-top: var(--space-3);
-    padding-top: var(--space-2);
-    border-top: var(--hairline) solid var(--border);
+    gap: var(--space-3) var(--space-4);
+    margin-top: var(--space-4);
   }
   .facts > div {
     display: grid;
@@ -596,7 +592,7 @@
     font: var(--role-label);
   }
   .facts dd {
-    font: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
+    font: var(--role-figure-sm);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }

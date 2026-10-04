@@ -62,28 +62,28 @@
 {/if}
 
 <style>
-  /* Graphite: the one primary action is ink, like every selected control; Stop steps back to an outline. */
+  /* Graphite: the one primary action is ink, like every selected control; Stop steps back to an outline. The key
+     takes the transport row's end: its label at the left, the estimate or time left at the right. */
   .run-button {
     position: relative;
     isolation: isolate;
     overflow: hidden;
-    display: inline-flex;
+    display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: space-between;
     gap: var(--space-2);
     width: 100%;
-    max-width: 320px;
-    min-height: 46px;
-    padding-inline: var(--space-4);
+    height: 46px;
+    padding-inline: 14px;
     border: 0;
-    border-radius: var(--r-surface);
+    border-radius: var(--r-chrome);
     background: none;
     color: color-mix(
       in oklab,
       var(--text-inverse) calc(100% * (1 - var(--stop))),
       var(--text)
     );
-    font: var(--w-strong) var(--type-md) / 1 var(--font-sans);
+    font: 500 var(--type-body) / 1 var(--font-sans);
     transition: transform var(--dur-hover) var(--ease-out);
   }
   /* Hover strengthens the skin itself; a filter would re-rasterize the label. */
@@ -99,20 +99,12 @@
   .run-button:active {
     transform: scale(0.985);
   }
-  /* On a phone it spans the run bar at a thumb's height. */
-  @container viz (max-width: 520px) {
-    .run-button {
-      height: var(--hit);
-    }
-  }
-  /* The one solid control, with a lit top edge like every plate. */
   .skin {
     position: absolute;
     inset: 0;
     z-index: -1;
     border-radius: inherit;
     background: var(--brand);
-    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.22);
     opacity: calc(1 - var(--stop));
     transition:
       background-color var(--dur-hover) var(--ease-out),
@@ -130,23 +122,18 @@
   .run-button-content {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-2);
+    gap: 9px;
   }
   .stop-sq {
-    width: 10px;
-    height: 10px;
+    width: 9px;
+    height: 9px;
     border-radius: 1px;
     background: currentColor;
   }
-  /* The estimate is a small chip at the label's side, in the button's own ink. */
   .duration {
-    padding: 3px 6px;
-    border: var(--hairline) solid
-      color-mix(in oklab, currentColor 22%, transparent);
-    border-radius: var(--r-well);
-    background: color-mix(in oklab, currentColor 9%, transparent);
-    color: color-mix(in oklab, currentColor 80%, transparent);
-    font: 500 var(--type-2xs) / 1 var(--font-mono);
+    font: var(--role-figure-sm);
+    line-height: 1;
     font-variant-numeric: tabular-nums;
+    opacity: 0.85;
   }
 </style>

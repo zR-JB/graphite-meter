@@ -272,7 +272,7 @@
   bind:clientWidth={panelWidth}
 >
   <div class="instrument">
-    <div class="dial well" class:hung>
+    <div class="dial panel" class:hung>
       {#if indicatedServers.length > 1}
         <div class="server-indicator">
           <ServerLens servers={indicatedServers} {participants} />
@@ -365,13 +365,13 @@
     </div>
 
     {#if store.latencyEnabled}
-      <div class="latency-panel well"><LatencyProfile /></div>
+      <div class="latency-panel panel"><LatencyProfile /></div>
     {/if}
 
-    <!-- The one action, and under it the stages it runs, centred on the instrument. -->
-    <div class="instrument-controls">
+    <!-- The transport row: one key per stage, and the run key at its end. -->
+    <div class="transport">
+      <StageTrack />
       <div class="run-slot"><RunButton /></div>
-      <div class="stage-head"><StageTrack /></div>
     </div>
 
     <div class="results"><ResultCards live={liveReadout} /></div>
@@ -383,55 +383,54 @@
     container: viz / inline-size;
     height: 100%;
   }
-  /* The dial's well and the latency well share the top as equal halves; the controls and the cards keep their
-     height under them. The dial yields to the rest of the instrument before the page would scroll. */
+  /* The dial's panel beside the latency panel, which sets the row's height; under them the transport row and
+     the cards, all on the instrument's width. */
   .instrument {
-    --gauge-well-height: clamp(220px, min(36svh, 100svh - 460px), 380px);
+    --dial-height: clamp(260px, 32svh, 320px);
     display: grid;
-    gap: var(--space-3);
+    gap: var(--space-4);
     grid-template:
-      "dial" var(--gauge-well-height)
-      "controls" auto
+      "dial" var(--dial-height)
+      "transport" auto
       "results" auto
       "latency" auto
       / minmax(0, 1fr);
   }
   .instrument:not(:has(.latency-panel)) {
     grid-template:
-      "dial" var(--gauge-well-height)
-      "controls" auto
+      "dial" var(--dial-height)
+      "transport" auto
       "results" auto
       / minmax(0, 1fr);
   }
   @container viz (min-width: 760px) {
     .instrument {
+      --dial-height: 300px;
       grid-template:
-        "dial latency" minmax(var(--gauge-well-height), auto)
-        "controls controls" auto
+        "dial latency" minmax(var(--dial-height), auto)
+        "transport transport" auto
         "results results" auto
-        / minmax(240px, 1fr) minmax(240px, 1fr);
+        / 300px minmax(0, 1fr);
     }
     .instrument:not(:has(.latency-panel)) {
       grid-template:
-        "dial dial" var(--gauge-well-height)
-        "controls controls" auto
+        "dial dial" var(--dial-height)
+        "transport transport" auto
         "results results" auto
-        / minmax(240px, 1fr) minmax(240px, 1fr);
+        / 300px minmax(0, 1fr);
     }
   }
-  @media (min-width: 1800px) and (min-height: 1000px) {
+  @container viz (min-width: 1180px) {
     .instrument {
-      --gauge-well-height: clamp(280px, min(42svh, 100svh - 460px), 520px);
+      grid-template-columns: 320px minmax(0, 1fr);
     }
   }
-  /* A phone keeps a readable dial while the page carries the rest. */
   @container viz (max-width: 520px) {
     .instrument {
-      --gauge-well-height: clamp(260px, 32svh, 320px);
-      gap: var(--space-2);
+      gap: var(--space-3);
     }
   }
-  /* The dial's housing: the face, and the note under the ring; the face ends on the well's edge, so a hung note
+  /* The dial's panel: the face, and the note under the ring; the face ends on the panel's edge, so a hung note
      measures from it. */
   .dial {
     grid-area: dial;
@@ -442,7 +441,6 @@
     min-height: 0;
     overflow: hidden;
   }
-  /* The lanes centre in the latency housing beside the dial. */
   .latency-panel {
     grid-area: latency;
     display: flex;
@@ -450,42 +448,37 @@
     justify-content: center;
     min-width: 0;
     min-height: 0;
-    padding: var(--space-2) var(--space-3);
+    padding: var(--space-4) var(--space-5);
   }
   .results {
     grid-area: results;
     min-width: 0;
   }
-  .instrument-controls {
-    --stage-controls-width: 540px;
-    grid-area: controls;
-    display: grid;
-    justify-self: center;
-    gap: var(--space-3);
-    width: 100%;
-    padding-block: var(--space-1);
-  }
-  .instrument-controls:has(:global(.quad)) {
-    --stage-controls-width: 700px;
+  .transport {
+    grid-area: transport;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    min-width: 0;
   }
   .run-slot {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    min-height: 46px;
+    flex: 0 0 220px;
+    min-width: 0;
   }
-  .stage-head {
-    width: 100%;
-    max-width: var(--stage-controls-width);
-    justify-self: center;
-  }
-  @media (max-height: 800px) {
-    .instrument {
-      --gauge-well-height: clamp(200px, min(34svh, 100svh - 420px), 320px);
+  @container viz (max-width: 1180px) {
+    .run-slot {
+      flex-basis: 190px;
     }
-    .instrument-controls {
-      gap: var(--space-2);
-      padding-block: 0;
+  }
+  /* Narrow rows: the keys two to a line and the run key on its own line under them. */
+  @container viz (max-width: 720px) {
+    .run-slot {
+      flex-basis: 100%;
+    }
+  }
+  @container viz (max-width: 520px) {
+    .latency-panel {
+      padding: var(--space-3) var(--space-4);
     }
   }
   .server-indicator {
@@ -521,10 +514,9 @@
     position: absolute;
     translate: var(--x) var(--y);
     color: var(--text-soft);
-    font: var(--w-strong) var(--type-2xs) / 1 var(--font-mono);
+    font: var(--w-normal) var(--type-xs) / 1 var(--font-sans);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
-    opacity: 0.75;
   }
   .gauge-tick[data-anchor-x="end"] {
     --x: -100%;
@@ -546,21 +538,20 @@
     padding-inline: 9%;
     padding-top: calc(2 * var(--gauge-center-offset));
   }
-  /* Tabular figures keep a live value from shifting layout; the readout carries the one bold weight on the page. */
+  /* Tabular figures keep a live value from shifting layout; the readout is the page's largest figure. */
   .gauge-value,
   .terminal-number {
     max-width: 100%;
     color: var(--text);
-    font-family: var(--font-display);
-    font-weight: var(--w-strong);
+    font-family: var(--font-mono);
+    font-weight: 500;
     font-variant-numeric: lining-nums tabular-nums;
     line-height: 1;
-    letter-spacing: var(--track-tight);
     white-space: nowrap;
   }
   .gauge-value {
     min-width: 5ch;
-    font-size: clamp(22px, 14cqmin, 64px);
+    font-size: clamp(22px, 13cqmin, 40px);
     text-align: center;
   }
   /* "—" waits quietly where the value arrives, like the cards'. */
@@ -594,13 +585,17 @@
     align-items: center;
     gap: 6px;
     color: var(--text-muted);
-    font: var(--w-strong) clamp(var(--type-xs), 3.4cqmin, var(--type-body)) / 1
+    font: 500 clamp(var(--type-xs), 3.4cqmin, var(--type-body)) / 1
       var(--font-sans);
     white-space: nowrap;
   }
   .terminal-direction .tone-icon {
-    width: 20px;
-    height: 20px;
+    width: 18px;
+    height: 18px;
+  }
+  .terminal-direction .tone-icon :global(svg) {
+    width: 10px;
+    height: 10px;
   }
   @container (max-height: 180px) {
     .terminal-direction {
@@ -608,15 +603,15 @@
     }
   }
   .terminal-number {
-    font-size: clamp(28px, 14cqmin, 64px);
+    font-size: clamp(26px, 13cqmin, 40px);
   }
   /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. One size and line height for both, so the result
      lands where the live value stood. */
   .terminal-unit,
   .gauge-unit {
-    color: var(--text-soft);
-    font: var(--w-strong) clamp(var(--type-xs), 3.6cqmin, var(--type-md)) /
-      var(--type-md) var(--font-mono);
+    color: var(--text-muted);
+    font: 500 clamp(var(--type-xs), 3.6cqmin, var(--type-sm)) / var(--type-md)
+      var(--font-mono);
   }
   /* Empty, it keeps its line, so "—" sits where the value arrives. */
   .gauge-unit {
