@@ -35,7 +35,7 @@
     "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --dur-hover: 120ms;
+  --dur-hover: 100ms;
   --transition-control:
     background-color var(--dur-hover) var(--ease-out),
     border-color var(--dur-hover) var(--ease-out),
