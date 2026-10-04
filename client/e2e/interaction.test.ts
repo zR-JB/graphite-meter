@@ -111,9 +111,9 @@ test("a finger scrolls past graphs, reads one by dragging sideways and toggles j
   await expect(readout).toHaveCount(0);
 
   const at = await centre(graph);
-  await touch(page, "touchStart", at.x - 80, at.y);
+  await touch(page, "touchStart", at.x - 40, at.y);
   for (let step = 1; step <= 8; step++)
-    await touch(page, "touchMove", at.x - 80 + step * 20, at.y);
+    await touch(page, "touchMove", at.x - 40 + step * 10, at.y);
   await expect(readout).toHaveCount(1);
   await touch(page, "touchEnd");
   await expect(readout).toHaveCount(0);

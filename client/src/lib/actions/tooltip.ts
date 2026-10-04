@@ -10,6 +10,7 @@ const REST_MS = 300;
 const TERM_REST_MS = 200;
 const WARM_REST_MS = 60;
 const CLOSE_MS = 100;
+const SWEEP_PX_PER_MS = 0.2;
 const LONG_PRESS_MS = 450;
 // A finger that drifts further is scrolling, not pressing.
 const SLOP_PX = 10;
@@ -263,11 +264,24 @@ function createTooltip(node: HTMLElement, initial: string, marked: boolean) {
   function onEnter(event: PointerEvent) {
     if (!hovers(event)) return;
     clearTimeout(closeTimer);
+    sweeping(event);
     settle(event);
   }
   function cancelOpen() {
     clearTimeout(openTimer);
     openTimer = 0;
+  }
+  // The hand's last position and time: faster than SWEEP_PX_PER_MS between two moves is a sweep, not a reading
+  // hand's drift.
+  let last = { x: 0, y: 0, t: 0 };
+  function sweeping(event: PointerEvent) {
+    const dt = event.timeStamp - last.t;
+    const fast =
+      dt > 0 &&
+      Math.hypot(event.clientX - last.x, event.clientY - last.y) / dt >
+        SWEEP_PX_PER_MS;
+    last = { x: event.clientX, y: event.clientY, t: event.timeStamp };
+    return fast;
   }
   // Hover intent: a hand on the word for a moment opens the tip; a drag never counts, and a sweep leaves first.
   function settle(event: PointerEvent) {
@@ -328,6 +342,8 @@ function createTooltip(node: HTMLElement, initial: string, marked: boolean) {
       Math.hypot(event.clientX - press.x, event.clientY - press.y) > SLOP_PX
     )
       endPress();
+    // A sweeping hand has not rested: its moment starts over where it is now.
+    if (sweeping(event) && openTimer) cancelOpen();
     settle(event);
   }
   // A tap on jargon or a fact toggles its tip; a tap on a control only runs it.

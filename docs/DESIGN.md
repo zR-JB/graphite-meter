@@ -176,17 +176,18 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
 
 ## Components
 
-- **Console** (`GaugePanel`): a face column, the dial's panel over the run key, 300 px wide and up to 560 with
-  the console, beside the latency panel with the stage chips under it; the face is as tall as the lanes and the
-  chips together, so the ring has more height than the lanes and the chips stand level with the run key; under
-  both one card per stage across the console. A complete run fits 1024 × 768 without scrolling. On a phone the
-  dial keeps about two fifths of the screen with the run key under it, the chips sit two to a row, the cards two
-  to a row with the running card first, and the lanes come last.
+- **Console** (`GaugePanel`): the dial's panel, 300 px wide and up to 560 with the console, beside the latency
+  panel with the controls under it, the run key over the stage chips, centred in the room the lanes leave; the
+  dial is as tall as the lanes and the controls together, so the ring has more height than the lanes; under both
+  one card per stage across the console. Without the latency stage the dial stands centred and wider with the
+  controls under it. A complete run fits 1024 × 768 without scrolling. On a phone the dial keeps about two fifths
+  of the screen with the controls under it, the chips two to a row, the cards two to a row with the running card
+  first, and the lanes come last.
   The dial is a 270° ring with an arc a twelfth of its radius wide, short ticks and five labels; every result's
   arc lies on the ring, the longest underneath, so each shows from where the next shorter one ends, and ends in
   a bead in its hue; a bead moved inward off a close neighbour hangs on a stalk; the stage's mark and name sit
   over the number. The ring and its readout grow with the screen: on a landscape screen the
-  console takes the column's height, and the spare height goes to the face column and the chips' row, so the
+  console takes the column's height, and the spare height goes to the dial and the controls' row, so the
   cards keep their size. Every "—" that waits for a value is `--text-soft`; a measured value is full ink. The note under the
   dial holds the phase's note or a failure, and while no data or no reply arrives, for how long; on a landscape
   screen it hangs just under the ring. Every rate on the page reads in the dial's unit, zero included. Nothing
@@ -201,8 +202,8 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
 - **Server lens** (`ServerLens`, `ServerScope quiet`): with several servers, one quiet field in the dial's corner
   (All servers or one), as wide as the choice it shows, drives the cards and which server's latency is shown once
   the run finishes. History's detail has its own.
-- **Stage chips** (`StageTrack`): under the engraved caption "Test stages", one 172 × 46 px chip per stage,
-  centred as a row. A chip is a switch: along its top a 3 px bar in the stage's hue that fills as the stage runs
+- **Stage chips** (`StageTrack`): under the run key and the engraved caption "Test stages", one 172 × 46 px chip
+  per stage in a row. A chip is a switch: along its top a 3 px bar in the stage's hue that fills as the stage runs
   and stays full once measured (hatched for a partial stage, failed in `--err`, a sweep while warming up); under
   it the stage's glyph and name and, at the end, its time: the stage's length while it waits ("4 s"), the time
   into it while it runs ("1.9 / 4 s", counting in place; the time alone on a phone), a check once complete, or
@@ -210,15 +211,15 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   140–172 px each. The running chip takes its hue as its
   edge, like the running card. One off stays operable, so it reads soft, and only a locked chip dims. The chip's
   hover names its result. Nothing on the row moves between states.
-- **Run key** (`RunButton`): the one solid control, ink, under the dial's panel at the panel's width, 48 px (44 on
+- **Run key** (`RunButton`): the one solid control, ink, over the stage chips at their row's width, 48 px (44 on
   a phone), its label and estimate centred; Stop steps back to a quiet plate with a square.
 - **Result card** (`ResultSummary`): one panel per stage, ruled 2 px in its hue along the top: the stage's mark
   and name with a status word at the line's end when not complete; the readout, one line tall (bidirectional: ↓
   and ↑ as a pair on one baseline); one quiet line (the wire rate with its overhead, the latency card's jitter, a
   failure's reason named by server when several ran, and after a stall No data from 0.5 s); the strip on a field
   tinted in the hue; then the facts as ruled rows, a quiet label and its figure on one line: Peak, Stability,
-  Transferred (bidirectional: Stability, Down + up, Transferred; latency: Stability and the latency each loaded
-  stage added, with the stage's glyph in its hue), "—" until known, so the card keeps its height from Start to
+  Transferred (bidirectional: Stability, Down + up, Transferred; latency: the idle stage's Stability, Range,
+  Replies and Timeouts), "—" until known, so the card keeps its height from Start to
   the result. The running card's edge takes its hue. A card with no data yet keeps its strip's room
   but draws nothing in it; a saved result has no strip; a card that has not run, or is done while the run goes
   on, folds on a phone to its name and value. The card's hover lists every fact as pairs.
@@ -243,8 +244,8 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   sits under the last row and its ticks run up through the rows as gridlines behind the plots; the idle median
   is one line from its tick through the loaded rows, and each loaded row's added-latency span starts from it. A
   pointer anywhere on a row's plot reads the marker nearest it and follows the pointer from marker to marker; the
-  reading (population, marker, value, meaning) stands in a line of its own under the axis, kept from Start, never
-  over a plot. A narrow panel drops jitter, never timeouts; a phone gives each population its figures, then its plot. A failed
+  reading (marker, value, meaning) stands in the row beside the marker, above the box's band, on the side with
+  room for it, as the strips' readouts do. A narrow panel drops jitter, never timeouts; a phone gives each population its figures, then its plot. A failed
   stage names its reason under the headline.
 - **Sheet** (`SidePanel`, `.sheet`): the title, quiet head actions, grouped plates. **Choice list** (`.choices`): rows
   with a name and a second line saying what the choice does (`PATH_NOTE`) or why it is unavailable, cut with an
@@ -254,7 +255,8 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   narrower than its words, with the time and name under it; Custom adds a − time + stepper (`TimeStepper`) per stage
   and for warmup. Steps grow with the time (0.5 s, 1 s, 10 s, 1 min, 5 min) and land on their grid; a click edits the
   time as text (`90`, `2h`, `1 h 30 min`, `1:30:00`), which rounds to the time shown, and Escape drops the edit. The
-  field takes the keyboard like a spin button; − and + serve pointers and stay put at a limit. The servers' stage
+  field takes the keyboard like a spin button; − and + serve pointers and stay put at a limit. The stream limit is
+  the same − figure + stepper over a whole number (`CountStepper`). The servers' stage
   limit bounds every time, and its notice names each stage over it.
 - **Select**: only for a list of servers (`ServerScope`): a native `select`, so a phone opens its own picker;
   where the browser allows it (`appearance: base-select`) the field and its list take the console's own field,
@@ -268,7 +270,8 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
   column's scale. The time takes the row's slack and each value column is as wide as its content, so the figures
   sit together at the right; the table stops at 1120 px, and the column heads' rule comes in as rows scroll under
   them. Columns never shrink below their content: once they no longer fit, each row folds, its time on one line and
-  its values under it. Sort by lists only the shown columns. The detail repeats the result cards (three across or
+  its values under it. Sort by lists only the shown columns. A notice over the list counts the records it cannot
+  read, with Remove them, which deletes only those, or Dismiss. The detail repeats the result cards (three across or
   one to a row, never two and an orphan) and the latency lanes on the same 12 px text edge as its head, then each
   server's facts. From 821 px it sits beside the list, and the hairline between them is a handle like a docked
   sheet's edge: the list keeps its share of the width (40 % by default), never under 360 px, and the detail never
@@ -276,8 +279,9 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
 - **Facts** (`dl.kv`): label/value pairs; a qualifier that belongs to a value is an `.aside`, never joined with a dot.
 - **Tooltip and readout**: a readout is a light plate (`.inspect-card`, a hairline, 3 px corners); a tip is
   ink (`--brand`, inverse text, 3 px corners, no arrow), so it never reads as part of the instrument, and it
-  fades in over 120 ms. A tip opens once the pointer has been on its word for 0.3 s (jargon 0.2 s, at once while
-  another tip shows or just after one closed), so a pointer passing by or dragging opens none. It also opens on keyboard focus, on a
+  fades in over 120 ms. A tip opens once the pointer has rested on its word for 0.3 s (jargon 0.2 s, 60 ms just
+  after another closed); a hand moving faster than 0.4 px/ms starts the rest over, a reading hand's drift does
+  not, so a pointer passing by or dragging opens none. It also opens on keyboard focus, on a
   click or tap on jargon or an explained fact, or on a long press on a control; never after a click on a control. It
   stays while the pointer is on its word, closes a moment after it leaves, and one tip shows at a time. A scroll or a
   tap elsewhere closes a pointer's tip; a tap on the tip closes it without reaching what lies beneath. A tip the
@@ -291,9 +295,9 @@ History's column heads. One glyph per concept: download, upload, bidirectional a
 | `.kv` row                | 42             | plate 4            | row               | separators `--border-subtle`                        |
 | Choice row               | 42 (two lines) | 2, concentric      | row + `small`     | hover `--hover-wash`; chosen by its mark            |
 | `.btn`                   | 32 (bar 28)    | 3                  | control           | hairline; quiet: hover, press and open washes       |
-| Run key                  | 48             | panel foot         | 14 px 600         | ink fill, `--text-inverse`; running: quiet plate    |
+| Run key                  | 48             | 3                  | 14 px 600         | ink fill, `--text-inverse`; running: quiet plate    |
 | Stage chip               | 172 × 46       | 3                  | 12 px 700, figure | bar in hue; live: time and hue edge; done: check    |
-| `.segmented`             | 32             | 3 track, 2 segment | control           | a plate thumb anchored to the chosen segment slides |
+| `.segmented`             | 32             | 3 track, 2 segment | control           | the chosen segment is a plate: fill, edge, shadow   |
 | Switch                   | 22 × 38        | full               | row label         | off: check edge; on: ink track                      |
 | Check, radio             | 18             | 2, full            | —                 | ink fill or ring                                    |
 | `.inspect-card`, tooltip | content        | 3                  | 12 px / 1.4       | `--surface-2`, `--elev-tooltip`                     |
