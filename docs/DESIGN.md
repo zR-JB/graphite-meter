@@ -168,10 +168,11 @@ nothing loops while a stage runs, so a slow device's frames stay even. A one-tim
 so once it has run it leaves no effect for the browser to reapply on every restyle. The vocabulary is a handful
 of keyframes in `app.css` (`rise`, `row-in`, `pop`, `grow-x`, `glint`), each with one meaning.
 
-- Tokens: `--dur-hover` 120 ms, `--dur-slide` 180 ms (popovers, dialogs, tips), `--dur-sheet` 420 ms (sheets and
-  their column), `--dur-graph` 280 ms (bars, keys, scale changes), `--dur-stage` 520 ms (a stage event's wave),
-  `--beat` 60 ms (the step of a wave), `--dur-pulse` 1.1 s (a live indicator only). Easing is `--ease-out` for
-  anything the run or the user caused; `--ease-spring` only for a control's small state change.
+- Tokens: `--dur-hover` 100 ms, `--dur-slide` 150 ms (popovers, dialogs, tips), `--dur-sheet` 320 ms (sheets and
+  their column), `--dur-graph` 220 ms (bars, keys, scale changes), `--dur-stage` 380 ms (a stage event's wave),
+  `--beat` 40 ms (the step of a wave), `--dur-pulse` 1.1 s (a live indicator only). Easing is `--ease-out` for
+  what follows a measurement; what arrives settles with a little overshoot (`--ease-settle` for a section or a
+  span, `--ease-spring` for a control's state or a mark popping on). A reading never overshoots.
 - Arrival: the console rises into place in reading order a beat apart, the dial, the lanes, the controls, then
   the cards left to right (`rise`, 8 px).
 - A stage starting is one wave from the chips down: the chip's edge and bar first, the dial's figure and the
@@ -180,11 +181,18 @@ of keyframes in `app.css` (`rise`, `row-in`, `pop`, `grow-x`, `glint`), each wit
   never faded frame by frame).
 - A stage settling: its chip's check pops on the spring; its card lays its facts down one row after another
   (`row-in`, 40 ms apart); a measured span in the lanes grows from its middle the first time it is drawn.
-- The result replays the run on the dial as one sweep from zero over 1.2 s (`--sweep`): every result's arc shows
+- The result replays the run on the dial as one sweep from zero over 0.9 s (`--sweep`): every result's arc shows
   up to the shared front, so the front changes hue as it passes each shorter result, and each bead pops on the
   spring as the front reaches it. The run key, once it reads Start or Run again, is crossed by a sheen once.
-- A key gives under a press (0.94) and springs back; a chip gives less (0.97).
-- A theme change opens the new theme as a circle from the theme key (a view transition, 560 ms).
+- A press never moves what it presses: a key's or a chip's hit box stays put, so a press near its edge still
+  lands. The key's fill deepens and its glyph gives (0.82) and springs back; the run key's and a chip's content
+  give a little (0.975, 0.96).
+- A theme change opens the new theme as a circle from the theme key (a view transition of type `theme`, 420 ms),
+  and the key's new glyph turns into place on the spring. The page stays clickable while it runs.
+- A change that reshapes the console, a stage switched on or off, morphs it (`morph()`, a view transition of type
+  `morph`): the dial, the lanes, the controls and each card glide from their old boxes to their new ones on the
+  compositor, a panel that stays shows only its new look as it glides, an arriving card rises in and a leaving one
+  sinks out. The panels carry their transition names only while a morph runs.
 - Live values and the running strip's leading edge move on the single frame clock in
   `presentation/motion.svelte.ts`; a glide smooths only the rendering.
 - A view hands off by a class: the old fades out in 90 ms and the new in over 180 (`.handoff`, `.handoff-out`,

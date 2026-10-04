@@ -420,7 +420,7 @@
     .dial,
     .latency-panel,
     .controls {
-      animation: rise var(--dur-stage) var(--ease-out) backwards;
+      animation: rise var(--dur-stage) var(--ease-settle) backwards;
     }
     .latency-panel {
       animation-delay: var(--beat);

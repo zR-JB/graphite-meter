@@ -566,7 +566,7 @@
   @media (prefers-reduced-motion: no-preference) {
     .band,
     .range {
-      animation: grow-x var(--dur-stage) var(--ease-out) backwards;
+      animation: grow-x var(--dur-stage) var(--ease-settle) backwards;
     }
   }
   /* Every figure in a row on the median's baseline (app.css, --role-label). */

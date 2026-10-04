@@ -1,5 +1,5 @@
 // One frame clock moves every animated value; it runs only while something moves.
-import { untrack } from "svelte";
+import { flushSync, untrack } from "svelte";
 import { expoOut } from "svelte/easing";
 import { prefersReducedMotion } from "svelte/motion";
 import type { TransitionConfig } from "svelte/transition";
@@ -27,6 +27,20 @@ function releaseClock(): void {
 
 /** Reduced motion: every value still updates, in one frame rather than an animation. */
 export const still = () => prefersReducedMotion.current;
+
+/** A change that reshapes the console: its named panels glide from their old boxes to their new ones on the
+    compositor (a "morph" view transition), an arriving one rises in and a leaving one sinks out. */
+export function morph(update: () => void): void {
+  if (still() || globalThis.document?.hidden || !document.startViewTransition)
+    return update();
+  document.startViewTransition({
+    update: () => {
+      update();
+      flushSync();
+    },
+    types: ["morph"],
+  });
+}
 
 function request(): void {
   if (!frame && tasks.size && !globalThis.document?.hidden)
@@ -69,7 +83,7 @@ const unseen = (a: number, b: number) =>
   Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(b));
 
 const GLIDE_MIN_MS = 50;
-const GLIDE_MAX_MS = 600;
+const GLIDE_MAX_MS = 400;
 const SAMPLE_GAP_MS = 2_000;
 
 interface Correction {

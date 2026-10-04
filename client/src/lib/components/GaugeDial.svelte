@@ -15,7 +15,7 @@
     description: string;
   }
   /** The result sweep's length, as in the stylesheet's `result-sweep`. */
-  const SWEEP_MS = 1200;
+  const SWEEP_MS = 900;
 </script>
 
 <script lang="ts">
@@ -87,7 +87,7 @@
             ? { snap: true }
             : current === course
               ? { finish: true }
-              : { over: 480 },
+              : { over: 360 },
         );
         accent = tone;
         revealed = true;
@@ -419,12 +419,12 @@
      Once, as the result arrives; the bead's moment follows the sweep's ease-out-cubic (SWEEP_MS). */
   @media (prefers-reduced-motion: no-preference) {
     .result-arc {
-      animation: result-sweep 1200ms cubic-bezier(0.33, 1, 0.68, 1) backwards;
+      animation: result-sweep 900ms cubic-bezier(0.33, 1, 0.68, 1) backwards;
     }
     .bead {
       transform-box: fill-box;
       transform-origin: center;
-      animation: pop 480ms var(--ease-spring) var(--at) backwards;
+      animation: pop 400ms var(--ease-spring) var(--at) backwards;
     }
   }
   @keyframes result-sweep {

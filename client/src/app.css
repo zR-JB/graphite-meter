@@ -141,17 +141,19 @@
   --statusbar-h: 28px;
 
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  /* A small control's settle overshoots a touch; the instrument's own motion never does. */
-  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
-  --dur-hover: 120ms;
-  --dur-handoff-out: 90ms;
-  --dur-handoff-in: 180ms;
+  /* What arrives overshoots its place a little and settles: a control's state, a section rising in, a mark
+     popping on. The instrument's readings themselves never overshoot. */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-settle: cubic-bezier(0.22, 1.2, 0.36, 1);
+  --dur-hover: 100ms;
+  --dur-handoff-out: 70ms;
+  --dur-handoff-in: 150ms;
   /* A stage event travels as one wave: chip, dial, lanes, card, a beat apart, over one stage tempo. */
-  --dur-stage: 520ms;
-  --beat: 60ms;
-  --dur-slide: 180ms;
-  --dur-sheet: 420ms;
-  --dur-graph: 280ms;
+  --dur-stage: 380ms;
+  --beat: 40ms;
+  --dur-slide: 150ms;
+  --dur-sheet: 320ms;
+  --dur-graph: 220ms;
   --dur-pulse: 1100ms;
   --transition-control:
     background-color var(--dur-hover) var(--ease-out),
@@ -759,14 +761,19 @@
     font: var(--role-control);
     text-decoration: none;
     white-space: nowrap;
-    transition:
-      var(--transition-control),
-      scale var(--dur-graph) var(--ease-spring);
+    transition: var(--transition-control);
   }
-  /* A key gives under a press and springs back as it lifts. */
+  /* A key's hit box never moves under the pointer, so a press near its edge still lands: the press deepens the
+     fill, and the glyph gives and springs back as it lifts. */
+  .btn:active:not(:disabled, [aria-disabled="true"]) {
+    background-image: linear-gradient(var(--selected-wash) 0 0);
+  }
+  .btn :where(svg) {
+    transition: scale var(--dur-graph) var(--ease-spring);
+  }
   @media (prefers-reduced-motion: no-preference) {
-    .btn:active:not(:disabled, [aria-disabled="true"]) {
-      scale: 0.94;
+    .btn:active:not(:disabled, [aria-disabled="true"]) :where(svg) {
+      scale: 0.82;
       transition-duration: var(--dur-hover);
     }
   }
@@ -1696,13 +1703,73 @@
 }
 
 /* A theme change opens the new theme as a circle from the key that asked for it. */
+/* The page stays clickable while the reveal runs: the transition layer takes no pointer. */
+::view-transition {
+  pointer-events: none;
+}
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none;
   mix-blend-mode: normal;
 }
-::view-transition-new(root) {
-  animation: theme-reveal 560ms var(--ease-out);
+:root:active-view-transition-type(theme)::view-transition-new(root) {
+  animation: theme-reveal 420ms var(--ease-out);
+}
+/* A morph names the console's panels only while it runs, so a theme change reveals the page as one surface. Each
+   panel glides from its old box to its new one; its old and new looks keep their size and cross over, so text
+   never stretches; an arriving panel rises in and a leaving one sinks out. */
+:root:active-view-transition-type(morph) {
+  & .gauge-panel .dial {
+    view-transition-name: dial;
+  }
+  & .gauge-panel .latency-panel {
+    view-transition-name: lanes;
+  }
+  & .gauge-panel .controls {
+    view-transition-name: controls;
+  }
+  & .gauge-panel .card[data-tone="latency"] {
+    view-transition-name: card-latency;
+  }
+  & .gauge-panel .card[data-tone="download"] {
+    view-transition-name: card-download;
+  }
+  & .gauge-panel .card[data-tone="upload"] {
+    view-transition-name: card-upload;
+  }
+  & .gauge-panel .card[data-tone="bidirectional"] {
+    view-transition-name: card-bidirectional;
+  }
+  &::view-transition-group(*) {
+    animation-duration: var(--dur-stage);
+    animation-timing-function: var(--ease-settle);
+  }
+  &::view-transition-old(*),
+  &::view-transition-new(*) {
+    height: 100%;
+    object-fit: none;
+    object-position: left top;
+  }
+  /* A panel on both sides shows only its new look as it glides, so no text ever shows twice. */
+  &::view-transition-old(*):not(:only-child) {
+    animation: none;
+    opacity: 0;
+  }
+  &::view-transition-new(*):not(:only-child) {
+    animation: none;
+  }
+  &::view-transition-new(*):only-child {
+    animation: rise var(--dur-stage) var(--ease-settle) backwards;
+  }
+  &::view-transition-old(*):only-child {
+    animation: sink var(--dur-handoff-in) var(--ease-out) forwards;
+  }
+}
+@keyframes sink {
+  to {
+    opacity: 0;
+    translate: 0 6px;
+  }
 }
 @keyframes theme-reveal {
   from {

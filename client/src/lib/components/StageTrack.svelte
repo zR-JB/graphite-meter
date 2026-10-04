@@ -20,7 +20,7 @@
   import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
   import type { StageKey } from "../state/store.svelte";
   import { planned, STAGES } from "../runner/schedule";
-  import { handoff, type Handoff } from "../presentation/motion.svelte";
+  import { handoff, morph, type Handoff } from "../presentation/motion.svelte";
   import type { Snippet } from "svelte";
 
   /** The run key, set over the chips as wide as their row. */
@@ -155,7 +155,7 @@
             : ''}"
         use:tooltipAction={s.tip}
         disabled={s.locked}
-        onclick={() => controller.toggleStage(s.key)}
+        onclick={() => morph(() => controller.toggleStage(s.key))}
       >
         <span class="chip-bar" aria-hidden="true">
           <span
@@ -229,9 +229,7 @@
     box-shadow: var(--elev-tile);
     color: var(--text);
     text-align: start;
-    transition:
-      var(--transition-control),
-      scale var(--dur-graph) var(--ease-spring);
+    transition: var(--transition-control);
   }
   @media (hover: hover) {
     .chip:hover:not(:disabled) {
@@ -276,13 +274,18 @@
   .chip-fill.is-live {
     transition: background-color var(--dur-graph) var(--ease-out);
   }
-  /* A finished stage's check pops in on the spring, and a press gives under the finger. */
+  /* A finished stage's check pops in on the spring. A press gives inside the chip's border, so the hit box
+     never moves under the finger. */
+  .chip > * {
+    transition: scale var(--dur-graph) var(--ease-spring);
+  }
   @media (prefers-reduced-motion: no-preference) {
     .chip-check {
-      animation: pop 420ms var(--ease-spring) backwards;
+      animation: pop 380ms var(--ease-spring) backwards;
     }
-    .chip:active:not(:disabled) {
-      scale: 0.97;
+    .chip:active:not(:disabled) > * {
+      scale: 0.96;
+      transition-duration: var(--dur-hover);
     }
   }
   /* A finished stage keeps its hue; partial is hatched like the dial's dashed arc. */

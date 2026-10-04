@@ -235,7 +235,7 @@
       "--reveal-r",
       `${Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y))}px`,
     );
-    document.startViewTransition(apply);
+    document.startViewTransition({ update: apply, types: ["theme"] });
   }
 
   // The grid and resize controls share one resolution of the saved widths.
@@ -676,7 +676,10 @@
         () =>
           `Theme: ${THEME[store.theme].label}${keyHint("T")} — cycles light, dark and auto`,
       )}
-      onclick={toggleTheme}><Icon name={THEME[store.theme].icon} /></button
+      onclick={toggleTheme}
+      >{#key store.theme}<span class="theme-glyph"
+          ><Icon name={THEME[store.theme].icon} /></span
+        >{/key}</button
     >
     <div class="topbar-more">
       <TopbarMore
@@ -887,6 +890,22 @@
   @media (hover: hover) {
     .brand-btn:hover .brand-label {
       color: var(--text-soft);
+    }
+  }
+  /* A new theme's glyph turns into place on the spring as the circle opens from the key. */
+  .theme-glyph {
+    display: grid;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .theme-glyph {
+      animation: glyph-turn 480ms var(--ease-spring) backwards;
+    }
+  }
+  @keyframes glyph-turn {
+    from {
+      opacity: 0;
+      rotate: -120deg;
+      scale: 0.3;
     }
   }
   .brand-btn:active {

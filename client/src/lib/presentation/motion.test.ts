@@ -22,9 +22,9 @@ test("a clock keeps moving between samples, stops at its limit and absorbs corre
   expect(clock.at(5_000)).toBe(1_000);
   clock.set(450, { rate: 1, max: 1_000, now: 500 });
   expect(clock.at(500)).toBe(500);
-  // The correction is absorbed over one interval at the clock's own pace.
-  expect(clock.at(900)).toBe(860);
-  expect(clock.at(1_000)).toBe(950);
+  // The correction is absorbed over one interval, 400 ms at most, at the clock's own pace.
+  expect(clock.at(700)).toBe(675);
+  expect(clock.at(900)).toBe(850);
 });
 
 /** Drives the shared frame clock by hand from 0, then flushes it so later tests can schedule. */

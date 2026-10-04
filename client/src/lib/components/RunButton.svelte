@@ -94,8 +94,13 @@
       background: linear-gradient(var(--hover-wash) 0 0), var(--surface-1);
     }
   }
-  .run-button:active {
-    transform: scale(0.985);
+  /* The key's hit box stays put under a press; its skins and label give, and spring back as it lifts. */
+  .run-button > * {
+    transition: scale var(--dur-graph) var(--ease-spring);
+  }
+  .run-button:active:not([aria-disabled="true"]) > * {
+    scale: 0.975;
+    transition-duration: var(--dur-hover);
   }
   /* A phone's key keeps a thumb's height. */
   :global(.gauge-panel.compact) .run-button {
