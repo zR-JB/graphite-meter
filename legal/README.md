@@ -101,6 +101,37 @@ metadata and reviewed component set.
 `legal/project.json` is the only place to update Graphite Meter's copyright
 year or year range. The generator never derives it from the wall clock.
 
+## Rust reviews
+
+The Rust binaries have their own review files:
+
+- `rust-reviewed-components.json`: one approved review per line for each crate
+  a shipped Rust binary compiles. A registry review covers its crate name and
+  source across versions while the license expression, modification status
+  and legal-file fingerprints stay the same; a git review binds the exact
+  version and fork revision. Unused approvals may remain.
+- `rust-provenance.json` and `manual/rust/`: legal texts, with their SHA-256
+  and review notes, for crates that do not package their own.
+- `rust-platform-debian-bookworm.json`: one reviewed record per shipped Rust
+  target for what the toolchain and builder link beyond Cargo's packages:
+  native inputs, system-library imports, the notice texts that cover them, and
+  `noticesSha256`, their fingerprint.
+- `rust-notice-sources.json`: pinned upstream URLs and SHA-256 of notice texts
+  the builder lacks, such as musl's and LLVM's, bound to the Rust release in
+  `rustVersion`.
+- `rust-forks.json`: the reviewed forks, described below.
+
+`mise run rust-check` runs `scripts.legal.check_rust_reviews`. The client
+ships on every TUI platform and the server on every server platform listed in
+`[workspace.metadata.graphite-meter]` of `rust/Cargo.toml`. For each of these
+builds, the check lists the compiled crates with `cargo tree` over normal and
+build edges and requires an approved review for each. Every shipped target
+needs an approved record with review notes and a notice fingerprint in the
+platform record the metadata names. The reviews file keeps its layout
+(`python3 -m scripts.legal.check_rust_reviews --format` rewrites it), and the
+static x86_64 Linux server and client compile at most 143 and 150 crates, a
+dependency policy rather than a license requirement.
+
 ## Updating pinned forks
 
 The Rust workspace builds noq and h2 from forks that carry Graphite Meter

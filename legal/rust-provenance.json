@@ -1,0 +1,106 @@
+[
+  {
+    "ecosystem": "cargo",
+    "name": "enum-assoc",
+    "version": "1.4.1",
+    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
+    "upstreamRevision": "351b306939b150601451df752a183b077b0de85a",
+    "licenseExpression": "MIT OR Apache-2.0",
+    "modified": false,
+    "artifactScopes": [
+      "rust"
+    ],
+    "localPaths": [],
+    "localLegalFiles": [
+      {
+        "name": "legal/manual/rust/enum-assoc/Cargo.toml.upstream",
+        "sha256": "ac76a8e989ded142df50e3b796c8926e90c7e0f42d2428ff9ef62a359d38f582",
+        "kind": "notice"
+      },
+      {
+        "name": "legal/manual/rust/enum-assoc/LICENSE-APACHE",
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "kind": "license"
+      }
+    ],
+    "reviewNotes": "The crate and exact upstream commit omit license files. Cargo.toml.upstream is byte-identical to the published Cargo.toml.orig and declares MIT OR Apache-2.0. LICENSE-APACHE was fetched from https://www.apache.org/licenses/LICENSE-2.0.txt. Selected: Apache-2.0, as its approved review records. Source declaration: https://github.com/Eolu/enum-assoc/blob/351b306939b150601451df752a183b077b0de85a/Cargo.toml. No upstream NOTICE file exists at that revision."
+  },
+  {
+    "ecosystem": "cargo",
+    "name": "rustfs-mimalloc",
+    "version": "0.5.6",
+    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
+    "upstreamRevision": "f8f70b713a22188c260f03d9fd22290aa3d158b6",
+    "licenseExpression": "Apache-2.0",
+    "modified": false,
+    "artifactScopes": [
+      "rust"
+    ],
+    "localPaths": [],
+    "localLegalFiles": [
+      {
+        "name": "legal/manual/rust/rustfs-mimalloc/LICENSE-APACHE",
+        "sha256": "b3051d72e14fe264919f7d78da34773d25560b9dcc18eabf8a8c23144236894c",
+        "kind": "license"
+      }
+    ],
+    "reviewNotes": "Published crate archive SHA-256 95bb29aa7aee255a84d956b4f5309a3f98993ae6e10836ae5e4e8519e960780f. Exact source: https://github.com/houseme/rustfs-mimalloc/tree/f8f70b713a22188c260f03d9fd22290aa3d158b6. The package declares Apache-2.0 but omits its root LICENSE. Retain the exact revision's LICENSE, fetched from https://raw.githubusercontent.com/houseme/rustfs-mimalloc/f8f70b713a22188c260f03d9fd22290aa3d158b6/LICENSE, including houseme copyright, Apache grant, patent terms and disclaimer. No root NOTICE file exists at that revision. Third-party source is unmodified."
+  },
+  {
+    "ecosystem": "cargo",
+    "name": "rustfs-mimalloc-sys",
+    "version": "0.5.6",
+    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
+    "upstreamRevision": "f8f70b713a22188c260f03d9fd22290aa3d158b6",
+    "licenseExpression": "Apache-2.0",
+    "modified": false,
+    "artifactScopes": [
+      "rust"
+    ],
+    "localPaths": [],
+    "localLegalFiles": [
+      {
+        "name": "legal/manual/rust/rustfs-mimalloc/LICENSE-APACHE",
+        "sha256": "b3051d72e14fe264919f7d78da34773d25560b9dcc18eabf8a8c23144236894c",
+        "kind": "license"
+      },
+      {
+        "name": "legal/manual/rust/rustfs-mimalloc/LICENSE-MIMALLOC",
+        "sha256": "82ade5d7d9b029044b5fbbc326207fc47c2d44ee4dd71e8a559c36d728217de9",
+        "kind": "license"
+      }
+    ],
+    "reviewNotes": "Published crate archive SHA-256 0e6571957abe93757f0c6dd99182589054ace7da4102af4296ffcc8297eb3524. Exact source: https://github.com/houseme/rustfs-mimalloc/tree/f8f70b713a22188c260f03d9fd22290aa3d158b6. The package declares Apache-2.0 but omits its root LICENSE. Retain the exact revision's LICENSE, fetched from https://raw.githubusercontent.com/houseme/rustfs-mimalloc/f8f70b713a22188c260f03d9fd22290aa3d158b6/LICENSE, including houseme copyright, Apache grant, patent terms and disclaimer. No root NOTICE file exists at that revision. Third-party source is unmodified. Also retain the packaged Microsoft Corporation/Daan Leijen MIT copyright, permission and disclaimer. All 50 packaged native include/src/LICENSE files match official Microsoft mimalloc v3.5.3 byte-for-byte; no upstream include/src file is missing. Source: https://github.com/microsoft/mimalloc/tree/v3.5.3. Both Apache-2.0 wrapper and MIT native obligations apply. Default features compile native3.5.3 with no malloc override, secure/debug or CPU-baseline feature enabled; native/import closure remains subject to final release verification."
+  },
+  {
+    "ecosystem": "cargo",
+    "name": "winapi-x86_64-pc-windows-gnu",
+    "version": "0.4.0",
+    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
+    "upstreamRevision": "",
+    "licenseExpression": "MIT/Apache-2.0",
+    "modified": false,
+    "artifactScopes": [
+      "rust"
+    ],
+    "localPaths": [],
+    "localLegalFiles": [
+      {
+        "name": "legal/manual/rust/winapi-x86_64-pc-windows-gnu/Cargo.toml.upstream",
+        "sha256": "d158846cdb1259d606bfbeb050e386484cb18f14db41478568114eddb76ec43e",
+        "kind": "notice"
+      },
+      {
+        "name": "legal/manual/rust/winapi-x86_64-pc-windows-gnu/LICENSE-APACHE",
+        "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
+        "kind": "license"
+      },
+      {
+        "name": "legal/manual/rust/winapi-x86_64-pc-windows-gnu/LICENSE-MIT",
+        "sha256": "ce7bc3499fee93d5022ef430d5e4201e79a6d9154f3974e42f41349f0569e09b",
+        "kind": "license"
+      }
+    ],
+    "reviewNotes": "The crate and its package omit license files and VCS metadata. Cargo.toml.upstream is byte-identical to the published Cargo.toml.orig and declares MIT/Apache-2.0 for https://github.com/retep998/winapi-rs. LICENSE-MIT and LICENSE-APACHE are the repository texts packaged in winapi 0.3.9 (revision 796a8e6c2971dc2ff1bcff166e6671284f9b5b6b), the crate that depends on this one. Selection: MIT."
+  }
+]
