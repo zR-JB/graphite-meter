@@ -36,7 +36,8 @@ pub(crate) struct Connection {
 }
 
 impl Connection {
-    /// Tries each address in turn; a silent one gets 3 s, so it cannot spend the whole attempt.
+    /// Tries each address in turn; a silent one gets 3 s, so it cannot spend the whole attempt. One that answers
+    /// finishes its handshake within the caller's deadline: on a lossy path lost handshake packets take seconds.
     pub(crate) async fn dial(origin: &Origin, insecure: bool) -> Result<(Self, http3::client::SendRequest), Error> {
         let mut config = quinn::ClientConfig::new(crate::tls::quic(insecure).await?);
         let mut transport = quinn::TransportConfig::default();
@@ -58,9 +59,12 @@ impl Connection {
             }
             let runtime = quinn::default_runtime().ok_or("no async runtime for QUIC")?;
             let endpoint = Endpoint(quinn::Endpoint::new(quinn::EndpointConfig::default(), None, socket, runtime)?);
-            let connecting = endpoint.0.connect_with(config.clone(), address, &origin.host)?;
-            let connected = timeout(Duration::from_secs(3), connecting).await.map_err(Error::from);
-            let quic = match connected.and_then(|quic| Ok(quic?)) {
+            let mut connecting = endpoint.0.connect_with(config.clone(), address, &origin.host)?;
+            let connected = async {
+                timeout(Duration::from_secs(3), connecting.handshake_data()).await??;
+                Ok::<_, Error>(connecting.await?)
+            };
+            let quic = match connected.await {
                 Ok(quic) => quic,
                 Err(error) => {
                     last_error = Some(error);
@@ -190,6 +194,20 @@ mod tests {
         ] {
             assert!(Origin::from_uri(&uri.parse().unwrap()).is_err());
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_silent_address_gets_three_seconds() {
+        let _ = crate::crypto::provider().install_default();
+        let silent = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let uri = format!("https://127.0.0.1:{}/", silent.local_addr().unwrap().port());
+        let started = tokio::time::Instant::now();
+        assert!(
+            Connection::dial(&Origin::from_uri(&uri.parse().unwrap()).unwrap(), true)
+                .await
+                .is_err()
+        );
+        assert_eq!(started.elapsed().as_secs(), 3);
     }
 
     #[test]
