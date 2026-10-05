@@ -455,10 +455,8 @@ mod tests {
     fn stages_take_names_and_aliases_in_run_order() {
         let all = Stage::ALL.to_vec();
         assert_eq!(run("-stages BIDI,up,down,ping").unwrap().stages, all);
-        assert_eq!(
-            run_args(&["--stages", " latency ,,download,latency"]).unwrap().stages,
-            [Stage::Latency, Stage::Download]
-        );
+        let spaced = run_args(&["--stages", " latency ,,download,latency"]).unwrap();
+        assert_eq!(spaced.stages, [Stage::Latency, Stage::Download]);
         let unknown = "invalid value \"upload,sideways\" for flag -stages: unknown stage \"sideways\": use latency, \
                        download, upload, or bidirectional";
         assert_eq!(run("-stages upload,sideways").unwrap_err(), unknown);
@@ -469,12 +467,9 @@ mod tests {
     #[test]
     fn cadences_take_names_or_spacings_from_80ms_to_15s() {
         let every = |ms| Cadence::Every(Duration::from_millis(ms));
-        let cases = [("reply-driven", Cadence::ReplyDriven), ("FAST", every(80)), (" Medium ", every(250))];
-        for (text, cadence) in
-            cases
-                .into_iter()
-                .chain([("slow", every(600)), ("80ms", every(80)), ("15s", every(15_000))])
-        {
+        let named = [("reply-driven", Cadence::ReplyDriven), ("FAST", every(80)), (" Medium ", every(250))];
+        let spaced = [("slow", every(600)), ("80ms", every(80)), ("15s", every(15_000))];
+        for (text, cadence) in named.into_iter().chain(spaced) {
             assert_eq!(run_args(&["-ping", text]).unwrap().ping, cadence, "{text}");
             assert_eq!(run_args(&["-loaded-ping", text]).unwrap().loaded_ping, cadence, "{text}");
         }
@@ -546,11 +541,8 @@ mod tests {
         assert_eq!(ids, ["a", "b.c", "d_e", "f-g"]);
         let refused = "invalid value \"e\" for flag -server: select one to 4 different server IDs";
         assert_eq!(run("-server a -server b -server c -server d -server e").unwrap_err(), refused);
-        assert!(
-            run("-server a/b")
-                .unwrap_err()
-                .starts_with("invalid value \"a/b\" for flag -server: ")
-        );
+        let invalid = run("-server a/b").unwrap_err();
+        assert!(invalid.starts_with("invalid value \"a/b\" for flag -server: "), "{invalid}");
     }
 
     #[test]
@@ -581,14 +573,9 @@ mod tests {
         assert_eq!(key(timed), base);
         assert_eq!(key("-server a -server b -stages ping,down,up -loaded-latency=false"), base);
         assert_ne!(key("-server a"), base);
-        assert_ne!(
-            key("-server a -server b -stages download,upload"),
-            key("-server a -server b -stages down")
-        );
-        assert_ne!(
-            key("-server a -server b -stages down -loaded-latency=false"),
-            key("-server a -server b -stages down")
-        );
+        let down = key("-server a -server b -stages down");
+        assert_ne!(key("-server a -server b -stages download,upload"), down);
+        assert_ne!(key("-server a -server b -stages down -loaded-latency=false"), down);
         assert_ne!(key("-server a -server b -insecure"), base);
     }
 }

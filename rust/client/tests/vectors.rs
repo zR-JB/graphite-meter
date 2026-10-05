@@ -27,28 +27,10 @@ struct Receivers(Vec<String>);
 impl Receivers {
     fn number(&mut self, value: &Value) -> u32 {
         let name = value["id"].as_str().unwrap();
-        let number = self.0.iter().position(|known| known == name).unwrap_or_else(|| {
+        if !self.0.iter().any(|known| known == name) {
             self.0.push(name.to_owned());
-            self.0.len() - 1
-        });
-        number as u32
-    }
-
-    /// A checkpoint, or none for `null`.
-    fn checkpoint(&mut self, value: &Value) -> Option<Receiver> {
-        if value.is_null() {
-            return None;
         }
-        let count = |field: &str| value[field].as_u64().unwrap();
-        let counters = Counters::new(count("bytes"), count("nanos"));
-        Some(Receiver { id: self.number(value), counters })
-    }
-
-    fn fed(&mut self, value: &Value) -> Fed {
-        Fed {
-            id: self.number(value),
-            bytes: value["maximum"].as_u64().unwrap(),
-        }
+        self.0.iter().position(|known| known == name).unwrap() as u32
     }
 }
 
@@ -58,23 +40,28 @@ fn boundary(value: &Value, at: Instant, receivers: &mut Receivers) -> Boundary {
     for (server, bytes) in entries("down") {
         reading(&mut readings, server).down = bytes.as_u64();
     }
-    for (server, snapshot) in entries("up") {
-        reading(&mut readings, server).up = receivers.checkpoint(snapshot);
+    for (server, snapshot) in entries("up").filter(|(_, snapshot)| !snapshot.is_null()) {
+        let counters = Counters::new(snapshot["bytes"].as_u64().unwrap(), snapshot["nanos"].as_u64().unwrap());
+        reading(&mut readings, server).up = Some(Receiver { id: receivers.number(snapshot), counters });
     }
     for (server, observed) in entries("observedUp") {
-        reading(&mut readings, server).fed = Some(receivers.fed(observed));
+        let fed = Fed {
+            id: receivers.number(observed),
+            bytes: observed["maximum"].as_u64().unwrap(),
+        };
+        reading(&mut readings, server).fed = Some(fed);
     }
     Boundary { at, stalled: false, last: value["final"] == true, readings }
 }
 
 fn reading<'a>(readings: &'a mut Vec<Reading>, server: &str) -> &'a mut Reading {
-    match readings.iter().position(|reading| reading.server.as_str() == server) {
-        Some(index) => &mut readings[index],
-        None => {
-            readings.push(Reading { server: id(server), down: None, up: None, fed: None });
-            readings.last_mut().unwrap()
-        }
+    if !readings.iter().any(|reading| reading.server.as_str() == server) {
+        readings.push(Reading { server: id(server), down: None, up: None, fed: None });
     }
+    readings
+        .iter_mut()
+        .find(|reading| reading.server.as_str() == server)
+        .unwrap()
 }
 
 /// A vector's headline as mean and peak.
@@ -109,12 +96,8 @@ fn aggregation() {
             "upload" => Stage::Upload,
             _ => Stage::Bidirectional,
         };
-        let mut participants: Vec<_> = case["participants"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|p| id(p.as_str().unwrap()))
-            .collect();
+        let named = case["participants"].as_array().unwrap().iter();
+        let mut participants: Vec<_> = named.map(|name| id(name.as_str().unwrap())).collect();
         let mut aggregate = Aggregate::new(stage, participants.clone(), base);
         let mut receivers = Receivers::default();
         for value in case["boundaries"].as_array().unwrap() {

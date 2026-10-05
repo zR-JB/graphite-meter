@@ -1,19 +1,18 @@
-//! Lane groups and latency buses against the server.
+//! Lane groups and QUIC dials against the server.
 use graphite_meter_client::{
     model::{Dir, LaneHealth, Stage},
-    net::{Class, Client, Fault, Lanes, LatencyPath, Request, ThroughputPath, Work, topology},
+    net::{Client, Fault, Lanes, Request, ThroughputPath, Work, topology},
 };
 use graphite_meter_e2e::Server;
-use graphite_meter_net::Pool;
+use graphite_meter_net::{ConnectError, Pool};
 use graphite_meter_proto::{
-    bus::Ping,
-    discovery::{LatencyTransport, Protocol, ThroughputTransport},
+    discovery::{Probe, Protocol, ThroughputTransport},
     json,
-    lane::LaneEnding,
     origin::Origin,
     route::Route,
     upload::{Counters, Session},
 };
+use graphite_meter_testkit::{self as testkit, Link};
 use http::Method;
 use std::{
     sync::Arc,
@@ -112,45 +111,19 @@ async fn fourteen_webtransport_lanes_outgrow_the_first_connection_window_without
 }
 
 #[tokio::test]
-async fn buses_carry_pings_over_websocket_and_webtransport_datagrams() {
+async fn a_silent_quic_address_fails_after_3_s_while_a_delayed_answering_one_finishes() {
     let (server, client) = (Server::start().await, client());
-    for (origin, transport) in [
-        (&server.http1, LatencyTransport::WebSocket),
-        (&server.http3, LatencyTransport::WebTransport),
-    ] {
-        let mut bus = client
-            .bus(&LatencyPath { origin: origin.clone(), transport })
-            .await
-            .unwrap();
-        let reply = async {
-            loop {
-                bus.send(Ping { id: 7 }).await.unwrap();
-                if let Ok(pong) = tokio::time::timeout(Duration::from_millis(500), bus.next()).await {
-                    break pong.unwrap();
-                }
-            }
-        };
-        assert_eq!(tokio::time::timeout(Duration::from_secs(5), reply).await.unwrap().id, 7, "{transport:?}");
-    }
-}
-
-#[tokio::test]
-async fn a_websocket_bus_the_server_ends_as_idle_redials() {
-    let (server, client) = (Server::start().await, client());
-    let path = LatencyPath {
-        origin: server.http1.clone(),
-        transport: LatencyTransport::WebSocket,
+    let silent = Link::udp(server.quic, Duration::ZERO).await.unwrap();
+    silent.inject(testkit::Fault::Stall);
+    let delayed = Link::udp(server.quic, Duration::from_secs(1)).await.unwrap();
+    let timed = async |link: &Link| {
+        let (started, origin) = (Instant::now(), Origin::parse(&format!("https://{}", link.address)).unwrap());
+        let request = Request::new(Method::GET, &origin, Route::Probe);
+        (client.json(Protocol::Http3, request, Probe::decode).await, started.elapsed())
     };
-    let mut bus = client.bus(&path).await.unwrap();
-    bus.send(Ping { id: 0 }).await.unwrap();
-    assert_eq!(bus.next().await.unwrap().id, 0);
-    let quiet = Instant::now();
-    let ended = tokio::time::timeout(Duration::from_secs(60), bus.next()).await.unwrap();
-    assert!(quiet.elapsed() >= Duration::from_secs(29), "{:?}", quiet.elapsed());
-    let fault = ended.unwrap_err();
-    assert!(matches!(fault, Fault::Ended(LaneEnding::Idle)), "{fault:?}");
-    assert_eq!(fault.class(), Class::Redial);
-    let mut redialled = client.bus(&path).await.unwrap();
-    redialled.send(Ping { id: 1 }).await.unwrap();
-    assert_eq!(redialled.next().await.unwrap().id, 1);
+    let ((unanswered, silence), (answered, delay)) = tokio::join!(timed(&silent), timed(&delayed));
+    assert!(matches!(unanswered, Err(Fault::Connect(ConnectError::Unreachable(_)))), "{unanswered:?}");
+    assert!((3.0..4.0).contains(&silence.as_secs_f64()), "{silence:?}");
+    answered.unwrap();
+    assert!(delay > Duration::from_secs(3), "{delay:?} outlasts the silent address's bound");
 }

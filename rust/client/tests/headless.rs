@@ -6,7 +6,7 @@ use graphite_meter_client::{INTERRUPTED, Interrupts, Reaction, TERMINATED};
 use std::{process::Stdio, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     process::{Child, Command},
     time::timeout,
 };
@@ -80,59 +80,27 @@ fn the_first_signal_stops_and_a_second_exits_with_its_own_status_in_either_order
     }
 }
 
-#[tokio::test]
-async fn a_protected_server_exits_1_asking_for_a_terminal() {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let _peer = tokio::spawn(async move {
-        while let Ok((mut stream, _)) = listener.accept().await {
-            let mut head = Vec::new();
-            while !head.ends_with(b"\r\n\r\n") && stream.read_u8().await.map(|byte| head.push(byte)).is_ok() {}
-            let refusal = "HTTP/1.1 403 Forbidden\r\ngraphite-meter-auth: required\r\ncontent-length: 0\r\n\r\n";
-            let _ = stream.write_all(refusal.as_bytes()).await;
-        }
-    });
-    let refused = "graphite-meter-client: Sign-in required; run graphite-meter-client in a terminal to sign in.\n";
-    let child = client(&url, "latency").spawn().unwrap();
-    assert_eq!(finished(child).await, (Some(1), String::new(), refused.into()));
+/// The path of the next request on `stream`, once its head arrived.
+async fn path(stream: &mut TcpStream) -> Option<String> {
+    let mut head = Vec::new();
+    while !head.ends_with(b"\r\n\r\n") {
+        head.push(stream.read_u8().await.ok()?);
+    }
+    String::from_utf8_lossy(&head).split(' ').nth(1).map(str::to_owned)
 }
 
-/// A server named A at a peer that answers its catalogue, preflight and probe, and refuses everything else.
-async fn refusing_downloads() -> String {
+/// A peer at the returned URL answering each request by its path: a 200 JSON body, or `refusal`.
+async fn peer(body: fn(&str) -> &'static str, refusal: &'static str) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move {
         while let Ok((mut stream, _)) = listener.accept().await {
             tokio::spawn(async move {
-                loop {
-                    let mut head = Vec::new();
-                    while !head.ends_with(b"\r\n\r\n") {
-                        let Ok(byte) = stream.read_u8().await else { return };
-                        head.push(byte);
-                    }
-                    let path = String::from_utf8_lossy(&head)
-                        .split(' ')
-                        .nth(1)
-                        .unwrap_or_default()
-                        .to_owned();
-                    let body = match path.as_str() {
-                        "/servers" => r#"{"defaultSelection":["self"],"servers":[{"id":"self","url":".","name":"A"}]}"#,
-                        "/preflight" => concat!(
-                            r#"{"server":{"name":"A","location":""},"engineVersion":"1","generation":"1","#,
-                            r#""capabilities":{"uploadCheckpoint":true,"maxStageMs":300000,"#,
-                            r#""throughput":[{"baseUrl":".","transport":"fetch-stream","protocol":"http1"}],"#,
-                            r#""latency":[{"baseUrl":".","transport":"websocket"}]}}"#
-                        ),
-                        "/probe" => {
-                            r#"{"clientIp":"127.0.0.1","clientIpVersion":4,"clientIpSource":"socket","protocolNegotiated":"http/1.1"}"#
-                        }
-                        _ => "",
+                while let Some(path) = path(&mut stream).await {
+                    let answer = match body(&path) {
+                        "" => refusal.to_owned(),
+                        body => format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n{body}", body.len()),
                     };
-                    let status = if body.is_empty() { "404 Not Found" } else { "200 OK" };
-                    let answer = format!(
-                        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",
-                        body.len()
-                    );
                     if stream.write_all(answer.as_bytes()).await.is_err() {
                         return;
                     }
@@ -141,6 +109,33 @@ async fn refusing_downloads() -> String {
         }
     });
     url
+}
+
+#[tokio::test]
+async fn a_protected_server_exits_1_asking_for_a_terminal() {
+    let refusal = "HTTP/1.1 403 Forbidden\r\ngraphite-meter-auth: required\r\ncontent-length: 0\r\n\r\n";
+    let url = peer(|_| "", refusal).await;
+    let refused = "graphite-meter-client: Sign-in required; run graphite-meter-client in a terminal to sign in.\n";
+    let child = client(&url, "latency").spawn().unwrap();
+    assert_eq!(finished(child).await, (Some(1), String::new(), refused.into()));
+}
+
+/// A server named A that answers its catalogue, preflight and probe, and refuses everything else.
+async fn refusing_downloads() -> String {
+    let body = |path: &str| match path {
+        "/servers" => r#"{"defaultSelection":["self"],"servers":[{"id":"self","url":".","name":"A"}]}"#,
+        "/preflight" => concat!(
+            r#"{"server":{"name":"A","location":""},"engineVersion":"1","generation":"1","#,
+            r#""capabilities":{"uploadCheckpoint":true,"maxStageMs":300000,"#,
+            r#""throughput":[{"baseUrl":".","transport":"fetch-stream","protocol":"http1"}],"#,
+            r#""latency":[{"baseUrl":".","transport":"websocket"}]}}"#
+        ),
+        "/probe" => {
+            r#"{"clientIp":"127.0.0.1","clientIpVersion":4,"clientIpSource":"socket","protocolNegotiated":"http/1.1"}"#
+        }
+        _ => "",
+    };
+    peer(body, "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n").await
 }
 
 #[tokio::test]

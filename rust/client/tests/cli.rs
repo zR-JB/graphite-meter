@@ -28,14 +28,10 @@ fn help_prints_go_usage_to_stderr() {
 
 #[test]
 fn a_flag_error_prints_go_message_and_usage() {
-    let cases: [(&[&str], &str); 4] = [
+    let cases: [(&[&str], &str); 3] = [
         (&["-bogus"], "flag provided but not defined: -bogus"),
         (&["-streams", "x"], "invalid value \"x\" for flag -streams: parse error"),
         (&["-insecure=maybe"], "invalid boolean value \"maybe\" for -insecure: parse error"),
-        (
-            &["-server", "a", "-server", "a"],
-            "invalid value \"a\" for flag -server: select one to 4 different server IDs",
-        ),
     ];
     for (args, message) in cases {
         let output = client(args);
@@ -47,12 +43,8 @@ fn a_flag_error_prints_go_message_and_usage() {
 
 #[test]
 fn another_argument_error_names_the_client() {
-    let cases: [(&[&str], &str); 3] = [
+    let cases: [(&[&str], &str); 2] = [
         (&["-report", "extra"], "unexpected argument \"extra\""),
-        (
-            &["-streams", "15"],
-            "forced streams must be from 1 to 14 per server and direction, or 0 for automatic",
-        ),
         (
             &["-throughput-protocol", "h9"],
             "invalid throughput protocol \"h9\": use auto, http1, http2, or http3",

@@ -176,10 +176,12 @@ mod tests {
     use crate::{
         config::{Parsed, parse},
         model::Failure,
-        run::prepare::Paths,
+        net::Client,
+        run::prepare::{Paths, Prepared},
     };
+    use graphite_meter_net::Pool;
     use graphite_meter_proto::{catalog::ServerCatalog, reason::FailureReason};
-    use std::ffi::OsString;
+    use std::{ffi::OsString, sync::Arc, time::Instant};
 
     const CATALOGUE: &str = r#"{"defaultSelection": ["b"], "servers": [
         {"id": "self", "url": ".", "name": "Self"},
@@ -205,10 +207,8 @@ mod tests {
         assert_eq!(selected("").unwrap(), ["b"]);
         assert_eq!(selected("-server b -server self").unwrap(), ["self", "b"]);
         assert_eq!(selected("-server b -server a -server self").unwrap(), ["self", "a", "b"]);
-        assert_eq!(
-            selected("-server a -server nowhere").unwrap_err(),
-            "unknown or repeated server \"nowhere\""
-        );
+        let unknown = "unknown or repeated server \"nowhere\"";
+        assert_eq!(selected("-server a -server nowhere").unwrap_err(), unknown);
         let left = "the catalogue's server \"broken\" was left out: invalid catalogue origin";
         assert_eq!(selected("-server broken").unwrap_err(), left);
         let explicit = "explicit origins need a single selected server; use Automatic origins for several";
@@ -219,18 +219,14 @@ mod tests {
     const SERVED: &str = "http://meter.example:7246";
 
     fn preflight(throughput: &[(&str, &str, &str)], latency: &[(&str, &str)]) -> Preflight {
-        let throughput: Vec<_> = throughput
-            .iter()
-            .map(|(base, transport, protocol)| {
-                serde_json::json!({"baseUrl": base, "transport": transport, "protocol": protocol})
-            })
-            .collect();
-        let latency: Vec<_> = latency
-            .iter()
-            .map(|(base, transport)| serde_json::json!({"baseUrl": base, "transport": transport}))
-            .collect();
-        let capabilities = serde_json::json!({"throughput": throughput, "latency": latency});
-        let document = serde_json::json!({"server": {"name": "meter"}, "engineVersion": "1", "generation": "g",
+        use serde_json::json;
+        let fetch =
+            |(base, transport, protocol)| json!({"baseUrl": base, "transport": transport, "protocol": protocol});
+        let throughput: Vec<_> = throughput.iter().copied().map(fetch).collect();
+        let probe = |(base, transport)| json!({"baseUrl": base, "transport": transport});
+        let latency: Vec<_> = latency.iter().copied().map(probe).collect();
+        let capabilities = json!({"throughput": throughput, "latency": latency});
+        let document = json!({"server": {"name": "meter"}, "engineVersion": "1", "generation": "g",
             "capabilities": capabilities});
         Preflight::decode(document.to_string().as_bytes()).unwrap()
     }
@@ -251,18 +247,11 @@ mod tests {
         let config = config(args);
         let served = Origin::parse(served).unwrap();
         let found = candidates(&config.paths, entry, &served, preflight, config.probes())?;
-        let mut lines: Vec<_> = found
-            .throughput
-            .iter()
-            .map(|path| format!("{} {} {}", path.transport.name(), path.protocol.name(), path.origin.port))
-            .collect();
-        lines.extend(
-            found
-                .latency
-                .iter()
-                .map(|path| format!("{} {}", path.transport.name(), path.origin.port)),
-        );
-        Ok(lines.join(", "))
+        let fetch =
+            |path: &ThroughputPath| format!("{} {} {}", path.transport.name(), path.protocol.name(), path.origin.port);
+        let probe = |path: &LatencyPath| format!("{} {}", path.transport.name(), path.origin.port);
+        let (throughput, latency) = (found.throughput.iter().map(fetch), found.latency.iter().map(probe));
+        Ok(throughput.chain(latency).collect::<Vec<_>>().join(", "))
     }
 
     fn own() -> ServerEntry {
@@ -272,65 +261,43 @@ mod tests {
     #[test]
     fn automatic_paths_follow_the_native_order_and_forced_ones_never_downgrade() {
         let (native, own) = (native(), own());
+        #[rustfmt::skip]
         let rows = [
             ("", "fetch-stream http1 7246, webtransport http3 7249, webtransport 7249, websocket 7246"),
-            (
-                "-throughput-transport webtransport -latency-transport websocket",
-                "webtransport http3 7249, websocket 7246",
-            ),
-            (
-                "-throughput-origin https://meter.example:7248 -stages down -loaded-latency=false",
-                "fetch-stream http2 7248",
-            ),
-            (
-                "-throughput-protocol http3 -stages up -loaded-latency=false",
-                "fetch-stream http3 7249, webtransport http3 7249",
-            ),
-            (
-                "-latency-transport webtransport -stages ping",
-                "fetch-stream http1 7246, webtransport http3 7249, webtransport 7249",
-            ),
+            ("-throughput-transport webtransport -latency-transport websocket",
+                "webtransport http3 7249, websocket 7246"),
+            ("-throughput-origin https://meter.example:7248 -stages down -loaded-latency=false",
+                "fetch-stream http2 7248"),
+            ("-throughput-protocol http3 -stages up -loaded-latency=false",
+                "fetch-stream http3 7249, webtransport http3 7249"),
+            ("-latency-transport webtransport -stages ping",
+                "fetch-stream http1 7246, webtransport http3 7249, webtransport 7249"),
         ];
         for (args, expected) in rows {
             assert_eq!(paths(args, SERVED, &native, &own).unwrap(), expected, "{args}");
         }
+        #[rustfmt::skip]
         let refusals = [
-            (
-                "-throughput-origin https://meter.example:7249 -throughput-protocol http2",
-                "endpoint is fixed to http3, cannot use http2",
-            ),
-            (
-                "-throughput-origin https://other.example",
-                "throughput target \"https://other.example\" unavailable",
-            ),
-            (
-                "-latency-origin https://other.example",
-                "latency target \"https://other.example\" unavailable",
-            ),
+            ("-throughput-origin https://meter.example:7249 -throughput-protocol http2",
+                "endpoint is fixed to http3, cannot use http2"),
+            ("-throughput-origin https://other.example", "throughput target \"https://other.example\" unavailable"),
+            ("-latency-origin https://other.example", "latency target \"https://other.example\" unavailable"),
         ];
         for (args, refusal) in refusals {
             assert_eq!(paths(args, SERVED, &native, &own).unwrap_err(), refusal, "{args}");
         }
-        let elsewhere = "https://meter.example";
-        assert_eq!(
-            paths("-stages down -loaded-latency=false", elsewhere, &native, &own).unwrap(),
-            "webtransport http3 7249"
-        );
+        let elsewhere = |args| paths(args, "https://meter.example", &native, &own);
+        assert_eq!(elsewhere("-stages down -loaded-latency=false").unwrap(), "webtransport http3 7249");
         let several = "several throughput targets are available; select an origin";
-        assert_eq!(
-            paths("-throughput-transport fetch-stream", elsewhere, &native, &own).unwrap_err(),
-            several
-        );
+        assert_eq!(elsewhere("-throughput-transport fetch-stream").unwrap_err(), several);
     }
 
     #[test]
     fn a_negotiated_target_takes_a_forced_protocol_and_webtransport_needs_http3() {
         let own = own();
         let negotiated = preflight(&[(".", "fetch-stream", "negotiated")], &[(".", "websocket")]);
-        assert_eq!(
-            paths("", SERVED, &negotiated, &own).unwrap(),
-            "fetch-stream negotiated 7246, websocket 7246"
-        );
+        let automatic = paths("", SERVED, &negotiated, &own).unwrap();
+        assert_eq!(automatic, "fetch-stream negotiated 7246, websocket 7246");
         let forced = paths("-throughput-protocol http2", SERVED, &negotiated, &own).unwrap();
         assert_eq!(forced, "fetch-stream http2 7246, websocket 7246");
         let datagrams = preflight(&[(".", "webtransport-datagram", "http3")], &[(".", "websocket")]);
@@ -345,43 +312,44 @@ mod tests {
         let foreign = preflight(&[("https://cdn.example", "fetch-stream", "http2")], &[(SERVED, "websocket")]);
         let refused = "server \"self\" advertised an unapproved target origin";
         assert_eq!(paths("", SERVED, &foreign, &own()).unwrap_err(), refused);
-        let mut listed = own();
-        listed
-            .additional_origins
-            .push(Origin::parse("https://cdn.example:8443").unwrap());
+        let (mut listed, added) = (own(), |origin| Origin::parse(origin).unwrap());
+        listed.additional_origins.push(added("https://cdn.example:8443"));
         assert_eq!(paths("", SERVED, &foreign, &listed).unwrap_err(), refused);
-        listed
-            .additional_origins
-            .push(Origin::parse("https://CDN.example:443").unwrap());
+        listed.additional_origins.push(added("https://CDN.example:443"));
         assert_eq!(paths("", SERVED, &foreign, &listed).unwrap(), "fetch-stream http2 443, websocket 7246");
         let other_port = preflight(&[("https://meter.example:1", "fetch-stream", "http2")], &[]);
         assert!(paths("-stages down -loaded-latency=false", SERVED, &other_port, &own()).is_ok());
     }
 
+    /// A server named after its ID in capitals with a stage limit of `seconds`, prepared unless `failure`.
+    fn server(name: &str, seconds: u64, failure: Option<Failure>) -> ServerPath {
+        let origin = Origin::parse(SERVED).unwrap();
+        let (transport, protocol) = (ThroughputTransport::FetchStream, Protocol::Http1);
+        let throughput = ThroughputPath { origin: origin.clone(), transport, protocol };
+        let (stage_limit, idle_rtt) = (Duration::from_secs(seconds), Duration::ZERO);
+        let paths = Paths {
+            throughput,
+            control: protocol,
+            latency: None,
+            stage_limit,
+            idle_rtt,
+        };
+        let (id, name) = (ServerId::parse(name).unwrap(), name.to_uppercase());
+        let path = failure.map_or(Ok(paths), Err);
+        ServerPath {
+            id,
+            name,
+            location: String::new(),
+            origin,
+            offered: None,
+            path,
+        }
+    }
+
     #[test]
     fn the_smallest_stage_limit_among_prepared_servers_names_its_server() {
-        let server = |name: &str, seconds: u64, prepared: bool| ServerPath {
-            id: ServerId::parse(name).unwrap(),
-            name: name.to_uppercase(),
-            location: String::new(),
-            origin: Origin::parse(SERVED).unwrap(),
-            offered: None,
-            path: match prepared {
-                true => Ok(Paths {
-                    throughput: ThroughputPath {
-                        origin: Origin::parse(SERVED).unwrap(),
-                        transport: ThroughputTransport::FetchStream,
-                        protocol: Protocol::Http1,
-                    },
-                    control: Protocol::Http1,
-                    latency: None,
-                    stage_limit: Duration::from_secs(seconds),
-                    idle_rtt: Duration::ZERO,
-                }),
-                false => Err(Failure::new(FailureReason::ConnectionLost, "gone")),
-            },
-        };
-        let servers = [server("a", 300, true), server("b", 90, true), server("c", 1, false)];
+        let gone = Some(Failure::new(FailureReason::ConnectionLost, "gone"));
+        let servers = [server("a", 300, None), server("b", 90, None), server("c", 1, gone)];
         let plan =
             |seconds| [(Stage::Latency, Duration::from_secs(1)), (Stage::Download, Duration::from_secs(seconds))];
         assert_eq!(fit(&plan(90), &servers), Ok(()));
@@ -392,5 +360,31 @@ mod tests {
         assert_eq!(fit(&plan(86_400), &servers[2..]), Ok(()));
         assert_eq!(short(Duration::from_secs(5400)), "1h30m");
         assert_eq!(short(Duration::from_secs(86_400)), "24h");
+    }
+
+    #[test]
+    fn a_run_reuses_a_whole_check_with_its_key_for_30_s() {
+        let at = Instant::now();
+        let client = Client::new(false, Arc::new(Pool::inline()));
+        let (key, catalogue) = (config("-server a -stages down").key(), Arc::new([]));
+        let prepared = Prepared {
+            key,
+            at,
+            client,
+            catalogue,
+            servers: vec![server("a", 30, None)],
+        };
+        let longer = config("-server a -stages down -download-duration 1m -warmup 2s").key();
+        let reuse = Duration::from_secs(30);
+        assert!(prepared.reusable(&longer, at + reuse));
+        assert!(!prepared.reusable(&longer, at + reuse + Duration::from_millis(1)));
+        assert!(!prepared.reusable(&config("-server a -stages down,up").key(), at));
+        assert!(!prepared.reusable(&config("-server a -stages down -insecure").key(), at));
+        let late = Some(Failure::new(FailureReason::Timeout, "late"));
+        let failed = Prepared {
+            servers: vec![server("a", 30, None), server("b", 30, late)],
+            ..prepared
+        };
+        assert!(!failed.reusable(&longer, at));
     }
 }
