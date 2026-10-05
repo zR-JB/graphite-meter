@@ -79,18 +79,16 @@ impl Listener {
 impl Listen for Listener {
     type Connection = noq::Incoming;
 
-    /// The next handshake that needs no Retry: Retry spends a round trip to protect admission under load, and a
-    /// source's QUIC share from Initials that may be spoofed.
-    async fn accept(&mut self) -> io::Result<(noq::Incoming, SocketAddr)> {
-        loop {
-            let incoming = self.endpoint.accept().await.ok_or(io::ErrorKind::InvalidInput)?;
-            let peer = incoming.remote_address();
-            if !incoming.remote_address_validated() && self.app.quic_retry(peer.ip().to_canonical()) {
-                let _ = incoming.retry();
-                continue;
-            }
-            return Ok((incoming, peer));
+    /// The next handshake, or `None` once it is answered with a Retry: Retry spends a round trip to protect admission
+    /// under load, and a source's QUIC share from Initials that may be spoofed.
+    async fn accept(&mut self) -> io::Result<Option<(noq::Incoming, SocketAddr)>> {
+        let incoming = self.endpoint.accept().await.ok_or(io::ErrorKind::InvalidInput)?;
+        let peer = incoming.remote_address();
+        if !incoming.remote_address_validated() && self.app.quic_retry(peer.ip().to_canonical()) {
+            let _ = incoming.retry();
+            return Ok(None);
         }
+        Ok(Some((incoming, peer)))
     }
 
     fn name(&self) -> String {

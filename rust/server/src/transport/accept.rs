@@ -23,7 +23,8 @@ const RETRY_LAST: Duration = Duration::from_secs(1);
 pub trait Listen {
     type Connection: Send + 'static;
 
-    fn accept(&mut self) -> impl Future<Output = io::Result<(Self::Connection, SocketAddr)>> + Send;
+    /// The next connection, or `None` for an attempt the listener answered itself, such as with a Retry.
+    fn accept(&mut self) -> impl Future<Output = io::Result<Option<(Self::Connection, SocketAddr)>>> + Send;
 
     /// The socket in accept failure lines, such as `tcp [::]:7246`.
     fn name(&self) -> String;
@@ -37,8 +38,8 @@ pub trait Listen {
 impl Listen for TcpListener {
     type Connection = TcpStream;
 
-    async fn accept(&mut self) -> io::Result<(TcpStream, SocketAddr)> {
-        TcpListener::accept(self).await
+    async fn accept(&mut self) -> io::Result<Option<(TcpStream, SocketAddr)>> {
+        TcpListener::accept(self).await.map(Some)
     }
 
     fn name(&self) -> String {
@@ -71,8 +72,11 @@ where
             Some(_) = connections.join_next() => continue,
             accepted = listener.accept() => accepted,
         };
+        // An accept that is always ready, as noq's under a flood, still leaves the runtime to its other tasks.
+        tokio::task::consume_budget().await;
         let (connection, peer) = match accepted {
-            Ok(accepted) => accepted,
+            Ok(Some(accepted)) => accepted,
+            Ok(None) => continue,
             Err(error) if error.kind() == io::ErrorKind::InvalidInput => break Err(error),
             Err(error) => {
                 delay = (delay * 2).clamp(RETRY_FIRST, RETRY_LAST);
@@ -244,7 +248,7 @@ mod tests {
     impl Listen for Failing {
         type Connection = TcpStream;
 
-        async fn accept(&mut self) -> io::Result<(TcpStream, SocketAddr)> {
+        async fn accept(&mut self) -> io::Result<Option<(TcpStream, SocketAddr)>> {
             crate::lock(&self.tried).push(tokio::time::Instant::now());
             if self.failures == 0 {
                 return std::future::pending().await;
@@ -258,6 +262,45 @@ mod tests {
         }
     }
 
+    /// A listener flooded with attempts it answers itself, each ready at once.
+    struct Flooded;
+
+    impl Listen for Flooded {
+        type Connection = ();
+
+        async fn accept(&mut self) -> io::Result<Option<((), SocketAddr)>> {
+            Ok(None)
+        }
+
+        fn name(&self) -> String {
+            "flooded".into()
+        }
+    }
+
+    #[test]
+    fn a_flood_of_attempts_answered_at_once_leaves_the_runtime_to_its_other_tasks() {
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async {
+                let shutdown = CancellationToken::new();
+                let stop = shutdown.clone();
+                let serving = tokio::spawn(async move {
+                    super::serve(Flooded, Handle::current, &stop, |_| None, |(), _| async {}).await
+                });
+                tokio::task::yield_now().await;
+                shutdown.cancel();
+                serving.await.unwrap().unwrap();
+            });
+            let _ = done.send(());
+        });
+        let stopped = finished.recv_timeout(Duration::from_secs(5));
+        assert!(stopped.is_ok(), "the stop ran beside the flood and ended the loop");
+    }
+
     /// A listener with one connection whose closer reports when it ran and whether that connection was gone.
     struct Closing {
         accepted: bool,
@@ -268,11 +311,11 @@ mod tests {
     impl Listen for Closing {
         type Connection = ();
 
-        async fn accept(&mut self) -> io::Result<((), SocketAddr)> {
+        async fn accept(&mut self) -> io::Result<Option<((), SocketAddr)>> {
             if std::mem::replace(&mut self.accepted, true) {
                 return std::future::pending().await;
             }
-            Ok(((), "192.0.2.1:1".parse().unwrap()))
+            Ok(Some(((), "192.0.2.1:1".parse().unwrap())))
         }
 
         fn name(&self) -> String {

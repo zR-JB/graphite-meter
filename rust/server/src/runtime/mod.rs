@@ -163,12 +163,17 @@ impl Server {
                     "tcp"
                 }
                 Socket::Quic(quic) => {
-                    // Each endpoint's connections run on its runtime.
+                    // Each endpoint accepts, answers Retry and runs its connections on its own runtime.
                     for listener in quic.listeners {
                         let (runtime, http3) = (listener.runtime(), quic.http3.clone());
+                        let (app, stopping, next) = (app.clone(), shutdown.clone(), runtime.clone());
                         let serve = move |incoming, peer| http3.connection(incoming, peer);
-                        let next = move || runtime.clone();
-                        services.push(listen(app.clone(), listener, next, stopping, role, Transport::Quic, serve));
+                        let serving = runtime.spawn(async move {
+                            let next = move || next.clone();
+                            listen(app, listener, next, &stopping, role, Transport::Quic, serve).await
+                        });
+                        services
+                            .push(Box::pin(async move { serving.await.map_err(|error| format!("{role}: {error}"))? }));
                     }
                     "udp"
                 }
