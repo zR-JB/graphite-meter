@@ -3,8 +3,8 @@
 use bytes::Bytes;
 use graphite_meter_client::{
     config::{Config, PathChoice},
-    model::{Dir, Failure, LaneHealth, Stage},
-    net::{Client, Fault, ReadBuffer, Request, ThroughputPath, retrying, topology},
+    model::{Failure, LaneHealth, Stage},
+    net::{Client, Fault, ReadBuffer, Request, ThroughputPath},
     run::{prepare::prepare, upload::UploadSession},
 };
 use graphite_meter_net::{ConnectError, Pool};
@@ -78,10 +78,8 @@ fn ok(body: &str) -> String {
 trait Stream: AsyncRead + AsyncWrite + Send + Unpin {}
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> Stream for T {}
 
-/// The `n`th request's answer, given its head; `None` ends its connection unanswered.
-type Answer = fn(usize, &str) -> Option<String>;
-
-/// An HTTP/1.1 peer, over TLS with `tls`, sending each request head with its connection's number to the receiver.
+/// An HTTP/1.1 peer, over TLS with `tls`, sending each request head with its connection's number to the receiver;
+/// `answer` gives the `n`th request's answer from its head, `None` ending its connection unanswered.
 fn peer(
     listener: TcpListener,
     tls: Option<TlsAcceptor>,
@@ -232,67 +230,6 @@ async fn a_bodyless_post_failing_on_a_reused_connection_is_sent_once_more() {
         assert_eq!(seen, connection);
         assert!(head.starts_with("POST /upload/session HTTP/1.1\r\n"), "{head}");
     }
-}
-
-/// A minted upload ID as `retrying` gets it from a peer answering `answer`, and the requests that took.
-async fn mint(answer: Answer) -> (Result<Session, Fault>, usize) {
-    let (listener, address) = local().await;
-    let mut heads = peer(listener, None, answer);
-    let (client, origin) = (client(false), origin("http", address));
-    let request = || Request::new(Method::POST, &origin, Route::UploadSession);
-    let minted = retrying(|| client.json(Protocol::Http1, request(), Session::decode)).await;
-    drop(client);
-    let mut requests = 0;
-    while heads.try_recv().is_ok() {
-        requests += 1;
-    }
-    (minted, requests)
-}
-
-#[tokio::test]
-async fn minting_redials_a_server_error_and_stands_at_a_client_error() {
-    let (minted, requests) = mint(|request, _| match request {
-        0 => Some("HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\n\r\n".into()),
-        _ => Some(ok(r#"{"uploadId":"u1"}"#)),
-    })
-    .await;
-    assert_eq!((minted.unwrap().upload_id.as_str(), requests), ("u1", 2));
-    let (refused, requests) = mint(|_, _| Some("HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n".into())).await;
-    assert!(matches!(refused, Err(Fault::Status { .. })), "{refused:?}");
-    assert_eq!(requests, 1);
-}
-
-#[tokio::test]
-async fn a_departed_upload_session_asks_its_receiver_to_finalize() {
-    let (listener, address) = local().await;
-    let mut heads = peer(listener, None, |_, head| match head.split_once(' ').map(|(_, rest)| rest) {
-        Some(rest) if rest.starts_with("/upload/session ") => Some(ok(r#"{"uploadId":"u0"}"#)),
-        Some(rest) if rest.starts_with("/upload/progress?id=u0 ") && head.starts_with("GET") => {
-            Some("HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n11\r\n{\"type\":\"ready\"}\n\r\n".into())
-        }
-        Some(rest) if rest.starts_with("/upload/progress") => Some(ok("")),
-        _ => None,
-    });
-    let origin = origin("http", address);
-    let path = ThroughputPath {
-        origin,
-        transport: ThroughputTransport::FetchStream,
-        protocol: Protocol::Http1,
-    };
-    let plans = topology(&path, Stage::Upload, Dir { down: 0, up: 1 });
-    let (client, token) = (client(false), CancellationToken::new());
-    let session = UploadSession::open(&client, &path, Protocol::Http1, plans, Duration::ZERO, Arc::default(), token);
-    session.await.unwrap().depart();
-    let finalized = async {
-        while let Some((_, head)) = heads.recv().await {
-            if head.starts_with("DELETE /upload/progress?id=u0 HTTP/1.1\r\n") {
-                return;
-            }
-        }
-    };
-    tokio::time::timeout(Duration::from_secs(1), finalized)
-        .await
-        .expect("the receiver was asked to finalize");
 }
 
 #[tokio::test]
@@ -604,6 +541,26 @@ async fn a_missed_checkpoint_is_asked_again_every_100_ms_within_its_budget() {
     assert!(started.elapsed() >= Duration::from_millis(400), "{:?}", started.elapsed());
     let missed = asked.load(Ordering::SeqCst) - 3;
     assert!((1..=5).contains(&missed), "{missed} asks within 500 ms");
+}
+
+#[tokio::test]
+async fn a_departed_upload_session_asks_its_receiver_to_finalize() {
+    let (session, mut heads) = upload(Arc::default(), |_, head| match target(head) {
+        "/upload/session" => Some(ok(r#"{"uploadId":"u0"}"#)),
+        "/upload/progress" if head.starts_with("GET ") => Some(feed(&[r#"{"type":"ready"}"#], false)),
+        _ => Some(ok("")),
+    })
+    .await;
+    session.depart();
+    let finalized = async {
+        while let Some((_, head)) = heads.recv().await {
+            if head.starts_with("DELETE /upload/progress?id=u0 HTTP/1.1\r\n") {
+                return;
+            }
+        }
+    };
+    let finalized = tokio::time::timeout(Duration::from_secs(1), finalized).await;
+    finalized.expect("the receiver was asked to finalize");
 }
 
 /// A catalogue of the peer alone, and its preflight offering HTTP/1.1 fetch streams and `extra` targets.

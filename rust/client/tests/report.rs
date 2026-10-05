@@ -2,15 +2,12 @@
 use graphite_meter_client::{
     events::{Event, View},
     measure::{
-        aggregate::{Rate, Reading},
+        aggregate::{Aggregate, Boundary, Rate, Reading},
         latency::{Population, Summary, Timing},
     },
-    model::{Dir, Failure, LaneHealth, Outcome, Scope, ServerFailure, ServerResult, Stage, StageResult, Throughput},
+    model::{Dir, Failure, Outcome, Scope, ServerFailure, ServerResult, Stage, StageResult, Throughput},
     report::{WIDTH, details, progress, report, unreported},
-    run::{
-        engine::{Decision, Engine, Input, Member, Sample, StagePlan},
-        prepare::ServerPath,
-    },
+    run::prepare::ServerPath,
     text::{Line, Profile, write},
     tui::theme::Palette,
 };
@@ -41,21 +38,18 @@ fn latency(median_ms: u64, replies: usize, timeouts: usize) -> Option<Population
 }
 
 fn server(name: &str, left: bool, down: Option<f64>, median_ms: u64) -> ServerResult {
-    let throughput = Dir {
-        down: down.map(|mean| Throughput { rate: Some(Rate { mean, peak: mean * 1.5 }), bytes: 0 }),
-        up: None,
-    };
+    let down = down.map(|mean| Throughput { rate: Some(Rate { mean, peak: mean * 1.5 }), bytes: 0 });
     ServerResult {
         server: id(name),
         left,
-        throughput,
+        throughput: Dir { down, up: None },
         latency: latency(median_ms, 40, 1),
     }
 }
 
-/// A view of a latency and download run over `names`; the second leaves the download at 1.5 s.
-fn view(names: &[&str]) -> View {
-    let (at, mut view) = (Instant::now(), View::default());
+/// The view of a finished run of `plan` over `names`, each a prepared server named `<name> meter`, whose stages
+/// gave `results` from `at`.
+fn viewed(names: &[&str], plan: &[(Stage, Duration)], results: Vec<StageResult>, end: Event, at: Instant) -> View {
     let origin = Origin::parse("https://meter.example").unwrap();
     let unchecked = Failure::new(FailureReason::Timeout, "unchecked");
     let servers = names.iter().map(|name| ServerPath {
@@ -66,60 +60,62 @@ fn view(names: &[&str]) -> View {
         offered: None,
         path: Err(unchecked.clone()),
     });
-    let plan = vec![(Stage::Latency, SECOND * 4), (Stage::Download, SECOND * 10)];
-    let shares = |left: bool, down| {
-        names
-            .iter()
-            .enumerate()
-            .map(move |(at, name)| server(name, left && at == 1, down, 12 + at as u64))
-    };
-    let mut download = StageResult {
-        stage: Stage::Download,
-        measured: SECOND * 10,
-        stopped: false,
-        throughput: Dir {
-            down: Some(Throughput {
-                rate: Some(Rate { mean: 1.25e7, peak: 1.5e7 }),
-                bytes: 125_000_000,
-            }),
-            up: None,
-        },
-        servers: shares(true, Some(1.25e7 / names.len() as f64)).collect(),
-        failures: Vec::new(),
-        intervals: Vec::new(),
-        omitted: 0,
-    };
-    if let [_, second, ..] = names {
-        let failure = Failure::new(FailureReason::Timeout, "download bytes stopped growing for 2s");
-        let at = at + SECOND * 15 / 2;
-        download
-            .failures
-            .push(ServerFailure { server: id(second), scope: Scope::Throughput, failure, at });
-    }
-    let idle = StageResult {
-        stage: Stage::Latency,
-        measured: SECOND * 4,
-        stopped: false,
-        throughput: Dir::default(),
-        servers: shares(false, None).collect(),
-        failures: Vec::new(),
-        intervals: Vec::new(),
-        omitted: 0,
-    };
-    let events = [
+    let mut events = vec![
         Event::Checking { run: true },
         Event::Prepared { servers: servers.collect(), catalogue: Arc::new([]) },
-        Event::RunStarted { plan, focus: id(names[0]), at },
-        Event::StageFinished(idle),
-        Event::StageFinished(download),
-        Event::RunFinished {
-            outcome: Outcome::Complete,
-            error: None,
-            elapsed: Duration::from_millis(17_400),
-        },
+        Event::RunStarted { plan: plan.to_vec(), focus: id(names[0]), at },
     ];
+    events.extend(results.into_iter().map(Event::StageFinished));
+    events.push(end);
+    let mut view = View::default();
     events.iter().for_each(|event| view.apply(event));
     view
+}
+
+fn result(stage: Stage, measured: Duration, down: Option<Throughput>, servers: Vec<ServerResult>) -> StageResult {
+    StageResult {
+        stage,
+        measured,
+        stopped: false,
+        throughput: Dir { down, up: None },
+        servers,
+        failures: Vec::new(),
+        intervals: Vec::new(),
+        omitted: 0,
+    }
+}
+
+/// A latency and download run over `names`; the second leaves the download at 7.5 s.
+fn view(names: &[&str]) -> View {
+    let at = Instant::now();
+    let shares = |left: bool, down| {
+        let named = names.iter().enumerate();
+        named.map(move |(at, name)| server(name, left && at == 1, down, 12 + at as u64))
+    };
+    let headline = Throughput {
+        rate: Some(Rate { mean: 1.25e7, peak: 1.5e7 }),
+        bytes: 125_000_000,
+    };
+    let share = Some(1.25e7 / names.len() as f64);
+    let mut download = result(Stage::Download, SECOND * 10, Some(headline), shares(true, share).collect());
+    if let [_, second, ..] = names {
+        let failure = Failure::new(FailureReason::Timeout, "download bytes stopped growing for 2s");
+        let failed = ServerFailure {
+            server: id(second),
+            scope: Scope::Throughput,
+            failure,
+            at: at + SECOND * 15 / 2,
+        };
+        download.failures.push(failed);
+    }
+    let idle = result(Stage::Latency, SECOND * 4, None, shares(false, None).collect());
+    let plan = [(Stage::Latency, SECOND * 4), (Stage::Download, SECOND * 10)];
+    let end = Event::RunFinished {
+        outcome: Outcome::Complete,
+        error: None,
+        elapsed: Duration::from_millis(17_400),
+    };
+    viewed(names, &plan, vec![idle, download], end, at)
 }
 
 fn printed(lines: &[Line], profile: Profile) -> String {
@@ -165,7 +161,7 @@ fn several_servers_add_each_server_s_share_and_the_issues() {
 }
 
 #[test]
-fn full_details_open_with_each_result_s_facts_and_without_intervals_leave_out_their_heading() {
+fn full_details_open_with_each_result_s_facts_and_end_with_the_intervals_a_run_has() {
     let mut view = view(&["a", "b"]);
     let idle = &mut view.run.as_mut().unwrap().results[0].servers[0];
     let idle = idle.latency.as_mut().unwrap();
@@ -194,44 +190,25 @@ Issues
 b meter · Download throughput · at 7.5 s · Stopped delivering data
 ";
     assert_eq!(text, expected);
-}
-
-/// A download stage of server `a` measured by the engine from `base`, one kilobyte per millisecond.
-fn measured_download(base: Instant) -> StageResult {
-    let member = Member { server: id("a"), warmup: Duration::ZERO };
-    let plan = StagePlan {
-        stage: Stage::Download,
-        members: vec![member],
-        duration: SECOND * 2,
-        latency: None,
-    };
-    let (mut engine, mut at) = (Engine::new(plan, base), base);
-    loop {
-        let down = Some(at.duration_since(base).as_millis() as u64 * 1000);
-        let reading = Reading { server: id("a"), down, up: None, fed: None };
-        let lanes = Dir { down: LaneHealth::Ok, up: LaneHealth::Ok };
-        let samples = [Sample { reading, ready: true, missed: None, lanes }];
-        let input = Input {
-            now: at,
-            lateness: Duration::ZERO,
-            samples: &samples,
-            probes: &[],
-            departed: &[],
-        };
-        let tick = engine.tick(input);
-        if tick.decisions.contains(&Decision::Finish) {
-            return engine.result();
-        }
-        at = tick.next;
-    }
-}
-
-#[test]
-fn full_details_end_with_the_aggregation_intervals_of_a_finished_run() {
-    let mut view = view(&["a", "b"]);
     let run = view.run.as_mut().unwrap();
-    let measured = measured_download(run.at.unwrap());
-    run.results[1].intervals = measured.intervals;
+    let (base, a) = (run.at.unwrap(), id("a"));
+    let mut aggregate = Aggregate::new(Stage::Download, vec![a.clone()], base);
+    for ms in [0, 1000, 2000] {
+        let reading = Reading {
+            server: a.clone(),
+            down: Some(ms * 1000),
+            up: None,
+            fed: None,
+        };
+        let at = base + Duration::from_millis(ms);
+        aggregate.observe(Boundary {
+            at,
+            stalled: false,
+            last: ms == 2000,
+            readings: vec![reading],
+        });
+    }
+    run.results[1].intervals = aggregate.intervals().0.iter().cloned().collect();
     let text = printed(&details(&view, WIDTH, &Palette::new(true), true), Profile::Plain);
     let intervals = "\n\nAggregation intervals\nDownload 0.0–2.0 s · a meter · measured window\n";
     assert!(text.ends_with(intervals), "{text}");
@@ -279,41 +256,21 @@ fn a_run_that_never_started_reports_why_and_progress_names_each_stage() {
     assert_eq!(progress(&Event::Measuring(Stage::Bidirectional)).as_deref(), Some("Bidirectional…"));
 }
 
-/// A finished download run over the server `a`, which `result` describes; its stage over `failures`.
+/// The report of a finished download run over the server `a`, which `result` describes.
 fn sole(mut result: StageResult, outcome: Outcome, error: Option<Failure>) -> String {
-    let (at, mut view) = (Instant::now(), View::default());
-    let server = ServerPath {
-        id: id("a"),
-        name: "a meter".into(),
-        location: String::new(),
-        origin: Origin::parse("https://meter.example").unwrap(),
-        offered: None,
-        path: Err(Failure::new(FailureReason::Timeout, "unchecked")),
-    };
+    let at = Instant::now();
     for failure in &mut result.failures {
         failure.at = at + SECOND * 5;
     }
-    let events = [
-        Event::Checking { run: true },
-        Event::Prepared { servers: Arc::new([server]), catalogue: Arc::new([]) },
-        Event::RunStarted {
-            plan: vec![(Stage::Download, SECOND * 10)],
-            focus: id("a"),
-            at,
-        },
-        Event::StageFinished(result),
-        Event::RunFinished { outcome, error, elapsed: SECOND * 12 },
-    ];
-    events.iter().for_each(|event| view.apply(event));
+    let end = Event::RunFinished { outcome, error, elapsed: SECOND * 12 };
+    let view = viewed(&["a"], &[(Stage::Download, SECOND * 10)], vec![result], end, at);
     printed(&report(&view, WIDTH, &Palette::new(true)), Profile::Plain)
 }
 
 /// The download stage over `a`: measured for `measured` at 100 Mbit/s when `rate`, `a` leaving with `failure`.
 fn download(measured: Duration, rate: bool, failure: Option<(Scope, FailureReason)>) -> StageResult {
-    let throughput = (!measured.is_zero()).then(|| Throughput {
-        rate: rate.then_some(Rate { mean: 1.25e7, peak: 1.5e7 }),
-        bytes: 125_000_000,
-    });
+    let rate = rate.then_some(Rate { mean: 1.25e7, peak: 1.5e7 });
+    let throughput = (!measured.is_zero()).then_some(Throughput { rate, bytes: 125_000_000 });
     let failures = failure.map(|(scope, reason)| ServerFailure {
         server: id("a"),
         scope,
@@ -322,22 +279,16 @@ fn download(measured: Duration, rate: bool, failure: Option<(Scope, FailureReaso
     });
     let left = failures
         .as_ref()
-        .is_some_and(|failure| failure.failure.reason != FailureReason::InsufficientEvidence);
-    StageResult {
-        stage: Stage::Download,
-        measured,
-        stopped: false,
+        .is_some_and(|failed| failed.failure.reason != FailureReason::InsufficientEvidence);
+    let own = ServerResult {
+        server: id("a"),
+        left,
         throughput: Dir { down: throughput, up: None },
-        servers: vec![ServerResult {
-            server: id("a"),
-            left,
-            throughput: Dir { down: throughput, up: None },
-            latency: latency(12, 40, 1),
-        }],
-        failures: failures.into_iter().collect(),
-        intervals: Vec::new(),
-        omitted: 0,
-    }
+        latency: latency(12, 40, 1),
+    };
+    let mut result = result(Stage::Download, measured, throughput, vec![own]);
+    result.failures.extend(failures);
+    result
 }
 
 #[test]

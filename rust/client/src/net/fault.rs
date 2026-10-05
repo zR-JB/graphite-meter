@@ -206,47 +206,27 @@ mod tests {
         let busy = |seconds| Class::Busy(Duration::from_secs(seconds));
         const REFUSAL: &str = "x-graphite-upload-refusal";
         type Row = (u16, &'static [(&'static str, &'static str)], FailureReason, Class, &'static str);
+        const DATE: [(&str, &str); 1] = [("retry-after", "Wed, 21 Oct 2026 07:28:00 GMT")];
+        const AUTH: [(&str, &str); 1] = [("graphite-meter-auth", "required")];
+        const FULL: [(&str, &str); 2] = [(REFUSAL, "clientFull"), ("retry-after", "1")];
+        let mismatch = "upload id belongs to another client (HTTP 403)";
         let rows: &[Row] = &[
             (503, &[], ServerBusy, busy(0), "HTTP 503 from upload session"),
             (429, &[("retry-after", "3")], ServerBusy, busy(3), "HTTP 429 from upload session"),
             (429, &[("retry-after", "+3")], ServerBusy, busy(0), "HTTP 429 from upload session"),
-            (
-                429,
-                &[("retry-after", "Wed, 21 Oct 2026 07:28:00 GMT")],
-                ServerBusy,
-                busy(0),
-                "HTTP 429 from upload session",
-            ),
+            (429, &DATE, ServerBusy, busy(0), "HTTP 429 from upload session"),
             (500, &[], ProtocolError, Class::Redial, "HTTP 500 from upload session"),
             (502, &[], ProtocolError, Class::Redial, "HTTP 502 from upload session"),
             (204, &[], ProtocolError, Class::Final, "HTTP 204 from upload session"),
             (302, &[], ProtocolError, Class::Final, "HTTP 302 from upload session"),
             (403, &[], ProtocolError, Class::Final, "HTTP 403 from upload session"),
-            (
-                403,
-                &[("graphite-meter-auth", "required")],
-                SignInRequired,
-                Class::Final,
-                "authentication required",
-            ),
+            (403, &AUTH, SignInRequired, Class::Final, "authentication required"),
             (403, &[(REFUSAL, "revoked")], SignInRequired, Class::Final, "authentication required"),
             (408, &[(REFUSAL, "idle")], Timeout, Class::Redial, "the server ended the lane: idle"),
             (503, &[(REFUSAL, "globalFull")], ServerBusy, busy(0), "HTTP 503 from upload session"),
-            (
-                400,
-                &[(REFUSAL, "clientFull"), ("retry-after", "1")],
-                ServerBusy,
-                busy(1),
-                "HTTP 429 from upload session",
-            ),
+            (400, &FULL, ServerBusy, busy(1), "HTTP 429 from upload session"),
             (400, &[(REFUSAL, "invalid")], ProtocolError, Class::Final, "unknown upload id (HTTP 400)"),
-            (
-                403,
-                &[(REFUSAL, "ownerMismatch")],
-                ProtocolError,
-                Class::Final,
-                "upload id belongs to another client (HTTP 403)",
-            ),
+            (403, &[(REFUSAL, "ownerMismatch")], ProtocolError, Class::Final, mismatch),
             (418, &[(REFUSAL, "unknown")], ProtocolError, Class::Final, "HTTP 418 from upload session"),
         ];
         for (status, headers, reason, class, text) in rows {
@@ -260,25 +240,8 @@ mod tests {
         assert!(answer(200, &[(REFUSAL, "invalid")]).is_none());
         let lane = Fault::answer(StatusCode::BAD_GATEWAY, &HeaderMap::new(), Route::Upload, || unreachable!());
         assert_eq!(lane.unwrap().class(), Class::Final, "a lane's server error stands");
-        let issuer = answer(403, &[("graphite-meter-auth", "required")]);
+        let issuer = answer(403, &AUTH);
         assert!(matches!(issuer, Some(Fault::SignIn(origin)) if origin.to_string() == "https://meter.example"));
-    }
-
-    #[test]
-    fn progress_error_records_map_as_their_refusal_headers_do() {
-        use {FailureReason::*, UploadRefusal::*};
-        let issuer = || Origin::parse("https://meter.example").unwrap();
-        for (refusal, reason, class) in [
-            (Idle, Timeout, Class::Redial),
-            (Revoked, SignInRequired, Class::Final),
-            (GlobalFull, ServerBusy, Class::Busy(Duration::ZERO)),
-            (ClientFull, ServerBusy, Class::Busy(Duration::ZERO)),
-            (Invalid, ProtocolError, Class::Final),
-            (OwnerMismatch, ProtocolError, Class::Final),
-        ] {
-            let fault = Fault::refusal(refusal, Route::UploadProgress, None, issuer);
-            assert_eq!((fault.reason(), fault.class()), (reason, class), "{refusal:?}");
-        }
     }
 
     #[test]

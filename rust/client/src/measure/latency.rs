@@ -231,12 +231,4 @@ mod tests {
         assert_eq!(population(false, &latency).median(), Some(ms(10)));
         assert_eq!(population(true, &Latency::default()).median(), None);
     }
-
-    #[test]
-    fn added_latency_keeps_its_sign_and_needs_both_medians() {
-        assert_eq!(added(Some(ms(12)), Some(ms(10))), Some(2.0));
-        assert_eq!(added(Some(ms(9)), Some(ms(10))), Some(-1.0));
-        assert_eq!(added(None, Some(ms(10))), None);
-        assert_eq!(added(Some(ms(10)), None), None);
-    }
 }

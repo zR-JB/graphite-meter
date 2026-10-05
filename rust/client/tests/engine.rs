@@ -102,14 +102,10 @@ impl Script {
     }
 
     fn tick(&mut self, at: Duration, lateness: Duration, samples: &[Sample], probes: &[(ServerId, Probe)]) {
-        let departed = std::mem::take(&mut self.departed);
-        let tick = self.engine.tick(Input {
-            now: self.base + at,
-            lateness,
-            samples,
-            probes,
-            departed: &departed,
-        });
+        let (now, departed) = (self.base + at, std::mem::take(&mut self.departed));
+        let tick = self
+            .engine
+            .tick(Input { now, lateness, samples, probes, departed: &departed });
         self.next = tick.next - self.base;
         self.log
             .extend(tick.decisions.into_iter().map(|decision| (at, decision)));
@@ -121,11 +117,16 @@ impl Script {
         }
     }
 
+    /// A tick on time.
+    fn step(&mut self, at: Duration, samples: &[Sample], probes: &[(ServerId, Probe)]) {
+        self.tick(at, Duration::ZERO, samples, probes);
+    }
+
     /// Ticks when the engine asks, through `until` or its finish.
     fn run_until(&mut self, until: Duration, samples: impl Fn(Duration) -> Vec<Sample>) {
         while !self.finished() && self.next <= until {
             let at = self.next;
-            self.tick(at, Duration::ZERO, &samples(at), &[]);
+            self.step(at, &samples(at), &[]);
         }
     }
 
@@ -139,10 +140,8 @@ impl Script {
     }
 
     fn at(&self, wanted: &Decision) -> Option<Duration> {
-        self.log
-            .iter()
-            .find(|(_, decision)| decision == wanted)
-            .map(|(at, _)| *at)
+        let found = self.log.iter().find(|(_, decision)| decision == wanted);
+        found.map(|(at, _)| *at)
     }
 
     /// When the window opened and when it closes.
@@ -172,7 +171,7 @@ impl Script {
 }
 
 #[test]
-fn a_quiet_link_never_ends_a_stage() {
+fn a_quiet_link_or_shared_silence_removes_nobody_and_shows_recovering() {
     let mut script = Script::new(plan(Stage::Download, &["a"], false));
     script.run(|at| {
         let bytes = if at < ms(6000) { moved(at, ms(1000)) } else { moved(at, STAGE) - 5_000_000 };
@@ -187,6 +186,13 @@ fn a_quiet_link_never_ends_a_stage() {
     let result = script.engine.result();
     assert_eq!(result.measured, STAGE);
     assert!(result.throughput.down.unwrap().rate.is_some());
+
+    let mut script = Script::new(plan(Stage::Download, &["a", "b"], false));
+    let bytes = |at: Duration| if at < ms(5000) { moved(at, ms(2000)) } else { moved(at, STAGE) - 3_000_000 };
+    script.run(|at| vec![down("a", bytes(at)), down("b", bytes(at))]);
+    assert!(script.removed().is_empty());
+    assert_eq!(script.recovering, [ms(4000), ms(4250), ms(4500), ms(4750), ms(5000)]);
+    assert_eq!(script.at(&Decision::Finish), Some(STAGE));
 }
 
 #[test]
@@ -200,7 +206,7 @@ fn a_final_boundary_just_after_a_tick_stays_off_the_live_rates_and_counts_in_the
         let mut script = Script::new(plan(stage, &["a"], false));
         script.run_until(STAGE - ms(250), |at| vec![reading(at, moved(at, STAGE))]);
         let before = STAGE - Duration::from_micros(50);
-        script.tick(before, Duration::ZERO, &[reading(before, moved(before, STAGE))], &[]);
+        script.step(before, &[reading(before, moved(before, STAGE))], &[]);
         script.run(|at| vec![reading(at, moved(at, STAGE) + BURST)]);
         assert_eq!(script.at(&Decision::Finish), Some(STAGE));
         assert_eq!(script.live.last(), Some(&before), "{stage:?}");
@@ -228,16 +234,6 @@ fn a_server_silent_while_another_grows_leaves_where_it_last_moved() {
     assert_eq!(result.intervals[0].end - script.base, ms(3000));
     assert!(result.servers[1].left);
     assert_eq!(result.failures[0].scope, Scope::Throughput);
-}
-
-#[test]
-fn shared_silence_removes_nobody_and_shows_recovering() {
-    let mut script = Script::new(plan(Stage::Download, &["a", "b"], false));
-    let bytes = |at: Duration| if at < ms(5000) { moved(at, ms(2000)) } else { moved(at, STAGE) - 3_000_000 };
-    script.run(|at| vec![down("a", bytes(at)), down("b", bytes(at))]);
-    assert!(script.removed().is_empty());
-    assert_eq!(script.recovering, [ms(4000), ms(4250), ms(4500), ms(4750), ms(5000)]);
-    assert_eq!(script.at(&Decision::Finish), Some(STAGE));
 }
 
 #[test]
@@ -358,7 +354,7 @@ fn a_late_final_boundary_keeps_the_headline() {
 fn probers_drain_after_the_window_for_at_most_ten_seconds() {
     let mut script = Script::new(plan(Stage::Latency, &["a"], true));
     let up = [(id("a"), Probe::Up)];
-    script.tick(Duration::ZERO, Duration::ZERO, &[], &up);
+    script.step(Duration::ZERO, &[], &up);
     script.run(|_| Vec::new());
     assert_eq!(script.window(), Some((Duration::ZERO, STAGE)));
     assert_eq!(script.at(&Decision::CloseWindow), Some(STAGE));
@@ -400,14 +396,14 @@ fn readiness_past_ten_seconds_removes_the_unready() {
 #[test]
 fn probes_count_from_the_window_start_including_the_opening_tick() {
     let mut script = Script::new(plan(Stage::Upload, &["a"], true));
-    script.tick(Duration::ZERO, Duration::ZERO, &[Sample { ready: false, ..sample("a") }], &[]);
-    script.tick(ms(250), Duration::ZERO, &[up("a", 0, ms(250))], &[(id("a"), Probe::Up)]);
+    script.step(Duration::ZERO, &[Sample { ready: false, ..sample("a") }], &[]);
+    script.step(ms(250), &[up("a", 0, ms(250))], &[(id("a"), Probe::Up)]);
     assert_eq!(script.next, ms(250));
     let reply = |sent| {
         let outcome = ProbeOutcome::Reply { rtt: ms(20), handling: Duration::ZERO };
         (id("a"), Probe::Outcome { sent: script.base + sent, outcome })
     };
-    script.tick(ms(250), Duration::ZERO, &[up("a", 0, ms(250))], &[reply(ms(100)), reply(ms(300))]);
+    script.step(ms(250), &[up("a", 0, ms(250))], &[reply(ms(100)), reply(ms(300))]);
     assert_eq!(script.window(), Some((ms(250), ms(250) + STAGE)));
     script.run(|at| vec![up("a", moved(at, STAGE * 2), at)]);
     let population = script.engine.result().servers[0].latency.unwrap();
@@ -426,44 +422,28 @@ fn a_lost_latency_channel_leaves_only_in_the_latency_stage() {
     };
     let mut script = Script::new(plan(Stage::Latency, &["a", "b"], true));
     let (a, b, base) = (id("a"), id("b"), script.base);
-    script.tick(Duration::ZERO, Duration::ZERO, &[], &[(a.clone(), Probe::Up), (b.clone(), Probe::Up)]);
-    script.tick(
-        ms(1000),
-        Duration::ZERO,
-        &[],
-        &[(a.clone(), reply(base, ms(900))), (b.clone(), lost(base + ms(1000)))],
-    );
+    script.step(Duration::ZERO, &[], &[(a.clone(), Probe::Up), (b.clone(), Probe::Up)]);
+    script.step(ms(1000), &[], &[(a.clone(), reply(base, ms(900))), (b.clone(), lost(base + ms(1000)))]);
     assert_eq!(script.removed(), [(ms(1000), "b", FailureReason::ConnectionLost)]);
-    script.tick(STAGE, Duration::ZERO, &[], &[(a.clone(), reply(base, ms(9990)))]);
+    script.step(STAGE, &[], &[(a.clone(), reply(base, ms(9990)))]);
     assert!(!script.finished());
-    script.tick(
-        STAGE + ms(250),
-        Duration::ZERO,
-        &[],
-        &[(a.clone(), reply(base, STAGE)), (a.clone(), Probe::Drained)],
-    );
+    script.step(STAGE + ms(250), &[], &[(a.clone(), reply(base, STAGE)), (a, Probe::Drained)]);
     assert!(script.finished());
     let population = script.engine.result().servers[0].latency.unwrap();
     assert_eq!((population.summary.replies, population.complete), (2, true));
 
     let mut script = Script::new(plan(Stage::Download, &["a", "b"], true));
     let ups = [(id("a"), Probe::Up), (id("b"), Probe::Up)];
-    script.tick(Duration::ZERO, Duration::ZERO, &[down("a", 0), down("b", 0)], &ups);
+    script.step(Duration::ZERO, &[down("a", 0), down("b", 0)], &ups);
     let probes = [(id("b"), lost(script.base + ms(1000)))];
-    script.tick(ms(1000), Duration::ZERO, &[down("a", 1_000_000), down("b", 1_000_000)], &probes);
+    script.step(ms(1000), &[down("a", 1_000_000), down("b", 1_000_000)], &probes);
     let samples = [down("a", 10_000_000), down("b", 10_000_000)];
-    script.tick(STAGE - ms(250), Duration::ZERO, &samples, &[]);
-    script.tick(STAGE, Duration::ZERO, &samples, &[(id("a"), Probe::Drained)]);
+    script.step(STAGE - ms(250), &samples, &[]);
+    script.step(STAGE, &samples, &[(id("a"), Probe::Drained)]);
     assert!(script.finished() && script.removed().is_empty());
     assert_eq!(script.failed(), [(ms(1000), "b", Scope::Latency, FailureReason::ConnectionLost)]);
-    assert!(
-        script.engine.result().servers[1]
-            .throughput
-            .down
-            .unwrap()
-            .rate
-            .is_some()
-    );
+    let b = script.engine.result().servers[1].throughput.down.unwrap();
+    assert!(b.rate.is_some(), "its throughput still counts");
 }
 
 #[test]
@@ -471,7 +451,7 @@ fn latency_failures_are_announced_as_they_happen_and_only_once() {
     let mut script = Script::new(plan(Stage::Download, &["a", "b"], true));
     let samples = |at: Duration| vec![down("a", moved(at, STAGE * 2)), down("b", moved(at, STAGE * 2))];
     let up = [(id("a"), Probe::Up)];
-    script.tick(Duration::ZERO, Duration::ZERO, &samples(Duration::ZERO), &up);
+    script.step(Duration::ZERO, &samples(Duration::ZERO), &up);
     script.run_until(STAGE, samples);
     assert_eq!(script.failed(), [(STAGE, "b", Scope::Latency, FailureReason::Timeout)]);
     assert_eq!(script.window().map(|(start, _)| start), Some(STAGE));
@@ -479,13 +459,13 @@ fn latency_failures_are_announced_as_they_happen_and_only_once() {
 
     let mut script = Script::new(plan(Stage::Latency, &["a", "b"], true));
     let ups = [(id("a"), Probe::Up), (id("b"), Probe::Up)];
-    script.tick(Duration::ZERO, Duration::ZERO, &[], &ups);
+    script.step(Duration::ZERO, &[], &ups);
     let down = |reason| Probe::Down {
         at: script.base + ms(1000),
         failure: Failure::new(reason, "down"),
     };
     let downs = [(id("b"), down(FailureReason::ServerBusy)), (id("b"), down(FailureReason::ConnectionLost))];
-    script.tick(ms(1000), Duration::ZERO, &[], &downs);
+    script.step(ms(1000), &[], &downs);
     assert_eq!(script.failed(), [(ms(1000), "b", Scope::Latency, FailureReason::ServerBusy)]);
     assert!(script.removed().is_empty());
 }
@@ -507,7 +487,7 @@ fn a_member_whose_participant_cannot_open_leaves() {
 fn a_stop_mid_window_keeps_what_was_measured() {
     let mut script = Script::new(plan(Stage::Download, &["a"], true));
     let up = [(id("a"), Probe::Up)];
-    script.tick(Duration::ZERO, Duration::ZERO, &[down("a", 0)], &up);
+    script.step(Duration::ZERO, &[down("a", 0)], &up);
     script.run_until(ms(4000), |at| vec![down("a", moved(at, STAGE))]);
     script.engine.stop(script.base + ms(4100));
     let result = script.engine.result();
@@ -515,7 +495,7 @@ fn a_stop_mid_window_keeps_what_was_measured() {
     assert!(result.failures.is_empty() && result.throughput.down.unwrap().rate.is_some());
     assert!(!result.servers[0].latency.unwrap().complete);
     let decisions = script.log.len();
-    script.tick(ms(4250), Duration::ZERO, &[down("a", 4_250_000)], &[]);
+    script.step(ms(4250), &[down("a", 4_250_000)], &[]);
     assert_eq!(script.log.len(), decisions);
 }
 
@@ -531,10 +511,10 @@ fn run(servers: &[(&str, usize, Duration)]) -> Vec<StageResult> {
             probes.push((id(name), Probe::Outcome { sent: base + ms(100 * reply as u64 + 1), outcome }));
         }
     }
-    latency.tick(Duration::ZERO, Duration::ZERO, &[], &probes[..names.len()]);
-    latency.tick(ms(5000), Duration::ZERO, &[], &probes[names.len()..]);
+    latency.step(Duration::ZERO, &[], &probes[..names.len()]);
+    latency.step(ms(5000), &[], &probes[names.len()..]);
     let drained: Vec<_> = names.iter().map(|name| (id(name), Probe::Drained)).collect();
-    latency.tick(STAGE, Duration::ZERO, &[], &drained);
+    latency.step(STAGE, &[], &drained);
     let mut download = Script::new(plan(Stage::Download, &names, false));
     download.run(|at| {
         servers
@@ -579,17 +559,9 @@ fn outcomes_follow_stage_results() {
     let stopped = stopped.result();
     assert_eq!((stopped.throughput.down, stopped.status(None)), (None, StageStatus::Stopped));
     assert_eq!(Outcome::of(&[stopped], &[Stage::Download]), Outcome::Stopped);
-}
-
-#[test]
-fn the_latency_focus_moves_to_a_survivor_that_measured_latency() {
-    let plan = [Stage::Latency, Stage::Download];
-    let results = run(&[("a", 5, ms(3000)), ("b", 5, STAGE)]);
-    assert_eq!(focus(&results), Some(id("b")));
-    assert_eq!(Outcome::of(&results, &plan), Outcome::Partial);
+    // Once the first server left, the latency focus is a survivor that measured latency, if any.
     let results = run(&[("a", 5, ms(3000)), ("b", 0, STAGE)]);
-    assert_eq!(focus(&results), None);
-    assert_eq!(Outcome::of(&results, &plan), Outcome::Incomplete);
+    assert_eq!((focus(&results), Outcome::of(&results, &plan)), (None, Outcome::Incomplete));
 }
 
 #[test]
@@ -602,24 +574,24 @@ fn a_stage_without_evidence_records_insufficient_evidence() {
         .collect();
     assert_eq!(reasons, [(Scope::Latency, FailureReason::InsufficientEvidence)]);
     let mut script = Script::new(plan(Stage::Latency, &["a"], true));
-    script.tick(Duration::ZERO, Duration::ZERO, &[], &[(id("a"), Probe::Up)]);
+    script.step(Duration::ZERO, &[], &[(id("a"), Probe::Up)]);
     script.run(|_| Vec::new());
     let insufficient = (STAGE + ms(10_000), "a", Scope::Latency, FailureReason::InsufficientEvidence);
     assert_eq!(script.failed(), [insufficient]);
     let mut script = Script::new(plan(Stage::Download, &["a"], false));
     script.run(|_| vec![down("a", 0)]);
-    let reasons: Vec<_> = script
-        .engine
-        .result()
-        .failures
-        .iter()
-        .map(|failure| failure.failure.reason)
-        .collect();
-    assert_eq!(reasons, [FailureReason::Timeout]);
+    let failures = script.engine.result().failures;
+    assert_eq!(
+        failures
+            .iter()
+            .map(|failure| failure.failure.reason)
+            .collect::<Vec<_>>(),
+        [FailureReason::Timeout]
+    );
 }
 
 #[test]
-fn warmup_follows_the_slowest_member_still_present_after_readiness() {
+fn warmup_follows_the_slowest_member_still_present_after_readiness_and_its_round_trips() {
     let mut plan = plan(Stage::Download, &["a", "b"], false);
     (plan.members[0].warmup, plan.members[1].warmup) = (ms(800), ms(3000));
     let mut script = Script::new(plan.clone());
@@ -628,10 +600,7 @@ fn warmup_follows_the_slowest_member_still_present_after_readiness() {
     let mut script = Script::new(plan);
     script.run(|at| vec![down("a", moved(at, STAGE * 3)), Sample { ready: false, ..down("b", 0) }]);
     assert_eq!(script.window().map(|(start, _)| start), Some(STAGE + ms(800)));
-}
-
-#[test]
-fn warmup_stretches_to_ten_idle_round_trips_within_four_seconds() {
+    // A member's warmup is ten of its idle round trips within 4 s, which also space its lane starts.
     assert_eq!(warmup(ms(800), ms(120)), ms(1200));
     assert_eq!(warmup(ms(800), ms(20)), ms(800));
     assert_eq!(warmup(ms(800), ms(900)), ms(4000));
