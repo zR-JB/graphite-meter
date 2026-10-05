@@ -291,3 +291,43 @@ async fn approvals_are_bounded_per_login_and_before_sign_in_and_pages_budgeted_p
     let throttled = send_from(&app, Endpoint::H1Tls, "203.0.113.1", empty(request)).await;
     assert_eq!(throttled.status(), StatusCode::FORBIDDEN, "ten approval pages a minute");
 }
+
+#[tokio::test]
+async fn approvals_are_bounded_at_eight_per_client_and_256_in_total() {
+    let app = auth_app(&[]);
+    let browser = |index: usize| {
+        let approval = challenge(&format!("browser {index}"));
+        let path = format!("/auth/browser?challenge={approval}&client_origin=https%3A%2F%2Fapp.example");
+        empty(public("GET", &path))
+    };
+    for index in 0..8 {
+        let opened = send_from(&app, Endpoint::H1Tls, "198.51.100.1", browser(index)).await;
+        assert_eq!(opened.status(), StatusCode::SEE_OTHER, "{index}");
+    }
+    let ninth = send_from(&app, Endpoint::H1Tls, "198.51.100.1", browser(8)).await;
+    assert_eq!(ninth.status(), StatusCode::FORBIDDEN, "eight per client");
+    for index in 8..128 {
+        let peer = format!("198.51.100.{}", index / 8 + 1);
+        let opened = send_from(&app, Endpoint::H1Tls, &peer, browser(index)).await;
+        assert_eq!(opened.status(), StatusCode::SEE_OTHER, "{index}");
+    }
+    // Sixteen logins on addresses of their own open eight terminal approvals each.
+    let open = async |opener: usize, approvals: usize| {
+        let login = login(&app, &format!("opener {opener}"));
+        let mut statuses = Vec::new();
+        for index in 0..approvals {
+            let path = format!("/auth/cli?challenge={}", challenge(&format!("terminal {opener} {index}")));
+            let peer = format!("203.0.113.{opener}");
+            statuses.push(
+                send_from(&app, Endpoint::H1Tls, &peer, empty(signed("GET", &path, &login)))
+                    .await
+                    .status(),
+            );
+        }
+        statuses
+    };
+    for opener in 0..16 {
+        assert_eq!(open(opener, 8).await, [StatusCode::OK; 8], "{opener}");
+    }
+    assert_eq!(open(16, 1).await, [StatusCode::FORBIDDEN], "the 257th approval");
+}
