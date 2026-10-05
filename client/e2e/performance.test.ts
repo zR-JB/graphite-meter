@@ -21,6 +21,9 @@ async function churnSurfaces(cycles: number) {
   };
   const click = async (selector: string) => {
     const button = document.querySelector<HTMLButtonElement>(selector);
+    // A close that steps back through history lands in a later task; a control under the closing modal waits.
+    for (let wait = 0; button?.closest("[inert]") && wait < 30; wait++)
+      await frames();
     if (!button || button.disabled || !button.checkVisibility())
       throw new Error(`Unavailable stress control: ${selector}`);
     button.click();
@@ -35,12 +38,13 @@ async function churnSurfaces(cycles: number) {
       await click(`.topbar [data-more="${overflow}"]`);
     }
   };
-  const assertClosed = () => {
-    if (
-      document.querySelector("dialog[open], :popover-open:not(.tooltip)") ||
-      document.querySelector(".scrim.open")
-    )
-      throw new Error(`Surface stuck open at ${location.hash}`);
+  const assertClosed = async () => {
+    const open = () =>
+      document.querySelector(
+        "dialog[open], :popover-open:not(.tooltip), .scrim.open",
+      );
+    for (let wait = 0; open() && wait < 30; wait++) await frames();
+    if (open()) throw new Error(`Surface stuck open at ${location.hash}`);
   };
   for (let i = 0; i < cycles; i++) {
     for (let reversal = 0; reversal < 2; reversal++) {
@@ -57,7 +61,7 @@ async function churnSurfaces(cycles: number) {
         await click('dialog[role="alertdialog"][open] .confirm-actions button');
       }
       await click('button[aria-label="Close Settings"]');
-      assertClosed();
+      await assertClosed();
     }
     for (let reversal = 0; reversal < 2; reversal++) {
       await topbar("Details", "endpoint");
@@ -66,7 +70,7 @@ async function churnSurfaces(cycles: number) {
         throw new Error("Legal dialog did not open modally");
       await click('button[aria-label="Close About & legal"]');
       await click('button[aria-label="Close Details"]');
-      assertClosed();
+      await assertClosed();
     }
     await topbar("History", "history");
     // Its first visit loads a chunk; later visits deliberately do not settle.
@@ -94,7 +98,7 @@ async function churnSurfaces(cycles: number) {
       await click('button[aria-label="History actions"]');
     }
     await click('button[aria-label="Close History"]');
-    assertClosed();
+    await assertClosed();
   }
 }
 

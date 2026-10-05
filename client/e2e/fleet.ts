@@ -96,6 +96,8 @@ export async function closeSettings(page: Page) {
   await expect
     .poll(() => panel.all((els) => els.every((el) => el.inert)))
     .toBe(true);
+  // The stage slides back with the column; a pointer aimed mid-slide misses its control.
+  await page.evaluate(settled);
 }
 
 export async function ready(page: Page) {
