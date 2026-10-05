@@ -25,8 +25,8 @@ from pathlib import Path
 
 import verify_oci
 from github_api import (
-    TLS_NAME, ControlPlaneError, confined_path, decode_json, expect_array, expect_object, fail, file_sha256,
-    int_field, object_field, runner_path, str_field,
+    TLS_NAME, ControlPlaneError, JsonObject, confined_path, decode_json, expect_array, expect_object, fail,
+    file_sha256, int_field, object_field, runner_path, str_field,
 )
 from rust_workspace import ROOT, load, offer_name, tui_archive
 from trust import SEMVER_NUMBER, env, env_sha, exact_files
@@ -124,7 +124,8 @@ def check_source_txt(content: str, where: str, version: str, offer: str, target:
 def verify_offer(path: Path, package: str, target: str, profile: str, root: Path = ROOT) -> str:
     """Check a source offer and return its notices. Under its own directory, as Go's, it holds the reviewed notices
     and inventory of a `profile` build of `package` for `target` against this checkout's Cargo.lock, the source of
-    each inventoried crate, the server's browser packages, and otherwise only files equal to this checkout's."""
+    each inventoried crate and, for the server, of each inventoried browser package, and otherwise only files equal
+    to this checkout's."""
     top = path.name.removesuffix(".tar.gz")
     names = archive_names(path)
     if outside := sorted(name for name in names if name != top and not name.startswith(top + "/")):
@@ -135,12 +136,18 @@ def verify_offer(path: Path, package: str, target: str, profile: str, root: Path
     if int_field(inventory, "schemaVersion", path.name) != 1 or any(
             inventory.get(key) != value for key, value in identity.items()):
         fail(f"{path.name} does not inventory a {profile} build of {package} for {target} from this Cargo.lock")
-    crates = set()
-    for item in expect_array(inventory.get("components"), f"{path.name} components"):
-        component = object_field(expect_object(item, path.name), "component", path.name)
-        crates.add(f"{top}/third_party/cargo/{str_field(component, 'name', path.name)}-"
-                   f"{str_field(component, 'version', path.name)}/")
-    upstream = tuple(crates) + ((f"{top}/third_party/npm/",) if package == SERVER else ())
+
+    def tree(ecosystem: str, component: JsonObject) -> str:
+        return (f"{top}/third_party/{ecosystem}/{str_field(component, 'name', path.name)}-"
+                f"{str_field(component, 'version', path.name)}/")
+
+    trees = {tree("cargo", object_field(expect_object(item, path.name), "component", path.name))
+             for item in expect_array(inventory.get("components"), f"{path.name} components")}
+    browser = {tree("npm", expect_object(item, path.name))
+               for item in expect_array(inventory.get("browser"), f"{path.name} browser")}
+    if (package == SERVER) != bool(browser):
+        fail(f"{path.name} must inventory browser packages exactly when it offers the server's source")
+    trees |= browser
     try:
         with tarfile.open(path, "r:gz") as archive:
             files = [entry.name for entry in archive if not entry.isdir()]
@@ -148,14 +155,14 @@ def verify_offer(path: Path, package: str, target: str, profile: str, root: Path
         raise ControlPlaneError(f"cannot read {path.name}: {exc}") from exc
     for name in files:
         relative = name.removeprefix(top + "/")
-        if name.startswith(upstream) or relative in ("inventory.json", "LEGAL.txt"):
+        if name.startswith(tuple(trees)) or relative in ("inventory.json", "LEGAL.txt"):
             continue
         if TLS_NAME.search(relative):
             fail(f"{path.name} holds certificate or key material outside dependency source: {relative}")
         local = confined_path(root / relative, root)
         if not local.is_file() or read(path, name) != local.read_bytes():
             fail(f"{path.name} holds {relative}, which is neither dependency source nor this checkout's file")
-    if missing := sorted(tree for tree in crates if not any(name.startswith(tree) for name in files)):
+    if missing := sorted(tree for tree in trees if not any(name.startswith(tree) for name in files)):
         fail(f"{path.name} lacks the source of {missing[:5]}")
     notices = text(path, f"{top}/LEGAL.txt")
     if not notices.strip() or verify_oci.DEVELOPMENT in notices:

@@ -172,10 +172,12 @@ real Cargo build of it, in three steps:
    compiler, or whose input copies differ. The collector then requires that
    the build compiled only prepared crates with unchanged legal files, linked
    only the record's native inputs, imported only its system libraries,
-   embedded exactly `LEGAL.txt`, and writes `inventory.json`.
+   embedded exactly `LEGAL.txt`, and writes `inventory.json` of the compiled
+   crates and the server's browser packages.
 3. **Source offer.** A reviewed build writes its source offer, named like
    its release archive with `_third-party-source.tar.gz`, with the compiled
-   crates' and browser packages' sources, the inventory, the report, the fork
+   crates' and browser packages' sources (a package without a source
+   directory is refused, as in Go's), the inventory, the report, the fork
    records and the manual material under one directory named like the
    archive, as Go's. It also writes the `SOURCE.txt` that its TUI archive or
    image ships: the release source, the source offer and the Rust target. A

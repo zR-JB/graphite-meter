@@ -15,7 +15,7 @@ from unittest.mock import patch
 from scripts.ci.github_api import ControlPlaneError
 from scripts.legal import rust_platform as platform
 from scripts.legal.check_rust_reviews import manual_problems
-from scripts.legal.model import LegalError, Review, marshal, sha256
+from scripts.legal.model import Component, LegalError, Review, marshal, sha256
 from scripts.legal.model import Project
 from scripts.legal.rust import (DEVELOPMENT, ROOT, Build, Prepared, build_verify, parse, report, source_notice,
                                 source_offer, stage_browser, write_changed)
@@ -227,6 +227,12 @@ class BuildVerifyTests(Scratch):
         self.assertEqual(self.run_build(), self.binary)
         inventory = json.loads((self.out / "inventory.json").read_bytes())
         self.assertEqual([item["component"]["name"] for item in inventory["components"]], ["dependency"])
+        self.assertEqual(inventory["browser"], [])
+        package = Component("package", "1.0.0", "npm", source_path=self.root)
+        self.state.browser = [package, package, Component("IBM Plex Sans", "1.0", "font")]
+        self.run_build()
+        inventory = json.loads((self.out / "inventory.json").read_bytes())
+        self.assertEqual(inventory["browser"], [package.json()])
 
     def test_unprepared_crates_changed_notices_or_other_embedded_notices_are_refused(self) -> None:
         self.state.selected = {"app"}
@@ -267,6 +273,27 @@ class BuildVerifyTests(Scratch):
             f"Dependency source archive: {base}_third-party-source.tar.gz", "Rust target: x86_64-pc-windows-gnu"])
         self.assertEqual((self.out / "SOURCE.txt").read_text(), source_notice(
             Project.read(ROOT), "1.2.3", f"{base}_third-party-source.tar.gz", "x86_64-pc-windows-gnu"))
+
+    def test_a_server_offer_holds_each_browser_package_s_source_and_refuses_one_without(self) -> None:
+        def vendor(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            Path(command[-1]).mkdir(parents=True)
+            return subprocess.CompletedProcess(command, 0)
+
+        self.write("notices/inventory.json", "{}\n")
+        package = Component("@scope/package", "1.0.0", "npm",
+                            source_path=self.write("store/package/index.js", "code\n").parent)
+        self.state.browser = [package, package, Component("IBM Plex Sans", "1.0", "font")]
+        build = Build("graphite-meter-server", "x86_64-unknown-linux-musl", "release", "1.2.3", self.out)
+        with patch("scripts.legal.rust.subprocess.run", vendor):
+            source_offer(build, self.state, [])
+        base = "graphite-meter-server_1.2.3_linux_amd64_rust_third-party-source"
+        with tarfile.open(self.out / f"{base}.tar.gz") as archive:
+            self.assertEqual([name for name in archive.getnames() if "/third_party/" in name],
+                             [f"{base}/third_party/npm/@scope/package-1.0.0/index.js"])
+        self.state.browser = [Component("lost", "1.0.0", "npm")]
+        with patch("scripts.legal.rust.subprocess.run", vendor), \
+                self.assertRaisesRegex(LegalError, "source directory unavailable for npm lost@1.0.0"):
+            source_offer(build, self.state, [])
 
 
 class PlatformTests(Scratch):

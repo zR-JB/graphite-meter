@@ -267,8 +267,14 @@ def build_verify(build: Build, state: Prepared) -> tuple[Path, list[Component]]:
     write_changed(build.out / "inventory.json", marshal({
         "schemaVersion": 1, "package": build.package, "target": state.target, "profile": build.profile,
         "scope": "compiled Cargo inputs, including build scripts and procedural macros",
-        "cargoLockSha256": sha256((rust / "Cargo.lock").read_bytes()), "components": inventory}))
+        "cargoLockSha256": sha256((rust / "Cargo.lock").read_bytes()), "components": inventory,
+        "browser": [component.json() for component in browser_packages(state)]}))
     return executable, actual
+
+
+def browser_packages(state: Prepared) -> list[Component]:
+    """The npm packages of the server's browser build, once each; their source ships in its source offer."""
+    return list({(item.name, item.version): item for item in state.browser if item.ecosystem == "npm"}.values())
 
 
 def source_notice(project: Project, version: str, offer: str, target: str) -> str:
@@ -301,11 +307,11 @@ def source_offer(build: Build, state: Prepared, actual: list[Component]) -> None
             for component in actual:
                 name = f"{component.name}-{component.version}"
                 add_tree(archive, vendor / name, f"{root}/third_party/cargo/{name}", vendor / name)
-            for component in state.browser:
-                if component.source_path is not None:
-                    add_tree(archive, component.source_path,
-                             f"{root}/third_party/{component.ecosystem}/{component.name}-{component.version}",
-                             component.source_path)
+            for component in browser_packages(state):
+                if component.source_path is None:
+                    raise LegalError(f"source directory unavailable for npm {component.name}@{component.version}")
+                add_tree(archive, component.source_path, f"{root}/third_party/npm/{component.name}-{component.version}",
+                         component.source_path)
             for name in ("inventory.json", "LEGAL.txt"):
                 add_bytes(archive, f"{root}/{name}", (build.out / name).read_bytes())
             add_bytes(archive, f"{root}/legal/rust-forks.json", (ROOT / "legal/rust-forks.json").read_bytes())

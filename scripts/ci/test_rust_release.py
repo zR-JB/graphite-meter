@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -15,7 +16,7 @@ from github_api import ControlPlaneError, JsonObject, file_sha256
 from rust_release import (
     image_files, main, native_executable, server_offers, stage, tui_files, verify, verify_offer, verify_tui,
 )
-from rust_workspace import load, offer_name, tui_archive
+from rust_workspace import ROOT, load, offer_name, tui_archive
 from verify_release_assets import TARGETS, tui_archives
 
 REPO, SHA = "zR-JB/graphite-meter", "f" * 40
@@ -117,13 +118,34 @@ class OfferTests(Scratch):
         path = self.root / "offer_third-party-source.tar.gz"
         top = "offer_third-party-source"
         inventory = (b'{"schemaVersion": 1, "package": "graphite-meter-client", "target": "%s", "profile": "release",'
-                     b' "cargoLockSha256": "%s", "components": [{"component": {"name": "absent", "version": "1"}}]}')
+                     b' "cargoLockSha256": "%s", "components": [{"component": {"name": "absent", "version": "1"}}],'
+                     b' "browser": []}')
         lock = file_sha256(Path(__file__).resolve().parents[2] / "rust/Cargo.lock")
         for digest, error in ((lock, "lacks the source of"), ("0" * 64, "from this Cargo.lock")):
             write_tar(path, {f"{top}/inventory.json": inventory % (AMD64.encode(), digest.encode()),
                              f"{top}/LEGAL.txt": b"notices\n"})
             with self.subTest(error=error), self.assertRaisesRegex(ControlPlaneError, error):
                 verify_offer(path, "graphite-meter-client", AMD64, "release")
+
+    def test_a_server_offer_holds_the_source_of_every_inventoried_browser_package_and_only_it_does(self) -> None:
+        top = "graphite-meter-server_1.2.3_linux_amd64_rust_third-party-source"
+        package = {"name": "package", "version": "1.0.0"}
+        for name, browser, extra, error in (
+            ("graphite-meter-server", [package], {}, None),
+            ("graphite-meter-server", [package, {"name": "@scope/absent", "version": "2.0.0"}], {},
+             r"lacks the source of \[.*npm/@scope/absent-2.0.0/"),
+            ("graphite-meter-server", [], {}, "browser packages exactly when"),
+            ("graphite-meter-server", [package], {f"{top}/third_party/npm/other-1.0.0/index.js": b"x"},
+             "neither dependency"),
+            ("graphite-meter-client", [package], {}, "browser packages exactly when"),
+        ):
+            with self.subTest(package=name, browser=browser, extra=sorted(extra)):
+                inventory = {"schemaVersion": 1, "package": name, "target": AMD64, "profile": "release",
+                             "cargoLockSha256": file_sha256(ROOT / "rust/Cargo.lock"),
+                             "components": [{"component": {"name": "dependency", "version": "1.0.0"}}],
+                             "browser": browser}
+                path = self.offer(extra | {f"{top}/inventory.json": json.dumps(inventory).encode()}, name)
+                outcome(self, error, lambda: verify_offer(path, name, AMD64, "release"))
 
 
 class TuiTests(Scratch):

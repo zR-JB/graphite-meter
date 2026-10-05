@@ -246,7 +246,8 @@ def write_rust_offer(path: Path, package: str, target: str, profile: str = "rele
     top = path.name.removesuffix(".tar.gz")
     inventory = {"schemaVersion": 1, "package": package, "target": target, "profile": profile,
                  "cargoLockSha256": hashlib.sha256((ROOT / "rust/Cargo.lock").read_bytes()).hexdigest(),
-                 "components": [{"component": {"name": "dependency", "version": "1.0.0"}}]}
+                 "components": [{"component": {"name": "dependency", "version": "1.0.0"}}],
+                 "browser": [{"name": "package", "version": "1.0.0"}] if package == "graphite-meter-server" else []}
     write_tar(path, {f"{top}/inventory.json": json.dumps(inventory).encode(),
                      f"{top}/LEGAL.txt": f"notices of {package} for {target}\n".encode(),
                      f"{top}/legal/rust-forks.json": (ROOT / "legal/rust-forks.json").read_bytes(),
