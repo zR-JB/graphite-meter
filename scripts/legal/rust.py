@@ -7,8 +7,9 @@ macros), their reviewed notices, the platform's reviewed notices, and snapshots 
 in the directory rust/legal's build side reads as GM_RUST_LEGAL_DIR. build_verify: one `cargo rustc` build
 that embeds them, then checks that it compiled only prepared crates with unchanged notices, linked and imported
 only reviewed platform inputs, and embedded exactly the prepared report. source_offer: the third-party source
-of a reviewed release build. --development notices need every dependency review but no platform record, so any
-host builds them; they say they are unreviewed, and so does the executable (legal/README.md).
+of a reviewed build and the SOURCE.txt that names it. --development notices need every dependency review but no
+platform record, so any host builds them; they say they are unreviewed, and so does the executable
+(legal/README.md).
 """
 from __future__ import annotations
 
@@ -27,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from ..ci.github_api import ControlPlaneError, local_path
-from ..ci.rust_workspace import ROOT, load
+from ..ci.rust_workspace import ROOT, load, offer_name
 from ..ci.toolchains import rust_channel
 from . import rust_platform as platform
 from .artifacts import about, add_bytes, add_tree, legal_header, notices, release_source
@@ -262,40 +263,57 @@ def build_verify(build: Build, state: Prepared) -> tuple[Path, list[Component]]:
     return executable, actual
 
 
+def source_notice(project: Project, version: str, offer: str, target: str) -> str:
+    """SOURCE.txt of a reviewed build, in its TUI archive or image: its source, release, source offer and target."""
+    return (f"Graphite Meter source: {release_source(project, version)[1]}\nMatching release: v{version}\n"
+            f"Dependency source archive: {offer}\nRust target: {target}\n")
+
+
 def source_offer(build: Build, state: Prepared, actual: list[Component]) -> None:
-    """THIRD_PARTY_SOURCE.tar.gz: the compiled crates' and browser packages' sources and the manual material."""
+    """The source offer, named by offer_name, of the compiled crates' and browser packages' sources and the manual
+    material, as Go's under one directory; and the SOURCE.txt that names it."""
+    assert build.target is not None
+    shipped = load().server if build.package == "graphite-meter-server" else load().tui
+    platform_name = next(name for name, target in shipped.items() if target == build.target)
+    offer = offer_name(build.package, build.version, platform_name)
+    root = offer.removesuffix(".tar.gz")
+    # One offer per directory, so the image build copies exactly this one.
+    for stale in build.out.glob("*_third-party-source.tar.gz"):
+        stale.unlink()
     with tempfile.TemporaryDirectory(prefix="rust-sources-") as scratch:
         vendor = Path(scratch) / "vendor"
         subprocess.run(["cargo", "vendor", "--locked", "--versioned-dirs", str(vendor)], cwd=ROOT / "rust",
                        stdout=subprocess.DEVNULL, check=True, timeout=600)
-        with (build.out / "THIRD_PARTY_SOURCE.tar.gz").open("wb") as raw, \
+        with (build.out / offer).open("wb") as raw, \
                 gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed, \
                 tarfile.open(fileobj=compressed, mode="w") as archive:
             for component in actual:
                 name = f"{component.name}-{component.version}"
-                add_tree(archive, vendor / name, f"third_party/cargo/{name}", vendor / name)
+                add_tree(archive, vendor / name, f"{root}/third_party/cargo/{name}", vendor / name)
             for component in state.browser:
                 if component.source_path is not None:
                     add_tree(archive, component.source_path,
-                             f"third_party/{component.ecosystem}/{component.name}-{component.version}",
+                             f"{root}/third_party/{component.ecosystem}/{component.name}-{component.version}",
                              component.source_path)
             for name in ("inventory.json", "LEGAL.txt"):
-                add_bytes(archive, name, (build.out / name).read_bytes())
-            add_bytes(archive, "legal/rust-forks.json", (ROOT / "legal/rust-forks.json").read_bytes())
+                add_bytes(archive, f"{root}/{name}", (build.out / name).read_bytes())
+            add_bytes(archive, f"{root}/legal/rust-forks.json", (ROOT / "legal/rust-forks.json").read_bytes())
             # Entries can share a file, such as one license for two fonts; the archive holds it once.
             for path in dict.fromkeys(path for entry in state.provenance for path in manual_files(entry)):
-                add_tree(archive, ROOT / path, path, ROOT / path)
+                add_tree(archive, ROOT / path, f"{root}/{path}", ROOT / path)
+    write_changed(build.out / "SOURCE.txt", source_notice(Project.read(ROOT), build.version, offer,
+                                                          build.target).encode())
 
 
 def collect(build: Build) -> Path:
-    """Prepare, build and verify, then write a reviewed release build's source offer; returns the executable."""
+    """Prepare, build and verify, then write a reviewed build's source offer; returns the executable."""
     # rust/rust-toolchain.toml selects the toolchain unless the caller's environment overrides it.
     os.environ["RUSTUP_TOOLCHAIN"] = rust_channel(ROOT)
     build.out.mkdir(parents=True, exist_ok=True)
     try:
         state = prepare(build)
         executable, actual = build_verify(build, state)
-        if not build.development and build.profile == "release":
+        if not build.development:
             source_offer(build, state, actual)
     except BaseException:
         # A later build must not embed notices whose checks failed.

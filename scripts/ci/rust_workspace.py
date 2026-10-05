@@ -3,6 +3,8 @@
 
     python3 scripts/ci/rust_workspace.py targets {tui,server}
     python3 scripts/ci/rust_workspace.py target {tui,server} PLATFORM
+
+It also names the Rust release files, which tooling on both sides of a release reads.
 """
 
 from __future__ import annotations
@@ -49,6 +51,16 @@ def load(root: Path = ROOT) -> Workspace:
     if not isinstance(record, str) or RECORD.fullmatch(record) is None:
         raise ValueError("rust/Cargo.toml platform-record must name a JSON file in legal/")
     return Workspace(members, shipped("tui"), shipped("server"), Path(record))
+
+
+def release_name(package: str, version: str, platform: str) -> str:
+    """The stem of a Rust release file of `package` for `platform` (GOOS/GOARCH): Go's name with a `_rust` marker."""
+    return f"{package}_{version}_{platform.replace('/', '_')}_rust"
+
+
+def offer_name(package: str, version: str, platform: str) -> str:
+    """The source offer of that build; its files lie in a directory named like it without `.tar.gz`, as Go's."""
+    return f"{release_name(package, version, platform)}_third-party-source.tar.gz"
 
 
 def main() -> None:

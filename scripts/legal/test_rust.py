@@ -4,6 +4,7 @@ import io
 import json
 import os
 import subprocess
+import tarfile
 import unittest
 import zlib
 from pathlib import Path
@@ -15,8 +16,9 @@ from scripts.ci.github_api import ControlPlaneError
 from scripts.legal import rust_platform as platform
 from scripts.legal.check_rust_reviews import manual_problems
 from scripts.legal.model import LegalError, Review, marshal, sha256
-from scripts.legal.rust import (DEVELOPMENT, ROOT, Build, Prepared, build_verify, parse, report, stage_browser,
-                                write_changed)
+from scripts.legal.model import Project
+from scripts.legal.rust import (DEVELOPMENT, ROOT, Build, Prepared, build_verify, parse, report, source_notice,
+                                source_offer, stage_browser, write_changed)
 from scripts.legal.rust_inventory import compiled, components, selected
 from scripts.legal.rust_platform import SYSROOT
 
@@ -237,6 +239,29 @@ class BuildVerifyTests(Scratch):
         self.binary.write_bytes(b"code" + self.payload)
         with self.assertRaisesRegex(LegalError, "only a development build's executable"):
             self.run_build()
+
+    def test_the_source_offer_lies_under_its_own_name_and_source_txt_names_it(self) -> None:
+        def vendor(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            (Path(command[-1]) / "dependency-1.0.0").mkdir(parents=True)
+            (Path(command[-1]) / "dependency-1.0.0/lib.rs").write_text("code\n")
+            return subprocess.CompletedProcess(command, 0)
+
+        self.write("notices/inventory.json", "{}\n")
+        self.write("notices/old_third-party-source.tar.gz", "stale")
+        build = Build("graphite-meter-client", "x86_64-pc-windows-gnu", "release", "1.2.3", self.out)
+        with patch("scripts.legal.rust.subprocess.run", vendor):
+            source_offer(build, self.state, self.state.components)
+        base = "graphite-meter-client_1.2.3_windows_amd64_rust"
+        self.assertEqual(sorted(path.name for path in self.out.glob("*_third-party-source.tar.gz")),
+                         [f"{base}_third-party-source.tar.gz"])
+        with tarfile.open(self.out / f"{base}_third-party-source.tar.gz") as archive:
+            self.assertEqual(sorted(archive.getnames()), [f"{base}_third-party-source/{name}" for name in (
+                "LEGAL.txt", "inventory.json", "legal/rust-forks.json", "third_party/cargo/dependency-1.0.0/lib.rs")])
+        self.assertEqual((self.out / "SOURCE.txt").read_text().splitlines(), [
+            "Graphite Meter source: https://github.com/zR-JB/graphite-meter/tree/v1.2.3", "Matching release: v1.2.3",
+            f"Dependency source archive: {base}_third-party-source.tar.gz", "Rust target: x86_64-pc-windows-gnu"])
+        self.assertEqual((self.out / "SOURCE.txt").read_text(), source_notice(
+            Project.read(ROOT), "1.2.3", f"{base}_third-party-source.tar.gz", "x86_64-pc-windows-gnu"))
 
 
 class PlatformTests(Scratch):

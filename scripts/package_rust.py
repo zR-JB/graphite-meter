@@ -22,16 +22,14 @@ import zipfile
 from pathlib import Path
 
 from .ci.github_api import ControlPlaneError, confined_path, local_path
-from .ci.rust_workspace import ROOT, load
-from .legal.artifacts import release_source
-from .legal.model import LegalError, Project
+from .ci.rust_workspace import ROOT, load, offer_name, release_name
+from .legal.model import LegalError
 from .legal.rust import DEVELOPMENT, VERSION, Build, collect
 
 def names(version: str, platform_name: str) -> tuple[str, str, str]:
     """The archive, its root directory and the binary of the TUI for `platform_name` (GOOS/GOARCH)."""
-    goos, goarch = platform_name.split("/")
-    base = f"graphite-meter-client_{version}_{goos}_{goarch}_rust"
-    if goos == "windows":
+    base = release_name("graphite-meter-client", version, platform_name)
+    if platform_name.startswith("windows/"):
         return f"{base}.zip", base, "graphite-meter-client.exe"
     return f"{base}.tar.gz", base, "graphite-meter-client"
 
@@ -61,7 +59,7 @@ def probe(executable: Path, version: str, platform_name: str) -> None:
 def package(version: str, platform_name: str, target: str, output: Path) -> None:
     """Build and write the archive and source offer of one platform, replacing neither until both are complete."""
     archive, base, binary = names(version, platform_name)
-    offer = f"{base}_third-party-source.tar.gz"
+    offer = offer_name("graphite-meter-client", version, platform_name)
     cargo = ROOT / "rust/target"
     cargo.mkdir(parents=True, exist_ok=True)
     # The notices must lie inside the checkout, where the build script reads them.
@@ -77,12 +75,10 @@ def package(version: str, platform_name: str, target: str, output: Path) -> None
         for name in ("LICENSE", "COPYRIGHT"):
             shutil.copyfile(ROOT / name, directory / name)
         shutil.copyfile(legal / "LEGAL.txt", directory / "THIRD_PARTY_NOTICES.txt")
-        source = release_source(Project.read(ROOT), version)[1]
-        (directory / "SOURCE.txt").write_text(f"Graphite Meter source: {source}\nMatching release: v{version}\n"
-                                              f"Dependency source archive: {offer}\nRust target: {target}\n")
+        shutil.copyfile(legal / "SOURCE.txt", directory / "SOURCE.txt")
         kind = "zip" if archive.endswith(".zip") else "gztar"
         shutil.make_archive(str(confined_path(stage / base, stage)), kind, root_dir=stage, base_dir=base)
-        shutil.copyfile(legal / "THIRD_PARTY_SOURCE.tar.gz", confined_path(stage / offer, stage))
+        shutil.copyfile(confined_path(legal / offer, legal), confined_path(stage / offer, stage))
         for name in (archive, offer):
             os.replace(confined_path(stage / name, stage), confined_path(output / name, output))
     print(f"Rust TUI {platform_name}: {archive} and {offer}", flush=True)
@@ -107,7 +103,7 @@ def archived(path: Path) -> dict[str, bytes]:
 def check(version: str, platform_name: str, output: Path) -> None:
     """The archive of `platform_name` holds exactly Go's layout with reviewed notices beside its source offer."""
     archive, base, binary = names(version, platform_name)
-    offer = f"{base}_third-party-source.tar.gz"
+    offer = offer_name("graphite-meter-client", version, platform_name)
     files = archived(confined_path(output / archive, output))
     expected = {f"{base}/{name}" for name in (binary, "LICENSE", "COPYRIGHT", "THIRD_PARTY_NOTICES.txt",
                                               "SOURCE.txt")}

@@ -8,8 +8,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts import package_rust
-from scripts.legal.model import LegalError
-from scripts.legal.rust import ROOT, Build
+from scripts.ci.rust_workspace import load, offer_name
+from scripts.legal.model import LegalError, Project
+from scripts.legal.rust import ROOT, Build, source_notice
 from scripts.legal.test_rust import Scratch
 
 FILES = ("COPYRIGHT", "LICENSE", "SOURCE.txt", "THIRD_PARTY_NOTICES.txt")
@@ -36,10 +37,15 @@ class PackageTests(Scratch):
         self.built: list[Build] = []
 
     def collect(self, build: Build) -> Path:
+        """Write what the collector writes for a reviewed build."""
+        assert build.target is not None
         self.built.append(build)
-        self.write(f"{build.out.relative_to(self.root)}/LEGAL.txt", "notices\n")
-        self.write(f"{build.out.relative_to(self.root)}/THIRD_PARTY_SOURCE.tar.gz",
-                   tar_gz({"source/README.txt": b"sources"}))
+        out = build.out.relative_to(self.root)
+        platform_name = next(name for name, target in load().tui.items() if target == build.target)
+        offer = offer_name(build.package, build.version, platform_name)
+        self.write(f"{out}/LEGAL.txt", "notices\n")
+        self.write(f"{out}/{offer}", tar_gz({"source/README.txt": b"sources"}))
+        self.write(f"{out}/SOURCE.txt", source_notice(Project.read(self.root), build.version, offer, build.target))
         return self.write("rust/target/built/graphite-meter-client", "binary")
 
     def test_each_platform_gets_go_s_archive_layout_with_the_rust_marker_and_its_source_offer(self) -> None:

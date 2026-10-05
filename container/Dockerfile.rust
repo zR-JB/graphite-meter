@@ -94,16 +94,11 @@ RUN target=$(python3 scripts/ci/rust_workspace.py target server "linux/$TARGETAR
     && python3 -m scripts.legal.rust --package graphite-meter-server --target "$target" --profile "$PROFILE" \
         --version "$VERSION" --out rust/target/server-notices --browser-assets client/dist \
         --browser-scan /tmp/browser-modules.json \
-    && cp "rust/target/$target/$PROFILE/graphite-meter-server" /graphite-meter \
-    && printf 'Graphite Meter source: https://github.com/zR-JB/graphite-meter\nMatching release: v%s\nDependency source archive: %s\n' \
-        "$VERSION" "graphite-meter-server_${VERSION}_linux_${TARGETARCH}_rust_third-party-source.tar.gz" >/SOURCE.txt
+    && cp "rust/target/$target/$PROFILE/graphite-meter-server" /graphite-meter
 
-# The source offer is a release asset, not image content.
+# The source offer, which the image's SOURCE.txt names, is a release asset, not image content.
 FROM scratch AS server-artifacts
-ARG VERSION
-ARG TARGETARCH
-COPY --from=server-build /src/rust/target/server-notices/THIRD_PARTY_SOURCE.tar.gz \
-    /graphite-meter-server_${VERSION}_linux_${TARGETARCH}_rust_third-party-source.tar.gz
+COPY --from=server-build /src/rust/target/server-notices/*_third-party-source.tar.gz /
 
 # Go's image takes the CA roots and their copyright from this builder, so both images trust the same roots.
 FROM docker.io/library/golang:1.27.1@sha256:3680233e3204827fbdc66088528ae6d4b3d034f51d03a99d454f6de034888244 AS ca-certificates
@@ -114,7 +109,7 @@ COPY --from=server-build /graphite-meter /graphite-meter
 COPY LICENSE COPYRIGHT /usr/share/licenses/graphite-meter/
 # The binary's notices followed by the image's own additions.
 COPY --from=server-build /src/rust/target/server-notices/IMAGE_NOTICES.txt /usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt
-COPY --from=server-build /SOURCE.txt /usr/share/licenses/graphite-meter/SOURCE.txt
+COPY --from=server-build /src/rust/target/server-notices/SOURCE.txt /usr/share/licenses/graphite-meter/SOURCE.txt
 COPY --from=ca-certificates /usr/share/doc/ca-certificates/copyright /usr/share/licenses/ca-certificates/COPYRIGHT
 # Outbound OIDC discovery, token exchange, UserInfo and JWKS requests need the public CA roots.
 COPY --from=ca-certificates /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt

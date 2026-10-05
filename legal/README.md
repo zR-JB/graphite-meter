@@ -173,10 +173,12 @@ real Cargo build of it, in three steps:
    the build compiled only prepared crates with unchanged legal files, linked
    only the record's native inputs, imported only its system libraries,
    embedded exactly `LEGAL.txt`, and writes `inventory.json`.
-3. **Source offer.** A reviewed release-profile build writes
-   `THIRD_PARTY_SOURCE.tar.gz` with the compiled crates' and browser
-   packages' sources, the inventory, the report, the fork records and the
-   manual material.
+3. **Source offer.** A reviewed build writes its source offer, named like
+   its release archive with `_third-party-source.tar.gz`, with the compiled
+   crates' and browser packages' sources, the inventory, the report, the fork
+   records and the manual material under one directory named like the
+   archive, as Go's. It also writes the `SOURCE.txt` that its TUI archive or
+   image ships: the release source, the source offer and the Rust target.
 
 A failed platform check prints the build's candidate record and the listing
 its `noticesSha256` hashes; `--review-template` prints pending reviews of the
