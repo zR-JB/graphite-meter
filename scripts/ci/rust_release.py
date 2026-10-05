@@ -223,9 +223,10 @@ def verify(version: str, revision: str, image: Path, tui: Path, assets: Path, se
     assets.mkdir(parents=True, exist_ok=True)
     for directory, names in ((image, set(server_offers(version))), (tui, tui_files(version))):
         for name in sorted(names):
-            if (assets / name).exists():
+            target = confined_path(assets / name, assets)
+            if target.exists():
                 fail(f"{name} arrives twice")
-            shutil.copyfile(directory / name, confined_path(assets / name, assets))
+            shutil.copyfile(confined_path(directory / name, directory), target)
     return digest, manifest
 
 
