@@ -39,7 +39,7 @@ fn stage(stage: Stage) -> Event {
     Event::StageStarted(StagePlan { stage, members: Vec::new(), duration: SECOND, latency: None })
 }
 
-/// A view of a latency then download run over `a` and `b`, where `a` leaves the download after 1.5 s.
+/// A view of a latency then download run over `a` and `b`, where `a` leaves the download after 1.5 s; `c` had no path.
 fn departed(b_measured: bool) -> (View, Instant) {
     let (at, mut view) = (Instant::now(), View::default());
     let plan = vec![(Stage::Latency, SECOND), (Stage::Download, SECOND)];
@@ -51,13 +51,25 @@ fn departed(b_measured: bool) -> (View, Instant) {
         failure: timeout.clone(),
         at: at + SECOND * 3,
     };
+    let unprepared = ServerFailure {
+        server: id("c"),
+        scope: Scope::Server,
+        failure: Failure::new(FailureReason::PreparationFailed, "no path"),
+        at,
+    };
     let events = [
         Event::RunStarted { plan, focus: id("a"), at },
+        Event::ServerFailed {
+            server: id("c"),
+            scope: Scope::Server,
+            failure: unprepared.failure.clone(),
+            at: Duration::ZERO,
+        },
         stage(Stage::Latency),
         Event::StageFinished(result(
             Stage::Latency,
             vec![server("a", false, Some(Duration::from_millis(4))), server("b", false, b_median)],
-            Vec::new(),
+            vec![unprepared],
         )),
         stage(Stage::Download),
         Event::ServerFailed {
@@ -91,15 +103,22 @@ fn the_latency_server_moves_to_a_survivor_that_measured_latency_and_stays_otherw
 fn a_finished_stage_records_its_failures_as_its_result_does() {
     let (view, _) = departed(true);
     let issues = view.run.unwrap().issues;
+    let unprepared = Issue {
+        server: id("c"),
+        stage: Stage::Latency,
+        scope: Scope::Server,
+        failure: Failure::new(FailureReason::PreparationFailed, "no path"),
+        at: Duration::ZERO,
+    };
     let failure = Failure::new(FailureReason::Timeout, "download bytes stopped growing for 2s");
-    let expected = Issue {
+    let left = Issue {
         server: id("a"),
         stage: Stage::Download,
         scope: Scope::Throughput,
         failure,
         at: SECOND * 3,
     };
-    assert_eq!(issues, [expected]);
+    assert_eq!(issues, [unprepared, left]);
 }
 
 #[test]

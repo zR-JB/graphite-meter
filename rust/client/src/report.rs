@@ -8,7 +8,7 @@ pub use details::details;
 use crate::{
     events::{Event, Run, View},
     measure::{format, latency::Population},
-    model::{Direction, Outcome, Scope, ServerResult, Stage, StageResult, StageStatus, Throughput},
+    model::{Direction, Outcome, Stage, StageResult, StageStatus, Throughput},
     text::{Line, Style, wrap},
     tui::theme::Palette,
 };
@@ -17,17 +17,18 @@ use vocabulary::*;
 
 /// The width of a report that does not reach a terminal.
 pub const WIDTH: usize = 100;
+const PARTIAL: &str = "Partial";
 const ADDED_NOTE: &str = "Added: loaded median minus idle median, same server.";
+const SIGNED_OUT: &str = "Sign-in expired. Checking the selected servers…";
 
-/// The report of the view's finished run; none for a run that never started.
+/// The report of the view's finished run; none for a run that never started or lost its sign-in.
 pub fn report(view: &View, width: usize, palette: &Palette) -> Vec<Line> {
-    let Some(run) = view
-        .run
-        .as_ref()
-        .filter(|run| run.at.is_some() && run.outcome.is_some())
-    else {
+    let Some(run) = view.run.as_ref().filter(|run| run.outcome.is_some()) else {
         return Vec::new();
     };
+    if unreported(view).is_some() {
+        return Vec::new();
+    }
     let report = Report { view, run, focus: run.focus.as_ref(), width, palette };
     let heading = match (report.several(), &run.focus) {
         (true, Some(focus)) => format!("Latency to {}", report.name(focus)),
@@ -64,7 +65,7 @@ pub fn results(view: &View, focus: Option<&ServerId>, width: usize, palette: &Pa
         let rates = report.result(stage).map(mean_rates).filter(|rates| !rates.is_empty());
         let mut cell = Line::plain(rates.as_deref().unwrap_or(report.unmeasured(stage)));
         if report.status(stage) == Some(StageStatus::Partial) {
-            cell = cell.and("  ", Style::default()).and("Partial", palette.warn);
+            cell = cell.and("  ", Style::default()).and(PARTIAL, palette.warn);
         }
         rows.push(vec![Line::styled(compact_stage(stage), palette.stage(stage)), cell]);
     }
@@ -76,13 +77,18 @@ pub fn results(view: &View, focus: Option<&ServerId>, width: usize, palette: &Pa
     [throughput, latency, failures].concat()
 }
 
-/// Why the view's run never started, as a run without the interface ends.
-pub fn unstarted(view: &View) -> Option<String> {
-    let run = view.run.as_ref().filter(|run| run.at.is_none())?;
-    Some(match &run.error {
-        Some(error) if error.reason == FailureReason::SignInRequired => error.text.clone(),
-        Some(error) => format!("Test could not start: {}", error.text),
-        None => "Test stopped before it started.".into(),
+/// Why the view's run has no report: it never started, or its sign-in expired.
+pub fn unreported(view: &View) -> Option<String> {
+    let run = view.run.as_ref()?;
+    let signed_out = run
+        .error
+        .as_ref()
+        .filter(|error| error.reason == FailureReason::SignInRequired);
+    Some(match (&run.error, signed_out) {
+        _ if run.at.is_some() => return signed_out.map(|_| SIGNED_OUT.into()),
+        (_, Some(error)) => error.text.clone(),
+        (Some(error), None) => format!("Test could not start: {}", error.text),
+        (None, None) => "Test stopped before it started.".into(),
     })
 }
 
@@ -126,7 +132,7 @@ impl Report<'_> {
         match self.status(stage) {
             None => "Skipped",
             Some(StageStatus::Complete) => MISSING,
-            Some(StageStatus::Partial) => "Partial",
+            Some(StageStatus::Partial) => PARTIAL,
             Some(StageStatus::Failed) => "Failed",
             Some(StageStatus::Stopped) => "Stopped",
         }
@@ -172,7 +178,7 @@ impl Report<'_> {
                     .and(" ", Style::default())
                     .and(label(stage), palette.text);
                 let result = self.result(stage).map(|result| (result, result.throughput[direction]));
-                let (value, mut facts) = match result {
+                let (value, facts) = match result {
                     Some((result, Some(throughput @ Throughput { rate: Some(rate), .. }))) => {
                         let facts = throughput_facts(throughput, result.measured, direction);
                         (Line::styled(format::rate(rate.mean), hue.bold()), facts)
@@ -180,18 +186,15 @@ impl Report<'_> {
                     Some((_, Some(_))) => (Line::styled(MISSING, palette.muted), Vec::new()),
                     _ => (Line::styled(self.unmeasured(stage), palette.muted), Vec::new()),
                 };
-                let partial = self.status(stage) == Some(StageStatus::Partial);
-                if partial {
-                    facts.insert(0, "Partial".into());
-                }
-                rows.push((named, value, facts, partial));
+                let partial = (self.status(stage) == Some(StageStatus::Partial)).then(|| PARTIAL.to_owned());
+                rows.push((named, value, [partial.into_iter().collect(), facts].concat()));
             }
         }
         let label_width = rows.iter().map(|row| row.0.width()).max().unwrap_or(0);
         let value_width = rows.iter().map(|row| row.1.width()).max().unwrap_or(0);
         let indent = label_width + value_width + 2;
         let mut lines = Vec::new();
-        for (label, value, facts, partial) in rows {
+        for (label, value, facts) in rows {
             let first = label
                 .pad(label_width)
                 .and("  ", Style::default())
@@ -199,10 +202,10 @@ impl Report<'_> {
             let wrapped = wrap(&facts, self.width.saturating_sub(indent + 3).max(20));
             for (index, part) in wrapped.into_iter().enumerate() {
                 let line = if index == 0 { first.clone() } else { Line::plain(" ".repeat(indent)) };
-                lines.push(match part.strip_prefix("Partial").filter(|_| index == 0 && partial) {
+                lines.push(match part.strip_prefix(PARTIAL).filter(|_| index == 0) {
                     Some(rest) => line
                         .and("   ", Style::default())
-                        .and("Partial", palette.warn)
+                        .and(PARTIAL, palette.warn)
                         .and(rest, palette.muted),
                     None if part.is_empty() => line,
                     None => line.and("   ", Style::default()).and(part, palette.muted),
@@ -221,8 +224,8 @@ impl Report<'_> {
         let (mut rows, mut failures, mut added_shown, mut measured) = (Vec::new(), Vec::new(), false, false);
         for &(stage, _) in &self.run.plan {
             let result = self.result(stage);
-            measured |= result.is_some() && !stage.directions().is_empty();
             for &direction in stage.directions() {
+                measured |= result.is_some_and(|result| result.throughput[direction].is_some());
                 failures.extend(result.and_then(|result| self.throughput_failure(result, direction)));
             }
             let name = Line::styled(compact_population(stage), palette.stage(stage));
@@ -239,7 +242,7 @@ impl Report<'_> {
             }
             added_shown |= !cells[1].is_empty();
             rows.push([vec![name], cells.drain(..).map(Line::plain).collect()].concat());
-            failures.extend(result.and_then(|result| self.latency_failure(result, stage)));
+            failures.extend(result.and_then(|result| self.latency_failure(result)));
         }
         if !measured {
             return None;
@@ -258,32 +261,22 @@ impl Report<'_> {
         Some((grid, failures, added_shown))
     }
 
-    /// Why a direction has no result, or that it stopped.
+    /// That a direction stopped in its window, or why every server left its stage.
     fn throughput_failure(&self, result: &StageResult, direction: Direction) -> Option<Line> {
         let label = direction_label(result.stage, direction);
-        let throughput = result.throughput[direction]?;
         if result.stopped {
+            result.throughput[direction]?;
             return Some(Line::styled(format!("{label} stopped."), self.palette.warn));
         }
-        if throughput.rate.is_some() {
-            return None;
-        }
-        let failures: Vec<_> = result
-            .failures
-            .iter()
-            .filter(|failure| failure.scope != Scope::Latency)
-            .collect();
-        let left = |server: &ServerResult| failures.iter().any(|failure| failure.server == server.server);
-        let reason = match failures.last() {
-            Some(failure) if result.servers.iter().all(left) => failure.failure.reason,
-            _ => FailureReason::InsufficientEvidence,
-        };
-        Some(Line::styled(format!("{label}: {}", reason.label()), self.palette.err))
+        let mut failures = result.failures.iter().map(|failure| &failure.failure);
+        let last = failures.rfind(|failure| failure.reason != FailureReason::InsufficientEvidence)?;
+        let gone = result.servers.iter().all(|server| server.left);
+        gone.then(|| Line::styled(format!("{label}: {}", last.reason.label()), self.palette.err))
     }
 
-    /// The latency server's latency failure in `stage`, or that it stopped.
-    fn latency_failure(&self, result: &StageResult, stage: Stage) -> Option<Line> {
-        let label = population_label(stage);
+    /// That the latency server's population stopped, or why it ended early: its first failure in the stage.
+    fn latency_failure(&self, result: &StageResult) -> Option<Line> {
+        let label = population_label(result.stage);
         if result.stopped {
             return Some(Line::styled(format!("{label} stopped."), self.palette.warn));
         }
@@ -291,7 +284,7 @@ impl Report<'_> {
         let failed = result
             .failures
             .iter()
-            .find(|failure| failure.scope == Scope::Latency && failure.server == *focus);
+            .find(|failure| failure.server == *focus && failure.failure.reason != FailureReason::InsufficientEvidence);
         Some(Line::styled(format!("{label}: {}", failed?.failure.reason.label()), self.palette.err))
     }
 
@@ -300,14 +293,14 @@ impl Report<'_> {
         let (mut notes, mut timing) = (Vec::new(), Vec::new());
         for &(stage, _) in &self.run.plan {
             let Some(population) = self.population(stage) else { continue };
-            let summary = population.summary;
-            let failed = self
-                .result(stage)
-                .and_then(|result| self.latency_failure(result, stage))
-                .is_some();
+            let (summary, result) = (population.summary, self.result(stage));
+            let failed = result.and_then(|result| self.latency_failure(result)).is_some();
             if failed || summary.timeouts > 0 || summary.unresolved > 0 || summary.send_failures > 0 {
                 let mut facts = vec![format!("{} replies", count(summary.replies))];
-                facts.extend(self.result(stage).map(|result| clock(result.measured)));
+                let measured = result
+                    .map(|result| result.measured)
+                    .filter(|measured| !measured.is_zero());
+                facts.extend(measured.map(clock));
                 facts.extend(
                     (summary.unresolved > 0).then(|| format!("unfinished probes {}", count(summary.unresolved))),
                 );
@@ -357,22 +350,11 @@ impl Report<'_> {
                 *width = (*width).max(cell.width());
             }
         }
-        let based = |cell: Line, base: Style| {
-            Line(
-                cell.0
-                    .into_iter()
-                    .map(|mut span| {
-                        span.style = if span.style == Style::default() { base } else { span.style };
-                        span
-                    })
-                    .collect(),
-            )
-        };
         if widths.iter().map(|width| width + 2).sum::<usize>().saturating_sub(2) <= self.width {
             let header = headers.iter().map(|header| Line::styled(*header, muted)).collect();
             let rows = std::iter::once(header).chain(
                 rows.into_iter()
-                    .map(|row| row.into_iter().map(|cell| based(cell, text)).collect()),
+                    .map(|row| row.into_iter().map(|cell| cell.based(text)).collect()),
             );
             let joined = |row: Vec<Line>| {
                 let cells = row.into_iter().zip(&widths).map(|(cell, width)| cell.pad(*width));
@@ -389,7 +371,7 @@ impl Report<'_> {
             let facts: Vec<_> = facts
                 .map(|(cell, header)| format!("{header} {}", cell.text()).trim().to_owned())
                 .collect();
-            lines.push(based(row[0].clone(), text));
+            lines.push(row[0].clone().based(text));
             lines.extend(
                 wrap(&facts, self.width.saturating_sub(2))
                     .into_iter()

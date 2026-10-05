@@ -24,6 +24,8 @@ use tokio_util::sync::CancellationToken;
 /// How long a stage's upload sessions may take to finish, and a stopped stage's.
 const FINISH: Duration = Duration::from_secs(10);
 const STOPPED_FINISH: Duration = Duration::from_secs(1);
+/// Why a run whose servers all left ends.
+const NO_SURVIVORS: &str = "all selected servers failed";
 
 /// A prepared server across the run.
 struct Seat<'a> {
@@ -61,30 +63,60 @@ pub async fn run(prepared: &Prepared, config: &Config, events: &Events, token: C
     events.send(Event::RunStarted { plan: plan.clone(), focus, at: started });
     let run = Run { prepared, config, events, token: &token, started };
     unprepared.iter().for_each(|failure| run.failed(failure));
-    let (sole, planned) = (prepared.servers.len() == 1, plan.len());
-    let mut results = Vec::new();
-    for (stage, duration) in plan {
-        let members: Vec<_> = seats.iter().filter(|seat| seat.present).collect();
-        if token.is_cancelled() || members.is_empty() {
+    let (sole, mut results, mut error) = (prepared.servers.len() == 1, Vec::new(), None);
+    for (stage, duration) in &plan {
+        if token.is_cancelled() {
             break;
         }
-        let result = run.stage(stage, duration, &members).await;
+        let members: Vec<_> = seats.iter().filter(|seat| seat.present).collect();
+        let mut result = run.stage(*stage, *duration, &members).await;
+        if results.is_empty() {
+            result.failures.splice(0..0, unprepared.iter().cloned());
+        }
         for server in &result.servers {
             let Some(seat) = seats.iter_mut().find(|seat| seat.server.id == server.server) else {
                 continue;
             };
-            seat.present &= sole || !server.left;
+            seat.present &= !server.left;
             let median = server.latency.and_then(|latency| latency.summary.p50);
-            seat.idle_rtt = median.filter(|_| stage == Stage::Latency).unwrap_or(seat.idle_rtt);
+            seat.idle_rtt = median.filter(|_| *stage == Stage::Latency).unwrap_or(seat.idle_rtt);
         }
+        events.send(Event::StageFinished(result.clone()));
         results.push(result);
+        if !token.is_cancelled() && seats.iter().all(|seat| !seat.present) {
+            match survivor(&results, sole) {
+                Ok(()) => seats[0].present = true,
+                Err(failure) => {
+                    error = Some(failure);
+                    break;
+                }
+            }
+        }
     }
-    let outcome = match token.is_cancelled() && results.len() < planned {
+    let outcome = match token.is_cancelled() && results.len() < plan.len() {
         true => Outcome::Stopped,
         false => Outcome::of(&results, &config.stages, &unprepared),
     };
-    events.send(Event::RunFinished { outcome, error: None, elapsed: started.elapsed() });
+    events.send(Event::RunFinished { outcome, error, elapsed: started.elapsed() });
     outcome
+}
+
+/// Whether a sole server that left stays for the next stage: once the run measured, unless it needs sign-in; else why
+/// the run ends.
+fn survivor(results: &[StageResult], sole: bool) -> Result<(), Failure> {
+    let failures = results.iter().flat_map(|result| &result.failures);
+    let last = failures
+        .map(|failure| &failure.failure)
+        .rfind(|failure| failure.reason != FailureReason::InsufficientEvidence);
+    let measured = results.iter().any(|result| !result.measured.is_zero());
+    let signed_out = last.is_some_and(|failure| failure.reason == FailureReason::SignInRequired);
+    if sole && measured && !signed_out {
+        return Ok(());
+    }
+    Err(match last {
+        Some(last) => Failure::new(last.reason, format!("{NO_SURVIVORS}: {last}")),
+        None => Failure::new(FailureReason::ConnectionLost, NO_SURVIVORS),
+    })
 }
 
 /// Why the run cannot start: no server has a path, or a planned stage outlasts a server's limit.
@@ -148,9 +180,7 @@ impl Run<'_> {
                 .map(|participant| participant.finish(budget)),
         )
         .await;
-        let result = live.engine.result();
-        self.events.send(Event::StageFinished(result.clone()));
-        result
+        live.engine.result()
     }
 
     /// Announces a failure, except a missing result's, which the stage's result carries.

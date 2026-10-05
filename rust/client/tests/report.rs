@@ -6,7 +6,7 @@ use graphite_meter_client::{
         latency::{Population, Summary},
     },
     model::{Dir, Failure, Outcome, Scope, ServerFailure, ServerResult, Stage, StageResult, Throughput},
-    report::{WIDTH, progress, report, unstarted},
+    report::{WIDTH, progress, report, unreported},
     run::prepare::ServerPath,
     text::{Line, Profile, write},
     tui::theme::Palette,
@@ -162,7 +162,7 @@ fn several_servers_add_each_server_s_share_and_the_issues() {
 }
 
 #[test]
-fn the_16_colour_profile_writes_gos_sgr_codes_and_a_narrow_report_fits_its_width() {
+fn the_16_colour_profile_writes_bold_and_base_colours_and_a_narrow_report_fits_its_width() {
     let lines = report(&view(&["a", "b"]), 40, &Palette::new(false));
     let text = printed(&lines, Profile::Ansi);
     let codes: Vec<u8> = text
@@ -193,9 +193,120 @@ fn a_run_that_never_started_reports_why_and_progress_names_each_stage() {
     view.apply(&Event::Checking { run: true });
     view.apply(&Event::RunFinished { outcome: Outcome::Stopped, error: None, elapsed: SECOND });
     assert!(report(&view, WIDTH, &Palette::new(true)).is_empty());
-    assert_eq!(unstarted(&view).as_deref(), Some("Test stopped before it started."));
+    assert_eq!(unreported(&view).as_deref(), Some("Test stopped before it started."));
     let error = Some(Failure::new(FailureReason::ConnectionLost, "Server could not be reached"));
     view.apply(&Event::RunFinished { outcome: Outcome::Failed, error, elapsed: SECOND });
-    assert_eq!(unstarted(&view).as_deref(), Some("Test could not start: Server could not be reached"));
+    assert_eq!(unreported(&view).as_deref(), Some("Test could not start: Server could not be reached"));
     assert_eq!(progress(&Event::Measuring(Stage::Bidirectional)).as_deref(), Some("Bidirectional…"));
+}
+
+/// A finished download run over the server `a`, which `result` describes; its stage over `failures`.
+fn sole(mut result: StageResult, outcome: Outcome, error: Option<Failure>) -> String {
+    let (at, mut view) = (Instant::now(), View::default());
+    let server = ServerPath {
+        id: id("a"),
+        name: "a meter".into(),
+        location: String::new(),
+        origin: Origin::parse("https://meter.example").unwrap(),
+        offered: None,
+        path: Err(Failure::new(FailureReason::Timeout, "unchecked")),
+    };
+    for failure in &mut result.failures {
+        failure.at = at + SECOND * 5;
+    }
+    let events = [
+        Event::Checking { run: true },
+        Event::Prepared { servers: Arc::new([server]), catalogue: Arc::new([]) },
+        Event::RunStarted {
+            plan: vec![(Stage::Download, SECOND * 10)],
+            focus: id("a"),
+            at,
+        },
+        Event::StageFinished(result),
+        Event::RunFinished { outcome, error, elapsed: SECOND * 12 },
+    ];
+    events.iter().for_each(|event| view.apply(event));
+    printed(&report(&view, WIDTH, &Palette::new(true)), Profile::Plain)
+}
+
+/// The download stage over `a`: measured for `measured` at 100 Mbit/s when `rate`, `a` leaving with `failure`.
+fn download(measured: Duration, rate: bool, failure: Option<(Scope, FailureReason)>) -> StageResult {
+    let throughput = (!measured.is_zero()).then(|| Throughput {
+        rate: rate.then_some(Rate { mean: 1.25e7, peak: 1.5e7 }),
+        bytes: 125_000_000,
+    });
+    let failures = failure.map(|(scope, reason)| ServerFailure {
+        server: id("a"),
+        scope,
+        failure: Failure::new(reason, "lost"),
+        at: Instant::now(),
+    });
+    let left = failures
+        .as_ref()
+        .is_some_and(|failure| failure.failure.reason != FailureReason::InsufficientEvidence);
+    StageResult {
+        stage: Stage::Download,
+        measured,
+        stopped: false,
+        throughput: Dir { down: throughput, up: None },
+        servers: vec![ServerResult {
+            server: id("a"),
+            left,
+            throughput: Dir { down: throughput, up: None },
+            latency: latency(12, 40, 1),
+        }],
+        failures: failures.into_iter().collect(),
+        intervals: Vec::new(),
+        omitted: 0,
+    }
+}
+
+#[test]
+fn a_sole_server_that_left_names_why_under_its_partial_rate_and_latency() {
+    let result = download(SECOND * 10, true, Some((Scope::Throughput, FailureReason::ConnectionLost)));
+    let expected = "\
+Graphite Meter  Partial  a meter · 12.0 s · 125.0 MB
+
+↓ Download  100.0 Mbit/s   Partial · peak 120.0 · 125.0 MB · 10.0 s
+
+Latency      Median   Added  P95      Jitter  Probe timeouts
+Loaded down  12.0 ms  —      24.0 ms  0.4 ms  1 / 41 (2.4%)
+
+Download: Connection lost
+Loaded latency · Download: Connection lost
+
+Loaded latency · Download: 40 replies · 10.0 s
+Added: loaded median minus idle median, same server.
+";
+    assert_eq!(sole(result, Outcome::Partial, None), expected);
+}
+
+#[test]
+fn too_little_measured_time_shows_only_a_dash() {
+    let result = download(SECOND * 10, false, Some((Scope::Throughput, FailureReason::InsufficientEvidence)));
+    let text = sole(result, Outcome::Incomplete, None);
+    assert!(text.contains("\n↓ Download  —\n\nLatency "), "{text}");
+    assert!(!text.contains("Too little measured time"), "{text}");
+}
+
+#[test]
+fn a_stop_before_the_window_shows_stopped_and_a_zero_window_no_duration() {
+    let mut result = download(Duration::ZERO, false, None);
+    result.stopped = true;
+    let text = sole(result, Outcome::Stopped, None);
+    assert!(text.contains("\n↓ Download  Stopped\n"), "{text}");
+    assert!(text.contains("\nLoaded latency · Download stopped.\n"), "{text}");
+    assert!(!text.contains("\nDownload stopped."), "{text}");
+    assert!(text.contains("\nLoaded latency · Download: 40 replies\n"), "{text}");
+}
+
+#[test]
+fn a_started_run_s_error_ends_its_report_and_an_expired_sign_in_withholds_it() {
+    let failure = Some((Scope::Throughput, FailureReason::ConnectionLost));
+    let error = Failure::new(FailureReason::ConnectionLost, "all selected servers failed: lost");
+    let text = sole(download(SECOND * 10, true, failure), Outcome::Incomplete, Some(error));
+    assert!(text.ends_with("\n\nall selected servers failed: lost\n"), "{text}");
+    let error = Failure::new(FailureReason::SignInRequired, "all selected servers failed: sign in");
+    let failure = Some((Scope::Throughput, FailureReason::SignInRequired));
+    assert_eq!(sole(download(SECOND * 10, true, failure), Outcome::Incomplete, Some(error)), "");
 }

@@ -175,7 +175,7 @@ impl App {
                     self.overlay = Overlay::None;
                 }
                 self.notice.clear();
-                if let Some(reason) = report::unstarted(&self.view) {
+                if let Some(reason) = report::unreported(&self.view) {
                     (self.screen, self.notice) = (Screen::Setup, reason);
                     self.recheck = error.is_some().then(|| now + RECHECK);
                 }

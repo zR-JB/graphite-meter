@@ -105,6 +105,14 @@ impl Line {
         Self(spans)
     }
 
+    /// The line with `base` for its unstyled spans.
+    pub fn based(mut self, base: Style) -> Self {
+        for span in self.0.iter_mut().filter(|span| span.style == Style::default()) {
+            span.style = base;
+        }
+        self
+    }
+
     /// The line without trailing spaces.
     pub fn trimmed(mut self) -> Self {
         while let Some(last) = self.0.last_mut() {

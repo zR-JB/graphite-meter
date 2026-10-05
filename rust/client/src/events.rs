@@ -214,8 +214,6 @@ pub struct Run {
     pub results: Vec<StageResult>,
     /// Every failure, a finished stage's as its result records them.
     pub issues: Vec<Issue>,
-    /// Where the stage in progress began adding to `issues`.
-    stage_issues: usize,
     pub outcome: Option<Outcome>,
     pub error: Option<Failure>,
     pub elapsed: Duration,
@@ -277,7 +275,7 @@ impl Run {
     fn apply(&mut self, event: &Event) {
         match event {
             Event::StageStarted(plan) => {
-                (self.stage, self.stage_issues) = (Some((plan.clone(), None)), self.issues.len());
+                self.stage = Some((plan.clone(), None));
                 (self.rates, self.recovering) = (Dir::default(), false);
             }
             Event::Measuring(stage) => self.measuring(*stage),
@@ -341,7 +339,7 @@ impl Run {
     /// Keeps `result`, whose failures replace the stage's announced ones, and moves the focus off a server that left.
     fn finished(&mut self, result: &StageResult) {
         let origin = self.at;
-        self.issues.truncate(self.stage_issues);
+        self.issues.retain(|issue| issue.stage != result.stage);
         self.issues.extend(result.failures.iter().map(|failure| Issue {
             server: failure.server.clone(),
             stage: result.stage,

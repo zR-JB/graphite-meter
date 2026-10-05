@@ -76,7 +76,7 @@ fn run(config: Config) -> io::Result<ExitCode> {
         #[cfg(not(unix))]
         let dark = None;
         let (view, status) = headless(config, pool, first(signals)).await;
-        match report::unstarted(&view) {
+        match report::unreported(&view) {
             Some(reason) => eprintln!("graphite-meter-client: {reason}"),
             None => print(&view, &Palette::new(dark.unwrap_or(true)), columns, terminal)?,
         }
