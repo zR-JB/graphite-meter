@@ -121,7 +121,9 @@ credentials and no dangerous triggers other than the reviewed `workflow_run`.
 `test_workflow_policy.py` breaks a copy of the repository once per rule. No
 workflow or image build, nor a mise task or `scripts/*.sh` one of them runs,
 may build with unreviewed development notices (`--development` or
-`scripts.rust_build`).
+`scripts.rust_build`). Every dependency manifest, lockfile, toolchain pin, Cargo
+configuration and build script has a code owner, and every lockfile a
+Dependabot entry.
 
 When adding an external action, review it and its composite dependencies,
 allow it in repository settings, pin the SHA with a version comment for
@@ -160,11 +162,13 @@ SHA-256 of its `channel-rust-<version>.toml`. Shipped platforms, their Rust
 targets and the platform record live in `[workspace.metadata.graphite-meter]`
 of `rust/Cargo.toml`, which tooling reads through `rust_workspace.py`. Cargo
 caches are keyed by job, toolchain and `Cargo.lock`, so a new lockfile builds
-once from scratch.
+once from scratch; only CI writes caches.
 
 The `rust` filter selects the workspace checks and the Windows client tests and
 covers every file a Rust source includes; `rust-interop` selects the
 interoperability and perf jobs, which also build Go; `rust-image` covers every
 input of `container/Dockerfile.rust` for the image and its browser suite;
 `rust-release` covers every stage but the browser app's for the TUI archives
-and the staging check.
+and the staging check. `advisories.yml` rechecks the locked crates against the
+live advisory database daily. Dependabot's weekly cargo updates pass
+`rust-check` only once `check_rust_reviews` accepts every new crate.

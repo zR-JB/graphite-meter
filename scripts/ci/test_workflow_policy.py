@@ -208,6 +208,17 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "rust misses docs/DEPLOYMENT.md, which rust/server/src/extra.rs includes"),
     ("rust/client/tests/extra.rs", None, 'concat!(env!("CARGO_MANIFEST_DIR"), "/../../client/app.css")\n',
      "rust misses client/app.css"),
+    # The daily advisory check runs cargo-deny's advisories without caches.
+    (W + "advisories.yml", "on:\n", "on:\n  pull_request:\n", "triggered only by"),
+    (W + "advisories.yml", "run: cargo deny --locked check advisories\n", "run: cargo deny --locked check bans\n",
+     "misorders invariant: run: cargo deny --locked check advisories"),
+    (W + "advisories.yml", "cache: 'false'", "cache: 'true'", "advisories.yml must disable every cache"),
+    # Supply-chain files have an owner, and Dependabot updates every lockfile.
+    (".github/CODEOWNERS", "rust-toolchain.toml              @zR-JB\n", "",
+     r"without an owner: \['rust/rust-toolchain.toml'\]"),
+    ("rust/server/tools/build.rs", None, "fn main() {}\n", r"without an owner: \['rust/server/tools/build.rs'\]"),
+    (".github/dependabot.yml", "  - package-ecosystem: cargo\n    directory: /rust\n",
+     "  - package-ecosystem: cargo\n    directory: /\n", "must update cargo in /rust"),
 )
 
 
@@ -218,8 +229,8 @@ class WorkflowPolicyTests(unittest.TestCase):
         root = Path(directory.name)
         shutil.copytree(ROOT / ".github", root / ".github")
         shutil.copytree(ROOT / "scripts", root / "scripts", ignore=shutil.ignore_patterns("__pycache__"))
-        for name in ("mise.toml", "mise.lock", "go/go.mod", "container/Dockerfile", "container/Dockerfile.rust",
-                     "rust/rust-toolchain.toml"):
+        for name in ("mise.toml", "mise.lock", "go/go.mod", "go/go.sum", "client/bun.lock", "container/Dockerfile",
+                     "container/Dockerfile.rust", "rust/rust-toolchain.toml", "rust/Cargo.lock"):
             (root / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, root / name)
         return root

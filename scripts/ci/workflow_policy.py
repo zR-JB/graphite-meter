@@ -23,6 +23,7 @@ RELEASE_SECRETS = {"GHCR_TOKEN", "RELEASE_APP_PRIVATE_KEY"}
 DEVELOPMENT_BUILDS = ("--development", "scripts.rust_build")
 
 TRIGGERS = {
+    "advisories.yml": {"schedule", "workflow_dispatch"},
     "ci.yml": {"pull_request", "push"},
     "release-request.yml": {"workflow_dispatch"},
     "release.yml": {"workflow_run"},
@@ -39,6 +40,7 @@ ALLOWED_USES = {
     },
 }
 ORDERED = {
+    "workflows/advisories.yml": ("run: cargo deny --locked check advisories\n",),
     "actions/setup-project/action.yml": (
         "rustup toolchain install", "python3 scripts/ci/toolchains.py verify-rust",
     ),
@@ -111,6 +113,12 @@ SELECTED_BY = {
 ALWAYS = ("plan", "tooling", "secret-scan", "gate")
 # Repository paths a Rust source includes: relative to the file, or to its crate's manifest directory.
 RUST_INCLUDE = re.compile(r'include_(?:str|bytes)!\("([^"]+)"\)|concat!\(env!\("CARGO_MANIFEST_DIR"\), "([^"]+)"\)')
+# Dependency manifests and lockfiles, toolchain pins, Cargo configuration and build scripts.
+SUPPLY_CHAIN = re.compile(r"(?:^|/)(?:Cargo\.(?:toml|lock)|deny\.toml|build\.rs|rust-toolchain(?:\.toml)?"
+                          r"|go\.(?:mod|sum)|package\.json|bun\.lock|bunfig\.toml|mise\.(?:toml|lock))$"
+                          r"|(?:^|/)\.cargo/")
+# The Dependabot ecosystem that updates each lockfile's directory.
+ECOSYSTEMS = {"Cargo.lock": "cargo", "go.sum": "gomod", "bun.lock": "bun"}
 FORBIDDEN = {
     "workflows/release.yml": ("head_sha", "pull_request.head", "mise run", "secrets["),
     "workflows/release-request.yml": (
@@ -242,8 +250,11 @@ def check_workflows(root: Path) -> None:
         if "uses: docker/build-push-action@" in step and (missing := [item for item in IMAGE_BUILD
                                                                      if item not in step]):
             fail(f"release-request.yml: every image build must declare {missing[0].strip()}")
-        if "setup-project" in step and "cache: 'false'" not in step:
-            fail("release-request.yml: the untrusted build must disable every cache")
+    # Caches are keyed by job; only CI writes them.
+    for name in sorted(names - {"ci.yml"}):
+        for step in STEP.split((workflows / name).read_text(encoding="utf-8")):
+            if "setup-project" in step and "cache: 'false'" not in step:
+                fail(f"{name} must disable every cache")
     for step in STEP.split(read(root, ".github/actions/setup-project/action.yml")):
         if ("uses: actions/cache@" in step and "inputs.cache == 'true'" not in step
                 or "uses: jdx/mise-action@" in step and "cache: ${{ inputs.cache }}" not in step):
@@ -366,6 +377,34 @@ def check_selection(root: Path) -> None:
                 fail(f"CI job {name} may run without {needed}: filter {output} is not within {other}")
 
 
+def owned(path: str, patterns: list[str]) -> bool:
+    """Whether a CODEOWNERS pattern, in gitignore syntax without negation or **, covers `path`."""
+    parts = path.split("/")
+    for pattern in patterns:
+        starts = range(1) if "/" in pattern.rstrip("/") else range(len(parts))
+        for start in starts:
+            for end in range(start + 1, len(parts) + 1):
+                if ((end < len(parts) or not pattern.endswith("/"))
+                        and PurePosixPath(*parts[start:end]).full_match(pattern.strip("/"))):
+                    return True
+    return False
+
+
+def check_dependencies(root: Path) -> None:
+    """CODEOWNERS covers every supply-chain file, and Dependabot updates every lockfile's ecosystem."""
+    patterns = [line.split()[0] for line in read(root, ".github/CODEOWNERS").splitlines()
+                if line.strip() and not line.startswith("#")]
+    names = files(root)
+    if unowned := sorted(name for name in names if SUPPLY_CHAIN.search(name) and not owned(name, patterns)):
+        fail(f".github/CODEOWNERS leaves supply-chain files without an owner: {unowned}")
+    updates = set(re.findall(r"(?m)^  - package-ecosystem: (\S+)\n    directory: (\S+)$",
+                             read(root, ".github/dependabot.yml")))
+    for name in names:
+        path = PurePosixPath(name)
+        if (ecosystem := ECOSYSTEMS.get(path.name)) and (ecosystem, f"/{path.parent}") not in updates:
+            fail(f".github/dependabot.yml must update {ecosystem} in /{path.parent}")
+
+
 def check_certificates(root: Path) -> None:
     names = files(root)
     if bad := [name for name in names if TLS_NAME.search(name)]:
@@ -410,6 +449,7 @@ def check_repository(root: Path = ROOT) -> None:
     check_ci(root)
     check_paths(root)
     check_selection(root)
+    check_dependencies(root)
     check_development_notices(root)
     check_certificates(root)
 
