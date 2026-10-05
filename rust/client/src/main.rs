@@ -1,7 +1,7 @@
 //! The Graphite Meter native terminal client.
 
 use graphite_meter_client::{
-    INTERRUPTED, TERMINATED, VERSION,
+    INTERRUPTED, Interrupts, Reaction, TERMINATED, VERSION,
     config::{self, Config, Parsed, Refusal},
     events::View,
     headless, report, status, text as styled,
@@ -109,12 +109,10 @@ async fn first(mut signals: UnboundedReceiver<u8>) -> u8 {
 /// Each interrupt's and termination's status as it arrives; with `at_once`, a second exits at once with its own.
 fn signals(at_once: bool) -> io::Result<UnboundedReceiver<u8>> {
     let (caught, signals) = mpsc::unbounded_channel();
-    let mut first = true;
-    let mut interrupt = move |status: u8| {
-        if at_once && !std::mem::take(&mut first) {
-            std::process::exit(status.into());
-        }
-        let _ = caught.send(status);
+    let mut interrupts = Interrupts::default();
+    let mut interrupt = move |status: u8| match interrupts.on(status) {
+        Reaction::Exit(status) if at_once => std::process::exit(status.into()),
+        _ => drop(caught.send(status)),
     };
     #[cfg(unix)]
     {

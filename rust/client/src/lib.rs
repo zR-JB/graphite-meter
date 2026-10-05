@@ -43,6 +43,31 @@ pub const VERSION: &str = match option_env!("GM_ENGINE_VERSION") {
 pub const INTERRUPTED: u8 = 130;
 pub const TERMINATED: u8 = 143;
 
+/// What a caught interrupt or termination does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reaction {
+    /// Stop the run, which ends with this status.
+    Stop(u8),
+    /// Exit at once with this status.
+    Exit(u8),
+}
+
+/// The signals caught so far: the first stops the run, a later one exits at once.
+#[derive(Debug, Default)]
+pub struct Interrupts {
+    stopping: bool,
+}
+
+impl Interrupts {
+    /// The reaction to a signal whose status is `status`.
+    pub fn on(&mut self, status: u8) -> Reaction {
+        match std::mem::replace(&mut self.stopping, true) {
+            false => Reaction::Stop(status),
+            true => Reaction::Exit(status),
+        }
+    }
+}
+
 /// Runs `config` once without the interface, writing stage progress to stderr; `stop` stops it with the status it
 /// resolves to. The run's view and the process status.
 pub async fn headless(config: Config, runtimes: Arc<Pool>, stop: impl Future<Output = u8>) -> (View, u8) {

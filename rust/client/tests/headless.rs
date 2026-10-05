@@ -1,7 +1,8 @@
-//! The binary without the interface against canned peers: signals during preparation, a second signal, and a
+//! The binary without the interface against canned peers: signals during preparation, the second signal's policy, and a
 //! protected server.
 #![cfg(unix)]
 
+use graphite_meter_client::{INTERRUPTED, Interrupts, Reaction, TERMINATED};
 use std::{process::Stdio, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -68,12 +69,14 @@ async fn a_termination_during_preparation_stops_the_test_before_it_starts() {
     assert_eq!(finished(child).await, (Some(143), String::new(), stopped.into()));
 }
 
-#[tokio::test]
-async fn a_second_signal_exits_at_once_with_its_status() {
-    let (child, _peer) = preparing().await;
-    // Held while stopped, the interrupt arrives first and the termination right after it.
-    kill(&child, &["-STOP", "-INT", "-TERM", "-CONT"]).await;
-    assert_eq!(finished(child).await.0, Some(143));
+#[test]
+fn the_first_signal_stops_and_a_second_exits_with_its_own_status_in_either_order() {
+    for (first, second) in [(INTERRUPTED, TERMINATED), (TERMINATED, INTERRUPTED)] {
+        let mut interrupts = Interrupts::default();
+        assert_eq!(interrupts.on(first), Reaction::Stop(first));
+        assert_eq!(interrupts.on(second), Reaction::Exit(second));
+        assert_eq!(interrupts.on(first), Reaction::Exit(first));
+    }
 }
 
 #[tokio::test]
