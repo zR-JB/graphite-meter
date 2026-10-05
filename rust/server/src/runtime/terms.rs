@@ -144,4 +144,11 @@ mod tests {
         assert_eq!(refused, message, "a handshake byte more on each connection");
         assert!(terms.check(0, endpoint + 1).is_err(), "the endpoint's socket buffers count");
     }
+
+    #[test]
+    fn noqs_stream_floor_at_per_client_limits_equal_to_the_totals() {
+        let totals = [("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", "256"), ("GM_MAX_SESSIONS_PER_CLIENT", "64")];
+        let floor = quic::noq_floor(&config(&totals).limits).unwrap();
+        assert_eq!(floor >> 10, 978, "noq's stream floor for 324 request streams, without HTTP/3's state");
+    }
 }
