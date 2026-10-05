@@ -275,20 +275,25 @@ def write_rust_tui(directory: Path, version: str, platform: str, target: str,
         write_tar(directory / archive, files)
 
 
-def write_rust_release(image: Path, tui: Path, version: str, revision: str, repository: str) -> JsonObject:
-    """Stage the Rust image with its server source offers and the TUI archives; return the image's index."""
+def write_rust_release(image: Path, tui: Path | None, version: str, revision: str, repository: str) -> JsonObject:
+    """Stage the Rust image with its server source offers and the TUI archives; return the image's index. Without
+    `tui`, stage a prerelease's image, which BuildKit fetched from GitHub and whose SOURCE.txt names the repository."""
     image.mkdir(parents=True, exist_ok=True)
-    tui.mkdir(parents=True, exist_ok=True)
     workspace = load()
     sources: dict[str, Mapping[str, bytes]] = {}
     for platform, target in workspace.server.items():
         offer = offer_name("graphite-meter-server", version, platform)
-        write_rust_offer(image / offer, "graphite-meter-server", target)
-        sources[platform.split("/")[1]] = {
-            "usr/share/licenses/graphite-meter/SOURCE.txt": rust_source(version, offer, target)}
-    oci = write_oci(image / RUST_OCI, repository, revision, remote=False, arch_files=sources)
+        source = rust_source(version, offer, target)
+        if tui is None:
+            source = f"https://github.com/{repository}\n".encode()
+        else:
+            write_rust_offer(image / offer, "graphite-meter-server", target)
+        sources[platform.split("/")[1]] = {"usr/share/licenses/graphite-meter/SOURCE.txt": source}
+    oci = write_oci(image / RUST_OCI, repository, revision, remote=tui is None, arch_files=sources)
     (image / f"{RUST_OCI}.sha256").write_text(
         f"{hashlib.sha256((image / RUST_OCI).read_bytes()).hexdigest()}  {RUST_OCI}\n")
-    for platform, target in workspace.tui.items():
-        write_rust_tui(tui, version, platform, target)
+    if tui is not None:
+        tui.mkdir(parents=True, exist_ok=True)
+        for platform, target in workspace.tui.items():
+            write_rust_tui(tui, version, platform, target)
     return oci

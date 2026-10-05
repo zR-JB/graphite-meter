@@ -20,9 +20,9 @@ registry() {
     '"$script"
 }
 
-# Go's image is tagged VERSION; the Rust image, which only stable releases ship, VERSION-rust.
+# Go's image is tagged VERSION, a stable or prerelease version; the Rust image VERSION-rust.
 publish_image() {
-  [[ "$IMAGE_TAG" =~ ^$STABLE((-(alpha|beta|rc)\.(0|[1-9][0-9]*))|-rust)?$ ]] || fail "invalid image tag: $IMAGE_TAG"
+  [[ "$IMAGE_TAG" =~ ^$STABLE(-(alpha|beta|rc)\.(0|[1-9][0-9]*))?(-rust)?$ ]] || fail "invalid image tag: $IMAGE_TAG"
   [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "invalid verified digest"
   registry '
     archive=oci-archive:/work/graphite-meter.oci.tar

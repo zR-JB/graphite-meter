@@ -156,11 +156,22 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      r"rust-release misses \['rust/rust-toolchain.toml'"),
     (RUST, "COPY LICENSE COPYRIGHT mise.toml ./\n", "COPY LICENSE COPYRIGHT mise.toml client/ ./\n",
      r"rust-release misses \['client/x'\]"),
-    # The release request builds Rust only for a validated stable request, empty, with provenance, without a
-    # token, and stages exactly its files; the approved job publishes exactly what the verify job verified.
+    # The release request builds Rust only for a validated request, its TUI archives only for a stable one, from
+    # the source the build job resolved, empty, with provenance, without a token, and stages exactly its files; the
+    # approved job publishes exactly what the verify job verified.
     (REQUEST, "name: Build untrusted Rust image", "name: Build Rust image", "as release.py expects"),
     (REQUEST, "    needs: build\n    if: needs.build.outputs.rust == 'true'\n", "    needs: build\n",
      "only when the validated request selects them"),
+    (REQUEST, "    if: needs.build.outputs.rust == 'true' && needs.build.outputs.stable == 'true'\n",
+     "    if: needs.build.outputs.rust == 'true'\n", "TUI archives only for a stable release"),
+    (REQUEST, "context: ${{ needs.build.outputs.context }}\n          file: container/Dockerfile.rust\n"
+     "          target: server\n", "context: .\n          file: container/Dockerfile.rust\n          target: server\n",
+     "build the source the build job resolved"),
+    (REQUEST, "context: ${{ steps.source.outputs.context }}\n          file: container/Dockerfile\n",
+     "context: https://github.com/${{ github.repository }}.git\n          file: container/Dockerfile\n",
+     "build the source the build job resolved"),
+    (REQUEST, "      context: ${{ steps.source.outputs.context }}\n    steps:",
+     "      context: ${{ github.event.inputs.sha }}\n    steps:", r"misorders invariant: \s+context"),
     (REQUEST, "dest=${{ runner.temp }}/rust-server-export\n          no-cache: true\n",
      "dest=${{ runner.temp }}/rust-server-export\n", "every image build must declare no-cache"),
     (REQUEST, "dest=${{ runner.temp }}/rust-tui-export\n          no-cache: true\n          provenance: mode=max\n",

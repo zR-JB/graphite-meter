@@ -8,8 +8,9 @@
 
 Staging copies exactly the expected files out of BuildKit exports. Verification reads the staged files as data and
 never runs them: the image as verify_oci does, each source offer against this checkout, each TUI archive's layout,
-executable format and notices, and each SOURCE.txt against the offer it names. CI stages and checks its own builds
-as a release request stages and the release verifies them. Every path lies inside RUNNER_TEMP.
+executable format and notices, and each SOURCE.txt against the offer it names. A prerelease, as Go's, ships only the
+image, whose SOURCE.txt names the repository. CI stages and checks its own builds as a release request stages and the
+release verifies them. Every path lies inside RUNNER_TEMP.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ from verify_release_assets import TUI_FILES, archive_names, require_same
 
 N = SEMVER_NUMBER
 VERSION = re.compile(rf"{N}\.{N}\.{N}(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?")
+PRERELEASE = re.compile(rf"{N}\.{N}\.{N}-(?:alpha|beta|rc)\.{N}")
 OCI = "graphite-meter-rust.oci.tar"
 OCI_LIMIT = 1024 * 1024 * 1024
 FILE_LIMIT = 16 * 1024 * 1024
@@ -49,8 +51,14 @@ def release_version(value: str) -> str:
     return value
 
 
+def prerelease(version: str) -> bool:
+    return PRERELEASE.fullmatch(version) is not None
+
+
 def server_offers(version: str) -> dict[str, tuple[str, str]]:
-    """Each server source offer with its image platform and Rust target."""
+    """Each server source offer with its image platform and Rust target; a prerelease, as Go's, publishes none."""
+    if prerelease(version):
+        return {}
     return {offer_name(SERVER, version, platform): (platform, target) for platform, target in load().server.items()}
 
 
@@ -201,6 +209,10 @@ def verify_image(directory: Path, version: str, revision: str, profile: str, roo
 
     def check_source(arch: str, content: str) -> None:
         platform = f"linux/{arch}"
+        if prerelease(version):
+            if content != f"https://github.com/{env('REPOSITORY')}\n":
+                fail(f"the image's {platform} SOURCE.txt does not name the repository as Go's prerelease image does")
+            return
         if platform not in offers:
             fail(f"the image's linux/{arch} server has no source offer")
         check_source_txt(content, f"the image's {platform}", version, offers[platform], load().server[platform])
@@ -211,13 +223,17 @@ def verify_image(directory: Path, version: str, revision: str, profile: str, roo
     return digest, manifest
 
 
-def verify(version: str, revision: str, image: Path, tui: Path, assets: Path, server_profile: str = "release",
+def verify(version: str, revision: str, image: Path, tui: Path | None, assets: Path, server_profile: str = "release",
            root: Path = ROOT) -> tuple[str, str]:
     """Verify the staged image and TUI directories and copy their release assets, the TUI archives and every source
-    offer, into `assets`; return the image archive's SHA-256 and manifest digest."""
+    offer, into `assets`; return the image archive's SHA-256 and manifest digest. A prerelease has only the image."""
+    if (tui is None) != prerelease(version):
+        fail("a Rust prerelease ships only the image; a stable release also the TUI archives")
     exact_files(image, image_files(version))
-    exact_files(tui, tui_files(version))
     digest, manifest = verify_image(image, version, revision, server_profile, root)
+    if tui is None:
+        return digest, manifest
+    exact_files(tui, tui_files(version))
     for platform, target in load().tui.items():
         verify_tui(tui, version, platform, target, root)
     assets.mkdir(parents=True, exist_ok=True)
@@ -232,7 +248,9 @@ def verify(version: str, revision: str, image: Path, tui: Path, assets: Path, se
 
 def command_stage_image() -> None:
     version, out = release_version(env("VERSION")), runner_path("OUT_DIR")
-    stage(runner_path("SERVER_EXPORT"), out, set(server_offers(version)))
+    out.mkdir(parents=True, exist_ok=True)
+    if offers := set(server_offers(version)):
+        stage(runner_path("SERVER_EXPORT"), out, offers)
     shutil.copyfile(runner_path("OCI_ARCHIVE"), confined_path(out / OCI, out))
     (out / f"{OCI}.sha256").write_text(f"{file_sha256(out / OCI)}  {OCI}\n", encoding="utf-8")
     print(f"staged {sorted(image_files(version))}")

@@ -6,7 +6,8 @@ settings, report output and exit codes, and the Go TUI's look and keys; either c
 
 Go stays the default. The Rust builds are opt-in: stable releases can add a linux/amd64 + linux/arm64 server image
 tagged `X.Y.Z-rust` (with `X.Y-rust` and `latest-rust` following the newest such release) and TUI archives for Linux
-amd64/arm64 and Windows amd64 named like Go's with a `_rust` marker. There is no Rust build for macOS.
+amd64/arm64 and Windows amd64 named like Go's with a `_rust` marker; prereleases can add the image alone, tagged
+`X.Y.Z-{alpha,beta,rc}.N-rust`. There is no Rust build for macOS.
 [Deployment](../docs/DEPLOYMENT.md#experimental-rust-image) covers the image and its tags.
 
 ## Building and running

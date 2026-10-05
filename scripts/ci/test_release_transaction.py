@@ -207,8 +207,9 @@ class RegistryTests(unittest.TestCase):
                 self.assertEqual(status, 0, output)
                 self.assertEqual((tags["1.2"], tags["latest"]), (series, latest))
 
-    def test_the_rust_image_is_tagged_version_rust_and_only_for_stable_releases(self) -> None:
-        for tag, error in (("1.2.3-rust", None), ("1.2.3-rc.1-rust", "invalid image tag"),
+    def test_the_rust_image_is_tagged_version_rust_for_stable_releases_and_prereleases(self) -> None:
+        for tag, error in (("1.2.3-rust", None), ("1.2.3-rc.1-rust", None), ("1.2.3-alpha.0-rust", None),
+                           ("1.2.3-rust-rc.1", "invalid image tag"), ("1.2.3-rc.1-rust-rust", "invalid image tag"),
                            ("1.2.3-rust.1", "invalid image tag"), ("1.2.3-RUST", "invalid image tag")):
             with self.subTest(tag=tag):
                 status, output, tags = self.run_script("image", {}, IMAGE_TAG=tag)

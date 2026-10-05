@@ -10,7 +10,7 @@ import tomllib
 from pathlib import Path, PurePosixPath
 
 from github_api import PEM, TLS_NAME, ControlPlaneError, fail
-from release import REQUEST_JOBS
+from release import REQUEST_JOBS, RUST_TUI_JOB
 from toolchains import check as check_toolchain_literals, pin
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -46,7 +46,7 @@ ORDERED = {
     ),
     "workflows/release-request.yml": (
         "if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}",
-        "run: python3 scripts/ci/release.py prepare",
+        "\n      context: ${{ steps.source.outputs.context }}\n", "run: python3 scripts/ci/release.py prepare",
         'python3 scripts/ci/verify_release_assets.py "$VERSION"',
         "SOURCE_SHA: ${{ steps.request.outputs.remote_sha }}\n",
         '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', "uses: docker/build-push-action@",
@@ -104,6 +104,8 @@ CONTEXT = {
 }
 # Every image build of the untrusted request starts empty, records max provenance and gets no token.
 IMAGE_BUILD = ("no-cache: true\n", "provenance: mode=max\n", "github-token: ''\n")
+# Every image build of the untrusted request builds the source its build job validated and resolved.
+IMAGE_CONTEXTS = ("${{ steps.source.outputs.context }}", "${{ needs.build.outputs.context }}")
 # The plan output that selects each CI job; the jobs ALWAYS names run on every change.
 SELECTED_BY = {
     "core": "code", "go": "go", "e2e": "code", "smoke": "code", "release": "code", "security": "deps",
@@ -236,20 +238,26 @@ def check_workflows(root: Path) -> None:
     # release.py takes each artifact only from the request job that wrote it.
     if re.findall(r"(?m)^    name: (.*)$", request) != list(REQUEST_JOBS):
         fail(f"release-request.yml: its jobs must be named {list(REQUEST_JOBS)}, as release.py expects")
-    # The Rust jobs run only for a validated stable request that selected them.
+    # The Rust jobs run only for a validated request that selected them, the TUI archives only for a stable one.
     for job in JOB.split(request.split("\njobs:\n", 1)[1]):
-        if job and not job.startswith("build:\n") and (
-                "    needs: build\n    if: needs.build.outputs.rust == 'true'\n" not in job):
-            fail("release-request.yml: Rust jobs must run only when the validated request selects them")
+        selected = "    needs: build\n    if: needs.build.outputs.rust == 'true'"
+        stable = " && needs.build.outputs.stable == 'true'" if f"    name: {RUST_TUI_JOB}\n" in job else ""
+        if job and not job.startswith("build:\n") and f"{selected}{stable}\n" not in job:
+            fail("release-request.yml: Rust jobs must run only when the validated request selects them, "
+                 "and the TUI archives only for a stable release")
     scopes = re.findall(r"(?m)^ *permissions:.*(?:\n +\S.*)*", request)
     if scopes != ["permissions:\n  contents: read"]:
         fail("release-request.yml: the untrusted build may only read contents")
     for step in STEP.split(request.split("\njobs:", 1)[1]):
         if "${{ inputs." in step and "run: python3 scripts/ci/release.py prepare" not in step:
             fail("release-request.yml: dispatch inputs may reach only the request validator")
-        if "uses: docker/build-push-action@" in step and (missing := [item for item in IMAGE_BUILD
-                                                                     if item not in step]):
+        if "uses: docker/build-push-action@" not in step:
+            continue
+        if missing := [item for item in IMAGE_BUILD if item not in step]:
             fail(f"release-request.yml: every image build must declare {missing[0].strip()}")
+        contexts = re.findall(r"(?m)^ +context: (.*)$", step)
+        if len(contexts) != 1 or contexts[0] not in IMAGE_CONTEXTS:
+            fail("release-request.yml: every image build must build the source the build job resolved")
     # Caches are keyed by job; only CI writes them.
     for name in sorted(names - {"ci.yml"}):
         for step in STEP.split((workflows / name).read_text(encoding="utf-8")):

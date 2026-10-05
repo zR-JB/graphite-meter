@@ -30,10 +30,11 @@ gh workflow run release-request.yml --ref main -f tag=v1.2.3 -f mode=publish
 ```
 
 A prerelease adds `-f pr=N -f sha=<PR head>` to a `vX.Y.Z-{alpha,beta,rc}.N`
-tag; `mode=validate` stops before any write. A stable release adds the
-experimental Rust image and TUI archives with `-f rust=true`; Go's image and
-archives stay the default and are always released. Approve the `ghcr-release`
-deployment when the Release run asks.
+tag; `mode=validate` stops before any write. `-f rust=true` adds the
+experimental Rust image, tagged like Go's with `-rust`, and for a stable
+release the Rust TUI archives; Go's image and archives stay the default and
+are always released. Approve the `ghcr-release` deployment when the Release
+run asks.
 
 1. **Untrusted build.** `release-request.yml` is a `workflow_dispatch` job on
    main with `contents: read`, no secrets and no caches. Only `release.py
@@ -41,13 +42,14 @@ deployment when the Release run asks.
    stable build checks the committed legal outputs, stamps the version and
    builds the native archives, the third-party source archive and the OCI
    image from main; a prerelease builds only the image, which BuildKit fetches
-   as the exact remote commit without a token. With `rust`, two more jobs
-   build main with the pinned Rust builder, without caches: one the
-   linux/amd64 + linux/arm64 image and the server source offers, one the
-   Linux and Windows TUI archives with their source offers, which it checks by
-   running the amd64 TUI. `rust_release.py` stages exactly the release files
-   out of each export. Rust builds have no macOS archive, and prereleases
-   have no Rust build: only a GitHub Release carries their source offers.
+   as the exact remote commit without a token. With `rust`, the pinned Rust
+   builder builds the same source without caches: the `rust-image` job the
+   linux/amd64 + linux/arm64 image, and for a stable release also the server
+   source offers and, in the `rust-tui` job, the Linux and Windows TUI
+   archives with their source offers, which that job checks by running the
+   amd64 TUI. Every image build takes the source the build job resolved.
+   `rust_release.py` stages exactly the release files out of each export.
+   Rust builds have no macOS archive.
 2. **Trusted verification.** `release.yml` runs main's tooling on
    `workflow_run` for main dispatches only and never executes the requested
    source. It binds `request.json` to the run title, the owner, the first
@@ -67,14 +69,19 @@ deployment when the Release run asks.
    points the `major.minor` and `latest` aliases at the highest published
    releases, which also repairs aliases a cancelled run left behind; after a
    Rust release, `major.minor-rust` and `latest-rust` follow the highest
-   published releases that shipped a Rust server source offer.
+   published releases that shipped a Rust server source offer. No alias
+   follows a prerelease.
 
 The default `GITHUB_TOKEN` has no write scope in any workflow. Handoffs are
 retained 35 days to cover the approval window; the recheck fails closed.
 GitHub's automatic source archives provide the project source; a stable
 release adds the third-party source archive, each Rust build's source offer
 and a source-availability note naming them. A prerelease publishes only its
-image and creates no GitHub Release.
+images and creates no GitHub Release. Go's and Rust's prerelease images both
+ship their notices, name the repository in `SOURCE.txt` and the PR head in
+their `revision` label; that commit's lockfiles (`go/go.sum`,
+`client/bun.lock`, `rust/Cargo.lock` with the forks in
+`legal/rust-forks.json`) pin the third-party source they were built from.
 
 OCI builds request `provenance: mode=max`, pin the privileged binfmt image and
 keep BuildKit's insecure entitlements disabled. Neither Dockerfile may select a

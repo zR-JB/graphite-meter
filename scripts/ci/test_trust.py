@@ -15,10 +15,11 @@ from github_api import (
     ControlPlaneError, JsonObject, confined_path, file_sha256, local_path, runner_path,
 )
 from fixtures import (
-    AMD, Answers, engine, git_head, github, outcome, pages, write_oci, write_release_assets, write_rust_release,
-    write_rust_tui,
+    AMD, Answers, engine, git_head, github, outcome, pages, write_oci, write_release_assets, write_rust_offer,
+    write_rust_release, write_rust_tui,
 )
 from rust_release import OCI as RUST_OCI, server_offers, tui_files
+from rust_workspace import offer_name
 from verify_release_assets import verify_checksums, verify_release_file_set
 from release import (
     BUILD_JOB,
@@ -123,13 +124,13 @@ def job(name: str = BUILD_JOB, conclusion: str = "success") -> dict[str, object]
 
 
 def release_of(stable: bool, rust: bool = False) -> Release:
-    return Release("v1.2.3", MAIN, 0, rust) if stable else Release("v1.2.3-rc.1", HEAD, 101)
+    return Release("v1.2.3", MAIN, 0, rust) if stable else Release("v1.2.3-rc.1", HEAD, 101, rust)
 
 
 def trusted(stable: bool, mode: str = "publish", rust: bool = False) -> dict[str, object]:
-    """Every GitHub answer that authorizes a stable release, with or without Rust, or a PR #101 prerelease."""
+    """Every GitHub answer that authorizes a stable release or a PR #101 prerelease, with or without Rust."""
     names = ["release-request-4242"] + (["release-assets-4242"] if stable else []) + (
-        ["release-rust-image-4242", "release-rust-tui-4242"] if rust else [])
+        ["release-rust-image-4242"] if rust else []) + (["release-rust-tui-4242"] if rust and stable else [])
     responses: dict[str, object] = {
         MAIN_COMMIT: {"sha": MAIN}, REQUEST_WORKFLOW: {"id": 31337},
         REQUEST_RUN: dispatch_run(31337, 4242, request_title(mode, release_of(stable, rust), MAIN)),
@@ -230,8 +231,7 @@ class MainBindingTests(unittest.TestCase):
             with self.subTest(sha=sha), self.assertRaisesRegex(ControlPlaneError, "40-character"):
                 parse_release("v0.5.2", sha, 0)
         self.assertEqual(parse_release("v0.5.2", MAIN, 0, True), Release("v0.5.2", MAIN, 0, True))
-        with self.assertRaisesRegex(ControlPlaneError, "only with stable releases"):
-            parse_release("v0.5.2-rc.1", MAIN, 7, True)
+        self.assertEqual(parse_release("v0.5.2-rc.1", MAIN, 7, True), Release("v0.5.2-rc.1", MAIN, 7, True))
 
 
 class EnvironmentTests(unittest.TestCase):
@@ -391,8 +391,8 @@ class RequestTests(unittest.TestCase):
         }
         prerelease = {"TAG": "v1.2.3-rc.1", "PR": "101", "SHA": HEAD}
         for change, error in (
-            ({}, None), (prerelease, None), ({"RUST": "true"}, None),
-            (prerelease | {"RUST": "true"}, "only with stable releases"), ({"RUST": "yes"}, "true or false"),
+            ({}, None), (prerelease, None), ({"RUST": "true"}, None), (prerelease | {"RUST": "true"}, None),
+            ({"RUST": "yes"}, "true or false"),
             ({"RUST": ""}, "RUST is required"),
             ({"SHA": HEAD}, "leave sha empty"), ({"PR": "101", "SHA": HEAD}, "stable tags"),
             ({"TAG": "v1.2.3-rc.1"}, "stable tags"), (prerelease | {"SHA": ""}, "SHA is required"),
@@ -454,7 +454,7 @@ class RequestTests(unittest.TestCase):
             ({}, {}, True, None), (prerelease, {}, False, None), ({"rust": True}, {}, True, None),
             ({"rust": True, "title": {"rust": False}}, {}, True, "dispatch inputs"),
             ({"rust": "true"}, {}, True, "rust must be true or false"),
-            (prerelease | {"rust": True}, {}, False, "only with stable releases"),
+            (prerelease | {"rust": True}, {}, False, None),
             (prerelease, {}, True, "downloaded artifacts"), ({}, {}, False, "downloaded artifacts"),
             ({"sourceSha": HEAD}, {}, True, "trusted main commit"),
             ({"requestRunAttempt": True}, {}, True, "requestRunAttempt"),
@@ -479,8 +479,10 @@ class RequestTests(unittest.TestCase):
                 if artifacts_present:
                     (root / "release-assets-4242").mkdir()
                 rust = record["rust"] is True
-                for name in ("release-rust-image-4242", "release-rust-tui-4242") if rust else ():
-                    (root / name).mkdir()
+                if rust:
+                    (root / "release-rust-image-4242").mkdir()
+                if rust and record["pr"] == 0:
+                    (root / "release-rust-tui-4242").mkdir()
                 inputs = record | cast(dict[str, object], change.get("title", {}))
                 title = request_title(str(inputs["mode"]), Release(
                     str(inputs["tag"]), str(inputs["sourceSha"]), cast(int, inputs["pr"]), inputs["rust"] is True),
@@ -510,8 +512,9 @@ def write_request(root: Path, stable: bool, mode: str, rust: bool = False) -> tu
         write_release_assets(request_dir / "release-assets-4242", "1.2.3")
     rust_oci: JsonObject = {}
     if rust:
-        rust_oci = write_rust_release(request_dir / "release-rust-image-4242", request_dir / "release-rust-tui-4242",
-                                      "1.2.3", release.sha, REPO)
+        rust_oci = write_rust_release(request_dir / "release-rust-image-4242",
+                                      request_dir / "release-rust-tui-4242" if stable else None, release.version,
+                                      release.sha, REPO)
     return request_dir, oci, rust_oci
 
 
@@ -543,6 +546,11 @@ class CommandTests(unittest.TestCase):
         def rust_checksum(request_dir: Path) -> None:
             (request_dir / "release-rust-image-4242" / f"{RUST_OCI}.sha256").write_text(f"0  {RUST_OCI}\n")
 
+        def prerelease_offer(request_dir: Path) -> None:
+            name = offer_name("graphite-meter-server", "1.2.3-rc.1", "linux/amd64")
+            write_rust_offer(request_dir / "release-rust-image-4242" / name, "graphite-meter-server",
+                             "x86_64-unknown-linux-musl")
+
         unprotected = {ENVIRONMENT: REVIEWED | {"protection_rules": []}}
         rows: tuple[tuple[bool, bool, str, Edit | None, dict[str, object], dict[str, str], str | None], ...] = (
             (True, False, "publish", None, {}, {}, None),
@@ -557,6 +565,10 @@ class CommandTests(unittest.TestCase):
              {}, "main moved during"),
             (True, True, "publish", tui, {}, {}, "notices differ from its source offer"),
             (True, True, "publish", rust_checksum, {}, {}, "does not match its checksum"),
+            # A Rust prerelease, as Go's, publishes only its image.
+            (False, True, "publish", None, {}, {}, None),
+            (False, True, "validate", rust_checksum, {}, {}, "does not match its checksum"),
+            (False, True, "publish", prerelease_offer, {}, {}, "files are"),
         )
         for stable, rust, mode, edit, responses, env, error in rows:
             with self.subTest(stable=stable, rust=rust, mode=mode, error=error):
@@ -584,7 +596,14 @@ class CommandTests(unittest.TestCase):
                 self.assertEqual((result["digest"], result["publish"], result["sha"], result["rust"]),
                                  (AMD, str(mode == "publish").lower(), release.sha, str(rust).lower()))
                 self.assertEqual(file_sha256(root / "handoff/image" / OCI), result["oci_sha256"])
+                if rust:
+                    self.assertEqual((result["rust_digest"], file_sha256(root / "handoff/rust-image" / OCI)),
+                                     (AMD, result["rust_oci_sha256"]))
+                else:
+                    self.assertFalse((root / "handoff/rust-image").exists())
+                    self.assertEqual(result["rust_digest"], "")
                 if not stable:
+                    self.assertFalse((root / "handoff/assets").exists())
                     continue
                 handoff = root / "handoff/assets"
                 self.assertEqual(result["assets_sha256"], assets_sha256(handoff))
@@ -592,12 +611,6 @@ class CommandTests(unittest.TestCase):
                 rust_assets = set(server_offers("1.2.3")) | tui_files("1.2.3") if rust else set()
                 self.assertEqual({path.name for path in handoff.iterdir()}, go | rust_assets)
                 verify_release_file_set(handoff, verify_checksums(handoff))
-                if rust:
-                    self.assertEqual((result["rust_digest"], file_sha256(root / "handoff/rust-image" / OCI)),
-                                     (AMD, result["rust_oci_sha256"]))
-                else:
-                    self.assertFalse((root / "handoff/rust-image").exists())
-                    self.assertEqual(result["rust_digest"], "")
 
     def test_recheck_reauthorizes_the_exact_handoff_after_approval(self) -> None:
         handoff = self.root / "handoff"
@@ -610,7 +623,8 @@ class CommandTests(unittest.TestCase):
         for stable, env, responses, error in (
             (True, {}, {}, None), (False, {}, {}, None), (True, {"RUST": "true"}, {}, None),
             (True, {"RUST": "true", "RUST_OCI_SHA256": "0" * 64}, {}, "Rust OCI handoff"),
-            (False, {"RUST": "true"}, {}, "only with stable releases"),
+            (False, {"RUST": "true"}, {}, None),
+            (False, {"RUST": "true", "RUST_OCI_SHA256": "0" * 64}, {}, "Rust OCI handoff"),
             (True, {"OCI_SHA256": "0" * 64}, {}, "OCI handoff"),
             (True, {"ASSETS_SHA256": "0" * 64}, {}, "asset handoff"),
             (True, {"HEAD": OLD}, {}, "checked-out tooling"),

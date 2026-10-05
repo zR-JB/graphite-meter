@@ -31,7 +31,7 @@ on:
         type: choice
         options: [validate, publish]
       rust:
-        description: Also release the experimental Rust image and TUIs; stable only, Go stays the default
+        description: Also release the experimental Rust image, and with a stable release its TUIs; Go stays the default
         required: false
         default: false
         type: boolean
@@ -47,9 +47,11 @@ jobs:
     timeout-minutes: 60
     outputs:
       rust: ${{ steps.request.outputs.rust }}
+      stable: ${{ steps.request.outputs.stable }}
       version: ${{ steps.request.outputs.version }}
       sha: ${{ steps.request.outputs.sha }}
       client_validate: ${{ steps.request.outputs.client_validate }}
+      context: ${{ steps.source.outputs.context }}
     steps:
       - name: Checkout main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -195,7 +197,8 @@ jobs:
           retention-days: 1
           compression-level: 0
 
-  # Rust builds ship only with stable releases, which build main: these jobs build the checked-out main commit.
+  # The Rust jobs build the source the build job resolved: main for a stable release, which alone ships TUI
+  # archives and source offers, or the exact PR head that BuildKit fetches for a prerelease, as Go's image.
   rust-image:
     name: Build untrusted Rust image
     needs: build
@@ -234,7 +237,7 @@ jobs:
         env:
           DOCKER_BUILD_RECORD_UPLOAD: 'false'
         with:
-          context: .
+          context: ${{ needs.build.outputs.context }}
           file: container/Dockerfile.rust
           target: server
           platforms: linux/amd64,linux/arm64
@@ -253,11 +256,12 @@ jobs:
             GM_CLIENT_VALIDATE=${{ needs.build.outputs.client_validate }}
 
       - name: Export the Rust server's source offers
+        if: needs.build.outputs.stable == 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         env:
           DOCKER_BUILD_RECORD_UPLOAD: 'false'
         with:
-          context: .
+          context: ${{ needs.build.outputs.context }}
           file: container/Dockerfile.rust
           target: server-artifacts
           platforms: linux/amd64,linux/arm64
@@ -270,7 +274,7 @@ jobs:
             GM_CLIENT_REVISION=${{ needs.build.outputs.sha }}
             GM_CLIENT_VALIDATE=${{ needs.build.outputs.client_validate }}
 
-      - name: Stage the Rust image and its server source offers
+      - name: Stage the Rust image and a stable release's server source offers
         env:
           VERSION: ${{ needs.build.outputs.version }}
           OCI_ARCHIVE: ${{ runner.temp }}/rust-image.oci.tar
@@ -278,7 +282,7 @@ jobs:
           OUT_DIR: ${{ runner.temp }}/release-rust-image
         run: python3 scripts/ci/rust_release.py stage-image
 
-      - name: Upload the untrusted Rust image and server source offers
+      - name: Upload the untrusted Rust image and its staged source offers
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-rust-image-${{ github.run_id }}
@@ -290,7 +294,7 @@ jobs:
   rust-tui:
     name: Build untrusted Rust TUI archives
     needs: build
-    if: needs.build.outputs.rust == 'true'
+    if: needs.build.outputs.rust == 'true' && needs.build.outputs.stable == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -324,7 +328,7 @@ jobs:
         env:
           DOCKER_BUILD_RECORD_UPLOAD: 'false'
         with:
-          context: .
+          context: ${{ needs.build.outputs.context }}
           file: container/Dockerfile.rust
           target: tui-artifacts
           platforms: linux/amd64

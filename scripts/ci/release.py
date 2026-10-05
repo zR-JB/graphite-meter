@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate release requests, then authorize stable releases, optionally with Rust builds, and PR prereleases."""
+"""Validate release requests, then authorize stable releases and PR prereleases, each optionally with Rust builds."""
 
 from __future__ import annotations
 
@@ -90,9 +90,6 @@ def parse_release(tag: str, sha: str, pr: int, rust: bool = False) -> Release:
         gh.fail("stable tags are vMAJOR.MINOR.PATCH; PR prereleases add -{alpha,beta,rc}.N")
     if SHA_RE.fullmatch(sha) is None:
         gh.fail("release source must be a 40-character commit SHA")
-    # Only a GitHub Release carries the Rust builds' source offers, and prereleases publish none.
-    if rust and pr:
-        gh.fail("Rust builds ship only with stable releases")
     return Release(tag, sha, pr, rust)
 
 
@@ -228,6 +225,8 @@ def verify_request(request_dir: Path) -> tuple[Release, bool]:
         artifacts[f"release-assets-{run_id}"] = (BUILD_JOB, ASSETS_LIMIT)
     if release.rust:
         artifacts[f"release-rust-image-{run_id}"] = (RUST_IMAGE_JOB, ASSETS_LIMIT)
+    # A prerelease publishes images only; the Rust TUI archives ship with stable releases.
+    if release.rust and release.stable:
         artifacts[f"release-rust-tui-{run_id}"] = (RUST_TUI_JOB, ASSETS_LIMIT)
     require_dispatch_run(repository, env("REPOSITORY_OWNER"), publisher, run_id,
                          "release-request.yml", request_title(str(request["mode"]), release,
@@ -263,8 +262,9 @@ def command_verify() -> None:
     rust_image, rust_assets = request_dir / f"release-rust-image-{run_id}", request_dir / "rust-assets"
     rust_sha256 = rust_manifest = ""
     if release.rust:
-        rust_sha256, rust_manifest = rust_release.verify(
-            release.version, release.sha, rust_image, request_dir / f"release-rust-tui-{run_id}", rust_assets)
+        rust_tui = request_dir / f"release-rust-tui-{run_id}" if release.stable else None
+        rust_sha256, rust_manifest = rust_release.verify(release.version, release.sha, rust_image, rust_tui,
+                                                         rust_assets)
     main, ci_run_id, codeql_id = require_publishable(env("REPOSITORY"), release)
     if main != env("PUBLISHER_SHA"):
         gh.fail("main moved during verification; start a fresh request")
@@ -276,6 +276,7 @@ def command_verify() -> None:
     if release.rust:
         (handoff / "rust-image").mkdir()
         shutil.copyfile(rust_image / rust_release.OCI, handoff / "rust-image" / OCI)
+    if release.rust and release.stable:
         for path in rust_assets.iterdir():
             shutil.copyfile(path, handoff / "assets" / path.name)
         write_checksums(handoff / "assets")

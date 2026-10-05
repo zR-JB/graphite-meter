@@ -221,5 +221,41 @@ class VerifyTests(Scratch):
                 self.assertFalse((self.root / "assets").exists())
 
 
+class PrereleaseTests(Scratch):
+    """A prerelease, as Go's, ships only the image, which BuildKit fetched from the PR head and whose SOURCE.txt names
+    the repository."""
+
+    def test_a_prerelease_stages_and_verifies_only_its_image(self) -> None:
+        version = "1.2.3-rc.1"
+        self.assertEqual((server_offers(version), image_files(version)), ({}, {RUST_OCI, f"{RUST_OCI}.sha256"}))
+        built, staged, assets = self.root / "built", self.root / "staged", self.root / "assets"
+        oci = write_rust_release(built, None, version, SHA, REPO)
+        env = {"RUNNER_TEMP": str(self.root), "VERSION": version, "OCI_ARCHIVE": str(built / RUST_OCI),
+               "SERVER_EXPORT": str(self.root / "absent"), "OUT_DIR": str(staged)}
+        with patch.dict(os.environ, env), patch("sys.argv", ["rust_release.py", "stage-image"]):
+            main()
+        with patch.dict(os.environ, engine(self.root, REPO, f"{version}-rust", SHA, oci)):
+            self.assertEqual(verify(version, SHA, staged, None, assets)[0], file_sha256(staged / RUST_OCI))
+            for tui_dir, release in ((self.root / "tui", version), (None, "1.2.3")):
+                with self.subTest(release=release), self.assertRaisesRegex(ControlPlaneError, "ships only the image"):
+                    verify(release, SHA, staged, tui_dir, assets)
+        self.assertFalse(assets.exists())
+
+    def test_a_prerelease_image_names_the_repository_as_go_s_prerelease_image_does(self) -> None:
+        version, offer = "1.2.3-rc.1", offer_name("graphite-meter-server", "1.2.3-rc.1", "linux/amd64")
+        for source, error in ((b"https://github.com/zR-JB/graphite-meter\n", None),
+                              (rust_source(version, offer, AMD64), "does not name the repository"),
+                              (b"https://github.com/zR-JB/graphite-meter/tree/v1.2.3-rc.1\n",
+                               "does not name the repository")):
+            with self.subTest(source=source):
+                image = self.root / str(len(list(self.root.iterdir())))
+                image.mkdir()
+                files = {"usr/share/licenses/graphite-meter/SOURCE.txt": source}
+                oci = write_oci(image / RUST_OCI, REPO, SHA, remote=True, arch_files={"amd64": files, "arm64": files})
+                (image / f"{RUST_OCI}.sha256").write_text(f"{file_sha256(image / RUST_OCI)}  {RUST_OCI}\n")
+                with patch.dict(os.environ, engine(self.root, REPO, f"{version}-rust", SHA, oci)):
+                    outcome(self, error, lambda: verify(version, SHA, image, None, self.root / "assets"))
+
+
 if __name__ == "__main__":
     unittest.main()
