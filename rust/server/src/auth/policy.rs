@@ -159,7 +159,7 @@ impl Policy {
         if headers.contains_key(header::AUTHORIZATION) {
             return self.bearer(store, headers);
         }
-        store.cookie(cookie(headers, SESSION_COOKIE)?)
+        cookie_lease(store, headers)
     }
 
     fn bearer(&self, store: &Store, headers: &HeaderMap) -> Option<AuthLease> {
@@ -333,6 +333,11 @@ fn requested(headers: &HeaderMap, allowed: &[&str]) -> Option<Vec<String>> {
         .filter(|name| !name.is_empty());
     let known = |name: &str| name == "content-type" || allowed.contains(&name);
     names.map(|name| known(&name).then_some(name)).collect()
+}
+
+/// The lease of the login whose session cookie `headers` carry.
+pub(super) fn cookie_lease(store: &Store, headers: &HeaderMap) -> Option<AuthLease> {
+    store.cookie(cookie(headers, SESSION_COOKIE)?)
 }
 
 /// The cookie `name`: invalid pairs are skipped, and two valid ones are ambiguous.

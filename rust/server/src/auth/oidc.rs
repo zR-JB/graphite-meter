@@ -4,10 +4,10 @@
 use super::{
     Enabled, LoginKey, Security, jwt,
     page::{self, Page},
-    policy::cookie,
+    policy::{cookie, cookie_lease},
     provider::{Client, Provider},
     rate::{Attempts, engage, share_full},
-    routes::{check_csrf, clear_cookie, establish, field, form, presented, redirect, rejected, set_cookie},
+    routes::{check_csrf, clear_cookie, establish, field, form, redirect, rejected, set_cookie},
     security::{Counter, Reason},
     store::{Digest, digest, random},
 };
@@ -278,7 +278,7 @@ pub(super) async fn start<B: http_body::Body>(
         let keys = peer.keys().filter(|keys| oidc.starts.allow(keys, false, None));
         let keys = keys.ok_or(Reason::Throttled)?;
         let approval = if approval::verification_code(challenge).is_some() { challenge } else { "" };
-        oidc.start(&keys, approval, presented(auth, &head.headers))
+        oidc.start(&keys, approval, cookie_lease(&auth.store, &head.headers).map(|lease| lease.login()))
     })();
     match started {
         Ok((url, browser)) => {

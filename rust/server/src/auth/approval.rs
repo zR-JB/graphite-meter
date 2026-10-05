@@ -4,7 +4,7 @@
 use super::{
     AuthLease, Enabled, LOGIN_LIFETIME, LoginKey,
     page::{self, Page},
-    policy::{SESSION_COOKIE, browser_origin, cookie},
+    policy::{browser_origin, cookie_lease},
     rate::share_full,
     routes::{Form, body, field, redirect},
     security::Counter,
@@ -255,7 +255,7 @@ fn signed_in(auth: &Enabled, headers: &HeaderMap) -> Option<AuthLease> {
     if headers.contains_key(header::AUTHORIZATION) {
         return None;
     }
-    auth.store.cookie(cookie(headers, SESSION_COOKIE)?)
+    cookie_lease(&auth.store, headers)
 }
 
 /// The page approving `challenge` for a terminal, or for the browser `origin`.

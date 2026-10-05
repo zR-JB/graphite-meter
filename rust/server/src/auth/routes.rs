@@ -6,7 +6,7 @@ use super::{
     oidc::{self, Oidc, TRANSACTION_COOKIE},
     page::{self, Page},
     password::Password,
-    policy::{SESSION_COOKIE, cookie},
+    policy::{SESSION_COOKIE, cookie, cookie_lease},
     protect,
     security::{Counter, Reason},
     store::{MintRefusal, random},
@@ -184,7 +184,8 @@ async fn sign_in<B: http_body::Body>(
         None => "/".into(),
     };
     let identity = ("local-operator", "Local operator", "local");
-    let mut answer = match establish(auth, identity, presented(auth, headers), redirect(&target)) {
+    let prior = cookie_lease(&auth.store, headers).map(|lease| lease.login());
+    let mut answer = match establish(auth, identity, prior, redirect(&target)) {
         Ok(answer) => answer,
         Err(reason) => return rejected(auth, reason, challenge),
     };
@@ -210,12 +211,6 @@ pub(super) fn establish(
     set_cookie(&mut answer, CSRF_COOKIE, &login.csrf, login.expires);
     clear_cookie(&mut answer, LOGIN_COOKIE);
     Ok(answer)
-}
-
-/// The login whose session cookie the request presents.
-pub(super) fn presented(auth: &Enabled, headers: &HeaderMap) -> Option<LoginKey> {
-    let lease = cookie(headers, SESSION_COOKIE).and_then(|token| auth.store.cookie(token));
-    lease.map(|lease| lease.login())
 }
 
 /// Checks a sign-in form: posted from the public origin with the token its login cookie holds.
