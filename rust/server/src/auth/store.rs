@@ -193,7 +193,8 @@ impl Store {
     /// Issues `login` a measurement grant for the `browser` origin or a native client. A login holds eight; then a
     /// native grant replaces the oldest native one, and anything else is refused.
     pub fn grant(&self, login: LoginKey, browser: Option<HeaderValue>) -> Result<String, GrantRefusal> {
-        lock(&self.0).grant(login, browser)
+        let credentials = credentials();
+        lock(&self.0).grant(login, browser, credentials)
     }
 
     /// A one-use ticket presenting `lease` at `target` from the `origin` that minted it, for 30 s at most.
@@ -252,8 +253,13 @@ impl Store {
 }
 
 impl State {
-    /// See `Store::grant`.
-    pub(super) fn grant(&mut self, login: LoginKey, browser: Option<HeaderValue>) -> Result<String, GrantRefusal> {
+    /// See `Store::grant`; `(token, id)` come from `credentials`.
+    pub(super) fn grant(
+        &mut self,
+        login: LoginKey,
+        browser: Option<HeaderValue>,
+        (token, id): (String, String),
+    ) -> Result<String, GrantRefusal> {
         let revoked = self.login(&login.0).ok_or(GrantRefusal::NoLogin)?.revoked.child_token();
         let held: Vec<_> = self.grants.iter().filter(|(_, grant)| grant.login == login).collect();
         if held.len() >= MAX_LOGIN_GRANTS {
@@ -264,7 +270,6 @@ impl State {
                 evicted.revoked.cancel();
             }
         }
-        let (token, id) = (random::<32>(), random::<16>());
         self.sequence += 1;
         let grant = Grant {
             login,
@@ -330,7 +335,10 @@ pub(super) fn digest(token: &str) -> Digest {
 
 /// `N` random bytes in unpadded base64url.
 pub(super) fn random<const N: usize>() -> String {
-    let mut bytes = [0; N];
-    getrandom::fill(&mut bytes).expect("the system's randomness serves every credential");
-    URL_SAFE_NO_PAD.encode(bytes)
+    URL_SAFE_NO_PAD.encode(crate::random::<N>())
+}
+
+/// A new grant's bearer token and id, drawn before the store is locked.
+pub(super) fn credentials() -> (String, String) {
+    (random::<32>(), random::<16>())
 }

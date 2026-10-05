@@ -104,10 +104,10 @@ impl App {
             let port = listen_port(&listener.address)?;
             HeaderValue::from_str(&format!("h3=\":{port}\"")).ok()
         });
-        let generation = random::<16>()?.iter().map(|byte| format!("{byte:02x}")).collect();
+        let generation = crate::random::<16>().iter().map(|byte| format!("{byte:02x}")).collect();
         Ok(Self {
             quotas: Quotas::new(config.limits, &budget, None),
-            uploads: Uploads::new(random()?, Meter::new(config.verbose)),
+            uploads: Uploads::new(crate::random(), Meter::new(config.verbose)),
             auth,
             assets: Assets::embedded(config.auth.is_some(), config.result_history_default),
             budget,
@@ -380,10 +380,4 @@ impl App {
 /// The port of a listen address such as `:7246` or `[::]:7249`.
 pub(super) fn listen_port(address: &str) -> Option<u16> {
     address.rsplit_once(':')?.1.parse().ok()
-}
-
-fn random<const N: usize>() -> Result<[u8; N], String> {
-    let mut bytes = [0; N];
-    getrandom::fill(&mut bytes).map_err(|error| format!("randomness unavailable: {error}"))?;
-    Ok(bytes)
 }

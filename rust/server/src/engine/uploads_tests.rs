@@ -21,7 +21,7 @@ fn lane() -> Lane {
 
 fn fixture() -> (Uploads, ClientKeys, String) {
     let uploads = Uploads::new([7; 32], Meter::new(true));
-    let id = uploads.mint().unwrap();
+    let id = uploads.mint();
     (uploads, client("192.0.2.1"), id)
 }
 
@@ -50,7 +50,7 @@ fn invalid() -> Record {
 async fn ids_are_signed_by_their_store_and_create_state_only_while_fresh() {
     let (uploads, owner, id) = fixture();
     assert!(id.starts_with("gmu_") && id.len() == 79, "{id}");
-    assert_ne!(uploads.mint().unwrap(), id);
+    assert_ne!(uploads.mint(), id);
     assert_eq!(uploads.live(), 0, "minting holds no state");
     let mut forged = id.clone().into_bytes();
     forged[20] = if forged[20] == b'A' { b'B' } else { b'A' };
@@ -66,7 +66,7 @@ async fn ids_are_signed_by_their_store_and_create_state_only_while_fresh() {
         "reads create nothing"
     );
 
-    let unused = uploads.mint().unwrap();
+    let unused = uploads.mint();
     advance(Duration::from_secs(60)).await;
     drop(uploads.begin(&id, Some(&owner), lane(), None).unwrap());
     advance(Duration::from_secs(61)).await;
@@ -80,7 +80,7 @@ async fn ids_are_signed_by_their_store_and_create_state_only_while_fresh() {
 #[tokio::test(start_paused = true)]
 async fn an_owner_is_its_narrowest_key_and_an_ambiguous_peer_owns_nothing() {
     let uploads = Uploads::new([7; 32], Meter::new(true));
-    let id = uploads.mint().unwrap();
+    let id = uploads.mint();
     drop(
         uploads
             .begin(&id, Some(&client("2001:db8:1:2::1")), lane(), None)
@@ -101,11 +101,11 @@ async fn an_owner_is_its_narrowest_key_and_an_ambiguous_peer_owns_nothing() {
 
     let grant = ClientKeys::Auth(Holder::Grant("g".into()), "alice".into());
     let login = ClientKeys::Auth(Holder::Login("s".into()), "alice".into());
-    let delegated = uploads.mint().unwrap();
+    let delegated = uploads.mint();
     drop(uploads.subscribe(&delegated, Some(&grant)).unwrap());
     assert_eq!(uploads.checkpoint(&delegated, Some(&login)).err(), Some(UploadRefusal::OwnerMismatch));
 
-    let fresh = uploads.mint().unwrap();
+    let fresh = uploads.mint();
     assert_eq!(uploads.begin(&fresh, None, lane(), None).err(), Some(UploadRefusal::OwnerMismatch));
     assert_eq!(uploads.subscribe(&fresh, None).err(), Some(UploadRefusal::OwnerMismatch));
     assert_eq!(uploads.checkpoint(&fresh, None).err(), Some(UploadRefusal::Invalid));
@@ -116,7 +116,7 @@ async fn an_owner_is_its_narrowest_key_and_an_ambiguous_peer_owns_nothing() {
 #[tokio::test(start_paused = true)]
 async fn a_client_holds_thirty_two_aggregates_and_its_wider_prefixes_twice_as_many() {
     let uploads = Uploads::new([7; 32], Meter::new(true));
-    let create = |keys: &ClientKeys| uploads.subscribe(&uploads.mint().unwrap(), Some(keys)).err();
+    let create = |keys: &ClientKeys| uploads.subscribe(&uploads.mint(), Some(keys)).err();
     let v4 = client("192.0.2.1");
     for _ in 0..MAX_PER_CLIENT {
         assert_eq!(create(&v4), None);
@@ -134,39 +134,33 @@ async fn a_client_holds_thirty_two_aggregates_and_its_wider_prefixes_twice_as_ma
 async fn at_capacity_only_the_stalest_empty_aggregate_is_displaced_and_stays_refused() {
     let uploads = Uploads::new([7; 32], Meter::new(true));
     let owner = client("192.0.2.1");
-    let (stalest, newer) = (uploads.mint().unwrap(), uploads.mint().unwrap());
+    let (stalest, newer) = (uploads.mint(), uploads.mint());
     let mut displaced = uploads.subscribe(&stalest, Some(&owner)).unwrap();
     assert_eq!(record(&mut displaced).await, Some(Record::Ready));
     advance(Duration::from_secs(1)).await;
     drop(uploads.subscribe(&newer, Some(&owner)).unwrap());
-    let finished = uploads.mint().unwrap();
+    let finished = uploads.mint();
     drop(uploads.subscribe(&finished, Some(&owner)).unwrap());
     uploads.finish(&finished, Some(&owner)).unwrap();
-    let _laned = uploads
-        .begin(&uploads.mint().unwrap(), Some(&owner), lane(), None)
-        .unwrap();
+    let _laned = uploads.begin(&uploads.mint(), Some(&owner), lane(), None).unwrap();
     for index in 0..MAX_LIVE - 4 {
         let keys = client(&format!("198.51.100.{}", index / 30));
         uploads
-            .begin(&uploads.mint().unwrap(), Some(&keys), lane(), None)
+            .begin(&uploads.mint(), Some(&keys), lane(), None)
             .unwrap()
             .record(1);
     }
     assert_eq!(uploads.live(), MAX_LIVE);
 
     let newcomer = client("203.0.113.1");
-    let _joined = uploads
-        .begin(&uploads.mint().unwrap(), Some(&newcomer), lane(), None)
-        .unwrap();
+    let _joined = uploads.begin(&uploads.mint(), Some(&newcomer), lane(), None).unwrap();
     assert_eq!(record(&mut displaced).await, Some(invalid()));
     assert_eq!(line(&mut displaced).await, None);
     let refused = uploads.subscribe(&stalest, Some(&owner)).err();
     assert_eq!(refused, Some(UploadRefusal::Invalid), "a displaced ID is refused while it is fresh");
-    let _second = uploads
-        .begin(&uploads.mint().unwrap(), Some(&newcomer), lane(), None)
-        .unwrap();
+    let _second = uploads.begin(&uploads.mint(), Some(&newcomer), lane(), None).unwrap();
     assert_eq!(uploads.checkpoint(&newer, Some(&owner)).err(), Some(UploadRefusal::Invalid));
-    let full = uploads.subscribe(&uploads.mint().unwrap(), Some(&newcomer)).err();
+    let full = uploads.subscribe(&uploads.mint(), Some(&newcomer)).err();
     assert_eq!(full, Some(UploadRefusal::GlobalFull), "finished, laned and nonempty aggregates stay");
 }
 
@@ -185,7 +179,7 @@ async fn retention_outlasts_observers_but_not_an_idle_aggregate() {
     drop(uploads.subscribe(&id, Some(&owner)).unwrap());
     advance(Duration::from_secs(1) + SWEEP_INTERVAL).await;
     assert_eq!(uploads.checkpoint(&id, Some(&owner)).err(), Some(UploadRefusal::Invalid));
-    let mut feed = uploads.subscribe(&uploads.mint().unwrap(), Some(&owner)).unwrap();
+    let mut feed = uploads.subscribe(&uploads.mint(), Some(&owner)).unwrap();
     assert_eq!(record(&mut feed).await, Some(Record::Ready));
     advance(RETENTION + SWEEP_INTERVAL * 2).await;
     assert_eq!(record(&mut feed).await, Some(invalid()), "an expired aggregate ends its feed");

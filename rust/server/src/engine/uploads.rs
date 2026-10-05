@@ -214,14 +214,14 @@ impl Uploads {
         }))
     }
 
-    /// A new ID, which holds no state until a lane or reader uses it; `None` without system randomness.
-    pub fn mint(&self) -> Option<String> {
+    /// A new ID, which holds no state until a lane or reader uses it.
+    pub fn mint(&self) -> String {
         let mut id = [0; ID_BYTES];
         id[..8].copy_from_slice(&self.0.clock.now().to_be_bytes());
-        getrandom::fill(&mut id[8..SIGNED_BYTES]).ok()?;
+        id[8..SIGNED_BYTES].copy_from_slice(&crate::random::<16>());
         let tag = self.mac(&id[..SIGNED_BYTES]).finalize().into_bytes();
         id[SIGNED_BYTES..].copy_from_slice(&tag);
-        Some(format!("{ID_PREFIX}{}", URL_SAFE_NO_PAD.encode(id)))
+        format!("{ID_PREFIX}{}", URL_SAFE_NO_PAD.encode(id))
     }
 
     /// Joins `id`'s aggregate as a data lane that `lane` bounds, its bytes counted in `transfer`.

@@ -8,7 +8,7 @@ use super::{
     rate::share_full,
     routes::{Form, body, field, redirect},
     security::Counter,
-    store::{GrantRefusal, MAX_LOGIN_GRANTS, State},
+    store::{GrantRefusal, MAX_LOGIN_GRANTS, State, credentials},
 };
 use crate::{
     app::{finalize::Access, query, response},
@@ -202,7 +202,7 @@ pub(super) async fn token<B: http_body::Body>(auth: &Enabled, request: Request<B
 
 /// Issues the grant an approved challenge of `verifier` holds for `origin`, ending the approval.
 fn issue(auth: &Enabled, verifier: &str, origin: Option<HeaderValue>) -> Response<Body> {
-    let challenge = challenge(verifier);
+    let (challenge, credentials) = (challenge(verifier), credentials());
     let now = Instant::now();
     let mut state = lock(&auth.store.0);
     let approval = state.approvals.get(&challenge);
@@ -217,7 +217,7 @@ fn issue(auth: &Enabled, verifier: &str, origin: Option<HeaderValue>) -> Respons
         let full = origin.is_some() && state.grants_of(login) >= MAX_LOGIN_GRANTS;
         return if full { response::empty(StatusCode::TOO_MANY_REQUESTS) } else { pending() };
     }
-    let token = match state.grant(login, origin.clone()) {
+    let token = match state.grant(login, origin.clone(), credentials) {
         Ok(token) => token,
         Err(GrantRefusal::Full) => return response::empty(StatusCode::TOO_MANY_REQUESTS),
         Err(GrantRefusal::NoLogin) => return pending(),
