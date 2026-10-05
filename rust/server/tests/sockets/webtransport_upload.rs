@@ -15,14 +15,14 @@ use graphite_meter_proto::upload::Record;
 use graphite_meter_server::limits::CONNECTION_CREDIT;
 
 /// A progress feed's records as they arrive.
-struct Feed {
+pub(super) struct Feed {
     stream: RecvStream,
     buffered: Vec<u8>,
 }
 
 impl Feed {
     /// The next stream the server opens in `session`.
-    async fn of(session: &Session) -> Self {
+    pub(super) async fn of(session: &Session) -> Self {
         Self {
             stream: session.accept_uni().await.unwrap(),
             buffered: Vec::new(),
@@ -30,7 +30,7 @@ impl Feed {
     }
 
     /// The next record, past heartbeats; `None` at the stream's end.
-    async fn next(&mut self) -> Option<Record> {
+    pub(super) async fn next(&mut self) -> Option<Record> {
         loop {
             if let Some(end) = self.buffered.iter().position(|&byte| byte == b'\n') {
                 let line: Vec<u8> = self.buffered.drain(..=end).collect();
@@ -56,7 +56,7 @@ impl Feed {
     }
 }
 
-fn refused(record: Option<Record>) -> String {
+pub(super) fn refused(record: Option<Record>) -> String {
     match record {
         Some(Record::Error { code, .. }) => code,
         other => panic!("an error record, not {other:?}"),

@@ -1,13 +1,15 @@
 //! Revocation over real sockets: sign-out closes a WebSocket bus with 1008 and a WebTransport session with 3, and a
-//! CONNECT presents its grant before the upgrade.
+//! CONNECT presents its grant before the upgrade and an upload's owner before its feed.
 
 use super::{
-    http3::{Connection, H3, transport},
+    http3::{Connection, H3, read, transport},
     webtransport::{ending, open},
+    webtransport_upload::{Feed, refused},
     *,
 };
 use futures_util::{SinkExt, StreamExt};
 use graphite_meter_http3::webtransport::Session;
+use graphite_meter_proto::upload::Record;
 use graphite_meter_server::auth::{NewLogin, Store};
 use http::{Request, Response};
 use tokio_tungstenite::{
@@ -84,4 +86,36 @@ async fn a_connect_needs_a_grant_and_sign_out_ends_its_session_with_3() {
     assert!(open(&opened).await);
     assert!(store.sign_out(login.key, false));
     assert_eq!(opened.closed().await, Ok(ending(3, "authentication required")));
+}
+
+#[tokio::test]
+async fn an_upload_session_needs_a_grant_and_the_upload_s_owner() {
+    let h3 = H3::start(&AUTH).await;
+    let (store, login) = signed_in(&h3);
+    let other = store.sign_in("other", "Other", "local").unwrap();
+    let (owner, other) = (store.grant(login.key, None).unwrap(), store.grant(other.key, None).unwrap());
+    let connection = h3.connect(transport(None)).await;
+    let request = Request::post("https://localhost/upload/session").header("authorization", format!("Bearer {owner}"));
+    let (mut send, mut answer) = connection
+        .requests
+        .send_request(request.body(()).unwrap())
+        .await
+        .unwrap()
+        .split();
+    send.finish().await.unwrap();
+    assert_eq!(answer.response().await.unwrap().status(), 200);
+    let created: serde_json::Value = serde_json::from_slice(&read(&mut answer).await.unwrap()).unwrap();
+    let path = format!("/wt/upload?id={}", created["uploadId"].as_str().unwrap());
+    let unsigned = session(&connection, &path, None)
+        .await
+        .err()
+        .expect("a refusal before any feed");
+    assert_eq!(unsigned.status(), 403);
+    assert_eq!(unsigned.headers()["graphite-meter-auth"], "required");
+    let owned = session(&connection, &path, Some(&owner)).await.unwrap();
+    assert_eq!(Feed::of(&owned).await.next().await, Some(Record::Ready));
+    // A connection carries one session.
+    let elsewhere = h3.connect(transport(None)).await;
+    let foreign = session(&elsewhere, &path, Some(&other)).await.unwrap();
+    assert_eq!(refused(Feed::of(&foreign).await.next().await), "ownerMismatch");
 }
