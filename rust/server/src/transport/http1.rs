@@ -55,7 +55,7 @@ type Bus = Arc<Mutex<Option<(OnUpgrade, Lane)>>>;
 
 impl Http1 {
     /// An accepted connection's work, after its TLS handshake on a TLS listener, on whichever runtime polls it.
-    pub fn connection(&self, socket: TcpStream, peer: SocketAddr) -> impl Future<Output = ()> + Send + 'static {
+    pub fn connection(&self, socket: TcpStream, peer: SocketAddr) -> impl Future<Output = ()> + Send + use<> {
         let (listener, socket, accepted) = (self.clone(), socket.into_std(), Instant::now());
         async move {
             let Ok(socket) = socket.and_then(TcpStream::from_std) else {

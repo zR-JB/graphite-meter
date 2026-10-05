@@ -30,9 +30,12 @@ fn main() -> ExitCode {
         [only] if only == "hash-password" => hash_password().err().map(|error| format!("hash-password: {error}")),
         _ => match config::load(|name| std::env::var_os(name), args, &mut io::stderr()) {
             Ok(Loaded::Help) => None,
-            Ok(Loaded::Config(config)) => serve(*config)
-                .err()
-                .map(|error| format!("server error: {}", quote(&error))),
+            Ok(Loaded::Config(config)) => match runtime::check_budget(&config) {
+                Ok(()) => serve(*config)
+                    .err()
+                    .map(|error| format!("server error: {}", quote(&error))),
+                Err(error) => Some(format!("configuration error: {}", quote(&error))),
+            },
             Err(error) => Some(format!("configuration error: {}", quote(&error))),
         },
     };

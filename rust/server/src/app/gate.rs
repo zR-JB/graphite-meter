@@ -11,7 +11,7 @@ use graphite_meter_proto::route::{Kind, Route};
 use http::{Method, Request, Response, StatusCode, Version, header};
 
 /// A request head, as parsed, holds at most this many bytes.
-const MAX_HEAD_BYTES: usize = 32 << 10;
+pub(crate) const MAX_HEAD_BYTES: usize = 32 << 10;
 
 /// What the gate decided for a request.
 pub(super) enum Gate {

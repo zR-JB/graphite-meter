@@ -1,7 +1,8 @@
-//! The running server over real sockets: HTTP/1 transfers and their endings, connection bounds, WebSocket buses
-//! and TLS.
+//! The running server over real sockets: HTTP/1 and HTTP/2 transfers and their endings, connection bounds,
+//! WebSocket buses and TLS.
 
 mod connection;
+mod http2;
 mod tls;
 mod transfer;
 mod websocket;
@@ -35,6 +36,7 @@ fn config(env: &[(&str, &str)]) -> Config {
 struct Running {
     address: SocketAddr,
     tls: Option<SocketAddr>,
+    h2: Option<SocketAddr>,
     stop: oneshot::Sender<()>,
     task: JoinHandle<Result<(), String>>,
 }
@@ -42,11 +44,12 @@ struct Running {
 async fn start(env: &[(&str, &str)]) -> Running {
     let server = Server::bind(config(env)).await.unwrap();
     let (address, tls) = (server.local_addr(Endpoint::H1).unwrap(), server.local_addr(Endpoint::H1Tls));
+    let h2 = server.local_addr(Endpoint::H2);
     let (stop, stopped) = oneshot::channel();
     let task = tokio::spawn(server.serve(async {
         let _ = stopped.await;
     }));
-    Running { address, tls, stop, task }
+    Running { address, tls, h2, stop, task }
 }
 
 impl Running {

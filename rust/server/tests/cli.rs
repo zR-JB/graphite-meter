@@ -121,3 +121,22 @@ fn runtime_failures_log_a_server_error_and_exit_one() {
     let line = text(&output.stderr).strip_suffix('\n').unwrap();
     assert_eq!(logged(line), format!(r#"server error: "listen tcp {address}: address already in use""#));
 }
+
+#[test]
+fn a_buffer_budget_below_the_connection_floors_is_a_configuration_error() {
+    let env = [
+        ("GM_H2_ADDR", ":0"),
+        ("GM_TLS_CERT", "/missing/cert.pem"),
+        ("GM_TLS_KEY", "/missing/key.pem"),
+        ("GM_MAX_CONNECTIONS", "2"),
+        ("GM_MAX_CONNECTIONS_PER_CLIENT", "2"),
+        ("GM_MAX_BUFFER_BYTES", "3407871"),
+    ];
+    let output = server(&[], &env, b"");
+    assert_eq!(output.status.code(), Some(1));
+    let line = text(&output.stderr).strip_suffix('\n').unwrap();
+    let message = "configuration error: \"GM_MAX_BUFFER_BYTES (3407871) must be at least 3407872: GM_MAX_CONNECTIONS \
+                   (2) connection floors of 1572864 bytes, 0 bytes of QUIC endpoint buffers and the 262144-byte \
+                   download block\"";
+    assert_eq!(logged(line), message);
+}

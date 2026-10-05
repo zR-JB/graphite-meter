@@ -9,6 +9,7 @@ pub mod query;
 pub(crate) mod response;
 pub mod topology;
 
+pub(crate) use gate::MAX_HEAD_BYTES;
 pub use topology::Endpoint;
 
 use crate::{
@@ -125,6 +126,11 @@ impl App {
     pub fn connection(&self, peer: IpAddr, transport: Transport) -> Option<Hold> {
         let keys = ClientKeys::connection(peer, &self.config.trusted_proxies);
         self.quotas.connection(&keys, transport)
+    }
+
+    /// Receive-window credit for a connection `keys` fund; `None` past their share or the clients' half.
+    pub fn window_credit(&self, keys: &ClientKeys, bytes: usize) -> Option<Hold> {
+        self.quotas.credit(keys, bytes)
     }
 
     /// Answers a request that `exchange` bounds until it is admitted.

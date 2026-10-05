@@ -3,6 +3,7 @@
 pub mod accept;
 pub mod body;
 pub mod http1;
+pub mod http2;
 pub mod lifecycle;
 pub mod tls;
 pub mod websocket;
