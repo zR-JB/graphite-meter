@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-image=${1:?usage: VERSION=... GM_CLIENT_REVISION=... scripts/verify-container.sh IMAGE}
+image=${1:?usage: VERSION=... GM_CLIENT_REVISION=... [ENGINE_VERSION=...] scripts/verify-container.sh IMAGE}
 version=${VERSION:?}
 revision=${GM_CLIENT_REVISION:?}
+# The Rust server reports VERSION-rust; its browser app reports VERSION.
+engine_version=${ENGINE_VERSION:-$version}
 engine=${CONTAINER_ENGINE:-$(command -v docker || command -v podman || true)}
 if ! command -v "$engine" >/dev/null 2>&1; then
     echo "container verification requires Docker or Podman" >&2
@@ -37,7 +39,7 @@ for _ in $(seq 30); do
 done
 
 origin="http://127.0.0.1:7246"
-curl -fsS "$base/preflight" | jq -e --arg origin "$origin" --arg version "$version" '
+curl -fsS "$base/preflight" | jq -e --arg origin "$origin" --arg version "$engine_version" '
   .engineVersion == $version and (.generation | type == "string" and length > 0)
   and .capabilities.throughput == [{"baseUrl": $origin, "transport": "fetch-stream", "protocol": "http1"}]
   and .capabilities.latency == [{"baseUrl": $origin, "transport": "websocket"}]
@@ -59,9 +61,42 @@ usr/share/licenses/graphite-meter/COPYRIGHT Graphite Meter
 usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt THIRD-PARTY SOFTWARE NOTICES
 usr/share/licenses/graphite-meter/SOURCE.txt https://github.com/zR-JB/graphite-meter
 EOF
+# The Go and Rust images hold the same files: one static binary, the CA roots and the notices; no libc,
+# shell or package manager. The engine adds only its runtime files.
+tar -tvf "$tmp/rootfs.tar" | awk '$1 !~ /^d/ { print $6 }' \
+    | grep -Evx '\.dockerenv|(dev|proc|sys|run)/.*|etc/(hostname|hosts|resolv\.conf|mtab)' | sort >"$tmp/files"
+diff -u - "$tmp/files" <<'FILES'
+etc/ssl/certs/ca-certificates.crt
+graphite-meter
+usr/share/licenses/ca-certificates/COPYRIGHT
+usr/share/licenses/graphite-meter/COPYRIGHT
+usr/share/licenses/graphite-meter/LICENSE
+usr/share/licenses/graphite-meter/SOURCE.txt
+usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt
+FILES
+# An unreviewed development build's notices and executable carry this marker; no image may ship one.
+if tar -xOf "$tmp/rootfs.tar" graphite-meter usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt \
+    | grep -aF 'UNREVIEWED DEVELOPMENT BUILD' >/dev/null; then
+    echo "the image ships an unreviewed development build" >&2
+    exit 1
+fi
 licenses='{{ index .Config.Labels "org.opencontainers.image.licenses" }}'
 test "$("$engine" inspect -f "$licenses" "$image")" = AGPL-3.0-or-later
 test "$("$engine" inspect -f '{{.Config.User}}' "$image")" = 65532:65532
+# Relative GM_* paths resolve from /.
+case "$("$engine" inspect -f '{{.Config.WorkingDir}}' "$image")" in
+    '' | /) ;;
+    *) echo "the image must run from /" >&2; exit 1 ;;
+esac
+# mimalloc in the static Rust server keeps transparent huge pages off unless MIMALLOC_ALLOW_THP asks for them.
+case "$engine_version" in
+    *-rust)
+        "$engine" run --rm -e MIMALLOC_VERBOSE=1 "$image" --version >"$tmp/thp-default" 2>&1
+        grep -qE "option 'allow_thp': 0([[:space:]]|$)" "$tmp/thp-default"
+        "$engine" run --rm -e MIMALLOC_VERBOSE=1 -e MIMALLOC_ALLOW_THP=2 "$image" --version >"$tmp/thp-set" 2>&1
+        grep -qE "option 'allow_thp': 2([[:space:]]|$)" "$tmp/thp-set"
+        ;;
+esac
 
 curl -fsS "$base/" -o "$tmp/index.html"
 grep -qi '<script[^>]*type="module"' "$tmp/index.html"
