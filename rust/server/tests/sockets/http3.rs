@@ -237,7 +237,8 @@ async fn an_unadmitted_request_is_reset_at_fifteen_seconds_beside_an_admitted_do
 #[tokio::test]
 async fn transfers_the_peer_leaves_idle_end_after_thirty_seconds() {
     let h3 = H3::start(&[]).await;
-    let connection = h3.connect(transport(None)).await;
+    // Stream credit below the server's first send window stalls the download at once.
+    let connection = h3.connect(transport(Some(64 << 10))).await;
     let (_download, mut download) = connection.open("GET", ENDLESS).await;
     download.response().await.unwrap();
     let id = connection.upload_id().await;

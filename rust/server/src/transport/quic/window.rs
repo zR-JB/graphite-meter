@@ -1,6 +1,6 @@
 //! A QUIC connection's windows: the receive window an admitted upload funds, and the send window that follows demand.
 
-use super::budget::ConnectionBudget;
+use super::{SEND_WINDOW_TUNING, budget::ConnectionBudget};
 use crate::{
     app::App,
     limits::{Budget, Pressure},
@@ -17,6 +17,8 @@ use std::{
 };
 use tokio::time::Instant;
 
+/// The send window a path keeps once it sends this much in a tuning interval.
+const FAST_SEND_WINDOW: u64 = 2 << 20;
 /// The least growth of a send window worth a change.
 const SEND_WINDOW_STEP: u64 = 256 << 10;
 /// A send window shrinks after its demand stayed low this long.
@@ -67,8 +69,9 @@ impl ReceiveWindow for Window {
     }
 }
 
-/// The send window: 2 MiB, grown towards two observed bandwidth-delay products up to 16 MiB while the budget has
-/// headroom, and back to 2 MiB after a second of low demand or once no request runs.
+/// The send window: 256 KiB, grown towards two observed bandwidth-delay products up to 16 MiB, and towards what the
+/// path sends in a tuning interval up to 2 MiB, while the budget has headroom; back to 256 KiB after a second of low
+/// demand or once no request runs.
 pub(super) struct SendWindow {
     limit: u64,
     /// When the path's sent bytes were last read, and their count.
@@ -128,17 +131,22 @@ impl SendWindow {
     }
 }
 
-/// Two bandwidth-delay products of `sent` bytes over `elapsed`, within the send window's bounds: enough for a new path
-/// to grow on fast links without filling the bottleneck's queue.
+/// Two bandwidth-delay products of `sent` bytes over `elapsed`, or a tuning interval's sending up to 2 MiB, within the
+/// send window's bounds: enough for a new path to grow on fast links, while a slow path's window holds no more than it
+/// sends in an interval.
 fn desired(sent: u64, rtt: Duration, elapsed: Duration) -> u64 {
-    let Some(demand) = u128::from(sent)
+    let (sent, elapsed) = (u128::from(sent), elapsed.as_nanos());
+    let Some(demand) = sent
         .saturating_mul(rtt.as_nanos())
         .saturating_mul(2)
-        .checked_div(elapsed.as_nanos())
+        .checked_div(elapsed)
     else {
         return MIN_SEND_WINDOW;
     };
-    demand.clamp(u128::from(MIN_SEND_WINDOW), u128::from(MAX_SEND_WINDOW)) as u64
+    let interval = (sent.saturating_mul(SEND_WINDOW_TUNING.as_nanos()) / elapsed).min(u128::from(FAST_SEND_WINDOW));
+    demand
+        .max(interval)
+        .clamp(u128::from(MIN_SEND_WINDOW), u128::from(MAX_SEND_WINDOW)) as u64
 }
 
 #[cfg(test)]
@@ -146,11 +154,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_send_window_wants_two_bandwidth_delay_products_within_its_bounds() {
+    fn the_send_window_wants_two_bandwidth_delay_products_or_an_interval_of_sending_within_its_bounds() {
         let millis = Duration::from_millis;
         assert_eq!(desired(16 << 20, millis(50), millis(250)), 6_710_886);
         assert_eq!(desired(16 << 20, millis(100), millis(100)), MAX_SEND_WINDOW);
-        assert_eq!(desired(1 << 20, millis(1), millis(250)), MIN_SEND_WINDOW);
+        assert_eq!(desired(16 << 20, millis(1), millis(250)), FAST_SEND_WINDOW, "a fast path's interval");
+        assert_eq!(desired(1 << 20, millis(1), millis(250)), 1 << 20, "a slower path's interval");
+        assert_eq!(desired(40 << 10, millis(90), millis(250)), MIN_SEND_WINDOW, "a slow path");
         assert_eq!(desired(1 << 20, millis(1), Duration::ZERO), MIN_SEND_WINDOW, "no time observed");
     }
 }

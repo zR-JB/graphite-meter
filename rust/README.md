@@ -112,8 +112,10 @@ resident-memory bound.
   last connection closes, once per idle period, the server returns every runtime thread's free pages.
 - A connection and its streams stay on one pinned runtime on both sides (`e2e/tests/lanes.rs` checks the pinning);
   two HTTP/3 endpoints on four workers cost less CPU per byte than one or four (PR #210).
-- QUIC receive windows autotune from 768 KiB to 48 MiB per connection and 32 MiB per stream, sends from 2 to 16 MiB,
-  with receive batches of four GRO messages (`mise run rust-delayed-downloads`).
+- QUIC receive windows autotune from 768 KiB to 48 MiB per connection and 32 MiB per stream, sends from 256 KiB to
+  16 MiB, with receive batches of four GRO messages (`mise run rust-delayed-downloads`); a slow path's send window stays
+  below a quic-go peer's credit, so a control reply beside downloads waits for no credit grant
+  (`server/tests/sockets/delayed.rs`).
 - The HTTP/2 server polls its streams before the socket, which keeps an upload's peak RSS at 9.5 MiB instead of
   33–36 MiB (CI run 37265088955); uploads keep large windows nearly full (`server/tests/sockets/http2.rs`).
 - The client's HTTP/2 windows are 32/64 MiB with 64 KiB frames; a silent QUIC address gets 3 s, an answering one 5 s
