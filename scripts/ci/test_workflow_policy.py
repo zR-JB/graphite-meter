@@ -156,6 +156,9 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      r"rust-release misses \['rust/rust-toolchain.toml'"),
     (RUST, "COPY LICENSE COPYRIGHT mise.toml ./\n", "COPY LICENSE COPYRIGHT mise.toml client/ ./\n",
      r"rust-release misses \['client/x'\]"),
+    # A client lockfile change selects the staging check of the server's source offers.
+    (".github/ci-paths.yml", "  - 'client/bun.lock'\n  - 'client/bunfig.toml'\n  - 'client/patches/**'\n",
+     "  - 'client/bunfig.toml'\n  - 'client/patches/**'\n", r"rust-release misses \['client/bun.lock'\]"),
     # The release request builds Rust only for a validated request, its TUI archives only for a stable one, from
     # the source the build job resolved, empty, with provenance, without a token, and stages exactly its files; the
     # approved job publishes exactly what the verify job verified.

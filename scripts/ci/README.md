@@ -179,6 +179,7 @@ covers every file a Rust source includes; `rust-interop` selects the
 interoperability and perf jobs, which also build Go; `rust-image` covers every
 input of `container/Dockerfile.rust` for the image and its browser suite;
 `rust-release` covers every stage but the browser app's for the TUI archives
-and the staging check. `advisories.yml` rechecks the locked crates against the
+and the staging check, and the browser's locked dependencies, whose sources
+the server's source offers carry. `advisories.yml` rechecks the locked crates against the
 live advisory database daily. Dependabot's weekly cargo updates pass
 `rust-check` only once `check_rust_reviews` accepts every new crate.

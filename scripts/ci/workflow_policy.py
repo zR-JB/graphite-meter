@@ -353,18 +353,21 @@ def path_filters(text: str) -> dict[str, list[str]]:
 
 
 def check_paths(root: Path) -> None:
-    """A change to any input of the Rust image selects the jobs that build it, one to any input of the TUI archives,
-    which every stage but the browser app's provides, selects their export, and one to a file a Rust source includes
-    selects the Rust checks."""
+    """A change to any input of the Rust image selects the jobs that build it; one to any input of the TUI archives,
+    which every stage but the browser app's provides, or of the browser's locked dependencies, whose sources the
+    server's source offers carry, selects their export and staging; and one to a file a Rust source includes selects
+    the Rust checks."""
     filters = path_filters(read(root, ".github/ci-paths.yml"))
     stages = [(match[1] if (match := re.match(r"FROM .* AS (\S+)", text)) else "", text)
               for text in re.split(r"(?m)^(?=FROM )", read(root, "container/Dockerfile.rust"))]
-    for name, skipped in (("rust-image", set()), ("rust-release", {"browser"})):
+    # Each filter covers a stage's inputs up to the instruction named for it.
+    for name, until in (("rust-image", {}), ("rust-release", {"browser": "RUN bun --bun install"})):
         # A copied directory stands for every file below it.
         inputs = [".dockerignore", "container/Dockerfile.rust", *(
             source + "x" if source.endswith("/") else source
-            for stage, text in stages if stage not in skipped
-            for line in re.findall(r"(?m)^COPY (?!--)(.+)$", text) for source in line.split()[:-1])]
+            for stage, text in stages
+            for line in re.findall(r"(?m)^COPY (?!--)(.+)$", text.split(until[stage])[0] if stage in until else text)
+            for source in line.split()[:-1])]
         if missing := [path for path in inputs
                        if not any(PurePosixPath(path).full_match(glob) for glob in filters.get(name, []))]:
             fail(f".github/ci-paths.yml {name} misses {missing}")
@@ -403,7 +406,9 @@ def check_selection(root: Path) -> None:
         fail(f"CI jobs run on filters the plan does not output: {unknown}")
     for name, output in selected.items():
         for needed in needs[name]:
-            if output and (other := selected.get(needed)) and not set(filters[output]) <= set(filters[other]):
+            # A glob lies within another that matches it as a path.
+            if output and (other := selected.get(needed)) and not all(
+                    any(PurePosixPath(glob).full_match(cover) for cover in filters[other]) for glob in filters[output]):
                 fail(f"CI job {name} may run without {needed}: filter {output} is not within {other}")
 
 
