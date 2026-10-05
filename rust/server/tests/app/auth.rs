@@ -316,3 +316,28 @@ async fn a_login_ends_after_eight_hours_and_a_subject_holds_eight() {
     lease.ended().await;
     assert!(store.cookie(&logins[1].token).is_none());
 }
+
+#[tokio::test]
+async fn the_session_report_needs_the_session_cookie_and_answers_like_every_auth_route() {
+    let app = auth_app(&[]);
+    let login = login(&app, "operator");
+    let grant = store(&app).grant(login.key, None).unwrap();
+    for request in [public("GET", "/auth/session"), bearer("GET", "/auth/session", &grant)] {
+        let refused = tls(&app, empty(request)).await;
+        assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+        assert_headers(&refused, &[("cache-control", Some("no-store")), ("x-frame-options", Some("DENY"))]);
+        assert!(
+            header(&refused, "content-security-policy")
+                .unwrap()
+                .starts_with("default-src 'none'")
+        );
+    }
+    let report = tls(&app, empty(signed("GET", "/auth/session", &login))).await;
+    assert_eq!(report.status(), StatusCode::OK);
+    assert_headers(&report, &[("cache-control", Some("no-store")), ("x-frame-options", Some("DENY"))]);
+    assert!(
+        header(&report, "content-security-policy")
+            .unwrap()
+            .starts_with("default-src 'none'")
+    );
+}
