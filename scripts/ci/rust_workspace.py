@@ -21,7 +21,6 @@ PLATFORM = re.compile(r"[a-z0-9]+/[a-z0-9]+")
 TARGET = re.compile(r"[a-z0-9_]+(?:-[a-z0-9_]+){2,3}")
 RECORD = re.compile(r"legal/[\w.-]+\.json")
 KINDS = ("tui", "server")
-STABLE = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
 
 
 @dataclass(frozen=True)
@@ -72,10 +71,16 @@ def offer_name(package: str, version: str, platform: str) -> str:
     return f"{release_name(package, version, platform)}_third-party-source.tar.gz"
 
 
+def stable(version: str) -> bool:
+    """Whether `version` is MAJOR.MINOR.PATCH in canonical decimal."""
+    parts = version.split(".")
+    return len(parts) == 3 and all(p.isascii() and p.isdigit() and (p == "0" or p[0] != "0") for p in parts)
+
+
 def source_url(repository: str, version: str) -> str:
     """The source a Rust build of `version` names: a stable release's tag, otherwise, as Go's prerelease and CI
     builds, the repository."""
-    return f"{repository}/tree/v{version}" if STABLE.fullmatch(version) else repository
+    return f"{repository}/tree/v{version}" if stable(version) else repository
 
 
 def main() -> None:
