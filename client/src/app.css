@@ -108,8 +108,8 @@
   inherits: false;
   initial-value: 0%;
 }
-/* Measured widths a parent hands to the one child that reads them (`inherit` there); not inherited further, so
-   a resize restyles that child rather than everything inside it. */
+/* Values a parent hands to the one child that reads them (`inherit` there); not inherited further, so a resize
+   or a sheet drag restyles that child rather than everything inside it. */
 @property --panel-w {
   syntax: "<length>";
   inherits: false;
@@ -129,6 +129,11 @@
   syntax: "<length>";
   inherits: false;
   initial-value: 0px;
+}
+@property --sheet-drag {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
 }
 
 /* Theme: the stored preference stamps data-theme (store, index.html, and the

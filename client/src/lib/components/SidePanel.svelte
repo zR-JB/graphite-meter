@@ -214,6 +214,7 @@
   }
   /* The scrim comes and goes with the flyout it shades, on the sheet's own clock. */
   .scrim {
+    --sheet-drag: inherit;
     position: fixed;
     z-index: var(--z-scrim);
     inset: var(--topbar-h) 0 0;
