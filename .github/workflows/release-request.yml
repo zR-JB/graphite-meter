@@ -340,8 +340,8 @@ jobs:
           build-args: |
             VERSION=${{ needs.build.outputs.version }}
 
-      # The check runs the amd64 TUI here; the trusted consumer never executes candidates.
-      - name: Stage the TUI archives and check them
+      # The amd64 TUI runs here; the trusted consumer verifies the archives and never executes candidates.
+      - name: Stage the TUI archives and run the amd64 TUI
         env:
           VERSION: ${{ needs.build.outputs.version }}
           TUI_EXPORT: ${{ runner.temp }}/rust-tui-export

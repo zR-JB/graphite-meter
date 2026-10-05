@@ -94,44 +94,46 @@ class PackageTests(Scratch):
                 with self.assertRaisesRegex(LegalError, error):
                     package_rust.probe(executable, "1.2.3", "linux/amd64")
 
-    def test_the_check_accepts_what_package_wrote_and_runs_only_the_build_for_this_machine(self) -> None:
+    def test_the_check_runs_the_archived_build_for_this_machine_only(self) -> None:
         output = self.root / "dist"
         output.mkdir()
         probed: list[tuple[bytes, str]] = []
         with patch.object(package_rust, "collect", self.collect), \
-                patch.object(package_rust, "host_platform", return_value="linux/arm64"), \
                 patch.object(package_rust, "probe", lambda path, _, name: probed.append((path.read_bytes(), name))):
-            for platform_name, target in PLATFORMS:
-                package_rust.package("1.2.3", platform_name, target, output)
-            probed.clear()
-            for platform_name, _ in PLATFORMS:
-                package_rust.check("1.2.3", platform_name, output)
-        self.assertEqual(probed, [(b"binary", "linux/arm64")])
+            with patch.object(package_rust, "host_platform", return_value="plan9/amd64"):
+                for platform_name, target in PLATFORMS:
+                    package_rust.package("1.2.3", platform_name, target, output)
+                with self.assertRaisesRegex(LegalError, "no Rust TUI is built for plan9/amd64"):
+                    package_rust.check("1.2.3", output)
+            for host, _ in PLATFORMS:
+                with patch.object(package_rust, "host_platform", return_value=host):
+                    package_rust.check("1.2.3", output)
+        self.assertEqual(probed, [(b"binary", "linux/arm64"), (b"binary", "windows/amd64")])
 
-    def test_the_check_refuses_development_notices_other_files_and_an_unnamed_or_missing_source_offer(self) -> None:
-        base = "graphite-meter-client_1.2.3_linux_arm64_rust"
-        offer = f"{base}_third-party-source.tar.gz"
-        layout = {"graphite-meter-client": b"binary", "LICENSE": b"license", "COPYRIGHT": b"copyright",
-                  "THIRD_PARTY_NOTICES.txt": b"notices\n",
-                  "SOURCE.txt": f"Dependency source archive: {offer}\n".encode()}
-        cases = (({}, None), ({"THIRD_PARTY_NOTICES.txt": b"UNREVIEWED DEVELOPMENT BUILD\n"}, "notices"),
-                 ({"extra.txt": b"extra"}, "holds"), ({"SOURCE.txt": b"source\n"}, "does not name"),
-                 ({"offer": b""}, "No such file"))
-        for number, (changes, error) in enumerate(cases):
-            with self.subTest(changes=sorted(changes)):
-                output = self.root / f"dist-{number}"
-                output.mkdir()
-                files = {f"{base}/{name}": content for name, content in (layout | changes).items() if name != "offer"}
-                (output / f"{base}.tar.gz").write_bytes(tar_gz(files))
-                if "offer" not in changes:
-                    (output / offer).write_bytes(tar_gz({"source/README.txt": b"sources"}))
-                with patch.object(package_rust, "host_platform", return_value="plan9/amd64"):
-                    if error is None:
-                        package_rust.check("1.2.3", "linux/arm64", output)
-                        continue
-                    with self.assertRaisesRegex((LegalError, OSError), error):
-                        package_rust.check("1.2.3", "linux/arm64", output)
-
+    def test_archives_are_reproducible_with_fixed_times_owners_and_modes(self) -> None:
+        archives: list[dict[str, bytes]] = []
+        for number in range(2):
+            output = self.root / f"dist-{number}"
+            output.mkdir()
+            with patch.object(package_rust, "collect", self.collect), \
+                    patch.object(package_rust, "host_platform", return_value="plan9/amd64"):
+                for platform_name, target in PLATFORMS:
+                    (self.root / "LICENSE").touch()
+                    package_rust.package("1.2.3", platform_name, target, output)
+            archives.append({path.name: path.read_bytes() for path in output.iterdir()})
+        self.assertEqual(archives[0], archives[1])
+        linux = "graphite-meter-client_1.2.3_linux_arm64_rust"
+        with tarfile.open(self.root / f"dist-0/{linux}.tar.gz") as archive:
+            self.assertEqual({(entry.name, entry.mode, entry.mtime, entry.uid, entry.gid, entry.uname)
+                              for entry in archive}, {(linux, 0o755, 0, 0, 0, "")} | {
+                (f"{linux}/{name}", 0o755 if name == "graphite-meter-client" else 0o644, 0, 0, 0, "")
+                for name in (*FILES, "graphite-meter-client")})
+        windows = "graphite-meter-client_1.2.3_windows_amd64_rust"
+        with zipfile.ZipFile(self.root / f"dist-0/{windows}.zip") as archive:
+            self.assertEqual({(entry.filename, entry.date_time, entry.external_attr >> 16)
+                              for entry in archive.infolist()}, {(f"{windows}/", (1980, 1, 1, 0, 0, 0), 0o40755)} | {
+                (f"{windows}/{name}", (1980, 1, 1, 0, 0, 0), 0o100755 if name.endswith(".exe") else 0o100644)
+                for name in (*FILES, "graphite-meter-client.exe")})
 
 if __name__ == "__main__":
     unittest.main()

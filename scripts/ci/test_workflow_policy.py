@@ -199,8 +199,8 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "          provenance: mode=max\n          github-token: ${{ github.token }}\n", "every image build must declare"),
     (REQUEST, "dest=${{ runner.temp }}/rust-tui-export\n", "dest=${{ runner.temp }}/rust-tui-export\n"
      "          cache-from: type=gha\n", "cache-from"),
-    (REQUEST, "VERSION=${{ needs.build.outputs.version }}\n\n      # The check",
-     "VERSION=${{ inputs.tag }}\n\n      # The check", "only the request validator"),
+    (REQUEST, "VERSION=${{ needs.build.outputs.version }}\n\n      # The amd64 TUI",
+     "VERSION=${{ inputs.tag }}\n\n      # The amd64 TUI", "only the request validator"),
     (REQUEST, "run: python3 scripts/ci/rust_release.py stage-image\n",
      'run: cp -R "$SERVER_EXPORT" "$OUT_DIR"\n', "rust_release.py stage-image"),
     (REQUEST, 'python3 -m scripts.package_rust "$VERSION" --output "$OUT_DIR" --check\n', "", "package_rust"),

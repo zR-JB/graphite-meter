@@ -5,11 +5,14 @@
 Builds the TUI with reviewed notices for every TUI platform of rust/Cargo.toml's workspace metadata. It runs in
 the pinned builder image (container/Dockerfile.rust), which provides the toolchain and the cross compilers; a
 build for the builder's own system and architecture is run to check its version and allocator setting.
---check builds nothing: it checks the archives and source offers in DIR and runs the TUI built for this machine.
+Archives are reproducible: fixed times, owners and modes. --check builds nothing: it runs the TUI built for this
+machine out of its archive in DIR; rust_release.py verifies every archive and source offer as a release does.
 """
 from __future__ import annotations
 
 import argparse
+import gzip
+import io
 import os
 import platform
 import re
@@ -24,7 +27,7 @@ from pathlib import Path
 from .ci.github_api import ControlPlaneError, confined_path, local_path
 from .ci.rust_workspace import ROOT, load, offer_name, tui_archive
 from .legal.model import LegalError
-from .legal.rust import DEVELOPMENT, VERSION, Build, collect
+from .legal.rust import VERSION, Build, collect
 
 
 def host_platform() -> str:
@@ -62,81 +65,82 @@ def package(version: str, platform_name: str, target: str, output: Path) -> None
         executable = collect(Build("graphite-meter-client", target, "release", version, legal))
         if platform_name == host_platform():
             probe(executable, version, platform_name)
-        directory = confined_path(stage / base, stage)
-        directory.mkdir()
-        shutil.copy2(executable, directory / binary)
-        for name in ("LICENSE", "COPYRIGHT"):
-            shutil.copyfile(ROOT / name, directory / name)
-        shutil.copyfile(legal / "LEGAL.txt", directory / "THIRD_PARTY_NOTICES.txt")
-        shutil.copyfile(legal / "SOURCE.txt", directory / "SOURCE.txt")
-        kind = "zip" if archive.endswith(".zip") else "gztar"
-        shutil.make_archive(str(confined_path(stage / base, stage)), kind, root_dir=stage, base_dir=base)
+        texts = {"LICENSE": ROOT / "LICENSE", "COPYRIGHT": ROOT / "COPYRIGHT",
+                 "THIRD_PARTY_NOTICES.txt": legal / "LEGAL.txt", "SOURCE.txt": legal / "SOURCE.txt"}
+        files = {binary: (executable.read_bytes(), 0o755)} | {name: (path.read_bytes(), 0o644)
+                                                              for name, path in texts.items()}
+        write_archive(confined_path(stage / archive, stage), base, files)
         shutil.copyfile(confined_path(legal / offer, legal), confined_path(stage / offer, stage))
         for name in (archive, offer):
             os.replace(confined_path(stage / name, stage), confined_path(output / name, output))
     print(f"Rust TUI {platform_name}: {archive} and {offer}", flush=True)
 
 
-def archived(path: Path) -> dict[str, bytes]:
-    """The files of an archive by name; an entry that is neither a file nor a directory is refused."""
+def write_archive(path: Path, base: str, files: dict[str, tuple[bytes, int]]) -> None:
+    """Go's layout, `base/` holding `files` with their modes, at fixed times and owners."""
     if path.suffix == ".zip":
-        with zipfile.ZipFile(path) as archive:
-            return {entry.filename: archive.read(entry) for entry in archive.infolist() if not entry.is_dir()}
-    files: dict[str, bytes] = {}
-    with tarfile.open(path, "r:gz") as archive:
-        for entry in archive:
-            handle = archive.extractfile(entry) if entry.isfile() else None
-            if handle is None and not entry.isdir():
-                raise LegalError(f"{path.name} holds {entry.name}, which is not a regular file")
-            if handle is not None:
-                files[entry.name] = handle.read()
-    return files
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+            directory = zipfile.ZipInfo(f"{base}/", (1980, 1, 1, 0, 0, 0))
+            directory.create_system, directory.external_attr = 3, (0o40755 << 16) | 0x10
+            archive.writestr(directory, b"")
+            for name, (data, mode) in sorted(files.items()):
+                entry = zipfile.ZipInfo(f"{base}/{name}", (1980, 1, 1, 0, 0, 0))
+                entry.create_system, entry.external_attr = 3, (0o100000 | mode) << 16
+                archive.writestr(entry, data, zipfile.ZIP_DEFLATED)
+        return
+    with path.open("wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed, \
+            tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as archive:
+        directory = tarfile.TarInfo(base)
+        directory.type, directory.mode = tarfile.DIRTYPE, 0o755
+        archive.addfile(directory)
+        for name, (data, mode) in sorted(files.items()):
+            entry = tarfile.TarInfo(f"{base}/{name}")
+            entry.size, entry.mode = len(data), mode
+            archive.addfile(entry, io.BytesIO(data))
 
 
-def check(version: str, platform_name: str, output: Path) -> None:
-    """The archive of `platform_name` holds exactly Go's layout with reviewed notices beside its source offer."""
+def check(version: str, output: Path) -> None:
+    """Run the TUI built for this machine out of its archive."""
+    platform_name = host_platform()
+    if platform_name not in load().tui:
+        raise LegalError(f"no Rust TUI is built for {platform_name}")
     archive, base, binary = tui_archive(version, platform_name)
-    offer = offer_name("graphite-meter-client", version, platform_name)
-    files = archived(confined_path(output / archive, output))
-    expected = {f"{base}/{name}" for name in (binary, "LICENSE", "COPYRIGHT", "THIRD_PARTY_NOTICES.txt",
-                                              "SOURCE.txt")}
-    if files.keys() != expected:
-        raise LegalError(f"{archive} holds {sorted(files)}, not {sorted(expected)}")
-    notices = files[f"{base}/THIRD_PARTY_NOTICES.txt"]
-    if not notices.strip() or any(DEVELOPMENT.encode() in content for content in files.values()):
-        raise LegalError(f"{archive} lacks reviewed notices")
-    if f"Dependency source archive: {offer}\n".encode() not in files[f"{base}/SOURCE.txt"]:
-        raise LegalError(f"{archive}'s SOURCE.txt does not name {offer}")
-    with tarfile.open(confined_path(output / offer, output), "r:gz") as source:
-        if not any(entry.isfile() for entry in source):
-            raise LegalError(f"{offer} holds no source")
-    if platform_name == host_platform():
-        with tempfile.TemporaryDirectory() as directory:
-            executable = Path(directory) / binary
-            executable.write_bytes(files[f"{base}/{binary}"])
-            executable.chmod(0o755)
-            probe(executable, version, platform_name)
-    print(f"Rust TUI {platform_name}: {archive} and {offer} checked", flush=True)
+    path = confined_path(output / archive, output)
+    if path.suffix == ".zip":
+        with zipfile.ZipFile(path) as files:
+            data = files.read(f"{base}/{binary}")
+    else:
+        with tarfile.open(path, "r:gz") as files:
+            handle = files.extractfile(f"{base}/{binary}")
+            if handle is None:
+                raise LegalError(f"{archive} holds no executable {binary}")
+            data = handle.read()
+    with tempfile.TemporaryDirectory() as directory:
+        executable = Path(directory) / binary
+        executable.write_bytes(data)
+        executable.chmod(0o755)
+        probe(executable, version, platform_name)
+    print(f"Rust TUI {platform_name}: {archive} runs", flush=True)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("version")
     parser.add_argument("--output", type=Path, default=ROOT / "go/dist")
-    parser.add_argument("--check", action="store_true", help="check the archives in --output instead of building")
+    parser.add_argument("--check", action="store_true", help="run this machine's TUI out of --output instead of building")
     args = parser.parse_args()
     if VERSION.fullmatch(args.version) is None:
         parser.error("VERSION must be a release identifier")
     try:
         output = local_path(args.output, ROOT)
         output.mkdir(parents=True, exist_ok=True)
+        if args.check:
+            check(args.version, output)
+            return
         for platform_name, target in load().tui.items():
-            if args.check:
-                check(args.version, platform_name, output)
-            else:
-                package(args.version, platform_name, target, output)
-    except (ControlPlaneError, LegalError, OSError, ValueError, subprocess.CalledProcessError, tarfile.TarError,
-            zipfile.BadZipFile) as error:
+            package(args.version, platform_name, target, output)
+    except (ControlPlaneError, LegalError, OSError, ValueError, KeyError, subprocess.CalledProcessError,
+            tarfile.TarError, zipfile.BadZipFile) as error:
         sys.exit(f"Rust TUI packaging: {error}")
 
 
