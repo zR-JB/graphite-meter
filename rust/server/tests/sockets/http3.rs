@@ -338,3 +338,36 @@ async fn a_funded_connection_goes_away_fifteen_seconds_after_its_admitted_work()
         "a connection without credit stays"
     );
 }
+
+#[tokio::test]
+async fn connection_credit_reaches_the_reply_that_waited_longest() {
+    let h3 = H3::start(&[]).await;
+    let mut transport = transport(None);
+    // Each grant of connection credit is smaller than what one reply queues at a time.
+    transport.receive_window((64_u32 << 10).into());
+    let connection = h3.connect(transport).await;
+    let open = async || {
+        let (mut send, recv) = connection.open("GET", ENDLESS).await;
+        send.finish().await.unwrap();
+        (send, recv)
+    };
+    // The first reply fills the window, then two more wait for credit in that order; reading the first frees credit
+    // a little at a time, and the second's head must not lose every grant to the third.
+    let (_bulk, mut bulk) = open().await;
+    bulk.response().await.unwrap();
+    let ((_other, mut other), _later) = (open().await, open().await);
+    let reading = async {
+        loop {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            bulk.data().await.unwrap();
+        }
+    };
+    let reply = async {
+        tokio::select! {
+            reply = other.response() => reply,
+            () = reading => unreachable!(),
+        }
+    };
+    let reply = tokio::time::timeout(Duration::from_secs(5), reply).await;
+    assert_eq!(reply.expect("the waiting reply got credit").unwrap().status(), 200);
+}

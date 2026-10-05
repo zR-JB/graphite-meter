@@ -128,6 +128,44 @@ async fn only_an_admitted_upload_reserves_receive_credit_until_its_connection_is
         .expect("the budget drains to its baseline");
 }
 
+#[tokio::test]
+async fn a_peer_sending_on_streams_nothing_reads_holds_at_most_192_kib() {
+    let h3 = H3::start(&[]).await;
+    let budget = h3.server.budget.clone();
+    let connection = h3.connect(transport(None)).await;
+    // The ping bus accepts no stream, so their data waits unread.
+    let session = connection.session("/wt/ping").await;
+    h3.server.until_active(1).await;
+    let (before, sent) = (settled(&budget).await, connection.quic.stats().udp_tx.bytes);
+    let chunk = bytes::Bytes::from(vec![7; 16 << 10]);
+    for _ in 0..2 {
+        let mut stream = session.open_uni().await.unwrap();
+        let sending = async { while stream.write_chunk(chunk.clone()).await.is_ok() {} };
+        let _ = tokio::time::timeout(Duration::from_millis(500), sending).await;
+    }
+    let sent = connection.quic.stats().udp_tx.bytes - sent;
+    let held = settled(&budget).await.saturating_sub(before);
+    assert!(sent <= 192 << 10 && held <= 192 << 10, "{sent} bytes sent, {held} held");
+}
+
+#[tokio::test]
+async fn under_pressure_an_admitted_upload_reserves_no_receive_credit() {
+    let h3 = H3::start(&[]).await;
+    let budget = h3.server.budget.clone();
+    let connection = h3.connect(transport(None)).await;
+    let id = connection.upload_id().await;
+    let pressure = budget.lease(budget.usage().limit / 4 * 3).unwrap();
+    let before = settled(&budget).await;
+    let mut answer = connection
+        .send("POST", &format!("/upload?id={id}"), b"held back")
+        .await
+        .1;
+    assert_eq!(read(&mut answer).await.unwrap(), br#"{"bytes":9}"#);
+    let held = settled(&budget).await.saturating_sub(before);
+    assert!(held < CONNECTION_CREDIT / 4, "{held} bytes under pressure");
+    drop(pressure);
+}
+
 /// Why a server with HTTP/3, two connections and a budget of `budget` bytes does not bind, if it does not.
 async fn refusal(scratch: &Scratch, budget: &str) -> Option<String> {
     let [cert, key] = ["cert.pem", "key.pem"].map(|name| scratch.path().join(name));

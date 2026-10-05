@@ -238,6 +238,63 @@ async fn under_pressure_a_running_upload_keeps_its_window_after_the_one_that_rai
 }
 
 #[tokio::test]
+async fn an_upload_keeps_a_large_window_nearly_full() {
+    let h2 = H2::start(&[]).await;
+    let mut connection = h2.connect(65_535).await;
+    let id = connection.upload_id().await;
+    let (answer, mut upload) = connection.open("POST", &format!("/upload?id={id}")).await;
+    assert!(window_opens(&mut upload, Duration::from_secs(5)).await);
+    let sent = 15 << 19;
+    send(&mut upload, Bytes::from(vec![7; sent]), false).await;
+    counted(&mut connection, &id, 1 + sent as u64).await;
+    // Refreshed once a mebibyte of its 8 MiB is unclaimed, where h2 alone waits for a third of it.
+    upload.reserve_capacity(8 << 20);
+    let refreshed = async {
+        while upload.capacity() <= 7 << 20 {
+            poll_fn(|cx| upload.poll_capacity(cx)).await.unwrap().unwrap();
+        }
+    };
+    let refreshed = tokio::time::timeout(Duration::from_secs(2), refreshed).await;
+    assert!(refreshed.is_ok(), "{} bytes of window", upload.capacity());
+    upload.send_data(Bytes::new(), true).unwrap();
+    assert_eq!(answer.await.unwrap().status(), 200);
+}
+
+#[tokio::test]
+async fn unadmitted_header_and_data_floods_stay_within_the_floor() {
+    let h2 = H2::start(&[]).await;
+    let budget = h2.server.budget.clone();
+    let idle = super::quic::settled(&budget).await;
+    let mut flood = h2.connect(0).await;
+    let pad = http::HeaderValue::from_bytes(&[b'p'; 24 << 10]).unwrap();
+    let mut held = Vec::new();
+    for _ in 0..64 {
+        poll_fn(|cx| flood.client.poll_ready(cx)).await.unwrap();
+        let mut head = Request::post("https://localhost/probe").body(()).unwrap();
+        head.headers_mut().insert("x-pad", pad.clone());
+        held.push(flood.client.send_request(head, false).unwrap());
+    }
+    for (_, upload) in &mut held {
+        for _ in 0..64 {
+            upload.reserve_capacity(1);
+            if upload.capacity() > 0 {
+                let _ = upload.send_data(Bytes::from_static(b"x"), false);
+            }
+        }
+    }
+    let mut refused = 0;
+    for (response, _) in held {
+        let response = tokio::time::timeout(Duration::from_secs(5), response).await.unwrap();
+        refused += usize::from(response.is_err_and(|error| error.reason() == Some(Reason::REFUSED_STREAM)));
+        let used = budget.usage().used.saturating_sub(idle);
+        assert!(used <= graphite_meter_server::transport::http2::FLOOR_BYTES, "{used} bytes");
+    }
+    assert!(refused > 0, "the flood reached the connection's allowance");
+    let mut sibling = h2.connect(65_535).await;
+    assert_eq!(sibling.json("GET", "/probe").await["protocolNegotiated"], "h2");
+}
+
+#[tokio::test]
 async fn transfers_the_peer_leaves_idle_end_after_thirty_seconds() {
     let h2 = H2::start(&[]).await;
     let mut connection = h2.connect(65_535).await;
@@ -361,7 +418,7 @@ async fn a_connection_whose_floor_does_not_fit_is_closed_at_accept() {
 }
 
 #[tokio::test]
-async fn a_connection_without_a_preface_closes_after_ten_seconds() {
+async fn a_connection_announces_250_streams_and_64_kib_frames_and_waits_ten_seconds_for_its_preface() {
     let h2 = H2::start(&[]).await;
     let socket = TcpStream::connect(h2.server.h2.unwrap()).await.unwrap();
     let name = ServerName::try_from("localhost").unwrap();
@@ -371,6 +428,18 @@ async fn a_connection_without_a_preface_closes_after_ten_seconds() {
     assert_eq!(settings[3], 4, "the server sends its SETTINGS first");
     let mut rest = vec![0; usize::from(settings[2])];
     stream.read_exact(&mut rest).await.unwrap();
+    let announced: Vec<_> = rest
+        .chunks(6)
+        .map(|entry| {
+            (
+                u16::from_be_bytes([entry[0], entry[1]]),
+                u32::from_be_bytes([entry[2], entry[3], entry[4], entry[5]]),
+            )
+        })
+        .collect();
+    for setting in [(3, 250), (5, 65_536)] {
+        assert!(announced.contains(&setting), "{announced:?}");
+    }
     advance_clock(Duration::from_secs(9)).await;
     let read = tokio::time::timeout(Duration::from_millis(50), stream.read(&mut [0; 1])).await;
     assert!(read.is_err(), "the connection waits for its preface");
