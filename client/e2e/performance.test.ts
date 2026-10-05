@@ -211,12 +211,19 @@ for (const width of [1000, 390]) {
   });
 }
 
-test("panels build on first use and retain their state after closing", async (page) => {
+test("panels build as the pointer reaches their key and retain their state after closing", async (page) => {
   await open(page, home.http);
   await expect(page.locator("#console")).toHaveCount(1);
   const duration = page.locator('input[aria-label="Download stage time"]');
   await expect(duration).toHaveCount(0);
   await expect(page.locator(".infra")).toHaveCount(0);
+  await page.getByRole("button", { name: "Settings", exact: true }).hover();
+  await expect(duration).toHaveCount(1);
+  expect(
+    await duration.all((els) => els.some((el) => el.checkVisibility())),
+  ).toBe(false);
+  await page.getByRole("button", { name: "Details", exact: true }).hover();
+  await expect(page.locator(".infra")).toHaveCount(1);
   await openSettings(page);
   await duration.fill("2");
   await closeSettings(page);
