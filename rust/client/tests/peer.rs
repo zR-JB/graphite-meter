@@ -3,7 +3,7 @@
 use bytes::Bytes;
 use graphite_meter_client::{
     model::{Dir, Stage},
-    net::{Client, Fault, Request, ThroughputPath, retrying, topology},
+    net::{Client, Fault, ReadBuffer, Request, ThroughputPath, retrying, topology},
     run::upload::UploadSession,
 };
 use graphite_meter_net::{ConnectError, Pool};
@@ -29,7 +29,7 @@ use std::{
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    net::TcpListener,
+    net::{TcpListener, UdpSocket},
     sync::mpsc,
 };
 use tokio_rustls::TlsAcceptor;
@@ -287,6 +287,21 @@ async fn a_departed_upload_session_asks_its_receiver_to_finalize() {
     tokio::time::timeout(Duration::from_secs(1), finalized)
         .await
         .expect("the receiver was asked to finalize");
+}
+
+#[tokio::test]
+async fn an_abandoned_quic_dial_stops_sending() {
+    let silent = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let origin = Origin::parse(&format!("https://{}", silent.local_addr().unwrap())).unwrap();
+    let client = client(false);
+    let dial = client.dial(&origin, Protocol::Http3, ReadBuffer::Adaptive);
+    assert!(tokio::time::timeout(Duration::from_millis(200), dial).await.is_err());
+    // Its connection's close may still go out; a dial left running resends its Initial about a second in.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let mut datagram = [0; 2048];
+    while silent.try_recv(&mut datagram).is_ok() {}
+    let resent = tokio::time::timeout(Duration::from_secs(2), silent.recv(&mut datagram)).await;
+    assert!(resent.is_err(), "the abandoned dial kept sending");
 }
 
 #[tokio::test]

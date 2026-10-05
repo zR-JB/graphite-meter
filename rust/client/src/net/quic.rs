@@ -11,7 +11,11 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::{runtime::Handle, task::AbortHandle, time::timeout};
+use tokio::{
+    runtime::Handle,
+    task::{AbortHandle, JoinHandle},
+    time::timeout,
+};
 
 /// How long an address may stay silent: lost handshake packets on a lossy path take seconds.
 const SILENT: Duration = Duration::from_secs(3);
@@ -40,15 +44,25 @@ impl Drop for Quic {
     }
 }
 
-/// Dials `origin` on `runtime`, which then runs the connection, its endpoint and its driver.
+/// Dials `origin` on `runtime`, which then runs the connection, its endpoint and its driver; dropping the dial
+/// abandons it.
 pub(super) async fn dial(
     origin: &Origin,
     verify: Verify,
     runtime: &Handle,
 ) -> Result<(Arc<Quic>, client::SendRequest), Fault> {
     let origin = origin.clone();
-    let dialed = runtime.spawn(async move { connect(&origin, verify).await });
-    dialed.await.map_err(|error| Fault::Lost(error.to_string()))?
+    let mut dialing = Dialing(runtime.spawn(async move { connect(&origin, verify).await }));
+    (&mut dialing.0).await.map_err(|error| Fault::Lost(error.to_string()))?
+}
+
+/// A dial running on another runtime, aborted once nothing awaits it.
+struct Dialing(JoinHandle<Result<(Arc<Quic>, client::SendRequest), Fault>>);
+
+impl Drop for Dialing {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 /// Each address in turn, IPv4 first; the last address's fault if none connects.
