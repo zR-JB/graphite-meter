@@ -248,7 +248,11 @@ mod tests {
             refusal(&[("GM_RUST_LEGAL_DIR", "legal")]),
             "GM_RUST_LEGAL_DIR must be an absolute directory"
         );
-        assert!(refusal(&[("GM_RUST_LEGAL_DIR", "/")]).ends_with(&format!("is outside {}", root.display())));
+        let outside = root.parent().unwrap().display().to_string();
+        assert_eq!(
+            refusal(&[("GM_RUST_LEGAL_DIR", &outside)]),
+            format!("{outside} is outside {}", root.display())
+        );
         let version = "GM_ENGINE_VERSION must be a nonempty release identifier";
         assert_eq!(refusal(&[("GM_ENGINE_VERSION", "")]), version);
         assert_eq!(refusal(&[("GM_ENGINE_VERSION", "1.0 beta")]), version);
