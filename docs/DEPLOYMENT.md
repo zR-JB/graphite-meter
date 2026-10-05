@@ -91,6 +91,18 @@ Rootful Docker gives container root the host's root. _Rootless Podman already ma
 non-root user?_ Defence in depth: an escape from the default unit lands on a subordinate UID with no access to your
 files; the keep-id units run as your user, as root did before.
 
+### Experimental Rust image
+
+Stable releases can also publish an experimental Rust server image for linux/amd64 and linux/arm64, beside Linux and
+Windows Rust TUI archives marked `_rust`. Go's image and archives remain the default, and there is no Rust build for
+macOS. The Rust tags share `ghcr.io/zr-jb/graphite-meter` with Go's: `:X.Y.Z-rust` for each release that shipped
+one, and `:X.Y-rust` and `:latest-rust` for the newest such release. To try it, change the tag in the `docker run`
+command, Compose file or Quadlet unit, or pin a digest.
+
+Semver-range updaters such as Flux, Argo CD Image Updater, Renovate or WUD read `X.Y.Z-rust` as a prerelease of Go's
+`X.Y.Z`, so they may skip it or move a Rust pin to Go's next release. Follow `:latest-rust`, or restrict the updater
+to tags matching `-rust$` and compare the version before that suffix.
+
 ## Native listeners
 
 Each listener has its own address and advertised origin, so a client can select a protocol deterministically. The
