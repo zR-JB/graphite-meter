@@ -89,10 +89,8 @@ class Fixture:
     """Evidence directory and trust material for one run."""
 
     def __init__(self, prefix: str) -> None:
-        # On a runner the job's temporary directory, which no cache restores.
-        parent = Path(os.environ.get("RUNNER_TEMP") or ROOT / "rust/target")
-        parent.mkdir(exist_ok=True)
-        self.directory = Path(tempfile.mkdtemp(prefix=prefix, dir=parent))
+        # TMPDIR; the CI jobs set it to the runner's job directory, which no cache restores.
+        self.directory = Path(tempfile.mkdtemp(prefix=prefix))
         self.environment = {key: value for key, value in os.environ.items()
                             if not key.startswith(("GM_", "MIMALLOC_"))}
         self.ca, self.cert, self.key = self.identity()

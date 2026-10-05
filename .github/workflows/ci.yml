@@ -236,12 +236,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends musl-tools
+      # The scripts keep their evidence in TMPDIR.
       - name: Run unchanged Go peers, the Go native client and process checks against the sharded server
+        env:
+          TMPDIR: ${{ runner.temp }}
         run: mise run rust-interop
       - name: Gate delayed-link HTTP/3 and WebTransport downloads
         run: mise run rust-delayed-downloads
-      - id: chrome
-        name: Install pinned Chrome for Testing
+      - name: Install pinned Chrome for Testing
         uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
         with:
           chrome-version: ${{ steps.toolchain.outputs.chrome-version }}
@@ -249,8 +251,8 @@ jobs:
       # Chrome for Testing is an unpacked archive without a setuid sandbox; the script runs it with --no-sandbox.
       - name: Check Chromium's HTTP/3, WebTransport and session close codes against the sharded server
         env:
-          CHROME: ${{ steps.chrome.outputs.chrome-path }}
-        run: python3 rust/interop/browser.py --chromium "$CHROME"
+          TMPDIR: ${{ runner.temp }}
+        run: python3 rust/interop/browser.py
       - name: Upload interoperability evidence
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -284,30 +286,26 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends musl-tools
+      # perf.py keeps each server in TMPDIR/graphite-meter-perf/<variant> and its evidence in TMPDIR.
       - id: baseline
         name: Restore PR 210's static release server
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ runner.temp }}/baseline
+          path: ${{ runner.temp }}/graphite-meter-perf/baseline
           key: rust-perf-baseline-${{ runner.os }}-${{ runner.arch }}-${{ env.BASELINE_SHA }}
       - name: Build PR 210's static release server
         if: steps.baseline.outputs.cache-hit != 'true'
         env:
-          SOURCE: ${{ runner.temp }}/pr210
-          DESTINATION: ${{ runner.temp }}/baseline
-        run: |
-          git fetch --no-tags --depth=1 origin "$BASELINE_SHA"
-          git worktree add --detach "$SOURCE" "$BASELINE_SHA"
-          python3 rust/interop/perf.py build "$SOURCE" "$DESTINATION"
+          TMPDIR: ${{ runner.temp }}
+        run: python3 rust/interop/perf.py baseline "$BASELINE_SHA"
       - name: Build this branch's static release server
         env:
-          DESTINATION: ${{ runner.temp }}/candidate
-        run: python3 rust/interop/perf.py build . "$DESTINATION"
+          TMPDIR: ${{ runner.temp }}
+        run: python3 rust/interop/perf.py candidate
       - name: Compare HTTP/1, HTTP/2 and HTTP/3 with PR 210 in alternating order
         env:
-          BASELINE: ${{ runner.temp }}/baseline/graphite-meter-server
-          CANDIDATE: ${{ runner.temp }}/candidate/graphite-meter-server
-        run: python3 rust/interop/perf.py measure "$BASELINE" "$CANDIDATE"
+          TMPDIR: ${{ runner.temp }}
+        run: python3 rust/interop/perf.py measure
       - name: Upload the perf runs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

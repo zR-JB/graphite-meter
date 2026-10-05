@@ -1,10 +1,10 @@
 """Drive Chromium through the Rust server's HTTP/3 and WebTransport routes and session close codes.
 
-    python3 rust/interop/browser.py --chromium BINARY [--server BINARY]
+    python3 rust/interop/browser.py
 
 Chromium must fetch over HTTP/3, use WebTransport datagrams and streams, and see the close code and reason of
 a session the server ends at its lifetime and when it stops. The server shards HTTP/3 over this host's runtime
-threads. Without --server it builds the static musl server with the ci profile.
+threads. It builds the static musl server with the ci profile and runs the first of BROWSERS on PATH.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import hashlib
 import http.server
 import json
 import os
+import shutil
 import signal
 import socket
 import ssl
@@ -26,6 +27,8 @@ from typing import Any, Callable
 from fixture import ROOT, Fixture, Server, build_server, planned_endpoints, udp_sockets
 
 PAGE = (Path(__file__).parent / "browser.html").read_bytes()
+# Chrome for Testing as setup-chrome puts it on PATH, then a distribution's Chromium.
+BROWSERS = ("chrome", "chromium")
 MIB = 1024 * 1024
 CHECKS: dict[str, Callable[[Any], bool]] = {
     "download": lambda d: d == {"bytes": MIB, "protocol": "h3"},
@@ -105,11 +108,11 @@ def chromium(binary: str, fixture: Fixture, pages: Pages, server: Server) -> dic
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--chromium", required=True, help="the Chromium or Chrome for Testing binary")
-    parser.add_argument("--server", type=Path, help="prebuilt server binary")
-    args = parser.parse_args()
-    binary = args.server.resolve() if args.server else build_server(ROOT, "ci")
+    argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
+    browser = next((name for name in BROWSERS if shutil.which(name)), None)
+    if browser is None:
+        raise SystemExit(f"none of {', '.join(BROWSERS)} is on PATH")
+    binary = build_server(ROOT, "ci")
     fixture = Fixture("browser-")
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(fixture.cert, fixture.key)
@@ -121,7 +124,7 @@ def main() -> None:
         pages = Pages(context, server)
         threading.Thread(target=pages.serve_forever, daemon=True).start()
         try:
-            report = chromium(args.chromium, fixture, pages, server)
+            report = chromium(browser, fixture, pages, server)
         finally:
             pages.shutdown()
     (fixture.directory / "chromium.json").write_text(json.dumps(report, indent=1))

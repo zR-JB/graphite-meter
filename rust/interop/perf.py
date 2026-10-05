@@ -1,12 +1,13 @@
 """Temporary perf smoke: this branch's server against PR #210's on one runner, never on a laptop.
 
-    python3 rust/interop/perf.py build CHECKOUT DESTINATION
-    python3 rust/interop/perf.py measure BASELINE CANDIDATE
+    python3 rust/interop/perf.py baseline COMMIT
+    python3 rust/interop/perf.py candidate
+    python3 rust/interop/perf.py measure
 
-`build` copies CHECKOUT's static musl release server into DESTINATION. `measure` drives both servers with the Go
-native client, a fresh server per run, in alternating order: throughput, server CPU per byte, peak RSS, RSS right
-after the transfer and after the idle release. It keeps every run in runs.jsonl, prints medians with their spread
-and fails only on gross regressions.
+`baseline` checks out COMMIT and `candidate` uses this checkout; each copies its static musl release server into
+STORE. `measure` drives both servers with the Go native client, a fresh server per run, in alternating order:
+throughput, server CPU per byte, peak RSS, RSS right after the transfer and after the idle release. It keeps every
+run in runs.jsonl, prints medians with their spread and fails only on gross regressions.
 """
 
 from __future__ import annotations
@@ -18,11 +19,13 @@ import re
 import shutil
 import statistics
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
-from fixture import Fixture, build_server, native
+from fixture import ROOT, Fixture, build_server, native
+from github_api import runner_path
 
 CELLS = [(listener, direction) for listener in ("http1", "http2", "http3") for direction in ("download", "upload")]
 VARIANTS = ("baseline", "candidate")
@@ -32,6 +35,28 @@ IDLE = 3.0
 MIB = 1 << 20
 RATE = re.compile(r"(?:Download|Upload)\s+([\d.]+) (bit|kbit|Mbit|Gbit|Tbit)/s")
 UNITS = {"bit": 1e-9, "kbit": 1e-6, "Mbit": 1e-3, "Gbit": 1.0, "Tbit": 1e3}
+# TMPDIR; the job sets it to the runner's job directory and caches the baseline from there.
+STORE = Path(tempfile.gettempdir()) / "graphite-meter-perf"
+COMMIT = re.compile(r"[0-9a-f]{40}")
+
+
+def server_binary(variant: str) -> Path:
+    return STORE / variant / "graphite-meter-server"
+
+
+def build(variant: str, checkout: Path) -> None:
+    destination = server_binary(variant)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(build_server(checkout, "release"), destination)
+
+
+def baseline(commit: str) -> None:
+    if not COMMIT.fullmatch(commit):
+        raise SystemExit(f"not a full commit hash: {commit!r}")
+    checkout = STORE / "baseline-checkout"
+    subprocess.run(["git", "fetch", "--no-tags", "--depth=1", "origin", commit], cwd=ROOT, check=True)
+    subprocess.run(["git", "worktree", "add", "--detach", str(checkout), commit], cwd=ROOT, check=True)
+    build("baseline", checkout)
 
 
 def status(pid: int, key: str) -> int:
@@ -148,10 +173,9 @@ def report(table: dict[str, dict[str, dict[str, Any]]], found: list[str]) -> str
     return "\n".join(lines) + "\n"
 
 
-def measure(baseline: Path, candidate: Path) -> None:
+def measure() -> None:
     fixture = Fixture("perf-")
     client = fixture.go_build("client", "./cmd/graphite-meter-client")
-    binaries = {"baseline": baseline.resolve(), "candidate": candidate.resolve()}
     rows = []
     with (fixture.directory / "runs.jsonl").open("w") as sink:
         for repeat in range(REPEATS):
@@ -159,7 +183,7 @@ def measure(baseline: Path, candidate: Path) -> None:
                 cell = CELLS[(index + repeat) % len(CELLS)]
                 order = VARIANTS if (index + repeat) % 2 == 0 else VARIANTS[::-1]
                 for variant in order:
-                    row = run(fixture, binaries[variant], client, variant, cell, repeat)
+                    row = run(fixture, server_binary(variant), client, variant, cell, repeat)
                     rows.append(row)
                     sink.write(json.dumps(row) + "\n")
                     print(json.dumps(row), flush=True)
@@ -168,8 +192,8 @@ def measure(baseline: Path, candidate: Path) -> None:
     found = regressions(table)
     text = report(table, found)
     print(text, flush=True)
-    if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
-        with open(summary, "a") as output:
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        with runner_path("GITHUB_STEP_SUMMARY").open("a") as output:
             output.write(text)
     if found:
         raise SystemExit("gross regression against PR #210: " + "; ".join(found))
@@ -178,18 +202,16 @@ def measure(baseline: Path, candidate: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
-    build = commands.add_parser("build")
-    build.add_argument("checkout", type=Path)
-    build.add_argument("destination", type=Path)
-    compare = commands.add_parser("measure")
-    compare.add_argument("baseline", type=Path)
-    compare.add_argument("candidate", type=Path)
+    commands.add_parser("baseline").add_argument("commit")
+    commands.add_parser("candidate")
+    commands.add_parser("measure")
     args = parser.parse_args()
-    if args.command == "build":
-        args.destination.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(build_server(args.checkout.resolve(), "release"), args.destination)
+    if args.command == "baseline":
+        baseline(args.commit)
+    elif args.command == "candidate":
+        build("candidate", ROOT)
     else:
-        measure(args.baseline, args.candidate)
+        measure()
 
 
 if __name__ == "__main__":

@@ -1,9 +1,9 @@
 """Run unchanged Go peers, the Go native client and process checks against the Rust server binary.
 
-    python3 rust/interop/server.py [--server BINARY]
+    python3 rust/interop/server.py
 
-Without --server it builds the static musl server with the ci profile (needs musl-tools). Every server runs
-on this host's runtime threads, so on Linux HTTP/3 is sharded over SO_REUSEPORT endpoints.
+It builds the static musl server with the ci profile (needs musl-tools). Every server runs on this host's
+runtime threads, so on Linux HTTP/3 is sharded over SO_REUSEPORT endpoints.
 """
 
 from __future__ import annotations
@@ -148,10 +148,8 @@ def shutdown_under_load(binary: Path, fixture: Fixture, client: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--server", type=Path, help="prebuilt server binary")
-    args = parser.parse_args()
-    binary = args.server.resolve() if args.server else build_server(ROOT, "ci")
+    argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
+    binary = build_server(ROOT, "ci")
     fixture = Fixture("interop-")
     allocator(binary, fixture)
     binaries = {"unchanged": fixture.go_build("peer", str(PEER)), "current-reset": current_reset_peer(fixture)}
