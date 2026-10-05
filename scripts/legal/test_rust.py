@@ -121,6 +121,11 @@ class CollectorTests(Scratch):
         self.assertTrue(reviewed.startswith(b"Graphite Meter\n"))
         self.assertIn(b"Source code: https://github.com/zR-JB/graphite-meter/tree/v1.2.3\n", reviewed)
         self.assertTrue(reviewed.endswith(b"\nnotices\n"))
+        # A prerelease has no tag; as Go's prerelease image, it names the repository.
+        prerelease = report(project, "1.2.3-rc.1", "notices\n", False)
+        self.assertIn(b"Source code: https://github.com/zR-JB/graphite-meter\n\n", prerelease)
+        self.assertEqual(source_notice(project, "1.2.3-rc.1", "offer.tar.gz", "x86_64-unknown-linux-musl"),
+                         (ROOT / "legal/generated/container/SOURCE.txt").read_text())
 
     def test_staging_mirrors_the_browser_build_but_keeps_the_server_legal_files(self) -> None:
         source, staged = self.root / "dist", self.root / "staged"

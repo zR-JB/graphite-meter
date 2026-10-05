@@ -178,7 +178,9 @@ real Cargo build of it, in three steps:
    crates' and browser packages' sources, the inventory, the report, the fork
    records and the manual material under one directory named like the
    archive, as Go's. It also writes the `SOURCE.txt` that its TUI archive or
-   image ships: the release source, the source offer and the Rust target.
+   image ships: the release source, the source offer and the Rust target. A
+   prerelease publishes no tag or source offer, so, as in Go's prerelease
+   image, its `SOURCE.txt` and notices name the repository.
 
 A failed platform check prints the build's candidate record and the listing
 its `noticesSha256` hashes; `--review-template` prints pending reviews of the
