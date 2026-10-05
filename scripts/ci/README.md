@@ -161,8 +161,9 @@ builds the image once per architecture and exports its server source offers;
 settings; `rust-release` stages both with `rust_release.py` and verifies them
 as a release does, without running them: the image as above, each source
 offer's inventory, notices and files against the checkout, each archive's
-layout, executable format and notices, and every `SOURCE.txt` against the
-offer it names. Setup
+layout, executable format and notices, that each executable and image server
+names the SHA-256 of its offer's notices as a reviewed build, and every
+`SOURCE.txt` against the offer it names. Setup
 installs the toolchain `rust/rust-toolchain.toml` pins with `--no-self-update`
 and refuses it unless rustup installed it from the channel manifest whose
 SHA-256 `mise.toml` pins as `rust_manifest_sha256`; a new channel needs the

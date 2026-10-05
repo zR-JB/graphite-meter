@@ -17,8 +17,8 @@ from scripts.legal import rust_platform as platform
 from scripts.legal.check_rust_reviews import manual_problems
 from scripts.legal.model import Component, LegalError, Review, marshal, sha256
 from scripts.legal.model import Project
-from scripts.legal.rust import (DEVELOPMENT, ROOT, Build, Prepared, build_verify, parse, report, source_notice,
-                                source_offer, stage_browser, write_changed)
+from scripts.legal.rust import (DEVELOPMENT, REVIEWED, ROOT, Build, Prepared, build_verify, parse, report,
+                                source_notice, source_offer, stage_browser, write_changed)
 from scripts.legal.rust_inventory import compiled, components, selected
 from scripts.legal.rust_platform import SYSROOT
 
@@ -110,9 +110,18 @@ class InventoryTests(Scratch):
 
 
 class CollectorTests(Scratch):
+    def test_every_copy_of_the_build_markers_is_the_one_rust_legal_embeds(self) -> None:
+        build = (ROOT / "rust/legal/src/build.rs").read_text()
+        for name, marker in (("DEVELOPMENT", DEVELOPMENT), ("REVIEWED", REVIEWED)):
+            self.assertIn(f'const {name}: &str = "{marker}";', build)
+        # The verifiers and the image check look for them.
+        for path, copy in (("scripts/ci/verify_oci.py", f'DEVELOPMENT = "{DEVELOPMENT}"'),
+                           ("scripts/ci/rust_release.py", f'REVIEWED = "{REVIEWED}"'),
+                           ("scripts/verify-container.sh", f"'{DEVELOPMENT}'")):
+            with self.subTest(path=path):
+                self.assertIn(copy, (ROOT / path).read_text())
+
     def test_development_reports_open_with_the_marker_rust_legal_keeps(self) -> None:
-        source = (ROOT / "rust/legal/src/lib.rs").read_text()
-        self.assertIn(f'const DEVELOPMENT: &str = "{DEVELOPMENT}";', source)
         from scripts.legal.model import Project
         project = Project.read(ROOT)
         development = report(project, "development", "notices\n", True)
@@ -210,7 +219,7 @@ class BuildVerifyTests(Scratch):
         self.state = Prepared("host", "host", self.root, self.metadata, {"app", "dependency"}, prepared,
                               "platform", None, self.reviews, [])
 
-    def run_build(self, compiled_ids: tuple[str, ...] = ("dependency", "app")) -> Path:
+    def run_build(self, compiled_ids: tuple[str, ...] = ("dependency", "app"), target: str | None = None) -> Path:
         artifacts = [{"reason": "compiler-artifact", "package_id": identity,
                       "target": {"name": "graphite-meter-client" if identity == "app" else identity,
                                  "kind": ["bin"] if identity == "app" else ["lib"]},
@@ -219,8 +228,11 @@ class BuildVerifyTests(Scratch):
         messages = [*artifacts, {"reason": "build-script-executed", "package_id": "app", "linked_libs": [],
                                  "out_dir": str(self.root / "build")}, {"reason": "build-finished", "success": True}]
         result = subprocess.CompletedProcess([], 0, "".join(json.dumps(item) + "\n" for item in messages))
-        build = Build("graphite-meter-client", None, "ci", "development", self.out)
-        with patch("scripts.legal.rust.subprocess.run", return_value=result):
+        build = Build("graphite-meter-client", target, "ci", "development", self.out)
+        with patch("scripts.legal.rust.subprocess.run", return_value=result), \
+                patch.object(platform, "link_map", return_value=self.root / "map"), \
+                patch.object(platform, "linked", return_value=set()), patch.object(platform, "imports", return_value=set()), \
+                patch("scripts.legal.rust.checked_platform_notice", return_value="platform"):
             return build_verify(build, self.state)[0]
 
     def test_a_build_of_the_prepared_crates_with_embedded_notices_passes(self) -> None:
@@ -273,6 +285,21 @@ class BuildVerifyTests(Scratch):
             f"Dependency source archive: {base}_third-party-source.tar.gz", "Rust target: x86_64-pc-windows-gnu"])
         self.assertEqual((self.out / "SOURCE.txt").read_text(), source_notice(
             Project.read(ROOT), "1.2.3", f"{base}_third-party-source.tar.gz", "x86_64-pc-windows-gnu"))
+
+    def test_a_reviewed_executable_carries_its_notices_sha_256_beside_them(self) -> None:
+        report = self.write("notices/LEGAL.txt", "notices\n").read_bytes()
+        payload = zlib.compress(report)
+        self.write("build/legal.zlib", payload)
+        marker = f"{REVIEWED}{sha256(report)}".encode()
+        for binary, error in ((b"code" + payload + marker, None), (b"code" + payload, "SHA-256"),
+                              (b"code" + payload + f"{REVIEWED}{sha256(b'other')}".encode(), "SHA-256")):
+            with self.subTest(binary=binary[-20:]):
+                self.binary.write_bytes(binary)
+                if error is None:
+                    self.assertEqual(self.run_build(target="x86_64-unknown-linux-musl"), self.binary)
+                    continue
+                with self.assertRaisesRegex(LegalError, error):
+                    self.run_build(target="x86_64-unknown-linux-musl")
 
     def test_a_server_offer_holds_each_browser_package_s_source_and_refuses_one_without(self) -> None:
         def vendor(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:

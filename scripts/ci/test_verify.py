@@ -29,7 +29,6 @@ from fixtures import (
 )
 from verify_oci import (
     BLOB_LIMIT,
-    DEVELOPMENT,
     select_engine,
     validate_index_descriptors,
     verify as verify_oci,
@@ -273,10 +272,6 @@ class OCITests(unittest.TestCase):
                 oci = write_oci(archive, "example/repo", "f" * 40, remote=False, files=files)
                 with patch.dict(os.environ, engine(Path(directory), "example/repo", "1.2.3", "f" * 40, oci)):
                     outcome(self, error, lambda: verify_oci("1.2.3", "f" * 40, archive))
-
-    def test_the_development_marker_is_the_one_rust_legal_embeds(self) -> None:
-        source = (Path(__file__).resolve().parents[2] / "rust/legal/src/lib.rs").read_text()
-        self.assertIn(f'const DEVELOPMENT: &str = "{DEVELOPMENT}";', source)
 
     def test_engine_is_a_known_name_resolved_on_path(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

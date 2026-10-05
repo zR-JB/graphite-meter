@@ -162,9 +162,9 @@ real Cargo build of it, in three steps:
    needs its approved platform record, whose notice texts the builder lacks are
    fetched from `rust-notice-sources.json` into `legal/manual/` and checked by
    SHA-256. The step writes the directory the build reads as
-   `GM_RUST_LEGAL_DIR`: `LEGAL.txt` (the `-legal` report), `package.txt`,
-   `target.txt`, `rustc-path.txt`, and `inputs.txt` with copies of those inputs
-   under `inputs/`. For the server it also stages the browser build in
+   `GM_RUST_LEGAL_DIR`: `LEGAL.txt` (the `-legal` report) with its SHA-256 in
+   `LEGAL.sha256`, `package.txt`, `target.txt`, `rustc-path.txt`, and
+   `inputs.txt` with copies of those inputs under `inputs/`. For the server it also stages the browser build in
    `browser-assets/` with its own `legal/` files, and, for a reviewed build,
    writes the image's `IMAGE_NOTICES.txt`.
 2. **Build and verify.** One `cargo rustc` build embeds the notices; the
@@ -172,8 +172,11 @@ real Cargo build of it, in three steps:
    compiler, or whose input copies differ. The collector then requires that
    the build compiled only prepared crates with unchanged legal files, linked
    only the record's native inputs, imported only its system libraries,
-   embedded exactly `LEGAL.txt`, and writes `inventory.json` of the compiled
-   crates and the server's browser packages.
+   embedded exactly `LEGAL.txt` and, for a reviewed build, carries
+   `graphite-meter reviewed notices sha256:` with its SHA-256 in plain text,
+   which release verification compares with the notices shipped beside the
+   executable; it then writes `inventory.json` of the compiled crates and the
+   server's browser packages.
 3. **Source offer.** A reviewed build writes its source offer, named like
    its release archive with `_third-party-source.tar.gz`, with the compiled
    crates' and browser packages' sources (a package without a source

@@ -14,9 +14,6 @@ use std::{
     sync::OnceLock,
 };
 
-/// Opens the report of an unreviewed development build, whose executable also carries it in plain text.
-const DEVELOPMENT: &str = "UNREVIEWED DEVELOPMENT BUILD";
-
 /// The browser's notice path, which a server serves from the report's suffix.
 pub const BROWSER_NOTICE: &str = "legal/THIRD_PARTY_NOTICES.txt";
 
@@ -26,6 +23,7 @@ pub struct Notices {
     payload: Option<(&'static [u8], usize)>,
     /// Where the browser's notice starts in the report.
     browser: Option<usize>,
+    /// The build's plain marker: a development build's, a reviewed build's with its report's SHA-256, or nothing.
     marker: &'static str,
     report: OnceLock<Vec<u8>>,
 }
@@ -33,12 +31,11 @@ pub struct Notices {
 impl Notices {
     /// Used by the generated `legal.rs`.
     #[doc(hidden)]
-    pub const fn new(payload: Option<(&'static [u8], usize)>, browser: Option<usize>, development: bool) -> Self {
-        let marker = if development { DEVELOPMENT } else { "" };
+    pub const fn new(payload: Option<(&'static [u8], usize)>, browser: Option<usize>, marker: &'static str) -> Self {
         Self { payload, browser, marker, report: OnceLock::new() }
     }
 
-    /// Keeps a development build's plain marker, which release verification refuses, in the executable.
+    /// Keeps the build's plain marker, which release verification reads, in the executable.
     pub fn keep(&self) {
         std::hint::black_box(self.marker);
     }
@@ -76,12 +73,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_development_build_carries_the_plain_marker() {
-        assert_eq!(Notices::new(None, None, true).marker, "UNREVIEWED DEVELOPMENT BUILD");
-        assert_eq!(Notices::new(None, None, false).marker, "");
-    }
-
-    #[test]
     fn printing_into_a_closed_pipe_ends_quietly() {
         let (reader, writer) = io::pipe().unwrap();
         drop(reader);
@@ -96,11 +87,11 @@ mod tests {
     fn the_browser_notice_is_the_report_suffix() {
         let report = b"project\nrust crates\nbrowser notice\n";
         let compressed = miniz_oxide::deflate::compress_to_vec_zlib(report, 9).leak();
-        let notices = Notices::new(Some((compressed, report.len())), Some(20), false);
+        let notices = Notices::new(Some((compressed, report.len())), Some(20), "");
         assert_eq!(notices.report(), Some(&report[..]));
         assert_eq!(notices.browser(), Some(&b"browser notice\n"[..]));
-        let unshared = Notices::new(Some((compressed, report.len())), None, false);
+        let unshared = Notices::new(Some((compressed, report.len())), None, "");
         assert_eq!(unshared.browser(), None);
-        assert_eq!(Notices::new(None, None, false).report(), None);
+        assert_eq!(Notices::new(None, None, "").report(), None);
     }
 }

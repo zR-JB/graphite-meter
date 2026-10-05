@@ -46,6 +46,8 @@ VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]*")
 PRERELEASE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+-(?:alpha|beta|rc)\.[0-9]+")
 # Opens the notices of a --development build; rust/legal keeps it in that build's executable too.
 DEVELOPMENT = "UNREVIEWED DEVELOPMENT BUILD"
+# Precedes LEGAL.sha256, the SHA-256 of a reviewed build's notices, in its executable (rust/legal).
+REVIEWED = "graphite-meter reviewed notices sha256:"
 DEVELOPMENT_NOTICE = (f"{DEVELOPMENT}\n\nThis build's host generated these notices. They cover the dependencies it "
                       "may compile, but not its Rust standard library, C runtime or system libraries, which only the "
                       "reviewed platform records of the release builders cover. Do not distribute this build.\n\n")
@@ -172,7 +174,9 @@ def prepare(build: Build) -> Prepared:
     body = notices(found) + platform_section(text)
     if build.browser is not None:
         body = browser_notices(build, state, project)
-    write_changed(build.out / "LEGAL.txt", report(project, build.version, body, build.development))
+    legal = report(project, build.version, body, build.development)
+    write_changed(build.out / "LEGAL.txt", legal)
+    write_changed(build.out / "LEGAL.sha256", sha256(legal).encode())
     inputs = [*INPUTS, *(SERVER_INPUTS if build.browser else ()),
               *(file.name for entry in provenance for file in entry.localLegalFiles if not file.name.startswith("/"))]
     inputs += [str(Path(item["manifest_path"]).resolve().relative_to(ROOT)) for item in metadata["packages"]
@@ -264,6 +268,8 @@ def build_verify(build: Build, state: Prepared) -> tuple[Path, list[Component]]:
         raise LegalError("the executable does not embed the prepared notices")
     if (DEVELOPMENT.encode() in binary) != build.development:
         raise LegalError(f"only a development build's executable may carry {DEVELOPMENT!r}")
+    if not build.development and f"{REVIEWED}{sha256(zlib.decompress(payload))}".encode() not in binary:
+        raise LegalError("the executable does not carry its notices' SHA-256")
     write_changed(build.out / "inventory.json", marshal({
         "schemaVersion": 1, "package": build.package, "target": state.target, "profile": build.profile,
         "scope": "compiled Cargo inputs, including build scripts and procedural macros",

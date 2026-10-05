@@ -9,8 +9,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fixtures import (
-    RUST_OCI, engine, executable, outcome, rust_source, write_oci, write_rust_offer, write_rust_release,
-    write_rust_tui, write_tar,
+    RUST_OCI, engine, executable, outcome, reviewed, rust_server, rust_source, write_oci, write_rust_offer,
+    write_rust_release, write_rust_tui, write_tar,
 )
 from github_api import ControlPlaneError, JsonObject, file_sha256
 from rust_release import (
@@ -22,7 +22,7 @@ from scripts.legal.rust import build_source
 from verify_release_assets import TARGETS, tui_archives
 
 REPO, SHA = "zR-JB/graphite-meter", "f" * 40
-AMD64, WINDOWS = "x86_64-unknown-linux-musl", "x86_64-pc-windows-gnu"
+AMD64, ARM64, WINDOWS = "x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl", "x86_64-pc-windows-gnu"
 
 
 class Scratch(unittest.TestCase):
@@ -167,6 +167,10 @@ class TuiTests(Scratch):
             ({"extra.txt": b"x"}, "unexpected"),
             ({"graphite-meter-client.exe": executable(AMD64)}, f"does not hold a {WINDOWS} executable"),
             ({"graphite-meter-client.exe": executable(WINDOWS, b"UNREVIEWED DEVELOPMENT BUILD")}, "unreviewed"),
+            # A reviewed build carries the SHA-256 of exactly the notices beside it.
+            ({"graphite-meter-client.exe": executable(WINDOWS)}, "does not hold the reviewed build of its notices"),
+            ({"graphite-meter-client.exe": executable(WINDOWS, reviewed(b"other\n"))},
+             "does not hold the reviewed build of its notices"),
             ({"LICENSE": b"other"}, "LICENSE differs"),
             ({"THIRD_PARTY_NOTICES.txt": b"other\n"}, "notices differ"),
             ({"SOURCE.txt": rust_source("1.2.4", offer, WINDOWS)}, "SOURCE.txt does not name"),
@@ -227,7 +231,17 @@ class VerifyTests(Scratch):
 
         def swapped(image: Path, _: Path) -> JsonObject:
             named = {"usr/share/licenses/graphite-meter/SOURCE.txt": rust_source("1.2.3", amd64, AMD64)}
-            return rebuilt(image, {"amd64": named, "arm64": named})
+            return rebuilt(image, {"amd64": named | {"graphite-meter": rust_server(AMD64)},
+                                   "arm64": named | {"graphite-meter": rust_server(ARM64)}})
+
+        def servers(amd64_server: bytes, arm64_server: bytes) -> Edit:
+            def edit(image: Path, _: Path) -> JsonObject:
+                files = {arch: {"usr/share/licenses/graphite-meter/SOURCE.txt": rust_source(
+                    "1.2.3", offer_name("graphite-meter-server", "1.2.3", f"linux/{arch}"), target),
+                    "graphite-meter": server} for arch, target, server in (
+                    ("amd64", AMD64, amd64_server), ("arm64", ARM64, arm64_server))}
+                return rebuilt(image, files)
+            return edit
 
         def unsourced(image: Path, _: Path) -> JsonObject:
             return rebuilt(image, {})
@@ -241,10 +255,14 @@ class VerifyTests(Scratch):
         def ci_offer(image: Path, _: Path) -> None:
             write_rust_offer(image / amd64, "graphite-meter-server", AMD64, "ci")
 
-        rows: tuple[tuple[Edit | None, str, str], ...] = (
+        rows: tuple[tuple[Edit | None, str, str | None], ...] = (
             (checksum, "release", "does not match its checksum"),
             (swapped, "release", "linux/arm64 SOURCE.txt does not name"),
             (unsourced, "release", "linux/amd64 SOURCE.txt"),
+            # Each server is the reviewed build of its own offer's notices.
+            (servers(rust_server(AMD64), rust_server(ARM64)), "release", None),
+            (servers(b"server", rust_server(ARM64)), "release", "linux/amd64 server is not the reviewed build"),
+            (servers(rust_server(AMD64), rust_server(AMD64)), "release", "linux/arm64 server is not the reviewed"),
             (missing_offer, "release", "files are"),
             (extra_tui, "release", "files are"),
             (ci_offer, "release", "does not inventory a release build"),
@@ -254,7 +272,7 @@ class VerifyTests(Scratch):
             with self.subTest(error=error):
                 self.root = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
                 outcome(self, error, lambda: self.run_verify(edit, profile))
-                self.assertFalse((self.root / "assets").exists())
+                self.assertEqual((self.root / "assets").exists(), error is None)
 
 
 class PrereleaseTests(Scratch):
@@ -279,14 +297,16 @@ class PrereleaseTests(Scratch):
 
     def test_a_prerelease_image_names_the_repository_as_go_s_prerelease_image_does(self) -> None:
         version, offer = "1.2.3-rc.1", offer_name("graphite-meter-server", "1.2.3-rc.1", "linux/amd64")
-        for source, error in ((b"https://github.com/zR-JB/graphite-meter\n", None),
-                              (rust_source(version, offer, AMD64), "does not name the repository"),
-                              (b"https://github.com/zR-JB/graphite-meter/tree/v1.2.3-rc.1\n",
-                               "does not name the repository")):
-            with self.subTest(source=source):
+        repository, server = b"https://github.com/zR-JB/graphite-meter\n", rust_server(AMD64)
+        for source, binary, error in ((repository, server, None),
+                                      (rust_source(version, offer, AMD64), server, "does not name the repository"),
+                                      (b"https://github.com/zR-JB/graphite-meter/tree/v1.2.3-rc.1\n", server,
+                                       "does not name the repository"),
+                                      (repository, b"server", "server is not a reviewed build")):
+            with self.subTest(source=source, binary=binary):
                 image = self.root / str(len(list(self.root.iterdir())))
                 image.mkdir()
-                files = {"usr/share/licenses/graphite-meter/SOURCE.txt": source}
+                files = {"usr/share/licenses/graphite-meter/SOURCE.txt": source, "graphite-meter": binary}
                 oci = write_oci(image / RUST_OCI, REPO, SHA, remote=True, arch_files={"amd64": files, "arm64": files})
                 (image / f"{RUST_OCI}.sha256").write_text(f"{file_sha256(image / RUST_OCI)}  {RUST_OCI}\n")
                 with patch.dict(os.environ, engine(self.root, REPO, f"{version}-rust", SHA, oci)):

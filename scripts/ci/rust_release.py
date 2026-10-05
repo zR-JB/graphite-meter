@@ -16,6 +16,7 @@ release verifies them. Every path lies inside RUNNER_TEMP.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import shutil
 import tarfile
@@ -41,6 +42,8 @@ FILE_LIMIT = 16 * 1024 * 1024
 EXECUTABLE_LIMIT = 128 * 1024 * 1024
 SERVER, CLIENT = "graphite-meter-server", "graphite-meter-client"
 PROFILES = ("ci", "release")
+# A reviewed build's executable carries its notices' SHA-256 after this (rust/legal/src/build.rs).
+REVIEWED = "graphite-meter reviewed notices sha256:"
 # ELF e_machine and PE machine of each target's architecture.
 MACHINES = {"x86_64": (62, 0x8664), "aarch64": (183, 0xAA64)}
 
@@ -179,6 +182,11 @@ def verify_offer(path: Path, package: str, target: str, profile: str, root: Path
     return notices
 
 
+def reviewed_digests(executable: bytes) -> set[str]:
+    """The notices' SHA-256 digests that `executable` names as a reviewed build's."""
+    return {digest.decode() for digest in re.findall(re.escape(REVIEWED.encode()) + rb"([0-9a-f]{64})", executable)}
+
+
 def native_executable(data: bytes, target: str) -> bool:
     """Whether `data` is a 64-bit little-endian executable for `target`: PE for Windows, otherwise ELF."""
     elf, pe = MACHINES.get(target.split("-", 1)[0], (0, 0))
@@ -207,9 +215,11 @@ def verify_tui(directory: Path, version: str, platform: str, target: str, root: 
     for name in ("LICENSE", "COPYRIGHT"):
         if read(path, f"{base}/{name}") != (root / name).read_bytes():
             fail(f"{archive}: {name} differs from this checkout's")
-    if text(path, f"{base}/THIRD_PARTY_NOTICES.txt") != verify_offer(directory / offer, CLIENT, target, "release",
-                                                                     root):
+    notices = verify_offer(directory / offer, CLIENT, target, "release", root)
+    if text(path, f"{base}/THIRD_PARTY_NOTICES.txt") != notices:
         fail(f"{archive}'s notices differ from its source offer's")
+    if reviewed_digests(executable) != {hashlib.sha256(notices.encode()).hexdigest()}:
+        fail(f"{archive} does not hold the reviewed build of its notices")
     check_source_txt(text(path, f"{base}/SOURCE.txt"), archive, version, offer, target, root)
 
 
@@ -221,23 +231,26 @@ def verify_image(directory: Path, version: str, revision: str, profile: str, roo
     digest = file_sha256(path)
     if (directory / f"{OCI}.sha256").read_text(encoding="utf-8") != f"{digest}  {OCI}\n":
         fail(f"{OCI} does not match its checksum")
-    offers = {platform: name for name, (platform, _) in server_offers(version).items()}
+    offers = {platform: (name, verify_offer(directory / name, SERVER, target, profile, root))
+              for name, (platform, target) in server_offers(version).items()}
 
-    def check_source(arch: str, content: str) -> None:
+    def check_files(arch: str, content: str, server: bytes) -> None:
         platform = f"linux/{arch}"
+        digests = reviewed_digests(server)
         if prerelease(version):
             if content != f"{source_url(version, root)}\n":
                 fail(f"the image's {platform} SOURCE.txt does not name the repository as Go's prerelease image does")
+            if len(digests) != 1:
+                fail(f"the image's {platform} server is not a reviewed build")
             return
         if platform not in offers:
             fail(f"the image's linux/{arch} server has no source offer")
-        check_source_txt(content, f"the image's {platform}", version, offers[platform], load().server[platform],
-                         root)
+        offer, notices = offers[platform]
+        check_source_txt(content, f"the image's {platform}", version, offer, load().server[platform], root)
+        if digests != {hashlib.sha256(notices.encode()).hexdigest()}:
+            fail(f"the image's {platform} server is not the reviewed build of its source offer's notices")
 
-    manifest = verify_oci.verify(f"{version}-rust", revision, path, check_source)
-    for name, (_, target) in server_offers(version).items():
-        verify_offer(directory / name, SERVER, target, profile, root)
-    return digest, manifest
+    return digest, verify_oci.verify(f"{version}-rust", revision, path, check_files)
 
 
 def verify(version: str, revision: str, image: Path, tui: Path | None, assets: Path, server_profile: str = "release",

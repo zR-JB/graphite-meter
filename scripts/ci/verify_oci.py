@@ -96,11 +96,11 @@ def blob(archive: tarfile.TarFile, digest: str) -> JsonObject:
     return expect_object(decode_json(member(archive, digest, BLOB_LIMIT).decode(errors="replace"), digest), digest)
 
 
-def check_image_files(archive: tarfile.TarFile, image: str) -> str:
+def check_image_files(archive: tarfile.TarFile, image: str) -> tuple[str, bytes]:
     """The image manifest `image` ships the server and its notices, and no copy is a development build's; return
-    its last SOURCE.txt, or nothing."""
+    its last SOURCE.txt, or nothing, and its last server."""
     found = {SERVER: 0, NOTICES: 0}
-    source = b""
+    source = server = b""
     for item in expect_array(blob(archive, image).get("layers"), image):
         layer = member(archive, str_field(expect_object(item, image), "digest", image), LAYER_LIMIT)
         with tarfile.open(fileobj=io.BytesIO(layer)) as files:
@@ -110,11 +110,12 @@ def check_image_files(archive: tarfile.TarFile, image: str) -> str:
                     source = handle.read(BLOB_LIMIT)
                 if name in found and (handle := files.extractfile(entry)) is not None:
                     found[name] += 1
-                    if DEVELOPMENT.encode() in handle.read():
+                    if DEVELOPMENT.encode() in (data := handle.read()):
                         fail(f"image {image} ships an unreviewed development build's {name}")
+                    server = data if name == SERVER else server
     if missing := sorted(name for name, count in found.items() if count == 0):
         fail(f"image {image} lacks {missing}")
-    return source.decode(errors="replace")
+    return source.decode(errors="replace"), server
 
 
 def source_commit(statement: JsonObject, repository: str) -> str:
@@ -179,9 +180,9 @@ def skopeo(engine: str, image: str, *args: str, archive: Path | None = None) -> 
 
 
 def verify(version: str, revision: str, archive: Path,
-           check_source: Callable[[str, str], None] | None = None) -> str:
-    """Verify the archive, passing each architecture's SOURCE.txt to `check_source`, and return its manifest
-    digest."""
+           check_files: Callable[[str, str, bytes], None] | None = None) -> str:
+    """Verify the archive, passing each architecture's SOURCE.txt and server to `check_files`, and return its
+    manifest digest."""
     if archive.is_symlink() or not archive.is_file() or archive.stat().st_size == 0:
         fail(f"OCI archive is missing, empty, or not a regular file: {archive}")
     engine, image = select_engine(), env("SKOPEO_IMAGE")
@@ -197,9 +198,9 @@ def verify(version: str, revision: str, archive: Path,
             sources = set().union(*(provenance_sources(tar, digest, repository)
                                     for digest in attestations))
             for arch, digest in images.items():
-                source = check_image_files(tar, digest)
-                if check_source is not None:
-                    check_source(arch, source)
+                source, server = check_image_files(tar, digest)
+                if check_files is not None:
+                    check_files(arch, source, server)
     except tarfile.TarError as exc:
         raise ControlPlaneError(f"cannot read OCI archive layout: {exc}") from exc
     if sources != {revision}:

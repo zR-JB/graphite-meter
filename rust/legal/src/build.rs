@@ -1,6 +1,6 @@
 //! The build-script side: checks the notice inputs, then writes the compressed report and `legal.rs`.
 
-use crate::{BROWSER_NOTICE, DEVELOPMENT};
+use crate::BROWSER_NOTICE;
 use std::{
     env,
     ffi::OsString,
@@ -8,6 +8,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Opens the report of an unreviewed development build, whose executable also carries it in plain text.
+const DEVELOPMENT: &str = "UNREVIEWED DEVELOPMENT BUILD";
+/// Precedes the SHA-256 of a reviewed build's report in its executable, where release verification reads it.
+const REVIEWED: &str = "graphite-meter reviewed notices sha256:";
 /// The longest report a build embeds.
 const MAX_REPORT_BYTES: usize = 16 << 20;
 /// The browser build that a reviewed legal directory's notices cover.
@@ -51,7 +55,7 @@ fn embed_with(
         }
     }
     let Some(configured) = var("GM_RUST_LEGAL_DIR") else {
-        generate(output, "None", None, false)?;
+        generate(output, "None", None, "")?;
         return Ok(None);
     };
     if !Path::new(&configured).is_absolute() {
@@ -77,10 +81,14 @@ fn embed_with(
         }
         false => None,
     };
+    let marker = match report.starts_with(DEVELOPMENT.as_bytes()) {
+        true => DEVELOPMENT.to_owned(),
+        false => format!("{REVIEWED}{}", digest(&directory)?),
+    };
     let compressed = miniz_oxide::deflate::compress_to_vec_zlib(&report, 9);
     write(&output.join("legal.zlib"), &compressed)?;
     let payload = format!("Some((include_bytes!(concat!(env!(\"OUT_DIR\"), \"/legal.zlib\")), {}))", report.len());
-    generate(output, &payload, start, report.starts_with(DEVELOPMENT.as_bytes()))?;
+    generate(output, &payload, start, &marker)?;
     browser.then(|| canonical(&assets)).transpose()
 }
 
@@ -101,10 +109,19 @@ fn check_inputs(checkout: &Path, directory: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn generate(output: &Path, payload: &str, browser: Option<usize>, development: bool) -> Result<(), String> {
+/// The SHA-256 of a reviewed `LEGAL.txt`, which the collector writes to `LEGAL.sha256` and checks the executable for.
+fn digest(directory: &Path) -> Result<String, String> {
+    let digest = String::from_utf8(read(&directory.join("LEGAL.sha256"))?).unwrap_or_default();
+    match digest.len() == 64 && digest.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')) {
+        true => Ok(digest),
+        false => Err("LEGAL.sha256 must hold 64 lowercase hexadecimal digits".into()),
+    }
+}
+
+fn generate(output: &Path, payload: &str, browser: Option<usize>, marker: &str) -> Result<(), String> {
     let source = format!(
         "pub static NOTICES: graphite_meter_legal::Notices = \
-         graphite_meter_legal::Notices::new({payload}, {browser:?}, {development});\n"
+         graphite_meter_legal::Notices::new({payload}, {browser:?}, {marker:?});\n"
     );
     write(&output.join("legal.rs"), source.as_bytes())
 }
@@ -129,6 +146,8 @@ mod tests {
     use graphite_meter_testkit::Scratch;
 
     const REPORT: &str = "UNREVIEWED DEVELOPMENT BUILD\n\nproject\nrust crates\nbrowser notice\n";
+    /// The collector's digest file, which only a reviewed report's marker carries.
+    const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
     /// A checkout holding a reviewed legal directory for the server's x86_64 musl build.
     fn checkout() -> (Scratch, PathBuf) {
@@ -141,6 +160,7 @@ mod tests {
             ("legal/inputs.txt", "rust/Cargo.lock\n"),
             ("legal/inputs/rust/Cargo.lock", "lock"),
             ("legal/LEGAL.txt", REPORT),
+            ("legal/LEGAL.sha256", DIGEST),
             ("legal/browser-assets/legal/THIRD_PARTY_NOTICES.txt", "browser notice\n"),
         ] {
             scratch.file(name, contents).unwrap();
@@ -179,7 +199,7 @@ mod tests {
     fn a_build_without_notices_embeds_none() {
         let (_scratch, root) = checkout();
         assert_eq!(embed_with(&|_| None, &root, &root.join("out"), true), Ok(None));
-        assert!(generated(&root).ends_with("Notices::new(None, None, false);\n"));
+        assert!(generated(&root).ends_with("Notices::new(None, None, \"\");\n"));
     }
 
     #[test]
@@ -187,21 +207,28 @@ mod tests {
         let (_scratch, root) = checkout();
         assert_eq!(run(&root, &[], true), Ok(Some(root.join("legal/browser-assets"))));
         let start = REPORT.len() - "browser notice\n".len();
-        let expected = format!("/legal.zlib\")), {})), Some({start}), true);\n", REPORT.len());
+        let expected =
+            format!("/legal.zlib\")), {})), Some({start}), \"UNREVIEWED DEVELOPMENT BUILD\");\n", REPORT.len());
         assert!(generated(&root).ends_with(&expected), "{}", generated(&root));
         let compressed = fs::read(root.join("out/legal.zlib")).unwrap();
         let report = miniz_oxide::inflate::decompress_to_vec_zlib(&compressed).unwrap();
         assert_eq!(report, REPORT.as_bytes());
         assert_eq!(run(&root, &[], false), Ok(None));
-        assert!(generated(&root).ends_with(&format!("{})), None, true);\n", REPORT.len())));
+        assert!(generated(&root).ends_with(&format!("{})), None, \"UNREVIEWED DEVELOPMENT BUILD\");\n", REPORT.len())));
     }
 
     #[test]
-    fn a_reviewed_report_carries_no_marker() {
+    fn a_reviewed_report_s_marker_carries_its_digest() {
         let (scratch, root) = checkout();
         scratch.file("legal/LEGAL.txt", "project\n").unwrap();
         assert_eq!(run(&root, &[], false), Ok(None));
-        assert!(generated(&root).ends_with(", None, false);\n"));
+        let marker = format!(", None, \"graphite-meter reviewed notices sha256:{DIGEST}\");\n");
+        assert!(generated(&root).ends_with(&marker), "{}", generated(&root));
+        let refusal = "LEGAL.sha256 must hold 64 lowercase hexadecimal digits";
+        for digest in [&DIGEST[1..], &DIGEST.to_uppercase(), &format!("{DIGEST}\n")] {
+            scratch.file("legal/LEGAL.sha256", digest).unwrap();
+            assert_eq!(run(&root, &[], false), Err(refusal.into()));
+        }
     }
 
     #[test]

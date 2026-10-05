@@ -235,6 +235,16 @@ def executable(target: str, payload: bytes = b"") -> bytes:
     return b"\x7fELF\x02\x01\x01" + bytes(9) + (2).to_bytes(2, "little") + machine.to_bytes(2, "little") + payload
 
 
+def reviewed(notices: bytes) -> bytes:
+    """The marker of a reviewed Rust build of `notices`."""
+    return b"graphite-meter reviewed notices sha256:" + hashlib.sha256(notices).hexdigest().encode()
+
+
+def rust_server(target: str) -> bytes:
+    """The image's server of `target`, built with the notices of write_rust_offer's offer."""
+    return b"server\0" + reviewed(f"notices of graphite-meter-server for {target}\n".encode())
+
+
 def rust_source(version: str, offer: str, target: str) -> bytes:
     return (f"Graphite Meter source: https://github.com/zR-JB/graphite-meter/tree/v{version}\n"
             f"Matching release: v{version}\nDependency source archive: {offer}\nRust target: {target}\n").encode()
@@ -263,9 +273,10 @@ def write_rust_tui(directory: Path, version: str, platform: str, target: str,
     archive, base, binary = tui_archive(version, platform)
     offer = offer_name("graphite-meter-client", version, platform)
     write_rust_offer(directory / offer, "graphite-meter-client", target)
-    members = {binary: executable(target), "LICENSE": (ROOT / "LICENSE").read_bytes(),
+    notices = f"notices of graphite-meter-client for {target}\n".encode()
+    members = {binary: executable(target, reviewed(notices)), "LICENSE": (ROOT / "LICENSE").read_bytes(),
                "COPYRIGHT": (ROOT / "COPYRIGHT").read_bytes(),
-               "THIRD_PARTY_NOTICES.txt": f"notices of graphite-meter-client for {target}\n".encode(),
+               "THIRD_PARTY_NOTICES.txt": notices,
                "SOURCE.txt": rust_source(version, offer, target)} | dict(changes or {})
     files = {f"{base}/{name}": payload for name, payload in members.items()}
     if archive.endswith(".zip"):
@@ -289,7 +300,8 @@ def write_rust_release(image: Path, tui: Path | None, version: str, revision: st
             source = f"https://github.com/{repository}\n".encode()
         else:
             write_rust_offer(image / offer, "graphite-meter-server", target)
-        sources[platform.split("/")[1]] = {"usr/share/licenses/graphite-meter/SOURCE.txt": source}
+        sources[platform.split("/")[1]] = {"usr/share/licenses/graphite-meter/SOURCE.txt": source,
+                                           "graphite-meter": rust_server(target)}
     oci = write_oci(image / RUST_OCI, repository, revision, remote=tui is None, arch_files=sources)
     (image / f"{RUST_OCI}.sha256").write_text(
         f"{hashlib.sha256((image / RUST_OCI).read_bytes()).hexdigest()}  {RUST_OCI}\n")

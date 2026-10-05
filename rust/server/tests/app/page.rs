@@ -34,7 +34,7 @@ const REPORT: &str = "project\nrust crates\nbrowser notice\n";
 fn notices() -> &'static Notices {
     let compressed = miniz_oxide::deflate::compress_to_vec_zlib(REPORT.as_bytes(), 9).leak();
     let browser = REPORT.len() - "browser notice\n".len();
-    Box::leak(Box::new(Notices::new(Some((compressed, REPORT.len())), Some(browser), false)))
+    Box::leak(Box::new(Notices::new(Some((compressed, REPORT.len())), Some(browser), "")))
 }
 
 fn served(env: &[(&str, &str)]) -> App {
@@ -132,7 +132,7 @@ async fn the_browser_notice_is_the_shared_report_suffix() {
     let response = send(&app, Endpoint::H1, empty(request("GET", "/legal/THIRD_PARTY_NOTICES.txt"))).await;
     assert_eq!(header(&response, "content-type"), Some("text/plain; charset=utf-8"));
     assert_eq!(text(response).await, "browser notice\n");
-    let unshared = Box::leak(Box::new(Notices::new(None, None, false)));
+    let unshared = Box::leak(Box::new(Notices::new(None, None, "")));
     let unshared = super::app(&[]).with_assets(FILES, unshared);
     let response = send(&unshared, Endpoint::H1, empty(request("GET", "/legal/THIRD_PARTY_NOTICES.txt"))).await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
