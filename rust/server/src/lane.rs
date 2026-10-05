@@ -30,7 +30,7 @@ struct State {
     ending: AtomicU8,
     decided: CancellationToken,
     shutdown: CancellationToken,
-    revoked: Option<CancellationToken>,
+    auth: Option<AuthLease>,
     _hold: Hold,
     _work: WorkGuard,
 }
@@ -52,7 +52,7 @@ impl Lane {
             ending: AtomicU8::new(RUNNING),
             decided: CancellationToken::new(),
             shutdown: shutdown.clone(),
-            revoked: auth.map(|auth| auth.revoked().clone()),
+            auth: auth.cloned(),
             _hold: hold,
             _work: work.start(),
         }))
@@ -75,8 +75,8 @@ impl Lane {
     pub async fn ended(&self) -> LaneEnding {
         let state = &self.0;
         let revoked = async {
-            match &state.revoked {
-                Some(revoked) => revoked.cancelled().await,
+            match &state.auth {
+                Some(auth) => auth.ended().await,
                 None => future::pending().await,
             }
         };
@@ -97,12 +97,12 @@ impl Lane {
         if let Some(ending) = self.ending() {
             return Some(ending);
         }
-        let state = &self.0;
-        let cause = if state.revoked.as_ref().is_some_and(CancellationToken::is_cancelled) {
+        let (state, now) = (&self.0, Instant::now());
+        let cause = if state.auth.as_ref().is_some_and(|auth| auth.is_ended(now)) {
             LaneEnding::Revoked
         } else if state.shutdown.is_cancelled() {
             LaneEnding::Shutdown
-        } else if Instant::now() >= state.deadline {
+        } else if now >= state.deadline {
             LaneEnding::Lifetime
         } else {
             return None;
@@ -192,30 +192,42 @@ impl Drop for WorkGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{auth::Holder, exchange::Exchange, limits::Quota, peer::ClientKeys};
+    use crate::{
+        auth::{NewLogin, Store},
+        exchange::Exchange,
+        limits::Quota,
+        peer::ClientKeys,
+    };
 
     struct Fixture {
         quota: Quota,
         work: Work,
         shutdown: CancellationToken,
-        revoked: CancellationToken,
+        store: Store,
+        login: NewLogin,
     }
 
     impl Fixture {
         fn new() -> Self {
-            let (shutdown, revoked) = (CancellationToken::new(), CancellationToken::new());
+            let store = Store::default();
+            let login = store.sign_in("p", "P", "local").unwrap();
             Self {
                 quota: Quota::new(10, 10),
                 work: Work::default(),
-                shutdown,
-                revoked,
+                shutdown: CancellationToken::new(),
+                store,
+                login,
             }
         }
 
         fn lane(&self, lifetime: Duration) -> Lane {
             let hold = self.quota.acquire(&ClientKeys::Exempt, 1).unwrap();
-            let auth = AuthLease::new(Holder::Login("s".into()), "p", self.revoked.clone());
+            let auth = self.store.cookie(&self.login.token).unwrap();
             Exchange::start().admit(ClientKeys::Exempt, hold, lifetime, &self.work, &self.shutdown, Some(&auth))
+        }
+
+        fn revoke(&self) {
+            assert!(self.store.sign_out(self.login.key, false));
         }
     }
 
@@ -252,7 +264,7 @@ mod tests {
         assert_eq!((lane.due(), lane.ending()), (Some(LaneEnding::Lifetime), Some(LaneEnding::Lifetime)));
         let lane = fixture.lane(LONG);
         fixture.shutdown.cancel();
-        fixture.revoked.cancel();
+        fixture.revoke();
         assert_eq!(lane.due(), Some(LaneEnding::Revoked));
         assert_eq!((lane.finish(), lane.ended().await), (LaneEnding::Revoked, LaneEnding::Revoked));
         let fixture = Fixture::new();
@@ -281,7 +293,7 @@ mod tests {
         let fixture = Fixture::new();
         let lane = fixture.lane(LONG);
         tokio::time::sleep(Duration::from_secs(5)).await;
-        fixture.revoked.cancel();
+        fixture.revoke();
         assert_eq!(ending(&lane).await, (LaneEnding::Revoked, Duration::ZERO));
         let fixture = Fixture::new();
         let lane = fixture.lane(LONG);
@@ -321,12 +333,12 @@ mod tests {
             (LaneEnding::Lifetime, IDLE_BOUND),
             "a lifetime due with the idle bound wins"
         );
-        fixture.revoked.cancel();
+        fixture.revoke();
         assert_eq!((lane.finish(), lane.ended().await), (LaneEnding::Lifetime, LaneEnding::Lifetime));
 
         let fixture = Fixture::new();
         let lane = fixture.lane(LONG);
-        fixture.revoked.cancel();
+        fixture.revoke();
         fixture.shutdown.cancel();
         assert_eq!(lane.ended().await, LaneEnding::Revoked, "revocation outranks a shutdown due at once");
     }

@@ -2,27 +2,26 @@
 //! answers and connection hints.
 
 use super::App;
-use crate::{auth::Auth, transport::body::Body};
-use graphite_meter_proto::route::Route;
+use crate::transport::body::Body;
 use http::{HeaderMap, HeaderValue, Response, Version, header};
 
 /// Who may read an answer from another origin.
-#[derive(Debug, Clone, Copy)]
-pub enum Access<'a> {
+#[derive(Debug, Clone)]
+pub enum Access {
     /// Anyone, without credentials: authentication is off.
     Public,
     /// The UI origin, with its session cookie.
-    Cookie(&'a HeaderValue),
+    Cookie(HeaderValue),
     /// An approved browser origin, with a bearer grant.
-    Bearer(&'a HeaderValue),
+    Bearer(HeaderValue),
 }
 
-impl Access<'_> {
+impl Access {
     /// The headers of any answer, replacing those of a broader access.
-    pub fn apply(self, headers: &mut HeaderMap) {
+    pub fn apply(&self, headers: &mut HeaderMap) {
         const PUBLIC: &str = "X-Graphite-Upload-Refusal, Retry-After";
-        const AUTH: &str = "X-Graphite-Upload-Refusal, Retry-After, Graphite-Meter-Auth, Graphite-Meter-Auth-URL";
-        const BEARER: &str = "X-Graphite-Upload-Refusal, Retry-After, Graphite-Meter-Auth, Graphite-Meter-Auth-URL, \
+        const AUTH: &str = "Graphite-Meter-Auth, Graphite-Meter-Auth-URL, X-Graphite-Upload-Refusal, Retry-After";
+        const BEARER: &str = "Graphite-Meter-Auth, Graphite-Meter-Auth-URL, X-Graphite-Upload-Refusal, Retry-After, \
                               Graphite-Meter-Browser-Auth";
         let (origin, exposed) = match self {
             Self::Public => (HeaderValue::from_static("*"), PUBLIC),
@@ -41,8 +40,8 @@ impl Access<'_> {
         }
     }
 
-    /// The headers of a route's answer, which also answer its preflight.
-    pub fn apply_measurement(self, headers: &mut HeaderMap) {
+    /// The headers of a preflight's answer; with authentication off every route answer carries them.
+    pub fn apply_measurement(&self, headers: &mut HeaderMap) {
         self.apply(headers);
         let allowed = match self {
             Self::Public => "*",
@@ -75,19 +74,23 @@ pub fn close(headers: &mut HeaderMap, version: Version) {
 }
 
 impl App {
-    /// Applies the headers of an answer to a request for `route`; a bootstrap probe answer names the HTTP/3 port.
+    /// Applies the headers of an answer the gate passed: its `access`, hardening once authentication made the request
+    /// secure, and on a bootstrap probe answer the HTTP/3 port.
     pub(super) fn finalize(
         &self,
         response: &mut Response<Body>,
-        route: Option<Route>,
+        access: Option<&Access>,
         bootstrap: bool,
         version: Version,
     ) {
         let headers = response.headers_mut();
-        if route.is_some() {
-            match self.auth {
-                Auth::Off => Access::Public.apply_measurement(headers),
-            }
+        match access {
+            Some(Access::Public) => Access::Public.apply_measurement(headers),
+            Some(access) => access.apply(headers),
+            None => {}
+        }
+        if self.auth.enabled() {
+            harden(headers, true);
         }
         if bootstrap && let Some(alt_svc) = &self.alt_svc {
             headers.insert(header::ALT_SVC, alt_svc.clone());

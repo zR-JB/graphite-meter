@@ -136,6 +136,11 @@ impl Server {
         quic.unwrap_or(0)
     }
 
+    /// The state every listener shares.
+    pub fn app(&self) -> Arc<App> {
+        self.app.clone()
+    }
+
     /// An observation hook for tests: the buffer budget every listener draws on.
     pub fn budget(&self) -> Budget {
         self.app.budget().clone()

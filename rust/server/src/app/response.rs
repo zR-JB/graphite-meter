@@ -3,7 +3,7 @@
 use crate::{limits::Refusal, transport::body::Body};
 use bytes::Bytes;
 use graphite_meter_proto::refusal::UploadRefusal;
-use http::{HeaderValue, Response, StatusCode, header};
+use http::{HeaderValue, Method, Response, StatusCode, header};
 use serde::Serialize;
 
 /// Plain text no browser sniffs, as Go's `http.Error` writes it.
@@ -41,6 +41,30 @@ pub fn json(document: impl Into<Bytes>) -> Response<Body> {
 
 pub fn json_of(document: &impl Serialize) -> Response<Body> {
     json(serde_json::to_vec(document).expect("documents serialize"))
+}
+
+/// Go's `http.Redirect`: a GET answer links the location in a short HTML body.
+pub fn redirect(method: &Method, status: StatusCode, location: &HeaderValue) -> Response<Body> {
+    let linked = matches!(*method, Method::GET | Method::HEAD);
+    let mut response = match *method == Method::GET {
+        true => {
+            let escaped = [("&", "&amp;"), ("<", "&lt;"), (">", "&gt;"), ("\"", "&#34;"), ("'", "&#39;")]
+                .iter()
+                .fold(location.to_str().unwrap_or_default().to_owned(), |text, (raw, entity)| {
+                    text.replace(raw, entity)
+                });
+            let reason = status.canonical_reason().unwrap_or_default();
+            Response::new(Body::full(format!("<a href=\"{escaped}\">{reason}</a>.\n\n")))
+        }
+        false => Response::new(Body::empty()),
+    };
+    *response.status_mut() = status;
+    let headers = response.headers_mut();
+    headers.insert(header::LOCATION, location.clone());
+    if linked {
+        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
+    }
+    response
 }
 
 /// A 405 naming the methods the route answers.

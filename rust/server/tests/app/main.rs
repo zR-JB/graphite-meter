@@ -1,8 +1,10 @@
 //! The app as transports drive it: constructed requests with in-memory bodies through `App::handle`.
 
+mod auth;
 mod control;
 mod gate;
 mod page;
+mod sessions;
 mod upload;
 
 use bytes::Bytes;

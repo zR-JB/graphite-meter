@@ -424,6 +424,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "socket2",
+ "subtle",
  "tokio",
  "tokio-rustls",
  "tokio-tungstenite",

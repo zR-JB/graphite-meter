@@ -2,8 +2,8 @@
 
 use super::*;
 use graphite_meter_proto::route::Route;
-use graphite_meter_server::app::finalize::{Access, harden};
-use http::{HeaderMap, HeaderValue, StatusCode, Version};
+use graphite_meter_server::app::finalize::harden;
+use http::{HeaderMap, StatusCode, Version};
 use http_body_util::Full;
 
 #[test]
@@ -194,36 +194,6 @@ async fn every_route_answers_its_cors_preflight_from_the_route_pin() {
         }
         assert_eq!(header(&response, "access-control-allow-credentials"), None);
     }
-}
-
-#[test]
-fn signed_in_access_echoes_the_origin_and_names_its_credentials() {
-    let origin = HeaderValue::from_static("https://ui.example");
-    let mut headers = HeaderMap::new();
-    Access::Cookie(&origin).apply_measurement(&mut headers);
-    let value = |headers: &HeaderMap, name: &str| headers.get(name).map(|value| value.to_str().unwrap().to_owned());
-    assert_eq!(value(&headers, "access-control-allow-origin").as_deref(), Some("https://ui.example"));
-    assert_eq!(value(&headers, "access-control-allow-credentials").as_deref(), Some("true"));
-    let allowed = value(&headers, "access-control-allow-headers");
-    assert_eq!(allowed.as_deref(), Some("Authorization, Content-Type, X-CSRF-Token"));
-    let exposed = "X-Graphite-Upload-Refusal, Retry-After, Graphite-Meter-Auth, Graphite-Meter-Auth-URL";
-    assert_eq!(value(&headers, "access-control-expose-headers").as_deref(), Some(exposed));
-    assert_eq!(value(&headers, "vary").as_deref(), Some("Origin"));
-
-    let browser = HeaderValue::from_static("https://app.example");
-    Access::Bearer(&browser).apply_measurement(&mut headers);
-    assert_eq!(value(&headers, "access-control-allow-origin").as_deref(), Some("https://app.example"));
-    assert_eq!(
-        value(&headers, "access-control-allow-credentials"),
-        None,
-        "a bearer grant sends no cookies"
-    );
-    assert_eq!(
-        value(&headers, "access-control-allow-headers").as_deref(),
-        Some("Authorization, Content-Type")
-    );
-    let exposed = format!("{exposed}, Graphite-Meter-Browser-Auth");
-    assert_eq!(value(&headers, "access-control-expose-headers"), Some(exposed));
 }
 
 #[test]

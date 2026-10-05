@@ -14,6 +14,19 @@ pub fn get(query: Option<&str>, name: &str) -> Option<String> {
     pairs.find(|(key, _)| key == name).map(|(_, value)| value)
 }
 
+/// A URL-encoded form's fields; `None` when one holds `;` or a bad escape, or a name repeats.
+pub fn form(body: &str) -> Option<Vec<(String, String)>> {
+    let mut fields: Vec<(String, String)> = Vec::new();
+    for text in body.split('&').filter(|text| !text.is_empty()) {
+        let (name, value) = pair(text)?;
+        if fields.iter().any(|(known, _)| *known == name) {
+            return None;
+        }
+        fields.push((name, value));
+    }
+    Some(fields)
+}
+
 fn pair(text: &str) -> Option<(String, String)> {
     if text.is_empty() || text.contains(';') {
         return None;

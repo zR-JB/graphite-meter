@@ -1,7 +1,11 @@
 //! The checks before dispatch: the request head, the route this endpoint mounts and its methods, and
 //! authorization.
 
-use super::{App, Connection, finalize::close, response};
+use super::{
+    App, Connection,
+    finalize::{close, harden},
+    response,
+};
 use crate::{
     auth::Decision,
     peer::{Address, Peer},
@@ -40,7 +44,11 @@ impl App {
             Some(route) if !allows(route, method) => {
                 let mut allow: Vec<_> = methods(route).collect();
                 allow.sort_unstable();
-                Gate::Answer(response::method_not_allowed(&allow.join(", ")))
+                let mut answer = response::method_not_allowed(&allow.join(", "));
+                if self.auth.enabled() {
+                    harden(answer.headers_mut(), true);
+                }
+                Gate::Answer(answer)
             }
             _ => Gate::Pass { route, peer },
         }

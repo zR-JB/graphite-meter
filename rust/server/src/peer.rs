@@ -160,7 +160,7 @@ impl ClientKeys {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio_util::sync::CancellationToken;
+    use crate::auth::Store;
 
     fn headers(pairs: &[(&'static str, &'static str)]) -> HeaderMap {
         let mut headers = HeaderMap::new();
@@ -210,11 +210,16 @@ mod tests {
         assert_eq!(v6, nets.map(|net| ClientKey::V6(net.parse().unwrap())));
         let v4 = keys(ClientKeys::address("::ffff:192.0.2.1".parse().unwrap()));
         assert_eq!(v4, [ClientKey::V4(Ipv4Addr::new(192, 0, 2, 1))]);
-        let lease = AuthLease::new(Holder::Grant("g1".into()), "alice", CancellationToken::new());
+        let store = Store::default();
+        let login = store.sign_in("alice", "Alice", "local").unwrap();
+        let lease = store.bearer(&store.grant(login.key, None).unwrap()).unwrap();
+        let Holder::Grant(grant) = lease.holder().clone() else {
+            panic!("a grant's lease")
+        };
         let peer = Peer::new(Address::Ambiguous("10.0.0.1".parse().unwrap()));
         assert_eq!(peer.keys(), None, "ambiguous evidence owns nothing");
         let signed_in = keys(peer.with_auth(Some(lease)).keys().unwrap());
-        assert_eq!(signed_in, [ClientKey::Grant("g1".into()), ClientKey::Principal("alice".into())]);
+        assert_eq!(signed_in, [ClientKey::Grant(grant), ClientKey::Principal("alice".into())]);
         let trusted = ["192.0.2.0/24".parse().unwrap()];
         assert_eq!(ClientKeys::connection("192.0.2.7".parse().unwrap(), &trusted), ClientKeys::Exempt);
         assert_eq!(keys(ClientKeys::Exempt), []);

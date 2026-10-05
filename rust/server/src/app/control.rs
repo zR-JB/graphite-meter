@@ -1,8 +1,7 @@
-//! Discovery, the probe, upload sessions, checkpoints and progress control, and socket tickets.
+//! Discovery, the probe, upload sessions, checkpoints and progress control.
 
 use super::{App, Connection, Endpoint, listen_port, query, response};
 use crate::{
-    auth::Auth,
     config::{ENGINE_VERSION, Listener, ListenerKind},
     exchange::Exchange,
     log::RateLimited,
@@ -15,7 +14,6 @@ use graphite_meter_proto::{
         ServerInfo, ThroughputTarget, ThroughputTransport,
     },
     origin::{BaseUrl, Origin},
-    token::SocketTicket,
     upload::Session,
 };
 use http::{HeaderValue, Method, Request, Response, StatusCode, header, uri::Authority};
@@ -171,13 +169,6 @@ impl App {
         headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store, no-transform"));
         headers.insert("x-accel-buffering", HeaderValue::from_static("no"));
         response
-    }
-
-    /// A WebTransport or WebSocket ticket; authentication off needs none.
-    pub(super) fn ticket(&self) -> Response<Body> {
-        match self.auth {
-            Auth::Off => response::json_of(&SocketTicket::unauthenticated()),
-        }
     }
 }
 

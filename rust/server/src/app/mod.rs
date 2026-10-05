@@ -30,7 +30,10 @@ use crate::{
 use bytes::Buf;
 use gate::Gate;
 use graphite_meter_legal::Notices;
-use graphite_meter_proto::{lane::LaneEnding, route::Route};
+use graphite_meter_proto::{
+    lane::LaneEnding,
+    route::{Kind, Route},
+};
 use http::{HeaderValue, Method, Request, Response, StatusCode, header};
 use std::{future::poll_fn, net::IpAddr, pin::pin, time::Duration};
 use tokio::time::Instant;
@@ -94,9 +97,7 @@ impl From<Unadmitted> for Response<Body> {
 impl App {
     /// Draws the download block from the budget; admitted work ends when `shutdown` is cancelled.
     pub fn new(config: Config, shutdown: CancellationToken) -> Result<Self, String> {
-        if config.auth.is_some() {
-            return Err("authentication is unavailable in this build".into());
-        }
+        let auth = Auth::new(config.auth.as_ref())?;
         let budget = Budget::new(config.max_buffer_bytes);
         let block = Block::new(&budget, Meter::new(config.verbose))?;
         let alt_svc = config.listener(ListenerKind::H3).and_then(|listener| {
@@ -107,7 +108,7 @@ impl App {
         Ok(Self {
             quotas: Quotas::new(config.limits, &budget, None),
             uploads: Uploads::new(random()?, Meter::new(config.verbose)),
-            auth: Auth::Off,
+            auth,
             assets: Assets::embedded(config.auth.is_some(), config.result_history_default),
             budget,
             block,
@@ -130,6 +131,10 @@ impl App {
 
     pub fn quotas(&self) -> &Quotas {
         &self.quotas
+    }
+
+    pub fn auth(&self) -> &Auth {
+        &self.auth
     }
 
     /// The verbose throughput lines for the `window` since the last, for each direction that moved or runs.
@@ -166,25 +171,24 @@ impl App {
     ) -> Outcome {
         let (version, deadline) = (request.version(), exchange.deadline());
         let mut response = match self.gate(&request, connection) {
-            Gate::Answer(mut answer) => {
-                self.finalize(&mut answer, None, false, version);
-                answer
-            }
+            Gate::Answer(answer) => answer,
             Gate::Pass { route, peer } => {
                 let bootstrap = connection.endpoint.bootstrap()
                     && route == Some(Route::Probe)
                     && request.method() != Method::OPTIONS;
+                let access = self.auth.access(route, peer.auth(), request.headers());
+                let access = access.as_ref();
                 match self.dispatch(request, route, &peer, connection, exchange).await {
                     Outcome::Response(mut response) => {
-                        self.finalize(&mut response, route, bootstrap, version);
+                        self.finalize(&mut response, access, bootstrap, version);
                         response
                     }
                     Outcome::WebSocket(mut response, lane) => {
-                        self.finalize(&mut response, route, bootstrap, version);
+                        self.finalize(&mut response, access, bootstrap, version);
                         return Outcome::WebSocket(response, lane);
                     }
                     Outcome::WebTransport(mut response, lane, plan) => {
-                        self.finalize(&mut response, route, bootstrap, version);
+                        self.finalize(&mut response, access, bootstrap, version);
                         return Outcome::WebTransport(response, lane, plan);
                     }
                     Outcome::Abort => return Outcome::Abort,
@@ -229,7 +233,8 @@ impl App {
             Route::Servers => self.catalog(&request),
             Route::UploadSession => self.upload_session(),
             Route::UploadCheckpoint => self.checkpoint(&request, peer),
-            Route::WtSession | Route::WsSession => self.ticket(),
+            Route::WtSession => self.auth.ticket(&request, peer.auth(), Kind::WebTransport),
+            Route::WsSession => self.auth.ticket(&request, peer.auth(), Kind::WebSocket),
         };
         Outcome::Response(response)
     }

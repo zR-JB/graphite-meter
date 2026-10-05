@@ -1,6 +1,7 @@
 //! The running server over real sockets: HTTP/1, HTTP/2 and HTTP/3 transfers and their endings, connection bounds,
 //! delayed links, WebSocket buses, WebTransport sessions and TLS.
 
+mod auth;
 mod connection;
 mod delayed;
 mod http2;
@@ -15,12 +16,12 @@ mod webtransport;
 mod webtransport_upload;
 
 use graphite_meter_server::{
-    app::Endpoint,
+    app::{App, Endpoint},
     config::{self, Config, Loaded},
     limits::Budget,
     runtime::Server,
 };
-use std::{ffi::OsString, net::SocketAddr, time::Duration};
+use std::{ffi::OsString, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     net::TcpStream,
@@ -61,6 +62,7 @@ struct Running {
     /// The endpoints sharing the HTTP/3 port.
     endpoints: usize,
     budget: Budget,
+    app: Arc<App>,
     stop: oneshot::Sender<()>,
     task: JoinHandle<Result<(), String>>,
 }
@@ -70,7 +72,7 @@ async fn start(env: &[(&str, &str)]) -> Running {
     let (address, tls) = (server.local_addr(Endpoint::H1).unwrap(), server.local_addr(Endpoint::H1Tls));
     let (h2, quic) = (server.local_addr(Endpoint::H2), server.local_addr(Endpoint::Quic));
     let (companion, budget) = (server.local_addr(Endpoint::H3Companion), server.budget());
-    let endpoints = server.quic_endpoints();
+    let (endpoints, app) = (server.quic_endpoints(), server.app());
     let (stop, stopped) = oneshot::channel();
     let task = tokio::spawn(server.serve(async {
         let _ = stopped.await;
@@ -83,6 +85,7 @@ async fn start(env: &[(&str, &str)]) -> Running {
         companion,
         endpoints,
         budget,
+        app,
         stop,
         task,
     }
