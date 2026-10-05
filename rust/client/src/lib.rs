@@ -1,6 +1,7 @@
 //! The Graphite Meter native terminal client.
 
 pub mod config;
+pub mod events;
 pub mod model;
 pub mod net;
 
@@ -11,7 +12,9 @@ pub mod measure {
 }
 
 pub mod run {
+    pub mod coordinator;
     pub mod engine;
+    pub mod participant;
     pub mod prepare;
     pub mod probe;
     pub mod select;
