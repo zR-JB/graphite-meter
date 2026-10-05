@@ -68,9 +68,7 @@ pub enum Probe {
         failure: Failure,
     },
     /// A channel opened; replies before it are not adjacent to those after.
-    Up {
-        at: Instant,
-    },
+    Up,
     /// Sending stopped and every probe of the window resolved.
     Drained,
 }
@@ -208,9 +206,6 @@ impl Engine {
                 self.fail(index, Scope::Server, failure.clone(), input.now, true, &mut tick.decisions);
             }
         }
-        for (server, probe) in input.probes {
-            self.probe(server, probe, &mut tick.decisions);
-        }
         if !matches!(self.phase, Phase::Draining) {
             self.check_lanes(&input, &mut tick.decisions);
         }
@@ -223,6 +218,9 @@ impl Engine {
             Phase::Opening => self.open(&input, &mut tick),
             Phase::Measuring => self.measure(&input, &mut tick),
             _ => {}
+        }
+        for (server, probe) in input.probes {
+            self.probe(server, probe, &mut tick.decisions);
         }
         if self.phase == Phase::Draining {
             self.drain(input.now);
@@ -360,7 +358,7 @@ impl Engine {
                 member.latency.record(*outcome);
             }
             Probe::Outcome { .. } => {}
-            Probe::Up { .. } => {
+            Probe::Up => {
                 member.latency.break_continuity();
                 if member.probing == Probing::Waiting {
                     member.probing = Probing::Up;
@@ -407,15 +405,20 @@ impl Engine {
     fn ready(&mut self, input: &Input, tick: &mut Tick) {
         let transfers = !self.plan.stage.directions().is_empty();
         let ready = |server: &ServerId| {
+            let mut samples = input.samples.iter();
+            samples.any(|sample| sample.server == *server && sample.ready)
+        };
+        let up = |server: &ServerId| {
             input
-                .samples
+                .probes
                 .iter()
-                .any(|sample| sample.server == *server && sample.ready)
+                .any(|(id, probe)| id == server && *probe == Probe::Up)
         };
         let members = self.members.iter().enumerate().filter(|(_, member)| member.present);
         let late = members.filter_map(|(index, member)| {
             let lanes = transfers && !ready(&member.server);
-            (lanes || member.probing == Probing::Waiting).then_some((index, lanes))
+            let probing = member.probing == Probing::Waiting && !up(&member.server);
+            (lanes || probing).then_some((index, lanes))
         });
         let late: Vec<_> = late.collect();
         let bound = self.created + READY_BOUND;

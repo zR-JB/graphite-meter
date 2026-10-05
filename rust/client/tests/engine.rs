@@ -312,7 +312,7 @@ fn a_late_final_boundary_keeps_the_headline() {
 #[test]
 fn probers_drain_after_the_window_for_at_most_ten_seconds() {
     let mut script = Script::new(plan(Stage::Latency, &["a"], true));
-    let up = [(id("a"), Probe::Up { at: script.base })];
+    let up = [(id("a"), Probe::Up)];
     script.tick(Duration::ZERO, Duration::ZERO, &[], &up);
     script.run(|_| Vec::new());
     assert_eq!(script.window(), Some((Duration::ZERO, STAGE)));
@@ -353,6 +353,23 @@ fn readiness_past_ten_seconds_removes_the_unready() {
 }
 
 #[test]
+fn probes_count_from_the_window_start_including_the_opening_tick() {
+    let mut script = Script::new(plan(Stage::Upload, &["a"], true));
+    script.tick(Duration::ZERO, Duration::ZERO, &[Sample { ready: false, ..sample("a") }], &[]);
+    script.tick(ms(250), Duration::ZERO, &[up("a", 0, ms(250))], &[(id("a"), Probe::Up)]);
+    assert_eq!(script.next, ms(250));
+    let reply = |sent| {
+        let outcome = ProbeOutcome::Reply { rtt: ms(20), handling: Duration::ZERO };
+        (id("a"), Probe::Outcome { sent: script.base + sent, outcome })
+    };
+    script.tick(ms(250), Duration::ZERO, &[up("a", 0, ms(250))], &[reply(ms(100)), reply(ms(300))]);
+    assert_eq!(script.window(), Some((ms(250), ms(250) + STAGE)));
+    script.run(|at| vec![up("a", moved(at, STAGE * 2), at)]);
+    let population = script.engine.result().servers[0].latency.unwrap();
+    assert_eq!(population.summary.replies, 1);
+}
+
+#[test]
 fn a_lost_latency_channel_leaves_only_in_the_latency_stage() {
     let lost = |at| Probe::Down {
         at,
@@ -364,12 +381,7 @@ fn a_lost_latency_channel_leaves_only_in_the_latency_stage() {
     };
     let mut script = Script::new(plan(Stage::Latency, &["a", "b"], true));
     let (a, b, base) = (id("a"), id("b"), script.base);
-    script.tick(
-        Duration::ZERO,
-        Duration::ZERO,
-        &[],
-        &[(a.clone(), Probe::Up { at: base }), (b.clone(), Probe::Up { at: base })],
-    );
+    script.tick(Duration::ZERO, Duration::ZERO, &[], &[(a.clone(), Probe::Up), (b.clone(), Probe::Up)]);
     script.tick(
         ms(1000),
         Duration::ZERO,
@@ -390,7 +402,7 @@ fn a_lost_latency_channel_leaves_only_in_the_latency_stage() {
     assert_eq!((population.summary.replies, population.complete), (2, true));
 
     let mut script = Script::new(plan(Stage::Download, &["a", "b"], true));
-    let ups = [(id("a"), Probe::Up { at: script.base }), (id("b"), Probe::Up { at: script.base })];
+    let ups = [(id("a"), Probe::Up), (id("b"), Probe::Up)];
     script.tick(Duration::ZERO, Duration::ZERO, &[down("a", 0), down("b", 0)], &ups);
     let probes = [(id("b"), lost(script.base + ms(1000)))];
     script.tick(ms(1000), Duration::ZERO, &[down("a", 1_000_000), down("b", 1_000_000)], &probes);
@@ -413,7 +425,7 @@ fn a_lost_latency_channel_leaves_only_in_the_latency_stage() {
 fn latency_failures_are_announced_as_they_happen_and_only_once() {
     let mut script = Script::new(plan(Stage::Download, &["a", "b"], true));
     let samples = |at: Duration| vec![down("a", moved(at, STAGE * 2)), down("b", moved(at, STAGE * 2))];
-    let up = [(id("a"), Probe::Up { at: script.base })];
+    let up = [(id("a"), Probe::Up)];
     script.tick(Duration::ZERO, Duration::ZERO, &samples(Duration::ZERO), &up);
     script.run_until(STAGE, samples);
     assert_eq!(script.failed(), [(STAGE, "b", Scope::Latency, FailureReason::Timeout)]);
@@ -421,7 +433,7 @@ fn latency_failures_are_announced_as_they_happen_and_only_once() {
     assert!(script.removed().is_empty());
 
     let mut script = Script::new(plan(Stage::Latency, &["a", "b"], true));
-    let ups = [(id("a"), Probe::Up { at: script.base }), (id("b"), Probe::Up { at: script.base })];
+    let ups = [(id("a"), Probe::Up), (id("b"), Probe::Up)];
     script.tick(Duration::ZERO, Duration::ZERO, &[], &ups);
     let down = |reason| Probe::Down {
         at: script.base + ms(1000),
@@ -449,7 +461,7 @@ fn a_member_whose_participant_cannot_open_leaves() {
 #[test]
 fn a_stop_mid_window_keeps_what_was_measured() {
     let mut script = Script::new(plan(Stage::Download, &["a"], true));
-    let up = [(id("a"), Probe::Up { at: script.base })];
+    let up = [(id("a"), Probe::Up)];
     script.tick(Duration::ZERO, Duration::ZERO, &[down("a", 0)], &up);
     script.run_until(ms(4000), |at| vec![down("a", moved(at, STAGE))]);
     script.engine.stop(script.base + ms(4100));
@@ -467,7 +479,7 @@ fn run(servers: &[(&str, usize, Duration)]) -> Vec<StageResult> {
     let names: Vec<_> = servers.iter().map(|(name, ..)| *name).collect();
     let mut latency = Script::new(plan(Stage::Latency, &names, true));
     let base = latency.base;
-    let mut probes: Vec<_> = names.iter().map(|name| (id(name), Probe::Up { at: base })).collect();
+    let mut probes: Vec<_> = names.iter().map(|name| (id(name), Probe::Up)).collect();
     for (name, replies, _) in servers {
         for reply in 0..*replies {
             let outcome = ProbeOutcome::Reply { rtt: ms(10), handling: Duration::ZERO };
@@ -539,7 +551,7 @@ fn a_stage_without_evidence_records_insufficient_evidence() {
         .collect();
     assert_eq!(reasons, [(Scope::Latency, FailureReason::InsufficientEvidence)]);
     let mut script = Script::new(plan(Stage::Latency, &["a"], true));
-    script.tick(Duration::ZERO, Duration::ZERO, &[], &[(id("a"), Probe::Up { at: script.base })]);
+    script.tick(Duration::ZERO, Duration::ZERO, &[], &[(id("a"), Probe::Up)]);
     script.run(|_| Vec::new());
     let insufficient = (STAGE + ms(10_000), "a", Scope::Latency, FailureReason::InsufficientEvidence);
     assert_eq!(script.failed(), [insufficient]);
