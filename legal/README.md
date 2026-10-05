@@ -96,6 +96,12 @@ Do not edit these by hand:
 The generator also creates release `SOURCE.txt` material from the same project
 metadata and reviewed component set.
 
+Each component in `client/public/legal/about.json` links its source, its
+upstream and, when Graphite Meter patches it, its changes. A release links
+the patch at its tag. Any other build, a prerelease included, links the patch
+on the default branch: the committed file cannot name a PR head, so a
+prerelease built from a PR that changes a patch shows main's version of it.
+
 ## Copyright year
 
 `legal/project.json` is the only place to update Graphite Meter's copyright
