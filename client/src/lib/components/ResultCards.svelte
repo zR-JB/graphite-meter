@@ -15,6 +15,8 @@
   import { announce } from "../presentation/announcer.svelte";
   import { handoff } from "../presentation/motion.svelte";
   import { untrack } from "svelte";
+  import { planned } from "../runner/schedule";
+  import { stageShown } from "./stageTrack";
   import {
     CARD_ORDER,
     laneShort,
@@ -65,8 +67,8 @@
     );
     return summaryCards(evidence, units, store.showWireEstimates);
   });
-  // Every stage holds its card in its column under its key, a skipped one quietly, so switching a stage on or
-  // off changes a card's state and never moves the row.
+  // Every chip's stage holds its card in its column under its key, a skipped one quietly, so skipping a stage
+  // changes a card's state and never moves the row.
   const skipped = (key: Stage) => status(key) === "disabled";
   type Transfer = Exclude<Stage, "latency">;
   let retainedGraphs: Partial<Record<Transfer, CardGraph>> = {};
@@ -162,12 +164,17 @@
     retainedCards[card.key] = { source: card, view };
     return view;
   }
+  // A card stands under every chip the stage keys show, by the same rule, so the two rows always match.
   const cards = $derived(
-    CARD_ORDER.map((key) =>
-      store.phase !== "complete" && store.phase !== "error"
-        ? byStage[key]
-        : (settled.find((card) => card.key === key) ?? byStage[key]),
-    ).map(withGraph),
+    CARD_ORDER.filter((key) =>
+      stageShown(key, planned(store.config, key), store.stagePresentation[key]),
+    )
+      .map((key) =>
+        store.phase !== "complete" && store.phase !== "error"
+          ? byStage[key]
+          : (settled.find((card) => card.key === key) ?? byStage[key]),
+      )
+      .map(withGraph),
   );
 
   // Lost latency probes are marked on the latency card's rows; nothing is added under the cards mid-run.

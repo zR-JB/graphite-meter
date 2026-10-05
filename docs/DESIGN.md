@@ -271,8 +271,9 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   hover names its result. Nothing on the row moves between states.
 - **Run key** (`RunButton`): the one solid control, ink, over the stage chips at their row's width, 48 px (44 on
   a phone), its label and estimate centred; Stop steps back to a quiet plate with a square.
-- **Result card** (`ResultSummary`): one panel per stage, every stage's in its column under its key whether it
-  runs or not (a stage switched off shows its card quietly, marked Skipped, so the row never moves), ruled 2 px in
+- **Result card** (`ResultSummary`): one panel under each stage key, by the keys' own rule (Bi-dir only while it
+  is selected in Settings or ran), so the two rows always match; a stage skipped from its key shows its card
+  quietly, marked Skipped, so skipping never moves the row, ruled 2 px in
   its hue along the top: the stage's mark
   and name with a status word at the line's end when not complete; the readout, one line tall (bidirectional: ↓
   and ↑ as a pair on one baseline); one quiet line (the wire rate with its overhead, the latency card's jitter, a
