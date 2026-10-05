@@ -19,7 +19,9 @@ mise run pipeline-test     # ty type check, control-plane and legal tests
 `mise run check` is the deterministic developer gate; `mise run ci` runs every
 CI job's task locally, and the policy fails if one of its steps has no CI job.
 `Gate` is the only required status. Path filters (`.github/ci-paths.yml`)
-narrow PR runs only; every push to main runs every job.
+narrow PR runs only; every push to main runs every job. Each job runs on the
+filter `workflow_policy.py` names for it, and a filter never selects a job
+without the jobs it needs, which the Gate would pass as skipped.
 
 ## Releases
 
@@ -159,3 +161,10 @@ targets and the platform record live in `[workspace.metadata.graphite-meter]`
 of `rust/Cargo.toml`, which tooling reads through `rust_workspace.py`. Cargo
 caches are keyed by job, toolchain and `Cargo.lock`, so a new lockfile builds
 once from scratch.
+
+The `rust` filter selects the workspace checks and the Windows client tests and
+covers every file a Rust source includes; `rust-interop` selects the
+interoperability and perf jobs, which also build Go; `rust-image` covers every
+input of `container/Dockerfile.rust` for the image and its browser suite;
+`rust-release` covers every stage but the browser app's for the TUI archives
+and the staging check.

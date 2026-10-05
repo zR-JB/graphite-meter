@@ -30,6 +30,8 @@ jobs:
       go: ${{ github.event_name == 'push' || steps.filter.outputs.go == 'true' }}
       deps: ${{ github.event_name == 'push' || steps.filter.outputs.deps == 'true' }}
       rust: ${{ github.event_name == 'push' || steps.filter.outputs.rust == 'true' }}
+      rust-interop: ${{ github.event_name == 'push' || steps.filter.outputs.rust-interop == 'true' }}
+      rust-image: ${{ github.event_name == 'push' || steps.filter.outputs.rust-image == 'true' }}
       rust-release: ${{ github.event_name == 'push' || steps.filter.outputs.rust-release == 'true' }}
     steps:
       - name: Checkout exact CI source
@@ -221,7 +223,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     needs: plan
-    if: needs.plan.outputs.rust == 'true'
+    if: needs.plan.outputs.rust-interop == 'true'
     env:
       CARGO_INCREMENTAL: '0'
     steps:
@@ -276,7 +278,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     needs: plan
-    if: needs.plan.outputs.rust == 'true'
+    if: needs.plan.outputs.rust-image == 'true'
     env:
       VERSION: 0.0.0-ci
       REPOSITORY: ${{ github.repository }}
@@ -350,7 +352,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: [plan, rust-image]
-    if: needs.plan.outputs.rust == 'true'
+    if: needs.plan.outputs.rust-image == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -496,7 +498,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     needs: plan
-    if: needs.plan.outputs.rust == 'true'
+    if: needs.plan.outputs.rust-interop == 'true'
     env:
       CARGO_INCREMENTAL: '0'
       BASELINE_SHA: a020e9013dd800ed989b7bdbca6a845c3825929a

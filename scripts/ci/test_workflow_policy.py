@@ -145,11 +145,12 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (RUST, "musl-dev:amd64=1.2.3-1", "musl-dev:amd64", "exact apt package versions"),
     (RUST, "RUN printf 'Types: deb", "RUN apt-get update\nRUN printf 'Types: deb", "snapshot.debian.org"),
     (RUST, "/20260927T180000Z", "", "snapshot.debian.org"),
-    # A change to any input of the Rust image selects the Rust jobs.
+    # A change to any input of the Rust image selects the jobs that build it.
     (".github/ci-paths.yml", "  - 'client/**'\n  - 'api/**'\n", "  - 'api/**'\n",
-     r"rust misses \['client/package.json'"),
-    (".github/ci-paths.yml", "  - 'container/Dockerfile.rust'\n", "", r"rust misses \['container/Dockerfile.rust'\]"),
-    (RUST, "COPY api/ /src/api/\n", "COPY api/ docs/ /src/api/\n", r"rust misses \['docs/x'\]"),
+     r"rust-image misses \['client/package.json'"),
+    (".github/ci-paths.yml", "  - 'container/Dockerfile.rust'\n", "",
+     r"rust-image misses \['container/Dockerfile.rust'\]"),
+    (RUST, "COPY api/ /src/api/\n", "COPY api/ docs/ /src/api/\n", r"rust-image misses \['docs/x'\]"),
     # A source-only Rust change selects the TUI exports.
     (".github/ci-paths.yml", "rust-release:\n  - *workflow\n  - 'rust/**'\n", "rust-release:\n  - *workflow\n",
      r"rust-release misses \['rust/rust-toolchain.toml'"),
@@ -193,6 +194,20 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "rust_release.py check"),
     (W + "ci.yml", "rust-tui, rust-release, rust-windows", "rust-tui, rust-windows",
      r"Gate must need every job: \['rust-release'\]"),
+    (W + "ci.yml", "      rust-e2e, rust-tui", "      rust-tui", r"Gate must need every job: \['rust-e2e'\]"),
+    # Each job runs on its reviewed filter, which the plan outputs, and never without the jobs it needs.
+    (W + "ci.yml", "    needs: [plan, rust-image]\n    if: needs.plan.outputs.rust-image ==",
+     "    needs: [plan, rust-image]\n    if: needs.plan.outputs.rust ==", r"reviewed filters: \['rust-e2e'\]"),
+    (W + "ci.yml", "      rust-interop: ${{ github.event_name == 'push' || "
+     "steps.filter.outputs.rust-interop == 'true' }}\n", "", r"the plan does not output: \['rust-interop', 'rust-perf'\]"),
+    (W + "ci.yml", "steps.filter.outputs.rust-image == 'true'", "steps.filter.outputs.rust == 'true'",
+     "filters by their names"),
+    (".github/ci-paths.yml", "rust-release:\n  - *workflow\n", "rust-release:\n  - *workflow\n  - 'docs/**'\n",
+     "CI job rust-release may run without rust-image"),
+    ("rust/server/src/extra.rs", None, 'const NOTE: &str = include_str!("../../../docs/DEPLOYMENT.md");\n',
+     "rust misses docs/DEPLOYMENT.md, which rust/server/src/extra.rs includes"),
+    ("rust/client/tests/extra.rs", None, 'concat!(env!("CARGO_MANIFEST_DIR"), "/../../client/app.css")\n',
+     "rust misses client/app.css"),
 )
 
 

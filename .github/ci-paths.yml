@@ -33,8 +33,22 @@ deps:
   - 'client/bun.lock'
   - 'client/bunfig.toml'
 
-# Every input of the Rust image build, which the policy checks against Dockerfile.rust.
+# Inputs of the Rust workspace's checks and tests.
 rust:
+  - *workflow
+  - 'rust/**'
+  - 'api/**'
+  - 'legal/**'
+  - 'go/internal/auth/assets/**'
+
+# The Rust binaries against Go's peers, server and client.
+rust-interop:
+  - *workflow
+  - 'rust/**'
+  - 'go/**'
+
+# Every input of the Rust image build, which the policy checks against Dockerfile.rust.
+rust-image:
   - *workflow
   - 'rust/**'
   - 'legal/**'
@@ -46,7 +60,7 @@ rust:
   - 'LICENSE'
   - 'COPYRIGHT'
 
-# Inputs of the TUI archives: every stage of Dockerfile.rust but the browser app's, rust/**/src included.
+# Inputs of the TUI archives and their staging: every stage of Dockerfile.rust but the browser app's, rust/**/src included.
 rust-release:
   - *workflow
   - 'rust/**'

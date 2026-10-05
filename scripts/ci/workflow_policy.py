@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import tomllib
@@ -16,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 USES = re.compile(r"(?m)^\s*(?:-\s*)?uses:\s*(\S+)")
 WRITE = re.compile(r"(?<![\w-])(?!permission-)([a-z-]+):\s*write\b")
 STEP = re.compile(r"(?m)^(?=\s*- )")
-JOB = re.compile(r"(?m)^  (?=[a-z-]+:$)")
+JOB = re.compile(r"(?m)^  (?=[a-z0-9-]+:$)")
 RELEASE_SECRETS = {"GHCR_TOKEN", "RELEASE_APP_PRIVATE_KEY"}
 # How a build gets unreviewed development notices: the collector's flag or a local Rust build.
 DEVELOPMENT_BUILDS = ("--development", "scripts.rust_build")
@@ -101,6 +102,15 @@ CONTEXT = {
 }
 # Every image build of the untrusted request starts empty, records max provenance and gets no token.
 IMAGE_BUILD = ("no-cache: true\n", "provenance: mode=max\n", "github-token: ''\n")
+# The plan output that selects each CI job; the jobs ALWAYS names run on every change.
+SELECTED_BY = {
+    "core": "code", "go": "go", "e2e": "code", "smoke": "code", "release": "code", "security": "deps",
+    "rust": "rust", "rust-windows": "rust", "rust-interop": "rust-interop", "rust-perf": "rust-interop",
+    "rust-image": "rust-image", "rust-e2e": "rust-image", "rust-tui": "rust-release", "rust-release": "rust-release",
+}
+ALWAYS = ("plan", "tooling", "secret-scan", "gate")
+# Repository paths a Rust source includes: relative to the file, or to its crate's manifest directory.
+RUST_INCLUDE = re.compile(r'include_(?:str|bytes)!\("([^"]+)"\)|concat!\(env!\("CARGO_MANIFEST_DIR"\), "([^"]+)"\)')
 FORBIDDEN = {
     "workflows/release.yml": ("head_sha", "pull_request.head", "mise run", "secrets["),
     "workflows/release-request.yml": (
@@ -111,6 +121,14 @@ FORBIDDEN = {
 
 def read(root: Path, name: str) -> str:
     return (root / name).read_text(encoding="utf-8")
+
+
+def files(root: Path) -> list[str]:
+    """The tracked files, or every file outside a Git checkout."""
+    listed = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True, check=False)
+    if listed.returncode == 0:
+        return [entry.decode() for entry in listed.stdout.split(b"\0") if entry]
+    return [path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file()]
 
 
 def run_scripts(text: str) -> list[str]:
@@ -246,7 +264,7 @@ def check_ci(root: Path) -> None:
             fail(f"CI must run the local gate step {task}")
     if "run: python3 -m scripts.legal.check_git_sources --verify\n" not in ci:
         fail("CI must verify the Cargo fork pins with check_git_sources --verify")
-    jobs = set(re.findall(r"(?m)^  ([a-z-]+):$", ci.split("\njobs:\n", 1)[1])) - {"gate"}
+    jobs = set(re.findall(r"(?m)^  ([a-z0-9-]+):$", ci.split("\njobs:\n", 1)[1])) - {"gate"}
     gate = re.search(r"(?ms)^  gate:\n.*?^    needs: \[([^]]*)\]", ci)
     if missing := sorted(jobs - {name.strip() for name in (gate.group(1) if gate else "").split(",")}):
         fail(f"CI Gate must need every job: {missing}")
@@ -294,12 +312,13 @@ def path_filters(text: str) -> dict[str, list[str]]:
 
 
 def check_paths(root: Path) -> None:
-    """A change to any input of the Rust image selects the jobs that build it, and one to any input of the TUI
-    archives, which every stage but the browser app's provides, selects their export."""
+    """A change to any input of the Rust image selects the jobs that build it, one to any input of the TUI archives,
+    which every stage but the browser app's provides, selects their export, and one to a file a Rust source includes
+    selects the Rust checks."""
     filters = path_filters(read(root, ".github/ci-paths.yml"))
     stages = [(match[1] if (match := re.match(r"FROM .* AS (\S+)", text)) else "", text)
               for text in re.split(r"(?m)^(?=FROM )", read(root, "container/Dockerfile.rust"))]
-    for name, skipped in (("rust", set()), ("rust-release", {"browser"})):
+    for name, skipped in (("rust-image", set()), ("rust-release", {"browser"})):
         # A copied directory stands for every file below it.
         inputs = [".dockerignore", "container/Dockerfile.rust", *(
             source + "x" if source.endswith("/") else source
@@ -308,14 +327,47 @@ def check_paths(root: Path) -> None:
         if missing := [path for path in inputs
                        if not any(PurePosixPath(path).full_match(glob) for glob in filters.get(name, []))]:
             fail(f".github/ci-paths.yml {name} misses {missing}")
+    for name in files(root):
+        if not name.startswith("rust/") or not name.endswith(".rs"):
+            continue
+        for relative, manifest in RUST_INCLUDE.findall(read(root, name)):
+            base = PurePosixPath(name).parent if relative else PurePosixPath(*PurePosixPath(name).parts[:2])
+            included = PurePosixPath(os.path.normpath(base / (relative or manifest.lstrip("/"))))
+            if not any(included.full_match(glob) for glob in filters["rust"]):
+                fail(f".github/ci-paths.yml rust misses {included}, which {name} includes")
+
+
+def check_selection(root: Path) -> None:
+    """Every push runs every job, and a pull request each job whose reviewed filter matches; a job's needs run
+    whenever it does, since the Gate passes a job skipped for a skipped prerequisite."""
+    ci = read(root, ".github/workflows/ci.yml")
+    filters = path_filters(read(root, ".github/ci-paths.yml"))
+    outputs = re.findall(r"(?m)^      ([\w-]+): \$\{\{ github\.event_name == 'push' \|\| "
+                         r"steps\.filter\.outputs\.([\w-]+) == 'true' \}\}$", ci)
+    if any(name != source or name not in filters for name, source in outputs):
+        fail("CI's plan must output .github/ci-paths.yml filters by their names, and every one on push")
+    selected: dict[str, str | None] = {}
+    needs: dict[str, list[str]] = {}
+    for job in filter(None, JOB.split(ci.split("\njobs:\n", 1)[1])):
+        name = job.split(":", 1)[0]
+        output = re.search(r"(?m)^    if: needs\.plan\.outputs\.([\w-]+) == 'true'$", job)
+        selected[name] = output[1] if output else None
+        listed = re.search(r"(?m)^    needs: \[?([^]\n]*)", job)
+        needs[name] = [item.strip() for item in listed[1].split(",")] if listed else []
+    expected = {**SELECTED_BY, **dict.fromkeys(ALWAYS)}
+    if wrong := sorted(name for name in selected.keys() | expected.keys()
+                       if selected.get(name, "") != expected.get(name, "")):
+        fail(f"CI jobs must run on their reviewed filters: {wrong}")
+    if unknown := sorted(name for name, output in selected.items() if output and output not in dict(outputs)):
+        fail(f"CI jobs run on filters the plan does not output: {unknown}")
+    for name, output in selected.items():
+        for needed in needs[name]:
+            if output and (other := selected.get(needed)) and not set(filters[output]) <= set(filters[other]):
+                fail(f"CI job {name} may run without {needed}: filter {output} is not within {other}")
 
 
 def check_certificates(root: Path) -> None:
-    listed = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True, check=False)
-    if listed.returncode == 0:
-        names = [entry.decode() for entry in listed.stdout.split(b"\0") if entry]
-    else:
-        names = [str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()]
+    names = files(root)
     if bad := [name for name in names if TLS_NAME.search(name)]:
         fail("tracked TLS certificate/key paths found:\n  " + "\n  ".join(bad))
     if bad := [name for name in names if PEM.search((root / name).read_bytes())]:
@@ -357,6 +409,7 @@ def check_repository(root: Path = ROOT) -> None:
     check_workflows(root)
     check_ci(root)
     check_paths(root)
+    check_selection(root)
     check_development_notices(root)
     check_certificates(root)
 
