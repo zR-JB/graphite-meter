@@ -6,5 +6,17 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[dependencies]
+graphite-meter-proto.workspace = true
+graphite-meter-server.workspace = true
+graphite-meter-testkit.workspace = true
+tokio = { workspace = true, features = ["rt", "sync"] }
+
+[dev-dependencies]
+graphite-meter-client.workspace = true
+graphite-meter-net.workspace = true
+http.workspace = true
+tokio = { workspace = true, features = ["macros", "time"] }
+
 [lints]
 workspace = true

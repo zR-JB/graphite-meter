@@ -366,6 +366,15 @@ dependencies = [
 [[package]]
 name = "graphite-meter-e2e"
 version = "0.0.0"
+dependencies = [
+ "graphite-meter-client",
+ "graphite-meter-net",
+ "graphite-meter-proto",
+ "graphite-meter-server",
+ "graphite-meter-testkit",
+ "http",
+ "tokio",
+]
 
 [[package]]
 name = "graphite-meter-http3"
