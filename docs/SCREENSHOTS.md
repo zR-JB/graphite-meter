@@ -66,5 +66,5 @@ Paths: the laptop's carries 3.4 Gbit/s down and 1.9 Gbit/s up with 1 ms of one-w
 9.4 Gbit/s each way with no added delay; the phone's 1.65 Gbit/s down and 0.86 Gbit/s up with 1.5 ms. Each queues a
 few milliseconds of data, so latency under load comes from real queueing. The three servers of the multi-server run
 each have their own path, and together they fill the laptop's. The terminal capture is the TUI's own 120 × 40 screen
-on the workstation's path, rendered as text. The captures are framed in a plain browser window or a phone outline.
+on the workstation's path, rendered as text. Each capture is shown as a plain screen or in a plain phone outline.
 To measure your own network, follow [deployment and configuration](DEPLOYMENT.md).

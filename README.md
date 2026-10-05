@@ -11,7 +11,7 @@ One Go server, a responsive web interface, and a native terminal client.
 
 [Quick start](#quick-start) · [Measurements](#what-you-can-measure) · [Browser](#browser-client) · [Terminal](#native-terminal-client) · [Documentation](#documentation)
 
-<img src="docs/assets/hero.png" alt="A wired 10 GbE workstation mid-run, uploading at 9.32 Gbit/s with 0.3 ms idle latency, beside a phone with its finished Wi-Fi result" width="1080">
+<img src="docs/assets/hero.png" alt="A laptop screen with a wired 10 GbE test mid-run, uploading at 9.32 Gbit/s with 0.3 ms idle latency, and a phone in front with its finished Wi-Fi result" width="1080">
 
 <sub>Real runs over shaped home-network paths · <a href="docs/SCREENSHOTS.md">screenshot gallery</a></sub>
 
