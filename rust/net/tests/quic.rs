@@ -1,4 +1,4 @@
-//! The stream and datagram limits each role's QUIC transport grants its peer.
+//! The stream and datagram limits each role's QUIC transport grants its peer, and the client's receive windows.
 use graphite_meter_net::quic::{client_transport, server_transport};
 use graphite_meter_testkit::Identity;
 use std::{sync::Arc, time::Duration};
@@ -46,4 +46,43 @@ async fn each_role_grants_the_streams_and_datagrams_of_its_transport() {
         assert!(open(connection.open_uni()).await.is_none(), "{granted} unidirectional streams");
     }
     assert!(client.max_datagram_size().is_some() && server.max_datagram_size().is_some());
+}
+
+/// The bytes `stream` takes before the peer's credit runs out.
+async fn credit(stream: &mut noq::SendStream) -> usize {
+    let chunk = vec![0; 64 << 10];
+    let mut taken = 0;
+    while let Ok(Ok(written)) = tokio::time::timeout(Duration::from_millis(200), stream.write(&chunk)).await {
+        taken += written;
+    }
+    taken
+}
+
+#[tokio::test]
+async fn a_client_grants_768_kib_until_it_reads() {
+    let identity = Identity::generate().unwrap();
+    let server = noq::Endpoint::server(identity.quic_server(), "127.0.0.1:0".parse().unwrap()).unwrap();
+    let mut client = identity.quic_client();
+    client.transport_config(Arc::new(client_transport()));
+    let endpoint = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+    let connecting = endpoint
+        .connect_with(client, server.local_addr().unwrap(), "localhost")
+        .unwrap();
+    let (client, accepted) = tokio::join!(connecting, async { server.accept().await.unwrap().await });
+    let (_client, server) = (client.unwrap(), accepted.unwrap());
+    let mut unread = server.open_uni().await.unwrap();
+    assert_eq!(credit(&mut unread).await, 768 << 10);
+}
+
+#[test]
+fn the_client_transport_autotunes_to_48_mib_with_32_mib_streams_and_sends_16_mib() {
+    let config = format!("{:?}", client_transport());
+    for window in [
+        "stream_receive_window: 33554432,",
+        ", receive_window: 50331648,",
+        "initial_receive_window: Some(786432),",
+        "send_window: 16777216,",
+    ] {
+        assert!(config.contains(window), "{window} in {config}");
+    }
 }
