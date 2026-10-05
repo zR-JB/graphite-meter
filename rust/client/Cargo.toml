@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 bytes.workspace = true
+crossterm.workspace = true
 form_urlencoded.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
@@ -23,13 +24,14 @@ hyper-util.workspace = true
 noq = { workspace = true, features = ["runtime-tokio", "rustls-ring"] }
 rustls.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tokio = { workspace = true, features = ["macros", "net", "rt", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-tungstenite.workspace = true
 tokio-util.workspace = true
+unicode-width.workspace = true
 
 [dev-dependencies]
 graphite-meter-testkit.workspace = true
-tokio = { workspace = true, features = ["io-util", "macros", "net", "test-util"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "test-util"] }
 tokio-rustls.workspace = true
 
 [build-dependencies]
