@@ -13,10 +13,12 @@ use crate::{
         prepare::{Prepared, prepare},
     },
 };
+use futures_util::FutureExt;
 use graphite_meter_net::Pool;
 use graphite_meter_proto::{origin::Origin, reason::FailureReason};
 use std::{
     collections::HashMap,
+    panic::AssertUnwindSafe,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -28,6 +30,8 @@ const GRACE: Duration = Duration::from_secs(5);
 /// Why a run without the interface does not sign in.
 pub const SIGN_IN: &str = "Sign-in required; run graphite-meter-client in a terminal to sign in.";
 const REJECTED: &str = "server rejected the approved credential; verify its authentication configuration";
+/// What an operation that panicked ends with.
+const INTERNAL: &str = "internal error";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -154,7 +158,7 @@ impl Work {
             tokio::time::sleep(GRACE).await;
         };
         tokio::select! {
-            () = work => {}
+            () = guarded(&self.events, run, started, work) => {}
             () = overdue => if run {
                 let (outcome, elapsed) = (Outcome::Stopped, started.elapsed());
                 self.events.send(Event::RunFinished { outcome, error: None, elapsed });
@@ -250,6 +254,22 @@ impl Work {
     }
 }
 
+/// Runs `work`, the operation begun at `started`; a panic in it ends the check or run as failed.
+async fn guarded(events: &Events, run: bool, started: Instant, work: impl Future<Output = ()>) {
+    if AssertUnwindSafe(work).catch_unwind().await.is_ok() {
+        return;
+    }
+    let failure = Failure::new(FailureReason::ConnectionLost, INTERNAL);
+    events.send(match run {
+        true => Event::RunFinished {
+            outcome: Outcome::Failed,
+            error: Some(failure),
+            elapsed: started.elapsed(),
+        },
+        false => Event::CheckFailed(failure),
+    });
+}
+
 /// The first origin asking for sign-in, the catalogue's or a server's, with the name a prompt gives it.
 fn asking(prepared: &Result<Prepared, Failure>, url: &Origin) -> Option<(Origin, String)> {
     let asks = |failure: &Failure| failure.reason == FailureReason::SignInRequired;
@@ -279,5 +299,26 @@ fn refuse(prepared: &mut Result<Prepared, Failure>, refusal: &Failure) {
                 .filter_map(|server| server.path.as_mut().err());
             failed.for_each(replace);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn an_operation_that_panics_ends_its_run_or_check_as_failed() {
+        let (events, mut received) = Events::channel();
+        for run in [true, false] {
+            guarded(&events, run, Instant::now(), async { panic!("an operation's bug") }).await;
+            let failure = match received.try_recv().unwrap() {
+                Event::RunFinished { outcome: Outcome::Failed, error: Some(failure), .. } if run => failure,
+                Event::CheckFailed(failure) if !run => failure,
+                event => panic!("{event:?}"),
+            };
+            assert_eq!(failure.text, INTERNAL);
+        }
+        guarded(&events, true, Instant::now(), async {}).await;
+        assert!(received.try_recv().is_err(), "a finished operation sends nothing more");
     }
 }

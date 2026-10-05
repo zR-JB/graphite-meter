@@ -89,18 +89,26 @@ pub async fn run<B: Backend>(
 }
 
 /// The terminal in raw mode on the alternate screen, reporting the mouse and pastes and asked for its background;
-/// dropping it clears the chrome and restores the terminal.
-struct Session;
+/// dropping it clears the chrome, restores the terminal and puts back the panic hook it replaced.
+struct Session {
+    hook: Arc<Hook>,
+}
+
+type Hook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Send + Sync>;
 
 impl Session {
     fn enter() -> io::Result<Self> {
-        let hook = std::panic::take_hook();
+        let (hook, interface) = (Arc::new(std::panic::take_hook()), std::thread::current().id());
+        let previous = hook.clone();
+        // A panic on the interface's thread ends it; elsewhere the run ends as failed and the interface stays.
         std::panic::set_hook(Box::new(move |info| {
-            restore();
-            hook(info);
+            if std::thread::current().id() == interface {
+                restore();
+            }
+            previous(info);
         }));
+        let session = Self { hook };
         enable_raw_mode()?;
-        let session = Self;
         execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
         let _ = execute!(io::stdout(), EnableBracketedPaste);
         // The answer arrives among the keys; the clear wipes what a terminal that ignores the query shows.
@@ -113,6 +121,10 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         restore();
+        if !std::thread::panicking() {
+            let hook = self.hook.clone();
+            std::panic::set_hook(Box::new(move |info| hook(info)));
+        }
     }
 }
 
