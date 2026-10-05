@@ -276,7 +276,9 @@ export class Locator {
         const hit = document.elementFromPoint(x, y);
         const covered = !hit || !(el.contains(hit) || hit.contains(el));
         const moved = box.x !== before.x || box.y !== before.y;
-        if (box.width === 0 || moved || el.disabled || covered)
+        // A blocked control ignores clicks without being disabled.
+        const disabled = el.disabled || el.ariaDisabled === "true";
+        if (box.width === 0 || moved || disabled || covered)
           throw new Error(`not actionable: ${hit?.outerHTML.slice(0, 120)}`);
         return { x, y };
       }),
