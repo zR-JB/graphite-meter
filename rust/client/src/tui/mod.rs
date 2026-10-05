@@ -98,6 +98,8 @@ pub struct App {
     signal: Option<u8>,
     /// When the paths are checked next.
     recheck: Option<Instant>,
+    /// When the checked paths turn stale, until a frame shows it.
+    stale: Option<Instant>,
     /// What the latest operation prepared for, and when its paths arrived.
     asked: Option<PrepKey>,
     checked: Option<(PrepKey, Instant)>,
@@ -127,6 +129,7 @@ impl App {
             quitting: false,
             signal: None,
             recheck: Some(now),
+            stale: None,
             asked: None,
             checked: None,
             scroll: 0,
@@ -144,7 +147,7 @@ impl App {
         self.live.event(event, now);
         match event {
             Event::Prepared { .. } => {
-                self.checked = self.asked.clone().map(|key| (key, now));
+                (self.checked, self.stale) = (self.asked.clone().map(|key| (key, now)), Some(now + FRESH));
                 if std::mem::take(&mut self.setup.chooser) {
                     self.open_chooser();
                 }
@@ -197,7 +200,7 @@ impl App {
                     editor.insert(&text);
                 }
             }
-            Input::Mouse(mouse) if matches!(self.overlay, Overlay::None | Overlay::Details) => match mouse.kind {
+            Input::Mouse(mouse) if self.wheels() => match mouse.kind {
                 MouseEventKind::ScrollUp => self.scroll = self.scroll.saturating_sub(3),
                 MouseEventKind::ScrollDown => self.scroll = self.scroll.saturating_add(3),
                 _ => {}
@@ -228,7 +231,8 @@ impl App {
             (Screen::SignIn(_), _) => keys::SIGN_IN,
             (Screen::Run, _) => keys::RUN,
         };
-        let action = keys::find(table, key, |action| self.offers(action));
+        // s also answers a one-server catalogue, which help leaves it out for.
+        let action = keys::find(table, key, |action| action == Action::Servers || self.offers(action));
         if matches!(self.overlay, Overlay::ConfirmStop) {
             return self.confirm(action);
         }
@@ -287,13 +291,10 @@ impl App {
         }
     }
 
-    /// Whether frames change without input: a spinner turns or a recheck waits.
+    /// Whether frames change without input: a spinner turns, a recheck waits or the checked paths turned stale.
     pub fn animating(&self) -> bool {
-        self.checking() || self.running() || matches!(self.screen, Screen::SignIn(_))
-    }
-
-    pub fn into_view(self) -> View {
-        self.view
+        let stale = self.stale.is_some_and(|at| at < self.now);
+        stale || self.checking() || self.running() || matches!(self.screen, Screen::SignIn(_))
     }
 
     /// How the interface ends now.
@@ -308,6 +309,12 @@ impl App {
         }
     }
 
+    /// Whether the wheel scrolls: not on the sign-in screen or in the editor and stop prompt.
+    fn wheels(&self) -> bool {
+        let overlay = matches!(self.overlay, Overlay::None | Overlay::Details);
+        overlay && !matches!(self.screen, Screen::SignIn(_))
+    }
+
     fn running(&self) -> bool {
         self.view.run.as_ref().is_some_and(|run| run.outcome.is_none())
     }
@@ -315,7 +322,7 @@ impl App {
     fn offers(&self, action: Action) -> bool {
         match action {
             Action::Available => self.can_use_available(),
-            Action::Servers => self.view.catalogue.len() != 1,
+            Action::Servers => self.view.catalogue.len() > 1,
             Action::Latency => self.view.servers.len() > 1,
             Action::Stop => self.running(),
             Action::Again | Action::Setup => !self.running(),

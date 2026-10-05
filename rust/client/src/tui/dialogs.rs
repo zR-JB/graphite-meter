@@ -16,7 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// The chooser's focused catalogue entry and the one to four servers it would select.
+/// The chooser's focused catalogue entry and the up to four servers it would select; none takes the default ones.
 pub struct Chooser {
     row: usize,
     draft: Vec<ServerId>,
@@ -61,7 +61,6 @@ impl App {
             Action::Select => {
                 let Some(entry) = catalogue.get(chooser.row) else { return };
                 match chooser.draft.iter().position(|id| *id == entry.id) {
-                    Some(_) if chooser.draft.len() == 1 => self.notice = "At least one server takes the test.".into(),
                     Some(at) => {
                         chooser.draft.remove(at);
                     }

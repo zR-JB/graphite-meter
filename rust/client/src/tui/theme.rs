@@ -195,10 +195,13 @@ pub async fn background(limit: std::time::Duration) -> Option<bool> {
     dark
 }
 
-/// An answer to the query arriving as keys: its `ESC ]` as `alt+]`, its characters as keys, its end as `alt+\` or
-/// `ctrl+g`.
+/// An answer to the query arriving as keys: its `ESC ]` as `alt+]`, or as esc and `]` when split, its characters as
+/// keys, its end as `alt+\` or `ctrl+g`.
 #[derive(Debug, Default)]
-pub struct Answer(Option<Vec<u8>>);
+pub struct Answer {
+    answer: Option<Vec<u8>>,
+    escaped: bool,
+}
 
 /// What a key was to an answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,9 +214,11 @@ pub enum Taken {
 
 impl Answer {
     pub fn take(&mut self, key: KeyEvent) -> Taken {
-        let Some(answer) = &mut self.0 else {
-            let opens = key.code == KeyCode::Char(']') && key.modifiers == KeyModifiers::ALT;
-            self.0 = opens.then(|| b"\x1b]".to_vec());
+        let escaped = std::mem::replace(&mut self.escaped, key.code == KeyCode::Esc);
+        let Some(answer) = &mut self.answer else {
+            let opens = key.code == KeyCode::Char(']')
+                && (key.modifiers == KeyModifiers::ALT || escaped && key.modifiers == KeyModifiers::NONE);
+            self.answer = opens.then(|| b"\x1b]".to_vec());
             return if opens { Taken::Part } else { Taken::Not };
         };
         let end: &[u8] = match (key.code, key.modifiers) {
@@ -224,13 +229,13 @@ impl Answer {
             (KeyCode::Char('\\'), KeyModifiers::ALT) => b"\x1b\\",
             (KeyCode::Char('g'), KeyModifiers::CONTROL) => b"\x07",
             _ => {
-                self.0 = None;
+                self.answer = None;
                 return Taken::Not;
             }
         };
         answer.extend_from_slice(end);
         let (dark, _) = scan(answer);
-        self.0 = None;
+        self.answer = None;
         dark.map_or(Taken::Part, Taken::Background)
     }
 }

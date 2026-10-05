@@ -7,10 +7,7 @@ use crate::{
     text::Profile,
 };
 use crossterm::{
-    event::{
-        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event as Input,
-        EventStream,
-    },
+    event::{DisableBracketedPaste, EnableBracketedPaste, Event as Input, EventStream},
     execute,
     terminal::{Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -88,6 +85,11 @@ pub async fn run<B: Backend>(
     }
 }
 
+/// Pushes the window title and reports mouse buttons and the wheel, without plain moves, in SGR form.
+const ENTER: &[u8] = b"\x1b[22;0t\x1b[?1002h\x1b[?1006h";
+/// Undoes `ENTER`, putting back the pushed title.
+const LEAVE: &[u8] = b"\x1b[?1006l\x1b[?1002l\x1b[23;0t";
+
 /// The terminal in raw mode on the alternate screen, reporting the mouse and pastes and asked for its background;
 /// dropping it clears the chrome, restores the terminal and puts back the panic hook it replaced.
 struct Session {
@@ -109,7 +111,8 @@ impl Session {
         }));
         let session = Self { hook };
         enable_raw_mode()?;
-        execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+        execute!(io::stdout(), EnterAlternateScreen)?;
+        io::stdout().write_all(ENTER)?;
         let _ = execute!(io::stdout(), EnableBracketedPaste);
         // The answer arrives among the keys; the clear wipes what a terminal that ignores the query shows.
         io::stdout().write_all(theme::QUERY)?;
@@ -129,7 +132,7 @@ impl Drop for Session {
 }
 
 fn restore() {
-    let _ = io::stdout().write_all(&Chrome::default().bytes(None, Profile::Plain));
-    let _ = execute!(io::stdout(), DisableBracketedPaste, DisableMouseCapture, LeaveAlternateScreen);
+    let _ = io::stdout().write_all(&[Chrome::default().bytes(None, Profile::Plain), LEAVE.to_vec()].concat());
+    let _ = execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen);
     let _ = disable_raw_mode();
 }

@@ -235,7 +235,7 @@ fn l_changes_the_shown_latency_server_and_not_the_reports() {
     done(&mut app, now);
     assert!(shows(&mut app, now, "Results · latency to B"));
     assert!(shows(&mut app, now, "Idle 30.0 ms"));
-    let lines = report(&app.into_view(), 100, &Palette::new(true));
+    let lines = report(&app.exit().view, 100, &Palette::new(true));
     let texts: Vec<_> = lines.iter().map(Line::text).collect();
     assert!(texts.iter().any(|text| text.starts_with("Latency to A")), "{texts:#?}");
 }
@@ -324,6 +324,14 @@ fn the_background_answer_arriving_as_keys_sets_the_palette() {
     assert_eq!(app.key(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::ALT), now), []);
     assert_eq!(title(&mut app), Color::Indexed(0));
     assert!(matches!(command(&press(&mut app, KeyCode::Char('r'), now)), Command::Run(_)));
+
+    let mut split = App::new(Config::default(), Profile::Ansi, now);
+    for c in "\x1b]11;rgb:FDFD/f6f6/e3e3".chars() {
+        let code = if c == '\x1b' { KeyCode::Esc } else { KeyCode::Char(c) };
+        assert_eq!(press(&mut split, code, now), [], "an answer split after its escape starts no test: {c}");
+    }
+    assert_eq!(split.key(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::ALT), now), []);
+    assert_eq!(title(&mut split), Color::Indexed(0));
 }
 
 #[test]
@@ -394,4 +402,23 @@ fn quitting_a_finished_run_reports_it_and_after_setup_does_not() {
         assert_eq!(exit.report, report);
         assert_eq!(status(&exit.view, exit.signal), 0);
     }
+}
+
+#[test]
+fn esc_after_a_finished_run_returns_to_start_test() {
+    let now = Instant::now();
+    let mut app = App::new(Config::default(), Profile::Plain, now);
+    press(&mut app, KeyCode::Down, now);
+    assert!(matches!(command(&press(&mut app, KeyCode::Char('r'), now)), Command::Run(_)));
+    app.event(
+        &Event::RunStarted {
+            plan: vec![(Stage::Latency, SECOND)],
+            focus: id("a"),
+            at: now,
+        },
+        now,
+    );
+    done(&mut app, now);
+    press(&mut app, KeyCode::Esc, now);
+    assert!(shows(&mut app, now, "› Start test"));
 }

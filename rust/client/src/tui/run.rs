@@ -96,7 +96,7 @@ impl App {
             Action::Scroll => (self.scroll, self.follow) = (self.scroll.saturating_add_signed(key.step()), false),
             Action::Again => return self.start(),
             Action::Setup => {
-                (self.screen, self.notice, self.scroll) = (super::Screen::Setup, String::new(), 0);
+                (self.screen, self.notice, self.scroll, self.setup.row) = (super::Screen::Setup, String::new(), 0, 0);
                 self.recheck_soon();
             }
             _ => {}

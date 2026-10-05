@@ -54,6 +54,9 @@ fn q_at_setup_exits_0() {
     assert_eq!((session.keys, session.status), (1, 0), "{:?}", session.text);
     assert!(session.text.contains("Start"), "the setup frame: {:?}", session.text);
     assert!(session.text.contains("\x1b]9;4;0\x07"));
+    assert!(session.text.contains("\x1b[22;0t\x1b[?1002h\x1b[?1006h"), "title pushed, no plain moves");
+    assert!(session.text.contains("\x1b[?1006l\x1b[?1002l\x1b[23;0t"), "title put back");
+    assert!(!session.text.contains("\x1b[?1003h"));
     assert_eq!(after_restore(&session), "");
 }
 

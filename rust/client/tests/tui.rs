@@ -1,5 +1,5 @@
 //! The interface without a terminal: keys, events and ticks in, frames, chrome and effects out.
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{Event as Input, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use graphite_meter_client::{
     config::Config,
     controller::Command,
@@ -189,13 +189,19 @@ fn the_editor_types_question_marks_and_q_caps_its_text_and_esc_cancels() {
 }
 
 #[test]
-fn the_chooser_keeps_one_to_four_servers() {
+fn the_chooser_keeps_up_to_four_servers_and_none_takes_the_default_ones() {
     let (mut app, now) = app();
     app.event(&prepared(), now);
     press(&mut app, KeyCode::Char('s'), now);
     assert!(shows(&mut app, now, "Test servers · 1 selected"));
     press(&mut app, KeyCode::Char(' '), now);
-    assert!(shows(&mut app, now, "At least one server takes the test."));
+    assert!(shows(&mut app, now, "Test servers · 0 selected"));
+    press(&mut app, KeyCode::Enter, now);
+    assert!(checked(app.tick(now + Duration::from_millis(350))).servers.is_empty());
+
+    let (mut app, now) = self::app();
+    app.event(&prepared(), now);
+    press(&mut app, KeyCode::Char('s'), now);
     for _ in 0..4 {
         press(&mut app, KeyCode::Down, now);
         press(&mut app, KeyCode::Char(' '), now);
@@ -330,6 +336,47 @@ fn an_expired_sign_in_asks_for_a_new_code() {
     app.event(&Event::CheckFailed(Unapproved::Expired.failure()), now);
     assert!(shows(&mut app, now, "Sign-in expired. Press v to request a new code."));
     assert!(!shows(&mut app, now, "Match this code"));
+}
+
+#[test]
+fn s_explains_a_catalogue_of_one_server() {
+    let (mut app, now) = app();
+    let Event::Prepared { servers, catalogue } = prepared() else { unreachable!() };
+    app.event(&Event::Prepared { servers, catalogue: catalogue[..1].into() }, now);
+    assert_eq!(press(&mut app, KeyCode::Char('s'), now), []);
+    assert!(shows(&mut app, now, "This catalogue offers one server."));
+    press(&mut app, KeyCode::Char('?'), now);
+    assert!(!shows(&mut app, now, "s test servers"), "help leaves it out");
+}
+
+#[test]
+fn checked_paths_turn_stale_on_screen_30_s_later_without_input() {
+    let (mut app, now) = app();
+    app.event(&prepared(), now);
+    assert!(shows(&mut app, now, "A Ready"));
+    let fresh = now + Duration::from_secs(30);
+    assert_eq!(app.tick(fresh), []);
+    assert!(!app.animating(), "nothing changes while the paths are fresh");
+    let stale = fresh + Duration::from_millis(33);
+    assert_eq!(app.tick(stale), []);
+    assert!(app.animating(), "the frame that shows them stale is drawn");
+    assert!(shows(&mut app, stale, "A Recheck needed"));
+    assert!(!app.animating());
+}
+
+#[test]
+fn the_wheel_leaves_the_sign_in_screen_where_it_is() {
+    let now = Instant::now();
+    let mut app = signing_in(now);
+    let mut buffer = Buffer::empty(Rect::new(0, 0, 40, 12));
+    let wheel = MouseEvent {
+        kind: MouseEventKind::ScrollDown,
+        column: 0,
+        row: 0,
+        modifiers: KeyModifiers::NONE,
+    };
+    app.input(Input::Mouse(wheel), now);
+    assert_eq!(app.draw(&mut buffer, now).links, [], "the link stays below the viewport");
 }
 
 #[test]

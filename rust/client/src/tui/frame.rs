@@ -22,6 +22,7 @@ impl App {
     /// Draws a frame into `buffer`, and returns what the terminal shows beside it.
     pub fn draw(&mut self, buffer: &mut Buffer, now: Instant) -> Chrome {
         self.now = now;
+        self.stale = self.stale.filter(|at| *at >= now);
         let links = self.paint(buffer);
         let title = format!("Graphite Meter · {}", self.status().0);
         Chrome { title, progress: self.progress(), links }
