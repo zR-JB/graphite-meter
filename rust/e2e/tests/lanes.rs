@@ -19,6 +19,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
 
 const MIB: u64 = 1 << 20;
@@ -47,9 +48,10 @@ async fn received(client: &Client, via: Protocol, origin: &Origin, id: &str) -> 
     counters.map_or(0, Counters::bytes)
 }
 
-#[tokio::test]
-async fn bidirectional_lanes_move_bytes_over_each_transport() {
-    let (server, client) = (Server::start().await, client());
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bidirectional_lanes_move_bytes_over_each_transport_on_pinned_runtimes() {
+    let pinned = Arc::new(Pool::beside(&Handle::current()).unwrap());
+    let (server, client) = (Server::start().await, Client::new(true, pinned.clone()));
     for (transport, protocol, origin) in [
         (ThroughputTransport::FetchStream, Protocol::Http1, &server.http1),
         (ThroughputTransport::FetchStream, Protocol::Http2, &server.http2),
@@ -68,6 +70,12 @@ async fn bidirectional_lanes_move_bytes_over_each_transport() {
         let counted = async |lanes: &Lanes| lanes.ready() && received(&client, protocol, origin, &id).await >= MIB;
         until(&mut upload, bound, counted).await;
         assert_eq!(upload.bytes(), 0, "{transport:?} {protocol:?}: the receiver counts uploads");
+        let tasks: usize = pinned
+            .runtimes()
+            .iter()
+            .map(|runtime| runtime.metrics().num_alive_tasks())
+            .sum();
+        assert!(tasks >= 4, "{transport:?} {protocol:?}: {tasks} tasks on the pinned runtimes, four lanes");
         token.cancel();
     }
 }

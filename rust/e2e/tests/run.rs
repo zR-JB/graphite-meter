@@ -1,5 +1,5 @@
-//! Whole runs against the server: every stage over each transport, a server that departs mid-stage, and a run
-//! without the interface.
+//! Whole runs against the server on pinned runtimes: every stage over each transport, a server that departs
+//! mid-stage, and a run without the interface.
 use graphite_meter_client::{
     config::{self, Config, Parsed},
     events::{Event, Events},
@@ -15,7 +15,7 @@ use graphite_meter_net::Pool;
 use graphite_meter_proto::{catalog::ServerId, origin::Origin, reason::FailureReason};
 use graphite_meter_testkit::{Fault, Link};
 use std::{ffi::OsString, net::SocketAddr, sync::Arc, time::Duration};
-use tokio::sync::mpsc;
+use tokio::{runtime::Handle, sync::mpsc};
 use tokio_util::sync::CancellationToken;
 
 /// Every stage for 2 s.
@@ -43,9 +43,14 @@ fn config(url: &Origin, args: &[&str]) -> Config {
     }
 }
 
-/// Prepares and runs `config`, handing each event to `seen` as it arrives.
+/// The pinned runtimes beside the test's multi-thread runtime.
+fn pinned() -> Arc<Pool> {
+    Arc::new(Pool::beside(&Handle::current()).unwrap())
+}
+
+/// Prepares and runs `config` on pinned runtimes, handing each event to `seen` as it arrives.
 async fn run(config: &Config, seen: impl AsyncFnMut(&Event)) -> (Outcome, Vec<Event>) {
-    let client = Client::new(config.insecure, Arc::new(Pool::inline()));
+    let client = Client::new(config.insecure, pinned());
     let prepared = prepare(config, client).await.unwrap();
     let (events, received) = Events::channel();
     let watched = watch(received, seen);
@@ -113,32 +118,32 @@ async fn completes(server: &Server, args: &[&str]) {
     assert!(events.iter().any(up), "live upload rates");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_run_completes_over_http1_with_websocket_latency() {
     completes(&Server::start().await, &["-latency-transport", "websocket"]).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_run_completes_over_http2_with_websocket_latency() {
     let server = Server::start().await;
     let origin = server.http2.to_string();
     completes(&server, &["-throughput-origin", &origin, "-latency-transport", "websocket"]).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_run_completes_over_http3_with_datagram_latency() {
     let server = Server::start().await;
     let origin = server.http3.to_string();
     completes(&server, &["-throughput-origin", &origin, "-latency-transport", "webtransport"]).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_run_completes_over_webtransport_with_datagram_latency() {
     let args = ["-throughput-transport", "webtransport", "-latency-transport", "webtransport"];
     completes(&Server::start().await, &args).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_server_stalled_mid_download_departs_and_the_other_completes_partial() {
     let (_relayed, link) = relayed().await;
     let catalogue = format!(
@@ -174,7 +179,7 @@ async fn a_server_stalled_mid_download_departs_and_the_other_completes_partial()
     assert!(events.iter().any(announced));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_sole_server_that_fails_a_stage_rejoins_the_next() {
     let (_server, link) = relayed().await;
     let url = Origin::parse(&format!("http://{}", link.address)).unwrap();
@@ -200,14 +205,14 @@ async fn a_sole_server_that_fails_a_stage_rejoins_the_next() {
     assert!(upload.throughput[Direction::Up].unwrap().rate.is_some());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_run_without_the_interface_completes_with_status_0() {
     let server = Server::start().await;
     let config = config(
         &server.http1,
         &["-stages", "latency,download", "-latency-duration", "1s", "-download-duration", "1s"],
     );
-    let (view, status) = headless(config, Arc::new(Pool::inline()), std::future::pending()).await;
+    let (view, status) = headless(config, pinned(), std::future::pending()).await;
     let run = view.run.as_ref().unwrap();
     assert_eq!((run.outcome, status), (Some(Outcome::Complete), 0), "{:#?}", run.results);
     let lines = report(&view, WIDTH, &Palette::new(true));
