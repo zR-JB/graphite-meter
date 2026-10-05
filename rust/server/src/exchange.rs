@@ -7,7 +7,8 @@ use crate::{
     peer::ClientKeys,
 };
 use std::{
-    future,
+    future::{self, Future, poll_fn},
+    pin::pin,
     sync::{Arc, OnceLock},
     time::Duration,
 };
@@ -74,6 +75,20 @@ impl Watch {
     /// The admitted client's keys, which also fund its connection's receive window; `None` before admission.
     pub fn admitted(&self) -> Option<&ClientKeys> {
         self.admitted.get()
+    }
+
+    /// `served`, counted as admitted work on `work` from the poll that sees the exchange admitted until it ends.
+    pub async fn counted<T>(&self, served: impl Future<Output = T>, work: &Work) -> T {
+        let mut served = pin!(served);
+        let mut guard = None;
+        poll_fn(|cx| {
+            let polled = served.as_mut().poll(cx);
+            if guard.is_none() && self.admitted().is_some() {
+                guard = Some(work.start());
+            }
+            polled
+        })
+        .await
     }
 
     /// Completes at the deadline unless the exchange was admitted by then; a lane bounds it after admission.

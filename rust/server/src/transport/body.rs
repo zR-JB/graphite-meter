@@ -1,24 +1,31 @@
-//! The response body every transport writes, a document, a download or a progress feed, and the rules of writing
-//! it within its bound.
+//! The response body every transport writes, a document, a download or a progress feed, the rules of writing it
+//! within its bound, the pump that writes it to HTTP/2 and HTTP/3 streams, and when an upload funds its window.
 
 use crate::{
     engine::{DownloadSource, ProgressFeed, download::BLOCK_BYTES},
-    exchange::EXCHANGE_BOUND,
+    exchange::{EXCHANGE_BOUND, Watch},
     lane::Lane,
+    limits::{Budget, Pressure},
+    peer::ClientKeys,
 };
 use bytes::Bytes;
 use futures_util::{FutureExt, Stream, future::Fuse, stream};
 use graphite_meter_proto::lane::LaneEnding;
+use http::{Response, response::Parts};
 use http_body::{Frame, SizeHint};
 use std::{
     error::Error,
     fmt,
-    future::Future,
+    future::{Future, poll_fn},
     io, mem,
     pin::Pin,
     task::{Context, Poll, ready},
+    time::Duration,
 };
 use tokio::time::{Instant, Sleep, sleep_until};
+
+/// An upload refused a raised receive window asks again after this pause.
+const FUNDING_RETRY: Duration = Duration::from_millis(100);
 
 /// A reply's body and what bounds writing it.
 pub struct Body {
@@ -196,6 +203,94 @@ impl ReplyBound {
             Rule::Lane(lane, _) if lane.finish() != LaneEnding::Finished => Err(Aborted),
             _ => Ok(()),
         }
+    }
+}
+
+/// An HTTP/2 or HTTP/3 stream a reply is pumped into.
+pub(crate) trait Sink {
+    /// Writes the head; `end` when nothing follows it.
+    async fn head(&mut self, head: Parts, end: bool, bound: &mut ReplyBound) -> Result<(), Aborted>;
+
+    /// Writes non-empty `data` as flow control admits it, ending the stream after it when `last`; each frame
+    /// written is progress.
+    async fn data(&mut self, data: Bytes, last: bool, bound: &mut ReplyBound) -> Result<(), Aborted>;
+
+    /// Ends the stream after a body whose last data did not.
+    async fn end(&mut self, bound: &mut ReplyBound) -> Result<(), Aborted>;
+
+    /// Ready once the peer abandoned the reply.
+    fn poll_reset(&mut self, cx: &mut Context<'_>) -> Poll<()>;
+}
+
+/// Writes a reply within its bound: its head, then, unless it answers HEAD, its data.
+pub(crate) async fn pump(sink: &mut impl Sink, response: Response<Body>, head: bool) -> Result<(), Aborted> {
+    let (parts, mut body) = response.into_parts();
+    let mut bound = ReplyBound::of(&body);
+    let end = head || http_body::Body::is_end_stream(&body);
+    sink.head(parts, end, &mut bound).await?;
+    if end {
+        return bound.delivered();
+    }
+    while let Some(data) = poll_fn(|cx| next_data(cx, &mut body, &mut bound, sink)).await? {
+        if data.is_empty() {
+            continue;
+        }
+        let last = http_body::Body::is_end_stream(&body);
+        sink.data(data, last, &mut bound).await?;
+        if last {
+            return bound.delivered();
+        }
+    }
+    sink.end(&mut bound).await?;
+    bound.delivered()
+}
+
+/// The body's next data; while it has none ready, the reply's bound or the peer's reset ends it.
+fn next_data(
+    cx: &mut Context<'_>,
+    body: &mut Body,
+    bound: &mut ReplyBound,
+    sink: &mut impl Sink,
+) -> Poll<Result<Option<Bytes>, Aborted>> {
+    bound.check(cx)?;
+    match http_body::Body::poll_frame(Pin::new(body), cx) {
+        Poll::Ready(frame) => Poll::Ready(
+            frame
+                .transpose()
+                .map(|frame| frame.map(|frame| frame.into_data().unwrap_or_default())),
+        ),
+        Poll::Pending => {
+            bound.blocked(cx)?;
+            sink.poll_reset(cx).map(|()| Err(Aborted))
+        }
+    }
+}
+
+/// Whether an upload reads at its connection's raised receive window: asked on its first read after admission, and
+/// a pause after a refusal; never while the budget holds growth back.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Funding {
+    /// A refusal holds the next ask until the instant.
+    Unfunded(Option<Instant>),
+    Funded,
+}
+
+impl Funding {
+    /// Asks `raise` with the admitted client's keys once that is due.
+    pub(crate) fn fund(&mut self, watch: &Watch, budget: &Budget, raise: impl FnOnce(&ClientKeys) -> bool) {
+        let Self::Unfunded(retry) = *self else {
+            return;
+        };
+        let Some(keys) = watch.admitted() else {
+            return;
+        };
+        if budget.pressure() == Pressure::HoldBack || retry.is_some_and(|at| Instant::now() < at) {
+            return;
+        }
+        *self = match raise(keys) {
+            true => Self::Funded,
+            false => Self::Unfunded(Some(Instant::now() + FUNDING_RETRY)),
+        };
     }
 }
 

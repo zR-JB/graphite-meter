@@ -1,16 +1,16 @@
 //! HTTP/2 through the h2 fork: each connection's floor and settings, its streams within their exchange bounds, the
-//! reply pump, and the receive window an admitted upload funds.
+//! stream replies are pumped into, and the receive window an admitted upload funds.
 
 mod window;
 
 use super::{
-    body::{Aborted, Body, ReplyBound},
+    body::{Aborted, ReplyBound, Sink, pump},
     lifecycle::{Event, Grace, Lifecycle},
     tls,
 };
 use crate::{
     app::{App, Connection, Endpoint, MAX_HEAD_BYTES, Outcome},
-    exchange::{Exchange, Watch},
+    exchange::Exchange,
     lane::Work,
 };
 use bytes::Bytes;
@@ -20,8 +20,7 @@ use h2::{
     Reason, RecvStream, SendStream,
     server::{Builder, SendResponse},
 };
-use http::{Method, Request, Response};
-use http_body::Body as _;
+use http::{Method, Request, Response, response::Parts};
 use std::{
     future::{Future, poll_fn},
     io,
@@ -165,13 +164,16 @@ impl Http2 {
             let request = request.map(|stream| Incoming::new(stream, watch.clone(), window));
             let served = async {
                 match app.handle(request, &connection, exchange).await {
-                    Outcome::Response(response) => pump(&mut respond, response, head).await,
+                    Outcome::Response(response) => {
+                        let mut reply = Reply { respond: &mut respond, stream: None };
+                        pump(&mut reply, response, head).await
+                    }
                     Outcome::WebSocket(..) | Outcome::Abort => Err(Aborted),
                 }
             };
             let ended = tokio::select! {
                 biased;
-                ended = admitted(served, &watch, &connection.work) => ended,
+                ended = watch.counted(served, &connection.work) => ended,
                 () = watch.expired() => Err(Aborted),
             };
             if ended.is_err() {
@@ -181,65 +183,45 @@ impl Http2 {
     }
 }
 
-/// `served`, counted as admitted work on the connection from the poll that sees `watch` admitted.
-async fn admitted<T>(served: impl Future<Output = T>, watch: &Watch, work: &Work) -> T {
-    let mut served = pin!(served);
-    let mut guard = None;
-    poll_fn(|cx| {
-        let polled = served.as_mut().poll(cx);
-        if guard.is_none() && watch.admitted().is_some() {
-            guard = Some(work.start());
-        }
-        polled
-    })
-    .await
+/// An HTTP/2 stream's reply: its head ends the stream when nothing follows, data goes in frames flow control admits.
+struct Reply<'a> {
+    respond: &'a mut SendResponse<Bytes>,
+    stream: Option<SendStream<Bytes>>,
 }
 
-/// Writes a reply within its bound: its head, then, unless it answers HEAD, its data in frames flow control admits.
-async fn pump(respond: &mut SendResponse<Bytes>, response: Response<Body>, head: bool) -> Result<(), Aborted> {
-    let (parts, mut body) = response.into_parts();
-    let mut bound = ReplyBound::of(&body);
-    let end = head || body.is_end_stream();
-    let mut stream = respond
-        .send_response(Response::from_parts(parts, ()), end)
-        .map_err(|_| Aborted)?;
-    if end {
-        return bound.delivered();
+impl Reply<'_> {
+    fn stream(&mut self) -> Result<&mut SendStream<Bytes>, Aborted> {
+        self.stream.as_mut().ok_or(Aborted)
     }
-    while let Some(mut data) = poll_fn(|cx| next_data(cx, &mut body, &mut bound, &mut stream)).await? {
+}
+
+impl Sink for Reply<'_> {
+    async fn head(&mut self, head: Parts, end: bool, _: &mut ReplyBound) -> Result<(), Aborted> {
+        let stream = self.respond.send_response(Response::from_parts(head, ()), end);
+        self.stream = Some(stream.map_err(|_| Aborted)?);
+        Ok(())
+    }
+
+    async fn data(&mut self, mut data: Bytes, last: bool, bound: &mut ReplyBound) -> Result<(), Aborted> {
+        let stream = self.stream()?;
         while !data.is_empty() {
             let length = data.len().min(FRAME_BYTES);
-            let capacity = capacity(&mut stream, &mut bound, length).await?;
+            let capacity = capacity(stream, bound, length).await?;
             let chunk = data.split_to(length.min(capacity));
-            let last = data.is_empty() && body.is_end_stream();
-            stream.send_data(chunk, last).map_err(|_| Aborted)?;
+            stream.send_data(chunk, last && data.is_empty()).map_err(|_| Aborted)?;
             bound.progressed();
-            if last {
-                return bound.delivered();
-            }
         }
+        Ok(())
     }
-    stream.send_data(Bytes::new(), true).map_err(|_| Aborted)?;
-    bound.delivered()
-}
 
-/// The body's next data; while it has none ready, the reply's bound or the peer's reset ends it.
-fn next_data(
-    cx: &mut Context<'_>,
-    body: &mut Body,
-    bound: &mut ReplyBound,
-    stream: &mut SendStream<Bytes>,
-) -> Poll<Result<Option<Bytes>, Aborted>> {
-    bound.check(cx)?;
-    match Pin::new(body).poll_frame(cx) {
-        Poll::Ready(frame) => Poll::Ready(
-            frame
-                .transpose()
-                .map(|frame| frame.map(|frame| frame.into_data().unwrap_or_default())),
-        ),
-        Poll::Pending => {
-            bound.blocked(cx)?;
-            stream.poll_reset(cx).map(|_| Err(Aborted))
+    async fn end(&mut self, _: &mut ReplyBound) -> Result<(), Aborted> {
+        self.stream()?.send_data(Bytes::new(), true).map_err(|_| Aborted)
+    }
+
+    fn poll_reset(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+        match &mut self.stream {
+            Some(stream) => stream.poll_reset(cx).map(drop),
+            None => Poll::Pending,
         }
     }
 }
