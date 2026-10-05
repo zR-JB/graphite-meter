@@ -9,6 +9,7 @@ use crate::{
     VERSION,
     events::Check,
     report::vocabulary as words,
+    run::prepare::ServerPath,
     text::{Line, Profile, Style},
 };
 use graphite_meter_proto::text::safe;
@@ -78,9 +79,8 @@ impl App {
         let palette = &self.palette;
         let (status, pill) = self.status();
         let (title, status) = (" Graphite Meter ", format!(" {status} "));
-        let gap = width
-            .saturating_sub(crate::text::width(title) + crate::text::width(&status))
-            .max(1);
+        let used = crate::text::width(title) + crate::text::width(&status);
+        let gap = width.saturating_sub(used).max(1);
         let context = match self.screen {
             Screen::Run => self.labels().join(", "),
             _ => self.config.url.to_string(),
@@ -129,11 +129,8 @@ impl App {
         };
         let all = self.bindings(self.help);
         if self.help {
-            return [vec![notice], dialogs::columns(&all, palette)]
-                .concat()
-                .into_iter()
-                .map(|line| line.fit(width))
-                .collect();
+            let lines = [vec![notice], dialogs::columns(&all, palette)].concat();
+            return lines.into_iter().map(|line| line.fit(width)).collect();
         }
         let mut shown = all;
         if more && matches!((&self.screen, &self.overlay), (Screen::Setup | Screen::Run, Overlay::None)) {
@@ -147,16 +144,9 @@ impl App {
 
     /// The keys help lists: all of them, or those the footer offers.
     fn bindings(&self, all: bool) -> Vec<keys::Binding> {
-        let offered = |action| self.offers(action);
         match (&self.screen, &self.overlay) {
-            (_, Overlay::Edit(_)) => keys::listed(keys::EDIT, offered),
-            (_, Overlay::Details) => keys::listed(keys::DETAILS, offered),
-            (_, Overlay::ConfirmStop) => keys::listed(keys::CONFIRM, offered),
-            (Screen::Setup, _) if !all => self.hints(),
-            (Screen::Setup, _) => keys::listed(keys::SETUP, offered),
-            (Screen::Chooser(_), _) => keys::listed(keys::CHOOSER, offered),
-            (Screen::SignIn(_), _) => keys::listed(keys::SIGN_IN, offered),
-            (Screen::Run, _) => keys::listed(keys::RUN, offered),
+            (Screen::Setup, Overlay::None) if !all => self.hints(),
+            _ => keys::listed(self.table(), |action| self.offers(action)),
         }
     }
 
@@ -204,10 +194,8 @@ impl App {
 
     /// The selected servers' names with their locations.
     pub(super) fn labels(&self) -> Vec<String> {
-        let servers = self.view.servers.iter();
-        servers
-            .map(|server| words::server(&server.name, &server.location))
-            .collect()
+        let label = |server: &ServerPath| words::server(&server.name, &server.location);
+        self.view.servers.iter().map(label).collect()
     }
 
     /// The spinner beside "Checking paths…".
@@ -223,10 +211,8 @@ impl App {
 
 /// `left` and `right`, as tall as each other, side by side.
 pub(super) fn beside(left: Vec<Line>, right: Vec<Line>) -> Vec<Line> {
-    let joined = left.into_iter().zip(right);
-    joined
-        .map(|(left, right)| left.and(" ", Style::default()).with(right))
-        .collect()
+    let joined = |(left, right): (Line, Line)| left.and(" ", Style::default()).with(right);
+    left.into_iter().zip(right).map(joined).collect()
 }
 
 /// `labels` without repeats, in order.

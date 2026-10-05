@@ -226,17 +226,11 @@ impl App {
             }
         }
         let Some(key) = Key::of(event) else { return Vec::new() };
-        let table = match (&self.screen, &self.overlay) {
-            (_, Overlay::Edit(_)) => return self.edit_key(key),
-            (_, Overlay::Details) => keys::DETAILS,
-            (_, Overlay::ConfirmStop) => keys::CONFIRM,
-            (Screen::Setup, _) => keys::SETUP,
-            (Screen::Chooser(_), _) => keys::CHOOSER,
-            (Screen::SignIn(_), _) => keys::SIGN_IN,
-            (Screen::Run, _) => keys::RUN,
-        };
+        if let Overlay::Edit(_) = self.overlay {
+            return self.edit_key(key);
+        }
         // s also answers a one-server catalogue, which help leaves it out for.
-        let action = keys::find(table, key, |action| action == Action::Servers || self.offers(action));
+        let action = keys::find(self.table(), key, |action| action == Action::Servers || self.offers(action));
         if matches!(self.overlay, Overlay::ConfirmStop) {
             return self.confirm(action);
         }
@@ -329,6 +323,19 @@ impl App {
 
     fn running(&self) -> bool {
         self.view.run.as_ref().is_some_and(|run| run.outcome.is_none())
+    }
+
+    /// The key table of the screen, or of the overlay over it.
+    fn table(&self) -> &'static [keys::Binding] {
+        match (&self.screen, &self.overlay) {
+            (_, Overlay::Edit(_)) => keys::EDIT,
+            (_, Overlay::Details) => keys::DETAILS,
+            (_, Overlay::ConfirmStop) => keys::CONFIRM,
+            (Screen::Setup, _) => keys::SETUP,
+            (Screen::Chooser(_), _) => keys::CHOOSER,
+            (Screen::SignIn(_), _) => keys::SIGN_IN,
+            (Screen::Run, _) => keys::RUN,
+        }
     }
 
     fn offers(&self, action: Action) -> bool {

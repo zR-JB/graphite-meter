@@ -109,8 +109,8 @@ impl App {
     pub(super) fn rows(&self) -> Vec<Row> {
         let rows = ROWS.iter().map(|(_, row, ..)| *row);
         let advanced = rows.clone().position(|row| row == Row::Advanced).unwrap_or_default();
-        rows.take(if self.setup.advanced { ROWS.len() } else { advanced + 1 })
-            .collect()
+        let shown = if self.setup.advanced { ROWS.len() } else { advanced + 1 };
+        rows.take(shown).collect()
     }
 
     pub(super) fn row(&self) -> Row {
@@ -119,10 +119,8 @@ impl App {
     }
 
     pub(super) fn first_stage(&self) -> usize {
-        self.rows()
-            .iter()
-            .position(|row| matches!(row, Row::Stage(_)))
-            .unwrap_or(0)
+        let stage = self.rows().iter().position(|row| matches!(row, Row::Stage(_)));
+        stage.unwrap_or(0)
     }
 
     pub(super) fn flag(&self, row: Row) -> Option<bool> {
@@ -234,12 +232,8 @@ impl App {
     pub(super) fn setup_list(&self, width: usize) -> (Vec<Line>, usize) {
         let rows = self.rows();
         let shown: Vec<_> = rows.iter().map(|&row| self.show(row)).collect();
-        let labels = shown
-            .iter()
-            .map(|shown| crate::text::width(shown.label))
-            .max()
-            .unwrap_or(0);
-        let label_width = labels.min((width / 2).max(12));
+        let labels = shown.iter().map(|shown| crate::text::width(shown.label)).max();
+        let label_width = labels.unwrap_or(0).min((width / 2).max(12));
         let (mut lines, mut focus) = (Vec::new(), 0);
         for (index, ((heading, row, ..), shown)) in ROWS.iter().zip(&shown).enumerate() {
             if let Some(heading) = heading {
@@ -313,10 +307,8 @@ impl App {
             lines.push(self.checking_line());
         }
         let warn = |text: &str, indent: &'static str| {
-            let filled = fill(text, width.saturating_sub(indent.len()).max(4));
-            filled
-                .into_iter()
-                .map(move |line| Line::plain(indent).and(line, palette.warn))
+            let filled = fill(text, width.saturating_sub(indent.len()).max(4)).into_iter();
+            filled.map(move |line| Line::plain(indent).and(line, palette.warn))
         };
         let names = self.labels();
         let name_width = names.iter().map(|name| crate::text::width(name)).max().unwrap_or(0);

@@ -221,9 +221,8 @@ impl App {
         let Some((value, bounds, range)) = span(config, row) else {
             return Ok(String::new());
         };
-        let raw = raw
-            .parse::<f64>()
-            .map_or_else(|_| raw.to_owned(), |seconds| format!("{seconds}s"));
+        let seconds = raw.parse::<f64>();
+        let raw = seconds.map_or_else(|_| raw.to_owned(), |seconds| format!("{seconds}s"));
         let nanos =
             duration::parse(&raw).map_err(|_| "use a duration like 800ms, 4s, or 1m; a bare number is seconds")?;
         let parsed = u64::try_from(nanos).map_or(Duration::MAX, Duration::from_nanos);
@@ -279,10 +278,8 @@ fn default_scheme(raw: &str) -> &'static str {
         Some((name, port)) if port.bytes().all(|byte| byte.is_ascii_digit()) => name,
         _ => host,
     };
-    let host = host
-        .strip_prefix('[')
-        .and_then(|host| host.strip_suffix(']'))
-        .unwrap_or(host);
+    let bracketed = host.strip_prefix('[').and_then(|host| host.strip_suffix(']'));
+    let host = bracketed.unwrap_or(host);
     let loopback = host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback());
     if loopback || host.eq_ignore_ascii_case("localhost") {
         "http://"
@@ -313,10 +310,8 @@ impl Editor {
         let spaced = text
             .chars()
             .map(|c| if matches!(c, '\t' | '\n' | '\r') { ' ' } else { c });
-        let typed: Vec<_> = spaced
-            .filter(|c| safe(*c))
-            .take(MAX_TEXT.saturating_sub(self.text.len()))
-            .collect();
+        let room = MAX_TEXT.saturating_sub(self.text.len());
+        let typed: Vec<_> = spaced.filter(|c| safe(*c)).take(room).collect();
         let at = self.cursor;
         self.cursor += typed.len();
         self.text.splice(at..at, typed);

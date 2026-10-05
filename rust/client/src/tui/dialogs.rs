@@ -92,9 +92,8 @@ impl App {
             if let Some(server) = self.view.servers.iter().find(|server| server.id == entry.id) {
                 label = format!("{label} · {}", self.readiness(server).label());
             }
-            let line = self
-                .checkbox(chooser.draft.contains(&entry.id))
-                .and(format!(" {label}"), Style::default());
+            let checkbox = self.checkbox(chooser.draft.contains(&entry.id));
+            let line = checkbox.and(format!(" {label}"), Style::default());
             lines.push(match index == chooser.row {
                 true => Line::plain("› ").with(highlight(line, palette.selected)),
                 false => Line::plain("  ").with(line),
@@ -171,11 +170,8 @@ impl App {
 
     /// The approval page's address wrapped to `width`, which ends the sign-in screen's body, and the page.
     pub(super) fn sign_in_link(&self, width: usize) -> Option<(&str, Vec<Line>)> {
-        let prompt = self
-            .view
-            .sign_in
-            .as_ref()
-            .filter(|_| matches!(self.screen, Screen::SignIn(_)))?;
+        let shown = matches!(self.screen, Screen::SignIn(_));
+        let prompt = self.view.sign_in.as_ref().filter(|_| shown)?;
         let chars: Vec<char> = prompt.url.chars().collect();
         let wrapped = chars.chunks(width.max(1));
         let lines = wrapped.map(|chunk| Line::styled(chunk.iter().collect::<String>(), self.palette.accent));
@@ -195,11 +191,8 @@ pub(super) fn browse(url: &str) {
     };
     let mut command = std::process::Command::new(opener);
     command.args(args).arg(url);
-    let spawned = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn();
+    command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    let spawned = command.spawn();
     if let Ok(mut child) = spawned {
         std::thread::spawn(move || child.wait());
     }

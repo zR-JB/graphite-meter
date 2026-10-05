@@ -108,10 +108,8 @@ pub fn chart(
 
 /// The ruler with a tick where each stage began, and beneath it their names and the span's end.
 fn ruler(marks: &[(Duration, Stage)], span: f64, columns: usize, palette: &Palette) -> [Line; 2] {
-    let end: String = words::clock(Duration::from_secs_f64(span))
-        .chars()
-        .take(columns)
-        .collect();
+    let end = words::clock(Duration::from_secs_f64(span));
+    let end: String = end.chars().take(columns).collect();
     let end_at = columns - end.chars().count();
     let column = |at: Duration| ((at.as_secs_f64() / span * columns as f64) as usize).min(columns - 1);
     let (mut ticks, mut names, mut written) = (vec!['─'; columns], Line::plain(" ".repeat(SCALE + 1)), 0);

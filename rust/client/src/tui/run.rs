@@ -146,9 +146,8 @@ impl App {
 
     /// How long the stage's warmup or window has run.
     pub(super) fn elapsed(&self) -> Duration {
-        self.live
-            .since
-            .map_or(Duration::ZERO, |since| self.now.saturating_duration_since(since))
+        let since = self.live.since.unwrap_or(self.now);
+        self.now.saturating_duration_since(since)
     }
 
     /// The progress bar: busy while the run prepares, then the share of planned stage time done, which a stage that
@@ -196,13 +195,8 @@ impl App {
             true => format!("Results · latency to {}", self.name(self.latency_server())),
             false => "Results".into(),
         };
-        let shown = results
-            .iter()
-            .map(Line::width)
-            .max()
-            .unwrap_or(0)
-            .max(crate::text::width(&title) + 2)
-            + 4;
+        let widest = results.iter().map(Line::width).max().unwrap_or(0);
+        let shown = widest.max(crate::text::width(&title) + 2) + 4;
         let bottom = match width.checked_sub(shown + 1).filter(|rest| width >= SIDE && *rest >= 30) {
             Some(rest) => {
                 let fields = self.test_fields(run, rest - 4);
@@ -259,17 +253,15 @@ impl App {
                 false => Line::styled(words::MISSING, palette.muted),
             }];
         };
+        let traced = |direction: &Direction| {
+            run.throughput[*direction]
+                .points()
+                .iter()
+                .any(|point| point.value.is_some())
+        };
         let directions: Vec<Direction> = match live {
             true => stage.directions().to_vec(),
-            false => Direction::BOTH
-                .into_iter()
-                .filter(|&direction| {
-                    run.throughput[direction]
-                        .points()
-                        .iter()
-                        .any(|point| point.value.is_some())
-                })
-                .collect(),
+            false => Direction::BOTH.into_iter().filter(traced).collect(),
         };
         let mut lines = if live { self.readings(run, stage, width) } else { Vec::new() };
         let (marks, end) = marks(run);
@@ -287,10 +279,8 @@ impl App {
         let empty = Series::default();
         let rtt = run.rtt.iter().find(|(id, _)| Some(id) == self.latency_server());
         let rtt = [(rtt.map_or(&empty, |(_, series)| series), false)];
-        let traces: Vec<_> = directions
-            .iter()
-            .map(|&direction| (&run.throughput[direction], direction == Direction::Up))
-            .collect();
+        let trace = |&direction: &Direction| (&run.throughput[direction], direction == Direction::Up);
+        let traces: Vec<_> = directions.iter().map(trace).collect();
         let rates = |height| chart::chart(&traces, &marks, Axis::Rate, span, (width, height), palette);
         let rtts = |height| chart::chart(&rtt, &marks, Axis::Ms, span, (width, height), palette);
         let height = height.saturating_sub(lines.len());
@@ -351,11 +341,8 @@ impl App {
 fn marks(run: &Run) -> (Vec<(Duration, Stage)>, Duration) {
     let (mut marks, mut offset, mut end) = (Vec::new(), Duration::ZERO, Duration::ZERO);
     for &(stage, duration) in &run.plan {
-        let measured = run
-            .results
-            .iter()
-            .rfind(|result| result.stage == stage)
-            .map(|result| result.measured);
+        let result = run.results.iter().rfind(|result| result.stage == stage);
+        let measured = result.map(|result| result.measured);
         let open = matches!(&run.stage, Some((plan, Some(_))) if plan.stage == stage);
         if open || measured.is_some_and(|measured| !measured.is_zero()) {
             marks.push((offset, stage));

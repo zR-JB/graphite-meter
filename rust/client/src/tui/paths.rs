@@ -8,7 +8,7 @@ use crate::{
 };
 use graphite_meter_proto::{
     catalog::ServerId,
-    discovery::{Capabilities, LatencyTransport, Protocol, ThroughputTransport},
+    discovery::{Capabilities, LatencyTarget, LatencyTransport, Protocol, ThroughputTarget, ThroughputTransport},
     origin::Origin,
     reason::FailureReason,
 };
@@ -37,10 +37,8 @@ impl App {
     }
 
     pub(super) fn readiness(&self, server: &ServerPath) -> Readiness {
-        let stale = self
-            .checked
-            .as_ref()
-            .is_none_or(|(_, at)| self.now.saturating_duration_since(*at) > FRESH);
+        let outdated = |(_, at): &(_, Instant)| self.now.saturating_duration_since(*at) > FRESH;
+        let stale = self.checked.as_ref().is_none_or(outdated);
         match &server.path {
             _ if self.checking() => Readiness::Checking,
             Err(failure) if failure.reason == FailureReason::SignInRequired => Readiness::SignIn,
@@ -53,12 +51,8 @@ impl App {
     /// The selected servers whose paths a run can take.
     pub(super) fn ready(&self) -> Vec<ServerId> {
         let usable = |server: &&ServerPath| matches!(self.readiness(server), Readiness::Ready | Readiness::Stale);
-        self.view
-            .servers
-            .iter()
-            .filter(usable)
-            .map(|server| server.id.clone())
-            .collect()
+        let servers = self.view.servers.iter().filter(usable);
+        servers.map(|server| server.id.clone()).collect()
     }
 
     pub(super) fn can_use_available(&self) -> bool {
@@ -99,11 +93,8 @@ impl App {
             for transport in kind.shared {
                 let offers = |server: &ServerPath| {
                     let offered = server.offered.as_ref();
-                    offered.is_some_and(|offered| {
-                        (kind.offered)(offered, &server.origin)
-                            .iter()
-                            .any(|path| path.1 == transport)
-                    })
+                    let paths = |offered| (kind.offered)(offered, &server.origin);
+                    offered.is_some_and(|offered| paths(offered).iter().any(|path| path.1 == transport))
                 };
                 let lacking = self.view.servers.iter().filter(|server| !offers(server));
                 let names: Vec<_> = lacking.map(|server| server.name.as_str()).collect();
@@ -121,16 +112,11 @@ impl App {
             return choices;
         };
         let checked = server.path.as_ref().ok().and_then(kind.checked);
-        let mut choices = vec![automatic(
-            checked
-                .map(|origin| format!("→ {}", self.short(origin)))
-                .unwrap_or_default(),
-        )];
+        let note = checked.map(|origin| format!("→ {}", self.short(origin)));
+        let mut choices = vec![automatic(note.unwrap_or_default())];
         for (origin, transport, version) in (kind.offered)(offered, &server.origin) {
-            if !choices
-                .iter()
-                .any(|choice| choice.selects((Some(&origin), Some(transport))))
-            {
+            let chosen = (Some(&origin), Some(transport));
+            if !choices.iter().any(|choice| choice.selects(chosen)) {
                 let label = words::connection((kind.label)(transport), version, &origin);
                 let note = self.short(&origin);
                 choices.push(Choice {
@@ -162,9 +148,8 @@ impl App {
     /// Steps a path row to the next choice, or to the first when the chosen one is not offered: its label.
     pub(super) fn cycle_path<T: Copy + PartialEq>(&mut self, kind: &Kind<T>, step: isize) -> String {
         let choices = self.choices(kind);
-        let at = choices
-            .iter()
-            .position(|choice| choice.selects((kind.chosen)(&self.config.paths)));
+        let chosen = (kind.chosen)(&self.config.paths);
+        let at = choices.iter().position(|choice| choice.selects(chosen));
         let next = at.map_or(0, |at| (at as isize + step).rem_euclid(choices.len() as isize) as usize);
         let choice = &choices[next];
         (kind.choose)(&mut self.config.paths, choice.origin.clone(), choice.transport);
@@ -188,8 +173,8 @@ impl App {
             return format!(":{}", origin.port);
         }
         let text = origin.to_string();
-        text.split_once("://")
-            .map_or(text.clone(), |(_, authority)| authority.to_owned())
+        let authority = text.split_once("://").map(|(_, authority)| authority.to_owned());
+        authority.unwrap_or(text)
     }
 }
 
@@ -216,9 +201,9 @@ pub(super) const THROUGHPUT: Kind<ThroughputTransport> = Kind {
     offered: |offered, served| {
         let streams = offered.throughput.iter();
         let streams = streams.filter(|target| target.transport != ThroughputTransport::WebTransportDatagram);
-        streams
-            .map(|target| (target.base_url.resolve(served).clone(), target.transport, target.protocol))
-            .collect()
+        let offer =
+            |target: &ThroughputTarget| (target.base_url.resolve(served).clone(), target.transport, target.protocol);
+        streams.map(offer).collect()
     },
     checked: |paths| Some(&paths.throughput.origin),
 };
@@ -229,13 +214,11 @@ pub(super) const LATENCY: Kind<LatencyTransport> = Kind {
     chosen: |paths| (paths.latency_origin.as_ref(), paths.latency_transport),
     choose: |paths, origin, transport| (paths.latency_origin, paths.latency_transport) = (origin, transport),
     offered: |offered, served| {
-        let paths = offered
-            .latency
-            .iter()
-            .map(|target| (target.base_url.resolve(served).clone(), target.transport));
-        paths
-            .map(|(origin, transport)| (origin, transport, words::latency_protocol(transport)))
-            .collect()
+        let offer = |target: &LatencyTarget| {
+            let origin = target.base_url.resolve(served).clone();
+            (origin, target.transport, words::latency_protocol(target.transport))
+        };
+        offered.latency.iter().map(offer).collect()
     },
     checked: |paths| paths.latency.as_ref().map(|path| &path.origin),
 };

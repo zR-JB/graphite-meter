@@ -4,6 +4,7 @@ use crate::{
     events::Run,
     model::{Stage, StageResult, StageStatus},
     report::vocabulary as words,
+    run::prepare::Paths,
     text::{Line, Style, wrap},
 };
 
@@ -29,18 +30,15 @@ impl App {
             };
             return vec![label("Servers").with(value)];
         }
-        let paths: Vec<_> = self
-            .view
-            .servers
-            .iter()
+        let servers = self.view.servers.iter();
+        let paths: Vec<_> = servers
             .filter_map(|server| Some((&server.id, server.path.as_ref().ok()?)))
             .collect();
         let throughput = unique(paths.iter().map(|(_, paths)| words::throughput_path(&paths.throughput)));
         let shown = paths.iter().find(|(id, _)| Some(*id) == self.latency_server());
         let latency = shown.and_then(|(_, paths)| paths.latency.as_ref());
-        let streams = paths
-            .last()
-            .map_or(words::MISSING.into(), |(_, paths)| words::streams(config, &paths.throughput));
+        let streams = |(_, paths): &(_, &Paths)| words::streams(config, &paths.throughput);
+        let streams = paths.last().map_or(words::MISSING.into(), streams);
         let names: Vec<_> = self.view.servers.iter().map(|server| server.name.as_str()).collect();
         let (names, streams) = match self.several() {
             true => (format!("{} (all servers)", names.join(", ")), format!("per server · {streams}")),
@@ -71,11 +69,8 @@ impl App {
     /// Each planned stage: waiting, its warmup, its window's progress, or how it ended.
     fn track(&self, run: &Run, width: usize) -> Vec<Line> {
         let (palette, live) = (&self.palette, run.outcome.is_none());
-        let current = run
-            .stage
-            .as_ref()
-            .filter(|_| live)
-            .map(|(plan, window)| (plan.stage, window.is_some()));
+        let current = run.stage.as_ref().filter(|_| live);
+        let current = current.map(|(plan, window)| (plan.stage, window.is_some()));
         let mut lines = Vec::new();
         for &(stage, duration) in &run.plan {
             let (hue, muted) = (palette.stage(stage), palette.muted);
@@ -131,9 +126,8 @@ impl App {
             .servers
             .iter()
             .find(|own| Some(&own.server) == self.latency_server());
-        let median = own
-            .and_then(|own| own.latency?.median())
-            .filter(|_| result.stage == Stage::Latency);
+        let median = own.and_then(|own| own.latency?.median());
+        let median = median.filter(|_| result.stage == Stage::Latency);
         if let Some(median) = median {
             let gap = if line.width() > 0 { "  " } else { "" };
             line = line
