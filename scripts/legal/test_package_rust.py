@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import io
 import tarfile
 import unittest
@@ -18,8 +19,10 @@ PLATFORMS = (("linux/arm64", "aarch64-unknown-linux-musl"), ("windows/amd64", "x
 
 
 def tar_gz(files: dict[str, bytes]) -> bytes:
+    """A gzipped tar of `files`, at a fixed time as the collector writes a source offer."""
     data = io.BytesIO()
-    with tarfile.open(fileobj=data, mode="w:gz") as archive:
+    with gzip.GzipFile(filename="", mode="wb", fileobj=data, mtime=0) as compressed, \
+            tarfile.open(fileobj=compressed, mode="w") as archive:
         for name, content in files.items():
             entry = tarfile.TarInfo(name)
             entry.size = len(content)
@@ -116,12 +119,15 @@ class PackageTests(Scratch):
             output = self.root / f"dist-{number}"
             output.mkdir()
             with patch.object(package_rust, "collect", self.collect), \
-                    patch.object(package_rust, "host_platform", return_value="plan9/amd64"):
+                    patch.object(package_rust, "host_platform", return_value="plan9/amd64"), \
+                    patch("time.time", return_value=1_000_000_000.0 + number):
                 for platform_name, target in PLATFORMS:
                     (self.root / "LICENSE").touch()
                     package_rust.package("1.2.3", platform_name, target, output)
             archives.append({path.name: path.read_bytes() for path in output.iterdir()})
         self.assertEqual(archives[0], archives[1])
+        # The gzip header's MTIME field.
+        self.assertEqual({data[4:8] for name, data in archives[0].items() if name.endswith(".tar.gz")}, {bytes(4)})
         linux = "graphite-meter-client_1.2.3_linux_arm64_rust"
         with tarfile.open(self.root / f"dist-0/{linux}.tar.gz") as archive:
             self.assertEqual({(entry.name, entry.mode, entry.mtime, entry.uid, entry.gid, entry.uname)
