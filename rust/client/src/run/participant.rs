@@ -100,11 +100,9 @@ impl Participant {
 
     /// Moves what its prober observed into `into`.
     pub fn probes(&mut self, into: &mut Vec<(ServerId, Probe)>) {
-        let mut probes = Vec::new();
         if let Some(prober) = &mut self.prober {
-            prober.drain(&mut probes);
+            into.extend(prober.drain().map(|probe| (self.server.clone(), probe)));
         }
-        into.extend(probes.into_iter().map(|probe| (self.server.clone(), probe)));
     }
 
     /// The measured window opened and ends at `end`.

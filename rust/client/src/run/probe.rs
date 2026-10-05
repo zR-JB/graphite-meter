@@ -207,10 +207,8 @@ impl Prober {
         self.window.send_replace(Window::Closed);
     }
 
-    pub fn drain(&mut self, into: &mut Vec<Probe>) {
-        while let Ok(probe) = self.probes.try_recv() {
-            into.push(probe);
-        }
+    pub fn drain(&mut self) -> impl Iterator<Item = Probe> + '_ {
+        std::iter::from_fn(|| self.probes.try_recv().ok())
     }
 }
 
