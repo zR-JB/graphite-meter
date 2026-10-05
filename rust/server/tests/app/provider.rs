@@ -61,10 +61,11 @@ pub(super) fn child(test: &str) -> bool {
     false
 }
 
-/// What the provider changes in its answers: members merged into the ID token's header and claims and into the
-/// user information, where `null` removes one.
+/// What the provider changes in its answers: members merged into its metadata, the ID token's header and claims and
+/// the user information, where `null` removes one.
 #[derive(Default)]
 pub(super) struct Twist {
+    pub metadata: Value,
     pub header: Value,
     pub claims: Value,
     pub userinfo: Value,
@@ -195,16 +196,19 @@ impl Shared {
             "/.well-known/openid-configuration" if !self.ready.load(Ordering::Relaxed) => (503, json!({})),
             "/.well-known/openid-configuration" => (
                 200,
-                json!({
-                    "issuer": issuer,
-                    "authorization_endpoint": format!("{issuer}/authorize"),
-                    "token_endpoint": format!("{issuer}/token"),
-                    "userinfo_endpoint": format!("{issuer}/userinfo"),
-                    "jwks_uri": format!("{issuer}/jwks"),
-                    "id_token_signing_alg_values_supported":
-                        ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "EdDSA", "HS256"],
-                    "authorization_response_iss_parameter_supported": true,
-                }),
+                merge(
+                    json!({
+                        "issuer": issuer,
+                        "authorization_endpoint": format!("{issuer}/authorize"),
+                        "token_endpoint": format!("{issuer}/token"),
+                        "userinfo_endpoint": format!("{issuer}/userinfo"),
+                        "jwks_uri": format!("{issuer}/jwks"),
+                        "id_token_signing_alg_values_supported":
+                            ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "EdDSA", "HS256"],
+                        "authorization_response_iss_parameter_supported": true,
+                    }),
+                    &self.twist.lock().unwrap().metadata,
+                ),
             ),
             "/jwks" => {
                 assert_eq!(head.headers[header::CACHE_CONTROL], "no-cache");

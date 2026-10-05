@@ -340,6 +340,28 @@ async fn oidc_mode_without_its_provider_shows_the_provider_notice_and_discovers_
 }
 
 #[tokio::test]
+async fn a_provider_signing_only_with_algorithms_this_server_cannot_verify_is_refused_at_discovery() {
+    let test = "oidc::a_provider_signing_only_with_algorithms_this_server_cannot_verify_is_refused_at_discovery";
+    if !child(test) {
+        return;
+    }
+    let provider = Provider::start().await;
+    provider.twist(Twist {
+        metadata: json!({"id_token_signing_alg_values_supported": ["ES512", "HS256"]}),
+        ..Twist::default()
+    });
+    let refused = oidc_app(provider.issuer(), false).auth().discover().await;
+    let message = "provider advertises no ID token algorithm this server verifies: [\"ES512\", \"HS256\"]";
+    assert_eq!(refused.unwrap_err(), message);
+    let app = oidc_app(provider.issuer(), true);
+    let discovery = app.auth().background_discovery().unwrap();
+    let retrying = tokio::time::timeout(Duration::from_millis(1200), discovery).await;
+    assert!(retrying.is_err(), "hybrid retries past the first backoff");
+    let html = text(tls(&app, empty(public("GET", "/login"))).await).await;
+    assert!(html.contains("disabled>Continue with Id</button>") && html.contains("current-password"));
+}
+
+#[tokio::test]
 async fn starts_and_code_exchanges_are_budgeted_per_client_address() {
     if !child("oidc::starts_and_code_exchanges_are_budgeted_per_client_address") {
         return;

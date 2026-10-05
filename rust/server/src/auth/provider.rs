@@ -145,13 +145,18 @@ impl Provider {
         let Some(origin) = origin else {
             return Err("provider metadata names a non-HTTPS endpoint".into());
         };
+        let advertised = &metadata.id_token_signing_alg_values_supported;
+        let algorithms = Alg::allowed(advertised);
+        if algorithms.is_empty() {
+            return Err(format!("provider advertises no ID token algorithm this server verifies: {advertised:?}"));
+        }
         Ok(Self {
             origin: origin.to_string(),
             authorization: metadata.authorization_endpoint,
             token: metadata.token_endpoint,
             userinfo: metadata.userinfo_endpoint,
             jwks: metadata.jwks_uri,
-            algorithms: Alg::allowed(&metadata.id_token_signing_alg_values_supported),
+            algorithms,
             issuer_parameter: metadata.authorization_response_iss_parameter_supported,
             keys: Default::default(),
         })
