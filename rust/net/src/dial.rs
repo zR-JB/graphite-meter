@@ -145,6 +145,8 @@ mod tests {
         }
     }
 
+    // Windows reports a refused loopback connect only after its SYN retries.
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_refused_address_hands_over_at_once() {
         let (closed, refused) = listener().await;
