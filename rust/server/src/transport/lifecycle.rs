@@ -87,20 +87,21 @@ impl Lifecycle {
         }
     }
 
-    /// Restarts the stale bound when the admitted work's idle period changes, and the grace when work that outlived
-    /// it ends on a connection with fresh graces.
+    /// Restarts the stale bound when the admitted work's idle period changes or the connection gets credit while
+    /// idle, and the grace when work that outlived it ends on a connection with fresh graces.
     fn observe(&mut self, credited: bool) {
         let since = self.work.idle_since();
-        if since == self.idle_since {
-            return;
+        if since != self.idle_since {
+            self.idle_since = since;
+            self.stale = None;
+            if let (Grace::Fresh, false, Some(since), Some(closing)) =
+                (self.grace, self.stopping, since, &mut self.closing)
+            {
+                closing.as_mut().reset(since + SHUTDOWN_GRACE);
+            }
         }
-        self.idle_since = since;
-        self.stale = since
-            .filter(|_| credited)
-            .map(|since| Box::pin(sleep_until(since + IDLE)));
-        if let (Grace::Fresh, false, Some(since), Some(closing)) = (self.grace, self.stopping, since, &mut self.closing)
-        {
-            closing.as_mut().reset(since + SHUTDOWN_GRACE);
+        if let (None, true, Some(since)) = (&self.stale, credited, since) {
+            self.stale = Some(Box::pin(sleep_until(since + IDLE)));
         }
     }
 
@@ -172,6 +173,18 @@ mod tests {
             }
             assert_eq!(poll(&mut lifecycle, true, true).await, Poll::Ready(Event::Close));
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn credit_gained_while_idle_starts_the_stale_bound_from_the_last_admitted_work() {
+        let work = Work::default();
+        let mut lifecycle = Lifecycle::new(work.clone(), Grace::Once);
+        drop(work.start());
+        assert!(poll(&mut lifecycle, false, true).await.is_pending());
+        advance(IDLE - MILLI).await;
+        assert!(poll(&mut lifecycle, true, true).await.is_pending(), "credited after its work ended");
+        advance(MILLI).await;
+        assert_eq!(poll(&mut lifecycle, true, true).await, Poll::Ready(Event::GoAway));
     }
 
     #[tokio::test(start_paused = true)]
