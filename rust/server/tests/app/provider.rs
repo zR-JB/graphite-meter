@@ -27,7 +27,10 @@ use std::{
     },
     time::{SystemTime, UNIX_EPOCH},
 };
-use tokio::net::TcpListener;
+use tokio::{
+    net::TcpListener,
+    sync::{mpsc, oneshot},
+};
 use tokio_rustls::TlsAcceptor;
 
 pub(super) const CLIENT_ID: &str = "meter";
@@ -75,7 +78,12 @@ struct Shared {
     twist: Mutex<Twist>,
     ready: AtomicBool,
     key_sets: AtomicUsize,
+    /// Where token and user information requests announce themselves while held.
+    held: Mutex<Option<Held>>,
 }
+
+/// A held request's path, and the sender that lets its answer go.
+type Held = mpsc::UnboundedSender<(String, oneshot::Sender<()>)>;
 
 pub(super) struct Provider(Arc<Shared>);
 
@@ -103,6 +111,7 @@ impl Provider {
             twist: Mutex::default(),
             ready: AtomicBool::new(true),
             key_sets: AtomicUsize::new(0),
+            held: Mutex::default(),
         });
         let serving = shared.clone();
         tokio::spawn(async move {
@@ -132,6 +141,13 @@ impl Provider {
 
     pub fn twist(&self, twist: Twist) {
         *self.0.twist.lock().unwrap() = twist;
+    }
+
+    /// From now on holds each token and user information answer until the test releases it.
+    pub fn hold(&self) -> mpsc::UnboundedReceiver<(String, oneshot::Sender<()>)> {
+        let (announce, held) = mpsc::unbounded_channel();
+        *self.0.held.lock().unwrap() = Some(announce);
+        held
     }
 
     /// How many times the server fetched the key set.
@@ -168,6 +184,12 @@ impl Shared {
         let body = body.collect().await.unwrap().to_bytes();
         let agent = head.headers[header::USER_AGENT].to_str().unwrap();
         assert!(agent.starts_with("graphite-meter/"), "{agent}");
+        let held = self.held.lock().unwrap().clone();
+        if let Some(held) = held.filter(|_| matches!(head.uri.path(), "/token" | "/userinfo")) {
+            let (release, released) = oneshot::channel();
+            held.send((head.uri.path().to_owned(), release)).unwrap();
+            let _ = released.await;
+        }
         let issuer = &self.issuer;
         let (status, document) = match head.uri.path() {
             "/.well-known/openid-configuration" if !self.ready.load(Ordering::Relaxed) => (503, json!({})),

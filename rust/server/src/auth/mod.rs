@@ -164,12 +164,12 @@ impl Auth {
         self.enabled() && (path == "/login" || path.starts_with("/auth/"))
     }
 
-    /// Answers an authentication route, reading its body: pages, sign-in posts, the OIDC callback, approvals and
-    /// logout.
-    pub async fn handle<B: http_body::Body>(&self, request: Request<B>, _endpoint: Endpoint, peer: &Peer) -> Outcome {
+    /// Answers an authentication route by its exchange's `deadline`, reading its body: pages, sign-in posts, the OIDC
+    /// callback, approvals and logout.
+    pub async fn handle<B: http_body::Body>(&self, request: Request<B>, deadline: Instant, peer: &Peer) -> Outcome {
         let response = match self {
             Self::Off => response::status(StatusCode::NOT_FOUND),
-            Self::On(auth) => routes::handle(auth, request, peer).await,
+            Self::On(auth) => routes::handle(auth, request, deadline, peer).await,
         };
         Outcome::Response(response)
     }

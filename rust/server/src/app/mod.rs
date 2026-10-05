@@ -210,7 +210,7 @@ impl App {
         let Some(route) = route else {
             let endpoint = connection.endpoint;
             if endpoint.ui() && self.auth.claims(request.uri().path()) {
-                return self.auth.handle(request, endpoint, peer).await;
+                return self.auth.handle(request, exchange.deadline(), peer).await;
             }
             return Outcome::Response(match endpoint.ui() {
                 true => self.page(&request),

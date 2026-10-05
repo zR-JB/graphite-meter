@@ -31,6 +31,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use subtle::ConstantTimeEq;
+use tokio::time::Instant;
 use zeroize::Zeroizing;
 
 /// A controller route reads at most this many body bytes.
@@ -45,7 +46,12 @@ const FORM_LIFETIME: Duration = Duration::from_secs(10 * 60);
 pub(super) type Form = Vec<(String, String)>;
 
 /// Answers a controller route the policy let through; a path no route claims is not found.
-pub(super) async fn handle<B: http_body::Body>(auth: &Enabled, request: Request<B>, peer: &Peer) -> Response<Body> {
+pub(super) async fn handle<B: http_body::Body>(
+    auth: &Enabled,
+    request: Request<B>,
+    deadline: Instant,
+    peer: &Peer,
+) -> Response<Body> {
     let method = match request.method() {
         &Method::HEAD => Method::GET,
         method => method.clone(),
@@ -59,7 +65,7 @@ pub(super) async fn handle<B: http_body::Body>(auth: &Enabled, request: Request<
         (&Method::POST, "/auth/password", Some(password), _) => sign_in(auth, password, request, peer).await,
         (&Method::POST, "/auth/oidc/start", _, Some(provider)) => oidc::start(auth, provider, request, peer).await,
         (&Method::GET, "/auth/oidc/callback", _, Some(provider)) => {
-            oidc::callback(auth, provider, request.into_parts().0, peer).await
+            oidc::callback(auth, provider, request.into_parts().0, deadline, peer).await
         }
         (&Method::GET, "/auth/session", ..) => session(auth, lease),
         (&Method::GET, "/auth/cli", ..) => approval::cli_page(auth, &request, peer),

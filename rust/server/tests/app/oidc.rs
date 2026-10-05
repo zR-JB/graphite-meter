@@ -11,7 +11,10 @@ use graphite_meter_server::{app::query, auth::COUNTERS, peer::ClientKeys};
 use http::StatusCode;
 use http_body_util::Full;
 use serde_json::json;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    pin::pin,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 const NONCE: &str = "a-long-unpredictable-sign-in-nonce";
 
@@ -366,4 +369,41 @@ async fn starts_and_code_exchanges_are_budgeted_per_client_address() {
     let throttled = sign_in_from(&app, &provider, "192.0.2.20", "198.51.100.1").await;
     assert_eq!(location(&throttled), "/login?error=failed", "the eleventh exchange in the minute");
     assert!(line(&app, &mut last).starts_with("[gm:auth] 1m local=0 oidc=10 invalid-password=0 oidc-failure=1 "));
+}
+
+#[tokio::test]
+async fn a_provider_too_slow_for_the_exchange_bound_fails_the_sign_in_in_time() {
+    if !child("oidc::a_provider_too_slow_for_the_exchange_bound_fails_the_sign_in_in_time") {
+        return;
+    }
+    let provider = Provider::start().await;
+    let app = discovered(&provider).await;
+    let started = start(&app, "192.0.2.1", "").await;
+    let cookie = format!("__Host-gm_oidc={}", cookie_value(&started, "__Host-gm_oidc"));
+    let (code, state) = provider.authorize(location(&started));
+    let mut held = provider.hold();
+    let query = format!("code={code}&state={state}&iss={}", query::escape(provider.issuer()));
+    let mut signing = pin!(callback(&app, "192.0.2.1", &query, &cookie));
+    let mut arrive = async |path| {
+        let (arrived, release) = tokio::select! {
+            held = held.recv() => held.unwrap(),
+            _ = &mut signing => panic!("answered before {path}"),
+        };
+        assert_eq!(arrived, path);
+        release
+    };
+    let elapse = async |duration| {
+        tokio::time::pause();
+        tokio::time::advance(duration).await;
+        tokio::time::resume();
+    };
+    let token = arrive("/token").await;
+    elapse(Duration::from_secs(7)).await;
+    token.send(()).unwrap();
+    let _userinfo = arrive("/userinfo").await;
+    elapse(Duration::from_millis(5500)).await;
+    let failed = tokio::time::timeout(Duration::from_secs(1), signing).await;
+    let failed = failed.expect("answered while the 15 s exchange bound leaves time to send it");
+    assert_eq!(location(&failed), "/login?error=failed");
+    assert!(line(&app, &mut [0; COUNTERS]).contains(" oidc=0 invalid-password=0 oidc-failure=1 "));
 }

@@ -28,15 +28,15 @@ use std::{
     time::{Duration, SystemTime},
 };
 use subtle::ConstantTimeEq;
-use tokio::time::{Instant, sleep, timeout};
+use tokio::time::{Instant, sleep, timeout_at};
 use zeroize::Zeroizing;
 
 const MAX_TRANSACTIONS: usize = 16384;
 const MAX_CLIENT_TRANSACTIONS: usize = 8;
 /// A sign-in at the provider must return within this.
 const TRANSACTION_LIFETIME: Duration = Duration::from_secs(10 * 60);
-/// A callback's provider requests finish within this.
-const CALLBACK_DEADLINE: Duration = Duration::from_secs(15);
+/// A callback's provider requests leave this long of its exchange's bound to answer.
+const ANSWER_MARGIN: Duration = Duration::from_secs(3);
 /// Discovery retries back off from one second, doubling up to this.
 const RETRY_MAX: Duration = Duration::from_secs(60);
 /// The transaction's cookie, the one a browser sends on the provider's cross-site redirect back.
@@ -290,10 +290,17 @@ pub(super) async fn start<B: http_body::Body>(
     }
 }
 
-/// `GET /auth/oidc/callback`: the transaction its state and cookie name, the exchange budget, then the provider's word.
-pub(super) async fn callback(auth: &Enabled, oidc: &Oidc, head: Parts, peer: &Peer) -> Response<Body> {
+/// `GET /auth/oidc/callback`: the transaction its state and cookie name, the exchange budget, then the provider's word
+/// in time to answer by `deadline`.
+pub(super) async fn callback(
+    auth: &Enabled,
+    oidc: &Oidc,
+    head: Parts,
+    deadline: Instant,
+    peer: &Peer,
+) -> Response<Body> {
     let query = head.uri.query().unwrap_or_default();
-    let mut answer = match sign_in(auth, oidc, &head, query, peer).await {
+    let mut answer = match sign_in(auth, oidc, &head, deadline, peer).await {
         Ok(answer) => answer,
         Err((reason, challenge)) if challenge.is_empty() => {
             refused(auth, reason, &query::get(Some(query), "challenge").unwrap_or_default())
@@ -308,9 +315,10 @@ async fn sign_in(
     auth: &Enabled,
     oidc: &Oidc,
     head: &Parts,
-    query: &str,
+    deadline: Instant,
     peer: &Peer,
 ) -> Result<Response<Body>, (Reason, String)> {
+    let query = head.uri.query().unwrap_or_default();
     let refuse = |reason| (reason, String::new());
     let fields = query::form(query).ok_or(refuse(Reason::CallbackParameters))?;
     let (code, state) = (field(&fields, "code"), field(&fields, "state"));
@@ -326,7 +334,7 @@ async fn sign_in(
     if !peer.keys().is_some_and(|keys| oidc.exchanges.allow(&keys, false, None)) {
         return Err(fail(Reason::ExchangeRateLimited));
     }
-    let identify = timeout(CALLBACK_DEADLINE, oidc.identify(&transaction, code));
+    let identify = timeout_at(deadline - ANSWER_MARGIN, oidc.identify(&transaction, code));
     let (subject, name) = identify.await.unwrap_or(Err(Reason::TokenExchange)).map_err(fail)?;
     let page = response::html(page::render(Page::Continue, &[("Challenge", &transaction.challenge)]));
     let answer = establish(auth, (&subject, &name, &auth.provider), transaction.prior, page).map_err(fail)?;
