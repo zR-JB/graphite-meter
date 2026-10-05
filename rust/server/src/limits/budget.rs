@@ -3,7 +3,7 @@
 use crate::log::Latch;
 use std::sync::{
     Arc,
-    atomic::{AtomicUsize, Ordering},
+    atomic::{self, AtomicUsize, Ordering},
 };
 
 /// One shared byte limit; clones share it.
@@ -14,8 +14,9 @@ pub struct Budget(Arc<Shared>);
 struct Shared {
     limit: usize,
     used: AtomicUsize,
-    /// Endpoint buffers within `used`, which grow with the host's cores rather than its load.
+    /// Endpoint buffers ever reserved and released, wrapping; those held count within `used`.
     reserved: AtomicUsize,
+    released: AtomicUsize,
     held_back: Latch,
 }
 
@@ -43,6 +44,7 @@ impl Budget {
             limit,
             used: AtomicUsize::new(0),
             reserved: AtomicUsize::new(0),
+            released: AtomicUsize::new(0),
             held_back: Latch::default(),
         }))
     }
@@ -56,12 +58,13 @@ impl Budget {
 
     /// Charges endpoint buffers, which the pressure thresholds and the clients' half leave out.
     pub fn reserve(&self, bytes: usize) -> Option<Lease> {
-        let lease = self
-            .0
-            .charge(bytes)
-            .then(|| Lease { budget: self.clone(), bytes, kind: Kind::Reserved })?;
         self.0.reserved.fetch_add(bytes, Ordering::Relaxed);
-        Some(lease)
+        atomic::fence(Ordering::Release);
+        if !self.0.charge(bytes) {
+            self.0.released.fetch_add(bytes, Ordering::Relaxed);
+            return None;
+        }
+        Some(Lease { budget: self.clone(), bytes, kind: Kind::Reserved })
     }
 
     /// The pressure level; logs when growth is held back at three quarters and when usage falls below five eighths.
@@ -88,7 +91,7 @@ impl Budget {
         Usage {
             limit: self.0.limit,
             used: self.0.used.load(Ordering::Relaxed),
-            reserved: self.0.reserved.load(Ordering::Relaxed),
+            reserved: self.0.held(),
         }
     }
 
@@ -113,11 +116,18 @@ impl Shared {
         self.used.fetch_sub(bytes, Ordering::Relaxed);
     }
 
-    /// The limit past the reservations and what of it is used.
+    fn held(&self) -> usize {
+        let released = self.released.load(Ordering::Relaxed);
+        self.reserved.load(Ordering::Relaxed).wrapping_sub(released)
+    }
+
+    /// The limit past the reservations and what of it is used. Read around `used`, the totals cover every
+    /// reservation it holds and may overcount, which only lowers the pressure.
     fn unreserved(&self) -> (usize, usize) {
-        let reserved = self.reserved.load(Ordering::Relaxed);
-        let used = self.used.load(Ordering::Relaxed).saturating_sub(reserved);
-        (self.limit.saturating_sub(reserved), used)
+        let released = self.released.load(Ordering::Acquire);
+        let used = self.used.load(Ordering::Acquire);
+        let reserved = self.reserved.load(Ordering::Relaxed).wrapping_sub(released).min(used);
+        (self.limit - reserved, used - reserved)
     }
 }
 
@@ -161,10 +171,10 @@ impl Lease {
 
 impl Drop for Lease {
     fn drop(&mut self) {
-        if self.kind == Kind::Reserved {
-            self.budget.0.reserved.fetch_sub(self.bytes, Ordering::Relaxed);
-        }
         self.budget.0.give_back(self.bytes);
+        if self.kind == Kind::Reserved {
+            self.budget.0.released.fetch_add(self.bytes, Ordering::Release);
+        }
     }
 }
 
@@ -203,6 +213,23 @@ mod tests {
             (budget.usage(), budget.client_windows()),
             (Usage { limit: 1000, used: 0, reserved: 0 }, 500)
         );
+    }
+
+    #[test]
+    fn reservations_coming_and_going_never_look_like_pressure() {
+        let budget = Budget::new(1000);
+        let churn = {
+            let budget = budget.clone();
+            std::thread::spawn(move || {
+                for _ in 0..200_000 {
+                    drop(budget.reserve(900));
+                }
+            })
+        };
+        while !churn.is_finished() {
+            assert_eq!(budget.pressure(), Pressure::Normal);
+        }
+        churn.join().unwrap();
     }
 
     #[test]
