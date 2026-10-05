@@ -5,32 +5,23 @@
   const controller = getApplicationController();
   import { tooltipAction } from "../actions/tooltip";
   import { fmtDuration } from "../format";
-  import { handoff } from "../presentation/motion.svelte";
   import { BLOCKED, runActionLabel } from "../presentation/vocabulary";
 
   const pending = $derived(store.preparing);
   const idle = $derived(!store.isRunning && !pending);
   const eta = $derived(fmtDuration(store.totalEtaMs, 0));
-  const action = handoff(
-    () => ({
-      label: runActionLabel(pending, store.isRunning, store.phase),
-      running: store.isRunning,
-      pending,
-      eta: idle ? eta : "",
-    }),
-    (shown) => shown.label,
-  );
-  const { label, running } = $derived(action.shown);
+  // The label, the skin and the stop mark change together, the moment the run's state does.
+  const label = $derived(runActionLabel(pending, store.isRunning, store.phase));
+  const running = $derived(store.isRunning || pending);
   const blocker = $derived(
     idle && !store.catalogLoading ? store.startBlocker : "",
   );
 </script>
 
-<!-- The skin answers a press at once; only the label crosses over to the next one. -->
 <button
   class="run-button"
-  class:running={store.isRunning || pending}
-  class:pending={action.shown.pending}
+  class:running
+  class:pending
   aria-busy={pending}
   aria-disabled={!!blocker}
   aria-describedby={idle ? "run-duration" : undefined}
@@ -39,18 +30,14 @@
 >
   <span class="skin" aria-hidden="true"></span>
   <span class="skin stop" aria-hidden="true"></span>
-  <span class="run-button-content handoff" class:handoff-out={action.out}>
+  <span class="run-button-content">
     {#if running}
       <span class="stop-sq" aria-hidden="true"></span>
     {/if}
     {label}
   </span>
-  {#if action.shown.eta}
-    <span
-      class="duration handoff"
-      class:handoff-out={action.out}
-      aria-hidden="true">~{action.shown.eta}</span
-    >
+  {#if idle}
+    <span class="duration" aria-hidden="true">~{eta}</span>
   {/if}
 </button>
 {#if idle}

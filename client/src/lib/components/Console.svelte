@@ -425,7 +425,7 @@
   // A workspace that appears shows what has already settled as settled: the moments that mark a result arriving
   // (the dial's sweep and beads, a card's facts, a lane's span, a chip's check) play when it arrives, so on each
   // return to the console the ones it mounts with are finished at once, and only what arrives later plays.
-  const SETTLES = ["result-sweep", "pop", "row-in", "grow-x"];
+  const SETTLES = ["result-sweep", "await-sweep", "pop", "row-in", "grow-x"];
   function entering(node: HTMLElement) {
     const finish = () => {
       for (const animation of node.getAnimations({ subtree: true }))

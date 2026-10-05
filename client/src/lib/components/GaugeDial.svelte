@@ -469,6 +469,10 @@
       transform-origin: center;
       animation: pop 400ms var(--ease-spring) var(--at) backwards;
     }
+    /* Until its sweep begins a result's arcs are at zero, where their round caps would leave a dot. */
+    .result-layer > svg {
+      animation: await-sweep 0s linear var(--drain) backwards;
+    }
     /* A new run rewinds the result: every arc drains back to zero together and the beads drop off, then the
        first stage rises from the empty ring (RESULT_DRAIN_MS). */
     .result-layer.handoff-out {
@@ -487,6 +491,11 @@
     }
     to {
       --sweep: 1;
+    }
+  }
+  @keyframes await-sweep {
+    from {
+      visibility: hidden;
     }
   }
   @keyframes result-drain {
