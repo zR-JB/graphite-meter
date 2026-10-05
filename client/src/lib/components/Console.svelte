@@ -18,7 +18,12 @@
   import LegalDialog from "./LegalDialog.svelte";
   import TopbarMore from "./TopbarMore.svelte";
   import { statusLabel, THEME } from "../presentation/vocabulary";
-  import { flip, handoff, still } from "../presentation/motion.svelte";
+  import {
+    flip,
+    handoff,
+    nextFrame,
+    still,
+  } from "../presentation/motion.svelte";
   import { keyHint as tipKey, tooltip } from "../actions/tooltip";
   import { canFocus, activeModal } from "../actions/focus";
   import { MediaQuery } from "svelte/reactivity";
@@ -417,6 +422,22 @@
   }
 
   // Direct closes and browser navigation commit through the same focus owner.
+  // A workspace that appears shows what has already settled as settled: the moments that mark a result arriving
+  // (the dial's sweep and beads, a card's facts, a lane's span, a chip's check) play when it arrives, so on each
+  // return to the console the ones it mounts with are finished at once, and only what arrives later plays.
+  const SETTLES = ["result-sweep", "pop", "row-in", "grow-x"];
+  function entering(node: HTMLElement) {
+    const finish = () => {
+      for (const animation of node.getAnimations({ subtree: true }))
+        if (
+          animation instanceof CSSAnimation &&
+          SETTLES.some((name) => animation.animationName.endsWith(name))
+        )
+          animation.finish();
+    };
+    finish();
+    return nextFrame(finish);
+  }
   // A docked sheet opening or closing changes the stage's width in one step and moves on the compositor (flip):
   // the sheet slides from its edge and pushes the stage, which moves as one surface from where it stood.
   const dockedPanels = (route: Route) =>
@@ -776,6 +797,7 @@
       data-flip="stage"
       data-stage={store.isRunning ? store.phaseStage : undefined}
       class:previous={store.previousRun}
+      {@attach entering}
       aria-label="Measurement workspace"
       tabindex="-1"
       inert={flyout}
@@ -999,6 +1021,18 @@
     overflow: clip auto;
     /* Keep stage scrolling from chaining out to the document. */
     overscroll-behavior: contain;
+  }
+  /* A workspace appears in one quick fade, the console on load and on each return from History, and History as
+     it opens: never piece by piece. */
+  @media (prefers-reduced-motion: no-preference) {
+    .stage {
+      animation: appear var(--dur-slide) var(--ease-out) backwards;
+    }
+  }
+  @keyframes appear {
+    from {
+      opacity: 0;
+    }
   }
   /* While a run is under way the console is lit from above in the running stage's hue, and the light shifts to
      each stage's hue as it begins, warmup included. One gradient, repainted only while the hue moves. */

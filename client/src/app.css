@@ -1659,13 +1659,6 @@
 
 /* The motion vocabulary. Every move is transform or opacity on the compositor, or a one-time paint; a loop runs
    only while the thing it describes is live. Reduced motion lands every one at its end state (above). */
-/* Arriving: a section rises a few pixels into place. */
-@keyframes rise {
-  from {
-    opacity: 0;
-    translate: 0 8px;
-  }
-}
 /* A settled figure's row slides in from under its label's line. */
 @keyframes row-in {
   from {
@@ -1684,15 +1677,6 @@
 @keyframes grow-x {
   from {
     scale: 0 1;
-  }
-}
-/* A sheen crosses a surface once. */
-@keyframes glint {
-  from {
-    translate: -120% 0;
-  }
-  to {
-    translate: 320% 0;
   }
 }
 

@@ -166,18 +166,18 @@ Motion takes the user through the run without touching it: nothing moves that th
 nothing moves twice for one cause, and every move is transform or opacity or a paint that runs once per event;
 nothing loops while a stage runs, so a slow device's frames stay even. A one-time animation fills backwards only,
 so once it has run it leaves no effect for the browser to reapply on every restyle. The vocabulary is a handful
-of keyframes in `app.css` (`rise`, `row-in`, `pop`, `grow-x`, `glint`), each with one meaning.
+of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
 
 - Tokens: `--dur-hover` 100 ms, `--dur-slide` 150 ms (popovers, dialogs, tips), `--dur-sheet` 320 ms (sheets and
   their column), `--dur-graph` 220 ms (bars, keys, scale changes), `--dur-stage` 380 ms (a stage event's wave),
   `--beat` 40 ms (the step of a wave), `--dur-pulse` 1.1 s (a live indicator only). Easing is `--ease-out` for
   what follows a measurement; what arrives settles with a little overshoot (`--ease-settle` for a section or a
   span, `--ease-spring` for a control's state or a mark popping on). A reading never overshoots.
-- Arrival: the console rises into place in reading order a beat apart, the dial, the lanes, the controls, then
-  the cards left to right (`rise`, 8 px).
+- Arrival: a workspace appears in one quick fade (`appear`, `--dur-slide`), the console on load and on each
+  return from History, and History as it opens; never piece by piece.
 - A run is one story told on the dial, and nothing passes through an empty console on the way. Start: the run
   key's skin turns to Stop on the press while its label crosses over; the previous result rewinds, every arc
-  draining back to zero together as its beads drop off (`result-drain`, 320 ms), while the lanes and the cards keep
+  draining back to zero together as its beads drop off (`result-drain`, 300 ms, fast from the press), while the lanes and the cards keep
   their frames and only their figures clear. Each stage: during its warmup the ring's track takes a faint tint of
   its hue and the console's light from above (`--ambient`) shifts to it; when it starts measuring, the needle rises
   from zero (520 ms, eased out); when it ends, the needle drains back to zero (300 ms) and blends into the next
@@ -191,7 +191,7 @@ of keyframes in `app.css` (`rise`, `row-in`, `pop`, `grow-x`, `glint`), each wit
 - The result replays the run on the dial as one sweep from zero over 0.9 s (`--sweep`), once the last needle has
   drained (`--drain`): every result's arc shows
   up to the shared front, so the front changes hue as it passes each shorter result, and each bead pops on the
-  spring as the front reaches it. The run key, once it reads Start or Run again, is crossed by a sheen once.
+  spring as the front reaches it.
 - A press never moves what it presses: a key's or a chip's hit box stays put, so a press near its edge still
   lands. The key's fill deepens and its glyph gives (0.82) and springs back; the run key's and a chip's content
   give a little (0.975, 0.96).
@@ -200,10 +200,11 @@ of keyframes in `app.css` (`rise`, `row-in`, `pop`, `grow-x`, `glint`), each wit
 - A change that reshapes the console, a stage switched on or off, applies in the frame of the click that asked
   for it, and then moves (`flip()`): every element marked `data-flip` (the dial, the lanes, the controls, each card
   and each lane row) glides from its old place to its new one on the compositor, a wider one opens from its old
-  width, an arriving one rises in and a leaving one sinks out from where it stood. Nothing waits for a snapshot of
+  width. Two things never share a place: a leaving one goes at once and its neighbours close over its place, and an
+  arriving one waits for its neighbours to make room (140 ms) before it rises in. Nothing waits for a snapshot of
   the old page, so the click is answered at once. Opening or closing a result in History moves its panes the same
-  way: the list keeps its place while its width changes, opening from its old width as it grows, and the result
-  rises in or sinks out.
+  way: the list keeps its place while its width changes, and the result rises in; closing, the result goes at once
+  and the list opens across its place from its old width, like a curtain.
 - Live values and the running strip's leading edge move on the single frame clock in
   `presentation/motion.svelte.ts`; a glide smooths only the rendering.
 - A view hands off by a class: the old fades out in 90 ms and the new in over 180 (`.handoff`, `.handoff-out`,
@@ -268,7 +269,9 @@ of keyframes in `app.css` (`rise`, `row-in`, `pop`, `grow-x`, `glint`), each wit
   hover names its result. Nothing on the row moves between states.
 - **Run key** (`RunButton`): the one solid control, ink, over the stage chips at their row's width, 48 px (44 on
   a phone), its label and estimate centred; Stop steps back to a quiet plate with a square.
-- **Result card** (`ResultSummary`): one panel per stage, ruled 2 px in its hue along the top: the stage's mark
+- **Result card** (`ResultSummary`): one panel per stage, every stage's in its column under its key whether it
+  runs or not (a stage switched off shows its card quietly, marked Skipped, so the row never moves), ruled 2 px in
+  its hue along the top: the stage's mark
   and name with a status word at the line's end when not complete; the readout, one line tall (bidirectional: ↓
   and ↑ as a pair on one baseline); one quiet line (the wire rate with its overhead, the latency card's jitter, a
   failure's reason named by server when several ran, and after a stall No data from 0.5 s); the strip on a field

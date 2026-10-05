@@ -22,7 +22,7 @@
   const RISE_MS = 520;
   const DRAIN_MS = 300;
   /** A result's arcs drain back to zero over this as the next run starts, as in `result-drain`. */
-  export const RESULT_DRAIN_MS = 320;
+  export const RESULT_DRAIN_MS = 300;
 </script>
 
 <script lang="ts">
@@ -475,7 +475,7 @@
       opacity: 1;
     }
     .result-layer.handoff-out .result-arc {
-      animation: result-drain 320ms cubic-bezier(0.55, 0, 0.75, 0.2) forwards;
+      animation: result-drain 300ms var(--ease-out) forwards;
     }
     .result-layer.handoff-out .bead {
       animation: bead-out 200ms var(--ease-out) forwards;

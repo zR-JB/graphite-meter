@@ -290,21 +290,7 @@
       border-color var(--dur-stage) var(--ease-out) calc(2 * var(--beat)),
       box-shadow 0s linear calc(2 * var(--beat));
   }
-  /* The cards arrive after the console, one beat apart, left to right. */
   @media (prefers-reduced-motion: no-preference) {
-    .card {
-      animation: rise var(--dur-stage) var(--ease-settle) backwards;
-      animation-delay: calc(3 * var(--beat));
-    }
-    .card:nth-child(2) {
-      animation-delay: calc(4 * var(--beat));
-    }
-    .card:nth-child(3) {
-      animation-delay: calc(5 * var(--beat));
-    }
-    .card:nth-child(4) {
-      animation-delay: calc(6 * var(--beat));
-    }
     /* A stage that settles lays its facts down one row after another under the figure. */
     .card:is(.complete, .partial, .stopped, .failed) .facts > div {
       animation: row-in 260ms var(--ease-settle) backwards;

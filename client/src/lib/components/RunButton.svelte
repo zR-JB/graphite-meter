@@ -131,24 +131,6 @@
     opacity: 0.6;
     cursor: not-allowed;
   }
-  /* When the key becomes Start or Run again, a sheen crosses it once: the run is ready for the next press. */
-  @media (prefers-reduced-motion: no-preference) {
-    .run-button:not(.running, [aria-disabled="true"])::after {
-      content: "";
-      position: absolute;
-      inset: 0;
-      z-index: -1;
-      width: 35%;
-      background: linear-gradient(
-        100deg,
-        transparent,
-        color-mix(in oklab, var(--text-inverse) 22%, transparent),
-        transparent
-      );
-      animation: glint 1100ms var(--ease-out) 700ms both;
-      pointer-events: none;
-    }
-  }
   .run-button-content {
     display: inline-flex;
     align-items: center;

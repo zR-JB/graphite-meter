@@ -65,10 +65,9 @@
     );
     return summaryCards(evidence, units, store.showWireEstimates);
   });
-  // Until a run completes, every planned stage holds a card; values fill in, nothing moves.
-  const planned = $derived(
-    CARD_ORDER.filter((key) => status(key) !== "disabled"),
-  );
+  // Every stage holds its card in its column under its key, a skipped one quietly, so switching a stage on or
+  // off changes a card's state and never moves the row.
+  const skipped = (key: Stage) => status(key) === "disabled";
   type Transfer = Exclude<Stage, "latency">;
   let retainedGraphs: Partial<Record<Transfer, CardGraph>> = {};
   // The run's series per stage, over its plan until settled; a scoped server has no series of its own.
@@ -164,9 +163,10 @@
     return view;
   }
   const cards = $derived(
-    (store.phase !== "complete" && store.phase !== "error"
-      ? planned.map((key) => byStage[key])
-      : settled
+    CARD_ORDER.map((key) =>
+      store.phase !== "complete" && store.phase !== "error"
+        ? byStage[key]
+        : (settled.find((card) => card.key === key) ?? byStage[key]),
     ).map(withGraph),
   );
 
@@ -320,15 +320,17 @@
       key,
       label: STAGE[key].short,
       icon: STAGE[key].icon,
-      status: active
-        ? status(key) === "recovering"
-          ? "recovering"
-          : "active"
-        : stopped
-          ? "stopped"
-          : store.phase === "aborted"
-            ? "not-run"
-            : "pending",
+      status: skipped(key)
+        ? "not-run"
+        : active
+          ? status(key) === "recovering"
+            ? "recovering"
+            : "active"
+          : stopped
+            ? "stopped"
+            : store.phase === "aborted"
+              ? "not-run"
+              : "pending",
       num: timeout ? MISSING : shown.num,
       unit: timeout ? "timeout" : shown.unit,
       tip: JARGON[key],

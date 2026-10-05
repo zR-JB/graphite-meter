@@ -29,8 +29,9 @@ function releaseClock(): void {
 export const still = () => prefersReducedMotion.current;
 
 const FLIP_MS = 380;
-const GHOST_MS = 140;
 const FLIP_EASE = "cubic-bezier(0.22, 1.2, 0.36, 1)";
+// Neighbours have moved most of the way by then: an arriving element appears into room already made.
+const ROOM_MS = 140;
 // A sheet moves without overshoot: it is a surface sliding to its edge, not a part settling into place.
 const SHEET_EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
 // As `--dur-sheet`, which keeps a closing sheet displayed while it leaves.
@@ -46,9 +47,10 @@ const boxes = (only?: readonly string[]) =>
   );
 
 /** A change that reshapes the console applies at once, in the frame of the click that asked for it. Then every
-    element marked `data-flip` that stayed glides from its old place to its new one, an arriving one rises in,
-    and a leaving one sinks out from where it stood: all on the compositor. An element with `data-flip-edge`
-    (`left` or `right`) is a sheet: it slides in from beyond that edge and back out, without overshoot. `only`
+    element marked `data-flip` that stayed glides from its old place to its new one, all on the compositor. Two
+    things never share a place: a leaving one goes at once and its neighbours close over it, and an arriving one
+    waits for its neighbours to make room, then rises in. An element with `data-flip-edge` (`left` or `right`)
+    is a sheet: it slides in from beyond that edge and back out, without overshoot. `only`
     names the keys that move, so a change can move a surface as one rather than each part on its own. */
 export function flip(update: () => void, only?: readonly string[]): void {
   if (still() || globalThis.document?.hidden) {
@@ -76,7 +78,12 @@ export function flip(update: () => void, only?: readonly string[]): void {
           { opacity: 0, translate: "0 8px" },
           { opacity: 1, translate: "0 0" },
         ],
-        { duration: FLIP_MS, easing: FLIP_EASE, fill: "backwards" },
+        {
+          duration: FLIP_MS - ROOM_MS,
+          delay: ROOM_MS,
+          easing: FLIP_EASE,
+          fill: "backwards",
+        },
       );
       continue;
     }
@@ -99,8 +106,9 @@ export function flip(update: () => void, only?: readonly string[]): void {
       );
   }
   for (const [key, { el, box }] of before) {
-    if (after.has(key)) continue;
-    // A leaving element is gone from the page or no longer displayed; a copy at its old place leaves in its stead.
+    const edge = el.dataset.flipEdge;
+    if (after.has(key) || !edge) continue;
+    // A sheet no longer displayed leaves to its edge as a copy at its old place.
     const ghost = el.cloneNode(true) as HTMLElement;
     ghost.removeAttribute("data-flip");
     ghost.setAttribute("aria-hidden", "true");
@@ -116,20 +124,13 @@ export function flip(update: () => void, only?: readonly string[]): void {
       zIndex: "1",
     });
     document.body.append(ghost);
-    const edge = el.dataset.flipEdge;
     const off = edge === "left" ? -box.right : innerWidth - box.left;
     ghost
-      .animate(
-        edge
-          ? [{ translate: "0 0" }, { translate: `${off}px 0` }]
-          : [
-              { opacity: 1, translate: "0 0" },
-              { opacity: 0, translate: "0 6px" },
-            ],
-        edge
-          ? { duration: SHEET_MS, easing: SHEET_EASE, fill: "forwards" }
-          : { duration: GHOST_MS, easing: "ease-in", fill: "forwards" },
-      )
+      .animate([{ translate: "0 0" }, { translate: `${off}px 0` }], {
+        duration: SHEET_MS,
+        easing: SHEET_EASE,
+        fill: "forwards",
+      })
       .finished.finally(() => ghost.remove());
   }
 }

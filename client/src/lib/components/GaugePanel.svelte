@@ -423,20 +423,6 @@
     justify-items: center;
     min-width: 0;
   }
-  /* The console arrives in reading order, a beat apart: the dial, the lanes, the controls; the cards follow. */
-  @media (prefers-reduced-motion: no-preference) {
-    .dial,
-    .latency-panel,
-    .controls {
-      animation: rise var(--dur-stage) var(--ease-settle) backwards;
-    }
-    .latency-panel {
-      animation-delay: var(--beat);
-    }
-    .controls {
-      animation-delay: calc(2 * var(--beat));
-    }
-  }
   /* The dial's figure rises into place as each stage's value arrives. */
   .metric-wrap {
     --rise: 6px;
