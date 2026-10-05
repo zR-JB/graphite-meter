@@ -174,8 +174,20 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "build the source the build job resolved"),
     (REQUEST, "      context: ${{ steps.source.outputs.context }}\n    steps:",
      "      context: ${{ github.event.inputs.sha }}\n    steps:", r"misorders invariant: \s+context"),
-    (REQUEST, "dest=${{ runner.temp }}/rust-server-export\n          no-cache: true\n",
-     "dest=${{ runner.temp }}/rust-server-export\n", "every image build must declare no-cache"),
+    (REQUEST, "dest=${{ runner.temp }}/rust-tui-export\n          no-cache: true\n",
+     "dest=${{ runner.temp }}/rust-tui-export\n", "every image build must declare no-cache"),
+    # Only the source offers' export reuses its image build, from the job's own builder and with the same inputs.
+    (REQUEST, "dest=${{ runner.temp }}/rust-image.oci.tar\n          no-cache: true\n",
+     "dest=${{ runner.temp }}/rust-image.oci.tar\n", "every image build must declare no-cache"),
+    (REQUEST, "          outputs: type=local,dest=${{ runner.temp }}/rust-server-export\n          provenance: mode=max\n"
+     "          github-token: ''\n          build-args: |\n            VERSION=${{ needs.build.outputs.version }}\n",
+     "          outputs: type=local,dest=${{ runner.temp }}/rust-server-export\n          provenance: mode=max\n"
+     "          github-token: ''\n          build-args: |\n            VERSION=${{ needs.build.outputs.version }}\n"
+     "            PROFILE=ci\n", "every image build must declare no-cache"),
+    (REQUEST, "          target: server-artifacts\n          platforms: linux/amd64,linux/arm64\n",
+     "          target: server-artifacts\n          platforms: linux/amd64\n", "every image build must declare no-cache"),
+    (REQUEST, "      # This job's fresh builder", "      - uses: docker/setup-buildx-action@" + "a" * 40 +
+     "\n      # This job's fresh builder", "every image build must declare no-cache"),
     (REQUEST, "dest=${{ runner.temp }}/rust-tui-export\n          no-cache: true\n          provenance: mode=max\n",
      "dest=${{ runner.temp }}/rust-tui-export\n          no-cache: true\n          provenance: false\n",
      "every image build must declare provenance"),

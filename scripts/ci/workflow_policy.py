@@ -102,8 +102,10 @@ CONTEXT = {
         "RUST_DIGEST": "needs.verify.outputs.rust_digest",
     },
 }
-# Every image build of the untrusted request starts empty, records max provenance and gets no token.
-IMAGE_BUILD = ("no-cache: true\n", "provenance: mode=max\n", "github-token: ''\n")
+# Every image build of the untrusted request records max provenance and gets no token.
+IMAGE_BUILD = ("provenance: mode=max\n", "github-token: ''\n")
+# Each starts empty but an export of the server's source offers, which reuses the image build before it.
+OFFERS_EXPORT = "target: server-artifacts\n"
 # Every image build of the untrusted request builds the source its build job validated and resolved.
 IMAGE_CONTEXTS = ("${{ steps.source.outputs.context }}", "${{ needs.build.outputs.context }}")
 # The plan output that selects each CI job; the jobs ALWAYS names run on every change.
@@ -261,6 +263,16 @@ def check_workflows(root: Path) -> None:
         contexts = re.findall(r"(?m)^ +context: (.*)$", step)
         if len(contexts) != 1 or contexts[0] not in IMAGE_CONTEXTS:
             fail("release-request.yml: every image build must build the source the build job resolved")
+    for job in JOB.split(request.split("\njobs:\n", 1)[1]):
+        builds = [step for step in STEP.split(job) if "uses: docker/build-push-action@" in step]
+        for previous, step in zip(["", *builds], builds):
+            # The job's own builder then holds only the image build's layers, so both outputs come from one build.
+            reuses = (OFFERS_EXPORT in step and "target: server\n" in previous and "no-cache: true\n" in previous
+                      and job.count("uses: docker/setup-buildx-action@") == 1
+                      and build_inputs(step) == build_inputs(previous))
+            if "no-cache: true\n" not in step and not reuses:
+                fail("release-request.yml: every image build must declare no-cache, but the source offers' export "
+                     "right after its image build with the same inputs")
     # Caches are keyed by job; only CI writes them.
     for name in sorted(names - {"ci.yml"}):
         for step in STEP.split((workflows / name).read_text(encoding="utf-8")):
@@ -272,6 +284,13 @@ def check_workflows(root: Path) -> None:
             fail("setup-project: every cache must follow the cache input")
     if "VERSION= mise run legal-check\n" not in request:
         fail("release-request.yml: stable builds must check committed legal outputs first")
+
+
+def build_inputs(step: str) -> tuple[list[str], str]:
+    """The Dockerfile, context, platforms and build arguments of a build-push-action step."""
+    keys = re.findall(r"(?m)^ +(?:file|context|platforms): .*$", step)
+    arguments = re.search(r"(?m)^( +)build-args: \|\n((?:\1 +\S.*\n)*)", step)
+    return keys, arguments[2] if arguments else ""
 
 
 def check_ci(root: Path) -> None:

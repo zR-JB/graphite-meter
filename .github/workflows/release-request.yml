@@ -256,6 +256,7 @@ jobs:
             GM_CLIENT_REVISION=${{ needs.build.outputs.sha }}
             GM_CLIENT_VALIDATE=${{ needs.build.outputs.client_validate }}
 
+      # This job's fresh builder holds only the image build's layers, so the source offers come from that build.
       - name: Export the Rust server's source offers
         if: needs.build.outputs.stable == 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -267,7 +268,6 @@ jobs:
           target: server-artifacts
           platforms: linux/amd64,linux/arm64
           outputs: type=local,dest=${{ runner.temp }}/rust-server-export
-          no-cache: true
           provenance: mode=max
           github-token: ''
           build-args: |
