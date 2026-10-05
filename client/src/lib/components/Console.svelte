@@ -630,7 +630,7 @@
   id="console"
   {@attach observeWidth((width) => (consoleWidth = width))}
   data-phase={store.phase}
-  style="--dock-left: {docks.left}px; --dock-right: {docks.right}px;"
+  style:grid-template-columns="{docks.left}px minmax(0, 1fr) {docks.right}px"
 >
   <!-- Container queries move direct actions into More as the bar narrows. -->
   <header class="topbar" class:saving={store.savingResults}>
@@ -854,15 +854,12 @@
 </main>
 
 <style>
-  /* Dock columns stay 0 until a docked panel fills them via display: contents. */
+  /* Dock columns stay 0 until a docked panel fills them via display: contents; their inline widths restyle the
+     grid alone. */
   #console {
     position: relative;
     isolation: isolate;
     display: grid;
-    grid-template-columns: var(--dock-left, 0px) minmax(0, 1fr) var(
-        --dock-right,
-        0px
-      );
     grid-template-rows:
       var(--topbar-h) minmax(0, 1fr)
       calc(var(--statusbar-h) + env(safe-area-inset-bottom, 0px));

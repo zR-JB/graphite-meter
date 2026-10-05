@@ -142,6 +142,8 @@
   /* A flyout sheet floats over the page with the one shadow the design allows; docked, it is a frame beside
      the instrument, flat. */
   .panel-layer > :global(dialog.panel) {
+    --panel-w: inherit;
+    --dock-w: inherit;
     max-width: none;
     max-height: none;
     margin: 0;

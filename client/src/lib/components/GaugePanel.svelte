@@ -399,6 +399,7 @@
      height stays on the canvas below; what little the dial's ring adds over the lanes goes around the controls.
      Without the latency stage the dial stands centred with the controls under it. */
   .instrument {
+    --panel-width: inherit;
     --dial-height: clamp(320px, 40svh, 380px);
     display: grid;
     gap: var(--space-4);
@@ -466,6 +467,7 @@
   /* The dial's panel: the face, and the note under the ring; the face ends on the note, so a hung note measures
      from it. */
   .dial {
+    --dial-width: inherit;
     grid-area: dial;
     position: relative;
     display: flex;
