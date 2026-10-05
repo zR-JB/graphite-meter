@@ -34,7 +34,7 @@ impl App {
         let peer = Peer::new(address);
         let peer = match self.auth.authorize(request, endpoint, &peer) {
             Decision::Allow(lease) => peer.with_auth(lease),
-            Decision::Refuse(answer) | Decision::Handled(answer) => return Gate::Answer(answer),
+            Decision::Answer(answer) => return Gate::Answer(answer),
         };
         match route {
             Some(route) if !allows(route, method) => {

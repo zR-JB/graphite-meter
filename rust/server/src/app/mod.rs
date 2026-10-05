@@ -6,7 +6,7 @@ pub mod finalize;
 mod gate;
 mod page;
 pub mod query;
-mod response;
+pub(crate) mod response;
 pub mod topology;
 
 pub use topology::Endpoint;
@@ -169,7 +169,11 @@ impl App {
         exchange: Exchange,
     ) -> Outcome {
         let Some(route) = route else {
-            return Outcome::Response(match connection.endpoint.ui() {
+            let endpoint = connection.endpoint;
+            if endpoint.ui() && self.auth.claims(request.uri().path()) {
+                return self.auth.handle(request, endpoint, peer).await;
+            }
+            return Outcome::Response(match endpoint.ui() {
                 true => self.page(&request),
                 false => response::status(StatusCode::NOT_FOUND),
             });
