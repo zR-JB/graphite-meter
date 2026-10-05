@@ -30,7 +30,9 @@ pub const MAX_PER_CLIENT: usize = 32;
 pub const ID_LIFETIME: Duration = Duration::from_secs(120);
 /// An aggregate without lanes is kept this long after its last lane joined or left, so it outlives its ID.
 pub const RETENTION: Duration = ID_LIFETIME;
+/// Retention is swept at most this often.
 const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
+const SWEEP_NANOS: u64 = SWEEP_INTERVAL.as_secs() * 1_000_000_000;
 
 const ID_PREFIX: &str = "gmu_";
 /// An ID signs its issue time and a serial number.
@@ -46,6 +48,8 @@ struct Store {
     clock: Clock,
     serial: AtomicU64,
     capacity: Quota,
+    /// The store clock at the next sweep, read without locking `entries`.
+    next_sweep: AtomicU64,
     entries: Mutex<Entries>,
 }
 
@@ -53,7 +57,6 @@ struct Entries {
     live: HashMap<Box<str>, Entry>,
     /// Displaced IDs, refused until they would have expired.
     tombstones: HashMap<Box<str>, Instant>,
-    next_sweep: Instant,
 }
 
 struct Entry {
@@ -200,11 +203,8 @@ impl Uploads {
             clock: Clock(now),
             serial: AtomicU64::new(0),
             capacity: Quota::new(MAX_LIVE, MAX_PER_CLIENT),
-            entries: Mutex::new(Entries {
-                live: HashMap::new(),
-                tombstones: HashMap::new(),
-                next_sweep: now + SWEEP_INTERVAL,
-            }),
+            next_sweep: AtomicU64::new(SWEEP_NANOS),
+            entries: Mutex::new(Entries { live: HashMap::new(), tombstones: HashMap::new() }),
         }))
     }
 
@@ -248,9 +248,11 @@ impl Uploads {
         Ok(())
     }
 
-    /// Expires what retention no longer covers, at most once per sweep interval.
+    /// Expires what retention no longer covers once a sweep is due; until then it reads one atomic.
     pub(super) fn sweep(&self) {
-        drop(self.entries());
+        if self.0.clock.now() >= self.0.next_sweep.load(Ordering::Relaxed) {
+            drop(self.entries());
+        }
     }
 
     fn access(&self, id: &str, owner: Option<&ClientKeys>, access: Access) -> Result<Arc<Aggregate>, UploadRefusal> {
@@ -311,10 +313,10 @@ impl Uploads {
 
     fn entries(&self) -> MutexGuard<'_, Entries> {
         let mut entries = lock(&self.0.entries);
-        let now = Instant::now();
-        if now >= entries.next_sweep {
-            entries.sweep(now);
-            entries.next_sweep = now + SWEEP_INTERVAL;
+        let now = self.0.clock.now();
+        if now >= self.0.next_sweep.load(Ordering::Relaxed) {
+            entries.sweep(Instant::now());
+            self.0.next_sweep.store(now + SWEEP_NANOS, Ordering::Relaxed);
         }
         entries
     }
