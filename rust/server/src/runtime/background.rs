@@ -3,7 +3,7 @@
 use crate::{app::App, log};
 use graphite_meter_net::Pool;
 use std::time::Duration;
-use tokio::time::{MissedTickBehavior, interval, sleep};
+use tokio::time::{MissedTickBehavior, interval, timeout};
 
 /// The server returns freed memory once it has had no connection for this long.
 const IDLE_RELEASE: Duration = Duration::from_secs(2);
@@ -11,11 +11,12 @@ const IDLE_RELEASE: Duration = Duration::from_secs(2);
 const TRANSFER_LOG: Duration = Duration::from_secs(1);
 const ADMISSION_LOG: Duration = Duration::from_secs(30);
 
-/// Calls `release` each time the server has had no connection for `IDLE_RELEASE`.
+/// Calls `release` once per idle period, `IDLE_RELEASE` after the last connection closed.
 pub(super) async fn release_when_idle(app: &App, release: impl Fn()) {
     loop {
         app.quotas().idle().await;
-        sleep(IDLE_RELEASE).await;
+        // Each close that empties the server again restarts the wait.
+        while timeout(IDLE_RELEASE, app.quotas().idle()).await.is_ok() {}
         if app.quotas().connections() == 0 {
             release();
         }
@@ -121,6 +122,20 @@ mod tests {
             advance(IDLE_RELEASE).await;
             settle().await;
             assert_eq!(released(), 2);
+            advance(IDLE_RELEASE * 3).await;
+            settle().await;
+            assert_eq!(released(), 2, "once per idle period");
+
+            for _ in 0..4 {
+                drop(app.connection(peer, Transport::Tcp).unwrap());
+                settle().await;
+                advance(IDLE_RELEASE - Duration::from_millis(500)).await;
+                settle().await;
+            }
+            assert_eq!(released(), 2, "short connections every 1.5 s release nothing");
+            advance(Duration::from_millis(500)).await;
+            settle().await;
+            assert_eq!(released(), 3, "two seconds after the last of them");
         };
         tokio::select! {
             () = releasing => unreachable!("the release loop runs until the server stops"),
