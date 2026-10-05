@@ -96,7 +96,8 @@ WebTransport session per group of up to 16 lanes.
 **Memory.** One budget (`GM_MAX_BUFFER_BYTES`) covers every HTTP/2 and QUIC buffer, charged as it fills; HTTP/1
 holds no floor. Startup refuses a budget below `GM_MAX_CONNECTIONS` times the larger connection floor, the QUIC
 endpoint buffers and the 256 KiB download block. A QUIC connection holds a floor of its handshake, certificate
-flights and Noq's stream state (481 KiB at default limits), about 0.5 MiB in all; an HTTP/2 connection 1.5 MiB.
+flights and Noq's stream state (481 KiB at default limits, 978 KiB with per-client limits at the totals), about
+0.5 MiB in all at default limits; an HTTP/2 connection 1.5 MiB.
 Receive windows stay 64 KiB until an admitted upload reads, so a silent peer holds at most 192 KiB of reassembly.
 From a quarter of the budget or the connection capacity, unvalidated QUIC handshakes need Retry; from three
 quarters no window grows. A certificate reload that does not fit keeps the previous chain. This accounting is not a
@@ -179,7 +180,8 @@ User-visible behaviour that deliberately differs from Go's server and TUI.
 - 303 redirects from GET `/auth/cli`, `/auth/browser` and `/auth/oidc/callback` carry no body.
 - Every OIDC callback answer clears the transaction cookie.
 - OIDC sign-in stops waiting for the provider 3 s before the callback's 15 s exchange bound.
-- OIDC verifies RS256–512, PS256–512, ES256, ES384 and EdDSA with RSA keys of 2048–8192 bits; a provider advertising
+- OIDC verifies RS256–512, PS256–512, ES256, ES384 and EdDSA with RSA keys of 2048–8192 bits (Go also accepts
+  1024-bit keys); a provider advertising
   only ES512 is refused at discovery.
 - Discovery refuses endpoints with a fragment, port 0 or non-ASCII text, a `null` algorithm list and a non-boolean
   issuer-parameter flag.
