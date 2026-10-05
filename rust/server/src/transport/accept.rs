@@ -226,6 +226,47 @@ mod tests {
         assert_eq!(socket.read(&mut [0; 1]).await.unwrap(), 0);
     }
 
+    /// A listener whose accepts fail `failures` times, recording when each was tried.
+    struct Failing {
+        failures: usize,
+        tried: Arc<std::sync::Mutex<Vec<tokio::time::Instant>>>,
+    }
+
+    impl Listen for Failing {
+        type Connection = TcpStream;
+
+        async fn accept(&mut self) -> io::Result<(TcpStream, SocketAddr)> {
+            crate::lock(&self.tried).push(tokio::time::Instant::now());
+            if self.failures == 0 {
+                return std::future::pending().await;
+            }
+            self.failures -= 1;
+            Err(io::Error::other("too many open files"))
+        }
+
+        fn name(&self) -> String {
+            "tcp test".into()
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_accept_is_retried_after_a_delay_doubling_to_a_second() {
+        let tried = Arc::default();
+        let listener = Failing { failures: 10, tried: Arc::clone(&tried) };
+        let shutdown = CancellationToken::new();
+        let stop = shutdown.clone();
+        let task = tokio::spawn(async move {
+            let pool = Pool::new().unwrap();
+            super::serve(listener, &pool, &stop, |_| None, |_, _| async {}).await
+        });
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        shutdown.cancel();
+        task.await.unwrap().unwrap();
+        let tried = crate::lock(&tried);
+        let delays: Vec<_> = tried.windows(2).map(|pair| (pair[1] - pair[0]).as_millis()).collect();
+        assert_eq!(delays, [5, 10, 20, 40, 80, 160, 320, 640, 1000, 1000]);
+    }
+
     #[tokio::test]
     async fn a_connection_beyond_its_share_is_closed_unserved() {
         let quota = Quota::new(10, 1);
