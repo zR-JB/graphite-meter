@@ -120,17 +120,19 @@ impl Http2 {
             if stopping.as_mut().poll(cx).is_ready() {
                 lifecycle.stop();
             }
+            // Streams first, on a fresh coop budget: socket reads spend it, and a spent budget stalls their selects.
+            while let Poll::Ready(Some(())) = streams.poll_next_unpin(cx) {}
             loop {
                 match h2.poll_accept(cx) {
                     Poll::Ready(Some(Ok((request, respond)))) if streams.len() < MAX_STREAMS as usize => {
                         streams.push(self.stream(request, respond, &connection, &window));
+                        cx.waker().wake_by_ref();
                     }
                     Poll::Ready(Some(Ok((_, mut respond)))) => respond.send_reset(Reason::REFUSED_STREAM),
                     Poll::Ready(Some(Err(_)) | None) => return Poll::Ready(()),
                     Poll::Pending => break,
                 }
             }
-            while let Poll::Ready(Some(())) = streams.poll_next_unpin(cx) {}
             // Queued END_STREAM and reset frames keep h2's streams after their futures end.
             let live = !streams.is_empty() || h2.has_streams();
             while let Poll::Ready(event) = lifecycle.poll(cx, window.raised(), live) {
