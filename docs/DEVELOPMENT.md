@@ -17,7 +17,7 @@ git clone https://github.com/zR-JB/graphite-meter.git
 cd graphite-meter
 mise run setup      # locked tools and dependencies, the Git hook, then `mise run doctor`
 mise run dev        # development build on http://localhost:7246
-mise run tui        # native TUI against it; add `-- -server <url>` for another server
+mise run tui        # native TUI against it; add `-- --url <url>` for another server
 ```
 
 `GM_IMPLEMENTATION=rust` runs the opt-in Rust server or TUI instead in `dev`, `prod` and `tui`.
