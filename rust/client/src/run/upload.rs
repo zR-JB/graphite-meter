@@ -78,7 +78,8 @@ struct Progress {
     ended: Option<Fault>,
 }
 
-/// Where control requests go: the client's pool, or for an HTTP/3 path connections of the session's own.
+/// Where control requests go: over the throughput check's connection, or for an HTTP/3 path connections of the
+/// session's own.
 #[derive(Clone)]
 struct Control {
     client: Client,
@@ -87,20 +88,22 @@ struct Control {
 }
 
 impl UploadSession {
-    /// Mints a receiver and starts its feed and its lanes `stagger` apart; `replaced` is the server's for the run.
+    /// Mints a receiver with control requests over `via`, the protocol `path`'s check took, and starts its feed and
+    /// its lanes `stagger` apart; `replaced` is the server's for the run.
     pub async fn open(
         client: &Client,
         path: &ThroughputPath,
+        via: Protocol,
         plans: Vec<GroupPlan>,
         stagger: Duration,
         replaced: Arc<AtomicBool>,
         token: CancellationToken,
     ) -> Result<Self, Fault> {
-        let origin = path.origin.clone();
-        let control = match path.protocol {
-            Protocol::Http3 => Control { client: client.apart(), via: Protocol::Http3, origin },
-            _ => Control { client: client.clone(), via: Protocol::Negotiated, origin },
+        let connections = match path.protocol {
+            Protocol::Http3 => client.apart(),
+            _ => client.clone(),
         };
+        let control = Control { client: connections, via, origin: path.origin.clone() };
         let webtransport = path.transport == ThroughputTransport::WebTransport;
         let start = Start {
             client: client.clone(),

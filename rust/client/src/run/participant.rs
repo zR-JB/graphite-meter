@@ -57,7 +57,8 @@ impl Participant {
         let up = match plan.stage.moves(Direction::Up) {
             true => {
                 let child = token.child_token();
-                let session = UploadSession::open(client, path, plans, spacing(Direction::Up), replaced, child);
+                let session =
+                    UploadSession::open(client, path, paths.control, plans, spacing(Direction::Up), replaced, child);
                 Some(session.await.map_err(|fault| fault.failure())?)
             }
             false => None,

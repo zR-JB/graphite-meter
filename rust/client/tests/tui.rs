@@ -91,6 +91,7 @@ fn prepared() -> Event {
     };
     let paths = Paths {
         throughput,
+        control: Protocol::Http2,
         latency: None,
         stage_limit: Duration::from_secs(300),
         idle_rtt: Duration::ZERO,

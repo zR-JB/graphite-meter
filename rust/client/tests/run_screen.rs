@@ -85,6 +85,7 @@ fn running(names: &[&str], plan: &[(Stage, Duration)], now: Instant) -> App {
             transport: ThroughputTransport::FetchStream,
             protocol: Protocol::Http2,
         },
+        control: Protocol::Http2,
         latency: None,
         stage_limit: SECOND * 300,
         idle_rtt: Duration::ZERO,

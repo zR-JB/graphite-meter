@@ -373,6 +373,7 @@ mod tests {
                         transport: ThroughputTransport::FetchStream,
                         protocol: Protocol::Http1,
                     },
+                    control: Protocol::Http1,
                     latency: None,
                     stage_limit: Duration::from_secs(seconds),
                     idle_rtt: Duration::ZERO,

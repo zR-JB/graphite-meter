@@ -2,7 +2,7 @@
 //! proxies, the trust store and grants over verified TLS.
 use bytes::Bytes;
 use graphite_meter_client::{
-    config::Config,
+    config::{Config, PathChoice},
     model::{Dir, Failure, LaneHealth, Stage},
     net::{Client, Fault, ReadBuffer, Request, ThroughputPath, retrying, topology},
     run::{prepare::prepare, upload::UploadSession},
@@ -281,7 +281,7 @@ async fn a_departed_upload_session_asks_its_receiver_to_finalize() {
     };
     let plans = topology(&path, Stage::Upload, Dir { down: 0, up: 1 });
     let (client, token) = (client(false), CancellationToken::new());
-    let session = UploadSession::open(&client, &path, plans, Duration::ZERO, Arc::default(), token);
+    let session = UploadSession::open(&client, &path, Protocol::Http1, plans, Duration::ZERO, Arc::default(), token);
     session.await.unwrap().depart();
     let finalized = async {
         while let Some((_, head)) = heads.recv().await {
@@ -504,7 +504,7 @@ async fn upload(
         protocol: Protocol::Http1,
     };
     let (client, token) = (client(false), CancellationToken::new());
-    let session = UploadSession::open(&client, &path, Vec::new(), Duration::ZERO, replaced, token);
+    let session = UploadSession::open(&client, &path, Protocol::Http1, Vec::new(), Duration::ZERO, replaced, token);
     (session.await.unwrap(), heads)
 }
 
@@ -645,6 +645,46 @@ async fn uploads_need_every_server_to_offer_receiver_checkpoints() {
         let prepared = prepare(&downloads(&url, stage), client(false)).await.unwrap();
         assert_eq!(prepared.servers[0].path, Err(refused.clone()), "{stage:?}");
     }
+}
+
+/// A dial before the mint would hold the upload lanes back by its handshakes while the download lanes start.
+#[tokio::test]
+async fn a_run_mints_its_receiver_over_its_throughput_check_s_connection() {
+    let (listener, throughput) = local().await;
+    let mut heads = peer(listener, None, |_, head| match target(head) {
+        "/probe" => Some(ok(include_str!("../../../api/probe.golden.json"))),
+        "/upload/session" => Some(ok(r#"{"uploadId":"u0"}"#)),
+        _ => None,
+    });
+    let elsewhere = format!(
+        r#",{{"baseUrl":"http://localhost:{}","transport":"fetch-stream","protocol":"http1"}}"#,
+        throughput.port()
+    );
+    let (listener, served) = local().await;
+    let _discovery = peer(listener, None, move |_, head| discovery(head, true, &elsewhere));
+    let paths = PathChoice {
+        throughput_origin: Some(origin("http", throughput)),
+        ..PathChoice::default()
+    };
+    let config = Config { paths, ..downloads(&origin("http", served), Stage::Upload) };
+    let prepared = prepare(&config, client(false)).await.unwrap();
+    let paths = prepared.servers[0].path.clone().unwrap();
+    assert_eq!(paths.throughput.origin, origin("http", throughput));
+    let token = CancellationToken::new();
+    let open = UploadSession::open(
+        &prepared.client,
+        &paths.throughput,
+        paths.control,
+        Vec::new(),
+        Duration::ZERO,
+        Arc::default(),
+        token,
+    );
+    drop(open.await.unwrap());
+    let probe = heads.recv().await.unwrap();
+    let mint = heads.recv().await.unwrap();
+    assert_eq!((probe.0, target(&probe.1)), (0, "/probe"));
+    assert_eq!((mint.0, target(&mint.1)), (0, "/upload/session"));
 }
 
 #[tokio::test]

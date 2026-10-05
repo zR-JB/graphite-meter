@@ -61,6 +61,8 @@ pub struct ServerPath {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Paths {
     pub throughput: ThroughputPath,
+    /// The protocol its throughput check went over, unresolved; upload control requests take it and its connection.
+    pub control: Protocol,
     /// When a stage probes latency.
     pub latency: Option<LatencyPath>,
     pub stage_limit: Duration,
@@ -148,11 +150,13 @@ async fn check(
         };
         first(&candidates.latency, checked).await
     };
-    let throughput = first(&candidates.throughput, |path| async move { check_throughput(client, &path).await });
-    let (throughput, latency) = tokio::try_join!(throughput, latency).map_err(|fault| fault.failure())?;
+    let checked = |path: ThroughputPath| async move { Ok((path.protocol, check_throughput(client, &path).await?)) };
+    let throughput = first(&candidates.throughput, checked);
+    let ((control, throughput), latency) = tokio::try_join!(throughput, latency).map_err(|fault| fault.failure())?;
     let (latency, idle_rtt) = latency.unzip();
     Ok(Paths {
         throughput,
+        control,
         latency,
         idle_rtt: idle_rtt.unwrap_or_default(),
         stage_limit: preflight.capabilities.stage_limit(),
@@ -252,6 +256,7 @@ mod tests {
             offered: None,
             path: path.map(|()| Paths {
                 throughput,
+                control: Protocol::Http1,
                 latency: None,
                 stage_limit: REUSE,
                 idle_rtt: Duration::ZERO,
