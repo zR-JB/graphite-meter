@@ -20,15 +20,17 @@ const CONTROL_STREAMS: usize = 4;
 pub(super) const INCOMING_BYTES: u64 = 64 << 10;
 pub(super) const INCOMING_TOTAL_BYTES: u64 = 4 << 20;
 
-/// The request streams of a connection: a client's admission shares and the control streams.
-pub(super) fn max_requests(limits: &Limits) -> u32 {
-    let streams = limits.operations_per_client + limits.sessions_per_client + CONTROL_STREAMS;
-    u32::try_from(streams).unwrap_or(u32::MAX)
+/// The request streams of a connection: a client's admission shares and the control streams, when that fits a QUIC
+/// stream count.
+pub(super) fn max_requests(limits: &Limits) -> Result<u32, String> {
+    let streams = limits.operations_per_client.checked_add(limits.sessions_per_client);
+    let streams = streams.and_then(|streams| u32::try_from(streams.checked_add(CONTROL_STREAMS)?).ok());
+    streams.ok_or_else(|| "per-client stream budgets exceed the QUIC stream limit".into())
 }
 
 /// The transport of every connection, whose floor noq charges when it creates one.
-pub(super) fn transport(limits: &Limits) -> noq::TransportConfig {
-    server_transport(max_requests(limits))
+pub(super) fn transport(limits: &Limits) -> Result<noq::TransportConfig, String> {
+    max_requests(limits).map(server_transport)
 }
 
 /// What a connection holds from accept until noq drops it: its TLS handshake and the HTTP/3 layer's state.
@@ -37,8 +39,8 @@ pub fn floor_bytes(handshake: usize) -> usize {
 }
 
 /// The floor noq itself charges each connection with these limits.
-pub fn noq_floor(limits: &Limits) -> usize {
-    transport(limits).connection_floor_bytes()
+pub fn noq_floor(limits: &Limits) -> Result<usize, String> {
+    transport(limits).map(|transport| transport.connection_floor_bytes())
 }
 
 /// The largest datagram an endpoint reads into one receive segment.

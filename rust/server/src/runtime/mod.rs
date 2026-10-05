@@ -79,7 +79,7 @@ impl Server {
     /// failure closes those bound before it.
     pub async fn bind(mut config: Config) -> Result<Self, String> {
         let (tls, hosts, auth) = (config.tls.clone(), tls::covered_hosts(&config), config.auth.is_some());
-        let terms = Terms::of(&config);
+        let terms = Terms::of(&config)?;
         let endpoint_bytes = Arc::new(AtomicUsize::new(configured_endpoint(&config)?));
         let endpoint = endpoint_bytes.clone();
         // Only QUIC floors grow with the chain.

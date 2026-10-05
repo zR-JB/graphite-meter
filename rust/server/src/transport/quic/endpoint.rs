@@ -145,14 +145,14 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
             .max_incoming(self.limits.connections.div_ceil(shards))
             .incoming_buffer_size(INCOMING_BYTES)
             .incoming_buffer_size_total(INCOMING_TOTAL_BYTES.div_ceil(shards as u64));
-        let mut transport = budget::transport(self.limits);
+        let mut transport = budget::transport(self.limits)?;
         transport.shared_budget(Some(self.app.budget().noq()));
         config.transport_config(Arc::new(transport));
         Ok(Http3 {
             app: self.app.clone(),
             config,
             certificates: self.certificates.clone(),
-            max_requests: budget::max_requests(self.limits) as usize,
+            max_requests: budget::max_requests(self.limits)? as usize,
             shutdown: self.shutdown.clone(),
         })
     }

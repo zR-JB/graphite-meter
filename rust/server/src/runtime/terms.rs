@@ -10,7 +10,7 @@ use crate::{
 /// Refuses a buffer budget below every connection's floor, the QUIC endpoint's buffers before its socket exists and
 /// the download block.
 pub fn check_budget(config: &Config) -> Result<(), String> {
-    Terms::of(config).check(0, configured_endpoint(config)?)
+    Terms::of(config)?.check(0, configured_endpoint(config)?)
 }
 
 /// The QUIC endpoint's buffers without its socket's, or none without HTTP/3.
@@ -34,15 +34,16 @@ pub(super) struct Terms {
 }
 
 impl Terms {
-    pub(super) fn of(config: &Config) -> Self {
-        Self {
+    pub(super) fn of(config: &Config) -> Result<Self, String> {
+        Ok(Self {
             limit: config.max_buffer_bytes,
             connections: config.limits.connections,
             h2: config.listener(ListenerKind::H2).is_some(),
             quic: config
                 .listener(ListenerKind::H3)
-                .map(|_| quic::noq_floor(&config.limits)),
-        }
+                .map(|_| quic::noq_floor(&config.limits))
+                .transpose()?,
+        })
     }
 
     /// Refuses a budget that a QUIC handshake of `handshake` bytes and endpoint buffers of `endpoint` bytes leave
@@ -98,6 +99,21 @@ mod tests {
     }
 
     #[test]
+    fn per_client_stream_budgets_must_fit_a_quic_stream_count() {
+        let max = i64::MAX.to_string();
+        let huge = [
+            ("GM_H3_ADDR", ":7249"),
+            ("GM_MAX_ACTIVE_MEASUREMENTS", &max),
+            ("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", &max),
+            ("GM_MAX_ACTIVE_SESSIONS", &max),
+            ("GM_MAX_SESSIONS_PER_CLIENT", &max),
+        ];
+        let refused = check_budget(&config(&[&TLS[..], &huge[..]].concat()));
+        assert_eq!(refused, Err("per-client stream budgets exceed the QUIC stream limit".into()));
+        assert_eq!(check_budget(&config(&huge[1..])), Ok(()), "only HTTP/3 counts streams");
+    }
+
+    #[test]
     fn http3_adds_its_connection_floor_handshake_and_endpoint_buffers() {
         let env = [
             ("GM_H3_ADDR", ":7249"),
@@ -105,12 +121,16 @@ mod tests {
             ("GM_MAX_CONNECTIONS_PER_CLIENT", "2"),
         ];
         let config = config(&[&TLS[..], &env[..]].concat());
-        assert_eq!(quic::noq_floor(&config.limits) >> 10, 481, "noq's stream floor at default limits");
+        assert_eq!(
+            quic::noq_floor(&config.limits).unwrap() >> 10,
+            481,
+            "noq's stream floor at default limits"
+        );
         let endpoint = configured_endpoint(&config).unwrap();
-        let floor = quic::floor_bytes(0) + quic::noq_floor(&config.limits);
+        let floor = quic::floor_bytes(0) + quic::noq_floor(&config.limits).unwrap();
         let terms = Terms {
             limit: 2 * floor + endpoint + BLOCK_BYTES,
-            ..Terms::of(&config)
+            ..Terms::of(&config).unwrap()
         };
         assert_eq!(terms.check(0, endpoint), Ok(()));
         let refused = terms.check(1, endpoint).unwrap_err();
