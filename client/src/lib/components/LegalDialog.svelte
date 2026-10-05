@@ -36,6 +36,7 @@
   const ECOSYSTEM: Record<string, string> = {
     go: "Go modules",
     "go-toolchain": "Go toolchain",
+    cargo: "Rust crates",
     npm: "npm packages",
     font: "Fonts",
   };
