@@ -2,7 +2,7 @@
 
 use graphite_meter_client::{
     measure::{
-        aggregate::{Aggregate, Boundary, Rate, Reading, Receiver},
+        aggregate::{Aggregate, Boundary, Fed, Rate, Reading, Receiver},
         format,
         latency::{Deadline, Latency, ProbeOutcome},
     },
@@ -25,18 +25,30 @@ fn id(text: &str) -> ServerId {
 struct Receivers(Vec<String>);
 
 impl Receivers {
-    fn get(&mut self, value: &Value, bytes: &str) -> Option<Receiver> {
-        let name = value.get("id")?.as_str()?;
-        let number = match self.0.iter().position(|known| known == name) {
-            Some(number) => number,
-            None => {
-                self.0.push(name.to_owned());
-                self.0.len() - 1
-            }
-        };
-        let nanos = value.get("nanos").map_or(0, |nanos| nanos.as_u64().unwrap());
-        let counters = Counters::new(value[bytes].as_u64().unwrap(), nanos);
-        Some(Receiver { id: number as u32, counters })
+    fn number(&mut self, value: &Value) -> u32 {
+        let name = value["id"].as_str().unwrap();
+        let number = self.0.iter().position(|known| known == name).unwrap_or_else(|| {
+            self.0.push(name.to_owned());
+            self.0.len() - 1
+        });
+        number as u32
+    }
+
+    /// A checkpoint, or none for `null`.
+    fn checkpoint(&mut self, value: &Value) -> Option<Receiver> {
+        if value.is_null() {
+            return None;
+        }
+        let count = |field: &str| value[field].as_u64().unwrap();
+        let counters = Counters::new(count("bytes"), count("nanos"));
+        Some(Receiver { id: self.number(value), counters })
+    }
+
+    fn fed(&mut self, value: &Value) -> Fed {
+        Fed {
+            id: self.number(value),
+            bytes: value["maximum"].as_u64().unwrap(),
+        }
     }
 }
 
@@ -47,10 +59,10 @@ fn boundary(value: &Value, at: Instant, receivers: &mut Receivers) -> Boundary {
         reading(&mut readings, server).down = bytes.as_u64();
     }
     for (server, snapshot) in entries("up") {
-        reading(&mut readings, server).up = receivers.get(snapshot, "bytes");
+        reading(&mut readings, server).up = receivers.checkpoint(snapshot);
     }
     for (server, observed) in entries("observedUp") {
-        reading(&mut readings, server).fed = receivers.get(observed, "maximum");
+        reading(&mut readings, server).fed = Some(receivers.fed(observed));
     }
     Boundary { at, stalled: false, last: value["final"] == true, readings }
 }

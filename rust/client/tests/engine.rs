@@ -2,7 +2,7 @@
 
 use graphite_meter_client::{
     measure::{
-        aggregate::{Reason, Receiver},
+        aggregate::{Fed, Reason, Receiver},
         latency::ProbeOutcome,
     },
     model::{Cadence, Dir, Failure, LaneHealth, Outcome, Scope, Stage, StageResult},
@@ -52,10 +52,14 @@ fn down(server: &str, bytes: u64) -> Sample {
     Sample { down: Some(bytes), ..sample(server) }
 }
 
+fn checkpoint(server: &str, bytes: u64, nanos: u64) -> Sample {
+    let counters = Counters::new(bytes, nanos);
+    Sample { up: Some(Ok(Receiver { id: 0, counters })), ..sample(server) }
+}
+
 /// A checkpoint whose receiver clock runs with the client's.
 fn up(server: &str, bytes: u64, at: Duration) -> Sample {
-    let counters = Counters::new(bytes, at.as_nanos() as u64 + 1);
-    Sample { up: Some(Ok(Receiver { id: 0, counters })), ..sample(server) }
+    checkpoint(server, bytes, at.as_nanos() as u64 + 1)
 }
 
 fn missed(server: &str, reason: FailureReason) -> Sample {
@@ -175,6 +179,24 @@ fn shared_silence_removes_nobody_and_shows_recovering() {
     assert!(script.removed().is_empty());
     assert_eq!(script.recovering, [ms(4000), ms(4250), ms(4500), ms(4750), ms(5000)]);
     assert_eq!(script.at(&Decision::Finish), Some(STAGE));
+}
+
+#[test]
+fn an_upload_server_falls_silent_when_its_ledger_stops_growing_on_the_client_clock() {
+    let mut script = Script::new(plan(Stage::Upload, &["a"], false));
+    script.run(|at| vec![up("a", moved(at, ms(7000)), at.min(ms(7000)))]);
+    assert_eq!(script.removed(), [(STAGE, "a", FailureReason::Timeout)]);
+
+    let mut script = Script::new(plan(Stage::Upload, &["a", "b"], false));
+    script.run(|at| vec![up("a", moved(at, STAGE), at), checkpoint("b", 0, 0)]);
+    assert_eq!(script.removed(), [(ms(2000), "b", FailureReason::Timeout)]);
+
+    let mut script = Script::new(plan(Stage::Upload, &["a", "b"], false));
+    script.run(|at| {
+        let fed = Fed { id: 0, bytes: moved(at, STAGE) };
+        vec![up("a", moved(at, STAGE), at), Sample { fed: Some(fed), ..checkpoint("b", 1000, 1) }]
+    });
+    assert!(script.removed().is_empty());
 }
 
 #[test]

@@ -4,7 +4,7 @@
 
 use crate::{
     measure::{
-        aggregate::{Aggregate, Boundary, Reading, Receiver, Window},
+        aggregate::{Aggregate, Boundary, Fed, Reading, Receiver, Window},
         latency::{Latency, Population, ProbeOutcome},
     },
     model::{
@@ -24,8 +24,6 @@ const FINAL_CHECKPOINT_BUDGET: Duration = Duration::from_millis(500);
 const LATE_TICK: Duration = Duration::from_millis(1500);
 /// Bytes that stop growing this long are silence.
 const SILENCE: Duration = Duration::from_secs(2);
-/// A receiver that sends no record at all is silent only after this long.
-const SILENT_RECEIVER: Duration = Duration::from_secs(4);
 /// Another server that moved this recently makes a silent one's problem its own.
 const QUIET: Duration = Duration::from_millis(500);
 const MISSED_CHECKPOINTS: u32 = 3;
@@ -53,8 +51,7 @@ pub struct Sample {
     pub ready: bool,
     pub down: Option<u64>,
     pub up: Option<Result<Receiver, Failure>>,
-    /// The latest count its upload feed reported.
-    pub fed: Option<Receiver>,
+    pub fed: Option<Fed>,
     pub lanes: Dir<LaneHealth>,
 }
 
@@ -576,16 +573,7 @@ impl Engine {
 
     /// Whether the member's bytes in `direction` stopped growing for the silence limit.
     fn silent(&self, member: &Member, direction: Direction, now: Instant) -> bool {
-        let quiet = now.saturating_duration_since(member.moved[direction]);
-        let receiver = || {
-            self.aggregate
-                .as_ref()
-                .map(|aggregate| aggregate.receiver_quiet(&member.server))
-        };
-        match direction {
-            Direction::Down => quiet >= SILENCE,
-            Direction::Up => quiet >= SILENT_RECEIVER || receiver().is_some_and(|quiet| quiet >= SILENCE),
-        }
+        now.saturating_duration_since(member.moved[direction]) >= SILENCE
     }
 
     /// Finishes once every probing member drained, or at the drain bound.

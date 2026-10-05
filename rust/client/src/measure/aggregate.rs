@@ -16,11 +16,18 @@ const MIN_PEAK: Duration = Duration::from_millis(500);
 /// A stage keeps its latest this many intervals.
 pub const MAX_INTERVALS: usize = 128;
 
-/// One upload receiver's counters; a replacement receiver has another `id`.
+/// One upload receiver's counters; a replacement receiver has a higher `id`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Receiver {
     pub id: u32,
     pub counters: Counters,
+}
+
+/// The highest byte count a receiver's progress feed reported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Fed {
+    pub id: u32,
+    pub bytes: u64,
 }
 
 /// One server's counters at a boundary.
@@ -31,8 +38,7 @@ pub struct Reading {
     pub down: Option<u64>,
     /// A fresh receiver checkpoint.
     pub up: Option<Receiver>,
-    /// The latest count the receiver's progress feed reported.
-    pub fed: Option<Receiver>,
+    pub fed: Option<Fed>,
 }
 
 /// Every server's counters at one instant of the client's clock.
@@ -175,17 +181,9 @@ struct Open {
 struct Ledger {
     server: ServerId,
     down: Option<u64>,
-    up: Option<Received>,
+    /// The current receiver's highest count.
+    up: Option<Fed>,
     bytes: Dir<u64>,
-}
-
-/// The highest count of the current receiver, and its clock then and now.
-#[derive(Debug)]
-struct Received {
-    id: u32,
-    bytes: u64,
-    grew_at: u64,
-    latest: u64,
 }
 
 /// One stage's accounting.
@@ -354,13 +352,6 @@ impl Aggregate {
             .fold(0, u64::saturating_add)
     }
 
-    /// How long `server`'s receiver clock has run since its count last grew.
-    pub fn receiver_quiet(&self, server: &ServerId) -> Duration {
-        let ledger = self.ledgers.iter().find(|ledger| ledger.server == *server);
-        let received = ledger.and_then(|ledger| ledger.up.as_ref());
-        received.map_or(Duration::ZERO, |received| Duration::from_nanos(received.latest - received.grew_at))
-    }
-
     /// Complete intervals with a window, the latest first.
     fn counted(&self) -> impl Iterator<Item = (&Interval, &Window)> {
         let complete = self.intervals.iter().rev().filter(|interval| interval.complete);
@@ -477,32 +468,25 @@ impl Aggregate {
                 ledger.bytes.down = ledger.bytes.down.saturating_add(count.saturating_sub(*high));
                 *high = (*high).max(count);
             }
-            for receiver in reading.fed.iter().chain(&reading.up) {
-                ledger.credit(*receiver);
+            let checkpoint = reading.up.map(|up| Fed { id: up.id, bytes: up.counters.bytes() });
+            for fed in reading.fed.into_iter().chain(checkpoint) {
+                ledger.credit(fed);
             }
         }
     }
 }
 
 impl Ledger {
-    /// Credits growth of the current receiver, and a replacement's whole count.
-    fn credit(&mut self, receiver: Receiver) {
-        let (bytes, nanos) = (receiver.counters.bytes(), receiver.counters.nanos());
-        let fresh = Received { id: receiver.id, bytes, grew_at: nanos, latest: nanos };
-        let Some(received) = &mut self.up else {
-            self.up = Some(fresh);
-            return;
+    /// Credits the current receiver's growth and a newer receiver's whole count.
+    fn credit(&mut self, next: Fed) {
+        let added = match self.up {
+            None => 0,
+            Some(current) if next.id < current.id || next.id == current.id && next.bytes <= current.bytes => return,
+            Some(current) if next.id == current.id => next.bytes - current.bytes,
+            Some(_) => next.bytes,
         };
-        if received.id != receiver.id {
-            self.bytes.up = self.bytes.up.saturating_add(bytes);
-            *received = fresh;
-            return;
-        }
-        received.latest = received.latest.max(nanos);
-        if bytes > received.bytes {
-            self.bytes.up = self.bytes.up.saturating_add(bytes - received.bytes);
-            (received.bytes, received.grew_at) = (bytes, nanos);
-        }
+        self.bytes.up = self.bytes.up.saturating_add(added);
+        self.up = Some(next);
     }
 }
 
@@ -549,6 +533,29 @@ mod tests {
         let window = dropout.window.as_ref().unwrap();
         assert_eq!((window.start, window.end, window.rates.down), (base, ms(2000), Some(1000.0)));
         assert_eq!(aggregate.result(Direction::Down), Some(Rate { mean: 1000.0, peak: 1000.0 }));
+    }
+
+    #[test]
+    fn a_feed_still_naming_a_replaced_receiver_adds_nothing() {
+        let base = Instant::now();
+        let mut aggregate = Aggregate::new(Stage::Upload, vec![id("a")], base);
+        let ticks = [
+            ((0, 1000), (0, 1000, 1)),
+            ((0, 1500), (1, 200, 1)),
+            ((0, 1500), (1, 400, 2)),
+            ((1, 600), (1, 500, 3)),
+        ];
+        for (tick, ((fed_id, fed), (up_id, bytes, nanos))) in (0..).zip(ticks) {
+            let reading = Reading {
+                server: id("a"),
+                down: None,
+                up: Some(Receiver { id: up_id, counters: Counters::new(bytes, nanos) }),
+                fed: Some(Fed { id: fed_id, bytes: fed }),
+            };
+            let at = base + Duration::from_millis(250 * tick);
+            aggregate.observe(Boundary { at, stalled: false, last: false, readings: vec![reading] });
+        }
+        assert_eq!(aggregate.total(Direction::Up), 500 + 200 + 200 + 200);
     }
 
     #[test]
