@@ -77,7 +77,7 @@ async fn send_from<B: http_body::Body>(
     request: Request<B>,
 ) -> Response<Body> {
     match outcome(app, endpoint, peer, request).await {
-        Outcome::Response(response) | Outcome::WebSocket(response, _) => response,
+        Outcome::Response(response) | Outcome::WebSocket(response, _) | Outcome::WebTransport(response, ..) => response,
         Outcome::Abort => panic!("the exchange was aborted"),
     }
 }

@@ -27,7 +27,7 @@ pub(super) struct H3 {
 /// A client connection, its request sender and the task driving it, which ends when the connection closes.
 pub(super) struct Connection {
     pub(super) quic: noq::Connection,
-    requests: client::SendRequest,
+    pub(super) requests: client::SendRequest,
     _driver: JoinHandle<Result<(), Error>>,
     _endpoint: noq::Endpoint,
 }
@@ -100,12 +100,12 @@ impl Connection {
         (recv.response().await.unwrap(), recv)
     }
 
-    async fn json(&self, method: &str, path: &str) -> serde_json::Value {
+    pub(super) async fn json(&self, method: &str, path: &str) -> serde_json::Value {
         let mut body = self.send(method, path, b"").await.1;
         serde_json::from_slice(&read(&mut body).await.unwrap()).unwrap()
     }
 
-    async fn upload_id(&self) -> String {
+    pub(super) async fn upload_id(&self) -> String {
         self.json("POST", "/upload/session").await["uploadId"]
             .as_str()
             .unwrap()
@@ -113,7 +113,7 @@ impl Connection {
     }
 
     /// The code the server closed the connection with, if it did within `bound` of real time.
-    async fn closed_within(&self, bound: Duration) -> Option<Code> {
+    pub(super) async fn closed_within(&self, bound: Duration) -> Option<Code> {
         match tokio::time::timeout(bound, self.quic.closed()).await {
             Ok(noq::ConnectionError::ApplicationClosed(close)) => Some(Code(close.error_code.into_inner())),
             Ok(error) => panic!("closed without an application code: {error:?}"),
@@ -142,7 +142,7 @@ async fn reply(recv: &mut RecvHalf) -> Result<Vec<u8>, Error> {
 }
 
 /// Moves the clock on by `duration` in steps the keep-alives span, so no connection idles out.
-async fn pass(mut duration: Duration) {
+pub(super) async fn pass(mut duration: Duration) {
     while !duration.is_zero() {
         let step = duration.min(STEP);
         advance_clock(step).await;

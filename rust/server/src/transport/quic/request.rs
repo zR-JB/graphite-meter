@@ -1,15 +1,18 @@
 //! HTTP/3 requests: each within its exchange bound until admitted, its body funding the connection's window, and its
-//! reply pumped in 16 KiB frames that yield to siblings on a crowded connection.
+//! reply pumped in 16 KiB frames that yield to siblings on a crowded connection; a CONNECT opens a WebTransport session.
 
 use super::window::{Incoming, Window};
 use crate::{
     app::{App, Connection, Outcome},
     exchange::{Exchange, Watch},
-    transport::body::{Aborted, ReplyBound, Sink, pump, within},
+    transport::{
+        body::{Aborted, Body, ReplyBound, Sink, pump, within},
+        webtransport::{self, ANSWER_BOUND},
+    },
 };
 use bytes::Bytes;
-use graphite_meter_http3::{self as http3, Code, SendHalf, server};
-use http::{Method, Response, StatusCode, response::Parts};
+use graphite_meter_http3::{self as http3, Code, RequestStream, SendHalf, server};
+use http::{Method, Request, Response, response::Parts};
 use http_body::Body as _;
 use std::{
     future::Future,
@@ -62,15 +65,10 @@ impl Requests {
         let Ok((head, stream)) = request.resolve().await else {
             return;
         };
-        let (mut send, recv) = stream.split();
         if head.method() == Method::CONNECT {
-            let mut refusal = Response::new(());
-            *refusal.status_mut() = StatusCode::NOT_FOUND;
-            if send.send_response(refusal).await.is_ok() {
-                let _ = send.finish().await;
-            }
-            return;
+            return self.connect(head, stream, exchange).await;
         }
+        let (send, recv) = stream.split();
         let bodiless = head.method() == Method::HEAD;
         let request = head.map(|()| Incoming::new(recv, watch.clone(), self.window.clone()));
         let Outcome::Response(response) = self.app.handle(request, &self.connection, exchange).await else {
@@ -88,6 +86,22 @@ impl Requests {
             stopped: None,
         };
         let _ = pump(&mut reply, response, bodiless).await;
+    }
+
+    /// A CONNECT: its WebTransport session, or the app's answer within `ANSWER_BOUND`.
+    async fn connect(&self, head: Request<()>, stream: RequestStream, exchange: Exchange) {
+        let request = head.map(|()| Body::empty());
+        match self.app.handle(request, &self.connection, exchange).await {
+            Outcome::WebTransport(response, lane, plan) => {
+                webtransport::serve(stream, response.into_parts().0.headers, lane, plan).await;
+            }
+            Outcome::Response(response) => {
+                let (send, _recv) = stream.split();
+                let mut reply = Reply { send, large: None, stopped: None };
+                let _ = tokio::time::timeout(ANSWER_BOUND, pump(&mut reply, response, false)).await;
+            }
+            Outcome::WebSocket(..) | Outcome::Abort => {}
+        }
     }
 }
 

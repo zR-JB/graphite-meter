@@ -133,7 +133,7 @@ async fn respond(
             shared.post(Limit::Open);
             Ok(response.map(|body| Reply { body, shared }))
         }
-        Outcome::Abort => Err(io::ErrorKind::ConnectionAborted.into()),
+        Outcome::WebTransport(..) | Outcome::Abort => Err(io::ErrorKind::ConnectionAborted.into()),
     }
 }
 

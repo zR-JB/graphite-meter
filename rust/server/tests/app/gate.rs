@@ -52,6 +52,27 @@ async fn unmounted_routes_are_not_found_and_mounted_ones_check_their_methods() {
 }
 
 #[tokio::test]
+async fn webtransport_sessions_are_admitted_before_their_upgrade() {
+    let app = app(&[ALL_LISTENERS.as_slice(), &[("GM_MAX_SESSIONS_PER_CLIENT", "1")]].concat());
+    let connect = async |path: &str| outcome(&app, Endpoint::Quic, "192.0.2.1", empty(request("CONNECT", path))).await;
+    let Outcome::WebTransport(accepted, download, _) = connect("/wt/download").await else {
+        panic!("a session");
+    };
+    assert_eq!(accepted.status(), StatusCode::OK);
+    assert_eq!(header(&accepted, "access-control-allow-origin"), Some("*"));
+    let Outcome::Response(refused) = connect("/wt/download").await else {
+        panic!("a refusal");
+    };
+    assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS, "one transfer session per client");
+    let Outcome::WebTransport(_, ping, _) = connect("/wt/ping").await else {
+        panic!("a bus");
+    };
+    assert_eq!(active(&app).await, 2, "the bus is an operation beside the session");
+    drop((download, ping));
+    assert_eq!(active(&app).await, 0);
+}
+
+#[tokio::test]
 async fn a_request_head_over_32_kib_is_refused() {
     let app = app(&[]);
     let fixed = "GET".len() + "/nope".len() + 14 + "host".len() + "speed.example".len() + 4 + "x-fill".len() + 4;

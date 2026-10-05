@@ -31,7 +31,7 @@ impl Block {
 }
 
 /// One download's remaining payload, handed out as slices of the block without copying.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DownloadSource {
     block: Bytes,
     remaining: u64,

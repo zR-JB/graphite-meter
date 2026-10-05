@@ -21,7 +21,7 @@ use crate::{
     lane::{Lane, Work},
     limits::{Budget, Hold, Pressure, Quotas, Refusal, Transport},
     peer::{ClientKeys, Peer},
-    transport::{body::Body, websocket},
+    transport::{body::Body, websocket, webtransport::Plan},
 };
 use bytes::Buf;
 use gate::Gate;
@@ -65,6 +65,8 @@ pub enum Outcome {
     Response(Response<Body>),
     /// Writes the `101`, then carries the WebSocket bus that the lane bounds.
     WebSocket(Response<Body>, Lane),
+    /// Accepts the WebTransport session with the head's fields, then serves the plan over the lane.
+    WebTransport(Response<Body>, Lane, Plan),
     /// Ends the exchange without an answer: an HTTP/1 connection closes, an HTTP/2 or HTTP/3 stream resets.
     Abort,
 }
@@ -166,6 +168,10 @@ impl App {
                         self.finalize(&mut response, route, bootstrap, version);
                         return Outcome::WebSocket(response, lane);
                     }
+                    Outcome::WebTransport(mut response, lane, plan) => {
+                        self.finalize(&mut response, route, bootstrap, version);
+                        return Outcome::WebTransport(response, lane, plan);
+                    }
                     Outcome::Abort => return Outcome::Abort,
                 }
             }
@@ -198,6 +204,7 @@ impl App {
         let response = match route {
             Route::Upload => return self.receive(request, peer, connection, exchange).await,
             Route::Ping => return self.websocket(&request, peer, connection, exchange),
+            Route::WtDownload | Route::WtPing => return self.webtransport(&request, route, peer, connection, exchange),
             Route::Download => self.download(&request, peer, connection, exchange),
             Route::UploadProgress => self.progress(&request, peer, connection, exchange),
             Route::Probe => self.probe(peer, connection.endpoint),
@@ -206,18 +213,59 @@ impl App {
             Route::UploadSession => self.upload_session(),
             Route::UploadCheckpoint => self.checkpoint(&request, peer),
             Route::WtSession | Route::WsSession => self.ticket(),
-            // No transport serves these yet.
-            Route::WtDownload | Route::WtUpload | Route::WtPing => response::status(StatusCode::NOT_IMPLEMENTED),
+            // No transport serves it yet.
+            Route::WtUpload => response::status(StatusCode::NOT_IMPLEMENTED),
         };
         Outcome::Response(response)
     }
 
     /// Admits a request as a lane holding a measurement handler for the operation lifetime.
     pub(super) fn admit(&self, peer: &Peer, connection: &Connection, exchange: Exchange) -> Result<Lane, Unadmitted> {
+        self.admit_as(peer, connection, exchange, false)
+    }
+
+    /// Admits a lane holding a handler for the operation lifetime, or a `session` for the session lifetime.
+    fn admit_as(
+        &self,
+        peer: &Peer,
+        connection: &Connection,
+        exchange: Exchange,
+        session: bool,
+    ) -> Result<Lane, Unadmitted> {
         let keys = peer.keys().ok_or(Unadmitted::Ambiguous)?;
-        let hold = self.quotas.operation(&keys).map_err(Unadmitted::Busy)?;
-        let lifetime = self.config.lifetimes.operation;
+        let lifetimes = &self.config.lifetimes;
+        let (hold, lifetime) = match session {
+            true => (self.quotas.session(&keys), lifetimes.session),
+            false => (self.quotas.operation(&keys), lifetimes.operation),
+        };
+        let hold = hold.map_err(Unadmitted::Busy)?;
         Ok(exchange.admit(keys, hold, lifetime, &connection.work, &self.shutdown, peer.auth()))
+    }
+
+    /// A WebTransport session, admitted before its upgrade: `/wt/ping` as an operation, the transfer routes as
+    /// sessions.
+    fn webtransport<B>(
+        &self,
+        request: &Request<B>,
+        route: Route,
+        peer: &Peer,
+        connection: &Connection,
+        exchange: Exchange,
+    ) -> Outcome {
+        let lane = match self.admit_as(peer, connection, exchange, route != Route::WtPing) {
+            Ok(lane) => lane,
+            Err(unadmitted) => return Outcome::Response(unadmitted.into()),
+        };
+        let query = request.uri().query();
+        let plan = match route {
+            Route::WtDownload => Plan::Download {
+                source: self.block.source(query::transfer_bytes(query)),
+                streams: query::streams(query),
+                datagrams: query::datagrams(query),
+            },
+            _ => Plan::Ping,
+        };
+        Outcome::WebTransport(response::empty(StatusCode::OK), lane, plan)
     }
 
     /// The WebSocket bus, admitted before its handshake is checked.

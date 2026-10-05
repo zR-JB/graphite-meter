@@ -8,6 +8,7 @@ pub mod lifecycle;
 pub mod quic;
 pub mod tls;
 pub mod websocket;
+pub mod webtransport;
 
 use crate::log::RateLimited;
 

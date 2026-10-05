@@ -168,7 +168,7 @@ impl Http2 {
                         let mut reply = Reply { respond: &mut respond, stream: None };
                         pump(&mut reply, response, head).await
                     }
-                    Outcome::WebSocket(..) | Outcome::Abort => Err(Aborted),
+                    Outcome::WebSocket(..) | Outcome::WebTransport(..) | Outcome::Abort => Err(Aborted),
                 }
             };
             let ended = tokio::select! {

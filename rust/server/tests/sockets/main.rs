@@ -1,5 +1,5 @@
 //! The running server over real sockets: HTTP/1, HTTP/2 and HTTP/3 transfers and their endings, connection bounds,
-//! WebSocket buses and TLS.
+//! WebSocket buses, WebTransport sessions and TLS.
 
 mod connection;
 mod http2;
@@ -8,6 +8,7 @@ mod quic;
 mod tls;
 mod transfer;
 mod websocket;
+mod webtransport;
 
 use graphite_meter_server::{
     app::Endpoint,
