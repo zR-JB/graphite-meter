@@ -6,7 +6,7 @@ use graphite_meter_client::{
         latency::ProbeOutcome,
     },
     model::{Cadence, Dir, Failure, LaneHealth, Outcome, Scope, Stage, StageResult},
-    run::engine::{Decision, Engine, Input, Probe, Sample, StagePlan, stagger, warmup},
+    run::engine::{Decision, Engine, Input, Probe, Sample, StagePlan, lateness, stagger, warmup},
 };
 use graphite_meter_proto::{catalog::ServerId, reason::FailureReason, upload::Counters};
 use std::time::{Duration, Instant};
@@ -127,6 +127,14 @@ impl Script {
             .map(|(at, _)| *at)
     }
 
+    /// When the window opened and when it closes.
+    fn window(&self) -> Option<(Duration, Duration)> {
+        self.log.iter().find_map(|(_, decision)| match decision {
+            Decision::OpenWindow { start, end } => Some((*start - self.base, *end - self.base)),
+            _ => None,
+        })
+    }
+
     fn removed(&self) -> Vec<(Duration, &str, FailureReason)> {
         let removals = self.log.iter().filter_map(|(at, decision)| match decision {
             Decision::Remove(server, failure) => Some((*at, server.as_str(), failure.reason)),
@@ -143,7 +151,8 @@ fn a_quiet_link_never_ends_a_stage() {
         let bytes = if at < ms(6000) { moved(at, ms(1000)) } else { moved(at, STAGE) - 5_000_000 };
         vec![down("a", bytes)]
     });
-    assert_eq!(script.at(&Decision::OpenWindow), Some(Duration::ZERO));
+    assert_eq!(script.window(), Some((Duration::ZERO, STAGE)));
+    assert_eq!(script.at(&Decision::CloseWindow), Some(STAGE));
     assert_eq!(script.at(&Decision::Finish), Some(STAGE));
     assert!(script.removed().is_empty());
     assert_eq!(script.recovering.first(), Some(&ms(3000)));
@@ -235,13 +244,21 @@ fn a_refused_grant_leaves_at_once_asking_for_sign_in() {
         };
         vec![up("a", moved(at, STAGE), at), b]
     });
-    assert_eq!(script.at(&Decision::OpenWindow), Some(Duration::ZERO));
+    assert_eq!(script.window(), Some((Duration::ZERO, STAGE)));
     assert_eq!(script.removed(), [(ms(3000), "b", FailureReason::SignInRequired)]);
 }
 
+fn intervals(result: &StageResult) -> Vec<(Reason, bool)> {
+    let intervals = result.intervals.iter();
+    intervals.map(|interval| (interval.reason, interval.complete)).collect()
+}
+
 #[test]
-fn a_late_tick_resumes_evidence_and_a_slow_checkpoint_does_not() {
-    for (stage, lateness, resumed) in [(Stage::Download, ms(1600), true), (Stage::Upload, ms(0), false)] {
+fn a_late_timer_resumes_evidence_and_a_slow_checkpoint_does_not() {
+    // The tick at 3 s wants the next at 3.25 s and returns at once, or at 4.5 s after slow checkpoints.
+    for (stage, fired, returned, resumed) in
+        [(Stage::Download, ms(4800), ms(3000), true), (Stage::Upload, ms(4500), ms(4500), false)]
+    {
         let mut script = Script::new(plan(stage, &["a"], false));
         let samples = |at: Duration| {
             vec![Sample {
@@ -250,20 +267,40 @@ fn a_late_tick_resumes_evidence_and_a_slow_checkpoint_does_not() {
             }]
         };
         script.run_until(ms(3000), samples);
-        script.tick(ms(4600), lateness, &samples(ms(4600)), &[]);
+        assert_eq!(script.next, ms(3250));
+        let at = |offset| script.base + offset;
+        let late = lateness(at(fired), at(script.next), at(returned));
+        script.tick(fired, late, &samples(fired), &[]);
         script.run(samples);
-        let result = script.engine.result();
-        let reasons: Vec<_> = result
-            .intervals
-            .iter()
-            .map(|interval| (interval.reason, interval.complete))
-            .collect();
-        match resumed {
-            true => assert_eq!(reasons, [(Reason::StageStart, false), (Reason::EvidenceResumed, true)], "{stage:?}"),
-            false => assert_eq!(reasons, [(Reason::StageStart, true)], "{stage:?}"),
-        }
-        assert!(script.removed().is_empty());
+        let expected = match resumed {
+            true => vec![(Reason::StageStart, false), (Reason::EvidenceResumed, true)],
+            false => vec![(Reason::StageStart, true)],
+        };
+        assert_eq!(intervals(&script.engine.result()), expected, "{stage:?}");
     }
+}
+
+#[test]
+fn a_late_final_boundary_keeps_the_headline() {
+    let mut script = Script::new(plan(Stage::Download, &["a"], false));
+    let samples = |at: Duration| vec![down("a", moved(at, STAGE * 2))];
+    script.run_until(STAGE - ms(250), samples);
+    script.tick(STAGE + ms(1600), ms(1600), &samples(STAGE + ms(1600)), &[]);
+    assert!(script.finished());
+    let result = script.engine.result();
+    assert_eq!(intervals(&result), [(Reason::StageStart, true)]);
+    assert!(result.throughput.down.unwrap().rate.is_some());
+}
+
+#[test]
+fn probers_drain_after_the_window_for_at_most_ten_seconds() {
+    let mut script = Script::new(plan(Stage::Latency, &["a"], true));
+    let up = [(id("a"), Probe::Up { at: script.base })];
+    script.tick(Duration::ZERO, Duration::ZERO, &[], &up);
+    script.run(|_| Vec::new());
+    assert_eq!(script.window(), Some((Duration::ZERO, STAGE)));
+    assert_eq!(script.at(&Decision::CloseWindow), Some(STAGE));
+    assert_eq!(script.at(&Decision::Finish), Some(STAGE + ms(10_000)));
 }
 
 #[test]
@@ -294,7 +331,7 @@ fn readiness_past_ten_seconds_removes_the_unready() {
     let mut script = Script::new(plan(Stage::Download, &["a", "b"], false));
     script.run(|at| vec![down("a", moved(at, STAGE * 2)), Sample { ready: false, ..down("b", 0) }]);
     assert_eq!(script.removed(), [(STAGE, "b", FailureReason::Timeout)]);
-    assert_eq!(script.at(&Decision::OpenWindow), Some(STAGE));
+    assert_eq!(script.window(), Some((STAGE, STAGE * 2)));
     assert_eq!(script.at(&Decision::Finish), Some(STAGE * 2));
 }
 

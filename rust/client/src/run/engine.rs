@@ -78,7 +78,7 @@ pub enum Probe {
 pub struct Input<'a> {
     /// When the samples were taken.
     pub now: Instant,
-    /// How late the timer fired, without the time spent gathering checkpoints.
+    /// `lateness(fired, previous Tick.next, when the previous tick returned)`; zero for the first tick.
     pub lateness: Duration,
     pub samples: &'a [Sample],
     pub probes: &'a [(ServerId, Probe)],
@@ -86,15 +86,15 @@ pub struct Input<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
-    /// The measured window opened at this tick.
-    OpenWindow,
+    /// The measured window: probes sent in it count, and it closes at `end`.
+    OpenWindow { start: Instant, end: Instant },
     /// The next tick's samples carry checkpoints gathered within `budget`; `last` for the final boundary.
-    Checkpoint {
-        budget: Duration,
-        last: bool,
-    },
+    Checkpoint { budget: Duration, last: bool },
+    /// The window closed: lanes stop, upload sessions finish and probers drain.
+    CloseWindow,
     /// The member leaves the run for this failure.
     Remove(ServerId, Failure),
+    /// The stage is over: every participant ends.
     Finish,
 }
 
@@ -465,7 +465,8 @@ impl Engine {
             self.aggregate = Some(aggregate);
         }
         self.phase = Phase::Measuring;
-        tick.decisions.push(Decision::OpenWindow);
+        tick.decisions
+            .push(Decision::OpenWindow { start: now, end: now + self.plan.duration });
         self.schedule(now, tick);
     }
 
@@ -481,20 +482,15 @@ impl Engine {
     }
 
     fn measure(&mut self, input: &Input, tick: &mut Tick) {
-        let Some((_, end)) = self.window else { return };
-        if self.aggregate.is_none() {
-            if input.now >= end {
-                (self.ended, self.phase) = (Some(end), Phase::Draining);
-            }
-            tick.next = tick.next.min(end);
-            return;
+        let last = self.last && self.window.is_some_and(|(_, end)| input.now >= end);
+        if self.aggregate.is_some() {
+            self.observe(input, last, tick);
         }
-        let last = self.last && input.now >= end;
-        self.observe(input, last, tick);
-        match last {
-            true => (self.ended, self.phase) = (Some(input.now), Phase::Draining),
-            false => self.schedule(input.now, tick),
+        if !last {
+            return self.schedule(input.now, tick);
         }
+        (self.ended, self.phase) = (Some(input.now), Phase::Draining);
+        tick.decisions.push(Decision::CloseWindow);
     }
 
     /// Credits the boundary, then removes members whose checkpoints or bytes fail them.
@@ -600,11 +596,17 @@ impl Engine {
         };
         Boundary {
             at: input.now,
-            stalled: input.lateness > LATE_TICK,
+            stalled: !last && input.lateness > LATE_TICK,
             last,
             readings: present.map(reading).collect(),
         }
     }
+}
+
+/// How late a tick's timer fired: from when it was due, or from when the previous tick returned if that was later, so
+/// time spent gathering checkpoints never counts.
+pub fn lateness(fired: Instant, due: Instant, returned: Instant) -> Duration {
+    fired.saturating_duration_since(due.max(returned))
 }
 
 /// The warmup before a stage: `base` stretched to ten idle round trips of the slowest server, at most 4 s.
