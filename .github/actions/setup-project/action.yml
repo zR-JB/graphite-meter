@@ -85,6 +85,14 @@ runs:
         install_args: --locked ${{ steps.tools.outputs.install-args }}
         cache: ${{ inputs.cache }}
 
+    # Python on Windows names its interpreter python.exe only; the steps below run python3.
+    - name: Name the pinned Python python3 on Windows
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        python=$(mise which python)
+        cp "$python" "$(dirname "$python")/python3.exe"
+
     - id: versions
       name: Read toolchain metadata and keep task installs explicit
       shell: bash

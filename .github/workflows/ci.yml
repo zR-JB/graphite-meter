@@ -270,6 +270,31 @@ jobs:
             ${{ runner.temp }}/browser-*/*.json
           if-no-files-found: ignore
 
+  rust-windows:
+    name: Rust client tests on Windows
+    runs-on: windows-latest
+    timeout-minutes: 30
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    defaults:
+      run: {shell: bash}
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      # Tests compare checked-in text byte for byte.
+      - name: Check out text with its committed line endings
+        run: git config --global core.autocrlf false
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up Rust
+        uses: ./.github/actions/setup-project
+        with: {rust: 'true'}
+      - name: Run the client crate's unit and process tests
+        working-directory: rust
+        run: cargo test --locked -p graphite-meter-client --lib --tests
+
   # Temporary: this branch's server against PR #210's on one runner.
   rust-perf:
     name: Rust perf smoke against PR 210
@@ -341,7 +366,8 @@ jobs:
     name: Gate
     runs-on: ubuntu-24.04
     if: always()
-    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-perf]
+    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-windows,
+      rust-perf]
     steps:
       - name: Require every selected job
         env:
