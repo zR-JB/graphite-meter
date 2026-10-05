@@ -457,6 +457,18 @@ test("History refuses other database versions without changing them", async (pag
     });
     await expect(refusal).toBeVisible(OPEN_BOUND);
     await page.getByRole("button", { name: "Retry", exact: true }).click();
+    // The refusal shows before an upgrade's abort settles, and was already shown before Retry. Chrome 153's
+    // renderer crashes when an open races an aborting upgrade, so read once both of History's opens settled.
+    await expect
+      .poll(async () => {
+        const { opens } = await page.storage();
+        const history = opens.filter((o) => o.version === HISTORY_DB.version);
+        const settled = history.filter(({ events }) =>
+          events.some((event) => /^(success|error)/.test(event)),
+        );
+        return { opened: history.length, settled: settled.length };
+      }, OPEN_BOUND)
+      .toEqual({ opened: 2, settled: 2 });
     await expect(refusal).toBeVisible(OPEN_BOUND);
     expect(await stored(page)).toEqual(before);
   }
