@@ -16,7 +16,7 @@ use crate::{
         accept::{self, Listen},
         http1::Http1,
         http2::Http2,
-        quic::{self, Http3},
+        quic::{Binding, Endpoints},
         tls::{self, Certificates},
     },
 };
@@ -60,14 +60,14 @@ struct Listening {
 enum Socket {
     Http1(TcpListener, Option<TlsAcceptor>),
     Http2(TcpListener, TlsAcceptor),
-    Quic(Box<(quic::Listener, Http3)>),
+    Quic(Box<Endpoints>),
 }
 
 impl Socket {
     fn local_addr(&self) -> io::Result<SocketAddr> {
         match self {
             Self::Http1(socket, _) | Self::Http2(socket, _) => socket.local_addr(),
-            Self::Quic(quic) => quic.0.local_addr(),
+            Self::Quic(quic) => quic.listeners[0].local_addr(),
         }
     }
 }
@@ -104,13 +104,17 @@ impl Server {
             .iter()
             .find(|listening| listening.endpoint == Endpoint::H3Companion);
         if let (Some(companion), Some(certificates)) = (companion, &certificates) {
-            let covered = |bytes| {
-                terms.check(certificates.handshake_bytes(), bytes)?;
-                endpoint_bytes.store(bytes, Ordering::Relaxed);
-                Ok(())
+            let fits = |bytes| terms.check(certificates.handshake_bytes(), bytes);
+            let binding = Binding {
+                app: &app,
+                limits: &limits,
+                certificates,
+                fits,
+                shutdown: &shutdown,
             };
             let local = companion.socket.local_addr().map_err(|error| error.to_string())?;
-            let bound = quic::bind(local, pool.next(), &app, &limits, certificates, covered, &shutdown)?;
+            let bound = binding.bind(local, &pool)?;
+            endpoint_bytes.store(bound.bytes, Ordering::Relaxed);
             let (endpoint, address) = (Endpoint::Quic, companion.address.clone());
             listeners.push(Listening { endpoint, address, socket: Socket::Quic(Box::new(bound)) });
         }
@@ -121,6 +125,15 @@ impl Server {
     pub fn local_addr(&self, endpoint: Endpoint) -> Option<SocketAddr> {
         let listening = self.listeners.iter().find(|listening| listening.endpoint == endpoint)?;
         listening.socket.local_addr().ok()
+    }
+
+    /// How many endpoints share the HTTP/3 port, for observation.
+    pub fn quic_endpoints(&self) -> usize {
+        let quic = self.listeners.iter().find_map(|listening| match &listening.socket {
+            Socket::Quic(quic) => Some(quic.listeners.len()),
+            _ => None,
+        });
+        quic.unwrap_or(0)
     }
 
     /// The buffer budget every listener draws on, for observation.
@@ -136,27 +149,31 @@ impl Server {
         for Listening { endpoint, address, socket } in listeners {
             let role = endpoint.role(auth);
             let (app, shutdown, next) = (app.clone(), shutdown.clone(), || pool.next());
-            let (service, protocol) = match socket {
+            let protocol = match socket {
                 Socket::Http1(socket, tls) => {
                     let http1 = Http1 { app: app.clone(), endpoint, tls, shutdown };
                     let serve = move |socket, peer| http1.connection(socket, peer);
-                    (listen(app, socket, next, stopping, role, Transport::Tcp, serve), "tcp")
+                    services.push(listen(app, socket, next, stopping, role, Transport::Tcp, serve));
+                    "tcp"
                 }
                 Socket::Http2(socket, tls) => {
                     let http2 = Http2 { app: app.clone(), tls, shutdown };
                     let serve = move |socket, peer| http2.connection(socket, peer);
-                    (listen(app, socket, next, stopping, role, Transport::Tcp, serve), "tcp")
+                    services.push(listen(app, socket, next, stopping, role, Transport::Tcp, serve));
+                    "tcp"
                 }
                 Socket::Quic(quic) => {
-                    let (listener, http3) = *quic;
-                    let runtime = listener.runtime();
-                    let serve = move |incoming, peer| http3.connection(incoming, peer);
-                    let next = move || runtime.clone();
-                    (listen(app, listener, next, stopping, role, Transport::Quic, serve), "udp")
+                    // Each endpoint's connections run on its runtime.
+                    for listener in quic.listeners {
+                        let (runtime, http3) = (listener.runtime(), quic.http3.clone());
+                        let serve = move |incoming, peer| http3.connection(incoming, peer);
+                        let next = move || runtime.clone();
+                        services.push(listen(app.clone(), listener, next, stopping, role, Transport::Quic, serve));
+                    }
+                    "udp"
                 }
             };
             log!("graphite-meter {ENGINE_VERSION} listening on {address}/{protocol} ({role})");
-            services.push(service);
         }
         if let Some(certificates) = certificates {
             services.push(Box::pin(async move {

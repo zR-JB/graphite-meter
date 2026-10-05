@@ -24,7 +24,7 @@ async fn initial(h3: &H3) -> Vec<u8> {
 }
 
 /// Whether the server answers an Initial from the local address `source` with a Retry rather than its own Initial.
-async fn retried(h3: &H3, source: &str) -> bool {
+pub(super) async fn retried(h3: &H3, source: &str) -> bool {
     let socket = UdpSocket::bind(format!("{source}:0")).await.unwrap();
     socket
         .send_to(&initial(h3).await, h3.server.quic.unwrap())

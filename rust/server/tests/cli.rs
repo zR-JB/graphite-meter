@@ -169,6 +169,77 @@ fn verbose_logs_report_throughput_and_sigterm_ends_a_running_download() {
     assert!(elapsed < std::time::Duration::from_secs(2), "stopped after {elapsed:?}");
 }
 
+/// What a server with HTTP/3 and four connections holds on a current-thread runtime, so on one endpoint: every
+/// connection's floor with the download block, and the endpoint's buffers.
+fn single_endpoint_terms(env: &[(&str, &str)]) -> (usize, usize) {
+    use graphite_meter_server::{config, runtime::Server};
+    let lookup = |name: &str| env.iter().find(|(key, _)| *key == name).map(|(_, value)| value.into());
+    let config = |budget: &str| {
+        let lookup = |name: &str| match name {
+            "GM_MAX_BUFFER_BYTES" => Some(budget.into()),
+            _ => lookup(name),
+        };
+        let loaded = config::load(lookup, Vec::<std::ffi::OsString>::new(), &mut Vec::new());
+        let Ok(config::Loaded::Config(config)) = loaded else { panic!("{loaded:?}") };
+        *config
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let server = Server::bind(config("8589934592")).await.unwrap();
+        let endpoint = server.budget().usage().reserved;
+        let refusal = Server::bind(config("1")).await.err().unwrap();
+        let term = |suffix: &str| -> usize {
+            let before = refusal.split(suffix).next().unwrap();
+            before.rsplit(' ').next().unwrap().parse().unwrap()
+        };
+        (term(": GM_MAX_CONNECTIONS") - term(" bytes of QUIC endpoint buffers"), endpoint)
+    })
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_budget_covering_fewer_quic_endpoints_than_planned_logs_how_many() {
+    use graphite_meter_testkit::{Identity, Scratch};
+    use std::io::{BufRead, BufReader};
+    let (scratch, identity) = (Scratch::new().unwrap(), Identity::generate().unwrap());
+    let cert = scratch.file("cert.pem", &identity.certificate).unwrap();
+    let key = scratch.file("key.pem", &identity.key).unwrap();
+    let mut env = vec![
+        ("GM_H1_ADDR", "127.0.0.1:0"),
+        ("GM_H3_ADDR", "127.0.0.7:0"),
+        ("GM_TLS_CERT", cert.to_str().unwrap()),
+        ("GM_TLS_KEY", key.to_str().unwrap()),
+        ("GM_MAX_CONNECTIONS", "4"),
+        ("GM_MAX_CONNECTIONS_PER_CLIENT", "4"),
+    ];
+    // Two endpoints hold more than one, so a budget covering exactly one falls back to it.
+    let (rest, endpoint) = single_endpoint_terms(&env);
+    let budget = (rest + endpoint).to_string();
+    env.extend([("GM_MAX_BUFFER_BYTES", budget.as_str()), ("TOKIO_WORKER_THREADS", "4")]);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphite-meter-server"))
+        .env_clear()
+        .envs(env)
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut lines = BufReader::new(child.stderr.take().unwrap())
+        .lines()
+        .map_while(Result::ok);
+    let messages: Vec<_> = lines
+        .by_ref()
+        .map(|line| logged(&line).to_owned())
+        .take_while(|message| !message.contains("/udp ("))
+        .collect();
+    let line = "[gm:memory] the buffer budget covers 1 of 2 QUIC endpoints";
+    assert!(messages.iter().any(|message| message == line), "{messages:?}");
+    let killed = Command::new("kill").args(["-TERM", &child.id().to_string()]).status();
+    assert!(killed.unwrap().success());
+    assert!(child.wait().unwrap().success());
+}
+
 #[test]
 fn runtime_failures_log_a_server_error_and_exit_one() {
     let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

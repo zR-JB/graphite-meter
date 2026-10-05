@@ -5,6 +5,7 @@ mod connection;
 mod http2;
 mod http3;
 mod quic;
+mod shards;
 mod shutdown;
 mod tls;
 mod transfer;
@@ -56,6 +57,8 @@ struct Running {
     h2: Option<SocketAddr>,
     quic: Option<SocketAddr>,
     companion: Option<SocketAddr>,
+    /// The endpoints sharing the HTTP/3 port.
+    endpoints: usize,
     budget: Budget,
     stop: oneshot::Sender<()>,
     task: JoinHandle<Result<(), String>>,
@@ -66,11 +69,22 @@ async fn start(env: &[(&str, &str)]) -> Running {
     let (address, tls) = (server.local_addr(Endpoint::H1).unwrap(), server.local_addr(Endpoint::H1Tls));
     let (h2, quic) = (server.local_addr(Endpoint::H2), server.local_addr(Endpoint::Quic));
     let (companion, budget) = (server.local_addr(Endpoint::H3Companion), server.budget());
+    let endpoints = server.quic_endpoints();
     let (stop, stopped) = oneshot::channel();
     let task = tokio::spawn(server.serve(async {
         let _ = stopped.await;
     }));
-    Running { address, tls, h2, quic, companion, budget, stop, task }
+    Running {
+        address,
+        tls,
+        h2,
+        quic,
+        companion,
+        endpoints,
+        budget,
+        stop,
+        task,
+    }
 }
 
 impl Running {

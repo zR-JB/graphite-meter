@@ -29,7 +29,7 @@ pub(super) struct Connection {
     pub(super) quic: noq::Connection,
     pub(super) requests: client::SendRequest,
     _driver: JoinHandle<Result<(), Error>>,
-    _endpoint: noq::Endpoint,
+    pub(super) endpoint: noq::Endpoint,
 }
 
 impl H3 {
@@ -65,7 +65,7 @@ impl H3 {
         let quic = connecting.unwrap().await?;
         let (mut driver, requests) = client::new(quic.clone());
         let driver = tokio::spawn(async move { driver.drive().await });
-        Ok(Connection { quic, requests, _driver: driver, _endpoint: endpoint })
+        Ok(Connection { quic, requests, _driver: driver, endpoint })
     }
 }
 

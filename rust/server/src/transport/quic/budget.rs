@@ -41,23 +41,26 @@ pub fn noq_floor(limits: &Limits) -> usize {
     transport(limits).connection_floor_bytes()
 }
 
-/// The largest datagram the endpoint reads into one receive segment.
-fn packet_bytes(config: &noq::EndpointConfig) -> Option<usize> {
+/// The largest datagram an endpoint reads into one receive segment.
+pub(super) fn packet_bytes(config: &noq::EndpointConfig) -> Option<usize> {
     usize::try_from(config.get_max_udp_payload_size().min(64 << 10)).ok()
 }
 
-/// The endpoint's buffers: its receive batch, the first packet of each handshake awaiting accept, the queued
-/// handshake packets and the socket's `kernel` buffer bytes.
+/// One of `shards` endpoints' buffers: its receive batch, the first packet of each handshake its part of the incoming
+/// limits admits, its part of their queued packets, its forwarding queue and its socket's `kernel` buffer bytes.
 pub fn endpoint_bytes(
     config: &noq::EndpointConfig,
+    shards: usize,
     connections: usize,
     kernel: usize,
     segments: usize,
 ) -> Option<usize> {
     let packet = packet_bytes(config)?;
+    let queue = if shards > 1 { super::shard::queue_bytes(packet)? } else { 0 };
     noq::receive_batch_bytes(packet, segments)
-        .checked_add(packet.checked_mul(connections.checked_add(1)?)?)?
-        .checked_add(INCOMING_TOTAL_BYTES as usize)?
+        .checked_add(packet.checked_mul(connections.div_ceil(shards).checked_add(1)?)?)?
+        .checked_add((INCOMING_TOTAL_BYTES as usize).div_ceil(shards))?
+        .checked_add(queue)?
         .checked_add(kernel)
 }
 
