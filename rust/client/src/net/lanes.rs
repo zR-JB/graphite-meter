@@ -138,16 +138,22 @@ impl Lanes {
         let plans: Vec<_> = plans.into_iter().filter(|plan| plan.direction == direction).collect();
         let count = plans.iter().map(|plan| plan.lanes.len()).sum();
         let tally = Arc::new(Tally { retrying: Mutex::new(vec![None; count]), ..Tally::default() });
-        let job = match work {
-            Work::Download => Job::Download,
-            Work::Upload(id) => Job::Upload { id, block: block() },
-        };
+        let block = if direction == Direction::Up { block() } else { Bytes::new() };
         let mut tasks = JoinSet::new();
         for plan in plans {
             let path = (plan.carrier == Carrier::Path).then_some(&plan.path);
             let shared = path.and_then(|path| client.connections.home(&path.origin, path.protocol));
             let home = shared.unwrap_or_else(|| client.shared.runtimes.next());
-            let group = Arc::new(Group::new(client, plan, job.clone()));
+            let (client, work, block) = (client.clone(), work.clone(), block.clone());
+            let group = Group {
+                client,
+                plan,
+                work,
+                block,
+                conn: Slot(Default::default()),
+                session: Slot(Default::default()),
+            };
+            let group = Arc::new(group);
             for lane in group.plan.lanes.clone() {
                 let (group, tally, token) = (group.clone(), tally.clone(), token.clone());
                 let delay = stagger.saturating_mul(u32::try_from(lane).unwrap_or(u32::MAX));
@@ -207,54 +213,24 @@ fn block() -> Bytes {
     block.into()
 }
 
-#[derive(Clone)]
-enum Job {
-    Download,
-    Upload { id: String, block: Bytes },
-}
-
 /// A group's shared connection or session, replaced one dial at a time once unusable.
 struct Slot<T>(tokio::sync::Mutex<Option<T>>);
 
-trait Shared: Sized {
-    /// Another handle to it; none when only one request may use it.
-    fn handle(&self) -> Option<Self>;
-    fn usable(&self) -> bool;
-}
-
-impl Shared for Conn {
-    fn handle(&self) -> Option<Self> {
-        self.share()
-    }
-
-    fn usable(&self) -> bool {
-        Conn::usable(self)
-    }
-}
-
-impl Shared for Arc<Session> {
-    fn handle(&self) -> Option<Self> {
-        Some(self.clone())
-    }
-
-    fn usable(&self) -> bool {
-        Session::usable(self)
-    }
-}
-
-impl<T: Shared> Slot<T> {
-    fn new() -> Self {
-        Self(tokio::sync::Mutex::new(None))
-    }
-
-    /// A handle to the usable one, else to what `dial` brings, which an HTTP/1.1 lane keeps to itself.
-    async fn get(&self, dial: impl Future<Output = Result<T, Fault>>) -> Result<T, Fault> {
+impl<T> Slot<T> {
+    /// A `handle` to the one `usable` says may go on, else to what `dial` brings; without a handle, as for an
+    /// HTTP/1.1 connection, the lane keeps it to itself.
+    async fn get(
+        &self,
+        dial: impl Future<Output = Result<T, Fault>>,
+        usable: fn(&T) -> bool,
+        handle: fn(&T) -> Option<T>,
+    ) -> Result<T, Fault> {
         let mut current = self.0.lock().await;
-        if let Some(handle) = current.as_ref().filter(|shared| shared.usable()).and_then(T::handle) {
+        if let Some(handle) = current.as_ref().filter(|shared| usable(shared)).and_then(handle) {
             return Ok(handle);
         }
         let dialed = dial.await?;
-        let Some(handle) = dialed.handle() else { return Ok(dialed) };
+        let Some(handle) = handle(&dialed) else { return Ok(dialed) };
         *current = Some(dialed);
         Ok(handle)
     }
@@ -264,7 +240,9 @@ impl<T: Shared> Slot<T> {
 struct Group {
     client: Client,
     plan: GroupPlan,
-    job: Job,
+    work: Work,
+    /// The block uploads repeat.
+    block: Bytes,
     conn: Slot<Conn>,
     session: Slot<Arc<Session>>,
 }
@@ -288,16 +266,6 @@ impl Lane {
 }
 
 impl Group {
-    fn new(client: &Client, plan: GroupPlan, job: Job) -> Self {
-        Self {
-            client: client.clone(),
-            plan,
-            job,
-            conn: Slot::new(),
-            session: Slot::new(),
-        }
-    }
-
     /// Runs lane `number` after `delay` until its fault stands.
     async fn run(self: Arc<Self>, number: usize, tally: Arc<Tally>, delay: Duration) -> Fault {
         tokio::time::sleep(delay).await;
@@ -330,38 +298,40 @@ impl Group {
         let (ThroughputPath { origin, protocol, .. }, client) = (&self.plan.path, &self.client);
         let conn = match self.plan.carrier {
             Carrier::Session => {
-                let session = self.session.get(self.dial_session(tally)).await?;
-                return match &self.job {
-                    Job::Download => receive(&session, lane, tally).await,
-                    Job::Upload { block, .. } => send(&session, block, lane, tally).await,
+                let (dial, usable) = (self.dial_session(tally), |session: &Arc<Session>| session.usable());
+                let session = self.session.get(dial, usable, |session| Some(session.clone())).await?;
+                return match &self.work {
+                    Work::Download => receive(&session, lane, tally).await,
+                    Work::Upload(_) => send(&session, &self.block, lane, tally).await,
                 };
             }
             Carrier::Dialed => {
                 let down = self.plan.direction == Direction::Down;
                 let buffer = if down { ReadBuffer::Fixed } else { ReadBuffer::Adaptive };
-                self.conn.get(client.dial(origin, *protocol, buffer)).await?
+                let dial = client.dial(origin, *protocol, buffer);
+                self.conn.get(dial, Conn::usable, Conn::share).await?
             }
             Carrier::Path => client.connections.shared(client, origin, *protocol).await?,
         };
-        match &self.job {
-            Job::Download => self.download(conn, lane, tally).await,
-            Job::Upload { id, block } => self.upload(conn, id, block, lane, tally).await,
+        match &self.work {
+            Work::Download => self.download(conn, lane, tally).await,
+            Work::Upload(id) => self.upload(conn, id, lane, tally).await,
         }
     }
 
     /// The group's session, dialed on the lane's runtime; an upload's is announced for its feed.
     async fn dial_session(&self, tally: &Tally) -> Result<Arc<Session>, Fault> {
-        let (route, query) = match &self.job {
-            Job::Download => {
+        let (route, query) = match &self.work {
+            Work::Download => {
                 let streams = self.plan.lanes.len().to_string();
                 (Route::WtDownload, vec![("bytes", STREAM_BYTES.to_string()), ("streams", streams)])
             }
-            Job::Upload { id, .. } => (Route::WtUpload, vec![("id", id.clone())]),
+            Work::Upload(id) => (Route::WtUpload, vec![("id", id.clone())]),
         };
         let home = Handle::current();
         let session = self.client.session_on(&home, &self.plan.path.origin, route, query);
         let session = Arc::new(session.await?);
-        if let Job::Upload { .. } = self.job {
+        if let Work::Upload(_) = self.work {
             tally.session.send_replace(Some(session.clone()));
         }
         Ok(session)
@@ -387,18 +357,11 @@ impl Group {
         Ok(())
     }
 
-    async fn upload(
-        &self,
-        mut conn: Conn,
-        id: &str,
-        block: &Bytes,
-        lane: &mut Lane,
-        tally: &Tally,
-    ) -> Result<(), Fault> {
+    async fn upload(&self, mut conn: Conn, id: &str, lane: &mut Lane, tally: &Tally) -> Result<(), Fault> {
         let query = vec![("cb", cache_buster()), ("id", id.to_owned()), ("lane", lane.number.to_string())];
         let request = self.request(Method::POST, Route::Upload, query);
         lane.announce(tally);
-        let payload = Payload::repeat(block.clone(), lane.sent.clone());
+        let payload = Payload::repeat(self.block.clone(), lane.sent.clone());
         let mut answer = conn.open(&self.client, &request, payload).await?;
         while answer.chunk().await?.is_some() {}
         Ok(())

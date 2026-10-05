@@ -116,7 +116,9 @@ impl Client {
 
     /// A control request's answer, its head within the control timeout; the caller bounds its body.
     pub async fn control(&self, via: Protocol, request: Request) -> Result<Incoming, Fault> {
-        self.answer(via, &request, Instant::now() + CONTROL_TIMEOUT).await
+        let deadline = Instant::now() + CONTROL_TIMEOUT;
+        let answer = self.connections.send(self, via, &request, deadline).await?;
+        self.check(&request, answer)
     }
 
     /// A connection of its own to `origin`, dialed on the current runtime, which then runs it.
@@ -145,11 +147,6 @@ impl Client {
         }
     }
 
-    async fn answer(&self, via: Protocol, request: &Request, deadline: Instant) -> Result<Incoming, Fault> {
-        let answer = self.connections.send(self, via, request, deadline).await?;
-        self.check(request, answer)
-    }
-
     /// The HTTP version a JSON answer came over, and the answer read by `decode`, within the control timeout.
     async fn exchange<T>(&self, via: Protocol, request: Request, decode: Decode<T>) -> Result<(Version, T), Fault> {
         let deadline = Instant::now() + CONTROL_TIMEOUT;
@@ -158,19 +155,16 @@ impl Client {
             let version = answer.version();
             Ok((version, self.check(&request, answer)?.json(decode).await?))
         };
-        timeout_at(deadline, exchange)
-            .await
-            .unwrap_or(Err(Fault::TimedOut("control response")))
+        let exchanged = timeout_at(deadline, exchange).await;
+        exchanged.unwrap_or(Err(Fault::TimedOut("control response")))
     }
 
     /// The request's head with an absolute URI, uncacheable, with its server's grant over verified HTTPS.
     fn head(&self, request: &Request) -> Result<http::Request<()>, Fault> {
         let mut target = format!("{}{}", request.origin, request.route.path());
         if !request.query.is_empty() {
-            let query = form_urlencoded::Serializer::new(String::new())
-                .extend_pairs(&request.query)
-                .finish();
-            target = format!("{target}?{query}");
+            let mut query = form_urlencoded::Serializer::new(String::new());
+            target = format!("{target}?{}", query.extend_pairs(&request.query).finish());
         }
         let mut head = http::Request::builder()
             .method(request.method.clone())
@@ -188,10 +182,8 @@ impl Client {
 
     /// The answer's body when it is a 200.
     fn check(&self, request: &Request, answer: Answer) -> Result<Incoming, Fault> {
-        match self.refusal(request, answer.status(), answer.headers()) {
-            None => Ok(answer.into_body()),
-            Some(fault) => Err(fault),
-        }
+        let refused = self.refusal(request, answer.status(), answer.headers());
+        refused.map_or_else(|| Ok(answer.into_body()), Err)
     }
 
     /// The fault an upload progress `error` record from `origin` means; a revoked grant is dropped.

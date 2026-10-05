@@ -39,28 +39,20 @@ impl Client {
         route: Route,
         query: Vec<(&'static str, String)>,
     ) -> Result<Session, Fault> {
-        let request = Request {
-            method: Method::CONNECT,
-            origin: origin.clone(),
-            route,
-            query,
-        };
+        let request = Request { query, ..Request::new(Method::CONNECT, origin, route) };
         let head = self.head(&request)?;
         let open = async {
             let (quic, requests) = quic::dial(origin, self.shared.verify, home).await?;
-            match webtransport::Session::connect(&requests, head)
-                .await
-                .map_err(http3_fault)?
-            {
+            let connected = webtransport::Session::connect(&requests, head).await;
+            match connected.map_err(http3_fault)? {
                 Ok((session, _)) => Ok(Session { session, quic, client: self.clone(), origin: origin.clone() }),
                 Err(refused) => Err(self
                     .refusal(&request, refused.status(), refused.headers())
                     .unwrap_or_else(|| Fault::Malformed(format!("WebTransport refused with {}", refused.status())))),
             }
         };
-        timeout(CONTROL_TIMEOUT, open)
-            .await
-            .unwrap_or(Err(Fault::TimedOut("WebTransport session")))
+        let opened = timeout(CONTROL_TIMEOUT, open).await;
+        opened.unwrap_or(Err(Fault::TimedOut("WebTransport session")))
     }
 }
 
