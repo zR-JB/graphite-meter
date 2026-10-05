@@ -50,13 +50,12 @@ export function sheetDrag(onDismiss: () => void) {
       node.style.transform = "";
       host.style.removeProperty("--sheet-drag");
     }
+    // Reads the height before writing, so a drag step never forces a layout.
     function animate(offset: number, ms: number) {
+      const share = Math.min(1, offset / node.offsetHeight);
       node.style.transition = ms ? `transform ${ms}ms var(--ease-out)` : "none";
       node.style.transform = `translateY(${offset}px)`;
-      host.style.setProperty(
-        "--sheet-drag",
-        String(Math.min(1, offset / node.offsetHeight)),
-      );
+      host.style.setProperty("--sheet-drag", String(share));
     }
     function onStart(event: TouchEvent) {
       if (event.touches.length !== 1 || !bottomSheet()) return;
@@ -100,8 +99,10 @@ export function sheetDrag(onDismiss: () => void) {
       event.preventDefault();
       const elapsed = Math.max(1, event.timeStamp - gesture.lastAt);
       const instantVelocity = (touch.clientY - gesture.lastY) / elapsed;
-      // Smoothed: a single frame's delta is noisy enough to read a steady drag as a flick.
-      gesture.velocity = gesture.velocity * 0.65 + instantVelocity * 0.35;
+      // Smoothed: a single frame's delta is noisy enough to read a steady drag as a flick. The weight is per 60 Hz
+      // frame of elapsed time, so a 120 Hz touch stream reads a drag the same.
+      const keep = 0.65 ** (elapsed / (1000 / 60));
+      gesture.velocity = gesture.velocity * keep + instantVelocity * (1 - keep);
       gesture.lastY = touch.clientY;
       gesture.lastAt = event.timeStamp;
       animate(Math.max(0, deltaY), 0);

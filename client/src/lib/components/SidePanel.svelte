@@ -142,6 +142,8 @@
   /* A flyout sheet floats over the page with the one shadow the design allows; docked, it is a frame beside
      the instrument, flat. */
   .panel-layer > :global(dialog.panel) {
+    --panel-w: inherit;
+    --dock-w: inherit;
     max-width: none;
     max-height: none;
     margin: 0;
@@ -212,6 +214,7 @@
   }
   /* The scrim comes and goes with the flyout it shades, on the sheet's own clock. */
   .scrim {
+    --sheet-drag: inherit;
     position: fixed;
     z-index: var(--z-scrim);
     inset: var(--topbar-h) 0 0;
