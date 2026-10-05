@@ -20,6 +20,8 @@ mise run dev        # development build on http://localhost:7246
 mise run tui        # native TUI against it; add `-- -server <url>` for another server
 ```
 
+`GM_IMPLEMENTATION=rust` runs the opt-in Rust server or TUI instead in `dev`, `prod` and `tui`.
+
 mise trusts the project configuration automatically; in paranoid mode run
 [`mise trust`](https://mise.jdx.dev/cli/trust.html) once. Use `mise run <task>` in scripts (`mise doctor` is mise's
 own command) and `mise exec -- <cmd>` for tools. `mise tasks` lists every task with its description.
@@ -36,6 +38,7 @@ symlink another worktree's `node_modules`. Bun's package cache and Go's build ca
 | `go/cmd/`      | Server and native client entry points.                                                     |
 | `go/internal/` | Server, transport, measurement, native client and embedded assets.                         |
 | `container/`   | Container build and deployment examples.                                                   |
+| `rust/`        | Opt-in Rust server and native client ([Rust implementation](../rust/README.md)).           |
 | `legal/`       | Reviewed dependency metadata and generated notices ([legal pipeline](../legal/README.md)). |
 | `scripts/ci/`  | CI and release control plane ([CI and release](../scripts/ci/README.md)).                  |
 

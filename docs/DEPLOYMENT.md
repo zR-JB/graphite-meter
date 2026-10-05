@@ -103,6 +103,13 @@ Semver-range updaters such as Flux, Argo CD Image Updater, Renovate or WUD read 
 `X.Y.Z`, so they may skip it or move a Rust pin to Go's next release. Follow `:latest-rust`, or restrict the updater
 to tags matching `-rust$` and compare the version before that suffix.
 
+The Rust image keeps the Go image's ports, `GM_*` settings, `hash-password` command, [container user](#container-user)
+and layout: one static binary on `scratch` with its notices and CA roots. It reports its version as `X.Y.Z-rust`,
+adds `--legal` and `GM_MAX_BUFFER_BYTES` (default 8 GiB), which bounds the connection buffers its HTTP/2 and HTTP/3
+listeners share. The [Rust README](../rust/README.md#differences-from-go) lists every behaviour that differs from Go.
+On an amd64 host `mise run rust-container-build` builds it from a checkout as `graphite-meter:latest-rust`; its
+pinned builder also cross-compiles arm64, so on arm64 hosts run a published tag.
+
 ## Native listeners
 
 Each listener has its own address and advertised origin, so a client can select a protocol deterministically. The
