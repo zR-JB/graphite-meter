@@ -108,7 +108,8 @@ impl App {
     pub(super) fn confirm(&mut self, action: Option<Action>) -> Vec<Effect> {
         self.overlay = Overlay::None;
         match action {
-            Some(Action::Quit | Action::Abort) => vec![Effect::Quit],
+            Some(Action::Quit) => self.quit(),
+            Some(Action::Abort) => self.interrupt(crate::INTERRUPTED),
             Some(Action::Confirm) => {
                 self.notice = "Stopping the test…".into();
                 Effect::command(Command::Stop)

@@ -1,6 +1,8 @@
-//! The interface during and after a run: its panels, stop prompt, Details, latency server, charts, chrome and theme.
+//! The interface during and after a run: its panels, stop prompt, Details, latency server, charts, chrome, theme and
+//! quitting.
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use graphite_meter_client::{
+    INTERRUPTED, TERMINATED,
     config::Config,
     controller::Command,
     events::Event,
@@ -15,6 +17,7 @@ use graphite_meter_client::{
         engine::StagePlan,
         prepare::{Paths, ServerPath},
     },
+    status,
     text::{Line, Profile},
     tui::{
         App, Effect,
@@ -135,13 +138,12 @@ fn finished(stage: Stage, servers: Vec<ServerResult>, down: Option<f64>) -> Even
     })
 }
 
+fn ended(outcome: Outcome) -> Event {
+    Event::RunFinished { outcome, error: None, elapsed: SECOND * 12 }
+}
+
 fn done(app: &mut App, now: Instant) {
-    let event = Event::RunFinished {
-        outcome: Outcome::Complete,
-        error: None,
-        elapsed: SECOND * 12,
-    };
-    app.event(&event, now);
+    app.event(&ended(Outcome::Complete), now);
 }
 
 #[test]
@@ -304,7 +306,7 @@ fn chrome_titles_the_window_and_shows_progress_until_the_end() {
         url: "https://a.example/x\x1b".into(),
         text: Line::plain("open"),
     };
-    let linked = Chrome { link: Some(link), ..finished.clone() };
+    let linked = Chrome { links: vec![link], ..finished.clone() };
     let bytes = linked.bytes(Some(&finished), Profile::Plain);
     assert_eq!(bytes, b"\x1b[4;2H\x1b]8;;https://a.example/x\x1b\\open\x1b]8;;\x1b\\");
 }
@@ -342,5 +344,53 @@ fn the_colour_profile_follows_the_environment() {
         let vars: HashMap<_, _> = env.split(' ').filter_map(|pair| pair.split_once('=')).collect();
         let profile = theme::profile(tty, |name| vars.get(name).map(|value| value.to_string()));
         assert_eq!(profile, expected, "{env} on a terminal: {tty}");
+    }
+}
+
+#[test]
+fn q_during_a_run_stops_it_and_then_quits_with_its_report() {
+    let now = Instant::now();
+    let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
+    press(&mut app, KeyCode::Esc, now);
+    assert_eq!(command(&press(&mut app, KeyCode::Char('q'), now)), &Command::Stop);
+    assert!(shows(&mut app, now, "Stopping the test before quitting… ctrl+c quits at once."));
+    assert_eq!(press(&mut app, KeyCode::Char('q'), now), []);
+    assert_eq!(app.event(&ended(Outcome::Stopped), now), [Effect::Quit]);
+    let exit = app.exit();
+    assert!(exit.report);
+    assert_eq!(status(&exit.view, exit.signal), 1);
+    let lines = report(&exit.view, 100, &exit.palette);
+    assert!(lines[0].text().starts_with("Graphite Meter  Stopped"), "{:?}", lines[0]);
+}
+
+#[test]
+fn ctrl_c_or_a_signal_stops_a_run_and_a_second_quits_at_once() {
+    let now = Instant::now();
+    let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+    for (key, code) in [(true, INTERRUPTED), (false, TERMINATED)] {
+        let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
+        let interrupt = |app: &mut App| if key { app.key(ctrl_c, now) } else { app.interrupt(code) };
+        assert_eq!(command(&interrupt(&mut app)), &Command::Stop);
+        assert_eq!(interrupt(&mut app), [Effect::Quit]);
+        let exit = app.exit();
+        assert!(!exit.report, "a running test has no report");
+        assert_eq!(status(&exit.view, exit.signal), code);
+    }
+}
+
+#[test]
+fn quitting_a_finished_run_reports_it_and_after_setup_does_not() {
+    let now = Instant::now();
+    for (setup, report) in [(false, true), (true, false)] {
+        let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
+        done(&mut app, now);
+        if setup {
+            press(&mut app, KeyCode::Esc, now);
+        }
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(app.key(ctrl_c, now), [Effect::Quit]);
+        let exit = app.exit();
+        assert_eq!(exit.report, report);
+        assert_eq!(status(&exit.view, exit.signal), 0);
     }
 }

@@ -1,5 +1,4 @@
-//! The terminal interface: the terminal's setup and restore, the event loop over any `Terminal` backend, and the
-//! `App` whose screens it draws.
+//! The terminal interface: the `App` whose screens the event loop in `terminal` draws.
 mod chart;
 pub mod chrome;
 mod dialogs;
@@ -9,40 +8,28 @@ mod paths;
 mod run;
 mod settings;
 mod setup;
+mod terminal;
 pub mod theme;
 mod track;
 
+pub use terminal::{interactive, run};
+
 use crate::{
+    INTERRUPTED,
     config::{Config, PrepKey},
-    controller::{Command, Controller},
-    events::{Event, Events, Run, View},
+    controller::Command,
+    events::{Event, Run, SignInEnd, View},
+    net::approval,
     report,
     text::Profile,
 };
-use chrome::Chrome;
-use crossterm::{
-    event::{
-        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event as Input,
-        EventStream, KeyEvent, KeyEventKind, MouseEventKind,
-    },
-    execute,
-    terminal::{Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
-};
-use dialogs::Chooser;
-use futures_util::{Stream, StreamExt};
-use graphite_meter_net::Pool;
+use crossterm::event::{Event as Input, KeyEvent, KeyEventKind, MouseEventKind};
+use dialogs::{Chooser, SignIn};
 use keys::{Action, Key};
-use ratatui_core::{backend::Backend, terminal::Terminal};
 use settings::Editor;
 use setup::Setup;
-use std::{
-    io::{self, Write},
-    pin::pin,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 use theme::{Answer, Palette, Taken};
-use tokio::sync::mpsc::UnboundedReceiver;
 
 /// How long settings rest before their paths are checked again.
 const RECHECK: Duration = Duration::from_millis(350);
@@ -56,7 +43,7 @@ const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 enum Screen {
     Setup,
     Chooser(Chooser),
-    SignIn,
+    SignIn(SignIn),
     Run,
 }
 
@@ -71,6 +58,8 @@ enum Overlay {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
     Command(Box<Command>),
+    /// Opens the sign-in page at this address in a browser.
+    OpenBrowser(String),
     Quit,
 }
 
@@ -80,11 +69,13 @@ impl Effect {
     }
 }
 
-/// How the interface ended: what it showed and in which palette, and the signal that stopped a run.
+/// How the interface ended: what it showed and in which palette, the signal that stopped a run, and whether it
+/// showed a finished run, whose report follows.
 pub struct Exit {
     pub view: View,
     pub palette: Palette,
     pub signal: Option<u8>,
+    pub report: bool,
 }
 
 /// The interface's state; time enters through each call.
@@ -101,6 +92,10 @@ pub struct App {
     live: run::Live,
     help: bool,
     notice: String,
+    /// Whether the interface quits once the run stops.
+    quitting: bool,
+    /// The signal that stopped the run.
+    signal: Option<u8>,
     /// When the paths are checked next.
     recheck: Option<Instant>,
     /// What the latest operation prepared for, and when its paths arrived.
@@ -129,6 +124,8 @@ impl App {
             live: run::Live::default(),
             help: false,
             notice: String::new(),
+            quitting: false,
+            signal: None,
             recheck: Some(now),
             asked: None,
             checked: None,
@@ -140,7 +137,8 @@ impl App {
         }
     }
 
-    pub fn event(&mut self, event: &Event, now: Instant) {
+    /// Takes `event`; a run ending while the interface quits ends it.
+    pub fn event(&mut self, event: &Event, now: Instant) -> Vec<Effect> {
         self.now = now;
         self.view.apply(event);
         self.live.event(event, now);
@@ -152,9 +150,19 @@ impl App {
                 }
             }
             Event::CheckFailed(_) => self.setup.chooser = false,
-            Event::SignIn(_) => (self.screen, self.overlay) = (Screen::SignIn, Overlay::None),
-            Event::SignInEnded(_) if matches!(self.screen, Screen::SignIn) => {
-                self.screen = if self.running() { Screen::Run } else { Screen::Setup };
+            Event::SignIn(_) => {
+                (self.screen, self.overlay) = (Screen::SignIn(SignIn::new(now)), Overlay::None);
+                self.notice = "Check the code, then press enter to open the sign-in page.".into();
+            }
+            Event::SignInEnded(end) => {
+                if matches!(self.screen, Screen::SignIn(_)) {
+                    self.screen = if self.running() { Screen::Run } else { Screen::Setup };
+                }
+                match end {
+                    SignInEnd::Approved => self.notice = "Signed in. Checking the authenticated paths…".into(),
+                    SignInEnd::Expired => self.notice = approval::EXPIRED.into(),
+                    SignInEnd::Failed | SignInEnd::Cancelled => {}
+                }
             }
             Event::RunStarted { .. } => self.notice = "Test started. Press esc to stop.".into(),
             Event::ServerFailed { server, failure, .. } => {
@@ -171,9 +179,13 @@ impl App {
                     (self.screen, self.notice) = (Screen::Setup, reason);
                     self.recheck = error.is_some().then(|| now + RECHECK);
                 }
+                if self.quitting {
+                    return vec![Effect::Quit];
+                }
             }
             _ => {}
         }
+        Vec::new()
     }
 
     /// Reacts to terminal input: keys, pasted text and the mouse wheel.
@@ -213,7 +225,7 @@ impl App {
             (_, Overlay::ConfirmStop) => keys::CONFIRM,
             (Screen::Setup, _) => keys::SETUP,
             (Screen::Chooser(_), _) => keys::CHOOSER,
-            (Screen::SignIn, _) => keys::SIGN_IN,
+            (Screen::SignIn(_), _) => keys::SIGN_IN,
             (Screen::Run, _) => keys::RUN,
         };
         let action = keys::find(table, key, |action| self.offers(action));
@@ -222,19 +234,41 @@ impl App {
         }
         let Some(action) = action else { return Vec::new() };
         match (action, &self.screen) {
-            (Action::Quit | Action::Abort, _) => return vec![Effect::Quit],
+            (Action::Quit, _) => return self.quit(),
+            (Action::Abort, _) => return self.interrupt(INTERRUPTED),
             (Action::Help, _) => self.help = !self.help,
             (Action::Page, _) => self.page(key),
             (_, Screen::Setup) => return self.setup_key(action, key),
             (_, Screen::Chooser(_)) => self.chooser_key(action, key),
-            (Action::Cancel, _) => {
-                self.notice = "Sign-in canceled. Press v to request a new code.".into();
-                return Effect::command(Command::Stop);
-            }
+            (_, Screen::SignIn(_)) => return self.sign_in_key(action),
             (_, Screen::Run) => return self.run_key(action, key),
-            _ => {}
         }
         Vec::new()
+    }
+
+    /// Quits, a running test first stopping.
+    fn quit(&mut self) -> Vec<Effect> {
+        if !self.running() {
+            return vec![Effect::Quit];
+        }
+        if std::mem::replace(&mut self.quitting, true) {
+            return Vec::new();
+        }
+        self.overlay = Overlay::None;
+        self.notice = "Stopping the test before quitting… ctrl+c quits at once.".into();
+        Effect::command(Command::Stop)
+    }
+
+    /// Quits as ctrl+c or a signal ending with `status` asks: like q, and at once while quitting.
+    pub fn interrupt(&mut self, status: u8) -> Vec<Effect> {
+        if !self.running() {
+            return vec![Effect::Quit];
+        }
+        self.signal.get_or_insert(status);
+        match self.quitting {
+            true => vec![Effect::Quit],
+            false => self.quit(),
+        }
     }
 
     /// Eases the shown rates, and checks the paths once their settings have rested.
@@ -255,11 +289,23 @@ impl App {
 
     /// Whether frames change without input: a spinner turns or a recheck waits.
     pub fn animating(&self) -> bool {
-        self.checking() || self.running() || matches!(self.screen, Screen::SignIn)
+        self.checking() || self.running() || matches!(self.screen, Screen::SignIn(_))
     }
 
     pub fn into_view(self) -> View {
         self.view
+    }
+
+    /// How the interface ends now.
+    pub fn exit(self) -> Exit {
+        let finished = self.view.run.as_ref().is_some_and(|run| run.outcome.is_some());
+        let report = finished && matches!(self.screen, Screen::Run);
+        Exit {
+            view: self.view,
+            palette: self.palette,
+            signal: self.signal,
+            report,
+        }
     }
 
     fn running(&self) -> bool {
@@ -301,104 +347,4 @@ impl App {
         self.notice = "Checking paths before the test. Press esc to stop.".into();
         Effect::command(Command::Run(self.config.clone()))
     }
-}
-
-/// Runs the interface on this terminal until it quits.
-pub async fn interactive(config: Config, runtimes: Arc<Pool>, stop: impl Future<Output = u8>) -> io::Result<Exit> {
-    let profile = theme::profile(true, |name| std::env::var(name).ok());
-    let _session = Session::enter()?;
-    let mut terminal = Terminal::new(ratatui_crossterm::CrosstermBackend::new(io::stdout()))?;
-    let (events, received) = Events::channel();
-    let controller = Controller::new(true, runtimes, events);
-    let input = EventStream::new().filter_map(|input| std::future::ready(input.ok()));
-    let app = App::new(config, profile, Instant::now());
-    run(&mut terminal, app, controller, received, input, stop, io::stdout()).await
-}
-
-/// Draws `app` and feeds it events, input and ticks until it quits, writing its chrome to `chrome` after each draw;
-/// `stop` quits as a signal, which stops a run.
-pub async fn run<B: Backend>(
-    terminal: &mut Terminal<B>,
-    mut app: App,
-    mut controller: Controller,
-    mut events: UnboundedReceiver<Event>,
-    input: impl Stream<Item = Input>,
-    stop: impl Future<Output = u8>,
-    mut chrome: impl Write,
-) -> Result<Exit, B::Error> {
-    let (mut input, mut stop, mut signal, mut shown) = (pin!(input), pin!(stop), None, None);
-    let mut frames = tokio::time::interval(FRAME);
-    frames.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut changed = true;
-    loop {
-        let effects = tokio::select! {
-            Some(event) = events.recv() => {
-                app.event(&event, Instant::now());
-                changed = true;
-                Vec::new()
-            }
-            input = input.next() => {
-                changed = true;
-                input.map_or_else(|| vec![Effect::Quit], |input| app.input(input, Instant::now()))
-            }
-            _ = frames.tick() => {
-                let now = Instant::now();
-                if std::mem::take(&mut changed) || app.animating() {
-                    let mut drawn = Chrome::default();
-                    terminal.draw(|frame| drawn = app.draw(frame.buffer_mut(), now))?;
-                    let bytes = drawn.bytes(shown.as_ref(), app.profile);
-                    let _ = chrome.write_all(&bytes).and_then(|()| chrome.flush());
-                    shown = Some(drawn);
-                }
-                app.tick(now)
-            }
-            code = &mut stop, if signal.is_none() => {
-                signal = Some(app.running().then_some(code));
-                vec![Effect::Quit]
-            }
-        };
-        for effect in effects {
-            match effect {
-                Effect::Command(command) => controller.command(*command),
-                Effect::Quit => {
-                    let (palette, signal) = (app.palette, signal.flatten());
-                    return Ok(Exit { view: app.into_view(), palette, signal });
-                }
-            }
-        }
-    }
-}
-
-/// The terminal in raw mode on the alternate screen, reporting the mouse and pastes and asked for its background;
-/// dropping it clears the chrome and restores the terminal.
-struct Session;
-
-impl Session {
-    fn enter() -> io::Result<Self> {
-        let hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            restore();
-            hook(info);
-        }));
-        enable_raw_mode()?;
-        let session = Self;
-        execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
-        let _ = execute!(io::stdout(), EnableBracketedPaste);
-        // The answer arrives among the keys; the clear wipes what a terminal that ignores the query shows.
-        io::stdout().write_all(theme::QUERY)?;
-        execute!(io::stdout(), Clear(ClearType::All))?;
-        Ok(session)
-    }
-}
-
-impl Drop for Session {
-    fn drop(&mut self) {
-        restore();
-    }
-}
-
-fn restore() {
-    let _ = io::stdout().write_all(&Chrome::default().bytes(None, Profile::Plain));
-    let _ = execute!(io::stdout(), DisableBracketedPaste, DisableMouseCapture, LeaveAlternateScreen);
-    let _ = disable_raw_mode();
 }

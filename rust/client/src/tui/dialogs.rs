@@ -1,15 +1,20 @@
-//! The server chooser, and help listing a screen's keys.
+//! The server chooser, the sign-in prompt, and help listing a screen's keys.
 use super::{
-    App, Screen,
+    App, Effect, Screen,
     frame::highlight,
     keys::{Action, Binding, Key},
     theme::Palette,
 };
 use crate::{
+    controller::Command,
     report::vocabulary as words,
-    text::{Line, Style},
+    text::{self, Line, Style},
 };
 use graphite_meter_proto::catalog::{MAX_SELECTED, ServerId};
+use std::{
+    process::Stdio,
+    time::{Duration, Instant},
+};
 
 /// The chooser's focused catalogue entry and the one to four servers it would select.
 pub struct Chooser {
@@ -99,6 +104,105 @@ impl App {
         }
         let title = format!("Test servers · {} selected", chooser.draft.len());
         self.panel(&title, lines, width, 0)
+    }
+}
+
+/// The sign-in prompt's arrival and whether its page was opened.
+pub struct SignIn {
+    since: Instant,
+    opened: bool,
+}
+
+impl SignIn {
+    pub(super) fn new(now: Instant) -> Self {
+        Self { since: now, opened: false }
+    }
+}
+
+impl App {
+    pub(super) fn sign_in_key(&mut self, action: Action) -> Vec<Effect> {
+        let (Screen::SignIn(sign_in), Some(prompt)) = (&mut self.screen, &self.view.sign_in) else {
+            return Vec::new();
+        };
+        match action {
+            Action::Browse => {
+                sign_in.opened = true;
+                self.notice = "Sign-in page opened in the browser.".into();
+                vec![Effect::OpenBrowser(prompt.url.clone())]
+            }
+            Action::Cancel => {
+                self.notice = "Sign-in canceled. Press v to request a new code.".into();
+                Effect::command(Command::Stop)
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// The prompt in a panel, with the code to match and the time waited and left, over the page's address.
+    pub(super) fn sign_in_body(&self, sign_in: &SignIn, width: usize) -> Vec<Line> {
+        let (Some(prompt), palette) = (&self.view.sign_in, &self.palette) else {
+            return Vec::new();
+        };
+        let status = match sign_in.opened {
+            false => Line::styled("Open the sign-in page below", palette.accent),
+            true => Line::plain(format!("{} ", self.spinner())).and("Waiting for approval…", palette.accent),
+        };
+        let (label, bar) = ("Match this code ", "─".repeat(text::width(&prompt.code) + 2));
+        let indent = " ".repeat(text::width(label));
+        let code = Line::styled(label, palette.text)
+            .and("│ ", palette.border)
+            .and(&prompt.code, palette.value)
+            .and(" │", palette.border);
+        let waited = self.now.saturating_duration_since(sign_in.since);
+        let left = prompt.deadline.into_std().saturating_duration_since(self.now);
+        let left = Duration::from_secs(left.as_secs_f64().round() as u64);
+        let times = format!("waited {} · expires in {}", words::clock(waited), words::setting(left));
+        let lines = vec![
+            status,
+            Line::plain(&indent).and(format!("╭{bar}╮"), palette.border),
+            code,
+            Line::plain(indent).and(format!("╰{bar}╯"), palette.border),
+            Line::styled(times, palette.muted),
+        ];
+        let mut lines = self.panel(&format!("Sign in to {}", prompt.issuer), lines, width, 0);
+        lines.push(Line::default());
+        lines.extend(self.sign_in_link(width).map(|(_, lines)| lines).unwrap_or_default());
+        lines
+    }
+
+    /// The approval page's address wrapped to `width`, which ends the sign-in screen's body, and the page.
+    pub(super) fn sign_in_link(&self, width: usize) -> Option<(&str, Vec<Line>)> {
+        let prompt = self
+            .view
+            .sign_in
+            .as_ref()
+            .filter(|_| matches!(self.screen, Screen::SignIn(_)))?;
+        let chars: Vec<char> = prompt.url.chars().collect();
+        let wrapped = chars.chunks(width.max(1));
+        let lines = wrapped.map(|chunk| Line::styled(chunk.iter().collect::<String>(), self.palette.accent));
+        Some((&prompt.url, lines.collect()))
+    }
+}
+
+/// Opens the HTTPS page `url` with the platform's opener, which is reaped in the background.
+pub(super) fn browse(url: &str) {
+    if !url.starts_with("https://") {
+        return;
+    }
+    let (opener, args): (&str, &[&str]) = match () {
+        _ if cfg!(windows) => ("rundll32", &["url.dll,FileProtocolHandler"]),
+        _ if cfg!(target_os = "macos") => ("open", &[]),
+        _ => ("xdg-open", &[]),
+    };
+    let mut command = std::process::Command::new(opener);
+    command.args(args).arg(url);
+    let spawned = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    if let Ok(mut child) = spawned {
+        std::thread::spawn(move || child.wait());
     }
 }
 

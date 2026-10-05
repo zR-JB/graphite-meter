@@ -34,6 +34,7 @@ pub enum Action {
     Adjust,
     Toggle,
     Open,
+    Browse,
     Recheck,
     Servers,
     Available,
@@ -117,6 +118,7 @@ const AUTOMATIC: Binding = Binding::new(&[char('a')], Action::Automatic, "a", "a
 const SELECT: Binding = Binding::new(&[SPACE], Action::Select, "space", "select");
 const APPLY: Binding = Binding::new(&[ENTER], Action::Apply, "enter", "apply");
 const CANCEL: Binding = Binding::new(&[ESC], Action::Cancel, "esc", "cancel");
+const BROWSE: Binding = Binding::new(&[ENTER, SPACE, char('o')], Action::Browse, "enter/space", "open page");
 const CURSOR: Binding = Binding::new(&[LEFT, RIGHT, HOME, END], Action::Cursor, "←/→", "move");
 const STOP: Binding = Binding::new(&[ESC], Action::Stop, "esc", "stop test");
 const CONFIRM_STOP: Binding = Binding::new(&[ESC], Action::Confirm, "esc", "confirm stop");
@@ -139,7 +141,7 @@ pub const SETUP: &[Binding] = &[
 ];
 pub const EDIT: &[Binding] = &[CURSOR, APPLY, CANCEL, ABORT];
 pub const CHOOSER: &[Binding] = &[MOVE, SELECT, APPLY, CANCEL, QUIT, HELP.hidden(), ABORT.hidden()];
-pub const SIGN_IN: &[Binding] = &[CANCEL, QUIT, HELP.hidden(), ABORT.hidden()];
+pub const SIGN_IN: &[Binding] = &[BROWSE, CANCEL, QUIT, PAGE.hidden(), HELP.hidden(), ABORT.hidden()];
 #[rustfmt::skip]
 pub const RUN: &[Binding] = &[
     STOP, AGAIN, SETUP_AGAIN, DETAILS_OPEN, LATENCY, SCROLL.hidden(), PAGE.hidden(), HELP, QUIT, ABORT.hidden(),

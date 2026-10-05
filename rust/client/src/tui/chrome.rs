@@ -1,5 +1,5 @@
 //! What the terminal shows beyond the frame, as the sequences that change it: the window title (OSC 2), the progress
-//! bar (OSC 9;4) and a link over drawn text (OSC 8).
+//! bar (OSC 9;4) and links over drawn text (OSC 8).
 use crate::text::{self, Line, Profile};
 use std::io::Write;
 
@@ -7,7 +7,7 @@ use std::io::Write;
 pub struct Chrome {
     pub title: String,
     pub progress: Progress,
-    pub link: Option<Link>,
+    pub links: Vec<Link>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -30,8 +30,8 @@ pub struct Link {
 }
 
 impl Chrome {
-    /// The sequences that change what `shown` set, or set everything; the link is written each time, since a draw
-    /// may cover it.
+    /// The sequences that change what `shown` set, or set everything; links are written each time, since a draw may
+    /// cover them.
     pub fn bytes(&self, shown: Option<&Self>, profile: Profile) -> Vec<u8> {
         let mut out = Vec::new();
         if shown.is_none_or(|shown| shown.title != self.title) {
@@ -45,7 +45,7 @@ impl Chrome {
                 Progress::Share(share) => write!(out, "\x1b]9;4;1;{share}\x07"),
             };
         }
-        if let Some(link) = &self.link {
+        for link in &self.links {
             let url: String = link.url.chars().filter(char::is_ascii_graphic).collect();
             let _ = write!(out, "\x1b[{};{}H\x1b]8;;{url}\x1b\\", link.row + 1, link.column + 1);
             let _ = text::write(std::slice::from_ref(&link.text), profile, &mut out);

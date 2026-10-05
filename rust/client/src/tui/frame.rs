@@ -1,6 +1,10 @@
 //! The frame: header, the screen's body in a scrolled viewport, the footer with its keys, and panels; styled lines
 //! written into the terminal's buffer.
-use super::{App, FRAME, Overlay, SMALLEST, SPINNER, Screen, chrome::Chrome, dialogs, keys};
+use super::{
+    App, FRAME, Overlay, SMALLEST, SPINNER, Screen,
+    chrome::{Chrome, Link},
+    dialogs, keys,
+};
 use crate::{
     VERSION,
     report::vocabulary as words,
@@ -17,17 +21,19 @@ impl App {
     /// Draws a frame into `buffer`, and returns what the terminal shows beside it.
     pub fn draw(&mut self, buffer: &mut Buffer, now: Instant) -> Chrome {
         self.now = now;
-        self.paint(buffer);
+        let links = self.paint(buffer);
         let title = format!("Graphite Meter · {}", self.status().0);
-        Chrome { title, progress: self.progress(), link: None }
+        Chrome { title, progress: self.progress(), links }
     }
 
-    fn paint(&mut self, buffer: &mut Buffer) {
+    /// Paints the frame, and returns where its links landed.
+    fn paint(&mut self, buffer: &mut Buffer) -> Vec<Link> {
         let (width, height) = (usize::from(buffer.area.width), usize::from(buffer.area.height));
         if width < SMALLEST.0 || height < SMALLEST.1 {
             let notice = format!("Enlarge the terminal to at least {}×{}.", SMALLEST.0, SMALLEST.1);
             let x = width.saturating_sub(crate::text::width(&notice)) / 2;
-            return put(buffer, x, height / 2, width, &Line::plain(notice), self.profile);
+            put(buffer, x, height / 2, width, &Line::plain(notice), self.profile);
+            return Vec::new();
         }
         let inner = width - 2;
         let mut lines = self.header(inner);
@@ -41,13 +47,28 @@ impl App {
             self.scroll = self.scroll.clamp((focus + 1).saturating_sub(rows), focus);
         }
         (self.scroll, self.rows) = (self.scroll.min(hidden), rows);
-        let top = lines.len();
+        let (top, end) = (lines.len(), body.len());
         lines.extend(body.into_iter().skip(self.scroll).take(rows));
         lines.resize(top + rows, Line::default());
         lines.extend(self.footer(inner, hidden > 0));
         for (y, line) in lines.iter().enumerate() {
             put(buffer, 1, y, inner, line, self.profile);
         }
+        self.links(inner, top, end)
+    }
+
+    /// The sign-in link's shown lines, which end the body of `end` lines drawn from row `top`.
+    fn links(&self, width: usize, top: usize, end: usize) -> Vec<Link> {
+        let Some((url, texts)) = self.sign_in_link(width) else { return Vec::new() };
+        let first = end - texts.len();
+        let shown = texts.into_iter().enumerate().filter_map(|(index, text)| {
+            let row = (first + index)
+                .checked_sub(self.scroll)
+                .filter(|&row| row < self.rows)?;
+            let row = u16::try_from(top + row).ok()?;
+            Some(Link { row, column: 1, url: url.to_owned(), text })
+        });
+        shown.collect()
     }
 
     /// The title, the status and what the test reaches.
@@ -134,7 +155,7 @@ impl App {
             (Screen::Setup, _) if !all => self.hints(),
             (Screen::Setup, _) => keys::listed(keys::SETUP, offered),
             (Screen::Chooser(_), _) => keys::listed(keys::CHOOSER, offered),
-            (Screen::SignIn, _) => keys::listed(keys::SIGN_IN, offered),
+            (Screen::SignIn(_), _) => keys::listed(keys::SIGN_IN, offered),
             (Screen::Run, _) => keys::listed(keys::RUN, offered),
         }
     }
@@ -147,13 +168,7 @@ impl App {
                 (lines, Some(focus))
             }
             Screen::Chooser(chooser) => (self.chooser_body(chooser, width, rows), None),
-            Screen::SignIn => {
-                let Some(prompt) = &self.view.sign_in else { return (Vec::new(), None) };
-                let code = Line::styled("Match this code ", self.palette.text).and(&prompt.code, self.palette.value);
-                let mut lines = self.panel(&format!("Sign in to {}", prompt.issuer), vec![code], width, 0);
-                lines.extend([Line::default(), Line::styled(&prompt.url, self.palette.accent)]);
-                (lines, None)
-            }
+            Screen::SignIn(sign_in) => (self.sign_in_body(sign_in, width), None),
             Screen::Run => (self.run_body(width, rows), None),
         }
     }

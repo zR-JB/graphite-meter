@@ -1,10 +1,10 @@
-//! The interface without a terminal: keys, events and ticks in, frames and effects out.
+//! The interface without a terminal: keys, events and ticks in, frames, chrome and effects out.
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use graphite_meter_client::{
     config::Config,
     controller::Command,
-    events::Event,
-    net::ThroughputPath,
+    events::{Event, SignInEnd, SignInPrompt},
+    net::{ThroughputPath, approval::Unapproved},
     run::prepare::{Paths, ServerPath},
     text::Profile,
     tui::{App, Effect},
@@ -241,4 +241,93 @@ fn a_path_change_checks_once_350_ms_after_the_last_change() {
     let config = checked(app.tick(at(950)));
     assert_eq!(config.paths.throughput_transport, Some(ThroughputTransport::WebTransport));
     assert_eq!(app.tick(at(1300)), []);
+}
+
+const PAGE: &str = "https://meter.example/auth/cli?challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+
+/// The sign-in screen for `PAGE`, which expires two minutes after `now`.
+fn signing_in(now: Instant) -> App {
+    let mut app = App::new(Config::default(), Profile::Plain, now);
+    let prompt = SignInPrompt {
+        issuer: "Meter".into(),
+        url: PAGE.into(),
+        code: "ABCD-EFGH".into(),
+        deadline: (now + Duration::from_secs(120)).into(),
+    };
+    app.event(&Event::SignIn(prompt), now);
+    app
+}
+
+/// The text of `row` from `column` on, as drawn.
+fn drawn(buffer: &Buffer, row: u16, column: u16) -> String {
+    let width = buffer.area.width;
+    (column..width)
+        .map(|x| buffer[(x, row)].symbol())
+        .collect::<String>()
+        .trim_end()
+        .to_owned()
+}
+
+#[test]
+fn sign_in_shows_the_code_and_links_the_page() {
+    let start = Instant::now();
+    let mut app = signing_in(start);
+    let later = start + Duration::from_millis(3200);
+    for text in [
+        "Sign in to Meter",
+        "Open the sign-in page below",
+        "Match this code │ ABCD-EFGH │",
+        "waited 3.2 s · expires in 1 min 57 s",
+        "Check the code, then press enter to open the sign-in page.",
+        "enter/space open page • esc cancel • q quit",
+    ] {
+        assert!(shows(&mut app, later, text), "{text}\n{:#?}", frame(&mut app, later));
+    }
+    let mut buffer = Buffer::empty(Rect::new(0, 0, WIDTH, 40));
+    let chrome = app.draw(&mut buffer, later);
+    let [link] = &chrome.links[..] else { panic!("{:?}", chrome.links) };
+    assert_eq!((link.url.as_str(), link.text.text()), (PAGE, PAGE.to_owned()));
+    assert_eq!(drawn(&buffer, link.row, link.column), PAGE);
+}
+
+#[test]
+fn a_wrapped_link_records_the_rows_it_is_scrolled_to() {
+    let now = Instant::now();
+    let mut app = signing_in(now);
+    let mut buffer = Buffer::empty(Rect::new(0, 0, 40, 12));
+    assert_eq!(app.draw(&mut buffer, now).links, [], "the link is below the viewport");
+    press(&mut app, KeyCode::PageDown, now);
+    let chrome = app.draw(&mut buffer, now);
+    let texts: Vec<_> = chrome.links.iter().map(|link| link.text.text()).collect();
+    assert_eq!(texts.concat(), PAGE);
+    assert_eq!(chrome.links.iter().map(|link| link.row).collect::<Vec<_>>(), [7, 8, 9]);
+    for link in &chrome.links {
+        assert_eq!(drawn(&buffer, link.row, link.column), link.text.text());
+    }
+}
+
+#[test]
+fn enter_space_and_o_open_the_page_and_esc_cancels() {
+    let now = Instant::now();
+    for code in [KeyCode::Enter, KeyCode::Char(' '), KeyCode::Char('o')] {
+        let mut app = signing_in(now);
+        assert_eq!(press(&mut app, code, now), [Effect::OpenBrowser(PAGE.into())], "{code:?}");
+        assert!(shows(&mut app, now, "⠋ Waiting for approval…"));
+        assert!(shows(&mut app, now, "Sign-in page opened in the browser."));
+    }
+    let mut app = signing_in(now);
+    assert_eq!(press(&mut app, KeyCode::Esc, now), [Effect::Command(Box::new(Command::Stop))]);
+    app.event(&Event::SignInEnded(SignInEnd::Cancelled), now);
+    assert!(shows(&mut app, now, "Sign-in canceled. Press v to request a new code."));
+    assert!(shows(&mut app, now, "Start test"));
+}
+
+#[test]
+fn an_expired_sign_in_asks_for_a_new_code() {
+    let now = Instant::now();
+    let mut app = signing_in(now);
+    app.event(&Event::SignInEnded(SignInEnd::Expired), now);
+    app.event(&Event::CheckFailed(Unapproved::Expired.failure()), now);
+    assert!(shows(&mut app, now, "Sign-in expired. Press v to request a new code."));
+    assert!(!shows(&mut app, now, "Match this code"));
 }

@@ -39,6 +39,10 @@ pub const VERSION: &str = match option_env!("GM_ENGINE_VERSION") {
     None => concat!(env!("CARGO_PKG_VERSION"), "-rust-dev"),
 };
 
+/// The statuses of an interrupt and of a termination that stopped a run.
+pub const INTERRUPTED: u8 = 130;
+pub const TERMINATED: u8 = 143;
+
 /// Runs `config` once without the interface, writing stage progress to stderr; `stop` stops it with the status it
 /// resolves to. The run's view and the process status.
 pub async fn headless(config: Config, runtimes: Arc<Pool>, stop: impl Future<Output = u8>) -> (View, u8) {
