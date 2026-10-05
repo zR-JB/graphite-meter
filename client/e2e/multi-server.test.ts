@@ -116,7 +116,9 @@ test("deselecting a verified peer starts a self-only run at once", async (page) 
 test("a missed final upload checkpoint is retried and keeps the interval and the run", async (page) => {
   await open(page, home.url, { servers: [home, frankfurt], config: combined });
   await ready(page);
-  await page.evaluate((origin) => {
+  // Automatic falls back past a slow HTTP/1.1 probe, so Frankfurt's checkpoints may go to any of its origins.
+  const origins = [frankfurt.url, frankfurt.h2, frankfurt.h3];
+  await page.evaluate((origins) => {
     const original = window.fetch.bind(window);
     Object.assign(window, { checkpoints: 0 });
     window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -126,14 +128,14 @@ test("a missed final upload checkpoint is retried and keeps the interval and the
         "upload";
       if (
         !uploading ||
-        url.origin !== origin ||
+        !origins.includes(url.origin) ||
         url.pathname !== "/upload/checkpoint" ||
         (window as any).checkpoints++
       )
         return original(input, init);
       return Promise.resolve(new Response(null, { status: 503 }));
     }) as typeof fetch;
-  }, frankfurt.url);
+  }, origins);
   const saved = await run(page);
   expect(
     await page.evaluate(() => (window as any).checkpoints),
