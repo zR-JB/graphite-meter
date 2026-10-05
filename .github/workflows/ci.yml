@@ -468,7 +468,7 @@ jobs:
         run: SKOPEO_IMAGE=$(python3 scripts/ci/toolchains.py get images.skopeo) python3 scripts/ci/rust_release.py check
 
   rust-windows:
-    name: Rust client tests on Windows
+    name: Rust checks on Windows
     runs-on: windows-latest
     timeout-minutes: 30
     needs: plan
@@ -488,9 +488,12 @@ jobs:
       - name: Set up Rust
         uses: ./.github/actions/setup-project
         with: {rust: 'true'}
-      - name: Run the client crate's unit and process tests
+      - name: Run the client, net and legal crates' unit and process tests
         working-directory: rust
-        run: cargo test --locked -p graphite-meter-client --lib --tests
+        run: cargo test --locked -p graphite-meter-client -p graphite-meter-net -p graphite-meter-legal --lib --tests
+      - name: Check that the server builds for Windows
+        working-directory: rust
+        run: cargo check --locked -p graphite-meter-server
 
   # Temporary: this branch's server and client against PR #210's on one runner.
   rust-perf:
