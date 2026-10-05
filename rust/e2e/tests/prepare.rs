@@ -1,7 +1,7 @@
-//! Path checks against the server: each path, the fallbacks, failures by name and refused sign-ins.
+//! Path checks against the server: each path, the fallbacks and failures by name.
 use graphite_meter_client::{
     config::{self, Config, Parsed},
-    net::{LatencyPath, ThroughputPath},
+    net::{Client, LatencyPath, ThroughputPath},
     run::prepare::{Paths, Prepared, prepare},
 };
 use graphite_meter_e2e::Server;
@@ -30,9 +30,9 @@ fn config(url: &Origin, args: &[&str]) -> Config {
 }
 
 async fn check(url: &Origin, args: &[&str]) -> Prepared {
-    prepare(&config(url, args), Arc::new(Pool::new().unwrap()))
-        .await
-        .unwrap()
+    let config = config(url, args);
+    let client = Client::new(config.insecure, Arc::new(Pool::new().unwrap()));
+    prepare(&config, client).await.unwrap()
 }
 
 /// The paths of the one server `url` selects.
@@ -143,31 +143,4 @@ async fn an_unavailable_selected_server_fails_by_name_and_an_unselected_one_does
         (failure.reason, failure.text.as_str()),
         (FailureReason::ConnectionLost, "Server could not be reached")
     );
-}
-
-#[tokio::test]
-async fn a_protected_server_is_refused_over_http_and_with_insecure_tls() {
-    const HASH: &str =
-        "$argon2id$v=19$m=19456,t=2,p=1$OT2po7nOdP+21BKX5CuZQw$9kVgfSWvlFy31939zUCVY62fHIuSqC8RwL67EpQ8qy8";
-    let server = Server::with(&[
-        ("GM_AUTH_MODE", "password"),
-        ("GM_AUTH_PUBLIC_URL", "https://127.0.0.7"),
-        ("GM_AUTH_PASSWORD_HASH", HASH),
-        ("GM_ADVERTISED_NATIVE_ENDPOINTS", "http2,http3"),
-    ])
-    .await;
-    let refusals: [(&Origin, &[&str], &str); 2] = [
-        (&server.http1, &[], "authenticated operation requires an HTTPS -url"),
-        (
-            &server.http2,
-            &["-insecure"],
-            "sign-in refuses skipped TLS verification (Skip TLS verify, -insecure)",
-        ),
-    ];
-    for (url, args, refusal) in refusals {
-        let Err(failure) = prepare(&config(url, args), Arc::new(Pool::new().unwrap())).await else {
-            panic!("{url} was prepared");
-        };
-        assert_eq!((failure.reason, failure.text.as_str()), (FailureReason::PreparationFailed, refusal));
-    }
 }

@@ -7,20 +7,16 @@ use crate::{
     net::{Client, Fault, LatencyPath, Request, ThroughputPath},
 };
 use futures_util::future::join_all;
-use graphite_meter_net::Pool;
 use graphite_meter_proto::{
     bus::Ping,
     catalog::{ServerCatalog, ServerEntry, ServerId},
     discovery::{LatencyTransport, Preflight, Protocol, ThroughputTransport},
-    origin::{Origin, Scheme},
+    origin::Origin,
     reason::FailureReason,
     route::Route,
 };
 use http::Method;
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 use tokio::time::{self, timeout};
 
 /// How long a path check may take, the catalogue and every server included.
@@ -71,16 +67,16 @@ impl Prepared {
     }
 }
 
-/// Checks the paths `config` selects over a client of its own; a selected server that fails fails alone.
-pub async fn prepare(config: &Config, runtimes: Arc<Pool>) -> Result<Prepared, Failure> {
-    let (at, client) = (Instant::now(), Client::new(config.insecure, runtimes));
+/// Checks the paths `config` selects over `client`, which this check owns; a selected server that fails fails alone.
+pub async fn prepare(config: &Config, client: Client) -> Result<Prepared, Failure> {
+    let at = Instant::now();
     let deadline = time::Instant::now() + PREPARATION_TIMEOUT;
     let request = Request::new(Method::GET, &config.url, Route::Servers);
     let catalogue = client.json(Protocol::Negotiated, request, ServerCatalog::decode);
     let received = time::timeout_at(deadline, catalogue)
         .await
         .map_err(|_| late())?
-        .map_err(|fault| failure(config, &config.url, fault))?;
+        .map_err(|fault| fault.failure())?;
     let selected = select::servers(&received, config).map_err(refused)?;
     let checks = selected.into_iter().map(|entry| async {
         let mut server = ServerPath {
@@ -105,10 +101,9 @@ async fn check(
     server: &mut ServerPath,
 ) -> Result<Paths, Failure> {
     let served = server.origin.clone();
-    let failed = |fault| failure(config, &served, fault);
     let request = Request::new(Method::GET, &served, Route::Preflight);
     let preflight = client.json(Protocol::Negotiated, request, Preflight::decode).await;
-    let preflight = preflight.map_err(failed)?;
+    let preflight = preflight.map_err(|fault| fault.failure())?;
     if !preflight.server.name.is_empty() {
         server.name.clone_from(&preflight.server.name);
     }
@@ -125,13 +120,14 @@ async fn check(
         if candidates.latency.is_empty() {
             return Ok(None);
         }
-        first(&candidates.latency, async |path| {
-            Ok(Some((path.clone(), check_latency(client, path).await?)))
-        })
-        .await
+        let checked = |path: LatencyPath| async move {
+            let rtt = check_latency(client, &path).await?;
+            Ok(Some((path, rtt)))
+        };
+        first(&candidates.latency, checked).await
     };
-    let throughput = first(&candidates.throughput, async |path| check_throughput(client, path).await);
-    let (throughput, latency) = tokio::try_join!(throughput, latency).map_err(failed)?;
+    let throughput = first(&candidates.throughput, |path| async move { check_throughput(client, &path).await });
+    let (throughput, latency) = tokio::try_join!(throughput, latency).map_err(|fault| fault.failure())?;
     let (latency, idle_rtt) = latency.unzip();
     Ok(Paths {
         throughput,
@@ -142,10 +138,13 @@ async fn check(
 }
 
 /// The first of `candidates` whose check passes, moving on unless a server asks for sign-in; else the last fault.
-async fn first<P, T>(candidates: &[P], check: impl AsyncFn(&P) -> Result<T, Fault>) -> Result<T, Fault> {
+async fn first<P: Clone, T, F>(candidates: &[P], check: impl Fn(P) -> F) -> Result<T, Fault>
+where
+    F: Future<Output = Result<T, Fault>>,
+{
     let mut result = Err(Fault::Malformed("no path to check".into()));
     for candidate in candidates {
-        result = check(candidate).await;
+        result = check(candidate.clone()).await;
         if matches!(result, Ok(_) | Err(Fault::SignIn(_))) {
             break;
         }
@@ -194,17 +193,6 @@ async fn check_latency(client: &Client, path: &LatencyPath) -> Result<Duration, 
         .unwrap_or(Err(Fault::TimedOut("latency reply")))
 }
 
-/// What `fault` at the server discovered from `origin` means; a sign-in is refused over HTTP and with `-insecure`.
-fn failure(config: &Config, origin: &Origin, fault: Fault) -> Failure {
-    match fault {
-        Fault::SignIn(_) if config.insecure => {
-            refused("sign-in refuses skipped TLS verification (Skip TLS verify, -insecure)")
-        }
-        Fault::SignIn(_) if origin.scheme == Scheme::Http => refused("authenticated operation requires an HTTPS -url"),
-        fault => fault.failure(),
-    }
-}
-
 fn refused(text: impl Into<String>) -> Failure {
     Failure::new(FailureReason::PreparationFailed, text)
 }
@@ -217,7 +205,8 @@ fn late() -> Failure {
 mod tests {
     use super::*;
     use crate::config::{Parsed, parse};
-    use std::ffi::OsString;
+    use graphite_meter_net::Pool;
+    use std::{ffi::OsString, sync::Arc};
 
     fn config(args: &str) -> Config {
         match parse(args.split_whitespace().map(OsString::from)) {

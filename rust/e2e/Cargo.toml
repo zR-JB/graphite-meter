@@ -10,13 +10,14 @@ publish.workspace = true
 graphite-meter-proto.workspace = true
 graphite-meter-server.workspace = true
 graphite-meter-testkit.workspace = true
-tokio = { workspace = true, features = ["rt", "sync"] }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 
 [dev-dependencies]
 graphite-meter-client.workspace = true
 graphite-meter-net.workspace = true
 http.workspace = true
-tokio = { workspace = true, features = ["macros", "time"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "test-util"] }
+tokio-rustls.workspace = true
 tokio-util.workspace = true
 
 [lints]

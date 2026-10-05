@@ -1,13 +1,16 @@
 //! End-to-end tests of the client against the in-process server.
 use graphite_meter_proto::origin::Origin;
 use graphite_meter_server::{
-    app::Endpoint,
+    app::{App, Endpoint},
     config::{self, Loaded},
     runtime,
 };
 use graphite_meter_testkit::{Identity, Scratch};
-use std::{ffi::OsString, net::SocketAddr};
-use tokio::sync::oneshot;
+use std::{ffi::OsString, net::SocketAddr, sync::Arc, time::Duration};
+use tokio::{
+    sync::{mpsc, oneshot},
+    time::timeout,
+};
 
 /// One loopback address spelled three ways, as listener addresses must differ: discovery advertises every listener
 /// on the host it was asked at.
@@ -19,6 +22,7 @@ pub struct Server {
     pub http2: Origin,
     pub http3: Origin,
     pub quic: SocketAddr,
+    pub app: Arc<App>,
     _stop: oneshot::Sender<()>,
     _scratch: Scratch,
 }
@@ -30,7 +34,12 @@ impl Server {
 
     /// The server with `settings` over the test configuration.
     pub async fn with(settings: &[(&str, &str)]) -> Self {
-        let (scratch, identity) = (Scratch::new().unwrap(), Identity::generate().unwrap());
+        Self::serve(settings, &Identity::generate().unwrap()).await
+    }
+
+    /// The server with `settings` over the test configuration, presenting `identity`.
+    pub async fn serve(settings: &[(&str, &str)], identity: &Identity) -> Self {
+        let scratch = Scratch::new().unwrap();
         let certificate = scratch.file("cert.pem", &identity.certificate).unwrap();
         let key = scratch.file("key.pem", &identity.key).unwrap();
         let mut env: Vec<(&str, OsString)> = settings.iter().map(|&(name, value)| (name, value.into())).collect();
@@ -54,11 +63,40 @@ impl Server {
             origin("https", Endpoint::H2),
             origin("https", Endpoint::Quic),
         );
-        let quic = address(Endpoint::Quic);
+        let (quic, app) = (address(Endpoint::Quic), server.app());
         let (stop, stopped) = oneshot::channel::<()>();
         tokio::spawn(server.serve(async {
             let _ = stopped.await;
         }));
-        Self { http1, http2, http3, quic, _stop: stop, _scratch: scratch }
+        Self {
+            http1,
+            http2,
+            http3,
+            quic,
+            app,
+            _stop: stop,
+            _scratch: scratch,
+        }
     }
+}
+
+/// What `received` brings up to the first item `last` matches, within `limit`.
+pub async fn until<T: std::fmt::Debug>(
+    received: &mut mpsc::UnboundedReceiver<T>,
+    limit: Duration,
+    last: impl Fn(&T) -> bool,
+) -> Vec<T> {
+    let mut items = Vec::new();
+    let collected = timeout(limit, async {
+        while let Some(item) = received.recv().await {
+            let done = last(&item);
+            items.push(item);
+            if done {
+                return;
+            }
+        }
+    });
+    let ended = collected.await.is_ok();
+    assert!(ended, "nothing ended within {limit:?}: {items:#?}");
+    items
 }

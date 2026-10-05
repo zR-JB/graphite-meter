@@ -232,7 +232,7 @@ async fn http3_send(
     Ok(response.map(|()| Incoming(Source::Http3 { recv: Box::new(recv), _quic: quic.clone() })))
 }
 
-/// A request body: none, or one block repeated for a transfer's bytes.
+/// A request body: none, one block once, or one block repeated for a transfer's bytes.
 pub struct Payload {
     block: Bytes,
     remaining: u64,
@@ -243,6 +243,11 @@ pub struct Payload {
 impl Payload {
     pub fn empty() -> Self {
         Self { block: Bytes::new(), remaining: 0, sent: None }
+    }
+
+    /// `bytes` once.
+    pub fn once(bytes: Bytes) -> Self {
+        Self { remaining: bytes.len() as u64, block: bytes, sent: None }
     }
 
     /// `block` repeated for a transfer's bytes, adding each slice handed on to `sent`.

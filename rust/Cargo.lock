@@ -378,6 +378,7 @@ dependencies = [
  "graphite-meter-testkit",
  "http",
  "tokio",
+ "tokio-rustls",
  "tokio-util",
 ]
 

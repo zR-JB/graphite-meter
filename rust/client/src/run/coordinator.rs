@@ -53,10 +53,12 @@ pub async fn run(prepared: &Prepared, config: &Config, events: &Events, token: C
     let mut seats: Vec<_> = prepared.servers.iter().filter_map(Seat::new).collect();
     let plan = config.plan();
     if let Some(error) = refusal(prepared, &seats, &unprepared, &plan) {
-        events.send(Event::RunFinished { outcome: Outcome::Failed, error: Some(error) });
-        return Outcome::Failed;
+        let (outcome, elapsed) = (Outcome::Failed, started.elapsed());
+        events.send(Event::RunFinished { outcome, error: Some(error), elapsed });
+        return outcome;
     }
-    events.send(Event::RunStarted { plan: plan.clone(), focus: seats[0].server.id.clone() });
+    let focus = seats[0].server.id.clone();
+    events.send(Event::RunStarted { plan: plan.clone(), focus, at: started });
     let run = Run { prepared, config, events, token: &token, started };
     unprepared.iter().for_each(|failure| run.failed(failure));
     let sole = prepared.servers.len() == 1;
@@ -81,7 +83,7 @@ pub async fn run(prepared: &Prepared, config: &Config, events: &Events, token: C
         true => Outcome::Stopped,
         false => Outcome::of(&results, &config.stages, &unprepared),
     };
-    events.send(Event::RunFinished { outcome, error: None });
+    events.send(Event::RunFinished { outcome, error: None, elapsed: started.elapsed() });
     outcome
 }
 
@@ -121,7 +123,7 @@ impl Run<'_> {
         };
         let plan = StagePlan { stage, members: members.collect(), duration, latency };
         self.events.send(Event::StageStarted(plan.clone()));
-        let mut live = Live::new(self, Engine::new(plan.clone(), Instant::now()));
+        let mut live = Live::new(self, stage, Engine::new(plan.clone(), Instant::now()));
         let token = self.token.child_token();
         let opening = seats.iter().map(|seat| {
             let replaced = seat.replaced.clone();
@@ -167,6 +169,7 @@ impl Run<'_> {
 /// A stage in progress: its engine, the participants still in it, and what the engine asked for.
 struct Live<'a> {
     run: &'a Run<'a>,
+    stage: Stage,
     engine: Engine,
     participants: Vec<Participant>,
     /// Participants that could not open, for the next tick.
@@ -178,10 +181,11 @@ struct Live<'a> {
 }
 
 impl<'a> Live<'a> {
-    fn new(run: &'a Run<'a>, engine: Engine) -> Self {
+    fn new(run: &'a Run<'a>, stage: Stage, engine: Engine) -> Self {
         let (participants, departed, finished) = (Vec::new(), Vec::new(), false);
         Self {
             run,
+            stage,
             engine,
             participants,
             departed,
@@ -249,7 +253,7 @@ impl<'a> Live<'a> {
                 Decision::OpenWindow { start, end } => {
                     self.window = Some(start);
                     participants.iter().for_each(|participant| participant.opened(end));
-                    self.run.events.send(Event::Measuring);
+                    self.run.events.send(Event::Measuring(self.stage));
                 }
                 Decision::Checkpoint { budget, .. } => self.checkpoint = Some(budget),
                 Decision::CloseWindow => {
@@ -282,7 +286,7 @@ impl<'a> Live<'a> {
         }
     }
 
-    /// Announces the window's in-window probes and the boundary's rates `at` into the window.
+    /// Announces the window's in-window probes and the boundary's live rates `at` into the window.
     fn announce(&self, tick: &Tick, probes: &[(ServerId, Probe)], at: Duration, start: Instant) {
         let events = self.run.events;
         for (server, probe) in probes {
@@ -295,7 +299,8 @@ impl<'a> Live<'a> {
                 events.send(Event::Probe { server: server.clone(), at, rtt });
             }
         }
-        let rates = tick.window.as_ref().map(|window| window.rates).unwrap_or_default();
-        events.send(Event::Sample { at, rates, recovering: tick.recovering });
+        if let Some(rates) = tick.live {
+            events.send(Event::Sample { at, rates, recovering: tick.recovering });
+        }
     }
 }

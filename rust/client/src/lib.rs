@@ -1,6 +1,7 @@
 //! The Graphite Meter native terminal client.
 
 pub mod config;
+pub mod controller;
 pub mod events;
 pub mod model;
 pub mod net;

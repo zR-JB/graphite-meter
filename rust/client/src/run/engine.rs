@@ -4,7 +4,7 @@
 
 use crate::{
     measure::{
-        aggregate::{Aggregate, Boundary, Reading, Window},
+        aggregate::{Aggregate, Boundary, Reading},
         latency::{Latency, Population, ProbeOutcome},
     },
     model::{
@@ -22,6 +22,8 @@ const CHECKPOINT_BUDGET: Duration = Duration::from_millis(1500);
 const FINAL_CHECKPOINT_BUDGET: Duration = Duration::from_millis(500);
 /// A tick this late resumes evidence.
 const LATE_TICK: Duration = Duration::from_millis(1500);
+/// Half a tick: a shorter window holds only a few reads, so its rates stay off the live trace.
+const LIVE_WINDOW: Duration = Duration::from_millis(125);
 /// Bytes that stop growing this long are silence.
 const SILENCE: Duration = Duration::from_secs(2);
 /// Another server that moved this recently makes a silent one's problem its own.
@@ -109,8 +111,9 @@ pub enum Decision {
 #[derive(Debug)]
 pub struct Tick {
     pub decisions: Vec<Decision>,
-    /// The boundary's window, for live rates.
-    pub window: Option<Window>,
+    /// The boundary's rates for the live trace: a window of at least half a tick, or any at a restart, where none
+    /// breaks the trace.
+    pub live: Option<Dir<Option<f64>>>,
     /// Silence every member shares: nobody leaves for it.
     pub recovering: bool,
     /// When the engine wants its next tick.
@@ -201,7 +204,7 @@ impl Engine {
 
     pub fn tick(&mut self, input: Input) -> Tick {
         let next = input.now + TICK;
-        let mut tick = Tick { decisions: Vec::new(), window: None, recovering: false, next };
+        let mut tick = Tick { decisions: Vec::new(), live: None, recovering: false, next };
         if self.phase == Phase::Done {
             return tick;
         }
@@ -478,7 +481,13 @@ impl Engine {
         let Some(aggregate) = &mut self.aggregate else { return };
         let bytes = |seat: &Seat| Dir::from_fn(|direction| aggregate.bytes(&seat.server, direction));
         let before: Vec<_> = self.seats.iter().map(bytes).collect();
-        tick.window = aggregate.observe(boundary);
+        let intervals = |aggregate: &Aggregate| aggregate.intervals().0.len() + aggregate.intervals().1;
+        let earlier = intervals(aggregate);
+        let window = aggregate.observe(boundary);
+        let restarted = intervals(aggregate) > earlier;
+        if restarted || window.as_ref().is_some_and(|window| window.shortest() >= LIVE_WINDOW) {
+            tick.live = Some(window.map(|window| window.rates).unwrap_or_default());
+        }
         for (seat, before) in self.seats.iter_mut().zip(before) {
             for direction in Direction::BOTH {
                 if aggregate.bytes(&seat.server, direction) > before[direction] {

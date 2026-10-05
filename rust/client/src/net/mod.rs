@@ -1,5 +1,6 @@
 //! The network layer: one request API over HTTP/1.1, HTTP/2 and HTTP/3, lane groups, the latency bus, their
-//! failures and the retry rule.
+//! failures, the retry rule and native sign-in.
+pub mod approval;
 mod bus;
 mod conn;
 mod fault;

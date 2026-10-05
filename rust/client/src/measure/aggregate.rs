@@ -100,7 +100,7 @@ impl Window {
     }
 
     /// The shortest clock the window spans.
-    fn shortest(&self) -> Duration {
+    pub fn shortest(&self) -> Duration {
         let receivers = self.components.up.iter().map(|component| component.duration);
         receivers.fold(self.end - self.start, Duration::min)
     }

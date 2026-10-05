@@ -5,7 +5,7 @@ use graphite_meter_client::{
         aggregate::{Fed, Reading, Reason, Receiver},
         latency::ProbeOutcome,
     },
-    model::{Cadence, Dir, Failure, LaneHealth, Outcome, Scope, ServerFailure, Stage, StageResult, focus},
+    model::{Cadence, Dir, Direction, Failure, LaneHealth, Outcome, Scope, ServerFailure, Stage, StageResult, focus},
     run::engine::{Decision, Engine, Input, Member, Probe, Sample, StagePlan, lateness, stagger, warmup},
 };
 use graphite_meter_proto::{catalog::ServerId, reason::FailureReason, upload::Counters};
@@ -77,6 +77,8 @@ struct Script {
     next: Duration,
     log: Vec<(Duration, Decision)>,
     recovering: Vec<Duration>,
+    /// When the live trace got rates.
+    live: Vec<Duration>,
     /// Departures the next tick passes in.
     departed: Vec<(ServerId, Failure)>,
 }
@@ -91,6 +93,7 @@ impl Script {
             next: Duration::ZERO,
             log: Vec::new(),
             recovering: Vec::new(),
+            live: Vec::new(),
             departed: Vec::new(),
         }
     }
@@ -109,6 +112,9 @@ impl Script {
             .extend(tick.decisions.into_iter().map(|decision| (at, decision)));
         if tick.recovering {
             self.recovering.push(at);
+        }
+        if tick.live.is_some() {
+            self.live.push(at);
         }
     }
 
@@ -178,6 +184,29 @@ fn a_quiet_link_never_ends_a_stage() {
     let result = script.engine.result();
     assert_eq!(result.measured, STAGE);
     assert!(result.throughput.down.unwrap().rate.is_some());
+}
+
+#[test]
+fn a_final_boundary_just_after_a_tick_stays_off_the_live_rates_and_counts_in_the_result() {
+    const BURST: u64 = 6 * 256 * 1024;
+    for (stage, direction) in [(Stage::Download, Direction::Down), (Stage::Upload, Direction::Up)] {
+        let reading = |at: Duration, bytes| match direction {
+            Direction::Down => down("a", bytes),
+            Direction::Up => up("a", bytes, at),
+        };
+        let mut script = Script::new(plan(stage, &["a"], false));
+        script.run_until(STAGE - ms(250), |at| vec![reading(at, moved(at, STAGE))]);
+        let before = STAGE - Duration::from_micros(50);
+        script.tick(before, Duration::ZERO, &[reading(before, moved(before, STAGE))], &[]);
+        script.run(|at| vec![reading(at, moved(at, STAGE) + BURST)]);
+        assert_eq!(script.at(&Decision::Finish), Some(STAGE));
+        assert_eq!(script.live.last(), Some(&before), "{stage:?}");
+        let result = script.engine.result();
+        let throughput = result.throughput[direction].unwrap();
+        assert_eq!(throughput.bytes, moved(STAGE, STAGE) + BURST);
+        let mean = throughput.bytes as f64 / result.measured.as_secs_f64();
+        assert!((throughput.rate.unwrap().mean - mean).abs() < 1.0, "{stage:?}: {throughput:?}");
+    }
 }
 
 #[test]

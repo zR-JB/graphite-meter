@@ -3,6 +3,7 @@ use graphite_meter_client::{
     config::{self, Config, Parsed},
     events::{Event, Events},
     model::{Direction, Outcome, Scope, Stage, StageResult},
+    net::Client,
     run::{coordinator, prepare::prepare},
 };
 use graphite_meter_e2e::Server;
@@ -40,7 +41,8 @@ fn config(url: &Origin, args: &[&str]) -> Config {
 
 /// Prepares and runs `config`, handing each event to `seen` as it arrives.
 async fn run(config: &Config, seen: impl AsyncFnMut(&Event)) -> (Outcome, Vec<Event>) {
-    let prepared = prepare(config, Arc::new(Pool::new().unwrap())).await.unwrap();
+    let client = Client::new(config.insecure, Arc::new(Pool::new().unwrap()));
+    let prepared = prepare(config, client).await.unwrap();
     let (events, received) = Events::channel();
     let watched = watch(received, seen);
     let outcome = async {
@@ -93,8 +95,11 @@ async fn completes(server: &Server, args: &[&str]) {
             assert!(throughput.rate.is_some() && throughput.bytes > 0, "{:?} {direction:?}", result.stage);
         }
     }
-    let measuring = events.iter().filter(|event| **event == Event::Measuring).count();
-    assert_eq!(measuring, 4);
+    let measuring = events.iter().filter_map(|event| match event {
+        Event::Measuring(stage) => Some(*stage),
+        _ => None,
+    });
+    assert_eq!(measuring.collect::<Vec<_>>(), Stage::ALL);
     assert!(
         events
             .iter()
@@ -140,7 +145,7 @@ async fn a_server_stalled_mid_download_departs_and_the_other_completes_partial()
     let args = ["-server", "self", "-server", "relayed", "-stages", "download", "-download-duration", "6s"];
     let config = config(&server.http1, &[&["-insecure"], args.as_slice()].concat());
     let stall = async |event: &Event| {
-        if *event == Event::Measuring {
+        if matches!(event, Event::Measuring(_)) {
             tokio::time::sleep(Duration::from_secs(1)).await;
             link.inject(Fault::Stall);
         }
@@ -172,7 +177,7 @@ async fn a_sole_server_that_fails_a_stage_rejoins_the_next() {
     let args = ["-stages", "down,up", "-download-duration", "4s", "-upload-duration", "2s"];
     let mut stalled = false;
     let stall = async |event: &Event| match event {
-        Event::Measuring if !stalled => {
+        Event::Measuring(_) if !stalled => {
             stalled = true;
             tokio::time::sleep(Duration::from_millis(1500)).await;
             link.inject(Fault::Stall);
