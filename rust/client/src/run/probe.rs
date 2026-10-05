@@ -113,8 +113,8 @@ impl Schedule {
 
     /// Probes whose deadline passed by `now`, as timeouts.
     pub fn expire(&mut self, now: Instant) -> Vec<Probe> {
-        self.late
-            .retain(|_, sent| now.saturating_duration_since(*sent) <= LATE_REPLIES);
+        let recent = |_: &u32, sent: &mut Instant| now.saturating_duration_since(*sent) <= LATE_REPLIES;
+        self.late.retain(recent);
         let mut expired = Vec::new();
         self.pending.retain(|&id, &mut (sent, deadline)| {
             let waiting = now < deadline;
@@ -137,9 +137,8 @@ impl Schedule {
     pub fn lost(&mut self) -> Vec<Probe> {
         self.late.clear();
         let pending = std::mem::take(&mut self.pending).into_values();
-        pending
-            .map(|(sent, _)| Probe::Outcome { sent, outcome: ProbeOutcome::Unresolved })
-            .collect()
+        let unresolved = |(sent, _)| Probe::Outcome { sent, outcome: ProbeOutcome::Unresolved };
+        pending.map(unresolved).collect()
     }
 
     /// Sending stops; probes in flight drain to their deadlines.

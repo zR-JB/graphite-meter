@@ -47,10 +47,9 @@ impl Participant {
         let lanes = config.lanes(path.protocol, path.transport);
         let plans = topology(path, plan.stage, lanes);
         let spacing = |direction| stagger(warmup, lanes[direction]);
-        let prober = plan
-            .latency
-            .zip(paths.latency.clone())
-            .map(|(cadence, latency)| Prober::spawn(client.clone(), latency, plan.stage, cadence, token.child_token()));
+        let probed = plan.latency.zip(paths.latency.clone());
+        let prober =
+            probed.map(|(cadence, path)| Prober::spawn(client.clone(), path, plan.stage, cadence, token.child_token()));
         let down = plan.stage.moves(Direction::Down).then(|| {
             Lanes::start(client, plans.clone(), Work::Download, spacing(Direction::Down), token.child_token())
         });

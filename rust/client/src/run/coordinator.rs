@@ -153,7 +153,16 @@ impl Run<'_> {
         };
         let plan = StagePlan { stage, members: members.collect(), duration, latency };
         self.events.send(Event::StageStarted(plan.clone()));
-        let mut live = Live::new(self, stage, Engine::new(plan.clone(), Instant::now()));
+        let mut live = Live {
+            run: self,
+            stage,
+            engine: Engine::new(plan.clone(), Instant::now()),
+            participants: Vec::new(),
+            departed: Vec::new(),
+            checkpoint: None,
+            window: None,
+            finished: false,
+        };
         let token = self.token.child_token();
         let opening = seats.iter().map(|seat| {
             let replaced = seat.replaced.clone();
@@ -172,12 +181,7 @@ impl Run<'_> {
             None => live.engine.stop(Instant::now()),
         }
         let budget = if self.token.is_cancelled() { STOPPED_FINISH } else { FINISH };
-        join_all(
-            live.participants
-                .into_iter()
-                .map(|participant| participant.finish(budget)),
-        )
-        .await;
+        join_all(live.participants.into_iter().map(|ended| ended.finish(budget))).await;
         live.engine.result()
     }
 
@@ -208,21 +212,7 @@ struct Live<'a> {
     finished: bool,
 }
 
-impl<'a> Live<'a> {
-    fn new(run: &'a Run<'a>, stage: Stage, engine: Engine) -> Self {
-        let (participants, departed, finished) = (Vec::new(), Vec::new(), false);
-        Self {
-            run,
-            stage,
-            engine,
-            participants,
-            departed,
-            checkpoint: None,
-            window: None,
-            finished,
-        }
-    }
-
+impl Live<'_> {
     /// Ticks when the engine asks until it finishes or the run stops.
     async fn run(&mut self) {
         let token = self.run.token;
@@ -246,10 +236,7 @@ impl<'a> Live<'a> {
     async fn tick(&mut self, now: Instant, lateness: Duration) -> (Tick, Vec<(ServerId, Probe)>) {
         let mut samples: Vec<_> = self.participants.iter_mut().map(Participant::local).collect();
         if let Some(budget) = self.checkpoint.take() {
-            let gathered = self
-                .participants
-                .iter()
-                .map(|participant| participant.checkpoint(budget));
+            let gathered = self.participants.iter().map(|one| one.checkpoint(budget));
             for (sample, checkpoint) in samples.iter_mut().zip(join_all(gathered).await) {
                 match checkpoint {
                     Some(Ok(receiver)) => sample.reading.up = Some(receiver),
@@ -286,24 +273,18 @@ impl<'a> Live<'a> {
                 Decision::Checkpoint { budget, .. } => self.checkpoint = Some(budget),
                 Decision::CloseWindow => {
                     closed = true;
-                    participants
-                        .iter_mut()
-                        .for_each(|participant| participant.close(FINISH));
+                    participants.iter_mut().for_each(|one| one.close(FINISH));
                 }
                 Decision::Failed(failure) => {
-                    let failed = participants
-                        .iter_mut()
-                        .find(|participant| *participant.server() == failure.server);
-                    if let Some(participant) = failed.filter(|_| failure.scope == Scope::Latency) {
-                        participant.stop_probing();
+                    let index = participants.iter().position(|one| *one.server() == failure.server);
+                    if let Some(index) = index.filter(|_| failure.scope == Scope::Latency) {
+                        participants[index].stop_probing();
                     }
                     self.run.failed(&failure);
                 }
                 Decision::Remove(failure) => {
-                    let departing = participants
-                        .iter()
-                        .position(|participant| *participant.server() == failure.server);
-                    if let Some(index) = departing {
+                    let index = participants.iter().position(|one| *one.server() == failure.server);
+                    if let Some(index) = index {
                         participants.remove(index).depart();
                     }
                     self.run.failed(&failure);

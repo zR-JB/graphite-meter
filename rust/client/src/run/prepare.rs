@@ -90,10 +90,8 @@ pub async fn prepare(config: &Config, client: Client) -> Result<Prepared, Failur
     let deadline = time::Instant::now() + PREPARATION_TIMEOUT;
     let request = Request::new(Method::GET, &config.url, Route::Servers);
     let catalogue = client.json(Protocol::Negotiated, request, ServerCatalog::decode);
-    let received = time::timeout_at(deadline, catalogue)
-        .await
-        .map_err(|_| late())?
-        .map_err(|fault| fault.failure())?;
+    let received = time::timeout_at(deadline, catalogue).await.map_err(|_| late())?;
+    let received = received.map_err(|fault| fault.failure())?;
     let selected = select::servers(&received, config).map_err(refused)?;
     let checks = selected.into_iter().map(|entry| async {
         let mut server = ServerPath {
@@ -183,9 +181,8 @@ where
 async fn check_throughput(client: &Client, path: &ThroughputPath) -> Result<ThroughputPath, Fault> {
     if path.transport == ThroughputTransport::WebTransport {
         let session = client.session(&path.origin, Route::WtDownload, vec![("bytes", "0".into())]);
-        timeout(VERIFY, session)
-            .await
-            .unwrap_or(Err(Fault::TimedOut("WebTransport session")))?;
+        let opened = timeout(VERIFY, session).await;
+        opened.unwrap_or(Err(Fault::TimedOut("WebTransport session")))?;
     }
     let protocol = client.probe(&path.origin, path.protocol).await?;
     Ok(ThroughputPath { protocol, ..path.clone() })
@@ -214,9 +211,8 @@ async fn check_latency(client: &Client, path: &LatencyPath) -> Result<Duration, 
             ping = ping.next();
         }
     };
-    timeout(VERIFY, verified)
-        .await
-        .unwrap_or(Err(Fault::TimedOut("latency reply")))
+    let verified = timeout(VERIFY, verified).await;
+    verified.unwrap_or(Err(Fault::TimedOut("latency reply")))
 }
 
 fn refused(text: impl Into<String>) -> Failure {

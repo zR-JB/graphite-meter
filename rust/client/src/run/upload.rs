@@ -134,7 +134,8 @@ impl UploadSession {
     pub async fn checkpoint(&self, budget: Duration) -> Result<Receiver, Fault> {
         let (deadline, id, control) = (Instant::now() + budget, Some(self.upload.id.as_str()), &self.start.control);
         loop {
-            let asked = control.json(Method::POST, Route::UploadCheckpoint, id, json::decode::<Counters>);
+            let request = control.request(Method::POST, Route::UploadCheckpoint, id);
+            let asked = control.json(request, json::decode::<Counters>);
             let fault = match timeout_at(deadline, asked).await {
                 Ok(Ok(counters)) => return Ok(Receiver { id: self.upload.number, counters }),
                 Ok(Err(fault)) => fault,
@@ -178,9 +179,8 @@ impl UploadSession {
         drop(lanes);
         let finished = async {
             self.start.control.finalize(&id).await;
-            let _ = progress
-                .wait_for(|progress| progress.complete || progress.ended.is_some())
-                .await;
+            let ended = |progress: &Progress| progress.complete || progress.ended.is_some();
+            let _ = progress.wait_for(ended).await;
         };
         let _ = timeout(budget, finished).await;
         token.cancel();
@@ -207,7 +207,7 @@ impl Start {
     /// Mints receiver `number` and starts its feed and lanes.
     async fn upload(self, number: u32) -> Result<Upload, Fault> {
         let control = &self.control;
-        let mint = || control.json(Method::POST, Route::UploadSession, None, Minted::decode);
+        let mint = || control.json(control.request(Method::POST, Route::UploadSession, None), Minted::decode);
         let id = retrying(mint).await?.upload_id;
         let token = self.token.child_token();
         let work = Work::Upload(id.clone());
@@ -221,29 +221,23 @@ impl Start {
 }
 
 impl Control {
+    /// A request to `method` on `route` for upload `id`, if any.
     fn request(&self, method: Method, route: Route, id: Option<&str>) -> Request {
-        let mut request = Request::new(method, &self.origin, route);
-        request.query.extend(id.map(|id| ("id", id.to_owned())));
-        request
-    }
-
-    /// The answer's head to `method` on `route` for upload `id`, if any, within the control timeout.
-    async fn send(&self, method: Method, route: Route, id: Option<&str>) -> Result<Incoming, Fault> {
-        self.client.control(self.via, self.request(method, route, id)).await
+        let query = id.map(|id| ("id", id.to_owned())).into_iter().collect();
+        Request { query, ..Request::new(method, &self.origin, route) }
     }
 
     /// Asks the receiver of upload `id` to finalize and reads its answer.
     async fn finalize(&self, id: &str) {
-        if let Ok(mut answer) = self.send(Method::DELETE, Route::UploadProgress, Some(id)).await {
+        let request = self.request(Method::DELETE, Route::UploadProgress, Some(id));
+        if let Ok(mut answer) = self.client.control(self.via, request).await {
             while let Ok(Some(_)) = answer.chunk().await {}
         }
     }
 
-    /// The JSON answer to `method` on `route` for upload `id`, if any, within the control timeout.
-    async fn json<T>(&self, method: Method, route: Route, id: Option<&str>, decode: Decode<T>) -> Result<T, Fault> {
-        self.client
-            .json(self.via, self.request(method, route, id), decode)
-            .await
+    /// The JSON answer to `request` within the control timeout.
+    async fn json<T>(&self, request: Request, decode: Decode<T>) -> Result<T, Fault> {
+        self.client.json(self.via, request, decode).await
     }
 }
 
@@ -261,7 +255,7 @@ async fn follow(
                 .wait_for(Option::is_some)
                 .await
                 .ok()
-                .and_then(|session| session.clone());
+                .and_then(|opened| opened.clone());
             let session = session.ok_or_else(|| Fault::Lost("upload lanes ended".into()))?;
             let stream = session.accept_uni().await?;
             read(&control, Source::Stream(stream, session), &progress, &mut false).await
@@ -277,7 +271,8 @@ async fn follow(
     let mut retry = Retry::default();
     loop {
         let (started, mut moved) = (std::time::Instant::now(), false);
-        let feed = control.send(Method::GET, Route::UploadProgress, Some(&id)).await;
+        let request = control.request(Method::GET, Route::UploadProgress, Some(&id));
+        let feed = control.client.control(control.via, request).await;
         let fault = match feed {
             Ok(feed) => match read(&control, Source::Http(feed), &progress, &mut moved).await {
                 Ok(()) => return,
