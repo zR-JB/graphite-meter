@@ -113,12 +113,21 @@ def text(path: Path, name: str) -> str:
         raise ControlPlaneError(f"{path.name}: {name} is not UTF-8") from exc
 
 
-def check_source_txt(content: str, where: str, version: str, offer: str, target: str) -> None:
+def source_url(version: str, root: Path = ROOT) -> str:
+    """The source a Rust build names, as the collector's build_source: legal/project.json's repository, at the
+    release tag unless `version` is a prerelease's."""
+    project = expect_object(decode_json((root / "legal/project.json").read_text(encoding="utf-8"), "project.json"),
+                            "project.json")
+    repository = str_field(project, "repository", "project.json")
+    return repository if prerelease(version) else f"{repository}/tree/v{version}"
+
+
+def check_source_txt(content: str, where: str, version: str, offer: str, target: str, root: Path = ROOT) -> None:
     """A SOURCE.txt names the release source, the release, the source offer beside it and its Rust target."""
-    lines = content.split("\n")
-    expected = [f"Matching release: v{version}", f"Dependency source archive: {offer}", f"Rust target: {target}", ""]
-    if len(lines) != 5 or not lines[0].startswith("Graphite Meter source: https://") or lines[1:] != expected:
-        fail(f"{where} SOURCE.txt does not name {offer} for {target}")
+    expected = (f"Graphite Meter source: {source_url(version, root)}\nMatching release: v{version}\n"
+                f"Dependency source archive: {offer}\nRust target: {target}\n")
+    if content != expected:
+        fail(f"{where} SOURCE.txt does not name {offer} for {target} at {source_url(version, root)}")
 
 
 def verify_offer(path: Path, package: str, target: str, profile: str, root: Path = ROOT) -> str:
@@ -201,7 +210,7 @@ def verify_tui(directory: Path, version: str, platform: str, target: str, root: 
     if text(path, f"{base}/THIRD_PARTY_NOTICES.txt") != verify_offer(directory / offer, CLIENT, target, "release",
                                                                      root):
         fail(f"{archive}'s notices differ from its source offer's")
-    check_source_txt(text(path, f"{base}/SOURCE.txt"), archive, version, offer, target)
+    check_source_txt(text(path, f"{base}/SOURCE.txt"), archive, version, offer, target, root)
 
 
 def verify_image(directory: Path, version: str, revision: str, profile: str, root: Path = ROOT) -> tuple[str, str]:
@@ -217,12 +226,13 @@ def verify_image(directory: Path, version: str, revision: str, profile: str, roo
     def check_source(arch: str, content: str) -> None:
         platform = f"linux/{arch}"
         if prerelease(version):
-            if content != f"https://github.com/{env('REPOSITORY')}\n":
+            if content != f"{source_url(version, root)}\n":
                 fail(f"the image's {platform} SOURCE.txt does not name the repository as Go's prerelease image does")
             return
         if platform not in offers:
             fail(f"the image's linux/{arch} server has no source offer")
-        check_source_txt(content, f"the image's {platform}", version, offers[platform], load().server[platform])
+        check_source_txt(content, f"the image's {platform}", version, offers[platform], load().server[platform],
+                         root)
 
     manifest = verify_oci.verify(f"{version}-rust", revision, path, check_source)
     for name, (_, target) in server_offers(version).items():

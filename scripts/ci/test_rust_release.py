@@ -14,9 +14,11 @@ from fixtures import (
 )
 from github_api import ControlPlaneError, JsonObject, file_sha256
 from rust_release import (
-    image_files, main, native_executable, server_offers, stage, tui_files, verify, verify_offer, verify_tui,
+    image_files, main, native_executable, server_offers, source_url, stage, tui_files, verify, verify_offer, verify_tui,
 )
 from rust_workspace import ROOT, load, offer_name, tui_archive
+from scripts.legal.model import Project
+from scripts.legal.rust import build_source
 from verify_release_assets import TARGETS, tui_archives
 
 REPO, SHA = "zR-JB/graphite-meter", "f" * 40
@@ -171,6 +173,11 @@ class TuiTests(Scratch):
             ({"SOURCE.txt": rust_source("1.2.3", "other.tar.gz", WINDOWS)}, "SOURCE.txt does not name"),
             ({"SOURCE.txt": rust_source("1.2.3", offer, AMD64)}, "SOURCE.txt does not name"),
             ({"SOURCE.txt": rust_source("1.2.3", offer, WINDOWS) + b"more\n"}, "SOURCE.txt does not name"),
+            # The source is this release's tag of legal/project.json's repository, exactly.
+            ({"SOURCE.txt": rust_source("1.2.3", offer, WINDOWS).replace(b"/tree/v1.2.3", b"/tree/main")},
+             "SOURCE.txt does not name"),
+            ({"SOURCE.txt": rust_source("1.2.3", offer, WINDOWS).replace(b"zR-JB/", b"other/")},
+             "SOURCE.txt does not name"),
         ):
             directory = self.root / str(len(list(self.root.iterdir())))
             directory.mkdir()
@@ -178,6 +185,13 @@ class TuiTests(Scratch):
             with self.subTest(changes=sorted(changes)):
                 outcome(self, error, lambda: verify_tui(directory, "1.2.3", "windows/amd64", WINDOWS))
         self.assertEqual(tui_archive("1.2.3", "windows/amd64")[2], "graphite-meter-client.exe")
+
+    def test_the_verified_source_is_the_one_the_collector_names(self) -> None:
+        project = Project.read(ROOT)
+        for version in ("1.2.3", "1.2.3-rc.1"):
+            with self.subTest(version=version):
+                self.assertEqual(source_url(version), build_source(project, version)[1])
+        self.assertEqual(source_url("1.2.3"), "https://github.com/zR-JB/graphite-meter/tree/v1.2.3")
 
 
 Edit = Callable[[Path, Path], JsonObject | None]
