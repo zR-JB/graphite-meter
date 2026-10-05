@@ -8,6 +8,10 @@ publish.workspace = true
 
 [dependencies]
 graphite-meter-legal.workspace = true
+graphite-meter-proto.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [build-dependencies]
 graphite-meter-legal = { workspace = true, features = ["build"] }

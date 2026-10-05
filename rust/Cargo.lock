@@ -336,6 +336,8 @@ name = "graphite-meter-client"
 version = "0.0.0"
 dependencies = [
  "graphite-meter-legal",
+ "graphite-meter-proto",
+ "serde_json",
 ]
 
 [[package]]
