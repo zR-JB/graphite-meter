@@ -134,10 +134,8 @@ impl Config {
         if self.warmup > MAX_WARMUP {
             return Err("warmup must be from 0s to 4s".into());
         }
-        if let Some(stage) = Stage::ALL
-            .into_iter()
-            .find(|&stage| !STAGE_LIMITS.contains(&self.duration(stage)))
-        {
+        let outside = |stage: &Stage| !STAGE_LIMITS.contains(&self.duration(*stage));
+        if let Some(stage) = Stage::ALL.iter().find(|stage| outside(stage)) {
             return Err(format!("{} duration must be from 1s to 24h", stage.name()));
         }
         let fast = |cadence| matches!(cadence, Cadence::Every(spacing) if spacing < FASTEST_CADENCE);
@@ -189,10 +187,8 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Parsed, Refusal
     if let Some(argument) = arguments.first() {
         return Err(Refusal::Argument(format!("unexpected argument {}", quote(&argument.to_string_lossy()))));
     }
-    flags
-        .finish()
-        .map(|config| Parsed::Run(Box::new(config)))
-        .map_err(Refusal::Argument)
+    let config = flags.finish().map_err(Refusal::Argument)?;
+    Ok(Parsed::Run(Box::new(config)))
 }
 
 /// The usage text for `program`.
