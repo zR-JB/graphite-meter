@@ -7,7 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.legal.artifacts import render, review_audit, review_template
+from scripts.legal.artifacts import about, render, review_audit, review_template
 from scripts.legal.discovery import (
     discover_browser, discover_go, go_discovery_targets, go_packages, go_toolchain_component,
     has_go_replacement_provenance, legal_go_version, package_license, package_root,
@@ -279,6 +279,8 @@ class LegalTests(unittest.TestCase):
 
     def test_rendering_preserves_scope_release_identity_and_private_source_path(self) -> None:
         self.write("LICENSE", "Project license")
+        self.write("legal/rust-forks.json", "[]")
+        self.write("client/package.json", "{}")
         project = Project(name="Graphite Meter", repository="https://example.invalid/repo")
         component, review = self.reviewed()
         component.source_path = self.root
@@ -293,6 +295,37 @@ class LegalTests(unittest.TestCase):
         self.assertIn(b'"selectedLicenseExpression": ""', review_template(scopes))
         ordered = sort_components([replace(component, name="b"), component, replace(component, source="updated")])
         self.assertEqual([item.name for item in ordered], ["b", "example"])
+
+    def test_about_links_each_component_to_its_source_and_a_fork_or_patch_to_its_upstream_and_changes(self) -> None:
+        fork = "https://github.com/owner/quic"
+        self.write("legal/rust-forks.json", json.dumps([{"fork": fork, "rev": "f" * 40,
+                                                         "upstream": "https://github.com/upstream/quic",
+                                                         "base": "b" * 40}]))
+        patches = {"svelte@5.0.0": "patches/svelte@5.0.0.patch"}
+        self.write("client/package.json", json.dumps({"patchedDependencies": patches}))
+        components = [
+            Component("ring", "0.17.14", "cargo", "registry+https://github.com/rust-lang/crates.io-index"),
+            Component("quic", "1.3.0", "cargo", f"git+{fork}?rev={'f' * 40}#{'f' * 40}", modified=True),
+            Component("svelte", "5.0.0", "npm", "https://github.com/sveltejs/svelte", modified=True),
+            Component("Go standard library", "go1.27.1", "go-toolchain", "https://go.dev/"),
+            Component("local", "1", "npm", "file:vendor/local"),
+        ]
+        project = Project(name="Graphite Meter", repository="https://github.com/owner/meter")
+        for source_url, blob in ((project.repository, project.repository + "/blob/HEAD"),
+                                 (project.repository + "/tree/v1.2.3", project.repository + "/blob/v1.2.3")):
+            listed = json.loads(about(self.root, project, "1.2.3", source_url, components))["components"]
+            self.assertEqual({item["name"]: item["links"] for item in listed}, {
+                "ring": [{"label": "Source", "url": "https://crates.io/crates/ring/0.17.14"}],
+                "quic": [{"label": "Source", "url": f"{fork}/tree/{'f' * 40}"},
+                         {"label": "Upstream", "url": f"https://github.com/upstream/quic/tree/{'b' * 40}"},
+                         {"label": "Changes", "url": f"{fork}/compare/{'b' * 40}...{'f' * 40}"}],
+                "svelte": [{"label": "Source", "url": "https://github.com/sveltejs/svelte"},
+                           {"label": "Changes", "url": f"{blob}/client/patches/svelte%405.0.0.patch"}],
+                "Go standard library": [{"label": "Source", "url": "https://go.dev/"}],
+                "local": [],
+            })
+            # The review identity stays as reviewed.
+            self.assertEqual(listed[0]["source"], "registry+https://github.com/rust-lang/crates.io-index")
 
 
 if __name__ == "__main__":

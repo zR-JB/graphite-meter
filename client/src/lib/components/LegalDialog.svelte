@@ -125,12 +125,17 @@
                         >{/if}</span
                     >
                     <span>{component.selectedLicenseExpression}</span>
-                    <a
-                      href={component.source}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      >{component.source.replace(/^https?:\/\//, "")}</a
-                    >
+                    <span class="component-links">
+                      {#each component.links as link (link.label)}
+                        <a
+                          href={link.url}
+                          aria-label={`${link.label} for ${component.name}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          >{link.label}<Icon name="external" /></a
+                        >
+                      {/each}
+                    </span>
                   </dd>
                 </div>
               {/each}
@@ -169,14 +174,28 @@
   }
   .components dd {
     display: grid;
-    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.8fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr);
     gap: 2px var(--space-3);
   }
+  .component-links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: start;
+    gap: 0 var(--space-3);
+  }
   .components a {
-    width: fit-content;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
     color: var(--text-muted);
     text-decoration-color: transparent;
-    overflow-wrap: anywhere;
+    text-underline-offset: 0.2em;
+    white-space: nowrap;
+  }
+  .components a :global(svg) {
+    flex: none;
+    width: var(--icon-sm);
+    height: var(--icon-sm);
   }
   @media (hover: hover) {
     .components a:hover {
@@ -200,7 +219,7 @@
     .components dd {
       grid-template-columns: auto minmax(0, 1fr);
     }
-    .components a {
+    .component-links {
       grid-column: 1 / -1;
     }
   }

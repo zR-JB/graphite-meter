@@ -209,7 +209,8 @@ def browser_notices(build: Build, state: Prepared, project: Project) -> str:
     version, source_url = build_source(project, build.version)
     write_changed(staged / "legal/LICENSE.txt", (ROOT / "LICENSE").read_bytes())
     write_changed(staged / "legal/THIRD_PARTY_NOTICES.txt", shared.encode())
-    write_changed(staged / "legal/about.json", about(project, version, source_url, state.components + state.browser))
+    write_changed(staged / "legal/about.json",
+                  about(ROOT, project, version, source_url, state.components + state.browser))
     if not build.development:
         image = notices(state.components + state.browser + scopes["container"]) + platform_section(state.platform)
         write_changed(build.out / "IMAGE_NOTICES.txt", report(project, build.version, image, False))

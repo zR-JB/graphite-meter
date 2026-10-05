@@ -7,8 +7,10 @@ import os
 import re
 import tarfile
 from pathlib import Path
+from urllib.parse import parse_qs, quote, urlsplit, urlunsplit
 
-from .model import Component, Json, LegalError, Project, Provenance, Review, manual_files, marshal
+from .model import (Component, Json, LegalError, Project, Provenance, Review, array, manual_files, marshal, obj,
+                    read_json, text)
 from .review import component_key, find_review, validate_review
 
 RELEASE_VERSION = re.compile(r"^v?[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)\.[0-9]+)?")
@@ -45,12 +47,42 @@ def legal_header(project: Project, source_url: str, license_text: bytes) -> byte
     return header if license_text.endswith(b"\n") else header + b"\n"
 
 
-def about(project: Project, version: str, source_url: str, components: list[Component]) -> bytes:
+def links(component: Component, forks: dict[tuple[str, str], dict[str, Json]], patches: dict[str, Json],
+          blob: str) -> list[Json]:
+    """A component's web pages: its source at the shipped version, and for a fork or a patched package its upstream
+    and the project's changes. `source` stays the review identity, which for a crate is not a web address."""
+    source, upstream, changes = component.source, "", ""
+    if component.ecosystem == "cargo" and source.startswith("registry+"):
+        source = f"https://crates.io/crates/{quote(component.name)}/{quote(component.version)}"
+    elif source.startswith("git+"):
+        location = urlsplit(source.removeprefix("git+"))
+        repository = urlunsplit((location.scheme, location.netloc, location.path.removesuffix(".git"), "", ""))
+        revision = location.fragment or parse_qs(location.query).get("rev", [""])[0]
+        source = repository + (f"/tree/{quote(revision)}" if revision else "")
+        if fork := forks.get((repository, revision)):
+            upstream = f"{text(fork, 'upstream')}/tree/{text(fork, 'base')}"
+            if component.modified:
+                changes = f"{repository}/compare/{text(fork, 'base')}...{revision}"
+    if component.modified and component.ecosystem == "npm":
+        if patch := text(patches, f"{component.name}@{component.version}"):
+            changes = f"{blob}/client/{quote(patch)}"
+    return [{"label": label, "url": url} for label, url in (("Source", source), ("Upstream", upstream),
+                                                            ("Changes", changes))
+            if url.startswith(("https://", "http://"))]
+
+
+def about(repo: Path, project: Project, version: str, source_url: str, components: list[Component]) -> bytes:
     """The browser's legal/about.json."""
+    forks = {(text(fork, "fork"), text(fork, "rev")): fork
+             for fork in map(obj, array(read_json(repo / "legal/rust-forks.json")))}
+    patches = obj(obj(read_json(repo / "client/package.json")).get("patchedDependencies", {}))
+    # The client's patches as the named source holds them: at a release's tag, otherwise on the default branch.
+    blob = source_url.replace("/tree/", "/blob/", 1) if "/tree/" in source_url else source_url + "/blob/HEAD"
     listed: list[Json] = []
     for component in components:
         value = component.json()
         del value["legalTexts"], value["notices"]
+        value["links"] = links(component, forks, patches, blob)
         listed.append(value)
     return marshal({
         "schemaVersion": 2, "project": project.json(), "sourceVersion": version, "sourceURL": source_url,
@@ -69,7 +101,7 @@ def render(repo: Path, project: Project, version: str, scopes: dict[str, list[Co
         files[base + "/inventory.json"] = marshal(inventory)
         files[base + "/THIRD_PARTY_NOTICES.txt"] = notices(components).encode()
         files[base + "/SOURCE.txt"] = (source_url + "\n").encode()
-    files["client/public/legal/about.json"] = about(project, version, source_url, scopes["server/browser"])
+    files["client/public/legal/about.json"] = about(repo, project, version, source_url, scopes["server/browser"])
     files["client/public/legal/LICENSE.txt"] = license_text
     files["client/public/legal/THIRD_PARTY_NOTICES.txt"] = notices(scopes["server/browser"]).encode()
     files["go/internal/legal/assets/TUI_LEGAL.txt"] = (legal_header(project, source_url, license_text) + b"\n"
