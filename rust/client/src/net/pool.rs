@@ -1,7 +1,7 @@
 //! Control connections per origin and protocol: a multiplexed one shared, idle HTTP/1.1 ones reused.
 use super::{
     Client, Request,
-    conn::{Answer, Conn, Failed},
+    conn::{Answer, Conn, Failed, Payload, ReadBuffer},
     fault::Fault,
     lock,
 };
@@ -16,7 +16,10 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
-use tokio::time::{Instant, timeout_at};
+use tokio::{
+    runtime::Handle,
+    time::{Instant, timeout_at},
+};
 
 /// Idle HTTP/1.1 connections kept per origin and protocol.
 const IDLE: usize = 32;
@@ -55,15 +58,33 @@ impl Connections {
         request: &Request,
         deadline: Instant,
     ) -> Result<Answer, Fault> {
-        let slot = {
-            let mut slots = lock(&self.slots);
-            slots.entry((request.origin.clone(), via)).or_default().clone()
-        };
+        let slot = self.slot(&request.origin, via);
         match self.attempt(client, &slot, via, request, deadline, true).await {
             Err((_, true)) => self.attempt(client, &slot, via, request, deadline, false).await,
             result => result,
         }
         .map_err(|(fault, _)| fault)
+    }
+
+    /// The multiplexed connection to `origin` over `via`, dialed on the current runtime when there is none.
+    pub(super) async fn shared(&self, client: &Client, origin: &Origin, via: Protocol) -> Result<Conn, Fault> {
+        let slot = self.slot(origin, via);
+        Ok(self
+            .take(client, &slot, via, origin, true, Some(&Handle::current()))
+            .await?
+            .conn)
+    }
+
+    /// The runtime the multiplexed QUIC connection to `origin` over `via` runs on, if there is one.
+    pub(super) fn home(&self, origin: &Origin, via: Protocol) -> Option<Handle> {
+        let slot = self.slot(origin, via);
+        let shared = lock(&slot.shared);
+        shared.as_ref()?.1.home()
+    }
+
+    fn slot(&self, origin: &Origin, via: Protocol) -> Arc<Slot> {
+        let mut slots = lock(&self.slots);
+        slots.entry((origin.clone(), via)).or_default().clone()
     }
 
     /// One try; its fault says whether it failed on a reused connection before any answer.
@@ -77,10 +98,10 @@ impl Connections {
         reuse: bool,
     ) -> Result<Answer, (Fault, bool)> {
         let head = client.head(request).map_err(|fault| (fault, false))?;
-        let taken = timeout_at(deadline, self.take(client, slot, via, &request.origin, reuse)).await;
+        let taken = timeout_at(deadline, self.take(client, slot, via, &request.origin, reuse, None)).await;
         let taken = taken.map_err(|_| (Fault::TimedOut("control connection"), false));
         let Taken { mut conn, serial, reused } = taken?.map_err(|fault| (fault, false))?;
-        match timeout_at(deadline, conn.send(head)).await {
+        match timeout_at(deadline, conn.send(head, Payload::empty())).await {
             Ok(Ok(answer)) => {
                 slot.keep(conn);
                 Ok(answer)
@@ -98,6 +119,7 @@ impl Connections {
         }
     }
 
+    /// A connection for one request; a QUIC one it dials runs on `home`, else on the next pinned runtime.
     async fn take(
         &self,
         client: &Client,
@@ -105,6 +127,7 @@ impl Connections {
         via: Protocol,
         origin: &Origin,
         reuse: bool,
+        home: Option<&Handle>,
     ) -> Result<Taken, Fault> {
         if reuse && let Some(taken) = slot.reusable() {
             return Ok(taken);
@@ -112,14 +135,14 @@ impl Connections {
         let multiplexed = matches!(via, Protocol::Http2 | Protocol::Http3)
             || via == Protocol::Negotiated && origin.scheme == Scheme::Https;
         if !multiplexed || slot.exclusive.load(Ordering::Relaxed) {
-            let conn = Conn::dial(client, origin, via).await?;
+            let conn = Conn::dial(client, origin, via, ReadBuffer::Adaptive, home).await?;
             return Ok(Taken { conn, serial: None, reused: false });
         }
         let _dialing = slot.dialing.lock().await;
         if reuse && let Some(taken) = slot.reusable() {
             return Ok(taken);
         }
-        let conn = Conn::dial(client, origin, via).await?;
+        let conn = Conn::dial(client, origin, via, ReadBuffer::Adaptive, home).await?;
         let Some(shared) = conn.share() else {
             slot.exclusive.store(true, Ordering::Relaxed);
             return Ok(Taken { conn, serial: None, reused: false });

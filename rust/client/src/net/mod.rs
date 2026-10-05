@@ -1,30 +1,41 @@
-//! The network layer: one request API over HTTP/1.1, HTTP/2 and HTTP/3, its failures and the retry rule.
+//! The network layer: one request API over HTTP/1.1, HTTP/2 and HTTP/3, lane groups, the latency bus, their
+//! failures and the retry rule.
+mod bus;
 mod conn;
 mod fault;
+mod lanes;
 mod pool;
 mod quic;
 mod retry;
+mod session;
 
-pub use conn::{Decode, Incoming};
+pub use bus::{Bus, LatencyPath};
+pub use conn::{Conn, Decode, Incoming, Payload, ReadBuffer};
 pub use fault::{Class, Fault};
+pub use lanes::{Carrier, GroupPlan, Lanes, ThroughputPath, Work, topology};
 pub use retry::{Attempt, REDIAL_WINDOW, Retry};
+pub use session::Session;
 
 use conn::Answer;
 use graphite_meter_net::{Connector, Pool, Proxy, Verify};
 use graphite_meter_proto::{
     discovery::Protocol,
+    lane::LaneEnding,
     origin::{Origin, Scheme},
     route::Route,
 };
-use http::{HeaderValue, Method, header};
+use http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, MutexGuard, PoisonError},
     time::Duration,
 };
-use tokio::time::{Instant, timeout_at};
+use tokio::{
+    runtime::Handle,
+    time::{Instant, timeout_at},
+};
 
-/// How long a control request may take, its answer's body included.
+/// How long a control request may take, its answer's body included, and a session or bus to open.
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A path check's network state, which its run reuses: proxies, verification, grants, control connections and
@@ -98,6 +109,11 @@ impl Client {
         self.answer(via, &request, Instant::now() + CONTROL_TIMEOUT).await
     }
 
+    /// A connection of its own to `origin`, dialed on the current runtime, which then runs it.
+    pub async fn dial(&self, origin: &Origin, via: Protocol, buffer: ReadBuffer) -> Result<Conn, Fault> {
+        Conn::dial(self, origin, via, buffer, Some(&Handle::current())).await
+    }
+
     /// Keeps `issuer`'s grant for its requests and its enrolled targets'; a token no header can carry is dropped,
     /// so its server asks for sign-in again.
     pub fn grant(&self, issuer: &Origin, token: &str) {
@@ -147,17 +163,35 @@ impl Client {
         head.body(()).map_err(|error| Fault::Malformed(error.to_string()))
     }
 
-    /// The answer's body when it is a 200; a sign-in refusal drops its server's grant.
+    /// The answer's body when it is a 200.
     fn check(&self, request: &Request, answer: Answer) -> Result<Incoming, Fault> {
-        let issuer = || lock(&self.0.grants).issuer(&request.origin).clone();
-        match Fault::answer(answer.status(), answer.headers(), request.route, issuer) {
+        match self.refusal(request, answer.status(), answer.headers()) {
             None => Ok(answer.into_body()),
-            Some(Fault::SignIn(issuer)) => {
-                lock(&self.0.grants).tokens.remove(&issuer);
-                Err(Fault::SignIn(issuer))
-            }
             Some(fault) => Err(fault),
         }
+    }
+
+    /// The fault an answer other than a 200 means; a sign-in refusal drops its server's grant.
+    fn refusal(&self, request: &Request, status: StatusCode, headers: &HeaderMap) -> Option<Fault> {
+        let issuer = || lock(&self.0.grants).issuer(&request.origin).clone();
+        match Fault::answer(status, headers, request.route, issuer)? {
+            Fault::SignIn(issuer) => {
+                lock(&self.0.grants).tokens.remove(&issuer);
+                Some(Fault::SignIn(issuer))
+            }
+            fault => Some(fault),
+        }
+    }
+
+    /// The fault a lane ending at `origin` means; a revoked grant is dropped and its server asks for sign-in.
+    fn ending(&self, origin: &Origin, ending: LaneEnding) -> Fault {
+        if ending != LaneEnding::Revoked {
+            return Fault::Ended(ending);
+        }
+        let mut grants = lock(&self.0.grants);
+        let issuer = grants.issuer(origin).clone();
+        grants.tokens.remove(&issuer);
+        Fault::SignIn(issuer)
     }
 }
 

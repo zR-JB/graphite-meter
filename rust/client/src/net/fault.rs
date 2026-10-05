@@ -1,4 +1,5 @@
 //! Failures typed where they arise: their reason, how a retry treats them, and the text a view shows.
+use crate::model::Failure;
 use graphite_meter_net::ConnectError;
 use graphite_meter_proto::{
     lane::LaneEnding, origin::Origin, reason::FailureReason, refusal::UploadRefusal, route::Route, text,
@@ -67,6 +68,10 @@ impl Fault {
             | Self::Malformed(_) => Class::Final,
             Self::Connect(_) | Self::Lost(_) | Self::TimedOut(_) | Self::Ended(_) => Class::Redial,
         }
+    }
+
+    pub fn failure(&self) -> Failure {
+        Failure::new(self.reason(), self.to_string())
     }
 
     /// The fault an answer of `status` to `from` means, if any; a sign-in is for the server `issuer` names.

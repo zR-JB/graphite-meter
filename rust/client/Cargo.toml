@@ -9,6 +9,8 @@ publish.workspace = true
 [dependencies]
 bytes.workspace = true
 form_urlencoded.workspace = true
+futures-util.workspace = true
+getrandom.workspace = true
 graphite-meter-http3.workspace = true
 graphite-meter-legal.workspace = true
 graphite-meter-net.workspace = true
@@ -22,6 +24,8 @@ noq = { workspace = true, features = ["runtime-tokio", "rustls-ring"] }
 rustls.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tokio-tungstenite.workspace = true
+tokio-util.workspace = true
 
 [dev-dependencies]
 graphite-meter-testkit.workspace = true

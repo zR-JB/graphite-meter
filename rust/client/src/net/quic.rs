@@ -23,6 +23,8 @@ pub struct Quic {
     connection: noq::Connection,
     _endpoint: noq::Endpoint,
     driver: AbortHandle,
+    /// The runtime that runs them.
+    pub home: Handle,
 }
 
 impl Quic {
@@ -104,6 +106,7 @@ async fn attempt(
         connection,
         _endpoint: endpoint,
         driver: driver.abort_handle(),
+        home: Handle::current(),
     };
     Ok((Arc::new(quic), requests))
 }

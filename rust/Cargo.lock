@@ -346,6 +346,8 @@ version = "0.0.0"
 dependencies = [
  "bytes",
  "form_urlencoded",
+ "futures-util",
+ "getrandom 0.4.3",
  "graphite-meter-http3",
  "graphite-meter-legal",
  "graphite-meter-net",
@@ -361,6 +363,8 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-rustls",
+ "tokio-tungstenite",
+ "tokio-util",
 ]
 
 [[package]]
@@ -374,6 +378,7 @@ dependencies = [
  "graphite-meter-testkit",
  "http",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
