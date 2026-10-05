@@ -2,18 +2,18 @@
 
 # Graphite Meter
 
-**Self-hosted network testing for browsers and terminals.**
+**Self-hosted network testing for fast local networks, from any browser or terminal.**
 
-Measure download, upload, and latency before and during transfers.\
+Measure download, upload, and latency before and during transfers, up to multi-gigabit links.\
 One Go server, a responsive web interface, and a native terminal client.
 
 [![CI](https://github.com/zR-JB/graphite-meter/actions/workflows/ci.yml/badge.svg)](https://github.com/zR-JB/graphite-meter/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/zR-JB/graphite-meter?sort=semver)](https://github.com/zR-JB/graphite-meter/releases) [![Container](https://img.shields.io/badge/container-ghcr.io%2Fzr--jb%2Fgraphite--meter-387d91)](https://github.com/zR-JB/graphite-meter/pkgs/container/graphite-meter) [![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
 [Quick start](#quick-start) · [Measurements](#what-you-can-measure) · [Browser](#browser-client) · [Terminal](#native-terminal-client) · [Documentation](#documentation)
 
-<img src="docs/assets/hero.png" alt="Graphite Meter completed results on desktop with an overlapping phone companion" width="1080">
+<img src="docs/assets/hero.png" alt="A completed 10 GbE test on desktop, 9.35 Gbit/s down and 9.33 Gbit/s up with 0.2 ms idle latency, beside a phone measuring upload over Wi-Fi" width="1080">
 
-<sub>Real runs against local servers · <a href="docs/SCREENSHOTS.md">screenshot gallery</a></sub>
+<sub>Real runs over a shaped 10 GbE LAN and a Wi-Fi path · <a href="docs/SCREENSHOTS.md">screenshot gallery</a></sub>
 
 </div>
 
@@ -56,17 +56,20 @@ for controlled performance testing.
 
 ## Browser client
 
-Run a test from a phone or desktop without installing a client. The dial, the latency card and one card
-per stage keep transfer speed and responsiveness visible together: each stage card graphs its rate with the
-latency its load added underneath.
+Run a test from a phone or desktop without installing a client. The dial carries the live rate and, once
+the run completes, every stage's result on one ring. Beside it, the latency lanes set idle and loaded latency
+side by side as box plots with what each load added. Under the run key, one card per stage keeps its graph,
+peak, stability and the latency its load caused, so transfer speed and responsiveness stay visible together.
+The run reads as one sequence: each stage's needle rises from zero, drains back as the next begins, and the
+result replays on the dial when the run ends.
 
-- **Flexible tests:** stage switches beside Start, duration presets or custom timings, automatic or fixed
+- **Flexible tests:** a key per stage over its card, duration presets or custom timings, automatic or fixed
   stream counts, and optional early completion when a stage stabilizes.
 - **Server selection:** a **Test servers** checklist in Settings, independent sign-in for protected
   peers, and one server selector over the results (all servers, or one) that the latency card and
   Details follow. Automatic paths resolve per server.
-- **Display choices:** light and dark themes, decimal or binary bits/bytes, gauge scaling, and graph
-  inspection by pointer, keyboard or touch, with reduced-motion support.
+- **Display choices:** light and dark themes, decimal or binary bits/bytes, a fixed or automatic dial
+  maximum, and graph inspection by pointer, keyboard or touch, with reduced-motion support.
 - **Phone layout:** one vertical reading order; the bottom status bar keeps the current stage and remaining
   time visible while you scroll.
 - **Wide desktop workspace:** open Settings and Details side by side with the meter. Resize
@@ -75,7 +78,7 @@ latency its load added underneath.
 - **Local history:** optionally save up to 2,000 results on your device, grouped by day. Inspect past runs
   while the live test continues, then return to it from the toolbar. History is not a server-side archive.
 
-<img src="docs/assets/workspace.png" alt="Graphite Meter with Settings and Details open beside the completed meter on a wide desktop" width="1080">
+<img src="docs/assets/workspace.png" alt="Settings and Details docked on both sides of a completed 10 GbE test on a wide desktop" width="1080">
 
 <p align="center"><sub>Resizable desktop panels · more in the <a href="docs/SCREENSHOTS.md">gallery</a></sub></p>
 

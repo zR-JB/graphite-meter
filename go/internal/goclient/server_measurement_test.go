@@ -302,6 +302,55 @@ func TestOnlyALateTickResumesEvidence(t *testing.T) {
 	})
 }
 
+// The stage end lands microseconds after the last tick, so its boundary spans a few reads.
+func TestAStageEndBurstStaysOffTheLiveRate(t *testing.T) {
+	t.Parallel()
+	const burst = 6 * laneBuffer
+	for _, dir := range []Direction{Down, Up} {
+		t.Run(string(dir), func(t *testing.T) {
+			t.Parallel()
+			p := &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: "a"}},
+				transport: &runner{coordinated: &participantCounters{}}}
+			plan := StagePlan{Name: StageDownload, Directions: []Direction{Down}}
+			if dir == Up {
+				plan = StagePlan{Name: StageUpload, Directions: []Direction{Up}}
+			}
+			var live []ThroughputSample
+			s := testStage(p, plan, func(e Event) { live = append(live, e.Throughput) })
+			s.ctx = t.Context()
+			boundary := func(at time.Duration, bytes uint64) measurementBoundary {
+				b := measurementBoundary{at: at}
+				if dir == Up {
+					b.up = map[string]*ReceiverSnapshot{"a": {ID: "r", Bytes: bytes, Nanos: uint64(at)}}
+				} else {
+					b.down = map[string]uint64{"a": bytes}
+				}
+				return b
+			}
+			s.c.aggregate.observe(boundary(time.Second, 0))
+			s.beginSampling(time.Now())
+			var steady []ThroughputSample
+			for i := range uint64(4) {
+				s.observe(sampledBoundary{boundary: boundary(time.Second+time.Duration(i+1)*sampleInterval,
+					(i+1)*250_000_000)})
+				steady = append(steady, ThroughputSample{BytesPerSec: 1e9, TotalBytes: (i + 1) * 250_000_000})
+			}
+			const total = 1_000_000_000 + burst
+			final := boundary(2*time.Second+50*time.Microsecond, total)
+			final.final = true
+			s.observe(sampledBoundary{boundary: final})
+			if !reflect.DeepEqual(live, steady) {
+				t.Fatalf("live rates %+v, want %+v", live, steady)
+			}
+			result := s.c.aggregate.result(dir)
+			if mean := total / (time.Second + 50*time.Microsecond).Seconds(); result.Unavailable ||
+				result.MeanBps != mean || result.TotalBytes != total {
+				t.Fatalf("the stage end left the result: %+v, want mean %v", result, mean)
+			}
+		})
+	}
+}
+
 func TestLiveRatesRestartOnlyWithTheInterval(t *testing.T) {
 	t.Parallel()
 	p := &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: "a"}}}
