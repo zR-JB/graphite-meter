@@ -742,7 +742,11 @@
           ><Icon name={THEME[store.theme].icon} /></span
         >{/key}</button
     >
-    <div class="topbar-more" {@attach prepareDetails} {@attach prepareHistory}>
+    <div
+      class="topbar-more"
+      {@attach prepareDetails}
+      {@attach store.savingResults && prepareHistory}
+    >
       <TopbarMore
         showHistory={store.savingResults}
         historyActive={historyOpen}
