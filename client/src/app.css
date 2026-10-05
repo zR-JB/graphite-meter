@@ -108,6 +108,33 @@
   inherits: false;
   initial-value: 0%;
 }
+/* Values a parent hands to the one child that reads them (`inherit` there); not inherited further, so a resize
+   or a sheet drag restyles that child rather than everything inside it. */
+@property --panel-w {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --dock-w {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --panel-width {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --dial-width {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --sheet-drag {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
 
 /* Theme: the stored preference stamps data-theme (store, index.html, and the
    auth pages' theme.js); without it the OS preference applies. Every palette
@@ -1650,8 +1677,10 @@
   }
 }
 
-/* Unlayered, so it outranks every layered ring; main.ts sets data-pointer. */
-:root[data-pointer] :focus-visible,
+/* Unlayered, so it outranks every layered ring; main.ts sets data-pointer. The focusable kinds are named so the
+   attribute restyles those alone rather than the whole page. */
+:root[data-pointer]
+  :is(a, button, input, select, textarea, summary, [tabindex]):focus-visible,
 :root[data-pointer]
   label:has(> :is([type="radio"], [type="checkbox"]):focus-visible) {
   outline: none;

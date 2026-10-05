@@ -17,6 +17,7 @@ func testFS() fstest.MapFS {
 		"version.json":           {Data: []byte("{}")},
 		"assets/app.js":          {Data: []byte("console.log('app')")},
 		"assets/sub/dir/file.js": {Data: []byte("console.log('nested')")},
+		"fonts/face.woff2":       {Data: []byte("wOF2")},
 	}
 }
 
@@ -37,7 +38,9 @@ func TestHandlerRoutes(t *testing.T) {
 			wantCache: immutable},
 		{name: "root serves index", path: "/", wantStatus: http.StatusOK, wantBody: "index page",
 			wantCache: "no-store"},
-		{name: "unhashed file", path: "/version.json", wantStatus: http.StatusOK, wantBody: "{}"},
+		{name: "unhashed file", path: "/version.json", wantStatus: http.StatusOK, wantBody: "{}", wantCache: "no-cache"},
+		{name: "font", path: "/fonts/face.woff2", wantStatus: http.StatusOK, wantBody: "wOF2",
+			wantCache: "public, max-age=604800"},
 		{name: "no SPA fallback", path: "/results", wantStatus: http.StatusNotFound},
 		{name: "missing asset", path: "/assets/missing.js", wantStatus: http.StatusNotFound},
 		{name: "nested asset", path: "/assets/sub/dir/file.js", wantStatus: http.StatusOK, wantBody: "nested",
@@ -64,6 +67,42 @@ func TestHandlerRoutes(t *testing.T) {
 					test.wantBody, test.wantCache)
 			}
 		})
+	}
+}
+
+// A client gets the build's brotli or gzip copy it accepts, tagged per encoding, and revalidates unhashed files.
+func TestHandlerEncodings(t *testing.T) {
+	files := testFS()
+	files["assets/app.js.br"] = &fstest.MapFile{Data: []byte("brotli")}
+	files["assets/app.js.gz"] = &fstest.MapFile{Data: []byte("gzip")}
+	h := handler(files, false, false)
+	tags := map[string]bool{}
+	for _, test := range []struct{ accept, wantBody, wantEncoding string }{
+		{"", "console.log('app')", ""},
+		{"gzip, deflate", "gzip", "gzip"},
+		{"gzip, deflate, br, zstd", "brotli", "br"},
+		{"br;q=0, gzip;q=0.5", "gzip", "gzip"},
+		{"identity", "console.log('app')", ""},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/assets/app.js", nil)
+		req.Header.Set("Accept-Encoding", test.accept)
+		rr := testkit.Record(h.ServeHTTP, req)
+		got := rr.Header()
+		if rr.Body.String() != test.wantBody || got.Get("Content-Encoding") != test.wantEncoding ||
+			got.Get("Vary") != "Accept-Encoding" || !strings.HasPrefix(got.Get("Content-Type"), "text/javascript") {
+			t.Errorf("Accept-Encoding %q = %q encoding %q vary %q type %q, want %q %q", test.accept, rr.Body,
+				got.Get("Content-Encoding"), got.Get("Vary"), got.Get("Content-Type"), test.wantBody, test.wantEncoding)
+		}
+		tags[got.Get("ETag")] = true
+	}
+	if len(tags) != 3 {
+		t.Errorf("ETags %v, want one per encoding", tags)
+	}
+	first := serve(h, http.MethodGet, "/version.json")
+	req := httptest.NewRequest(http.MethodGet, "/version.json", nil)
+	req.Header.Set("If-None-Match", first.Header().Get("ETag"))
+	if rr := testkit.Record(h.ServeHTTP, req); rr.Code != http.StatusNotModified || first.Header().Get("Vary") != "" {
+		t.Errorf("revalidation = %d, vary %q; want 304 without Vary", rr.Code, first.Header().Get("Vary"))
 	}
 }
 

@@ -1,7 +1,8 @@
 import { defineConfig, type Plugin } from "vite";
-import { writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { resolve, sep } from "node:path";
+import { join, resolve, sep } from "node:path";
+import { brotliCompressSync, gzipSync } from "node:zlib";
 import { execFileSync } from "node:child_process";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 
@@ -59,6 +60,30 @@ const legalScan = (): Plugin => ({
     writeFileSync(output, `${JSON.stringify([...modules].sort())}\n`, "utf8");
   },
 });
+
+// Brotli and gzip copies of the text files let the server send them compressed at no per-request cost; the
+// server injects into index.html, so it compresses nothing it rewrites.
+const precompress = (): Plugin => {
+  let outDir = "";
+  return {
+    name: "gm-precompress",
+    apply: "build",
+    configResolved: (config) => void (outDir = config.build.outDir),
+    closeBundle: {
+      order: "post",
+      handler() {
+        for (const name of readdirSync(outDir, { recursive: true })) {
+          const path = join(outDir, String(name));
+          if (!/\.(js|css|svg|json|txt)$/.test(path)) continue;
+          const source = readFileSync(path);
+          if (source.length < 1024) continue;
+          writeFileSync(`${path}.br`, brotliCompressSync(source));
+          writeFileSync(`${path}.gz`, gzipSync(source, { level: 9 }));
+        }
+      },
+    },
+  };
+};
 
 // String.replace has no async callback support; needed since Bun.build is async.
 async function replaceAsync(
@@ -152,7 +177,7 @@ const minifyHtml = (): Plugin => ({
 });
 
 export default defineConfig({
-  plugins: [svelte(), versionFile(), minifyHtml(), legalScan()],
+  plugins: [svelte(), versionFile(), minifyHtml(), legalScan(), precompress()],
   build: {
     outDir: env.GM_LEGAL_SCAN_DIR ?? "dist",
   },

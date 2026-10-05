@@ -27,6 +27,7 @@
   import { keyHint as tipKey, tooltip } from "../actions/tooltip";
   import { canFocus, activeModal } from "../actions/focus";
   import { MediaQuery } from "svelte/reactivity";
+  import type { Attachment } from "svelte/attachments";
   import {
     resolveDockWidths,
     MIN_DOCK_WIDTH,
@@ -210,6 +211,22 @@
   let telemetryVisited = $state(
     initialRoute.kind === "app" && initialRoute.panels.includes("endpoint"),
   );
+  // A key builds what it opens as the hand or focus reaches it, so the press only reveals it.
+  const prepare =
+    (build: () => void): Attachment<HTMLElement> =>
+    (node) => {
+      const listening = new AbortController();
+      const once = () => {
+        listening.abort();
+        build();
+      };
+      node.addEventListener("pointerenter", once, listening);
+      node.addEventListener("focusin", once, listening);
+      return () => listening.abort();
+    };
+  const prepareSettings = prepare(() => (settingsVisited = true));
+  const prepareDetails = prepare(() => (telemetryVisited = true));
+  const prepareHistory = prepare(loadHistoryWorkspace);
   const legalOpen = $derived(
     currentRoute.kind === "app" && currentRoute.dialog === "legal",
   );
@@ -630,7 +647,7 @@
   id="console"
   {@attach observeWidth((width) => (consoleWidth = width))}
   data-phase={store.phase}
-  style="--dock-left: {docks.left}px; --dock-right: {docks.right}px;"
+  style:grid-template-columns="{docks.left}px minmax(0, 1fr) {docks.right}px"
 >
   <!-- Container queries move direct actions into More as the bar narrows. -->
   <header class="topbar" class:saving={store.savingResults}>
@@ -663,6 +680,7 @@
       class="btn btn-icon key"
       aria-label="Settings"
       aria-expanded={settingsOpen}
+      {@attach prepareSettings}
       {@attach tooltip(() => `Settings — test and display${keyHint("S")}`)}
       onclick={(event) =>
         togglePanel("settings", event.currentTarget as HTMLElement)}
@@ -696,6 +714,7 @@
         aria-label="History"
         aria-current={historyOpen ? "page" : undefined}
         aria-pressed={historyOpen}
+        {@attach prepareHistory}
         {@attach tooltip(() => `History — saved results${keyHint("H")}`)}
         onclick={(event) =>
           toggleHistoryFromPointer(event.currentTarget as HTMLElement)}
@@ -705,6 +724,7 @@
       class="btn btn-icon key direct-endpoint"
       aria-label="Details"
       aria-expanded={telemetryOpen}
+      {@attach prepareDetails}
       {@attach tooltip(() => `Details — server and connection${keyHint("D")}`)}
       onclick={(event) =>
         togglePanel("endpoint", event.currentTarget as HTMLElement)}
@@ -722,7 +742,11 @@
           ><Icon name={THEME[store.theme].icon} /></span
         >{/key}</button
     >
-    <div class="topbar-more">
+    <div
+      class="topbar-more"
+      {@attach prepareDetails}
+      {@attach store.savingResults && prepareHistory}
+    >
       <TopbarMore
         showHistory={store.savingResults}
         historyActive={historyOpen}
@@ -854,15 +878,12 @@
 </main>
 
 <style>
-  /* Dock columns stay 0 until a docked panel fills them via display: contents. */
+  /* Dock columns stay 0 until a docked panel fills them via display: contents; their inline widths restyle the
+     grid alone. */
   #console {
     position: relative;
     isolation: isolate;
     display: grid;
-    grid-template-columns: var(--dock-left, 0px) minmax(0, 1fr) var(
-        --dock-right,
-        0px
-      );
     grid-template-rows:
       var(--topbar-h) minmax(0, 1fr)
       calc(var(--statusbar-h) + env(safe-area-inset-bottom, 0px));

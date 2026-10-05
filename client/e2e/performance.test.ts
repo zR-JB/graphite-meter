@@ -21,6 +21,9 @@ async function churnSurfaces(cycles: number) {
   };
   const click = async (selector: string) => {
     const button = document.querySelector<HTMLButtonElement>(selector);
+    // A close that steps back through history lands in a later task; a control under the closing modal waits.
+    for (let wait = 0; button?.closest("[inert]") && wait < 30; wait++)
+      await frames();
     if (!button || button.disabled || !button.checkVisibility())
       throw new Error(`Unavailable stress control: ${selector}`);
     button.click();
@@ -35,18 +38,13 @@ async function churnSurfaces(cycles: number) {
       await click(`.topbar [data-more="${overflow}"]`);
     }
   };
-  // A close goes back through browser history; a loaded browser can deliver its popstate frames later.
   const assertClosed = async () => {
-    for (
-      let wait = 0;
-      document.querySelector("dialog[open], :popover-open:not(.tooltip)") ||
-      document.querySelector(".scrim.open");
-      wait++
-    ) {
-      if (wait === 60)
-        throw new Error(`Surface stuck open at ${location.hash}`);
-      await frames();
-    }
+    const open = () =>
+      document.querySelector(
+        "dialog[open], :popover-open:not(.tooltip), .scrim.open",
+      );
+    for (let wait = 0; open() && wait < 60; wait++) await frames();
+    if (open()) throw new Error(`Surface stuck open at ${location.hash}`);
   };
   for (let i = 0; i < cycles; i++) {
     for (let reversal = 0; reversal < 2; reversal++) {
@@ -213,12 +211,19 @@ for (const width of [1000, 390]) {
   });
 }
 
-test("panels build on first use and retain their state after closing", async (page) => {
+test("panels build as the pointer reaches their key and retain their state after closing", async (page) => {
   await open(page, home.http);
   await expect(page.locator("#console")).toHaveCount(1);
   const duration = page.locator('input[aria-label="Download stage time"]');
   await expect(duration).toHaveCount(0);
   await expect(page.locator(".infra")).toHaveCount(0);
+  await page.getByRole("button", { name: "Settings", exact: true }).hover();
+  await expect(duration).toHaveCount(1);
+  expect(
+    await duration.all((els) => els.some((el) => el.checkVisibility())),
+  ).toBe(false);
+  await page.getByRole("button", { name: "Details", exact: true }).hover();
+  await expect(page.locator(".infra")).toHaveCount(1);
   await openSettings(page);
   await duration.fill("2");
   await closeSettings(page);
