@@ -186,5 +186,7 @@ crates that lack one.
 `rust-client-build`, `rust-server-run`, `rust-client-run` and
 `GM_IMPLEMENTATION=rust`) embed, need the dependency reviews but no platform
 record, so any host builds them. Their report and their executable carry
-`UNREVIEWED DEVELOPMENT BUILD`: such a build is not distributable, and a
-reviewed build's executable must not carry the marker.
+`UNREVIEWED DEVELOPMENT BUILD`: such a build is not distributable. A
+reviewed build's executable must not carry the marker, the workflow policy
+keeps development builds out of everything CI and releases run, and release
+verification refuses an image whose server or notices carry it.

@@ -64,7 +64,9 @@ keep BuildKit's insecure entitlements disabled. The Dockerfile may not select a
 custom frontend. Verification requires one runnable `linux/amd64` and
 `linux/arm64` manifest, each with one linked SLSA provenance statement whose
 source (the fetched commit, or the local checkout's revision) is the release
-commit of this repository, and copies every blob inside a network-less Skopeo
+commit of this repository, requires each image's layers to ship the server and
+its `THIRD_PARTY_NOTICES.txt` with no copy carrying `UNREVIEWED DEVELOPMENT
+BUILD`, and copies every blob inside a network-less Skopeo
 container whose only mount is the read-only archive. The untrusted build writes
 that provenance, so it shows which source was built but does not authenticate
 it. Build arguments carry no secrets because max provenance records them.
@@ -97,7 +99,10 @@ it. Build arguments carry no secrets because max provenance records them.
 `.github/zizmor.yml`) requires full-SHA action pins, non-persisted checkout
 credentials and no dangerous triggers other than the reviewed `workflow_run`.
 `workflow_policy.py` holds the project's own trust rules, and
-`test_workflow_policy.py` breaks a copy of the repository once per rule.
+`test_workflow_policy.py` breaks a copy of the repository once per rule. No
+workflow or image build, nor a mise task or `scripts/*.sh` one of them runs,
+may build with unreviewed development notices (`--development` or
+`scripts.rust_build`).
 
 When adding an external action, review it and its composite dependencies,
 allow it in repository settings, pin the SHA with a version comment for

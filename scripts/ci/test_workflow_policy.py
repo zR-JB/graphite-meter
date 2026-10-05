@@ -128,6 +128,12 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (SETUP, "        python3 scripts/ci/toolchains.py verify-rust\n", "", "misorders invariant"),
     (SETUP, "inputs.rust == 'true' && inputs.cache == 'true'", "inputs.rust == 'true'",
      "follow the cache input"),
+    # Development notices stay out of CI and releases, directly or through a task or script a job runs.
+    (W + "ci.yml", None, "# mise run rust-server-run\n", "development notices"),
+    ("mise.toml", "[tasks.rust-check]\n", '[tasks.rust-check]\ndepends = ["rust-client-build"]\n',
+     "development notices"),
+    ("container/Dockerfile", None, "RUN python3 -m scripts.legal.rust --development\n", "development notices"),
+    ("scripts/release-artifacts.sh", None, "python3 -m scripts.rust_build\n", "development notices"),
 )
 
 
@@ -137,6 +143,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
         shutil.copytree(ROOT / ".github", root / ".github")
+        shutil.copytree(ROOT / "scripts", root / "scripts", ignore=shutil.ignore_patterns("__pycache__"))
         for name in ("mise.toml", "mise.lock", "go/go.mod", "container/Dockerfile",
                      "rust/rust-toolchain.toml"):
             (root / name).parent.mkdir(parents=True, exist_ok=True)

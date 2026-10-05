@@ -17,6 +17,8 @@ WRITE = re.compile(r"(?<![\w-])(?!permission-)([a-z-]+):\s*write\b")
 STEP = re.compile(r"(?m)^(?=\s*- )")
 JOB = re.compile(r"(?m)^  (?=[a-z-]+:$)")
 RELEASE_SECRETS = {"GHCR_TOKEN", "RELEASE_APP_PRIVATE_KEY"}
+# How a build gets unreviewed development notices: the collector's flag or a local Rust build.
+DEVELOPMENT_BUILDS = ("--development", "scripts.rust_build")
 
 TRIGGERS = {
     "ci.yml": {"pull_request", "push"},
@@ -216,6 +218,32 @@ def check_ci(root: Path) -> None:
         fail(f"CI Gate must need every job: {missing}")
 
 
+def check_development_notices(root: Path) -> None:
+    """Nothing CI or a release runs builds with unreviewed development notices: no workflow, image build, mise
+    task or scripts/*.sh they reach starts the collector's --development mode or a local Rust build."""
+    tasks = tomllib.loads(read(root, "mise.toml"))["tasks"]
+    texts = [path.read_text(encoding="utf-8")
+             for path in sorted([*(root / ".github").rglob("*.y*ml"), *(root / "container").glob("Dockerfile*")])]
+    reached: set[str] = set()
+    while texts:
+        text = texts.pop()
+        if any(marker in text for marker in DEVELOPMENT_BUILDS):
+            fail("CI and releases must not build with unreviewed development notices")
+        for task, script in re.findall(r"mise run ([\w-]+)|(?<![\w/.-])(scripts/[\w/.-]+\.sh)\b", text):
+            if (name := task or script) in reached:
+                continue
+            reached.add(name)
+            if script:
+                texts.append(read(root, script))
+                continue
+            # A task runs its steps and, before and after them, the tasks it depends on.
+            for key in ("run", "depends", "depends_post"):
+                steps = tasks.get(name, {}).get(key, [])
+                for step in steps if isinstance(steps, list) else [steps]:
+                    texts.append(step if key == "run" and isinstance(step, str)
+                                 else f"mise run {step if isinstance(step, str) else step['task']}")
+
+
 def check_certificates(root: Path) -> None:
     listed = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True, check=False)
     if listed.returncode == 0:
@@ -242,6 +270,7 @@ def check_repository(root: Path = ROOT) -> None:
     check_actions(root)
     check_workflows(root)
     check_ci(root)
+    check_development_notices(root)
     check_certificates(root)
 
 

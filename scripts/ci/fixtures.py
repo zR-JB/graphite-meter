@@ -95,13 +95,14 @@ def descriptor(os_name: str, arch: str, digest: str, attests: str | None = None)
 
 
 RUNNABLE = (descriptor("linux", "amd64", AMD), descriptor("linux", "arm64", ARM))
+IMAGE_FILES = {"./graphite-meter": b"server", "usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt": b"notices"}
 ATTESTED = (descriptor("unknown", "unknown", "sha256:" + "c" * 64, AMD),
             descriptor("unknown", "unknown", "sha256:" + "d" * 64, ARM))
 
 
-def write_oci(path: Path, repository: str, revision: str, *, remote: bool,
-              tamper: bool = False, predicate: str = SLSA) -> JsonObject:
-    """Write BuildKit-shaped provenance for both images into an OCI archive; return its index."""
+def write_oci(path: Path, repository: str, revision: str, *, remote: bool, tamper: bool = False,
+              predicate: str = SLSA, files: Mapping[str, bytes] = IMAGE_FILES) -> JsonObject:
+    """Write two images of `files` with BuildKit-shaped provenance into an OCI archive; return its index."""
     blobs: dict[str, bytes] = {}
 
     def add(value: object) -> str:
@@ -109,6 +110,17 @@ def write_oci(path: Path, repository: str, revision: str, *, remote: bool,
         digest = "sha256:" + hashlib.sha256(data).hexdigest()
         blobs[digest] = data + (b" " if tamper else b"")
         return digest
+
+    layer = io.BytesIO()
+    with tarfile.open(fileobj=layer, mode="w:gz") as archive:
+        for name, payload in files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+    layer_digest = "sha256:" + hashlib.sha256(layer.getvalue()).hexdigest()
+    blobs[layer_digest] = layer.getvalue()
+    images = {arch: add({"schemaVersion": 2, "mediaType": MANIFEST_TYPE, "architecture": arch,
+                         "layers": [{"digest": layer_digest}]}) for arch in ("amd64", "arm64")}
 
     source: JsonObject = {"path": "Dockerfile"}
     if remote:
@@ -118,16 +130,16 @@ def write_oci(path: Path, repository: str, revision: str, *, remote: bool,
     statement = add({"predicateType": SLSA, "subject": [], "predicate": {
         "buildDefinition": {"externalParameters": {"configSource": source}},
         "runDetails": {"metadata": {"buildkit_metadata": {} if remote else {"vcs": vcs}}}}})
-    layer = {"mediaType": "application/vnd.in-toto+json", "digest": statement,
+    statement_layer = {"mediaType": "application/vnd.in-toto+json", "digest": statement,
              "annotations": {"in-toto.io/predicate-type": predicate}}
-    attested = [descriptor("unknown", "unknown", add({"layers": [layer]}), image)
-                for image in (AMD, ARM)]
+    attested = [descriptor("unknown", "unknown", add({"layers": [statement_layer]}), image)
+                for image in images.values()]
     with tarfile.open(path, "w") as archive:
         for digest, data in blobs.items():
             info = tarfile.TarInfo("blobs/sha256/" + digest.removeprefix("sha256:"))
             info.size = len(data)
             archive.addfile(info, io.BytesIO(data))
-    return index(*RUNNABLE, *attested)
+    return index(*(descriptor("linux", arch, image) for arch, image in images.items()), *attested)
 
 
 def engine(directory: Path, repository: str, version: str, revision: str,
