@@ -35,12 +35,18 @@ async function churnSurfaces(cycles: number) {
       await click(`.topbar [data-more="${overflow}"]`);
     }
   };
-  const assertClosed = () => {
-    if (
+  // A close goes back through browser history; a loaded browser can deliver its popstate frames later.
+  const assertClosed = async () => {
+    for (
+      let wait = 0;
       document.querySelector("dialog[open], :popover-open:not(.tooltip)") ||
-      document.querySelector(".scrim.open")
-    )
-      throw new Error(`Surface stuck open at ${location.hash}`);
+      document.querySelector(".scrim.open");
+      wait++
+    ) {
+      if (wait === 60)
+        throw new Error(`Surface stuck open at ${location.hash}`);
+      await frames();
+    }
   };
   for (let i = 0; i < cycles; i++) {
     for (let reversal = 0; reversal < 2; reversal++) {
@@ -57,7 +63,7 @@ async function churnSurfaces(cycles: number) {
         await click('dialog[role="alertdialog"][open] .confirm-actions button');
       }
       await click('button[aria-label="Close Settings"]');
-      assertClosed();
+      await assertClosed();
     }
     for (let reversal = 0; reversal < 2; reversal++) {
       await topbar("Details", "endpoint");
@@ -66,7 +72,7 @@ async function churnSurfaces(cycles: number) {
         throw new Error("Legal dialog did not open modally");
       await click('button[aria-label="Close About & legal"]');
       await click('button[aria-label="Close Details"]');
-      assertClosed();
+      await assertClosed();
     }
     await topbar("History", "history");
     // Its first visit loads a chunk; later visits deliberately do not settle.
@@ -94,7 +100,7 @@ async function churnSurfaces(cycles: number) {
       await click('button[aria-label="History actions"]');
     }
     await click('button[aria-label="Close History"]');
-    assertClosed();
+    await assertClosed();
   }
 }
 
