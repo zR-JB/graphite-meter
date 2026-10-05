@@ -6,7 +6,7 @@ use graphite_meter_client::{
         latency::ProbeOutcome,
     },
     model::{Cadence, Dir, Failure, LaneHealth, Outcome, Scope, ServerFailure, Stage, StageResult, focus},
-    run::engine::{Decision, Engine, Input, Probe, Sample, StagePlan, lateness, stagger, warmup},
+    run::engine::{Decision, Engine, Input, Member, Probe, Sample, StagePlan, lateness, stagger, warmup},
 };
 use graphite_meter_proto::{catalog::ServerId, reason::FailureReason, upload::Counters};
 use std::time::{Duration, Instant};
@@ -24,8 +24,10 @@ fn id(text: &str) -> ServerId {
 fn plan(stage: Stage, members: &[&str], latency: bool) -> StagePlan {
     StagePlan {
         stage,
-        members: members.iter().map(|member| id(member)).collect(),
-        warmup: Duration::ZERO,
+        members: members
+            .iter()
+            .map(|member| Member { server: id(member), warmup: Duration::ZERO })
+            .collect(),
         duration: STAGE,
         latency: latency.then_some(Cadence::ReplyDriven),
     }
@@ -568,11 +570,23 @@ fn a_stage_without_evidence_records_insufficient_evidence() {
 }
 
 #[test]
+fn warmup_follows_the_slowest_member_still_present_after_readiness() {
+    let mut plan = plan(Stage::Download, &["a", "b"], false);
+    (plan.members[0].warmup, plan.members[1].warmup) = (ms(800), ms(3000));
+    let mut script = Script::new(plan.clone());
+    script.run(|at| vec![down("a", moved(at, STAGE * 2)), down("b", moved(at, STAGE * 2))]);
+    assert_eq!(script.window().map(|(start, _)| start), Some(ms(3000)));
+    let mut script = Script::new(plan);
+    script.run(|at| vec![down("a", moved(at, STAGE * 3)), Sample { ready: false, ..down("b", 0) }]);
+    assert_eq!(script.window().map(|(start, _)| start), Some(STAGE + ms(800)));
+}
+
+#[test]
 fn warmup_stretches_to_ten_idle_round_trips_within_four_seconds() {
-    assert_eq!(warmup(ms(800), &[ms(50), ms(120)]), ms(1200));
-    assert_eq!(warmup(ms(800), &[ms(20)]), ms(800));
-    assert_eq!(warmup(ms(800), &[ms(900)]), ms(4000));
-    assert_eq!(warmup(Duration::ZERO, &[]), Duration::ZERO);
+    assert_eq!(warmup(ms(800), ms(120)), ms(1200));
+    assert_eq!(warmup(ms(800), ms(20)), ms(800));
+    assert_eq!(warmup(ms(800), ms(900)), ms(4000));
+    assert_eq!(warmup(Duration::ZERO, Duration::ZERO), Duration::ZERO);
     assert_eq!(stagger(ms(400), 5), ms(50));
     assert_eq!(stagger(ms(4000), 6), ms(75));
     assert_eq!(stagger(ms(4000), 1), Duration::ZERO);
