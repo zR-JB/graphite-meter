@@ -7,6 +7,7 @@ use super::{
     body::{Aborted, ReplyBound, Sink, pump},
     lifecycle::{Event, Grace, Lifecycle},
     tls,
+    window::Incoming,
 };
 use crate::{
     app::{App, Connection, Endpoint, MAX_HEAD_BYTES, Outcome},
@@ -37,7 +38,7 @@ use tokio::{
 };
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
-use window::{Incoming, Window};
+use window::Window;
 
 /// What a connection holds of the buffer budget from accept until its task ends.
 pub const FLOOR_BYTES: usize = TRANSPORT_BYTES + STATE_BYTES;

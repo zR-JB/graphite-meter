@@ -9,6 +9,7 @@ pub mod quic;
 pub mod tls;
 pub mod websocket;
 pub mod webtransport;
+mod window;
 
 use crate::log::RateLimited;
 

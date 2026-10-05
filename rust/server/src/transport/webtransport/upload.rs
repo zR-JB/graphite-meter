@@ -6,7 +6,7 @@ use crate::{
     engine::{ProgressFeed, UploadSink, Uploads},
     lane::Lane,
     peer::ClientKeys,
-    transport::body::FUNDING_RETRY,
+    transport::window::FUNDING_RETRY,
 };
 use bytes::Bytes;
 use futures_util::{StreamExt, future::OptionFuture, stream::FuturesUnordered};

@@ -1,12 +1,10 @@
 //! The response body every transport writes, a document, a download or a progress feed, the rules of writing it
-//! within its bound, the pump that writes it to HTTP/2 and HTTP/3 streams, and when an upload funds its window.
+//! within its bound, and the pump that writes it to HTTP/2 and HTTP/3 streams.
 
 use crate::{
     engine::{DownloadSource, ProgressFeed, download::BLOCK_BYTES},
-    exchange::{EXCHANGE_BOUND, Watch},
+    exchange::EXCHANGE_BOUND,
     lane::Lane,
-    limits::{Budget, Pressure},
-    peer::ClientKeys,
 };
 use bytes::Bytes;
 use futures_util::{FutureExt, Stream, future::Fuse, stream};
@@ -20,12 +18,8 @@ use std::{
     io, mem,
     pin::{Pin, pin},
     task::{Context, Poll, ready},
-    time::Duration,
 };
 use tokio::time::{Instant, Sleep, sleep_until};
-
-/// An upload refused a raised receive window asks again after this pause.
-pub(crate) const FUNDING_RETRY: Duration = Duration::from_millis(100);
 
 /// A reply's body and what bounds writing it.
 pub struct Body {
@@ -283,34 +277,6 @@ pub(crate) async fn within<T, E>(
         }
     })
     .await
-}
-
-/// Whether an upload reads at its connection's raised receive window: asked on its first read after admission, and
-/// a pause after a refusal; never while the budget holds growth back.
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum Funding {
-    /// A refusal holds the next ask until the instant.
-    Unfunded(Option<Instant>),
-    Funded,
-}
-
-impl Funding {
-    /// Asks `raise` with the admitted client's keys once that is due.
-    pub(crate) fn fund(&mut self, watch: &Watch, budget: &Budget, raise: impl FnOnce(&ClientKeys) -> bool) {
-        let Self::Unfunded(retry) = *self else {
-            return;
-        };
-        let Some(keys) = watch.admitted() else {
-            return;
-        };
-        if budget.pressure() == Pressure::HoldBack || retry.is_some_and(|at| Instant::now() < at) {
-            return;
-        }
-        *self = match raise(keys) {
-            true => Self::Funded,
-            false => Self::Unfunded(Some(Instant::now() + FUNDING_RETRY)),
-        };
-    }
 }
 
 impl fmt::Debug for Body {

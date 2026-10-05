@@ -1,11 +1,15 @@
 //! The receive window of an HTTP/2 connection, which admitted uploads fund.
 
-use crate::{app::App, exchange::Watch, limits::Hold, lock, peer::ClientKeys, transport::body::Funding};
+use crate::{
+    app::App,
+    limits::{Budget, Hold},
+    lock,
+    peer::ClientKeys,
+    transport::window::ReceiveWindow,
+};
 use bytes::Bytes;
 use h2::RecvStream;
-use http_body::Frame;
 use std::{
-    pin::Pin,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -38,16 +42,25 @@ impl Window {
         }
     }
 
-    /// Whether an upload of `keys` reads at the raised window, raising it for the first.
-    fn fund(&self, stream: &mut RecvStream, keys: &ClientKeys) -> bool {
-        if self.uploads.fetch_add(1, Ordering::Relaxed) > 0 || self.raise(stream, keys) {
-            return true;
-        }
-        self.uploads.fetch_sub(1, Ordering::Relaxed);
-        false
+    /// Whether the window was raised, which the connection's credit then holds until it ends.
+    pub(super) fn raised(&self) -> bool {
+        self.raised.load(Ordering::Relaxed)
+    }
+}
+
+/// Under pressure, or past its client's share, an upload reads at the current window.
+impl ReceiveWindow for Window {
+    type Stream = RecvStream;
+    type Error = h2::Error;
+
+    fn budget(&self) -> &Budget {
+        self.app.budget()
     }
 
     fn raise(&self, stream: &mut RecvStream, keys: &ClientKeys) -> bool {
+        if self.uploads.fetch_add(1, Ordering::Relaxed) > 0 {
+            return true;
+        }
         let mut credit = lock(&self.credit);
         if credit.is_none() {
             *credit = self.app.window_credit(keys, (WINDOW - DEFAULT_WINDOW) as usize);
@@ -59,62 +72,28 @@ impl Window {
         if !self.raised.load(Ordering::Relaxed) {
             *credit = None;
         }
+        self.uploads.fetch_sub(1, Ordering::Relaxed);
         false
     }
 
-    /// Whether the window was raised, which the connection's credit then holds until it ends.
-    pub(super) fn raised(&self) -> bool {
-        self.raised.load(Ordering::Relaxed)
-    }
-
-    /// An upload reading at the raised window ended; the last lowers it again.
+    /// The last upload reading at the raised window lowers it again.
     fn release(&self, stream: &mut RecvStream) {
         if self.uploads.fetch_sub(1, Ordering::Relaxed) == 1 {
             stream.flow_control().set_target_connection_window_size(DEFAULT_WINDOW);
         }
     }
-}
 
-/// A request body, which funds the raised window as `Funding` rules; under pressure, or past its client's share, an
-/// upload reads at the current window.
-pub(super) struct Incoming {
-    stream: RecvStream,
-    watch: Watch,
-    window: Arc<Window>,
-    funding: Funding,
-}
-
-impl Incoming {
-    pub(super) fn new(stream: RecvStream, watch: Watch, window: Arc<Window>) -> Self {
-        Self { stream, watch, window, funding: Funding::Unfunded(None) }
-    }
-}
-
-impl http_body::Body for Incoming {
-    type Data = Bytes;
-    type Error = h2::Error;
-
-    fn poll_frame(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, h2::Error>>> {
-        let this = self.get_mut();
-        let (window, stream) = (&this.window, &mut this.stream);
-        this.funding
-            .fund(&this.watch, window.app.budget(), |keys| window.fund(stream, keys));
-        let data = ready!(this.stream.poll_data(cx));
-        if let Some(Ok(data)) = &data {
-            this.stream.flow_control().release_capacity(data.len())?;
+    fn poll_data(stream: &mut RecvStream, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, h2::Error>>> {
+        let data = ready!(stream.poll_data(cx));
+        if let Some(Ok(data)) = &data
+            && let Err(error) = stream.flow_control().release_capacity(data.len())
+        {
+            return Poll::Ready(Some(Err(error)));
         }
-        Poll::Ready(data.map(|data| data.map(Frame::data)))
+        Poll::Ready(data)
     }
 
-    fn is_end_stream(&self) -> bool {
-        self.stream.is_end_stream()
-    }
-}
-
-impl Drop for Incoming {
-    fn drop(&mut self) {
-        if let Funding::Funded = self.funding {
-            self.window.release(&mut self.stream);
-        }
+    fn is_end_stream(stream: &RecvStream) -> bool {
+        stream.is_end_stream()
     }
 }

@@ -1,13 +1,14 @@
 //! HTTP/3 requests: each within its exchange bound until admitted, its body funding the connection's window, and its
 //! reply pumped in 16 KiB frames that yield to siblings on a crowded connection; a CONNECT opens a WebTransport session.
 
-use super::window::{Incoming, Window};
+use super::window::Window;
 use crate::{
     app::{App, Connection, Outcome},
     exchange::{Exchange, Watch},
     transport::{
-        body::{Aborted, Body, Funding, ReplyBound, Sink, pump, within},
+        body::{Aborted, Body, ReplyBound, Sink, pump, within},
         webtransport::{self, ANSWER_BOUND},
+        window::{Funding, Incoming},
     },
 };
 use bytes::Bytes;

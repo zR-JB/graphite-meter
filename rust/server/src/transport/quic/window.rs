@@ -3,19 +3,16 @@
 use super::budget::ConnectionBudget;
 use crate::{
     app::App,
-    exchange::Watch,
     limits::{Budget, Pressure},
     peer::ClientKeys,
-    transport::body::Funding,
+    transport::window::ReceiveWindow,
 };
 use bytes::Bytes;
 use graphite_meter_http3::{self as http3, RecvHalf};
 use graphite_meter_net::quic::{MAX_SEND_WINDOW, MIN_SEND_WINDOW, RECEIVE_WINDOW};
-use http_body::Frame;
 use std::{
-    pin::Pin,
     sync::Arc,
-    task::{Context, Poll, ready},
+    task::{Context, Poll},
     time::Duration,
 };
 use tokio::time::Instant;
@@ -53,48 +50,20 @@ impl Window {
     }
 }
 
-/// A request body, which funds the raised window as `Funding` rules.
-pub(super) struct Incoming {
-    stream: RecvHalf,
-    watch: Watch,
-    window: Arc<Window>,
-    funding: Funding,
-    finished: bool,
-}
-
-impl Incoming {
-    pub(super) fn new(stream: RecvHalf, watch: Watch, window: Arc<Window>) -> Self {
-        Self {
-            stream,
-            watch,
-            window,
-            funding: Funding::Unfunded(None),
-            finished: false,
-        }
-    }
-}
-
-impl http_body::Body for Incoming {
-    type Data = Bytes;
+impl ReceiveWindow for Window {
+    type Stream = RecvHalf;
     type Error = http3::Error;
 
-    fn poll_frame(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, http3::Error>>> {
-        let this = self.get_mut();
-        if this.finished {
-            return Poll::Ready(None);
-        }
-        let window = &this.window;
-        this.funding
-            .fund(&this.watch, window.app.budget(), |keys| window.fund(keys));
-        let frame = ready!(this.stream.poll_data(cx))
-            .transpose()
-            .map(|data| data.map(Frame::data));
-        this.finished = !matches!(frame, Some(Ok(_)));
-        Poll::Ready(frame)
+    fn budget(&self) -> &Budget {
+        self.app.budget()
     }
 
-    fn is_end_stream(&self) -> bool {
-        self.finished
+    fn raise(&self, _: &mut RecvHalf, keys: &ClientKeys) -> bool {
+        self.fund(keys)
+    }
+
+    fn poll_data(stream: &mut RecvHalf, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, http3::Error>>> {
+        stream.poll_data(cx).map(Result::transpose)
     }
 }
 
