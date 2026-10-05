@@ -40,6 +40,32 @@ async fn a_request_head_has_fifteen_seconds_from_its_first_byte() {
 }
 
 #[tokio::test]
+async fn an_unadmitted_reply_the_peer_does_not_read_is_cut_at_the_exchange_bound() {
+    const REQUESTS: usize = 40_000;
+    let server = start(&[]).await;
+    let reply = server.get("/probe").await.body.len();
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.set_recv_buffer_size(4096).unwrap();
+    let (mut reader, mut writer) = socket.connect(server.address).await.unwrap().into_split();
+    let requests = "GET /probe HTTP/1.1\r\nHost: test\r\n\r\n".repeat(REQUESTS);
+    let sending = tokio::spawn(async move {
+        let _ = writer.write_all(requests.as_bytes()).await;
+        std::future::pending::<()>().await;
+        writer
+    });
+    sleep(Duration::from_millis(200)).await;
+    tokio::time::pause();
+    sleep(Duration::from_secs(16)).await;
+    tokio::time::resume();
+    let (mut buffer, mut received) = (vec![0; 64 << 10], 0);
+    while let Ok(read @ 1..) = reader.read(&mut buffer).await {
+        received += read;
+    }
+    sending.abort();
+    assert!(received < REQUESTS * reply / 2, "the replies were cut with {received} bytes read");
+}
+
+#[tokio::test]
 async fn a_head_over_thirty_two_kibibytes_is_refused() {
     let server = start(&[]).await;
     let mut client = server.connect().await;

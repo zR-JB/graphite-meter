@@ -46,7 +46,6 @@ async fn an_upload_counts_every_byte_into_its_aggregate_and_answers_its_own_tota
     let upload = |body| request("POST", &format!("/upload?id={id}")).body(body).unwrap();
     let response = send(&app, Endpoint::H1, upload(chunks(&[b"abc", b"", b"defgh"], false))).await;
     assert_eq!(response.status(), StatusCode::OK);
-    assert!(matches!(response.body().bound(), Some(Bound::Until(_))));
     assert_eq!(header(&response, "cache-control"), Some("no-store"));
     assert_eq!(text(response).await, r#"{"bytes":8}"#);
     let response = send(&app, Endpoint::Quic, upload(chunks(&[b"12"], false))).await;
@@ -170,7 +169,6 @@ async fn a_progress_feed_attaches_reports_and_completes_after_finalization() {
     drop(replaced);
     let headers = ["content-type", "cache-control", "x-accel-buffering"].map(|name| header(&feed, name));
     assert_eq!(headers, [Some("application/x-ndjson"), Some("no-store, no-transform"), Some("no")]);
-    assert!(lane_bound(&feed));
     assert_eq!(active(&app).await, 1, "a feed holds a handler");
 
     let upload = request("POST", &format!("/upload?id={id}"))

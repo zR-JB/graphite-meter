@@ -2,7 +2,7 @@
 //! and the hand-off of WebSocket upgrades.
 
 use super::{
-    body::{Body, Bound},
+    body::{Aborted, Body, ReplyBound},
     tls, websocket,
 };
 use crate::{
@@ -11,7 +11,6 @@ use crate::{
     lock,
 };
 use bytes::Bytes;
-use graphite_meter_proto::lane::LaneEnding;
 use http::{Method, Request, Response};
 use http_body::{Frame, SizeHint};
 use hyper::{body::Incoming, server::conn::http1, service::service_fn, upgrade::OnUpgrade};
@@ -140,8 +139,7 @@ async fn respond(
 enum Limit {
     /// A parsed request until admitted.
     Exchange(Watch),
-    Until(Instant),
-    Lane(Lane),
+    Reply(ReplyBound),
     Open,
 }
 
@@ -152,7 +150,7 @@ struct Shared {
     changed: AtomicBool,
     /// The deadline of the exchange a request's first byte started.
     started: Mutex<Option<Instant>>,
-    /// The reply's body ended, so the flush after it ends the exchange.
+    /// The reply's body ended, so the flush after it delivers the reply.
     complete: AtomicBool,
 }
 
@@ -172,19 +170,14 @@ impl Shared {
 
     /// Bounds the connection by the reply's bound; a reply without a body to send is complete at once.
     fn reply(self: &Arc<Self>, response: Response<Body>, head: bool) -> Response<Reply> {
-        let limit = match response.body().bound() {
-            Some(Bound::Lane(lane)) => Limit::Lane(lane.clone()),
-            Some(Bound::Until(deadline)) => Limit::Until(*deadline),
-            None => Limit::Until(Instant::now() + EXCHANGE_BOUND),
-        };
         let complete = head || http_body::Body::is_end_stream(response.body());
         self.complete.store(complete, Ordering::Release);
-        self.post(limit);
+        self.post(Limit::Reply(ReplyBound::of(response.body())));
         response.map(|body| Reply { body, shared: self.clone() })
     }
 }
 
-/// A reply as hyper writes it: its lane's other endings abort it, and its end completes the exchange.
+/// A reply as hyper writes it, whose end completes it.
 struct Reply {
     body: Body,
     shared: Arc<Shared>,
@@ -192,20 +185,15 @@ struct Reply {
 
 impl http_body::Body for Reply {
     type Data = Bytes;
-    type Error = io::Error;
+    type Error = Aborted;
 
-    fn poll_frame(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, io::Error>>> {
+    fn poll_frame(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, Aborted>>> {
         let this = self.get_mut();
-        if let Some(Bound::Lane(lane)) = this.body.bound()
-            && lane.due().is_some_and(|ending| ending != LaneEnding::Finished)
-        {
-            return Poll::Ready(Some(Err(ended())));
-        }
         let frame = ready!(Pin::new(&mut this.body).poll_frame(cx));
         if frame.is_none() || this.body.is_end_stream() {
             this.shared.complete.store(true, Ordering::Release);
         }
-        Poll::Ready(frame.map(|frame| frame.map_err(|never| match never {})))
+        Poll::Ready(frame)
     }
 
     fn is_end_stream(&self) -> bool {
@@ -215,10 +203,6 @@ impl http_body::Body for Reply {
     fn size_hint(&self) -> SizeHint {
         self.body.size_hint()
     }
-}
-
-fn ended() -> io::Error {
-    io::ErrorKind::ConnectionAborted.into()
 }
 
 /// The socket as hyper sees it.
@@ -235,11 +219,8 @@ enum State {
     Waiting,
     /// A request until admitted or answered by the deadline; its watch once its head is parsed.
     Exchange(Option<Watch>),
-    /// A reply until written by the deadline.
-    Until,
-    /// A reply its lane bounds, and the lane's ending, polled while the socket blocks.
-    Lane(Lane, Pin<Box<dyn Future<Output = LaneEnding> + Send>>),
-    /// Admitted work without a reply yet, or an upgraded connection.
+    Reply(ReplyBound),
+    /// Admitted work reading its request, or an upgraded connection.
     Open,
 }
 
@@ -249,25 +230,22 @@ impl<S> Io<S> {
         Self { inner, state: State::Waiting, deadline, shared }
     }
 
-    /// Adopts a posted limit and fails once the connection's deadline passed or its lane ended otherwise.
+    /// Adopts a posted limit and fails once the connection's deadline passed or its reply must end.
     fn check(&mut self, cx: &mut Context<'_>) -> io::Result<()> {
         if self.shared.changed.load(Ordering::Acquire) && self.shared.changed.swap(false, Ordering::Acquire) {
             self.adopt();
         }
-        let expired = match &self.state {
-            State::Waiting | State::Exchange(_) | State::Until => self.deadline.as_mut().poll(cx).is_ready(),
-            State::Lane(lane, _) if lane.ending().is_some_and(|ending| ending != LaneEnding::Finished) => {
-                return Err(ended());
-            }
-            State::Lane(..) | State::Open => false,
-        };
-        match &self.state {
-            _ if !expired => {}
+        match &mut self.state {
+            State::Reply(bound) => Ok(bound.check(cx)?),
+            State::Open => Ok(()),
+            State::Waiting | State::Exchange(_) if self.deadline.as_mut().poll(cx).is_pending() => Ok(()),
             // A request admitted while its body is read is bound by its lane instead.
-            State::Exchange(Some(watch)) if watch.admitted().is_some() => self.state = State::Open,
-            _ => return Err(io::ErrorKind::TimedOut.into()),
+            State::Exchange(Some(watch)) if watch.admitted().is_some() => {
+                self.state = State::Open;
+                Ok(())
+            }
+            State::Waiting | State::Exchange(_) => Err(io::ErrorKind::TimedOut.into()),
         }
-        Ok(())
     }
 
     fn adopt(&mut self) {
@@ -279,27 +257,15 @@ impl<S> Io<S> {
                 self.deadline.as_mut().reset(watch.deadline());
                 State::Exchange(Some(watch))
             }
-            Limit::Until(deadline) => {
-                self.deadline.as_mut().reset(deadline);
-                State::Until
-            }
-            Limit::Lane(lane) => {
-                let ending = lane.clone();
-                State::Lane(lane, Box::pin(async move { ending.ended().await }))
-            }
+            Limit::Reply(bound) => State::Reply(bound),
             Limit::Open => State::Open,
         };
     }
 
-    /// Waits for the lane's ending too while the socket blocks.
+    /// Waits for the reply's lane too while the socket blocks.
     fn blocked(&mut self, cx: &mut Context<'_>) -> io::Result<()> {
-        if let State::Lane(_, ending) = &mut self.state
-            && let Poll::Ready(ending) = ending.as_mut().poll(cx)
-        {
-            self.state = State::Open;
-            if ending != LaneEnding::Finished {
-                return Err(ended());
-            }
+        if let State::Reply(bound) = &mut self.state {
+            bound.blocked(cx)?;
         }
         Ok(())
     }
@@ -307,8 +273,8 @@ impl<S> Io<S> {
     fn written(&mut self, cx: &mut Context<'_>, result: Poll<io::Result<usize>>) -> Poll<io::Result<usize>> {
         match &result {
             Poll::Ready(Ok(1..)) => {
-                if let State::Lane(lane, _) = &self.state {
-                    lane.moved();
+                if let State::Reply(bound) = &self.state {
+                    bound.progressed();
                 }
             }
             Poll::Pending => self.blocked(cx)?,
@@ -317,13 +283,12 @@ impl<S> Io<S> {
         result
     }
 
-    /// The reply reached the socket: its lane finishes, and the connection waits for the next request.
+    /// The reply reached the socket, and the connection waits for the next request.
     fn delivered(&mut self) -> io::Result<()> {
-        if let State::Lane(lane, _) = &self.state
-            && lane.finish() != LaneEnding::Finished
-        {
-            return Err(ended());
-        }
+        let State::Reply(bound) = &self.state else {
+            return Ok(());
+        };
+        bound.delivered()?;
         self.deadline.as_mut().reset(Instant::now() + KEEP_ALIVE_IDLE);
         self.state = State::Waiting;
         Ok(())

@@ -6,7 +6,6 @@ mod page;
 mod upload;
 
 use bytes::Bytes;
-use graphite_meter_server::transport::body::Bound;
 use graphite_meter_server::{
     app::{App, Connection, Endpoint, Outcome},
     config::{self, Config, Loaded},
@@ -112,10 +111,6 @@ impl http_body::Body for Unending {
 
 async fn json(response: Response<Body>) -> Value {
     serde_json::from_str(&text(response).await).unwrap()
-}
-
-fn lane_bound(response: &Response<Body>) -> bool {
-    matches!(response.body().bound(), Some(Bound::Lane(_)))
 }
 
 /// The handlers `/probe` reports in use.

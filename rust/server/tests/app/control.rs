@@ -167,7 +167,6 @@ async fn a_download_sends_its_clamped_length_and_holds_a_handler_until_it_ends()
     assert_eq!(response.status(), StatusCode::OK);
     let headers = ["content-type", "cache-control", "content-length"].map(|name| header(&response, name));
     assert_eq!(headers, [Some("application/octet-stream"), Some("no-store"), Some("300000")]);
-    assert!(lane_bound(&response));
     assert_eq!(active(&app).await, 1);
     assert_eq!(response.into_body().collect().await.unwrap().to_bytes().len(), 300_000);
     assert_eq!(active(&app).await, 0, "the handler ends with the body");
@@ -179,7 +178,7 @@ async fn a_download_sends_its_clamped_length_and_holds_a_handler_until_it_ends()
     for (method, query, length) in [("HEAD", "?bytes=10", "10"), ("GET", "?bytes=0", "0")] {
         let response = send(&app, Endpoint::H1, empty(request(method, &format!("/download{query}")))).await;
         assert_eq!(header(&response, "content-length"), Some(length));
-        assert!(!lane_bound(&response) && http_body::Body::is_end_stream(response.body()));
+        assert!(http_body::Body::is_end_stream(response.body()));
         assert_eq!(active(&app).await, 0, "{method} releases its handler with the reply");
     }
 }
@@ -219,13 +218,10 @@ async fn full_handler_pools_and_client_shares_ask_for_a_retry() {
 }
 
 #[tokio::test]
-async fn socket_tickets_with_authentication_off_are_empty_and_unbound_answers_keep_the_exchange_bound() {
+async fn socket_tickets_with_authentication_off_are_empty() {
     let app = app(&ALL_LISTENERS);
     for (endpoint, path) in [(Endpoint::H1, "/ws/session"), (Endpoint::Quic, "/wt/session")] {
         let response = send(&app, endpoint, empty(request("POST", path))).await;
-        assert!(matches!(response.body().bound(), Some(Bound::Until(_))));
         assert_eq!(text(response).await, r#"{"token":"","expires":0}"#);
     }
-    let response = send(&app, Endpoint::H1, empty(request("GET", "/nope").header("content-length", "1"))).await;
-    assert!(matches!(response.body().bound(), Some(Bound::Until(_))));
 }
