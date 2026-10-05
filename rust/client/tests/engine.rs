@@ -2,7 +2,7 @@
 
 use graphite_meter_client::{
     measure::{
-        aggregate::{Fed, Reason, Receiver},
+        aggregate::{Fed, Reading, Reason, Receiver},
         latency::ProbeOutcome,
     },
     model::{Cadence, Dir, Failure, LaneHealth, Outcome, Scope, ServerFailure, Stage, StageResult, focus},
@@ -39,24 +39,23 @@ fn moved(at: Duration, stop: Duration) -> u64 {
 }
 
 fn sample(server: &str) -> Sample {
+    let reading = Reading { server: id(server), down: None, up: None, fed: None };
     let lanes = Dir { down: LaneHealth::Ok, up: LaneHealth::Ok };
-    Sample {
-        server: id(server),
-        ready: true,
-        down: None,
-        up: None,
-        fed: None,
-        lanes,
-    }
+    Sample { reading, ready: true, missed: None, lanes }
+}
+
+fn with(mut sample: Sample, change: impl FnOnce(&mut Reading)) -> Sample {
+    change(&mut sample.reading);
+    sample
 }
 
 fn down(server: &str, bytes: u64) -> Sample {
-    Sample { down: Some(bytes), ..sample(server) }
+    with(sample(server), |reading| reading.down = Some(bytes))
 }
 
 fn checkpoint(server: &str, bytes: u64, nanos: u64) -> Sample {
     let counters = Counters::new(bytes, nanos);
-    Sample { up: Some(Ok(Receiver { id: 0, counters })), ..sample(server) }
+    with(sample(server), |reading| reading.up = Some(Receiver { id: 0, counters }))
 }
 
 /// A checkpoint whose receiver clock runs with the client's.
@@ -66,7 +65,7 @@ fn up(server: &str, bytes: u64, at: Duration) -> Sample {
 
 fn missed(server: &str, reason: FailureReason) -> Sample {
     Sample {
-        up: Some(Err(Failure::new(reason, "checkpoint missed"))),
+        missed: Some(Failure::new(reason, "checkpoint missed")),
         ..sample(server)
     }
 }
@@ -222,7 +221,10 @@ fn an_upload_server_falls_silent_when_its_ledger_stops_growing_on_the_client_clo
     let mut script = Script::new(plan(Stage::Upload, &["a", "b"], false));
     script.run(|at| {
         let fed = Fed { id: 0, bytes: moved(at, STAGE) };
-        vec![up("a", moved(at, STAGE), at), Sample { fed: Some(fed), ..checkpoint("b", 1000, 1) }]
+        vec![
+            up("a", moved(at, STAGE), at),
+            with(checkpoint("b", 1000, 1), |reading| reading.fed = Some(fed)),
+        ]
     });
     assert!(script.removed().is_empty());
 }
@@ -265,6 +267,19 @@ fn a_refused_grant_leaves_at_once_asking_for_sign_in() {
     });
     assert_eq!(script.window(), Some((Duration::ZERO, STAGE)));
     assert_eq!(script.removed(), [(ms(3000), "b", FailureReason::SignInRequired)]);
+
+    let mut script = Script::new(plan(Stage::Upload, &["a", "b", "c"], false));
+    script.run(|at| match at.is_zero() {
+        true => vec![
+            up("a", 0, at),
+            missed("b", FailureReason::SignInRequired),
+            missed("c", FailureReason::Timeout),
+        ],
+        false => vec![up("a", moved(at, STAGE), at)],
+    });
+    let refused = (Duration::ZERO, "b", FailureReason::SignInRequired);
+    assert_eq!(script.removed(), [refused, (Duration::ZERO, "c", FailureReason::PreparationFailed)]);
+    assert_eq!(script.window(), Some((Duration::ZERO, STAGE)));
 }
 
 fn intervals(result: &StageResult) -> Vec<(Reason, bool)> {
@@ -279,12 +294,8 @@ fn a_late_timer_resumes_evidence_and_a_slow_checkpoint_does_not() {
         [(Stage::Download, ms(4800), ms(3000), true), (Stage::Upload, ms(4500), ms(4500), false)]
     {
         let mut script = Script::new(plan(stage, &["a"], false));
-        let samples = |at: Duration| {
-            vec![Sample {
-                down: Some(moved(at, STAGE)),
-                ..up("a", moved(at, STAGE), at)
-            }]
-        };
+        let samples =
+            |at: Duration| vec![with(up("a", moved(at, STAGE), at), |reading| reading.down = Some(moved(at, STAGE)))];
         script.run_until(ms(3000), samples);
         assert_eq!(script.next, ms(3250));
         let at = |offset| script.base + offset;

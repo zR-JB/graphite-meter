@@ -4,7 +4,7 @@
 
 use crate::{
     measure::{
-        aggregate::{Aggregate, Boundary, Fed, Reading, Receiver, Window},
+        aggregate::{Aggregate, Boundary, Reading, Window},
         latency::{Latency, Population, ProbeOutcome},
     },
     model::{
@@ -49,15 +49,15 @@ pub struct Member {
     pub warmup: Duration,
 }
 
-/// One member's local counters and lane health at a tick, with its checkpoint when one was asked for.
+/// One member's counters and lane health at a tick.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sample {
-    pub server: ServerId,
+    /// Its counters, with the checkpoint asked for when it arrived.
+    pub reading: Reading,
     /// Its lanes are open and its upload feed advances.
     pub ready: bool,
-    pub down: Option<u64>,
-    pub up: Option<Result<Receiver, Failure>>,
-    pub fed: Option<Fed>,
+    /// Why the checkpoint asked for did not arrive.
+    pub missed: Option<Failure>,
     pub lanes: Dir<LaneHealth>,
 }
 
@@ -140,6 +140,7 @@ enum Probing {
 #[derive(Debug)]
 struct Seat {
     server: ServerId,
+    warmup: Duration,
     present: bool,
     probing: Probing,
     latency: Latency,
@@ -166,28 +167,26 @@ pub struct Engine {
 }
 
 impl Seat {
-    fn new(server: ServerId, probing: Probing, now: Instant) -> Self {
-        let moved = Dir { down: now, up: now };
-        Self {
-            server,
-            present: true,
-            probing,
-            latency: Latency::default(),
-            misses: 0,
-            moved,
-        }
+    /// How long its bytes in `direction` have not grown.
+    fn quiet(&self, direction: Direction, now: Instant) -> Duration {
+        now.saturating_duration_since(self.moved[direction])
     }
 }
 
 impl Engine {
     pub fn new(plan: StagePlan, now: Instant) -> Self {
         let probing = if plan.latency.is_some() { Probing::Waiting } else { Probing::Off };
-        let seats = plan
-            .members
-            .iter()
-            .map(|member| Seat::new(member.server.clone(), probing, now))
-            .collect();
+        let seat = |member: &Member| Seat {
+            server: member.server.clone(),
+            warmup: member.warmup,
+            present: true,
+            probing,
+            latency: Latency::default(),
+            misses: 0,
+            moved: Dir { down: now, up: now },
+        };
         Self {
+            seats: plan.members.iter().map(seat).collect(),
             plan,
             phase: Phase::Ready,
             created: now,
@@ -195,7 +194,6 @@ impl Engine {
             ended: None,
             stopped: false,
             last: false,
-            seats,
             aggregate: None,
             failures: Vec::new(),
         }
@@ -213,7 +211,7 @@ impl Engine {
                 self.fail(index, Scope::Server, failure.clone(), input.now, true, &mut tick.decisions);
             }
         }
-        if !matches!(self.phase, Phase::Draining) {
+        if self.phase != Phase::Draining {
             self.check_lanes(&input, &mut tick.decisions);
         }
         if self.phase == Phase::Ready {
@@ -232,7 +230,7 @@ impl Engine {
         if self.phase == Phase::Draining {
             self.drain(input.now);
         }
-        let remaining: Vec<_> = self.present().map(|member| member.server.clone()).collect();
+        let remaining: Vec<_> = self.present().map(|seat| seat.server.clone()).collect();
         if remaining.len() < survivors
             && let Some(aggregate) = &mut self.aggregate
         {
@@ -255,16 +253,15 @@ impl Engine {
     /// What the stage measured; complete once it decided `Finish` or stopped.
     pub fn result(&self) -> StageResult {
         let measured = self.window.map_or(Duration::ZERO, |(start, end)| {
-            let ended = self.ended.unwrap_or(end).min(end);
-            ended.saturating_duration_since(start)
+            self.ended.unwrap_or(end).min(end).saturating_duration_since(start)
         });
-        let servers = self.seats.iter().map(|member| ServerResult {
-            server: member.server.clone(),
-            left: !member.present,
-            throughput: self.throughput(Some(&member.server)),
-            latency: (member.probing != Probing::Off).then(|| Population {
-                summary: member.latency.summary(),
-                complete: member.present && member.probing != Probing::Failed && !self.stopped,
+        let servers = self.seats.iter().map(|seat| ServerResult {
+            server: seat.server.clone(),
+            left: !seat.present,
+            throughput: self.throughput(Some(&seat.server)),
+            latency: (seat.probing != Probing::Off).then(|| Population {
+                summary: seat.latency.summary(),
+                complete: seat.present && seat.probing != Probing::Failed && !self.stopped,
             }),
         });
         let (intervals, omitted) = self.aggregate.as_ref().map_or((Vec::new(), 0), |aggregate| {
@@ -285,125 +282,96 @@ impl Engine {
 
     /// Per direction the stage moves, `server`'s share or all servers' headline and bytes.
     fn throughput(&self, server: Option<&ServerId>) -> Dir<Option<Throughput>> {
-        let measured = |direction| {
-            let Some(aggregate) = &self.aggregate else {
-                return Throughput { rate: None, bytes: 0 };
-            };
-            match server {
-                Some(server) => Throughput {
-                    rate: aggregate.server(server, direction),
-                    bytes: aggregate.bytes(server, direction),
-                },
-                None => Throughput {
-                    rate: aggregate.result(direction),
-                    bytes: aggregate.total(direction),
-                },
-            }
+        let measured = |direction| match (&self.aggregate, server) {
+            (None, _) => Throughput { rate: None, bytes: 0 },
+            (Some(all), None) => Throughput { rate: all.result(direction), bytes: all.total(direction) },
+            (Some(all), Some(id)) => Throughput {
+                rate: all.server(id, direction),
+                bytes: all.bytes(id, direction),
+            },
         };
         Dir::from_fn(|direction| self.plan.stage.moves(direction).then(|| measured(direction)))
     }
 
     /// Ends the stage, recording `insufficient-evidence` for members still present whose result is missing.
-    fn finish(&mut self, now: Instant, decisions: &mut Vec<Decision>) {
+    fn finish(&mut self, now: Instant, out: &mut Vec<Decision>) {
         self.ended.get_or_insert(now);
         self.phase = Phase::Done;
-        if self.window.is_some() {
-            let headless = self.plan.stage.directions().iter().any(|&direction| {
-                let aggregate = self.aggregate.as_ref();
-                aggregate.is_some_and(|aggregate| aggregate.result(direction).is_none())
-            });
-            let throughput = headless && self.failures.iter().all(|failure| failure.scope == Scope::Latency);
-            for index in 0..self.seats.len() {
-                let member = &self.seats[index];
-                let unmeasured = member.probing != Probing::Failed && member.latency.summary().p50.is_none();
-                let latency = self.plan.stage == Stage::Latency && unmeasured;
-                let present = member.present;
-                for (_, scope) in [(throughput, Scope::Throughput), (latency, Scope::Latency)]
-                    .into_iter()
-                    .filter(|&(lacks, _)| lacks && present)
-                {
-                    let failure = Failure::new(FailureReason::InsufficientEvidence, "too little measured time");
-                    self.fail(index, scope, failure, now, false, decisions);
-                }
+        let lacks = |throughput: Option<Throughput>| throughput.is_some_and(|throughput| throughput.rate.is_none());
+        let all = self.throughput(None);
+        let explained = self.failures.iter().any(|failure| failure.scope != Scope::Latency);
+        let throughput = self.window.is_some() && !explained && (lacks(all.down) || lacks(all.up));
+        let latency = self.window.is_some() && self.plan.stage == Stage::Latency;
+        for index in 0..self.seats.len() {
+            let seat = &self.seats[index];
+            let present = seat.present;
+            let unmeasured = latency && seat.probing != Probing::Failed && seat.latency.summary().p50.is_none();
+            let scopes = [(throughput, Scope::Throughput), (unmeasured, Scope::Latency)];
+            for (_, scope) in scopes.into_iter().filter(|&(lacks, _)| lacks && present) {
+                let failure = Failure::new(FailureReason::InsufficientEvidence, "too little measured time");
+                self.fail(index, scope, failure, now, false, out);
             }
         }
-        decisions.push(Decision::Finish);
+        out.push(Decision::Finish);
     }
 
     fn present(&self) -> impl Iterator<Item = &Seat> {
-        self.seats.iter().filter(|member| member.present)
+        self.seats.iter().filter(|seat| seat.present)
     }
 
     fn index(&self, server: &ServerId) -> Option<usize> {
-        self.seats
-            .iter()
-            .position(|member| member.present && member.server == *server)
+        let mut seats = self.seats.iter();
+        seats.position(|seat| seat.present && seat.server == *server)
     }
 
-    /// Records a member's failure, removing it when `remove`.
-    fn fail(
-        &mut self,
-        index: usize,
-        scope: Scope,
-        failure: Failure,
-        at: Instant,
-        remove: bool,
-        decisions: &mut Vec<Decision>,
-    ) {
-        let member = &mut self.seats[index];
-        member.present &= !remove;
-        let failure = ServerFailure { server: member.server.clone(), scope, failure, at };
+    /// Records a member's failure; it leaves when `leaves`.
+    fn fail(&mut self, index: usize, scope: Scope, cause: Failure, at: Instant, leaves: bool, out: &mut Vec<Decision>) {
+        let seat = &mut self.seats[index];
+        seat.present &= !leaves;
+        let failure = ServerFailure { server: seat.server.clone(), scope, failure: cause, at };
         self.failures.push(failure.clone());
-        decisions.push(if remove { Decision::Remove(failure) } else { Decision::Failed(failure) });
+        out.push(if leaves { Decision::Remove(failure) } else { Decision::Failed(failure) });
     }
 
-    fn probe(&mut self, server: &ServerId, probe: &Probe, decisions: &mut Vec<Decision>) {
+    fn probe(&mut self, server: &ServerId, probe: &Probe, out: &mut Vec<Decision>) {
         let Some(index) = self.index(server) else { return };
-        let (window, member) = (self.window, &mut self.seats[index]);
+        let (window, seat) = (self.window, &mut self.seats[index]);
         match probe {
             Probe::Outcome { sent, outcome } if window.is_some_and(|(start, end)| (start..end).contains(sent)) => {
-                member.latency.record(*outcome);
+                seat.latency.record(*outcome);
             }
-            Probe::Outcome { .. } => {}
             Probe::Up => {
-                member.latency.break_continuity();
-                if member.probing == Probing::Waiting {
-                    member.probing = Probing::Up;
+                seat.latency.break_continuity();
+                if seat.probing == Probing::Waiting {
+                    seat.probing = Probing::Up;
                 }
             }
-            Probe::Drained if matches!(member.probing, Probing::Waiting | Probing::Up) => {
-                member.probing = Probing::Drained
-            }
-            Probe::Drained => {}
-            Probe::Down { at, failure } => self.latency_failed(index, failure.clone(), *at, decisions),
+            Probe::Drained if matches!(seat.probing, Probing::Waiting | Probing::Up) => seat.probing = Probing::Drained,
+            Probe::Down { at, failure } => self.latency_failed(index, failure.clone(), *at, out),
+            Probe::Outcome { .. } | Probe::Drained => {}
         }
     }
 
     /// A lost latency population; in the latency stage a server lost beside another leaves the run.
-    fn latency_failed(&mut self, index: usize, failure: Failure, at: Instant, decisions: &mut Vec<Decision>) {
+    fn latency_failed(&mut self, index: usize, failure: Failure, at: Instant, out: &mut Vec<Decision>) {
         if std::mem::replace(&mut self.seats[index].probing, Probing::Failed) == Probing::Failed {
             return;
         }
         let lost = matches!(failure.reason, FailureReason::ConnectionLost | FailureReason::Timeout);
-        let remove = self.plan.stage == Stage::Latency && lost && self.present().count() > 1;
-        self.fail(index, Scope::Latency, failure, at, remove, decisions);
+        let leaves = self.plan.stage == Stage::Latency && lost && self.present().count() > 1;
+        self.fail(index, Scope::Latency, failure, at, leaves, out);
     }
 
     /// A member whose lanes failed for good leaves.
-    fn check_lanes(&mut self, input: &Input, decisions: &mut Vec<Decision>) {
+    fn check_lanes(&mut self, input: &Input, out: &mut Vec<Decision>) {
+        let directions = self.plan.stage.directions();
         for sample in input.samples {
-            let Some(index) = self.index(&sample.server) else { continue };
-            let failed = self
-                .plan
-                .stage
-                .directions()
-                .iter()
-                .find_map(|&direction| match &sample.lanes[direction] {
-                    LaneHealth::Failed(failure) => Some(failure.clone()),
-                    _ => None,
-                });
-            if let Some(failure) = failed {
-                self.fail(index, Scope::Throughput, failure, input.now, true, decisions);
+            let failed = directions.iter().find_map(|&direction| match &sample.lanes[direction] {
+                LaneHealth::Failed(failure) => Some(failure.clone()),
+                _ => None,
+            });
+            if let (Some(index), Some(failure)) = (self.index(&sample.reading.server), failed) {
+                self.fail(index, Scope::Throughput, failure, input.now, true, out);
             }
         }
     }
@@ -411,20 +379,11 @@ impl Engine {
     /// Waits until every member's lanes and prober are ready; at the bound the late ones fail.
     fn ready(&mut self, input: &Input, tick: &mut Tick) {
         let transfers = !self.plan.stage.directions().is_empty();
-        let ready = |server: &ServerId| {
-            let mut samples = input.samples.iter();
-            samples.any(|sample| sample.server == *server && sample.ready)
-        };
-        let up = |server: &ServerId| {
-            input
-                .probes
-                .iter()
-                .any(|(id, probe)| id == server && *probe == Probe::Up)
-        };
-        let members = self.seats.iter().enumerate().filter(|(_, member)| member.present);
-        let late = members.filter_map(|(index, member)| {
-            let lanes = transfers && !ready(&member.server);
-            let probing = member.probing == Probing::Waiting && !up(&member.server);
+        let up = |server: &ServerId| input.probes.contains(&(server.clone(), Probe::Up));
+        let seats = self.seats.iter().enumerate().filter(|(_, seat)| seat.present);
+        let late = seats.filter_map(|(index, seat)| {
+            let lanes = transfers && !sample(input, &seat.server).is_some_and(|sample| sample.ready);
+            let probing = seat.probing == Probing::Waiting && !up(&seat.server);
             (lanes || probing).then_some((index, lanes))
         });
         let late: Vec<_> = late.collect();
@@ -440,13 +399,7 @@ impl Engine {
                 false => self.latency_failed(index, failure.clone(), input.now, &mut tick.decisions),
             }
         }
-        let present = self
-            .plan
-            .members
-            .iter()
-            .zip(&self.seats)
-            .filter(|(_, seat)| seat.present);
-        let warmup = present.map(|(member, _)| member.warmup).max().unwrap_or_default();
+        let warmup = self.present().map(|seat| seat.warmup).max().unwrap_or_default();
         self.phase = Phase::Warmup(input.now + warmup);
     }
 
@@ -456,39 +409,42 @@ impl Engine {
             return self.open(input, tick);
         }
         (self.phase, tick.next) = (Phase::Opening, input.now);
-        tick.decisions
-            .push(Decision::Checkpoint { budget: CHECKPOINT_BUDGET, last: false });
+        let checkpoint = Decision::Checkpoint { budget: CHECKPOINT_BUDGET, last: false };
+        tick.decisions.push(checkpoint);
     }
 
-    /// Opens the window from this tick's samples; a member without its first checkpoint leaves.
+    /// Opens the window from this tick's samples; an uploading member without its first checkpoint leaves.
     fn open(&mut self, input: &Input, tick: &mut Tick) {
-        let now = input.now;
+        let (now, uploads) = (input.now, self.plan.stage.moves(Direction::Up));
         for index in 0..self.seats.len() {
-            let member = &self.seats[index];
-            let sample = input.samples.iter().find(|sample| sample.server == member.server);
-            let failure = match sample.and_then(|sample| sample.up.as_ref()) {
-                _ if !member.present || !self.plan.stage.moves(Direction::Up) => continue,
-                Some(Ok(_)) => continue,
-                Some(Err(failure)) if failure.reason == FailureReason::SignInRequired => failure.clone(),
+            let sample = sample(input, &self.seats[index].server);
+            if !uploads || !self.seats[index].present || sample.is_some_and(|sample| sample.reading.up.is_some()) {
+                continue;
+            }
+            let failure = match sample.and_then(|sample| sample.missed.clone()) {
+                Some(refused) if refused.reason == FailureReason::SignInRequired => refused,
                 _ => {
                     Failure::new(FailureReason::PreparationFailed, "receiver checkpoint unavailable before measurement")
                 }
             };
             self.fail(index, Scope::Throughput, failure, now, true, &mut tick.decisions);
         }
-        self.window = Some((now, now + self.plan.duration));
-        for member in &mut self.seats {
-            member.moved = Dir { down: now, up: now };
+        if self.present().next().is_none() {
+            return;
+        }
+        let end = now + self.plan.duration;
+        self.window = Some((now, end));
+        for seat in &mut self.seats {
+            seat.moved = Dir { down: now, up: now };
         }
         if !self.plan.stage.directions().is_empty() {
-            let participants = self.present().map(|member| member.server.clone()).collect();
+            let participants = self.present().map(|seat| seat.server.clone()).collect();
             let mut aggregate = Aggregate::new(self.plan.stage, participants, now);
             aggregate.observe(self.boundary(input, false));
             self.aggregate = Some(aggregate);
         }
         self.phase = Phase::Measuring;
-        tick.decisions
-            .push(Decision::OpenWindow { start: now, end: now + self.plan.duration });
+        tick.decisions.push(Decision::OpenWindow { start: now, end });
         self.schedule(now, tick);
     }
 
@@ -520,13 +476,13 @@ impl Engine {
     fn observe(&mut self, input: &Input, last: bool, tick: &mut Tick) {
         let boundary = self.boundary(input, last);
         let Some(aggregate) = &mut self.aggregate else { return };
-        let bytes = |member: &Seat| Dir::from_fn(|direction| aggregate.bytes(&member.server, direction));
+        let bytes = |seat: &Seat| Dir::from_fn(|direction| aggregate.bytes(&seat.server, direction));
         let before: Vec<_> = self.seats.iter().map(bytes).collect();
         tick.window = aggregate.observe(boundary);
-        for (member, before) in self.seats.iter_mut().zip(before) {
+        for (seat, before) in self.seats.iter_mut().zip(before) {
             for direction in Direction::BOTH {
-                if aggregate.bytes(&member.server, direction) > before[direction] {
-                    member.moved[direction] = input.now;
+                if aggregate.bytes(&seat.server, direction) > before[direction] {
+                    seat.moved[direction] = input.now;
                 }
             }
         }
@@ -535,30 +491,28 @@ impl Engine {
                 self.fail(index, Scope::Throughput, failure, input.now, true, &mut tick.decisions);
             }
         }
-        let shared = |direction| self.present().all(|member| self.silent(member, direction, input.now));
+        let shared = |direction| self.present().all(|seat| seat.quiet(direction, input.now) >= SILENCE);
         tick.recovering = !last && self.plan.stage.directions().iter().any(|&direction| shared(direction));
     }
 
     /// Why a present member leaves at this boundary, if it does.
     fn departure(&mut self, index: usize, input: &Input, last: bool) -> Option<Failure> {
-        let member = &self.seats[index];
-        let sample = input.samples.iter().find(|sample| sample.server == member.server);
-        if !member.present {
+        let sample = sample(input, &self.seats[index].server);
+        if !self.seats[index].present {
             return None;
         }
         if let Some(failure) = self.missed(index, sample, input.now, last) {
             return Some(failure);
         }
-        let member = &self.seats[index];
+        let (seat, now) = (&self.seats[index], input.now);
         for &direction in self.plan.stage.directions() {
-            if self.silent(member, direction, input.now) && (last || self.moving(index, direction, input.now)) {
+            if seat.quiet(direction, now) >= SILENCE && (last || self.moving(index, direction, now)) {
                 let name = if direction == Direction::Down { "download" } else { "upload" };
                 return Some(Failure::new(FailureReason::Timeout, format!("{name} bytes stopped growing for 2s")));
             }
-            let quiet = input.now.saturating_duration_since(member.moved[direction]) >= QUIET;
             if let Some(LaneHealth::Retrying(failure)) = sample.map(|sample| &sample.lanes[direction])
                 && last
-                && quiet
+                && seat.quiet(direction, now) >= QUIET
             {
                 return Some(failure.clone());
             }
@@ -569,61 +523,41 @@ impl Engine {
     /// A refused checkpoint leaves at once; three missed in a row leave while another server's uploads move.
     fn missed(&mut self, index: usize, sample: Option<&Sample>, now: Instant, last: bool) -> Option<Failure> {
         let moving = self.moving(index, Direction::Up, now);
-        let member = &mut self.seats[index];
-        match sample?.up.as_ref()? {
-            Ok(_) => {
-                member.misses = 0;
-                None
-            }
-            Err(failure) => {
-                member.misses += 1;
-                let refused = failure.reason == FailureReason::SignInRequired;
-                (refused || member.misses >= MISSED_CHECKPOINTS && !last && moving).then(|| failure.clone())
-            }
+        let (seat, sample) = (&mut self.seats[index], sample?);
+        if sample.reading.up.is_some() {
+            seat.misses = 0;
         }
+        let failure = sample.missed.as_ref()?;
+        seat.misses += 1;
+        let refused = failure.reason == FailureReason::SignInRequired;
+        (refused || seat.misses >= MISSED_CHECKPOINTS && !last && moving).then(|| failure.clone())
     }
 
     /// Whether another present member's bytes in `direction` moved a moment ago.
     fn moving(&self, except: usize, direction: Direction, now: Instant) -> bool {
-        let recent = |member: &Seat| now.saturating_duration_since(member.moved[direction]) < QUIET;
-        let mut members = self.seats.iter().enumerate();
-        members.any(|(index, member)| index != except && member.present && recent(member))
-    }
-
-    /// Whether the member's bytes in `direction` stopped growing for the silence limit.
-    fn silent(&self, member: &Seat, direction: Direction, now: Instant) -> bool {
-        now.saturating_duration_since(member.moved[direction]) >= SILENCE
+        let mut others = self.seats.iter().enumerate().filter(|&(index, _)| index != except);
+        others.any(|(_, seat)| seat.present && seat.quiet(direction, now) < QUIET)
     }
 
     /// Finishes once every probing member drained, or at the drain bound.
     fn drain(&mut self, now: Instant) {
         let end = self.window.map_or(now, |(_, end)| end);
-        let probing = self
-            .present()
-            .any(|member| matches!(member.probing, Probing::Waiting | Probing::Up));
-        if !probing || now >= end + DRAIN_BOUND {
+        let probing = |seat: &Seat| matches!(seat.probing, Probing::Waiting | Probing::Up);
+        if !self.present().any(probing) || now >= end + DRAIN_BOUND {
             self.phase = Phase::Done;
         }
     }
 
     fn boundary(&self, input: &Input, last: bool) -> Boundary {
-        let present = input
-            .samples
-            .iter()
-            .filter(|sample| self.index(&sample.server).is_some());
-        let reading = |sample: &Sample| Reading {
-            server: sample.server.clone(),
-            down: sample.down,
-            up: sample.up.as_ref().and_then(|up| up.as_ref().ok().copied()),
-            fed: sample.fed,
-        };
-        Boundary {
-            at: input.now,
-            stalled: !last && input.lateness > LATE_TICK,
-            last,
-            readings: present.map(reading).collect(),
-        }
+        let present = self.present().filter_map(|seat| sample(input, &seat.server));
+        let readings = present.map(|sample| sample.reading.clone()).collect();
+        let stalled = !last && input.lateness > LATE_TICK;
+        Boundary { at: input.now, stalled, last, readings }
     }
+}
+
+fn sample<'a>(input: &Input<'a>, server: &ServerId) -> Option<&'a Sample> {
+    input.samples.iter().find(|sample| sample.reading.server == *server)
 }
 
 /// How late a tick's timer fired: from when it was due, or from when the previous tick returned if that was later, so
