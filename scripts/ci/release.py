@@ -45,6 +45,8 @@ TAG_RE = re.compile(rf"v{N}\.{N}\.{N}(-(?:alpha|beta|rc)\.{N})?")
 OCI = "graphite-meter.oci.tar"
 OCI_LIMIT = 1024 * 1024 * 1024
 ASSETS_LIMIT = 2 * OCI_LIMIT
+# The release request's job, which must have written each of its artifacts while it ran.
+BUILD_JOB = "Build untrusted release candidate"
 # Seconds between reads while GitHub's read path catches up with a write.
 DELAYS = (0.25, 0.5, 1, 2, 4, 8)
 T = TypeVar("T")
@@ -205,9 +207,9 @@ def verify_request(request_dir: Path) -> tuple[Release, bool]:
         gh.fail("request mode must be validate or publish")
     if release.stable and release.sha != publisher:
         gh.fail("a stable release must build the trusted main commit")
-    artifacts = {candidate.name: OCI_LIMIT + 1024 * 1024}
+    artifacts = {candidate.name: (BUILD_JOB, OCI_LIMIT + 1024 * 1024)}
     if release.stable:
-        artifacts[f"release-assets-{run_id}"] = ASSETS_LIMIT
+        artifacts[f"release-assets-{run_id}"] = (BUILD_JOB, ASSETS_LIMIT)
     require_dispatch_run(repository, env("REPOSITORY_OWNER"), publisher, run_id,
                          "release-request.yml", request_title(str(request["mode"]), release,
                                                               publisher), artifacts)

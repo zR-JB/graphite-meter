@@ -18,6 +18,7 @@ from fixtures import (
     AMD, Answers, engine, git_head, github, outcome, pages, write_oci, write_release_assets,
 )
 from release import (
+    BUILD_JOB,
     OCI,
     Release,
     assets_sha256,
@@ -50,6 +51,7 @@ P = f"repos/{REPO}/"
 PULL, MAIN_COMMIT = P + "pulls/101", P + "commits/main"
 REQUEST_WORKFLOW, REQUEST_RUN = P + "actions/workflows/release-request.yml", P + "actions/runs/4242"
 ARTIFACTS = REQUEST_RUN + "/artifacts?per_page=100"
+REQUEST_JOBS = REQUEST_RUN + "/jobs?filter=latest&per_page=100"
 JOBS = P + "actions/runs/5151/jobs?filter=latest&per_page=100"
 CHECKS = P + f"commits/{HEAD}/check-runs?per_page=100&filter=all"
 CODEQL = P + "code-scanning/analyses?ref=refs%2Fheads%2Fmain&tool_name=CodeQL&per_page=100"
@@ -102,9 +104,17 @@ def dispatch_run(workflow_id: int, run_id: int, title: str = "title") -> dict[st
     }
 
 
-def artifacts(*names: str, size: int = 1024, expired: bool = False) -> object:
-    return pages({"artifacts": [{"name": name, "expired": expired, "size_in_bytes": size}
+def artifacts(*names: str, size: int = 1024, expired: bool = False, created: str = "10:05",
+              updated: str = "10:06") -> object:
+    return pages({"artifacts": [{"name": name, "expired": expired, "size_in_bytes": size,
+                                 "created_at": f"2026-09-01T{created}:00Z", "updated_at": f"2026-09-01T{updated}:00Z"}
                                 for name in names]})
+
+
+def job(name: str = BUILD_JOB, conclusion: str = "success") -> dict[str, object]:
+    """A request job that ran from 10:00 to 10:10."""
+    return {"name": name, "status": "completed", "conclusion": conclusion,
+            "started_at": "2026-09-01T10:00:00Z", "completed_at": "2026-09-01T10:10:00Z"}
 
 
 def release_of(stable: bool) -> Release:
@@ -118,6 +128,7 @@ def trusted(stable: bool, mode: str = "publish") -> dict[str, object]:
         MAIN_COMMIT: {"sha": MAIN}, REQUEST_WORKFLOW: {"id": 31337},
         REQUEST_RUN: dispatch_run(31337, 4242, request_title(mode, release_of(stable), MAIN)),
         ARTIFACTS: artifacts(*names), JOBS: pages({"jobs": [GATE]}),
+        REQUEST_JOBS: pages({"jobs": [job()]}),
     }
     if mode == "publish":
         responses |= {ENVIRONMENT: REVIEWED, POLICIES: MAIN_ONLY}
@@ -301,17 +312,30 @@ class RequestTests(unittest.TestCase):
             ("artifact", artifacts(name, expired=True), "expected one unexpired"),
             ("artifact", artifacts(name, name), "expected one unexpired"),
             ("artifact", artifacts(name, size=4097), "exceeds"),
+            # The artifact comes from the job named for it, written while that job ran.
+            ("artifact", artifacts(name, created="09:59"), "not written while its job"),
+            ("artifact", artifacts(name, updated="10:11"), "not written while its job"),
+            ("artifact", artifacts(name, created="10:07"), "not written while its job"),
+            ("artifact", artifacts(name, created="10:00", updated="10:10"), None),
+            ("jobs", [], "no single successful job"),
+            ("jobs", [job("Build something else")], "no single successful job"),
+            ("jobs", [job(), job()], "no single successful job"),
+            ("jobs", [job(conclusion="failure")], "no single successful job"),
+            ("jobs", [job() | {"started_at": "yesterday"}], "not an ISO 8601 time"),
         ):
             run = dispatch_run(7001, 4242)
-            files = artifacts(name)
+            files, jobs = artifacts(name), [job()]
             if field == "artifact":
                 files = value
+            elif field == "jobs":
+                jobs = cast(list[dict[str, object]], value)
             elif field is not None:
                 run[field] = value
-            with (self.subTest(field=field, error=error),
-                  github({REQUEST_WORKFLOW: {"id": 7001}, ARTIFACTS: files, REQUEST_RUN: run})):
+            with (self.subTest(field=field, value=value, error=error),
+                  github({REQUEST_WORKFLOW: {"id": 7001}, ARTIFACTS: files, REQUEST_RUN: run,
+                          REQUEST_JOBS: pages({"jobs": jobs})})):
                 outcome(self, error, lambda: require_dispatch_run(
-                    REPO, "zR-JB", MAIN, 4242, "release-request.yml", "title", {name: 4096}))
+                    REPO, "zR-JB", MAIN, 4242, "release-request.yml", "title", {name: (BUILD_JOB, 4096)}))
 
     def test_handoff_directories_hold_exact_regular_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

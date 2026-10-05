@@ -41,7 +41,9 @@ deployment when the Release run asks.
 2. **Trusted verification.** `release.yml` runs main's tooling on
    `workflow_run` for main dispatches only and never executes the requested
    source. It binds `request.json` to the run title, the owner, the first
-   attempt and bounded artifacts, verifies the image and archives as data, and
+   attempt and bounded artifacts, each written by the request job that
+   `release.py` names for it while that job ran, so no other job of the run
+   can supply it; it verifies the image and archives as data, and
    requires either every main CI job and CodeQL for a stable release or, for a
    prerelease, an open PR containing current main with identical `.github`,
    `.githooks`, `scripts` and mise trees, its newest CI Gate and CodeQL check.

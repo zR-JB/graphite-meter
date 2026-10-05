@@ -76,6 +76,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (W + "ci.yml", "mise run legal-check", "mise run legal-generate",
      "local gate step legal-check"),
     (REQUEST, "VERSION= mise run legal-check\n", "", "committed legal outputs"),
+    (REQUEST, "name: Build untrusted release candidate", "name: Build the release candidate", "as release.py expects"),
     ("certs/dev.txt", None, "local development certificate", "TLS certificate/key paths"),
     ("notes.txt", None, "-----BEGIN " + "PRIVATE KEY-----", "PEM"),
     (W + "ci.yml", "on:\n", "on:\n  pull_request_target:\n", "triggered only by"),
