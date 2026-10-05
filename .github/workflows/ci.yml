@@ -230,8 +230,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
-      - id: toolchain
-        name: Set up Go, Rust and cargo-nextest
+      - name: Set up Go, Rust and cargo-nextest
         uses: ./.github/actions/setup-project
         with: {go: 'true', rust: 'true', cargo-nextest: 'true'}
       # Only the static server's C dependencies use Ubuntu's unpinned musl compiler.
@@ -250,16 +249,6 @@ jobs:
         run: mise run rust-client-interop
       - name: Gate delayed-link HTTP/3 and WebTransport downloads
         run: mise run rust-delayed-downloads
-      - name: Install pinned Chrome for Testing
-        uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
-        with:
-          chrome-version: ${{ steps.toolchain.outputs.chrome-version }}
-          install-dependencies: true
-      # Chrome for Testing is an unpacked archive without a setuid sandbox; the script runs it with --no-sandbox.
-      - name: Check Chromium's HTTP/3, WebTransport and session close codes against the sharded server
-        env:
-          TMPDIR: ${{ runner.temp }}
-        run: python3 rust/interop/browser.py
       - name: Upload interoperability evidence
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -269,8 +258,6 @@ jobs:
           path: |
             ${{ runner.temp }}/interop-*/*.log
             ${{ runner.temp }}/client-*/*.log
-            ${{ runner.temp }}/browser-*/*.log
-            ${{ runner.temp }}/browser-*/*.json
           if-no-files-found: ignore
 
   rust-image:
@@ -335,7 +322,7 @@ jobs:
           for arch in amd64 arm64; do
             scripts/verify-container.sh "graphite-meter-rust:$arch"
           done
-      - name: Export the amd64 image's server for the browser suite
+      - name: Export the amd64 image's server for the browser checks
         run: |
           docker create --name rust-image-server graphite-meter-rust:amd64
           docker cp rust-image-server:/graphite-meter "$RUNNER_TEMP/rust-image/graphite-meter-server"
@@ -374,6 +361,11 @@ jobs:
           path: ${{ runner.temp }}/rust-image
       - name: Restore the server's executable mode
         run: chmod +x "$RUNNER_TEMP/rust-image/graphite-meter-server"
+      # Chrome for Testing is an unpacked archive without a setuid sandbox; the script runs it with --no-sandbox.
+      - name: Check Chromium's HTTP/3, WebTransport and session close codes against the image's sharded server
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: python3 rust/interop/browser.py --server image
       - name: Run Chromium against one fleet of the image's server, password sign-in included
         env:
           # As the Go job: Chrome for Testing has no setuid sandbox.
@@ -390,6 +382,8 @@ jobs:
           path: |
             client/test-results/webview
             client/test-results/servers
+            ${{ runner.temp }}/browser-*/*.log
+            ${{ runner.temp }}/browser-*/*.json
           if-no-files-found: ignore
 
   rust-tui:

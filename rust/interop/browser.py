@@ -1,10 +1,11 @@
 """Drive Chromium through the Rust server's HTTP/3 and WebTransport routes and session close codes.
 
-    python3 rust/interop/browser.py
+    python3 rust/interop/browser.py [--server build|image]
 
 Chromium must fetch over HTTP/3, use WebTransport datagrams and streams, and see the close code and reason of
 a session the server ends at its lifetime and when it stops. The server shards HTTP/3 over this host's runtime
-threads. It builds the static musl server with the ci profile and runs the first of BROWSERS on PATH.
+threads. It runs the first of BROWSERS on PATH against the static musl server it builds with the ci profile, or
+against the server the CI image job exports, which the job downloads to TMPDIR/rust-image/graphite-meter-server.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import signal
 import socket
 import ssl
 import subprocess
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any, Callable
@@ -29,6 +31,7 @@ from fixture import ROOT, Fixture, Server, build_server, planned_endpoints, udp_
 PAGE = (Path(__file__).parent / "browser.html").read_bytes()
 # Chrome for Testing as setup-chrome puts it on PATH, then a distribution's Chromium.
 BROWSERS = ("chrome", "chromium")
+IMAGE_SERVER = Path(tempfile.gettempdir()) / "rust-image" / "graphite-meter-server"
 MIB = 1024 * 1024
 CHECKS: dict[str, Callable[[Any], bool]] = {
     "download": lambda d: d == {"bytes": MIB, "protocol": "h3"},
@@ -108,11 +111,13 @@ def chromium(binary: str, fixture: Fixture, pages: Pages, server: Server) -> dic
 
 
 def main() -> None:
-    argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--server", choices=("build", "image"), default="build", help="the server to run")
+    image = parser.parse_args().server == "image"
     browser = next((name for name in BROWSERS if shutil.which(name)), None)
     if browser is None:
         raise SystemExit(f"none of {', '.join(BROWSERS)} is on PATH")
-    binary = build_server(ROOT, "ci")
+    binary = IMAGE_SERVER if image else build_server(ROOT, "ci")
     fixture = Fixture("browser-")
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(fixture.cert, fixture.key)
