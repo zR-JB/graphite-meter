@@ -283,17 +283,17 @@ impl Engine {
         }
     }
 
-    /// Per direction the stage moves, `server`'s share or all servers' headline and bytes.
+    /// Per direction the stage moves, `server`'s share or all servers' headline and bytes; none without a window.
     fn throughput(&self, server: Option<&ServerId>) -> Dir<Option<Throughput>> {
-        let measured = |direction| match (&self.aggregate, server) {
-            (None, _) => Throughput { rate: None, bytes: 0 },
-            (Some(all), None) => Throughput { rate: all.result(direction), bytes: all.total(direction) },
-            (Some(all), Some(id)) => Throughput {
+        let measured = |all: &Aggregate, direction| match server {
+            None => Throughput { rate: all.result(direction), bytes: all.total(direction) },
+            Some(id) => Throughput {
                 rate: all.server(id, direction),
                 bytes: all.bytes(id, direction),
             },
         };
-        Dir::from_fn(|direction| self.plan.stage.moves(direction).then(|| measured(direction)))
+        let moved = |direction| self.aggregate.as_ref().filter(|_| self.plan.stage.moves(direction));
+        Dir::from_fn(|direction| moved(direction).map(|all| measured(all, direction)))
     }
 
     /// Ends the stage, recording `insufficient-evidence` for members still present whose result is missing.

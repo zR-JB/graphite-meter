@@ -5,7 +5,10 @@ use graphite_meter_client::{
         aggregate::{Fed, Reading, Reason, Receiver},
         latency::ProbeOutcome,
     },
-    model::{Cadence, Dir, Direction, Failure, LaneHealth, Outcome, Scope, ServerFailure, Stage, StageResult, focus},
+    model::{
+        Cadence, Dir, Direction, Failure, LaneHealth, Outcome, Scope, ServerFailure, Stage, StageResult, StageStatus,
+        focus,
+    },
     run::engine::{Decision, Engine, Input, Member, Probe, Sample, StagePlan, lateness, stagger, warmup},
 };
 use graphite_meter_proto::{catalog::ServerId, reason::FailureReason, upload::Counters};
@@ -566,10 +569,14 @@ fn outcomes_follow_stage_results() {
 
     let mut script = Script::new(self::plan(Stage::Download, &["a"], false));
     script.run(|_| vec![Sample { ready: false, ..down("a", 0) }]);
-    assert_eq!(Outcome::of(&[script.engine.result()], &[Stage::Download], &[]), Outcome::Failed);
+    let unopened = script.engine.result();
+    assert_eq!((unopened.throughput.down, unopened.status(None)), (None, StageStatus::Failed));
+    assert_eq!(Outcome::of(&[unopened], &[Stage::Download], &[]), Outcome::Failed);
     let mut stopped = Engine::new(self::plan(Stage::Download, &["a"], false), Instant::now());
     stopped.stop(Instant::now());
-    assert_eq!(Outcome::of(&[stopped.result()], &[Stage::Download], &[]), Outcome::Stopped);
+    let stopped = stopped.result();
+    assert_eq!((stopped.throughput.down, stopped.status(None)), (None, StageStatus::Stopped));
+    assert_eq!(Outcome::of(&[stopped], &[Stage::Download], &[]), Outcome::Stopped);
 }
 
 #[test]

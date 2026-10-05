@@ -164,7 +164,7 @@ pub struct StageResult {
     /// The measured window's length; zero when it never opened.
     pub measured: Duration,
     pub stopped: bool,
-    /// All servers' headline per direction the stage moves.
+    /// All servers' headline per direction the stage moves, once its window opened.
     pub throughput: Dir<Option<Throughput>>,
     /// Every server that began the stage, in selection order.
     pub servers: Vec<ServerResult>,
@@ -184,12 +184,13 @@ pub enum StageStatus {
 
 impl StageResult {
     pub fn status(&self, focus: Option<&ServerId>) -> StageStatus {
-        let missing = |throughput: Option<Throughput>| throughput.is_some_and(|throughput| throughput.rate.is_none());
+        let missing =
+            |direction: &Direction| self.throughput[*direction].is_none_or(|throughput| throughput.rate.is_none());
         let focused = self.servers.iter().find(|server| Some(&server.server) == focus);
         let median = focused.and_then(|server| server.latency?.median());
         match () {
             _ if self.stopped => StageStatus::Stopped,
-            _ if missing(self.throughput.down) || missing(self.throughput.up) => StageStatus::Failed,
+            _ if self.stage.directions().iter().any(missing) => StageStatus::Failed,
             _ if self.stage == Stage::Latency && median.is_none() => StageStatus::Failed,
             _ if !self.failures.is_empty() => StageStatus::Partial,
             _ => StageStatus::Complete,
