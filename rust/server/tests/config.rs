@@ -352,7 +352,7 @@ fn authentication_settings_are_complete_and_canonical() {
     let auth = config(&env, &[]).auth.unwrap();
     let oidc = auth.methods.oidc().unwrap();
     assert_eq!(
-        (oidc.allowed_groups.as_slice(), oidc.provider_name.as_str()),
+        (oidc.allowed_groups.as_slice(), auth.provider.as_str()),
         (&["ops".into(), "admins".into()][..], "Authelia")
     );
     assert!(auth.methods.password().is_some());

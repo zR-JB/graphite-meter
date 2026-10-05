@@ -1,24 +1,32 @@
 //! Authentication: the policy every request passes, its own routes, and the lease a signed-in request carries.
 
+mod page;
 pub mod password;
 mod policy;
+mod rate;
 mod routes;
+mod security;
 mod store;
 
 pub use policy::Policy;
+pub use security::{COUNTERS, Security};
 pub use store::{GrantRefusal, LOGIN_LIFETIME, LoginKey, NewLogin, Store};
 
 use crate::{
     app::{Endpoint, Outcome, finalize::Access, response},
-    config,
+    config::{self, Methods},
+    log,
     peer::{ClientKeys, Peer},
     transport::body::Body,
 };
 use graphite_meter_proto::{
+    duration,
     route::{Kind, Route},
     token::SocketTicket,
 };
-use http::{HeaderMap, HeaderValue, Request, Response, StatusCode, header};
+use http::{HeaderMap, HeaderValue, Request, Response, StatusCode};
+use page::protect;
+use password::Password;
 use std::sync::Arc;
 use tokio::time::{Instant, sleep_until};
 use tokio_util::sync::CancellationToken;
@@ -36,29 +44,73 @@ pub enum Decision {
 pub enum Auth {
     /// Every request is allowed, anonymously.
     Off,
-    /// Sign-in at the public origin, and the store of its logins, grants and tickets.
-    On { policy: Policy, store: Store },
+    /// Sign-in at the public origin.
+    On(Box<Enabled>),
+}
+
+/// Sign-in at the public origin: the policy, the store of logins, grants and tickets, password sign-in and the
+/// security log.
+pub struct Enabled {
+    policy: Policy,
+    store: Store,
+    password: Option<Password>,
+    security: Security,
+    /// The OIDC provider's name, which the sign-in page shows.
+    provider: String,
 }
 
 impl Auth {
-    /// The authentication `config` enables; OIDC sign-in is refused as unavailable.
-    pub fn new(config: Option<&config::Auth>) -> Result<Self, String> {
+    /// The authentication `config` enables, with its password hash read and checked; OIDC sign-in is refused as
+    /// unavailable.
+    pub fn new(config: Option<&config::Auth>, verbose: bool) -> Result<Self, String> {
         let Some(config) = config else { return Ok(Self::Off) };
-        if config.methods.oidc().is_some() {
+        let (mode, oidc) = match &config.methods {
+            Methods::Password(_) => ("password", None),
+            Methods::Oidc(oidc) => ("oidc", Some(oidc)),
+            Methods::Hybrid(_, oidc) => ("hybrid", Some(oidc)),
+        };
+        if oidc.is_some() {
             return Err("OIDC sign-in is unavailable in this build".into());
         }
-        Ok(Self::On { policy: Policy::new(config), store: Store::default() })
+        let security = Security::new(verbose);
+        let password = match config.methods.password() {
+            Some(secret) => {
+                let encoded = secret.read(4096).map_err(|error| format!("password hash: {error}"))?;
+                let password = Password::new(&encoded)?;
+                security.debug(format_args!("local password hash loaded and validated"));
+                Some(password)
+            }
+            None => None,
+        };
+        log!(
+            "[gm:auth] mode={mode} origin={} provider={} issuer={} allowed-groups={} session-lifetime={}",
+            config.public_origin,
+            config.provider,
+            oidc.map_or("", |oidc| oidc.issuer.as_str()),
+            oidc.map_or(0, |oidc| oidc.allowed_groups.len()),
+            duration::format(LOGIN_LIFETIME),
+        );
+        let (policy, store, provider) = (Policy::new(config), Store::default(), config.provider.clone());
+        Ok(Self::On(Box::new(Enabled { policy, store, password, security, provider })))
     }
 
     pub fn enabled(&self) -> bool {
-        matches!(self, Self::On { .. })
+        matches!(self, Self::On(_))
     }
 
     /// The store of logins, grants and tickets, when enabled.
     pub fn store(&self) -> Option<&Store> {
         match self {
             Self::Off => None,
-            Self::On { store, .. } => Some(store),
+            Self::On(auth) => Some(&auth.store),
+        }
+    }
+
+    /// The security log's counts, when enabled.
+    pub fn security(&self) -> Option<&Security> {
+        match self {
+            Self::Off => None,
+            Self::On(auth) => Some(&auth.security),
         }
     }
 
@@ -66,7 +118,7 @@ impl Auth {
     pub fn authorize<B>(&self, request: &Request<B>, endpoint: Endpoint, peer: &Peer) -> Decision {
         match self {
             Self::Off => Decision::Allow(None),
-            Self::On { policy, store } => policy.authorize(store, request, endpoint, peer),
+            Self::On(auth) => auth.policy.authorize(&auth.store, request, endpoint, peer),
         }
     }
 
@@ -80,7 +132,7 @@ impl Auth {
     pub async fn handle<B: http_body::Body>(&self, request: Request<B>, _endpoint: Endpoint, peer: &Peer) -> Outcome {
         let response = match self {
             Self::Off => response::status(StatusCode::NOT_FOUND),
-            Self::On { policy, store } => routes::handle(policy, store, request, peer.auth()).await,
+            Self::On(auth) => routes::handle(auth, request, peer).await,
         };
         Outcome::Response(response)
     }
@@ -95,7 +147,7 @@ impl Auth {
         route?;
         match self {
             Self::Off => Some(Access::Public),
-            Self::On { policy, .. } => policy.access(lease?, headers),
+            Self::On(auth) => auth.policy.access(lease?, headers),
         }
     }
 
@@ -103,7 +155,7 @@ impl Auth {
     pub(crate) fn ticket<B>(&self, request: &Request<B>, lease: Option<&AuthLease>, kind: Kind) -> Response<Body> {
         match self {
             Self::Off => response::json_of(&SocketTicket::unauthenticated()),
-            Self::On { policy, store } => routes::mint(policy, store, request, lease, kind),
+            Self::On(auth) => routes::mint(auth, request, lease, kind),
         }
     }
 }
@@ -174,29 +226,6 @@ impl AuthLease {
             () = sleep_until(self.expires) => {}
         }
     }
-}
-
-/// Go's headers of every authentication page and refusal, with HSTS once the request is known to be secure.
-fn protect(headers: &mut HeaderMap, secure: bool) {
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
-    use sha2::{Digest, Sha256};
-    use std::sync::LazyLock;
-    static POLICY: LazyLock<HeaderValue> = LazyLock::new(|| {
-        let hash = |asset: &str| STANDARD.encode(Sha256::digest(asset));
-        let styles = hash(include_str!("../../../../go/internal/auth/assets/auth.css"));
-        let theme = hash(include_str!("../../../../go/internal/auth/assets/theme.js"));
-        let pending = hash(include_str!("../../../../go/internal/auth/assets/pending.js"));
-        let policy = format!(
-            "default-src 'none'; style-src 'sha256-{styles}'; font-src 'self'; script-src 'sha256-{theme}' \
-             'sha256-{pending}'; connect-src 'self'; img-src data:; form-action 'self'; frame-ancestors 'none'; \
-             base-uri 'none'"
-        );
-        HeaderValue::from_str(&policy).expect("hashes are base64")
-    });
-    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
-    crate::app::finalize::harden(headers, secure);
-    headers.insert(header::CONTENT_SECURITY_POLICY, POLICY.clone());
 }
 
 #[cfg(test)]

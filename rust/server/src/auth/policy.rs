@@ -22,7 +22,7 @@ const SINGLE: [&str; 6] = [
     "access-control-request-method",
     "access-control-request-headers",
 ];
-const SESSION_COOKIE: &str = "__Host-gm_session";
+pub(super) const SESSION_COOKIE: &str = "__Host-gm_session";
 const BROWSER_TOKEN: &str = "/auth/browser/token";
 
 /// How far a request's connection is trusted.
@@ -337,7 +337,7 @@ fn requested(headers: &HeaderMap, allowed: &[&str]) -> Option<Vec<String>> {
 }
 
 /// Go's `CookiesNamed` for one cookie: invalid pairs are skipped, and two valid ones are ambiguous.
-fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+pub(super) fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     let values = headers.get_all(header::COOKIE).iter();
     let pairs: Vec<_> = values
         .flat_map(|value| value.as_bytes().split(|&byte| byte == b';'))

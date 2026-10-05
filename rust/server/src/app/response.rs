@@ -30,6 +30,14 @@ pub fn empty(status: StatusCode) -> Response<Body> {
     response
 }
 
+/// An HTML page.
+pub fn html(page: String) -> Response<Body> {
+    let mut response = Response::new(Body::full(page));
+    let html = HeaderValue::from_static("text/html; charset=utf-8");
+    response.headers_mut().insert(header::CONTENT_TYPE, html);
+    response
+}
+
 /// A JSON document no cache keeps.
 pub fn json(document: impl Into<Bytes>) -> Response<Body> {
     let mut response = Response::new(Body::full(document));

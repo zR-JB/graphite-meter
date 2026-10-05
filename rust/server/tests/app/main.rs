@@ -5,6 +5,7 @@ mod control;
 mod gate;
 mod page;
 mod sessions;
+mod signin;
 mod upload;
 
 use bytes::Bytes;

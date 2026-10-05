@@ -193,6 +193,9 @@ impl Server {
         }
         let release = background::release_when_idle(&app, || background::release_memory(pool));
         services.push(until_stopped(stopping, release));
+        if let Some(security) = app.auth().security() {
+            services.push(until_stopped(stopping, background::log_security(security)));
+        }
         if verbose {
             services.push(until_stopped(stopping, background::log_verbose(&app)));
         }

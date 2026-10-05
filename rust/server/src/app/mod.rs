@@ -97,7 +97,7 @@ impl From<Unadmitted> for Response<Body> {
 impl App {
     /// Draws the download block from the budget; admitted work ends when `shutdown` is cancelled.
     pub fn new(config: Config, shutdown: CancellationToken) -> Result<Self, String> {
-        let auth = Auth::new(config.auth.as_ref())?;
+        let auth = Auth::new(config.auth.as_ref(), config.verbose)?;
         let budget = Budget::new(config.max_buffer_bytes);
         let block = Block::new(&budget, Meter::new(config.verbose))?;
         let alt_svc = config.listener(ListenerKind::H3).and_then(|listener| {

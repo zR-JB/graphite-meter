@@ -1,6 +1,10 @@
-//! Work beside the listeners: returning freed memory once the server is idle, and the verbose logs.
+//! Work beside the listeners: returning freed memory once the server is idle, the security log and the verbose logs.
 
-use crate::{app::App, log};
+use crate::{
+    app::App,
+    auth::{COUNTERS, Security},
+    log,
+};
 use graphite_meter_net::Pool;
 use std::time::Duration;
 use tokio::time::{MissedTickBehavior, interval, timeout};
@@ -10,6 +14,8 @@ const IDLE_RELEASE: Duration = Duration::from_secs(2);
 /// Verbose logs report transfer rates every second and the admission counters every thirty.
 const TRANSFER_LOG: Duration = Duration::from_secs(1);
 const ADMISSION_LOG: Duration = Duration::from_secs(30);
+/// The security log reports sign-in outcomes every minute.
+const SECURITY_LOG: Duration = Duration::from_secs(60);
 
 /// Calls `release` once per idle period, `IDLE_RELEASE` after the last connection closed.
 pub(super) async fn release_when_idle(app: &App, release: impl Fn()) {
@@ -36,6 +42,19 @@ pub(super) fn release_memory(pool: &Pool) {
 fn collect() {
     #[cfg(target_env = "musl")]
     rustfs_mimalloc::heap::Heap::main().collect(true);
+}
+
+/// Logs the minute's sign-in outcomes whenever one changed.
+pub(super) async fn log_security(security: &Security) {
+    let (mut ticks, mut last) = (interval(SECURITY_LOG), [0; COUNTERS]);
+    ticks.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    ticks.tick().await;
+    loop {
+        ticks.tick().await;
+        if let Some(line) = security.line(&mut last) {
+            log!("{line}");
+        }
+    }
 }
 
 /// Logs transfer rates every second and the admission counters every thirty seconds.

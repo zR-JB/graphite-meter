@@ -10,7 +10,15 @@ use graphite_meter_proto::{
     origin::{BaseUrl, Origin, Scheme},
 };
 use ipnet::IpNet;
-use std::{ffi::OsString, fmt, io::Write, path::PathBuf, time::Duration};
+use std::{
+    ffi::OsString,
+    fmt,
+    fs::File,
+    io::{Read, Write},
+    path::PathBuf,
+    time::Duration,
+};
+use zeroize::Zeroizing;
 
 /// The engine version `version` prints and discovery reports.
 pub const ENGINE_VERSION: &str = match option_env!("GM_ENGINE_VERSION") {
@@ -170,6 +178,8 @@ pub struct Auth {
     /// The canonical HTTPS origin of the UI.
     pub public_origin: Origin,
     pub methods: Methods,
+    /// The OIDC provider's name, which the sign-in page names in every mode.
+    pub provider: String,
 }
 
 #[derive(Debug, Clone)]
@@ -202,7 +212,6 @@ pub struct Oidc {
     pub client_id: String,
     pub secret: Secret,
     pub allowed_groups: Vec<String>,
-    pub provider_name: String,
 }
 
 /// A secret given inline in the environment or as a file to read.
@@ -210,6 +219,30 @@ pub struct Oidc {
 pub enum Secret {
     Inline(String),
     File(PathBuf),
+}
+
+impl Secret {
+    /// The trimmed secret; a file is read up to `limit` bytes and must hold one.
+    pub fn read(&self, limit: u64) -> Result<Zeroizing<String>, String> {
+        let path = match self {
+            Self::Inline(secret) => return Ok(Zeroizing::new(secret.trim().to_owned())),
+            Self::File(path) => path,
+        };
+        let failed = |operation, error| path_error(operation, &path.to_string_lossy(), &error);
+        let mut bytes = Zeroizing::new(Vec::new());
+        let file = File::open(path).map_err(|error| failed("open", error))?;
+        file.take(limit + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| failed("read", error))?;
+        if bytes.len() as u64 > limit {
+            return Err(format!("secret file exceeds {limit} bytes"));
+        }
+        let secret = Zeroizing::new(String::from_utf8_lossy(&bytes).trim().to_owned());
+        if secret.is_empty() {
+            return Err("secret is empty".into());
+        }
+        Ok(secret)
+    }
 }
 
 impl fmt::Debug for Secret {

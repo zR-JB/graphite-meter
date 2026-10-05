@@ -319,7 +319,7 @@ fn digest(token: &str) -> Digest {
 }
 
 /// `N` random bytes in unpadded base64url.
-fn random<const N: usize>() -> String {
+pub(super) fn random<const N: usize>() -> String {
     let mut bytes = [0; N];
     getrandom::fill(&mut bytes).expect("the system's randomness serves every credential");
     URL_SAFE_NO_PAD.encode(bytes)

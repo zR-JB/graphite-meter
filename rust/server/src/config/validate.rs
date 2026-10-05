@@ -224,7 +224,8 @@ fn auth(settings: &Settings) -> Result<Option<Auth>, String> {
     }
     let methods = methods(settings)?;
     advertised_auth_origins(settings, &public_origin)?;
-    Ok(Some(Auth { public_origin, methods }))
+    let provider = settings.auth_oidc_provider_name.clone();
+    Ok(Some(Auth { public_origin, methods, provider }))
 }
 
 /// Go's secret checks, in its order: both exclusions, each method's sources, then the provider's settings.
@@ -261,7 +262,6 @@ fn methods(settings: &Settings) -> Result<Methods, String> {
             client_id: client_id.clone(),
             secret,
             allowed_groups: groups.clone(),
-            provider_name: name.clone(),
         });
         return Ok(match (password, oidc) {
             (Some(password), Some(oidc)) => Methods::Hybrid(password, oidc),

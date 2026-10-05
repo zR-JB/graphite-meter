@@ -34,6 +34,16 @@ pub fn rfc3339(time: SystemTime) -> String {
     format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
 }
 
+/// A whole-second UTC time as HTTP dates and cookie expiries print it, such as `Thu, 01 Jan 1970 00:00:01 GMT`.
+pub fn http_date(time: SystemTime) -> String {
+    const WEEKDAYS: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
+    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let [year, month, day, hour, minute, second] = utc(time);
+    let days = time.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() / 86_400;
+    let (weekday, month) = (WEEKDAYS[(days % 7) as usize], MONTHS[month as usize - 1]);
+    format!("{weekday}, {day:02} {month} {year:04} {hour:02}:{minute:02}:{second:02} GMT")
+}
+
 fn utc(time: SystemTime) -> [u64; 6] {
     let seconds = time.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
     let (year, month, day) = civil(seconds / 86_400);
@@ -129,6 +139,11 @@ mod tests {
         assert_eq!(at(1_791_158_399), "2026/10/04 23:59:59");
         assert_eq!(at(4_107_542_400), "2100/03/01 00:00:00");
         assert_eq!(rfc3339(UNIX_EPOCH + Duration::from_millis(1_791_158_399_500)), "2026-10-04T23:59:59Z");
+        assert_eq!(http_date(UNIX_EPOCH + Duration::from_secs(1)), "Thu, 01 Jan 1970 00:00:01 GMT");
+        assert_eq!(
+            http_date(UNIX_EPOCH + Duration::from_secs(1_791_158_399)),
+            "Sun, 04 Oct 2026 23:59:59 GMT"
+        );
     }
 
     #[test]

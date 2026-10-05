@@ -6,7 +6,7 @@ use super::{
     *,
 };
 use graphite_meter_proto::upload::Session;
-use graphite_meter_server::auth::NewLogin;
+use graphite_meter_server::auth::{COUNTERS, NewLogin};
 use http::{StatusCode, Version};
 use http_body_util::Full;
 use std::time::Duration;
@@ -160,6 +160,8 @@ async fn sign_out_proves_csrf_and_ends_the_login_or_every_login_of_its_subject()
         assert!(store.cookie(&current.token).is_none() && store.cookie(&other.token).is_some());
         assert_eq!(store.cookie(&sibling.token).is_some(), scope.is_empty(), "scope {scope:?}");
     }
+    let minute = app.auth().security().unwrap().line(&mut [0; COUNTERS]).unwrap();
+    assert!(minute.contains(" logout=2 "), "{minute}");
 }
 
 #[tokio::test]
