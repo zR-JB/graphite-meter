@@ -43,8 +43,13 @@ pub enum Action {
     Cancel,
     Cursor,
     Stop,
+    Confirm,
     Setup,
     Again,
+    Details,
+    Close,
+    Latency,
+    Scroll,
     Page,
     Help,
     Quit,
@@ -114,8 +119,13 @@ const APPLY: Binding = Binding::new(&[ENTER], Action::Apply, "enter", "apply");
 const CANCEL: Binding = Binding::new(&[ESC], Action::Cancel, "esc", "cancel");
 const CURSOR: Binding = Binding::new(&[LEFT, RIGHT, HOME, END], Action::Cursor, "←/→", "move");
 const STOP: Binding = Binding::new(&[ESC], Action::Stop, "esc", "stop test");
+const CONFIRM_STOP: Binding = Binding::new(&[ESC], Action::Confirm, "esc", "confirm stop");
 const SETUP_AGAIN: Binding = Binding::new(&[ESC], Action::Setup, "esc", "setup");
 const AGAIN: Binding = Binding::new(&[ENTER, char('r')], Action::Again, "enter", "run again");
+const DETAILS_OPEN: Binding = Binding::new(&[char('d')], Action::Details, "d", "details");
+const CLOSE: Binding = Binding::new(&[ESC, char('d')], Action::Close, "esc", "close");
+const LATENCY: Binding = Binding::new(&[char('l')], Action::Latency, "l", "latency server");
+const SCROLL: Binding = Binding::new(&[UP, DOWN, char('k'), char('j')], Action::Scroll, "↑/↓", "scroll");
 pub const PAGE: Binding =
     Binding::new(&[code(KeyCode::PageUp), code(KeyCode::PageDown), HOME, END], Action::Page, "pgdn", "more");
 pub const HELP: Binding = Binding::new(&[char('?')], Action::Help, "?", "keys");
@@ -130,7 +140,12 @@ pub const SETUP: &[Binding] = &[
 pub const EDIT: &[Binding] = &[CURSOR, APPLY, CANCEL, ABORT];
 pub const CHOOSER: &[Binding] = &[MOVE, SELECT, APPLY, CANCEL, QUIT, HELP.hidden(), ABORT.hidden()];
 pub const SIGN_IN: &[Binding] = &[CANCEL, QUIT, HELP.hidden(), ABORT.hidden()];
-pub const RUN: &[Binding] = &[STOP, AGAIN, SETUP_AGAIN, PAGE.hidden(), HELP, QUIT, ABORT.hidden()];
+#[rustfmt::skip]
+pub const RUN: &[Binding] = &[
+    STOP, AGAIN, SETUP_AGAIN, DETAILS_OPEN, LATENCY, SCROLL.hidden(), PAGE.hidden(), HELP, QUIT, ABORT.hidden(),
+];
+pub const DETAILS: &[Binding] = &[SCROLL, CLOSE, QUIT, PAGE.hidden(), HELP.hidden(), ABORT.hidden()];
+pub const CONFIRM: &[Binding] = &[CONFIRM_STOP, QUIT, ABORT.hidden()];
 
 /// The first binding of `table` for `key` whose action is `offered`.
 pub fn find(table: &[Binding], key: Key, offered: impl Fn(Action) -> bool) -> Option<Action> {

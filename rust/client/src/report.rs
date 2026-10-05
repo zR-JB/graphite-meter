@@ -28,7 +28,7 @@ pub fn report(view: &View, width: usize, palette: &Palette) -> Vec<Line> {
     else {
         return Vec::new();
     };
-    let report = Report { view, run, width, palette };
+    let report = Report { view, run, focus: run.focus.as_ref(), width, palette };
     let heading = match (report.several(), &run.focus) {
         (true, Some(focus)) => format!("Latency to {}", report.name(focus)),
         _ => "Latency".to_owned(),
@@ -47,6 +47,33 @@ pub fn report(view: &View, width: usize, palette: &Palette) -> Vec<Line> {
     );
     blocks.retain(|block| !block.is_empty());
     blocks.join(&Line::default()).into_iter().map(Line::trimmed).collect()
+}
+
+/// The finished run's results as the interface shows them with `focus` as the latency server: each stage's mean
+/// rates, the latency grid and the failures; none when nothing was measured.
+pub fn results(view: &View, focus: Option<&ServerId>, width: usize, palette: &Palette) -> Vec<Line> {
+    let Some(run) = view.run.as_ref().filter(|run| run.at.is_some()) else {
+        return Vec::new();
+    };
+    let report = Report { view, run, focus, width, palette };
+    let Some((latency, failures, _)) = report.results("Latency") else {
+        return Vec::new();
+    };
+    let mut rows = Vec::new();
+    for &(stage, _) in run.plan.iter().filter(|(stage, _)| !stage.directions().is_empty()) {
+        let rates = report.result(stage).map(mean_rates).filter(|rates| !rates.is_empty());
+        let mut cell = Line::plain(rates.as_deref().unwrap_or(report.unmeasured(stage)));
+        if report.status(stage) == Some(StageStatus::Partial) {
+            cell = cell.and("  ", Style::default()).and("Partial", palette.warn);
+        }
+        rows.push(vec![Line::styled(compact_stage(stage), palette.stage(stage)), cell]);
+    }
+    let scope = if report.several() { "All servers" } else { "" };
+    let throughput = match rows.is_empty() {
+        true => Vec::new(),
+        false => report.grid(&["Throughput", scope], rows),
+    };
+    [throughput, latency, failures].concat()
 }
 
 /// Why the view's run never started, as a run without the interface ends.
@@ -70,6 +97,8 @@ pub fn progress(event: &Event) -> Option<String> {
 struct Report<'a> {
     view: &'a View,
     run: &'a Run,
+    /// The latency server.
+    focus: Option<&'a ServerId>,
     width: usize,
     palette: &'a Palette,
 }
@@ -89,7 +118,7 @@ impl Report<'_> {
     }
 
     fn status(&self, stage: Stage) -> Option<StageStatus> {
-        Some(self.result(stage)?.status(self.run.focus.as_ref()))
+        Some(self.result(stage)?.status(self.focus))
     }
 
     /// What a planned stage shows without a value.
@@ -106,10 +135,7 @@ impl Report<'_> {
     /// The latency server's population in `stage`.
     fn population(&self, stage: Stage) -> Option<Population> {
         let result = self.result(stage)?;
-        let server = result
-            .servers
-            .iter()
-            .find(|server| Some(&server.server) == self.run.focus.as_ref());
+        let server = result.servers.iter().find(|server| Some(&server.server) == self.focus);
         server?.latency
     }
 
@@ -228,7 +254,8 @@ impl Report<'_> {
         if !added_shown {
             headers.remove(2);
         }
-        Some((self.grid(&headers, rows), failures, added_shown))
+        let grid = if rows.is_empty() { Vec::new() } else { self.grid(&headers, rows) };
+        Some((grid, failures, added_shown))
     }
 
     /// Why a direction has no result, or that it stopped.
@@ -260,7 +287,7 @@ impl Report<'_> {
         if result.stopped {
             return Some(Line::styled(format!("{label} stopped."), self.palette.warn));
         }
-        let focus = self.run.focus.as_ref()?;
+        let focus = self.focus?;
         let failed = result
             .failures
             .iter()

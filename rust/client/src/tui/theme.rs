@@ -4,7 +4,11 @@ use crate::{
     model::{Outcome, Stage},
     text::{Color, Profile, Style},
 };
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use graphite_meter_proto::flag::parse_bool;
+
+/// The background query: OSC 11, then DA1, which every terminal answers, in order; none on Windows.
+pub const QUERY: &[u8] = if cfg!(windows) { b"" } else { b"\x1b]11;?\x1b\\\x1b[c" };
 
 /// A tone's light and dark shades.
 type Tone = [Color; 2];
@@ -30,6 +34,12 @@ const STAGES: [Tone; 4] = [
     tone((0x254ea3, 25, 4), (0x71a3ff, 75, 12)),
     tone((0xa35d1d, 130, 1), (0xfeb66a, 215, 9)),
     tone((0x7f2456, 89, 1), (0xe472ac, 169, 9)),
+];
+const TRACES: [Tone; 4] = [
+    tone((0x0f9485, 30, 6), (0x70dbc4, 80, 14)),
+    tone((0x275ac8, 26, 4), (0x71a3ff, 75, 12)),
+    tone((0xca6e03, 166, 1), (0xfeb66a, 215, 9)),
+    tone((0x9b2065, 125, 1), (0xe472ac, 169, 9)),
 ];
 
 /// The styles views draw with.
@@ -78,6 +88,16 @@ impl Palette {
 
     pub fn stage(&self, stage: Stage) -> Style {
         Style::fg(STAGES[stage as usize][usize::from(self.dark)])
+    }
+
+    /// A stage's chart trace.
+    pub fn trace(&self, stage: Stage) -> Style {
+        Style::fg(TRACES[stage as usize][usize::from(self.dark)])
+    }
+
+    /// A pill on `style`'s colour.
+    pub fn badge(&self, style: Style) -> Style {
+        Style { bg: style.fg, ..self.pill }
     }
 
     /// An outcome's label: bold in its badge's colour.
@@ -154,11 +174,7 @@ pub async fn background(limit: std::time::Duration) -> Option<bool> {
     crossterm::terminal::enable_raw_mode().ok()?;
     let mut output = std::io::stdout();
     let (mut answers, mut dark) = (Vec::new(), None);
-    if output
-        .write_all(b"\x1b]11;?\x1b\\\x1b[c")
-        .and_then(|()| output.flush())
-        .is_ok()
-    {
+    if output.write_all(QUERY).and_then(|()| output.flush()).is_ok() {
         let _ = tokio::time::timeout(limit, async {
             let mut chunk = [0; 1024];
             while answers.len() < 4096 {
@@ -177,6 +193,46 @@ pub async fn background(limit: std::time::Duration) -> Option<bool> {
     }
     let _ = crossterm::terminal::disable_raw_mode();
     dark
+}
+
+/// An answer to the query arriving as keys: its `ESC ]` as `alt+]`, its characters as keys, its end as `alt+\` or
+/// `ctrl+g`.
+#[derive(Debug, Default)]
+pub struct Answer(Option<Vec<u8>>);
+
+/// What a key was to an answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Taken {
+    Not,
+    Part,
+    /// The answer's end, naming a dark background or not.
+    Background(bool),
+}
+
+impl Answer {
+    pub fn take(&mut self, key: KeyEvent) -> Taken {
+        let Some(answer) = &mut self.0 else {
+            let opens = key.code == KeyCode::Char(']') && key.modifiers == KeyModifiers::ALT;
+            self.0 = opens.then(|| b"\x1b]".to_vec());
+            return if opens { Taken::Part } else { Taken::Not };
+        };
+        let end: &[u8] = match (key.code, key.modifiers) {
+            (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) if answer.len() < 64 => {
+                answer.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
+                return Taken::Part;
+            }
+            (KeyCode::Char('\\'), KeyModifiers::ALT) => b"\x1b\\",
+            (KeyCode::Char('g'), KeyModifiers::CONTROL) => b"\x07",
+            _ => {
+                self.0 = None;
+                return Taken::Not;
+            }
+        };
+        answer.extend_from_slice(end);
+        let (dark, _) = scan(answer);
+        self.0 = None;
+        dark.map_or(Taken::Part, Taken::Background)
+    }
 }
 
 /// The answers so far: OSC 11's background, if any, and whether DA1's reply ended them.

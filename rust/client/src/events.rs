@@ -119,7 +119,8 @@ pub struct Point {
     /// The mean of the merged values; none for a gap.
     pub value: Option<f64>,
     pub peak: f64,
-    count: u32,
+    /// How many values merged into it.
+    pub count: u32,
 }
 
 impl Series {

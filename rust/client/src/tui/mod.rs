@@ -1,12 +1,16 @@
 //! The terminal interface: the terminal's setup and restore, the event loop over any `Terminal` backend, and the
 //! `App` whose screens it draws.
+mod chart;
+pub mod chrome;
 mod dialogs;
 mod frame;
 mod keys;
 mod paths;
+mod run;
 mod settings;
 mod setup;
 pub mod theme;
+mod track;
 
 use crate::{
     config::{Config, PrepKey},
@@ -15,13 +19,14 @@ use crate::{
     report,
     text::Profile,
 };
+use chrome::Chrome;
 use crossterm::{
     event::{
         DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event as Input,
         EventStream, KeyEvent, KeyEventKind, MouseEventKind,
     },
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use dialogs::Chooser;
 use futures_util::{Stream, StreamExt};
@@ -31,12 +36,12 @@ use ratatui_core::{backend::Backend, terminal::Terminal};
 use settings::Editor;
 use setup::Setup;
 use std::{
-    io,
+    io::{self, Write},
     pin::pin,
     sync::Arc,
     time::{Duration, Instant},
 };
-use theme::Palette;
+use theme::{Answer, Palette, Taken};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 /// How long settings rest before their paths are checked again.
@@ -58,6 +63,8 @@ enum Screen {
 enum Overlay {
     None,
     Edit(Editor),
+    Details,
+    ConfirmStop,
 }
 
 /// What the interface asks of its loop.
@@ -73,9 +80,10 @@ impl Effect {
     }
 }
 
-/// How the interface ended: what it showed, and the signal that stopped a run.
+/// How the interface ended: what it showed and in which palette, and the signal that stopped a run.
 pub struct Exit {
     pub view: View,
+    pub palette: Palette,
     pub signal: Option<u8>,
 }
 
@@ -85,9 +93,12 @@ pub struct App {
     view: View,
     profile: Profile,
     palette: Palette,
+    /// The terminal's background answer while it arrives.
+    answer: Answer,
     screen: Screen,
     overlay: Overlay,
     setup: Setup,
+    live: run::Live,
     help: bool,
     notice: String,
     /// When the paths are checked next.
@@ -111,9 +122,11 @@ impl App {
             view: View::default(),
             profile,
             palette: Palette::new(true),
+            answer: Answer::default(),
             screen: Screen::Setup,
             overlay: Overlay::None,
             setup: Setup::default(),
+            live: run::Live::default(),
             help: false,
             notice: String::new(),
             recheck: Some(now),
@@ -130,6 +143,7 @@ impl App {
     pub fn event(&mut self, event: &Event, now: Instant) {
         self.now = now;
         self.view.apply(event);
+        self.live.event(event, now);
         match event {
             Event::Prepared { .. } => {
                 self.checked = self.asked.clone().map(|key| (key, now));
@@ -142,7 +156,17 @@ impl App {
             Event::SignInEnded(_) if matches!(self.screen, Screen::SignIn) => {
                 self.screen = if self.running() { Screen::Run } else { Screen::Setup };
             }
+            Event::RunStarted { .. } => self.notice = "Test started. Press esc to stop.".into(),
+            Event::ServerFailed { server, failure, .. } => {
+                let name = self.view.servers.iter().find(|path| path.id == *server);
+                let name = name.map_or(server.as_str(), |path| path.name.as_str());
+                self.notice = format!("{name}: {}", failure.reason.label());
+            }
             Event::RunFinished { error, .. } => {
+                if matches!(self.overlay, Overlay::ConfirmStop) {
+                    self.overlay = Overlay::None;
+                }
+                self.notice.clear();
                 if let Some(reason) = report::unstarted(&self.view) {
                     (self.screen, self.notice) = (Screen::Setup, reason);
                     self.recheck = error.is_some().then(|| now + RECHECK);
@@ -161,7 +185,7 @@ impl App {
                     editor.insert(&text);
                 }
             }
-            Input::Mouse(mouse) if matches!(self.overlay, Overlay::None) => match mouse.kind {
+            Input::Mouse(mouse) if matches!(self.overlay, Overlay::None | Overlay::Details) => match mouse.kind {
                 MouseEventKind::ScrollUp => self.scroll = self.scroll.saturating_sub(3),
                 MouseEventKind::ScrollDown => self.scroll = self.scroll.saturating_add(3),
                 _ => {}
@@ -171,21 +195,32 @@ impl App {
         Vec::new()
     }
 
-    pub fn key(&mut self, key: KeyEvent, now: Instant) -> Vec<Effect> {
+    /// Reacts to a key, or takes it as part of the terminal's background answer.
+    pub fn key(&mut self, event: KeyEvent, now: Instant) -> Vec<Effect> {
         self.now = now;
-        let Some(key) = Key::of(key) else { return Vec::new() };
-        if matches!(self.overlay, Overlay::Edit(_)) {
-            return self.edit_key(key);
+        match self.answer.take(event) {
+            Taken::Not => {}
+            Taken::Part => return Vec::new(),
+            Taken::Background(dark) => {
+                self.palette = Palette::new(dark);
+                return Vec::new();
+            }
         }
-        let table = match self.screen {
-            Screen::Setup => keys::SETUP,
-            Screen::Chooser(_) => keys::CHOOSER,
-            Screen::SignIn => keys::SIGN_IN,
-            Screen::Run => keys::RUN,
+        let Some(key) = Key::of(event) else { return Vec::new() };
+        let table = match (&self.screen, &self.overlay) {
+            (_, Overlay::Edit(_)) => return self.edit_key(key),
+            (_, Overlay::Details) => keys::DETAILS,
+            (_, Overlay::ConfirmStop) => keys::CONFIRM,
+            (Screen::Setup, _) => keys::SETUP,
+            (Screen::Chooser(_), _) => keys::CHOOSER,
+            (Screen::SignIn, _) => keys::SIGN_IN,
+            (Screen::Run, _) => keys::RUN,
         };
-        let Some(action) = keys::find(table, key, |action| self.offers(action)) else {
-            return Vec::new();
-        };
+        let action = keys::find(table, key, |action| self.offers(action));
+        if matches!(self.overlay, Overlay::ConfirmStop) {
+            return self.confirm(action);
+        }
+        let Some(action) = action else { return Vec::new() };
         match (action, &self.screen) {
             (Action::Quit | Action::Abort, _) => return vec![Effect::Quit],
             (Action::Help, _) => self.help = !self.help,
@@ -196,23 +231,18 @@ impl App {
                 self.notice = "Sign-in canceled. Press v to request a new code.".into();
                 return Effect::command(Command::Stop);
             }
-            (Action::Stop, _) => {
-                self.notice = "Stopping the test…".into();
-                return Effect::command(Command::Stop);
-            }
-            (Action::Again, _) => return self.start(),
-            (Action::Setup, _) => {
-                (self.screen, self.notice, self.scroll) = (Screen::Setup, String::new(), 0);
-                self.recheck_soon();
-            }
+            (_, Screen::Run) => return self.run_key(action, key),
             _ => {}
         }
         Vec::new()
     }
 
-    /// Checks the paths once their settings have rested.
+    /// Eases the shown rates, and checks the paths once their settings have rested.
     pub fn tick(&mut self, now: Instant) -> Vec<Effect> {
         self.now = now;
+        if let Some(run) = &self.view.run {
+            self.live.ease(run.rates, now);
+        }
         match self.recheck {
             Some(due) if due <= now => {
                 self.recheck = None;
@@ -240,6 +270,7 @@ impl App {
         match action {
             Action::Available => self.can_use_available(),
             Action::Servers => self.view.catalogue.len() != 1,
+            Action::Latency => self.view.servers.len() > 1,
             Action::Stop => self.running(),
             Action::Again | Action::Setup => !self.running(),
             _ => true,
@@ -281,10 +312,11 @@ pub async fn interactive(config: Config, runtimes: Arc<Pool>, stop: impl Future<
     let controller = Controller::new(true, runtimes, events);
     let input = EventStream::new().filter_map(|input| std::future::ready(input.ok()));
     let app = App::new(config, profile, Instant::now());
-    run(&mut terminal, app, controller, received, input, stop).await
+    run(&mut terminal, app, controller, received, input, stop, io::stdout()).await
 }
 
-/// Draws `app` and feeds it events, input and ticks until it quits; `stop` quits as a signal, which stops a run.
+/// Draws `app` and feeds it events, input and ticks until it quits, writing its chrome to `chrome` after each draw;
+/// `stop` quits as a signal, which stops a run.
 pub async fn run<B: Backend>(
     terminal: &mut Terminal<B>,
     mut app: App,
@@ -292,8 +324,9 @@ pub async fn run<B: Backend>(
     mut events: UnboundedReceiver<Event>,
     input: impl Stream<Item = Input>,
     stop: impl Future<Output = u8>,
+    mut chrome: impl Write,
 ) -> Result<Exit, B::Error> {
-    let (mut input, mut stop, mut signal) = (pin!(input), pin!(stop), None);
+    let (mut input, mut stop, mut signal, mut shown) = (pin!(input), pin!(stop), None, None);
     let mut frames = tokio::time::interval(FRAME);
     frames.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut changed = true;
@@ -311,7 +344,11 @@ pub async fn run<B: Backend>(
             _ = frames.tick() => {
                 let now = Instant::now();
                 if std::mem::take(&mut changed) || app.animating() {
-                    terminal.draw(|frame| app.draw(frame.buffer_mut(), now))?;
+                    let mut drawn = Chrome::default();
+                    terminal.draw(|frame| drawn = app.draw(frame.buffer_mut(), now))?;
+                    let bytes = drawn.bytes(shown.as_ref(), app.profile);
+                    let _ = chrome.write_all(&bytes).and_then(|()| chrome.flush());
+                    shown = Some(drawn);
                 }
                 app.tick(now)
             }
@@ -323,13 +360,17 @@ pub async fn run<B: Backend>(
         for effect in effects {
             match effect {
                 Effect::Command(command) => controller.command(*command),
-                Effect::Quit => return Ok(Exit { view: app.into_view(), signal: signal.flatten() }),
+                Effect::Quit => {
+                    let (palette, signal) = (app.palette, signal.flatten());
+                    return Ok(Exit { view: app.into_view(), palette, signal });
+                }
             }
         }
     }
 }
 
-/// The terminal in raw mode on the alternate screen, reporting the mouse and pastes; dropping it restores the terminal.
+/// The terminal in raw mode on the alternate screen, reporting the mouse and pastes and asked for its background;
+/// dropping it clears the chrome and restores the terminal.
 struct Session;
 
 impl Session {
@@ -343,6 +384,9 @@ impl Session {
         let session = Self;
         execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
         let _ = execute!(io::stdout(), EnableBracketedPaste);
+        // The answer arrives among the keys; the clear wipes what a terminal that ignores the query shows.
+        io::stdout().write_all(theme::QUERY)?;
+        execute!(io::stdout(), Clear(ClearType::All))?;
         Ok(session)
     }
 }
@@ -354,6 +398,7 @@ impl Drop for Session {
 }
 
 fn restore() {
+    let _ = io::stdout().write_all(&Chrome::default().bytes(None, Profile::Plain));
     let _ = execute!(io::stdout(), DisableBracketedPaste, DisableMouseCapture, LeaveAlternateScreen);
     let _ = disable_raw_mode();
 }

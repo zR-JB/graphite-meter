@@ -1,10 +1,11 @@
 //! The words and numbers views print: stage, population and path labels, durations, counts and a run's cells.
 use crate::{
+    config::Config,
     measure::{
         format,
         latency::{Population, added},
     },
-    model::{Cadence, Direction, Outcome, Stage, Throughput},
+    model::{Cadence, Direction, Outcome, Stage, StageResult, Throughput},
     net::{LatencyPath, ThroughputPath},
 };
 use graphite_meter_proto::{
@@ -56,6 +57,20 @@ pub fn throughput_facts(throughput: Throughput, measured: Duration, direction: D
     facts.extend((!measured.is_zero()).then(|| clock(measured)));
     facts.extend((direction == Direction::Up).then(|| "receiver-timed".to_owned()));
     facts
+}
+
+/// A stage's mean rate per direction, `↓ 94.1 Mbit/s  ↑ 20.0 Mbit/s`; empty without throughput.
+pub fn mean_rates(result: &StageResult) -> String {
+    let directions = result.stage.directions().iter();
+    let rates = directions.filter_map(|&direction| {
+        let rate = result.throughput[direction]?.rate;
+        Some(format!(
+            "{} {}",
+            arrow(direction),
+            rate.map_or(MISSING.into(), |rate| format::rate(rate.mean))
+        ))
+    });
+    rates.collect::<Vec<_>>().join("  ")
 }
 
 pub fn label(stage: Stage) -> &'static str {
@@ -183,6 +198,22 @@ pub fn throughput_path(path: &ThroughputPath) -> String {
 
 pub fn latency_path(path: &LatencyPath) -> String {
     connection(latency_transport(path.transport), latency_protocol(path.transport), &path.origin)
+}
+
+/// The lanes a run opens per server and direction on `path`.
+pub fn streams(config: &Config, path: &ThroughputPath) -> String {
+    let lanes = config.lanes(path.protocol, path.transport);
+    match (config.streams.forced, path.transport, path.protocol) {
+        (forced @ 1.., ..) => format!("Forced · {forced} per direction"),
+        (_, ThroughputTransport::FetchStream, Protocol::Http1) => {
+            format!("Automatic · up to {} per direction", lanes.down)
+        }
+        (_, ThroughputTransport::FetchStream, Protocol::Http2 | Protocol::Http3) => {
+            format!("Automatic · {} download / {} upload", lanes.down, lanes.up)
+        }
+        (_, ThroughputTransport::FetchStream, _) => "Automatic".into(),
+        _ => "Automatic · 1 continuous stream per direction".into(),
+    }
 }
 
 /// A server's name and, when it has one, its location.

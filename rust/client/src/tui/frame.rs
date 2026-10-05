@@ -1,9 +1,9 @@
 //! The frame: header, the screen's body in a scrolled viewport, the footer with its keys, and panels; styled lines
 //! written into the terminal's buffer.
-use super::{App, FRAME, Overlay, SMALLEST, SPINNER, Screen, dialogs, keys};
+use super::{App, FRAME, Overlay, SMALLEST, SPINNER, Screen, chrome::Chrome, dialogs, keys};
 use crate::{
     VERSION,
-    report::{self, vocabulary as words},
+    report::vocabulary as words,
     text::{Line, Profile, Style},
 };
 use graphite_meter_proto::text::safe;
@@ -14,9 +14,15 @@ use ratatui_core::{
 use std::time::Instant;
 
 impl App {
-    /// Draws a frame into `buffer`.
-    pub fn draw(&mut self, buffer: &mut Buffer, now: Instant) {
+    /// Draws a frame into `buffer`, and returns what the terminal shows beside it.
+    pub fn draw(&mut self, buffer: &mut Buffer, now: Instant) -> Chrome {
         self.now = now;
+        self.paint(buffer);
+        let title = format!("Graphite Meter · {}", self.status().0);
+        Chrome { title, progress: self.progress(), link: None }
+    }
+
+    fn paint(&mut self, buffer: &mut Buffer) {
         let (width, height) = (usize::from(buffer.area.width), usize::from(buffer.area.height));
         if width < SMALLEST.0 || height < SMALLEST.1 {
             let notice = format!("Enlarge the terminal to at least {}×{}.", SMALLEST.0, SMALLEST.1);
@@ -47,7 +53,8 @@ impl App {
     /// The title, the status and what the test reaches.
     fn header(&self, width: usize) -> Vec<Line> {
         let palette = &self.palette;
-        let (title, status) = (" Graphite Meter ", format!(" {} ", self.status()));
+        let (status, pill) = self.status();
+        let (title, status) = (" Graphite Meter ", format!(" {status} "));
         let gap = width
             .saturating_sub(crate::text::width(title) + crate::text::width(&status))
             .max(1);
@@ -64,23 +71,29 @@ impl App {
         };
         let first = Line::styled(title, palette.title)
             .and(" ".repeat(gap), Style::default())
-            .and(status, palette.pill);
+            .and(status, pill);
         let second = Line::styled(format!("native client {VERSION}  "), palette.muted).and(context, palette.accent);
         vec![first.fit(width), second.fit(width)]
     }
 
-    fn status(&self) -> &'static str {
-        let run = self.view.run.as_ref().filter(|_| matches!(self.screen, Screen::Run));
-        match run.map(|run| (run.outcome, &run.stage)) {
-            Some((Some(outcome), _)) => words::outcome_label(outcome),
-            Some((None, Some((plan, Some(_))))) => words::label(plan.stage),
+    /// What the header's pill says, in its colour: the outcome's, or the measuring stage's.
+    pub(super) fn status(&self) -> (&'static str, Style) {
+        let (run, palette) = (self.view.run.as_ref().filter(|_| matches!(self.screen, Screen::Run)), &self.palette);
+        let label = match run.map(|run| (run.outcome, &run.stage)) {
+            Some((Some(outcome), _)) => {
+                return (words::outcome_label(outcome), palette.badge(palette.outcome(outcome)));
+            }
+            Some((None, Some((plan, Some(_))))) => {
+                return (words::label(plan.stage), palette.badge(palette.stage(plan.stage)));
+            }
             Some((None, Some((_, None)))) => "Warmup",
             Some((None, None)) => "Checking paths",
             None if self.config.validate().is_err() => "Test cannot start",
             None if self.checking() => "Checking paths",
             None if self.could_not_start() => "Test could not start",
             None => "Not started",
-        }
+        };
+        (label, palette.pill)
     }
 
     /// The notice, or the focused row's help, over the keys the screen offers.
@@ -116,6 +129,8 @@ impl App {
         let offered = |action| self.offers(action);
         match (&self.screen, &self.overlay) {
             (_, Overlay::Edit(_)) => keys::listed(keys::EDIT, offered),
+            (_, Overlay::Details) => keys::listed(keys::DETAILS, offered),
+            (_, Overlay::ConfirmStop) => keys::listed(keys::CONFIRM, offered),
             (Screen::Setup, _) if !all => self.hints(),
             (Screen::Setup, _) => keys::listed(keys::SETUP, offered),
             (Screen::Chooser(_), _) => keys::listed(keys::CHOOSER, offered),
@@ -139,14 +154,7 @@ impl App {
                 lines.extend([Line::default(), Line::styled(&prompt.url, self.palette.accent)]);
                 (lines, None)
             }
-            Screen::Run if !self.running() => (report::report(&self.view, width, &self.palette), None),
-            Screen::Run => {
-                let status = format!(" {}…", self.status());
-                (
-                    vec![Line::styled(self.spinner(), self.palette.accent).and(status, self.palette.muted)],
-                    None,
-                )
-            }
+            Screen::Run => (self.run_body(width, rows), None),
         }
     }
 

@@ -15,7 +15,7 @@ use std::time::Duration;
 /// intervals once it finished.
 pub fn details(view: &View, width: usize, palette: &Palette, full: bool) -> Vec<Line> {
     let Some(run) = &view.run else { return Vec::new() };
-    Report { view, run, width, palette }.details(full)
+    Report { view, run, focus: run.focus.as_ref(), width, palette }.details(full)
 }
 
 impl Report<'_> {
