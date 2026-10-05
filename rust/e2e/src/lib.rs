@@ -9,8 +9,9 @@ use graphite_meter_testkit::{Identity, Scratch};
 use std::{ffi::OsString, net::SocketAddr};
 use tokio::sync::oneshot;
 
-/// The QUIC listener's address, apart from the TCP listeners'.
-const QUIC_ADDRESS: &str = "127.0.0.7:0";
+/// One loopback address spelled three ways, as listener addresses must differ: discovery advertises every listener
+/// on the host it was asked at.
+const ADDRESSES: [&str; 3] = ["127.0.0.7:0", "127.0.7:0", "127.7:0"];
 
 /// The server on local ports, serving cleartext HTTP/1.1, HTTP/2 over TLS and HTTP/3 until dropped.
 pub struct Server {
@@ -24,16 +25,22 @@ pub struct Server {
 
 impl Server {
     pub async fn start() -> Self {
+        Self::with(&[]).await
+    }
+
+    /// The server with `settings` over the test configuration.
+    pub async fn with(settings: &[(&str, &str)]) -> Self {
         let (scratch, identity) = (Scratch::new().unwrap(), Identity::generate().unwrap());
         let certificate = scratch.file("cert.pem", &identity.certificate).unwrap();
         let key = scratch.file("key.pem", &identity.key).unwrap();
-        let env: [(&str, OsString); 5] = [
-            ("GM_H1_ADDR", "127.0.0.1:0".into()),
-            ("GM_H2_ADDR", "localhost:0".into()),
-            ("GM_H3_ADDR", QUIC_ADDRESS.into()),
+        let mut env: Vec<(&str, OsString)> = settings.iter().map(|&(name, value)| (name, value.into())).collect();
+        env.extend([
+            ("GM_H1_ADDR", ADDRESSES[0].into()),
+            ("GM_H2_ADDR", ADDRESSES[1].into()),
+            ("GM_H3_ADDR", ADDRESSES[2].into()),
             ("GM_TLS_CERT", certificate.into()),
             ("GM_TLS_KEY", key.into()),
-        ];
+        ]);
         let lookup = |name: &str| env.iter().find(|(set, _)| *set == name).map(|(_, value)| value.clone());
         let loaded = config::load(lookup, Vec::<OsString>::new(), &mut Vec::new());
         let Ok(Loaded::Config(config)) = loaded else {

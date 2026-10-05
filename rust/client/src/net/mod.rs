@@ -19,12 +19,12 @@ pub use session::Session;
 use conn::Answer;
 use graphite_meter_net::{Connector, Pool, Proxy, Verify};
 use graphite_meter_proto::{
-    discovery::Protocol,
+    discovery::{Probe, Protocol},
     lane::LaneEnding,
     origin::{Origin, Scheme},
     route::Route,
 };
-use http::{HeaderMap, HeaderValue, Method, StatusCode, header};
+use http::{HeaderMap, HeaderValue, Method, StatusCode, Version, header};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, MutexGuard, PoisonError},
@@ -97,11 +97,18 @@ impl Client {
 
     /// A control request's JSON answer, read by `decode` within the control timeout.
     pub async fn json<T>(&self, via: Protocol, request: Request, decode: Decode<T>) -> Result<T, Fault> {
-        let deadline = Instant::now() + CONTROL_TIMEOUT;
-        let answer = async { self.answer(via, &request, deadline).await?.json(decode).await };
-        timeout_at(deadline, answer)
-            .await
-            .unwrap_or(Err(Fault::TimedOut("control response")))
+        Ok(self.exchange(via, request, decode).await?.1)
+    }
+
+    /// The protocol a valid probe answer from `origin` came over, a negotiated one resolved.
+    pub async fn probe(&self, origin: &Origin, via: Protocol) -> Result<Protocol, Fault> {
+        let request = Request::new(Method::GET, origin, Route::Probe);
+        match (via, self.exchange(via, request, Probe::decode).await?.0) {
+            (Protocol::Negotiated, Version::HTTP_11) => Ok(Protocol::Http1),
+            (Protocol::Negotiated, Version::HTTP_2) => Ok(Protocol::Http2),
+            (Protocol::Negotiated, _) => Err(Fault::Malformed("probe used an unsupported HTTP protocol".into())),
+            (via, _) => Ok(via),
+        }
     }
 
     /// A control request's answer, its head within the control timeout; the caller bounds its body.
@@ -138,6 +145,19 @@ impl Client {
     async fn answer(&self, via: Protocol, request: &Request, deadline: Instant) -> Result<Incoming, Fault> {
         let answer = self.0.connections.send(self, via, request, deadline).await?;
         self.check(request, answer)
+    }
+
+    /// The HTTP version a JSON answer came over, and the answer read by `decode`, within the control timeout.
+    async fn exchange<T>(&self, via: Protocol, request: Request, decode: Decode<T>) -> Result<(Version, T), Fault> {
+        let deadline = Instant::now() + CONTROL_TIMEOUT;
+        let exchange = async {
+            let answer = self.0.connections.send(self, via, &request, deadline).await?;
+            let version = answer.version();
+            Ok((version, self.check(&request, answer)?.json(decode).await?))
+        };
+        timeout_at(deadline, exchange)
+            .await
+            .unwrap_or(Err(Fault::TimedOut("control response")))
     }
 
     /// The request's head with an absolute URI, uncacheable, with its server's grant over verified HTTPS.

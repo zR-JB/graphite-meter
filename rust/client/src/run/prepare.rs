@@ -1,0 +1,270 @@
+//! Path checks: the catalogue at `--url`, each selected server's preflight, then its throughput and latency paths,
+//! all within 12 s.
+use super::select;
+use crate::{
+    config::{Config, PrepKey},
+    model::Failure,
+    net::{Client, Fault, LatencyPath, Request, ThroughputPath},
+};
+use futures_util::future::join_all;
+use graphite_meter_net::Pool;
+use graphite_meter_proto::{
+    bus::Ping,
+    catalog::{ServerCatalog, ServerEntry, ServerId},
+    discovery::{LatencyTransport, Preflight, Protocol, ThroughputTransport},
+    origin::{Origin, Scheme},
+    reason::FailureReason,
+    route::Route,
+};
+use http::Method;
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use tokio::time::{self, timeout};
+
+/// How long a path check may take, the catalogue and every server included.
+const PREPARATION_TIMEOUT: Duration = Duration::from_secs(12);
+/// How long a run may take its check's paths and connections.
+const REUSE: Duration = Duration::from_secs(30);
+/// How long a WebTransport session or a latency bus may take to show that its path works.
+const VERIFY: Duration = Duration::from_secs(3);
+/// How long a datagram probe waits for its reply before another goes.
+const DATAGRAM_REPLY: Duration = Duration::from_millis(750);
+
+/// A path check: what it depends on, when it began, its network state and each selected server's paths.
+pub struct Prepared {
+    pub key: PrepKey,
+    pub at: Instant,
+    pub client: Client,
+    /// In catalogue order.
+    pub servers: Vec<ServerPath>,
+}
+
+/// A selected server and what its check found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerPath {
+    pub id: ServerId,
+    /// Its preflight's name, else its catalogue entry's.
+    pub name: String,
+    /// The origin its discovery came from, where it signs in.
+    pub origin: Origin,
+    pub path: Result<Paths, Failure>,
+}
+
+/// A prepared server's paths and what its checks measured.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Paths {
+    pub throughput: ThroughputPath,
+    /// When a stage probes latency.
+    pub latency: Option<LatencyPath>,
+    pub stage_limit: Duration,
+    /// The latency check's round trip; zero without one.
+    pub idle_rtt: Duration,
+}
+
+impl Prepared {
+    /// Whether a run with `key` may take this check: every server prepared, the key equal and at most 30 s old.
+    pub fn reusable(&self, key: &PrepKey, now: Instant) -> bool {
+        let fresh = now.saturating_duration_since(self.at) <= REUSE;
+        fresh && self.key == *key && self.servers.iter().all(|server| server.path.is_ok())
+    }
+}
+
+/// Checks the paths `config` selects over a client of its own; a selected server that fails fails alone.
+pub async fn prepare(config: &Config, runtimes: Arc<Pool>) -> Result<Prepared, Failure> {
+    let (at, client) = (Instant::now(), Client::new(config.insecure, runtimes));
+    let deadline = time::Instant::now() + PREPARATION_TIMEOUT;
+    let request = Request::new(Method::GET, &config.url, Route::Servers);
+    let catalogue = client.json(Protocol::Negotiated, request, ServerCatalog::decode);
+    let received = time::timeout_at(deadline, catalogue)
+        .await
+        .map_err(|_| late())?
+        .map_err(|fault| failure(config, &config.url, fault))?;
+    let selected = select::servers(&received, config).map_err(refused)?;
+    let checks = selected.into_iter().map(|entry| async {
+        let mut server = ServerPath {
+            id: entry.id.clone(),
+            name: entry.name.clone(),
+            origin: entry.url.resolve(&config.url).clone(),
+            path: Err(late()),
+        };
+        let checked = time::timeout_at(deadline, check(&client, config, entry, &mut server)).await;
+        server.path = checked.unwrap_or_else(|_| Err(late()));
+        server
+    });
+    let servers = join_all(checks).await;
+    Ok(Prepared { key: config.key(), at, client, servers })
+}
+
+/// One server's preflight and path checks; its name follows its preflight.
+async fn check(
+    client: &Client,
+    config: &Config,
+    entry: &ServerEntry,
+    server: &mut ServerPath,
+) -> Result<Paths, Failure> {
+    let served = server.origin.clone();
+    let failed = |fault| failure(config, &served, fault);
+    let request = Request::new(Method::GET, &served, Route::Preflight);
+    let preflight = client.json(Protocol::Negotiated, request, Preflight::decode).await;
+    let preflight = preflight.map_err(failed)?;
+    if !preflight.server.name.is_empty() {
+        server.name.clone_from(&preflight.server.name);
+    }
+    let candidates = select::candidates(&config.paths, entry, &served, &preflight, config.probes()).map_err(refused)?;
+    if config.uploads() && !preflight.capabilities.upload_checkpoint {
+        return Err(refused("receiver checkpoint support is required; upgrade this measurement server"));
+    }
+    let targets: Vec<_> = preflight
+        .base_urls()
+        .map(|base| base.resolve(&served).clone())
+        .collect();
+    client.enroll(&served, &targets);
+    let latency = async {
+        if candidates.latency.is_empty() {
+            return Ok(None);
+        }
+        first(&candidates.latency, async |path| {
+            Ok(Some((path.clone(), check_latency(client, path).await?)))
+        })
+        .await
+    };
+    let throughput = first(&candidates.throughput, async |path| check_throughput(client, path).await);
+    let (throughput, latency) = tokio::try_join!(throughput, latency).map_err(failed)?;
+    let (latency, idle_rtt) = latency.unzip();
+    Ok(Paths {
+        throughput,
+        latency,
+        idle_rtt: idle_rtt.unwrap_or_default(),
+        stage_limit: preflight.capabilities.stage_limit(),
+    })
+}
+
+/// The first of `candidates` whose check passes, moving on unless a server asks for sign-in; else the last fault.
+async fn first<P, T>(candidates: &[P], check: impl AsyncFn(&P) -> Result<T, Fault>) -> Result<T, Fault> {
+    let mut result = Err(Fault::Malformed("no path to check".into()));
+    for candidate in candidates {
+        result = check(candidate).await;
+        if matches!(result, Ok(_) | Err(Fault::SignIn(_))) {
+            break;
+        }
+    }
+    result
+}
+
+/// A throughput path that answers a probe, its WebTransport session opening first; the probe resolves a negotiated
+/// protocol.
+async fn check_throughput(client: &Client, path: &ThroughputPath) -> Result<ThroughputPath, Fault> {
+    if path.transport == ThroughputTransport::WebTransport {
+        let session = client.session(&path.origin, Route::WtDownload, vec![("bytes", "0".into())]);
+        timeout(VERIFY, session)
+            .await
+            .unwrap_or(Err(Fault::TimedOut("WebTransport session")))?;
+    }
+    let protocol = client.probe(&path.origin, path.protocol).await?;
+    Ok(ThroughputPath { protocol, ..path.clone() })
+}
+
+/// The round trip of a probe over a bus of its own; only the latest probe's reply counts, and a datagram probe goes
+/// again after 750 ms.
+async fn check_latency(client: &Client, path: &LatencyPath) -> Result<Duration, Fault> {
+    let wait = match path.transport {
+        LatencyTransport::WebTransport => DATAGRAM_REPLY,
+        LatencyTransport::WebSocket => VERIFY,
+    };
+    let verified = async {
+        let mut bus = client.bus(path).await?;
+        let mut ping = Ping { id: 0 };
+        loop {
+            let sent = Instant::now();
+            bus.send(ping).await?;
+            let reply = async {
+                while bus.next().await?.id != ping.id {}
+                Ok(sent.elapsed())
+            };
+            if let Ok(rtt) = timeout(wait, reply).await {
+                return rtt;
+            }
+            ping = ping.next();
+        }
+    };
+    timeout(VERIFY, verified)
+        .await
+        .unwrap_or(Err(Fault::TimedOut("latency reply")))
+}
+
+/// What `fault` at the server discovered from `origin` means; a sign-in is refused over HTTP and with `-insecure`.
+fn failure(config: &Config, origin: &Origin, fault: Fault) -> Failure {
+    match fault {
+        Fault::SignIn(_) if config.insecure => {
+            refused("sign-in refuses skipped TLS verification (Skip TLS verify, -insecure)")
+        }
+        Fault::SignIn(_) if origin.scheme == Scheme::Http => refused("authenticated operation requires an HTTPS -url"),
+        fault => fault.failure(),
+    }
+}
+
+fn refused(text: impl Into<String>) -> Failure {
+    Failure::new(FailureReason::PreparationFailed, text)
+}
+
+fn late() -> Failure {
+    Failure::new(FailureReason::Timeout, "the path check did not finish within 12 seconds")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Parsed, parse};
+    use std::ffi::OsString;
+
+    fn config(args: &str) -> Config {
+        match parse(args.split_whitespace().map(OsString::from)) {
+            Ok(Parsed::Run(config)) => *config,
+            other => panic!("{args}: {other:?}"),
+        }
+    }
+
+    fn server(path: Result<(), Failure>) -> ServerPath {
+        let origin = Origin::parse("http://meter.example").unwrap();
+        let throughput = ThroughputPath {
+            origin: origin.clone(),
+            transport: ThroughputTransport::FetchStream,
+            protocol: Protocol::Http1,
+        };
+        ServerPath {
+            id: ServerId::own(),
+            name: "meter".into(),
+            origin,
+            path: path.map(|()| Paths {
+                throughput,
+                latency: None,
+                stage_limit: REUSE,
+                idle_rtt: Duration::ZERO,
+            }),
+        }
+    }
+
+    #[test]
+    fn a_run_reuses_a_whole_check_with_its_key_for_30_s() {
+        let checked = config("-server a -stages down");
+        let at = Instant::now();
+        let prepared = Prepared {
+            key: checked.key(),
+            at,
+            client: Client::new(false, Arc::new(Pool::new().unwrap())),
+            servers: vec![server(Ok(()))],
+        };
+        let longer = config("-server a -stages down -download-duration 1m -warmup 2s").key();
+        assert!(prepared.reusable(&longer, at + REUSE));
+        assert!(!prepared.reusable(&longer, at + REUSE + Duration::from_millis(1)));
+        assert!(!prepared.reusable(&config("-server a -stages down,up").key(), at));
+        assert!(!prepared.reusable(&config("-server a -stages down -insecure").key(), at));
+        let failed = Prepared {
+            servers: vec![server(Ok(())), server(Err(late()))],
+            ..prepared
+        };
+        assert!(!failed.reusable(&longer, at));
+    }
+}

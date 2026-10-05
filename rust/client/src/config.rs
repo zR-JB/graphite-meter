@@ -101,7 +101,6 @@ impl Config {
     pub fn key(&self) -> PrepKey {
         let mut servers = self.servers.clone();
         servers.sort_unstable();
-        let transfers = self.stages.iter().any(|stage| !stage.directions().is_empty());
         PrepKey {
             url: self.url.clone(),
             servers,
@@ -109,9 +108,20 @@ impl Config {
             cadences: [self.ping, self.loaded_ping],
             streams: self.streams,
             insecure: self.insecure,
-            latency: self.stages.contains(&Stage::Latency) || self.loaded_latency && transfers,
-            checkpoints: self.stages.iter().any(|stage| stage.moves(Direction::Up)),
+            latency: self.probes(),
+            checkpoints: self.uploads(),
         }
+    }
+
+    /// Whether a stage probes latency: the latency stage, or loaded latency during transfers.
+    pub fn probes(&self) -> bool {
+        let transfers = self.stages.iter().any(|stage| !stage.directions().is_empty());
+        self.stages.contains(&Stage::Latency) || self.loaded_latency && transfers
+    }
+
+    /// Whether a stage uploads, which takes receiver checkpoints.
+    pub fn uploads(&self) -> bool {
+        self.stages.iter().any(|stage| stage.moves(Direction::Up))
     }
 
     /// Lanes per direction on a fetch-stream path of `protocol`, or a WebTransport one.

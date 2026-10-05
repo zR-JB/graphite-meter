@@ -12,6 +12,8 @@ pub mod measure {
 
 pub mod run {
     pub mod engine;
+    pub mod prepare;
+    pub mod select;
 }
 
 /// The version `--version` prints.
