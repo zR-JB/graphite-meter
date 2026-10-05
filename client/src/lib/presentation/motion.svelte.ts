@@ -31,28 +31,45 @@ export const still = () => prefersReducedMotion.current;
 const FLIP_MS = 380;
 const GHOST_MS = 140;
 const FLIP_EASE = "cubic-bezier(0.22, 1.2, 0.36, 1)";
-const boxes = () =>
+// A sheet moves without overshoot: it is a surface sliding to its edge, not a part settling into place.
+const SHEET_EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
+// As `--dur-sheet`, which keeps a closing sheet displayed while it leaves.
+const SHEET_MS = 320;
+/** The rendered elements marked `data-flip`, by key; an element that is not displayed has no place. */
+const boxes = (only?: readonly string[]) =>
   new Map(
-    Array.from(document.querySelectorAll<HTMLElement>("[data-flip]"), (el) => [
-      el.dataset.flip!,
-      { el, box: el.getBoundingClientRect() },
-    ]),
+    Array.from(document.querySelectorAll<HTMLElement>("[data-flip]"))
+      .filter((el) => !only || only.includes(el.dataset.flip!))
+      .map((el) => ({ el, box: el.getBoundingClientRect() }))
+      .filter(({ box }) => box.width > 0 || box.height > 0)
+      .map((entry) => [entry.el.dataset.flip!, entry]),
   );
 
 /** A change that reshapes the console applies at once, in the frame of the click that asked for it. Then every
     element marked `data-flip` that stayed glides from its old place to its new one, an arriving one rises in,
-    and a leaving one sinks out from where it stood: all on the compositor. */
-export function flip(update: () => void): void {
+    and a leaving one sinks out from where it stood: all on the compositor. An element with `data-flip-edge`
+    (`left` or `right`) is a sheet: it slides in from beyond that edge and back out, without overshoot. `only`
+    names the keys that move, so a change can move a surface as one rather than each part on its own. */
+export function flip(update: () => void, only?: readonly string[]): void {
   if (still() || globalThis.document?.hidden) {
     update();
     return;
   }
-  const before = boxes();
+  const before = boxes(only);
   update();
   flushSync();
-  const after = boxes();
+  const after = boxes(only);
   for (const [key, { el, box }] of after) {
     const old = before.get(key);
+    const edge = el.dataset.flipEdge;
+    if (!old && edge) {
+      const off = edge === "left" ? -box.right : innerWidth - box.left;
+      el.animate([{ translate: `${off}px 0` }, { translate: "0 0" }], {
+        duration: SHEET_MS,
+        easing: SHEET_EASE,
+      });
+      continue;
+    }
     if (!old) {
       el.animate(
         [
@@ -67,8 +84,8 @@ export function flip(update: () => void): void {
     const dy = old.box.top - box.top;
     if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5)
       el.animate([{ translate: `${dx}px ${dy}px` }, { translate: "0 0" }], {
-        duration: FLIP_MS,
-        easing: FLIP_EASE,
+        duration: edge ? SHEET_MS : FLIP_MS,
+        easing: edge ? SHEET_EASE : FLIP_EASE,
       });
     // A wider element opens from its old width rather than jumping to the new one.
     const grew = box.width - old.box.width;
@@ -82,8 +99,8 @@ export function flip(update: () => void): void {
       );
   }
   for (const [key, { el, box }] of before) {
-    if (after.has(key) || el.isConnected) continue;
-    // A leaving element is already gone from the page; a copy at its old place sinks out in its stead.
+    if (after.has(key)) continue;
+    // A leaving element is gone from the page or no longer displayed; a copy at its old place leaves in its stead.
     const ghost = el.cloneNode(true) as HTMLElement;
     ghost.removeAttribute("data-flip");
     ghost.setAttribute("aria-hidden", "true");
@@ -99,13 +116,19 @@ export function flip(update: () => void): void {
       zIndex: "1",
     });
     document.body.append(ghost);
+    const edge = el.dataset.flipEdge;
+    const off = edge === "left" ? -box.right : innerWidth - box.left;
     ghost
       .animate(
-        [
-          { opacity: 1, translate: "0 0" },
-          { opacity: 0, translate: "0 6px" },
-        ],
-        { duration: GHOST_MS, easing: "ease-in", fill: "forwards" },
+        edge
+          ? [{ translate: "0 0" }, { translate: `${off}px 0` }]
+          : [
+              { opacity: 1, translate: "0 0" },
+              { opacity: 0, translate: "0 6px" },
+            ],
+        edge
+          ? { duration: SHEET_MS, easing: SHEET_EASE, fill: "forwards" }
+          : { duration: GHOST_MS, easing: "ease-in", fill: "forwards" },
       )
       .finished.finally(() => ghost.remove());
   }

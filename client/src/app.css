@@ -108,18 +108,6 @@
   inherits: false;
   initial-value: 0%;
 }
-/* Docked sheets open and close by gliding their column, so the page makes room instead of jumping.
-   Only the shell reads them, so a glide never restyles what it contains. */
-@property --dock-left {
-  syntax: "<length>";
-  inherits: false;
-  initial-value: 0px;
-}
-@property --dock-right {
-  syntax: "<length>";
-  inherits: false;
-  initial-value: 0px;
-}
 
 /* Theme: the stored preference stamps data-theme (store, index.html, and the
    auth pages' theme.js); without it the OS preference applies. Every palette

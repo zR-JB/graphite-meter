@@ -209,9 +209,10 @@ of keyframes in `app.css` (`rise`, `row-in`, `pop`, `grow-x`, `glint`), each wit
   swap, so the fade itself runs on the compositor and no element writes its opacity per frame. A view that
   carries a figure (`--rise`: the dial's 6 px, a card's 3 px) sinks as it leaves and rises as the next arrives.
   A stage's hue changes with its stage, never by a crossfade: the re-armed needle tells the change.
-- A docked sheet hugs its column's inner edge, so the column's glide (`--dock-left`, `--dock-right`) is its slide:
-  sheet and page move in one layout pass, in and out, and a dragged handle moves them without the glide. A changed
-  time rolls like a counter (`Roll`, 320 ms): up as it grows, down as it shrinks.
+- A docked sheet's column opens or closes in one step, never glides: a glide would lay the whole console out on
+  every frame. The move is `flip()`'s: the sheet slides in from its edge (320 ms, no overshoot) and pushes the
+  stage, which moves as one surface from where it stood; closing reverses it. A dragged handle sets the column's
+  width directly. A changed time rolls like a counter (`Roll`, 320 ms): up as it grows, down as it shrinks.
 - The dial's head is a bead in its hue, a little wider than the arc. While the latency stage runs, each idle
   reply rings out from it, one `--dur-pulse` at a time: a faint hairline ring in its hue widens to twice the
   head and fades, eased out, while the head itself holds still; without replies nothing rings.

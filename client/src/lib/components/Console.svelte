@@ -18,7 +18,7 @@
   import LegalDialog from "./LegalDialog.svelte";
   import TopbarMore from "./TopbarMore.svelte";
   import { statusLabel, THEME } from "../presentation/vocabulary";
-  import { handoff, still } from "../presentation/motion.svelte";
+  import { flip, handoff, still } from "../presentation/motion.svelte";
   import { keyHint as tipKey, tooltip } from "../actions/tooltip";
   import { canFocus, activeModal } from "../actions/focus";
   import { MediaQuery } from "svelte/reactivity";
@@ -262,7 +262,6 @@
 
   let resizedDock = false;
   // While a handle is dragged the columns follow the pointer; the glide is for opening, closing and keys.
-  let resizingDock = $state(false);
   function setDockWidth(side: "left" | "right", px: number) {
     resizedDock = true;
     const other = side === "left" ? "right" : "left";
@@ -418,7 +417,20 @@
   }
 
   // Direct closes and browser navigation commit through the same focus owner.
+  // A docked sheet opening or closing changes the stage's width in one step and moves on the compositor (flip):
+  // the sheet slides from its edge and pushes the stage, which moves as one surface from where it stood.
+  const dockedPanels = (route: Route) =>
+    dockQuery.current && route.kind === "app" ? route.panels.join() : "";
   function commitRoute(next: Route, fromHistory = false) {
+    if (dockedPanels(next) === dockedPanels(currentRoute))
+      applyRoute(next, fromHistory);
+    else
+      flip(
+        () => applyRoute(next, fromHistory),
+        ["stage", "sheet-left", "sheet-right"],
+      );
+  }
+  function applyRoute(next: Route, fromHistory: boolean) {
     const previous = currentRoute;
     const previousHistory = historyOpen;
     const nextHistory =
@@ -588,7 +600,6 @@
   id="console"
   {@attach observeWidth((width) => (consoleWidth = width))}
   data-phase={store.phase}
-  data-resizing={resizingDock ? "" : undefined}
   style="--dock-left: {docks.left}px; --dock-right: {docks.right}px;"
 >
   <!-- Container queries move direct actions into More as the bar narrows. -->
@@ -703,7 +714,6 @@
     dockMaxWidth={dockMaxLeft}
     onResize={(px) => setDockWidth("left", px)}
     onResetWidth={() => resetDockWidth("left")}
-    onResizing={(dragging) => (resizingDock = dragging)}
     onClose={() => dismissPanel("settings")}
     side="left"
     title="Settings"
@@ -716,7 +726,7 @@
     {/if}
   </SidePanel>
   {#if currentRoute.kind === "not-found"}
-    <section class="stage history-stage" inert={flyout}>
+    <section class="stage history-stage" data-flip="stage" inert={flyout}>
       <div class="empty-state">
         <h1>Page not found</h1>
         <p>That client route does not exist.</p>
@@ -754,6 +764,7 @@
   {:else}
     <section
       class="stage measurement-stage"
+      data-flip="stage"
       data-stage={store.isRunning ? store.phaseStage : undefined}
       class:previous={store.previousRun}
       aria-label="Measurement workspace"
@@ -777,7 +788,6 @@
     dockMaxWidth={dockMaxRight}
     onResize={(px) => setDockWidth("right", px)}
     onResetWidth={() => resetDockWidth("right")}
-    onResizing={(dragging) => (resizingDock = dragging)}
     onClose={() => dismissPanel("endpoint")}
     title="Details"
   >
@@ -825,14 +835,7 @@
     height: 100dvh;
     background: var(--canvas);
     color: var(--text);
-    transition:
-      --dock-left var(--dur-sheet) var(--ease-out),
-      --dock-right var(--dur-sheet) var(--ease-out);
     timeline-scope: --column;
-  }
-  /* A dragged handle moves its column with the pointer, without the glide. */
-  #console[data-resizing] {
-    transition: none;
   }
 
   /* The last icon's own 8 px padding completes the right inset, so the bar's ink sits 16 px in at both ends. */

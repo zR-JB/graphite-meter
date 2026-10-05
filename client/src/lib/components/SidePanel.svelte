@@ -17,8 +17,6 @@
     dockMaxWidth?: number;
     onResize?: (px: number) => void;
     onResetWidth?: () => void;
-    /** A pointer drag on the handle starts or ends. */
-    onResizing?: (dragging: boolean) => void;
     onClose: () => void;
     children: Snippet;
   }
@@ -32,7 +30,6 @@
     dockMaxWidth = MAX_DOCK_WIDTH,
     onResize,
     onResetWidth,
-    onResizing,
     onClose,
     children,
   }: Props = $props();
@@ -78,6 +75,14 @@
         onClose();
       };
       node.addEventListener("keydown", escape);
+      // Docked, the sheet slides from its edge as its column opens or closes (flip, presentation/motion).
+      if (docked) {
+        node.dataset.flip = `sheet-${side}`;
+        node.dataset.flipEdge = side;
+      } else {
+        delete node.dataset.flip;
+        delete node.dataset.flipEdge;
+      }
       const drag = open && !docked ? sheetDrag(onClose)(node) : undefined;
       return () => {
         node.removeEventListener("keydown", escape);
@@ -124,7 +129,6 @@
             max: () => dockMaxWidth,
             set: (px) => onResize?.(px),
             reset: () => onResetWidth?.(),
-            active: (dragging) => onResizing?.(dragging),
           })}
       ></div>
     {/if}
