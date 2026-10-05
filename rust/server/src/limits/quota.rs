@@ -7,6 +7,7 @@ use crate::{
 };
 use std::{
     collections::HashMap,
+    fmt,
     sync::{Arc, Mutex},
 };
 
@@ -150,6 +151,18 @@ pub struct Hold {
     weight: usize,
     /// Released with this one.
     linked: Option<Box<Hold>>,
+}
+
+impl fmt::Debug for Hold {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { keys, weight, linked, .. } = self;
+        formatter
+            .debug_struct("Hold")
+            .field("keys", keys)
+            .field("weight", weight)
+            .field("linked", linked)
+            .finish()
+    }
 }
 
 impl Hold {

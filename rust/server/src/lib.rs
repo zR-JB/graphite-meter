@@ -2,6 +2,7 @@
 
 pub mod auth;
 pub mod config;
+pub mod lane;
 pub mod limits;
 pub mod log;
 pub mod peer;

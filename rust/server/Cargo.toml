@@ -20,11 +20,15 @@ noq.workspace = true
 ring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "time"] }
 tokio-util.workspace = true
 zeroize.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true, features = ["termios"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "test-util"] }
 
 [lints]
 workspace = true
