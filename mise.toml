@@ -378,38 +378,63 @@ cd go && go build -trimpath -o graphite-meter-client \
   -ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal/goclient.Version=$version" ./cmd/graphite-meter-client
 '''
 
+# GM_IMPLEMENTATION=rust runs the Rust server or TUI in dev, prod and tui; Go is the default. mise appends a
+# task's arguments to its script's last line, so each of these scripts ends by running "$@".
 [tasks.tui]
 shell = "bash -e -o pipefail -c"
-description = "Run the native TUI; arguments after -- go to the client (e.g. -- -server http://host:7246)"
+description = "Run the native TUI (GM_IMPLEMENTATION=go|rust); arguments after -- go to the client"
 raw = true
 run = '''
 version=$(scripts/build-version.sh)
-cd go && go run -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/goclient.Version=$version" \
-  ./cmd/graphite-meter-client "$@"
-'''
+case "${GM_IMPLEMENTATION:-go}" in
+  go)
+    cd go
+    set -- go run -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/goclient.Version=$version" \
+      ./cmd/graphite-meter-client ;;
+  rust)
+    python3 -m scripts.rust_build --package graphite-meter-client --profile ci --version "$version"
+    cd rust
+    set -- target/ci/graphite-meter-client ;;
+  *) echo "GM_IMPLEMENTATION must be go or rust" >&2; exit 2 ;;
+esac
+exec "$@"'''
 
 [tasks.dev]
-description = "Build the development client and run the embedded server"
+shell = "bash -e -o pipefail -c"
+description = "Build the development client and run the embedded server (GM_IMPLEMENTATION=go|rust)"
 raw = true
-run = [
-  { task = "client-build-dev" },
-  { task = "_embed-client" },
-  "cd go && go run ./cmd/graphite-meter",
-]
+run = '''
+case "${GM_IMPLEMENTATION:-go}" in
+  go)
+    mise run client-build-dev
+    mise run _embed-client
+    cd go
+    set -- go run ./cmd/graphite-meter ;;
+  rust) set -- mise run rust-server-run -- ;;
+  *) echo "GM_IMPLEMENTATION must be go or rust" >&2; exit 2 ;;
+esac
+exec "$@"'''
 
 [tasks.prod]
 shell = "bash -e -o pipefail -c"
-description = "Build the production client and run the stamped server"
+description = "Build the production client and run the stamped server (GM_IMPLEMENTATION=go|rust)"
 raw = true
-run = [
-  { task = "client-build-prod" },
-  { task = "_embed-client" },
-  '''
+run = '''
 version=$(scripts/build-version.sh)
-cd go && go run \
-  -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=$version" ./cmd/graphite-meter
-''',
-]
+case "${GM_IMPLEMENTATION:-go}" in
+  go)
+    mise run client-build-prod
+    mise run _embed-client
+    cd go
+    set -- go run -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=$version" \
+      ./cmd/graphite-meter ;;
+  rust)
+    mise run rust-server-build
+    cd rust
+    set -- target/release/graphite-meter-server ;;
+  *) echo "GM_IMPLEMENTATION must be go or rust" >&2; exit 2 ;;
+esac
+exec "$@"'''
 
 [tasks.container-build]
 description = "Build the production Docker or Podman image"
@@ -429,6 +454,40 @@ revision=${GM_CLIENT_REVISION:-$(git rev-parse --short HEAD 2>/dev/null || echo 
 description = "Format the Rust workspace"
 dir = "rust"
 run = "cargo fmt --all"
+
+# Local builds embed development notices: their executables say UNREVIEWED DEVELOPMENT BUILD and are not
+# distributable. The build tasks use the release profile, the run tasks the ci profile (no LTO, 16 codegen units).
+[tasks.rust-server-build]
+shell = "bash -e -o pipefail -c"
+description = "Build the Rust server, rust/target/release/graphite-meter-server, with the production browser app"
+run = '''
+version=$(scripts/build-version.sh)
+python3 -m scripts.rust_build --package graphite-meter-server --profile release --browser prod --version "$version"
+'''
+
+[tasks.rust-client-build]
+shell = "bash -e -o pipefail -c"
+description = "Build the Rust TUI, rust/target/release/graphite-meter-client"
+run = '''
+version=$(scripts/build-version.sh)
+python3 -m scripts.rust_build --package graphite-meter-client --profile release --version "$version"
+'''
+
+[tasks.rust-server-run]
+description = "Run the Rust server (ci profile) with the development browser app; arguments after -- go to the server"
+raw = true
+run = [
+  "python3 -m scripts.rust_build --package graphite-meter-server --profile ci --browser dev",
+  "cd rust && exec target/ci/graphite-meter-server",
+]
+
+[tasks.rust-client-run]
+description = "Run the Rust TUI (ci profile); arguments after -- go to the client"
+raw = true
+run = [
+  "python3 -m scripts.rust_build --package graphite-meter-client --profile ci",
+  "cd rust && exec target/ci/graphite-meter-client",
+]
 
 # Ordered: static policy checks run before the workspace compiles.
 [tasks.rust-check]
