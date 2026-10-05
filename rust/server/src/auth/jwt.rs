@@ -113,7 +113,7 @@ impl Jwks {
             x: Option<String>,
             y: Option<String>,
         }
-        let bytes = |value: &Option<String>| B64.decode(value.as_deref()?).ok();
+        let bytes = |value: &Option<String>| B64.decode(value.as_deref()?.trim_end_matches('=')).ok();
         let key = |key: Jwk| {
             let point =
                 |size: usize| Some([vec![4], bytes(&key.x)?, bytes(&key.y)?].concat()).filter(|p| p.len() == 1 + size);

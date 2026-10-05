@@ -282,6 +282,24 @@ async fn id_tokens_need_an_allowed_algorithm_a_known_key_and_valid_claims() {
 }
 
 #[tokio::test]
+async fn key_set_members_may_carry_base64_padding() {
+    if !child("oidc::key_set_members_may_carry_base64_padding") {
+        return;
+    }
+    let provider = Provider::start().await;
+    let app = discovered(&provider).await;
+    for header in [json!({"alg": "RS256", "kid": "rsa"}), json!({}), json!({"alg": "EdDSA", "kid": "ed"})] {
+        provider.twist(Twist {
+            padded_keys: true,
+            header: header.clone(),
+            ..Twist::default()
+        });
+        assert_eq!(sign_in(&app, &provider, "192.0.2.1").await.status(), StatusCode::OK, "{header}");
+    }
+    assert_eq!(provider.key_sets(), 1);
+}
+
+#[tokio::test]
 async fn hybrid_keeps_the_password_while_the_provider_is_down_and_discovers_it_in_the_background() {
     if !child("oidc::hybrid_keeps_the_password_while_the_provider_is_down_and_discovers_it_in_the_background") {
         return;

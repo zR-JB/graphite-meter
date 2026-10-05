@@ -62,9 +62,10 @@ pub(super) fn child(test: &str) -> bool {
 }
 
 /// What the provider changes in its answers: members merged into its metadata, the ID token's header and claims and
-/// the user information, where `null` removes one.
+/// the user information, where `null` removes one; and `=` padding on its keys' members.
 #[derive(Default)]
 pub(super) struct Twist {
+    pub padded_keys: bool,
     pub metadata: Value,
     pub header: Value,
     pub claims: Value,
@@ -213,7 +214,7 @@ impl Shared {
             "/jwks" => {
                 assert_eq!(head.headers[header::CACHE_CONTROL], "no-cache");
                 self.key_sets.fetch_add(1, Ordering::Relaxed);
-                (200, self.keys.jwks())
+                (200, self.keys.jwks(self.twist.lock().unwrap().padded_keys))
             }
             "/token" => self.token(&head.headers, &body),
             "/userinfo" => {
@@ -307,7 +308,7 @@ impl Signers {
         }
     }
 
-    fn jwks(&self) -> Value {
+    fn jwks(&self, padded: bool) -> Value {
         let public: signature::RsaPublicKeyComponents<Vec<u8>> = self.rsa.public().into();
         let point = |key: &EcdsaKeyPair, crv, kid| {
             let point = key.public_key().as_ref();
@@ -316,13 +317,23 @@ impl Signers {
             json!({"kty": "EC", "crv": crv, "kid": kid, "x": x, "y": y})
         };
         let ed = B64.encode(self.ed.public_key().as_ref());
-        json!({"keys": [
+        let mut keys = json!({"keys": [
             {"kty": "RSA", "kid": "rsa", "use": "sig", "n": B64.encode([&[0], &public.n[..]].concat()), "e": B64.encode(&public.e)},
             point(&self.p256, "P-256", "p256"),
             point(&self.p384, "P-384", "p384"),
             {"kty": "OKP", "crv": "Ed25519", "kid": "ed", "x": ed},
             {"kty": "EC", "crv": "P-256", "kid": "encrypting", "use": "enc", "x": "AA", "y": "AA"},
-        ]})
+        ]});
+        let members = keys["keys"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .flat_map(|key| key.as_object_mut().unwrap());
+        for (_, value) in members.filter(|(name, _)| padded && ["n", "e", "x", "y"].contains(&name.as_str())) {
+            let text = value.as_str().unwrap();
+            *value = json!(format!("{text}{}", "=".repeat((4 - text.len() % 4) % 4)));
+        }
+        keys
     }
 
     /// A compact JWS of `claims` signed as `header` names; `none` and unknown algorithms sign nothing.
