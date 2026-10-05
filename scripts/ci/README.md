@@ -130,8 +130,8 @@ it. Build arguments carry no secrets because max provenance records them.
 credentials and no dangerous triggers other than the reviewed `workflow_run`.
 `workflow_policy.py` holds the project's own trust rules, and
 `test_workflow_policy.py` breaks a copy of the repository once per rule. No
-workflow or image build, nor a mise task or `scripts/*.sh` one of them runs,
-may build with unreviewed development notices (`--development` or
+workflow or image build, nor a mise task, `scripts/*.sh` or Python driver
+one of them runs, may build with unreviewed development notices (`--development` or
 `scripts.rust_build`). Every dependency manifest, lockfile, toolchain pin, Cargo
 configuration and build script has a code owner, and every lockfile a
 Dependabot entry.

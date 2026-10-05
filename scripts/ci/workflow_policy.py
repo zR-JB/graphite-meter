@@ -21,6 +21,8 @@ JOB = re.compile(r"(?m)^  (?=[a-z0-9-]+:$)")
 RELEASE_SECRETS = {"GHCR_TOKEN", "RELEASE_APP_PRIVATE_KEY"}
 # How a build gets unreviewed development notices: the collector's flag or a local Rust build.
 DEVELOPMENT_BUILDS = ("--development", "scripts.rust_build")
+# The collector, which defines --development, and this policy name the markers without building.
+NAMING = ("scripts/legal/rust.py", "scripts/ci/workflow_policy.py")
 
 TRIGGERS = {
     "advisories.yml": {"schedule", "workflow_dispatch"},
@@ -315,21 +317,28 @@ def check_ci(root: Path) -> None:
 
 def check_development_notices(root: Path) -> None:
     """Nothing CI or a release runs builds with unreviewed development notices: no workflow, image build, mise
-    task or scripts/*.sh they reach starts the collector's --development mode or a local Rust build."""
+    task, scripts/*.sh or Python driver they reach starts the collector's --development mode or a local Rust
+    build."""
     tasks = tomllib.loads(read(root, "mise.toml"))["tasks"]
     texts = [path.read_text(encoding="utf-8")
              for path in sorted([*(root / ".github").rglob("*.y*ml"), *(root / "container").glob("Dockerfile*")])]
-    reached: set[str] = set()
+    reached = set(NAMING)
     while texts:
         text = texts.pop()
         if any(marker in text for marker in DEVELOPMENT_BUILDS):
             fail("CI and releases must not build with unreviewed development notices")
-        for task, script in re.findall(r"mise run ([\w-]+)|(?<![\w/.-])(scripts/[\w/.-]+\.sh)\b", text):
-            if (name := task or script) in reached:
+        for task, script, module, driver in re.findall(r"mise run ([\w-]+)|(?<![\w/.-])(scripts/[\w/.-]+\.sh)\b"
+                                                        r"|python3 (?:-m ([\w.]+)|(?:\.\./)*([\w/.-]+\.py))", text):
+            if module:
+                path = module.replace(".", "/")
+                script = next((name for name in (f"{path}.py", f"{path}/__main__.py") if (root / name).is_file()), "")
+            if (name := task or script or driver) in reached or not name:
                 continue
             reached.add(name)
-            if script:
-                texts.append(read(root, script))
+            if script or driver:
+                if not (root / name).is_file():
+                    fail(f"{name}, which CI or a release runs, is missing")
+                texts.append(read(root, name))
                 continue
             # A task runs its steps and, before and after them, the tasks it depends on.
             for key in ("run", "depends", "depends_post"):

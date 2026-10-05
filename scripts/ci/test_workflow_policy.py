@@ -244,6 +244,10 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (W + "advisories.yml", "run: cargo deny --locked check advisories\n", "run: cargo deny --locked check bans\n",
      "misorders invariant: run: cargo deny --locked check advisories"),
     (W + "advisories.yml", "cache: 'false'", "cache: 'true'", "advisories.yml must disable every cache"),
+    # Nor does a Python driver that CI runs, by path or as a module.
+    ("rust/interop/perf.py", None, 'BUILD = ["python3", "-m", "scripts.rust_build"]\n', "development notices"),
+    ("scripts/package_rust.py", None, 'DEVELOPMENT = "--development"\n', "development notices"),
+    (W + "ci.yml", "python3 rust/interop/browser.py", "python3 rust/interop/absent.py", "absent.py, which CI"),
     # Supply-chain files have an owner, and Dependabot updates every lockfile.
     (".github/CODEOWNERS", "rust-toolchain.toml              @zR-JB\n", "",
      r"without an owner: \['rust/rust-toolchain.toml'\]"),
@@ -259,7 +263,8 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
         shutil.copytree(ROOT / ".github", root / ".github")
-        shutil.copytree(ROOT / "scripts", root / "scripts", ignore=shutil.ignore_patterns("__pycache__"))
+        for name in ("scripts", "rust/interop"):
+            shutil.copytree(ROOT / name, root / name, ignore=shutil.ignore_patterns("__pycache__"))
         for name in ("mise.toml", "mise.lock", "go/go.mod", "go/go.sum", "client/bun.lock", "container/Dockerfile",
                      "container/Dockerfile.rust", "rust/rust-toolchain.toml", "rust/Cargo.lock"):
             (root / name).parent.mkdir(parents=True, exist_ok=True)
