@@ -180,7 +180,7 @@ impl Conn {
         };
         Ok(response
             .map_err(hyper_failed)?
-            .map(|body| Incoming(Source::Hyper(body))))
+            .map(|body| Incoming { source: Source::Hyper(body), ended: None }))
     }
 }
 
@@ -229,7 +229,8 @@ async fn http3_send(
             _ => return Err(http3_failed(error)),
         },
     };
-    Ok(response.map(|()| Incoming(Source::Http3 { recv: Box::new(recv), _quic: quic.clone() })))
+    let source = Source::Http3 { recv: Box::new(recv), _quic: quic.clone() };
+    Ok(response.map(|()| Incoming { source, ended: None }))
 }
 
 /// A request body: none, one block once, or one block repeated for a transfer's bytes.
@@ -287,7 +288,11 @@ impl hyper::body::Body for Payload {
 }
 
 /// A response body, holding the connection it reads from.
-pub struct Incoming(Source);
+pub struct Incoming {
+    source: Source,
+    /// Runs once the body ended.
+    ended: Option<Box<dyn FnOnce() + Send>>,
+}
 
 enum Source {
     Hyper(hyper::body::Incoming),
@@ -300,26 +305,37 @@ impl Incoming {
         self.read(true).await
     }
 
+    /// The same body, running `ended` once it ended.
+    pub(super) fn then(self, ended: impl FnOnce() + Send + 'static) -> Self {
+        Self { ended: Some(Box::new(ended)), ..self }
+    }
+
     /// The next payload; `lenient` reads a message error at an HTTP/3 body's end as its end.
     async fn read(&mut self, lenient: bool) -> Result<Option<Bytes>, Fault> {
-        match &mut self.0 {
+        let read = match &mut self.source {
             Source::Hyper(body) => loop {
-                let Some(frame) = body.frame().await else { return Ok(None) };
+                let Some(frame) = body.frame().await else { break Ok(None) };
                 if let Ok(data) = frame.map_err(|error| hyper_fault(&error))?.into_data() {
-                    return Ok(Some(data));
+                    break Ok(Some(data));
                 }
             },
             Source::Http3 { recv, .. } => match recv.data().await {
                 Err(http3::Error::Protocol(Code::H3_MESSAGE_ERROR)) if lenient => Ok(None),
                 data => data.map_err(http3_fault),
             },
+        };
+        if let Ok(None) = read
+            && let Some(ended) = self.ended.take()
+        {
+            ended();
         }
+        read
     }
 
     /// The body, at most 64 KiB of it, read by `decode`.
     pub async fn json<T>(mut self, decode: Decode<T>) -> Result<T, Fault> {
         let oversized = || Fault::Malformed(format!("control response exceeds {MAX_RESPONSE_BYTES} bytes"));
-        if let Source::Hyper(body) = &self.0
+        if let Source::Hyper(body) = &self.source
             && hyper::body::Body::size_hint(body)
                 .exact()
                 .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)

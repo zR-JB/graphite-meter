@@ -36,6 +36,7 @@ struct Slot {
     shared: Mutex<Option<(u64, Conn)>>,
     /// Held across a dial that may bring the multiplexed connection, which other requests wait for.
     dialing: tokio::sync::Mutex<()>,
+    /// HTTP/1.1 connections whose last answer ended.
     idle: Mutex<Vec<Conn>>,
     /// A negotiated dial found HTTP/1.1, so each request without an idle connection dials its own.
     exclusive: AtomicBool,
@@ -91,7 +92,7 @@ impl Connections {
     async fn attempt(
         &self,
         client: &Client,
-        slot: &Slot,
+        slot: &Arc<Slot>,
         via: Protocol,
         request: &Request,
         deadline: Instant,
@@ -102,10 +103,7 @@ impl Connections {
         let taken = taken.map_err(|_| (Fault::TimedOut("control connection"), false));
         let Taken { mut conn, serial, reused } = taken?.map_err(|fault| (fault, false))?;
         match timeout_at(deadline, conn.send(head, Payload::empty())).await {
-            Ok(Ok(answer)) => {
-                slot.keep(conn);
-                Ok(answer)
-            }
+            Ok(Ok(answer)) => Ok(slot.keep(conn, answer)),
             Ok(Err(Failed { fault, again })) => {
                 if again {
                     slot.retire(serial);
@@ -167,12 +165,21 @@ impl Slot {
         Some(Taken { conn: idle.swap_remove(ready), serial: None, reused: true })
     }
 
-    /// Keeps an HTTP/1.1 connection for the requests after its answer.
-    fn keep(&self, conn: Conn) {
-        let mut idle = lock(&self.idle);
-        if conn.share().is_none() && idle.len() < IDLE {
-            idle.push(conn);
+    /// Keeps an HTTP/1.1 connection for the requests after `answer` once its body ended; a request sent while the body
+    /// streams would wait behind it.
+    fn keep(self: &Arc<Self>, conn: Conn, answer: Answer) -> Answer {
+        if conn.share().is_some() {
+            return answer;
         }
+        let slot = self.clone();
+        answer.map(|body| {
+            body.then(move || {
+                let mut idle = lock(&slot.idle);
+                if idle.len() < IDLE {
+                    idle.push(conn);
+                }
+            })
+        })
     }
 
     /// Later requests take another connection than the shared one of `serial`; its open streams go on.
@@ -181,5 +188,49 @@ impl Slot {
         if serial.is_some() && shared.as_ref().map(|(current, _)| *current) == serial {
             *shared = None;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use graphite_meter_net::Pool;
+    use graphite_meter_proto::route::Route;
+    use http::Method;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+        sync::oneshot,
+    };
+
+    /// A request taking the connection of an answer still being read would wait behind it, as a receiver checkpoint
+    /// behind the upload progress feed it shared a connection with.
+    #[tokio::test]
+    async fn an_http1_connection_rejoins_the_pool_once_its_answer_ended() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (end, ended) = oneshot::channel::<()>();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut head = Vec::new();
+            while !head.ends_with(b"\r\n\r\n") {
+                head.push(socket.read_u8().await.unwrap());
+            }
+            let feed = b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n11\r\n{\"type\":\"ready\"}\n\r\n";
+            socket.write_all(feed).await.unwrap();
+            ended.await.unwrap();
+            socket.write_all(b"0\r\n\r\n").await.unwrap();
+            let _ = socket.read_u8().await;
+        });
+        let client = Client::new(false, Arc::new(Pool::inline()));
+        let origin = Origin::parse(&format!("http://{address}")).unwrap();
+        let feed = Request::new(Method::GET, &origin, Route::UploadProgress);
+        let mut answer = client.control(Protocol::Http1, feed).await.unwrap();
+        assert!(answer.chunk().await.unwrap().is_some());
+        let slot = client.connections.slot(&origin, Protocol::Http1);
+        assert!(lock(&slot.idle).is_empty(), "the connection still carries its answer");
+        end.send(()).unwrap();
+        assert_eq!(answer.chunk().await.unwrap(), None);
+        assert_eq!(lock(&slot.idle).len(), 1);
     }
 }
