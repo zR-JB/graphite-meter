@@ -134,6 +134,11 @@ impl ClientKeys {
         }
     }
 
+    /// The key an owner is compared by: the address, IPv6 /64, login or grant.
+    pub fn narrowest(&self) -> Option<ClientKey> {
+        self.iter().next()
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = ClientKey> {
         let prefix = |ip, bits| ClientKey::V6(Ipv6Net::new(ip, bits).expect("a prefix length up to 128").trunc());
         let keys = match self {
