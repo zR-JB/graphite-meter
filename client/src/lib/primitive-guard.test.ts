@@ -15,8 +15,8 @@ async function offenders(pattern: RegExp, allowed: string[] = []) {
   return found;
 }
 
-test("hints change no cursor", async () => {
-  expect(await offenders(/cursor:\s*help/)).toEqual([]);
+test("only the shared explained-word rule takes the help cursor", async () => {
+  expect(await offenders(/cursor:\s*help/, ["app.css"])).toEqual([]);
 });
 
 test("only the shared term mark draws a dotted underline", async () => {

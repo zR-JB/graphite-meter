@@ -88,7 +88,7 @@
     box-shadow: 0 1px 3px color-mix(in oklab, var(--shade) 40%, transparent);
     translate: 0 -50%;
     transition:
-      translate var(--dur-graph) var(--ease-out),
+      translate var(--dur-graph) var(--ease-spring),
       background-color var(--dur-hover) var(--ease-out);
   }
   input:checked + .track {

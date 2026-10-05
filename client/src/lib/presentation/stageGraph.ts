@@ -7,7 +7,14 @@ export interface GraphPoint {
 }
 export interface LatencyPoint {
   t: number;
+  /** The bucket's span on the run's timeline. */
+  t0: number;
+  t1: number;
+  /** The bucket's median reply. */
   ms: number;
+  /** The bucket's fastest and slowest replies. */
+  lo: number;
+  hi: number;
 }
 
 /** A stage's reply buckets as points; a bucket of timeouts has none. */
@@ -17,7 +24,16 @@ export const replies = (
 ): LatencyPoint[] =>
   history.flatMap((b) =>
     b.phase === phase && b.medianRttMs !== null
-      ? [{ t: b.t, ms: b.medianRttMs }]
+      ? [
+          {
+            t: b.t,
+            t0: b.startT,
+            t1: b.endT,
+            ms: b.medianRttMs,
+            lo: b.minRttMs ?? b.medianRttMs,
+            hi: b.maxRttMs ?? b.medianRttMs,
+          },
+        ]
       : [],
   );
 
@@ -45,13 +61,26 @@ export interface StageGraph {
   lines: string[];
   area: string;
   heads: { x: number; y: number }[];
-  dots: { x: number; y: number; t: number; ms: number }[];
+  /** A reply over the track's top is clamped there and marked. */
+  dots: {
+    x: number;
+    y: number;
+    yLo: number;
+    yHi: number;
+    t: number;
+    ms: number;
+    lo: number;
+    hi: number;
+    over: boolean;
+  }[];
   baselineY: number | null;
   /** Per lane: bin centre times and rates, for the hover readout. */
   bins: GraphPoint[][];
 }
 
 const BIN_PX = 4;
+/* A reply bar's pitch: slim bars with air between them. */
+const REPLY_PX = 8;
 const TOP_PAD = 3;
 
 interface PlotPoint {
@@ -118,9 +147,48 @@ export function stageGraphGeometry(
     trackHeight -
     1.5 -
     Math.min(1, Math.max(0, ms / (input.latencyTop || 1))) * (trackHeight - 3);
-  const dots = input.latency
-    .filter((point) => point.t >= start && point.t <= start + span)
-    .map((point) => ({ ...point, x: x(point.t), y: trackY(point.ms) }));
+  // Replies bin to the width like the lanes but on a wider pitch, so every stage's track has slim bars with air
+  // between them whatever its length or
+  // its buckets' width: a bucket reaches every column its span covers, a column spans its buckets' fastest to
+  // slowest reply, reads their medians' mean, and keeps the mark of any reply over the top.
+  const top = input.latencyTop || 1;
+  const slots = Math.max(8, Math.floor(width / REPLY_PX));
+  const sums = new Float64Array(slots);
+  const counts = new Uint16Array(slots);
+  const los = new Float64Array(slots).fill(Infinity);
+  const his = new Float64Array(slots).fill(-Infinity);
+  const column = (t: number) =>
+    Math.min(
+      slots - 1,
+      Math.max(0, Math.floor(((t - start) / (span || 1)) * slots)),
+    );
+  for (const point of input.latency) {
+    if (point.t1 < start || point.t0 > start + span) continue;
+    const last = column(Math.min(point.t1, start + span) - 1e-6);
+    for (let i = column(point.t0); i <= Math.max(last, column(point.t0)); i++) {
+      sums[i] += point.ms;
+      counts[i]++;
+      los[i] = Math.min(los[i], point.lo);
+      his[i] = Math.max(his[i], point.hi);
+    }
+  }
+  const dots = [...counts.keys()]
+    .filter((i) => counts[i])
+    .map((i) => {
+      const t = start + ((i + 0.5) / slots) * span;
+      const ms = sums[i] / counts[i];
+      return {
+        t,
+        ms,
+        lo: los[i],
+        hi: his[i],
+        x: x(t),
+        y: trackY(ms),
+        yLo: trackY(los[i]),
+        yHi: trackY(his[i]),
+        over: his[i] > top,
+      };
+    });
   return {
     lines,
     area: areaOf(lines[0] ?? "", points[0] ?? [], plotHeight),
@@ -182,10 +250,6 @@ export function drawStageGraph(
     baselineY: geometry.baselineY,
     bins: geometry.bins,
   };
-}
-
-export function stageGraph(input: StageGraphInput): StageGraph {
-  return drawStageGraph(stageGraphGeometry(input), input.head);
 }
 
 /** The bin and reply nearest a time, for the readout under the pointer. */

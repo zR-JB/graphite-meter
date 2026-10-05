@@ -16,8 +16,11 @@ export function mountHistoryPersistence(
   // Each result remembers the clear count it was queued under; an unread count is read before its write.
   const pending: { record: HistoryRecord; clears: Promise<number | null> }[] =
     [];
+  // Records written or refused, so a result is never queued twice.
+  const handled = new Set<string>();
   const settle = (record: HistoryRecord) => {
     pending.shift();
+    handled.add(record.id);
     if (store.historyCandidate?.id === record.id) store.historyCandidate = null;
   };
   const drain = async () => {
@@ -63,6 +66,18 @@ export function mountHistoryPersistence(
         clears: repository.clears().catch(() => null),
       });
       void drain();
+    });
+    // Saving switched on while a finished result is still on screen saves that result.
+    $effect(() => {
+      const latest = store.latestRecord;
+      if (
+        store.savingResults &&
+        latest &&
+        !handled.has(latest.id) &&
+        !store.historyCandidate &&
+        !pending.some((entry) => entry.record.id === latest.id)
+      )
+        store.historyCandidate = latest;
     });
   });
   const retry = () => void drain();

@@ -1,6 +1,5 @@
 import { compensationTooltip, type WireModel } from "../compensation";
 import {
-  fmtAddedMs,
   fmtBytes,
   fmtDuration,
   fmtMs,
@@ -11,6 +10,7 @@ import {
   type RateUnits,
 } from "../format";
 import type {
+  StageLatencySummary,
   AddedLatency,
   LatencyBucket,
   ThroughputSample,
@@ -19,6 +19,7 @@ import type {
 } from "../runner/contract";
 import type { MultiServerResult } from "../runner/measure";
 import { bidirectionalResultPresentation } from "./bidirectionalResult";
+import type { LatencyPoint } from "./stageGraph";
 import type { IconName } from "./icons";
 import { serverName } from "./serverAppearance";
 import {
@@ -37,6 +38,10 @@ interface SummaryEvidence extends Pick<
 > {
   status: Partial<Record<TransportRole, SummaryStatus>>;
   added: AddedLatency | null;
+  /** The idle stage's probe population, for the latency card's facts. */
+  idle?: StageLatencySummary | null;
+  /** The loaded stages in the run, settled or not, so their rows stand from Start; else the settled ones. */
+  transfers?: (typeof LOADED)[number][];
 }
 export interface SummaryRow {
   label: string;
@@ -66,7 +71,7 @@ export interface SummaryCard {
 /** One stage's series on the run's timeline; the leading edge while it runs. */
 export interface CardGraph {
   lanes: TracePoint[][];
-  latency: { t: number; ms: number }[];
+  latency: LatencyPoint[];
   start: number;
   span: number;
 }
@@ -80,17 +85,18 @@ export function buildCardGraphs(
   spans: Record<Transfer, number>,
   previous: CardGraphs = {},
 ): Record<Transfer, CardGraph> {
-  function sequence<T extends { t: number }>(
+  function sequence<T extends { t: number }, V>(
     before: T[] = [],
-    value: (point: T) => number,
-    create: (t: number, value: number) => T,
+    value: (point: T) => V,
+    create: (t: number, value: V) => T,
+    same: (a: V, b: V) => boolean = (a, b) => a === b,
   ) {
     let next = before;
     let length = 0;
     return {
-      add(t: number, amount: number) {
+      add(t: number, amount: V) {
         const old = before[length];
-        if (old === undefined || old.t !== t || value(old) !== amount) {
+        if (old === undefined || old.t !== t || !same(value(old), amount)) {
           if (next === before) next = before.slice(0, length);
           next.push(create(t, amount));
         } else if (next !== before) next.push(old);
@@ -111,8 +117,14 @@ export function buildCardGraphs(
     ),
     latency: sequence(
       previous[key]?.latency,
-      (point) => point.ms,
-      (t, ms) => ({ t, ms }),
+      ({ t0, t1, ms, lo, hi }) => ({ t0, t1, ms, lo, hi }),
+      (t, { t0, t1, ms, lo, hi }) => ({ t, t0, t1, ms, lo, hi }),
+      (a, b) =>
+        a.t0 === b.t0 &&
+        a.t1 === b.t1 &&
+        a.ms === b.ms &&
+        a.lo === b.lo &&
+        a.hi === b.hi,
     ),
     start: Infinity,
     end: -Infinity,
@@ -139,7 +151,13 @@ export function buildCardGraphs(
   }
   for (const sample of latency) {
     if (sample.medianRttMs === null || !(sample.phase in stages)) continue;
-    stages[sample.phase as Transfer].latency.add(sample.t, sample.medianRttMs);
+    stages[sample.phase as Transfer].latency.add(sample.t, {
+      t0: sample.startT,
+      t1: sample.endT,
+      ms: sample.medianRttMs,
+      lo: sample.minRttMs ?? sample.medianRttMs,
+      hi: sample.maxRttMs ?? sample.medianRttMs,
+    });
   }
   const finish = (key: Transfer): CardGraph => {
     const target = stages[key];
@@ -189,7 +207,7 @@ const shownStatus = (stages: Record<TransportRole, string>) =>
 /** The shown server's evidence, else the run's own; stages without a result are left out. */
 export function summaryEvidence(
   stages: Record<TransportRole, string>,
-  run: Omit<SummaryEvidence, "status">,
+  run: Omit<SummaryEvidence, "status" | "transfers">,
   details: MultiServerResult | null | undefined,
   shown: string,
 ): SummaryEvidence {
@@ -197,6 +215,9 @@ export function summaryEvidence(
     (details && shown && serverEvidence(details, shown)) || {
       ...run,
       status: shownStatus(stages),
+      transfers: LOADED.filter(
+        (stage) => stages[stage] && stages[stage] !== "disabled",
+      ),
     }
   );
 }
@@ -240,21 +261,42 @@ function wire(
   };
 }
 
+/** The idle stage's own facts: its spread, its replies and the probes that went unanswered. */
 function latencyCard(card: SummaryCard, evidence: SummaryEvidence) {
   const latency = evidence.latency;
   if (!latency) return card;
-  const { reportedMs, jitterMs } = latency;
-  const added = LOADED.flatMap((stage): SummaryRow[] => {
-    const ms = evidence.added?.[stage];
-    return ms == null
-      ? []
-      : [{ label: "Added", value: `${fmtAddedMs(ms)} ms`, stage }];
-  });
+  const { reportedMs, jitterMs, stabilityPct } = latency;
+  const idle = evidence.idle;
+  const answered = idle ? idle.probeCount - idle.timeoutCount : null;
   return {
     ...card,
     num: fmtMs(reportedMs),
     unit: "ms",
-    rows: [{ label: "Jitter", value: formatLatency(jitterMs) }, ...added],
+    rows: [
+      { label: "Jitter", value: formatLatency(jitterMs) },
+      {
+        label: "Stability",
+        value: stabilityPct == null ? MISSING : `${Math.round(stabilityPct)}%`,
+      },
+      {
+        label: "Range",
+        value:
+          idle?.minMs == null || idle.maxMs == null
+            ? MISSING
+            : `${fmtMs(idle.minMs)}–${fmtMs(idle.maxMs)} ms`,
+      },
+      {
+        label: "Replies",
+        value: answered == null ? MISSING : String(answered),
+      },
+      {
+        label: "Timeouts",
+        value:
+          idle && idle.probeCount
+            ? `${((100 * idle.timeoutCount) / idle.probeCount).toFixed(1)}%`
+            : MISSING,
+      },
+    ],
   };
 }
 
@@ -355,7 +397,7 @@ export function summaryCards(
 // Facts read the same way on every card: what the link peaked at, how steady it was, what moved.
 const TRANSFER_FACTS = ["Peak", "Stability", "Transferred"];
 const FACTS: Record<TransportRole, string[]> = {
-  latency: [],
+  latency: ["Stability", "Range", "Replies", "Timeouts"],
   download: TRANSFER_FACTS,
   upload: TRANSFER_FACTS,
   bidirectional: ["Stability", "Down + up", "Transferred"],
@@ -363,23 +405,30 @@ const FACTS: Record<TransportRole, string[]> = {
 const FACT_TIPS: Record<string, string> = {
   Peak: JARGON.peak,
   Stability: JARGON.rateStability,
+  Range: JARGON.latencyRange,
+  Replies: JARGON.replies,
   Transferred: JARGON.transferred,
 };
 
-/** A card's facts in every state, "—" until known, so a value arriving never moves the instrument. */
+/** A card's facts in every state, "—" until known, so a value arriving never moves the instrument; a label with
+ *  one row per stage gives each its row. */
 export const cardFacts = (card: SummaryCard): SummaryRow[] =>
-  FACTS[card.key].map((label) => ({
-    label,
-    value: MISSING,
-    ...card.rows.find((row) => row.label === label),
-    tip: FACT_TIPS[label],
-  }));
+  FACTS[card.key].flatMap((label) => {
+    const tip =
+      card.key === "latency" && label === "Stability"
+        ? JARGON.latencyStability
+        : FACT_TIPS[label];
+    const rows = card.rows.filter((row) => row.label === label);
+    return rows.length
+      ? rows.map((row) => ({ ...row, tip }))
+      : [{ label, value: MISSING, tip }];
+  });
 
 /** Time without data after a stall, which the card's line carries so it never adds a row. */
 export const cardNoData = (card: SummaryCard) =>
   card.rows.find((row) => row.label === "No data") ?? null;
 
-/** A completed run spoken in card order: each headline, then latency's jitter and added latency. */
+/** A completed run spoken in card order: each headline, then latency's jitter. */
 export const resultSentence = (cards: SummaryCard[]) =>
   cards
     .map((card) =>
@@ -387,28 +436,12 @@ export const resultSentence = (cards: SummaryCard[]) =>
         `${card.label} ${`${card.num} ${card.unit}`.trim()}${card.status === "complete" ? "" : `, ${card.status}`}`,
         ...(card.key === "latency"
           ? card.rows
-              .filter((row) => row.label === "Jitter" || row.stage)
-              .map(
-                (row) =>
-                  `${row.label}${row.stage ? ` ${STAGE[row.stage].short}` : ""} ${row.value}`,
-              )
+              .filter((row) => row.label === "Jitter")
+              .map((row) => `${row.label} ${row.value}`)
           : []),
       ].join(", "),
     )
     .join("; ");
-
-export const cardTip = (card: SummaryCard) =>
-  [
-    card.label,
-    card.tip.split("\n")[1],
-    ...card.rows
-      .filter((row) => row.value !== MISSING)
-      .map((row) =>
-        row.stage && row.label !== STAGE[row.stage].short
-          ? `${row.label} under ${STAGE[row.stage].short.toLowerCase()}\t${row.value}`
-          : `${row.label}\t${row.value}`,
-      ),
-  ].join("\n");
 
 interface TracePoint {
   t: number;
@@ -469,6 +502,8 @@ function serverEvidence(
     };
   return {
     status: shownStatus(server.stages),
+    transfers: LOADED.filter((stage) => server.stages[stage] !== "not-run"),
+    idle: server.latencyByStage?.latency ?? null,
     download: server.download,
     upload: server.upload,
     bidirectional: server.bidirectional,

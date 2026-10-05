@@ -1,8 +1,7 @@
 import "../state/runes.testutil";
 import { expect, spyOn, test } from "bun:test";
 
-const { frameTime, Handoff, nextFrame, Smoothed } =
-  await import("./motion.svelte");
+const { Handoff, nextFrame, Smoothed } = await import("./motion.svelte");
 
 test("a sample glides in over the interval between samples, never stepping", () => {
   const value = new Smoothed();
@@ -23,18 +22,17 @@ test("a clock keeps moving between samples, stops at its limit and absorbs corre
   expect(clock.at(5_000)).toBe(1_000);
   clock.set(450, { rate: 1, max: 1_000, now: 500 });
   expect(clock.at(500)).toBe(500);
-  // The correction is absorbed over one interval at the clock's own pace.
-  expect(clock.at(900)).toBe(860);
-  expect(clock.at(1_000)).toBe(950);
+  // The correction is absorbed over one interval, 400 ms at most, at the clock's own pace.
+  expect(clock.at(700)).toBe(675);
+  expect(clock.at(900)).toBe(850);
 });
 
-/** Drives the shared frame clock by hand, then hands it back at its old time so later tests can schedule. */
+/** Drives the shared frame clock by hand from 0, then flushes it so later tests can schedule. */
 function withFrames(body: (frame: (now: number) => void) => void): void {
   const owed: FrameRequestCallback[] = [];
   const raf = globalThis.requestAnimationFrame;
   globalThis.requestAnimationFrame = (task) => owed.push(task);
-  const start = frameTime();
-  let last = start;
+  let last = 0;
   const clock = spyOn(performance, "now").mockImplementation(() => last);
   const frame = (now: number) => {
     last = now;
@@ -46,7 +44,7 @@ function withFrames(body: (frame: (now: number) => void) => void): void {
     nextFrame(() => {});
     globalThis.requestAnimationFrame = raf;
     clock.mockRestore();
-    frame(start);
+    frame(0);
   }
 }
 
@@ -105,7 +103,7 @@ test("a handoff never shows a key shorter than its fade-out and follows a held k
       shown.add(view.shown.phase);
     }
     expect([...shown]).toEqual(["latency", "download"]);
-    expect(view.opacity).toBe(1);
+    expect(view.out).toBe(false);
     view.set({ phase: "download", ms: 2 });
     expect(view.shown.ms).toBe(2);
   }));
@@ -130,5 +128,5 @@ test("disposing a view stops its glide and handoff, and a new sample can resume"
     view.dispose();
     frame(1_000);
     expect(view.shown).toBe("old");
-    expect(view.opacity).toBe(1);
+    expect(view.out).toBe(true);
   }));

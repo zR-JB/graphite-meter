@@ -35,7 +35,7 @@
     "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --dur-hover: 120ms;
+  --dur-hover: 100ms;
   --transition-control:
     background-color var(--dur-hover) var(--ease-out),
     border-color var(--dur-hover) var(--ease-out),
@@ -49,9 +49,9 @@
   --space-4: 16px;
   --space-5: 24px;
 
-  --r-well: 4px;
-  --r-chrome: 8px;
-  --r-surface: 12px;
+  --r-well: 2px;
+  --r-chrome: 3px;
+  --r-surface: 4px;
   --r-full: 999px;
   --hairline: 1px;
 
@@ -76,15 +76,10 @@
   --hit: 44px;
 
   --canvas: light-dark(oklch(0.962 0.004 258), oklch(0.17 0.008 258));
-  --canvas-deep: light-dark(oklch(0.93 0.006 258), oklch(0.15 0.008 258));
-  --surface-1: light-dark(oklch(0.995 0.002 258), oklch(0.215 0.009 258));
+  --surface-1: light-dark(oklch(0.995 0.002 258), oklch(0.205 0.009 258));
   --surface-2: light-dark(oklch(0.975 0.003 258), oklch(0.25 0.01 258));
   --sheet-solid: light-dark(oklch(0.985 0.003 258), oklch(0.195 0.009 258));
-  --sheet: light-dark(
-    oklch(0.985 0.003 258 / 0.88),
-    oklch(0.195 0.009 258 / 0.88)
-  );
-  --sheet-blur: blur(28px) saturate(1.4);
+  --sheet: var(--sheet-solid);
 
   --border-subtle: light-dark(
     oklch(0.3 0.02 255 / 0.08),
@@ -116,17 +111,11 @@
   );
   --hover-wash: color-mix(in oklab, var(--text) 6%, transparent);
 
-  --edge-light: light-dark(oklch(1 0 0 / 0.8), oklch(1 0 0 / 0.075));
-  --edge-highlight: rgb(255 255 255 / 0.22);
-  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='.3 0 0 0 .35 .3 0 0 0 .35 .3 0 0 0 .35 0 0 0 0 1'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
-
-  --elev-tile: inset 0 var(--hairline) 0 var(--edge-light);
   --elev-float:
-    var(--elev-tile),
     0 2px 6px
-      light-dark(oklch(0.25 0.02 255 / 0.06), oklch(0.08 0.01 255 / 0.3)),
-    0 28px 64px -16px
-      light-dark(oklch(0.25 0.02 255 / 0.24), oklch(0.08 0.01 255 / 0.55));
+      light-dark(oklch(0.25 0.02 255 / 0.08), oklch(0.08 0.01 255 / 0.35)),
+    0 20px 48px -16px
+      light-dark(oklch(0.25 0.02 255 / 0.24), oklch(0.08 0.01 255 / 0.6));
 
   --focus-ring: 2px solid var(--brand);
   --ring-halo: 0 0 0 3px var(--brand-soft);
@@ -155,17 +144,6 @@
     --text-soft: var(--text-muted);
   }
 }
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  :root {
-    --sheet: var(--sheet-solid);
-    --sheet-blur: none;
-  }
-}
-@media (forced-colors: active) {
-  :root {
-    --grain: none;
-  }
-}
 :root[data-theme="dark"] {
   color-scheme: dark;
 }
@@ -186,11 +164,7 @@ body {
   min-height: 100dvh;
   margin: 0;
   padding: max(var(--space-4), 50dvh - 13rem) var(--space-4) var(--space-4);
-  background:
-    var(--grain),
-    radial-gradient(140% 90% at 50% 125%, var(--canvas-deep), transparent 70%),
-    var(--canvas);
-  background-blend-mode: overlay, normal;
+  background: var(--canvas);
   color: var(--text);
   font: var(--role-row);
   font-variant-numeric: tabular-nums;
@@ -201,11 +175,9 @@ body {
   container-type: inline-size;
   width: min(100%, 420px);
   padding: var(--space-5) var(--panel-pad) var(--panel-pad);
-  border: var(--hairline) solid var(--border-subtle);
+  border: var(--hairline) solid var(--border);
   border-radius: var(--r-surface);
   background: var(--sheet);
-  -webkit-backdrop-filter: var(--sheet-blur);
-  backdrop-filter: var(--sheet-blur);
   box-shadow: var(--elev-float);
 }
 .card > * {
@@ -301,10 +273,9 @@ a {
 .code,
 .card > p:has(> strong:only-child),
 .field {
-  border: var(--hairline) solid var(--border-subtle);
+  border: var(--hairline) solid var(--border);
   border-radius: var(--r-chrome);
   background: var(--surface-1);
-  box-shadow: var(--elev-tile);
 }
 .code,
 .card > p:has(> strong:only-child) {
@@ -391,7 +362,6 @@ button {
   border: 0;
   border-radius: var(--r-chrome);
   background: var(--brand);
-  box-shadow: inset 0 1px 0 var(--edge-highlight);
   color: var(--label);
   font: var(--w-strong) var(--type-md) / 1.2 var(--font-display);
   cursor: pointer;
@@ -412,9 +382,7 @@ form:is([data-busy], :has(button:enabled)) ~ .separator ~ form button {
   --label: var(--text-muted);
   --line: var(--border);
   background: var(--surface-2);
-  box-shadow:
-    inset 0 0 0 var(--hairline) var(--line),
-    var(--elev-tile);
+  box-shadow: inset 0 0 0 var(--hairline) var(--line);
 }
 @media (hover: hover) {
   .completion a:hover,

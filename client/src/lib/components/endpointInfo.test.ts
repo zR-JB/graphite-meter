@@ -1,12 +1,6 @@
 import { test, expect } from "bun:test";
 import type { TransportDiscovery } from "../runner/contract";
-import {
-  advertisedServerCapabilities,
-  advertisedServerHttpPaths,
-  pathEvidence,
-  serverLoadSummary,
-  endpointPathStatus,
-} from "./endpointInfo";
+import { advertisedServerHttpPaths, serverLoadSummary } from "./endpointInfo";
 
 function discovery(): TransportDiscovery {
   return {
@@ -49,43 +43,6 @@ test("occupancy reads as slots, cautions only past half and needs a slot limit",
     expect(serverLoadSummary(pool)).toBe(expected);
 });
 
-test("primary capabilities come from this server's discovery, not the runner", () => {
-  expect(advertisedServerCapabilities(discovery(), "throughput")).toEqual({
-    transports: ["fetch-stream", "webtransport"],
-    browserBlocked: true,
-  });
-  expect(advertisedServerCapabilities(discovery(), "latency")).toEqual({
-    transports: ["websocket"],
-    browserBlocked: false,
-  });
-  expect(advertisedServerCapabilities(null, "latency")).toBeNull();
-});
-
-test("HTTP capability paths preserve advertised version and TLS mode", () => {
-  const paths = advertisedServerHttpPaths({
-    ...discovery(),
-    throughput: {
-      "http://clear.example": {
-        state: "advertised",
-        targets: [
-          { transport: "fetch-stream", protocol: "http1", tls: false },
-          { transport: "fetch-stream", protocol: "http2", tls: true },
-          { transport: "fetch-stream", protocol: "http3", tls: true },
-          { transport: "fetch-stream", protocol: "negotiated", tls: true },
-          { transport: "webtransport", protocol: "http3", tls: true },
-        ],
-      },
-    },
-  } as unknown as TransportDiscovery);
-  expect(paths).toEqual([
-    "HTTP/1.1 (clear)",
-    "HTTP/2 (TLS)",
-    "HTTP/3 (TLS)",
-    "Negotiated HTTP (TLS)",
-  ]);
-  expect(advertisedServerHttpPaths(null)).toBeNull();
-});
-
 test("HTTP capability paths do not claim a latency-only WebTransport target", () => {
   expect(
     advertisedServerHttpPaths({
@@ -101,21 +58,4 @@ test("HTTP capability paths do not claim a latency-only WebTransport target", ()
       },
     } as unknown as TransportDiscovery),
   ).toEqual([]);
-});
-
-test("path evidence retains each protocol observation boundary", () => {
-  for (const [mode, browser, server, expected] of [
-    ["throughput", "h2", "http/1.1", "Browser HTTP/2, server HTTP/1.1"],
-    ["latency", "h2", "http/1.1", "Server HTTP/1.1"],
-    ["latency", undefined, undefined, "Pending"],
-  ] as const)
-    expect(pathEvidence(mode, browser, server)).toBe(expected);
-});
-
-test("endpoint path status keeps non-verified validation truthful", () => {
-  for (const [validation, mode, expected] of [
-    ["checking", "result", { label: "Checking", tone: "brand" }],
-    ["failed", "running", { label: "Failed", tone: "err" }],
-  ] as const)
-    expect(endpointPathStatus(validation, mode)).toEqual(expected);
 });

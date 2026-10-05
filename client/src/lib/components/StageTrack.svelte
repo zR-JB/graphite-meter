@@ -10,11 +10,21 @@
     stageTip,
     stageTrackModel,
   } from "./stageTrack";
-  import { STAGE, STATUS, STATUS_TONE } from "../presentation/vocabulary";
-  import { formatLatency, formatRate } from "../format";
+  import {
+    STAGE,
+    STATUS,
+    STATUS_TONE,
+    type Tone,
+  } from "../presentation/vocabulary";
+  import { fmtDuration, formatLatency, formatRate } from "../format";
   import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
   import type { StageKey } from "../state/store.svelte";
   import { planned, STAGES } from "../runner/schedule";
+  import { flip, handoff, type Handoff } from "../presentation/motion.svelte";
+  import type { Snippet } from "svelte";
+
+  /** The run key, set over the chips as wide as their row. */
+  let { children }: { children?: Snippet } = $props();
 
   const controller = getApplicationController();
 
@@ -71,12 +81,34 @@
       stageShown(s.key, s.selected, store.stagePresentation[s.key]),
     ),
   );
-  // The line under the name: the stage's progress while it runs, how it settled after.
-  const line = (s: (typeof model)[number]) => {
+  const plannedMs = (key: StageKey) =>
+    (store.run?.config ?? store.config).duration[`${key}Ms`];
+  // The bar along a chip's top is the stage's progress while it runs and how it settled after; the chip's end is
+  // the time into the stage while it runs, the stage's length while it waits, and its state word otherwise.
+  const look = (key: StageKey) => {
+    const s = model.find((s) => s.key === key)!;
     const live = s.state === "active" && store.phaseBudgetMs > 0;
+    const waiting =
+      s.selected &&
+      (s.state === "pending" ||
+        (s.state === "disabled" && !store.isRunning && !s.tag));
+    const upcoming = s.selected && s.tag === STATUS.next;
+    const time = live || waiting || upcoming;
     return {
-      tone: s.state === "recovering" ? STATUS_TONE.recovering : s.key,
+      state: s.state,
       live,
+      time,
+      text: live
+        ? `${(store.phaseClock.current / 1000).toFixed(1)} / ${fmtDuration(store.phaseBudgetMs, 0)}`
+        : time
+          ? fmtDuration(plannedMs(key), 0)
+          : s.reason,
+      // A narrow chip keeps the time into the stage and drops its length.
+      short: live ? fmtDuration(store.phaseClock.current, 1) : null,
+      tone: s.state === "recovering" ? STATUS_TONE.recovering : key,
+      tagTone: time
+        ? undefined
+        : (STATUS_TONE as Record<string, Tone | undefined>)[s.state],
       progress:
         s.state === "warmup" || s.state === "failed"
           ? 1
@@ -85,150 +117,148 @@
             : s.fill / 100,
     };
   };
+  // A word or check fades in with its state; the running time counts in place.
+  const looks = Object.fromEntries(
+    STAGES.map((key) => [
+      key,
+      handoff(
+        () => look(key),
+        (shown) =>
+          shown.live ? `${shown.state}:live` : `${shown.state}:${shown.text}`,
+      ),
+    ]),
+  ) as Record<StageKey, Handoff<ReturnType<typeof look>>>;
 </script>
 
-<fieldset class="stage-track">
-  <legend class="sr-only">Test stages, toggle to include or skip</legend>
-  {#each segments as s (s.key)}
-    {@const look = line(s)}
-    <button
-      type="button"
-      class="chip chip--{s.state}"
-      class:btn={!s.locked || s.state === "pending"}
-      class:on={s.selected}
-      data-tone={s.key}
-      role="switch"
-      aria-checked={s.selected}
-      aria-label="{s.label} stage{s.reason
-        ? ` (${s.reason})`
-        : s.state === 'complete'
-          ? ` (${STATUS.complete})`
-          : ''}"
-      use:tooltipAction={s.tip}
-      disabled={s.locked}
-      onclick={() => controller.toggleStage(s.key)}
-    >
-      <!-- One glyph per chip, so no state changes its width and nothing on the row moves. -->
-      <span class="bead" aria-hidden="true"><Icon name="check" /></span>
-      <span class="chip-label">{s.label}</span>
-      <span class="chip-bar" aria-hidden="true">
-        <span
-          class="chip-fill"
-          data-tone={look.tone}
-          class:chip-fill--warmup={s.state === "warmup"}
-          class:chip-fill--failed={s.state === "failed"}
-          class:is-partial={s.state === "partial"}
-          class:is-stalled={s.state === "recovering"}
-          class:is-live={look.live}
-          style:--progress={look.progress}
-        ></span>
-      </span>
-    </button>
-  {/each}
-</fieldset>
+<div
+  class="stage-track"
+  style:--chips={segments.length}
+  style:--cols={segments.length > 3 ? 2 : segments.length}
+>
+  {@render children?.()}
+  <div class="chips" role="group" aria-label="Test stages">
+    <span class="legend caps" aria-hidden="true">Test stages</span>
+    {#each segments as s (s.key)}
+      {@const view = looks[s.key]}
+      {@const look = view.shown}
+      <button
+        type="button"
+        class="chip chip--{s.state}"
+        class:on={s.selected}
+        data-tone={s.key}
+        role="switch"
+        aria-checked={s.selected}
+        aria-label="{s.label} stage{s.reason
+          ? ` (${s.reason})`
+          : s.state === 'complete'
+            ? ` (${STATUS.complete})`
+            : ''}"
+        use:tooltipAction={s.tip}
+        disabled={s.locked}
+        onclick={() => flip(() => controller.toggleStage(s.key))}
+      >
+        <span class="chip-bar" aria-hidden="true">
+          <span
+            class="chip-fill"
+            data-tone={look.tone}
+            class:chip-fill--warmup={look.state === "warmup"}
+            class:chip-fill--failed={look.state === "failed"}
+            class:is-partial={look.state === "partial"}
+            class:is-stalled={look.state === "recovering"}
+            class:is-live={look.live}
+            style:--progress={look.progress}
+          ></span>
+        </span>
+        <span class="chip-row">
+          <span class="chip-ico" aria-hidden="true"><Icon name={s.icon} /></span
+          >
+          <span class="chip-label">{s.label}</span>
+          {#if look.state === "complete"}
+            <span class="chip-check handoff" class:handoff-out={view.out}
+              ><Icon name="check" /></span
+            >
+          {:else if look.text}
+            <span
+              class="chip-tag handoff"
+              class:time={look.time}
+              class:handoff-out={view.out}
+              data-tone={look.tagTone}
+              >{#if look.short}<span class="full">{look.text}</span><span
+                  class="short">{look.short}</span
+                >{:else}{look.text}{/if}</span
+            >
+          {/if}
+        </span>
+      </button>
+    {/each}
+  </div>
+</div>
 
 <style>
+  /* The key over the chips, both as wide as the chip row: as many chips to a line as fit, 140–172 px each,
+     with the caption on the first chip's edge. */
   .stage-track {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: var(--space-2);
+    display: grid;
+    gap: var(--space-3);
+    width: min(
+      100%,
+      calc(var(--chips) * 172px + (var(--chips) - 1) * var(--space-2))
+    );
   }
-  /* A chip that can change is a switch drawn as an ink control (.btn); locked by a run, it is the run's progress.
-     Its size is its own, so locking never moves the row. */
+  .chips {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 6px var(--space-2);
+  }
+  .legend {
+    grid-column: 1 / -1;
+  }
+
+  /* A chip: its stage's bar along the top, then its glyph, name and, at the end, its time, word or check. */
   .chip {
-    --hit-pad: 0px;
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-2);
-    height: 36px;
-    padding: 0 var(--space-3) 0 10px;
+    display: grid;
+    gap: 7px;
+    align-content: center;
+    min-width: 0;
+    height: 46px;
+    padding: 8px 10px;
+    overflow: hidden;
+    border: var(--hairline) solid var(--border);
     border-radius: var(--r-chrome);
-    color: var(--text-soft);
-    font: var(--w-normal) var(--type-body) / 1 var(--font-sans);
-    white-space: nowrap;
+    background: var(--surface-1);
+    box-shadow: var(--elev-tile);
+    color: var(--text);
+    text-align: start;
     transition: var(--transition-control);
   }
-  /* A finger's target reaches past the plate to a full hit height. */
-  @media (pointer: coarse) {
-    .chip::before {
-      position: absolute;
-      inset: calc((100% - var(--hit)) / 2) 0;
-      content: "";
-    }
-  }
-  /* The washes are layers, so they add to the plate instead of replacing it. */
   @media (hover: hover) {
     .chip:hover:not(:disabled) {
-      background-image: linear-gradient(var(--hover-wash) 0 0);
-      color: var(--text);
+      border-color: var(--border-strong);
     }
   }
-  .chip:active:not(:disabled) {
-    background-image: linear-gradient(var(--selected-wash) 0 0);
-  }
-  .chip.on {
-    color: var(--text-muted);
-  }
-  .chip--active,
-  .chip--warmup,
-  .chip--recovering {
-    background: color-mix(in oklab, var(--tone) 14%, transparent);
-    color: var(--text);
+  /* One off stays operable, so it reads soft rather than dimmed; only a locked chip dims. */
+  .chip:not(.on) {
+    border-color: var(--border-subtle);
+    color: var(--text-soft);
   }
   .chip:disabled {
     cursor: default;
   }
-  /* Locked only while the test starts, a chip the run has not reached keeps its plate, undimmed, so nothing blinks. */
-  .chip.btn:disabled {
-    opacity: 1;
-  }
   .chip--disabled:disabled {
     opacity: 0.5;
   }
-  /* The bead is the stage's colour: filled when it runs, a ring when it is off, a check once complete. */
-  .bead {
-    position: relative;
-    flex: none;
-    width: 8px;
-    height: 8px;
-    border-radius: var(--r-full);
-    box-shadow: inset 0 0 0 1.5px var(--tone);
-    transition: background-color var(--dur-graph) var(--ease-out);
+  /* The running chip takes its hue as its edge, like the running card. */
+  .chip--active,
+  .chip--warmup,
+  .chip--recovering {
+    border-color: color-mix(in oklab, var(--tone) 55%, var(--border));
   }
-  .on .bead {
-    background: var(--tone);
-    box-shadow: none;
-  }
-  /* Centred on the bead, the check crossfades with it. */
-  .bead :global(svg) {
-    position: absolute;
-    top: calc((8px - var(--icon-sm)) / 2);
-    left: calc((8px - var(--icon-sm)) / 2);
-    width: var(--icon-sm);
-    height: var(--icon-sm);
-    color: var(--tone-ink);
-    opacity: 0;
-    transition: opacity var(--dur-graph) var(--ease-out);
-  }
-  .chip--complete .bead {
-    background-color: transparent;
-  }
-  .chip--complete .bead :global(svg) {
-    opacity: 1;
-  }
-  .chip-label {
-    font-weight: var(--w-strong);
-  }
-  /* Progress is a hairline under the label, like a stage's rule. */
   .chip-bar {
-    position: absolute;
-    inset: auto var(--space-3) 5px 10px;
-    height: 2px;
+    position: relative;
+    height: 3px;
     overflow: hidden;
     border-radius: var(--r-full);
+    background: var(--surface-inset);
   }
   .chip-fill {
     position: absolute;
@@ -241,12 +271,24 @@
       transform var(--dur-graph) var(--ease-out),
       background-color var(--dur-graph) var(--ease-out);
   }
-  .chip--complete .chip-fill {
-    opacity: 0;
-  }
   .chip-fill.is-live {
     transition: background-color var(--dur-graph) var(--ease-out);
   }
+  /* A finished stage's check pops in on the spring. A press gives inside the chip's border, so the hit box
+     never moves under the finger. */
+  .chip > * {
+    transition: scale var(--dur-graph) var(--ease-spring);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .chip-check {
+      animation: pop 380ms var(--ease-spring) backwards;
+    }
+    .chip:active:not(:disabled) > * {
+      scale: 0.96;
+      transition-duration: var(--dur-hover);
+    }
+  }
+  /* A finished stage keeps its hue; partial is hatched like the dial's dashed arc. */
   .chip-fill.is-partial {
     background: repeating-linear-gradient(
       90deg,
@@ -256,6 +298,7 @@
   }
   .chip-fill--failed {
     background: var(--err);
+    opacity: 0.45;
   }
   .chip-fill.is-stalled {
     animation: stall-pulse var(--dur-pulse) var(--ease-out) infinite;
@@ -284,26 +327,98 @@
       translate: 240%;
     }
   }
-  /* A phone gives the chips one row of equal columns; a chip's name never widens its column. */
-  @container viz (max-width: 520px) {
-    .stage-track {
-      display: grid;
-      grid-auto-columns: minmax(0, 1fr);
-      grid-auto-flow: column;
+  .chip-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 16px;
+    min-width: 0;
+  }
+  .chip-ico {
+    display: grid;
+    flex: none;
+    place-items: center;
+  }
+  .chip-ico :global(svg) {
+    width: 14px;
+    height: 14px;
+  }
+  .chip-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    font: var(--w-heavy) var(--type-sm) / 1 var(--font-sans);
+    letter-spacing: var(--track-tight);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .chip-check {
+    display: grid;
+    flex: none;
+    color: var(--ok);
+  }
+  .chip-check :global(svg) {
+    width: 12px;
+    height: 12px;
+  }
+  /* A state word is a small engraved tag; a time is a plain figure. */
+  .chip-tag {
+    flex: none;
+    padding: 2px 5px;
+    border-radius: var(--r-well);
+    background: var(--surface-inset);
+    color: var(--text-soft);
+    font: var(--w-strong) var(--type-2xs) / 1 var(--font-mono);
+    letter-spacing: var(--track-caps);
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .chip-tag[data-tone] {
+    color: var(--tone-ink);
+  }
+  .chip-tag.time {
+    padding: 0;
+    background: none;
+    color: var(--text-muted);
+    font: var(--role-figure-sm);
+    line-height: 1;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .chip-tag .short {
+    display: none;
+  }
+  /* Narrow rows: two chips to a line, the running one with the time into its stage alone. */
+  /* A phone keeps up to three chips on one line and sets four as two and two; a chip too narrow for its glyph
+     keeps its name and its time. */
+  :global(.gauge-panel.tight) {
+    .chips {
+      grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
     }
     .chip {
-      gap: var(--space-1);
-      padding: 0;
-      font-size: var(--type-sm);
+      container-type: inline-size;
+      padding: 8px;
     }
-    .chip-bar {
-      inset-inline: var(--space-2);
+    .chip-tag .full {
+      display: none;
+    }
+    .chip-tag .short {
+      display: inline;
     }
   }
-  /* A 320 px phone's 66 px columns hold the names at 11 px. */
-  @container viz (max-width: 300px) {
-    .chip {
+  @container (max-width: 124px) {
+    .chip-ico {
+      display: none;
+    }
+    .chip-label {
       font-size: var(--type-xs);
+    }
+    .chip-tag.time {
+      font-size: 10px;
+    }
+    .chip-tag:not(.time) {
+      padding-inline: 3px;
+      font-size: 9px;
     }
   }
 </style>

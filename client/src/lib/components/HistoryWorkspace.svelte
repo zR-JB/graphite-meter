@@ -232,8 +232,13 @@
     void [groups, columns];
     let alive = true;
     let stop: (() => void) | null = null;
+    // The fold depends on the width alone; unfolding to measure shows a scrollbar, and the height it takes
+    // resizes the list again.
+    let measuredWidth = -1;
     const measure = () => {
       stop = null;
+      if (node.clientWidth === measuredWidth) return;
+      measuredWidth = node.clientWidth;
       node.classList.remove("compact");
       node.classList.toggle("compact", node.scrollWidth > node.clientWidth);
     };
@@ -242,7 +247,10 @@
     };
     const observer = new ResizeObserver(fit);
     observer.observe(node);
-    void document.fonts.ready.then(fit);
+    void document.fonts.ready.then(() => {
+      measuredWidth = -1;
+      fit();
+    });
     return () => {
       alive = false;
       observer.disconnect();
@@ -583,14 +591,34 @@
               ? "record was"
               : "records were"} ignored.</span
           >
-          <button
-            class="btn"
-            type="button"
-            onclick={() => {
-              dismissedMalformed = malformedCount;
-              workspace?.focus({ preventScroll: true });
-            }}>Dismiss</button
-          >
+          <span class="notice-actions">
+            <button
+              class="btn"
+              type="button"
+              onclick={async () => {
+                actionError = "";
+                try {
+                  const removed = await repository.removeMalformed();
+                  malformedCount = 0;
+                  announce(
+                    `${removed} malformed ${removed === 1 ? "record" : "records"} removed.`,
+                  );
+                  announceHistoryChanged(changeSource);
+                } catch {
+                  actionError = "Unable to remove the malformed records.";
+                }
+                workspace?.focus({ preventScroll: true });
+              }}>Remove them</button
+            >
+            <button
+              class="btn btn-quiet"
+              type="button"
+              onclick={() => {
+                dismissedMalformed = malformedCount;
+                workspace?.focus({ preventScroll: true });
+              }}>Dismiss</button
+            >
+          </span>
         </p>
       {/if}
     </div>
@@ -635,7 +663,12 @@
       style:--split={store.historySplit}
       bind:clientWidth={bodyWidth}
     >
-      <div class="history-list" bind:this={list} {@attach fitTable}>
+      <div
+        class="history-list"
+        data-flip="history-list"
+        bind:this={list}
+        {@attach fitTable}
+      >
         <div class="history-table" style:--metric-columns={columns.length}>
           <div class="column-head page-fill" role="group" aria-label="Sort by">
             {#each ["date" as const, ...columns] as column (column)}
@@ -809,7 +842,7 @@
       {#if selectedRecord}
         {#key selectedRecord.id}
           <svelte:boundary>
-            <div class="detail-pane enter">
+            <div class="detail-pane enter" data-flip="history-detail">
               <HistoryResultDetail
                 record={selectedRecord}
                 onClose={() => onNavigate(null)}
@@ -876,6 +909,7 @@
   /* Reserving the list's scrollbar gutter, a notice ends on the rows' edge. */
   .notices {
     display: grid;
+    flex: none;
     gap: var(--space-1);
     padding: var(--space-3) var(--panel-pad) 0;
     overflow: hidden;
@@ -884,6 +918,10 @@
   .notice {
     align-items: center;
     justify-content: space-between;
+  }
+  .notice-actions {
+    display: flex;
+    gap: var(--space-2);
   }
   .workspace-body {
     position: relative;
@@ -939,17 +977,15 @@
   .history-list {
     container: history-list / inline-size;
   }
-  /* A reading table, not a spread: the time takes the slack and each value column is as wide as its content, so
-     the figures sit together at the right, and the table stops at a width the eye crosses in one line. Columns
-     never shrink below their content: the rows fold first (fitTable). */
+  /* The time takes the first share of the slack and the value columns the rest, so the table fills the list
+     whatever its width. Columns never shrink below their content: the rows fold first (fitTable). */
   .history-table {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto repeat(
         var(--metric-columns),
-        max-content
+        minmax(max-content, 1fr)
       );
     row-gap: var(--space-5);
-    max-width: 1120px;
     padding: 0 var(--panel-pad) var(--space-6);
   }
   .column-head,
@@ -1054,7 +1090,7 @@
   .unit {
     display: block;
     color: var(--text-soft);
-    font: var(--w-normal) var(--type-2xs) / 1.4 var(--font-mono);
+    font: 500 var(--type-2xs) / 1.4 var(--font-mono);
   }
   /* A day spaces its heading as a .group, but its gap must not open the table's columns. */
   .day {
@@ -1098,9 +1134,10 @@
     padding: 0;
   }
   /* A value, then what it cost or how it varied, in the column's own ink. */
+  /* The bar takes the column's slack up to a reading length, so a wide list draws longer bars, not wider gaps. */
   .metric {
     display: grid;
-    grid-template: "bar value" auto ". note" auto / minmax(0, 4.5rem) auto;
+    grid-template: "bar value" auto ". note" auto / minmax(0, 12rem) auto;
     align-items: baseline;
     justify-content: end;
     column-gap: var(--space-2);
@@ -1125,7 +1162,7 @@
     align-self: center;
     width: 100%;
     height: 4px;
-    border-radius: var(--r-full);
+    border-radius: 1px;
     background: linear-gradient(
         270deg,
         color-mix(in oklab, var(--tone) 62%, transparent)
@@ -1137,13 +1174,14 @@
   .value {
     grid-area: value;
     justify-self: end;
-    font-weight: 500;
+    font: 500 var(--type-md) / 1.35 var(--font-sans);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
+  /* A status word in a value's place is prose, not a figure. */
   .missing .value {
     color: var(--text-soft);
-    font-weight: var(--w-normal);
+    font: var(--role-row);
   }
   /* The selected wash dims soft text below 4.5:1; muted keeps it, as on a running card. */
   .result-row[aria-current] time small,

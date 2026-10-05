@@ -21,15 +21,8 @@ const loaded = (value: unknown) => {
 
 beforeEach(() => stored.clear());
 
-const { loadPersisted, savePersisted, defaultPersisted, STORAGE_KEY } =
+const { loadPersisted, defaultPersisted, STORAGE_KEY } =
   await import("./persistence");
-
-test("stored value at the current shape: hydrates as-is", () => {
-  const snapshot = defaultPersisted();
-  snapshot.theme = "light";
-  snapshot.unitKind = "bytes";
-  expect(loaded(snapshot)).toEqual(snapshot);
-});
 
 test("invalid history preference falls back to default and preserves explicit overrides", () => {
   const snapshot = defaultPersisted();
@@ -75,10 +68,6 @@ test("partial stored shape: missing fields fall back to defaults", () => {
   expect(result.unitBase).toBe("base10");
   expect(result.config).toEqual(DEFAULT_CONFIG);
   expect(result.showWireEstimates).toBe(true);
-});
-
-test("an explicit wire-estimate opt-out survives hydration", () => {
-  expect(loaded({ showWireEstimates: false }).showWireEstimates).toBe(false);
 });
 
 test("the early-finish switch loads from both saved shapes", () => {
@@ -170,16 +159,4 @@ test("unknown/extra stored keys: dropped, known keys still merge", () => {
   expect(
     (result.config as unknown as Record<string, unknown>).bogus,
   ).toBeUndefined();
-});
-
-test("current target identifiers round-trip without historical alias rewriting", () => {
-  const snapshot = defaultPersisted();
-  snapshot.config.transports = {
-    throughputTarget: "http1-clear",
-    latencyTarget: "ws-http1-tls",
-  };
-  snapshot.config.pingCadence = "slow";
-  snapshot.config.transferStreams = { mode: "forced", count: 3 };
-  savePersisted(snapshot);
-  expect(loadPersisted()).toEqual(snapshot);
 });

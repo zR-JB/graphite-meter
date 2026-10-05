@@ -68,7 +68,7 @@ export const refusal = (
   retryAfterMs: retryAfterMs(res.headers),
 });
 
-export function fetchInit(
+function fetchInit(
   credentials: RequestCredentials,
   headers?: HeadersInit,
 ): RequestInit {

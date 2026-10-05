@@ -226,9 +226,6 @@ export const JARGON = {
   probeAccounting:
     "Probe accounting\nReplies, and timeouts: no reply before the deadline\n" +
     "Unfinished probes and failed sends are counted apart, never as timeouts",
-  preflight:
-    "Preflight request\nOne request before any test: connection setup plus the response\n" +
-    "Not a latency measurement",
   pretestLatency:
     "Pre-test latency\nMedian round trip of the probes that checked the latency path\n" +
     "The first selected server's sizes the warmup",
@@ -307,16 +304,6 @@ export const phaseLabel = (phase: Phase, outcome: Outcome = "complete") =>
   phase === "complete" ? OUTCOME[outcome] : PHASE[phase];
 
 const CHECKING_SIGN_IN = "Checking sign-in";
-/** Characters of the longest statusLabel, so the footer never shifts. */
-export const STATUS_LABEL_CH = Math.max(
-  ...[
-    ...Object.values(PHASE),
-    ...Object.values(OUTCOME),
-    BLOCKED,
-    START_FAILED,
-    CHECKING_SIGN_IN,
-  ].map((label) => label.length),
-);
 
 export function statusLabel(
   preparation: PreparationState["status"],
@@ -399,4 +386,11 @@ export const PING_CADENCE: Record<PingCadence, string> = {
   fast: "Fast (80 ms)",
   medium: "Medium (250 ms)",
   slow: "Slow (600 ms)",
+};
+/** The cadence's word on a segment; its interval is the segment's tip. */
+export const PING_CADENCE_SHORT: Record<PingCadence, string> = {
+  "reply-driven": "Reply",
+  fast: "Fast",
+  medium: "Medium",
+  slow: "Slow",
 };

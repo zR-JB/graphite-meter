@@ -123,18 +123,13 @@
       <label
         class:unavailable={option.disabled ||
           (locked && option.value !== selected)}
-        {@attach tooltip(() => `${option.label}\n${option.detail}`)}
       >
         {@render choice(option)}
       </label>
     {/each}
     {#if unfolded}
       {#each folded as option (option.value)}
-        <label
-          transition:reveal
-          class="unavailable"
-          {@attach tooltip(() => `${option.label}\n${option.detail}`)}
-        >
+        <label transition:reveal class="unavailable">
           {@render choice(option)}
         </label>
       {/each}
