@@ -22,16 +22,9 @@ import zipfile
 from pathlib import Path
 
 from .ci.github_api import ControlPlaneError, confined_path, local_path
-from .ci.rust_workspace import ROOT, load, offer_name, release_name
+from .ci.rust_workspace import ROOT, load, offer_name, tui_archive
 from .legal.model import LegalError
 from .legal.rust import DEVELOPMENT, VERSION, Build, collect
-
-def names(version: str, platform_name: str) -> tuple[str, str, str]:
-    """The archive, its root directory and the binary of the TUI for `platform_name` (GOOS/GOARCH)."""
-    base = release_name("graphite-meter-client", version, platform_name)
-    if platform_name.startswith("windows/"):
-        return f"{base}.zip", base, "graphite-meter-client.exe"
-    return f"{base}.tar.gz", base, "graphite-meter-client"
 
 
 def host_platform() -> str:
@@ -58,7 +51,7 @@ def probe(executable: Path, version: str, platform_name: str) -> None:
 
 def package(version: str, platform_name: str, target: str, output: Path) -> None:
     """Build and write the archive and source offer of one platform, replacing neither until both are complete."""
-    archive, base, binary = names(version, platform_name)
+    archive, base, binary = tui_archive(version, platform_name)
     offer = offer_name("graphite-meter-client", version, platform_name)
     cargo = ROOT / "rust/target"
     cargo.mkdir(parents=True, exist_ok=True)
@@ -102,7 +95,7 @@ def archived(path: Path) -> dict[str, bytes]:
 
 def check(version: str, platform_name: str, output: Path) -> None:
     """The archive of `platform_name` holds exactly Go's layout with reviewed notices beside its source offer."""
-    archive, base, binary = names(version, platform_name)
+    archive, base, binary = tui_archive(version, platform_name)
     offer = offer_name("graphite-meter-client", version, platform_name)
     files = archived(confined_path(output / archive, output))
     expected = {f"{base}/{name}" for name in (binary, "LICENSE", "COPYRIGHT", "THIRD_PARTY_NOTICES.txt",

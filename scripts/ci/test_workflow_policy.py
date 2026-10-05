@@ -152,6 +152,14 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      r"rust-release misses \['rust/rust-toolchain.toml'"),
     (RUST, "COPY LICENSE COPYRIGHT mise.toml ./\n", "COPY LICENSE COPYRIGHT mise.toml client/ ./\n",
      r"rust-release misses \['client/x'\]"),
+    # CI stages and verifies its Rust builds as a release does.
+    (W + "ci.yml", "--target server-artifacts", "--target server", "--target server-artifacts"),
+    (W + "ci.yml", "OUT_DIR=$RUNNER_TEMP/staged/tui python3 scripts/ci/rust_release.py stage-tui\n", "",
+     "rust_release.py stage-tui"),
+    (W + "ci.yml", "python3 scripts/ci/rust_release.py check\n", "python3 scripts/ci/verify_oci.py\n",
+     "rust_release.py check"),
+    (W + "ci.yml", "rust-tui, rust-release, rust-windows", "rust-tui, rust-windows",
+     r"Gate must need every job: \['rust-release'\]"),
 )
 
 

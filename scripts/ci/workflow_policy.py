@@ -49,6 +49,11 @@ ORDERED = {
         "no-cache: true", "provenance: mode=max", "github-token: ''",
         "GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}\n",
     ),
+    # CI exports the image's source offers, then stages and verifies its Rust builds as releases do.
+    "workflows/ci.yml": (
+        "--target server-artifacts", "python3 scripts/ci/rust_release.py stage-image\n",
+        "python3 scripts/ci/rust_release.py stage-tui\n", "python3 scripts/ci/rust_release.py check\n",
+    ),
     "workflows/release.yml": (
         "github.event.workflow_run.conclusion == 'success'\n",
         "&& github.event.workflow_run.event == 'workflow_dispatch'\n",

@@ -58,6 +58,14 @@ def release_name(package: str, version: str, platform: str) -> str:
     return f"{package}_{version}_{platform.replace('/', '_')}_rust"
 
 
+def tui_archive(version: str, platform: str) -> tuple[str, str, str]:
+    """The Rust TUI archive for `platform`, its root directory and its executable, in Go's layout."""
+    base = release_name("graphite-meter-client", version, platform)
+    if platform.startswith("windows/"):
+        return f"{base}.zip", base, "graphite-meter-client.exe"
+    return f"{base}.tar.gz", base, "graphite-meter-client"
+
+
 def offer_name(package: str, version: str, platform: str) -> str:
     """The source offer of that build; its files lie in a directory named like it without `.tar.gz`, as Go's."""
     return f"{release_name(package, version, platform)}_third-party-source.tar.gz"

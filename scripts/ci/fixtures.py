@@ -16,6 +16,7 @@ from typing import cast
 from unittest.mock import patch
 
 from github_api import ControlPlaneError, JsonObject, JsonValue
+from rust_workspace import ROOT, load, offer_name, tui_archive
 from verify_release_assets import TARGETS, TUI_FILES, tui_archives
 
 AMD, ARM = "sha256:" + "a" * 64, "sha256:" + "b" * 64
@@ -101,8 +102,10 @@ ATTESTED = (descriptor("unknown", "unknown", "sha256:" + "c" * 64, AMD),
 
 
 def write_oci(path: Path, repository: str, revision: str, *, remote: bool, tamper: bool = False,
-              predicate: str = SLSA, files: Mapping[str, bytes] = IMAGE_FILES) -> JsonObject:
-    """Write two images of `files` with BuildKit-shaped provenance into an OCI archive; return its index."""
+              predicate: str = SLSA, files: Mapping[str, bytes] = IMAGE_FILES,
+              arch_files: Mapping[str, Mapping[str, bytes]] | None = None) -> JsonObject:
+    """Write two images of `files`, each with its `arch_files`, and BuildKit-shaped provenance into an OCI archive;
+    return its index."""
     blobs: dict[str, bytes] = {}
 
     def add(value: object) -> str:
@@ -111,16 +114,19 @@ def write_oci(path: Path, repository: str, revision: str, *, remote: bool, tampe
         blobs[digest] = data + (b" " if tamper else b"")
         return digest
 
-    layer = io.BytesIO()
-    with tarfile.open(fileobj=layer, mode="w:gz") as archive:
-        for name, payload in files.items():
-            info = tarfile.TarInfo(name)
-            info.size = len(payload)
-            archive.addfile(info, io.BytesIO(payload))
-    layer_digest = "sha256:" + hashlib.sha256(layer.getvalue()).hexdigest()
-    blobs[layer_digest] = layer.getvalue()
-    images = {arch: add({"schemaVersion": 2, "mediaType": MANIFEST_TYPE, "architecture": arch,
-                         "layers": [{"digest": layer_digest}]}) for arch in ("amd64", "arm64")}
+    def layer(contents: Mapping[str, bytes]) -> str:
+        data = io.BytesIO()
+        with tarfile.open(fileobj=data, mode="w:gz") as archive:
+            for name, payload in contents.items():
+                info = tarfile.TarInfo(name)
+                info.size = len(payload)
+                archive.addfile(info, io.BytesIO(payload))
+        digest = "sha256:" + hashlib.sha256(data.getvalue()).hexdigest()
+        blobs[digest] = data.getvalue()
+        return digest
+
+    images = {arch: add({"schemaVersion": 2, "mediaType": MANIFEST_TYPE, "architecture": arch, "layers": [
+        {"digest": layer({**files, **(arch_files or {}).get(arch, {})})}]}) for arch in ("amd64", "arm64")}
 
     source: JsonObject = {"path": "Dockerfile"}
     if remote:
@@ -205,3 +211,75 @@ def write_release_assets(dist: Path, version: str, reported: str = "") -> None:
         else:
             write_tar(dist / name, members)
     write_checksums(dist)
+
+
+RUST_OCI = "graphite-meter-rust.oci.tar"
+# 64-bit little-endian executable headers for each Rust target's architecture.
+ELF = {"x86_64": 62, "aarch64": 183}
+
+
+def executable(target: str, payload: bytes = b"") -> bytes:
+    """The start of an executable for `target`, followed by `payload`."""
+    if "-windows-" in target:
+        return b"MZ" + bytes(0x3A) + (0x40).to_bytes(4, "little") + b"PE\0\0" + (0x8664).to_bytes(2, "little") + payload
+    machine = ELF[target.split("-", 1)[0]]
+    return b"\x7fELF\x02\x01\x01" + bytes(9) + (2).to_bytes(2, "little") + machine.to_bytes(2, "little") + payload
+
+
+def rust_source(version: str, offer: str, target: str) -> bytes:
+    return (f"Graphite Meter source: https://github.com/zR-JB/graphite-meter/tree/v{version}\n"
+            f"Matching release: v{version}\nDependency source archive: {offer}\nRust target: {target}\n").encode()
+
+
+def write_rust_offer(path: Path, package: str, target: str, profile: str = "release",
+                     extra: Mapping[str, bytes] | None = None) -> None:
+    """A source offer as the collector writes it, against this checkout."""
+    top = path.name.removesuffix(".tar.gz")
+    inventory = {"schemaVersion": 1, "package": package, "target": target, "profile": profile,
+                 "cargoLockSha256": hashlib.sha256((ROOT / "rust/Cargo.lock").read_bytes()).hexdigest(),
+                 "components": [{"component": {"name": "dependency", "version": "1.0.0"}}]}
+    write_tar(path, {f"{top}/inventory.json": json.dumps(inventory).encode(),
+                     f"{top}/LEGAL.txt": f"notices of {package} for {target}\n".encode(),
+                     f"{top}/legal/rust-forks.json": (ROOT / "legal/rust-forks.json").read_bytes(),
+                     f"{top}/third_party/cargo/dependency-1.0.0/src/lib.rs": b"code\n",
+                     **({f"{top}/third_party/npm/package-1.0.0/index.js": b"code\n"}
+                        if package == "graphite-meter-server" else {}),
+                     **(extra or {})})
+
+
+def write_rust_tui(directory: Path, version: str, platform: str, target: str,
+                   changes: Mapping[str, bytes] | None = None) -> None:
+    """A TUI archive and its source offer as package_rust writes them; `changes` replaces archive members."""
+    archive, base, binary = tui_archive(version, platform)
+    offer = offer_name("graphite-meter-client", version, platform)
+    write_rust_offer(directory / offer, "graphite-meter-client", target)
+    members = {binary: executable(target), "LICENSE": (ROOT / "LICENSE").read_bytes(),
+               "COPYRIGHT": (ROOT / "COPYRIGHT").read_bytes(),
+               "THIRD_PARTY_NOTICES.txt": f"notices of graphite-meter-client for {target}\n".encode(),
+               "SOURCE.txt": rust_source(version, offer, target)} | dict(changes or {})
+    files = {f"{base}/{name}": payload for name, payload in members.items()}
+    if archive.endswith(".zip"):
+        with zipfile.ZipFile(directory / archive, "w") as handle:
+            for name, payload in files.items():
+                handle.writestr(name, payload)
+    else:
+        write_tar(directory / archive, files)
+
+
+def write_rust_release(image: Path, tui: Path, version: str, revision: str, repository: str) -> JsonObject:
+    """Stage the Rust image with its server source offers and the TUI archives; return the image's index."""
+    image.mkdir(parents=True, exist_ok=True)
+    tui.mkdir(parents=True, exist_ok=True)
+    workspace = load()
+    sources: dict[str, Mapping[str, bytes]] = {}
+    for platform, target in workspace.server.items():
+        offer = offer_name("graphite-meter-server", version, platform)
+        write_rust_offer(image / offer, "graphite-meter-server", target)
+        sources[platform.split("/")[1]] = {
+            "usr/share/licenses/graphite-meter/SOURCE.txt": rust_source(version, offer, target)}
+    oci = write_oci(image / RUST_OCI, repository, revision, remote=False, arch_files=sources)
+    (image / f"{RUST_OCI}.sha256").write_text(
+        f"{hashlib.sha256((image / RUST_OCI).read_bytes()).hexdigest()}  {RUST_OCI}\n")
+    for platform, target in workspace.tui.items():
+        write_rust_tui(tui, version, platform, target)
+    return oci

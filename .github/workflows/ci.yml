@@ -298,28 +298,31 @@ jobs:
           cache-image: 'false'
       - name: Set up pinned Buildx
         uses: ./.github/actions/setup-buildx
-      # The OCI archive builds each architecture's server once; the loaded images reuse its layers. The ci
-      # profile leaves out LTO, and the core job checks the browser app.
-      - name: Build the amd64 and arm64 server image with reviewed notices
+      # The OCI archive builds each architecture's server once; the loaded images and the source offers reuse its
+      # layers. The ci profile leaves out LTO, and the core job checks the browser app.
+      - name: Build the amd64 and arm64 server image with reviewed notices and export its source offers
         run: |
           build() {
-            docker buildx build --file container/Dockerfile.rust --target server \
+            docker buildx build --file container/Dockerfile.rust \
               --build-arg VERSION="$VERSION" --build-arg PROFILE=ci --build-arg GM_CLIENT_VALIDATE=0 \
               --label "org.opencontainers.image.source=https://github.com/$REPOSITORY" \
               --label "org.opencontainers.image.revision=$REVISION" \
-              --label "org.opencontainers.image.version=$VERSION" \
+              --label "org.opencontainers.image.version=$VERSION-rust" \
               --label org.opencontainers.image.licenses=AGPL-3.0-or-later "$@" .
           }
           mkdir -p "$RUNNER_TEMP/rust-image"
-          build --platform linux/amd64,linux/arm64 --provenance mode=max \
+          build --target server --platform linux/amd64,linux/arm64 --provenance mode=max \
             --output "type=oci,dest=$RUNNER_TEMP/rust-image/graphite-meter-rust.oci.tar"
           # Docker's image store cannot load the attestation manifests.
           for arch in amd64 arm64; do
-            build --platform "linux/$arch" --provenance false --load --tag "graphite-meter-rust:$arch"
+            build --target server --platform "linux/$arch" --provenance false --load --tag "graphite-meter-rust:$arch"
           done
+          build --target server-artifacts --platform linux/amd64,linux/arm64 --provenance false \
+            --output "type=local,dest=$RUNNER_TEMP/rust-image/server-export"
       - name: Verify the archive's platforms, provenance, labels and reviewed notices
         env:
           OCI_ARCHIVE: ${{ runner.temp }}/rust-image/graphite-meter-rust.oci.tar
+          VERSION: 0.0.0-ci-rust
         run: SKOPEO_IMAGE=$(python3 scripts/ci/toolchains.py get images.skopeo) python3 scripts/ci/verify_oci.py
       # The arm64 image runs under emulation.
       - name: Check both images' files, server, browser app and allocator setting like the Go image
@@ -334,7 +337,7 @@ jobs:
         run: |
           docker create --name rust-image-server graphite-meter-rust:amd64
           docker cp rust-image-server:/graphite-meter "$RUNNER_TEMP/rust-image/graphite-meter-server"
-      - name: Upload the image and its amd64 server
+      - name: Upload the image, its source offers and its amd64 server
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rust-image
@@ -418,6 +421,49 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
+
+  # Stages and verifies this run's Rust builds as a release request stages and the release verifies them.
+  rust-release:
+    name: Rust release staging
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    needs: [plan, rust-image, rust-tui]
+    if: needs.plan.outputs.rust-release == 'true'
+    env:
+      VERSION: 0.0.0-ci
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up pinned mise and Python
+        uses: ./.github/actions/setup-project
+      - name: Download the image and its source offers from this run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: rust-image
+          path: ${{ runner.temp }}/rust-image
+      - name: Download the TUI archives and source offers from this run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: rust-tui
+          path: ${{ runner.temp }}/rust-tui
+      - name: Stage exactly the release files out of the exports
+        env:
+          OCI_ARCHIVE: ${{ runner.temp }}/rust-image/graphite-meter-rust.oci.tar
+          SERVER_EXPORT: ${{ runner.temp }}/rust-image/server-export
+          TUI_EXPORT: ${{ runner.temp }}/rust-tui
+        run: |
+          OUT_DIR=$RUNNER_TEMP/staged/image python3 scripts/ci/rust_release.py stage-image
+          OUT_DIR=$RUNNER_TEMP/staged/tui python3 scripts/ci/rust_release.py stage-tui
+      # The image's server uses the ci profile; the TUI archives are release builds.
+      - name: Verify the image, the TUI archives and every source offer as the release does
+        env:
+          REPOSITORY: ${{ github.repository }}
+          REVISION: ${{ github.sha }}
+          SERVER_PROFILE: ci
+          IMAGE_DIR: ${{ runner.temp }}/staged/image
+          TUI_DIR: ${{ runner.temp }}/staged/tui
+        run: SKOPEO_IMAGE=$(python3 scripts/ci/toolchains.py get images.skopeo) python3 scripts/ci/rust_release.py check
 
   rust-windows:
     name: Rust client tests on Windows
@@ -523,7 +569,7 @@ jobs:
     runs-on: ubuntu-24.04
     if: always()
     needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-image,
-      rust-e2e, rust-tui, rust-windows, rust-perf]
+      rust-e2e, rust-tui, rust-release, rust-windows, rust-perf]
     steps:
       - name: Require every selected job
         env:

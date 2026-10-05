@@ -178,7 +178,7 @@ class ReleaseAssetTests(unittest.TestCase):
 class OCITests(unittest.TestCase):
     def test_index_requires_linked_provenance_for_each_platform(self) -> None:
         self.assertEqual(validate_index_descriptors(index(*RUNNABLE, *ATTESTED)),
-                         ([item["digest"] for item in ATTESTED], [AMD, ARM]))
+                         ([item["digest"] for item in ATTESTED], {"amd64": AMD, "arm64": ARM}))
         stray = descriptor("unknown", "unknown", "sha256:" + "e" * 64, "sha256:" + "f" * 64)
         mistyped = descriptor("unknown", "unknown", "sha256:" + "d" * 64, ARM)
         mistyped["annotations"] = {"vnd.docker.reference.type": "other",
