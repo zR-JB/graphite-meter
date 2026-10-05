@@ -77,22 +77,25 @@ impl Watch {
         self.admitted.get()
     }
 
-    /// `served`, counted as admitted work on `work` from the poll that sees the exchange admitted until it ends.
-    pub async fn counted<T>(&self, served: impl Future<Output = T>, work: &Work) -> T {
-        let mut served = pin!(served);
-        let mut guard = None;
-        poll_fn(|cx| {
+    /// `served`, counted as admitted work on `work` once seen admitted, or `None` once the exchange expires unadmitted.
+    pub async fn bounded<T>(&self, served: impl Future<Output = T>, work: &Work) -> Option<T> {
+        let (mut served, mut guard) = (pin!(served), None);
+        let counted = poll_fn(|cx| {
             let polled = served.as_mut().poll(cx);
             if guard.is_none() && self.admitted().is_some() {
                 guard = Some(work.start());
             }
             polled
-        })
-        .await
+        });
+        tokio::select! {
+            biased;
+            served = counted => Some(served),
+            () = self.expired() => None,
+        }
     }
 
     /// Completes at the deadline unless the exchange was admitted by then; a lane bounds it after admission.
-    pub async fn expired(&self) {
+    async fn expired(&self) {
         sleep_until(self.deadline).await;
         if self.admitted().is_some() {
             future::pending::<()>().await;

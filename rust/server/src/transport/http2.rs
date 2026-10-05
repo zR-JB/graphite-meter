@@ -174,12 +174,7 @@ impl Http2 {
                     Outcome::WebSocket(..) | Outcome::WebTransport(..) | Outcome::Abort => Err(Aborted),
                 }
             };
-            let ended = tokio::select! {
-                biased;
-                ended = watch.counted(served, &connection.work) => ended,
-                () = watch.expired() => Err(Aborted),
-            };
-            if ended.is_err() {
+            if watch.bounded(served, &connection.work).await != Some(Ok(())) {
                 respond.send_reset(Reason::CANCEL);
             }
         }

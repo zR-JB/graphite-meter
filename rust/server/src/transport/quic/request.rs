@@ -53,11 +53,7 @@ impl Requests {
             let exchange = Exchange::start();
             let watch = exchange.watch();
             let served = requests.respond(request, exchange, &watch);
-            tokio::select! {
-                biased;
-                () = watch.counted(served, &requests.connection.work) => {}
-                () = watch.expired() => {}
-            }
+            watch.bounded(served, &requests.connection.work).await;
         }
     }
 
