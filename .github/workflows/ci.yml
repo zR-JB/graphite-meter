@@ -295,7 +295,7 @@ jobs:
         working-directory: rust
         run: cargo test --locked -p graphite-meter-client --lib --tests
 
-  # Temporary: this branch's server against PR #210's on one runner.
+  # Temporary: this branch's server and client against PR #210's on one runner.
   rust-perf:
     name: Rust perf smoke against PR 210
     runs-on: ubuntu-24.04
@@ -312,30 +312,37 @@ jobs:
       - name: Set up Go and Rust
         uses: ./.github/actions/setup-project
         with: {go: 'true', rust: 'true'}
-      - name: Install the musl compiler for the static servers
+      - name: Install the musl compiler for the static binaries
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends musl-tools
-      # perf.py keeps each server in TMPDIR/graphite-meter-perf/<variant> and its evidence in TMPDIR.
+      # perf.py keeps each variant's binaries in TMPDIR/graphite-meter-perf/<variant> and its evidence in TMPDIR.
       - id: baseline
-        name: Restore PR 210's static release server
+        name: Restore PR 210's static release server and client
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/graphite-meter-perf/baseline
-          key: rust-perf-baseline-${{ runner.os }}-${{ runner.arch }}-${{ env.BASELINE_SHA }}
-      - name: Build PR 210's static release server
+          key: rust-perf-baseline-server-client-${{ runner.os }}-${{ runner.arch }}-${{ env.BASELINE_SHA }}
+      - name: Build PR 210's static release server and client
         if: steps.baseline.outputs.cache-hit != 'true'
         env:
           TMPDIR: ${{ runner.temp }}
         run: python3 rust/interop/perf.py baseline "$BASELINE_SHA"
-      - name: Build this branch's static release server
+      - name: Build this branch's static release server and client
         env:
           TMPDIR: ${{ runner.temp }}
         run: python3 rust/interop/perf.py candidate
-      - name: Compare HTTP/1, HTTP/2 and HTTP/3 with PR 210 in alternating order
+      - id: servers
+        name: Compare the servers over HTTP/1, HTTP/2 and HTTP/3 with PR 210 in alternating order
         env:
           TMPDIR: ${{ runner.temp }}
-        run: python3 rust/interop/perf.py measure
+        run: python3 rust/interop/perf.py servers
+      # The client comparison runs even when the server comparison found a regression.
+      - name: Compare the clients over HTTP/1, HTTP/2, HTTP/3 and WebTransport with PR 210 in alternating order
+        if: success() || steps.servers.outcome == 'failure'
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: python3 rust/interop/perf.py clients
       - name: Upload the perf runs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

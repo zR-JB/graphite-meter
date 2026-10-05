@@ -31,6 +31,11 @@ def musl_target() -> str:
 
 def build_server(checkout: Path, profile: str) -> Path:
     """Builds `checkout`'s static musl server with `profile`, without notices or browser assets."""
+    return build_static(checkout, profile, "graphite-meter-server")
+
+
+def build_static(checkout: Path, profile: str, package: str) -> Path:
+    """Builds `checkout`'s static musl `package` binary with `profile`, without notices or browser assets."""
     target = musl_target()
     environment = {key: value for key, value in os.environ.items()
                    if not key.startswith(("GM_", "CARGO_PROFILE_")) and not key.endswith("RUSTFLAGS")}
@@ -38,8 +43,8 @@ def build_server(checkout: Path, profile: str) -> Path:
     workspace = checkout / "rust"
     subprocess.run(["rustup", "target", "add", target], cwd=workspace, check=True)
     subprocess.run(["cargo", "build", "--locked", "--profile", profile, "--target", target,
-                    "-p", "graphite-meter-server"], cwd=workspace, env=environment, check=True)
-    return workspace / "target" / target / profile / "graphite-meter-server"
+                    "-p", package], cwd=workspace, env=environment, check=True)
+    return workspace / "target" / target / profile / package
 
 
 def planned_endpoints() -> int:
@@ -71,7 +76,7 @@ def udp_sockets(port: int) -> int:
 
 def native(client: Path, server: Server, listener: str, transport: str, stages: str, seconds: int,
            *extra: str) -> list[str]:
-    """A Go native client report run against `server`'s `listener`."""
+    """A native client's report run against `server`'s `listener`."""
     protocol = "http1" if listener.startswith("http1") else listener
     durations = [f"--{stage}-duration={seconds}s" for stage in ("latency", "download", "upload", "bidirectional")]
     return [str(client), "--report", "--url", server.origin("http1"), "--throughput-origin", server.origin(listener),
