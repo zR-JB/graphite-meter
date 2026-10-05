@@ -178,19 +178,15 @@ impl Conn {
             }
             Self::Http3 { requests, quic } => return http3_send(requests, quic, head, body).await,
         };
-        Ok(response
-            .map_err(hyper_failed)?
-            .map(|body| Incoming { source: Source::Hyper(body), ended: None }))
+        let incoming = |body| Incoming { source: Source::Hyper(body), ended: None };
+        Ok(response.map_err(hyper_failed)?.map(incoming))
     }
 }
 
 /// An HTTP/1.1 head: in origin form with its Host, or in absolute form with a proxy's credentials.
 fn http1_form(head: &mut http::Request<()>, form: &RequestForm) {
-    let authority = head
-        .uri()
-        .authority()
-        .map(|authority| HeaderValue::from_str(authority.as_str()));
-    if let Some(Ok(host)) = authority {
+    let authority = head.uri().authority();
+    if let Some(Ok(host)) = authority.map(|authority| HeaderValue::from_str(authority.as_str())) {
         head.headers_mut().insert(header::HOST, host);
     }
     match form {

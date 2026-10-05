@@ -117,9 +117,8 @@ impl Approval {
                 status => Err(Fault::Malformed(format!("client approval returned HTTP {}", status.as_u16()))),
             }
         };
-        timeout(CONTROL_TIMEOUT, exchange)
-            .await
-            .unwrap_or(Err(Fault::TimedOut("approval response")))
+        let exchanged = timeout(CONTROL_TIMEOUT, exchange).await;
+        exchanged.unwrap_or(Err(Fault::TimedOut("approval response")))
     }
 
     fn head(&self, length: usize) -> Result<http::Request<()>, Fault> {

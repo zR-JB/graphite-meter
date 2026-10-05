@@ -70,9 +70,8 @@ async fn connect(origin: &Origin, verify: Verify) -> Result<(Arc<Quic>, client::
     let crypto = QuicClientConfig::try_from(client_config(verify, Alpn::Http3).await).map_err(io::Error::other);
     let mut config = noq::ClientConfig::new(Arc::new(crypto.map_err(ConnectError::Io)?));
     config.transport_config(Arc::new(client_transport()));
-    let mut addresses = resolve(&origin.host, origin.port)
-        .await
-        .map_err(ConnectError::Unreachable)?;
+    let resolved = resolve(&origin.host, origin.port).await;
+    let mut addresses = resolved.map_err(ConnectError::Unreachable)?;
     addresses.sort_by_key(|address| !address.ip().to_canonical().is_ipv4());
     let name = match &origin.host {
         Host::Name(name) => name.clone(),
@@ -104,10 +103,8 @@ async fn attempt(
     let connecting = endpoint.connect_with(config.clone(), address, name);
     let mut connecting = connecting.map_err(|error| ConnectError::Io(io::Error::other(error)))?;
     let silent = || ConnectError::Unreachable(io::Error::new(io::ErrorKind::TimedOut, "no QUIC answer"));
-    timeout(SILENT, connecting.handshake_data())
-        .await
-        .map_err(|_| silent())?
-        .map_err(refused)?;
+    let answered = timeout(SILENT, connecting.handshake_data()).await;
+    answered.map_err(|_| silent())?.map_err(refused)?;
     let finished = timeout(ANSWERING, connecting).await;
     let connection = finished
         .map_err(|_| Fault::TimedOut("QUIC handshake"))?

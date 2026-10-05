@@ -69,11 +69,8 @@ impl Connections {
 
     /// The multiplexed connection to `origin` over `via`, dialed on the current runtime when there is none.
     pub(super) async fn shared(&self, client: &Client, origin: &Origin, via: Protocol) -> Result<Conn, Fault> {
-        let slot = self.slot(origin, via);
-        Ok(self
-            .take(client, &slot, via, origin, true, Some(&Handle::current()))
-            .await?
-            .conn)
+        let (slot, home) = (self.slot(origin, via), Handle::current());
+        Ok(self.take(client, &slot, via, origin, true, Some(&home)).await?.conn)
     }
 
     /// The runtime the multiplexed QUIC connection to `origin` over `via` runs on, if there is one.

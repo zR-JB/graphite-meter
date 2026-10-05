@@ -85,9 +85,8 @@ impl Client {
         if !upgraded(answer.headers(), &derive_accept_key(key.as_bytes())) {
             return Err(Fault::Malformed("invalid WebSocket upgrade response".into()));
         }
-        let upgraded = hyper::upgrade::on(answer)
-            .await
-            .map_err(|error| Fault::Lost(error.to_string()))?;
+        let upgraded = hyper::upgrade::on(answer).await;
+        let upgraded = upgraded.map_err(|error| Fault::Lost(error.to_string()))?;
         let config = WebSocketConfig::default()
             .read_buffer_size(4096)
             .write_buffer_size(0)

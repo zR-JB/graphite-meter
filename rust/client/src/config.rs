@@ -313,9 +313,8 @@ fn cadence(text: &str) -> Result<Cadence, String> {
     if let Some((_, cadence)) = named.iter().find(|(name, _)| name.eq_ignore_ascii_case(text)) {
         return Ok(*cadence);
     }
-    span(text, Duration::ZERO)
-        .map(Cadence::Every)
-        .map_err(|_| "use reply-driven, fast, medium, slow, or a duration such as 400ms".into())
+    let spacing = span(text, Duration::ZERO).map(Cadence::Every);
+    spacing.map_err(|_| "use reply-driven, fast, medium, slow, or a duration such as 400ms".into())
 }
 
 fn stages(text: &str) -> Result<Vec<Stage>, String> {

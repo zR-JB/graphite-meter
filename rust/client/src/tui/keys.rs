@@ -157,8 +157,6 @@ pub fn find(table: &[Binding], key: Key, offered: impl Fn(Action) -> bool) -> Op
 
 /// The bindings of `table` that help lists while their actions are `offered`.
 pub fn listed(table: &[Binding], offered: impl Fn(Action) -> bool) -> Vec<Binding> {
-    let listed = table
-        .iter()
-        .filter(|binding| binding.help.is_some() && offered(binding.action));
-    listed.copied().collect()
+    let listed = |binding: &&Binding| binding.help.is_some() && offered(binding.action);
+    table.iter().filter(listed).copied().collect()
 }
