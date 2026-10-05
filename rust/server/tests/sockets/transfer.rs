@@ -56,6 +56,36 @@ async fn a_download_the_peer_stops_draining_closes_after_the_idle_bound() {
 }
 
 #[tokio::test]
+async fn shutdown_ends_running_downloads_and_uploads_at_once() {
+    let server = start(&[]).await;
+    let id = server.upload_id().await;
+    let mut download = server.connect().await;
+    download
+        .send("GET /download?bytes=68719476736 HTTP/1.1\r\nHost: test\r\n\r\n")
+        .await;
+    download.head().await.unwrap();
+    let mut upload = server.connect().await;
+    upload
+        .send(&format!(
+            "POST /upload?id={id} HTTP/1.1\r\nHost: test\r\nContent-Length: 1000\r\n\r\npartial"
+        ))
+        .await;
+    server.until_active(2).await;
+    let stopped = server.stop();
+    let bound = Duration::from_secs(2);
+    tokio::time::timeout(bound, download.drain())
+        .await
+        .expect("the download ends");
+    let answer = tokio::time::timeout(bound, upload.answer()).await.unwrap();
+    assert!(answer.is_none(), "an upload ending with shutdown closes unanswered");
+    let stopped = tokio::time::timeout(bound, stopped).await;
+    stopped
+        .expect("the server stops before its drain grace")
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
 async fn a_finished_upload_answers_its_byte_count() {
     let server = start(&[]).await;
     let id = server.upload_id().await;

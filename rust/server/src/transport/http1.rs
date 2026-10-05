@@ -55,7 +55,7 @@ type Bus = Arc<Mutex<Option<(OnUpgrade, Lane)>>>;
 impl Http1 {
     /// An accepted connection's work, after its TLS handshake on a TLS listener, on whichever runtime polls it.
     pub fn connection(&self, socket: TcpStream, peer: SocketAddr) -> impl Future<Output = ()> + Send + 'static {
-        let (listener, socket) = (self.clone(), socket.into_std());
+        let (listener, socket, accepted) = (self.clone(), socket.into_std(), Instant::now());
         async move {
             let Ok(socket) = socket.and_then(TcpStream::from_std) else {
                 return;
@@ -67,7 +67,7 @@ impl Http1 {
                 work: Work::default(),
             };
             let Some(acceptor) = &listener.tls else {
-                return listener.serve(socket, connection).await;
+                return listener.serve(socket, connection, accepted).await;
             };
             let stream = tokio::select! {
                 biased;
@@ -75,17 +75,18 @@ impl Http1 {
                 stream = tls::accept(acceptor, socket, peer) => stream,
             };
             if let Some(stream) = stream {
-                listener.serve(stream, connection).await;
+                listener.serve(stream, connection, Instant::now()).await;
             }
         }
     }
 
-    async fn serve<S>(&self, stream: S, connection: Connection)
+    /// Serves requests until the connection ends; the first request's exchange began at `start`.
+    async fn serve<S>(&self, stream: S, connection: Connection, start: Instant)
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
         let shared = Arc::new(Shared::default());
-        let io = Io::new(stream, shared.clone());
+        let io = Io::new(stream, shared.clone(), start + EXCHANGE_BOUND);
         let bus = Bus::default();
         let service = {
             let (app, bus) = (self.app.clone(), bus.clone());
@@ -225,9 +226,11 @@ enum State {
 }
 
 impl<S> Io<S> {
-    fn new(inner: S, shared: Arc<Shared>) -> Self {
-        let deadline = Box::pin(sleep_until(Instant::now() + KEEP_ALIVE_IDLE));
-        Self { inner, state: State::Waiting, deadline, shared }
+    /// The first request's exchange runs until `deadline`.
+    fn new(inner: S, shared: Arc<Shared>, deadline: Instant) -> Self {
+        *lock(&shared.started) = Some(deadline);
+        let (state, deadline) = (State::Exchange(None), Box::pin(sleep_until(deadline)));
+        Self { inner, state, deadline, shared }
     }
 
     /// Adopts a posted limit and fails once the connection's deadline passed or its reply must end.
@@ -355,6 +358,12 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Io<S> {
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.inner).poll_shutdown(cx)
+        let this = &mut *self;
+        this.check(cx)?;
+        let result = Pin::new(&mut this.inner).poll_shutdown(cx);
+        if result.is_pending() {
+            this.blocked(cx)?;
+        }
+        result
     }
 }
