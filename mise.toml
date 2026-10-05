@@ -349,7 +349,7 @@ run = [
 
 # Mirrors CI job by job: server-race replaces check's server-test.
 [tasks.ci]
-description = "Run deterministic, race, Rust, advisory, browser, release, and container gates"
+description = "Run deterministic, race, Rust, interoperability, advisory, browser, release, and container gates"
 run = [
   { task = "workflow-check" },
   { task = "pipeline-test" },
@@ -358,6 +358,8 @@ run = [
   { task = "server-race" },
   { task = "rust-check" },
   { task = "rust-check-targets" },
+  { task = "rust-interop" },
+  { task = "rust-delayed-downloads" },
   { task = "security" },
   { task = "client-audit" },
   { task = "secret-scan-ci" },
@@ -452,6 +454,10 @@ rustup target add $(printf '%s\n' "${tui[@]}" "${server[@]}" | sort -u)
 cargo check --locked -p graphite-meter-client "${tui[@]/#/--target=}"
 cargo check --locked -p graphite-meter-server "${server[@]/#/--target=}"
 '''
+
+[tasks.rust-interop]
+description = "Run Go peers, the Go native client and process checks against the static Rust server (needs musl-tools)"
+run = "python3 rust/interop/server.py"
 
 [tasks.rust-delayed-downloads]
 shell = "bash -e -o pipefail -c"

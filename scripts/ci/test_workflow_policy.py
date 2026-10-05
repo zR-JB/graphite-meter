@@ -119,7 +119,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (REQUEST, "github-token: ''", "github-token: ${{ github.token }}", "github-token"),
     (REQUEST, "            GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}\n", "",
      "GM_CLIENT_REVISION"),
-    (W + "ci.yml", "secret-scan, rust]", "secret-scan]", r"Gate must need every job: \['rust'\]"),
+    (W + "ci.yml", "security, secret-scan, rust", "security, rust", r"Gate must need every job: \['secret-scan'\]"),
     (W + "ci.yml", "mise run rust-check\n", "cargo test\n", "local gate step rust-check"),
     (W + "ci.yml", "mise run rust-check-targets\n", "cargo check\n", "local gate step rust-check-targets"),
     (W + "ci.yml", "check_git_sources --verify\n", "check_git_sources\n", "check_git_sources --verify"),

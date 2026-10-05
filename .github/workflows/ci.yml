@@ -215,6 +215,54 @@ jobs:
       - name: Check the shipped TUI and server targets
         run: mise run rust-check-targets
 
+  rust-interop:
+    name: Rust interoperability
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    env:
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - id: toolchain
+        name: Set up Go, Rust and cargo-nextest
+        uses: ./.github/actions/setup-project
+        with: {go: 'true', rust: 'true', cargo-nextest: 'true'}
+      # Only the static server's C dependencies use Ubuntu's unpinned musl compiler.
+      - name: Install the musl compiler for the static server
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+      - name: Run unchanged Go peers, the Go native client and process checks against the sharded server
+        run: mise run rust-interop
+      - name: Gate delayed-link HTTP/3 and WebTransport downloads
+        run: mise run rust-delayed-downloads
+      - id: chrome
+        name: Install pinned Chrome for Testing
+        uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
+        with:
+          chrome-version: ${{ steps.toolchain.outputs.chrome-version }}
+          install-dependencies: true
+      # Chrome for Testing is an unpacked archive without a setuid sandbox; the script runs it with --no-sandbox.
+      - name: Check Chromium's HTTP/3, WebTransport and session close codes against the sharded server
+        env:
+          CHROME: ${{ steps.chrome.outputs.chrome-path }}
+        run: python3 rust/interop/browser.py --chromium "$CHROME"
+      - name: Upload interoperability evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rust-interop-evidence
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/interop-*/*.log
+            ${{ runner.temp }}/browser-*/*.log
+            ${{ runner.temp }}/browser-*/*.json
+          if-no-files-found: ignore
+
   secret-scan:
     name: Secret Scan
     runs-on: ubuntu-24.04
@@ -234,7 +282,7 @@ jobs:
     name: Gate
     runs-on: ubuntu-24.04
     if: always()
-    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust]
+    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop]
     steps:
       - name: Require every selected job
         env:
