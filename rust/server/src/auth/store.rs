@@ -190,8 +190,7 @@ impl Store {
         Some(login.lease(grant.login, holder, via, grant.revoked.clone()))
     }
 
-    /// Issues `login` a measurement grant for the `browser` origin or a native client. A login holds eight; then a
-    /// native grant replaces the oldest native one, and anything else is refused.
+    /// A test hook: issues a grant as an approved challenge does.
     pub fn grant(&self, login: LoginKey, browser: Option<HeaderValue>) -> Result<String, GrantRefusal> {
         let credentials = credentials();
         lock(&self.0).grant(login, browser, credentials)
@@ -253,7 +252,8 @@ impl Store {
 }
 
 impl State {
-    /// See `Store::grant`; `(token, id)` come from `credentials`.
+    /// Issues `login` a measurement grant with `credentials` for the `browser` origin or a native client. A login holds
+    /// eight; then a native grant replaces the oldest native one, and anything else is refused.
     pub(super) fn grant(
         &mut self,
         login: LoginKey,

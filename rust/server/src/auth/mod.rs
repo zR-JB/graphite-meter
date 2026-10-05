@@ -135,7 +135,7 @@ impl Auth {
         matches!(self, Self::On(_))
     }
 
-    /// The store of logins, grants and tickets, when enabled.
+    /// A test hook: the store of logins, grants and tickets, when enabled, for signing in without credentials.
     pub fn store(&self) -> Option<&Store> {
         match self {
             Self::Off => None,

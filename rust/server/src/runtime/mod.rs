@@ -143,7 +143,7 @@ impl Server {
         quic.unwrap_or(0)
     }
 
-    /// The state every listener shares.
+    /// A test hook: the state every listener shares.
     pub fn app(&self) -> Arc<App> {
         self.app.clone()
     }
