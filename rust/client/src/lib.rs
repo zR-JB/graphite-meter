@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod model;
+pub mod net;
 
 pub mod measure {
     pub mod aggregate;
