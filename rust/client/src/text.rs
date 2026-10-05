@@ -195,9 +195,7 @@ fn sgr(style: Style, profile: Profile) -> Option<String> {
         })
     };
     let bold = (style.bold && profile != Profile::Plain).then(|| "1".to_owned());
-    let codes: Vec<_> = [bold, color(style.fg, 30), color(style.bg, 40)]
-        .into_iter()
-        .flatten()
-        .collect();
+    let codes = [bold, color(style.fg, 30), color(style.bg, 40)];
+    let codes: Vec<_> = codes.into_iter().flatten().collect();
     (!codes.is_empty()).then(|| codes.join(";"))
 }

@@ -20,42 +20,30 @@ pub fn details(view: &View, width: usize, palette: &Palette, full: bool) -> Vec<
 impl Report<'_> {
     pub(super) fn details(&self, full: bool) -> Vec<Line> {
         let (palette, run) = (self.palette, self.run);
-        let columns = run
-            .plan
-            .iter()
-            .flat_map(|&(stage, _)| stage.directions().iter().map(move |&at| (stage, at)));
+        let planned = run.plan.iter();
+        let columns = planned.flat_map(|&(stage, _)| stage.directions().iter().map(move |&at| (stage, at)));
         let columns: Vec<(Stage, Direction)> = columns.collect();
         let rate = |throughput: Option<Throughput>| {
-            Line::plain(
-                throughput
-                    .and_then(|throughput| throughput.rate)
-                    .map_or(MISSING.into(), |rate| format::rate(rate.mean)),
-            )
+            let rate = throughput.and_then(|throughput| throughput.rate);
+            Line::plain(rate.map_or(MISSING.into(), |rate| format::rate(rate.mean)))
         };
-        let all = columns
-            .iter()
-            .map(|&(stage, direction)| rate(self.result(stage).and_then(|result| result.throughput[direction])));
+        let combined =
+            |&(stage, direction): &_| rate(self.result(stage).and_then(|result| result.throughput[direction]));
+        let all = columns.iter().map(combined);
         let mut rates = vec![[vec![Line::plain("All servers")], all.collect()].concat()];
         let mut medians = Vec::new();
         for server in self.view.servers.iter() {
             let own = |stage: Stage| {
-                self.result(stage)?
-                    .servers
-                    .iter()
-                    .find(|own| own.server == server.id)
-                    .cloned()
+                let servers = &self.result(stage)?.servers;
+                servers.iter().find(|own| own.server == server.id).cloned()
             };
             let mark = if self.view.remains(&server.id) { "" } else { " ✗" };
-            let cells = columns
-                .iter()
-                .map(|&(stage, direction)| rate(own(stage).and_then(|own| own.throughput[direction])));
+            let share = |&(stage, direction): &_| rate(own(stage).and_then(|own| own.throughput[direction]));
+            let cells = columns.iter().map(share);
             rates.push([vec![Line::plain(format!("{}{mark}", server.name))], cells.collect()].concat());
             let median = |&(stage, _): &(Stage, Duration)| {
-                Line::plain(
-                    own(stage)
-                        .and_then(|own| own.latency?.median())
-                        .map_or(MISSING.into(), ms),
-                )
+                let median = own(stage).and_then(|own| own.latency?.median());
+                Line::plain(median.map_or(MISSING.into(), ms))
             };
             medians.push([vec![Line::plain(&server.name)], run.plan.iter().map(median).collect()].concat());
         }
@@ -66,10 +54,8 @@ impl Report<'_> {
                 .map(|&(stage, direction)| direction_label(stage, direction)),
         );
         let headers: Vec<&str> = headers.iter().map(String::as_str).collect();
-        let populations: Vec<&str> = ["Server"]
-            .into_iter()
-            .chain(run.plan.iter().map(|&(stage, _)| compact_population(stage)))
-            .collect();
+        let populations = run.plan.iter().map(|&(stage, _)| compact_population(stage));
+        let populations: Vec<&str> = std::iter::once("Server").chain(populations).collect();
         let mut lines = vec![Line::styled(self.notice(), palette.heading)];
         let facts = if full { self.facts() } else { Vec::new() };
         if !facts.is_empty() {
@@ -135,21 +121,12 @@ impl Report<'_> {
         for result in &self.run.results {
             for interval in &result.intervals {
                 let names: Vec<_> = interval.participants.iter().map(|id| self.name(id)).collect();
-                let state = if interval.complete && interval.window.is_some() {
-                    "measured window"
-                } else {
-                    "incomplete evidence"
-                };
-                let span = format!(
-                    "{} {:.1}–{:.1} s",
-                    compact_stage(result.stage),
-                    offset(interval.start),
-                    offset(interval.end)
-                );
-                let parts: Vec<_> = [span, names.join(", "), state.into()]
-                    .into_iter()
-                    .filter(|part| !part.is_empty())
-                    .collect();
+                let measured = interval.complete && interval.window.is_some();
+                let state = if measured { "measured window" } else { "incomplete evidence" };
+                let (start, end) = (offset(interval.start), offset(interval.end));
+                let span = format!("{} {start:.1}–{end:.1} s", compact_stage(result.stage));
+                let parts = [span, names.join(", "), state.into()].into_iter();
+                let parts: Vec<_> = parts.filter(|part| !part.is_empty()).collect();
                 lines.push(Line::styled(parts.join(" · "), muted));
             }
             let omitted = format!("{} older intervals omitted; byte totals retain the full run", result.omitted);
@@ -161,12 +138,8 @@ impl Report<'_> {
     /// The run's outcome with how many of its servers remain.
     fn notice(&self) -> String {
         let selected = self.view.servers.len();
-        let remaining = self
-            .view
-            .servers
-            .iter()
-            .filter(|server| self.view.remains(&server.id))
-            .count();
+        let servers = self.view.servers.iter();
+        let remaining = servers.filter(|server| self.view.remains(&server.id)).count();
         let outcome = self.run.outcome.map_or("Running", outcome_label);
         match () {
             _ if self.run.outcome.is_none() && remaining < selected => {

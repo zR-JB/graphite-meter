@@ -235,15 +235,11 @@ impl View {
     /// Whether `server` is still in the run: in its latest stage without leaving, or prepared before any.
     pub fn remains(&self, server: &ServerId) -> bool {
         let results = self.run.iter().flat_map(|run| run.results.iter().rev());
-        match results
-            .filter_map(|result| result.servers.iter().find(|own| own.server == *server))
-            .next()
-        {
+        let mut own = results.filter_map(|result| result.servers.iter().find(|own| own.server == *server));
+        let prepared = |prepared: &ServerPath| prepared.id == *server && prepared.path.is_ok();
+        match own.next() {
             Some(own) => !own.left,
-            None => self
-                .servers
-                .iter()
-                .any(|prepared| prepared.id == *server && prepared.path.is_ok()),
+            None => self.servers.iter().any(prepared),
         }
     }
 

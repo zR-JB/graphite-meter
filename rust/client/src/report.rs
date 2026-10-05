@@ -8,7 +8,7 @@ pub use details::details;
 use crate::{
     events::{Event, Run, View},
     measure::{format, latency::Population},
-    model::{Direction, Outcome, Stage, StageResult, StageStatus, Throughput},
+    model::{Direction, Outcome, ServerFailure, Stage, StageResult, StageStatus, Throughput},
     text::{Line, Style, wrap},
     tui::theme::Palette,
 };
@@ -42,11 +42,8 @@ pub fn report(view: &View, width: usize, palette: &Palette) -> Vec<Line> {
     if report.several() {
         blocks.push(report.details(false));
     }
-    blocks.extend(
-        run.error
-            .as_ref()
-            .map(|error| vec![Line::styled(&error.text, palette.err)]),
-    );
+    let error = run.error.as_ref();
+    blocks.extend(error.map(|error| vec![Line::styled(&error.text, palette.err)]));
     blocks.retain(|block| !block.is_empty());
     blocks.join(&Line::default()).into_iter().map(Line::trimmed).collect()
 }
@@ -153,11 +150,8 @@ impl Report<'_> {
             servers => vec![format!("{servers} servers")],
         };
         facts.push(clock(self.run.elapsed));
-        let directions = self
-            .run
-            .results
-            .iter()
-            .flat_map(|result| [result.throughput.down, result.throughput.up]);
+        let results = self.run.results.iter();
+        let directions = results.flat_map(|result| [result.throughput.down, result.throughput.up]);
         let total: u64 = directions.flatten().map(|throughput| throughput.bytes).sum();
         facts.extend((total > 0).then(|| format::bytes(total)));
         let outcome = self.run.outcome.unwrap_or(Outcome::Failed);
@@ -219,9 +213,7 @@ impl Report<'_> {
     /// The latency grid, the failures under it and whether a row shows Added; none when nothing was measured.
     fn results(&self, heading: &str) -> Option<(Vec<Line>, Vec<Line>, bool)> {
         let palette = self.palette;
-        let idle = self
-            .population(Stage::Latency)
-            .and_then(|population| population.median());
+        let idle = self.population(Stage::Latency).and_then(|idle| idle.median());
         let (mut rows, mut failures, mut added_shown, mut measured) = (Vec::new(), Vec::new(), false, false);
         for &(stage, _) in &self.run.plan {
             let result = self.result(stage);
@@ -282,10 +274,10 @@ impl Report<'_> {
             return Some(Line::styled(format!("{label} stopped."), self.palette.warn));
         }
         let focus = self.focus?;
-        let failed = result
-            .failures
-            .iter()
-            .find(|failure| failure.server == *focus && failure.failure.reason != FailureReason::InsufficientEvidence);
+        let first = |failure: &&ServerFailure| {
+            failure.server == *focus && failure.failure.reason != FailureReason::InsufficientEvidence
+        };
+        let failed = result.failures.iter().find(first);
         Some(Line::styled(format!("{label}: {}", failed?.failure.reason.label()), self.palette.err))
     }
 
@@ -326,10 +318,8 @@ impl Report<'_> {
         for line in wrap(&facts, room) {
             lines.push(if lines.is_empty() { line } else { format!("  {line}") });
         }
-        lines
-            .into_iter()
-            .map(|line| Line::styled(line, self.palette.muted))
-            .collect()
+        let muted = |line| Line::styled(line, self.palette.muted);
+        lines.into_iter().map(muted).collect()
     }
 
     /// Muted headers over text cells, or each row's facts under its name when the columns do not fit.
@@ -343,31 +333,23 @@ impl Report<'_> {
         }
         if widths.iter().map(|width| width + 2).sum::<usize>().saturating_sub(2) <= self.width {
             let header = headers.iter().map(|header| Line::styled(*header, muted)).collect();
-            let rows = std::iter::once(header).chain(
-                rows.into_iter()
-                    .map(|row| row.into_iter().map(|cell| cell.based(text)).collect()),
-            );
+            let based = |row: Vec<Line>| row.into_iter().map(|cell| cell.based(text)).collect();
+            let rows = std::iter::once(header).chain(rows.into_iter().map(based));
             let joined = |row: Vec<Line>| {
                 let cells = row.into_iter().zip(&widths).map(|(cell, width)| cell.pad(*width));
-                cells
-                    .reduce(|line, cell| line.and("  ", Style::default()).with(cell))
-                    .unwrap_or_default()
-                    .trimmed()
+                let joined = cells.reduce(|line, cell| line.and("  ", Style::default()).with(cell));
+                joined.unwrap_or_default().trimmed()
             };
             return rows.map(joined).collect();
         }
         let mut lines = vec![Line::styled(headers[0], muted)];
         for row in rows {
             let facts = row[1..].iter().zip(&headers[1..]).filter(|(cell, _)| cell.width() > 0);
-            let facts: Vec<_> = facts
-                .map(|(cell, header)| format!("{header} {}", cell.text()).trim().to_owned())
-                .collect();
+            let fact = |(cell, header): (&Line, &&str)| format!("{header} {}", cell.text()).trim().to_owned();
+            let facts: Vec<_> = facts.map(fact).collect();
             lines.push(row[0].clone().based(text));
-            lines.extend(
-                wrap(&facts, self.width.saturating_sub(2))
-                    .into_iter()
-                    .map(|fact| Line::plain("  ").and(fact, muted)),
-            );
+            let indented = |fact| Line::plain("  ").and(fact, muted);
+            lines.extend(wrap(&facts, self.width.saturating_sub(2)).into_iter().map(indented));
         }
         lines
     }

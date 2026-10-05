@@ -104,7 +104,7 @@ impl Controller {
         let previous = self.current.take();
         let unfinished = previous
             .as_ref()
-            .filter(|previous| !previous.run && !previous.task.is_finished());
+            .filter(|check| !check.run && !check.task.is_finished());
         let replaced = unfinished.filter(|_| run).map(|check| check.config.clone());
         if let Some(previous) = &previous {
             previous.token.cancel();
@@ -200,8 +200,8 @@ impl Work {
             Some(Err(failure)) => (Outcome::Failed, Some(failure)),
             None => (Outcome::Stopped, None),
         };
-        self.events
-            .send(Event::RunFinished { outcome, error, elapsed: started.elapsed() });
+        let elapsed = started.elapsed();
+        self.events.send(Event::RunFinished { outcome, error, elapsed });
     }
 
     /// Prepares `config` with the grants kept, signing in while a server asks and an operator can approve; none once
@@ -220,9 +220,8 @@ impl Work {
             let refusal = match approval::refusal(&origin, config.insecure) {
                 _ if !self.interactive => Some(Failure::new(FailureReason::SignInRequired, SIGN_IN)),
                 Some(text) => Some(Failure::new(FailureReason::PreparationFailed, text)),
-                None => approved
-                    .contains(&origin)
-                    .then(|| Failure::new(FailureReason::SignInRequired, REJECTED)),
+                None if approved.contains(&origin) => Some(Failure::new(FailureReason::SignInRequired, REJECTED)),
+                None => None,
             };
             if let Some(refusal) = refusal {
                 refuse(&mut prepared, &refusal);
@@ -240,8 +239,8 @@ impl Work {
     async fn sign_in(&self, origin: &Origin, issuer: String, client: &Client) -> Option<Result<String, Failure>> {
         let approval = Approval::new(origin);
         let (url, code, deadline) = (approval.url.clone(), approval.code.clone(), approval.deadline);
-        self.events
-            .send(Event::SignIn(SignInPrompt { issuer, url, code, deadline }));
+        let prompt = SignInPrompt { issuer, url, code, deadline };
+        self.events.send(Event::SignIn(prompt));
         let granted = self.stop.run_until_cancelled(approval.grant(client)).await;
         let end = match &granted {
             None => SignInEnd::Cancelled,

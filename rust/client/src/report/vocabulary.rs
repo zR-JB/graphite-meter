@@ -47,11 +47,8 @@ pub fn throughput_facts(throughput: Throughput, measured: Duration, direction: D
     let mut facts = Vec::new();
     if let Some(rate) = throughput.rate.filter(|rate| rate.peak > 0.0) {
         let (peak, mean) = (format::rate(rate.peak), format::rate(rate.mean));
-        let unit = mean
-            .rsplit_once(' ')
-            .filter(|_| brief)
-            .map(|(_, unit)| format!(" {unit}"))
-            .unwrap_or_default();
+        let unit = brief.then(|| mean.rsplit_once(' ')).flatten();
+        let unit = unit.map_or(String::new(), |(_, unit)| format!(" {unit}"));
         facts.push(format!("peak {}", peak.strip_suffix(&unit).unwrap_or(&peak)));
     }
     facts.push(format::bytes(throughput.bytes));
@@ -74,11 +71,8 @@ pub fn mean_rates(result: &StageResult) -> String {
     let directions = result.stage.directions().iter();
     let rates = directions.filter_map(|&direction| {
         let rate = result.throughput[direction]?.rate;
-        Some(format!(
-            "{} {}",
-            arrow(direction),
-            rate.map_or(MISSING.into(), |rate| format::rate(rate.mean))
-        ))
+        let mean = rate.map_or(MISSING.into(), |rate| format::rate(rate.mean));
+        Some(format!("{} {mean}", arrow(direction)))
     });
     rates.collect::<Vec<_>>().join("  ")
 }
@@ -114,13 +108,7 @@ pub fn arrow(direction: Direction) -> &'static str {
 }
 
 pub fn outcome_label(outcome: Outcome) -> &'static str {
-    match outcome {
-        Outcome::Complete => "Complete",
-        Outcome::Partial => "Partial",
-        Outcome::Incomplete => "Incomplete",
-        Outcome::Stopped => "Stopped",
-        Outcome::Failed => "Failed",
-    }
+    ["Complete", "Partial", "Incomplete", "Stopped", "Failed"][outcome as usize]
 }
 
 pub fn clock(duration: Duration) -> String {
@@ -134,12 +122,8 @@ pub fn ms(duration: Duration) -> String {
 /// Thousands separated by commas.
 pub fn count(value: usize) -> String {
     let digits = value.to_string();
-    let groups: Vec<_> = digits
-        .as_bytes()
-        .rchunks(3)
-        .rev()
-        .map(String::from_utf8_lossy)
-        .collect();
+    let groups = digits.as_bytes().rchunks(3).rev();
+    let groups: Vec<_> = groups.map(String::from_utf8_lossy).collect();
     groups.join(",")
 }
 
