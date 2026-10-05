@@ -21,12 +21,7 @@ impl Stage {
     pub const ALL: [Self; 4] = [Self::Latency, Self::Download, Self::Upload, Self::Bidirectional];
 
     pub const fn name(self) -> &'static str {
-        match self {
-            Self::Latency => "latency",
-            Self::Download => "download",
-            Self::Upload => "upload",
-            Self::Bidirectional => "bidirectional",
-        }
+        ["latency", "download", "upload", "bidirectional"][self as usize]
     }
 
     /// The directions the stage moves bytes in; none for latency.

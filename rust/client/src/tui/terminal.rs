@@ -1,19 +1,15 @@
-//! The terminal's setup and restore, and the event loop over any `Terminal` backend.
+//! The terminal's setup and restore, and the interface's event loop on it.
 use super::{App, Effect, Exit, FRAME, chrome::Chrome, dialogs, theme};
-use crate::{
-    config::Config,
-    controller::Controller,
-    events::{Event, Events},
-    text::Profile,
-};
+use crate::{config::Config, controller::Controller, events::Events, text::Profile};
 use crossterm::{
-    event::{DisableBracketedPaste, EnableBracketedPaste, Event as Input, EventStream},
+    event::{DisableBracketedPaste, EnableBracketedPaste, EventStream},
     execute,
     terminal::{Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use futures_util::{Stream, StreamExt};
+use futures_util::StreamExt;
 use graphite_meter_net::Pool;
-use ratatui_core::{backend::Backend, terminal::Terminal};
+use ratatui_core::terminal::Terminal;
+use ratatui_crossterm::CrosstermBackend;
 use std::{
     io::{self, Write},
     pin::pin,
@@ -22,36 +18,22 @@ use std::{
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 
-/// Runs the interface on this terminal until it quits; `signals` brings each caught signal's status.
-pub async fn interactive(config: Config, runtimes: Arc<Pool>, signals: UnboundedReceiver<u8>) -> io::Result<Exit> {
+/// Runs the interface on this terminal until it quits, feeding it events, input, ticks and each caught signal's
+/// status from `signals`, and writing its chrome after each draw.
+pub async fn interactive(config: Config, runtimes: Arc<Pool>, mut signals: UnboundedReceiver<u8>) -> io::Result<Exit> {
     let profile = theme::profile(true, |name| std::env::var(name).ok());
     let _session = Session::enter()?;
-    let mut terminal = Terminal::new(ratatui_crossterm::CrosstermBackend::new(io::stdout()))?;
-    let (events, received) = Events::channel();
-    let controller = Controller::new(true, runtimes, events);
-    let input = EventStream::new().filter_map(|input| std::future::ready(input.ok()));
-    let app = App::new(config, profile, Instant::now());
-    run(&mut terminal, app, controller, received, input, signals, io::stdout()).await
-}
-
-/// Draws `app` and feeds it events, input, signals and ticks until it quits, writing its chrome to `chrome` after each
-/// draw.
-pub async fn run<B: Backend>(
-    terminal: &mut Terminal<B>,
-    mut app: App,
-    mut controller: Controller,
-    mut events: UnboundedReceiver<Event>,
-    input: impl Stream<Item = Input>,
-    mut signals: UnboundedReceiver<u8>,
-    mut chrome: impl Write,
-) -> Result<Exit, B::Error> {
-    let (mut input, mut shown) = (pin!(input), None);
+    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    let (events, mut received) = Events::channel();
+    let mut controller = Controller::new(true, runtimes, events);
+    let mut input = pin!(EventStream::new().filter_map(|input| std::future::ready(input.ok())));
+    let (mut app, mut chrome, mut shown) = (App::new(config, profile, Instant::now()), io::stdout(), None);
     let mut frames = tokio::time::interval(FRAME);
     frames.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut changed = true;
     loop {
         let effects = tokio::select! {
-            Some(event) = events.recv() => {
+            Some(event) = received.recv() => {
                 changed = true;
                 app.event(&event, Instant::now())
             }

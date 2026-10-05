@@ -12,7 +12,7 @@ mod terminal;
 pub mod theme;
 mod track;
 
-pub use terminal::{interactive, run};
+pub use terminal::interactive;
 
 use crate::{
     INTERRUPTED,
