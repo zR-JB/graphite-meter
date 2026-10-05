@@ -13,7 +13,7 @@ The dial carries the run's headline and every stage's result on one ring; the la
 latency side by side with what each load added; one card per stage, under its key, keeps the stage's graph with
 the latency its load caused underneath.
 
-<img src="assets/desktop.png" alt="Completed test from a laptop on Wi-Fi 7: 3.42 Gbit/s down, 1.86 Gbit/s up, 2.8 ms idle latency, the latency lanes and one card per stage" width="1080">
+<img src="assets/desktop.png" alt="Completed test from a laptop on Wi-Fi 7: 3.33 Gbit/s down, 1.86 Gbit/s up, 2.8 ms idle latency, the latency lanes and one card per stage" width="1080">
 
 <img src="assets/light.png" alt="The same completed test in the light theme" width="1080">
 
