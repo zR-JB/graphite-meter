@@ -17,6 +17,7 @@ const (
 	stallQuiet                   = 500 * time.Millisecond
 	minimumSurvivorEvidence      = 800 * time.Millisecond
 	minimumPeakWindow            = 500 * time.Millisecond
+	minimumLiveWindow            = sampleInterval / 2
 	minimumFailedLatencyOutcomes = 3
 )
 
@@ -494,7 +495,8 @@ func (s *stageRun) observe(sample sampledBoundary) (bool, error) {
 			}
 		}
 	}
-	if window != nil || restarted {
+	// A window far shorter than the cadence holds only a few reads, so its rate is left off the live trace.
+	if restarted || window != nil && window.shortest() >= minimumLiveWindow {
 		s.emitRates(window)
 	}
 	if err := s.lost(); err != nil {
