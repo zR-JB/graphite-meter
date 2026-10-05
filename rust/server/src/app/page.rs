@@ -13,7 +13,7 @@ impl App {
     /// The answer to a request that no route claims on a listener serving the app.
     pub(super) fn page<B>(&self, request: &Request<B>) -> Response<Body> {
         let head = request.method() == Method::HEAD;
-        let mut response = match self.assets.get(request.uri().path()) {
+        let mut response = match self.assets.get(request.uri().path(), request.headers()) {
             _ if request.method() != Method::GET && !head => {
                 let mut response = response::text(StatusCode::METHOD_NOT_ALLOWED, "method not allowed");
                 response
@@ -23,19 +23,19 @@ impl App {
             }
             Some(served) => {
                 let mut response = Response::new(Body::full(served.bytes));
-                let headers = response.headers_mut();
-                headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(served.content_type));
-                if let Some(cache) = served.cache {
-                    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
-                }
+                *response.status_mut() = served.status;
+                *response.headers_mut() = served.headers;
                 response
             }
             None => response::status(StatusCode::NOT_FOUND),
         };
         let length = http_body::Body::size_hint(response.body()).exact().unwrap_or_default();
         let policy = self.assets.policy(&self.connect_sources(&self.preflight(request)));
+        let status = response.status();
         let headers = response.headers_mut();
-        headers.insert(header::CONTENT_LENGTH, HeaderValue::from(length));
+        if status != StatusCode::NOT_MODIFIED {
+            headers.insert(header::CONTENT_LENGTH, HeaderValue::from(length));
+        }
         let policy = HeaderValue::from_str(&policy).expect("policies hold ASCII origins");
         headers.insert(header::CONTENT_SECURITY_POLICY, policy);
         headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));

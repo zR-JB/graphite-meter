@@ -1,13 +1,18 @@
-//! The embedded browser app: exact paths, the index with the server's meta tags, the browser's notice from the
-//! shared report, and the page's content security policy.
+//! The embedded browser app: exact paths with content tags and precompressed copies, the index with the server's
+//! meta tags, the browser's notice from the shared report, and the page's content security policy.
 
 #[cfg(test)]
 mod scan;
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+use base64::{
+    Engine as _,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+};
 use bytes::Bytes;
 use graphite_meter_legal::{BROWSER_NOTICE, Notices};
+use http::{HeaderMap, HeaderValue, StatusCode, header};
 use sha2::{Digest, Sha256};
+use std::{collections::HashMap, sync::OnceLock};
 
 /// One embedded file.
 pub struct Asset {
@@ -21,15 +26,28 @@ include!(concat!(env!("OUT_DIR"), "/legal.rs"));
 
 /// A file as served.
 pub struct Served {
-    pub content_type: &'static str,
+    pub status: StatusCode,
+    pub headers: HeaderMap,
     pub bytes: Bytes,
-    pub cache: Option<&'static str>,
+}
+
+/// An embedded file with its content tag.
+struct Tagged {
+    asset: &'static Asset,
+    tag: HeaderValue,
+}
+
+/// A served name's file and the build's brotli and gzip copies of it, in that preference.
+struct File {
+    plain: Tagged,
+    encoded: Vec<(&'static str, Tagged)>,
 }
 
 /// The browser app as one configuration serves it.
 pub struct Assets {
-    files: &'static [Asset],
+    files: HashMap<&'static str, File>,
     notices: &'static Notices,
+    notice_tag: OnceLock<HeaderValue>,
     /// The index with the server's meta tags.
     index: Option<Bytes>,
     /// The policy's script and style sources, which admit the index's inline elements.
@@ -63,38 +81,76 @@ impl Assets {
             let html = std::str::from_utf8(html).expect("the build checked the index");
             Bytes::from(html.replacen("</head>", &format!("{meta}</head>"), 1))
         });
-        Self { files, notices, index, inline }
+        let tagged = |asset: &'static Asset| Tagged { asset, tag: tag(asset.bytes) };
+        let copy = |path: String| files.iter().find(|file| file.path == path).map(tagged);
+        let files = files
+            .iter()
+            .filter(|file| !matches!(file.path.rsplit_once('.'), Some((_, "br" | "gz"))) && file.path != "index.html")
+            .map(|file| {
+                let encoded = [("br", ".br"), ("gzip", ".gz")]
+                    .into_iter()
+                    .filter_map(|(coding, suffix)| Some((coding, copy(format!("{}{suffix}", file.path))?)))
+                    .collect();
+                (file.path, File { plain: tagged(file), encoded })
+            })
+            .collect();
+        Self { files, notices, notice_tag: OnceLock::new(), index, inline }
     }
 
-    /// The file at `path`, a request path without its query: `/` is the index, and only exact names match.
-    pub fn get(&self, path: &str) -> Option<Served> {
-        if path == "/" {
-            let bytes = self.index.clone()?;
+    /// The file at `path`, a request path without its query, as `request` asks for it: `/` is the index, only exact
+    /// names match, and a client gets the precompressed copy it accepts or a 304 for the tag it holds.
+    pub fn get(&self, path: &str, request: &HeaderMap) -> Option<Served> {
+        let text = |name: header::HeaderName| {
+            request
+                .get(name)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+        };
+        let mut headers = HeaderMap::new();
+        let (content_type, cache, bytes, tag) = if path == "/" {
+            ("text/html; charset=utf-8", "no-store", self.index.clone()?, None)
+        } else if path.strip_prefix('/') == Some(BROWSER_NOTICE) {
+            let bytes = self.notices.browser()?;
+            let tag = self.notice_tag.get_or_init(|| tag(bytes));
+            ("text/plain; charset=utf-8", "no-cache", Bytes::from_static(bytes), Some(tag))
+        } else {
+            let name = path.strip_prefix('/')?;
+            let file = self.files.get(name)?;
+            // The bundler names every file under assets/ by its content hash; the fonts are unmodified upstream
+            // faces, reused for a week before a reload checks their tag.
+            let cache = match name {
+                _ if name.starts_with("assets/") => "public, max-age=31536000, immutable",
+                _ if name.starts_with("fonts/") => "public, max-age=604800",
+                _ => "no-cache",
+            };
+            if !file.encoded.is_empty() {
+                headers.insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+            }
+            let accept = text(header::ACCEPT_ENCODING);
+            let served = match file.encoded.iter().find(|(coding, _)| accepts(accept, coding)) {
+                Some((coding, copy)) => {
+                    headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static(coding));
+                    copy
+                }
+                None => &file.plain,
+            };
+            let Tagged { asset, tag } = served;
+            (asset.content_type, cache, Bytes::from_static(asset.bytes), Some(tag))
+        };
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
+        if let Some(tag) = tag {
+            headers.insert(header::ETAG, tag.clone());
+        }
+        if none_match(text(header::IF_NONE_MATCH), tag) {
+            headers.remove(header::CONTENT_ENCODING);
             return Some(Served {
-                content_type: "text/html; charset=utf-8",
-                bytes,
-                cache: Some("no-store"),
+                status: StatusCode::NOT_MODIFIED,
+                headers,
+                bytes: Bytes::new(),
             });
         }
-        let name = path.strip_prefix('/').filter(|name| *name != "index.html")?;
-        if name == BROWSER_NOTICE {
-            let bytes = Bytes::from_static(self.notices.browser()?);
-            return Some(Served {
-                content_type: "text/plain; charset=utf-8",
-                bytes,
-                cache: None,
-            });
-        }
-        let file = self.files.iter().find(|file| file.path == name)?;
-        // The bundler names every file under assets/ by its content hash.
-        let cache = name
-            .starts_with("assets/")
-            .then_some("public, max-age=31536000, immutable");
-        Some(Served {
-            content_type: file.content_type,
-            bytes: Bytes::from_static(file.bytes),
-            cache,
-        })
+        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+        Some(Served { status: StatusCode::OK, headers, bytes })
     }
 
     /// The page's content security policy, connecting to `connect` beyond 'self'.
@@ -126,4 +182,49 @@ fn inline_hash(html: &[u8], tag: &str) -> Option<String> {
     let (_, content) = html.split_once(&format!("<{tag}>"))?;
     let (content, _) = content.split_once(&format!("</{tag}>"))?;
     Some(STANDARD.encode(Sha256::digest(content.as_bytes())))
+}
+
+/// The quoted base64 of the first 12 bytes of the SHA-256 of `bytes`.
+fn tag(bytes: &[u8]) -> HeaderValue {
+    let tag = format!("\"{}\"", URL_SAFE_NO_PAD.encode(&Sha256::digest(bytes)[..12]));
+    HeaderValue::try_from(tag).expect("base64 is a valid header value")
+}
+
+/// Whether an Accept-Encoding header admits `coding` with a nonzero weight, read as Go's static handler reads it.
+fn accepts(header: &str, coding: &str) -> bool {
+    header
+        .split(',')
+        .find_map(|part| {
+            let (token, params) = part.split_once(';').unwrap_or((part, ""));
+            let params = params.trim();
+            let weight = params.strip_prefix("q=").unwrap_or(params).parse::<f64>();
+            token
+                .trim()
+                .eq_ignore_ascii_case(coding)
+                .then(|| weight.ok().is_none_or(|q| q > 0.0))
+        })
+        .unwrap_or(false)
+}
+
+/// Whether an If-None-Match header names `tag` or any representation, scanned as Go's `net/http` scans it.
+fn none_match(mut header: &str, tag: Option<&HeaderValue>) -> bool {
+    loop {
+        header = header.trim_start_matches([' ', '\t', '\r', '\n', ',']);
+        if header.starts_with('*') {
+            return true;
+        }
+        let Some(quoted) = header.strip_prefix("W/").unwrap_or(header).strip_prefix('"') else {
+            return false;
+        };
+        let Some(end) = quoted.find(|c: char| c.is_ascii() && c != '!' && !('#'..='~').contains(&c)) else {
+            return false;
+        };
+        if !quoted[end..].starts_with('"') {
+            return false;
+        }
+        if tag.is_some_and(|tag| tag.as_bytes()[1..] == quoted.as_bytes()[..=end]) {
+            return true;
+        }
+        header = &quoted[end + 1..];
+    }
 }

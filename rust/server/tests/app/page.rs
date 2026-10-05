@@ -4,7 +4,7 @@ use super::*;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use graphite_meter_legal::Notices;
 use graphite_meter_server::assets::{Asset, Assets};
-use http::StatusCode;
+use http::{HeaderMap, StatusCode};
 use sha2::{Digest, Sha256};
 
 const INDEX: &str = "<html><head><style>html{background:#131518}</style><script>let theme='dark';</script></head>\
@@ -20,6 +20,21 @@ static FILES: &[Asset] = &[
         path: "assets/app-1a2b.js",
         content_type: "text/javascript; charset=utf-8",
         bytes: b"export {};",
+    },
+    Asset {
+        path: "assets/app-1a2b.js.br",
+        content_type: "text/javascript; charset=utf-8",
+        bytes: b"brotli",
+    },
+    Asset {
+        path: "assets/app-1a2b.js.gz",
+        content_type: "text/javascript; charset=utf-8",
+        bytes: b"gzip",
+    },
+    Asset {
+        path: "fonts/face.woff2",
+        content_type: "font/woff2",
+        bytes: b"wOF2",
     },
     Asset {
         path: "favicon.svg",
@@ -39,6 +54,13 @@ fn notices() -> &'static Notices {
 
 fn served(env: &[(&str, &str)]) -> App {
     app(env).with_assets(FILES, notices())
+}
+
+async fn get(app: &App, method: &str, path: &str, headers: &[(&str, &str)]) -> Response<Body> {
+    let request = headers
+        .iter()
+        .fold(request(method, path), |request, (name, value)| request.header(*name, *value));
+    send(app, Endpoint::H1, empty(request)).await
 }
 
 fn sha256(text: &str) -> String {
@@ -74,7 +96,10 @@ async fn the_index_carries_the_server_meta_tags_under_the_page_policy() {
     let index = text(send(&off, Endpoint::H1, empty(request("GET", "/"))).await).await;
     assert!(index.contains("<meta name=\"graphite-meter-result-history-default\" content=\"false\"></head>"));
     assert!(!index.contains("graphite-meter-auth"));
-    let auth = Assets::new(FILES, notices(), true, false).get("/").unwrap().bytes;
+    let auth = Assets::new(FILES, notices(), true, false)
+        .get("/", &HeaderMap::new())
+        .unwrap()
+        .bytes;
     let tags = "<meta name=\"graphite-meter-auth\" content=\"enabled\">\
                 <meta name=\"graphite-meter-result-history-default\" content=\"false\"></head>";
     assert!(std::str::from_utf8(&auth).unwrap().contains(tags));
@@ -91,7 +116,7 @@ async fn only_exact_embedded_names_are_served_on_ui_listeners() {
     let icon = get(Endpoint::H1Tls, "/favicon.svg").await;
     assert_eq!(
         (header(&icon, "content-type"), header(&icon, "cache-control")),
-        (Some("image/svg+xml"), None)
+        (Some("image/svg+xml"), Some("no-cache"))
     );
     for path in [
         "/index.html",
@@ -100,6 +125,7 @@ async fn only_exact_embedded_names_are_served_on_ui_listeners() {
         "/%69ndex.html",
         "//favicon.svg",
         "/assets/../index.html",
+        "/assets/app-1a2b.js.br",
     ] {
         let response = get(Endpoint::H1Tls, path).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
@@ -110,6 +136,58 @@ async fn only_exact_embedded_names_are_served_on_ui_listeners() {
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{endpoint:?}");
         assert_eq!(header(&response, "content-security-policy"), None);
     }
+}
+
+/// A client gets the build's brotli or gzip copy it accepts, tagged per encoding, and revalidates by tag.
+#[tokio::test]
+async fn a_client_gets_the_copy_it_accepts_and_revalidates_by_tag() {
+    let app = served(&[]);
+    let mut tags = Vec::new();
+    for (accept, body, encoding) in [
+        ("", "export {};", None),
+        ("gzip, deflate", "gzip", Some("gzip")),
+        ("gzip, deflate, br, zstd", "brotli", Some("br")),
+        ("br;q=0, gzip;q=0.5", "gzip", Some("gzip")),
+        ("identity", "export {};", None),
+    ] {
+        let response = get(&app, "GET", "/assets/app-1a2b.js", &[("accept-encoding", accept)]).await;
+        assert_eq!(header(&response, "content-encoding"), encoding, "{accept}");
+        assert_eq!(header(&response, "vary"), Some("Accept-Encoding"));
+        assert_eq!(header(&response, "content-type"), Some("text/javascript; charset=utf-8"));
+        assert_eq!(header(&response, "content-length"), Some(body.len().to_string().as_str()));
+        tags.push((encoding, header(&response, "etag").unwrap().to_owned()));
+        assert_eq!(text(response).await, body);
+    }
+    tags.sort();
+    tags.dedup();
+    assert_eq!(tags.len(), 3);
+    let head = get(&app, "HEAD", "/assets/app-1a2b.js", &[("accept-encoding", "br")]).await;
+    assert_eq!(header(&head, "content-length"), Some("6"));
+    let held = format!("\"other\", W/{}", tags[2].1);
+    let accept = ("accept-encoding", "gzip");
+    let unchanged = get(&app, "GET", "/assets/app-1a2b.js", &[accept, ("if-none-match", &held)]).await;
+    assert_eq!(unchanged.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(header(&unchanged, "vary"), Some("Accept-Encoding"));
+    for name in ["content-encoding", "content-type", "content-length"] {
+        assert_eq!(header(&unchanged, name), None, "{name}");
+    }
+    assert_eq!(text(unchanged).await, "");
+    let icon = get(&app, "GET", "/favicon.svg", &[]).await;
+    let tag = header(&icon, "etag").unwrap().to_owned();
+    assert_eq!((tag.len(), header(&icon, "vary")), (18, None));
+    let unchanged = get(&app, "GET", "/favicon.svg", &[("if-none-match", &tag)]).await;
+    assert_eq!(unchanged.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(header(&unchanged, "etag"), Some(tag.as_str()));
+    assert_eq!(header(&unchanged, "cache-control"), Some("no-cache"));
+    let changed = get(&app, "GET", "/favicon.svg", &[("if-none-match", "\"other\"")]).await;
+    assert_eq!(text(changed).await, "<svg/>");
+    let font = get(&app, "GET", "/fonts/face.woff2", &[]).await;
+    assert_eq!(header(&font, "cache-control"), Some("public, max-age=604800"));
+    let index = get(&app, "GET", "/", &[("accept-encoding", "br, gzip")]).await;
+    for name in ["content-encoding", "vary", "etag"] {
+        assert_eq!(header(&index, name), None, "{name}");
+    }
+    assert!(text(index).await.contains("content=\"false\"></head>"));
 }
 
 #[tokio::test]
@@ -131,6 +209,8 @@ async fn the_browser_notice_is_the_shared_report_suffix() {
     let app = served(&[]);
     let response = send(&app, Endpoint::H1, empty(request("GET", "/legal/THIRD_PARTY_NOTICES.txt"))).await;
     assert_eq!(header(&response, "content-type"), Some("text/plain; charset=utf-8"));
+    assert_eq!(header(&response, "cache-control"), Some("no-cache"));
+    assert!(header(&response, "etag").is_some());
     assert_eq!(text(response).await, "browser notice\n");
     let unshared = Box::leak(Box::new(Notices::new(None, None, "")));
     let unshared = super::app(&[]).with_assets(FILES, unshared);

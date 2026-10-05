@@ -23,7 +23,12 @@ pub fn scan(root: &Path, reviewed: bool) -> Result<Vec<File>, String> {
         if name == graphite_meter_legal::BROWSER_NOTICE || (name.starts_with("legal/") && !reviewed) {
             continue;
         }
-        let content_type = content_type(&name).ok_or_else(|| format!("unsupported browser asset type: {name}"))?;
+        // The build's brotli and gzip copies take their original's type.
+        let original = name
+            .strip_suffix(".br")
+            .or_else(|| name.strip_suffix(".gz"))
+            .unwrap_or(&name);
+        let content_type = content_type(original).ok_or_else(|| format!("unsupported browser asset type: {name}"))?;
         let bytes = fs::read(&path).map_err(failed(&path))?;
         if name == "index.html" {
             check_index(&bytes)?;
@@ -123,6 +128,8 @@ mod tests {
             ("index.html", INDEX),
             ("favicon.svg", "<svg/>"),
             ("assets/app-1a2b.js", "export {};"),
+            ("assets/app-1a2b.js.br", "brotli"),
+            ("assets/app-1a2b.js.gz", "gzip"),
             ("fonts/plex.woff2", "font"),
             ("legal/about.json", "{}"),
             ("legal/THIRD_PARTY_NOTICES.txt", "Go notices"),
@@ -145,15 +152,17 @@ mod tests {
         let unreviewed = scan(scratch.path(), false).unwrap();
         let expected = [
             "assets/app-1a2b.js text/javascript; charset=utf-8",
+            "assets/app-1a2b.js.br text/javascript; charset=utf-8",
+            "assets/app-1a2b.js.gz text/javascript; charset=utf-8",
             "favicon.svg image/svg+xml",
             "fonts/plex.woff2 font/woff2",
             "index.html text/html; charset=utf-8",
         ];
         assert_eq!(listed(&unreviewed), expected);
-        assert_eq!(unreviewed[3].bytes, INDEX.as_bytes());
+        assert_eq!(unreviewed[5].bytes, INDEX.as_bytes());
         let reviewed = listed(&scan(scratch.path(), true).unwrap());
-        assert_eq!(reviewed[4], "legal/about.json application/json");
-        assert_eq!(reviewed.len(), 5);
+        assert_eq!(reviewed[6], "legal/about.json application/json");
+        assert_eq!(reviewed.len(), 7);
     }
 
     #[test]
@@ -162,6 +171,7 @@ mod tests {
             (".env", "unsafe browser asset name: \".env\""),
             ("assets/a b.js", "unsafe browser asset name: assets/\"a b.js\""),
             ("assets/app.exe", "unsupported browser asset type: assets/app.exe"),
+            ("assets/app.exe.br", "unsupported browser asset type: assets/app.exe.br"),
         ] {
             let scratch = fixture();
             scratch.file(name, "").unwrap();
