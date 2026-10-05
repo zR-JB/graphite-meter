@@ -1,4 +1,4 @@
-//! The command line: Go's 22 client flags, their validation in Go's order and words, and the `Config` they give.
+//! The command line: the client's 22 flags, their validation and the `Config` they give.
 
 use crate::model::{Cadence, Dir, Direction, Stage};
 use graphite_meter_proto::{
@@ -126,7 +126,7 @@ impl Config {
         Dir { down, up }
     }
 
-    /// Go's checks before the path choices are read.
+    /// The checks made before the path choices are read.
     fn validate(&self) -> Result<(), String> {
         if self.stages.is_empty() {
             return Err("select at least one stage: latency, download, upload or bidirectional".into());
@@ -195,7 +195,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Parsed, Refusal
         .map_err(Refusal::Argument)
 }
 
-/// Go's usage text for `program`.
+/// The usage text for `program`.
 pub fn usage(program: &str) -> String {
     format!("Usage of {program}:\n{}", flag::defaults(&FLAGS, &Flags::default()))
 }
@@ -264,7 +264,7 @@ fn boolean(text: &str) -> Result<bool, String> {
     flag::parse_bool(text).ok_or_else(|| "parse error".into())
 }
 
-/// A count as Go's `flag.Int` reads it; a negative one reads as a count validation refuses.
+/// A decimal count; a negative one reads as a count validation refuses.
 fn count(text: &str) -> Result<usize, String> {
     match text.parse::<i64>() {
         Ok(count) => Ok(usize::try_from(count).unwrap_or(usize::MAX)),
@@ -275,7 +275,7 @@ fn count(text: &str) -> Result<usize, String> {
     }
 }
 
-/// A duration as Go's `flag.Duration` reads it; a negative one reads as `negative`.
+/// A duration such as `1m30s`; a negative one reads as `negative`.
 fn span(text: &str, negative: Duration) -> Result<Duration, String> {
     let nanos = duration::parse(text).map_err(|_| "parse error")?;
     Ok(u64::try_from(nanos).map_or(negative, Duration::from_nanos))
@@ -345,7 +345,7 @@ fn show_origin(origin: &Option<Origin>) -> String {
     origin.as_ref().map_or_else(|| "auto".into(), Origin::to_string)
 }
 
-/// One flag row; `show` gives the value as Go prints its default.
+/// One flag row; `show` gives the value its usage default prints.
 macro_rules! row {
     ($name:literal, $kind:ident, $usage:expr, |$flags:ident, $text:ident| $set:expr, |$shown:ident| $show:expr) => {
         Flag {
