@@ -76,6 +76,8 @@ struct Script {
     next: Duration,
     log: Vec<(Duration, Decision)>,
     recovering: Vec<Duration>,
+    /// Departures the next tick passes in.
+    departed: Vec<(ServerId, Failure)>,
 }
 
 impl Script {
@@ -88,13 +90,19 @@ impl Script {
             next: Duration::ZERO,
             log: Vec::new(),
             recovering: Vec::new(),
+            departed: Vec::new(),
         }
     }
 
     fn tick(&mut self, at: Duration, lateness: Duration, samples: &[Sample], probes: &[(ServerId, Probe)]) {
-        let tick = self
-            .engine
-            .tick(Input { now: self.base + at, lateness, samples, probes });
+        let departed = std::mem::take(&mut self.departed);
+        let tick = self.engine.tick(Input {
+            now: self.base + at,
+            lateness,
+            samples,
+            probes,
+            departed: &departed,
+        });
         self.next = tick.next - self.base;
         self.log
             .extend(tick.decisions.into_iter().map(|decision| (at, decision)));
@@ -137,10 +145,19 @@ impl Script {
 
     fn removed(&self) -> Vec<(Duration, &str, FailureReason)> {
         let removals = self.log.iter().filter_map(|(at, decision)| match decision {
-            Decision::Remove(server, failure) => Some((*at, server.as_str(), failure.reason)),
+            Decision::Remove(failure) => Some((*at, failure.server.as_str(), failure.failure.reason)),
             _ => None,
         });
         removals.collect()
+    }
+
+    /// Failures the members stayed for.
+    fn failed(&self) -> Vec<(Duration, &str, Scope, FailureReason)> {
+        let failures = self.log.iter().filter_map(|(at, decision)| match decision {
+            Decision::Failed(failure) => Some((*at, failure.server.as_str(), failure.scope, failure.failure.reason)),
+            _ => None,
+        });
+        failures.collect()
     }
 }
 
@@ -381,14 +398,68 @@ fn a_lost_latency_channel_leaves_only_in_the_latency_stage() {
     script.tick(STAGE - ms(250), Duration::ZERO, &samples, &[]);
     script.tick(STAGE, Duration::ZERO, &samples, &[(id("a"), Probe::Drained)]);
     assert!(script.finished() && script.removed().is_empty());
+    assert_eq!(script.failed(), [(ms(1000), "b", Scope::Latency, FailureReason::ConnectionLost)]);
+    assert!(
+        script.engine.result().servers[1]
+            .throughput
+            .down
+            .unwrap()
+            .rate
+            .is_some()
+    );
+}
+
+#[test]
+fn latency_failures_are_announced_as_they_happen_and_only_once() {
+    let mut script = Script::new(plan(Stage::Download, &["a", "b"], true));
+    let samples = |at: Duration| vec![down("a", moved(at, STAGE * 2)), down("b", moved(at, STAGE * 2))];
+    let up = [(id("a"), Probe::Up { at: script.base })];
+    script.tick(Duration::ZERO, Duration::ZERO, &samples(Duration::ZERO), &up);
+    script.run_until(STAGE, samples);
+    assert_eq!(script.failed(), [(STAGE, "b", Scope::Latency, FailureReason::Timeout)]);
+    assert_eq!(script.window().map(|(start, _)| start), Some(STAGE));
+    assert!(script.removed().is_empty());
+
+    let mut script = Script::new(plan(Stage::Latency, &["a", "b"], true));
+    let ups = [(id("a"), Probe::Up { at: script.base }), (id("b"), Probe::Up { at: script.base })];
+    script.tick(Duration::ZERO, Duration::ZERO, &[], &ups);
+    let down = |reason| Probe::Down {
+        at: script.base + ms(1000),
+        failure: Failure::new(reason, "down"),
+    };
+    let downs = [(id("b"), down(FailureReason::ServerBusy)), (id("b"), down(FailureReason::ConnectionLost))];
+    script.tick(ms(1000), Duration::ZERO, &[], &downs);
+    assert_eq!(script.failed(), [(ms(1000), "b", Scope::Latency, FailureReason::ServerBusy)]);
+    assert!(script.removed().is_empty());
+}
+
+#[test]
+fn a_member_whose_participant_cannot_open_leaves() {
+    let mut script = Script::new(plan(Stage::Download, &["a", "b"], false));
+    script
+        .departed
+        .push((id("b"), Failure::new(FailureReason::PreparationFailed, "no lanes")));
+    script.run(|at| vec![down("a", moved(at, STAGE))]);
+    assert_eq!(script.removed(), [(Duration::ZERO, "b", FailureReason::PreparationFailed)]);
     let result = script.engine.result();
-    let scopes: Vec<_> = result
-        .failures
-        .iter()
-        .map(|failure| (failure.server.as_str(), failure.scope))
-        .collect();
-    assert_eq!(scopes, [("b", Scope::Latency)]);
-    assert!(result.servers[1].throughput.down.unwrap().rate.is_some());
+    assert_eq!(result.failures[0].scope, Scope::Server);
+    assert!(result.servers[1].left && result.throughput.down.unwrap().rate.is_some());
+}
+
+#[test]
+fn a_stop_mid_window_keeps_what_was_measured() {
+    let mut script = Script::new(plan(Stage::Download, &["a"], true));
+    let up = [(id("a"), Probe::Up { at: script.base })];
+    script.tick(Duration::ZERO, Duration::ZERO, &[down("a", 0)], &up);
+    script.run_until(ms(4000), |at| vec![down("a", moved(at, STAGE))]);
+    script.engine.stop(script.base + ms(4100));
+    let result = script.engine.result();
+    assert_eq!((result.measured, result.stopped), (ms(4100), true));
+    assert!(result.failures.is_empty() && result.throughput.down.unwrap().rate.is_some());
+    assert!(!result.servers[0].latency.unwrap().complete);
+    let decisions = script.log.len();
+    script.tick(ms(4250), Duration::ZERO, &[down("a", 4_250_000)], &[]);
+    assert_eq!(script.log.len(), decisions);
 }
 
 /// A latency stage where each of `servers` sends its replies, then a download stage.
@@ -447,6 +518,11 @@ fn a_stage_without_evidence_records_insufficient_evidence() {
         .map(|failure| (failure.scope, failure.failure.reason))
         .collect();
     assert_eq!(reasons, [(Scope::Latency, FailureReason::InsufficientEvidence)]);
+    let mut script = Script::new(plan(Stage::Latency, &["a"], true));
+    script.tick(Duration::ZERO, Duration::ZERO, &[], &[(id("a"), Probe::Up { at: script.base })]);
+    script.run(|_| Vec::new());
+    let insufficient = (STAGE + ms(10_000), "a", Scope::Latency, FailureReason::InsufficientEvidence);
+    assert_eq!(script.failed(), [insufficient]);
     let mut script = Script::new(plan(Stage::Download, &["a"], false));
     script.run(|_| vec![down("a", 0)]);
     let reasons: Vec<_> = script

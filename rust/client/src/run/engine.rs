@@ -82,6 +82,8 @@ pub struct Input<'a> {
     pub lateness: Duration,
     pub samples: &'a [Sample],
     pub probes: &'a [(ServerId, Probe)],
+    /// Members whose participant could not open the stage.
+    pub departed: &'a [(ServerId, Failure)],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,8 +94,10 @@ pub enum Decision {
     Checkpoint { budget: Duration, last: bool },
     /// The window closed: lanes stop, upload sessions finish and probers drain.
     CloseWindow,
+    /// A failure the member stays for: its latency population or the stage's evidence is lost.
+    Failed(ServerFailure),
     /// The member leaves the run for this failure.
-    Remove(ServerId, Failure),
+    Remove(ServerFailure),
     /// The stage is over: every participant ends.
     Finish,
 }
@@ -199,6 +203,11 @@ impl Engine {
             return tick;
         }
         let survivors = self.present().count();
+        for (server, failure) in input.departed {
+            if let Some(index) = self.index(server) {
+                self.fail(index, Scope::Server, failure.clone(), input.now, true, &mut tick.decisions);
+            }
+        }
         for (server, probe) in input.probes {
             self.probe(server, probe, &mut tick.decisions);
         }
@@ -225,9 +234,7 @@ impl Engine {
             aggregate.dropout(&remaining, input.now);
         }
         if remaining.is_empty() || self.phase == Phase::Done {
-            self.ended.get_or_insert(input.now);
-            self.phase = Phase::Done;
-            tick.decisions.push(Decision::Finish);
+            self.finish(input.now, &mut tick.decisions);
         }
         tick
     }
@@ -240,17 +247,16 @@ impl Engine {
         (self.stopped, self.phase) = (true, Phase::Done);
     }
 
+    /// What the stage measured; complete once it decided `Finish` or stopped.
     pub fn result(&self) -> StageResult {
-        let window = self
-            .window
-            .map(|(start, end)| (start, self.ended.unwrap_or(end).min(end)));
+        let measured = self.window.map_or(Duration::ZERO, |(start, end)| {
+            let ended = self.ended.unwrap_or(end).min(end);
+            ended.saturating_duration_since(start)
+        });
         let servers = self.members.iter().map(|member| ServerResult {
             server: member.server.clone(),
             left: !member.present,
-            throughput: self.throughput(|aggregate, direction| Throughput {
-                rate: aggregate.server(&member.server, direction),
-                bytes: aggregate.bytes(&member.server, direction),
-            }),
+            throughput: self.throughput(Some(&member.server)),
             latency: (member.probing != Probing::Off).then(|| Population {
                 summary: member.latency.summary(),
                 complete: member.present && member.probing != Probing::Failed && !self.stopped,
@@ -260,60 +266,63 @@ impl Engine {
             let (intervals, omitted) = aggregate.intervals();
             (intervals.iter().cloned().collect(), omitted)
         });
-        let mut result = StageResult {
+        StageResult {
             stage: self.plan.stage,
-            measured: window.map_or(Duration::ZERO, |(start, end)| end.saturating_duration_since(start)),
+            measured,
             stopped: self.stopped,
-            throughput: self.throughput(|aggregate, direction| Throughput {
-                rate: aggregate.result(direction),
-                bytes: aggregate.total(direction),
-            }),
+            throughput: self.throughput(None),
             servers: servers.collect(),
             failures: self.failures.clone(),
             intervals,
             omitted,
-        };
-        if let Some((_, end)) = window {
-            result.failures.extend(self.insufficient(&result, end));
         }
-        result
     }
 
-    /// Per direction the stage moves, what `of` reads from the aggregate; nothing without one.
-    fn throughput(&self, of: impl Fn(&Aggregate, Direction) -> Throughput) -> Dir<Option<Throughput>> {
-        let empty = Throughput { rate: None, bytes: 0 };
+    /// Per direction the stage moves, `server`'s share or all servers' headline and bytes.
+    fn throughput(&self, server: Option<&ServerId>) -> Dir<Option<Throughput>> {
         let measured = |direction| {
-            self.aggregate
-                .as_ref()
-                .map_or(empty, |aggregate| of(aggregate, direction))
+            let Some(aggregate) = &self.aggregate else {
+                return Throughput { rate: None, bytes: 0 };
+            };
+            match server {
+                Some(server) => Throughput {
+                    rate: aggregate.server(server, direction),
+                    bytes: aggregate.bytes(server, direction),
+                },
+                None => Throughput {
+                    rate: aggregate.result(direction),
+                    bytes: aggregate.total(direction),
+                },
+            }
         };
         Dir::from_fn(|direction| self.plan.stage.moves(direction).then(|| measured(direction)))
     }
 
-    /// The `insufficient-evidence` failures of members still present whose result is missing.
-    fn insufficient(&self, result: &StageResult, at: Instant) -> Vec<ServerFailure> {
-        let lacking = |throughput: Option<Throughput>| throughput.is_some_and(|throughput| throughput.rate.is_none());
-        let failed = result.failures.iter().any(|failure| failure.scope == Scope::Throughput);
-        let throughput = !failed && (lacking(result.throughput.down) || lacking(result.throughput.up));
-        let mut failures = Vec::new();
-        for (member, server) in self
-            .members
-            .iter()
-            .zip(&result.servers)
-            .filter(|(member, _)| member.present)
-        {
-            let no_median = server.latency.is_some_and(|population| population.median().is_none());
-            let latency =
-                self.plan.stage == Stage::Latency && no_median && !self.failed(&member.server, Scope::Latency);
-            for (_, scope) in [(throughput, Scope::Throughput), (latency, Scope::Latency)]
-                .into_iter()
-                .filter(|(lacks, _)| *lacks)
-            {
-                let failure = Failure::new(FailureReason::InsufficientEvidence, "too little measured time");
-                failures.push(ServerFailure { server: member.server.clone(), scope, failure, at });
+    /// Ends the stage, recording `insufficient-evidence` for members still present whose result is missing.
+    fn finish(&mut self, now: Instant, decisions: &mut Vec<Decision>) {
+        self.ended.get_or_insert(now);
+        self.phase = Phase::Done;
+        if self.window.is_some() {
+            let headless = self.plan.stage.directions().iter().any(|&direction| {
+                let aggregate = self.aggregate.as_ref();
+                aggregate.is_some_and(|aggregate| aggregate.result(direction).is_none())
+            });
+            let throughput = headless && self.failures.iter().all(|failure| failure.scope == Scope::Latency);
+            for index in 0..self.members.len() {
+                let member = &self.members[index];
+                let unmeasured = member.probing != Probing::Failed && member.latency.summary().p50.is_none();
+                let latency = self.plan.stage == Stage::Latency && unmeasured;
+                let present = member.present;
+                for (_, scope) in [(throughput, Scope::Throughput), (latency, Scope::Latency)]
+                    .into_iter()
+                    .filter(|&(lacks, _)| lacks && present)
+                {
+                    let failure = Failure::new(FailureReason::InsufficientEvidence, "too little measured time");
+                    self.fail(index, scope, failure, now, false, decisions);
+                }
             }
         }
-        failures
+        decisions.push(Decision::Finish);
     }
 
     fn present(&self) -> impl Iterator<Item = &Member> {
@@ -326,25 +335,21 @@ impl Engine {
             .position(|member| member.present && member.server == *server)
     }
 
-    fn failed(&self, server: &ServerId, scope: Scope) -> bool {
-        self.failures
-            .iter()
-            .any(|failure| failure.server == *server && failure.scope == scope)
-    }
-
-    /// Records a member's first failure in `scope`.
-    fn record(&mut self, index: usize, scope: Scope, failure: &Failure, at: Instant) {
-        let server = self.members[index].server.clone();
-        if !self.failed(&server, scope) {
-            self.failures
-                .push(ServerFailure { server, scope, failure: failure.clone(), at });
-        }
-    }
-
-    fn remove(&mut self, index: usize, scope: Scope, failure: Failure, at: Instant, decisions: &mut Vec<Decision>) {
-        self.record(index, scope, &failure, at);
-        self.members[index].present = false;
-        decisions.push(Decision::Remove(self.members[index].server.clone(), failure));
+    /// Records a member's failure, removing it when `remove`.
+    fn fail(
+        &mut self,
+        index: usize,
+        scope: Scope,
+        failure: Failure,
+        at: Instant,
+        remove: bool,
+        decisions: &mut Vec<Decision>,
+    ) {
+        let member = &mut self.members[index];
+        member.present &= !remove;
+        let failure = ServerFailure { server: member.server.clone(), scope, failure, at };
+        self.failures.push(failure.clone());
+        decisions.push(if remove { Decision::Remove(failure) } else { Decision::Failed(failure) });
     }
 
     fn probe(&mut self, server: &ServerId, probe: &Probe, decisions: &mut Vec<Decision>) {
@@ -371,12 +376,12 @@ impl Engine {
 
     /// A lost latency population; in the latency stage a server lost beside another leaves the run.
     fn latency_failed(&mut self, index: usize, failure: Failure, at: Instant, decisions: &mut Vec<Decision>) {
-        self.members[index].probing = Probing::Failed;
-        let lost = matches!(failure.reason, FailureReason::ConnectionLost | FailureReason::Timeout);
-        match self.plan.stage == Stage::Latency && lost && self.present().count() > 1 {
-            true => self.remove(index, Scope::Latency, failure, at, decisions),
-            false => self.record(index, Scope::Latency, &failure, at),
+        if std::mem::replace(&mut self.members[index].probing, Probing::Failed) == Probing::Failed {
+            return;
         }
+        let lost = matches!(failure.reason, FailureReason::ConnectionLost | FailureReason::Timeout);
+        let remove = self.plan.stage == Stage::Latency && lost && self.present().count() > 1;
+        self.fail(index, Scope::Latency, failure, at, remove, decisions);
     }
 
     /// A member whose lanes failed for good leaves.
@@ -393,7 +398,7 @@ impl Engine {
                     _ => None,
                 });
             if let Some(failure) = failed {
-                self.remove(index, Scope::Throughput, failure, input.now, decisions);
+                self.fail(index, Scope::Throughput, failure, input.now, true, decisions);
             }
         }
     }
@@ -421,7 +426,7 @@ impl Engine {
         let failure = Failure::new(FailureReason::Timeout, "server resources were not ready within 10 seconds");
         for (index, lanes) in late {
             match lanes {
-                true => self.remove(index, Scope::Throughput, failure.clone(), input.now, &mut tick.decisions),
+                true => self.fail(index, Scope::Throughput, failure.clone(), input.now, true, &mut tick.decisions),
                 false => self.latency_failed(index, failure.clone(), input.now, &mut tick.decisions),
             }
         }
@@ -452,7 +457,7 @@ impl Engine {
                     Failure::new(FailureReason::PreparationFailed, "receiver checkpoint unavailable before measurement")
                 }
             };
-            self.remove(index, Scope::Throughput, failure, now, &mut tick.decisions);
+            self.fail(index, Scope::Throughput, failure, now, true, &mut tick.decisions);
         }
         self.window = Some((now, now + self.plan.duration));
         for member in &mut self.members {
@@ -482,7 +487,8 @@ impl Engine {
     }
 
     fn measure(&mut self, input: &Input, tick: &mut Tick) {
-        let last = self.last && self.window.is_some_and(|(_, end)| input.now >= end);
+        let checkpointed = self.last || !self.plan.stage.moves(Direction::Up);
+        let last = checkpointed && self.window.is_some_and(|(_, end)| input.now >= end);
         if self.aggregate.is_some() {
             self.observe(input, last, tick);
         }
@@ -509,7 +515,7 @@ impl Engine {
         }
         for index in 0..self.members.len() {
             if let Some(failure) = self.departure(index, input, last) {
-                self.remove(index, Scope::Throughput, failure, input.now, &mut tick.decisions);
+                self.fail(index, Scope::Throughput, failure, input.now, true, &mut tick.decisions);
             }
         }
         let shared = |direction| self.present().all(|member| self.silent(member, direction, input.now));
