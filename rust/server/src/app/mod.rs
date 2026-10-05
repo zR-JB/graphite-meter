@@ -1,8 +1,10 @@
-//! HTTP semantics independent of version: the gate, dispatch to control endpoints and engines, and finalizing.
+//! HTTP semantics independent of version: the gate, dispatch to control endpoints, engines and the browser app, and
+//! finalizing.
 
 mod control;
 pub mod finalize;
 mod gate;
+mod page;
 pub mod query;
 mod response;
 pub mod topology;
@@ -10,6 +12,7 @@ pub mod topology;
 pub use topology::Endpoint;
 
 use crate::{
+    assets::{Asset, Assets},
     auth::Auth,
     config::{Config, ListenerKind},
     engine::{Block, Uploads},
@@ -20,6 +23,7 @@ use crate::{
 };
 use bytes::Buf;
 use gate::Gate;
+use graphite_meter_legal::Notices;
 use graphite_meter_proto::{lane::LaneEnding, route::Route};
 use http::{HeaderValue, Method, Request, Response, StatusCode, header};
 use std::{future::poll_fn, net::IpAddr, pin::pin};
@@ -33,6 +37,7 @@ pub struct App {
     quotas: Quotas,
     uploads: Uploads,
     auth: Auth,
+    assets: Assets,
     block: Block,
     /// The process's discovery generation: 32 hex digits.
     generation: String,
@@ -95,6 +100,7 @@ impl App {
             quotas: Quotas::new(config.limits, &budget, None),
             uploads: Uploads::new(random()?),
             auth: Auth::Off,
+            assets: Assets::embedded(config.auth.is_some(), config.result_history_default),
             budget,
             block,
             generation,
@@ -102,6 +108,12 @@ impl App {
             shutdown,
             config,
         })
+    }
+
+    /// Serves `files` and `notices` as the browser app instead of the embedded ones.
+    pub fn with_assets(self, files: &'static [Asset], notices: &'static Notices) -> Self {
+        let assets = Assets::new(files, notices, self.config.auth.is_some(), self.config.result_history_default);
+        Self { assets, ..self }
     }
 
     pub fn budget(&self) -> &Budget {
@@ -157,7 +169,10 @@ impl App {
         exchange: Exchange,
     ) -> Outcome {
         let Some(route) = route else {
-            return Outcome::Response(response::status(StatusCode::NOT_FOUND));
+            return Outcome::Response(match connection.endpoint.ui() {
+                true => self.page(&request),
+                false => response::status(StatusCode::NOT_FOUND),
+            });
         };
         if request.method() == Method::OPTIONS {
             return Outcome::Response(response::empty(StatusCode::NO_CONTENT));

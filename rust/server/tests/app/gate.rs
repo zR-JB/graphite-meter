@@ -42,8 +42,6 @@ async fn unmounted_routes_are_not_found_and_mounted_ones_check_their_methods() {
         (Endpoint::Quic, "GET", "/ws/ping"),
         (Endpoint::H2, "GET", "//probe"),
         (Endpoint::H2, "GET", "/probe/"),
-        (Endpoint::H1, "POST", "/preflight"),
-        (Endpoint::H1, "OPTIONS", "/ws/ping"),
     ] {
         let response = send(&app, endpoint, empty(request(method, path))).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{endpoint:?} {method} {path}");
@@ -146,7 +144,7 @@ async fn only_a_post_carries_a_body() {
         .header("content-length", "3")
         .body(Full::new(Bytes::from_static(b"abc")))
         .unwrap();
-    assert_eq!(send(&app, Endpoint::H1, post).await.status(), StatusCode::NOT_FOUND);
+    assert_eq!(send(&app, Endpoint::H1, post).await.status(), StatusCode::METHOD_NOT_ALLOWED);
 }
 
 #[tokio::test]

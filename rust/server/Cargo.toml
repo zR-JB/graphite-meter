@@ -13,6 +13,7 @@ bytes.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
 graphite-meter-http3.workspace = true
+graphite-meter-legal.workspace = true
 graphite-meter-net.workspace = true
 graphite-meter-proto.workspace = true
 h2.workspace = true
@@ -36,12 +37,16 @@ tokio-tungstenite.workspace = true
 tokio-util.workspace = true
 zeroize.workspace = true
 
+[build-dependencies]
+graphite-meter-legal = { workspace = true, features = ["build"] }
+
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true, features = ["termios"] }
 
 [dev-dependencies]
 graphite-meter-testkit.workspace = true
 http-body-util.workspace = true
+miniz_oxide.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 
 [lints]

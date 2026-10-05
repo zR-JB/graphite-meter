@@ -2,6 +2,7 @@
 
 use graphite_meter_proto::text::quote;
 use graphite_meter_server::{
+    assets::NOTICES,
     auth::password,
     config::{self, Config, ENGINE_VERSION, Loaded},
     log,
@@ -14,14 +15,18 @@ use std::{
 use zeroize::Zeroizing;
 
 fn main() -> ExitCode {
+    NOTICES.keep();
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let failure = match args.as_slice() {
         [only] if only == "version" || only == "--version" => {
             println!("{ENGINE_VERSION}");
             None
         }
-        // This build embeds no notices.
-        [only] if only == "--legal" || only == "-legal" => None,
+        [only] if only == "--legal" || only == "-legal" => match legal() {
+            Ok(0) => None,
+            Ok(status) => return ExitCode::from(status),
+            Err(error) => Some(format!("legal: {error}")),
+        },
         [only] if only == "hash-password" => hash_password().err().map(|error| format!("hash-password: {error}")),
         _ => match config::load(|name| std::env::var_os(name), args, &mut io::stderr()) {
             Ok(Loaded::Help) => None,
@@ -38,6 +43,15 @@ fn main() -> ExitCode {
         }
         None => ExitCode::SUCCESS,
     }
+}
+
+/// Prints the notices; the status is 141 into a closed pipe on Unix.
+fn legal() -> Result<u8, String> {
+    let report = NOTICES.report().ok_or(
+        "this build embeds no notices; mise run rust-server-run -- --legal builds the server with dependency notices \
+         and prints them",
+    )?;
+    graphite_meter_legal::print(io::stdout().lock(), report).map_err(|error| error.to_string())
 }
 
 /// Runs the server until SIGINT or SIGTERM.

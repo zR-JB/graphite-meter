@@ -2,6 +2,7 @@
 
 mod control;
 mod gate;
+mod page;
 mod upload;
 
 use bytes::Bytes;

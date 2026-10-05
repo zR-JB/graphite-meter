@@ -62,10 +62,15 @@ fn help_prints_the_usage_and_exits_zero() {
 }
 
 #[test]
-fn legal_prints_nothing_without_embedded_notices() {
+fn legal_without_embedded_notices_names_the_task_that_embeds_them() {
     for arg in ["-legal", "--legal"] {
         let output = server(&[arg], &[], b"");
-        assert!(output.status.success() && output.stdout.is_empty() && output.stderr.is_empty());
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        let line = text(&output.stderr).strip_suffix('\n').unwrap();
+        let message = "legal: this build embeds no notices; mise run rust-server-run -- --legal builds the server \
+                       with dependency notices and prints them";
+        assert_eq!(logged(line), message);
     }
 }
 
