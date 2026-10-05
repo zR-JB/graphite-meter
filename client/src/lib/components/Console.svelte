@@ -421,14 +421,23 @@
   // the sheet slides from its edge and pushes the stage, which moves as one surface from where it stood.
   const dockedPanels = (route: Route) =>
     dockQuery.current && route.kind === "app" ? route.panels.join() : "";
+  // A result opening or closing in History moves its panes the same way: the list keeps its place and width
+  // changes, and the result rises in or sinks out.
+  const openResult = (route: Route) =>
+    route.kind === "app" && route.workspace.kind === "history"
+      ? (route.workspace.selectedId ?? "")
+      : null;
   function commitRoute(next: Route, fromHistory = false) {
-    if (dockedPanels(next) === dockedPanels(currentRoute))
-      applyRoute(next, fromHistory);
-    else
-      flip(
-        () => applyRoute(next, fromHistory),
-        ["stage", "sheet-left", "sheet-right"],
-      );
+    const apply = () => applyRoute(next, fromHistory);
+    if (dockedPanels(next) !== dockedPanels(currentRoute))
+      flip(apply, ["stage", "sheet-left", "sheet-right"]);
+    else if (
+      openResult(next) !== null &&
+      openResult(currentRoute) !== null &&
+      openResult(next) !== openResult(currentRoute)
+    )
+      flip(apply, ["history-list", "history-detail"]);
+    else apply();
   }
   function applyRoute(next: Route, fromHistory: boolean) {
     const previous = currentRoute;

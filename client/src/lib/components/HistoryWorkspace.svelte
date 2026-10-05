@@ -663,7 +663,12 @@
       style:--split={store.historySplit}
       bind:clientWidth={bodyWidth}
     >
-      <div class="history-list" bind:this={list} {@attach fitTable}>
+      <div
+        class="history-list"
+        data-flip="history-list"
+        bind:this={list}
+        {@attach fitTable}
+      >
         <div class="history-table" style:--metric-columns={columns.length}>
           <div class="column-head page-fill" role="group" aria-label="Sort by">
             {#each ["date" as const, ...columns] as column (column)}
@@ -837,7 +842,7 @@
       {#if selectedRecord}
         {#key selectedRecord.id}
           <svelte:boundary>
-            <div class="detail-pane enter">
+            <div class="detail-pane enter" data-flip="history-detail">
               <HistoryResultDetail
                 record={selectedRecord}
                 onClose={() => onNavigate(null)}
