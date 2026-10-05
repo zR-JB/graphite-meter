@@ -270,6 +270,77 @@ jobs:
             ${{ runner.temp }}/browser-*/*.json
           if-no-files-found: ignore
 
+  rust-image:
+    name: Rust image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    env:
+      VERSION: 0.0.0-ci
+      REPOSITORY: ${{ github.repository }}
+      REVISION: ${{ github.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up pinned mise and Python
+        uses: ./.github/actions/setup-project
+      # The arm64 image's checks run its server.
+      - name: Set up arm64 emulation
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          # setup-qemu runs this image privileged to register binfmt. Pin the
+          # secondary image as tightly as the Action that launches it.
+          image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
+          cache-image: 'false'
+      - name: Set up pinned Buildx
+        uses: ./.github/actions/setup-buildx
+      # The OCI archive builds each architecture's server once; the loaded images reuse its layers. The ci
+      # profile leaves out LTO, and the core job checks the browser app.
+      - name: Build the amd64 and arm64 server image with reviewed notices
+        run: |
+          build() {
+            docker buildx build --file container/Dockerfile.rust --target server \
+              --build-arg VERSION="$VERSION" --build-arg PROFILE=ci --build-arg GM_CLIENT_VALIDATE=0 \
+              --label "org.opencontainers.image.source=https://github.com/$REPOSITORY" \
+              --label "org.opencontainers.image.revision=$REVISION" \
+              --label "org.opencontainers.image.version=$VERSION" \
+              --label org.opencontainers.image.licenses=AGPL-3.0-or-later "$@" .
+          }
+          mkdir -p "$RUNNER_TEMP/rust-image"
+          build --platform linux/amd64,linux/arm64 --provenance mode=max \
+            --output "type=oci,dest=$RUNNER_TEMP/rust-image/graphite-meter-rust.oci.tar"
+          # Docker's image store cannot load the attestation manifests.
+          for arch in amd64 arm64; do
+            build --platform "linux/$arch" --provenance false --load --tag "graphite-meter-rust:$arch"
+          done
+      - name: Verify the archive's platforms, provenance, labels and reviewed notices
+        env:
+          OCI_ARCHIVE: ${{ runner.temp }}/rust-image/graphite-meter-rust.oci.tar
+        run: SKOPEO_IMAGE=$(python3 scripts/ci/toolchains.py get images.skopeo) python3 scripts/ci/verify_oci.py
+      # The arm64 image runs under emulation.
+      - name: Check both images' files, server, browser app and allocator setting like the Go image
+        env:
+          ENGINE_VERSION: 0.0.0-ci-rust
+          GM_CLIENT_REVISION: source
+        run: |
+          for arch in amd64 arm64; do
+            scripts/verify-container.sh "graphite-meter-rust:$arch"
+          done
+      - name: Export the amd64 image's server for the browser suite
+        run: |
+          docker create --name rust-image-server graphite-meter-rust:amd64
+          docker cp rust-image-server:/graphite-meter "$RUNNER_TEMP/rust-image/graphite-meter-server"
+      - name: Upload the image and its amd64 server
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rust-image
+          path: ${{ runner.temp }}/rust-image/
+          if-no-files-found: error
+          retention-days: 7
+
   rust-windows:
     name: Rust client tests on Windows
     runs-on: windows-latest
@@ -373,8 +444,8 @@ jobs:
     name: Gate
     runs-on: ubuntu-24.04
     if: always()
-    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-windows,
-      rust-perf]
+    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-image,
+      rust-windows, rust-perf]
     steps:
       - name: Require every selected job
         env:

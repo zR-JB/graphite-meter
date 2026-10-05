@@ -20,9 +20,10 @@ from github_api import (
     expect_object,
     fail,
     object_field,
+    runner_path,
     str_field,
 )
-from trust import env
+from trust import env, env_sha
 
 DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 PLATFORMS = {"amd64", "arm64"}
@@ -212,3 +213,15 @@ def verify(version: str, revision: str, archive: Path) -> str:
         fail(f"OCI archive digest is {digest!r}")
     print(f"OCI verification passed: {version} @ {revision} as {digest}")
     return digest
+
+
+def main() -> None:
+    """Verify the archive in OCI_ARCHIVE, inside RUNNER_TEMP, as VERSION built from REVISION."""
+    try:
+        verify(env("VERSION"), env_sha("REVISION"), runner_path("OCI_ARCHIVE"))
+    except (ControlPlaneError, OSError) as exc:
+        raise SystemExit(f"OCI verification failed: {exc}") from exc
+
+
+if __name__ == "__main__":
+    main()

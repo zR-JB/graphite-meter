@@ -144,10 +144,12 @@ def literal_updates(root: Path = ROOT) -> dict[Path, str]:
             (r"(?m)^FROM docker\.io/library/golang:\S+ AS ca-certificates$",
              f"FROM {pins['images']['golang']} AS ca-certificates"),
         ],
-        ".github/workflows/release-request.yml": [
-            (r"(?m)^(\s*image: )docker.io/tonistiigi/binfmt@\S+$", rf"\g<1>{pins['images']['binfmt']}"),
-        ],
     }
+    # setup-qemu registers arm64 emulation with this image, privileged.
+    for name in (".github/workflows/ci.yml", ".github/workflows/release-request.yml"):
+        replacements[name] = [
+            (r"(?m)^(\s*image: )docker.io/tonistiigi/binfmt@\S+$", rf"\g<1>{pins['images']['binfmt']}"),
+        ]
     replacements[".github/workflows/release.yml"] = [
         (r"(?m)^(\s*SKOPEO_IMAGE: )quay.io/containers/skopeo:\S+$", rf"\g<1>{pins['images']['skopeo']}"),
     ]
