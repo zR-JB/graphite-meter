@@ -283,6 +283,19 @@ class ReleasePublicationTests(unittest.TestCase):
         self.assertIn(f"missing the third-party source asset {SOURCE}", error or "")
         self.assertEqual(after["writes"], [])
 
+    def test_a_rust_release_offers_each_rust_build_s_source_beside_go_s(self) -> None:
+        offers = [f"graphite-meter-{package}_1.2.3_linux_amd64_rust_third-party-source.tar.gz"
+                  for package in ("client", "server")]
+        error, output, published = self.publish(copy.deepcopy(EMPTY), ASSETS | {name: b"rust" for name in offers})
+        self.assertIsNone(error, output)
+        body = published["releases"][0]["body"]
+        self.assertIn(f"included in the Go artifacts is attached as **{SOURCE}**", body)
+        self.assertIn(", ".join(f"**{name}**" for name in offers), body)
+        error, output, published = self.publish(copy.deepcopy(EMPTY))
+        self.assertIsNone(error, output)
+        self.assertIn("included in the distributed artifacts", published["releases"][0]["body"])
+        self.assertNotIn("Rust", published["releases"][0]["body"])
+
     def test_release_publishes_only_exact_assets_at_the_exact_tag(self) -> None:
         error, output, published = self.publish(copy.deepcopy(EMPTY))
         self.assertIsNone(error, output)

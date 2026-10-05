@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate release requests, then authorize stable releases and PR prereleases."""
+"""Validate release requests, then authorize stable releases, optionally with Rust builds, and PR prereleases."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from typing import TypeVar
 from urllib.parse import quote
 
 import github_api as gh
+import rust_release
 import verify_oci
 import verify_release_assets
 from trust import (
@@ -45,14 +46,17 @@ TAG_RE = re.compile(rf"v{N}\.{N}\.{N}(-(?:alpha|beta|rc)\.{N})?")
 OCI = "graphite-meter.oci.tar"
 OCI_LIMIT = 1024 * 1024 * 1024
 ASSETS_LIMIT = 2 * OCI_LIMIT
-# The release request's job, which must have written each of its artifacts while it ran.
+# The release request's jobs; each artifact must have been written by its job while that job ran.
 BUILD_JOB = "Build untrusted release candidate"
+RUST_IMAGE_JOB = "Build untrusted Rust image"
+RUST_TUI_JOB = "Build untrusted Rust TUI archives"
+REQUEST_JOBS = (BUILD_JOB, RUST_IMAGE_JOB, RUST_TUI_JOB)
 # Seconds between reads while GitHub's read path catches up with a write.
 DELAYS = (0.25, 0.5, 1, 2, 4, 8)
 T = TypeVar("T")
 REQUEST_KEYS = {
     "schemaVersion", "repository", "tag", "sourceSha", "pr", "mode", "requestRunId",
-    "requestRunAttempt",
+    "requestRunAttempt", "rust",
 }
 
 
@@ -61,6 +65,7 @@ class Release:
     tag: str
     sha: str
     pr: int
+    rust: bool = False
 
     @property
     def stable(self) -> bool:
@@ -79,19 +84,28 @@ def assets_sha256(directory: Path) -> str:
     return hashlib.sha256(listing.encode()).hexdigest()
 
 
-def parse_release(tag: str, sha: str, pr: int) -> Release:
+def parse_release(tag: str, sha: str, pr: int, rust: bool = False) -> Release:
     match = TAG_RE.fullmatch(tag)
     if pr < 0 or match is None or (match.group(1) is None) != (pr == 0):
         gh.fail("stable tags are vMAJOR.MINOR.PATCH; PR prereleases add -{alpha,beta,rc}.N")
     if SHA_RE.fullmatch(sha) is None:
         gh.fail("release source must be a 40-character commit SHA")
-    return Release(tag, sha, pr)
+    # Only a GitHub Release carries the Rust builds' source offers, and prereleases publish none.
+    if rust and pr:
+        gh.fail("Rust builds ship only with stable releases")
+    return Release(tag, sha, pr, rust)
+
+
+def flag(name: str) -> bool:
+    if (value := env(name)) not in ("true", "false"):
+        gh.fail(f"{name} must be true or false")
+    return value == "true"
 
 
 def request_title(mode: str, release: Release, main: str) -> str:
     """The run-name that release-request.yml derives from its dispatch inputs."""
     source = f"PR #{release.pr} @ {release.sha}" if release.pr else "main"
-    return f"Release request · {mode} · {release.tag} · {source} · {main}"
+    return f"Release request · {mode} · {release.tag} · {source} · {main} · Rust {str(release.rust).lower()}"
 
 
 def main_workflow(repository: str, name: str) -> str:
@@ -169,19 +183,19 @@ def command_prepare() -> None:
     pr = env_int("PR") if os.environ.get("PR") else 0
     if not pr and os.environ.get("SHA"):
         gh.fail("stable releases build current main; leave sha empty")
-    release = parse_release(env("TAG"), env_sha("SHA") if pr else main, pr)
+    release = parse_release(env("TAG"), env_sha("SHA") if pr else main, pr, flag("RUST"))
     out = gh.runner_path("OUT_DIR")
     out.mkdir(parents=True, exist_ok=True)
     request = {
-        "schemaVersion": 2, "repository": repository, "tag": release.tag,
-        "sourceSha": release.sha, "pr": pr, "mode": mode,
+        "schemaVersion": 3, "repository": repository, "tag": release.tag,
+        "sourceSha": release.sha, "pr": pr, "mode": mode, "rust": release.rust,
         "requestRunId": env_int("REQUEST_RUN_ID"), "requestRunAttempt": 1,
     }
     (out / "request.json").write_text(json.dumps(request, indent=2, sort_keys=True) + "\n")
     gh.append_output(
         tag=release.tag, version=release.version, sha=release.sha,
         stable=str(release.stable).lower(), remote_sha="" if release.stable else release.sha,
-        client_validate="0" if release.stable else "1",
+        client_validate="0" if release.stable else "1", rust=str(release.rust).lower(),
     )
 
 
@@ -197,12 +211,14 @@ def verify_request(request_dir: Path) -> tuple[Release, bool]:
     candidate = request_dir / f"release-request-{run_id}"
     exact_files(candidate, {"request.json", OCI, f"{OCI}.sha256"})
     request = read_record(candidate / "request.json", REQUEST_KEYS, {
-        "schemaVersion": 2, "repository": repository, "requestRunId": run_id,
+        "schemaVersion": 3, "repository": repository, "requestRunId": run_id,
         "requestRunAttempt": 1,
     })
+    if not isinstance(rust := request["rust"], bool):
+        gh.fail("request rust must be true or false")
     release = parse_release(gh.str_field(request, "tag", "request"),
                             gh.str_field(request, "sourceSha", "request"),
-                            gh.int_field(request, "pr", "request"))
+                            gh.int_field(request, "pr", "request"), rust)
     if request["mode"] not in ("validate", "publish"):
         gh.fail("request mode must be validate or publish")
     if release.stable and release.sha != publisher:
@@ -210,6 +226,9 @@ def verify_request(request_dir: Path) -> tuple[Release, bool]:
     artifacts = {candidate.name: (BUILD_JOB, OCI_LIMIT + 1024 * 1024)}
     if release.stable:
         artifacts[f"release-assets-{run_id}"] = (BUILD_JOB, ASSETS_LIMIT)
+    if release.rust:
+        artifacts[f"release-rust-image-{run_id}"] = (RUST_IMAGE_JOB, ASSETS_LIMIT)
+        artifacts[f"release-rust-tui-{run_id}"] = (RUST_TUI_JOB, ASSETS_LIMIT)
     require_dispatch_run(repository, env("REPOSITORY_OWNER"), publisher, run_id,
                          "release-request.yml", request_title(str(request["mode"]), release,
                                                               publisher), artifacts)
@@ -218,21 +237,34 @@ def verify_request(request_dir: Path) -> tuple[Release, bool]:
     return release, request["mode"] == "publish"
 
 
+def write_checksums(directory: Path) -> None:
+    """Write checksums.txt, as sha256sum lists them, for every other file in `directory`."""
+    names = sorted(path.name for path in directory.iterdir() if path.name != "checksums.txt")
+    listing = "".join(f"{gh.file_sha256(directory / name)}  {name}\n" for name in names)
+    (directory / "checksums.txt").write_text(listing, encoding="utf-8")
+
+
 def command_verify() -> None:
     request_dir, handoff = gh.runner_path("REQUEST_DIR"), gh.runner_path("HANDOFF_DIR")
     release, publish = verify_request(request_dir)
     if publish:
         require_protected_environment(env("REPOSITORY"))
-    candidate = request_dir / f"release-request-{env_int('REQUEST_RUN_ID')}"
+    run_id = env_int("REQUEST_RUN_ID")
+    candidate = request_dir / f"release-request-{run_id}"
     if (candidate / OCI).stat().st_size > OCI_LIMIT:
         gh.fail(f"OCI archive exceeds {OCI_LIMIT} bytes")
     digest = gh.file_sha256(candidate / OCI)
     if (candidate / f"{OCI}.sha256").read_text(encoding="utf-8") != f"{digest}  {OCI}\n":
         gh.fail("OCI archive does not match the request checksum")
     manifest = verify_oci.verify(release.version, release.sha, candidate / OCI)
-    assets = request_dir / f"release-assets-{env_int('REQUEST_RUN_ID')}"
+    assets = request_dir / f"release-assets-{run_id}"
     if release.stable:
         verify_release_assets.verify_artifacts(release.version, assets)
+    rust_image, rust_assets = request_dir / f"release-rust-image-{run_id}", request_dir / "rust-assets"
+    rust_sha256 = rust_manifest = ""
+    if release.rust:
+        rust_sha256, rust_manifest = rust_release.verify(
+            release.version, release.sha, rust_image, request_dir / f"release-rust-tui-{run_id}", rust_assets)
     main, ci_run_id, codeql_id = require_publishable(env("REPOSITORY"), release)
     if main != env("PUBLISHER_SHA"):
         gh.fail("main moved during verification; start a fresh request")
@@ -241,16 +273,24 @@ def command_verify() -> None:
     shutil.copyfile(candidate / OCI, handoff / "image" / OCI)
     if release.stable:
         shutil.copytree(assets, handoff / "assets")
+    if release.rust:
+        (handoff / "rust-image").mkdir()
+        shutil.copyfile(rust_image / rust_release.OCI, handoff / "rust-image" / OCI)
+        for path in rust_assets.iterdir():
+            shutil.copyfile(path, handoff / "assets" / path.name)
+        write_checksums(handoff / "assets")
     gh.append_output(
         tag=release.tag, version=release.version, stable=str(release.stable).lower(),
         publish=str(publish).lower(), sha=release.sha, main_sha=main, pr=release.pr or "",
-        oci_sha256=digest, digest=manifest,
+        oci_sha256=digest, digest=manifest, rust=str(release.rust).lower(),
+        rust_oci_sha256=rust_sha256, rust_digest=rust_manifest,
         assets_sha256=assets_sha256(handoff / "assets") if release.stable else "",
     )
+    rust = f" Rust OCI SHA-256 `{rust_sha256}`." if release.rust else ""
     gh.append_summary(
         f"### {'Stable release' if release.stable else f'PR #{release.pr} prerelease'} verified"
         f"\n\n`{release.tag}` from `{release.sha}` on main `{main}`: CI run `{ci_run_id}`, "
-        f"CodeQL {codeql_id or 'on main'}, OCI SHA-256 `{digest}`. "
+        f"CodeQL {codeql_id or 'on main'}, OCI SHA-256 `{digest}`.{rust} "
         + ("Publication still requires `ghcr-release` approval." if publish
            else "Validation mode cannot reach a write-permission job.")
     )
@@ -259,12 +299,16 @@ def command_verify() -> None:
 def command_recheck() -> None:
     main = env_sha("MAIN_SHA")
     pr = env_int("PR") if os.environ.get("PR") else 0
-    release = parse_release(env("TAG"), env_sha("SOURCE_SHA"), pr)
+    release = parse_release(env("TAG"), env_sha("SOURCE_SHA"), pr, flag("RUST"))
     require_checkout(main)
     handoff = gh.runner_path("HANDOFF_DIR")
     exact_files(handoff / "image", {OCI})
     if gh.file_sha256(handoff / "image" / OCI) != env("OCI_SHA256"):
         gh.fail("approved OCI handoff does not match the verified archive")
+    if release.rust:
+        exact_files(handoff / "rust-image", {OCI})
+        if gh.file_sha256(handoff / "rust-image" / OCI) != env("RUST_OCI_SHA256"):
+            gh.fail("approved Rust OCI handoff does not match the verified archive")
     if release.stable and assets_sha256(handoff / "assets") != env("ASSETS_SHA256"):
         gh.fail("approved asset handoff does not match the verified assets")
     current, ci_run_id, codeql_id = require_publishable(env("REPOSITORY"), release)
@@ -288,15 +332,23 @@ def asset_digests(repository: str, release_id: int) -> dict[str, str]:
     return {gh.str_field(asset, "name", "asset"): str(asset.get("digest") or "") for asset in assets}
 
 
-def source_notice(release: Release, source: str) -> str:
-    return (
+def source_notice(release: Release, source: str, rust_sources: list[str]) -> str:
+    """The release body's source offer: the tagged repository, Go's third-party source and each Rust build's."""
+    notice = (
         "## Source availability\n\n"
         f"Graphite Meter source for this release is the repository snapshot at tag **{release.tag}** "
         f"(commit **{release.sha}**). GitHub provides that tagged project source below as "
         "**Source code (zip)** and **Source code (tar.gz)**.\n\n"
-        "Source for third-party components included in the distributed artifacts is attached as "
-        f"**{source}**. Together, the tagged repository source and that archive form the source "
-        "offer for this release."
+        f"Source for third-party components included in the {'Go' if rust_sources else 'distributed'} artifacts "
+        f"is attached as **{source}**. Together, the tagged repository source and that archive form the source "
+        f"offer for {'them' if rust_sources else 'this release'}."
+    )
+    if not rust_sources:
+        return notice
+    return notice + (
+        "\n\nSource for the third-party components of each experimental Rust build is attached as the archive "
+        f"named for that build: {', '.join(f'**{name}**' for name in rust_sources)}. Together with the tagged "
+        "repository source, each archive forms the source offer for its build."
     )
 
 
@@ -311,7 +363,8 @@ def command_publish() -> None:
     source = f"graphite-meter_{release.version}_third-party-source.tar.gz"
     if source not in local:
         gh.fail(f"release handoff is missing the third-party source asset {source}")
-    notice = source_notice(release, source)
+    rust_sources = sorted(name for name in local if name.endswith("_rust_third-party-source.tar.gz"))
+    notice = source_notice(release, source, rust_sources)
 
     def require_tag() -> None:
         if (sha := converge(f"{tag} visibility", lambda: release_tag_target(repository, tag))) != release.sha:

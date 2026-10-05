@@ -28,7 +28,9 @@ gh workflow run release-request.yml --ref main -f tag=v1.2.3 -f mode=publish
 ```
 
 A prerelease adds `-f pr=N -f sha=<PR head>` to a `vX.Y.Z-{alpha,beta,rc}.N`
-tag; `mode=validate` stops before any write. Approve the `ghcr-release`
+tag; `mode=validate` stops before any write. A stable release adds the
+experimental Rust image and TUI archives with `-f rust=true`; Go's image and
+archives stay the default and are always released. Approve the `ghcr-release`
 deployment when the Release run asks.
 
 1. **Untrusted build.** `release-request.yml` is a `workflow_dispatch` job on
@@ -37,13 +39,20 @@ deployment when the Release run asks.
    stable build checks the committed legal outputs, stamps the version and
    builds the native archives, the third-party source archive and the OCI
    image from main; a prerelease builds only the image, which BuildKit fetches
-   as the exact remote commit without a token.
+   as the exact remote commit without a token. With `rust`, two more jobs
+   build main with the pinned Rust builder, without caches: one the
+   linux/amd64 + linux/arm64 image and the server source offers, one the
+   Linux and Windows TUI archives with their source offers, which it checks by
+   running the amd64 TUI. `rust_release.py` stages exactly the release files
+   out of each export. Rust builds have no macOS archive, and prereleases
+   have no Rust build: only a GitHub Release carries their source offers.
 2. **Trusted verification.** `release.yml` runs main's tooling on
    `workflow_run` for main dispatches only and never executes the requested
    source. It binds `request.json` to the run title, the owner, the first
    attempt and bounded artifacts, each written by the request job that
    `release.py` names for it while that job ran, so no other job of the run
-   can supply it; it verifies the image and archives as data, and
+   can supply it; it verifies the images and archives as data, the Rust ones
+   as CI's `rust-release` job does, and
    requires either every main CI job and CodeQL for a stable release or, for a
    prerelease, an open PR containing current main with identical `.github`,
    `.githooks`, `scripts` and mise trees, its newest CI Gate and CodeQL check.
@@ -51,15 +60,19 @@ deployment when the Release run asks.
    deployments.
 3. **Approved publication.** One `ghcr-release` job holds the only write
    credentials. It rechecks the handoff digests and all trust above, pushes the
-   verified digest to its exact version tag, and for a stable release
-   publishes the GitHub Release and points the `major.minor` and `latest`
-   aliases at the highest published releases, which also repairs aliases a
-   cancelled run left behind.
+   verified digest to its exact version tag, and the Rust image's to
+   `VERSION-rust`. For a stable release it publishes the GitHub Release and
+   points the `major.minor` and `latest` aliases at the highest published
+   releases, which also repairs aliases a cancelled run left behind; after a
+   Rust release, `major.minor-rust` and `latest-rust` follow the highest
+   published releases that shipped a Rust server source offer.
 
 The default `GITHUB_TOKEN` has no write scope in any workflow. Handoffs are
 retained 35 days to cover the approval window; the recheck fails closed.
 GitHub's automatic source archives provide the project source; a stable
-release adds the third-party source archive and a source-availability note.
+release adds the third-party source archive, each Rust build's source offer
+and a source-availability note naming them. A prerelease publishes only its
+image and creates no GitHub Release.
 
 OCI builds request `provenance: mode=max`, pin the privileged binfmt image and
 keep BuildKit's insecure entitlements disabled. Neither Dockerfile may select a

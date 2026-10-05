@@ -23,8 +23,12 @@ AMD, ARM = "sha256:" + "a" * 64, "sha256:" + "b" * 64
 INDEX_TYPE = "application/vnd.oci.image.index.v1+json"
 MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
 SLSA = "https://slsa.dev/provenance/v1"
+# The Rust archive, when FAKE_RUST_INDEX is set, has its own index and labels.
 ENGINE = """#!/bin/sh
 printf '%s\\n' "$*" >>"$FAKE_ENGINE_LOG"
+case "$*" in
+  *-rust.oci.tar:*) [ -z "$FAKE_RUST_INDEX" ] || { FAKE_INDEX=$FAKE_RUST_INDEX; FAKE_LABELS=$FAKE_RUST_LABELS; } ;;
+esac
 case "$*" in
   *" inspect --raw "*) printf '%s\\n' "$FAKE_INDEX" ;;
   *"{{json .Labels}}"*) printf '%s\\n' "$FAKE_LABELS" ;;
@@ -149,22 +153,27 @@ def write_oci(path: Path, repository: str, revision: str, *, remote: bool, tampe
 
 
 def engine(directory: Path, repository: str, version: str, revision: str,
-           oci: JsonObject | None = None) -> dict[str, str]:
-    """Serve a two-platform image, `oci` or one with placeholder provenance, from a fake `docker`."""
+           oci: JsonObject | None = None, rust: JsonObject | None = None) -> dict[str, str]:
+    """Serve a two-platform image, `oci` or one with placeholder provenance, from a fake `docker`, and `rust` as
+    the VERSION-rust image of an archive named like the Rust one."""
     script = directory / "bin" / "docker"
     script.parent.mkdir(exist_ok=True)
     script.write_text(ENGINE)
     script.chmod(0o755)
-    labels = {"org.opencontainers.image.source": f"https://github.com/{repository}",
-              "org.opencontainers.image.revision": revision,
-              "org.opencontainers.image.version": version,
-              "org.opencontainers.image.licenses": "AGPL-3.0-or-later"}
+
+    def labels(version: str) -> str:
+        return json.dumps({"org.opencontainers.image.source": f"https://github.com/{repository}",
+                           "org.opencontainers.image.revision": revision,
+                           "org.opencontainers.image.version": version,
+                           "org.opencontainers.image.licenses": "AGPL-3.0-or-later"})
+
     return {
         "CONTAINER_ENGINE": "docker", "FAKE_ENGINE_LOG": str(directory / "engine.log"),
         "PATH": f"{script.parent}{os.pathsep}{os.environ['PATH']}",
         "SKOPEO_IMAGE": "quay.io/containers/skopeo:v1.22.3@sha256:" + "e" * 64,
         "FAKE_INDEX": json.dumps(oci or index(*RUNNABLE, *ATTESTED)),
-        "FAKE_LABELS": json.dumps(labels),
+        "FAKE_LABELS": labels(version),
+        "FAKE_RUST_INDEX": json.dumps(rust) if rust else "", "FAKE_RUST_LABELS": labels(f"{version}-rust"),
         "FAKE_DIGEST": AMD, "REPOSITORY": repository,
     }
 

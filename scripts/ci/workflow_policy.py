@@ -9,7 +9,7 @@ import tomllib
 from pathlib import Path, PurePosixPath
 
 from github_api import PEM, TLS_NAME, ControlPlaneError, fail
-from release import BUILD_JOB
+from release import REQUEST_JOBS
 from toolchains import check as check_toolchain_literals, pin
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -47,8 +47,10 @@ ORDERED = {
         'python3 scripts/ci/verify_release_assets.py "$VERSION"',
         "SOURCE_SHA: ${{ steps.request.outputs.remote_sha }}\n",
         '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', "uses: docker/build-push-action@",
-        "no-cache: true", "provenance: mode=max", "github-token: ''",
         "GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}\n",
+        "run: python3 scripts/ci/rust_release.py stage-image\n",
+        "python3 scripts/ci/rust_release.py stage-tui\n",
+        'python3 -m scripts.package_rust "$VERSION" --output "$OUT_DIR" --check\n',
     ),
     # CI exports the image's source offers, then stages and verifies its Rust builds as releases do.
     "workflows/ci.yml": (
@@ -63,6 +65,7 @@ ORDERED = {
         "run: python3 scripts/ci/release.py verify",
         "group: release-publish-${{ github.repository }}\n", "cancel-in-progress: false\n",
         "run: python3 scripts/ci/release.py recheck", "run: scripts/ci/publish.sh image",
+        "IMAGE_TAG: ${{ needs.verify.outputs.version }}-rust\n",
         "run: python3 scripts/ci/release.py publish", "run: scripts/ci/publish.sh aliases",
     ),
 }
@@ -83,7 +86,21 @@ CONTEXT = {
     "run: python3 scripts/ci/release.py publish": {
         "REPOSITORY": "github.repository", "TARGET_SHA": "github.sha",
     },
+    # What the approved job rechecks and publishes comes only from the verify job.
+    "run: python3 scripts/ci/release.py recheck": {
+        "TAG": "needs.verify.outputs.tag", "SOURCE_SHA": "needs.verify.outputs.sha",
+        "MAIN_SHA": "needs.verify.outputs.main_sha", "PR": "needs.verify.outputs.pr",
+        "OCI_SHA256": "needs.verify.outputs.oci_sha256", "ASSETS_SHA256": "needs.verify.outputs.assets_sha256",
+        "RUST": "needs.verify.outputs.rust", "RUST_OCI_SHA256": "needs.verify.outputs.rust_oci_sha256",
+    },
+    "ARCHIVE_DIR: ${{ runner.temp }}/handoff/rust-image\n": {"DIGEST": "needs.verify.outputs.rust_digest"},
+    "run: scripts/ci/publish.sh aliases": {
+        "VERSION": "needs.verify.outputs.version", "DIGEST": "needs.verify.outputs.digest",
+        "RUST_DIGEST": "needs.verify.outputs.rust_digest",
+    },
 }
+# Every image build of the untrusted request starts empty, records max provenance and gets no token.
+IMAGE_BUILD = ("no-cache: true\n", "provenance: mode=max\n", "github-token: ''\n")
 FORBIDDEN = {
     "workflows/release.yml": ("head_sha", "pull_request.head", "mise run", "secrets["),
     "workflows/release-request.yml": (
@@ -143,7 +160,7 @@ def check_actions(root: Path) -> None:
                 if missing := [item for item in required if item not in step]:
                     fail(f"{name}: mise setup must declare {missing[0].strip()}")
             for marker, bindings in CONTEXT.items():
-                env = re.findall(r"(?m)^ +([A-Z_]+): (.*)$", step) if marker in step else []
+                env = re.findall(r"(?m)^ +([A-Z][A-Z0-9_]*): (.*)$", step) if marker in step else []
                 for variable, value in bindings.items() if env else ():
                     if [found for key, found in env if key == variable] != [f"${{{{ {value} }}}}"]:
                         fail(f"{name}: {variable} must be exactly ${{{{ {value} }}}}")
@@ -191,14 +208,22 @@ def check_workflows(root: Path) -> None:
             fail("release.yml: only publish mode may hand off verified artifacts")
     request = (workflows / "release-request.yml").read_text(encoding="utf-8")
     # release.py takes each artifact only from the request job that wrote it.
-    if re.findall(r"(?m)^    name: (.*)$", request) != [BUILD_JOB]:
-        fail(f"release-request.yml: its job must be named {BUILD_JOB!r}, as release.py expects")
+    if re.findall(r"(?m)^    name: (.*)$", request) != list(REQUEST_JOBS):
+        fail(f"release-request.yml: its jobs must be named {list(REQUEST_JOBS)}, as release.py expects")
+    # The Rust jobs run only for a validated stable request that selected them.
+    for job in JOB.split(request.split("\njobs:\n", 1)[1]):
+        if job and not job.startswith("build:\n") and (
+                "    needs: build\n    if: needs.build.outputs.rust == 'true'\n" not in job):
+            fail("release-request.yml: Rust jobs must run only when the validated request selects them")
     scopes = re.findall(r"(?m)^ *permissions:.*(?:\n +\S.*)*", request)
     if scopes != ["permissions:\n  contents: read"]:
         fail("release-request.yml: the untrusted build may only read contents")
     for step in STEP.split(request.split("\njobs:", 1)[1]):
         if "${{ inputs." in step and "run: python3 scripts/ci/release.py prepare" not in step:
             fail("release-request.yml: dispatch inputs may reach only the request validator")
+        if "uses: docker/build-push-action@" in step and (missing := [item for item in IMAGE_BUILD
+                                                                     if item not in step]):
+            fail(f"release-request.yml: every image build must declare {missing[0].strip()}")
         if "setup-project" in step and "cache: 'false'" not in step:
             fail("release-request.yml: the untrusted build must disable every cache")
     for step in STEP.split(read(root, ".github/actions/setup-project/action.yml")):
