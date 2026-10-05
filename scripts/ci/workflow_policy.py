@@ -116,7 +116,6 @@ IMAGE_CONTEXTS = ("${{ steps.source.outputs.context }}", "${{ needs.build.output
 SELECTED_BY = {
     "core": "code", "go": "go", "e2e": "code", "smoke": "code", "release": "code", "security": "deps",
     "rust": "rust", "rust-windows": "rust", "rust-interop": "rust-interop", "rust-perf": "rust-interop",
-    "rust-campaign-build": "rust-interop", "rust-campaign": "rust-interop", "rust-campaign-report": "rust-interop",
     "rust-image": "rust-image", "rust-e2e": "rust-image", "rust-tui": "rust-release", "rust-release": "rust-release",
 }
 ALWAYS = ("plan", "tooling", "secret-scan", "gate")

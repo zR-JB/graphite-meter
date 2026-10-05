@@ -230,8 +230,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (W + "ci.yml", "    needs: [plan, rust-image]\n    if: needs.plan.outputs.rust-image ==",
      "    needs: [plan, rust-image]\n    if: needs.plan.outputs.rust ==", r"reviewed filters: \['rust-e2e'\]"),
     (W + "ci.yml", "      rust-interop: ${{ github.event_name == 'push' || "
-     "steps.filter.outputs.rust-interop == 'true' }}\n", "",
-     r"the plan does not output: \['rust-campaign', .*'rust-interop', 'rust-perf'\]"),
+     "steps.filter.outputs.rust-interop == 'true' }}\n", "", r"the plan does not output: \['rust-interop', 'rust-perf'\]"),
     (W + "ci.yml", "steps.filter.outputs.rust-image == 'true'", "steps.filter.outputs.rust == 'true'",
      "filters by their names"),
     (".github/ci-paths.yml", "rust-release:\n  - *workflow\n", "rust-release:\n  - *workflow\n  - 'docs/**'\n",
