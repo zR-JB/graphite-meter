@@ -1,0 +1,3 @@
+//! Authentication.
+
+pub mod password;
