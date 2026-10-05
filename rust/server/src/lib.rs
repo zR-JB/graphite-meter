@@ -2,7 +2,9 @@
 
 pub mod auth;
 pub mod config;
+pub mod limits;
 pub mod log;
+pub mod peer;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 

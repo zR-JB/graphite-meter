@@ -360,13 +360,17 @@ dependencies = [
  "base64",
  "getrandom 0.4.3",
  "graphite-meter-http3",
+ "graphite-meter-net",
  "graphite-meter-proto",
  "h2",
+ "http",
  "ipnet",
+ "noq",
  "ring",
  "rustix",
  "serde",
  "serde_json",
+ "tokio-util",
  "zeroize",
 ]
 

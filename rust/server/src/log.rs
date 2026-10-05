@@ -100,6 +100,11 @@ impl Latch {
                 .is_ok())
         .then_some(!on)
     }
+
+    /// Whether the condition was last reported as started.
+    pub fn on(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
 }
 
 #[cfg(test)]
