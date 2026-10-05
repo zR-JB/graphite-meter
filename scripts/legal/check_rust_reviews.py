@@ -4,7 +4,9 @@ The client ships on every TUI platform and the server on every server platform o
 workspace metadata; cargo tree over normal and build edges lists the crates each build compiles. A
 registry review covers its crate name and source across versions, a git review the exact version and
 revision; unused approved reviews may remain. Every shipped target also needs an approved platform
-record, and the static x86_64 Linux binaries stay within their crate budgets.
+record, and the static x86_64 Linux binaries stay within their crate budgets. The manual license texts of
+legal/rust-provenance.json keep their reviewed SHA-256, and the notice sources stay reviewed for the pinned
+Rust release.
 """
 from __future__ import annotations
 
@@ -14,8 +16,12 @@ import re
 import subprocess
 import sys
 import tomllib
+from pathlib import Path
 
 from ..ci.rust_workspace import ROOT, Workspace, load
+from .model import LegalError, Provenance, array, read_json
+from .review import add_provenance
+from .rust_platform import check_notice_sources
 
 REVIEWS = ROOT / "legal/rust-reviewed-components.json"
 FINGERPRINT = re.compile(r"[0-9a-f]{64}")
@@ -42,6 +48,20 @@ def compiled(package: str, target: str) -> set[tuple[str, str]]:
                            "--prefix", "none", "--format", "{p}", "--package", package],
                           cwd=ROOT / "rust", check=True, stdout=subprocess.PIPE, text=True).stdout
     return {(name, version.removeprefix("v")) for name, version, *_ in map(str.split, tree.splitlines())}
+
+
+def manual_problems(root: Path) -> list[str]:
+    """Incomplete or changed manual Rust provenance, or notice sources not reviewed for the pinned Rust."""
+    try:
+        entries = [Provenance.parse(item) for item in array(read_json(root / "legal/rust-provenance.json"))]
+        foreign = [entry.name for entry in entries if entry.ecosystem != "cargo" or entry.artifactScopes != ["rust"]]
+        if foreign:
+            raise LegalError(f"legal/rust-provenance.json entries must be cargo crates in the rust scope: {foreign}")
+        add_provenance(root, [], entries, "rust")
+        check_notice_sources(root)
+    except LegalError as error:
+        return [str(error)]
+    return []
 
 
 def unreviewed(reviews: list[dict], used: set[Crate]) -> list[Crate]:
@@ -81,6 +101,7 @@ def main() -> None:
     records = json.loads((ROOT / workspace.platform_record).read_text(encoding="utf-8"))
     problems = [f"{workspace.platform_record} has no approved record for {target}"
                 for target in unreviewed_platforms(records, {target for _, target in builds})]
+    problems += manual_problems(ROOT)
     sources: dict[tuple[str, str], set[str]] = {}
     for package in tomllib.loads((ROOT / "rust/Cargo.lock").read_text(encoding="utf-8"))["package"]:
         if "source" in package:

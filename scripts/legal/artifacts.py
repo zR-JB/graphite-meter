@@ -8,7 +8,7 @@ import re
 import tarfile
 from pathlib import Path
 
-from .model import Component, Json, LegalError, Project, Provenance, Review, marshal
+from .model import Component, Json, LegalError, Project, Provenance, Review, manual_files, marshal
 from .review import component_key, find_review, validate_review
 
 RELEASE_VERSION = re.compile(r"^v?[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)\.[0-9]+)?")
@@ -25,16 +25,43 @@ def notices(components: list[Component]) -> str:
     return "".join(output)
 
 
-def render(repo: Path, project: Project, version: str, scopes: dict[str, list[Component]]) -> dict[str, bytes]:
-    source_url = project.repository
+def release_source(project: Project, version: str) -> tuple[str, str]:
+    """The version a build names and its source: a release version's tag, otherwise the repository."""
     if RELEASE_VERSION.fullmatch(version):
         version = version.removeprefix("v")
-        source_url += "/tree/v" + version
+        return version, f"{project.repository}/tree/v{version}"
+    return version, project.repository
+
+
+def copyright_notice(project: Project) -> str:
+    return (f'{project.name}\nCopyright © {project.copyrightYears} {project.copyrightHolder}\n\n'
+            f'{project.name} is free software licensed under {project.licenseExpression}.\n'
+            "See LICENSE for the complete GNU Affero General Public License version 3 text.\n")
+
+
+def legal_header(project: Project, source_url: str, license_text: bytes) -> bytes:
+    """How a native binary's legal report starts: copyright, source and LICENSE."""
+    header = copyright_notice(project).encode() + f"\nSource code: {source_url}\n\nLICENSE\n\n".encode() + license_text
+    return header if license_text.endswith(b"\n") else header + b"\n"
+
+
+def about(project: Project, version: str, source_url: str, components: list[Component]) -> bytes:
+    """The browser's legal/about.json."""
+    listed: list[Json] = []
+    for component in components:
+        value = component.json()
+        del value["legalTexts"], value["notices"]
+        listed.append(value)
+    return marshal({
+        "schemaVersion": 2, "project": project.json(), "sourceVersion": version, "sourceURL": source_url,
+        "licenseURL": "legal/LICENSE.txt", "noticesURL": "legal/THIRD_PARTY_NOTICES.txt", "components": listed,
+    })
+
+
+def render(repo: Path, project: Project, version: str, scopes: dict[str, list[Component]]) -> dict[str, bytes]:
+    version, source_url = release_source(project, version)
     license_text = (repo / "LICENSE").read_bytes()
-    copyright_text = (f'{project.name}\nCopyright © {project.copyrightYears} {project.copyrightHolder}\n\n'
-                      f'{project.name} is free software licensed under {project.licenseExpression}.\n'
-                      "See LICENSE for the complete GNU Affero General Public License version 3 text.\n")
-    files = {"COPYRIGHT": copyright_text.encode()}
+    files = {"COPYRIGHT": copyright_notice(project).encode()}
     for scope, components in scopes.items():
         name = "server" if scope == "server/browser" else scope
         base = f"legal/generated/{name}"
@@ -42,22 +69,11 @@ def render(repo: Path, project: Project, version: str, scopes: dict[str, list[Co
         files[base + "/inventory.json"] = marshal(inventory)
         files[base + "/THIRD_PARTY_NOTICES.txt"] = notices(components).encode()
         files[base + "/SOURCE.txt"] = (source_url + "\n").encode()
-    about_components: list[dict[str, Json]] = []
-    for component in scopes["server/browser"]:
-        value = component.json()
-        del value["legalTexts"], value["notices"]
-        about_components.append(value)
-    files["client/public/legal/about.json"] = marshal({
-        "schemaVersion": 2, "project": project.json(), "sourceVersion": version, "sourceURL": source_url,
-        "licenseURL": "legal/LICENSE.txt", "noticesURL": "legal/THIRD_PARTY_NOTICES.txt",
-        "components": about_components,
-    })
+    files["client/public/legal/about.json"] = about(project, version, source_url, scopes["server/browser"])
     files["client/public/legal/LICENSE.txt"] = license_text
     files["client/public/legal/THIRD_PARTY_NOTICES.txt"] = notices(scopes["server/browser"]).encode()
-    report = copyright_text.encode() + f'\nSource code: {source_url}\n\nLICENSE\n\n'.encode() + license_text
-    if not license_text.endswith(b"\n"):
-        report += b"\n"
-    files["go/internal/legal/assets/TUI_LEGAL.txt"] = report + b"\n" + notices(scopes["tui"]).encode()
+    files["go/internal/legal/assets/TUI_LEGAL.txt"] = (legal_header(project, source_url, license_text) + b"\n"
+                                                       + notices(scopes["tui"]).encode())
     return files
 
 
@@ -154,9 +170,7 @@ def third_party_source_bundle(repo: Path, project: Project, version: str,
                              component.source_path)
             for entry in provenance:
                 destination = root + "/" + manual_source_destination(entry)
-                for local in entry.localPaths + [item.name for item in entry.localLegalFiles]:
-                    if Path(local).is_absolute():
-                        continue
+                for local in manual_files(entry):
                     path = repo / local
                     try:
                         path.lstat()

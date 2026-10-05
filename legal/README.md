@@ -150,3 +150,39 @@ every record; CI's Rust job also runs
 `python3 -m scripts.legal.check_git_sources --verify`, which fetches each
 branch and tag and checks ancestry, the change-set digest and scope, and the
 commit list.
+
+## Rust notices
+
+`python3 -m scripts.legal.rust` collects a Rust binary's notices around one
+real Cargo build of it, in three steps:
+
+1. **Prepare.** `cargo tree` for the target and the host gives a conservative
+   set of crates the build may compile, build scripts and procedural macros
+   included. Each needs its approved review, or manual provenance; the target
+   needs its approved platform record, whose notice texts the builder lacks are
+   fetched from `rust-notice-sources.json` into `legal/manual/` and checked by
+   SHA-256. The step writes the directory the build reads as
+   `GM_RUST_LEGAL_DIR`: `LEGAL.txt` (the `-legal` report), `package.txt`,
+   `target.txt`, `rustc-path.txt`, and `inputs.txt` with copies of those inputs
+   under `inputs/`. For the server it also stages the browser build in
+   `browser-assets/` with its own `legal/` files, and, for a reviewed build,
+   writes the image's `IMAGE_NOTICES.txt`.
+2. **Build and verify.** One `cargo rustc` build embeds the notices; the
+   build script refuses a directory prepared for another package, target or
+   compiler, or whose input copies differ. The collector then requires that
+   the build compiled only prepared crates with unchanged legal files, linked
+   only the record's native inputs, imported only its system libraries,
+   embedded exactly `LEGAL.txt`, and writes `inventory.json`.
+3. **Source offer.** A reviewed release-profile build writes
+   `THIRD_PARTY_SOURCE.tar.gz` with the compiled crates' and browser
+   packages' sources, the inventory, the report, the fork records and the
+   manual material.
+
+A failed platform check prints the build's candidate record and the listing
+its `noticesSha256` hashes; `--review-template` prints pending reviews of the
+crates that lack one.
+
+`--development` notices need the dependency reviews but no platform record,
+so any host builds them. Their report and their executable carry
+`UNREVIEWED DEVELOPMENT BUILD`: such a build is not distributable, and a
+reviewed build's executable must not carry the marker.
