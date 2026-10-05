@@ -1,9 +1,14 @@
 name: Set up pinned Buildx
 description: Buildx and BuildKit at the release build's versions, without a cached binary or insecure entitlements
+outputs:
+  name:
+    description: The builder, which `docker build` uses only when BUILDX_BUILDER names it
+    value: ${{ steps.buildx.outputs.name }}
 runs:
   using: composite
   steps:
-    - name: Set up Buildx
+    - id: buildx
+      name: Set up Buildx
       uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       with:
         version: v0.37.1

@@ -406,9 +406,14 @@ jobs:
         with: {persist-credentials: false}
       - name: Set up pinned mise and Python
         uses: ./.github/actions/setup-project
-      # The release build itself: release profile, no CI cache. It runs the amd64 TUI in the builder.
+      - id: buildx
+        name: Set up pinned Buildx
+        uses: ./.github/actions/setup-buildx
+      # The release build itself: release profile, no CI cache, the release request's BuildKit. It runs the amd64 TUI
+      # in the builder.
       - name: Build the Linux and Windows TUI archives and source offers in the pinned builder
         env:
+          BUILDX_BUILDER: ${{ steps.buildx.outputs.name }}
           RELEASE_DIST: ${{ runner.temp }}/rust-tui
         run: mise run rust-client-package "$VERSION"
       - name: Check each archive's files, notices and source offer, and run the amd64 TUI on the runner

@@ -159,7 +159,7 @@ The `rust` job runs `mise run rust-check`, verifies the Cargo fork pins with
 `check_git_sources --verify` and runs `rust-check-targets`. `rust-image`
 builds the image once per architecture and exports its server source offers;
 `rust-tui` builds the TUI archives and their source offers with release
-settings; `rust-release` stages both with `rust_release.py` and verifies them
+settings and the release request's pinned BuildKit; `rust-release` stages both with `rust_release.py` and verifies them
 as a release does, without running them: the image as above, each source
 offer's inventory, notices and files against the checkout, each archive's
 layout, executable format and notices, that each executable and image server

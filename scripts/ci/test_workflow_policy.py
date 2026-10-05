@@ -214,6 +214,9 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "RUST_OCI_SHA256: ${{ needs.verify.outputs.oci_sha256 }}", "RUST_OCI_SHA256 must be exactly"),
     (RELEASE, "        if: steps.verify.outputs.publish == 'true' && steps.verify.outputs.rust == 'true'\n",
      "        if: steps.verify.outputs.rust == 'true'\n", "hand off"),
+    # CI builds the TUI archives with the pinned BuildKit, which `docker build` uses only when named.
+    (W + "ci.yml", "          BUILDX_BUILDER: ${{ steps.buildx.outputs.name }}\n", "",
+     "misorders invariant: BUILDX_BUILDER"),
     # CI stages and verifies its Rust builds as a release does.
     (W + "ci.yml", "--target server-artifacts", "--target server", "--target server-artifacts"),
     (W + "ci.yml", "OUT_DIR=$RUNNER_TEMP/staged/tui python3 scripts/ci/rust_release.py stage-tui\n", "",

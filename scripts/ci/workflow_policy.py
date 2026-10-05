@@ -55,9 +55,11 @@ ORDERED = {
         "python3 scripts/ci/rust_release.py stage-tui\n",
         'python3 -m scripts.package_rust "$VERSION" --output "$OUT_DIR" --check\n',
     ),
-    # CI exports the image's source offers, then stages and verifies its Rust builds as releases do.
+    # CI exports the image's source offers, builds the TUI archives with the release request's BuildKit, then stages
+    # and verifies its Rust builds as releases do.
     "workflows/ci.yml": (
-        "--target server-artifacts", "python3 scripts/ci/rust_release.py stage-image\n",
+        "--target server-artifacts", "BUILDX_BUILDER: ${{ steps.buildx.outputs.name }}\n",
+        'run: mise run rust-client-package "$VERSION"\n', "python3 scripts/ci/rust_release.py stage-image\n",
         "python3 scripts/ci/rust_release.py stage-tui\n", "python3 scripts/ci/rust_release.py check\n",
     ),
     "workflows/release.yml": (
