@@ -2,7 +2,7 @@
 
 use super::uploads::Aggregate;
 use crate::lane::Lane;
-use std::sync::Arc;
+use std::{future::Future, pin::pin, sync::Arc};
 
 /// A joined data lane; dropping it leaves the aggregate, which may then complete.
 pub struct UploadSink {
@@ -29,6 +29,21 @@ impl UploadSink {
     /// The bytes this lane received.
     pub fn bytes(&self) -> u64 {
         self.bytes
+    }
+
+    /// Completes once the upload is finalized or expired: the end of a lane without a stream FIN.
+    pub fn finished(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
+        let aggregate = self.aggregate.clone();
+        async move {
+            loop {
+                let mut changed = pin!(aggregate.changed.notified());
+                changed.as_mut().enable();
+                if aggregate.ended() {
+                    return;
+                }
+                changed.await;
+            }
+        }
     }
 }
 

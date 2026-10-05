@@ -216,7 +216,11 @@ async fn a_finished_upload_completes_once_its_lanes_drain_and_takes_no_new_lane(
     lanes[0].record(100);
     lanes[1].record(230);
     assert!(matches!(record(&mut feed).await, Some(Record::Progress(counters)) if counters.bytes() == 330));
+    let finished = tokio::spawn(lanes[0].finished());
+    tokio::task::yield_now().await;
+    assert!(!finished.is_finished(), "a lane sees no finish before it");
     uploads.finish(&id, Some(&owner)).unwrap();
+    finished.await.unwrap();
     let [first_sink, second_sink] = lanes;
     drop(first_sink);
     for _ in 0..3 {

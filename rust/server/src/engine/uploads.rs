@@ -119,6 +119,12 @@ impl Aggregate {
         Counters::new(bytes, nanos)
     }
 
+    /// Finalized or expired: no lane joins any more.
+    pub(super) fn ended(&self) -> bool {
+        let life = self.life();
+        life.finished || life.expired
+    }
+
     /// A lane left: retention starts again from now.
     pub(super) fn leave(&self) {
         let mut life = self.life();
