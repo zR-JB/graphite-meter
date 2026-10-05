@@ -3,7 +3,7 @@ use super::{
     App, Overlay,
     frame::{beside, highlight, unique},
     keys::{self, Binding},
-    paths::Readiness,
+    paths::{LATENCY, Readiness, THROUGHPUT},
 };
 use crate::{
     config::MAX_STREAMS,
@@ -12,7 +12,6 @@ use crate::{
     report::vocabulary as words,
     text::{Line, Style, fill},
 };
-use graphite_meter_proto::discovery::{LatencyTransport, ThroughputTransport};
 use std::time::Duration;
 
 /// A setup row.
@@ -159,8 +158,8 @@ impl App {
                 inert = self.view.catalogue.len() < 2;
                 (None, self.selection())
             }
-            Row::Throughput => (None, self.path_value::<ThroughputTransport>(&mut help)),
-            Row::Latency => (None, self.path_value::<LatencyTransport>(&mut help)),
+            Row::Throughput => (None, self.path_value(&THROUGHPUT, &mut help)),
+            Row::Latency => (None, self.path_value(&LATENCY, &mut help)),
             Row::Protocol => match self.fixed_protocol() {
                 Some(fixed) => {
                     (help, inert) = ("Fixed by this path; pick another path to change it.".into(), true);

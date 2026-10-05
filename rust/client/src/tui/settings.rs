@@ -2,6 +2,7 @@
 use super::{
     App, Effect, Overlay, RECHECK,
     keys::{self, Action, Key},
+    paths::{LATENCY, THROUGHPUT},
     setup::Row,
 };
 use crate::{
@@ -13,7 +14,7 @@ use crate::{
 };
 use crossterm::event::KeyCode;
 use graphite_meter_proto::{
-    discovery::{LatencyTransport, Protocol, STAGE_LIMITS, ThroughputTransport},
+    discovery::{Protocol, STAGE_LIMITS},
     duration,
     origin::Origin,
     text::safe,
@@ -134,13 +135,13 @@ impl App {
                 return;
             }
             Row::Throughput => {
-                let label = self.cycle_path::<ThroughputTransport>(step);
+                let label = self.cycle_path(&THROUGHPUT, step);
                 if self.fixed_protocol().is_some() {
                     self.config.paths.protocol = None;
                 }
                 format!("Throughput path: {label}.")
             }
-            Row::Latency => format!("Latency path: {}.", self.cycle_path::<LatencyTransport>(step)),
+            Row::Latency => format!("Latency path: {}.", self.cycle_path(&LATENCY, step)),
             Row::Protocol if fixed.is_some() => format!("This path serves {} only.", words::protocol(fixed)),
             Row::Protocol => {
                 let versions = [None, Some(Protocol::Http1), Some(Protocol::Http2), Some(Protocol::Http3)];

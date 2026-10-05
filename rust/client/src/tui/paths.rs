@@ -87,7 +87,7 @@ impl App {
     }
 
     /// A path row's choices: automatic, then the single server's offers or the transports servers may share.
-    fn choices<T: Kind>(&self) -> Vec<Choice<T>> {
+    fn choices<T: Copy + PartialEq>(&self, kind: &Kind<T>) -> Vec<Choice<T>> {
         let automatic = |note| Choice {
             origin: None,
             transport: None,
@@ -96,10 +96,14 @@ impl App {
         };
         let Some((server, offered)) = self.single() else {
             let mut choices = vec![automatic("each server".into())];
-            for kind in T::SHARED {
+            for transport in kind.shared {
                 let offers = |server: &ServerPath| {
                     let offered = server.offered.as_ref();
-                    offered.is_some_and(|offered| T::offered(offered, &server.origin).iter().any(|path| path.1 == kind))
+                    offered.is_some_and(|offered| {
+                        (kind.offered)(offered, &server.origin)
+                            .iter()
+                            .any(|path| path.1 == transport)
+                    })
                 };
                 let lacking = self.view.servers.iter().filter(|server| !offers(server));
                 let names: Vec<_> = lacking.map(|server| server.name.as_str()).collect();
@@ -109,25 +113,26 @@ impl App {
                 };
                 choices.push(Choice {
                     origin: None,
-                    transport: Some(kind),
-                    label: kind.label().into(),
+                    transport: Some(transport),
+                    label: (kind.label)(transport).into(),
                     note,
                 });
             }
             return choices;
         };
-        let checked = server.path.as_ref().ok().and_then(T::checked);
+        let checked = server.path.as_ref().ok().and_then(kind.checked);
         let mut choices = vec![automatic(
             checked
                 .map(|origin| format!("→ {}", self.short(origin)))
                 .unwrap_or_default(),
         )];
-        for (origin, transport, version) in T::offered(offered, &server.origin) {
+        for (origin, transport, version) in (kind.offered)(offered, &server.origin) {
             if !choices
                 .iter()
                 .any(|choice| choice.selects((Some(&origin), Some(transport))))
             {
-                let (label, note) = (words::connection(transport.label(), version, &origin), self.short(&origin));
+                let label = words::connection((kind.label)(transport), version, &origin);
+                let note = self.short(&origin);
                 choices.push(Choice {
                     origin: Some(origin),
                     transport: Some(transport),
@@ -140,8 +145,8 @@ impl App {
     }
 
     /// A path row's value; its help gains the count of choices.
-    pub(super) fn path_value<T: Kind>(&self, help: &mut String) -> String {
-        let (choices, chosen) = (self.choices::<T>(), T::chosen(&self.config.paths));
+    pub(super) fn path_value<T: Copy + PartialEq>(&self, kind: &Kind<T>, help: &mut String) -> String {
+        let (choices, chosen) = (self.choices(kind), (kind.chosen)(&self.config.paths));
         *help = format!("{help}. ←/→ picks one of {}.", choices.len());
         match choices.iter().find(|choice| choice.selects(chosen)) {
             Some(choice) if choice.note.is_empty() => choice.label.clone(),
@@ -149,30 +154,30 @@ impl App {
             None => {
                 *help = format!("Not offered by the checked server. {help}");
                 let origin = chosen.0.map_or_else(|| "automatic origin".into(), Origin::to_string);
-                format!("{} · {origin}", chosen.1.map_or("auto", T::label))
+                format!("{} · {origin}", chosen.1.map_or("auto", kind.label))
             }
         }
     }
 
     /// Steps a path row to the next choice, or to the first when the chosen one is not offered: its label.
-    pub(super) fn cycle_path<T: Kind>(&mut self, step: isize) -> String {
-        let choices = self.choices::<T>();
+    pub(super) fn cycle_path<T: Copy + PartialEq>(&mut self, kind: &Kind<T>, step: isize) -> String {
+        let choices = self.choices(kind);
         let at = choices
             .iter()
-            .position(|choice| choice.selects(T::chosen(&self.config.paths)));
+            .position(|choice| choice.selects((kind.chosen)(&self.config.paths)));
         let next = at.map_or(0, |at| (at as isize + step).rem_euclid(choices.len() as isize) as usize);
         let choice = &choices[next];
-        T::choose(&mut self.config.paths, choice.origin.clone(), choice.transport);
+        (kind.choose)(&mut self.config.paths, choice.origin.clone(), choice.transport);
         choice.label.clone()
     }
 
     /// The HTTP version of the chosen throughput path when it does not negotiate one.
     pub(super) fn fixed_protocol(&self) -> Option<Protocol> {
         let (server, offered) = self.single()?;
-        let (Some(origin), Some(transport)) = ThroughputTransport::chosen(&self.config.paths) else {
+        let (Some(origin), Some(transport)) = (THROUGHPUT.chosen)(&self.config.paths) else {
             return None;
         };
-        let mut paths = ThroughputTransport::offered(offered, &server.origin).into_iter();
+        let mut paths = (THROUGHPUT.offered)(offered, &server.origin).into_iter();
         let (.., version) = paths.find(|path| path.0 == *origin && path.1 == transport)?;
         (version != Protocol::Negotiated).then_some(version)
     }
@@ -188,75 +193,52 @@ impl App {
     }
 }
 
-/// A path row's kind of transport.
-pub(super) trait Kind: Copy + PartialEq {
-    /// The transports a choice for every server may name.
-    const SHARED: [Self; 2];
-    fn label(self) -> &'static str;
-    fn chosen(paths: &PathChoice) -> (Option<&Origin>, Option<Self>);
-    fn choose(paths: &mut PathChoice, origin: Option<Origin>, transport: Option<Self>);
-    /// The paths of this kind a preflight offered, against the origin that served it, with their HTTP versions.
-    fn offered(offered: &Capabilities, served: &Origin) -> Vec<(Origin, Self, Protocol)>;
-    fn checked(paths: &Paths) -> Option<&Origin>;
+/// A path a preflight offered: its origin, transport and HTTP version.
+type Offer<T> = (Origin, T, Protocol);
+
+/// A path row's kind of transport: the transports a choice for every server may name, their labels, where the
+/// settings keep the choice, the paths of this kind a preflight offered against the origin that served it, and the
+/// checked path's origin.
+pub(super) struct Kind<T> {
+    shared: [T; 2],
+    label: fn(T) -> &'static str,
+    chosen: fn(&PathChoice) -> (Option<&Origin>, Option<T>),
+    choose: fn(&mut PathChoice, Option<Origin>, Option<T>),
+    offered: fn(&Capabilities, &Origin) -> Vec<Offer<T>>,
+    checked: fn(&Paths) -> Option<&Origin>,
 }
 
-impl Kind for ThroughputTransport {
-    const SHARED: [Self; 2] = [Self::FetchStream, Self::WebTransport];
-
-    fn label(self) -> &'static str {
-        words::throughput_transport(self)
-    }
-
-    fn chosen(paths: &PathChoice) -> (Option<&Origin>, Option<Self>) {
-        (paths.throughput_origin.as_ref(), paths.throughput_transport)
-    }
-
-    fn choose(paths: &mut PathChoice, origin: Option<Origin>, transport: Option<Self>) {
-        (paths.throughput_origin, paths.throughput_transport) = (origin, transport);
-    }
-
-    fn offered(offered: &Capabilities, served: &Origin) -> Vec<(Origin, Self, Protocol)> {
-        let streams = offered
-            .throughput
-            .iter()
-            .filter(|target| target.transport != Self::WebTransportDatagram);
+pub(super) const THROUGHPUT: Kind<ThroughputTransport> = Kind {
+    shared: [ThroughputTransport::FetchStream, ThroughputTransport::WebTransport],
+    label: words::throughput_transport,
+    chosen: |paths| (paths.throughput_origin.as_ref(), paths.throughput_transport),
+    choose: |paths, origin, transport| (paths.throughput_origin, paths.throughput_transport) = (origin, transport),
+    offered: |offered, served| {
+        let streams = offered.throughput.iter();
+        let streams = streams.filter(|target| target.transport != ThroughputTransport::WebTransportDatagram);
         streams
             .map(|target| (target.base_url.resolve(served).clone(), target.transport, target.protocol))
             .collect()
-    }
+    },
+    checked: |paths| Some(&paths.throughput.origin),
+};
 
-    fn checked(paths: &Paths) -> Option<&Origin> {
-        Some(&paths.throughput.origin)
-    }
-}
-
-impl Kind for LatencyTransport {
-    const SHARED: [Self; 2] = [Self::WebSocket, Self::WebTransport];
-
-    fn label(self) -> &'static str {
-        words::latency_transport(self)
-    }
-
-    fn chosen(paths: &PathChoice) -> (Option<&Origin>, Option<Self>) {
-        (paths.latency_origin.as_ref(), paths.latency_transport)
-    }
-
-    fn choose(paths: &mut PathChoice, origin: Option<Origin>, transport: Option<Self>) {
-        (paths.latency_origin, paths.latency_transport) = (origin, transport);
-    }
-
-    fn offered(offered: &Capabilities, served: &Origin) -> Vec<(Origin, Self, Protocol)> {
-        let version = words::latency_protocol;
-        let paths = offered.latency.iter();
+pub(super) const LATENCY: Kind<LatencyTransport> = Kind {
+    shared: [LatencyTransport::WebSocket, LatencyTransport::WebTransport],
+    label: words::latency_transport,
+    chosen: |paths| (paths.latency_origin.as_ref(), paths.latency_transport),
+    choose: |paths, origin, transport| (paths.latency_origin, paths.latency_transport) = (origin, transport),
+    offered: |offered, served| {
+        let paths = offered
+            .latency
+            .iter()
+            .map(|target| (target.base_url.resolve(served).clone(), target.transport));
         paths
-            .map(|target| (target.base_url.resolve(served).clone(), target.transport, version(target.transport)))
+            .map(|(origin, transport)| (origin, transport, words::latency_protocol(transport)))
             .collect()
-    }
-
-    fn checked(paths: &Paths) -> Option<&Origin> {
-        paths.latency.as_ref().map(|path| &path.origin)
-    }
-}
+    },
+    checked: |paths| paths.latency.as_ref().map(|path| &path.origin),
+};
 
 /// A path row's choice: an origin and a transport, each automatic when none.
 struct Choice<T> {
@@ -266,7 +248,7 @@ struct Choice<T> {
     note: String,
 }
 
-impl<T: Kind> Choice<T> {
+impl<T: PartialEq> Choice<T> {
     fn selects(&self, (origin, transport): (Option<&Origin>, Option<T>)) -> bool {
         self.origin.as_ref() == origin && self.transport == transport
     }
