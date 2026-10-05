@@ -155,3 +155,12 @@ async fn a_run_whose_server_left_ends_its_report_with_why() {
     );
     assert_eq!(report.lines().count(), 3, "{report}");
 }
+
+#[tokio::test]
+async fn a_report_into_a_closed_pipe_exits_141_quietly() {
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    let mut command = client(&refusing_downloads().await, "download");
+    let (status, report, stderr) = finished(command.stdout(writer).spawn().unwrap()).await;
+    assert_eq!((status, report, stderr), (Some(141), String::new(), String::new()));
+}

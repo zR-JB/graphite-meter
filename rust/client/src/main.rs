@@ -31,7 +31,7 @@ fn main() -> ExitCode {
     let usage = || config::usage(&text::clean(&program.to_string_lossy(), usize::MAX, text::safe));
     match config::parse(args) {
         Ok(Parsed::Help) => eprint!("{}", usage()),
-        Ok(Parsed::Version) => println!("graphite-meter-client {VERSION}"),
+        Ok(Parsed::Version) => return written(format!("graphite-meter-client {VERSION}\n").as_bytes()),
         Ok(Parsed::Legal) => return legal(),
         Ok(Parsed::Run(config)) => return run(*config).unwrap_or_else(|error| fail(&error.to_string())),
         Err(Refusal::Flag(error)) => {
@@ -62,10 +62,11 @@ fn run(config: Config) -> io::Result<ExitCode> {
         let signals = signals(!interactive)?;
         if interactive {
             let exit = tui::interactive(config, pool, signals).await?;
+            let status = status(&exit.view, exit.signal);
             if exit.report {
-                print(&exit.view, &exit.palette, columns(terminal), terminal)?;
+                return print(&exit.view, &exit.palette, columns(terminal), terminal, status);
             }
-            return Ok(ExitCode::from(status(&exit.view, exit.signal)));
+            return Ok(ExitCode::from(status));
         }
         let columns = columns(terminal);
         #[cfg(unix)]
@@ -76,11 +77,11 @@ fn run(config: Config) -> io::Result<ExitCode> {
         #[cfg(not(unix))]
         let dark = None;
         let (view, status) = headless(config, pool, first(signals)).await;
-        match report::unreported(&view) {
-            Some(reason) => eprintln!("graphite-meter-client: {reason}"),
-            None => print(&view, &Palette::new(dark.unwrap_or(true)), columns, terminal)?,
+        if let Some(reason) = report::unreported(&view) {
+            eprintln!("graphite-meter-client: {reason}");
+            return Ok(ExitCode::from(status));
         }
-        Ok(ExitCode::from(status))
+        print(&view, &Palette::new(dark.unwrap_or(true)), columns, terminal, status)
     })
 }
 
@@ -90,12 +91,15 @@ fn columns(terminal: bool) -> Option<u16> {
     columns.filter(|&columns| terminal && columns > 0)
 }
 
-/// Writes `view`'s report to stdout as wide as the terminal, or 100 columns.
-fn print(view: &View, palette: &Palette, columns: Option<u16>, terminal: bool) -> io::Result<()> {
+/// Writes `view`'s report to stdout as wide as the terminal, or 100 columns, and ends with `status`; into a closed
+/// pipe with 141 on Unix.
+fn print(view: &View, palette: &Palette, columns: Option<u16>, terminal: bool, status: u8) -> io::Result<ExitCode> {
     let width = columns.map_or(report::WIDTH, |columns| usize::from(columns).max(40));
     let lines = report::report(view, width, palette);
-    let profile = theme::profile(terminal, |name| std::env::var(name).ok());
-    styled::write(&lines, profile, &mut io::stdout())
+    let (profile, mut out) = (theme::profile(terminal, |name| std::env::var(name).ok()), Vec::new());
+    styled::write(&lines, profile, &mut out)?;
+    let printed = graphite_meter_legal::print(io::stdout().lock(), &out)?;
+    Ok(ExitCode::from(if printed == 0 { status } else { printed }))
 }
 
 /// The first signal's status.
@@ -148,18 +152,21 @@ fn signals(at_once: bool) -> io::Result<UnboundedReceiver<u8>> {
     Ok(signals)
 }
 
-/// Prints the notices; the status is 141 into a closed pipe on Unix.
+/// Prints the notices.
 fn legal() -> ExitCode {
-    let printed = NOTICES
-        .report()
-        .ok_or_else(|| {
-            "this build embeds no notices; mise run rust-client-run -- --legal builds the TUI with dependency notices \
-             and prints them"
-                .to_owned()
-        })
-        .and_then(|report| graphite_meter_legal::print(io::stdout().lock(), report).map_err(|error| error.to_string()));
-    match printed {
+    match NOTICES.report() {
+        Some(report) => written(report),
+        None => fail(
+            "this build embeds no notices; mise run rust-client-run -- --legal builds the TUI with dependency notices and \
+             prints them",
+        ),
+    }
+}
+
+/// Writes `bytes` to stdout; the status is 141 into a closed pipe on Unix.
+fn written(bytes: &[u8]) -> ExitCode {
+    match graphite_meter_legal::print(io::stdout().lock(), bytes) {
         Ok(status) => ExitCode::from(status),
-        Err(error) => fail(&error),
+        Err(error) => fail(&error.to_string()),
     }
 }

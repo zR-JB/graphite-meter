@@ -87,3 +87,12 @@ fn legal_without_embedded_notices_names_the_task_that_embeds_them() {
         assert_eq!(text(output.stderr), expected);
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn version_into_a_closed_pipe_exits_141_quietly() {
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    let output = Command::new(CLIENT).arg("--version").stdout(writer).output().unwrap();
+    assert_eq!((output.status.code(), text(output.stderr)), (Some(141), String::new()));
+}
