@@ -10,7 +10,7 @@ use graphite_meter_proto::approval::challenge;
 use graphite_meter_server::{app::query, auth::COUNTERS, peer::ClientKeys};
 use http::StatusCode;
 use http_body_util::Full;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::{
     pin::pin,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -469,4 +469,120 @@ async fn a_provider_too_slow_for_the_exchange_bound_fails_the_sign_in_in_time() 
     let failed = failed.expect("answered while the 15 s exchange bound leaves time to send it");
     assert_eq!(location(&failed), "/login?error=failed");
     assert!(line(&app, &mut [0; COUNTERS]).contains(" oidc=0 invalid-password=0 oidc-failure=1 "));
+}
+
+/// Whether a sign-in through a fresh app, with no keys cached, passes once the provider answers with `twist`.
+async fn signs_in_with(provider: &Provider, twist: Twist) -> bool {
+    provider.twist(twist);
+    let app = discovered(provider).await;
+    sign_in(&app, provider, "192.0.2.1").await.status() == StatusCode::OK
+}
+
+fn signed_as(header: Value) -> Twist {
+    Twist { header, ..Twist::default() }
+}
+
+#[tokio::test]
+async fn rsa_tokens_verify_with_every_hash_and_only_keys_of_at_least_2048_bits() {
+    if !child("oidc::rsa_tokens_verify_with_every_hash_and_only_keys_of_at_least_2048_bits") {
+        return;
+    }
+    let provider = Provider::start().await;
+    for alg in ["RS384", "PS512"] {
+        assert!(signs_in_with(&provider, signed_as(json!({"alg": alg, "kid": "rsa"}))).await, "{alg}");
+    }
+    let small = signed_as(json!({"alg": "RS256", "kid": "small"}));
+    assert!(!signs_in_with(&provider, small).await, "a 1024-bit key");
+}
+
+#[tokio::test]
+async fn a_key_verifies_only_for_signatures_its_operations_and_its_algorithm_allow() {
+    if !child("oidc::a_key_verifies_only_for_signatures_its_operations_and_its_algorithm_allow") {
+        return;
+    }
+    let provider = Provider::start().await;
+    for (rsa_key, verifies) in [
+        (json!({"use": "enc"}), false),
+        (json!({"use": "sig"}), true),
+        (json!({"key_ops": ["sign"]}), false),
+        (json!({"key_ops": ["sign", "verify"]}), true),
+        (json!({"alg": "RS384"}), false),
+        (json!({"alg": "RS256"}), true),
+    ] {
+        let twist = Twist {
+            rsa_key: rsa_key.clone(),
+            ..signed_as(json!({"alg": "RS256", "kid": "rsa"}))
+        };
+        assert_eq!(signs_in_with(&provider, twist).await, verifies, "{rsa_key}");
+    }
+}
+
+#[tokio::test]
+async fn id_tokens_over_16_kib_or_naming_a_content_type_or_encryption_are_refused() {
+    if !child("oidc::id_tokens_over_16_kib_or_naming_a_content_type_or_encryption_are_refused") {
+        return;
+    }
+    let provider = Provider::start().await;
+    // The claims beside the padding take about 250 bytes, and the header and signature about 150 encoded.
+    for (pad, fits) in [(11_700, true), (12_100, false)] {
+        let twist = Twist { claims: json!({"pad": "x".repeat(pad)}), ..Twist::default() };
+        assert_eq!(signs_in_with(&provider, twist).await, fits, "{pad} bytes of padding");
+    }
+    for header in [json!({"cty": "JWT"}), json!({"enc": "A256GCM"})] {
+        assert!(!signs_in_with(&provider, signed_as(header.clone())).await, "{header}");
+    }
+}
+
+#[tokio::test]
+async fn signed_user_information_must_name_the_issuer_and_this_client() {
+    if !child("oidc::signed_user_information_must_name_the_issuer_and_this_client") {
+        return;
+    }
+    let provider = Provider::start().await;
+    for (userinfo, accepted) in [
+        (json!({}), true),
+        (json!({"aud": ["another", CLIENT_ID]}), true),
+        (json!({"iss": "https://elsewhere.example"}), false),
+        (json!({"aud": "another"}), false),
+        (json!({"aud": null}), false),
+    ] {
+        let twist = Twist {
+            signed_userinfo: true,
+            userinfo: userinfo.clone(),
+            ..Twist::default()
+        };
+        assert_eq!(signs_in_with(&provider, twist).await, accepted, "{userinfo}");
+    }
+}
+
+#[tokio::test]
+async fn a_key_set_names_its_keys_once_keeps_64_usable_keys_and_skips_unreadable_ones() {
+    if !child("oidc::a_key_set_names_its_keys_once_keeps_64_usable_keys_and_skips_unreadable_ones") {
+        return;
+    }
+    let provider = Provider::start().await;
+    let twice = |keys: Value| format!(r#"{{"keys":[],"keys":{}}}"#, keys["keys"]);
+    assert!(!signs_in_with(&provider, Twist { key_set: Some(twice), ..Twist::default() }).await);
+    let once = |keys: Value| format!(r#"{{"keys":{}}}"#, keys["keys"]);
+    assert!(signs_in_with(&provider, Twist { key_set: Some(once), ..Twist::default() }).await);
+    // Sixty-three usable keys ahead leave the RSA key the 64th and the P-256 key past the cap.
+    let crowded = |keys: Value| {
+        let filler = json!({"kty": "EC", "crv": "P-256", "kid": "filler", "x": "A".repeat(43), "y": "A".repeat(43)});
+        let mut all = vec![filler; 63];
+        all.extend(keys["keys"].as_array().unwrap().iter().cloned());
+        json!({ "keys": all }).to_string()
+    };
+    let rsa = Twist {
+        key_set: Some(crowded),
+        ..signed_as(json!({"alg": "RS256", "kid": "rsa"}))
+    };
+    assert!(signs_in_with(&provider, rsa).await, "the 64th usable key");
+    assert!(
+        !signs_in_with(&provider, Twist { key_set: Some(crowded), ..Twist::default() }).await,
+        "the 65th"
+    );
+    let numeric = || Twist { rsa_key: json!({"alg": 256}), ..Twist::default() };
+    let rsa = Twist { header: json!({"alg": "RS256", "kid": "rsa"}), ..numeric() };
+    assert!(!signs_in_with(&provider, rsa).await, "a key with a numeric alg is skipped");
+    assert!(signs_in_with(&provider, numeric()).await, "the other keys verify");
 }
