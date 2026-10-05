@@ -1,4 +1,4 @@
-//! A loopback relay that delays each direction and injects faults on demand.
+//! A loopback relay that delays each direction, optionally through a bottleneck, and injects faults on demand.
 use bytes::Bytes;
 use std::{
     io,
@@ -24,6 +24,40 @@ pub enum Fault {
     Stall,
     /// TCP connections end with a reset; UDP drops everything, as with `Stall`.
     Reset,
+}
+
+/// A drop-tail bottleneck in each direction of a UDP link: its rate, and how much sending its queue holds.
+#[derive(Clone, Copy, Debug)]
+pub struct Bottleneck {
+    pub bits_per_second: u64,
+    pub queue: Duration,
+}
+
+/// When packets leave a direction's bottleneck.
+struct Pace {
+    bottleneck: Option<Bottleneck>,
+    free: Instant,
+}
+
+impl Pace {
+    fn new(bottleneck: Option<Bottleneck>) -> Self {
+        Self { bottleneck, free: Instant::now() }
+    }
+
+    /// When a packet of `bytes` leaves the bottleneck, or `None` when its queue is full.
+    fn departure(&mut self, bytes: usize) -> Option<Instant> {
+        let now = Instant::now();
+        let Some(bottleneck) = self.bottleneck else {
+            return Some(now);
+        };
+        let start = self.free.max(now);
+        if start - now > bottleneck.queue {
+            return None;
+        }
+        let nanos = bytes as u64 * 8 * 1_000_000_000 / bottleneck.bits_per_second;
+        self.free = start + Duration::from_nanos(nanos);
+        Some(self.free)
+    }
 }
 
 /// The long-header form bits that a QUIC Retry packet's first byte carries.
@@ -80,6 +114,20 @@ impl Link {
 
     /// Relays from `source`, which the target sees as the client's address.
     pub async fn udp_from(source: IpAddr, target: SocketAddr, one_way: Duration) -> io::Result<Self> {
+        Self::udp_relay(source, target, one_way, None).await
+    }
+
+    /// Relays through `bottleneck` in each direction before the delay.
+    pub async fn udp_through(target: SocketAddr, one_way: Duration, bottleneck: Bottleneck) -> io::Result<Self> {
+        Self::udp_relay(Ipv4Addr::LOCALHOST.into(), target, one_way, Some(bottleneck)).await
+    }
+
+    async fn udp_relay(
+        source: IpAddr,
+        target: SocketAddr,
+        one_way: Duration,
+        bottleneck: Option<Bottleneck>,
+    ) -> io::Result<Self> {
         let front = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await?;
         let back = UdpSocket::bind((source, 0)).await?;
         back.connect(target).await?;
@@ -98,7 +146,7 @@ impl Link {
         let mut tasks = JoinSet::new();
         let (reader, open) = (front.clone(), faults.clone());
         tasks.spawn(async move {
-            let mut buffer = vec![0; 65536];
+            let (mut buffer, mut pace) = (vec![0; 65536], Pace::new(bottleneck));
             loop {
                 let (count, from) = match reader.recv_from(&mut buffer).await {
                     Ok(received) => received,
@@ -106,16 +154,18 @@ impl Link {
                     Err(_) => break,
                 };
                 client.send_replace(Some(from));
-                if *open.borrow() == Fault::None {
+                if *open.borrow() == Fault::None
+                    && let Some(departure) = pace.departure(count)
+                {
                     let _ = up
-                        .send((Instant::now() + one_way, Bytes::copy_from_slice(&buffer[..count])))
+                        .send((departure + one_way, Bytes::copy_from_slice(&buffer[..count])))
                         .await;
                 }
             }
         });
         let (reader, open, counted) = (back.clone(), faults.clone(), retries.clone());
         tasks.spawn(async move {
-            let mut buffer = vec![0; 65536];
+            let (mut buffer, mut pace) = (vec![0; 65536], Pace::new(bottleneck));
             loop {
                 let count = match reader.recv(&mut buffer).await {
                     Ok(count) => count,
@@ -125,9 +175,11 @@ impl Link {
                 if buffer[0] & RETRY == RETRY {
                     counted.fetch_add(1, Ordering::Relaxed);
                 }
-                if *open.borrow() == Fault::None {
+                if *open.borrow() == Fault::None
+                    && let Some(departure) = pace.departure(count)
+                {
                     let _ = down
-                        .send((Instant::now() + one_way, Bytes::copy_from_slice(&buffer[..count])))
+                        .send((departure + one_way, Bytes::copy_from_slice(&buffer[..count])))
                         .await;
                 }
             }

@@ -4,7 +4,7 @@ mod link;
 mod scratch;
 
 pub use identity::Identity;
-pub use link::{Fault, Link};
+pub use link::{Bottleneck, Fault, Link};
 pub use scratch::Scratch;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
