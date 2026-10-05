@@ -76,9 +76,8 @@ pub(super) fn cli_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer) -> 
     }
     let lease = signed_in(auth, request.headers());
     let mut state = lock(&auth.store.0);
-    let found = state
-        .pending(&challenge)
-        .map(|approval| (approval.browser.clone(), approval.login));
+    let found = state.pending(&challenge);
+    let found = found.map(|approval| (approval.browser.clone(), approval.login));
     if let Some((Some(origin), _)) = &found {
         let origin = origin.to_str().unwrap_or_default();
         let query = query::encode(&[("challenge", &challenge), ("client_origin", origin)]);
@@ -211,10 +210,8 @@ pub(super) async fn token<B: http_body::Body>(auth: &Enabled, request: Request<B
 /// Issues the grant an approved challenge of `verifier` holds for `origin`, ending the approval.
 fn issue(auth: &Enabled, verifier: &str, origin: Option<HeaderValue>) -> Response<Body> {
     let (challenge, credentials) = (challenge(verifier), credentials());
-    let now = Instant::now();
     let mut state = lock(&auth.store.0);
-    let approval = state.approvals.get(&challenge);
-    let approval = approval.filter(|approval| now < approval.deadline && approval.browser == origin);
+    let approval = state.pending(&challenge).filter(|approval| approval.browser == origin);
     let Some((login, approved)) = approval.and_then(|approval| Some((approval.login?, approval.approved))) else {
         return pending();
     };
