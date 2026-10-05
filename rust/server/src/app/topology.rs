@@ -1,6 +1,5 @@
 //! What each endpoint mounts (`api/routes.txt`, `docs/DEPLOYMENT.md#native-listeners`).
 
-use crate::config::ListenerKind;
 use graphite_meter_proto::route::Route;
 
 /// What accepted a connection: a configured TCP listener, or the HTTP/3 address's TCP companion or QUIC endpoint.
@@ -11,16 +10,6 @@ pub enum Endpoint {
     H2,
     H3Companion,
     Quic,
-}
-
-/// What a route's work holds while it runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Admission {
-    Unmetered,
-    /// A measurement handler.
-    Operation,
-    /// A WebTransport transfer session and its handler.
-    Session,
 }
 
 impl Endpoint {
@@ -62,29 +51,5 @@ impl Endpoint {
             Self::H3Companion => "HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe, upload and ticket control",
             Self::Quic => "HTTP/3: probe, transfers, progress, WebTransport",
         }
-    }
-
-    /// The listener setting it belongs to.
-    pub const fn listener(self) -> ListenerKind {
-        match self {
-            Self::H1 => ListenerKind::H1,
-            Self::H1Tls => ListenerKind::H1Tls,
-            Self::H2 => ListenerKind::H2,
-            Self::H3Companion | Self::Quic => ListenerKind::H3,
-        }
-    }
-}
-
-pub const fn admission(route: Route) -> Admission {
-    match route {
-        Route::Download | Route::Upload | Route::UploadProgress | Route::Ping | Route::WtPing => Admission::Operation,
-        Route::WtDownload | Route::WtUpload => Admission::Session,
-        Route::Preflight
-        | Route::Probe
-        | Route::Servers
-        | Route::UploadSession
-        | Route::UploadCheckpoint
-        | Route::WtSession
-        | Route::WsSession => Admission::Unmetered,
     }
 }

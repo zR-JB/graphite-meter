@@ -2,10 +2,7 @@
 
 use super::*;
 use graphite_meter_proto::route::Route;
-use graphite_meter_server::app::{
-    finalize::{Access, harden},
-    topology::{Admission, admission},
-};
+use graphite_meter_server::app::finalize::{Access, harden};
 use http::{HeaderMap, HeaderValue, StatusCode, Version};
 use http_body_util::Full;
 
@@ -25,12 +22,6 @@ fn each_endpoint_mounts_the_routes_of_its_listener() {
     assert_eq!(Endpoint::ALL.map(mounted), expected);
     assert_eq!(Endpoint::ALL.map(Endpoint::ui), [true, true, false, false, false]);
     assert_eq!(Endpoint::ALL.map(Endpoint::bootstrap), [false, false, false, true, false]);
-    let metered = |kind| {
-        let routes = Route::ALL.iter().filter(|route| admission(**route) == kind);
-        routes.map(|route| route.path()).collect::<Vec<_>>().join(" ")
-    };
-    assert_eq!(metered(Admission::Operation), "/download /upload /upload/progress /ws/ping /wt/ping");
-    assert_eq!(metered(Admission::Session), "/wt/download /wt/upload");
 }
 
 #[tokio::test]
