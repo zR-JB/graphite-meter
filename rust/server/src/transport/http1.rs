@@ -7,7 +7,8 @@ use super::{
 };
 use crate::{
     app::{App, Connection, Endpoint, Outcome},
-    lane::{EXCHANGE_BOUND, Exchange, Lane, Watch, Work},
+    exchange::{EXCHANGE_BOUND, Exchange, Watch},
+    lane::{Lane, Work},
     lock,
 };
 use bytes::Bytes;

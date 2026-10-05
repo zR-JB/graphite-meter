@@ -4,7 +4,7 @@
 use super::PEER_FAILURES;
 use crate::{
     config::{Config, TlsFiles, path_error},
-    lane::EXCHANGE_BOUND,
+    exchange::EXCHANGE_BOUND,
     log,
     log::rfc3339,
 };

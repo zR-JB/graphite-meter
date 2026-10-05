@@ -1,99 +1,17 @@
-//! A request's time bounds before and after admission, and the one place a lane's ending is decided.
+//! An admitted request's time bounds, the one place a lane's ending is decided, and a connection's admitted work.
 
-use crate::{auth::AuthLease, limits::Hold, lock, peer::ClientKeys};
+use crate::{auth::AuthLease, limits::Hold, lock};
 use graphite_meter_proto::lane::{IDLE_BOUND, LaneEnding};
 use std::{
     future,
     sync::{
-        Arc, Mutex, OnceLock,
+        Arc, Mutex,
         atomic::{AtomicU8, AtomicU64, Ordering},
     },
     time::Duration,
 };
 use tokio::time::{Instant, sleep_until};
 use tokio_util::sync::CancellationToken;
-
-/// Every exchange has this long in all, request and reply, until it is admitted.
-pub const EXCHANGE_BOUND: Duration = Duration::from_secs(15);
-
-/// A request before admission. Its bound never extends its connection's idle period.
-#[derive(Debug)]
-pub struct Exchange {
-    deadline: Instant,
-    admitted: Arc<OnceLock<ClientKeys>>,
-}
-
-impl Exchange {
-    pub fn start() -> Self {
-        Self::until(Instant::now() + EXCHANGE_BOUND)
-    }
-
-    /// An exchange that began before its request was parsed, such as at the first byte of an HTTP/1 head.
-    pub fn until(deadline: Instant) -> Self {
-        Self { deadline, admitted: Arc::default() }
-    }
-
-    pub fn deadline(&self) -> Instant {
-        self.deadline
-    }
-
-    /// What the transport keeps of the exchange it hands to the app.
-    pub fn watch(&self) -> Watch {
-        Watch { deadline: self.deadline, admitted: self.admitted.clone() }
-    }
-
-    /// Admits the request of `keys` as a lane holding `hold`, whose `lifetime` replaces the exchange bound. It
-    /// ends on `shutdown`, and on revocation of the request's sign-in.
-    pub fn admit(
-        self,
-        keys: ClientKeys,
-        hold: Hold,
-        lifetime: Duration,
-        work: &Work,
-        shutdown: &CancellationToken,
-        auth: Option<&AuthLease>,
-    ) -> Lane {
-        let _ = self.admitted.set(keys);
-        let start = Instant::now();
-        Lane(Arc::new(State {
-            start,
-            deadline: start + lifetime,
-            moved: AtomicU64::new(0),
-            ending: AtomicU8::new(RUNNING),
-            decided: CancellationToken::new(),
-            shutdown: shutdown.clone(),
-            revoked: auth.map(|auth| auth.revoked().clone()),
-            _hold: hold,
-            _work: work.start(),
-        }))
-    }
-}
-
-/// A transport's view of an exchange: its deadline, and whether and for whom it was admitted.
-#[derive(Debug, Clone)]
-pub struct Watch {
-    deadline: Instant,
-    admitted: Arc<OnceLock<ClientKeys>>,
-}
-
-impl Watch {
-    pub fn deadline(&self) -> Instant {
-        self.deadline
-    }
-
-    /// The admitted client's keys, which also fund its connection's receive window; `None` before admission.
-    pub fn admitted(&self) -> Option<&ClientKeys> {
-        self.admitted.get()
-    }
-
-    /// Completes at the deadline unless the exchange was admitted by then; a lane bounds it after admission.
-    pub async fn expired(&self) {
-        sleep_until(self.deadline).await;
-        if self.admitted().is_some() {
-            future::pending::<()>().await;
-        }
-    }
-}
 
 const RUNNING: u8 = u8::MAX;
 
@@ -118,6 +36,28 @@ struct State {
 }
 
 impl Lane {
+    /// A lane holding `hold` until its `lifetime` ends, on `shutdown` or on revocation of the request's sign-in.
+    pub(crate) fn start(
+        hold: Hold,
+        lifetime: Duration,
+        work: &Work,
+        shutdown: &CancellationToken,
+        auth: Option<&AuthLease>,
+    ) -> Self {
+        let start = Instant::now();
+        Self(Arc::new(State {
+            start,
+            deadline: start + lifetime,
+            moved: AtomicU64::new(0),
+            ending: AtomicU8::new(RUNNING),
+            decided: CancellationToken::new(),
+            shutdown: shutdown.clone(),
+            revoked: auth.map(|auth| auth.revoked().clone()),
+            _hold: hold,
+            _work: work.start(),
+        }))
+    }
+
     /// Records traffic from the peer, which restarts the idle bound.
     pub fn moved(&self) {
         let nanos = u64::try_from(self.0.start.elapsed().as_nanos()).unwrap_or(u64::MAX);
@@ -252,7 +192,7 @@ impl Drop for WorkGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{auth::Holder, limits::Quota};
+    use crate::{auth::Holder, exchange::Exchange, limits::Quota, peer::ClientKeys};
 
     struct Fixture {
         quota: Quota,
@@ -286,24 +226,6 @@ mod tests {
         let start = Instant::now();
         let ending = lane.ended().await;
         (ending, start.elapsed())
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn an_exchange_expires_after_fifteen_seconds_unless_admitted() {
-        let start = Instant::now();
-        let exchange = Exchange::start();
-        let watch = exchange.watch();
-        watch.expired().await;
-        assert_eq!((start.elapsed(), watch.admitted()), (EXCHANGE_BOUND, None));
-        let fixture = Fixture::new();
-        let exchange = Exchange::start();
-        let watch = exchange.watch();
-        let hold = fixture.quota.acquire(&ClientKeys::Exempt, 1).unwrap();
-        let keys = ClientKeys::address("192.0.2.1".parse().unwrap());
-        let _lane = exchange.admit(keys.clone(), hold, LONG, &fixture.work, &fixture.shutdown, None);
-        assert_eq!(watch.admitted(), Some(&keys));
-        let expired = tokio::time::timeout(EXCHANGE_BOUND * 2, watch.expired()).await;
-        assert!(expired.is_err(), "an admitted exchange never expires");
     }
 
     #[tokio::test(start_paused = true)]

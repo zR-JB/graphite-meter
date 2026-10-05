@@ -5,6 +5,7 @@ pub mod assets;
 pub mod auth;
 pub mod config;
 pub mod engine;
+pub mod exchange;
 pub mod lane;
 pub mod limits;
 pub mod log;

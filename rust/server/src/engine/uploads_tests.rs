@@ -2,7 +2,8 @@ use super::*;
 use crate::{
     auth::Holder,
     engine::feed::{HEARTBEAT_AFTER, PROGRESS_INTERVAL},
-    lane::{Exchange, Work},
+    exchange::Exchange,
+    lane::Work,
 };
 use graphite_meter_proto::{lane::IDLE_BOUND, lane::LaneEnding, upload::Record};
 use tokio::time::advance;

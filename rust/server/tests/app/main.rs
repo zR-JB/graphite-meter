@@ -9,7 +9,8 @@ use bytes::Bytes;
 use graphite_meter_server::{
     app::{App, Connection, Endpoint, Outcome},
     config::{self, Config, Loaded},
-    lane::{Exchange, Work},
+    exchange::Exchange,
+    lane::Work,
     transport::body::Body,
 };
 use http::{Request, Response, request::Builder};

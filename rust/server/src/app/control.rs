@@ -4,7 +4,7 @@ use super::{App, Connection, Endpoint, listen_port, query, response};
 use crate::{
     auth::Auth,
     config::{ENGINE_VERSION, Listener, ListenerKind},
-    lane::Exchange,
+    exchange::Exchange,
     log::RateLimited,
     peer::Peer,
     transport::body::Body,

@@ -3,7 +3,8 @@
 
 use crate::{
     engine::{DownloadSource, ProgressFeed, download::BLOCK_BYTES},
-    lane::{EXCHANGE_BOUND, Lane},
+    exchange::EXCHANGE_BOUND,
+    lane::Lane,
 };
 use bytes::Bytes;
 use futures_util::{FutureExt, Stream, future::Fuse, stream};
@@ -218,7 +219,8 @@ mod tests {
     use super::*;
     use crate::{
         engine::Block,
-        lane::{Exchange, Work},
+        exchange::Exchange,
+        lane::Work,
         limits::{Budget, Quota},
         peer::ClientKeys,
     };
