@@ -121,7 +121,8 @@ impl ListenerKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Listener {
     pub kind: ListenerKind,
-    /// The listen address as configured, such as `:7246`; HTTP/3 binds it for UDP and its bootstrap TCP.
+    /// The listen address, such as `:7246`, with the port it bound once bound; HTTP/3 binds it for UDP and its
+    /// bootstrap TCP.
     pub address: String,
     pub public_origin: Option<Origin>,
     /// Discovery offers it as a native target.

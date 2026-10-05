@@ -46,8 +46,8 @@ type Service<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>
 
 impl Server {
     /// Loads the certificate and binds every enabled listener; a failure closes those bound before it.
-    pub async fn bind(config: Config) -> Result<Self, String> {
-        let served = config.listeners.iter().map(|listener| {
+    pub async fn bind(mut config: Config) -> Result<Self, String> {
+        let served = config.listeners.iter().enumerate().map(|(index, listener)| {
             let endpoint = match listener.kind {
                 ListenerKind::H1 => Endpoint::H1,
                 ListenerKind::H1Tls => Endpoint::H1Tls,
@@ -55,12 +55,10 @@ impl Server {
                     return Err(format!("{} listeners are unavailable in this build", kind.name()));
                 }
             };
-            Ok((endpoint, listener.address.clone()))
+            Ok((endpoint, index))
         });
         let served = served.collect::<Result<Vec<_>, String>>()?;
         let (tls, hosts, auth) = (config.tls.clone(), tls::covered_hosts(&config), config.auth.is_some());
-        let shutdown = CancellationToken::new();
-        let app = Arc::new(App::new(config, shutdown.clone())?);
         let certificates = match tls {
             Some(files) => {
                 let load = tokio::task::spawn_blocking(move || Certificates::load(files, hosts, SystemTime::now()));
@@ -69,12 +67,19 @@ impl Server {
             None => None,
         };
         let mut listeners = Vec::new();
-        for (endpoint, address) in served {
-            let socket = bind(&address)
+        for (endpoint, index) in served {
+            let configured = &mut config.listeners[index].address;
+            let socket = bind(configured)
                 .await
-                .map_err(|error| path_error("listen tcp", &address, &error))?;
+                .map_err(|error| path_error("listen tcp", configured, &error))?;
+            let address = configured.clone();
+            if let Ok(local) = socket.local_addr() {
+                *configured = bound(configured, local.port());
+            }
             listeners.push(Listening { endpoint, address, socket });
         }
+        let shutdown = CancellationToken::new();
+        let app = Arc::new(App::new(config, shutdown.clone())?);
         let pool = Pool::new().map_err(|error| format!("runtime threads: {error}"))?;
         Ok(Self { app, pool, listeners, certificates, shutdown, auth })
     }
@@ -144,6 +149,14 @@ pub fn stop_signal() -> io::Result<impl Future<Output = ()>> {
     Ok(async {
         let _ = tokio::signal::ctrl_c().await;
     })
+}
+
+/// `address` with a port 0 replaced by the `port` it bound.
+fn bound(address: &str, port: u16) -> String {
+    match address.rsplit_once(':') {
+        Some((host, "0")) => format!("{host}:{port}"),
+        _ => address.into(),
+    }
 }
 
 /// Binds `address`; a bare `:port` takes every IPv6 and IPv4 address, or every IPv4 one on a host without IPv6.

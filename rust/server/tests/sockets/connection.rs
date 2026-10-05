@@ -126,3 +126,17 @@ async fn connections_beyond_a_client_share_are_closed_unserved() {
     sleep(Duration::from_millis(50)).await;
     assert_eq!(server.get("/probe").await.status, 200, "closed connections release their shares");
 }
+
+#[tokio::test]
+async fn discovery_names_the_bound_port_of_a_listener_configured_with_port_zero() {
+    let server = start(&[]).await;
+    let port = server.address.port();
+    let preflight: serde_json::Value = serde_json::from_slice(&server.get("/preflight").await.body).unwrap();
+    let target = &preflight["capabilities"]["throughput"][0];
+    assert_eq!(target["baseUrl"], format!("http://test:{port}"));
+    let servers = server.get("/servers").await;
+    assert_eq!(servers.status, 200);
+    let page = server.get("/").await;
+    let policy = page.header("content-security-policy").unwrap();
+    assert!(policy.contains(&format!("http://test:{port}")), "{policy}");
+}
