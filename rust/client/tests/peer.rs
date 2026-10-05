@@ -367,6 +367,14 @@ async fn grants_travel_only_in_authorization_and_a_refusal_drops_only_its_server
             );
         }
     }
-    let (first, second) = (Some("Bearer first-grant".to_owned()), Some("Bearer second-grant".to_owned()));
-    assert_eq!(sent, [first.clone(), first.clone(), second.clone(), second, first, None]);
+    let (first, granted) = (Some("Bearer first-grant".to_owned()), Some("Bearer second-grant".to_owned()));
+    assert_eq!(sent, [first.clone(), first.clone(), granted.clone(), granted, first, None]);
+    let revoked = client.upload_error(&second, "revoked");
+    assert!(matches!(&revoked, Fault::SignIn(issuer) if *issuer == second), "{revoked:?}");
+    probe(&client, Protocol::Http1, &second).await.unwrap();
+    let (_, head) = heads[1].recv().await.unwrap();
+    assert!(
+        !head.contains("authorization: "),
+        "a revoked upload record drops its server's grant: {head}"
+    );
 }

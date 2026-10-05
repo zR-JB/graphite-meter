@@ -92,15 +92,28 @@ impl Fault {
         let retry_after = seconds
             .and_then(|value| value.parse().ok())
             .map(|seconds: u32| Duration::from_secs(seconds.into()));
-        let answered = |status| Self::Status { status, from, retry_after };
         Some(match header("x-graphite-upload-refusal").and_then(UploadRefusal::from_name) {
-            Some(UploadRefusal::Idle) => Self::Ended(LaneEnding::Idle),
-            Some(UploadRefusal::Revoked) => Self::SignIn(issuer()),
-            Some(UploadRefusal::GlobalFull) => answered(StatusCode::SERVICE_UNAVAILABLE),
-            Some(UploadRefusal::ClientFull) => answered(StatusCode::TOO_MANY_REQUESTS),
-            Some(refusal) => Self::Refused(refusal),
-            None => answered(status),
+            Some(refusal) => Self::refusal(refusal, from, retry_after, issuer),
+            None => Self::Status { status, from, retry_after },
         })
+    }
+
+    /// The fault an upload refusal in an answer to `from`, or in a progress record, means; a sign-in is for the
+    /// server `issuer` names.
+    pub(super) fn refusal(
+        refusal: UploadRefusal,
+        from: Route,
+        retry_after: Option<Duration>,
+        issuer: impl FnOnce() -> Origin,
+    ) -> Self {
+        let busy = |status| Self::Status { status, from, retry_after };
+        match refusal {
+            UploadRefusal::Idle => Self::Ended(LaneEnding::Idle),
+            UploadRefusal::Revoked => Self::SignIn(issuer()),
+            UploadRefusal::GlobalFull => busy(StatusCode::SERVICE_UNAVAILABLE),
+            UploadRefusal::ClientFull => busy(StatusCode::TOO_MANY_REQUESTS),
+            refusal => Self::Refused(refusal),
+        }
     }
 }
 
@@ -146,6 +159,7 @@ fn source(route: Route) -> &'static str {
         Route::Probe => "probe",
         Route::UploadCheckpoint => "receiver checkpoint",
         Route::UploadSession => "upload session",
+        Route::UploadProgress => "upload progress",
         route => route.path(),
     }
 }
@@ -239,6 +253,23 @@ mod tests {
         assert!(answer(200, &[(REFUSAL, "invalid")]).is_none());
         let issuer = answer(403, &[("graphite-meter-auth", "required")]);
         assert!(matches!(issuer, Some(Fault::SignIn(origin)) if origin.to_string() == "https://meter.example"));
+    }
+
+    #[test]
+    fn progress_error_records_map_as_their_refusal_headers_do() {
+        use {FailureReason::*, UploadRefusal::*};
+        let issuer = || Origin::parse("https://meter.example").unwrap();
+        for (refusal, reason, class) in [
+            (Idle, Timeout, Class::Redial),
+            (Revoked, SignInRequired, Class::Final),
+            (GlobalFull, ServerBusy, Class::Busy(Duration::ZERO)),
+            (ClientFull, ServerBusy, Class::Busy(Duration::ZERO)),
+            (Invalid, ProtocolError, Class::Final),
+            (OwnerMismatch, ProtocolError, Class::Final),
+        ] {
+            let fault = Fault::refusal(refusal, Route::UploadProgress, None, issuer);
+            assert_eq!((fault.reason(), fault.class()), (reason, class), "{refusal:?}");
+        }
     }
 
     #[test]

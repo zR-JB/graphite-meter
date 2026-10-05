@@ -246,7 +246,7 @@ async fn follow(
                 .and_then(|session| session.clone());
             let session = session.ok_or_else(|| Fault::Lost("upload lanes ended".into()))?;
             let stream = session.accept_uni().await?;
-            read(Source::Stream(stream, session), &progress, &mut false).await
+            read(&control, Source::Stream(stream, session), &progress, &mut false).await
         };
         match streamed.await {
             Ok(()) => return,
@@ -261,7 +261,7 @@ async fn follow(
         let (started, mut moved) = (std::time::Instant::now(), false);
         let feed = control.send(Method::GET, Route::UploadProgress, Some(&id)).await;
         let fault = match feed {
-            Ok(feed) => match read(Source::Http(feed), &progress, &mut moved).await {
+            Ok(feed) => match read(&control, Source::Http(feed), &progress, &mut moved).await {
                 Ok(()) => return,
                 Err(fault) => fault,
             },
@@ -290,7 +290,12 @@ impl Source {
 }
 
 /// Records from `source` into `progress` until `complete`, each line at most 64 KiB; `moved` once one decoded.
-async fn read(mut source: Source, progress: &watch::Sender<Progress>, moved: &mut bool) -> Result<(), Fault> {
+async fn read(
+    control: &Control,
+    mut source: Source,
+    progress: &watch::Sender<Progress>,
+    moved: &mut bool,
+) -> Result<(), Fault> {
     let mut line = Vec::new();
     loop {
         let chunk = timeout(CONTROL_TIMEOUT, source.chunk()).await;
@@ -310,7 +315,7 @@ async fn read(mut source: Source, progress: &watch::Sender<Progress>, moved: &mu
             line.clear();
             if let Ok(record) = record {
                 *moved = true;
-                if apply(record, progress)? {
+                if apply(control, record, progress)? {
                     return Ok(());
                 }
             }
@@ -319,7 +324,7 @@ async fn read(mut source: Source, progress: &watch::Sender<Progress>, moved: &mu
 }
 
 /// Applies a record; true once `complete` arrived. A regressing observation is stale and ignored.
-fn apply(record: Record, progress: &watch::Sender<Progress>) -> Result<bool, Fault> {
+fn apply(control: &Control, record: Record, progress: &watch::Sender<Progress>) -> Result<bool, Fault> {
     let (counters, complete) = match record {
         Record::Ready => {
             progress.send_modify(|state| state.ready = true);
@@ -327,12 +332,7 @@ fn apply(record: Record, progress: &watch::Sender<Progress>) -> Result<bool, Fau
         }
         Record::Progress(counters) => (counters, false),
         Record::Complete(counters) => (counters, true),
-        Record::Error { code, .. } => {
-            let refusal = UploadRefusal::from_name(&code);
-            return Err(
-                refusal.map_or_else(|| Fault::Malformed(format!("upload progress error {code}")), Fault::Refused)
-            );
-        }
+        Record::Error { code, .. } => return Err(control.client.upload_error(&control.origin, &code)),
     };
     let fresh = progress.borrow().latest.is_none_or(|latest| counters.follows(latest));
     if fresh {

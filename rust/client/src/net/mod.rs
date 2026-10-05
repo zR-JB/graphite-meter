@@ -23,6 +23,7 @@ use graphite_meter_proto::{
     discovery::{Probe, Protocol},
     lane::LaneEnding,
     origin::{Origin, Scheme},
+    refusal::UploadRefusal,
     route::Route,
 };
 use http::{HeaderMap, HeaderValue, Method, StatusCode, Version, header};
@@ -197,27 +198,40 @@ impl Client {
         }
     }
 
+    /// The fault an upload progress `error` record from `origin` means; a revoked grant is dropped.
+    pub fn upload_error(&self, origin: &Origin, code: &str) -> Fault {
+        let Some(refusal) = UploadRefusal::from_name(code) else {
+            return Fault::Malformed(format!("upload progress error {code}"));
+        };
+        let issuer = || self.issuer(origin);
+        self.signed_out(Fault::refusal(refusal, Route::UploadProgress, None, issuer))
+    }
+
     /// The fault an answer other than a 200 means; a sign-in refusal drops its server's grant.
     fn refusal(&self, request: &Request, status: StatusCode, headers: &HeaderMap) -> Option<Fault> {
-        let issuer = || lock(&self.0.grants).issuer(&request.origin).clone();
-        match Fault::answer(status, headers, request.route, issuer)? {
-            Fault::SignIn(issuer) => {
-                lock(&self.0.grants).tokens.remove(&issuer);
-                Some(Fault::SignIn(issuer))
-            }
-            fault => Some(fault),
-        }
+        let issuer = || self.issuer(&request.origin);
+        Some(self.signed_out(Fault::answer(status, headers, request.route, issuer)?))
     }
 
     /// The fault a lane ending at `origin` means; a revoked grant is dropped and its server asks for sign-in.
     fn ending(&self, origin: &Origin, ending: LaneEnding) -> Fault {
-        if ending != LaneEnding::Revoked {
-            return Fault::Ended(ending);
+        match ending {
+            LaneEnding::Revoked => self.signed_out(Fault::SignIn(self.issuer(origin))),
+            ending => Fault::Ended(ending),
         }
-        let mut grants = lock(&self.0.grants);
-        let issuer = grants.issuer(origin).clone();
-        grants.tokens.remove(&issuer);
-        Fault::SignIn(issuer)
+    }
+
+    /// The server whose grant `origin` takes.
+    fn issuer(&self, origin: &Origin) -> Origin {
+        lock(&self.0.grants).issuer(origin).clone()
+    }
+
+    /// `fault`, dropping its server's grant when it asks for sign-in.
+    fn signed_out(&self, fault: Fault) -> Fault {
+        if let Fault::SignIn(issuer) = &fault {
+            lock(&self.0.grants).tokens.remove(issuer);
+        }
+        fault
     }
 }
 
