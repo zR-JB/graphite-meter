@@ -254,6 +254,21 @@ async fn transfers_the_peer_leaves_idle_end_after_thirty_seconds() {
 }
 
 #[tokio::test]
+async fn a_progress_feed_without_stream_credit_is_reset_after_thirty_seconds() {
+    let h3 = H3::start(&[]).await;
+    let control = h3.connect(transport(None)).await;
+    let id = control.upload_id().await;
+    let connection = h3.connect(transport(Some(64))).await;
+    let _feed = connection.open("GET", &format!("/upload/progress?id={id}")).await;
+    h3.server.until_active(1).await;
+    pass(Duration::from_secs(28)).await;
+    assert_eq!((h3.server.active().await, connection.resets()), (1, 0));
+    pass(Duration::from_secs(3)).await;
+    h3.server.until_active(0).await;
+    assert_eq!(connection.resets(), 1, "the feed's stream is reset");
+}
+
+#[tokio::test]
 async fn transfers_reaching_the_operation_lifetime_are_reset() {
     let h3 = H3::start(&[("GM_MAX_OPERATION_DURATION", "1s")]).await;
     let connection = h3.connect(transport(None)).await;

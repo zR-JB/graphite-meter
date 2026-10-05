@@ -320,6 +320,22 @@ async fn transfers_the_peer_leaves_idle_end_after_thirty_seconds() {
 }
 
 #[tokio::test]
+async fn a_progress_feed_without_stream_credit_is_reset_after_thirty_seconds() {
+    let h2 = H2::start(&[]).await;
+    let mut connection = h2.connect(0).await;
+    let id = h2.server.upload_id().await;
+    let feed = connection.get("GET", &format!("/upload/progress?id={id}")).await;
+    assert_eq!(feed.status(), 200);
+    h2.server.until_active(1).await;
+    advance_clock(Duration::from_secs(29)).await;
+    assert_eq!(h2.server.active().await, 1);
+    advance_clock(Duration::from_secs(2)).await;
+    let reset = feed.into_body().data().await.unwrap().unwrap_err();
+    assert_eq!(reset.reason(), Some(Reason::CANCEL));
+    h2.server.until_active(0).await;
+}
+
+#[tokio::test]
 async fn transfers_reaching_the_operation_lifetime_are_reset() {
     let h2 = H2::start(&[("GM_MAX_OPERATION_DURATION", "1s")]).await;
     let mut connection = h2.connect(65_535).await;
