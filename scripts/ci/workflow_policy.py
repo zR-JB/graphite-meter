@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 import subprocess
 import tomllib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from github_api import PEM, TLS_NAME, ControlPlaneError, fail
 from toolchains import check as check_toolchain_literals, pin
@@ -244,6 +244,34 @@ def check_development_notices(root: Path) -> None:
                                  else f"mise run {step if isinstance(step, str) else step['task']}")
 
 
+def path_filters(text: str) -> dict[str, list[str]]:
+    """The globs of each .github/ci-paths.yml filter, with its aliases expanded."""
+    filters: dict[str, list[str]] = {}
+    anchors: dict[str, list[str]] = {}
+    current: list[str] = []
+    for line in text.splitlines():
+        if match := re.fullmatch(r"([\w-]+):(?: &([\w-]+))?", line):
+            current = filters[match[1]] = []
+            if match[2]:
+                anchors[match[2]] = current
+        elif match := re.fullmatch(r"  - '([^']+)'|  - \*([\w-]+)", line):
+            current.extend([match[1]] if match[1] else anchors[match[2]])
+    return filters
+
+
+def check_paths(root: Path) -> None:
+    """A change to any input of the Rust image selects the jobs that build it."""
+    filters = path_filters(read(root, ".github/ci-paths.yml"))
+    # A copied directory stands for every file below it.
+    inputs = [".dockerignore", "container/Dockerfile.rust", *(
+        source + "x" if source.endswith("/") else source
+        for line in re.findall(r"(?m)^COPY (?!--)(.+)$", read(root, "container/Dockerfile.rust"))
+        for source in line.split()[:-1])]
+    if missing := [path for path in inputs
+                   if not any(PurePosixPath(path).full_match(glob) for glob in filters.get("rust", []))]:
+        fail(f".github/ci-paths.yml rust misses {missing}")
+
+
 def check_certificates(root: Path) -> None:
     listed = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True, check=False)
     if listed.returncode == 0:
@@ -290,6 +318,7 @@ def check_repository(root: Path = ROOT) -> None:
     check_actions(root)
     check_workflows(root)
     check_ci(root)
+    check_paths(root)
     check_development_notices(root)
     check_certificates(root)
 

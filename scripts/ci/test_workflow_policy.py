@@ -142,6 +142,11 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (RUST, "musl-dev:amd64=1.2.3-1", "musl-dev:amd64", "exact apt package versions"),
     (RUST, "RUN printf 'Types: deb", "RUN apt-get update\nRUN printf 'Types: deb", "snapshot.debian.org"),
     (RUST, "/20260927T180000Z", "", "snapshot.debian.org"),
+    # A change to any input of the Rust image selects the Rust jobs.
+    (".github/ci-paths.yml", "  - 'client/**'\n  - 'api/**'\n", "  - 'api/**'\n",
+     r"rust misses \['client/package.json'"),
+    (".github/ci-paths.yml", "  - 'container/Dockerfile.rust'\n", "", r"rust misses \['container/Dockerfile.rust'\]"),
+    (RUST, "COPY api/ /src/api/\n", "COPY api/ docs/ /src/api/\n", r"rust misses \['docs/x'\]"),
 )
 
 

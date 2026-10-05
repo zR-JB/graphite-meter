@@ -33,7 +33,15 @@ deps:
   - 'client/bun.lock'
   - 'client/bunfig.toml'
 
+# Every input of the Rust image build, which the policy checks against Dockerfile.rust.
 rust:
   - *workflow
   - 'rust/**'
-  - 'legal/rust-*'
+  - 'legal/**'
+  - 'client/**'
+  - 'api/**'
+  - 'go/internal/auth/assets/**'
+  - 'container/Dockerfile.rust'
+  - '.dockerignore'
+  - 'LICENSE'
+  - 'COPYRIGHT'
