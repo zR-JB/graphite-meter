@@ -48,6 +48,7 @@ impl H2 {
         assert_eq!(stream.get_ref().1.alpn_protocol(), Some(&b"h2"[..]));
         let (client, connection) = client::Builder::new()
             .initial_window_size(window)
+            .max_send_buffer_size(16 << 20)
             .handshake(stream)
             .await
             .unwrap();
@@ -188,6 +189,52 @@ async fn only_an_admitted_upload_opens_the_connection_window() {
     assert_eq!(answer.await.unwrap().status(), 429, "the client's share is held");
     assert!(!window_opens(&mut upload, Duration::from_millis(500)).await);
     assert!(upload.capacity() < 65_535, "an unadmitted upload keeps the default window");
+}
+
+/// Waits until the upload `id` counted `bytes`.
+async fn counted(connection: &mut Connection, id: &str, bytes: u64) {
+    let reached = async {
+        while connection.json("POST", &format!("/upload/checkpoint?id={id}")).await["bytes"] != bytes {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(10), reached).await.unwrap();
+}
+
+#[tokio::test]
+async fn under_pressure_a_running_upload_keeps_its_window_after_the_one_that_raised_it_ends() {
+    let h2 = H2::start(&[]).await;
+    let budget = h2.server.budget.clone();
+    let idle = super::quic::settled(&budget).await;
+    let mut connection = h2.connect(65_535).await;
+    let id = connection.upload_id().await;
+    let (raised, mut raiser) = connection.open("POST", &format!("/upload?id={id}")).await;
+    assert!(window_opens(&mut raiser, Duration::from_secs(5)).await);
+    let pressure = budget.lease(budget.usage().limit / 4 * 3).unwrap();
+    let (running, mut upload) = connection.open("POST", &format!("/upload?id={id}")).await;
+    upload.send_data(Bytes::from_static(b"x"), false).unwrap();
+    counted(&mut connection, &id, 2).await;
+    raiser.send_data(Bytes::new(), true).unwrap();
+    assert_eq!(read(raised.await.unwrap().into_body()).await.unwrap(), br#"{"bytes":1}"#);
+    // More than the credit the window granted before, so the server must keep granting it.
+    let sent = 18 << 20;
+    send(&mut upload, Bytes::from(vec![7; sent]), false).await;
+    counted(&mut connection, &id, 2 + sent as u64).await;
+    assert!(
+        window_opens(&mut upload, Duration::from_secs(2)).await,
+        "the window it read at stays open while it runs"
+    );
+    upload.send_data(Bytes::new(), true).unwrap();
+    assert_eq!(running.await.unwrap().status(), 200);
+    drop((pressure, connection, upload, raiser));
+    let drained = async {
+        while budget.usage().used != idle {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(5), drained)
+        .await
+        .expect("the budget drains to its baseline");
 }
 
 #[tokio::test]

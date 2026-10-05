@@ -22,13 +22,14 @@ const DEFAULT_WINDOW: u32 = 65_535;
 /// Go's connection receive window, raised while admitted uploads read.
 const WINDOW: u32 = 16 << 20;
 
-/// The connection's receive window: 64 KiB until an admitted upload reads, then 16 MiB while one reads, within the
-/// share of the client that first raised it, which holds the credit until the connection ends.
+/// The connection's receive window: 64 KiB until an admitted upload reads, then 16 MiB until the last admitted upload
+/// stops reading, within the share of the client that first raised it, which holds the credit until the connection
+/// ends.
 pub(super) struct Window {
     app: Arc<App>,
     credit: Mutex<Option<Hold>>,
-    /// Uploads reading at the raised window.
-    uploads: AtomicUsize,
+    /// Admitted uploads reading, funded or not: running transfers keep the window they read at.
+    readers: AtomicUsize,
     raised: AtomicBool,
 }
 
@@ -37,7 +38,7 @@ impl Window {
         Self {
             app,
             credit: Mutex::default(),
-            uploads: AtomicUsize::new(0),
+            readers: AtomicUsize::new(0),
             raised: AtomicBool::new(false),
         }
     }
@@ -58,9 +59,6 @@ impl ReceiveWindow for Window {
     }
 
     fn raise(&self, stream: &mut RecvStream, keys: &ClientKeys) -> bool {
-        if self.uploads.fetch_add(1, Ordering::Relaxed) > 0 {
-            return true;
-        }
         let mut credit = lock(&self.credit);
         if credit.is_none() {
             *credit = self.app.window_credit(keys, (WINDOW - DEFAULT_WINDOW) as usize);
@@ -72,13 +70,14 @@ impl ReceiveWindow for Window {
         if !self.raised.load(Ordering::Relaxed) {
             *credit = None;
         }
-        self.uploads.fetch_sub(1, Ordering::Relaxed);
         false
     }
 
-    /// The last upload reading at the raised window lowers it again.
-    fn release(&self, stream: &mut RecvStream) {
-        if self.uploads.fetch_sub(1, Ordering::Relaxed) == 1 {
+    /// The last admitted upload to stop reading lowers the window again.
+    fn reading(&self, stream: &mut RecvStream, reading: bool) {
+        if reading {
+            self.readers.fetch_add(1, Ordering::Relaxed);
+        } else if self.readers.fetch_sub(1, Ordering::Relaxed) == 1 {
             stream.flow_control().set_target_connection_window_size(DEFAULT_WINDOW);
         }
     }

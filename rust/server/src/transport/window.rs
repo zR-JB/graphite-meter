@@ -56,8 +56,8 @@ pub(crate) trait ReceiveWindow: Send + Sync + 'static {
     /// Whether an upload of `keys` reads at the raised window, raising it for the first.
     fn raise(&self, stream: &mut Self::Stream, keys: &ClientKeys) -> bool;
 
-    /// An upload reading at the raised window ended.
-    fn release(&self, _stream: &mut Self::Stream) {}
+    /// An admitted upload began (`true`) or stopped reading on the connection, funded or not.
+    fn reading(&self, _stream: &mut Self::Stream, _reading: bool) {}
 
     fn poll_data(stream: &mut Self::Stream, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, Self::Error>>>;
 
@@ -72,13 +72,21 @@ pub(crate) struct Incoming<W: ReceiveWindow> {
     watch: Watch,
     window: Arc<W>,
     funding: Funding,
+    reading: bool,
     finished: bool,
 }
 
 impl<W: ReceiveWindow> Incoming<W> {
     pub(crate) fn new(stream: W::Stream, watch: Watch, window: Arc<W>) -> Self {
         let funding = Funding::Unfunded(None);
-        Self { stream, watch, window, funding, finished: false }
+        Self {
+            stream,
+            watch,
+            window,
+            funding,
+            reading: false,
+            finished: false,
+        }
     }
 }
 
@@ -92,6 +100,10 @@ impl<W: ReceiveWindow> http_body::Body for Incoming<W> {
             return Poll::Ready(None);
         }
         let (window, stream) = (&this.window, &mut this.stream);
+        if !this.reading && this.watch.admitted().is_some() {
+            this.reading = true;
+            window.reading(stream, true);
+        }
         this.funding
             .fund(&this.watch, window.budget(), |keys| window.raise(stream, keys));
         let frame = ready!(W::poll_data(stream, cx));
@@ -106,8 +118,8 @@ impl<W: ReceiveWindow> http_body::Body for Incoming<W> {
 
 impl<W: ReceiveWindow> Drop for Incoming<W> {
     fn drop(&mut self) {
-        if let Funding::Funded = self.funding {
-            self.window.release(&mut self.stream);
+        if self.reading {
+            self.window.reading(&mut self.stream, false);
         }
     }
 }
