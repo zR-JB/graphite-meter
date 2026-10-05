@@ -22,6 +22,8 @@ import rust_workspace  # noqa: E402
 
 # Image platforms by the machine names Python reports.
 PLATFORMS = {"x86_64": "linux/amd64", "aarch64": "linux/arm64"}
+PASSWORD = "correct horse battery staple"
+PASSWORD_HASH = "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0"
 
 
 def musl_target() -> str:
@@ -156,6 +158,12 @@ class Server:
 
     def output(self) -> str:
         return self.log.read_text()
+
+    def protect(self) -> None:
+        """Password mode, signed in at the HTTPS HTTP/1.1 origin, advertising only the TLS listeners."""
+        self.environment |= {"GM_AUTH_MODE": "password", "GM_AUTH_PUBLIC_URL": self.origin("http1-tls"),
+                             "GM_AUTH_PASSWORD_HASH": PASSWORD_HASH,
+                             "GM_ADVERTISED_NATIVE_ENDPOINTS": "http1-tls,http2,http3"}
 
     def start(self) -> subprocess.Popen[bytes]:
         """Starts the server; it is ready once its clear listener answers."""

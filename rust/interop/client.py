@@ -23,15 +23,13 @@ from http.client import HTTPMessage
 from pathlib import Path
 from typing import IO
 
-from fixture import ROOT, Fixture, Server, record
+from fixture import PASSWORD, ROOT, Fixture, Server, record
 
 WORKSPACE = ROOT / "rust"
 CLIENT = WORKSPACE / "target/ci/graphite-meter-client"
 # Building the test also builds the client binary, with the same features.
 TEST = ["cargo", "test", "--locked", "--profile", "ci", "-p", "graphite-meter-client", "--test", "go_signin"]
 SIGN_IN_TEST = "go_server_approves_a_native_sign_in_for_later_runs"
-PASSWORD = "correct horse battery staple"
-PASSWORD_HASH = "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0"
 SIGN_IN = "Sign-in required; run graphite-meter-client in a terminal to sign in."
 UNTRUSTED = "Certificate not trusted"
 CHALLENGE = re.compile(r"[A-Za-z0-9_-]{43}")
@@ -52,8 +50,7 @@ def go_server(fixture: Fixture, binary: Path, name: str, protected: bool = False
         "GM_H2_PUBLIC_ORIGIN": server.origin("http2"), "GM_H3_PUBLIC_ORIGIN": server.origin("http3"),
     }
     if protected:
-        server.environment |= {"GM_AUTH_MODE": "password", "GM_AUTH_PUBLIC_URL": public,
-                               "GM_AUTH_PASSWORD_HASH": PASSWORD_HASH}
+        server.protect()
     return server
 
 

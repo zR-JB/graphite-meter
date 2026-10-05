@@ -3,7 +3,8 @@
     python3 rust/interop/server.py
 
 It builds the static musl server with the ci profile (needs musl-tools). Every server runs on this host's
-runtime threads, so on Linux HTTP/3 is sharded over SO_REUSEPORT endpoints.
+runtime threads, so on Linux HTTP/3 is sharded over SO_REUSEPORT endpoints. Against a password-mode server the Go
+peer signs in, then checks cookie-authenticated HTTP/3, one-use WebTransport and WebSocket tickets, and logout.
 """
 
 from __future__ import annotations
@@ -162,6 +163,12 @@ def main() -> None:
         result = subprocess.run([str(binaries["unchanged"]), "retry", str(server.h3)], cwd=fixture.directory,
                                 capture_output=True, text=True, timeout=35)
         record(result, fixture.directory / "peer-retry.log", "Go peer under connection pressure")
+    protected = fixture.server(binary, "password")
+    protected.protect()
+    with protected as server:
+        result = subprocess.run([str(binaries["unchanged"]), "auth", str(server.h3), str(server.h1_tls)],
+                                cwd=fixture.directory, capture_output=True, text=True, timeout=35)
+        record(result, fixture.directory / "peer-auth.log", "Go peer signed in with the password")
     fewer_endpoints(binary, fixture)
     shutdown_under_load(binary, fixture, client)
 

@@ -1,9 +1,10 @@
 // Peer with the unchanged Go QUIC, HTTP/3 and WebTransport libraries for the assembled Rust server.
 //
-//	peer flow H3_PORT    bootstrap, transfers, sessions and per-source Retry
-//	peer retry H3_PORT   Retry once a quarter of the connection capacity is used
+//	peer flow H3_PORT              bootstrap, transfers, sessions and per-source Retry
+//	peer retry H3_PORT             Retry once a quarter of the connection capacity is used
+//	peer auth H3_PORT PUBLIC_PORT  password sign-in, cookie-authenticated HTTP/3, one-use socket tickets, logout
 //
-// Both read ca.pem from the working directory.
+// Each reads ca.pem from the working directory.
 package main
 
 import (
@@ -25,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/quic-go/quic-go/qlog"
@@ -169,12 +171,21 @@ func main() {
 }
 
 func run() error {
-	if len(os.Args) != 3 || (os.Args[1] != "flow" && os.Args[1] != "retry") {
-		return fmt.Errorf("usage: peer flow|retry H3_PORT (reads ca.pem from the working directory)")
+	mode := ""
+	if len(os.Args) > 1 {
+		mode = os.Args[1]
 	}
-	port, err := strconv.ParseUint(os.Args[2], 10, 16)
-	if err != nil {
-		return fmt.Errorf("invalid loopback port %q", os.Args[2])
+	ports := map[string]int{"flow": 1, "retry": 1, "auth": 2}[mode]
+	if ports == 0 || len(os.Args) != 2+ports {
+		return fmt.Errorf("usage: peer flow|retry H3_PORT, or peer auth H3_PORT PUBLIC_PORT (reads ca.pem from the working directory)")
+	}
+	origins := make([]string, ports)
+	for index, argument := range os.Args[2:] {
+		port, err := strconv.ParseUint(argument, 10, 16)
+		if err != nil {
+			return fmt.Errorf("invalid loopback port %q", argument)
+		}
+		origins[index] = fmt.Sprintf("https://127.0.0.1:%d", port)
 	}
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(must(os.ReadFile("ca.pem"))) {
@@ -185,11 +196,13 @@ func run() error {
 		CurvePreferences: []tls.CurveID{tls.X25519MLKEM768, tls.X25519}}
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
-	base := fmt.Sprintf("https://127.0.0.1:%d", port)
-	if os.Args[1] == "retry" {
-		return runRetry(ctx, base, config)
+	switch mode {
+	case "retry":
+		return runRetry(ctx, origins[0], config)
+	case "auth":
+		return runAuthenticated(ctx, origins[0], origins[1], config)
 	}
-	return runFlow(ctx, base, config)
+	return runFlow(ctx, origins[0], config)
 }
 
 // runRetry dials from 127.0.0.2, which an idle server admits without Retry, then from 127.0.0.3, which needs
@@ -416,5 +429,189 @@ func runFlow(ctx context.Context, base string, config *tls.Config) error {
 		return fmt.Errorf("WT datagram complete bytes=%d, observed=%d", count, observed)
 	}
 	fmt.Println("WT datagram upload: ready, receiver progress, HTTP finish, bounded completion")
+	return nil
+}
+
+// runAuthenticated signs in with the password at the public origin, then checks cookie-authenticated HTTP/3,
+// one-use WebTransport and WebSocket tickets, and that logout revokes the cookie, unused tickets and open lanes.
+func runAuthenticated(ctx context.Context, base, public string, config *tls.Config) error {
+	// A bare transport, unlike http.Client, never follows the sign-in redirects.
+	tcp := &http.Transport{TLSClientConfig: config}
+	defer tcp.CloseIdleConnections()
+	send := func(transport http.RoundTripper, req *http.Request) *http.Response {
+		response := must(transport.RoundTrip(req))
+		response.Body.Close()
+		return response
+	}
+	login := send(tcp, must(http.NewRequestWithContext(ctx, "GET", public+"/login", nil)))
+	nonce := responseCookie(login, "__Host-gm_login")
+	if login.StatusCode != http.StatusOK || nonce == nil {
+		return fmt.Errorf("login page status=%d, nonce cookie %t", login.StatusCode, nonce != nil)
+	}
+	form := url.Values{"csrf": {nonce.Value}, "password": {"correct horse battery staple"}}
+	signIn := must(http.NewRequestWithContext(ctx, "POST", public+"/auth/password", strings.NewReader(form.Encode())))
+	signIn.Header.Set("Origin", public)
+	signIn.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	signIn.AddCookie(nonce)
+	signedIn := send(tcp, signIn)
+	session, csrf := responseCookie(signedIn, "__Host-gm_session"), responseCookie(signedIn, "__Host-gm_csrf")
+	if signedIn.StatusCode != http.StatusSeeOther || session == nil || csrf == nil {
+		return fmt.Errorf("password sign-in status=%d, session cookie %t, CSRF cookie %t", signedIn.StatusCode,
+			session != nil, csrf != nil)
+	}
+	fmt.Println("Password sign-in: 303 with session and CSRF cookies")
+	protected := func(method, target string, body io.Reader) *http.Request {
+		req := must(http.NewRequestWithContext(ctx, method, target, body))
+		req.Header.Set("Origin", public)
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		req.Header.Set("X-CSRF-Token", csrf.Value)
+		req.AddCookie(session)
+		return req
+	}
+
+	host := must(url.Parse(base)).Host
+	config = config.Clone()
+	config.NextProtos = []string{http3.NextProtoH3}
+	transport := &webtransport.Transport{TLSClientConfig: config}
+	defer transport.Close()
+	var connections []*quic.Conn
+	defer func() {
+		for _, connection := range connections {
+			connection.CloseWithError(0, "peer finished")
+		}
+	}()
+	// Per-session flow control is not negotiated, so each session gets its own connection.
+	dial := func() *webtransport.ClientConn {
+		connection, peer, _, err := dialPeer(ctx, host, config, transport)
+		check(err)
+		connections = append(connections, connection)
+		return peer
+	}
+	client := dial()
+	denied := send(client, must(http.NewRequestWithContext(ctx, "GET", base+"/download?bytes=1", nil)))
+	if denied.StatusCode != http.StatusForbidden || denied.Header.Get("Graphite-Meter-Auth") != "required" {
+		return fmt.Errorf("H3 download without the cookie status=%d auth=%q", denied.StatusCode,
+			denied.Header.Get("Graphite-Meter-Auth"))
+	}
+	download := must(client.RoundTrip(protected("GET", base+"/download?bytes=65537", nil)))
+	data, err := io.ReadAll(io.LimitReader(download.Body, 65538))
+	download.Body.Close()
+	if err != nil || download.StatusCode != http.StatusOK || len(data) != 65537 {
+		return fmt.Errorf("H3 download with the cookie status=%d bytes=%d: %v", download.StatusCode, len(data), err)
+	}
+	fmt.Println("Cookie-authenticated H3: refused without the cookie; 65537 bytes with it")
+
+	mint := func(kind, target string) string {
+		query := url.Values{"target": {target}}
+		response := must(tcp.RoundTrip(protected("POST", public+"/"+kind+"/session?"+query.Encode(), nil)))
+		defer response.Body.Close()
+		var ticket struct {
+			Token string `json:"token"`
+		}
+		if response.StatusCode != http.StatusOK || json.UnmarshalRead(response.Body, &ticket) != nil || ticket.Token == "" {
+			check(fmt.Errorf("%s ticket status=%d token=%q", kind, response.StatusCode, ticket.Token))
+		}
+		return ticket.Token
+	}
+	origin := http.Header{"Origin": {public}}
+	wtTarget, wsTarget := base+"/wt/ping", public+"/ws/ping"
+	connectWT := func(peer *webtransport.ClientConn, token string) (*http.Response, *webtransport.Session, error) {
+		return peer.Dial(ctx, wtTarget+"?token="+url.QueryEscape(token), origin)
+	}
+	connectWS := func(token string) (*websocket.Conn, *http.Response, error) {
+		return websocket.Dial(ctx, "wss"+strings.TrimPrefix(wsTarget, "https")+"?token="+url.QueryEscape(token),
+			&websocket.DialOptions{HTTPClient: &http.Client{Transport: tcp}, HTTPHeader: origin})
+	}
+	refused := func(response *http.Response, err error) error {
+		if err == nil {
+			return fmt.Errorf("the ticket was admitted")
+		}
+		if response == nil || response.StatusCode != http.StatusForbidden {
+			return fmt.Errorf("expected 403, got %v: %w", response, err)
+		}
+		return nil
+	}
+	refusedWT := func(peer *webtransport.ClientConn, token string) error {
+		response, session, err := connectWT(peer, token)
+		if err == nil {
+			session.CloseWithError(0, "unexpected admission")
+		}
+		return refused(response, err)
+	}
+	refusedWS := func(token string) error {
+		bus, response, err := connectWS(token)
+		if err == nil {
+			bus.CloseNow()
+		}
+		return refused(response, err)
+	}
+
+	ticket := mint("wt", wtTarget)
+	if err := refusedWT(client, "invalid-ticket"); err != nil {
+		return fmt.Errorf("invalid WT ticket: %w", err)
+	}
+	_, ping, err := connectWT(client, ticket)
+	if err != nil {
+		return fmt.Errorf("WT ticket after a refused CONNECT on the same connection: %w", err)
+	}
+	check(pong(ctx, ping, "77"))
+	check(ping.CloseWithError(0, "ping finished"))
+	if err := refusedWT(dial(), ticket); err != nil {
+		return fmt.Errorf("spent WT ticket: %w", err)
+	}
+	fmt.Println("WT ticket: an invalid one refused, the connection kept; one use admitted a datagram ping, the replay refused")
+	ticket = mint("ws", wsTarget)
+	bus, _, err := connectWS(ticket)
+	if err != nil {
+		return fmt.Errorf("WS ticket: %w", err)
+	}
+	check(bus.Write(ctx, websocket.MessageText, []byte("PING,78")))
+	if _, reply, err := bus.Read(ctx); err != nil || !strings.HasPrefix(string(reply), "PONG,78,") {
+		return fmt.Errorf("WS pong %q: %v", reply, err)
+	}
+	check(bus.Close(websocket.StatusNormalClosure, ""))
+	if err := refusedWS(ticket); err != nil {
+		return fmt.Errorf("spent WS ticket: %w", err)
+	}
+	fmt.Println("WS ticket: one use admitted a ping bus, the replay refused")
+
+	unused := mint("wt", wtTarget)
+	_, heldSession, err := connectWT(dial(), mint("wt", wtTarget))
+	check(err)
+	defer heldSession.CloseWithError(0, "")
+	heldBus, _, err := connectWS(mint("ws", wsTarget))
+	check(err)
+	defer heldBus.CloseNow()
+	logout := protected("POST", public+"/auth/logout", strings.NewReader(url.Values{"csrf": {csrf.Value}}.Encode()))
+	logout.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if loggedOut := send(tcp, logout); loggedOut.StatusCode != http.StatusSeeOther {
+		return fmt.Errorf("logout status=%d", loggedOut.StatusCode)
+	}
+	_, err = heldSession.AcceptUniStream(ctx)
+	if closed, ok := errors.AsType[*webtransport.SessionError](err); !ok || !closed.Remote || closed.ErrorCode != 3 ||
+		closed.Message != "authentication required" {
+		return fmt.Errorf("WT session at logout: expected close 3 \"authentication required\": %v", err)
+	}
+	_, _, err = heldBus.Read(ctx)
+	if closed, ok := errors.AsType[websocket.CloseError](err); !ok || closed.Code != websocket.StatusPolicyViolation ||
+		closed.Reason != "authentication required" {
+		return fmt.Errorf("WS bus at logout: expected close 1008 \"authentication required\": %v", err)
+	}
+	if denied := send(client, protected("GET", base+"/download?bytes=1", nil)); denied.StatusCode != http.StatusForbidden {
+		return fmt.Errorf("H3 download with the revoked cookie status=%d", denied.StatusCode)
+	}
+	if err := refusedWT(dial(), unused); err != nil {
+		return fmt.Errorf("WT ticket minted before logout: %w", err)
+	}
+	fmt.Println("Logout: open WT session closed 3 and WS bus 1008, both \"authentication required\"; cookie and unused ticket refused")
+	return nil
+}
+
+func responseCookie(response *http.Response, name string) *http.Cookie {
+	for _, cookie := range response.Cookies() {
+		if cookie.Name == name {
+			return cookie
+		}
+	}
 	return nil
 }
