@@ -120,6 +120,24 @@ function reportPolicyViolations() {
   );
 }
 
+/** Every page: the last clicks and their targets, so a click that started nothing shows where it landed. */
+function recordClicks() {
+  const clicks: string[] = [];
+  Object.assign(window, { clicks });
+  document.addEventListener(
+    "click",
+    (event) => {
+      const target = event.target as Element | null;
+      const name = target?.closest("button")?.textContent?.trim().slice(0, 40);
+      clicks.push(
+        `${Math.round(performance.now())} ms ${target?.tagName ?? "?"}${name ? ` "${name}"` : ""}`,
+      );
+      clicks.splice(0, clicks.length - 5);
+    },
+    true,
+  );
+}
+
 /** Every page: no readout ever shows NaN or Infinity, and the dial moves while a transfer shows a rate. */
 function watchDisplay() {
   const TRANSFER = ["download", "upload", "bidirectional"];
@@ -405,6 +423,7 @@ export class Page {
         await this.raw.cdp("Runtime.enable");
         for (const guard of [
           reportPolicyViolations,
+          recordClicks,
           ...(this.options.monitorDisplay === false ? [] : [watchDisplay]),
           recordStorage,
         ])
@@ -483,6 +502,35 @@ export class Page {
   async blockRequests(urls: string[]) {
     await this.cdp("Network.enable");
     await this.cdp("Network.setBlockedURLs", { urls });
+  }
+  /** The run's visible state, for a failure message: phase, run control, blocker, gauge status and notices. */
+  async summary() {
+    const state = await this.evaluate(() => {
+      const text = (el: Element | null) =>
+        el?.textContent?.replace(/\s+/g, " ").trim();
+      const run = document.querySelector(".run-button");
+      return {
+        phase: document.querySelector("#console")?.getAttribute("data-phase"),
+        run: run && {
+          text: text(run),
+          disabled: run.getAttribute("aria-disabled"),
+          busy: run.getAttribute("aria-busy"),
+        },
+        blocker: text(document.querySelector("#run-duration")),
+        // A refused or failed start shows its reason only in the gauge's footer.
+        gauge: text(document.querySelector(".gauge-footer")),
+        clicks: (window as any).clicks,
+        notices: [
+          ...document.querySelectorAll('[role="alert"], [role="status"]'),
+        ]
+          .filter((el) => el.checkVisibility())
+          .map(text)
+          .filter(Boolean)
+          .slice(0, 8),
+      };
+    });
+    const recent = [...this.errors, ...this.console].slice(-8);
+    return `page state: ${JSON.stringify(state)}\nrecent console:\n${recent.join("\n")}`;
   }
   async artifact(name: string) {
     await mkdir(artifacts, { recursive: true });
@@ -588,6 +636,13 @@ export function test(
           .catch(() => undefined);
         if (page.errors.length) throw new Error(page.errors.join("\n"));
       } catch (error) {
+        // Parallel runs drop a test's own output, so its failure carries the page state.
+        const summary = await within(
+          "summarising the page",
+          page.summary(),
+          5_000,
+        ).catch(String);
+        if (error instanceof Error) error.message += `\n${summary}`;
         await page.artifact(name).catch(() => {});
         throw error;
       } finally {
