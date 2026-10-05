@@ -80,9 +80,9 @@ def package(version: str, platform_name: str, target: str, output: Path) -> None
         source = release_source(Project.read(ROOT), version)[1]
         (directory / "SOURCE.txt").write_text(f"Graphite Meter source: {source}\nMatching release: v{version}\n"
                                               f"Dependency source archive: {offer}\nRust target: {target}\n")
-        shutil.make_archive(str(stage / base), "zip" if archive.endswith(".zip") else "gztar", root_dir=stage,
-                            base_dir=base)
-        shutil.copyfile(legal / "THIRD_PARTY_SOURCE.tar.gz", stage / offer)
+        kind = "zip" if archive.endswith(".zip") else "gztar"
+        shutil.make_archive(str(confined_path(stage / base, stage)), kind, root_dir=stage, base_dir=base)
+        shutil.copyfile(legal / "THIRD_PARTY_SOURCE.tar.gz", confined_path(stage / offer, stage))
         for name in (archive, offer):
             os.replace(confined_path(stage / name, stage), confined_path(output / name, output))
     print(f"Rust TUI {platform_name}: {archive} and {offer}", flush=True)
