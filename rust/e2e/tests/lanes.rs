@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 const MIB: u64 = 1 << 20;
 
 fn client() -> Client {
-    Client::new(true, Arc::new(Pool::new().unwrap()))
+    Client::new(true, Arc::new(Pool::inline()))
 }
 
 /// Waits up to `bound` for `done`, failing at once when a lane's fault stands.

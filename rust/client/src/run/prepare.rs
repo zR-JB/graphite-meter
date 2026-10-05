@@ -266,7 +266,7 @@ mod tests {
         let prepared = Prepared {
             key: checked.key(),
             at,
-            client: Client::new(false, Arc::new(Pool::new().unwrap())),
+            client: Client::new(false, Arc::new(Pool::inline())),
             catalogue: Arc::new([]),
             servers: vec![server(Ok(()))],
         };

@@ -15,7 +15,7 @@ use std::{
 };
 
 fn client() -> Client {
-    Client::new(true, Arc::new(Pool::new().unwrap()))
+    Client::new(true, Arc::new(Pool::inline()))
 }
 
 async fn probe(client: &Client, via: Protocol, origin: &Origin) -> Result<Probe, Fault> {

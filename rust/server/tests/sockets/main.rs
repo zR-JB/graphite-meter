@@ -15,6 +15,7 @@ mod websocket;
 mod webtransport;
 mod webtransport_upload;
 
+use graphite_meter_net::Pool;
 use graphite_meter_server::{
     app::{App, Endpoint},
     config::{self, Config, Loaded},
@@ -25,6 +26,7 @@ use std::{ffi::OsString, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     net::TcpStream,
+    runtime::Handle,
     sync::oneshot,
     task::JoinHandle,
 };
@@ -52,6 +54,11 @@ fn config(env: &[(&str, &str)]) -> Config {
     }
 }
 
+/// Pinned runtimes beside a multi-thread test runtime, else none.
+fn pool() -> Pool {
+    Pool::beside(&Handle::current()).unwrap_or_else(|_| Pool::inline())
+}
+
 /// A server serving on local ports until stopped.
 struct Running {
     address: SocketAddr,
@@ -70,7 +77,7 @@ struct Running {
 /// Binds a server; an HTTP/3 port that another test took between its TCP and UDP binds is tried again.
 async fn bind(env: &[(&str, &str)]) -> Server {
     for _ in 0..8 {
-        match Server::bind(config(env)).await {
+        match Server::bind(config(env), pool()).await {
             Err(error) if error.starts_with("listen udp") && error.ends_with("address already in use") => continue,
             bound => return bound.unwrap(),
         }

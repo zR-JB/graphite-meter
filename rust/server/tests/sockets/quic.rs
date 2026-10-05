@@ -177,7 +177,7 @@ async fn refusal(scratch: &Scratch, budget: &str) -> Option<String> {
         ("GM_MAX_CONNECTIONS_PER_CLIENT", "2"),
         ("GM_MAX_BUFFER_BYTES", budget),
     ];
-    Server::bind(config(&env)).await.err()
+    Server::bind(config(&env), pool()).await.err()
 }
 
 /// The least budget a refusal names.

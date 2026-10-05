@@ -55,7 +55,7 @@ fn fail(error: &str) -> ExitCode {
 /// runs `config` once and prints its report to stdout, or why it never started to stderr.
 fn run(config: Config) -> io::Result<ExitCode> {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
-    let pool = Arc::new(runtime.block_on(async { Pool::new() })?);
+    let pool = Arc::new(Pool::beside(runtime.handle())?);
     runtime.block_on(async {
         let terminal = io::stdout().is_terminal();
         let interactive = terminal && !config.report;

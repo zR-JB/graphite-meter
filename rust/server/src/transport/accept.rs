@@ -128,7 +128,8 @@ mod tests {
         task::JoinHandle,
     };
 
-    /// A loop on a fresh local listener whose connections run `serve`, holding shares of `quota`.
+    /// A loop on a fresh local listener whose connections run `serve`, holding shares of `quota`, on pinned runtimes
+    /// beside a multi-thread test runtime.
     async fn start<F>(
         quota: Quota,
         serve: impl Fn(TcpStream) -> F + Send + Sync + 'static,
@@ -141,7 +142,7 @@ mod tests {
         let shutdown = CancellationToken::new();
         let stop = shutdown.clone();
         let task = tokio::spawn(async move {
-            let pool = Pool::new().unwrap();
+            let pool = Pool::beside(&Handle::current()).unwrap_or_else(|_| Pool::inline());
             let hold = |peer: SocketAddr| quota.acquire(&ClientKeys::address(peer.ip()), 1).ok();
             super::serve(listener, || pool.next(), &stop, hold, |socket, _| serve(socket)).await
         });
@@ -376,7 +377,7 @@ mod tests {
         let shutdown = CancellationToken::new();
         let stop = shutdown.clone();
         let task = tokio::spawn(async move {
-            let pool = Pool::new().unwrap();
+            let pool = Pool::inline();
             super::serve(listener, || pool.next(), &stop, |_| None, |_, _| async {}).await
         });
         tokio::time::sleep(Duration::from_secs(5)).await;

@@ -31,7 +31,7 @@ fn config(url: &Origin, args: &[&str]) -> Config {
 
 async fn check(url: &Origin, args: &[&str]) -> Prepared {
     let config = config(url, args);
-    let client = Client::new(config.insecure, Arc::new(Pool::new().unwrap()));
+    let client = Client::new(config.insecure, Arc::new(Pool::inline()));
     prepare(&config, client).await.unwrap()
 }
 

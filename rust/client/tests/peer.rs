@@ -30,7 +30,7 @@ const CHILD: &str = "GRAPHITE_METER_TEST_CHILD";
 const KEY: &str = "GRAPHITE_METER_TEST_KEY";
 
 fn client(insecure: bool) -> Client {
-    Client::new(insecure, Arc::new(Pool::new().unwrap()))
+    Client::new(insecure, Arc::new(Pool::inline()))
 }
 
 async fn local() -> (TcpListener, SocketAddr) {

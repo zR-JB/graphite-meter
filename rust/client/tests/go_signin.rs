@@ -68,7 +68,7 @@ fn completed(events: &[Event]) {
 async fn go_server_approves_a_native_sign_in_for_later_runs() {
     let url = std::env::var("GM_GO_AUTH_URL").expect("GM_GO_AUTH_URL names the Go server");
     let (events, mut received) = Events::channel();
-    let mut controller = Controller::new(true, Arc::new(Pool::new().unwrap()), events);
+    let mut controller = Controller::new(true, Arc::new(Pool::inline()), events);
     controller.command(Command::Run(config(&url, "http3", "webtransport", "webtransport")));
     let asked = until(&mut received, |event| matches!(event, Event::SignIn(_) | Event::RunFinished { .. })).await;
     let Some(Event::SignIn(prompt)) = asked.last() else {

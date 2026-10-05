@@ -1,5 +1,6 @@
 //! The server binary: `version`, `hash-password`, `--legal`, or the server configured by environment and flags.
 
+use graphite_meter_net::Pool;
 use graphite_meter_proto::text::quote;
 use graphite_meter_server::{
     assets::NOTICES,
@@ -67,9 +68,10 @@ fn serve(config: Config) -> Result<(), String> {
         .enable_all()
         .build()
         .map_err(|error| error.to_string())?;
+    let pool = Pool::beside(runtime.handle()).map_err(|error| format!("runtime threads: {error}"))?;
     runtime.block_on(async {
         let stop = runtime::stop_signal().map_err(|error| error.to_string())?;
-        Server::bind(config).await?.serve(stop).await
+        Server::bind(config, pool).await?.serve(stop).await
     })
 }
 

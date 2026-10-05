@@ -1,4 +1,5 @@
 //! End-to-end tests of the client against the in-process server.
+use graphite_meter_net::Pool;
 use graphite_meter_proto::origin::Origin;
 use graphite_meter_server::{
     app::{App, Endpoint},
@@ -16,7 +17,8 @@ use tokio::{
 /// on the host it was asked at.
 const ADDRESSES: [&str; 3] = ["127.0.0.7:0", "127.0.7:0", "127.7:0"];
 
-/// The server on local ports, serving cleartext HTTP/1.1, HTTP/2 over TLS and HTTP/3 until dropped.
+/// The server on local ports, serving cleartext HTTP/1.1, HTTP/2 over TLS and HTTP/3 on the test's runtime until
+/// dropped.
 pub struct Server {
     pub http1: Origin,
     pub http2: Origin,
@@ -55,7 +57,7 @@ impl Server {
         let Ok(Loaded::Config(config)) = loaded else {
             panic!("the test configuration loads: {:?}", loaded.err());
         };
-        let server = runtime::Server::bind(*config).await.unwrap();
+        let server = runtime::Server::bind(*config, Pool::inline()).await.unwrap();
         let address = |endpoint| server.local_addr(endpoint).unwrap();
         let origin = |scheme, endpoint| Origin::parse(&format!("{scheme}://{}", address(endpoint))).unwrap();
         let (http1, http2, http3) = (

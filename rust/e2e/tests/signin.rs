@@ -89,7 +89,7 @@ fn config(address: SocketAddr) -> Config {
 /// The prompt an interactive check of `config` shows.
 async fn prompted(config: &Config) -> (Controller, UnboundedReceiver<Event>, SignInPrompt) {
     let (events, mut received) = Events::channel();
-    let mut controller = Controller::new(true, Arc::new(Pool::new().unwrap()), events);
+    let mut controller = Controller::new(true, Arc::new(Pool::inline()), events);
     controller.command(Command::Check(config.clone()));
     let events = until(&mut received, LIMIT, |event| matches!(event, Event::SignIn(_))).await;
     let Some(Event::SignIn(prompt)) = events.last() else { unreachable!() };

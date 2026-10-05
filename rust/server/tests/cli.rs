@@ -249,6 +249,7 @@ fn verbose_logs_report_throughput_and_sigterm_ends_a_running_download() {
 /// What a server with HTTP/3 and four connections holds on a current-thread runtime, so on one endpoint: every
 /// connection's floor with the download block, and the endpoint's buffers.
 fn single_endpoint_terms(env: &[(&str, &str)]) -> (usize, usize) {
+    use graphite_meter_net::Pool;
     use graphite_meter_server::{config, runtime::Server};
     let lookup = |name: &str| env.iter().find(|(key, _)| *key == name).map(|(_, value)| value.into());
     let config = |budget: &str| {
@@ -265,9 +266,9 @@ fn single_endpoint_terms(env: &[(&str, &str)]) -> (usize, usize) {
         .build()
         .unwrap();
     runtime.block_on(async {
-        let server = Server::bind(config("8589934592")).await.unwrap();
+        let server = Server::bind(config("8589934592"), Pool::inline()).await.unwrap();
         let endpoint = server.budget().usage().reserved;
-        let refusal = Server::bind(config("1")).await.err().unwrap();
+        let refusal = Server::bind(config("1"), Pool::inline()).await.err().unwrap();
         let term = |suffix: &str| -> usize {
             let before = refusal.split(suffix).next().unwrap();
             before.rsplit(' ').next().unwrap().parse().unwrap()

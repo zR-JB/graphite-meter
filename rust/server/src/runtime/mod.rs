@@ -75,9 +75,9 @@ impl Socket {
 type Service<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
 
 impl Server {
-    /// Loads the certificate and binds every enabled listener, HTTP/3 on UDP beside its TCP companion's port; a
-    /// failure closes those bound before it.
-    pub async fn bind(mut config: Config) -> Result<Self, String> {
+    /// Loads the certificate and binds every enabled listener, HTTP/3 on UDP beside its TCP companion's port, its
+    /// connections to run on `pool`; a failure closes those bound before it.
+    pub async fn bind(mut config: Config, pool: Pool) -> Result<Self, String> {
         let (tls, hosts, auth) = (config.tls.clone(), tls::covered_hosts(&config), config.auth.is_some());
         let oidc_only = matches!(config.auth.as_ref().map(|auth| &auth.methods), Some(Methods::Oidc(_)));
         let terms = Terms::of(&config)?;
@@ -106,7 +106,6 @@ impl Server {
                 .await
                 .map_err(|error| format!("OIDC discovery: {error}"))?;
         }
-        let pool = Pool::new().map_err(|error| format!("runtime threads: {error}"))?;
         let companion = listeners
             .iter()
             .find(|listening| listening.endpoint == Endpoint::H3Companion);

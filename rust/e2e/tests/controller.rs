@@ -31,7 +31,7 @@ fn config(url: &Origin, args: &[&str]) -> Config {
 
 fn controller(interactive: bool) -> (Controller, UnboundedReceiver<Event>) {
     let (events, received) = Events::channel();
-    (Controller::new(interactive, Arc::new(Pool::new().unwrap()), events), received)
+    (Controller::new(interactive, Arc::new(Pool::inline()), events), received)
 }
 
 fn run_finished(event: &Event) -> bool {

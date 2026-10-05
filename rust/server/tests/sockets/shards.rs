@@ -68,7 +68,7 @@ async fn bind(scratch: &Scratch, budget: Option<usize>) -> Result<Server, String
         ("GM_MAX_CONNECTIONS_PER_CLIENT", "4"),
     ];
     env.extend(budget.as_deref().map(|budget| ("GM_MAX_BUFFER_BYTES", budget)));
-    Server::bind(config(&env)).await
+    Server::bind(config(&env), pool()).await
 }
 
 /// The number before `suffix` in a budget refusal.

@@ -45,7 +45,7 @@ fn config(url: &Origin, args: &[&str]) -> Config {
 
 /// Prepares and runs `config`, handing each event to `seen` as it arrives.
 async fn run(config: &Config, seen: impl AsyncFnMut(&Event)) -> (Outcome, Vec<Event>) {
-    let client = Client::new(config.insecure, Arc::new(Pool::new().unwrap()));
+    let client = Client::new(config.insecure, Arc::new(Pool::inline()));
     let prepared = prepare(config, client).await.unwrap();
     let (events, received) = Events::channel();
     let watched = watch(received, seen);
@@ -207,7 +207,7 @@ async fn a_run_without_the_interface_completes_with_status_0() {
         &server.http1,
         &["-stages", "latency,download", "-latency-duration", "1s", "-download-duration", "1s"],
     );
-    let (view, status) = headless(config, Arc::new(Pool::new().unwrap()), std::future::pending()).await;
+    let (view, status) = headless(config, Arc::new(Pool::inline()), std::future::pending()).await;
     let run = view.run.as_ref().unwrap();
     assert_eq!((run.outcome, status), (Some(Outcome::Complete), 0), "{:#?}", run.results);
     let lines = report(&view, WIDTH, &Palette::new(true));

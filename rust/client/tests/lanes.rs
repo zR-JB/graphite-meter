@@ -23,7 +23,7 @@ use tokio_tungstenite::tungstenite::{
 use tokio_util::sync::CancellationToken;
 
 fn client() -> Client {
-    Client::new(false, Arc::new(Pool::new().unwrap()))
+    Client::new(false, Arc::new(Pool::inline()))
 }
 
 async fn local() -> (TcpListener, Origin) {
