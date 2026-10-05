@@ -5,7 +5,7 @@ use graphite_meter_client::{
         aggregate::{Fed, Reason, Receiver},
         latency::ProbeOutcome,
     },
-    model::{Cadence, Dir, Failure, LaneHealth, Outcome, Scope, Stage, StageResult},
+    model::{Cadence, Dir, Failure, LaneHealth, Outcome, Scope, ServerFailure, Stage, StageResult, focus},
     run::engine::{Decision, Engine, Input, Probe, Sample, StagePlan, lateness, stagger, warmup},
 };
 use graphite_meter_proto::{catalog::ServerId, reason::FailureReason, upload::Counters};
@@ -462,13 +462,13 @@ fn a_stop_mid_window_keeps_what_was_measured() {
     assert_eq!(script.log.len(), decisions);
 }
 
-/// A latency stage where each of `servers` sends its replies, then a download stage.
-fn run(servers: &[(&str, usize)], download_stop_b: Duration) -> Vec<StageResult> {
-    let names: Vec<_> = servers.iter().map(|(name, _)| *name).collect();
+/// A latency stage where each server sends its replies, then a download stage where its bytes stop at its time.
+fn run(servers: &[(&str, usize, Duration)]) -> Vec<StageResult> {
+    let names: Vec<_> = servers.iter().map(|(name, ..)| *name).collect();
     let mut latency = Script::new(plan(Stage::Latency, &names, true));
     let base = latency.base;
     let mut probes: Vec<_> = names.iter().map(|name| (id(name), Probe::Up { at: base })).collect();
-    for (name, replies) in servers {
+    for (name, replies, _) in servers {
         for reply in 0..*replies {
             let outcome = ProbeOutcome::Reply { rtt: ms(10), handling: Duration::ZERO };
             probes.push((id(name), Probe::Outcome { sent: base + ms(100 * reply as u64 + 1), outcome }));
@@ -480,9 +480,9 @@ fn run(servers: &[(&str, usize)], download_stop_b: Duration) -> Vec<StageResult>
     latency.tick(STAGE, Duration::ZERO, &[], &drained);
     let mut download = Script::new(plan(Stage::Download, &names, false));
     download.run(|at| {
-        names
+        servers
             .iter()
-            .map(|&name| down(name, moved(at, if name == "b" { download_stop_b } else { STAGE })))
+            .map(|&(name, _, stop)| down(name, moved(at, stop)))
             .collect()
     });
     vec![latency.engine.result(), download.engine.result()]
@@ -491,27 +491,47 @@ fn run(servers: &[(&str, usize)], download_stop_b: Duration) -> Vec<StageResult>
 #[test]
 fn outcomes_follow_stage_results() {
     let plan = [Stage::Latency, Stage::Download];
-    assert_eq!(Outcome::of(&run(&[("a", 5), ("b", 5)], STAGE), &plan, false), Outcome::Complete);
-    assert_eq!(Outcome::of(&run(&[("a", 5), ("b", 5)], ms(3000)), &plan, false), Outcome::Partial);
-    assert_eq!(Outcome::of(&run(&[("a", 5), ("b", 0)], STAGE), &plan, false), Outcome::Partial);
-    assert_eq!(Outcome::of(&run(&[("a", 0), ("b", 5)], STAGE), &plan, false), Outcome::Incomplete);
-    let results = run(&[("a", 5)], STAGE);
+    let outcome = |servers: &[(&str, usize, Duration)]| Outcome::of(&run(servers), &plan, &[]);
+    assert_eq!(outcome(&[("a", 5, STAGE), ("b", 5, STAGE)]), Outcome::Complete);
+    assert_eq!(outcome(&[("a", 5, STAGE), ("b", 5, ms(3000))]), Outcome::Partial);
+    assert_eq!(outcome(&[("a", 5, STAGE), ("b", 0, STAGE)]), Outcome::Partial);
+    assert_eq!(outcome(&[("a", 0, STAGE), ("b", 5, STAGE)]), Outcome::Incomplete);
+
+    let results = run(&[("a", 5, STAGE)]);
+    let unprepared = ServerFailure {
+        server: id("b"),
+        scope: Scope::Server,
+        failure: Failure::new(FailureReason::PreparationFailed, "no path"),
+        at: Instant::now(),
+    };
+    assert_eq!(Outcome::of(&results, &plan, &[unprepared]), Outcome::Partial);
     assert_eq!(
-        Outcome::of(&results, &[Stage::Latency, Stage::Download, Stage::Upload], false),
+        Outcome::of(&results, &[Stage::Latency, Stage::Download, Stage::Upload], &[]),
         Outcome::Incomplete
     );
-    assert_eq!(Outcome::of(&results, &plan, true), Outcome::Stopped);
 
+    let mut script = Script::new(self::plan(Stage::Download, &["a"], false));
+    script.run(|_| vec![Sample { ready: false, ..down("a", 0) }]);
+    assert_eq!(Outcome::of(&[script.engine.result()], &[Stage::Download], &[]), Outcome::Failed);
     let mut stopped = Engine::new(self::plan(Stage::Download, &["a"], false), Instant::now());
     stopped.stop(Instant::now());
-    let result = stopped.result();
-    assert_eq!((result.measured, result.stopped), (Duration::ZERO, true));
-    assert_eq!(Outcome::of(&[result], &[Stage::Download], false), Outcome::Failed);
+    assert_eq!(Outcome::of(&[stopped.result()], &[Stage::Download], &[]), Outcome::Stopped);
+}
+
+#[test]
+fn the_latency_focus_moves_to_a_survivor_that_measured_latency() {
+    let plan = [Stage::Latency, Stage::Download];
+    let results = run(&[("a", 5, ms(3000)), ("b", 5, STAGE)]);
+    assert_eq!(focus(&results), Some(id("b")));
+    assert_eq!(Outcome::of(&results, &plan, &[]), Outcome::Partial);
+    let results = run(&[("a", 5, ms(3000)), ("b", 0, STAGE)]);
+    assert_eq!(focus(&results), None);
+    assert_eq!(Outcome::of(&results, &plan, &[]), Outcome::Incomplete);
 }
 
 #[test]
 fn a_stage_without_evidence_records_insufficient_evidence() {
-    let results = run(&[("a", 0)], STAGE);
+    let results = run(&[("a", 0, STAGE)]);
     let reasons: Vec<_> = results[0]
         .failures
         .iter()

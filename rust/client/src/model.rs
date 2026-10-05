@@ -197,25 +197,22 @@ impl StageResult {
     }
 }
 
-/// The run's latency server: the first selected one, or once it left, the first survivor whose latency stage has a
+/// The run's latency server: the first selected one while it stays, else the first survivor whose latency stage has a
 /// median.
 pub fn focus(results: &[StageResult]) -> Option<ServerId> {
-    let selected = &results.first()?.servers;
-    let left = |id: &ServerId| {
-        results
-            .iter()
-            .flat_map(|result| &result.servers)
-            .any(|server| server.server == *id && server.left)
-    };
-    let first = &selected.first()?.server;
-    if !left(first) {
+    let first = &results.first()?.servers.first()?.server;
+    let mut survivors = results.last()?.servers.iter().filter(|server| !server.left);
+    if survivors.clone().any(|server| server.server == *first) {
         return Some(first.clone());
     }
-    let idle = results.iter().find(|result| result.stage == Stage::Latency);
-    let measured = idle.into_iter().flat_map(|result| &result.servers);
-    let mut survivors =
-        measured.filter(|server| !left(&server.server) && server.latency.and_then(|l| l.median()).is_some());
-    Some(survivors.next().map_or(first, |server| &server.server).clone())
+    let idle = results.iter().find(|result| result.stage == Stage::Latency)?;
+    let measured = |id: &ServerId| {
+        let mut servers = idle.servers.iter();
+        servers.any(|server| server.server == *id && server.latency.and_then(|latency| latency.median()).is_some())
+    };
+    survivors
+        .find(|server| measured(&server.server))
+        .map(|server| server.server.clone())
 }
 
 /// How a run ended.
@@ -233,17 +230,18 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    pub fn of(results: &[StageResult], plan: &[Stage], stopped: bool) -> Self {
+    /// From the stage results and the failures of selected servers that never began a stage.
+    pub fn of(results: &[StageResult], plan: &[Stage], unprepared: &[ServerFailure]) -> Self {
         let focus = focus(results);
         let statuses: Vec<_> = results.iter().map(|result| result.status(focus.as_ref())).collect();
         let planned = plan
             .iter()
             .all(|stage| results.iter().any(|result| result.stage == *stage));
         match () {
-            _ if stopped => Self::Stopped,
+            _ if results.iter().any(|result| result.stopped) => Self::Stopped,
             _ if results.iter().all(|result| result.measured.is_zero()) => Self::Failed,
             _ if !planned || statuses.contains(&StageStatus::Failed) => Self::Incomplete,
-            _ if statuses.contains(&StageStatus::Partial) => Self::Partial,
+            _ if !unprepared.is_empty() || statuses.contains(&StageStatus::Partial) => Self::Partial,
             _ => Self::Complete,
         }
     }
