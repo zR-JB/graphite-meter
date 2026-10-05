@@ -359,6 +359,7 @@ run = [
   { task = "rust-check" },
   { task = "rust-check-targets" },
   { task = "rust-interop" },
+  { task = "rust-client-interop" },
   { task = "rust-delayed-downloads" },
   { task = "security" },
   { task = "client-audit" },
@@ -458,6 +459,10 @@ cargo check --locked -p graphite-meter-server "${server[@]/#/--target=}"
 [tasks.rust-interop]
 description = "Run Go peers, the Go native client and process checks against the static Rust server (needs musl-tools)"
 run = "python3 rust/interop/server.py"
+
+[tasks.rust-client-interop]
+description = "Run the Rust client against the unchanged Go server, signed in through Go's approval pages"
+run = "python3 rust/interop/client.py"
 
 [tasks.rust-delayed-downloads]
 shell = "bash -e -o pipefail -c"

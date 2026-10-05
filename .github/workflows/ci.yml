@@ -241,6 +241,10 @@ jobs:
         env:
           TMPDIR: ${{ runner.temp }}
         run: mise run rust-interop
+      - name: Run the Rust client against the unchanged Go server and its approved sign-in
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: mise run rust-client-interop
       - name: Gate delayed-link HTTP/3 and WebTransport downloads
         run: mise run rust-delayed-downloads
       - name: Install pinned Chrome for Testing
@@ -261,6 +265,7 @@ jobs:
           retention-days: 7
           path: |
             ${{ runner.temp }}/interop-*/*.log
+            ${{ runner.temp }}/client-*/*.log
             ${{ runner.temp }}/browser-*/*.log
             ${{ runner.temp }}/browser-*/*.json
           if-no-files-found: ignore

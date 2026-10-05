@@ -1,4 +1,4 @@
-"""Builds, identities and bounded server processes for runs against the Rust server binary."""
+"""Builds, identities and bounded server processes for runs against the Rust server or with the Rust client."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from types import TracebackType
@@ -162,6 +163,8 @@ class Server:
                 raise RuntimeError(f"server exited {self.process.returncode}:\n{self.output()}")
             try:
                 self.probe()
+                return self.process
+            except urllib.error.HTTPError:
                 return self.process
             except OSError:
                 if time.monotonic() >= deadline:
