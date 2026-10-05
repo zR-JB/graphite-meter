@@ -640,3 +640,64 @@ fn warmup_stretches_to_ten_idle_round_trips_within_four_seconds() {
     assert_eq!(stagger(ms(4000), 6), ms(75));
     assert_eq!(stagger(ms(4000), 1), Duration::ZERO);
 }
+
+#[test]
+fn a_stage_without_an_interval_of_enough_evidence_fails_and_the_run_is_incomplete() {
+    // Every boundary 1.6 s late resumes evidence, so no interval spans 800 ms.
+    let mut script = Script::new(plan(Stage::Download, &["a"], false));
+    while !script.finished() {
+        let at = script.next;
+        script.tick(at, ms(1600), &[down("a", moved(at, STAGE))], &[]);
+    }
+    let result = script.engine.result();
+    assert!(result.intervals.len() > 1);
+    assert_eq!(result.throughput.down.and_then(|throughput| throughput.rate), None);
+    let reasons: Vec<_> = result.failures.iter().map(|failure| failure.failure.reason).collect();
+    assert_eq!(reasons, [FailureReason::InsufficientEvidence]);
+    assert_eq!(result.status(None), StageStatus::Failed);
+    assert_eq!(Outcome::of(&[result], &[Stage::Download]), Outcome::Incomplete);
+}
+
+#[test]
+fn a_lane_failing_for_good_removes_its_server_with_that_failure() {
+    let lost = Failure::new(FailureReason::ConnectionLost, "download lanes failed");
+    let mut script = Script::new(plan(Stage::Download, &["a", "b"], false));
+    script.run(|at| {
+        let mut b = down("b", moved(at, STAGE));
+        if at >= ms(3000) {
+            b.lanes.down = LaneHealth::Failed(lost.clone());
+        }
+        vec![down("a", moved(at, STAGE)), b]
+    });
+    assert_eq!(script.removed(), [(ms(3000), "b", FailureReason::ConnectionLost)]);
+    let result = script.engine.result();
+    assert_eq!(result.failures.len(), 1);
+    assert_eq!((result.failures[0].scope, &result.failures[0].failure), (Scope::Throughput, &lost));
+    assert_eq!(result.status(Some(&id("a"))), StageStatus::Partial);
+}
+
+#[test]
+fn uploads_ask_checkpoints_each_tick_within_1_5_s_and_the_final_boundary_within_500_ms() {
+    let mut script = Script::new(plan(Stage::Upload, &["a"], false));
+    script.run(|at| vec![up("a", moved(at, STAGE), at)]);
+    let checkpoints: Vec<_> = script
+        .log
+        .iter()
+        .filter_map(|(at, decision)| match decision {
+            Decision::Checkpoint { budget, last } => Some((*at, *budget, *last)),
+            _ => None,
+        })
+        .collect();
+    let (start, end) = script.window().unwrap();
+    let tick = |at: Duration| (at, ms(1500), false);
+    // The window opens with the first batch, and each tick asks the next.
+    let mut expected = vec![tick(start)];
+    expected.extend((0..39).map(|ticks| tick(start + ms(250) * ticks)));
+    expected.push((end - ms(250), ms(500), true));
+    assert_eq!(checkpoints, expected);
+
+    let mut script = Script::new(plan(Stage::Download, &["a"], false));
+    script.run(|at| vec![down("a", moved(at, STAGE))]);
+    let checkpoint = |(_, decision): &(Duration, Decision)| matches!(decision, Decision::Checkpoint { .. });
+    assert!(!script.log.iter().any(checkpoint));
+}
