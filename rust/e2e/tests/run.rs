@@ -175,7 +175,7 @@ async fn a_server_stalled_mid_download_departs_and_the_other_completes_partial()
         (&relayed, Scope::Throughput, FailureReason::Timeout)
     );
     assert!(result.throughput[Direction::Down].unwrap().rate.is_some());
-    let announced = |event: &Event| matches!(event, Event::ServerFailed { server, .. } if *server == relayed);
+    let announced = |event: &Event| matches!(event, Event::ServerFailed(failure) if failure.server == relayed);
     assert!(events.iter().any(announced));
 }
 

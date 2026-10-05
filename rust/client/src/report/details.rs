@@ -68,9 +68,12 @@ impl Report<'_> {
         if !run.issues.is_empty() {
             lines.extend([Line::default(), Line::styled("Issues", palette.heading)]);
         }
-        for issue in &run.issues {
+        for (stage, issue) in &run.issues {
             let scope = if issue.scope == Scope::Latency { "latency" } else { "throughput" };
-            let (name, stage, at) = (self.name(&issue.server), compact_stage(issue.stage), clock(issue.at));
+            let at = run
+                .at
+                .map_or(Duration::ZERO, |origin| issue.at.saturating_duration_since(origin));
+            let (name, stage, at) = (self.name(&issue.server), compact_stage(*stage), clock(at));
             lines.push(Line::plain(format!(
                 "{name} · {stage} {scope} · at {at} · {}",
                 issue.failure.reason.label()

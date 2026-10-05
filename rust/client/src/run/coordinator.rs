@@ -41,7 +41,6 @@ struct Run<'a> {
     config: &'a Config,
     events: &'a Events,
     token: &'a CancellationToken,
-    started: Instant,
 }
 
 /// Runs `config`'s stages over the servers `prepared` has paths for, until done or `token` is cancelled.
@@ -61,7 +60,7 @@ pub async fn run(prepared: &Prepared, config: &Config, events: &Events, token: C
     }
     let focus = seats[0].server.id.clone();
     events.send(Event::RunStarted { plan: plan.clone(), focus, at: started });
-    let run = Run { prepared, config, events, token: &token, started };
+    let run = Run { prepared, config, events, token: &token };
     unprepared.iter().for_each(|failure| run.failed(failure));
     let (sole, mut results, mut error) = (prepared.servers.len() == 1, Vec::new(), None);
     for (stage, duration) in &plan {
@@ -188,12 +187,7 @@ impl Run<'_> {
     /// Announces a failure, except a missing result's, which the stage's result carries.
     fn failed(&self, failure: &ServerFailure) {
         if failure.failure.reason != FailureReason::InsufficientEvidence {
-            self.events.send(Event::ServerFailed {
-                server: failure.server.clone(),
-                scope: failure.scope,
-                failure: failure.failure.clone(),
-                at: failure.at.saturating_duration_since(self.started),
-            });
+            self.events.send(Event::ServerFailed(failure.clone()));
         }
     }
 }

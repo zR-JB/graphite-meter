@@ -1,7 +1,7 @@
 //! What operations tell their viewers as it happens, and the view the report and the interface reduce it to;
 //! sending never waits for a viewer.
 use crate::{
-    model::{Dir, Direction, Failure, Outcome, Scope, Stage, StageResult, focus},
+    model::{Dir, Direction, Failure, Outcome, ServerFailure, Stage, StageResult, focus},
     run::{engine::StagePlan, prepare::ServerPath},
 };
 use graphite_meter_proto::catalog::{ServerEntry, ServerId};
@@ -48,13 +48,8 @@ pub enum Event {
         at: Duration,
         rtt: Option<Duration>,
     },
-    /// A failure `at` into the run.
-    ServerFailed {
-        server: ServerId,
-        scope: Scope,
-        failure: Failure,
-        at: Duration,
-    },
+    /// A failure as it happens.
+    ServerFailed(ServerFailure),
     StageFinished(StageResult),
     /// The run ended `elapsed` after it began; `error` says why it never started.
     RunFinished {
@@ -214,21 +209,11 @@ pub struct Run {
     /// Round trips in milliseconds per probed server.
     pub rtt: Vec<(ServerId, Series)>,
     pub results: Vec<StageResult>,
-    /// Every failure, a finished stage's as its result records them.
-    pub issues: Vec<Issue>,
+    /// Every failure with its stage, a finished stage's as its result records them.
+    pub issues: Vec<(Stage, ServerFailure)>,
     pub outcome: Option<Outcome>,
     pub error: Option<Failure>,
     pub elapsed: Duration,
-}
-
-/// A failure and when it happened.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Issue {
-    pub server: ServerId,
-    pub stage: Stage,
-    pub scope: Scope,
-    pub failure: Failure,
-    pub at: Duration,
 }
 
 impl View {
@@ -304,13 +289,12 @@ impl Run {
                 let rtt = rtt.map(|rtt| rtt.as_secs_f64() * 1e3);
                 self.series(server).push(offset + *at, rtt);
             }
-            Event::ServerFailed { server, scope, failure, at } => {
+            Event::ServerFailed(failure) => {
                 let stage = self.stage.as_ref().map(|(plan, _)| plan.stage);
                 let Some(stage) = stage.or(self.plan.first().map(|(stage, _)| *stage)) else {
                     return;
                 };
-                let (server, scope, failure, at) = (server.clone(), *scope, failure.clone(), *at);
-                self.issues.push(Issue { server, stage, scope, failure, at });
+                self.issues.push((stage, failure.clone()));
             }
             Event::StageFinished(result) => self.finished(result),
             _ => {}
@@ -351,15 +335,9 @@ impl Run {
 
     /// Keeps `result`, whose failures replace the stage's announced ones, and moves the focus off a server that left.
     fn finished(&mut self, result: &StageResult) {
-        let origin = self.at;
-        self.issues.retain(|issue| issue.stage != result.stage);
-        self.issues.extend(result.failures.iter().map(|failure| Issue {
-            server: failure.server.clone(),
-            stage: result.stage,
-            scope: failure.scope,
-            failure: failure.failure.clone(),
-            at: origin.map_or(Duration::ZERO, |origin| failure.at.saturating_duration_since(origin)),
-        }));
+        self.issues.retain(|(stage, _)| *stage != result.stage);
+        let failures = result.failures.iter().map(|failure| (result.stage, failure.clone()));
+        self.issues.extend(failures);
         self.results.push(result.clone());
         self.focus = focus(&self.results).or(self.focus.take());
         self.stage = None;

@@ -172,10 +172,10 @@ impl App {
                 }
             }
             Event::RunStarted { .. } => self.notice = "Test started. Press esc to stop.".into(),
-            Event::ServerFailed { server, failure, .. } => {
-                let name = self.view.servers.iter().find(|path| path.id == *server);
-                let name = name.map_or(server.as_str(), |path| path.name.as_str());
-                self.notice = format!("{name}: {}", failure.reason.label());
+            Event::ServerFailed(failure) => {
+                let name = self.view.servers.iter().find(|path| path.id == failure.server);
+                let name = name.map_or(failure.server.as_str(), |path| path.name.as_str());
+                self.notice = format!("{name}: {}", failure.failure.reason.label());
             }
             Event::RunFinished { error, .. } => {
                 if matches!(self.overlay, Overlay::ConfirmStop) {

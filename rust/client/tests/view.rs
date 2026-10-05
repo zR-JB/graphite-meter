@@ -1,6 +1,6 @@
 //! The view a run's events reduce to: its latency server across a departure, its issues and its traces.
 use graphite_meter_client::{
-    events::{Event, Issue, Series, View},
+    events::{Event, Series, View},
     measure::latency::{Population, Summary},
     model::{Dir, Failure, Outcome, Scope, ServerFailure, ServerResult, Stage, StageResult},
     run::engine::StagePlan,
@@ -40,15 +40,15 @@ fn stage(stage: Stage) -> Event {
 }
 
 /// A view of a latency then download run over `a` and `b`, where `a` leaves the download after 1.5 s; `c` had no path.
-fn departed(b_measured: bool) -> (View, Instant) {
+/// The failures its result records, `a`'s announced a second earlier.
+fn departed(b_measured: bool) -> (View, [ServerFailure; 2]) {
     let (at, mut view) = (Instant::now(), View::default());
     let plan = vec![(Stage::Latency, SECOND), (Stage::Download, SECOND)];
-    let timeout = Failure::new(FailureReason::Timeout, "download bytes stopped growing for 2s");
     let b_median = b_measured.then_some(Duration::from_millis(9));
     let left = ServerFailure {
         server: id("a"),
         scope: Scope::Throughput,
-        failure: timeout.clone(),
+        failure: Failure::new(FailureReason::Timeout, "download bytes stopped growing for 2s"),
         at: at + SECOND * 3,
     };
     let unprepared = ServerFailure {
@@ -59,34 +59,24 @@ fn departed(b_measured: bool) -> (View, Instant) {
     };
     let events = [
         Event::RunStarted { plan, focus: id("a"), at },
-        Event::ServerFailed {
-            server: id("c"),
-            scope: Scope::Server,
-            failure: unprepared.failure.clone(),
-            at: Duration::ZERO,
-        },
+        Event::ServerFailed(unprepared.clone()),
         stage(Stage::Latency),
         Event::StageFinished(result(
             Stage::Latency,
             vec![server("a", false, Some(Duration::from_millis(4))), server("b", false, b_median)],
-            vec![unprepared],
+            vec![unprepared.clone()],
         )),
         stage(Stage::Download),
-        Event::ServerFailed {
-            server: id("a"),
-            scope: Scope::Throughput,
-            failure: timeout,
-            at: SECOND * 2,
-        },
+        Event::ServerFailed(ServerFailure { at: at + SECOND * 2, ..left.clone() }),
         Event::StageFinished(result(
             Stage::Download,
             vec![server("a", true, None), server("b", false, None)],
-            vec![left],
+            vec![left.clone()],
         )),
         Event::RunFinished { outcome: Outcome::Partial, error: None, elapsed: SECOND * 4 },
     ];
     events.iter().for_each(|event| view.apply(event));
-    (view, at)
+    (view, [unprepared, left])
 }
 
 #[test]
@@ -101,24 +91,9 @@ fn the_latency_server_moves_to_a_survivor_that_measured_latency_and_stays_otherw
 
 #[test]
 fn a_finished_stage_records_its_failures_as_its_result_does() {
-    let (view, _) = departed(true);
+    let (view, [unprepared, left]) = departed(true);
     let issues = view.run.unwrap().issues;
-    let unprepared = Issue {
-        server: id("c"),
-        stage: Stage::Latency,
-        scope: Scope::Server,
-        failure: Failure::new(FailureReason::PreparationFailed, "no path"),
-        at: Duration::ZERO,
-    };
-    let failure = Failure::new(FailureReason::Timeout, "download bytes stopped growing for 2s");
-    let left = Issue {
-        server: id("a"),
-        stage: Stage::Download,
-        scope: Scope::Throughput,
-        failure,
-        at: SECOND * 3,
-    };
-    assert_eq!(issues, [unprepared, left]);
+    assert_eq!(issues, [(Stage::Latency, unprepared), (Stage::Download, left)]);
 }
 
 #[test]
