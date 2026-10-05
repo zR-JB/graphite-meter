@@ -45,3 +45,14 @@ rust:
   - '.dockerignore'
   - 'LICENSE'
   - 'COPYRIGHT'
+
+# Inputs of the TUI archives: every stage of Dockerfile.rust but the browser app's, rust/**/src included.
+rust-release:
+  - *workflow
+  - 'rust/**'
+  - 'legal/**'
+  - 'go/internal/auth/assets/**'
+  - 'container/Dockerfile.rust'
+  - '.dockerignore'
+  - 'LICENSE'
+  - 'COPYRIGHT'

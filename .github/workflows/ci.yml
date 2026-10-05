@@ -30,6 +30,7 @@ jobs:
       go: ${{ github.event_name == 'push' || steps.filter.outputs.go == 'true' }}
       deps: ${{ github.event_name == 'push' || steps.filter.outputs.deps == 'true' }}
       rust: ${{ github.event_name == 'push' || steps.filter.outputs.rust == 'true' }}
+      rust-release: ${{ github.event_name == 'push' || steps.filter.outputs.rust-release == 'true' }}
     steps:
       - name: Checkout exact CI source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -386,6 +387,38 @@ jobs:
             client/test-results/servers
           if-no-files-found: ignore
 
+  rust-tui:
+    name: Rust TUI exports
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    needs: plan
+    if: needs.plan.outputs.rust-release == 'true'
+    env:
+      VERSION: 0.0.0-ci
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up pinned mise and Python
+        uses: ./.github/actions/setup-project
+      # The release build itself: release profile, no CI cache. It runs the amd64 TUI in the builder.
+      - name: Build the Linux and Windows TUI archives and source offers in the pinned builder
+        env:
+          RELEASE_DIST: ${{ runner.temp }}/rust-tui
+        run: mise run rust-client-package "$VERSION"
+      - name: Check each archive's files, notices and source offer, and run the amd64 TUI on the runner
+        env:
+          RELEASE_DIST: ${{ runner.temp }}/rust-tui
+        run: python3 -m scripts.package_rust "$VERSION" --output "$RELEASE_DIST" --check
+      - name: Upload the TUI archives and source offers
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rust-tui
+          path: ${{ runner.temp }}/rust-tui/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
   rust-windows:
     name: Rust client tests on Windows
     runs-on: windows-latest
@@ -490,7 +523,7 @@ jobs:
     runs-on: ubuntu-24.04
     if: always()
     needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-image,
-      rust-e2e, rust-windows, rust-perf]
+      rust-e2e, rust-tui, rust-windows, rust-perf]
     steps:
       - name: Require every selected job
         env:

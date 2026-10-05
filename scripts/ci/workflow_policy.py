@@ -260,16 +260,20 @@ def path_filters(text: str) -> dict[str, list[str]]:
 
 
 def check_paths(root: Path) -> None:
-    """A change to any input of the Rust image selects the jobs that build it."""
+    """A change to any input of the Rust image selects the jobs that build it, and one to any input of the TUI
+    archives, which every stage but the browser app's provides, selects their export."""
     filters = path_filters(read(root, ".github/ci-paths.yml"))
-    # A copied directory stands for every file below it.
-    inputs = [".dockerignore", "container/Dockerfile.rust", *(
-        source + "x" if source.endswith("/") else source
-        for line in re.findall(r"(?m)^COPY (?!--)(.+)$", read(root, "container/Dockerfile.rust"))
-        for source in line.split()[:-1])]
-    if missing := [path for path in inputs
-                   if not any(PurePosixPath(path).full_match(glob) for glob in filters.get("rust", []))]:
-        fail(f".github/ci-paths.yml rust misses {missing}")
+    stages = [(match[1] if (match := re.match(r"FROM .* AS (\S+)", text)) else "", text)
+              for text in re.split(r"(?m)^(?=FROM )", read(root, "container/Dockerfile.rust"))]
+    for name, skipped in (("rust", set()), ("rust-release", {"browser"})):
+        # A copied directory stands for every file below it.
+        inputs = [".dockerignore", "container/Dockerfile.rust", *(
+            source + "x" if source.endswith("/") else source
+            for stage, text in stages if stage not in skipped
+            for line in re.findall(r"(?m)^COPY (?!--)(.+)$", text) for source in line.split()[:-1])]
+        if missing := [path for path in inputs
+                       if not any(PurePosixPath(path).full_match(glob) for glob in filters.get(name, []))]:
+            fail(f".github/ci-paths.yml {name} misses {missing}")
 
 
 def check_certificates(root: Path) -> None:

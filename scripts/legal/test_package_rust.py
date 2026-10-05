@@ -13,6 +13,17 @@ from scripts.legal.rust import ROOT, Build
 from scripts.legal.test_rust import Scratch
 
 FILES = ("COPYRIGHT", "LICENSE", "SOURCE.txt", "THIRD_PARTY_NOTICES.txt")
+PLATFORMS = (("linux/arm64", "aarch64-unknown-linux-musl"), ("windows/amd64", "x86_64-pc-windows-gnu"))
+
+
+def tar_gz(files: dict[str, bytes]) -> bytes:
+    data = io.BytesIO()
+    with tarfile.open(fileobj=data, mode="w:gz") as archive:
+        for name, content in files.items():
+            entry = tarfile.TarInfo(name)
+            entry.size = len(content)
+            archive.addfile(entry, io.BytesIO(content))
+    return data.getvalue()
 
 
 class PackageTests(Scratch):
@@ -27,7 +38,8 @@ class PackageTests(Scratch):
     def collect(self, build: Build) -> Path:
         self.built.append(build)
         self.write(f"{build.out.relative_to(self.root)}/LEGAL.txt", "notices\n")
-        self.write(f"{build.out.relative_to(self.root)}/THIRD_PARTY_SOURCE.tar.gz", "sources")
+        self.write(f"{build.out.relative_to(self.root)}/THIRD_PARTY_SOURCE.tar.gz",
+                   tar_gz({"source/README.txt": b"sources"}))
         return self.write("rust/target/built/graphite-meter-client", "binary")
 
     def test_each_platform_gets_go_s_archive_layout_with_the_rust_marker_and_its_source_offer(self) -> None:
@@ -75,6 +87,44 @@ class PackageTests(Scratch):
                     continue
                 with self.assertRaisesRegex(LegalError, error):
                     package_rust.probe(executable, "1.2.3", "linux/amd64")
+
+    def test_the_check_accepts_what_package_wrote_and_runs_only_the_build_for_this_machine(self) -> None:
+        output = self.root / "dist"
+        output.mkdir()
+        probed: list[tuple[bytes, str]] = []
+        with patch.object(package_rust, "collect", self.collect), \
+                patch.object(package_rust, "host_platform", return_value="linux/arm64"), \
+                patch.object(package_rust, "probe", lambda path, _, name: probed.append((path.read_bytes(), name))):
+            for platform_name, target in PLATFORMS:
+                package_rust.package("1.2.3", platform_name, target, output)
+            probed.clear()
+            for platform_name, _ in PLATFORMS:
+                package_rust.check("1.2.3", platform_name, output)
+        self.assertEqual(probed, [(b"binary", "linux/arm64")])
+
+    def test_the_check_refuses_development_notices_other_files_and_an_unnamed_or_missing_source_offer(self) -> None:
+        base = "graphite-meter-client_1.2.3_linux_arm64_rust"
+        offer = f"{base}_third-party-source.tar.gz"
+        layout = {"graphite-meter-client": b"binary", "LICENSE": b"license", "COPYRIGHT": b"copyright",
+                  "THIRD_PARTY_NOTICES.txt": b"notices\n",
+                  "SOURCE.txt": f"Dependency source archive: {offer}\n".encode()}
+        cases = (({}, None), ({"THIRD_PARTY_NOTICES.txt": b"UNREVIEWED DEVELOPMENT BUILD\n"}, "notices"),
+                 ({"extra.txt": b"extra"}, "holds"), ({"SOURCE.txt": b"source\n"}, "does not name"),
+                 ({"offer": b""}, "No such file"))
+        for number, (changes, error) in enumerate(cases):
+            with self.subTest(changes=sorted(changes)):
+                output = self.root / f"dist-{number}"
+                output.mkdir()
+                files = {f"{base}/{name}": content for name, content in (layout | changes).items() if name != "offer"}
+                (output / f"{base}.tar.gz").write_bytes(tar_gz(files))
+                if "offer" not in changes:
+                    (output / offer).write_bytes(tar_gz({"source/README.txt": b"sources"}))
+                with patch.object(package_rust, "host_platform", return_value="plan9/amd64"):
+                    if error is None:
+                        package_rust.check("1.2.3", "linux/arm64", output)
+                        continue
+                    with self.assertRaisesRegex((LegalError, OSError), error):
+                        package_rust.check("1.2.3", "linux/arm64", output)
 
 
 if __name__ == "__main__":

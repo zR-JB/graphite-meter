@@ -147,6 +147,11 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      r"rust misses \['client/package.json'"),
     (".github/ci-paths.yml", "  - 'container/Dockerfile.rust'\n", "", r"rust misses \['container/Dockerfile.rust'\]"),
     (RUST, "COPY api/ /src/api/\n", "COPY api/ docs/ /src/api/\n", r"rust misses \['docs/x'\]"),
+    # A source-only Rust change selects the TUI exports.
+    (".github/ci-paths.yml", "rust-release:\n  - *workflow\n  - 'rust/**'\n", "rust-release:\n  - *workflow\n",
+     r"rust-release misses \['rust/rust-toolchain.toml'"),
+    (RUST, "COPY LICENSE COPYRIGHT mise.toml ./\n", "COPY LICENSE COPYRIGHT mise.toml client/ ./\n",
+     r"rust-release misses \['client/x'\]"),
 )
 
 
