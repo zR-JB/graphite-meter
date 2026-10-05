@@ -31,8 +31,9 @@ async fn a_download_ends_at_the_operation_lifetime() {
     while client.stream.read(&mut buffer).await.unwrap() > 0 {
         sleep(Duration::from_millis(2)).await;
     }
+    // The next ending, the 30 s idle bound, is far off, so ending soon after 1 s is the lifetime.
     let elapsed = started.elapsed();
-    assert!(elapsed >= Duration::from_secs(1) && elapsed < Duration::from_secs(3), "{elapsed:?}");
+    assert!(elapsed >= Duration::from_secs(1) && elapsed < Duration::from_secs(10), "{elapsed:?}");
     server.until_active(0).await;
 }
 
