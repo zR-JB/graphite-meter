@@ -346,3 +346,63 @@ fn a_buffer_budget_below_the_connection_floors_is_a_configuration_error() {
                    download block\"";
     assert_eq!(logged(line), message);
 }
+
+/// The `[gm:tls]` lines a server logs before listening with a certificate for `days` days and a key with `mode`.
+#[cfg(unix)]
+fn tls_lines(days: &str, mode: u32) -> (Vec<String>, String, String) {
+    use std::{
+        io::{BufRead, BufReader},
+        os::unix::fs::PermissionsExt,
+    };
+    let scratch = graphite_meter_testkit::Scratch::new().unwrap();
+    let (cert, key) = (scratch.path().join("cert.pem"), scratch.path().join("key.pem"));
+    let (cert, key) = (cert.to_str().unwrap(), key.to_str().unwrap());
+    let curve = ["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes", "-subj", "/CN=localhost"];
+    let generated = Command::new("openssl")
+        .args(["req", "-x509", "-days", days, "-keyout", key, "-out", cert])
+        .args(curve)
+        .args(["-addext", "subjectAltName=DNS:localhost"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success(), "{generated:?}");
+    std::fs::set_permissions(key, std::fs::Permissions::from_mode(mode)).unwrap();
+    let end = Command::new("openssl")
+        .args(["x509", "-in", cert, "-noout", "-enddate", "-dateopt", "iso_8601"])
+        .output()
+        .unwrap();
+    let end = text(&end.stdout)
+        .trim()
+        .strip_prefix("notAfter=")
+        .unwrap()
+        .replace(' ', "T");
+    let env = [("GM_H1_TLS_ADDR", "127.0.0.1:0"), ("GM_TLS_CERT", cert), ("GM_TLS_KEY", key)];
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphite-meter-server"))
+        .env_clear()
+        .envs(env)
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let lines = BufReader::new(child.stderr.take().unwrap()).lines().map(Result::unwrap);
+    let lines = lines.map(|line| logged(&line).to_owned());
+    let tls = lines.take_while(|line| !line.contains(" listening on ")).collect();
+    let killed = Command::new("kill").args(["-TERM", &child.id().to_string()]).status();
+    assert!(killed.unwrap().success());
+    assert!(child.wait().unwrap().success());
+    (tls, end, key.to_owned())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_loaded_certificate_logs_its_expiry_and_warns_of_a_near_one_and_a_readable_key() {
+    let (lines, end, key) = tls_lines("10", 0o644);
+    assert_eq!(
+        lines,
+        [
+            format!("[gm:tls] certificate loaded; expires at {end}"),
+            "[gm:tls] warning: certificate expires in 240h0m0s".into(),
+            format!("[gm:tls] warning: private key {key} permissions are 0644; remove group/other access"),
+        ]
+    );
+    let (lines, end, _) = tls_lines("90", 0o600);
+    assert_eq!(lines, [format!("[gm:tls] certificate loaded; expires at {end}")]);
+}
