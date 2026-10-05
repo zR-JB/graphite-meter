@@ -116,6 +116,25 @@ impl Lane {
         self.decide(cause)
     }
 
+    /// The ending revocation, shutdown or the lifetime calls for by now, decided without waiting: a check cheap
+    /// enough for every chunk of a transfer, which then needs `ended` only while it waits.
+    pub fn due(&self) -> Option<LaneEnding> {
+        if let Some(ending) = self.ending() {
+            return Some(ending);
+        }
+        let state = &self.0;
+        let cause = if state.revoked.as_ref().is_some_and(CancellationToken::is_cancelled) {
+            LaneEnding::Revoked
+        } else if state.shutdown.is_cancelled() {
+            LaneEnding::Shutdown
+        } else if Instant::now() >= state.deadline {
+            LaneEnding::Lifetime
+        } else {
+            return None;
+        };
+        Some(self.decide(cause))
+    }
+
     /// Ends the lane as finished unless another cause came first, and returns the ending that won.
     pub fn finish(&self) -> LaneEnding {
         self.decide(LaneEnding::Finished)
@@ -255,6 +274,25 @@ mod tests {
             }
         });
         assert_eq!(ending(&lane).await, (LaneEnding::Idle, Duration::from_secs(90)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_due_cause_is_decided_without_waiting() {
+        let fixture = Fixture::new();
+        let lane = fixture.lane(Duration::from_secs(10));
+        assert_eq!(lane.due(), None);
+        tokio::time::advance(Duration::from_secs(10)).await;
+        assert_eq!((lane.due(), lane.ending()), (Some(LaneEnding::Lifetime), Some(LaneEnding::Lifetime)));
+        let lane = fixture.lane(LONG);
+        fixture.shutdown.cancel();
+        fixture.revoked.cancel();
+        assert_eq!(lane.due(), Some(LaneEnding::Revoked));
+        assert_eq!((lane.finish(), lane.ended().await), (LaneEnding::Revoked, LaneEnding::Revoked));
+        let fixture = Fixture::new();
+        let lane = fixture.lane(LONG);
+        assert_eq!(lane.finish(), LaneEnding::Finished);
+        fixture.shutdown.cancel();
+        assert_eq!(lane.due(), Some(LaneEnding::Finished), "a decided ending stays");
     }
 
     #[tokio::test(start_paused = true)]

@@ -21,6 +21,7 @@ http.workspace = true
 http-body.workspace = true
 ipnet.workspace = true
 noq.workspace = true
+percent-encoding.workspace = true
 ring.workspace = true
 serde.workspace = true
 serde_json.workspace = true

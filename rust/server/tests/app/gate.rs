@@ -9,10 +9,6 @@ use graphite_meter_server::app::{
 use http::{HeaderMap, HeaderValue, StatusCode, Version};
 use http_body_util::Full;
 
-fn empty(builder: Builder) -> Request<Full<Bytes>> {
-    builder.body(Full::default()).unwrap()
-}
-
 #[test]
 fn each_endpoint_mounts_the_routes_of_its_listener() {
     let mounted = |endpoint: Endpoint| {

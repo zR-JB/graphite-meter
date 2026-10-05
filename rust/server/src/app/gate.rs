@@ -15,8 +15,8 @@ const MAX_HEAD_BYTES: usize = 32 << 10;
 
 /// What the gate decided for a request.
 pub(super) enum Gate {
-    /// Dispatch it, to the route if this endpoint mounts one at its path.
-    Pass { route: Option<Route> },
+    /// Dispatch it, to the route if this endpoint mounts one at its path, as the request of `peer`.
+    Pass { route: Option<Route>, peer: Peer },
     /// The gate's own answer.
     Answer(Response<Body>),
 }
@@ -32,17 +32,17 @@ impl App {
             .filter(|&route| endpoint.mounts(route) && (!endpoint.ui() || allows(route, method)));
         let address = Address::resolve(connection.peer, request.headers(), &self.config.trusted_proxies);
         let peer = Peer::new(address);
-        match self.auth.authorize(request, endpoint, &peer) {
-            Decision::Allow(_) => {}
+        let peer = match self.auth.authorize(request, endpoint, &peer) {
+            Decision::Allow(lease) => peer.with_auth(lease),
             Decision::Refuse(answer) | Decision::Handled(answer) => return Gate::Answer(answer),
-        }
+        };
         match route {
             Some(route) if !allows(route, method) => {
                 let mut allow: Vec<_> = methods(route).collect();
                 allow.sort_unstable();
                 Gate::Answer(response::method_not_allowed(&allow.join(", ")))
             }
-            _ => Gate::Pass { route },
+            _ => Gate::Pass { route, peer },
         }
     }
 }

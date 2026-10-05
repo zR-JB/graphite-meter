@@ -374,6 +374,7 @@ dependencies = [
  "http-body-util",
  "ipnet",
  "noq",
+ "percent-encoding",
  "ring",
  "rustix",
  "serde",

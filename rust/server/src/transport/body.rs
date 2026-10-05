@@ -13,11 +13,22 @@ use std::{
     pin::Pin,
     task::{Context, Poll, ready},
 };
+use tokio::time::Instant;
 
-/// A reply's body and, while it is admitted work, the lane that bounds writing it.
+/// A reply's body and what bounds writing it.
 pub struct Body {
     content: Content,
-    lane: Option<Lane>,
+    bound: Option<Bound>,
+}
+
+/// What bounds writing a reply; the app bounds every reply it hands a transport.
+#[derive(Debug, Clone)]
+pub enum Bound {
+    /// The reply is aborted unless written by then: an unadmitted exchange's deadline, or an admitted one's
+    /// for its last answer.
+    Until(Instant),
+    /// Admitted work: a finished lane lets the body run to its end, and any other ending aborts it.
+    Lane(Lane),
 }
 
 enum Content {
@@ -33,26 +44,35 @@ impl Body {
     }
 
     pub fn full(bytes: impl Into<Bytes>) -> Self {
-        Self { content: Content::Full(bytes.into()), lane: None }
+        Self { content: Content::Full(bytes.into()), bound: None }
     }
 
     pub fn download(source: DownloadSource) -> Self {
-        Self { content: Content::Download(source), lane: None }
+        Self { content: Content::Download(source), bound: None }
     }
 
     /// A progress feed's lines until it ends.
     pub fn feed(feed: ProgressFeed) -> Self {
         let lines = stream::unfold(feed, |mut feed| async move { feed.next().await.map(|line| (line, feed)) });
-        Self { content: Content::Feed(Box::pin(lines)), lane: None }
+        Self { content: Content::Feed(Box::pin(lines)), bound: None }
     }
 
-    /// The body as `lane`'s work: the lane's ending ends the reply, and the lane ends with it.
+    /// The body as `lane`'s work, which ends with it.
     pub fn with_lane(self, lane: Lane) -> Self {
-        Self { lane: Some(lane), ..self }
+        Self { bound: Some(Bound::Lane(lane)), ..self }
     }
 
-    pub fn lane(&self) -> Option<&Lane> {
-        self.lane.as_ref()
+    pub fn until(self, deadline: Instant) -> Self {
+        Self { bound: Some(Bound::Until(deadline)), ..self }
+    }
+
+    pub fn bound(&self) -> Option<&Bound> {
+        self.bound.as_ref()
+    }
+
+    /// Bounds the reply by `deadline` unless it is bound already.
+    pub(crate) fn bound_by_default(&mut self, deadline: Instant) {
+        self.bound.get_or_insert(Bound::Until(deadline));
     }
 }
 
@@ -103,7 +123,7 @@ impl fmt::Debug for Body {
         formatter
             .debug_struct("Body")
             .field("content", &content)
-            .field("lane", &self.lane.is_some())
+            .field("bound", &self.bound)
             .finish()
     }
 }

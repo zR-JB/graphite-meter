@@ -1,7 +1,10 @@
 //! The one set of response constructors.
 
-use crate::transport::body::Body;
+use crate::{limits::Refusal, transport::body::Body};
+use bytes::Bytes;
+use graphite_meter_proto::refusal::UploadRefusal;
 use http::{HeaderValue, Response, StatusCode, header};
+use serde::Serialize;
 
 /// Plain text no browser sniffs, as Go's `http.Error` writes it.
 pub fn text(status: StatusCode, text: &str) -> Response<Body> {
@@ -27,10 +30,55 @@ pub fn empty(status: StatusCode) -> Response<Body> {
     response
 }
 
+/// A JSON document no cache keeps.
+pub fn json(document: impl Into<Bytes>) -> Response<Body> {
+    let mut response = Response::new(Body::full(document));
+    let headers = response.headers_mut();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+pub fn json_of(document: &impl Serialize) -> Response<Body> {
+    json(serde_json::to_vec(document).expect("documents serialize"))
+}
+
 /// A 405 naming the methods the route answers.
 pub fn method_not_allowed(allow: &str) -> Response<Body> {
     let mut response = status(StatusCode::METHOD_NOT_ALLOWED);
     let allow = HeaderValue::from_str(allow).expect("method names are header values");
     response.headers_mut().insert(header::ALLOW, allow);
+    response
+}
+
+/// A full handler pool or client share: 503 or 429, asking for a retry after a second.
+pub fn busy(refusal: Refusal) -> Response<Body> {
+    let mut response = status(StatusCode::from_u16(refusal.status()).expect("a client error or server error"));
+    response
+        .headers_mut()
+        .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
+    response
+}
+
+/// A metered request whose trusted proxy named no single client.
+pub fn ambiguous() -> Response<Body> {
+    text(StatusCode::BAD_REQUEST, "ambiguous client address")
+}
+
+/// An upload refusal's message, status and name (`api/uploadrefusals.txt`).
+pub fn upload_refusal(refusal: UploadRefusal) -> Response<Body> {
+    let status = StatusCode::from_u16(refusal.status()).expect("a client error or server error");
+    let mut response = text(status, refusal.message());
+    let headers = response.headers_mut();
+    headers.insert("x-graphite-upload-refusal", HeaderValue::from_static(refusal.name()));
+    match refusal {
+        UploadRefusal::GlobalFull | UploadRefusal::ClientFull => {
+            headers.insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
+        }
+        UploadRefusal::Revoked => {
+            headers.insert("graphite-meter-auth", HeaderValue::from_static("required"));
+        }
+        UploadRefusal::Invalid | UploadRefusal::OwnerMismatch | UploadRefusal::Idle => {}
+    }
     response
 }
