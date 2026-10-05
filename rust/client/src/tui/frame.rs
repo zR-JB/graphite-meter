@@ -243,7 +243,7 @@ fn paint(style: Style, profile: Profile) -> ratatui_core::style::Style {
         let color = color?;
         let [_, red, green, blue] = color.rgb.to_be_bytes();
         match profile {
-            Profile::Plain => None,
+            Profile::Plain | Profile::Ascii => None,
             Profile::Ansi => Some(Color::Indexed(color.ansi)),
             Profile::Ansi256 => Some(Color::Indexed(color.ansi256)),
             Profile::TrueColor => Some(Color::Rgb(red, green, blue)),

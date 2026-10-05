@@ -1,5 +1,5 @@
-//! The graphite palette in the terminal's colour profile, which follows the environment as Go's colorprofile does,
-//! and the background the terminal reports to an OSC 11 query.
+//! The graphite palette in the terminal's colour profile, which follows the environment, and the background the
+//! terminal reports to an OSC 11 query.
 use crate::{
     model::{Outcome, Stage},
     text::{Color, Profile, Style},
@@ -121,7 +121,7 @@ pub fn profile(tty: bool, var: impl Fn(&str) -> Option<String>) -> Profile {
     let dumb = term.as_deref().map_or(!cfg!(windows), |term| term == "dumb");
     let mut profile = if tty && !dumb { env } else { Profile::Plain };
     if flag("NO_COLOR") && tty {
-        return Profile::Plain;
+        return profile.min(Profile::Ascii);
     }
     if flag("CLICOLOR_FORCE") {
         profile = profile.max(Profile::Ansi).max(env);

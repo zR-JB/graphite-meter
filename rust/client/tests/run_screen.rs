@@ -337,7 +337,8 @@ fn the_colour_profile_follows_the_environment() {
         (true, "TERM=xterm TMUX=/tmp/tmux", Profile::Ansi256),
         (true, "TERM=dumb", Profile::Plain),
         (true, "TERM=dumb CLICOLOR=1", Profile::Plain),
-        (true, "TERM=xterm-256color NO_COLOR=1", Profile::Plain),
+        (true, "TERM=xterm-256color NO_COLOR=1", Profile::Ascii),
+        (true, "TERM=dumb NO_COLOR=1", Profile::Plain),
         (false, "TERM=xterm-256color", Profile::Plain),
         (false, "TERM=xterm-256color CLICOLOR_FORCE=1", Profile::Ansi256),
     ] {

@@ -162,7 +162,7 @@ fn several_servers_add_each_server_s_share_and_the_issues() {
 }
 
 #[test]
-fn the_16_colour_profile_writes_bold_and_base_colours_and_a_narrow_report_fits_its_width() {
+fn the_16_colour_and_ascii_profiles_write_their_codes_and_a_narrow_report_fits_its_width() {
     let lines = report(&view(&["a", "b"]), 40, &Palette::new(false));
     let text = printed(&lines, Profile::Ansi);
     let codes: Vec<u8> = text
@@ -180,6 +180,9 @@ fn the_16_colour_profile_writes_bold_and_base_colours_and_a_narrow_report_fits_i
         .collect();
     assert!(codes.contains(&1) && codes.contains(&90) && codes.contains(&34), "{codes:?}");
     assert!(codes.iter().all(|code| matches!(code, 1 | 30..=37 | 90..=97)), "{codes:?}");
+    let ascii = printed(&lines, Profile::Ascii);
+    assert!(ascii.starts_with("\x1b[1mGraphite Meter\x1b[m"), "{ascii}");
+    assert_eq!(ascii.replace("\x1b[1m", "").replace("\x1b[m", ""), printed(&lines, Profile::Plain));
     let plain = printed(&lines, Profile::Plain);
     assert!(plain.contains("\nIdle\n  Median 12.0 ms · P95 24.0 ms\n  Jitter 0.4 ms\n"), "{plain}");
     let details = plain.split_once("\nComplete · 1 of 2 servers\n").unwrap().1;

@@ -33,6 +33,8 @@ impl Style {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Profile {
     Plain,
+    /// Bold without colour.
+    Ascii,
     Ansi,
     Ansi256,
     TrueColor,
@@ -183,7 +185,7 @@ fn sgr(style: Style, profile: Profile) -> Option<String> {
     let color = |color: Option<Color>, base: u8| {
         let color = color?;
         Some(match profile {
-            Profile::Plain => return None,
+            Profile::Plain | Profile::Ascii => return None,
             Profile::Ansi => format!("{}", base + color.ansi % 8 + color.ansi / 8 * 60),
             Profile::Ansi256 => format!("{};5;{}", base + 8, color.ansi256),
             Profile::TrueColor => {
