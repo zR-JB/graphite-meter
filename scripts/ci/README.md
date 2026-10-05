@@ -60,8 +60,10 @@ GitHub's automatic source archives provide the project source; a stable
 release adds the third-party source archive and a source-availability note.
 
 OCI builds request `provenance: mode=max`, pin the privileged binfmt image and
-keep BuildKit's insecure entitlements disabled. The Dockerfile may not select a
-custom frontend. Verification requires one runnable `linux/amd64` and
+keep BuildKit's insecure entitlements disabled. Neither Dockerfile may select a
+custom frontend; both pin their base images by digest and install exact apt
+package versions only from one snapshot.debian.org timestamp, and
+`toolchain-sync` keeps their image literals equal to `mise.toml`'s. Verification requires one runnable `linux/amd64` and
 `linux/arm64` manifest, each with one linked SLSA provenance statement whose
 source (the fetched commit, or the local checkout's revision) is the release
 commit of this repository, requires each image's layers to ship the server and

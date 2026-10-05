@@ -15,7 +15,7 @@ class ToolchainBoundaryTests(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         root = pathlib.Path(directory.name)
-        for name in ("mise.toml", "mise.lock", "go/go.mod", "container/Dockerfile",
+        for name in ("mise.toml", "mise.lock", "go/go.mod", "container/Dockerfile", "container/Dockerfile.rust",
                      "rust/rust-toolchain.toml"):
             target = root / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -41,11 +41,32 @@ class ToolchainBoundaryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "container/Dockerfile"):
             check(root)
         updates = literal_updates(root)
-        self.assertEqual(set(updates), {root / "container/Dockerfile"})
+        self.assertEqual(set(updates), {root / "container/Dockerfile", root / "container/Dockerfile.rust"})
         for path, content in updates.items():
             path.write_text(content)
         check(root)
         self.assertIn(f"FROM {image} AS client", (root / "container/Dockerfile").read_text())
+        self.assertIn(f"FROM --platform=$BUILDPLATFORM {image} AS browser",
+                      (root / "container/Dockerfile.rust").read_text())
+
+    def test_the_rust_builder_images_follow_the_python_and_rust_pins(self) -> None:
+        root = self.copy_pins()
+        path = root / "mise.toml"
+        original = path.read_text()
+        for pattern, replacement, error in (
+            (r"python:3\.14\.\d+-slim", "python:3.13.1-slim", "images.python must use the tools.python"),
+            (r"rust:1\.99\.0-bookworm", "rust:1.98.0-bookworm", "images.rust must use the rust/rust-toolchain"),
+            (r"rust:1\.99\.0-bookworm@sha256:[0-9a-f]+", "rust:1.99.0-bookworm", "exact version or image digest"),
+        ):
+            with self.subTest(replacement=replacement):
+                path.write_text(re.sub(pattern, replacement, original))
+                with self.assertRaisesRegex(ValueError, error):
+                    load_pins(root)
+        dockerfile = root / "container/Dockerfile.rust"
+        dockerfile.write_text(dockerfile.read_text().replace("@sha256:5903", "@sha256:0003"))
+        path.write_text(original)
+        with self.assertRaisesRegex(ValueError, "Dockerfile.rust"):
+            check(root)
 
     def test_publication_image_drift_is_rejected(self) -> None:
         root = self.copy_pins()

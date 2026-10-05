@@ -29,6 +29,9 @@ quay.io/containers/skopeo:v1.22.3-immutable\
 image_bun = "docker.io/oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895"
 image_golang = "docker.io/library/golang:1.27.1@sha256:3680233e3204827fbdc66088528ae6d4b3d034f51d03a99d454f6de034888244"
 image_binfmt = "docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
+# The Rust image's builder (container/Dockerfile.rust).
+image_python = "docker.io/library/python:3.14.7-slim-bookworm@sha256:82bc3c539b8813ada9d68c63b40158fa002f7f33de9bf3312a3dfdc0620dff56"
+image_rust = "docker.io/library/rust:1.99.0-bookworm@sha256:59037199c44290f2befcdd58dcc540164763fc296950255aaefeef096a1866b0"
 
 # SHA-256 of static.rust-lang.org/dist/channel-rust-<channel>.toml for rust/rust-toolchain.toml's channel.
 rust_manifest_sha256 = "ce6dddc886364f8d786514771212cebe9b731ba82d6b859951c6b0ccc516b6a2"
@@ -488,6 +491,32 @@ run = [
   "python3 -m scripts.rust_build --package graphite-meter-client --profile ci",
   "cd rust && exec target/ci/graphite-meter-client",
 ]
+
+# The pinned builder of container/Dockerfile.rust needs an amd64 host; it cross-compiles arm64.
+[tasks.rust-container-build]
+description = "Build the Rust server image with Docker or Podman on an amd64 host"
+usage = 'arg "[tag]" default="graphite-meter:latest-rust"'
+run = '''
+#!/usr/bin/env sh
+set -eu
+engine=${CONTAINER_ENGINE:-$(command -v docker || command -v podman || echo docker)}
+revision=${GM_CLIENT_REVISION:-$(git rev-parse --short HEAD 2>/dev/null || echo source)}
+# One VERSION stamps the server, the browser app and SOURCE.txt.
+"$engine" build -f container/Dockerfile.rust --target server -t "$usage_tag" \
+  --build-arg VERSION="${VERSION:-0.0.0-dev}" --build-arg GM_CLIENT_REVISION="$revision" \
+  --build-arg GM_CLIENT_VALIDATE="${GM_CLIENT_VALIDATE:-1}" --label org.opencontainers.image.licenses=AGPL-3.0-or-later .
+'''
+
+[tasks.rust-client-package]
+description = "Build the Linux and Windows Rust TUI archives and their source offers in the pinned builder image"
+usage = 'arg "[version]" default="development"'
+run = '''
+#!/usr/bin/env sh
+set -eu
+engine=${CONTAINER_ENGINE:-$(command -v docker || command -v podman || echo docker)}
+"$engine" build -f container/Dockerfile.rust --target tui-artifacts --build-arg VERSION="$usage_version" \
+  --output "type=local,dest=${RELEASE_DIST:-go/dist}" .
+'''
 
 # Ordered: static policy checks run before the workspace compiles.
 [tasks.rust-check]

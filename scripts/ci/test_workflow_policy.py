@@ -16,6 +16,7 @@ PINNED_STEP = "\n      - uses: {}@" + "a" * 40 + "\n        with: {{persist-cred
 REQUEST = W + "release-request.yml"
 PREPARE = "        run: python3 scripts/ci/release.py prepare\n"
 RELEASE = W + "release.yml"
+RUST = "container/Dockerfile.rust"
 PUBLISH = "  extra:\n    if: needs.verify.outputs.publish == 'true'\n    environment: other\n"
 MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (SETUP, None, "# ${{ secrets.TOKEN }}\n", r"secrets\."),
@@ -134,6 +135,13 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "development notices"),
     ("container/Dockerfile", None, "RUN python3 -m scripts.legal.rust --development\n", "development notices"),
     ("scripts/release-artifacts.sh", None, "python3 -m scripts.rust_build\n", "development notices"),
+    (RUST, None, "FROM docker.io/library/debian:bookworm AS extra\n", "Dockerfile.rust base images must be"),
+    (RUST, None, "FROM --platform=$BUILDPLATFORM ${BASE} AS extra\n", "digest-pinned"),
+    (RUST, "--browser-scan /tmp/browser-modules.json \\", "--browser-scan /tmp/browser-modules.json --development \\",
+     "development notices"),
+    (RUST, "musl-dev:amd64=1.2.3-1", "musl-dev:amd64", "exact apt package versions"),
+    (RUST, "RUN printf 'Types: deb", "RUN apt-get update\nRUN printf 'Types: deb", "snapshot.debian.org"),
+    (RUST, "/20260927T180000Z", "", "snapshot.debian.org"),
 )
 
 
@@ -144,7 +152,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         root = Path(directory.name)
         shutil.copytree(ROOT / ".github", root / ".github")
         shutil.copytree(ROOT / "scripts", root / "scripts", ignore=shutil.ignore_patterns("__pycache__"))
-        for name in ("mise.toml", "mise.lock", "go/go.mod", "container/Dockerfile",
+        for name in ("mise.toml", "mise.lock", "go/go.mod", "container/Dockerfile", "container/Dockerfile.rust",
                      "rust/rust-toolchain.toml"):
             (root / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, root / name)

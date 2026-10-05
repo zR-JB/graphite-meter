@@ -17,7 +17,7 @@ def review(name: str, version: str, upstream: str = REGISTRY, decision: str = "a
 class ReviewTests(unittest.TestCase):
     def test_the_client_ships_on_tui_platforms_and_the_server_on_server_platforms(self) -> None:
         linux, windows = {"linux/amd64": "x86_64-unknown-linux-musl"}, {"windows/amd64": "x86_64-pc-windows-gnu"}
-        workspace = Workspace({}, linux | windows, linux, Path("legal/platform.json"))
+        workspace = Workspace((), linux | windows, linux, Path("legal/platform.json"))
         self.assertEqual(shipped(workspace), [
             ("graphite-meter-client", "x86_64-unknown-linux-musl"), ("graphite-meter-client", "x86_64-pc-windows-gnu"),
             ("graphite-meter-server", "x86_64-unknown-linux-musl")])
