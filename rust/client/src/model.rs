@@ -206,13 +206,11 @@ pub fn focus(results: &[StageResult]) -> Option<ServerId> {
         return Some(first.clone());
     }
     let idle = results.iter().find(|result| result.stage == Stage::Latency)?;
-    let measured = |id: &ServerId| {
-        let mut servers = idle.servers.iter();
-        servers.any(|server| server.server == *id && server.latency.and_then(|latency| latency.median()).is_some())
+    let measured = |survivor: &&ServerResult| {
+        let mut servers = idle.servers.iter().filter(|server| server.server == survivor.server);
+        servers.any(|server| server.latency.and_then(|latency| latency.median()).is_some())
     };
-    survivors
-        .find(|server| measured(&server.server))
-        .map(|server| server.server.clone())
+    survivors.find(measured).map(|server| server.server.clone())
 }
 
 /// How a run ended.
@@ -234,9 +232,8 @@ impl Outcome {
     pub fn of(results: &[StageResult], plan: &[Stage], unprepared: &[ServerFailure]) -> Self {
         let focus = focus(results);
         let statuses: Vec<_> = results.iter().map(|result| result.status(focus.as_ref())).collect();
-        let planned = plan
-            .iter()
-            .all(|stage| results.iter().any(|result| result.stage == *stage));
+        let ran = |stage: &Stage| results.iter().any(|result| result.stage == *stage);
+        let planned = plan.iter().all(ran);
         match () {
             _ if results.iter().any(|result| result.stopped) => Self::Stopped,
             _ if results.iter().all(|result| result.measured.is_zero()) => Self::Failed,

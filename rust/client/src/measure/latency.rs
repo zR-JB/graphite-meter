@@ -28,13 +28,10 @@ pub enum ProbeOutcome {
 pub struct Latency {
     /// Replies by round trip rounded to the microsecond.
     rtts: BTreeMap<Duration, usize>,
-    replies: usize,
-    timeouts: usize,
-    unresolved: usize,
-    send_failures: usize,
+    /// The counts; `summary()` adds the statistics.
+    counts: Summary,
     previous: Option<Duration>,
     variation: Duration,
-    pairs: usize,
     timed: usize,
     timed_rtt: Duration,
     handling: Duration,
@@ -66,9 +63,9 @@ impl Latency {
     pub fn record(&mut self, outcome: ProbeOutcome) {
         match outcome {
             ProbeOutcome::Reply { rtt, handling } => self.reply(rtt, handling),
-            ProbeOutcome::Timeout => self.timeouts += 1,
-            ProbeOutcome::Unresolved => self.unresolved += 1,
-            ProbeOutcome::SendFailed => self.send_failures += 1,
+            ProbeOutcome::Timeout => self.counts.timeouts += 1,
+            ProbeOutcome::Unresolved => self.counts.unresolved += 1,
+            ProbeOutcome::SendFailed => self.counts.send_failures += 1,
         }
     }
 
@@ -76,11 +73,11 @@ impl Latency {
     fn reply(&mut self, rtt: Duration, handling: Duration) {
         if let Some(previous) = self.previous.replace(rtt) {
             self.variation = self.variation.saturating_add(rtt.abs_diff(previous));
-            self.pairs += 1;
+            self.counts.jitter_pairs += 1;
         }
         let micros = Duration::from_micros(u64::try_from((rtt.as_nanos() + 500) / 1000).unwrap_or(u64::MAX));
         *self.rtts.entry(micros).or_default() += 1;
-        self.replies += 1;
+        self.counts.replies += 1;
         if handling <= rtt {
             self.timed += 1;
             self.timed_rtt = self.timed_rtt.saturating_add(rtt);
@@ -94,28 +91,25 @@ impl Latency {
     }
 
     pub fn summary(&self) -> Summary {
+        let (replies, pairs) = (self.counts.replies, self.counts.jitter_pairs);
         let rank = |rank| self.nth(rank);
-        let p50 = (self.replies > 0).then(|| {
-            let lower = rank(self.replies.div_ceil(2));
-            match self.replies % 2 {
-                0 => lower + (rank(self.replies / 2 + 1) - lower) / 2,
+        let p50 = (replies > 0).then(|| {
+            let lower = rank(replies.div_ceil(2));
+            match replies % 2 {
+                0 => lower + (rank(replies / 2 + 1) - lower) / 2,
                 _ => lower,
             }
         });
         Summary {
-            replies: self.replies,
-            timeouts: self.timeouts,
-            unresolved: self.unresolved,
-            send_failures: self.send_failures,
             p50,
-            p95: (self.replies > 0).then(|| rank((95 * self.replies).div_ceil(100))),
-            jitter: (self.pairs > 0).then(|| mean(self.variation, self.pairs)),
-            jitter_pairs: self.pairs,
+            p95: (replies > 0).then(|| rank((95 * replies).div_ceil(100))),
+            jitter: (pairs > 0).then(|| mean(self.variation, pairs)),
             timing: (self.timed > 0).then(|| Timing {
                 pairs: self.timed,
                 rtt: mean(self.timed_rtt, self.timed),
                 handling: mean(self.handling, self.timed),
             }),
+            ..self.counts
         }
     }
 

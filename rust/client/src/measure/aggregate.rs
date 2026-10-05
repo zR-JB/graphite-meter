@@ -122,32 +122,21 @@ pub struct Interval {
 #[derive(Debug, Clone, Default, PartialEq)]
 struct Peaks {
     combined: Dir<f64>,
-    servers: Vec<(ServerId, Dir<f64>)>,
+    /// Per participant, in the interval's order.
+    servers: Vec<Dir<f64>>,
 }
 
 impl Peaks {
     fn record(&mut self, window: &Window) {
         for direction in Direction::BOTH {
-            if let Some(rate) = window.rates[direction] {
-                self.combined[direction] = self.combined[direction].max(rate);
-            }
-            for component in &window.components[direction] {
-                let index = match self.servers.iter().position(|(server, _)| *server == component.server) {
-                    Some(index) => index,
-                    None => {
-                        self.servers.push((component.server.clone(), Dir::default()));
-                        self.servers.len() - 1
-                    }
-                };
-                let peak = &mut self.servers[index].1[direction];
-                *peak = peak.max(component.rate);
+            let (components, combined) = (&window.components[direction], &mut self.combined[direction]);
+            *combined = window.rates[direction].map_or(*combined, |rate| combined.max(rate));
+            let len = self.servers.len().max(components.len());
+            self.servers.resize(len, Dir::default());
+            for (peak, component) in self.servers.iter_mut().zip(components) {
+                peak[direction] = peak[direction].max(component.rate);
             }
         }
-    }
-
-    fn server(&self, server: &ServerId, direction: Direction) -> f64 {
-        let found = self.servers.iter().find(|(known, _)| known == server);
-        found.map_or(0.0, |(_, peaks)| peaks[direction])
     }
 }
 
@@ -166,14 +155,21 @@ struct Mark {
     peaks: Peaks,
 }
 
+impl Mark {
+    fn of(boundary: &Boundary, interval: &Interval) -> Arc<Self> {
+        let (window, peaks) = (interval.window.clone(), interval.peaks.clone());
+        Arc::new(Self { boundary: boundary.clone(), window, peaks })
+    }
+}
+
 /// The current interval's evidence once its first boundary is in.
 #[derive(Debug)]
 struct Open {
     first: Boundary,
     last: Boundary,
     peak_from: Boundary,
-    /// Per participant and direction, the latest boundary where its bytes moved.
-    moved: Vec<(ServerId, Dir<Option<Arc<Mark>>>)>,
+    /// Per participant in order and direction, the latest boundary where its bytes moved.
+    moved: Vec<Dir<Option<Arc<Mark>>>>,
 }
 
 /// Unique measured bytes of one server, whatever window counts.
@@ -267,15 +263,10 @@ impl Aggregate {
             interval.peaks.record(peak);
             open.peak_from = boundary.clone();
         }
-        let mark = Arc::new(Mark {
-            boundary: boundary.clone(),
-            window: interval.window.clone(),
-            peaks: interval.peaks.clone(),
-        });
-        for (server, moved) in &mut open.moved {
-            for direction in Direction::BOTH {
-                let mut components = sample.components[direction].iter();
-                if components.any(|component| component.server == *server && component.bytes > 0) {
+        let mark = Mark::of(&boundary, interval);
+        for direction in Direction::BOTH {
+            for (moved, component) in open.moved.iter_mut().zip(&sample.components[direction]) {
+                if component.bytes > 0 {
                     moved[direction] = Some(mark.clone());
                 }
             }
@@ -291,11 +282,9 @@ impl Aggregate {
         if survivors.len() == interval.participants.len() {
             return;
         }
-        let departed = self
-            .open
-            .iter()
-            .flat_map(|open| &open.moved)
-            .filter(|(id, _)| !survivors.contains(id));
+        let moved = self.open.as_ref().map_or(&[][..], |open| &open.moved);
+        let paired = interval.participants.iter().zip(moved);
+        let departed = paired.filter(|(id, _)| !survivors.contains(id));
         let marks = departed.flat_map(|(_, moved)| [&moved.down, &moved.up]).flatten();
         let Some(end) = marks.min_by_key(|mark| mark.boundary.at).cloned() else {
             if !survivors.is_empty() {
@@ -331,11 +320,10 @@ impl Aggregate {
     /// `server`'s own headline: its component in the latest counted interval where it has enough evidence.
     pub fn server(&self, server: &ServerId, direction: Direction) -> Option<Rate> {
         self.counted().find_map(|(interval, window)| {
-            let mut components = window.components[direction].iter();
-            let component = components.find(|component| component.server == *server)?;
-            let mean = component.rate;
-            let peak = interval.peaks.server(server, direction).max(mean);
-            evidence(std::slice::from_ref(component)).then_some(Rate { mean, peak })
+            let index = interval.participants.iter().position(|id| id == server)?;
+            let (component, peaks) = (window.components[direction].get(index)?, interval.peaks.servers.get(index));
+            let (mean, peak) = (component.rate, peaks.map_or(0.0, |peaks| peaks[direction]));
+            evidence(std::slice::from_ref(component)).then_some(Rate { mean, peak: peak.max(mean) })
         })
     }
 
@@ -346,10 +334,8 @@ impl Aggregate {
     }
 
     pub fn total(&self, direction: Direction) -> u64 {
-        self.ledgers
-            .iter()
-            .map(|ledger| ledger.bytes[direction])
-            .fold(0, u64::saturating_add)
+        let bytes = self.ledgers.iter().map(|ledger| ledger.bytes[direction]);
+        bytes.fold(0, u64::saturating_add)
     }
 
     /// Complete intervals with a window, the latest first.
@@ -380,18 +366,9 @@ impl Aggregate {
     fn start(&mut self, boundary: Boundary) {
         let Some(interval) = self.intervals.back_mut() else { return };
         (interval.start, interval.end) = (boundary.at, boundary.at);
-        let window = interval.window.clone();
-        let mark = Arc::new(Mark {
-            boundary: boundary.clone(),
-            window,
-            peaks: interval.peaks.clone(),
-        });
+        let mark = Mark::of(&boundary, interval);
         let moved = Dir::from_fn(|direction| self.stage.moves(direction).then(|| mark.clone()));
-        let moved = interval
-            .participants
-            .iter()
-            .map(|id| (id.clone(), moved.clone()))
-            .collect();
+        let moved = vec![moved; interval.participants.len()];
         self.open = Some(Open {
             first: boundary.clone(),
             last: boundary.clone(),
@@ -417,35 +394,25 @@ impl Aggregate {
         let participants = self.intervals.back().map_or(&[][..], |interval| &interval.participants);
         let (mut components, mut stale) = (Dir::<Vec<Component>>::default(), false);
         for id in participants {
-            let (Some(start), Some(end)) = (first.reading(id), last.reading(id)) else {
-                return Err(Gap::Broken);
-            };
+            let (start, end) = first.reading(id).zip(last.reading(id)).ok_or(Gap::Broken)?;
             let component = |bytes: u64, duration: Duration| {
                 let rate = bytes as f64 / duration.as_secs_f64();
                 Component { server: id.clone(), bytes, duration, rate }
             };
             if self.stage.moves(Direction::Down) {
-                let (Some(start), Some(end)) = (start.down, end.down) else {
-                    return Err(Gap::Broken);
-                };
-                components
-                    .down
-                    .push(component(end.checked_sub(start).ok_or(Gap::Broken)?, elapsed));
+                let (start, end) = start.down.zip(end.down).ok_or(Gap::Broken)?;
+                let bytes = end.checked_sub(start).ok_or(Gap::Broken)?;
+                components.down.push(component(bytes, elapsed));
             }
             if self.stage.moves(Direction::Up) {
-                let (Some(start), Some(end)) = (start.up, end.up) else {
-                    return Err(Gap::Broken);
-                };
+                let (start, end) = start.up.zip(end.up).ok_or(Gap::Broken)?;
                 if start.id != end.id || !end.counters.follows(start.counters) {
                     return Err(Gap::Broken);
                 }
-                let nanos = end.counters.nanos() - start.counters.nanos();
-                match nanos {
-                    0 => stale = true,
-                    _ => components
-                        .up
-                        .push(component(end.counters.bytes() - start.counters.bytes(), Duration::from_nanos(nanos))),
-                }
+                let (start, end) = (start.counters, end.counters);
+                let (bytes, nanos) = (end.bytes() - start.bytes(), end.nanos() - start.nanos());
+                stale |= nanos == 0;
+                components.up.push(component(bytes, Duration::from_nanos(nanos)));
             }
         }
         if stale {
