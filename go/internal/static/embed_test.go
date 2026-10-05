@@ -17,6 +17,7 @@ func testFS() fstest.MapFS {
 		"version.json":           {Data: []byte("{}")},
 		"assets/app.js":          {Data: []byte("console.log('app')")},
 		"assets/sub/dir/file.js": {Data: []byte("console.log('nested')")},
+		"fonts/face.woff2":       {Data: []byte("wOF2")},
 	}
 }
 
@@ -38,6 +39,8 @@ func TestHandlerRoutes(t *testing.T) {
 		{name: "root serves index", path: "/", wantStatus: http.StatusOK, wantBody: "index page",
 			wantCache: "no-store"},
 		{name: "unhashed file", path: "/version.json", wantStatus: http.StatusOK, wantBody: "{}", wantCache: "no-cache"},
+		{name: "font", path: "/fonts/face.woff2", wantStatus: http.StatusOK, wantBody: "wOF2",
+			wantCache: "public, max-age=604800"},
 		{name: "no SPA fallback", path: "/results", wantStatus: http.StatusNotFound},
 		{name: "missing asset", path: "/assets/missing.js", wantStatus: http.StatusNotFound},
 		{name: "nested asset", path: "/assets/sub/dir/file.js", wantStatus: http.StatusOK, wantBody: "nested",

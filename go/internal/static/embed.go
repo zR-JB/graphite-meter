@@ -108,10 +108,14 @@ func handler(fsys fs.FS, authenticated, resultHistoryDefault bool) http.Handler 
 			return
 		}
 		h := w.Header()
-		// The bundler names every file under assets/ by its content hash.
-		if strings.HasPrefix(name, "assets/") {
+		// The bundler names every file under assets/ by its content hash; the fonts are unmodified upstream faces,
+		// reused for a week before a reload checks their tag.
+		switch {
+		case strings.HasPrefix(name, "assets/"):
 			h.Set("Cache-Control", "public, max-age=31536000, immutable")
-		} else {
+		case strings.HasPrefix(name, "fonts/"):
+			h.Set("Cache-Control", "public, max-age=604800")
+		default:
 			h.Set("Cache-Control", "no-cache")
 		}
 		// The build stores brotli and gzip copies of its text files beside them.
