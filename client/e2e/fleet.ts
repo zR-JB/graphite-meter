@@ -96,6 +96,8 @@ export async function closeSettings(page: Page) {
   await expect
     .poll(() => panel.all((els) => els.every((el) => el.inert)))
     .toBe(true);
+  // A docked sheet's column closes at once and the stage glides back over it; a pointer aimed mid-glide misses.
+  await page.evaluate(settled);
 }
 
 export async function ready(page: Page) {
