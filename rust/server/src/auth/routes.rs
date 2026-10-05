@@ -150,7 +150,7 @@ fn login_page<B>(auth: &Enabled, request: &Request<B>) -> Response<Body> {
     answer
 }
 
-/// Go's password sign-in: the form's CSRF proof, the attempt budgets, a free verifier slot and the hash, then a
+/// Password sign-in: the form's CSRF proof, the attempt budgets, a free verifier slot and the hash, then a
 /// login replacing the one the request presented.
 async fn sign_in<B: http_body::Body>(
     auth: &Enabled,
@@ -218,7 +218,7 @@ pub(super) fn presented(auth: &Enabled, headers: &HeaderMap) -> Option<LoginKey>
     lease.map(|lease| lease.login())
 }
 
-/// Go's check of a sign-in form: posted from the public origin with the token its login cookie holds.
+/// Checks a sign-in form: posted from the public origin with the token its login cookie holds.
 pub(super) fn check_csrf(auth: &Enabled, headers: &HeaderMap, proof: &str) -> Result<(), Reason> {
     let origin = headers.get(header::ORIGIN).filter(|origin| !origin.is_empty());
     match (origin, cookie(headers, LOGIN_COOKIE)) {
@@ -292,7 +292,7 @@ pub(super) fn redirect(target: &str) -> Response<Body> {
     response::redirect(&Method::POST, StatusCode::SEE_OTHER, &target)
 }
 
-/// Go's `setCookie`: host-only and secure; only the CSRF cookie, which pages read, is not HttpOnly, and only the OIDC
+/// Sets a host-only, secure cookie; only the CSRF cookie, which pages read, is not HttpOnly, and only the OIDC
 /// transaction's is not strictly same-site.
 pub(super) fn set_cookie(answer: &mut Response<Body>, name: &str, value: &str, expires: SystemTime) {
     let age = expires.duration_since(SystemTime::now()).map_or(0, |age| age.as_secs());

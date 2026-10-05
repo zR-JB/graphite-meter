@@ -6,7 +6,7 @@ use graphite_meter_proto::refusal::UploadRefusal;
 use http::{HeaderValue, Method, Response, StatusCode, header};
 use serde::Serialize;
 
-/// Plain text no browser sniffs, as Go's `http.Error` writes it.
+/// Plain text no browser sniffs, ending in a line break.
 pub fn text(status: StatusCode, text: &str) -> Response<Body> {
     let mut response = Response::new(Body::full(format!("{text}\n")));
     *response.status_mut() = status;
@@ -51,7 +51,7 @@ pub fn json_of(document: &impl Serialize) -> Response<Body> {
     json(serde_json::to_vec(document).expect("documents serialize"))
 }
 
-/// Go's `http.Redirect`: a GET answer links the location in a short HTML body.
+/// A redirect to `location`; a GET answer links it in a short HTML body.
 pub fn redirect(method: &Method, status: StatusCode, location: &HeaderValue) -> Response<Body> {
     let linked = matches!(*method, Method::GET | Method::HEAD);
     let mut response = match *method == Method::GET {

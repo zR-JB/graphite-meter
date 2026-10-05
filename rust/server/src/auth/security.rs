@@ -37,7 +37,7 @@ pub(super) enum Counter {
     Capacity = 9,
 }
 
-/// Why a sign-in was refused: Go's reason codes, and the notice the sign-in page shows.
+/// Why a sign-in was refused: the security log's reason codes, and the notice the sign-in page shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Reason {
     CsrfOriginMissing,

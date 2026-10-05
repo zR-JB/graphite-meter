@@ -1,5 +1,5 @@
-//! The operator's password: Argon2id PHC hashes at Go's fixed cost, verification off the runtime, the attempt
-//! budgets and the device cookies a sign-in leaves.
+//! The operator's password: Argon2id PHC hashes at one fixed cost, verification off the runtime, the attempt budgets
+//! and the device cookies a sign-in leaves.
 
 use super::rate::{Attempts, Ceiling};
 use crate::peer::ClientKeys;
@@ -28,7 +28,7 @@ const SALT_BYTES: usize = 16;
 const KEY_BYTES: usize = 32;
 const DEVICE_LIFETIME: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
-/// Unpadded standard base64, decoded as Go's `RawStdEncoding` decodes it.
+/// Unpadded standard base64 that tolerates nonzero trailing bits.
 const RAW_STD: GeneralPurpose = GeneralPurpose::new(
     &alphabet::STANDARD,
     GeneralPurposeConfig::new()
@@ -36,7 +36,7 @@ const RAW_STD: GeneralPurpose = GeneralPurpose::new(
         .with_decode_allow_trailing_bits(true),
 );
 
-/// Go's password rules: 1 to 1024 bytes without line breaks, not necessarily UTF-8.
+/// The password rules: 1 to 1024 bytes without line breaks, not necessarily UTF-8.
 pub fn validate(password: &[u8]) -> Result<(), &'static str> {
     if password.is_empty() || password.len() > 1024 {
         return Err("password must contain 1 to 1024 bytes");
@@ -74,7 +74,7 @@ struct Hash {
 }
 
 impl Hash {
-    /// Go's checks of a PHC string, with its messages.
+    /// Checks a PHC string, with the messages operators see.
     fn parse(encoded: &str) -> Result<Self, String> {
         let fields: Vec<_> = encoded.trim().split('$').collect();
         if fields.len() != 6 || fields[1] != "argon2id" || fields[2] != "v=19" {

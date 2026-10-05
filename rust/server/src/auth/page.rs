@@ -1,5 +1,5 @@
-//! The sign-in and approval pages, rendered from Go's templates in `go/internal/auth/assets` as its html/template
-//! renders them, and the headers of every authentication answer.
+//! The sign-in and approval pages, rendered byte for byte from the shared templates in `go/internal/auth/assets`, and
+//! the headers of every authentication answer.
 
 use http::{HeaderMap, HeaderValue, header};
 use std::{fmt::Write as _, sync::LazyLock};
@@ -46,7 +46,7 @@ pub(super) fn allow_form_action(headers: &mut HeaderMap, origin: &str) {
     }
 }
 
-/// Go's headers of every authentication page and refusal, with HSTS once the request is known to be secure.
+/// The headers of every authentication page and refusal, with HSTS once the request is known to be secure.
 pub(super) fn protect(headers: &mut HeaderMap, secure: bool) {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     use sha2::{Digest, Sha256};

@@ -1,5 +1,4 @@
-//! Which requests pass under authentication: trust in the connection, credentials, origins, preflights and Go's
-//! refusals.
+//! Which requests pass under authentication: trust in the connection, credentials, origins, preflights and refusals.
 
 use super::{AuthLease, Decision, Store, Via, protect};
 use crate::{
@@ -63,7 +62,7 @@ impl Policy {
         }
     }
 
-    /// Go's boundary: ambiguous fields, trust, preflights, the controller's routes, then credentials and origins.
+    /// The boundary: ambiguous fields, trust, preflights, the controller's routes, then credentials and origins.
     pub(super) fn authorize<B>(
         &self,
         store: &Store,
@@ -177,7 +176,7 @@ impl Policy {
         store.redeem(token, &target, request.headers().get(header::ORIGIN))
     }
 
-    /// Go's origin rules: a browser grant serves only its origin's measurement routes; other requests come from the
+    /// The origin rules: a browser grant serves only its origin's measurement routes; other requests come from the
     /// public origin or none, and a cookie's unsafe measurement requests prove their CSRF token.
     fn valid_origin<B>(&self, store: &Store, request: &Request<B>, route: Option<Route>, lease: &AuthLease) -> bool {
         let headers = request.headers();
@@ -210,7 +209,7 @@ impl Policy {
         ours && (route.is_none() || proof())
     }
 
-    /// Go's preflights: the browser token exchange, a browser grant's measurement routes, else the public origin's.
+    /// Preflights: the browser token exchange, a browser grant's measurement routes, else the public origin's.
     fn preflight(&self, headers: &HeaderMap, route: Option<Route>, trust: Trust) -> Decision {
         let secure = trust >= Trust::Secure;
         let origin = headers.get(header::ORIGIN).filter(|origin| browser_origin(origin));
@@ -266,7 +265,7 @@ impl Policy {
         Decision::Answer(answer)
     }
 
-    /// Go's sign-in-required answer, readable by the public origin or a browser origin measuring; the app root
+    /// The sign-in-required answer, readable by the public origin or a browser origin measuring; the app root
     /// redirects to the sign-in page instead.
     fn required<B>(&self, request: &Request<B>, endpoint: Endpoint, secure: bool) -> Decision {
         let root = endpoint.ui() && request.method() == Method::GET && request.uri().path() == "/";
@@ -300,7 +299,7 @@ fn request_authority<B>(request: &Request<B>) -> Option<&str> {
     }
 }
 
-/// A field's value as Go's `Header.Get` reads it: empty when absent, `None` when it is no text.
+/// A field's first value: empty when absent, `None` when it is no text.
 fn text<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers.get(name).map_or(Some(""), |value| value.to_str().ok())
 }
@@ -336,7 +335,7 @@ fn requested(headers: &HeaderMap, allowed: &[&str]) -> Option<Vec<String>> {
     names.map(|name| known(&name).then_some(name)).collect()
 }
 
-/// Go's `CookiesNamed` for one cookie: invalid pairs are skipped, and two valid ones are ambiguous.
+/// The cookie `name`: invalid pairs are skipped, and two valid ones are ambiguous.
 pub(super) fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     let values = headers.get_all(header::COOKIE).iter();
     let pairs: Vec<_> = values
