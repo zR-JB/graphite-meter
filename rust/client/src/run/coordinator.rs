@@ -272,7 +272,12 @@ impl<'a> Live<'a> {
                     self.run.failed(&failure);
                 }
                 Decision::Remove(failure) => {
-                    participants.retain(|participant| *participant.server() != failure.server);
+                    let departing = participants
+                        .iter()
+                        .position(|participant| *participant.server() == failure.server);
+                    if let Some(index) = departing {
+                        participants.remove(index).depart();
+                    }
                     self.run.failed(&failure);
                 }
                 Decision::Finish => self.finished = true,

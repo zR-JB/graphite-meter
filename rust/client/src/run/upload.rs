@@ -35,6 +35,8 @@ use tokio_util::sync::CancellationToken;
 
 /// The pause before a missed checkpoint is asked again.
 const CHECKPOINT_RETRY: Duration = Duration::from_millis(100);
+/// How long a departed server's receiver may take to answer its finalize.
+const DEPART: Duration = Duration::from_secs(1);
 
 /// One stage's uploads to a server; dropping it ends its lanes and feed.
 pub struct UploadSession {
@@ -172,10 +174,7 @@ impl UploadSession {
         let Upload { id, lanes, mut progress, token, .. } = self.upload;
         drop(lanes);
         let finished = async {
-            let control = &self.start.control;
-            if let Ok(mut answer) = control.send(Method::DELETE, Route::UploadProgress, Some(&id)).await {
-                while let Ok(Some(_)) = answer.chunk().await {}
-            }
+            self.start.control.finalize(&id).await;
             let _ = progress
                 .wait_for(|progress| progress.complete || progress.ended.is_some())
                 .await;
@@ -183,6 +182,13 @@ impl UploadSession {
         let _ = timeout(budget, finished).await;
         token.cancel();
         self.start.token.cancel();
+    }
+
+    /// Ends the lanes and feed, and asks the receiver to finalize without waiting more than a second for it.
+    pub fn depart(self) {
+        let (control, id) = (self.start.control.clone(), self.upload.id.clone());
+        self.start.token.cancel();
+        tokio::spawn(async move { timeout(DEPART, control.finalize(&id)).await });
     }
 
     /// Ends the current receiver and starts another in its place.
@@ -221,6 +227,13 @@ impl Control {
     /// The answer's head to `method` on `route` for upload `id`, if any, within the control timeout.
     async fn send(&self, method: Method, route: Route, id: Option<&str>) -> Result<Incoming, Fault> {
         self.client.control(self.via, self.request(method, route, id)).await
+    }
+
+    /// Asks the receiver of upload `id` to finalize and reads its answer.
+    async fn finalize(&self, id: &str) {
+        if let Ok(mut answer) = self.send(Method::DELETE, Route::UploadProgress, Some(id)).await {
+            while let Ok(Some(_)) = answer.chunk().await {}
+        }
     }
 
     /// The JSON answer to `method` on `route` for upload `id`, if any, within the control timeout.

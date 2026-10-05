@@ -1,4 +1,4 @@
-//! One server's share of a stage: its download lanes, upload session and prober. Dropping it is its departure.
+//! One server's share of a stage: its download lanes, upload session and prober; dropping it ends them.
 use super::{
     engine::{Probe, Sample, StagePlan, stagger},
     prepare::ServerPath,
@@ -128,6 +128,13 @@ impl Participant {
     /// Its latency population failed: probing ends.
     pub fn stop_probing(&mut self) {
         self.prober = None;
+    }
+
+    /// Leaves the stage: its work ends and its upload receiver is asked to finalize.
+    pub fn depart(mut self) {
+        if let Some(up) = self.up.take() {
+            up.depart();
+        }
     }
 
     /// Closes it if the window did not, and waits up to `budget` for its upload session to finish.

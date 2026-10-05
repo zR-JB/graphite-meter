@@ -1,9 +1,19 @@
 //! The network layer against canned peers, for what a real server never does, and under the process's environment:
 //! proxies, the trust store and grants over verified TLS.
 use bytes::Bytes;
-use graphite_meter_client::net::{Client, Fault, Request, retrying};
+use graphite_meter_client::{
+    model::{Dir, Stage},
+    net::{Client, Fault, Request, ThroughputPath, retrying, topology},
+    run::upload::UploadSession,
+};
 use graphite_meter_net::{ConnectError, Pool};
-use graphite_meter_proto::{discovery::Protocol, json, origin::Origin, route::Route, upload::Session};
+use graphite_meter_proto::{
+    discovery::{Protocol, ThroughputTransport},
+    json,
+    origin::Origin,
+    route::Route,
+    upload::Session,
+};
 use graphite_meter_testkit::{Identity, Scratch};
 use http::Method;
 use serde_json::Value;
@@ -23,6 +33,7 @@ use tokio::{
     sync::mpsc,
 };
 use tokio_rustls::TlsAcceptor;
+use tokio_util::sync::CancellationToken;
 
 /// Set in a child process that runs one test with the environment its parent chose.
 const CHILD: &str = "GRAPHITE_METER_TEST_CHILD";
@@ -243,6 +254,39 @@ async fn minting_redials_a_server_error_and_stands_at_a_client_error() {
     let (refused, requests) = mint(|_, _| Some("HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n".into())).await;
     assert!(matches!(refused, Err(Fault::Status { .. })), "{refused:?}");
     assert_eq!(requests, 1);
+}
+
+#[tokio::test]
+async fn a_departed_upload_session_asks_its_receiver_to_finalize() {
+    let (listener, address) = local().await;
+    let mut heads = peer(listener, None, |_, head| match head.split_once(' ').map(|(_, rest)| rest) {
+        Some(rest) if rest.starts_with("/upload/session ") => Some(ok(r#"{"uploadId":"u0"}"#)),
+        Some(rest) if rest.starts_with("/upload/progress?id=u0 ") && head.starts_with("GET") => {
+            Some("HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n11\r\n{\"type\":\"ready\"}\n\r\n".into())
+        }
+        Some(rest) if rest.starts_with("/upload/progress") => Some(ok("")),
+        _ => None,
+    });
+    let origin = origin("http", address);
+    let path = ThroughputPath {
+        origin,
+        transport: ThroughputTransport::FetchStream,
+        protocol: Protocol::Http1,
+    };
+    let plans = topology(&path, Stage::Upload, Dir { down: 0, up: 1 });
+    let (client, token) = (client(false), CancellationToken::new());
+    let session = UploadSession::open(&client, &path, plans, Duration::ZERO, Arc::default(), token);
+    session.await.unwrap().depart();
+    let finalized = async {
+        while let Some((_, head)) = heads.recv().await {
+            if head.starts_with("DELETE /upload/progress?id=u0 HTTP/1.1\r\n") {
+                return;
+            }
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(1), finalized)
+        .await
+        .expect("the receiver was asked to finalize");
 }
 
 #[tokio::test]
