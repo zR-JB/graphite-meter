@@ -54,6 +54,13 @@ impl State {
         (held < MAX_LOGIN_APPROVALS, total && !share_full(keys, MAX_CLIENT_APPROVALS, client))
     }
 
+    /// The approval of `challenge` while it lasts.
+    fn pending(&self, challenge: &str) -> Option<&Approval> {
+        self.approvals
+            .get(challenge)
+            .filter(|approval| Instant::now() < approval.deadline)
+    }
+
     fn open(&mut self, challenge: &str, browser: Option<HeaderValue>, keys: &ClientKeys, login: Option<LoginKey>) {
         let (clients, deadline) = (keys.iter().collect(), Instant::now() + LIFETIME);
         let approval = Approval { browser, clients, login, deadline, approved: false };
@@ -69,9 +76,9 @@ pub(super) fn cli_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer) -> 
     }
     let lease = signed_in(auth, request.headers());
     let mut state = lock(&auth.store.0);
-    state.sweep(Instant::now());
-    let found = state.approvals.get(&challenge);
-    let found = found.map(|approval| (approval.browser.clone(), approval.login));
+    let found = state
+        .pending(&challenge)
+        .map(|approval| (approval.browser.clone(), approval.login));
     if let Some((Some(origin), _)) = &found {
         let origin = origin.to_str().unwrap_or_default();
         let query = query::encode(&[("challenge", &challenge), ("client_origin", origin)]);
@@ -84,13 +91,14 @@ pub(super) fn cli_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer) -> 
     match found {
         Some((_, login)) if login != Some(lease.login()) => return refused(false),
         Some(_) => {}
-        None if state.approval_room(Some(lease.login()), &keys) == (true, true) => {
-            state.open(&challenge, None, &keys, Some(lease.login()));
-        }
         None => {
-            drop(state);
-            auth.security.count(Counter::Capacity);
-            return refused(true);
+            state.sweep(Instant::now());
+            if state.approval_room(Some(lease.login()), &keys) != (true, true) {
+                drop(state);
+                auth.security.count(Counter::Capacity);
+                return refused(true);
+            }
+            state.open(&challenge, None, &keys, Some(lease.login()));
         }
     }
     drop(state);
@@ -105,15 +113,15 @@ pub(super) fn browser_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer)
     let Some(origin) = origin.filter(|origin| browser_origin(origin) && verification_code(&challenge).is_some()) else {
         return refused(false);
     };
-    let known = lock(&auth.store.0).approvals.contains_key(&challenge);
+    let known = lock(&auth.store.0).pending(&challenge).is_some();
     let keys = peer
         .keys()
         .filter(|keys| known || auth.browser_approvals.allow(keys, false, None));
     let Some(keys) = keys else { return refused(true) };
     let login = signed_in(auth, headers);
     let mut state = lock(&auth.store.0);
-    state.sweep(Instant::now());
-    if !state.approvals.contains_key(&challenge) {
+    if state.pending(&challenge).is_none() {
+        state.sweep(Instant::now());
         if !state.approval_room(login.as_ref().map(AuthLease::login), &keys).1 {
             return refused(true);
         }

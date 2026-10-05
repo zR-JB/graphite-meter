@@ -108,6 +108,9 @@ async fn an_approval_expires_after_two_minutes_and_belongs_to_the_login_that_ope
     let approval = challenge(VERIFIER);
     let path = format!("/auth/cli?challenge={approval}");
     assert_eq!(page(&app, &path, Some(&operator)).await.status(), StatusCode::OK);
+    let asked = challenge("another-verifier-that-never-leaves-the-requester");
+    let browser = format!("/auth/browser?challenge={asked}&client_origin=https%3A%2F%2Fapp.example");
+    assert_eq!(location(&page(&app, &browser, None).await), format!("/login?challenge={asked}"));
     let refused = page(&app, &path, Some(&other)).await;
     assert_eq!(refused.status(), StatusCode::FORBIDDEN);
     assert!(text(refused).await.contains("This approval link is not valid."));
@@ -129,6 +132,9 @@ async fn an_approval_expires_after_two_minutes_and_belongs_to_the_login_that_ope
         StatusCode::FORBIDDEN
     );
     assert!(pending(exchange(&app, "/auth/cli/token", None, &verifier(VERIFIER)).await).await);
+    let expired = page(&app, &format!("/auth/cli?challenge={asked}"), None).await;
+    assert_eq!(location(&expired), format!("/login?challenge={asked}"), "no longer the browser's");
+    assert_eq!(page(&app, &path, Some(&other)).await.status(), StatusCode::OK, "opened afresh");
 }
 
 #[tokio::test]
