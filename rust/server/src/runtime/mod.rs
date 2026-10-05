@@ -127,7 +127,7 @@ impl Server {
         listening.socket.local_addr().ok()
     }
 
-    /// How many endpoints share the HTTP/3 port, for observation.
+    /// An observation hook for tests: how many endpoints share the HTTP/3 port.
     pub fn quic_endpoints(&self) -> usize {
         let quic = self.listeners.iter().find_map(|listening| match &listening.socket {
             Socket::Quic(quic) => Some(quic.listeners.len()),
@@ -136,7 +136,7 @@ impl Server {
         quic.unwrap_or(0)
     }
 
-    /// The buffer budget every listener draws on, for observation.
+    /// An observation hook for tests: the buffer budget every listener draws on.
     pub fn budget(&self) -> Budget {
         self.app.budget().clone()
     }

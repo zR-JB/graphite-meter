@@ -1,8 +1,4 @@
-//! The Linux endpoint set: one endpoint per runtime thread, each on its own `SO_REUSEPORT` socket of one address.
-//!
-//! The kernel picks a socket by a datagram's 4-tuple, so a client whose address changes can reach another endpoint.
-//! Connection IDs therefore begin with their endpoint's index, and each socket forwards the short-header packets
-//! that name another endpoint to that endpoint's queue.
+//! The Linux endpoint set: `SO_REUSEPORT` sockets on one address, forwarding packets whose connection ID names another.
 
 use noq::{AsyncUdpSocket, ConnectionId, ConnectionIdGenerator, InvalidCid, UdpSender, udp::RecvMeta};
 use std::{

@@ -48,10 +48,7 @@ impl Listen for TcpListener {
     }
 }
 
-/// Accepts until `shutdown`, holding each connection's share from `hold` (refused on `None`) and running `serve`'s
-/// future on the runtime `runtime` names. Then the listener closes at once, so new connections are refused, running
-/// ones get `SHUTDOWN_GRACE`, and the listener's closer ends those cut after it. Ends early only with the error of a
-/// socket that no longer listens.
+/// Accepts until `shutdown`, then closes the listener at once and drains; ends early if the socket stops listening.
 pub async fn serve<L, F>(
     mut listener: L,
     runtime: impl Fn() -> Handle,

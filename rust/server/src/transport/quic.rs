@@ -7,7 +7,7 @@ mod request;
 mod shard;
 mod window;
 
-pub use budget::{endpoint_bytes, floor_bytes, noq_floor};
+pub(crate) use budget::{endpoint_bytes, floor_bytes, noq_floor};
 pub use endpoint::{Binding, Endpoints};
 
 use super::{
@@ -41,7 +41,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use window::{SendWindow, Window};
 
-/// A whole handshake has this long, as quic-go's.
+/// A whole handshake has this long.
 const HANDSHAKE_BOUND: Duration = Duration::from_secs(10);
 /// How often a connection's send window follows its demand.
 const SEND_WINDOW_TUNING: Duration = Duration::from_millis(250);
@@ -96,7 +96,7 @@ impl Listen for Listener {
             .map_or_else(|_| "udp".into(), |address| format!("udp {address}"))
     }
 
-    /// Closes what the drain left, handshakes included, with H3_NO_ERROR, and lets the closes reach the socket.
+    /// Closes the connections the drain left with H3_NO_ERROR and lets the closes reach the socket.
     fn closer(&self) -> impl Future<Output = ()> + Send + 'static {
         let endpoint = self.endpoint.clone();
         async move {
@@ -209,7 +209,7 @@ impl Http3 {
     }
 }
 
-/// Go logs neither a peer's close nor an idle timeout.
+/// Whether a connection ended without a failure worth logging: a peer's close or an idle timeout.
 fn ended_normally(error: &http3::Error) -> bool {
     use noq::ConnectionError::{ConnectionClosed, LocallyClosed, TimedOut};
     match error {

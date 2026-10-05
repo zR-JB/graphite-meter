@@ -19,7 +19,7 @@ use std::{
 
 /// The connection window until an admitted upload reads.
 const DEFAULT_WINDOW: u32 = 65_535;
-/// Go's connection receive window, raised while admitted uploads read.
+/// The connection window while admitted uploads read.
 const WINDOW: u32 = 16 << 20;
 
 /// The connection's receive window: 64 KiB until an admitted upload reads, then 16 MiB until the last admitted upload

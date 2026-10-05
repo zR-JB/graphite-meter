@@ -46,14 +46,14 @@ pub const FLOOR_BYTES: usize = TRANSPORT_BYTES + STATE_BYTES;
 const TRANSPORT_BYTES: usize = 512 << 10;
 /// Decoded headers, buffered DATA and queued response metadata, which h2 charges to the floor as they fill.
 const STATE_BYTES: usize = 1 << 20;
-/// Go's stream receive window; the connection's opens to 16 MiB for admitted uploads.
+/// Each stream's receive window; the connection's opens to 16 MiB for admitted uploads.
 const STREAM_WINDOW: u32 = 8 << 20;
 const MAX_STREAMS: u32 = 250;
 /// 64 KiB frames cut the CPU cost per byte of bulk transfers by about a quarter.
 const FRAME_BYTES: usize = 64 << 10;
 /// The client preface and first SETTINGS arrive within this.
 const PREFACE_BOUND: Duration = Duration::from_secs(10);
-/// Go's TCP_NOTSENT_LOWAT: unsent downloads wait in h2's scheduler, where control replies interleave.
+/// Unsent downloads wait in h2's scheduler, where control replies interleave.
 #[cfg(target_os = "linux")]
 const NOTSENT_LOWAT: u32 = 64 << 10;
 
