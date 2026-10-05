@@ -35,6 +35,9 @@ async fn closed(socket: &mut WebSocketStream<TcpStream>) -> (u16, String) {
     }
 }
 
+/// RFC 6455's sample handshake nonce.
+const NONCE: &str = "dGhlIHNhbXBsZSBub25jZQ==";
+
 #[tokio::test]
 async fn a_bus_answers_text_and_binary_pings_until_the_peer_closes() {
     let server = start(&[]).await;
@@ -103,8 +106,9 @@ async fn shutdown_closes_buses_with_1001_while_the_listener_refuses_connections(
 #[tokio::test]
 async fn handshakes_refuse_head_and_http_1_0_with_the_headers_http_requires() {
     let server = start(&[]).await;
-    let upgrade = "Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n\
-                   Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+    let upgrade = format!(
+        "Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {NONCE}\r\n\r\n"
+    );
     let mut client = server.connect().await;
     client
         .send(&format!("HEAD /ws/ping HTTP/1.1\r\nHost: test\r\n{upgrade}"))
