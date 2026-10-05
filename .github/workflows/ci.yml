@@ -263,6 +263,62 @@ jobs:
             ${{ runner.temp }}/browser-*/*.json
           if-no-files-found: ignore
 
+  # Temporary: this branch's server against PR #210's on one runner.
+  rust-perf:
+    name: Rust perf smoke against PR 210
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    env:
+      CARGO_INCREMENTAL: '0'
+      BASELINE_SHA: a020e9013dd800ed989b7bdbca6a845c3825929a
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up Go and Rust
+        uses: ./.github/actions/setup-project
+        with: {go: 'true', rust: 'true'}
+      - name: Install the musl compiler for the static servers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+      - id: baseline
+        name: Restore PR 210's static release server
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/baseline
+          key: rust-perf-baseline-${{ runner.os }}-${{ runner.arch }}-${{ env.BASELINE_SHA }}
+      - name: Build PR 210's static release server
+        if: steps.baseline.outputs.cache-hit != 'true'
+        env:
+          SOURCE: ${{ runner.temp }}/pr210
+          DESTINATION: ${{ runner.temp }}/baseline
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASELINE_SHA"
+          git worktree add --detach "$SOURCE" "$BASELINE_SHA"
+          python3 rust/interop/perf.py build "$SOURCE" "$DESTINATION"
+      - name: Build this branch's static release server
+        env:
+          DESTINATION: ${{ runner.temp }}/candidate
+        run: python3 rust/interop/perf.py build . "$DESTINATION"
+      - name: Compare HTTP/1, HTTP/2 and HTTP/3 with PR 210 in alternating order
+        env:
+          BASELINE: ${{ runner.temp }}/baseline/graphite-meter-server
+          CANDIDATE: ${{ runner.temp }}/candidate/graphite-meter-server
+        run: python3 rust/interop/perf.py measure "$BASELINE" "$CANDIDATE"
+      - name: Upload the perf runs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rust-perf-smoke
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/perf-*/*.json*
+            ${{ runner.temp }}/perf-*/*.log
+          if-no-files-found: ignore
+
   secret-scan:
     name: Secret Scan
     runs-on: ubuntu-24.04
@@ -282,7 +338,7 @@ jobs:
     name: Gate
     runs-on: ubuntu-24.04
     if: always()
-    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop]
+    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-perf]
     steps:
       - name: Require every selected job
         env:
