@@ -86,7 +86,7 @@ async fn a_silent_handshake_holds_its_connection_for_ten_seconds() {
 }
 
 /// The budget's usage once it held still for a while.
-async fn settled(budget: &Budget) -> usize {
+pub(super) async fn settled(budget: &Budget) -> usize {
     let mut last = budget.usage().used;
     loop {
         tokio::time::sleep(Duration::from_millis(100)).await;

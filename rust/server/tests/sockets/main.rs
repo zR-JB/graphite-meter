@@ -9,6 +9,7 @@ mod tls;
 mod transfer;
 mod websocket;
 mod webtransport;
+mod webtransport_upload;
 
 use graphite_meter_server::{
     app::Endpoint,

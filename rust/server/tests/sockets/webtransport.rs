@@ -12,25 +12,25 @@ use tokio::time::Instant;
 
 impl Connection {
     /// The session `path` opens, or the answer refusing it.
-    async fn open_session(&self, path: &str) -> Result<Session, Response<()>> {
+    pub(super) async fn open_session(&self, path: &str) -> Result<Session, Response<()>> {
         let request = Request::get(format!("https://localhost{path}")).body(()).unwrap();
         let opened = Session::connect(&self.requests, request).await.unwrap();
         opened.map(|(session, _)| session)
     }
 
-    async fn session(&self, path: &str) -> Session {
+    pub(super) async fn session(&self, path: &str) -> Session {
         self.open_session(path).await.unwrap()
     }
 }
 
 /// Whether the session is still open after a moment of real time.
-async fn open(session: &Session) -> bool {
+pub(super) async fn open(session: &Session) -> bool {
     tokio::time::timeout(Duration::from_millis(50), session.closed())
         .await
         .is_err()
 }
 
-fn ending(code: u32, reason: &str) -> (u32, String) {
+pub(super) fn ending(code: u32, reason: &str) -> (u32, String) {
     (code, reason.into())
 }
 

@@ -21,7 +21,11 @@ use crate::{
     lane::{Lane, Work},
     limits::{Budget, Hold, Pressure, Quotas, Refusal, Transport},
     peer::{ClientKeys, Peer},
-    transport::{body::Body, websocket, webtransport::Plan},
+    transport::{
+        body::Body,
+        websocket,
+        webtransport::{Plan, Upload},
+    },
 };
 use bytes::Buf;
 use gate::Gate;
@@ -204,7 +208,9 @@ impl App {
         let response = match route {
             Route::Upload => return self.receive(request, peer, connection, exchange).await,
             Route::Ping => return self.websocket(&request, peer, connection, exchange),
-            Route::WtDownload | Route::WtPing => return self.webtransport(&request, route, peer, connection, exchange),
+            Route::WtDownload | Route::WtUpload | Route::WtPing => {
+                return self.webtransport(&request, route, peer, connection, exchange);
+            }
             Route::Download => self.download(&request, peer, connection, exchange),
             Route::UploadProgress => self.progress(&request, peer, connection, exchange),
             Route::Probe => self.probe(peer, connection.endpoint),
@@ -213,8 +219,6 @@ impl App {
             Route::UploadSession => self.upload_session(),
             Route::UploadCheckpoint => self.checkpoint(&request, peer),
             Route::WtSession | Route::WsSession => self.ticket(),
-            // No transport serves it yet.
-            Route::WtUpload => response::status(StatusCode::NOT_IMPLEMENTED),
         };
         Outcome::Response(response)
     }
@@ -263,6 +267,12 @@ impl App {
                 streams: query::streams(query),
                 datagrams: query::datagrams(query),
             },
+            Route::WtUpload => Plan::Upload(Upload {
+                uploads: self.uploads.clone(),
+                id: query::get(query, "id").unwrap_or_default(),
+                owner: peer.keys(),
+                datagrams: query::datagrams(query),
+            }),
             _ => Plan::Ping,
         };
         Outcome::WebTransport(response::empty(StatusCode::OK), lane, plan)

@@ -25,7 +25,7 @@ use std::{
 use tokio::time::{Instant, Sleep, sleep_until};
 
 /// An upload refused a raised receive window asks again after this pause.
-const FUNDING_RETRY: Duration = Duration::from_millis(100);
+pub(crate) const FUNDING_RETRY: Duration = Duration::from_millis(100);
 
 /// A reply's body and what bounds writing it.
 pub struct Body {

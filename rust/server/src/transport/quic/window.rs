@@ -39,7 +39,7 @@ impl Window {
     }
 
     /// Whether an upload of `keys` reads at the raised window, raising it for the first.
-    fn fund(&self, keys: &ClientKeys) -> bool {
+    pub(super) fn fund(&self, keys: &ClientKeys) -> bool {
         let reserved = self.budget.reserve(&self.app, keys);
         if reserved {
             self.quic.set_receive_window(RECEIVE_WINDOW.into());

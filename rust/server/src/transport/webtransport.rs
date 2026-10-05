@@ -1,6 +1,10 @@
 //! WebTransport sessions (`api/wire.md#webtransport-routes`): each accepted after its admission, served over its lane,
 //! and closed with its ending's code once its route's streams have dropped.
 
+mod upload;
+
+pub use upload::Upload;
+
 use crate::{
     engine::{DownloadSource, reflect::reflect},
     lane::Lane,
@@ -29,6 +33,8 @@ pub enum Plan {
     Ping,
     /// `source`'s bytes on `streams` server streams, or repeated in datagrams.
     Download { source: DownloadSource, streams: usize, datagrams: bool },
+    /// Client streams, and datagrams when asked, into an upload, with its progress feed on a server stream.
+    Upload(Upload),
 }
 
 impl fmt::Debug for Plan {
@@ -41,18 +47,19 @@ impl fmt::Debug for Plan {
                 .field("streams", streams)
                 .field("datagrams", datagrams)
                 .finish(),
+            Self::Upload(upload) => upload.fmt(formatter),
         }
     }
 }
 
 /// Accepts the session on `stream` with `headers`, serves `plan` until `lane` ends, the peer closes or the route is
-/// done, and closes it with the ending's code.
-pub async fn serve(stream: RequestStream, headers: HeaderMap, lane: Lane, plan: Plan) {
+/// done, and closes it with the ending's code. An upload asks `fund` whether it reads at the raised receive window.
+pub async fn serve(stream: RequestStream, headers: HeaderMap, lane: Lane, plan: Plan, fund: impl FnMut() -> bool) {
     let Ok(session) = Session::accept(stream, headers).await else {
         return;
     };
     let ending = {
-        let routed = route(&session, &lane, plan);
+        let routed = route(&session, &lane, plan, fund);
         tokio::select! {
             biased;
             ending = lane.ended() => ending,
@@ -63,10 +70,11 @@ pub async fn serve(stream: RequestStream, headers: HeaderMap, lane: Lane, plan: 
     session.close(ending.webtransport_code(), ending.reason()).await;
 }
 
-async fn route(session: &Session, lane: &Lane, plan: Plan) {
+async fn route(session: &Session, lane: &Lane, plan: Plan, fund: impl FnMut() -> bool) {
     match plan {
         Plan::Ping => ping(session, lane).await,
         Plan::Download { source, streams, datagrams } => download(session, lane, source, streams, datagrams).await,
+        Plan::Upload(upload) => upload.serve(session, lane, fund).await,
     }
 }
 

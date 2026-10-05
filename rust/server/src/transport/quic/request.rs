@@ -6,7 +6,7 @@ use crate::{
     app::{App, Connection, Outcome},
     exchange::{Exchange, Watch},
     transport::{
-        body::{Aborted, Body, ReplyBound, Sink, pump, within},
+        body::{Aborted, Body, Funding, ReplyBound, Sink, pump, within},
         webtransport::{self, ANSWER_BOUND},
     },
 };
@@ -66,7 +66,7 @@ impl Requests {
             return;
         };
         if head.method() == Method::CONNECT {
-            return self.connect(head, stream, exchange).await;
+            return self.connect(head, stream, exchange, watch).await;
         }
         let (send, recv) = stream.split();
         let bodiless = head.method() == Method::HEAD;
@@ -89,11 +89,16 @@ impl Requests {
     }
 
     /// A CONNECT: its WebTransport session, or the app's answer within `ANSWER_BOUND`.
-    async fn connect(&self, head: Request<()>, stream: RequestStream, exchange: Exchange) {
+    async fn connect(&self, head: Request<()>, stream: RequestStream, exchange: Exchange, watch: &Watch) {
         let request = head.map(|()| Body::empty());
         match self.app.handle(request, &self.connection, exchange).await {
             Outcome::WebTransport(response, lane, plan) => {
-                webtransport::serve(stream, response.into_parts().0.headers, lane, plan).await;
+                let (window, mut funding) = (&self.window, Funding::Unfunded(None));
+                let fund = || {
+                    funding.fund(watch, self.app.budget(), |keys| window.fund(keys));
+                    matches!(funding, Funding::Funded)
+                };
+                webtransport::serve(stream, response.into_parts().0.headers, lane, plan, fund).await;
             }
             Outcome::Response(response) => {
                 let (send, _recv) = stream.split();
