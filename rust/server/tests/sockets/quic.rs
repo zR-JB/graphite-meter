@@ -1,4 +1,5 @@
-//! The QUIC endpoint: Retry under pressure, the handshake bound, receive credit, and the budget it binds within.
+//! The QUIC endpoint: Retry under pressure, the handshake bound, receive credit, the budget it binds within, and the
+//! floors it shares with HTTP/2.
 
 use super::{
     http3::{ADDRESS, H3, read, transport},
@@ -6,7 +7,9 @@ use super::{
 };
 use graphite_meter_server::limits::CONNECTION_CREDIT;
 use graphite_meter_testkit::{Identity, Scratch};
+use rustls::pki_types::ServerName;
 use tokio::net::UdpSocket;
+use tokio_rustls::TlsConnector;
 
 const INITIAL: u8 = 0;
 const RETRY: u8 = 3;
@@ -197,4 +200,65 @@ async fn binding_checks_the_budget_with_the_chain_and_the_socket_it_holds() {
     let socket = socket.expect("the socket's buffers count");
     assert!(minimum(&socket) > minimum(&configured), "{socket}");
     assert_eq!(refusal(&scratch, &minimum(&socket).to_string()).await, None);
+}
+
+/// Leases what the budget has left past `spare` bytes.
+fn exhaust(budget: &Budget, spare: usize) -> graphite_meter_server::limits::Lease {
+    loop {
+        let left = budget.usage().limit - budget.usage().used;
+        if let Some(lease) = budget.lease(left.saturating_sub(spare)) {
+            return lease;
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_exhausted_budget_slows_running_connections_and_closes_one_whose_floor_does_not_fit() {
+    let h3 = H3::start(&[]).await;
+    let budget = h3.server.budget.clone();
+    let running = h3.connect(transport(None)).await;
+    let mut download = running.send("GET", "/download?bytes=4194304", b"").await.1;
+    let exhausted = exhaust(&budget, 0);
+    let bytes = tokio::time::timeout(Duration::from_secs(10), read(&mut download)).await;
+    assert_eq!(bytes.unwrap().unwrap().len(), 4 << 20, "refused charges leave the transfer its floors");
+    drop(exhausted);
+
+    let short = exhaust(&budget, 128 << 10);
+    let closed = match h3.connect_from("127.0.0.2", transport(None)).await {
+        Ok(refused) => refused.quic.closed().await,
+        Err(error) => error,
+    };
+    let noq::ConnectionError::ConnectionClosed(close) = closed else {
+        panic!("{closed:?}")
+    };
+    assert_eq!(close.error_code, noq::TransportErrorCode::INTERNAL_ERROR);
+    assert_eq!(running.quic.close_reason(), None);
+    drop(short);
+    assert_eq!(
+        running.json("GET", "/probe").await["load"]["active"],
+        0,
+        "the running connection serves on"
+    );
+}
+
+#[tokio::test]
+async fn http2_and_http3_connections_hold_their_floors_in_one_budget_and_http1_none() {
+    let h3 = H3::start(&[("GM_H2_ADDR", "localhost:0")]).await;
+    let budget = h3.server.budget.clone();
+    let idle = settled(&budget).await;
+    let mut http1 = h3.server.connect().await;
+    assert_eq!(http1.request("GET /probe", "").await.status, 200);
+    assert_eq!(settled(&budget).await, idle, "an HTTP/1 connection holds no floor");
+    let connector = TlsConnector::from(Arc::new(h3.identity.client(&[b"h2"])));
+    let socket = TcpStream::connect(h3.server.h2.unwrap()).await.unwrap();
+    let name = ServerName::try_from("localhost").unwrap();
+    let (_http2, driver) = h2::client::handshake(connector.connect(name, socket).await.unwrap())
+        .await
+        .unwrap();
+    let _driver = tokio::spawn(driver);
+    let http2 = settled(&budget).await - idle;
+    assert_eq!(http2, graphite_meter_server::transport::http2::FLOOR_BYTES);
+    let _http3 = h3.connect(transport(None)).await;
+    let http3 = settled(&budget).await - idle - http2;
+    assert!(http3 >= 481 << 10, "{http3} bytes for an HTTP/3 connection");
 }
