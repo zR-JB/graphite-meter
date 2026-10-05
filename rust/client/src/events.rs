@@ -194,6 +194,8 @@ pub enum Check {
     Checking,
     Ready,
     Failed(Failure),
+    /// A sign-in the check asked for was cancelled or expired.
+    SignIn,
 }
 
 /// A run from its preparation on.
@@ -237,12 +239,12 @@ impl View {
             Event::Prepared { servers, catalogue } => {
                 (self.servers, self.catalogue, self.check) = (servers.clone(), catalogue.clone(), Check::Ready);
             }
-            Event::CheckFailed(failure) => self.check = Check::Failed(failure.clone()),
+            Event::CheckFailed(failure) if self.check == Check::Checking => self.check = Check::Failed(failure.clone()),
             Event::SignIn(prompt) => self.sign_in = Some(prompt.clone()),
             Event::SignInEnded(end) => {
                 self.sign_in = None;
-                if *end == SignInEnd::Cancelled && self.check == Check::Checking {
-                    self.check = Check::Idle;
+                if matches!(end, SignInEnd::Cancelled | SignInEnd::Expired) && self.check == Check::Checking {
+                    self.check = Check::SignIn;
                 }
             }
             Event::RunStarted { plan, focus, at } => self.run = Some(Run::new(plan, focus, *at)),

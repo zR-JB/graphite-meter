@@ -280,6 +280,9 @@ impl App {
         if let Err(error) = self.config.validate() {
             return Line::styled(error, palette.warn);
         }
+        if self.view.check == Check::SignIn {
+            return Line::styled("sign in first; v requests a new code", palette.warn);
+        }
         if self.checking() {
             return Line::styled(self.spinner(), palette.accent).and(" checking paths", palette.muted);
         }

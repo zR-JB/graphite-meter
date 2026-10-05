@@ -110,7 +110,7 @@ impl App {
 /// The sign-in prompt's arrival and whether its page was opened.
 pub struct SignIn {
     since: Instant,
-    opened: bool,
+    pub(super) opened: bool,
 }
 
 impl SignIn {

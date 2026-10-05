@@ -331,3 +331,29 @@ fn an_expired_sign_in_asks_for_a_new_code() {
     assert!(shows(&mut app, now, "Sign-in expired. Press v to request a new code."));
     assert!(!shows(&mut app, now, "Match this code"));
 }
+
+#[test]
+fn a_cancelled_or_expired_sign_in_asks_to_sign_in_before_a_test() {
+    for end in [SignInEnd::Cancelled, SignInEnd::Expired] {
+        let (mut app, now) = app();
+        app.event(&Event::Checking { run: false }, now);
+        let prompt = SignInPrompt {
+            issuer: "Meter".into(),
+            url: PAGE.into(),
+            code: "ABCD-EFGH".into(),
+            deadline: (now + Duration::from_secs(120)).into(),
+        };
+        app.event(&Event::SignIn(prompt), now);
+        assert!(frame(&mut app, now)[0].ends_with(" Sign in"));
+        press(&mut app, KeyCode::Enter, now);
+        assert!(frame(&mut app, now)[0].ends_with(" Checking sign-in"));
+        app.event(&Event::SignInEnded(end), now);
+        app.event(&Event::CheckFailed(Unapproved::Expired.failure()), now);
+        assert!(frame(&mut app, now)[0].ends_with(" Sign in"), "{end:?}");
+        assert!(focused(&mut app, now).contains("› Start test sign in first; v requests a new code"));
+        assert_eq!(press(&mut app, KeyCode::Char('r'), now), []);
+        assert!(shows(&mut app, now, "Test cannot start: sign in first. Press v to request a new code."));
+        press(&mut app, KeyCode::Char('v'), now);
+        assert_eq!(checked(app.tick(now + Duration::from_millis(350))), Config::default());
+    }
+}

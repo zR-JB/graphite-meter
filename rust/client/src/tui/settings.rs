@@ -6,6 +6,7 @@ use super::{
 };
 use crate::{
     config::{Config, MAX_STREAMS, PathChoice, Streams},
+    events::Check,
     report::vocabulary::{self as words, CADENCES},
     text::Line,
     tui::theme::Palette,
@@ -33,6 +34,10 @@ impl App {
         let resetting = std::mem::take(&mut self.setup.resetting);
         if resetting && (action, row) != (Action::Open, Row::Reset) {
             self.notice = "Settings kept.".into();
+            return Vec::new();
+        }
+        if action == Action::Start && self.view.check == Check::SignIn {
+            self.notice = "Test cannot start: sign in first. Press v to request a new code.".into();
             return Vec::new();
         }
         if action == Action::Start || (action, row) == (Action::Open, Row::Start) {

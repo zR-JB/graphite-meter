@@ -7,6 +7,7 @@ use super::{
 };
 use crate::{
     VERSION,
+    events::Check,
     report::vocabulary as words,
     text::{Line, Profile, Style},
 };
@@ -110,9 +111,14 @@ impl App {
             Some((None, Some((_, None)))) => "Warmup",
             Some((None, None)) => "Checking paths",
             None if self.config.validate().is_err() => "Test cannot start",
-            None if self.checking() => "Checking paths",
-            None if self.could_not_start() => "Test could not start",
-            None => "Not started",
+            None => match &self.screen {
+                Screen::SignIn(sign_in) if sign_in.opened => "Checking sign-in",
+                Screen::SignIn(_) => "Sign in",
+                _ if self.view.check == Check::SignIn => "Sign in",
+                _ if self.checking() => "Checking paths",
+                _ if self.could_not_start() => "Test could not start",
+                _ => "Not started",
+            },
         };
         (label, palette.pill)
     }
