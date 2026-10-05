@@ -3,8 +3,11 @@
 use graphite_meter_client::{
     VERSION,
     config::{self, Config, Parsed, Refusal},
-    headless, report, text as styled,
-    tui::theme::{self, Palette},
+    headless, report, status, text as styled,
+    tui::{
+        self,
+        theme::{self, Palette},
+    },
 };
 use graphite_meter_net::Pool;
 use graphite_meter_proto::text;
@@ -53,13 +56,18 @@ fn fail(error: &str) -> ExitCode {
     ExitCode::FAILURE
 }
 
-/// Runs `config` once and prints its report to stdout, or why it never started to stderr.
+/// Runs the interface on a terminal; otherwise, or with `-report`, runs `config` once and prints its report to
+/// stdout, or why it never started to stderr.
 fn run(config: Config) -> io::Result<ExitCode> {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     let pool = Arc::new(Pool::new()?);
     runtime.block_on(async {
         let stop = signals()?;
         let terminal = io::stdout().is_terminal();
+        if terminal && !config.report {
+            let exit = tui::interactive(config, pool, stop).await?;
+            return Ok(ExitCode::from(status(&exit.view, exit.signal)));
+        }
         let columns = crossterm::terminal::size().ok().map(|(columns, _)| columns);
         let columns = columns.filter(|&columns| terminal && columns > 0);
         #[cfg(unix)]

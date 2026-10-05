@@ -12,7 +12,10 @@ use graphite_meter_client::{
     tui::theme::Palette,
 };
 use graphite_meter_proto::{catalog::ServerId, origin::Origin, reason::FailureReason};
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 const SECOND: Duration = Duration::from_secs(1);
 
@@ -55,7 +58,9 @@ fn view(names: &[&str]) -> View {
     let servers = names.iter().map(|name| ServerPath {
         id: id(name),
         name: format!("{name} meter"),
+        location: String::new(),
         origin: origin.clone(),
+        offered: None,
         path: Err(unchecked.clone()),
     });
     let plan = vec![(Stage::Latency, SECOND * 4), (Stage::Download, SECOND * 10)];
@@ -100,7 +105,7 @@ fn view(names: &[&str]) -> View {
     };
     let events = [
         Event::Checking { run: true },
-        Event::Prepared(servers.collect()),
+        Event::Prepared { servers: servers.collect(), catalogue: Arc::new([]) },
         Event::RunStarted { plan, focus: id(names[0]), at },
         Event::StageFinished(idle),
         Event::StageFinished(download),

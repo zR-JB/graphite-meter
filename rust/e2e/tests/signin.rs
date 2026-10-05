@@ -151,10 +151,12 @@ async fn a_sign_in_approved_over_http_lets_the_run_complete() {
     );
     assert_eq!(prompt.code.len(), 8);
     approve(&server, &identity, address, &prompt).await;
-    let checked =
-        until(&mut received, LIMIT, |event| matches!(event, Event::Prepared(_) | Event::CheckFailed(_))).await;
+    let checked = until(&mut received, LIMIT, |event| {
+        matches!(event, Event::Prepared { .. } | Event::CheckFailed(_))
+    })
+    .await;
     assert_eq!(checked[0], Event::SignInEnded(SignInEnd::Approved));
-    let Some(Event::Prepared(servers)) = checked.last() else {
+    let Some(Event::Prepared { servers, .. }) = checked.last() else {
         panic!("{checked:#?}")
     };
     assert!(servers.iter().all(|server| server.path.is_ok()), "{servers:#?}");

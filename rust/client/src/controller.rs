@@ -29,6 +29,7 @@ const GRACE: Duration = Duration::from_secs(5);
 pub const SIGN_IN: &str = "Sign-in required; run graphite-meter-client in a terminal to sign in.";
 const REJECTED: &str = "server rejected the approved credential; verify its authentication configuration";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Check(Config),
     Run(Config),
@@ -166,7 +167,7 @@ impl Work {
         self.events.send(Event::Checking { run: false });
         match self.prepare(config, state).await {
             Some(Ok(prepared)) => {
-                self.events.send(Event::Prepared(prepared.servers.clone().into()));
+                self.events.send(prepared.event());
                 state.prepared = Some(prepared);
             }
             Some(Err(failure)) => self.events.send(Event::CheckFailed(failure)),
@@ -188,7 +189,7 @@ impl Work {
         };
         let (outcome, error) = match prepared.filter(|_| !self.stop.is_cancelled()) {
             Some(Ok(prepared)) => {
-                self.events.send(Event::Prepared(prepared.servers.clone().into()));
+                self.events.send(prepared.event());
                 coordinator::run(&prepared, config, &self.events, self.stop.clone()).await;
                 return;
             }

@@ -4,7 +4,7 @@ use crate::{
     model::{Dir, Direction, Failure, Outcome, Scope, Stage, StageResult, focus},
     run::{engine::StagePlan, prepare::ServerPath},
 };
-use graphite_meter_proto::catalog::ServerId;
+use graphite_meter_proto::catalog::{ServerEntry, ServerId};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -17,8 +17,11 @@ pub enum Event {
     Checking {
         run: bool,
     },
-    /// The selected servers and their paths, in catalogue order.
-    Prepared(Arc<[ServerPath]>),
+    /// The catalogue and the selected servers with their paths, in catalogue order.
+    Prepared {
+        servers: Arc<[ServerPath]>,
+        catalogue: Arc<[ServerEntry]>,
+    },
     /// The path check could not finish.
     CheckFailed(Failure),
     /// A server asks for sign-in until `SignInEnded`.
@@ -177,8 +180,9 @@ impl Series {
 pub struct View {
     pub check: Check,
     pub sign_in: Option<SignInPrompt>,
-    /// The latest preparation's servers.
+    /// The latest preparation's servers and catalogue.
     pub servers: Arc<[ServerPath]>,
+    pub catalogue: Arc<[ServerEntry]>,
     pub run: Option<Run>,
 }
 
@@ -231,10 +235,17 @@ impl View {
         match event {
             Event::Checking { run: true } => self.run = Some(Run::default()),
             Event::Checking { run: false } => self.check = Check::Checking,
-            Event::Prepared(servers) => (self.servers, self.check) = (servers.clone(), Check::Ready),
+            Event::Prepared { servers, catalogue } => {
+                (self.servers, self.catalogue, self.check) = (servers.clone(), catalogue.clone(), Check::Ready);
+            }
             Event::CheckFailed(failure) => self.check = Check::Failed(failure.clone()),
             Event::SignIn(prompt) => self.sign_in = Some(prompt.clone()),
-            Event::SignInEnded(_) => self.sign_in = None,
+            Event::SignInEnded(end) => {
+                self.sign_in = None;
+                if *end == SignInEnd::Cancelled && self.check == Check::Checking {
+                    self.check = Check::Idle;
+                }
+            }
             Event::RunStarted { plan, focus, at } => self.run = Some(Run::new(plan, focus, *at)),
             Event::RunFinished { outcome, error, elapsed } => {
                 let run = self.run.get_or_insert_with(Run::default);

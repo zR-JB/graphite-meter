@@ -136,8 +136,8 @@ impl Config {
         Dir { down, up }
     }
 
-    /// The checks made before the path choices are read.
-    fn validate(&self) -> Result<(), String> {
+    /// Why the settings cannot run, if they cannot.
+    pub fn validate(&self) -> Result<(), String> {
         if self.stages.is_empty() {
             return Err("select at least one stage: latency, download, upload or bidirectional".into());
         }

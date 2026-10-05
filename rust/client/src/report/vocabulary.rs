@@ -1,10 +1,15 @@
-//! The words and numbers views print: stage and population labels, durations, counts and a run's cells.
+//! The words and numbers views print: stage, population and path labels, durations, counts and a run's cells.
 use crate::{
     measure::{
         format,
         latency::{Population, added},
     },
-    model::{Direction, Outcome, Stage, Throughput},
+    model::{Cadence, Direction, Outcome, Stage, Throughput},
+    net::{LatencyPath, ThroughputPath},
+};
+use graphite_meter_proto::{
+    discovery::{LatencyTransport, Protocol, ThroughputTransport},
+    origin::{Origin, Scheme},
 };
 use std::time::Duration;
 
@@ -111,4 +116,95 @@ pub fn count(value: usize) -> String {
         .map(String::from_utf8_lossy)
         .collect();
     groups.join(",")
+}
+
+/// A setting's duration: milliseconds, seconds, then whole minutes or hours with what remains.
+pub fn setting(duration: Duration) -> String {
+    if duration < Duration::from_secs(1) {
+        return format!("{} ms", duration.as_millis());
+    }
+    if duration < Duration::from_secs(60) {
+        return format!("{} s", duration.as_secs_f64());
+    }
+    let (step, (large, small)) = match duration < Duration::from_secs(3600) {
+        true => (1.0, ("min", "s")),
+        false => (60.0, ("h", "min")),
+    };
+    let steps = (duration.as_secs_f64() / step).round() as u64;
+    match steps % 60 {
+        0 => format!("{} {large}", steps / 60),
+        rest => format!("{} {large} {rest} {small}", steps / 60),
+    }
+}
+
+/// An HTTP version; none is automatic.
+pub fn protocol(protocol: Option<Protocol>) -> &'static str {
+    match protocol {
+        None => "Automatic",
+        Some(Protocol::Http1) => "HTTP/1.1",
+        Some(Protocol::Http2) => "HTTP/2",
+        Some(Protocol::Http3) => "HTTP/3",
+        Some(Protocol::Negotiated) => "Negotiated",
+    }
+}
+
+pub fn throughput_transport(transport: ThroughputTransport) -> &'static str {
+    match transport {
+        ThroughputTransport::FetchStream => "Fetch streams",
+        ThroughputTransport::WebTransport => "WebTransport streams",
+        ThroughputTransport::WebTransportDatagram => "WebTransport datagrams",
+    }
+}
+
+pub fn latency_transport(transport: LatencyTransport) -> &'static str {
+    match transport {
+        LatencyTransport::WebSocket => "WebSocket",
+        LatencyTransport::WebTransport => "WebTransport datagrams",
+    }
+}
+
+/// The HTTP version a latency transport runs over.
+pub fn latency_protocol(transport: LatencyTransport) -> Protocol {
+    match transport {
+        LatencyTransport::WebSocket => Protocol::Http1,
+        LatencyTransport::WebTransport => Protocol::Http3,
+    }
+}
+
+/// A path as its transport, HTTP version and security.
+pub fn connection(transport: &str, version: Protocol, origin: &Origin) -> String {
+    let security = if origin.scheme == Scheme::Https { "TLS" } else { "clear" };
+    format!("{transport} · {} · {security}", protocol(Some(version)))
+}
+
+pub fn throughput_path(path: &ThroughputPath) -> String {
+    connection(throughput_transport(path.transport), path.protocol, &path.origin)
+}
+
+pub fn latency_path(path: &LatencyPath) -> String {
+    connection(latency_transport(path.transport), latency_protocol(path.transport), &path.origin)
+}
+
+/// A server's name and, when it has one, its location.
+pub fn server(name: &str, location: &str) -> String {
+    match location {
+        "" => name.to_owned(),
+        location => format!("{name} · {location}"),
+    }
+}
+
+/// The cadence presets setup steps through, with their names.
+pub const CADENCES: [(Cadence, &str); 4] = [
+    (Cadence::ReplyDriven, "Reply-driven"),
+    (Cadence::Every(Duration::from_millis(80)), "Fast (80 ms)"),
+    (Cadence::Every(Duration::from_millis(250)), "Medium (250 ms)"),
+    (Cadence::Every(Duration::from_millis(600)), "Slow (600 ms)"),
+];
+
+/// A probe cadence by its preset's name, or its spacing.
+pub fn cadence(cadence: Cadence) -> String {
+    match (CADENCES.iter().find(|(preset, _)| *preset == cadence), cadence) {
+        (None, Cadence::Every(spacing)) => format!("Custom ({})", setting(spacing)),
+        (preset, _) => preset.unwrap_or(&CADENCES[0]).1.into(),
+    }
 }

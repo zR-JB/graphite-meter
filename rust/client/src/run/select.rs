@@ -363,7 +363,9 @@ mod tests {
         let server = |name: &str, seconds: u64, prepared: bool| ServerPath {
             id: ServerId::parse(name).unwrap(),
             name: name.to_uppercase(),
+            location: String::new(),
             origin: Origin::parse(SERVED).unwrap(),
+            offered: None,
             path: match prepared {
                 true => Ok(Paths {
                     throughput: ThroughputPath {

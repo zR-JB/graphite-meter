@@ -3,6 +3,7 @@
 use super::select;
 use crate::{
     config::{Config, PrepKey},
+    events::Event,
     model::Failure,
     net::{Client, Fault, LatencyPath, Request, ThroughputPath},
 };
@@ -10,13 +11,16 @@ use futures_util::future::join_all;
 use graphite_meter_proto::{
     bus::Ping,
     catalog::{ServerCatalog, ServerEntry, ServerId},
-    discovery::{LatencyTransport, Preflight, Protocol, ThroughputTransport},
+    discovery::{Capabilities, LatencyTransport, Preflight, Protocol, ThroughputTransport},
     origin::Origin,
     reason::FailureReason,
     route::Route,
 };
 use http::Method;
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::time::{self, timeout};
 
 /// How long a path check may take, the catalogue and every server included.
@@ -28,11 +32,13 @@ const VERIFY: Duration = Duration::from_secs(3);
 /// How long a datagram probe waits for its reply before another goes.
 const DATAGRAM_REPLY: Duration = Duration::from_millis(750);
 
-/// A path check: what it depends on, when it began, its network state and each selected server's paths.
+/// A path check: what it depends on, when it began, its network state, the catalogue and each selected server's
+/// paths.
 pub struct Prepared {
     pub key: PrepKey,
     pub at: Instant,
     pub client: Client,
+    pub catalogue: Arc<[ServerEntry]>,
     /// In catalogue order.
     pub servers: Vec<ServerPath>,
 }
@@ -41,10 +47,13 @@ pub struct Prepared {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerPath {
     pub id: ServerId,
-    /// Its preflight's name, else its catalogue entry's.
+    /// Its preflight's name, else its catalogue entry's; the location likewise.
     pub name: String,
+    pub location: String,
     /// The origin its discovery came from, where it signs in.
     pub origin: Origin,
+    /// What its preflight offered, once it answered.
+    pub offered: Option<Capabilities>,
     pub path: Result<Paths, Failure>,
 }
 
@@ -60,6 +69,12 @@ pub struct Paths {
 }
 
 impl Prepared {
+    /// The event that tells viewers what this check found.
+    pub fn event(&self) -> Event {
+        let (servers, catalogue) = (self.servers.clone().into(), self.catalogue.clone());
+        Event::Prepared { servers, catalogue }
+    }
+
     /// Whether a run with `key` may take this check: every server prepared, the key equal and at most 30 s old.
     pub fn reusable(&self, key: &PrepKey, now: Instant) -> bool {
         let fresh = now.saturating_duration_since(self.at) <= REUSE;
@@ -82,7 +97,9 @@ pub async fn prepare(config: &Config, client: Client) -> Result<Prepared, Failur
         let mut server = ServerPath {
             id: entry.id.clone(),
             name: entry.name.clone(),
+            location: entry.location.clone(),
             origin: entry.url.resolve(&config.url).clone(),
+            offered: None,
             path: Err(late()),
         };
         let checked = time::timeout_at(deadline, check(&client, config, entry, &mut server)).await;
@@ -90,10 +107,11 @@ pub async fn prepare(config: &Config, client: Client) -> Result<Prepared, Failur
         server
     });
     let servers = join_all(checks).await;
-    Ok(Prepared { key: config.key(), at, client, servers })
+    let catalogue = received.catalog.servers.into();
+    Ok(Prepared { key: config.key(), at, client, catalogue, servers })
 }
 
-/// One server's preflight and path checks; its name follows its preflight.
+/// One server's preflight and path checks; its name and location follow its preflight.
 async fn check(
     client: &Client,
     config: &Config,
@@ -107,6 +125,10 @@ async fn check(
     if !preflight.server.name.is_empty() {
         server.name.clone_from(&preflight.server.name);
     }
+    if !preflight.server.location.is_empty() {
+        server.location.clone_from(&preflight.server.location);
+    }
+    server.offered = Some(preflight.capabilities.clone());
     let candidates = select::candidates(&config.paths, entry, &served, &preflight, config.probes()).map_err(refused)?;
     if config.uploads() && !preflight.capabilities.upload_checkpoint {
         return Err(refused("receiver checkpoint support is required; upgrade this measurement server"));
@@ -206,7 +228,7 @@ mod tests {
     use super::*;
     use crate::config::{Parsed, parse};
     use graphite_meter_net::Pool;
-    use std::{ffi::OsString, sync::Arc};
+    use std::ffi::OsString;
 
     fn config(args: &str) -> Config {
         match parse(args.split_whitespace().map(OsString::from)) {
@@ -225,7 +247,9 @@ mod tests {
         ServerPath {
             id: ServerId::own(),
             name: "meter".into(),
+            location: String::new(),
             origin,
+            offered: None,
             path: path.map(|()| Paths {
                 throughput,
                 latency: None,
@@ -243,6 +267,7 @@ mod tests {
             key: checked.key(),
             at,
             client: Client::new(false, Arc::new(Pool::new().unwrap())),
+            catalogue: Arc::new([]),
             servers: vec![server(Ok(()))],
         };
         let longer = config("-server a -stages down -download-duration 1m -warmup 2s").key();

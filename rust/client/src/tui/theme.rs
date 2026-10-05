@@ -22,6 +22,9 @@ const SOFT: Tone = tone((0x5f646a, 241, 8), (0x8e9299, 246, 7));
 const GOOD: Tone = tone((0x2e734b, 29, 2), (0x88d1a2, 115, 10));
 const CAUTION: Tone = tone((0x85671f, 94, 1), (0xe8cf83, 186, 11));
 const BAD: Tone = tone((0xab413e, 131, 1), (0xed8b88, 210, 9));
+const BADGE: Tone = tone((0xfdfdfd, 231, 15), (0x0d1013, 233, 0));
+const BORDER: Tone = tone((0xcacbcf, 252, 15), (0x3e4348, 238, 8));
+const SELECTED: Tone = tone((0xe6e6e9, 254, 15), (0x303236, 236, 0));
 const STAGES: [Tone; 4] = [
     tone((0x1d7a73, 30, 6), (0x70dbc4, 80, 14)),
     tone((0x254ea3, 25, 4), (0x71a3ff, 75, 12)),
@@ -35,22 +38,40 @@ pub struct Palette {
     pub text: Style,
     pub value: Style,
     pub muted: Style,
+    pub accent: Style,
     pub heading: Style,
+    pub ok: Style,
     pub warn: Style,
     pub err: Style,
+    pub border: Style,
+    /// The focused row.
+    pub selected: Style,
+    /// The title badge, and the status pill without a colour of its own.
+    pub title: Style,
+    pub pill: Style,
+    /// The editor's block cursor.
+    pub cursor: Style,
     dark: bool,
 }
 
 impl Palette {
     pub fn new(dark: bool) -> Self {
         let shade = |tone: Tone| Style::fg(tone[usize::from(dark)]);
+        let on = |style: Style, tone: Tone| Style { bg: Some(tone[usize::from(dark)]), ..style };
         Self {
             text: shade(TEXT),
             value: shade(TEXT).bold(),
             muted: shade(SOFT),
+            accent: shade(INK),
             heading: shade(INK).bold(),
+            ok: shade(GOOD),
             warn: shade(CAUTION),
             err: shade(BAD).bold(),
+            border: shade(BORDER),
+            selected: on(shade(TEXT).bold(), SELECTED),
+            title: on(shade(BADGE).bold(), INK),
+            pill: on(shade(BADGE).bold(), SOFT),
+            cursor: on(shade(BADGE), TEXT),
             dark,
         }
     }

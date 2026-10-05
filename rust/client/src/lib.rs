@@ -24,9 +24,7 @@ pub mod run {
     pub mod upload;
 }
 
-pub mod tui {
-    pub mod theme;
-}
+pub mod tui;
 
 use config::Config;
 use controller::{Command, Controller};

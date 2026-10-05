@@ -140,6 +140,21 @@ pub fn wrap(parts: &[String], cells: usize) -> Vec<String> {
     lines
 }
 
+/// `text`'s words filled into lines of at most `cells`; a longer word takes a line of its own.
+pub fn fill(text: &str, cells: usize) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for word in text.split_whitespace() {
+        match lines.last_mut() {
+            Some(line) if width(line) + 1 + width(word) <= cells => {
+                line.push(' ');
+                line.push_str(word);
+            }
+            _ => lines.push(word.to_owned()),
+        }
+    }
+    lines
+}
+
 /// Writes `lines` in `profile`, each styled span in one SGR sequence and every unsafe character blanked.
 pub fn write(lines: &[Line], profile: Profile, out: &mut impl Write) -> io::Result<()> {
     for line in lines {

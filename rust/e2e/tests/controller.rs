@@ -73,9 +73,11 @@ async fn a_run_stopped_before_it_starts_still_finishes_the_check() {
     assert!(!stopped.iter().any(|event| matches!(event, Event::RunStarted { .. })), "{stopped:#?}");
     let finished = stopped.last().unwrap();
     assert!(matches!(finished, Event::RunFinished { outcome: Outcome::Stopped, error: None, .. }));
-    let checked = until(&mut received, LIMIT, |event| matches!(event, Event::Prepared(_))).await;
+    let checked = until(&mut received, LIMIT, |event| matches!(event, Event::Prepared { .. })).await;
     assert_eq!(checked[0], Event::Checking { run: false });
-    let Some(Event::Prepared(servers)) = checked.last() else { unreachable!() };
+    let Some(Event::Prepared { servers, .. }) = checked.last() else {
+        unreachable!()
+    };
     assert!(servers.iter().all(|server| server.path.is_ok()), "{servers:#?}");
     controller.settled().await;
 }
