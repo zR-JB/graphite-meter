@@ -21,6 +21,10 @@ use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 include!(concat!(env!("OUT_DIR"), "/legal.rs"));
 
+#[cfg(target_env = "musl")]
+#[global_allocator]
+static ALLOCATOR: rustfs_mimalloc::MiMalloc = rustfs_mimalloc::MiMalloc;
+
 /// The status of a refused command line.
 const USAGE_ERROR: u8 = 2;
 
