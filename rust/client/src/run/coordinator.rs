@@ -61,7 +61,7 @@ pub async fn run(prepared: &Prepared, config: &Config, events: &Events, token: C
     events.send(Event::RunStarted { plan: plan.clone(), focus, at: started });
     let run = Run { prepared, config, events, token: &token, started };
     unprepared.iter().for_each(|failure| run.failed(failure));
-    let sole = prepared.servers.len() == 1;
+    let (sole, planned) = (prepared.servers.len() == 1, plan.len());
     let mut results = Vec::new();
     for (stage, duration) in plan {
         let members: Vec<_> = seats.iter().filter(|seat| seat.present).collect();
@@ -79,7 +79,7 @@ pub async fn run(prepared: &Prepared, config: &Config, events: &Events, token: C
         }
         results.push(result);
     }
-    let outcome = match token.is_cancelled() {
+    let outcome = match token.is_cancelled() && results.len() < planned {
         true => Outcome::Stopped,
         false => Outcome::of(&results, &config.stages, &unprepared),
     };
