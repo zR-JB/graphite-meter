@@ -18,7 +18,7 @@ use std::{
     fmt,
     future::{Future, poll_fn},
     io, mem,
-    pin::Pin,
+    pin::{Pin, pin},
     task::{Context, Poll, ready},
     time::Duration,
 };
@@ -264,6 +264,25 @@ fn next_data(
             sink.poll_reset(cx).map(|()| Err(Aborted))
         }
     }
+}
+
+/// Completes `write` unless the reply's bound ends it first.
+pub(crate) async fn within<T, E>(
+    bound: &mut ReplyBound,
+    write: impl Future<Output = Result<T, E>>,
+) -> Result<T, Aborted> {
+    let mut write = pin!(write);
+    poll_fn(|cx| {
+        bound.check(cx)?;
+        match write.as_mut().poll(cx) {
+            Poll::Ready(written) => Poll::Ready(written.map_err(|_| Aborted)),
+            Poll::Pending => {
+                bound.blocked(cx)?;
+                Poll::Pending
+            }
+        }
+    })
+    .await
 }
 
 /// Whether an upload reads at its connection's raised receive window: asked on its first read after admission, and

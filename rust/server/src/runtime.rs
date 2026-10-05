@@ -1,17 +1,17 @@
-//! The running server: its certificate, listeners bound before any serves, connections on the pinned runtimes, and
-//! the shutdown order (listeners close at once, lanes end, connections drain).
+//! The running server: its certificate, listeners bound before any serves, connections on the pinned runtimes, the
+//! budget's terms, and the shutdown order (listeners close at once, lanes end, connections drain).
 
 use crate::{
     app::{App, Endpoint},
     config::{Config, ENGINE_VERSION, ListenerKind, path_error},
     engine::download::BLOCK_BYTES,
-    limits::Transport,
+    limits::{Budget, Transport},
     log,
     transport::{
-        accept,
+        accept::{self, Listen},
         http1::Http1,
         http2::{self, Http2},
-        quic,
+        quic::{self, Http3},
         tls::{self, Certificates},
     },
 };
@@ -22,10 +22,13 @@ use std::{
     io,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::SystemTime,
 };
-use tokio::net::{TcpListener, TcpStream};
+use tokio::{net::TcpListener, runtime::Handle};
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 
@@ -43,38 +46,38 @@ struct Listening {
     endpoint: Endpoint,
     /// The address as configured, which the startup line names.
     address: String,
-    socket: TcpListener,
-    protocol: Protocol,
+    socket: Socket,
 }
 
-/// What a listener's connections speak, over TLS with the acceptor's ALPN.
-enum Protocol {
-    Http1(Option<TlsAcceptor>),
-    Http2(TlsAcceptor),
+/// A listener's socket and what its connections speak, over TLS with the acceptor's ALPN.
+enum Socket {
+    Http1(TcpListener, Option<TlsAcceptor>),
+    Http2(TcpListener, TlsAcceptor),
+    Quic(Box<(quic::Listener, Http3)>),
+}
+
+impl Socket {
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        match self {
+            Self::Http1(socket, _) | Self::Http2(socket, _) => socket.local_addr(),
+            Self::Quic(quic) => quic.0.local_addr(),
+        }
+    }
 }
 
 type Service<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
 
 impl Server {
-    /// Loads the certificate and binds every enabled listener; a failure closes those bound before it.
+    /// Loads the certificate and binds every enabled listener, HTTP/3 on UDP beside its TCP companion's port; a
+    /// failure closes those bound before it.
     pub async fn bind(mut config: Config) -> Result<Self, String> {
-        let served = config.listeners.iter().enumerate().map(|(index, listener)| {
-            let endpoint = match listener.kind {
-                ListenerKind::H1 => Endpoint::H1,
-                ListenerKind::H1Tls => Endpoint::H1Tls,
-                ListenerKind::H2 => Endpoint::H2,
-                kind @ ListenerKind::H3 => {
-                    return Err(format!("{} listeners are unavailable in this build", kind.name()));
-                }
-            };
-            Ok((endpoint, index))
-        });
-        let served = served.collect::<Result<Vec<_>, String>>()?;
         let (tls, hosts, auth) = (config.tls.clone(), tls::covered_hosts(&config), config.auth.is_some());
-        let (terms, endpoint) = (Terms::of(&config), configured_endpoint(&config)?);
+        let terms = Terms::of(&config);
+        let endpoint_bytes = Arc::new(AtomicUsize::new(configured_endpoint(&config)?));
+        let endpoint = endpoint_bytes.clone();
         // Only QUIC floors grow with the chain.
         let fits = move |handshake| match terms.quic {
-            Some(_) => terms.check(handshake, endpoint),
+            Some(_) => terms.check(handshake, endpoint.load(Ordering::Relaxed)),
             None => Ok(()),
         };
         let certificates = match tls {
@@ -85,27 +88,25 @@ impl Server {
             }
             None => None,
         };
-        let mut listeners = Vec::new();
-        for (endpoint, index) in served {
-            let protocol = match (endpoint, &certificates) {
-                (Endpoint::H1, _) => Protocol::Http1(None),
-                (Endpoint::H1Tls, Some(certificates)) => Protocol::Http1(Some(certificates.acceptor(b"http/1.1"))),
-                (Endpoint::H2, Some(certificates)) => Protocol::Http2(certificates.acceptor(b"h2")),
-                _ => return Err("TLS listeners need a certificate".into()),
-            };
-            let configured = &mut config.listeners[index].address;
-            let socket = bind(configured)
-                .await
-                .map_err(|error| path_error("listen tcp", configured, &error))?;
-            let address = configured.clone();
-            if let Ok(local) = socket.local_addr() {
-                *configured = bound(configured, local.port());
-            }
-            listeners.push(Listening { endpoint, address, socket, protocol });
-        }
+        let mut listeners = bind_tcp(&mut config, certificates.as_ref()).await?;
+        let limits = config.limits;
         let shutdown = CancellationToken::new();
         let app = Arc::new(App::new(config, shutdown.clone())?);
         let pool = Pool::new().map_err(|error| format!("runtime threads: {error}"))?;
+        let companion = listeners
+            .iter()
+            .find(|listening| listening.endpoint == Endpoint::H3Companion);
+        if let (Some(companion), Some(certificates)) = (companion, &certificates) {
+            let covered = |bytes| {
+                terms.check(certificates.handshake_bytes(), bytes)?;
+                endpoint_bytes.store(bytes, Ordering::Relaxed);
+                Ok(())
+            };
+            let local = companion.socket.local_addr().map_err(|error| error.to_string())?;
+            let bound = quic::bind(local, pool.next(), &app, &limits, certificates, covered, &shutdown)?;
+            let (endpoint, address) = (Endpoint::Quic, companion.address.clone());
+            listeners.push(Listening { endpoint, address, socket: Socket::Quic(Box::new(bound)) });
+        }
         Ok(Self { app, pool, listeners, certificates, shutdown, auth })
     }
 
@@ -115,25 +116,40 @@ impl Server {
         listening.socket.local_addr().ok()
     }
 
+    /// The buffer budget every listener draws on, for observation.
+    pub fn budget(&self) -> Budget {
+        self.app.budget().clone()
+    }
+
     /// Serves until `stop`, then closes every listener at once, ends running lanes and drains connections.
     pub async fn serve(self, stop: impl Future<Output = ()>) -> Result<(), String> {
         let Self { app, pool, listeners, certificates, shutdown, auth } = self;
         let (pool, stopping) = (&pool, &shutdown);
         let mut services = FuturesUnordered::<Service<'_>>::new();
-        for Listening { endpoint, address, socket, protocol } in listeners {
+        for Listening { endpoint, address, socket } in listeners {
             let role = endpoint.role(auth);
-            log!("graphite-meter {ENGINE_VERSION} listening on {address}/tcp ({role})");
-            let (app, shutdown) = (app.clone(), shutdown.clone());
-            services.push(match protocol {
-                Protocol::Http1(tls) => {
+            let (app, shutdown, next) = (app.clone(), shutdown.clone(), || pool.next());
+            let (service, protocol) = match socket {
+                Socket::Http1(socket, tls) => {
                     let http1 = Http1 { app: app.clone(), endpoint, tls, shutdown };
-                    listen(app, socket, pool, stopping, role, move |socket, peer| http1.connection(socket, peer))
+                    let serve = move |socket, peer| http1.connection(socket, peer);
+                    (listen(app, socket, next, stopping, role, Transport::Tcp, serve), "tcp")
                 }
-                Protocol::Http2(tls) => {
+                Socket::Http2(socket, tls) => {
                     let http2 = Http2 { app: app.clone(), tls, shutdown };
-                    listen(app, socket, pool, stopping, role, move |socket, peer| http2.connection(socket, peer))
+                    let serve = move |socket, peer| http2.connection(socket, peer);
+                    (listen(app, socket, next, stopping, role, Transport::Tcp, serve), "tcp")
                 }
-            });
+                Socket::Quic(quic) => {
+                    let (listener, http3) = *quic;
+                    let runtime = listener.runtime();
+                    let serve = move |incoming, peer| http3.connection(incoming, peer);
+                    let next = move || runtime.clone();
+                    (listen(app, listener, next, stopping, role, Transport::Quic, serve), "udp")
+                }
+            };
+            log!("graphite-meter {ENGINE_VERSION} listening on {address}/{protocol} ({role})");
+            services.push(service);
         }
         if let Some(certificates) = certificates {
             services.push(Box::pin(async move {
@@ -153,21 +169,56 @@ impl Server {
     }
 }
 
-/// Accepts on `socket` until `stopping`, each connection holding its share, then drains.
-fn listen<'a, F>(
+/// Binds every enabled listener's TCP socket, HTTP/3's for its companion, and names the ports they bound in `config`.
+async fn bind_tcp(config: &mut Config, certificates: Option<&Arc<Certificates>>) -> Result<Vec<Listening>, String> {
+    let mut listeners = Vec::new();
+    for listener in &mut config.listeners {
+        let (endpoint, alpn): (_, Option<&[u8]>) = match listener.kind {
+            ListenerKind::H1 => (Endpoint::H1, None),
+            ListenerKind::H1Tls => (Endpoint::H1Tls, Some(b"http/1.1")),
+            ListenerKind::H2 => (Endpoint::H2, Some(b"h2")),
+            ListenerKind::H3 => (Endpoint::H3Companion, Some(b"http/1.1")),
+        };
+        let tls = match (alpn, certificates) {
+            (None, _) => None,
+            (Some(alpn), Some(certificates)) => Some(certificates.acceptor(alpn)),
+            (Some(_), None) => return Err("TLS listeners need a certificate".into()),
+        };
+        let configured = &mut listener.address;
+        let socket = bind(configured)
+            .await
+            .map_err(|error| path_error("listen tcp", configured, &error))?;
+        let address = configured.clone();
+        if let Ok(local) = socket.local_addr() {
+            *configured = bound(configured, local.port());
+        }
+        let socket = match (endpoint, tls) {
+            (Endpoint::H2, Some(tls)) => Socket::Http2(socket, tls),
+            (_, tls) => Socket::Http1(socket, tls),
+        };
+        listeners.push(Listening { endpoint, address, socket });
+    }
+    Ok(listeners)
+}
+
+/// Accepts on `socket` until `stopping`, each connection holding its share and running on a runtime `runtime` names,
+/// then drains.
+fn listen<'a, L, F>(
     app: Arc<App>,
-    socket: TcpListener,
-    pool: &'a Pool,
+    socket: L,
+    runtime: impl Fn() -> Handle + Send + 'a,
     stopping: &'a CancellationToken,
     role: &'static str,
-    serve: impl Fn(TcpStream, SocketAddr) -> F + Send + Sync + 'a,
+    transport: Transport,
+    serve: impl Fn(L::Connection, SocketAddr) -> F + Send + 'a,
 ) -> Service<'a>
 where
+    L: Listen + Send + 'a,
     F: Future<Output = ()> + Send + 'static,
 {
     Box::pin(async move {
-        let hold = |peer: SocketAddr| app.connection(peer.ip(), Transport::Tcp);
-        let serving = accept::serve(socket, pool, stopping, hold, serve);
+        let hold = |peer: SocketAddr| app.connection(peer.ip(), transport);
+        let serving = accept::serve(socket, runtime, stopping, hold, serve);
         serving.await.map_err(|error| format!("{role}: {error}"))
     })
 }

@@ -1,0 +1,158 @@
+//! HTTP/3 requests: each within its exchange bound until admitted, its body funding the connection's window, and its
+//! reply pumped in 16 KiB frames that yield to siblings on a crowded connection.
+
+use super::window::{Incoming, Window};
+use crate::{
+    app::{App, Connection, Outcome},
+    exchange::{Exchange, Watch},
+    transport::body::{Aborted, ReplyBound, Sink, pump, within},
+};
+use bytes::Bytes;
+use graphite_meter_http3::{self as http3, Code, SendHalf, server};
+use http::{Method, Response, StatusCode, response::Parts};
+use http_body::Body as _;
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    task::{Context, Poll},
+};
+
+const FRAME_BYTES: usize = 16 << 10;
+/// Large replies past this many on one connection yield to their siblings after each frame.
+const FAIRNESS_REPLIES: usize = 16;
+/// Replies larger than this count toward a connection's fairness bound.
+const LARGE_REPLY_BYTES: u64 = 1 << 20;
+
+/// What a connection's requests share.
+#[derive(Clone)]
+pub(super) struct Requests {
+    app: Arc<App>,
+    connection: Connection,
+    window: Arc<Window>,
+    large: Arc<AtomicUsize>,
+}
+
+impl Requests {
+    pub(super) fn new(app: Arc<App>, connection: Connection, window: Arc<Window>) -> Self {
+        Self { app, connection, window, large: Arc::default() }
+    }
+
+    /// One request: reset when its exchange expires unadmitted or its reply ends unwritten, and counted as admitted
+    /// work from the poll that sees it admitted until it ends.
+    pub(super) fn serve(&self, request: server::Request) -> impl Future<Output = ()> + Send + use<> {
+        let requests = self.clone();
+        async move {
+            let exchange = Exchange::start();
+            let watch = exchange.watch();
+            let served = requests.respond(request, exchange, &watch);
+            tokio::select! {
+                biased;
+                () = watch.counted(served, &requests.connection.work) => {}
+                () = watch.expired() => {}
+            }
+        }
+    }
+
+    /// Answers a request; a stream dropped unfinished is reset.
+    async fn respond(&self, request: server::Request, exchange: Exchange, watch: &Watch) {
+        let Ok((head, stream)) = request.resolve().await else {
+            return;
+        };
+        let (mut send, recv) = stream.split();
+        if head.method() == Method::CONNECT {
+            let mut refusal = Response::new(());
+            *refusal.status_mut() = StatusCode::NOT_FOUND;
+            if send.send_response(refusal).await.is_ok() {
+                let _ = send.finish().await;
+            }
+            return;
+        }
+        let bodiless = head.method() == Method::HEAD;
+        let request = head.map(|()| Incoming::new(recv, watch.clone(), self.window.clone()));
+        let Outcome::Response(response) = self.app.handle(request, &self.connection, exchange).await else {
+            return;
+        };
+        let large = !bodiless
+            && response
+                .body()
+                .size_hint()
+                .upper()
+                .is_some_and(|bytes| bytes > LARGE_REPLY_BYTES);
+        let mut reply = Reply {
+            send,
+            large: large.then(|| Large::new(&self.large)),
+            stopped: None,
+        };
+        let _ = pump(&mut reply, response, bodiless).await;
+    }
+}
+
+type Stopped = Pin<Box<dyn Future<Output = Result<Option<Code>, http3::Error>> + Send>>;
+
+/// An HTTP/3 stream's reply.
+struct Reply {
+    send: SendHalf,
+    large: Option<Large>,
+    /// The peer's STOP_SENDING, watched while the body waits.
+    stopped: Option<Stopped>,
+}
+
+impl Sink for Reply {
+    async fn head(&mut self, head: Parts, end: bool, bound: &mut ReplyBound) -> Result<(), Aborted> {
+        within(bound, self.send.send_response(Response::from_parts(head, ()))).await?;
+        if end {
+            within(bound, self.send.finish()).await?;
+        }
+        Ok(())
+    }
+
+    async fn data(&mut self, mut data: Bytes, last: bool, bound: &mut ReplyBound) -> Result<(), Aborted> {
+        while !data.is_empty() {
+            let frame = data.split_to(data.len().min(FRAME_BYTES));
+            within(bound, self.send.send_data(frame)).await?;
+            bound.progressed();
+            if self.large.as_ref().is_some_and(Large::crowded) {
+                tokio::task::yield_now().await;
+            }
+        }
+        if last {
+            within(bound, self.send.finish()).await?;
+        }
+        Ok(())
+    }
+
+    async fn end(&mut self, bound: &mut ReplyBound) -> Result<(), Aborted> {
+        within(bound, self.send.finish()).await
+    }
+
+    fn poll_reset(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+        let send = &self.send;
+        let stopped = self.stopped.get_or_insert_with(|| Box::pin(send.stopped()));
+        stopped.as_mut().poll(cx).map(drop)
+    }
+}
+
+/// A large reply on its connection.
+struct Large(Arc<AtomicUsize>);
+
+impl Large {
+    fn new(count: &Arc<AtomicUsize>) -> Self {
+        count.fetch_add(1, Ordering::Relaxed);
+        Self(count.clone())
+    }
+
+    /// Only a crowded connection needs a handoff after each frame; on others it would halve throughput.
+    fn crowded(&self) -> bool {
+        self.0.load(Ordering::Relaxed) > FAIRNESS_REPLIES
+    }
+}
+
+impl Drop for Large {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}

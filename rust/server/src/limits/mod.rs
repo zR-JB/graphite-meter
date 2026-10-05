@@ -61,6 +61,11 @@ impl Quotas {
         self.quic.holds_any(keys)
     }
 
+    /// Whether a quarter of the connection capacity is used, so that unvalidated QUIC handshakes need Retry.
+    pub fn connections_crowded(&self) -> bool {
+        self.connections.usage().active >= self.limits.connections / 4
+    }
+
     /// A measurement handler.
     pub fn operation(&self, keys: &ClientKeys) -> Result<Hold, Refusal> {
         self.operations.acquire(keys, 1)

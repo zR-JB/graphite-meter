@@ -298,10 +298,13 @@ impl SendHalf {
         poll_fn(|cx| self.poll_finish(cx)).await
     }
 
-    /// Waits for the peer to stop the stream, or to acknowledge all of its data and FIN.
-    pub async fn stopped(&self) -> Result<Option<Code>, Error> {
-        let code = self.stream.stopped().await.map_err(noq::WriteError::from)?;
-        Ok(code.map(|code| Code(code.into_inner())))
+    /// Waits for the peer to stop the stream, or to acknowledge all of its data and FIN; the future borrows nothing.
+    pub fn stopped(&self) -> impl Future<Output = Result<Option<Code>, Error>> + Send + use<> {
+        let stopped = self.stream.stopped();
+        async move {
+            let code = stopped.await.map_err(noq::WriteError::from)?;
+            Ok(code.map(|code| Code(code.into_inner())))
+        }
     }
 
     pub fn reset(&mut self, code: Code) {

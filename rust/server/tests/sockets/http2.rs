@@ -115,16 +115,6 @@ async fn send(stream: &mut SendStream<Bytes>, mut bytes: Bytes, end: bool) {
     }
 }
 
-/// Moves paused time on by `duration` while real network waits keep the running clock.
-async fn advance_clock(duration: Duration) {
-    tokio::time::pause();
-    tokio::time::advance(duration).await;
-    tokio::task::yield_now().await;
-    tokio::time::resume();
-}
-
-const ENDLESS: &str = "/download?bytes=68719476736";
-
 #[tokio::test]
 async fn http2_serves_its_routes_downloads_and_uploads() {
     let h2 = H2::start(&[]).await;

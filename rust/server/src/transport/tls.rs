@@ -143,15 +143,19 @@ impl Certificates {
         }
     }
 
-    /// A TLS 1.3 acceptor offering `alpn`, serving the current pair and following the client's suite order.
-    pub fn acceptor(self: &Arc<Self>, alpn: &[u8]) -> TlsAcceptor {
+    /// A TLS 1.3 configuration offering `alpn`, serving the current pair and following the client's suite order.
+    pub fn server_config(self: &Arc<Self>, alpn: &[u8]) -> ServerConfig {
         let mut config = ServerConfig::builder_with_provider(graphite_meter_net::provider())
             .with_protocol_versions(&[&rustls::version::TLS13])
             .expect("ring supports TLS 1.3")
             .with_no_client_auth()
             .with_cert_resolver(self.clone());
         config.alpn_protocols = vec![alpn.to_vec()];
-        TlsAcceptor::from(Arc::new(config))
+        config
+    }
+
+    pub fn acceptor(self: &Arc<Self>, alpn: &[u8]) -> TlsAcceptor {
+        TlsAcceptor::from(Arc::new(self.server_config(alpn)))
     }
 }
 

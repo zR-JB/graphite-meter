@@ -23,7 +23,7 @@ http-body.workspace = true
 hyper = { workspace = true, features = ["http1", "server"] }
 hyper-util.workspace = true
 ipnet.workspace = true
-noq.workspace = true
+noq = { workspace = true, features = ["runtime-tokio", "rustls-ring"] }
 percent-encoding.workspace = true
 ring.workspace = true
 rustls.workspace = true

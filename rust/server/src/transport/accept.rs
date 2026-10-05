@@ -1,13 +1,13 @@
-//! The one accept-and-drain loop: connection holds, retries after failed accepts, connections on the pinned runtimes,
-//! and the drain at shutdown.
+//! The one accept-and-drain loop: connection holds, retries after failed accepts, connections on pinned runtimes, and
+//! the drain at shutdown.
 
 use crate::{limits::Hold, log};
 use futures_util::FutureExt;
-use graphite_meter_net::Pool;
 use graphite_meter_proto::duration;
 use std::{any::Any, future::Future, io, net::SocketAddr, panic::AssertUnwindSafe, time::Duration};
 use tokio::{
     net::{TcpListener, TcpStream},
+    runtime::Handle,
     task::JoinSet,
     time::{sleep, timeout},
 };
@@ -43,11 +43,11 @@ impl Listen for TcpListener {
 }
 
 /// Accepts until `shutdown`, holding each connection's share from `hold` (refused on `None`) and running `serve`'s
-/// future on a runtime of `pool`. Then the listener closes at once, so new connections are refused, and running ones
-/// get `SHUTDOWN_GRACE`. Ends early only with the error of a socket that no longer listens.
+/// future on the runtime `runtime` names. Then the listener closes at once, so new connections are refused, and running
+/// ones get `SHUTDOWN_GRACE`. Ends early only with the error of a socket that no longer listens.
 pub async fn serve<L, F>(
     mut listener: L,
-    pool: &Pool,
+    runtime: impl Fn() -> Handle,
     shutdown: &CancellationToken,
     hold: impl Fn(SocketAddr) -> Option<Hold>,
     serve: impl Fn(L::Connection, SocketAddr) -> F,
@@ -90,7 +90,7 @@ where
                 log!("http: panic serving {peer}: {}", message(&*panic));
             }
         };
-        connections.spawn_on(task, &pool.next());
+        connections.spawn_on(task, &runtime());
     };
     drop(listener);
     let _ = timeout(SHUTDOWN_GRACE, async { while connections.join_next().await.is_some() {} }).await;
@@ -111,6 +111,7 @@ mod tests {
     use super::*;
     use crate::limits::Quota;
     use crate::peer::ClientKeys;
+    use graphite_meter_net::Pool;
     use std::sync::Arc;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -133,7 +134,7 @@ mod tests {
         let task = tokio::spawn(async move {
             let pool = Pool::new().unwrap();
             let hold = |peer: SocketAddr| quota.acquire(&ClientKeys::address(peer.ip()), 1).ok();
-            super::serve(listener, &pool, &stop, hold, |socket, _| serve(socket)).await
+            super::serve(listener, || pool.next(), &stop, hold, |socket, _| serve(socket)).await
         });
         (address, shutdown, task)
     }
@@ -257,7 +258,7 @@ mod tests {
         let stop = shutdown.clone();
         let task = tokio::spawn(async move {
             let pool = Pool::new().unwrap();
-            super::serve(listener, &pool, &stop, |_| None, |_, _| async {}).await
+            super::serve(listener, || pool.next(), &stop, |_| None, |_, _| async {}).await
         });
         tokio::time::sleep(Duration::from_secs(5)).await;
         shutdown.cancel();

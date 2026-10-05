@@ -1,8 +1,10 @@
-//! The running server over real sockets: HTTP/1 and HTTP/2 transfers and their endings, connection bounds,
+//! The running server over real sockets: HTTP/1, HTTP/2 and HTTP/3 transfers and their endings, connection bounds,
 //! WebSocket buses and TLS.
 
 mod connection;
 mod http2;
+mod http3;
+mod quic;
 mod tls;
 mod transfer;
 mod websocket;
@@ -10,6 +12,7 @@ mod websocket;
 use graphite_meter_server::{
     app::Endpoint,
     config::{self, Config, Loaded},
+    limits::Budget,
     runtime::Server,
 };
 use std::{ffi::OsString, net::SocketAddr, time::Duration};
@@ -19,6 +22,17 @@ use tokio::{
     sync::oneshot,
     task::JoinHandle,
 };
+
+/// A download no test waits to finish.
+const ENDLESS: &str = "/download?bytes=68719476736";
+
+/// Moves paused time on by `duration` while real network waits keep the running clock.
+async fn advance_clock(duration: Duration) {
+    tokio::time::pause();
+    tokio::time::advance(duration).await;
+    tokio::task::yield_now().await;
+    tokio::time::resume();
+}
 
 fn config(env: &[(&str, &str)]) -> Config {
     let lookup = |name: &str| {
@@ -37,6 +51,9 @@ struct Running {
     address: SocketAddr,
     tls: Option<SocketAddr>,
     h2: Option<SocketAddr>,
+    quic: Option<SocketAddr>,
+    companion: Option<SocketAddr>,
+    budget: Budget,
     stop: oneshot::Sender<()>,
     task: JoinHandle<Result<(), String>>,
 }
@@ -44,12 +61,13 @@ struct Running {
 async fn start(env: &[(&str, &str)]) -> Running {
     let server = Server::bind(config(env)).await.unwrap();
     let (address, tls) = (server.local_addr(Endpoint::H1).unwrap(), server.local_addr(Endpoint::H1Tls));
-    let h2 = server.local_addr(Endpoint::H2);
+    let (h2, quic) = (server.local_addr(Endpoint::H2), server.local_addr(Endpoint::Quic));
+    let (companion, budget) = (server.local_addr(Endpoint::H3Companion), server.budget());
     let (stop, stopped) = oneshot::channel();
     let task = tokio::spawn(server.serve(async {
         let _ = stopped.await;
     }));
-    Running { address, tls, h2, stop, task }
+    Running { address, tls, h2, quic, companion, budget, stop, task }
 }
 
 impl Running {

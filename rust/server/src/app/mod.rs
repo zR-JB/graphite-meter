@@ -19,7 +19,7 @@ use crate::{
     engine::{Block, Uploads},
     exchange::{EXCHANGE_BOUND, Exchange},
     lane::{Lane, Work},
-    limits::{Budget, Hold, Quotas, Refusal, Transport},
+    limits::{Budget, Hold, Pressure, Quotas, Refusal, Transport},
     peer::{ClientKeys, Peer},
     transport::{body::Body, websocket},
 };
@@ -126,6 +126,13 @@ impl App {
     pub fn connection(&self, peer: IpAddr, transport: Transport) -> Option<Hold> {
         let keys = ClientKeys::connection(peer, &self.config.trusted_proxies);
         self.quotas.connection(&keys, transport)
+    }
+
+    /// Whether an unvalidated QUIC handshake from `peer` must prove its address with a Retry first: once a quarter of
+    /// the connections or of the budget is used, or when its source already holds a QUIC connection.
+    pub fn quic_retry(&self, peer: IpAddr) -> bool {
+        let keys = ClientKeys::connection(peer, &self.config.trusted_proxies);
+        self.quotas.connections_crowded() || self.budget.pressure() >= Pressure::Retry || self.quotas.holds_quic(&keys)
     }
 
     /// Receive-window credit for a connection `keys` fund; `None` past their share or the clients' half.
