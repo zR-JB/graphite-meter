@@ -238,7 +238,6 @@ User-visible behaviour that deliberately differs from Go's server and TUI.
   colours; 16-colour frames write `38;5;0`–`15`.
 - On Windows the palette assumes a dark background.
 - On exit the TUI restores the terminal's previous window title where supported.
-- In the TUI the first interrupt or termination sets the exit status.
 - A second signal in report mode, or output into a closed pipe, exits with 130, 143 or 141 instead of dying of the
   signal; the shell sees the same status.
 - A build without reviewed notices refuses `--legal` with status 1.

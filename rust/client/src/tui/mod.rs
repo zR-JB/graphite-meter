@@ -19,6 +19,7 @@ use crate::{
     config::{Config, PrepKey},
     controller::Command,
     events::{Event, Run, SignInEnd, View},
+    model::Outcome,
     net::approval,
     report,
     text::Profile,
@@ -69,8 +70,8 @@ impl Effect {
     }
 }
 
-/// How the interface ended: what it showed and in which palette, the signal that stopped a run, and whether it
-/// showed a finished run, whose report follows.
+/// How the interface ended: what it showed and in which palette, the status of an interrupt that ends it, and
+/// whether it showed a finished run, whose report follows.
 pub struct Exit {
     pub view: View,
     pub palette: Palette,
@@ -94,8 +95,10 @@ pub struct App {
     notice: String,
     /// Whether the interface quits once the run stops.
     quitting: bool,
-    /// The signal that stopped the run.
-    signal: Option<u8>,
+    /// Whether ctrl+c or a signal arrived during a run.
+    interrupted: bool,
+    /// The status of the latest caught signal.
+    caught: Option<u8>,
     /// When the paths are checked next.
     recheck: Option<Instant>,
     /// When the checked paths turn stale, until a frame shows it.
@@ -127,7 +130,8 @@ impl App {
             help: false,
             notice: String::new(),
             quitting: false,
-            signal: None,
+            interrupted: false,
+            caught: None,
             recheck: Some(now),
             stale: None,
             asked: None,
@@ -239,7 +243,7 @@ impl App {
         let Some(action) = action else { return Vec::new() };
         match (action, &self.screen) {
             (Action::Quit, _) => return self.quit(),
-            (Action::Abort, _) => return self.interrupt(INTERRUPTED),
+            (Action::Abort, _) => return self.interrupt(),
             (Action::Help, _) => self.help = !self.help,
             (Action::Page, _) => self.page(key),
             (_, Screen::Setup) => return self.setup_key(action, key),
@@ -263,12 +267,18 @@ impl App {
         Effect::command(Command::Stop)
     }
 
-    /// Quits as ctrl+c or a signal ending with `status` asks: like q, and at once while quitting.
-    pub fn interrupt(&mut self, status: u8) -> Vec<Effect> {
+    /// Quits as a caught signal ending with `status` asks: like ctrl+c.
+    pub fn signal(&mut self, status: u8) -> Vec<Effect> {
+        self.caught = Some(status);
+        self.interrupt()
+    }
+
+    /// Quits as ctrl+c asks: like q, and at once while quitting.
+    fn interrupt(&mut self) -> Vec<Effect> {
         if !self.running() {
             return vec![Effect::Quit];
         }
-        self.signal.get_or_insert(status);
+        self.interrupted = true;
         match self.quitting {
             true => vec![Effect::Quit],
             false => self.quit(),
@@ -297,14 +307,16 @@ impl App {
         stale || self.checking() || self.running() || matches!(self.screen, Screen::SignIn(_))
     }
 
-    /// How the interface ends now.
+    /// How the interface ends now: with a signal's status after an interrupted run, or a caught one after a stopped
+    /// run.
     pub fn exit(self) -> Exit {
-        let finished = self.view.run.as_ref().is_some_and(|run| run.outcome.is_some());
-        let report = finished && matches!(self.screen, Screen::Run);
+        let outcome = self.view.run.as_ref().and_then(|run| run.outcome);
+        let report = outcome.is_some() && matches!(self.screen, Screen::Run);
+        let interrupted = self.interrupted || self.caught.is_some() && outcome == Some(Outcome::Stopped);
         Exit {
             view: self.view,
             palette: self.palette,
-            signal: self.signal,
+            signal: interrupted.then(|| self.caught.unwrap_or(INTERRUPTED)),
             report,
         }
     }

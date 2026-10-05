@@ -110,7 +110,7 @@ impl App {
         self.overlay = Overlay::None;
         match action {
             Some(Action::Quit) => self.quit(),
-            Some(Action::Abort) => self.interrupt(crate::INTERRUPTED),
+            Some(Action::Abort) => self.interrupt(),
             Some(Action::Confirm) => {
                 self.notice = "Stopping the test…".into();
                 Effect::command(Command::Stop)

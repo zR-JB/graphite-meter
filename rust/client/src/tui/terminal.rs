@@ -72,7 +72,7 @@ pub async fn run<B: Backend>(
             }
             Some(status) = signals.recv() => {
                 changed = true;
-                app.interrupt(status)
+                app.signal(status)
             }
         };
         for effect in effects {

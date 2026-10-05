@@ -378,12 +378,51 @@ fn ctrl_c_or_a_signal_stops_a_run_and_a_second_quits_at_once() {
     let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
     for (key, code) in [(true, INTERRUPTED), (false, TERMINATED)] {
         let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
-        let interrupt = |app: &mut App| if key { app.key(ctrl_c, now) } else { app.interrupt(code) };
+        let interrupt = |app: &mut App| if key { app.key(ctrl_c, now) } else { app.signal(code) };
         assert_eq!(command(&interrupt(&mut app)), &Command::Stop);
         assert_eq!(interrupt(&mut app), [Effect::Quit]);
         let exit = app.exit();
         assert!(!exit.report, "a running test has no report");
         assert_eq!(status(&exit.view, exit.signal), code);
+    }
+}
+
+#[test]
+fn ctrl_c_or_a_signal_during_a_run_sets_the_status_whatever_the_run_s_outcome() {
+    let now = Instant::now();
+    let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+    for (key, code) in [(true, INTERRUPTED), (false, TERMINATED)] {
+        for outcome in [Outcome::Partial, Outcome::Complete] {
+            let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
+            let effects = if key { app.key(ctrl_c, now) } else { app.signal(code) };
+            assert_eq!(command(&effects), &Command::Stop);
+            assert_eq!(app.event(&ended(outcome), now), [Effect::Quit]);
+            let exit = app.exit();
+            assert!(exit.report);
+            assert_eq!(status(&exit.view, exit.signal), code, "{outcome:?}");
+        }
+    }
+}
+
+#[test]
+fn after_a_run_a_signal_sets_the_status_only_when_the_run_stopped() {
+    let now = Instant::now();
+    let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+    for (signal, outcome, expected) in [
+        (Some(TERMINATED), Outcome::Stopped, TERMINATED),
+        (Some(INTERRUPTED), Outcome::Stopped, INTERRUPTED),
+        (None, Outcome::Stopped, 1),
+        (Some(TERMINATED), Outcome::Complete, 0),
+    ] {
+        let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
+        app.event(&ended(outcome), now);
+        let effects = match signal {
+            Some(code) => app.signal(code),
+            None => app.key(ctrl_c, now),
+        };
+        assert_eq!(effects, [Effect::Quit]);
+        let exit = app.exit();
+        assert_eq!(status(&exit.view, exit.signal), expected, "{signal:?} after {outcome:?}");
     }
 }
 
