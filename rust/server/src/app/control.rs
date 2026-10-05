@@ -125,7 +125,10 @@ impl App {
     }
 
     pub(super) fn upload_session(&self) -> Response<Body> {
-        response::json_of(&Session { upload_id: self.uploads.mint() })
+        match self.uploads.mint() {
+            Some(upload_id) => response::json_of(&Session { upload_id }),
+            None => response::status(StatusCode::INTERNAL_SERVER_ERROR),
+        }
     }
 
     /// An existing upload's counters, which never keep it alive.

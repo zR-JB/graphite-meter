@@ -35,8 +35,8 @@ const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const SWEEP_NANOS: u64 = SWEEP_INTERVAL.as_secs() * 1_000_000_000;
 
 const ID_PREFIX: &str = "gmu_";
-/// An ID signs its issue time and a serial number.
-const SIGNED_BYTES: usize = 16;
+/// An ID signs its issue time and 16 random bytes.
+const SIGNED_BYTES: usize = 24;
 const ID_BYTES: usize = SIGNED_BYTES + 32;
 
 /// The upload store; clones share it.
@@ -46,7 +46,6 @@ pub struct Uploads(Arc<Store>);
 struct Store {
     key: [u8; 32],
     clock: Clock,
-    serial: AtomicU64,
     capacity: Quota,
     /// The store clock at the next sweep, read without locking `entries`.
     next_sweep: AtomicU64,
@@ -201,21 +200,20 @@ impl Uploads {
         Self(Arc::new(Store {
             key,
             clock: Clock(now),
-            serial: AtomicU64::new(0),
             capacity: Quota::new(MAX_LIVE, MAX_PER_CLIENT),
             next_sweep: AtomicU64::new(SWEEP_NANOS),
             entries: Mutex::new(Entries { live: HashMap::new(), tombstones: HashMap::new() }),
         }))
     }
 
-    /// A new ID, which holds no state until a lane or reader uses it.
-    pub fn mint(&self) -> String {
+    /// A new ID, which holds no state until a lane or reader uses it; `None` without system randomness.
+    pub fn mint(&self) -> Option<String> {
         let mut id = [0; ID_BYTES];
         id[..8].copy_from_slice(&self.0.clock.now().to_be_bytes());
-        id[8..SIGNED_BYTES].copy_from_slice(&self.0.serial.fetch_add(1, Ordering::Relaxed).to_be_bytes());
+        getrandom::fill(&mut id[8..SIGNED_BYTES]).ok()?;
         let tag = self.mac(&id[..SIGNED_BYTES]).finalize().into_bytes();
         id[SIGNED_BYTES..].copy_from_slice(&tag);
-        format!("{ID_PREFIX}{}", URL_SAFE_NO_PAD.encode(id))
+        Some(format!("{ID_PREFIX}{}", URL_SAFE_NO_PAD.encode(id)))
     }
 
     /// Joins `id`'s aggregate as a data lane that `lane` bounds.
@@ -326,7 +324,7 @@ impl Uploads {
         let mut raw = [0; ID_BYTES];
         let decoded = id
             .strip_prefix(ID_PREFIX)
-            .filter(|encoded| encoded.len() == ID_BYTES.div_ceil(3) * 4)
+            .filter(|encoded| encoded.len() == (ID_BYTES * 4).div_ceil(3))
             .is_some_and(|encoded| URL_SAFE_NO_PAD.decode_slice(encoded, &mut raw) == Ok(ID_BYTES));
         if !decoded
             || self
