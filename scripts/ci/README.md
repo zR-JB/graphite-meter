@@ -62,7 +62,9 @@ run asks.
    requires either every main CI job and CodeQL for a stable release or, for a
    prerelease, an open PR containing current main with identical `.github`,
    `.githooks`, `scripts` and mise trees, its newest CI Gate and CodeQL check.
-   Publish mode also requires `ghcr-release` to have reviewers and main-only
+   A stable release whose tag already has a published Release must carry
+   exactly its assets, since the images go out before the Release. Publish
+   mode also requires `ghcr-release` to have reviewers and main-only
    deployments.
 3. **Approved publication.** One `ghcr-release` job holds the only write
    credentials. It rechecks the handoff digests and all trust above, pushes the

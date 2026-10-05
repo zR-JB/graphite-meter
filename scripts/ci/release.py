@@ -236,6 +236,42 @@ def verify_request(request_dir: Path) -> tuple[Release, bool]:
     return release, request["mode"] == "publish"
 
 
+def release_assets(repository: str, release_id: int) -> list[gh.JsonObject]:
+    pages = gh.api(f"repos/{repository}/releases/{release_id}/assets?per_page=100", paginate=True)
+    return [gh.expect_object(item, "asset") for page in gh.expect_array(pages, "assets")
+            for item in gh.expect_array(page, "assets")]
+
+
+def asset_digests(repository: str, release_id: int) -> dict[str, str]:
+    assets = release_assets(repository, release_id)
+    return {gh.str_field(asset, "name", "asset"): str(asset.get("digest") or "") for asset in assets}
+
+
+def local_digests(directory: Path) -> dict[str, str]:
+    """Each file's digest as GitHub reports a release asset's."""
+    exact_files(directory, names := {entry.name for entry in directory.iterdir()})
+    return {name: "sha256:" + gh.file_sha256(directory / name) for name in names}
+
+
+def tag_release(repository: str, tag: str) -> gh.JsonObject | None:
+    """The release at `tag`, if there is one."""
+    pages = gh.expect_array(gh.api(f"repos/{repository}/releases?per_page=100", paginate=True), "releases")
+    matches = [gh.expect_object(item, "release") for page in pages
+               for item in gh.expect_array(page, "releases") if isinstance(item, dict) and item.get("tag_name") == tag]
+    if len(matches) > 1:
+        gh.fail(f"multiple releases unexpectedly use tag {tag}")
+    return matches[0] if matches else None
+
+
+def require_same_published_assets(repository: str, release: Release, assets: Path) -> None:
+    """A stable release already published at its tag holds exactly `assets`: images go out before the Release, and
+    must not name source offers it would never carry."""
+    existing = tag_release(repository, release.tag)
+    if existing is not None and existing.get("draft") is False and asset_digests(
+            repository, gh.int_field(existing, "id", "release")) != local_digests(assets):
+        gh.fail(f"{release.tag} is already published with other assets")
+
+
 def write_checksums(directory: Path) -> None:
     """Write checksums.txt, as sha256sum lists them, for every other file in `directory`."""
     names = sorted(path.name for path in directory.iterdir() if path.name != "checksums.txt")
@@ -265,21 +301,27 @@ def command_verify() -> None:
         rust_tui = request_dir / f"release-rust-tui-{run_id}" if release.stable else None
         rust_sha256, rust_manifest = rust_release.verify(release.version, release.sha, rust_image, rust_tui,
                                                          rust_assets)
+    # The Release's assets: Go's and, with Rust, every Rust asset under one checksums.txt.
+    release_files = request_dir / "release-files"
+    if release.stable:
+        shutil.copytree(assets, release_files)
+    if release.rust and release.stable:
+        for path in rust_assets.iterdir():
+            shutil.copyfile(path, release_files / path.name)
+        write_checksums(release_files)
     main, ci_run_id, codeql_id = require_publishable(env("REPOSITORY"), release)
     if main != env("PUBLISHER_SHA"):
         gh.fail("main moved during verification; start a fresh request")
+    if release.stable:
+        require_same_published_assets(env("REPOSITORY"), release, release_files)
 
     (handoff / "image").mkdir(parents=True, exist_ok=True)
     shutil.copyfile(candidate / OCI, handoff / "image" / OCI)
     if release.stable:
-        shutil.copytree(assets, handoff / "assets")
+        shutil.copytree(release_files, handoff / "assets")
     if release.rust:
         (handoff / "rust-image").mkdir()
         shutil.copyfile(rust_image / rust_release.OCI, handoff / "rust-image" / OCI)
-    if release.rust and release.stable:
-        for path in rust_assets.iterdir():
-            shutil.copyfile(path, handoff / "assets" / path.name)
-        write_checksums(handoff / "assets")
     gh.append_output(
         tag=release.tag, version=release.version, stable=str(release.stable).lower(),
         publish=str(publish).lower(), sha=release.sha, main_sha=main, pr=release.pr or "",
@@ -312,6 +354,8 @@ def command_recheck() -> None:
             gh.fail("approved Rust OCI handoff does not match the verified archive")
     if release.stable and assets_sha256(handoff / "assets") != env("ASSETS_SHA256"):
         gh.fail("approved asset handoff does not match the verified assets")
+    if release.stable:
+        require_same_published_assets(env("REPOSITORY"), release, handoff / "assets")
     current, ci_run_id, codeql_id = require_publishable(env("REPOSITORY"), release)
     if current != main:
         gh.fail("main moved after verification; start a fresh request")
@@ -320,17 +364,6 @@ def command_recheck() -> None:
         f"authorized on main `{main}` after approval: CI run `{ci_run_id}`, "
         f"CodeQL {codeql_id or 'on main'}."
     )
-
-
-def release_assets(repository: str, release_id: int) -> list[gh.JsonObject]:
-    pages = gh.api(f"repos/{repository}/releases/{release_id}/assets?per_page=100", paginate=True)
-    return [gh.expect_object(item, "asset") for page in gh.expect_array(pages, "assets")
-            for item in gh.expect_array(page, "assets")]
-
-
-def asset_digests(repository: str, release_id: int) -> dict[str, str]:
-    assets = release_assets(repository, release_id)
-    return {gh.str_field(asset, "name", "asset"): str(asset.get("digest") or "") for asset in assets}
 
 
 def source_notice(release: Release, source: str, rust_sources: list[str]) -> str:
@@ -359,8 +392,7 @@ def command_publish() -> None:
     release = parse_release(env("TAG"), env_sha("TARGET_SHA"), 0)
     tag, base = release.tag, f"repos/{repository}"
     assets = gh.runner_path("ASSETS_DIR")
-    exact_files(assets, names := {entry.name for entry in assets.iterdir()})
-    local = {name: "sha256:" + gh.file_sha256(assets / name) for name in names}
+    local = local_digests(assets)
     source = f"graphite-meter_{release.version}_third-party-source.tar.gz"
     if source not in local:
         gh.fail(f"release handoff is missing the third-party source asset {source}")
@@ -372,12 +404,7 @@ def command_publish() -> None:
             gh.fail(f"{tag} resolves to {sha}, expected {release.sha}")
 
     require_compatible_release_tag(repository, tag, release.sha)
-    pages = gh.expect_array(gh.api(f"{base}/releases?per_page=100", paginate=True), "releases")
-    matches = [gh.expect_object(item, "release") for page in pages
-               for item in gh.expect_array(page, "releases") if isinstance(item, dict)
-               and item.get("tag_name") == tag]
-    if len(matches) > 1:
-        gh.fail(f"multiple releases unexpectedly use tag {tag}")
+    matches = [found] if (found := tag_release(repository, tag)) is not None else []
     if matches and matches[0].get("prerelease") is not False:
         gh.fail(f"{tag} already exists as a prerelease")
     if matches and matches[0].get("draft") is False:

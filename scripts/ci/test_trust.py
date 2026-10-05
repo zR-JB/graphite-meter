@@ -62,6 +62,7 @@ JOBS = P + "actions/runs/5151/jobs?filter=latest&per_page=100"
 CHECKS = P + f"commits/{HEAD}/check-runs?per_page=100&filter=all"
 CODEQL = P + "code-scanning/analyses?ref=refs%2Fheads%2Fmain&tool_name=CodeQL&per_page=100"
 TAG_REFS = P + "git/matching-refs/tags/v1.2.3"
+RELEASES, RELEASE_ASSETS = P + "releases?per_page=100", P + "releases/9/assets?per_page=100"
 ENVIRONMENT = P + "environments/ghcr-release"
 POLICIES = ENVIRONMENT + "/deployment-branch-policies"
 GATE = {"name": "Gate", "status": "completed", "conclusion": "success"}
@@ -156,7 +157,7 @@ def trusted(stable: bool, mode: str = "publish", rust: bool = False) -> dict[str
                                           "event": "push", "pull_requests": []}
         return responses | {
             TAG_REFS: [], ci_runs("push", MAIN): pages({"workflow_runs": [run]}),
-            CODEQL: pages([analysis(99, 1)]),
+            CODEQL: pages([analysis(99, 1)]), RELEASES: pages([]),
         }
     check = {"id": 77, "name": "CodeQL", "app": APP, "status": "completed",
              "conclusion": "success", "pull_requests": [{"number": 101}]}
@@ -167,6 +168,15 @@ def trusted(stable: bool, mode: str = "publish", rust: bool = False) -> dict[str
         ci_runs("pull_request", HEAD): pages({"workflow_runs": [ci_run(5151, "success")]}),
         CHECKS: pages({"check_runs": [check]}),
     }
+
+
+def published_with(*names: str, draft: bool, directory: Path | None = None) -> dict[str, object]:
+    """GitHub's answers for a v1.2.3 Release with assets `names`, digested from `directory` or made up."""
+    def digest(name: str) -> str:
+        return "sha256:" + (file_sha256(directory / name) if directory else "0" * 64)
+
+    return {RELEASES: pages([{"id": 9, "tag_name": "v1.2.3", "draft": draft, "prerelease": False}]),
+            RELEASE_ASSETS: pages([{"name": name, "digest": digest(name)} for name in names])}
 
 
 # Main has advanced to OLD, which the PR head still contains.
@@ -569,6 +579,8 @@ class CommandTests(unittest.TestCase):
                              "x86_64-unknown-linux-musl")
 
         unprotected = {ENVIRONMENT: REVIEWED | {"protection_rules": []}}
+        # An earlier run published v1.2.3 with other assets, such as without the Rust ones.
+        published = published_with("x.tar.gz", draft=False)
         rows: tuple[tuple[bool, bool, str, Edit | None, dict[str, object], dict[str, str], str | None], ...] = (
             (True, False, "publish", None, {}, {}, None),
             (False, False, "validate", None, {}, {}, None),
@@ -581,6 +593,9 @@ class CommandTests(unittest.TestCase):
             (False, False, "publish", None, MOVED | {MAIN_COMMIT: Answers([{"sha": MAIN}, {"sha": OLD}])},
              {}, "main moved during"),
             (True, True, "publish", tui, {}, {}, "notices differ from its source offer"),
+            (True, True, "publish", None, published, {}, "already published with other assets"),
+            (True, False, "validate", None, published, {}, "already published with other assets"),
+            (True, True, "publish", None, published_with("x.tar.gz", draft=True), {}, None),
             (True, True, "publish", rust_checksum, {}, {}, "does not match its checksum"),
             # A Rust prerelease, as Go's, publishes only its image.
             (False, True, "publish", None, {}, {}, None),
@@ -645,6 +660,9 @@ class CommandTests(unittest.TestCase):
             (True, {"OCI_SHA256": "0" * 64}, {}, "OCI handoff"),
             (True, {"ASSETS_SHA256": "0" * 64}, {}, "asset handoff"),
             (True, {"HEAD": OLD}, {}, "checked-out tooling"),
+            (True, {}, published_with("x.tar.gz", draft=False), "already published with other assets"),
+            (True, {}, published_with(*sorted(path.name for path in (handoff / "assets").iterdir()), draft=False,
+                                      directory=handoff / "assets"), None),
             (False, {}, closed, "not open against main"),
             (False, {}, MOVED | {MAIN_COMMIT: {"sha": OLD}}, "main moved after verification"),
         ):
