@@ -199,6 +199,7 @@ jobs:
 
   # The Rust jobs build the source the build job resolved: main for a stable release, which alone ships TUI
   # archives and source offers, or the exact PR head that BuildKit fetches for a prerelease, as Go's image.
+  # Each job runs alone, so release.py binds every artifact to the one job that ran while it was written.
   rust-image:
     name: Build untrusted Rust image
     needs: build
@@ -293,7 +294,7 @@ jobs:
 
   rust-tui:
     name: Build untrusted Rust TUI archives
-    needs: build
+    needs: [build, rust-image]
     if: needs.build.outputs.rust == 'true' && needs.build.outputs.stable == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 90

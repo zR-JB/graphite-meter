@@ -148,7 +148,8 @@ def require_dispatch_run(
     artifacts: dict[str, tuple[str, int]],
 ) -> None:
     """Bind a request run to its workflow, inputs, main, one attempt, the owner and `artifacts`, each named with
-    the job that must have written it, while it ran, and its size limit."""
+    the job that must have written it and its size limit. An artifact counts only if it was written while its job
+    ran and no other job of the run did, so no other job can have supplied it."""
     workflow_id = gh.int_field(gh.expect_object(gh.api(f"repos/{repository}/actions/workflows/{workflow}"),
                                           workflow), "id", workflow)
     run = gh.expect_object(gh.api(f"repos/{repository}/actions/runs/{run_id}"), "request run")
@@ -172,6 +173,7 @@ def require_dispatch_run(
     unexpired = [item for item in _objects(pages, "artifacts") if item.get("expired") is False]
     jobs = _objects(gh.api(gh.query(f"repos/{repository}/actions/runs/{run_id}/jobs", filter="latest",
                                     per_page=100), paginate=True), "jobs")
+    ran = [item for item in jobs if item.get("conclusion") != "skipped"]
     for name, (job, limit) in artifacts.items():
         if len(matches := [item for item in unexpired if item.get("name") == name]) != 1:
             gh.fail(f"expected one unexpired artifact {name}, found {len(matches)}")
@@ -180,9 +182,12 @@ def require_dispatch_run(
         built = [item for item in jobs if item.get("name") == job]
         if len(built) != 1 or (built[0].get("status"), built[0].get("conclusion")) != DONE:
             gh.fail(f"request run has no single successful job {job!r}")
-        if not (timestamp(built[0], "started_at") <= timestamp(matches[0], "created_at")
-                <= timestamp(matches[0], "updated_at") <= timestamp(built[0], "completed_at")):
+        created, updated = timestamp(matches[0], "created_at"), timestamp(matches[0], "updated_at")
+        if not timestamp(built[0], "started_at") <= created <= updated <= timestamp(built[0], "completed_at"):
             gh.fail(f"artifact {name} was not written while its job {job!r} ran")
+        if others := [_text(item.get("name")) for item in ran if item is not built[0]
+                      and timestamp(item, "started_at") <= updated and created <= timestamp(item, "completed_at")]:
+            gh.fail(f"artifact {name} was written while {', '.join(others)} also ran")
 
 
 def require_ci_gate(

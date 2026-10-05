@@ -164,6 +164,8 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "only when the validated request selects them"),
     (REQUEST, "    if: needs.build.outputs.rust == 'true' && needs.build.outputs.stable == 'true'\n",
      "    if: needs.build.outputs.rust == 'true'\n", "TUI archives only for a stable release"),
+    # The TUI job runs after the image job, so release.py can bind each artifact to the one job that ran.
+    (REQUEST, "    needs: [build, rust-image]\n", "    needs: build\n", "must run one after another"),
     (REQUEST, "context: ${{ needs.build.outputs.context }}\n          file: container/Dockerfile.rust\n"
      "          target: server\n", "context: .\n          file: container/Dockerfile.rust\n          target: server\n",
      "build the source the build job resolved"),

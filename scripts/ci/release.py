@@ -46,7 +46,7 @@ TAG_RE = re.compile(rf"v{N}\.{N}\.{N}(-(?:alpha|beta|rc)\.{N})?")
 OCI = "graphite-meter.oci.tar"
 OCI_LIMIT = 1024 * 1024 * 1024
 ASSETS_LIMIT = 2 * OCI_LIMIT
-# The release request's jobs; each artifact must have been written by its job while that job ran.
+# The release request's jobs, which run one after another; each artifact must be written while only its job ran.
 BUILD_JOB = "Build untrusted release candidate"
 RUST_IMAGE_JOB = "Build untrusted Rust image"
 RUST_TUI_JOB = "Build untrusted Rust TUI archives"

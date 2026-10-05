@@ -238,13 +238,16 @@ def check_workflows(root: Path) -> None:
     # release.py takes each artifact only from the request job that wrote it.
     if re.findall(r"(?m)^    name: (.*)$", request) != list(REQUEST_JOBS):
         fail(f"release-request.yml: its jobs must be named {list(REQUEST_JOBS)}, as release.py expects")
-    # The Rust jobs run only for a validated request that selected them, the TUI archives only for a stable one.
+    # The Rust jobs run only for a validated request that selected them, the TUI archives only for a stable one and
+    # after the image, so no two jobs run at once and each artifact binds to the one job that ran when it was written.
     for job in JOB.split(request.split("\njobs:\n", 1)[1]):
-        selected = "    needs: build\n    if: needs.build.outputs.rust == 'true'"
-        stable = " && needs.build.outputs.stable == 'true'" if f"    name: {RUST_TUI_JOB}\n" in job else ""
-        if job and not job.startswith("build:\n") and f"{selected}{stable}\n" not in job:
-            fail("release-request.yml: Rust jobs must run only when the validated request selects them, "
-                 "and the TUI archives only for a stable release")
+        tui = f"    name: {RUST_TUI_JOB}\n" in job
+        needs = "[build, rust-image]" if tui else "build"
+        stable = " && needs.build.outputs.stable == 'true'" if tui else ""
+        selected = f"    needs: {needs}\n    if: needs.build.outputs.rust == 'true'{stable}\n"
+        if job and not job.startswith("build:\n") and selected not in job:
+            fail("release-request.yml: Rust jobs must run one after another, only when the validated request "
+                 "selects them, and the TUI archives only for a stable release")
     scopes = re.findall(r"(?m)^ *permissions:.*(?:\n +\S.*)*", request)
     if scopes != ["permissions:\n  contents: read"]:
         fail("release-request.yml: the untrusted build may only read contents")

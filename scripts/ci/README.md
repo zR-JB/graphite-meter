@@ -45,17 +45,18 @@ run asks.
    as the exact remote commit without a token. With `rust`, the pinned Rust
    builder builds the same source without caches: the `rust-image` job the
    linux/amd64 + linux/arm64 image, and for a stable release also the server
-   source offers and, in the `rust-tui` job, the Linux and Windows TUI
-   archives with their source offers, which that job checks by running the
-   amd64 TUI. Every image build takes the source the build job resolved.
+   source offers and, in the `rust-tui` job after it, the Linux and Windows
+   TUI archives with their source offers, which that job checks by running
+   the amd64 TUI. Every image build takes the source the build job resolved.
    `rust_release.py` stages exactly the release files out of each export.
    Rust builds have no macOS archive.
 2. **Trusted verification.** `release.yml` runs main's tooling on
    `workflow_run` for main dispatches only and never executes the requested
    source. It binds `request.json` to the run title, the owner, the first
    attempt and bounded artifacts, each written by the request job that
-   `release.py` names for it while that job ran, so no other job of the run
-   can supply it; it verifies the images and archives as data, the Rust ones
+   `release.py` names for it while that job and no other job of the run ran;
+   the request's jobs run one after another, so none can supply another's
+   artifact. It verifies the images and archives as data, the Rust ones
    as CI's `rust-release` job does, and
    requires either every main CI job and CodeQL for a stable release or, for a
    prerelease, an open PR containing current main with identical `.github`,

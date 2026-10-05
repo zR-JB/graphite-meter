@@ -110,17 +110,26 @@ def dispatch_run(workflow_id: int, run_id: int, title: str = "title") -> dict[st
     }
 
 
+def written(*names: str, size: int = 1024, expired: bool = False, created: str = "10:05",
+            updated: str = "10:06") -> list[dict[str, object]]:
+    return [{"name": name, "expired": expired, "size_in_bytes": size,
+             "created_at": f"2026-09-01T{created}:00Z", "updated_at": f"2026-09-01T{updated}:00Z"} for name in names]
+
+
 def artifacts(*names: str, size: int = 1024, expired: bool = False, created: str = "10:05",
               updated: str = "10:06") -> object:
-    return pages({"artifacts": [{"name": name, "expired": expired, "size_in_bytes": size,
-                                 "created_at": f"2026-09-01T{created}:00Z", "updated_at": f"2026-09-01T{updated}:00Z"}
-                                for name in names]})
+    return pages({"artifacts": written(*names, size=size, expired=expired, created=created, updated=updated)})
 
 
-def job(name: str = BUILD_JOB, conclusion: str = "success") -> dict[str, object]:
+def job(name: str = BUILD_JOB, conclusion: str = "success", started: str = "10:00",
+        completed: str = "10:10") -> dict[str, object]:
     """A request job that ran from 10:00 to 10:10."""
     return {"name": name, "status": "completed", "conclusion": conclusion,
-            "started_at": "2026-09-01T10:00:00Z", "completed_at": "2026-09-01T10:10:00Z"}
+            "started_at": f"2026-09-01T{started}:00Z", "completed_at": f"2026-09-01T{completed}:00Z"}
+
+
+# The request jobs run one after another; each writes its artifacts while it runs.
+RUST_IMAGE_RAN, RUST_TUI_RAN = ("10:11", "10:20"), ("10:21", "10:30")
 
 
 def release_of(stable: bool, rust: bool = False) -> Release:
@@ -129,13 +138,16 @@ def release_of(stable: bool, rust: bool = False) -> Release:
 
 def trusted(stable: bool, mode: str = "publish", rust: bool = False) -> dict[str, object]:
     """Every GitHub answer that authorizes a stable release or a PR #101 prerelease, with or without Rust."""
-    names = ["release-request-4242"] + (["release-assets-4242"] if stable else []) + (
-        ["release-rust-image-4242"] if rust else []) + (["release-rust-tui-4242"] if rust and stable else [])
+    files = [*written("release-request-4242", *(["release-assets-4242"] if stable else [])),
+             *(written("release-rust-image-4242", created="10:15", updated="10:16") if rust else []),
+             *(written("release-rust-tui-4242", created="10:25", updated="10:26") if rust and stable else [])]
     responses: dict[str, object] = {
         MAIN_COMMIT: {"sha": MAIN}, REQUEST_WORKFLOW: {"id": 31337},
         REQUEST_RUN: dispatch_run(31337, 4242, request_title(mode, release_of(stable, rust), MAIN)),
-        ARTIFACTS: artifacts(*names), JOBS: pages({"jobs": [GATE]}),
-        REQUEST_JOBS: pages({"jobs": [job(), job(RUST_IMAGE_JOB), job(RUST_TUI_JOB)]}),
+        ARTIFACTS: pages({"artifacts": files}), JOBS: pages({"jobs": [GATE]}),
+        REQUEST_JOBS: pages({"jobs": [job(), job(RUST_IMAGE_JOB, "success" if rust else "skipped", *RUST_IMAGE_RAN),
+                                      job(RUST_TUI_JOB, "success" if rust and stable else "skipped",
+                                          *RUST_TUI_RAN)]}),
     }
     if mode == "publish":
         responses |= {ENVIRONMENT: REVIEWED, POLICIES: MAIN_ONLY}
@@ -331,6 +343,11 @@ class RequestTests(unittest.TestCase):
             ("jobs", [job(), job()], "no single successful job"),
             ("jobs", [job(conclusion="failure")], "no single successful job"),
             ("jobs", [job() | {"started_at": "yesterday"}], "not an ISO 8601 time"),
+            # No other job of the run may have been running while the artifact was written.
+            ("jobs", [job(), job(RUST_IMAGE_JOB)], f"written while {RUST_IMAGE_JOB} also ran"),
+            ("jobs", [job(), job(RUST_TUI_JOB, started="10:06", completed="10:20")], "also ran"),
+            ("jobs", [job(), job(RUST_IMAGE_JOB, "skipped")], None),
+            ("jobs", [job(), job(RUST_IMAGE_JOB, started="10:07", completed="10:20")], None),
         ):
             run = dispatch_run(7001, 4242)
             files, jobs = artifacts(name), [job()]
