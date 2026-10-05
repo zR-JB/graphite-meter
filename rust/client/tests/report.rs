@@ -2,12 +2,15 @@
 use graphite_meter_client::{
     events::{Event, View},
     measure::{
-        aggregate::Rate,
-        latency::{Population, Summary},
+        aggregate::{Rate, Reading},
+        latency::{Population, Summary, Timing},
     },
-    model::{Dir, Failure, Outcome, Scope, ServerFailure, ServerResult, Stage, StageResult, Throughput},
-    report::{WIDTH, progress, report, unreported},
-    run::prepare::ServerPath,
+    model::{Dir, Failure, LaneHealth, Outcome, Scope, ServerFailure, ServerResult, Stage, StageResult, Throughput},
+    report::{WIDTH, details, progress, report, unreported},
+    run::{
+        engine::{Decision, Engine, Input, Member, Sample, StagePlan},
+        prepare::ServerPath,
+    },
     text::{Line, Profile, write},
     tui::theme::Palette,
 };
@@ -159,6 +162,79 @@ fn several_servers_add_each_server_s_share_and_the_issues() {
         text.ends_with("\nIssues\nb meter · Download throughput · at 7.5 s · Stopped delivering data\n"),
         "{text}"
     );
+}
+
+#[test]
+fn full_details_open_with_each_result_s_facts_and_without_intervals_leave_out_their_heading() {
+    let mut view = view(&["a", "b"]);
+    let idle = &mut view.run.as_mut().unwrap().results[0].servers[0];
+    let idle = idle.latency.as_mut().unwrap();
+    let handling = Duration::from_micros(300);
+    idle.summary.timing = Some(Timing { pairs: 38, rtt: Duration::from_millis(12), handling });
+    let text = printed(&details(&view, WIDTH, &Palette::new(true), true), Profile::Plain);
+    let expected = "\
+Complete · 1 of 2 servers
+Idle latency: 40 replies · 4.0 s
+Server timing (38 paired replies, means): raw 12.0 ms · handling 0.3 ms
+Download: peak 120.0 Mbit/s · 125.0 MB · 10.0 s
+Loaded latency · Download: 40 replies · 10.0 s
+Added: loaded median minus idle median, same server.
+
+Server       Download
+All servers  100.0 Mbit/s
+a meter      50.00 Mbit/s
+b meter ✗    50.00 Mbit/s
+
+Latency median by server
+Server   Idle     Loaded down
+a meter  12.0 ms  12.0 ms
+b meter  13.0 ms  13.0 ms
+
+Issues
+b meter · Download throughput · at 7.5 s · Stopped delivering data
+";
+    assert_eq!(text, expected);
+}
+
+/// A download stage of server `a` measured by the engine from `base`, one kilobyte per millisecond.
+fn measured_download(base: Instant) -> StageResult {
+    let member = Member { server: id("a"), warmup: Duration::ZERO };
+    let plan = StagePlan {
+        stage: Stage::Download,
+        members: vec![member],
+        duration: SECOND * 2,
+        latency: None,
+    };
+    let (mut engine, mut at) = (Engine::new(plan, base), base);
+    loop {
+        let down = Some(at.duration_since(base).as_millis() as u64 * 1000);
+        let reading = Reading { server: id("a"), down, up: None, fed: None };
+        let lanes = Dir { down: LaneHealth::Ok, up: LaneHealth::Ok };
+        let samples = [Sample { reading, ready: true, missed: None, lanes }];
+        let input = Input {
+            now: at,
+            lateness: Duration::ZERO,
+            samples: &samples,
+            probes: &[],
+            departed: &[],
+        };
+        let tick = engine.tick(input);
+        if tick.decisions.contains(&Decision::Finish) {
+            return engine.result();
+        }
+        at = tick.next;
+    }
+}
+
+#[test]
+fn full_details_end_with_the_aggregation_intervals_of_a_finished_run() {
+    let mut view = view(&["a", "b"]);
+    let run = view.run.as_mut().unwrap();
+    let measured = measured_download(run.at.unwrap());
+    run.results[1].intervals = measured.intervals;
+    let text = printed(&details(&view, WIDTH, &Palette::new(true), true), Profile::Plain);
+    let intervals = "\n\nAggregation intervals\nDownload 0.0–2.0 s · a meter · measured window\n";
+    assert!(text.ends_with(intervals), "{text}");
 }
 
 #[test]

@@ -3,7 +3,7 @@ use crate::{
     config::Config,
     measure::{
         format,
-        latency::{Population, added},
+        latency::{Population, Summary, added},
     },
     model::{Cadence, Direction, Outcome, Stage, StageResult, Throughput},
     net::{LatencyPath, ThroughputPath},
@@ -42,13 +42,14 @@ pub fn latency_cells(population: &Population, idle: Option<Duration>) -> Vec<Str
     cells
 }
 
-/// The peak without the mean's unit, bytes, the window and, for uploads, that the receiver timed it.
-pub fn throughput_facts(throughput: Throughput, measured: Duration, direction: Direction) -> Vec<String> {
+/// The peak, without the mean's unit when `brief`, bytes, the window and, for uploads, that the receiver timed it.
+pub fn throughput_facts(throughput: Throughput, measured: Duration, direction: Direction, brief: bool) -> Vec<String> {
     let mut facts = Vec::new();
     if let Some(rate) = throughput.rate.filter(|rate| rate.peak > 0.0) {
         let (peak, mean) = (format::rate(rate.peak), format::rate(rate.mean));
         let unit = mean
             .rsplit_once(' ')
+            .filter(|_| brief)
             .map(|(_, unit)| format!(" {unit}"))
             .unwrap_or_default();
         facts.push(format!("peak {}", peak.strip_suffix(&unit).unwrap_or(&peak)));
@@ -56,6 +57,15 @@ pub fn throughput_facts(throughput: Throughput, measured: Duration, direction: D
     facts.push(format::bytes(throughput.bytes));
     facts.extend((!measured.is_zero()).then(|| clock(measured)));
     facts.extend((direction == Direction::Up).then(|| "receiver-timed".to_owned()));
+    facts
+}
+
+/// Replies, the window, and the probes left unfinished or never sent.
+pub fn latency_facts(summary: Summary, measured: Duration) -> Vec<String> {
+    let mut facts = vec![format!("{} replies", count(summary.replies))];
+    facts.extend((!measured.is_zero()).then(|| clock(measured)));
+    facts.extend((summary.unresolved > 0).then(|| format!("unfinished probes {}", count(summary.unresolved))));
+    facts.extend((summary.send_failures > 0).then(|| format!("failed sends {}", count(summary.send_failures))));
     facts
 }
 

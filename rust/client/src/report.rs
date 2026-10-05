@@ -13,6 +13,7 @@ use crate::{
     tui::theme::Palette,
 };
 use graphite_meter_proto::{catalog::ServerId, reason::FailureReason};
+use std::time::Duration;
 use vocabulary::*;
 
 /// The width of a report that does not reach a terminal.
@@ -180,7 +181,7 @@ impl Report<'_> {
                 let result = self.result(stage).map(|result| (result, result.throughput[direction]));
                 let (value, facts) = match result {
                     Some((result, Some(throughput @ Throughput { rate: Some(rate), .. }))) => {
-                        let facts = throughput_facts(throughput, result.measured, direction);
+                        let facts = throughput_facts(throughput, result.measured, direction, true);
                         (Line::styled(format::rate(rate.mean), hue.bold()), facts)
                     }
                     Some((_, Some(_))) => (Line::styled(MISSING, palette.muted), Vec::new()),
@@ -296,17 +297,7 @@ impl Report<'_> {
             let (summary, result) = (population.summary, self.result(stage));
             let failed = result.and_then(|result| self.latency_failure(result)).is_some();
             if failed || summary.timeouts > 0 || summary.unresolved > 0 || summary.send_failures > 0 {
-                let mut facts = vec![format!("{} replies", count(summary.replies))];
-                let measured = result
-                    .map(|result| result.measured)
-                    .filter(|measured| !measured.is_zero());
-                facts.extend(measured.map(clock));
-                facts.extend(
-                    (summary.unresolved > 0).then(|| format!("unfinished probes {}", count(summary.unresolved))),
-                );
-                facts.extend(
-                    (summary.send_failures > 0).then(|| format!("failed sends {}", count(summary.send_failures))),
-                );
+                let facts = latency_facts(summary, result.map_or(Duration::ZERO, |result| result.measured));
                 notes.extend(self.note(&population_label(stage), &facts));
             }
             if let Some(paired) = summary.timing {

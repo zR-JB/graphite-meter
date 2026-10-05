@@ -1,6 +1,6 @@
 //! Each server's share of a run: mean rates and latency medians per server, the run's issues and its aggregation
 //! intervals.
-use super::{Report, vocabulary::*};
+use super::{ADDED_NOTE, Report, vocabulary::*};
 use crate::{
     events::View,
     measure::format,
@@ -10,8 +10,8 @@ use crate::{
 };
 use std::time::Duration;
 
-/// Each server's mean rates and latency medians, ✗ once it left, and the run's issues; with `full` its aggregation
-/// intervals once it finished.
+/// Each server's mean rates and latency medians, ✗ once it left, and the run's issues; with `full` the facts of each
+/// result first and the aggregation intervals once the run finished.
 pub fn details(view: &View, width: usize, palette: &Palette, full: bool) -> Vec<Line> {
     let Some(run) = &view.run else { return Vec::new() };
     Report { view, run, focus: run.focus.as_ref(), width, palette }.details(full)
@@ -71,6 +71,11 @@ impl Report<'_> {
             .chain(run.plan.iter().map(|&(stage, _)| compact_population(stage)))
             .collect();
         let mut lines = vec![Line::styled(self.notice(), palette.heading)];
+        let facts = if full { self.facts() } else { Vec::new() };
+        if !facts.is_empty() {
+            lines.extend(facts);
+            lines.push(Line::default());
+        }
         lines.extend(self.grid(&headers, rates));
         lines.extend([Line::default(), Line::styled("Latency median by server", palette.heading)]);
         lines.extend(self.grid(&populations, medians));
@@ -85,10 +90,39 @@ impl Report<'_> {
                 issue.failure.reason.label()
             )));
         }
-        if full && run.outcome.is_some() {
+        if full && run.outcome.is_some() && run.results.iter().any(|result| !result.intervals.is_empty()) {
             lines.extend(self.intervals());
         }
         lines.into_iter().map(|line| line.fit(self.width)).collect()
+    }
+
+    /// Each measured direction's and latency population's facts, the server's timing, and what Added means.
+    fn facts(&self) -> Vec<Line> {
+        let Some((_, _, added)) = self.results("Latency") else { return Vec::new() };
+        let mut notes = Vec::new();
+        for &(stage, _) in &self.run.plan {
+            let result = self.result(stage);
+            let measured = result.map_or(Duration::ZERO, |result| result.measured);
+            for &direction in stage.directions() {
+                let throughput = result.and_then(|result| result.throughput[direction]);
+                let Some(throughput) = throughput.filter(|it| it.rate.is_some() || it.bytes > 0) else {
+                    continue;
+                };
+                let facts = throughput_facts(throughput, measured, direction, false);
+                notes.extend(self.note(&direction_label(stage, direction), &facts));
+            }
+            let Some(summary) = self.population(stage).map(|population| population.summary) else {
+                continue;
+            };
+            notes.extend(self.note(&population_label(stage), &latency_facts(summary, measured)));
+            if let Some(timing) = summary.timing {
+                let label = format!("Server timing ({} paired replies, means)", count(timing.pairs));
+                let facts = [format!("raw {}", ms(timing.rtt)), format!("handling {}", ms(timing.handling))];
+                notes.extend(self.note(&label, &facts));
+            }
+        }
+        notes.extend(added.then(|| Line::styled(ADDED_NOTE, self.palette.muted)));
+        notes
     }
 
     /// The aggregation intervals of every stage, and how many older ones each dropped.
