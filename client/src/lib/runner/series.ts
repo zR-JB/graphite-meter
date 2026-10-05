@@ -143,6 +143,7 @@ export class LatencyPresentationBuckets {
       startT: bucket.startT,
       endT,
       medianRttMs: rtts.length ? sortedMedian(rtts) : null,
+      minRttMs: rtts[0] ?? null,
       p95RttMs: rtts.length ? nearestRank(rtts, 0.95) : null,
       maxRttMs: rtts.at(-1) ?? null,
       pingCount: bucket.pings,
@@ -161,7 +162,12 @@ export function singleLatencyBucket(
   phase: Phase = "idle",
 ): LatencyBucket {
   const value = timedOut ? null : Math.max(0, rttMs);
-  const summary = { medianRttMs: value, p95RttMs: value, maxRttMs: value };
+  const summary = {
+    medianRttMs: value,
+    minRttMs: value,
+    p95RttMs: value,
+    maxRttMs: value,
+  };
   return {
     t,
     startT: t,
@@ -307,15 +313,22 @@ function mergeLatency(bin: LatencyBucket[]): LatencyBucket {
   const middle = replies.find(
     (b) => (seen += b.pingCount - b.timeoutCount) >= successes / 2,
   );
+  const finite = (values: (number | null)[]) =>
+    values.filter((value) => value != null);
   const worst = (values: (number | null)[]) => {
-    const finite = values.filter((value) => value != null);
-    return finite.length ? Math.max(...finite) : null;
+    const known = finite(values);
+    return known.length ? Math.max(...known) : null;
+  };
+  const least = (values: (number | null)[]) => {
+    const known = finite(values);
+    return known.length ? Math.min(...known) : null;
   };
   return {
     ...first,
     t: (first.startT + last.endT) / 2,
     endT: last.endT,
     medianRttMs: middle?.medianRttMs ?? null,
+    minRttMs: least(bin.map((b) => b.minRttMs)),
     p95RttMs: worst(bin.map((b) => b.p95RttMs)),
     maxRttMs: worst(bin.map((b) => b.maxRttMs)),
     pingCount: bin.reduce((sum, b) => sum + b.pingCount, 0),

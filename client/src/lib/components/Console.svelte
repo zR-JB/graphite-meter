@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
   import { observeWidth } from "../actions/observeWidth";
-  import { onMount, tick, type Component } from "svelte";
+  import { flushSync, onMount, tick, type Component } from "svelte";
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   const { cancelPendingStart, hasPendingStart, returnToStart, toggleRun } =
@@ -18,7 +18,12 @@
   import LegalDialog from "./LegalDialog.svelte";
   import TopbarMore from "./TopbarMore.svelte";
   import { statusLabel, THEME } from "../presentation/vocabulary";
-  import { handoff } from "../presentation/motion.svelte";
+  import {
+    flip,
+    handoff,
+    nextFrame,
+    still,
+  } from "../presentation/motion.svelte";
   import { keyHint as tipKey, tooltip } from "../actions/tooltip";
   import { canFocus, activeModal } from "../actions/focus";
   import { MediaQuery } from "svelte/reactivity";
@@ -34,7 +39,6 @@
     loadPersisted,
     savePersisted,
   } from "../state/persistence";
-  import { STAGES } from "../runner/schedule";
   import { authEnabled as pageAuthEnabled } from "../auth";
   const authEnabled = pageAuthEnabled();
   const status = handoff(
@@ -214,10 +218,29 @@
   // Tips name a key only while the page shortcuts act on it.
   const keyHint = (key: string) => tipKey(key, store.keyShortcuts);
 
+  // The new theme opens as a circle from the theme key, or the bar's corner when the key is out of view.
   function toggleTheme() {
     const next =
       THEME_CYCLE[(THEME_CYCLE.indexOf(store.theme) + 1) % THEME_CYCLE.length];
-    store.prefer({ theme: next });
+    const apply = () => {
+      store.prefer({ theme: next });
+      flushSync();
+    };
+    if (still() || !document.startViewTransition) return apply();
+    const key = document
+      .querySelector<HTMLElement>(".direct-theme")
+      ?.getBoundingClientRect();
+    const shown = key && key.width > 0;
+    const x = shown ? key.left + key.width / 2 : innerWidth;
+    const y = shown ? key.top + key.height / 2 : 0;
+    const root = document.documentElement.style;
+    root.setProperty("--reveal-x", `${x}px`);
+    root.setProperty("--reveal-y", `${y}px`);
+    root.setProperty(
+      "--reveal-r",
+      `${Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y))}px`,
+    );
+    document.startViewTransition({ update: apply, types: ["theme"] });
   }
 
   // The grid and resize controls share one resolution of the saved widths.
@@ -244,7 +267,6 @@
 
   let resizedDock = false;
   // While a handle is dragged the columns follow the pointer; the glide is for opening, closing and keys.
-  let resizingDock = $state(false);
   function setDockWidth(side: "left" | "right", px: number) {
     resizedDock = true;
     const other = side === "left" ? "right" : "left";
@@ -400,7 +422,45 @@
   }
 
   // Direct closes and browser navigation commit through the same focus owner.
+  // A workspace that appears shows what has already settled as settled: the moments that mark a result arriving
+  // (the dial's sweep and beads, a card's facts, a lane's span, a chip's check) play when it arrives, so on each
+  // return to the console the ones it mounts with are finished at once, and only what arrives later plays.
+  const SETTLES = ["result-sweep", "await-sweep", "pop", "row-in", "grow-x"];
+  function entering(node: HTMLElement) {
+    const finish = () => {
+      for (const animation of node.getAnimations({ subtree: true }))
+        if (
+          animation instanceof CSSAnimation &&
+          SETTLES.some((name) => animation.animationName.endsWith(name))
+        )
+          animation.finish();
+    };
+    finish();
+    return nextFrame(finish);
+  }
+  // A docked sheet opening or closing changes the stage's width in one step and moves on the compositor (flip):
+  // the sheet slides from its edge and pushes the stage, which moves as one surface from where it stood.
+  const dockedPanels = (route: Route) =>
+    dockQuery.current && route.kind === "app" ? route.panels.join() : "";
+  // A result opening or closing in History moves its panes the same way: the list keeps its place and width
+  // changes, and the result rises in or sinks out.
+  const openResult = (route: Route) =>
+    route.kind === "app" && route.workspace.kind === "history"
+      ? (route.workspace.selectedId ?? "")
+      : null;
   function commitRoute(next: Route, fromHistory = false) {
+    const apply = () => applyRoute(next, fromHistory);
+    if (dockedPanels(next) !== dockedPanels(currentRoute))
+      flip(apply, ["stage", "sheet-left", "sheet-right"]);
+    else if (
+      openResult(next) !== null &&
+      openResult(currentRoute) !== null &&
+      openResult(next) !== openResult(currentRoute)
+    )
+      flip(apply, ["history-list", "history-detail"]);
+    else apply();
+  }
+  function applyRoute(next: Route, fromHistory: boolean) {
     const previous = currentRoute;
     const previousHistory = historyOpen;
     const nextHistory =
@@ -570,23 +630,8 @@
   id="console"
   {@attach observeWidth((width) => (consoleWidth = width))}
   data-phase={store.phase}
-  data-resizing={resizingDock ? "" : undefined}
   style="--dock-left: {docks.left}px; --dock-right: {docks.right}px;"
 >
-  <!-- The room takes a little of the running stage's light, from above; History is read in plain light.
-       The light spans the whole room and falls from over the stage, so a docked sheet never cuts it at
-       its column's edge; each layer glides with the columns, as the shell does. -->
-  <div class="amb" aria-hidden="true">
-    {#each STAGES as stage (stage)}
-      <i
-        data-tone={stage}
-        class:lit={measurementOpen &&
-          store.isRunning &&
-          store.phaseStage === stage}
-        style="--dock-left: {docks.left}px; --dock-right: {docks.right}px;"
-      ></i>
-    {/each}
-  </div>
   <!-- Container queries move direct actions into More as the bar narrows. -->
   <header class="topbar" class:saving={store.savingResults}>
     <button
@@ -603,7 +648,7 @@
         ><path
           d="M12 2.6 3.9 7.3v9.4l8.1 4.7 8.1-4.7V7.3Z"
           fill="none"
-          stroke="var(--brand)"
+          stroke="var(--phase-latency)"
           stroke-width="2"
           stroke-linejoin="round"
         /><path
@@ -615,7 +660,7 @@
       ><span class="brand-label">Graphite&nbsp;Meter</span></button
     >
     <button
-      class="btn btn-icon btn-quiet"
+      class="btn btn-icon key"
       aria-label="Settings"
       aria-expanded={settingsOpen}
       {@attach tooltip(() => `Settings — test and display${keyHint("S")}`)}
@@ -646,7 +691,7 @@
       </button>{/if}
     {#if AccountControl}<AccountControl />{/if}
     {#if store.savingResults}<button
-        class="btn btn-icon btn-quiet direct-history"
+        class="btn btn-icon key direct-history"
         type="button"
         aria-label="History"
         aria-current={historyOpen ? "page" : undefined}
@@ -657,22 +702,25 @@
         ><Icon name="history" /></button
       >{/if}
     <button
-      class="btn btn-icon btn-quiet direct-theme"
-      aria-label={`Theme: ${THEME[store.theme].label}`}
-      {@attach tooltip(
-        () =>
-          `Theme: ${THEME[store.theme].label}${keyHint("T")} — cycles light, dark and auto`,
-      )}
-      onclick={toggleTheme}><Icon name={THEME[store.theme].icon} /></button
-    >
-    <button
-      class="btn btn-icon btn-quiet direct-endpoint"
+      class="btn btn-icon key direct-endpoint"
       aria-label="Details"
       aria-expanded={telemetryOpen}
       {@attach tooltip(() => `Details — server and connection${keyHint("D")}`)}
       onclick={(event) =>
         togglePanel("endpoint", event.currentTarget as HTMLElement)}
       ><Icon name="info" /></button
+    >
+    <button
+      class="btn btn-icon key direct-theme"
+      aria-label={`Theme: ${THEME[store.theme].label}`}
+      {@attach tooltip(
+        () =>
+          `Theme: ${THEME[store.theme].label}${keyHint("T")} — cycles light, dark and auto`,
+      )}
+      onclick={toggleTheme}
+      >{#key store.theme}<span class="theme-glyph"
+          ><Icon name={THEME[store.theme].icon} /></span
+        >{/key}</button
     >
     <div class="topbar-more">
       <TopbarMore
@@ -696,7 +744,6 @@
     dockMaxWidth={dockMaxLeft}
     onResize={(px) => setDockWidth("left", px)}
     onResetWidth={() => resetDockWidth("left")}
-    onResizing={(dragging) => (resizingDock = dragging)}
     onClose={() => dismissPanel("settings")}
     side="left"
     title="Settings"
@@ -709,48 +756,58 @@
     {/if}
   </SidePanel>
   {#if currentRoute.kind === "not-found"}
-    <section class="stage history-stage" inert={flyout}>
+    <section class="stage history-stage" data-flip="stage" inert={flyout}>
       <div class="empty-state">
         <h1>Page not found</h1>
         <p>That client route does not exist.</p>
         <a class="btn btn-accent" href="#/">Return to measurement</a>
       </div>
     </section>
-  {:else if historyOpen}
-    <section class="stage history-stage" inert={flyout}>
-      {#if HistoryWorkspace}<HistoryWorkspace
-          selectedId={currentRoute.kind === "app" &&
-          currentRoute.workspace.kind === "history"
-            ? currentRoute.workspace.selectedId
-            : null}
-          onNavigate={(id: string | null) =>
-            id ? historyRoute(id) : closeHistoryDetail()}
-          onClose={dismissHistory}
-        />{:else if historyChunkFailed}<div
-          class="empty-state"
-          data-tone="err"
-          role="alert"
-        >
-          <span class="empty-icon">!</span>
-          <p>History could not be opened.</p>
-          <!-- Chromium keeps a failed module in its module map until the page reloads. -->
-          <button
-            class="btn btn-accent"
-            type="button"
-            onclick={() => location.reload()}>Retry</button
-          >
-        </div>{:else}<div class="empty-state" role="status">
-          <span class="empty-icon"><Icon name="history" /></span>
-          <h2>Opening History</h2>
-        </div>{/if}
-    </section>
   {:else}
+    <!-- History lies over the console, which stays mounted under it with its rendering paused, so a return to it
+         resumes what is already laid out rather than building the instrument again. -->
+    {#if historyOpen}<section
+        class="stage history-stage"
+        data-flip="stage"
+        inert={flyout}
+      >
+        {#if HistoryWorkspace}<HistoryWorkspace
+            selectedId={currentRoute.kind === "app" &&
+            currentRoute.workspace.kind === "history"
+              ? currentRoute.workspace.selectedId
+              : null}
+            onNavigate={(id: string | null) =>
+              id ? historyRoute(id) : closeHistoryDetail()}
+            onClose={dismissHistory}
+          />{:else if historyChunkFailed}<div
+            class="empty-state"
+            data-tone="err"
+            role="alert"
+          >
+            <span class="empty-icon">!</span>
+            <p>History could not be opened.</p>
+            <!-- Chromium keeps a failed module in its module map until the page reloads. -->
+            <button
+              class="btn btn-accent"
+              type="button"
+              onclick={() => location.reload()}>Retry</button
+            >
+          </div>{:else}<div class="empty-state" role="status">
+            <span class="empty-icon"><Icon name="history" /></span>
+            <h2>Opening History</h2>
+          </div>{/if}
+      </section>{/if}
     <section
       class="stage measurement-stage"
+      class:away={historyOpen}
+      data-flip={historyOpen ? undefined : "stage"}
+      data-stage={store.isRunning ? store.phaseStage : undefined}
       class:previous={store.previousRun}
+      {@attach entering}
       aria-label="Measurement workspace"
+      aria-hidden={historyOpen || undefined}
       tabindex="-1"
-      inert={flyout}
+      inert={flyout || historyOpen}
     >
       <GaugePanel />
     </section>
@@ -769,7 +826,6 @@
     dockMaxWidth={dockMaxRight}
     onResize={(px) => setDockWidth("right", px)}
     onResetWidth={() => resetDockWidth("right")}
-    onResizing={(dragging) => (resizingDock = dragging)}
     onClose={() => dismissPanel("endpoint")}
     title="Details"
   >
@@ -815,58 +871,9 @@
       "leftdock stage   rightdock"
       "status   status  status";
     height: 100dvh;
-    /* The grain is zero-mean dither: it breaks gradients into noise without moving the page's level. */
-    background:
-      var(--grain),
-      radial-gradient(
-        140% 90% at 50% 125%,
-        var(--canvas-deep),
-        transparent 70%
-      ),
-      var(--canvas);
-    background-blend-mode: overlay, normal;
+    background: var(--canvas);
     color: var(--text);
-    transition:
-      --dock-left var(--dur-sheet) var(--ease-out),
-      --dock-right var(--dur-sheet) var(--ease-out);
     timeline-scope: --column;
-  }
-  /* A dragged handle moves its column with the pointer, without the glide. */
-  #console[data-resizing],
-  #console[data-resizing] .amb > i {
-    transition: none;
-  }
-  /* Each stage's light is its own layer, so a stage change cross-fades on the compositor. */
-  .amb {
-    position: relative;
-    z-index: -1;
-    grid-area: 1 / 1 / 3 / 4;
-    pointer-events: none;
-  }
-  /* The light's source sits a fifth of the way across the stage, however the columns stand. */
-  .amb > i {
-    --amb-mix: 14%;
-    position: absolute;
-    inset: 0;
-    background: radial-gradient(
-      120% 70% at
-        calc(
-          var(--dock-left) + (100% - var(--dock-left) - var(--dock-right)) * 0.2
-        ) -14%,
-      color-mix(in oklab, var(--tone) var(--amb-mix), transparent),
-      transparent 62%
-    );
-    opacity: 0;
-    transition:
-      opacity 1100ms var(--ease-out),
-      --dock-left var(--dur-sheet) var(--ease-out),
-      --dock-right var(--dur-sheet) var(--ease-out);
-  }
-  .amb > :is([data-tone="download"], [data-tone="bidirectional"]) {
-    --amb-mix: 16%;
-  }
-  .amb > .lit {
-    opacity: 1;
   }
 
   /* The last icon's own 8 px padding completes the right inset, so the bar's ink sits 16 px in at both ends. */
@@ -875,11 +882,22 @@
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    padding-inline: var(--space-4) var(--space-2);
-    border-bottom: var(--hairline) solid transparent;
+    padding-inline: var(--gutter);
+    border-bottom: var(--hairline) solid var(--border);
     container: topbar / inline-size;
   }
-  /* The measurement column scrolls under the bar, so its rule comes in as content passes beneath, as a sheet's head's does. */
+  /* The bar's keys are square glyph plates with a hairline. */
+  .topbar :global(.btn) {
+    background-color: var(--surface-1);
+  }
+  .key {
+    color: var(--text);
+  }
+  /* The bar keeps the connection's dot; its reply trace belongs to the instrument. */
+  .connectivity :global(.spark) {
+    display: none;
+  }
+  /* The measurement column scrolls under the bar, so its rule strengthens as content passes beneath, as a sheet's head's does. */
   @supports (animation-timeline: scroll()) {
     .measurement-stage {
       scroll-timeline: --column block;
@@ -904,6 +922,7 @@
     min-height: var(--control-h);
     padding: 0 6px;
     margin-left: -6px;
+    margin-right: 2px;
     border-radius: var(--r-chrome);
     font: var(--w-strong) var(--type-md) / 1.4 var(--font-sans);
     letter-spacing: -0.01em;
@@ -911,17 +930,33 @@
   }
   /* Washed like the quiet buttons beside it. */
   @media (hover: hover) {
-    .brand-btn:hover {
-      background: var(--hover-wash);
+    .brand-btn:hover .brand-label {
+      color: var(--text-soft);
+    }
+  }
+  /* A new theme's glyph turns into place on the spring as the circle opens from the key. */
+  .theme-glyph {
+    display: grid;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .theme-glyph {
+      animation: glyph-turn 480ms var(--ease-spring) backwards;
+    }
+  }
+  @keyframes glyph-turn {
+    from {
+      opacity: 0;
+      rotate: -120deg;
+      scale: 0.3;
     }
   }
   .brand-btn:active {
-    background: var(--selected-wash);
+    opacity: 0.7;
   }
   /* Hexagon in the brand accent, needle in the text colour (favicon.svg). */
   .brand-glyph {
-    width: 18px;
-    height: 18px;
+    width: 20px;
+    height: 20px;
   }
   .connectivity {
     display: grid;
@@ -988,14 +1023,72 @@
     flex-direction: column;
     gap: var(--space-3);
     min-width: 0;
-    padding: var(--space-3) var(--space-5) var(--space-4);
-    overflow-y: auto;
+    padding: var(--space-4) var(--gutter) var(--space-5);
+    /* A panel gliding to its new place may pass the edge; it never scrolls the stage sideways. */
+    overflow: clip auto;
     /* Keep stage scrolling from chaining out to the document. */
     overscroll-behavior: contain;
   }
+  /* A workspace appears in one quick fade, the console on load and on each return from History, and History as
+     it opens: never piece by piece. */
+  @media (prefers-reduced-motion: no-preference) {
+    .stage {
+      animation: appear var(--dur-slide) var(--ease-out) backwards;
+    }
+  }
+  @keyframes appear {
+    from {
+      opacity: 0;
+    }
+  }
+  /* While a run is under way the console is lit from above in the running stage's hue, and the light shifts to
+     each stage's hue as it begins, warmup included. One gradient, repainted only while the hue moves. */
+  .measurement-stage {
+    position: relative;
+    isolation: isolate;
+  }
+  .measurement-stage::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 0 0 auto;
+    height: 70%;
+    background: radial-gradient(
+      70% 80% at 30% 0%,
+      color-mix(in oklab, var(--ambient) 11%, transparent),
+      transparent 75%
+    );
+    opacity: 0;
+    transition:
+      opacity 900ms var(--ease-out),
+      --ambient 900ms var(--ease-out);
+    pointer-events: none;
+  }
+  .measurement-stage[data-stage]::before {
+    opacity: 1;
+  }
+  .measurement-stage[data-stage="latency"] {
+    --ambient: var(--phase-latency);
+  }
+  .measurement-stage[data-stage="download"] {
+    --ambient: var(--phase-download);
+  }
+  .measurement-stage[data-stage="upload"] {
+    --ambient: var(--phase-upload);
+  }
+  .measurement-stage[data-stage="bidirectional"] {
+    --ambient: var(--phase-bidirectional);
+  }
   .history-stage {
+    z-index: 1;
     padding: 0;
     overflow: hidden;
+    background: var(--canvas);
+  }
+  /* Under History the console keeps its layout and skips its rendering; it fades back in on return. */
+  .measurement-stage.away {
+    content-visibility: hidden;
+    animation: none;
   }
   /* A viewport too short for the instrument scrolls this column. */
   /* The instrument takes the column's height and gives it back from the latency rows first. */
@@ -1006,19 +1099,24 @@
     min-height: min-content;
     align-self: center;
   }
-  .measurement-stage :global(:is(.gauge-face, .latency-slot, .results)),
+  .measurement-stage :global(:is(.gauge-face, .results)),
   .status :global(:is(.elapsed, .transferred)) {
     transition: filter var(--dur-slide) var(--ease-out);
   }
   /* A failed start leaves the previous run on screen, dimmed; filter, as these fade by inline opacity. */
-  .previous :global(:is(.gauge-face, .latency-slot, .results)),
+  .previous :global(:is(.gauge-face, .results)),
   .previous ~ .status :global(:is(.elapsed, .transferred)) {
     filter: opacity(0.45);
   }
   @media (max-height: 800px) {
     .measurement-stage {
-      gap: var(--space-2);
-      padding-block: var(--space-1);
+      gap: var(--space-3);
+      padding-block: var(--space-3);
+    }
+  }
+  @media (max-width: 1023px) {
+    .stage:not(.history-stage) {
+      padding: var(--space-3) var(--gutter) var(--space-4);
     }
   }
   .status {
@@ -1028,10 +1126,11 @@
     gap: var(--space-3);
     min-width: 0;
     overflow: hidden;
-    padding: 0 var(--space-4) env(safe-area-inset-bottom, 0px);
-    border-top: var(--hairline) solid var(--border-subtle);
+    padding: 0 var(--gutter) env(safe-area-inset-bottom, 0px);
+    border-top: var(--hairline) solid var(--border);
+    background: var(--surface-1);
     color: var(--text-soft);
-    font: var(--w-normal) var(--type-xs) var(--font-sans);
+    font: var(--w-normal) var(--type-sm) var(--font-sans);
     font-variant-numeric: tabular-nums;
     container: status / inline-size;
   }
@@ -1043,16 +1142,19 @@
   @media (max-width: 759px) {
     /* History brings its own 16 px gutter. */
     .stage:not(.history-stage) {
-      padding-inline: var(--space-4);
+      padding-inline: var(--gutter);
     }
     /* 44 px targets put their 16 px icons on the page's 16 px gutter. */
     .topbar {
       gap: var(--space-1);
-      padding-inline: calc(var(--space-4) - (var(--hit) - var(--icon)) / 2);
+      padding-inline: calc(var(--gutter) - (var(--hit) - var(--icon)) / 2);
     }
     .brand-label,
     .live-copy {
       display: none;
+    }
+    .key {
+      width: var(--hit);
     }
     .brand-btn {
       justify-content: center;

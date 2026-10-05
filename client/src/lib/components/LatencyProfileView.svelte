@@ -3,14 +3,12 @@
   import { inView } from "../actions/inView";
   import { handoff, Smoothed } from "../presentation/motion.svelte";
   import Icon from "./Icon.svelte";
-  import { termAction, tooltipAction } from "../actions/tooltip";
+  import { tooltipAction } from "../actions/tooltip";
   import { warmUp } from "../actions/intent";
   import { scrub } from "../actions/scrub";
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
   import { fmtAddedMs, fmtMs, formatLatency } from "../format";
   import { fmtGaugeTick } from "./gaugeScale";
-  import { latencyScale } from "../presentation/scales";
-  import { stageGraph, type LatencyPoint } from "../presentation/stageGraph";
   import {
     entries,
     formatTimeouts,
@@ -37,13 +35,12 @@
     added?: Partial<
       Record<LatencyProfileViewLane["key"], number | null>
     > | null;
-    stability?: number | null;
     /** Whose latency this is, when several servers ran. */
     source?: string;
-    /** The idle stage's replies over its time, while the run's series exists. */
-    trace?: { points: LatencyPoint[]; start: number; span: number } | null;
     /** Why the Latency stage failed; it stands under the idle headline in place of its caption. */
     failure?: string;
+    /** The rows' figures and plots are handing off to the next run's; the area and its rows stay. */
+    out?: boolean;
   }
 
   let {
@@ -51,10 +48,9 @@
     variant = "bare",
     label = "Latency, jitter and probe timeouts by phase",
     added = null,
-    stability = null,
     source,
-    trace = null,
     failure,
+    out = false,
   }: Props = $props();
   const idle = $derived(lanes.find((lane) => lane.key === "latency") ?? null);
   // Lit like a stage card: dim until something is measured, brightest while the idle stage runs.
@@ -65,26 +61,6 @@
         ? "complete"
         : "pending",
   );
-  let traceWidth = $state(0);
-  let traceHeight = $state(0);
-  // The trace reuses the stage graph's latency track: one dot per reply bucket over the idle median.
-  const drawn = $derived(
-    trace && traceWidth && traceHeight
-      ? stageGraph({
-          lanes: [],
-          latency: trace.points,
-          start: trace.start,
-          span: trace.span,
-          ceiling: 1,
-          baseline: idle?.center ?? null,
-          latencyTop: latencyScale(trace.points.map((point) => point.ms)),
-          width: traceWidth,
-          plotHeight: 0,
-          trackHeight: traceHeight,
-        })
-      : null,
-  );
-
   let motion = $state(false);
 
   const scale = $derived(profileDomain(lanes));
@@ -105,7 +81,6 @@
     trackWidth: number;
   } | null>(null);
   let keyboardLane = $state<LatencyProfileViewLane["key"] | null>(null);
-  let cardWidth = $state(0);
 
   const hoverLane = $derived(
     hover ? (lanes.find((lane) => lane.key === hover!.key) ?? null) : null,
@@ -113,23 +88,19 @@
   const hoverValue = $derived(
     hoverLane && hover ? metricValue(hoverLane, hover.metric) : null,
   );
+  let readingWidth = $state(0);
+  // The reading stands clear of the marker on the side with room for it, else as far in from the edge as it can.
+  const readingLeft = (x: number, track: number) =>
+    x + 10 + readingWidth <= track
+      ? x + 10
+      : x - 10 - readingWidth >= 0
+        ? x - 10 - readingWidth
+        : Math.max(0, Math.min(x + 10, track - readingWidth));
 
-  const CARD_GAP = 12;
-  const CARD_PAD = 6;
   // Markers keep this margin, so one at either end of the scale stays whole.
   const EDGE = 7;
   const atPct = (pct: number, width: number) =>
     EDGE + (pct / 100) * (width - 2 * EDGE);
-  const cardLeft = $derived.by(() => {
-    if (!hover) return 0;
-    const anchorPx = atPct(hover.anchorPct, hover.trackWidth);
-    const desired =
-      hover.anchorPct <= 50
-        ? anchorPx + CARD_GAP
-        : anchorPx - cardWidth - CARD_GAP;
-    const maxLeft = Math.max(CARD_PAD, hover.trackWidth - cardWidth - CARD_PAD);
-    return Math.min(Math.max(CARD_PAD, desired), maxLeft);
-  });
 
   function setHover(
     lane: LatencyProfileViewLane,
@@ -293,82 +264,25 @@
 
 <section
   class="latency-card stage-area {light}"
+  class:out
   data-tone="latency"
   aria-label={label}
 >
   <header class="card-head">
-    <span class="dot" aria-hidden="true"></span>
-    <h3 use:tooltipAction={JARGON.latency}>{STAGE.latency.label}</h3>
-    <span class="aside"
-      >{source ? `${source}, idle and under load` : "Idle and under load"}</span
+    <span class="tone-icon" aria-hidden="true"
+      ><Icon name={STAGE.latency.icon} /></span
     >
+    <h3 use:tooltipAction={JARGON.latency}>
+      {STAGE.latency.label}
+    </h3>
+    <!-- Whose latency this is when several servers ran, or why the idle stage failed. -->
+    {#if failure && idle?.center == null}
+      <span class="aside failure">{failure}</span>
+    {:else if source}
+      <span class="aside">{source}</span>
+    {/if}
   </header>
   <div class="body">
-    {#if idle}
-      <div class="idle">
-        <div class="headline" class:quiet={idle.center == null}>
-          <span class="num"
-            >{idle.center == null ? MISSING : fmtMs(idle.center)}</span
-          >
-          {#if idle.center != null}<span class="unit">ms</span>{/if}
-        </div>
-        <span class="caption" class:failure={failure && idle.center == null}
-          >{failure && idle.center == null ? failure : "Idle median"}</span
-        >
-        {#if trace}
-          <div
-            class="trace"
-            aria-hidden="true"
-            bind:clientWidth={traceWidth}
-            bind:clientHeight={traceHeight}
-          >
-            {#if drawn}
-              <svg width={traceWidth} height={traceHeight}>
-                {#if drawn.baselineY !== null}<line
-                    class="reply-median"
-                    x1="0"
-                    x2={traceWidth}
-                    y1={drawn.baselineY}
-                    y2={drawn.baselineY}
-                  />{/if}
-                {#each drawn.dots as dot, index (index)}
-                  <circle class="reply" cx={dot.x} cy={dot.y} r="1.6" />
-                {/each}
-              </svg>
-            {/if}
-          </div>
-        {/if}
-        <dl class="facts">
-          <div>
-            <dt use:termAction={JARGON.jitter}>Jitter</dt>
-            <dd class:quiet={idle.jitter == null}>
-              {formatLatency(idle.jitter)}
-            </dd>
-          </div>
-          <div>
-            <dt use:termAction={JARGON.latencyRange}>Range</dt>
-            <dd class:quiet={idle.min == null || idle.max == null}>
-              {idle.min == null || idle.max == null
-                ? MISSING
-                : `${fmtMs(idle.min)}–${fmtMs(idle.max)} ms`}
-            </dd>
-          </div>
-          <!-- Held from Start, so the result lands without moving Timeouts. -->
-          <div>
-            <dt use:tooltipAction={JARGON.latencyStability}>Stability</dt>
-            <dd class:quiet={stability == null}>
-              {stability == null ? MISSING : `${Math.round(stability)}%`}
-            </dd>
-          </div>
-          <div>
-            <dt use:tooltipAction={timeoutsTip(idle)}>Timeouts</dt>
-            <dd class:quiet={idle.timeoutRatio == null}>
-              {formatTimeouts(idle.timeoutRatio)}
-            </dd>
-          </div>
-        </dl>
-      </div>
-    {/if}
     <div
       class="lanes"
       data-latency-profile
@@ -403,6 +317,7 @@
           .filter(Boolean)
           .join("\n")}
         <div
+          data-flip="lane-{lane.key}"
           class="lane"
           data-tone={lane.key}
           data-active={lane.active === true}
@@ -418,8 +333,8 @@
                 use:tooltipAction={note}><Icon name="info" /></span
               >
             {:else}
-              <span class="mark" aria-hidden="true"
-                ><span class="dot"></span></span
+              <span class="mark tone-icon" aria-hidden="true"
+                ><Icon name={STAGE[lane.key].icon} /></span
               >
             {/if}
             <span class="lane-label">{lane.label}</span>
@@ -507,20 +422,18 @@
               {/if}
             </span>
             {#if hover?.key === lane.key && hoverValue != null}
-              <span
-                class="guide"
-                style:left={`${atPct(pos(hoverValue, scale), hover.trackWidth)}px`}
-              ></span>
+              {@const x = atPct(pos(hoverValue, scale), hover.trackWidth)}
+              <span class="guide" style:left="{x}px"></span>
               <span
                 class="inspect-card hover-card"
-                bind:clientWidth={cardWidth}
-                style:left={`${cardLeft}px`}
+                class:unmeasured={!readingWidth}
+                bind:clientWidth={readingWidth}
+                style:left="{readingLeft(x, hover.trackWidth)}px"
               >
-                <span class="hover-head">
-                  <span>{metricLabel(hover.metric)}</span>
-                  <strong>{fmtMs(hoverValue)} ms</strong>
-                </span>
-                <span class="hover-meaning">{metricMeaning(hover.metric)}</span>
+                <strong
+                  >{metricLabel(hover.metric)} {fmtMs(hoverValue)} ms</strong
+                >
+                <span>{metricMeaning(hover.metric)}</span>
               </span>
             {/if}
           </div>
@@ -537,7 +450,11 @@
           >
         </div>
       {/each}
-      <div class="ticks" aria-hidden="true" style:opacity={ticks.opacity}>
+      <div
+        class="ticks handoff"
+        class:handoff-out={ticks.out}
+        aria-hidden="true"
+      >
         {#each ticks.shown as tick, index (index)}
           <span style={`left:${tick.left}%`}
             >{tick.text}{index === 2 ? " ms" : ""}</span
@@ -549,12 +466,15 @@
 </section>
 
 <style>
-  /* Latency is its stage's area on the page like every card (`.stage-area`). */
+  /* In its panel: the head at the top, then the idle figures beside the ruled lanes, centred in what is left. */
+  /* The lanes are the latency stage's area on the page (`.stage-area`): its rule, its wash, no box. */
   .latency-card {
     display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
     gap: var(--space-3);
     min-width: 0;
-    padding: var(--space-3) var(--space-4) var(--space-3);
+    height: 100%;
+    padding: var(--space-3) var(--space-4) var(--space-5);
     container: latency / inline-size;
   }
   .card-head {
@@ -564,21 +484,22 @@
     min-width: 0;
     min-height: 20px;
   }
-  .dot {
-    flex: none;
-    width: 7px;
-    height: 7px;
-    border-radius: var(--r-full);
-    background: var(--tone);
-  }
   h3 {
-    font: var(--w-strong) var(--type-md) / 20px var(--font-sans);
+    color: var(--text);
+    font: var(--role-title);
+    line-height: 22px;
     white-space: nowrap;
   }
-  /* On the title's baseline (app.css, --role-label). */
+  .card-head .tone-icon {
+    width: 18px;
+    height: 18px;
+  }
+  .card-head .tone-icon :global(svg) {
+    width: 10px;
+    height: 10px;
+  }
   .aside {
     min-width: 0;
-    margin-top: calc(var(--type-md) - var(--type-sm));
     overflow: hidden;
     color: var(--text-soft);
     font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
@@ -587,82 +508,12 @@
   }
   .body {
     display: grid;
-    grid-template-columns: minmax(176px, 0.62fr) minmax(0, 2fr);
-    gap: var(--space-5);
-  }
-  .idle {
-    display: grid;
     align-self: center;
-    align-content: start;
-    gap: 2px;
-    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
   }
-  .headline {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    white-space: nowrap;
-  }
-  .num {
-    font: 300 clamp(32px, 2.6vw, 46px) / 1 var(--font-display);
-    font-variant-numeric: tabular-nums;
-    letter-spacing: -0.025em;
-  }
-  .quiet .num {
-    color: var(--text-soft);
-  }
-  .unit {
-    color: var(--text-muted);
-    font: var(--w-normal) var(--type-md) / 1 var(--font-sans);
-  }
-  .caption {
-    color: var(--text-soft);
-    font: var(--w-normal) var(--type-sm) / 1.4 var(--font-sans);
-  }
-  .caption.failure {
+  .aside.failure {
     color: var(--err);
     font-weight: var(--w-strong);
-  }
-  .facts {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-2) var(--space-3);
-    margin-top: var(--space-3);
-    padding-top: var(--space-2);
-    border-top: var(--hairline) solid var(--border-subtle);
-  }
-  /* The idle replies over the stage, a latency track (`.reply`) whose floor is the facts' edge. */
-  .trace {
-    position: relative;
-    height: 32px;
-    margin-top: var(--space-2);
-  }
-  .trace + .facts {
-    margin-top: 0;
-  }
-  .trace svg {
-    position: absolute;
-    inset: 0;
-    overflow: visible;
-  }
-  .facts > div {
-    display: grid;
-    gap: 1px;
-    min-width: 0;
-  }
-  .facts dt {
-    width: fit-content;
-    color: var(--text-soft);
-    font: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
-  }
-  .facts dd {
-    font: var(--w-normal) var(--type-md) / 1.3 var(--font-sans);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
-  /* "—" for a value not yet measured is soft; a measured value is full ink. */
-  .facts dd.quiet {
-    color: var(--text-soft);
   }
 
   /* One row per population on one scale: name, median, jitter, timeouts, spread, and what the load added.
@@ -671,10 +522,11 @@
   .lanes {
     display: grid;
     align-self: center;
+    max-height: 100%;
     grid-template-columns:
       repeat(4, max-content) [track] minmax(120px, 1fr)
       minmax(64px, max-content);
-    grid-template-rows: auto repeat(var(--lanes), 40px) auto;
+    grid-template-rows: auto repeat(var(--lanes), minmax(36px, 52px)) auto;
     column-gap: var(--space-3);
     min-width: 0;
     isolation: isolate;
@@ -692,13 +544,66 @@
     font: var(--w-normal) var(--type-xs) / 1 var(--font-sans);
     text-align: end;
   }
+  /* Rows are ruled, so the table reads as a grid with the axis ticks running up through it. */
+  .lane + .lane {
+    border-top: var(--hairline) solid var(--border-subtle);
+  }
+  /* The population under load takes a wash of its hue across the whole area, edge to edge with the area's rule;
+     it fades in on its own layer a beat after its chip, so the row never repaints for it. */
+  .lane {
+    position: relative;
+  }
+  .lane::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 0 calc(-1 * var(--space-4));
+    background: color-mix(in oklab, var(--tone) 7%, transparent);
+    opacity: 0;
+    transition: opacity var(--dur-graph) var(--ease-out);
+    pointer-events: none;
+  }
+  .lane[data-active="true"]::before {
+    opacity: 1;
+    transition: opacity var(--dur-stage) var(--ease-out) var(--beat);
+  }
+  /* A new run clears the rows' figures and plots while the area, its rows and their names stay put. */
+  .lane
+    :is(
+      .lane-median,
+      .lane-jitter,
+      .lane-timeouts,
+      .lane-added,
+      .profile-artwork
+    ) {
+    transition: opacity var(--dur-handoff-in) var(--ease-out);
+  }
+  .out
+    .lane
+    :is(
+      .lane-median,
+      .lane-jitter,
+      .lane-timeouts,
+      .lane-added,
+      .profile-artwork
+    ) {
+    opacity: 0;
+    transition-duration: var(--dur-handoff-out);
+  }
+  /* A measured span grows from its middle the first time it is drawn. */
+  @media (prefers-reduced-motion: no-preference) {
+    .band,
+    .range {
+      animation: grow-x var(--dur-stage) var(--ease-settle) backwards;
+    }
+  }
   /* Every figure in a row on the median's baseline (app.css, --role-label). */
-  .lane-name,
-  .lane-added {
+  .lane-name {
     margin-top: calc(var(--type-md) - var(--type-body));
   }
   .lane-jitter,
-  .lane-timeouts {
+  .lane-timeouts,
+  .lane-added {
     margin-top: calc(var(--type-md) - var(--type-sm));
   }
   .lane-name {
@@ -712,27 +617,17 @@
   }
   /* One slot per row for its dot or a note, so a note arriving never moves the columns. */
   .mark {
-    display: grid;
-    flex: none;
-    place-items: center;
-    width: 12px;
-    height: 12px;
+    width: 18px;
+    height: 18px;
   }
-  .mark .dot {
-    width: 6px;
-    height: 6px;
-  }
-  .note {
-    color: var(--tone);
-  }
-  .note :global(svg) {
-    width: 12px;
-    height: 12px;
+  .mark :global(svg) {
+    width: 10px;
+    height: 10px;
   }
   /* Figures take their longest value's width ("9999 ms") from Start, so arriving values never shift the plot. */
   .lane-median {
     min-width: 7ch;
-    font: var(--w-normal) var(--type-md) / 1 var(--font-sans);
+    font: 500 var(--type-md) / 1 var(--font-mono);
     font-variant-numeric: tabular-nums;
     text-align: end;
     white-space: nowrap;
@@ -743,7 +638,7 @@
   .lane-jitter,
   .lane-timeouts {
     color: var(--text-muted);
-    font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
+    font: 500 var(--type-sm) / 1 var(--font-mono);
     font-style: normal;
     font-variant-numeric: tabular-nums;
     text-align: end;
@@ -756,7 +651,7 @@
   }
   .lane-added {
     color: var(--tone-ink);
-    font: var(--w-strong) var(--type-body) / 1 var(--font-sans);
+    font: 600 var(--type-sm) / 1 var(--font-mono);
     font-variant-numeric: tabular-nums;
     text-align: end;
     white-space: nowrap;
@@ -777,7 +672,7 @@
     top: 4px;
     translate: -50%;
     color: var(--text-soft);
-    font: var(--w-normal) var(--type-2xs) / 1.2 var(--font-sans);
+    font: 500 var(--type-2xs) / 1.2 var(--font-mono);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
@@ -862,7 +757,7 @@
     right: calc(var(--edge) + var(--space-1));
     bottom: var(--space-1);
     color: var(--text-soft);
-    font: var(--w-normal) var(--type-2xs) / 1 var(--font-sans);
+    font: 500 var(--type-2xs) / 1 var(--font-mono);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
@@ -906,74 +801,34 @@
     background: color-mix(in srgb, var(--text) 54%, transparent);
     pointer-events: none;
   }
-  /* Centred by auto margins, not a translate, so its text stays on whole pixels. */
+  /* The reading stands beside the marker above the box's band, so it never covers the box it reads; it shows
+     once measured, in place. */
   .hover-card {
     z-index: 10;
-    inset-block: 0;
-    display: grid;
-    gap: 2px;
-    height: fit-content;
-    min-width: 156px;
-    max-width: min(238px, 76vw);
-    margin-block: auto;
-    padding-block: var(--space-1);
-  }
-  .hover-head {
+    bottom: calc(50% + 8px);
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    min-width: 0;
+    align-items: baseline;
+    gap: var(--space-2);
+    max-width: 100%;
+    padding-block: 2px;
+    white-space: nowrap;
   }
-  .hover-head span,
-  .hover-meaning {
+  .hover-card.unmeasured {
+    visibility: hidden;
+  }
+  .hover-card strong {
+    font: var(--w-strong) var(--type-sm) var(--font-sans);
+    font-variant-numeric: tabular-nums;
+  }
+  .hover-card span {
     overflow: hidden;
     color: var(--text-soft);
     text-overflow: ellipsis;
-    white-space: nowrap;
   }
-  .hover-head strong {
-    font: var(--w-strong) var(--type-sm) var(--font-sans);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
-  /* Narrower cards put the idle facts above the rows. */
+  /* A narrower panel reads a marker by its value alone. */
   @container latency (max-width: 720px) {
-    .body {
-      grid-template-columns: minmax(0, 1fr);
-      gap: var(--space-3);
-    }
-    .idle {
-      grid-template-columns: auto 1fr;
-      align-items: end;
-      column-gap: var(--space-4);
-    }
-    .idle .caption {
-      grid-row: 2;
-    }
-    .idle .facts {
-      grid-column: 2;
-      grid-row: 1 / 3;
-      grid-template-columns: repeat(4, max-content);
-      margin: 0;
-      padding: 0;
-      border: 0;
-    }
-    /* The trace spans the card under the idle figures, on its own floor. */
-    .idle .trace {
-      grid-column: 1 / -1;
-      border-bottom: var(--hairline) solid var(--border-subtle);
-    }
-  }
-  @container latency (max-width: 480px) {
-    .idle {
-      grid-template-columns: minmax(0, 1fr);
-    }
-    .idle .facts {
-      grid-column: 1;
-      grid-row: auto;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      margin-top: var(--space-2);
+    .hover-card span {
+      display: none;
     }
   }
   /* Narrow: jitter leaves the row for the hover; the timeouts stay. */

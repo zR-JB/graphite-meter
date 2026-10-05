@@ -1,5 +1,5 @@
 // One frame clock moves every animated value; it runs only while something moves.
-import { untrack } from "svelte";
+import { flushSync, untrack } from "svelte";
 import { expoOut } from "svelte/easing";
 import { prefersReducedMotion } from "svelte/motion";
 import type { TransitionConfig } from "svelte/transition";
@@ -7,7 +7,6 @@ import type { TransitionConfig } from "svelte/transition";
 type Task = (now: number) => boolean;
 const tasks = new Set<Task>();
 let frame = 0;
-let lastFrame = 0;
 let watching = false;
 
 function visibilityChanged(): void {
@@ -29,6 +28,113 @@ function releaseClock(): void {
 /** Reduced motion: every value still updates, in one frame rather than an animation. */
 export const still = () => prefersReducedMotion.current;
 
+const FLIP_MS = 380;
+const FLIP_EASE = "cubic-bezier(0.22, 1.2, 0.36, 1)";
+// Neighbours have moved most of the way by then: an arriving element appears into room already made.
+const ROOM_MS = 140;
+// A sheet moves without overshoot: it is a surface sliding to its edge, not a part settling into place.
+const SHEET_EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
+// As `--dur-sheet`, which keeps a closing sheet displayed while it leaves.
+const SHEET_MS = 320;
+/** The rendered elements marked `data-flip`, by key; an element that is not displayed has no place. */
+const boxes = (only?: readonly string[]) =>
+  new Map(
+    Array.from(document.querySelectorAll<HTMLElement>("[data-flip]"))
+      .filter((el) => !only || only.includes(el.dataset.flip!))
+      .map((el) => ({ el, box: el.getBoundingClientRect() }))
+      .filter(({ box }) => box.width > 0 || box.height > 0)
+      .map((entry) => [entry.el.dataset.flip!, entry]),
+  );
+
+/** A change that reshapes the console applies at once, in the frame of the click that asked for it. Then every
+    element marked `data-flip` that stayed glides from its old place to its new one, all on the compositor. Two
+    things never share a place: a leaving one goes at once and its neighbours close over it, and an arriving one
+    waits for its neighbours to make room, then rises in. An element with `data-flip-edge` (`left` or `right`)
+    is a sheet: it slides in from beyond that edge and back out, without overshoot. `only`
+    names the keys that move, so a change can move a surface as one rather than each part on its own. */
+export function flip(update: () => void, only?: readonly string[]): void {
+  if (still() || globalThis.document?.hidden) {
+    update();
+    return;
+  }
+  const before = boxes(only);
+  update();
+  flushSync();
+  const after = boxes(only);
+  for (const [key, { el, box }] of after) {
+    const old = before.get(key);
+    const edge = el.dataset.flipEdge;
+    if (!old && edge) {
+      const off = edge === "left" ? -box.right : innerWidth - box.left;
+      el.animate([{ translate: `${off}px 0` }, { translate: "0 0" }], {
+        duration: SHEET_MS,
+        easing: SHEET_EASE,
+      });
+      continue;
+    }
+    if (!old) {
+      el.animate(
+        [
+          { opacity: 0, translate: "0 8px" },
+          { opacity: 1, translate: "0 0" },
+        ],
+        {
+          duration: FLIP_MS - ROOM_MS,
+          delay: ROOM_MS,
+          easing: FLIP_EASE,
+          fill: "backwards",
+        },
+      );
+      continue;
+    }
+    const dx = old.box.left - box.left;
+    const dy = old.box.top - box.top;
+    if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5)
+      el.animate([{ translate: `${dx}px ${dy}px` }, { translate: "0 0" }], {
+        duration: edge ? SHEET_MS : FLIP_MS,
+        easing: edge ? SHEET_EASE : FLIP_EASE,
+      });
+    // A wider element opens from its old width rather than jumping to the new one.
+    const grew = box.width - old.box.width;
+    if (grew >= 1)
+      el.animate(
+        [
+          { clipPath: `inset(0 ${grew}px 0 0 round var(--r-surface))` },
+          { clipPath: "inset(0 0 0 0 round var(--r-surface))" },
+        ],
+        { duration: FLIP_MS, easing: "cubic-bezier(0.16, 1, 0.3, 1)" },
+      );
+  }
+  for (const [key, { el, box }] of before) {
+    const edge = el.dataset.flipEdge;
+    if (after.has(key) || !edge) continue;
+    // A sheet no longer displayed leaves to its edge as a copy at its old place.
+    const ghost = el.cloneNode(true) as HTMLElement;
+    ghost.removeAttribute("data-flip");
+    ghost.setAttribute("aria-hidden", "true");
+    ghost.inert = true;
+    Object.assign(ghost.style, {
+      position: "fixed",
+      left: `${box.left}px`,
+      top: `${box.top}px`,
+      width: `${box.width}px`,
+      height: `${box.height}px`,
+      margin: "0",
+      pointerEvents: "none",
+      zIndex: "1",
+    });
+    document.body.append(ghost);
+    const off = edge === "left" ? -box.right : innerWidth - box.left;
+    ghost
+      .animate([{ translate: "0 0" }, { translate: `${off}px 0` }], {
+        duration: SHEET_MS,
+        easing: SHEET_EASE,
+        fill: "forwards",
+      })
+      .finished.finally(() => ghost.remove());
+  }
+}
+
 function request(): void {
   if (!frame && tasks.size && !globalThis.document?.hidden)
     frame = globalThis.requestAnimationFrame?.(run) ?? 0;
@@ -36,14 +142,10 @@ function request(): void {
 
 function run(now: number): void {
   frame = 0;
-  lastFrame = now;
   for (const task of tasks) if (!task(now)) tasks.delete(task);
   releaseClock();
   request();
 }
-
-/** The shared clock's latest frame time. */
-export const frameTime = () => lastFrame;
 
 /** Runs `task` on every frame until it returns false or the returned stop is called. */
 export function animate(task: Task): () => void {
@@ -74,7 +176,7 @@ const unseen = (a: number, b: number) =>
   Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(b));
 
 const GLIDE_MIN_MS = 50;
-const GLIDE_MAX_MS = 600;
+const GLIDE_MAX_MS = 400;
 const SAMPLE_GAP_MS = 2_000;
 
 interface Correction {
@@ -83,6 +185,8 @@ interface Correction {
   max?: number;
   /** A fixed glide instead of the interval between samples; later samples retarget within it at its pace. */
   over?: number;
+  /** A fixed glide eases out (cubic) instead of keeping a constant pace: a move the user watches start and land. */
+  ease?: boolean;
   /** Once no fixed glide is under way, snap instead of gliding over the sample interval. */
   finish?: boolean;
   snap?: boolean;
@@ -99,6 +203,7 @@ export class Smoothed {
   #at = -Infinity;
   #glide = 100;
   #fixed = false;
+  #ease = false;
   #stop: (() => void) | null = null;
 
   /** The last sample. */
@@ -112,8 +217,9 @@ export class Smoothed {
     const truth = this.#rate
       ? Math.min(this.#max, this.#to + this.#rate * since)
       : this.#to;
-    // The offset from the sample fades linearly, so a clock keeps its own pace.
-    const fade = Math.max(0, 1 - since / this.#glide);
+    // The offset from the sample fades linearly, so a clock keeps its own pace; an eased glide settles into place.
+    const left = Math.max(0, 1 - since / this.#glide);
+    const fade = this.#ease ? left ** 3 : left;
     return fade > 0 ? truth + (this.#from - this.#to) * fade : truth;
   }
 
@@ -131,6 +237,8 @@ export class Smoothed {
       (correction.finish && !within);
     this.#from = snap ? value : this.at(now);
     this.#fixed = correction.over !== undefined || (within && !snap);
+    this.#ease =
+      correction.over !== undefined ? !!correction.ease : within && this.#ease;
     if (correction.over !== undefined) this.#glide = correction.over;
     else if (within) this.#glide = left;
     else if (gap < SAMPLE_GAP_MS)
@@ -190,27 +298,32 @@ export class Smoothed {
   };
 }
 
-const HANDOFF_OUT_MS = 90;
-const HANDOFF_IN_MS = 180;
+export const HANDOFF_OUT_MS = 90;
 
-/** A new key fades the shown view out and the new one in; a key shorter than the fade-out never shows. */
+/** A new key fades the shown view out and the new one in; a key shorter than the fade-out never shows. The
+    fades are the stylesheet's (`.handoff`, `.handoff-out`, on the compositor); this only flips `out` on the frame
+    clock and swaps the view once the fade-out has run, `outMs` after it began; a view that leaves with a longer
+    move of its own (`outMs` of the leaving view) keeps the stage that long. */
 export class Handoff<T> {
   shown: T = $state.raw() as T;
-  #fade = new Smoothed();
+  /** True while the shown view fades out before the next one takes its place. */
+  out = $state(false);
   #key: unknown;
   #latest: T;
   #keyOf: (value: T) => unknown;
   #stop: (() => void) | null = null;
+  #outAt = 0;
+  #outMs: number | ((leaving: T) => number);
 
-  constructor(value: T, keyOf: (value: T) => unknown = (value) => value) {
+  constructor(
+    value: T,
+    keyOf: (value: T) => unknown = (value) => value,
+    outMs: number | ((leaving: T) => number) = HANDOFF_OUT_MS,
+  ) {
+    this.#outMs = outMs;
     this.shown = this.#latest = value;
     this.#keyOf = keyOf;
     this.#key = keyOf(value);
-    this.#fade.set(1, { snap: true });
-  }
-
-  get opacity(): number {
-    return this.#fade.current;
   }
 
   set(value: T): void {
@@ -220,7 +333,7 @@ export class Handoff<T> {
       if (this.#stop) this.#swap();
     } else if (still() || globalThis.document?.hidden) this.#swap();
     else {
-      this.#fade.set(0, { over: HANDOFF_OUT_MS * this.#fade.current });
+      this.out = true;
       this.#stop ??= animate(this.#frame);
     }
   }
@@ -228,13 +341,17 @@ export class Handoff<T> {
   #swap(): void {
     this.#stop?.();
     this.#stop = null;
+    this.#outAt = 0;
     this.shown = this.#latest;
     this.#key = this.#keyOf(this.#latest);
-    this.#fade.set(1, { over: HANDOFF_IN_MS * (1 - this.#fade.current) });
+    this.out = false;
   }
 
-  #frame = (): boolean => {
-    if (this.#fade.current > 0 && !still()) return true;
+  #frame = (now: number): boolean => {
+    this.#outAt ||= now;
+    const outMs =
+      typeof this.#outMs === "number" ? this.#outMs : this.#outMs(this.shown);
+    if (now - this.#outAt < outMs && !still()) return true;
     this.#swap();
     return false;
   };
@@ -242,15 +359,15 @@ export class Handoff<T> {
   dispose(): void {
     this.#stop?.();
     this.#stop = null;
-    this.#fade.dispose();
   }
 }
 
 export function handoff<T>(
   get: () => T,
   keyOf?: (value: T) => unknown,
+  outMs?: number | ((leaving: T) => number),
 ): Handoff<T> {
-  const view = new Handoff(untrack(get), keyOf);
+  const view = new Handoff(untrack(get), keyOf, outMs);
   $effect.pre(() => {
     const value = get();
     untrack(() => view.set(value));

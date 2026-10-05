@@ -63,7 +63,6 @@ const WRITE_CHUNK_BYTES = 4 * 1024 * 1024;
 
 const CONGESTION_CONTROL: WebTransportCongestionControl = "throughput";
 
-/* Measured as a wash on throughput — the transport buffers absorb the park — so this buys responsiveness, not rate. */
 const taskTurn = (): Promise<void> =>
   new Promise((resolve) => {
     const { port1, port2 } = new MessageChannel();

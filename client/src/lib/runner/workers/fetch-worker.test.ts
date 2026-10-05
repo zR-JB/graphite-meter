@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import {
-  fetchInit,
   nextUploadBytes,
   downloadFailure,
   refusal,
@@ -24,15 +23,6 @@ test("only an admission refusal reconnects a download lane; its Retry-After is w
       [{ "Retry-After": "1" }, {}, { "Retry-After": "0.5" }] as HeadersInit[]
     ).map((h) => busy(h)),
   ).toEqual([1_000, undefined, undefined]);
-});
-
-test("download requests retain bearer credentials", () => {
-  const init = fetchInit("include", {
-    authorization: "Bearer grant",
-  });
-  expect(init.credentials).toBe("include");
-  expect(init.redirect).toBe("error");
-  expect(new Headers(init.headers).get("authorization")).toBe("Bearer grant");
 });
 
 const MiB = 1024 * 1024;

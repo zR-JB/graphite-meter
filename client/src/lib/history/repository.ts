@@ -243,6 +243,28 @@ export class HistoryRepository {
     return record ? { status: "ready", record } : { status: "malformed" };
   }
 
+  /** Deletes every record that cannot be read and keeps the rest; returns how many went. */
+  async removeMalformed(): Promise<number> {
+    const tx = await this.#transaction("readwrite");
+    const store = tx.objectStore(HISTORY_DB.resultsStore);
+    let removed = 0;
+    await new Promise<void>((resolve, reject) => {
+      const scan = store.openCursor();
+      scan.onerror = () => reject(scan.error);
+      scan.onsuccess = () => {
+        const cursor = scan.result;
+        if (!cursor) return resolve();
+        if (!readHistoryRecord(cursor.value)) {
+          cursor.delete();
+          removed++;
+        }
+        cursor.continue();
+      };
+    });
+    await done(tx);
+    return removed;
+  }
+
   async delete(id: string): Promise<void> {
     const tx = await this.#transaction("readwrite");
     tx.objectStore(HISTORY_DB.resultsStore).delete(id);

@@ -8,10 +8,15 @@
   import { store } from "../state/store.svelte";
   import { fmtBytes, fmtMs, formatRate, resultRate } from "../format";
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
+  import { replies } from "../presentation/stageGraph";
+  import { latencyTrackScale } from "../presentation/scales";
+  import { stabilityPct } from "../runner/measure";
   import type { LiveReadout } from "../presentation/liveReadout.svelte";
   import { announce } from "../presentation/announcer.svelte";
   import { handoff } from "../presentation/motion.svelte";
   import { untrack } from "svelte";
+  import { planned } from "../runner/schedule";
+  import { stageShown } from "./stageTrack";
   import {
     CARD_ORDER,
     laneShort,
@@ -53,6 +58,7 @@
         download: store.stageResults.download,
         upload: store.stageResults.upload,
         bidirectional: store.result?.bidirectional ?? null,
+        idle: store.latencySummaries.latency ?? null,
         latency: store.stageResults.latency,
         added: store.result?.addedLatency ?? null,
       },
@@ -61,10 +67,9 @@
     );
     return summaryCards(evidence, units, store.showWireEstimates);
   });
-  // Until a run completes, every planned stage holds a card; values fill in, nothing moves.
-  const planned = $derived(
-    CARD_ORDER.filter((key) => status(key) !== "disabled"),
-  );
+  // Every chip's stage holds its card in its column under its key, a skipped one quietly, so skipping a stage
+  // changes a card's state and never moves the row.
+  const skipped = (key: Stage) => status(key) === "disabled";
   type Transfer = Exclude<Stage, "latency">;
   let retainedGraphs: Partial<Record<Transfer, CardGraph>> = {};
   // The run's series per stage, over its plan until settled; a scoped server has no series of its own.
@@ -84,6 +89,21 @@
       retainedGraphs,
     ));
   });
+  // The idle replies span the planned stage while it may still run, then the time they took: the latency card's
+  // strip.
+  const latencyTrace = $derived.by<CardGraph>(() => {
+    const points = replies(store.latency, "latency");
+    const start = points[0]?.t ?? 0;
+    const measured = (points.at(-1)?.t ?? start) - start;
+    const settled = !running("latency") && status("latency") !== "pending";
+    const plan = (store.run?.config ?? store.config).duration.latencyMs;
+    return {
+      lanes: [],
+      latency: points,
+      start,
+      span: Math.max(measured, settled ? 0 : plan) || 1,
+    };
+  });
   // The running card's leading edge moves on the frame clock; the other graphs stay put.
   const head = $derived.by(() => {
     const key = live.phase;
@@ -102,7 +122,10 @@
     ceiling: store.scales.chartBytesPerSec,
     baseline:
       store.latencyLanes.find((lane) => lane.key === "latency")?.center ?? null,
-    latencyTop: store.latencyScaleMs,
+    // The tracks' top comes from the buckets' slowest replies, since a bar spans its bucket's range.
+    latencyTop: latencyTrackScale(
+      store.latency.map((bucket) => bucket.maxRttMs ?? bucket.medianRttMs),
+    ),
     rate: (bytesPerSec) => formatRate(bytesPerSec, units),
   });
   // A stage subscribes to its own live value. Animating one must not rebuild
@@ -130,7 +153,10 @@
     Record<Stage, { source: SummaryCard; view: SummaryCard }>
   > = {};
   function withGraph(card: SummaryCard): SummaryCard {
-    const graph = graphs[card.key as Transfer] ?? null;
+    const graph =
+      card.key === "latency"
+        ? latencyTrace
+        : (graphs[card.key as Transfer] ?? null);
     const previous = retainedCards[card.key];
     if (previous?.source === card && previous.view.graph === graph)
       return previous.view;
@@ -138,24 +164,29 @@
     retainedCards[card.key] = { source: card, view };
     return view;
   }
+  // A card stands under every chip the stage keys show, by the same rule, so the two rows always match.
   const cards = $derived(
-    (store.phase !== "complete" && store.phase !== "error"
-      ? planned.map((key) => byStage[key])
-      : settled
-    ).map(withGraph),
+    CARD_ORDER.filter((key) =>
+      stageShown(key, planned(store.config, key), store.stagePresentation[key]),
+    )
+      .map((key) =>
+        store.phase !== "complete" && store.phase !== "error"
+          ? byStage[key]
+          : (settled.find((card) => card.key === key) ?? byStage[key]),
+      )
+      .map(withGraph),
   );
 
+  // Lost latency probes are marked on the latency card's rows; nothing is added under the cards mid-run.
+  const issues = $derived(
+    store.serverDetails
+      ? serverIssues(store.serverDetails, shown).filter(
+          (issue) => issue.throughput.length,
+        )
+      : [],
+  );
   const view = handoff(
-    () => ({
-      run: store.runSeq,
-      cards,
-      // Lost latency probes are marked on the latency card's rows; nothing is added under the cards mid-run.
-      issues: store.serverDetails
-        ? serverIssues(store.serverDetails, shown).filter(
-            (issue) => issue.throughput.length,
-          )
-        : [],
-    }),
+    () => ({ run: store.runSeq, cards, issues }),
     (view) => view.run,
   );
 
@@ -173,7 +204,7 @@
       label: "Transferred",
       value: fmtBytes(store.liveStageBytes, units.base),
     };
-    if (key !== "bidirectional") return [moved];
+    if (key !== "bidirectional") return [moved, ...liveShape(key, true)];
     const combined = live.rates && live.rates.down + live.rates.up;
     return [
       ...(["download", "upload"] as const).map((stage) => {
@@ -190,6 +221,66 @@
         value: combined == null ? MISSING : formatRate(combined, units),
       },
       moved,
+      ...liveShape(key, false),
+    ];
+  }
+  // Peak and Stability so far, read from the stage's series by the second, as the settled figures are: the
+  // card fills in while the stage runs and the result replaces the estimate. They change with the series, not
+  // the frame, so a stage's rows are kept until its rate series or the units change.
+  const retainedShapes: Partial<
+    Record<
+      Transfer,
+      { graph: CardGraph; units: typeof units; rows: SummaryRow[] }
+    >
+  > = {};
+  function liveShape(key: Transfer, withPeak: boolean): SummaryRow[] {
+    const graph = graphs[key];
+    if (!graph) return [];
+    const kept = retainedShapes[key];
+    if (
+      kept?.units === units &&
+      kept.graph.start === graph.start &&
+      graph.lanes.every((lane, i) => lane === kept.graph.lanes[i])
+    )
+      return kept.rows;
+    const rows = shapeRows(graph, withPeak);
+    retainedShapes[key] = { graph, units, rows };
+    return rows;
+  }
+  function shapeRows(graph: CardGraph, withPeak: boolean): SummaryRow[] {
+    const perLane = graph.lanes.map((lane) => {
+      const seconds = new Map<number, { sum: number; n: number }>();
+      for (const { t, v } of lane) {
+        const second = Math.floor((t - graph.start) / 1000);
+        const cell = seconds.get(second) ?? { sum: 0, n: 0 };
+        cell.sum += v;
+        cell.n++;
+        seconds.set(second, cell);
+      }
+      return seconds;
+    });
+    const seconds = [...new Set(perLane.flatMap((lane) => [...lane.keys()]))];
+    const rates = seconds
+      .sort((a, b) => a - b)
+      .map((second) =>
+        perLane.reduce((total, lane) => {
+          const cell = lane.get(second);
+          return total + (cell ? cell.sum / cell.n : 0);
+        }, 0),
+      );
+    if (!rates.length) return [];
+    return [
+      ...(withPeak
+        ? [{ label: "Peak", value: formatRate(Math.max(...rates), units) }]
+        : []),
+      ...(rates.length >= 2
+        ? [
+            {
+              label: "Stability",
+              value: `${Math.round(stabilityPct(rates))}%`,
+            },
+          ]
+        : []),
     ];
   }
 
@@ -204,14 +295,25 @@
     const { down = null, up = null } =
       store.live?.phase === key ? store.live : {};
     const stopped = store.phase === "aborted" && store.phaseStage === key;
-    const [value, accessible] = !own
-      ? [null, null]
+    // A stopped stage keeps the last value it measured, as the lanes keep their rows.
+    const held = !stopped
+      ? null
       : key === "latency"
+        ? (store.latencySummaries.latency?.p50Ms ?? null)
+        : (graphs[key]?.lanes.reduce(
+            (sum, lane) => sum + (lane.at(-1)?.v ?? 0),
+            0,
+          ) ??
+            null) ||
+          null;
+    const [value, accessible] = own
+      ? key === "latency"
         ? [live.rtt.current, store.liveRtt]
         : [
             live.rates!.down + live.rates!.up,
             down == null && up == null ? null : (down ?? 0) + (up ?? 0),
-          ];
+          ]
+      : [held, held];
     // A value's unit arrives with it, so a pending card never shifts its unit.
     const readout = (n: number | null) =>
       n === null
@@ -225,15 +327,17 @@
       key,
       label: STAGE[key].short,
       icon: STAGE[key].icon,
-      status: active
-        ? status(key) === "recovering"
-          ? "recovering"
-          : "active"
-        : stopped
-          ? "stopped"
-          : store.phase === "aborted"
-            ? "not-run"
-            : "pending",
+      status: skipped(key)
+        ? "not-run"
+        : active
+          ? status(key) === "recovering"
+            ? "recovering"
+            : "active"
+          : stopped
+            ? "stopped"
+            : store.phase === "aborted"
+              ? "not-run"
+              : "pending",
       num: timeout ? MISSING : shown.num,
       unit: timeout ? "timeout" : shown.unit,
       tip: JARGON[key],
@@ -251,7 +355,7 @@
   cards={view.shown.cards}
   {scale}
   {head}
-  fade={view.opacity}
+  out={view.out}
   details={details ?? store.serverDetails}
   issues={view.shown.issues}
   scope={details ? shown : ""}

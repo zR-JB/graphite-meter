@@ -28,7 +28,7 @@ import {
   type ServerView,
 } from "../runner/paths";
 import { presentConnections } from "../presentation/paths";
-import { fmtDuration, rateUnit, rateValueAt, rawRateFrom } from "../format";
+import { fmtDuration, rateUnit, rateValueAt } from "../format";
 import { STAGE } from "../presentation/vocabulary";
 import { latencyAxisMs, throughputScales } from "../presentation/scales";
 import { Smoothed } from "../presentation/motion.svelte";
@@ -364,6 +364,8 @@ class AppStore {
   historyColumns = $state.raw<HistoryColumn[]>([...DEFAULT_HISTORY_COLUMNS]);
   // Keep the completion snapshot plain because IndexedDB cannot clone proxies.
   historyCandidate = $state.raw<HistoryRecord | null>(null);
+  /** The finished run's record, whether or not saving was on when it finished. */
+  latestRecord = $state.raw<HistoryRecord | null>(null);
   historyWarning = $state("");
   operatorHistoryDefault = $derived.by(() => {
     if (typeof document === "undefined") return false;
@@ -521,11 +523,6 @@ class AppStore {
     return rateValueAt(bytesPerSec, unitBase, unitKind, scales.unitIndex);
   }
 
-  fromUnit(displayValue: number): number {
-    const { unitBase, unitKind, scales } = this;
-    return rawRateFrom(displayValue, unitBase, unitKind, scales.unitIndex);
-  }
-
   /** Bytes the running stage has moved so far, so its card counts up live. */
   liveStageBytes = $state(0);
   #stageBase = { phase: "", bytes: 0, last: 0 };
@@ -575,16 +572,15 @@ class AppStore {
       ) ?? this.run?.servers[0];
     // A finished run has no current stage, whichever one ran or failed last.
     this.phaseStage = null;
-    this.historyCandidate = this.savingResults
-      ? buildHistoryRecord(
-          result,
-          {
-            build: BUILD.clientVersion,
-            engine: focus?.paths.discovery.engineVersion ?? "unknown",
-          },
-          this.run?.config,
-        )
-      : null;
+    this.latestRecord = buildHistoryRecord(
+      result,
+      {
+        build: BUILD.clientVersion,
+        engine: focus?.paths.discovery.engineVersion ?? "unknown",
+      },
+      this.run?.config,
+    );
+    this.historyCandidate = this.savingResults ? this.latestRecord : null;
     this.phase = "complete";
   }
 
@@ -714,6 +710,7 @@ class AppStore {
       error: null,
       run: null,
       historyCandidate: null,
+      latestRecord: null,
       liveStageBytes: 0,
       resultScope: "",
     });

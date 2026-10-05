@@ -5,7 +5,7 @@
   import { BUILD } from "../buildenv";
   import { handoff, type Handoff } from "../presentation/motion.svelte";
   import type { Phase } from "../runner/contract";
-  import { CONNECTIVITY, STATUS_LABEL_CH } from "../presentation/vocabulary";
+  import { CONNECTIVITY } from "../presentation/vocabulary";
 
   let { status: label }: { status: Handoff<{ phase: Phase; label: string }> } =
     $props();
@@ -36,35 +36,30 @@
 </script>
 
 <span
-  class="label"
-  style:opacity={label.opacity}
-  style:min-width="{STATUS_LABEL_CH}ch"
+  class="label handoff"
+  class:handoff-out={label.out}
   {@attach refused
     ? tooltip(() => store.startError || store.startBlocker)
     : null}>{label.shown.label}</span
 >
 <span
-  class="elapsed"
+  class="elapsed handoff"
   class:secondary={left.shown.show}
-  style:opacity={counters.opacity}
-  ><span class="readout">{fmtDuration(counters.shown.elapsedMs)}</span><span
-    class="caption">&nbsp;elapsed</span
-  ></span
+  class:handoff-out={counters.out}
+  ><span class="readout">{fmtDuration(counters.shown.elapsedMs)}</span></span
 >
-<span class="transferred" style:opacity={counters.opacity}
-  ><span class="readout">{counters.shown.bytes}</span><span class="caption"
-    >&nbsp;transferred</span
-  ></span
+<span class="transferred handoff" class:handoff-out={counters.out}
+  ><span class="readout">{counters.shown.bytes}</span></span
 >
 {#if left.shown.show}
   <span
-    class="remaining"
+    class="remaining handoff"
+    class:handoff-out={left.out}
     data-tone={left.shown.recovering ? CONNECTIVITY.recovering.tone : undefined}
-    style:opacity={left.opacity}
   >
-    {#if left.shown.recovering}{CONNECTIVITY.recovering.label}<span
-        class="caption">, {fmtDuration(left.shown.ms)} left</span
-      >{:else}<span class="readout">{fmtDuration(left.shown.ms)}</span>
+    {#if left.shown.recovering}{CONNECTIVITY.recovering.label}, {fmtDuration(
+        left.shown.ms,
+      )} left{:else}<span class="readout">{fmtDuration(left.shown.ms)}</span>
       left{/if}
   </span>
 {/if}
@@ -74,14 +69,21 @@
   span {
     white-space: nowrap;
   }
-  /* Fixed widths and a trailing countdown keep changing text from moving the strip. */
+  /* The phase word and its figures read as one line from the left edge, each figure in a cell as wide as its
+     longest value, so a counting figure never moves its neighbours; the build alone stands at the right. */
   .label {
     color: var(--text);
     font-weight: var(--w-strong);
   }
+  .elapsed {
+    margin-left: var(--space-2);
+  }
   .readout {
     display: inline-block;
-    min-width: 9ch;
+    min-width: 7ch;
+    color: var(--text-muted);
+    font: var(--role-figure-sm);
+    line-height: 1;
     font-variant-numeric: tabular-nums;
     text-align: end;
   }
@@ -100,7 +102,6 @@
   }
   /* A phone's strip keeps one time in one place; each card shows what its stage transferred. */
   @container status (max-width: 520px) {
-    .caption,
     .transferred {
       display: none;
     }

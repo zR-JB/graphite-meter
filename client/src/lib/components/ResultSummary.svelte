@@ -1,9 +1,9 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
   import StageGraph from "./StageGraph.svelte";
   import {
     cardFacts,
     cardNoData,
-    cardTip,
     type CardScale,
     type SummaryCard,
     type SummaryRow,
@@ -22,18 +22,19 @@
     cards,
     scale = null,
     head = null,
-    fade = 1,
+    out = false,
     details,
     issues = [],
     scope = "",
     running = false,
   }: {
     cards: SummaryCard[];
-    /** Graphs share one rate and latency scale so their heights compare. */
+    /** Strips share one rate and latency scale so their heights compare. */
     scale?: CardScale | null;
     /** The running stage's leading edge. */
     head?: { key: string; t: number; values: (number | null)[] } | null;
-    fade?: number;
+    /** True while the cards hand off to a new run's view. */
+    out?: boolean;
     details?: MultiServerResult | null;
     issues?: {
       server: string;
@@ -57,16 +58,17 @@
           : reason,
       )
       .join(", ");
-  // Latency has its own card; this row holds the transfers.
-  const transfers = $derived(cards.filter((card) => card.key !== "latency"));
   const ceiling = $derived(scale?.ceiling ?? 0);
   const baseline = $derived(scale?.baseline ?? null);
   const latencyTop = $derived(scale?.latencyTop ?? 0);
+  // The latency card's quiet line is its jitter; a transfer's is its wire rate.
+  const jitter = (card: SummaryCard) =>
+    card.rows.find((row) => row.label === "Jitter")?.value ?? null;
 </script>
 
-<div class="result-summary">
+<div class="result-summary" style:--cards={Math.min(4, cards.length)}>
   <div class="result-cards" class:running data-tip-group {@attach tipGroup}>
-    {#each transfers as card (card.key)}
+    {#each cards as card (card.key)}
       {@const graph = card.graph}
       {@const quiet = card.status === "pending" || card.status === "not-run"}
       {@const tone = STATUS_TONE[card.status as keyof typeof STATUS_TONE]}
@@ -77,66 +79,89 @@
       {@const facts = cardFacts(card)}
       {@const noData = cardNoData(card)}
       <article
-        class="card stage-area {card.status}"
+        class="card {card.status}"
+        class:out
         data-tone={card.key}
-        style:--fade={fade}
+        data-flip="card-{card.key}"
       >
-        <header class="card-head">
-          <span class="dot" aria-hidden="true"></span>
-          <h3 use:tooltipAction={cardTip(card)}>
-            {STAGE[card.key].label}
-          </h3>
-          {#if tone || card.status === "active"}<span class="state"
-              >{#if tone && tone !== "neutral"}<span
-                  class="status-dot"
-                  data-tone={tone}
-                ></span>{/if}{card.status === "active"
-                ? STATUS.running
-                : STATUS[card.status as keyof typeof STATUS]}</span
-            >{/if}
-        </header>
-        {#key scope}
-          <div
-            class="headline enter"
-            class:quiet
-            aria-hidden={card.accessible ? "true" : undefined}
-          >
-            {#if card.key === "bidirectional" && lanes.length === 2 && !quiet}
-              {#each lanes as lane (lane.stage)}
-                <span class="pair" data-tone={lane.stage}
-                  ><span class="arrow" aria-hidden="true"
-                    >{lane.stage === "download" ? "↓" : "↑"}</span
-                  ><span class="sr-only">{STAGE[lane.stage].short}</span><span
-                    class="num">{lane.short}</span
-                  ></span
-                >
-              {/each}
-            {:else}
-              <span class="num">{card.num}</span>
-            {/if}
-            {#if card.unit && !quiet}<span class="unit">{card.unit}</span>{/if}
-          </div>
-        {/key}
-        <div class="line">
+        <span class="face">
+          <span class="name">
+            <span class="tone-icon" aria-hidden="true"
+              ><Icon name={card.icon} /></span
+            >
+            <h3>{STAGE[card.key].label}</h3>
+            {#if tone || card.status === "active"}<span class="status"
+                >{#if tone && tone !== "neutral"}<span
+                    class="status-dot"
+                    data-tone={tone}
+                  ></span>{/if}{card.status === "active"
+                  ? STATUS.running
+                  : STATUS[card.status as keyof typeof STATUS]}</span
+              >{/if}
+          </span>
+          {#key scope}
+            <span
+              class="headline enter"
+              class:quiet
+              aria-hidden={card.accessible ? "true" : undefined}
+            >
+              {#if card.key === "bidirectional" && lanes.length === 2 && !quiet}
+                {#each lanes as lane (lane.stage)}
+                  <span class="pair" data-tone={lane.stage}
+                    ><span class="arrow" aria-hidden="true"
+                      >{lane.stage === "download" ? "↓" : "↑"}</span
+                    ><span class="sr-only">{STAGE[lane.stage].short}</span><span
+                      class="num">{lane.short}</span
+                    ></span
+                  >
+                {/each}
+              {:else}
+                <span class="num">{card.num}</span>
+              {/if}
+              {#if card.unit && !quiet}<span class="unit">{card.unit}</span
+                >{/if}
+            </span>
+          {/key}
+        </span>
+        <span class="line">
           {#if reason && !quiet}
             <span class="reason">{reason}</span>
           {:else if card.wire}
             {@const wire = card.wire}
             <span class="wire"
-              ><span class="label" use:termAction={wire.tip}>Wire</span>
+              ><span class="label" use:termAction={wire.tip}>wire</span>
               {wire.value}
               <span class="delta">{wire.overhead}</span></span
+            >
+          {:else if card.key === "latency" && jitter(card) && !quiet}
+            <span class="wire"
+              ><span class="label">jitter</span> {jitter(card)}</span
             >
           {/if}
           {#if noData && !quiet}
             <span class="no-data"
-              ><span class="label" use:termAction={noData.tip!}>No data</span>
+              ><span class="label" use:termAction={noData.tip!}>no data</span>
               {noData.value}</span
             >
           {/if}
-        </div>
-        {#if graph && scale}
-          <div class="graph-slot">
+        </span>
+        {#if graph && scale && card.key === "latency"}
+          <div class="strip">
+            <StageGraph
+              tone="latency"
+              lanes={[]}
+              latency={graph.latency}
+              start={graph.start}
+              span={graph.span}
+              ceiling={1}
+              {baseline}
+              {latencyTop}
+              rate={scale.rate}
+              label="Idle latency over time"
+            />
+          </div>
+        {:else if graph && scale}
+          <div class="strip">
             <StageGraph
               tone={card.key as "download" | "upload" | "bidirectional"}
               lanes={graph.lanes}
@@ -155,19 +180,19 @@
             />
           </div>
         {/if}
-        <dl
-          class="facts"
-          class:unknown={facts.every((row) => row.value === MISSING)}
-        >
-          {#each facts as row (row.label)}
-            <div>
-              <dt use:tooltipAction={row.tip ?? ""}>
-                {row.label}
-              </dt>
-              <dd class:quiet={row.value === MISSING}>{row.value}</dd>
-            </div>
-          {/each}
-        </dl>
+        {#if facts.length}
+          <dl
+            class="facts"
+            class:unknown={facts.every((row) => row.value === MISSING)}
+          >
+            {#each facts as row (row.label)}
+              <div>
+                <dt use:tooltipAction={row.tip ?? ""}>{row.label}</dt>
+                <dd class:quiet={row.value === MISSING}>{row.value}</dd>
+              </div>
+            {/each}
+          </dl>
+        {/if}
         {#if card.accessible}<span class="sr-only">{card.accessible}</span>{/if}
       </article>
     {/each}
@@ -185,89 +210,162 @@
 </div>
 
 <style>
+  /* One card per stage across the console; the strips share one scale, so a stage's shape compares. */
   .result-summary {
     display: grid;
-    gap: var(--space-3);
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: var(--space-2);
     width: 100%;
+    height: 100%;
     container: results / inline-size;
   }
   .result-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: var(--space-4) var(--space-5);
+    grid-template-columns: repeat(var(--cards), minmax(0, 1fr));
+    gap: var(--space-4);
+    min-height: 0;
   }
-  /* A card is its stage's area (`.stage-area`): a rule and a wash, no box. Stretched by a taller
-     neighbour, its rows stay put and the room falls below them. */
-  .card {
-    display: grid;
-    grid-template-rows: 20px auto 18px;
-    grid-auto-rows: auto;
-    align-content: start;
-    gap: 6px;
-    min-width: 0;
-    padding: var(--space-3) var(--space-4) var(--space-3);
+  @container results (max-width: 1100px) {
+    .result-cards {
+      gap: var(--space-3);
+    }
   }
-  /* A phone stacks the cards, so an empty line has nothing to align with. */
+  /* A narrow console keeps two across; a phone leads with the running card and folds the others to their name
+     and value. */
+  @container results (max-width: 720px) {
+    .result-cards {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--space-2);
+    }
+  }
+  /* A phone stacks the cards in stage order, each whole from Start, so nothing moves as the stages run. */
   @container results (max-width: 520px) {
     .result-cards {
       grid-template-columns: minmax(0, 1fr);
-      row-gap: var(--space-3);
     }
     .card {
-      grid-template-rows: 20px;
+      padding: 8px var(--space-3) 10px;
     }
-    /* The running card stays in view, first under the run button: one that waits, or is done while the run goes
-       on, is its name and value. */
-    .line:empty,
-    .card:is(.pending, .not-run) > :is(.line, .graph-slot, .facts),
-    .running .card:not(.active, .recovering) > :is(.line, .graph-slot, .facts) {
+    .strip {
+      min-height: 56px;
+    }
+    .facts > div {
+      height: 20px;
+    }
+    .wire .delta {
       display: none;
     }
-    .running .card:is(.active, .recovering) {
-      order: -1;
+  }
+  /* A card is a panel ruled in its stage's hue along the top; the running card's edge strengthens. In its row it
+     takes the row's height up to a limit, its strip growing with it. */
+  .card {
+    --edge: var(--border);
+    position: relative;
+    display: grid;
+    align-content: start;
+    gap: var(--space-1);
+    min-width: 0;
+    max-height: 300px;
+    padding: 10px var(--space-4) var(--space-3);
+    overflow: hidden;
+    border: var(--hairline) solid var(--edge);
+    border-top: 2px solid var(--tone);
+    border-radius: var(--r-surface);
+    background: var(--surface-1);
+    box-shadow: var(--elev-tile);
+    transition: var(--transition-control);
+  }
+  .card:has(> .strip) {
+    grid-template-rows: auto auto minmax(68px, 1fr) auto;
+  }
+  /* The running card lifts a little on a glow in its hue. A stage starting reaches its card last in its wave: the
+     edge eases in two beats after the chip and the glow arrives with it in one step, a single repaint rather than
+     a blurred shadow redrawn on every frame of a fade. */
+  .card:is(.active, .recovering) {
+    --edge: color-mix(in oklab, var(--tone) 55%, var(--border));
+    box-shadow:
+      var(--elev-tile),
+      0 12px 32px -16px color-mix(in oklab, var(--tone) 60%, transparent);
+    transition:
+      border-color var(--dur-stage) var(--ease-out) calc(2 * var(--beat)),
+      box-shadow 0s linear calc(2 * var(--beat));
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    /* A stage that settles lays its facts down one row after another under the figure. */
+    .card:is(.complete, .partial, .stopped, .failed) .facts > div {
+      animation: row-in 260ms var(--ease-settle) backwards;
+      animation-delay: calc(var(--n, 0) * 40ms + var(--beat));
+    }
+    .facts > div:nth-child(2) {
+      --n: 1;
+    }
+    .facts > div:nth-child(3) {
+      --n: 2;
+    }
+    .facts > div:nth-child(4) {
+      --n: 3;
+    }
+    .facts > div:nth-child(5) {
+      --n: 4;
     }
   }
-  .card-head {
+  .card:is(.pending, .not-run) {
+    --edge: var(--border-subtle);
+    border-top-color: color-mix(in oklab, var(--tone) 45%, transparent);
+  }
+  .face {
+    display: grid;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+  .name {
     display: flex;
     align-items: center;
     gap: var(--space-2);
     min-width: 0;
-  }
-  .dot {
-    flex: none;
-    width: 7px;
-    height: 7px;
-    border-radius: var(--r-full);
-    background: var(--tone);
-  }
-  h3 {
+    height: 20px;
     color: var(--text);
-    font: var(--w-strong) var(--type-md) / 20px var(--font-sans);
+    font: var(--role-title);
     white-space: nowrap;
   }
-  /* On the title's baseline (app.css, --role-label). */
-  .state {
+  .name .tone-icon {
+    width: 18px;
+    height: 18px;
+  }
+  .name .tone-icon :global(svg) {
+    width: 10px;
+    height: 10px;
+  }
+  .status {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    margin: calc(var(--type-md) - var(--type-sm)) 0 0 auto;
-    /* Muted, not soft: small text on a running card's wash keeps 4.5:1. */
+    margin-left: auto;
     color: var(--text-muted);
-    font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
+    font: var(--w-normal) var(--type-xs) / 1 var(--font-sans);
   }
   .headline,
+  /* A card's measured parts hand off together: out in 90 ms, in over 180, on the compositor. */
   .line,
   .facts,
-  .graph-slot {
-    opacity: var(--fade);
+  .strip,
+  .status {
+    transition:
+      opacity var(--dur-handoff-in) var(--ease-out),
+      translate var(--dur-handoff-in) var(--ease-out);
   }
-  /* Light numerals read as measured values, not as headings. */
+  .out :is(.headline, .line, .facts, .strip, .status) {
+    opacity: 0;
+    translate: 0 3px;
+    transition-duration: var(--dur-handoff-out);
+  }
   .headline {
     display: flex;
     align-items: baseline;
-    gap: 10px;
+    gap: 6px;
     min-width: 0;
-    font: 300 clamp(32px, 2.6vw, 46px) / 1 var(--font-display);
+    font: var(--role-readout);
+    font-size: 26px;
     white-space: nowrap;
   }
   /* A strut one value tall, so a bidirectional pair's smaller figures sit on its baseline and keep the card's height. */
@@ -276,7 +374,6 @@
   }
   .num {
     font-variant-numeric: tabular-nums;
-    letter-spacing: -0.025em;
   }
   .pair {
     display: inline-flex;
@@ -284,26 +381,33 @@
     gap: 2px;
   }
   .pair .num {
-    font-size: clamp(26px, 2vw, 36px);
+    font-size: 20px;
+  }
+  .pair + .pair {
+    margin-left: 4px;
   }
   .arrow {
-    color: var(--tone);
-    font: var(--w-normal) var(--type-lg) / 1 var(--font-sans);
+    color: var(--text-soft);
+    font: var(--w-normal) var(--type-md) / 1 var(--font-sans);
   }
   .quiet .num {
     color: var(--text-soft);
   }
   .unit {
     color: var(--text-muted);
-    font: var(--w-normal) var(--type-md) / 1 var(--font-sans);
+    font: var(--role-figure-sm);
+    line-height: 1;
   }
+  /* One quiet line: the wire rate, a failure's reason, the latency card's jitter; after a stall, no data. */
   .line {
     display: flex;
     align-items: baseline;
+    gap: var(--space-2);
     min-width: 0;
+    height: 16px;
     overflow: hidden;
-    color: var(--text-muted);
-    font: var(--w-normal) var(--type-body) / 18px var(--font-sans);
+    color: var(--text-soft);
+    font: var(--w-normal) var(--type-sm) / 16px var(--font-sans);
     white-space: nowrap;
   }
   .reason,
@@ -312,72 +416,71 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .wire,
+  .no-data {
+    font: var(--role-figure-sm);
+    line-height: 16px;
+    color: var(--text-muted);
+  }
   .label {
     color: var(--text-soft);
+    font: var(--w-normal) var(--type-sm) / 16px var(--font-sans);
   }
-  /* After a stall, how long no data came, at the line's end. */
   .no-data {
     flex: none;
     margin-left: auto;
-    padding-left: var(--space-3);
   }
   .delta {
-    margin-left: 4px;
-    color: var(--tone-ink);
-    font-weight: var(--w-strong);
+    color: var(--text);
   }
   .reason {
     color: var(--err);
     font-weight: var(--w-strong);
   }
-  .graph-slot {
-    height: clamp(64px, 11svh, 132px);
-    min-height: 0;
+  /* The strip: the stage's shape and its latency replies, on a field tinted in the stage's hue; it grows with
+     the card up to a limit. */
+  .strip {
+    min-height: 68px;
+    max-height: 120px;
+    margin-top: var(--space-1);
+    padding: 6px 8px 0;
+    border-radius: var(--r-well);
+    background: color-mix(in oklab, var(--tone) 7%, var(--surface-1));
   }
-  /* A card with no data yet keeps its graph's room but draws nothing in it: only its rule, name and "—". */
-  .card:is(.pending, .not-run) > .graph-slot {
-    visibility: hidden;
-  }
+  /* The facts are ruled rows, a quiet label and its figure on one line; "—" until known, so nothing moves. */
   .facts {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 5.25rem), 1fr));
-    gap: var(--space-2) var(--space-3);
-    padding-top: var(--space-2);
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    margin-top: var(--space-2);
     border-top: var(--hairline) solid var(--border-subtle);
+    color: var(--text);
+    font: var(--role-figure-sm);
   }
-  /* Under the dial on a landscape page, which fits one screen down to 1024 x 768, a card's rows sit closer. */
-  @media (orientation: landscape) {
-    @container viz (min-width: 760px) {
-      .card {
-        gap: var(--space-1);
-      }
-      .facts {
-        column-gap: var(--space-2);
-      }
-    }
-  }
-  /* Until one fact is known the row keeps its place unseen, so the first values never move the instrument. */
-  .facts.unknown {
-    visibility: hidden;
+  /* A card that has measured nothing yet shows its facts' names with dashes, so the page is laid out from Start
+     and every "—" marks where a value arrives; the names keep their soft colour, which reads at AA. */
+  .facts.unknown dd {
+    color: var(--text-soft);
   }
   .facts > div {
-    display: grid;
-    gap: 1px;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+    height: 22px;
     min-width: 0;
+    white-space: nowrap;
+  }
+  .facts > div + div {
+    border-top: var(--hairline) solid var(--border-subtle);
   }
   .facts dt {
-    overflow: hidden;
     color: var(--text-soft);
-    font: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
   }
   .facts dd {
-    font: var(--w-normal) var(--type-md) / 1.3 var(--font-sans);
     font-variant-numeric: tabular-nums;
-    white-space: nowrap;
   }
-  /* "—" for a value not yet measured is soft; a measured value is full ink. */
   .facts dd.quiet {
     color: var(--text-soft);
   }

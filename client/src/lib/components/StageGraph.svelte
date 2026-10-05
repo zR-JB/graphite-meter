@@ -3,7 +3,7 @@
   import { warmUp } from "../actions/intent";
   import { scrub } from "../actions/scrub";
   import { inView } from "../actions/inView";
-  import { fmtDuration, formatLatency } from "../format";
+  import { fmtDuration, fmtMs, formatLatency } from "../format";
   import {
     nearestAt,
     stageGraphGeometry,
@@ -13,7 +13,7 @@
   } from "../presentation/stageGraph";
 
   interface Props {
-    tone: "download" | "upload" | "bidirectional";
+    tone: "download" | "upload" | "bidirectional" | "latency";
     lanes: GraphPoint[][];
     /** Names the lanes in the readout when there are two. */
     laneNames?: string[];
@@ -46,9 +46,13 @@
   const TRACK = 20;
   let width = $state(0);
   let plotHeight = $state(0);
+  let trackHeight = $state(0);
   let seen = $state(false);
+  // Without rate lanes the strip is the latency track alone, at the strip's full height.
+  const trackOnly = $derived(lanes.length === 0);
+  const trackH = $derived(trackOnly ? trackHeight : TRACK);
   const geometry = $derived(
-    width && plotHeight
+    width && (trackOnly ? trackHeight : plotHeight)
       ? stageGraphGeometry({
           lanes,
           latency,
@@ -58,15 +62,19 @@
           baseline,
           latencyTop,
           width,
-          plotHeight,
-          trackHeight: TRACK,
+          plotHeight: trackOnly ? 0 : plotHeight,
+          trackHeight: trackH,
         })
       : null,
   );
   const graph = $derived(
     geometry && drawStageGraph(geometry, seen ? head : null),
   );
-  const hasData = $derived(!!geometry?.bins.some((lane) => lane.length));
+  const hasData = $derived(
+    trackOnly
+      ? latency.length > 0
+      : !!geometry?.bins.some((lane) => lane.length),
+  );
 
   let hoverT = $state<number | null>(null);
   let keyboard = false;
@@ -74,8 +82,27 @@
   const samples = $derived(
     lanes.map((lane) => lane.filter((point) => point.t >= start)),
   );
+  // A bucket reads as its median and, when its replies spread, their range.
+  const replyRows = (reply: LatencyPoint) => [
+    { label: "Latency", value: formatLatency(reply.ms) },
+    ...(reply.lo < reply.hi
+      ? [{ label: "Range", value: `${fmtMs(reply.lo)}–${fmtMs(reply.hi)} ms` }]
+      : []),
+  ];
   const hover = $derived.by(() => {
     if (hoverT === null || !geometry || !hasData) return null;
+    if (trackOnly) {
+      const reply = nearestAt(latency, hoverT!);
+      if (!reply) return null;
+      return {
+        x: Math.min(
+          width,
+          Math.max(0, ((reply.t - start) / (span || 1)) * width),
+        ),
+        rows: replyRows(reply),
+        time: fmtDuration(Math.max(0, reply.t - start), 1),
+      };
+    }
     const rates = samples.map((lane) => nearestAt(lane, hoverT!));
     const at = rates.find(Boolean)!.t;
     const reply = nearestAt(latency, at);
@@ -84,7 +111,7 @@
       label: laneNames[lane] ?? "Rate",
       value: point ? rate(point.v) : "",
     }));
-    if (near) rows.push({ label: "Latency", value: formatLatency(near.ms) });
+    if (near) rows.push(...replyRows(near));
     return {
       x: Math.min(width, Math.max(0, ((at - start) / (span || 1)) * width)),
       rows,
@@ -118,7 +145,9 @@
   });
   // Arrow keys walk the drawn bins from the newest; the readout names the sample nearest where it stops.
   function stepTo(key: string): boolean {
-    const times = geometry?.bins.find((lane) => lane.length)?.map((p) => p.t);
+    const times = trackOnly
+      ? latency.map((p) => p.t)
+      : geometry?.bins.find((lane) => lane.length)?.map((p) => p.t);
     if (!times?.length) return false;
     const index =
       hoverT === null
@@ -181,46 +210,46 @@
   }}
   onkeydown={onKey}
 >
-  <div class="plot" bind:clientHeight={plotHeight}>
+  {#if !trackOnly}<div class="plot" bind:clientHeight={plotHeight}>
+      {#if graph}
+        <svg {width} height={plotHeight} aria-hidden="true">
+          <defs>
+            <linearGradient id="{uid}-fill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="var(--tone)" stop-opacity="0.2" />
+              <stop offset="1" stop-color="var(--tone)" stop-opacity="0" />
+            </linearGradient>
+          </defs>
+          <line
+            class="axis"
+            x1="0"
+            x2={width}
+            y1={plotHeight - 0.5}
+            y2={plotHeight - 0.5}
+          />
+          {#if graph.area}<path
+              class="area"
+              d={graph.area}
+              fill="url(#{uid}-fill)"
+            />{/if}
+          {#each graph.lines as line, index (index)}
+            <path class="line" class:second={index > 0} d={line} />
+          {/each}
+          {#each graph.heads as dot, index (index)}
+            <circle class="head" cx={dot.x} cy={dot.y} r="3.5" />
+          {/each}
+          {#if hover}<line
+              class="cursor"
+              x1={hover.x}
+              x2={hover.x}
+              y1="0"
+              y2={plotHeight}
+            />{/if}
+        </svg>
+      {/if}
+    </div>{/if}
+  <div class="track" class:full={trackOnly} bind:clientHeight={trackHeight}>
     {#if graph}
-      <svg {width} height={plotHeight} aria-hidden="true">
-        <defs>
-          <linearGradient id="{uid}-fill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stop-color="var(--tone)" stop-opacity="0.2" />
-            <stop offset="1" stop-color="var(--tone)" stop-opacity="0" />
-          </linearGradient>
-        </defs>
-        <line
-          class="axis"
-          x1="0"
-          x2={width}
-          y1={plotHeight - 0.5}
-          y2={plotHeight - 0.5}
-        />
-        {#if graph.area}<path
-            class="area"
-            d={graph.area}
-            fill="url(#{uid}-fill)"
-          />{/if}
-        {#each graph.lines as line, index (index)}
-          <path class="line" class:second={index > 0} d={line} />
-        {/each}
-        {#each graph.heads as dot, index (index)}
-          <circle class="head" cx={dot.x} cy={dot.y} r="3.5" />
-        {/each}
-        {#if hover}<line
-            class="cursor"
-            x1={hover.x}
-            x2={hover.x}
-            y1="0"
-            y2={plotHeight}
-          />{/if}
-      </svg>
-    {/if}
-  </div>
-  <div class="track">
-    {#if graph}
-      <svg {width} height={TRACK} aria-hidden="true">
+      <svg {width} height={trackH} aria-hidden="true">
         {#if graph.baselineY !== null}<line
             class="reply-median"
             x1="0"
@@ -228,15 +257,26 @@
             y1={graph.baselineY}
             y2={graph.baselineY}
           />{/if}
+        <!-- A bar spans a bin's fastest to slowest reply, at least a dot's length. -->
         {#each graph.dots as dot, index (index)}
-          <circle class="reply" cx={dot.x} cy={dot.y} r="1.6" />
+          <line
+            class="reply"
+            x1={dot.x}
+            x2={dot.x}
+            y1={dot.yLo}
+            y2={Math.min(dot.yHi, dot.yLo - 1.5)}
+          />
+          {#if dot.over}<path
+              class="reply-over"
+              d={`M ${dot.x - 2.5} 5.5 L ${dot.x} 0.5 L ${dot.x + 2.5} 5.5 Z`}
+            />{/if}
         {/each}
         {#if hover}<line
             class="cursor"
             x1={hover.x}
             x2={hover.x}
             y1="0"
-            y2={TRACK}
+            y2={trackH}
           />{/if}
       </svg>
     {/if}
@@ -280,6 +320,12 @@
   }
   .track {
     height: 20px;
+  }
+  .graph:has(> .track.full) {
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .track.full {
+    height: 100%;
   }
   svg {
     position: absolute;

@@ -201,19 +201,3 @@ test("only an enabled complete event creates an immutable history candidate", as
     store.resultHistoryPreference = previousPreference;
   }
 });
-
-test("settings reset returns history saving to the operator-controlled default", async () => {
-  const { store } = await import("./store.svelte");
-  const previousPreference = store.resultHistoryPreference;
-  try {
-    store.resultHistoryPreference = "enabled";
-    store.restoreTestDisplayDefaults();
-    expect(String(store.resultHistoryPreference)).toBe("default");
-
-    store.resultHistoryPreference = "disabled";
-    store.restoreTestDisplayDefaults();
-    expect(String(store.resultHistoryPreference)).toBe("default");
-  } finally {
-    store.resultHistoryPreference = previousPreference;
-  }
-});

@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from "../Icon.svelte";
   import { httpProtocolLabel } from "../../runner/paths";
-  import { keyHint, term, tipGroup, tooltip } from "../../actions/tooltip";
+  import { tipGroup, tooltip } from "../../actions/tooltip";
   import {
     fmtBytes,
     fmtDuration,
@@ -75,6 +75,7 @@
         upload: result.upload,
         bidirectional: result.bidirectional,
         latency: result.latency,
+        idle: (latencyServer?.latencyByStage ?? result.latencyByStage).latency,
         added: result.addedLatency,
       },
       details,
@@ -281,7 +282,6 @@
         class="btn btn-icon btn-quiet close-detail"
         type="button"
         aria-label="Close result"
-        {@attach tooltip(() => `Close${keyHint("Esc")}`)}
         onclick={onClose}
       >
         <Icon name="close" />
@@ -305,8 +305,6 @@
             variant="compact"
             label="Saved latency distributions"
             added={latencyServer?.addedLatency ?? result.addedLatency}
-            stability={(latencyServer?.latency ?? result.latency)
-              ?.stabilityPct ?? null}
             source={multiple ? latencyServer?.server.name : undefined}
           />
         </div>
@@ -373,7 +371,7 @@
         <section class="group">
           <h3>
             <span
-              {@attach term(() =>
+              {@attach tooltip(() =>
                 accounting.some((lane) => lane.accountingComplete === false)
                   ? `${JARGON.probeAccounting}\nPartial: ${PARTIAL_ACCOUNTING_HELP}`
                   : JARGON.probeAccounting,
@@ -457,10 +455,6 @@
   }
   .detail-body > :global(.result-summary) {
     max-width: none;
-  }
-  /* The stage areas' text shares the detail's one edge, a row inset in like its head and groups. */
-  .detail-body :global(.stage-area) {
-    padding-inline: var(--row-inset);
   }
   /* A saved result's three cards run three across or one to a row, never two and an orphan (3 × 240 px + 2 gaps). */
   @container results (width < 768px) {

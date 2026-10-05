@@ -10,20 +10,21 @@
     BROWSER_CONNECTION_BUDGET,
     normalizeStreamCount,
   } from "../../runner/paths";
-  import { term, tooltip } from "../../actions/tooltip";
-  import { reveal } from "../../presentation/motion.svelte";
+  import { tooltip } from "../../actions/tooltip";
+  import { flip, reveal } from "../../presentation/motion.svelte";
   import Icon from "../Icon.svelte";
   import Switch from "../Switch.svelte";
   import ServerSelection from "../ServerSelection.svelte";
   import ConnectionPicker from "./ConnectionPicker.svelte";
   import DurationStrip from "./DurationStrip.svelte";
-  import TimeStepper from "./TimeStepper.svelte";
+  import Stepper from "./Stepper.svelte";
   import Roll from "../Roll.svelte";
   import {
     BLOCKED,
     JARGON,
     phaseLabel,
     PING_CADENCE,
+    PING_CADENCE_SHORT,
     READINESS,
     READINESS_TIP,
     STAGE,
@@ -31,6 +32,7 @@
   import {
     fmtDuration,
     fmtStageTime,
+    parseDuration,
     rateUnit,
     rateValueAt,
     rawRateFrom,
@@ -196,9 +198,11 @@
     return from < 3_600_000 ? 60_000 : 300_000;
   }
   function setBidirectional(enabled: boolean) {
-    controller.configureRun({
-      stages: { ...store.config.stages, bidirectional: enabled },
-    });
+    flip(() =>
+      controller.configureRun({
+        stages: { ...store.config.stages, bidirectional: enabled },
+      }),
+    );
   }
   const activeDurationFields = $derived(
     store.config.stages.bidirectional
@@ -226,6 +230,11 @@
   ].join("\n");
 
   const forced = $derived(store.config.transferStreams.mode === "forced");
+  // A typed stream count is a whole number.
+  const parseCount = (text: string) => {
+    const count = Number(text.trim());
+    return text.trim() && Number.isInteger(count) ? count : null;
+  };
   const queuedStreams = $derived(
     forced &&
       store.config.transferStreams.count > BROWSER_CONNECTION_BUDGET &&
@@ -303,12 +312,17 @@
 {/snippet}
 
 {#snippet stepper(key: DurationKey, label: string)}
-  <TimeStepper
+  <Stepper
     {label}
-    ms={store.config.duration[key]}
+    value={store.config.duration[key]}
     min={DURATION_LIMITS[key][0]}
     max={maxMs(key)}
     step={(ms, direction) => stepMs(key, ms, direction)}
+    format={fmtStageTime}
+    parse={parseDuration}
+    unit={1000}
+    verbs={["Shorten", "Lengthen"]}
+    noun="time"
     disabled={store.preparing}
     onChange={(ms) => applyDuration(key, ms)}
   />
@@ -407,7 +421,7 @@
         <span
           class="stage-name"
           data-tone="warmup"
-          {@attach term(() => JARGON.warmup)}>{WARMUP_LABEL}</span
+          {@attach tooltip(() => JARGON.warmup)}>{WARMUP_LABEL}</span
         >
         {#if durationMode === "custom"}
           {@render stepper("warmupMs", "warmup")}
@@ -536,21 +550,21 @@
     <h3>Latency probes</h3>
     <div class="kv">
       {#each CADENCES as [key, label, tip] (key)}
-        <label>
+        <div class="cadence">
           <span {@attach tooltip(() => tip)}>{label}</span>
-          <select
-            value={store.config[key]}
-            onchange={(event) =>
-              controller.configureRun({
-                [key]: event.currentTarget.value as PingCadence,
-              })}
-            disabled={running || store.preparing}
-          >
-            {#each Object.entries(PING_CADENCE) as [value, name] (value)}
-              <option {value}>{name}</option>
+          <div class="segmented" role="group" aria-label={label}>
+            {#each Object.keys(PING_CADENCE) as PingCadence[] as value (value)}
+              <button
+                type="button"
+                aria-pressed={store.config[key] === value}
+                disabled={running || store.preparing}
+                {@attach tooltip(() => PING_CADENCE[value])}
+                onclick={() => controller.configureRun({ [key]: value })}
+                >{PING_CADENCE_SHORT[value]}</button
+              >
             {/each}
-          </select>
-        </label>
+          </div>
+        </div>
       {/each}
       {@render toggle(
         "Skip loaded latency if the Latency stage is off",
@@ -573,34 +587,33 @@
         (on) => streams({ mode: on ? "forced" : "auto" }),
         running || store.preparing,
       )}
-      <label>
+      <div class="units">
         <span
-          {@attach term(() =>
+          {@attach tooltip(() =>
             forced ? JARGON.forcedStreamCount : JARGON.autoStreamCount,
           )}
           >{forced
             ? "Streams per server and direction"
             : "HTTP/1.1 stream limit per direction"}</span
         >
-        <input
-          type="number"
-          min="1"
-          max="128"
-          step="1"
-          disabled={running || store.preparing}
+        <Stepper
+          label={forced ? "streams" : "stream limit"}
           value={store.config.transferStreams.count}
-          onkeydowncapture={(event) =>
-            keepOnEscape(event, store.config.transferStreams.count)}
-          onchange={(event) =>
-            commitNumber(
-              event,
-              "streams",
-              store.config.transferStreams.count,
-              normalizeStreamCount,
-              (count) => streams({ count }),
-            )}
+          min={1}
+          max={128}
+          step={() => 1}
+          format={String}
+          parse={parseCount}
+          verbs={["Fewer", "More"]}
+          fieldMin="3ch"
+          disabled={running || store.preparing}
+          onChange={(count) => {
+            const accepted = streams({ count: normalizeStreamCount(count) });
+            if (!accepted) announce(rejection);
+            return accepted;
+          }}
         />
-      </label>
+      </div>
       {@render toggle(
         "Datagram throughput (experimental)",
         JARGON.datagramThroughput,
@@ -730,8 +743,21 @@
   .units {
     column-gap: var(--space-2);
   }
-  .units > span {
+  /* A control stands at its label's end while the row holds both, and against the right edge when it wraps
+     under the label; a cadence's segments then take the row's width. */
+  .units > span,
+  .cadence > span {
+    flex: 1 0 auto;
     margin-inline-end: auto;
+  }
+  .units > :not(span) {
+    margin-inline-start: auto;
+  }
+  .cadence {
+    row-gap: var(--space-2);
+  }
+  .cadence > .segmented {
+    flex: 1 1 240px;
   }
   /* A narrow sheet stacks every stepper row and the units row alike, so no row wraps where its neighbour does not. */
   @container settings (max-width: 320px) {
@@ -742,10 +768,6 @@
     .units > span {
       flex-basis: 100%;
     }
-  }
-  .kv select {
-    width: auto;
-    max-width: 11rem;
   }
   .reset {
     justify-self: start;

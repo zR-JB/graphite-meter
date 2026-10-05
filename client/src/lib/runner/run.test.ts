@@ -12,7 +12,6 @@ import type {
   RunnerEvent,
 } from "./contract";
 import type { ParticipantHost, StageTransport } from "./transport";
-import type { DroppedServer } from "./run";
 import {
   buildHistoryRecord,
   incoherence,
@@ -57,6 +56,8 @@ interface Peer {
   finish?(host: ParticipantHost): void | Promise<void>;
   discard?(host: ParticipantHost, incomplete: boolean): void;
   checkpoint?(measuring: boolean): Promise<ReceiverCheckpoint | null>;
+  /** A measuring checkpoint answers the count at the moment it was asked, this long after. */
+  checkpointLagMs?: number;
   replaceUpload?(signal: AbortSignal): Promise<void>;
   receives?: false;
 }
@@ -69,7 +70,6 @@ async function harness(
     latencySource?: string;
     adaptive?: boolean;
     loadedLatency?: boolean;
-    dropped?: DroppedServer[];
   } = {},
 ) {
   const { Run } = await import("./run");
@@ -86,7 +86,7 @@ async function harness(
   const run = new Run(
     servers,
     options.latencySource ?? peers[0].id,
-    options.dropped,
+    [],
     ({ host, paths, activity }) => {
       const peer = peers.find(
         (entry) =>
@@ -142,8 +142,22 @@ async function harness(
           calls.push(`discard:${peer.id}`);
           peer.discard?.(host, incomplete);
         },
-        checkpoint: () =>
-          peer.checkpoint?.(measuring) ?? Promise.resolve(receiver()),
+        // A receiver that is absent, or silent at this moment, answers no checkpoint either.
+        checkpoint: () => {
+          const answer =
+            peer.receives === false ||
+            peer.silent?.(activity, performance.now() - started, "up")
+              ? null
+              : receiver();
+          return (
+            peer.checkpoint?.(measuring) ??
+            (measuring && peer.checkpointLagMs
+              ? new Promise<ReceiverCheckpoint | null>((resolve) =>
+                  setTimeout(() => resolve(answer), peer.checkpointLagMs),
+                )
+              : Promise.resolve(answer))
+          );
+        },
         replaceUpload: peer.replaceUpload,
       };
       return stage;
@@ -322,30 +336,6 @@ test("two servers sum their windows, and terminal evidence after the final bound
   expect(result.download!.totalBytes).toBeLessThan(10_000);
   near(result.multiServer.servers[0].download?.reportedBytesPerSec, 1_000);
   near(result.multiServer.servers[1].download?.reportedBytesPerSec, 3_000);
-});
-
-test("a server whose check failed before the run is shown with its reason while the rest measure", async () => {
-  const peer = { id: "peer", url: "https://peer.example", name: "Peer" };
-  const h = await harness(
-    [{ id: "self", rate: 2, measure: probe(10, 20) }],
-    { latency: true, download: true },
-    { latencyMs: 400, downloadMs: 1_000 },
-    {
-      dropped: [
-        { server: peer, reason: "preparation-failed", message: "unreachable" },
-      ],
-    },
-  );
-  h.start();
-  const { multiServer, stages, outcome } = await h.result();
-  expect(stages.latency).toBe("complete");
-  expect(multiServer.selection.map(({ id }) => id)).toEqual(["self", "peer"]);
-  expect(multiServer.participants).toEqual(["self"]);
-  expect(multiServer.failures).toMatchObject([
-    { serverId: "peer", stage: "download", reason: "preparation-failed" },
-  ]);
-  expect(stages.download).toBe("partial");
-  expect(outcome).toBe("partial");
 });
 
 test("a server lost in the latency stage is not prepared for the later stages", async () => {
@@ -630,6 +620,19 @@ test("a stable feed completes early and each result arrives before the next stag
   expect(stageResult).toBeLessThan(upload);
 });
 
+test("a stable upload completes early on its own", async () => {
+  const h = await harness(
+    two(),
+    { upload: true },
+    { uploadMs: 6_000 },
+    { adaptive: true },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.stages.upload).toBe("complete");
+  expect(result.durationMs).toBeLessThan(6_000);
+});
+
 test("the live stage track shows the statuses the run settles, one-lane bidirectional included", async () => {
   const { store } = await import("../state/store.svelte");
   const h = await harness(
@@ -884,6 +887,22 @@ const receiverOf = (id: string): ReceiverCheckpoint => ({
   bytes: 0,
   nanos: 1,
   receivedAtMs: 0,
+});
+
+test("a measurement checkpoint answered after a newer feed record never takes the count back", async () => {
+  const h = await harness(
+    // The answer reflects the count when it was asked, and arrives after the feed has moved on.
+    two({ checkpointLagMs: 300 }),
+    { upload: true },
+    { uploadMs: 2_000 },
+  );
+  h.start();
+  const result = await h.result();
+  const upload = result.multiServer.intervals.filter(
+    (interval) => interval.stage === "upload",
+  );
+  expect(upload).toHaveLength(1);
+  expect(upload[0].complete).toBe(true);
 });
 
 test("each server ends its stage as soon as its own final evidence arrives", async () => {

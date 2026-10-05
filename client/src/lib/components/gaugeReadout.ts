@@ -1,4 +1,4 @@
-import { fmtCount, fmtDuration, fmtMs } from "../format";
+import { fmtDuration, fmtMs } from "../format";
 import type { Phase, RunnerError } from "../runner/contract";
 import type { PreparationState } from "../state/store.svelte";
 import {
@@ -23,8 +23,6 @@ export interface GaugeReadoutInput {
   quietMs: number | null;
   /** How long latency probes have gone unanswered; null otherwise. */
   unansweredMs: number | null;
-  /** Idle replies counted so far while the latency stage runs; null outside it. */
-  replies: number | null;
   hasLatencyResult: boolean;
   unusable: boolean;
   headline: ResultGaugeArc | null;
@@ -75,14 +73,11 @@ export function gaugeReadout(input: GaugeReadoutInput) {
   const preparationLabel = statusLabel(preparation.status, phase);
   const failure = preparationFailurePresentation(preparation, input.startError);
   const status = terminalStatus(input);
-  // The latency stage counts its replies under the dial, so a steady link is seen to be measured.
   const hint = input.preparing
     ? preparationLabel
     : phase === "idle" || phase === "connecting" || phase === "warmup"
       ? phaseLabel(phase)
-      : phase === "latency" && input.replies
-        ? `${fmtCount(input.replies)} ${input.replies === 1 ? "reply" : "replies"}`
-        : "";
+      : "";
   const statusText = failure
     ? `${failure.headline} — ${failure.detail}`
     : status

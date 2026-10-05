@@ -3,9 +3,7 @@ import {
   probeAccountingDetails,
   probeAccountingSummary,
   hasProbeAccountingNotice,
-  entries,
   formatTimeouts,
-  nearestMetric,
   profileDomain,
   timeoutsTip,
 } from "./latencyProfile";
@@ -56,30 +54,6 @@ test("timeouts read as a share of resolved probes, and the tip counts them", () 
       "A timeout is a missing reply, not packet loss",
   );
   expect(timeoutsTip(lane({ count: 0, timeoutCount: null }))).toBe("");
-});
-
-test("entries: present metrics in label order, nulls dropped", () => {
-  const got = entries(lane({ p10: null, current: null }));
-  expect(got.map((e) => e.metric)).toEqual(["min", "center", "p90", "max"]);
-});
-
-test("nearestMetric: picks the closest measured value", () => {
-  const l = lane();
-  expect(nearestMetric(l, 51)).toBe("center"); // 50 is nearest
-  expect(nearestMetric(l, 88)).toBe("max"); // 90 is nearest
-  expect(nearestMetric(l, 0)).toBe("min"); // 10 is nearest
-});
-
-test("nearestMetric: no measured metrics yields null", () => {
-  const empty = lane({
-    min: null,
-    max: null,
-    p10: null,
-    p90: null,
-    center: null,
-    current: null,
-  });
-  expect(nearestMetric(empty, 42)).toBeNull();
 });
 
 test("incomplete accounting stays visible without turning unknown outcomes into zero", () => {

@@ -5,7 +5,6 @@
   import type { Snippet } from "svelte";
   import { resize } from "../actions/resize";
   import { sheetDrag } from "../actions/sheetDrag";
-  import { keyHint, tooltip } from "../actions/tooltip";
   import { activeModal } from "../actions/focus";
 
   interface Props {
@@ -18,8 +17,6 @@
     dockMaxWidth?: number;
     onResize?: (px: number) => void;
     onResetWidth?: () => void;
-    /** A pointer drag on the handle starts or ends. */
-    onResizing?: (dragging: boolean) => void;
     onClose: () => void;
     children: Snippet;
   }
@@ -33,7 +30,6 @@
     dockMaxWidth = MAX_DOCK_WIDTH,
     onResize,
     onResetWidth,
-    onResizing,
     onClose,
     children,
   }: Props = $props();
@@ -79,6 +75,14 @@
         onClose();
       };
       node.addEventListener("keydown", escape);
+      // Docked, the sheet slides from its edge as its column opens or closes (flip, presentation/motion).
+      if (docked) {
+        node.dataset.flip = `sheet-${side}`;
+        node.dataset.flipEdge = side;
+      } else {
+        delete node.dataset.flip;
+        delete node.dataset.flipEdge;
+      }
       const drag = open && !docked ? sheetDrag(onClose)(node) : undefined;
       return () => {
         node.removeEventListener("keydown", escape);
@@ -96,7 +100,6 @@
         <button
           class="btn btn-icon btn-quiet"
           aria-label={`Close ${title}`}
-          {@attach tooltip(() => `Close${keyHint("Esc")}`)}
           onclick={onClose}
         >
           <Icon name="close" />
@@ -126,7 +129,6 @@
             max: () => dockMaxWidth,
             set: (px) => onResize?.(px),
             reset: () => onResetWidth?.(),
-            active: (dragging) => onResizing?.(dragging),
           })}
       ></div>
     {/if}
@@ -137,33 +139,28 @@
   .panel-layer {
     display: contents;
   }
-  /* A sheet floats over the page: inset, rounded, frosted, with the one shadow the design allows. */
+  /* A flyout sheet floats over the page with the one shadow the design allows; docked, it is a frame beside
+     the instrument, flat. */
   .panel-layer > :global(dialog.panel) {
     max-width: none;
     max-height: none;
     margin: 0;
     flex-direction: column;
     overflow: hidden;
-    border: var(--hairline) solid var(--border-subtle);
+    border: var(--hairline) solid var(--border);
     border-radius: var(--r-surface);
     background: var(--sheet);
-    -webkit-backdrop-filter: var(--sheet-blur);
-    backdrop-filter: var(--sheet-blur);
     box-shadow: var(--elev-float);
     color: var(--text);
   }
   .panel-layer > :global(dialog.panel[open]) {
     display: flex;
   }
-  /* Docked, nothing clips the resize handle that straddles the edge; the body clips its own corners. */
+  /* Docked, nothing clips the resize handle that straddles the edge. */
   .docked > :global(dialog.panel) {
     overflow: visible;
   }
-  .docked .panel-body {
-    border-radius: 0 0 calc(var(--r-surface) - var(--hairline))
-      calc(var(--r-surface) - var(--hairline));
-  }
-  /* Docked, the sheet keeps its width and hugs its column's inner edge, so the column's glide is its slide:
+  /* Docked, the sheet is its column, flush with the bars, cut from the stage by one hairline; the column's glide is its slide:
      the sheet and the page it makes room in move in the same layout pass, with no second animation to
      fall behind on a slow machine. Closed, the column is 0 wide and the sheet hangs off the viewport's
      edge; it stays displayed for the glide out, then closes. */
@@ -171,12 +168,13 @@
     grid-area: rightdock;
     justify-self: start;
     position: relative;
-    width: calc(var(--dock-w) - var(--space-3));
+    width: var(--dock-w);
     height: auto;
-    margin: 0 var(--space-3) var(--space-3) 0;
-    /* Docked, only the plain page lies behind it: a blur would cost every frame and change nothing. */
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
+    margin: 0;
+    border-width: 0 0 0 var(--hairline);
+    border-radius: 0;
+    background: var(--sheet-solid);
+    box-shadow: none;
     transition:
       overlay var(--dur-sheet) allow-discrete,
       display var(--dur-sheet) allow-discrete;
@@ -184,7 +182,7 @@
   .docked > :global(dialog.panel.left) {
     grid-area: leftdock;
     justify-self: end;
-    margin: 0 0 var(--space-3) var(--space-3);
+    border-width: 0 var(--hairline) 0 0;
   }
   .panel-layer:not(.docked) > :global(dialog.panel) {
     --closed: translateX(calc(100% + var(--space-4)));

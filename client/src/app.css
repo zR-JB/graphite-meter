@@ -90,19 +90,19 @@
     U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF;
 }
 
-/* Docked sheets open and close by gliding their column, so the page makes room instead of jumping.
-   Only the shell reads them, so a glide never restyles what it contains. */
-@property --dock-left {
-  syntax: "<length>";
+/* How far the dial's result sweep has run on an arc, 0 to 1; at rest every arc shows whole. */
+@property --sweep {
+  syntax: "<number>";
   inherits: false;
-  initial-value: 0px;
+  initial-value: 1;
 }
-@property --dock-right {
-  syntax: "<length>";
-  inherits: false;
-  initial-value: 0px;
+/* The running stage's hue lighting the console; a typed colour, so a stage change glides between hues. */
+@property --ambient {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
 }
-/* A stage's wash brightens while it runs and settles once measured. */
+/* How much of its hue a stage area's wash carries; a typed percentage, so it transitions. */
 @property --wash {
   syntax: "<percentage>";
   inherits: false;
@@ -131,14 +131,23 @@
   --font-mono:
     "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 
-  --topbar-h: 60px;
+  --topbar-h: 48px;
   --statusbar-h: 28px;
 
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --dur-hover: 120ms;
-  --dur-slide: 180ms;
-  --dur-sheet: 420ms;
-  --dur-graph: 280ms;
+  /* What arrives overshoots its place a little and settles: a control's state, a section rising in, a mark
+     popping on. The instrument's readings themselves never overshoot. */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-settle: cubic-bezier(0.22, 1.2, 0.36, 1);
+  --dur-hover: 100ms;
+  --dur-handoff-out: 70ms;
+  --dur-handoff-in: 150ms;
+  /* A stage event travels as one wave: chip, dial, lanes, card, a beat apart, over one stage tempo. */
+  --dur-stage: 380ms;
+  --beat: 40ms;
+  --dur-slide: 150ms;
+  --dur-sheet: 320ms;
+  --dur-graph: 220ms;
   --dur-pulse: 1100ms;
   --transition-control:
     background-color var(--dur-hover) var(--ease-out),
@@ -154,9 +163,10 @@
   --space-5: 24px;
   --space-6: 32px;
 
-  --r-well: 4px;
-  --r-chrome: 8px;
-  --r-surface: 12px;
+  /* Radii rise with elevation and stay concentric: inner parts, controls and plates, housings and sheets. */
+  --r-well: 2px;
+  --r-chrome: 3px;
+  --r-surface: 4px;
   --r-full: 999px;
   /* A row's wash sits 2 px inside its plate, on a radius concentric with the plate's. */
   --r-row: calc(var(--r-chrome) - var(--hairline) - 2px);
@@ -179,9 +189,13 @@
   --role-caption: var(--w-normal) var(--type-xs) / 1.5 var(--font-sans);
   --role-panel-title: var(--w-strong) var(--type-lg) / 1.25 var(--font-display);
   --role-label: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
+  /* Figures are mono at one weight: a readout, a card's or lane's figure, a fact. */
+  --role-readout: 500 28px / 1 var(--font-mono);
+  --role-figure-sm: 500 var(--type-sm) / 1.3 var(--font-mono);
   /* Centred beside a larger word, a smaller one sits half their size gap high; that gap as its top margin sets it
      on the larger word's baseline, e.g. margin-top: calc(var(--type-md) - var(--type-sm)). */
   --track-tight: -0.02em;
+  --track-caps: 0.08em;
   --track-wide: 0.1em;
 
   --z-toast: 40;
@@ -192,6 +206,8 @@
   --row-h: 42px;
   --kv-label: 6.75rem;
   --panel-pad: var(--space-4);
+  /* The console's side gutter: the bars' text and the panels' edges share it. */
+  --gutter: var(--space-5);
   --row-inset: var(--space-3);
   --check: 18px;
   --hit: 44px;
@@ -207,17 +223,13 @@
        for the terminal client (see DESIGN.md). */
   /* Dark fills stay above the levels where OLED pixels switch off and smear. */
   --canvas: light-dark(oklch(0.962 0.004 258), oklch(0.17 0.008 258));
-  --canvas-deep: light-dark(oklch(0.93 0.006 258), oklch(0.15 0.008 258));
-  --surface-1: light-dark(oklch(0.995 0.002 258), oklch(0.215 0.009 258));
+  /* Wells sit below the page, plates above it; controls and glass take the top step. */
+  --surface-1: light-dark(oklch(0.995 0.002 258), oklch(0.205 0.009 258));
   --surface-2: light-dark(oklch(0.975 0.003 258), oklch(0.25 0.01 258));
   --surface-inset: light-dark(oklch(0.948 0.005 258), oklch(0.15 0.008 258));
-  /* What floats over the instrument: sheets, popovers and menus. */
+  /* What floats over the instrument: sheets, popovers and menus. Opaque: a blur costs every frame on a slow GPU. */
   --sheet-solid: light-dark(oklch(0.985 0.003 258), oklch(0.195 0.009 258));
-  --sheet: light-dark(
-    oklch(0.985 0.003 258 / 0.88),
-    oklch(0.195 0.009 258 / 0.88)
-  );
-  --sheet-blur: blur(28px) saturate(1.4);
+  --sheet: var(--sheet-solid);
 
   --border-subtle: light-dark(
     oklch(0.3 0.02 255 / 0.08),
@@ -249,9 +261,7 @@
   --phase-complete: var(--ok);
 
   --ok: light-dark(oklch(0.5 0.095 155), oklch(0.8 0.1 155));
-  --ok-soft: color-mix(in oklab, var(--ok) 14%, transparent);
   --warn: light-dark(oklch(0.53 0.095 85), oklch(0.86 0.1 92));
-  --warn-soft: color-mix(in oklab, var(--warn) 14%, transparent);
   --err: light-dark(oklch(0.52 0.14 25), oklch(0.74 0.12 22));
   --err-soft: color-mix(in oklab, var(--err) 14%, transparent);
 
@@ -269,40 +279,23 @@
   --hover-wash: color-mix(in oklab, var(--text) 6%, transparent);
   --selected-wash: color-mix(in oklab, var(--text) 10%, transparent);
 
-  /* Material. Shadows are one ink whose depth differs per theme: a dark canvas
-     needs a denser shadow to read at all. The grain is a cached tile of
-     mid-grey noise: blended with overlay it dithers gradients by about one
-     8-bit level without lifting or darkening the page. */
-  --shade: light-dark(oklch(0.25 0.02 255), oklch(0.08 0.01 255));
+  /* Only what floats casts a shadow; panels and keys are flat fills with a hairline. */
+  /* Material: a tile's light top edge, a recessed track, and the shadows under floating chrome. All static
+     paints, none per frame. */
   --edge-light: light-dark(oklch(1 0 0 / 0.8), oklch(1 0 0 / 0.075));
-  --edge-highlight: rgb(255 255 255 / 0.22);
-  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='.3 0 0 0 .35 .3 0 0 0 .35 .3 0 0 0 .35 0 0 0 0 1'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
-  --bg:
-    var(--grain),
-    radial-gradient(
-      120% 70% at 50% 0%,
-      light-dark(oklch(1 0 0 / 0.55), oklch(0.8 0.04 225 / 0.05)),
-      transparent 70%
-    ),
-    var(--canvas);
-  --glass: color-mix(in oklab, var(--surface-2) 74%, transparent);
-  --glass-blur: blur(20px) saturate(1.6);
-
   --elev-tile: inset 0 var(--hairline) 0 var(--edge-light);
   --elev-recess: inset 0 1px 2px
     color-mix(in oklab, var(--shade) 6%, transparent);
   --elev-tooltip:
-    var(--elev-tile),
-    0 1px 3px
-      light-dark(oklch(0.25 0.02 255 / 0.08), oklch(0.08 0.01 255 / 0.3)),
-    0 10px 28px -8px
-      light-dark(oklch(0.25 0.02 255 / 0.22), oklch(0.08 0.01 255 / 0.5));
+    0 1px 2px
+      light-dark(oklch(0.25 0.02 255 / 0.1), oklch(0.08 0.01 255 / 0.35)),
+    0 8px 20px -6px
+      light-dark(oklch(0.25 0.02 255 / 0.2), oklch(0.08 0.01 255 / 0.5));
   --elev-float:
-    var(--elev-tile),
     0 2px 6px
-      light-dark(oklch(0.25 0.02 255 / 0.06), oklch(0.08 0.01 255 / 0.3)),
-    0 28px 64px -16px
-      light-dark(oklch(0.25 0.02 255 / 0.24), oklch(0.08 0.01 255 / 0.55));
+      light-dark(oklch(0.25 0.02 255 / 0.08), oklch(0.08 0.01 255 / 0.35)),
+    0 20px 48px -16px
+      light-dark(oklch(0.25 0.02 255 / 0.24), oklch(0.08 0.01 255 / 0.6));
 
   /* Solid brand clears the 3:1 non-text contrast floor on light surfaces, where
      a translucent ring does not. */
@@ -339,24 +332,15 @@
     --dur-sheet: 0ms;
   }
 }
+@media (max-width: 1023px) {
+  :root {
+    --gutter: var(--space-4);
+  }
+}
 @media (prefers-contrast: more) {
   :root {
     --border-subtle: var(--border-strong);
     --text-soft: var(--text-muted);
-  }
-}
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  :root {
-    --glass: var(--surface-2);
-    --glass-blur: none;
-    --sheet: var(--sheet-solid);
-    --sheet-blur: none;
-  }
-}
-/* Forced colours drop gradients but keep images; the grain would paint over the system canvas. */
-@media (forced-colors: active) {
-  :root {
-    --grain: none;
   }
 }
 
@@ -509,8 +493,15 @@
       background: transparent;
     }
   }
+  /* The canvas carries one soft light from the top, so the page has depth without a texture. */
   body {
-    background: var(--canvas);
+    background:
+      radial-gradient(
+        120% 70% at 50% 0%,
+        light-dark(oklch(1 0 0 / 0.55), oklch(0.8 0.04 225 / 0.05)),
+        transparent 70%
+      ),
+      var(--canvas);
     color: var(--text);
     font-family: var(--font-sans);
     font-variant-numeric: tabular-nums;
@@ -554,6 +545,87 @@
       height: var(--hit);
     }
   }
+  @supports (appearance: base-select) {
+    select,
+    ::picker(select) {
+      appearance: base-select;
+    }
+    select {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+    }
+    select::picker-icon {
+      flex: none;
+      width: 7px;
+      height: 7px;
+      margin-left: auto;
+      margin-top: -3px;
+      border: solid var(--text-soft);
+      border-width: 0 1.5px 1.5px 0;
+      rotate: 45deg;
+      content: "";
+      transition: rotate var(--dur-hover) var(--ease-out);
+    }
+    select:open::picker-icon {
+      margin-top: 3px;
+      rotate: 225deg;
+    }
+    ::picker(select) {
+      min-width: anchor-size(width);
+      margin: 4px 0;
+      padding: 4px;
+      border: var(--hairline) solid var(--border-strong);
+      border-radius: var(--r-surface);
+      background: var(--surface-2);
+      box-shadow: var(--elev-float);
+      opacity: 0;
+      transition:
+        opacity var(--dur-hover) var(--ease-out),
+        overlay var(--dur-hover) allow-discrete,
+        display var(--dur-hover) allow-discrete;
+    }
+    select:open::picker(select) {
+      opacity: 1;
+    }
+    @starting-style {
+      select:open::picker(select) {
+        opacity: 0;
+      }
+    }
+    option {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      min-height: var(--control-h);
+      padding: 0 10px;
+      border-radius: var(--r-chrome);
+      color: var(--text);
+      font: var(--role-row);
+      transition: var(--transition-control);
+    }
+    @media (pointer: coarse) {
+      option {
+        min-height: var(--hit);
+      }
+    }
+    @media (hover: hover) {
+      option:hover {
+        background: var(--hover-wash);
+      }
+    }
+    option:checked {
+      background: var(--selected-wash);
+    }
+    option:disabled {
+      opacity: 0.5;
+    }
+    option::checkmark {
+      order: 1;
+      margin-left: auto;
+      color: var(--text-muted);
+    }
+  }
   select:focus-visible,
   input:where([type="number"], [type="text"], [type="search"]):focus-visible {
     outline: none;
@@ -569,7 +641,6 @@
     border: var(--hairline) solid var(--border-strong);
     border-radius: var(--r-well);
     background: var(--surface-2);
-    box-shadow: var(--elev-tile);
     color: var(--text-muted);
     font: 500 var(--type-2xs) / 1 var(--font-mono);
   }
@@ -592,6 +663,74 @@
     color: var(--text-soft);
     font-size: var(--type-xs);
     line-height: 1.5;
+  }
+
+  /* Instrument chrome: axis names, unit captions and the stages legend. */
+  .caps {
+    color: var(--text-soft);
+    font: var(--w-heavy) var(--type-2xs) / 1.2 var(--font-mono);
+    letter-spacing: var(--track-caps);
+    text-transform: uppercase;
+  }
+  /* A stage's area is its light on the page: a rule in its hue and a wash that fades out, no box. The lanes
+     read this way; the kept results are panels. */
+  .stage-area {
+    --wash: 0%;
+    border-top: 2px solid
+      color-mix(in oklab, var(--tone) var(--rule, 100%), transparent);
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--tone) var(--wash), transparent),
+      transparent 180px
+    );
+    transition:
+      --wash var(--dur-graph) var(--ease-out),
+      border-color var(--dur-graph) var(--ease-out);
+  }
+  .stage-area:is(.complete, .partial, .failed, .stopped) {
+    --wash: 9%;
+  }
+  .stage-area:is(.active, .recovering) {
+    --wash: 16%;
+  }
+  .stage-area:is(.pending, .not-run) {
+    --rule: 30%;
+  }
+  /* A panel: one fill step above the canvas in a hairline with a light top edge, for a kept result. */
+  .panel {
+    border: var(--hairline) solid var(--border);
+    border-radius: var(--r-surface);
+    background: var(--surface-1);
+    box-shadow: var(--elev-tile);
+  }
+  /* A hand-off's fades: the view leaves in 90 ms and the next arrives over 180, on the compositor; the frame
+     clock only flips the class. */
+  .handoff {
+    transition:
+      opacity var(--dur-handoff-in) var(--ease-out),
+      translate var(--dur-handoff-in) var(--ease-out);
+  }
+  /* A view that carries a figure sinks a few pixels as it leaves and rises into place as the next arrives. */
+  .handoff-out {
+    opacity: 0;
+    translate: 0 var(--rise, 0);
+    transition-duration: var(--dur-handoff-out);
+  }
+  /* A stage's mark: its glyph in a small plate washed in its hue. */
+  .tone-icon {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border: var(--hairline) solid var(--tone-line, var(--border));
+    border-radius: var(--r-well);
+    background: var(--tone-wash, var(--surface-2));
+    color: var(--tone, var(--text-soft));
+  }
+  .tone-icon :where(svg) {
+    width: var(--icon-sm);
+    height: var(--icon-sm);
   }
 
   /* The edge is an inset ring so a coarse pointer's transparent border grows the hit area in place. */
@@ -617,6 +756,20 @@
     text-decoration: none;
     white-space: nowrap;
     transition: var(--transition-control);
+  }
+  /* A key's hit box never moves under the pointer, so a press near its edge still lands: the press deepens the
+     fill, and the glyph gives and springs back as it lifts. */
+  .btn:active:not(:disabled, [aria-disabled="true"]) {
+    background-image: linear-gradient(var(--selected-wash) 0 0);
+  }
+  .btn :where(svg) {
+    transition: scale var(--dur-graph) var(--ease-spring);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .btn:active:not(:disabled, [aria-disabled="true"]) :where(svg) {
+      scale: 0.82;
+      transition-duration: var(--dur-hover);
+    }
   }
   .btn :where(svg) {
     width: var(--icon);
@@ -731,7 +884,7 @@
     vertical-align: middle;
     box-shadow: none;
   }
-  /* A stage or phase named in a row leads with a dot in its tone (data-tone). */
+  /* A stage or phase named in a row leads with its key (data-tone). */
   .stage-name {
     display: inline-flex;
     align-items: center;
@@ -739,39 +892,23 @@
   }
   .stage-name::before {
     content: "";
+    flex: none;
     width: 7px;
     height: 7px;
-    border-radius: var(--r-full);
+    border-radius: 1px;
     background: var(--tone);
     forced-color-adjust: none;
   }
-  /* A stage's area is its light on the page: a rule in its hue and a wash that fades out, no box. */
-  .stage-area {
-    --wash: 0%;
-    border-top: 2px solid
-      color-mix(in oklab, var(--tone) var(--rule, 100%), transparent);
-    background: linear-gradient(
-      180deg,
-      color-mix(in oklab, var(--tone) var(--wash), transparent),
-      transparent 78%
-    );
-    transition:
-      --wash var(--dur-graph) var(--ease-out),
-      border-color var(--dur-graph) var(--ease-out);
-  }
-  .stage-area:is(.complete, .partial, .failed, .stopped) {
-    --wash: 9%;
-  }
-  .stage-area:is(.active, .recovering) {
-    --wash: 16%;
-  }
-  .stage-area:is(.pending, .not-run) {
-    --rule: 30%;
-  }
-  /* A latency track: each reply bucket a dot in its stage's hue over the dashed idle median. */
+  /* A latency track: each reply bucket a bar in its stage's hue from the dashed idle median. */
   .reply {
+    stroke: var(--tone);
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    opacity: 0.75;
+  }
+  /* A reply past the track's top ends in an arrowhead at the edge. */
+  .reply-over {
     fill: var(--tone);
-    opacity: 0.7;
   }
   .reply-median {
     stroke: color-mix(in oklab, var(--phase-latency) 55%, transparent);
@@ -795,12 +932,9 @@
     color: var(--tone);
   }
 
-  /* A sticky head over the page repaints the page itself, so it never reads as a slab. The grain is noise, so
-     its tile needs no alignment with the page's; a fixed attachment would shimmer against it whenever the
-     column glides or the head slides in. */
+  /* A sticky head over the page repaints the page itself, so it never reads as a slab. */
   .page-fill {
-    background: var(--grain), var(--canvas);
-    background-blend-mode: overlay;
+    background: var(--canvas);
   }
 
   .sheet {
@@ -814,7 +948,7 @@
     align-items: center;
     gap: var(--space-1) var(--space-4);
     min-width: 0;
-    min-height: 56px;
+    min-height: 48px;
     padding: var(--space-2) calc(var(--panel-pad) - 12px) var(--space-2)
       calc(var(--panel-pad) + var(--row-inset));
     overflow: hidden;
@@ -900,7 +1034,7 @@
   .kv {
     display: grid;
     padding-inline: var(--row-inset);
-    border: var(--hairline) solid var(--border-subtle);
+    border: var(--hairline) solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-1);
     box-shadow: var(--elev-tile);
@@ -1069,7 +1203,7 @@
     translate: 0 -1px;
     rotate: -45deg;
     scale: 0;
-    transition: scale var(--dur-slide) var(--ease-out);
+    transition: scale var(--dur-slide) var(--ease-spring);
   }
   input.check[type="checkbox"]:checked::after {
     scale: 1;
@@ -1114,13 +1248,18 @@
     font: var(--role-label);
   }
 
+  /* Segments share the control's width equally, each as wide as the widest word, so two controls with the same
+     words line up. */
   .segmented {
-    display: flex;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
     gap: 2px;
     min-height: var(--control-h);
     padding: 2px;
     border-radius: var(--r-chrome);
     background: var(--track);
+    box-shadow: var(--elev-recess);
   }
   /* After the base rule, which would otherwise keep it at control height. */
   @media (pointer: coarse) {
@@ -1130,7 +1269,6 @@
   }
   /* Segments share spare width but never shrink below their word. */
   .segmented > button {
-    flex: 1 0 auto;
     min-width: 0;
     padding-inline: var(--space-2);
     overflow: hidden;
@@ -1152,8 +1290,12 @@
   .segmented > button:focus-visible {
     outline-offset: -2px;
   }
+  /* The plate moves to the chosen segment as a change of fill, word and shadow in one step. */
   .segmented > button {
-    transition: var(--transition-control);
+    transition:
+      background-color var(--dur-slide) var(--ease-out),
+      box-shadow var(--dur-slide) var(--ease-out),
+      color var(--dur-slide) var(--ease-out);
   }
   /* The hover wash is an image layer, so it adds to a selected fill instead of replacing it. */
   @media (hover: hover) {
@@ -1169,12 +1311,11 @@
       [aria-current]:not([aria-current="false"]),
       :has(> input:checked)
     ) {
-    background-color: var(--selected-wash);
+    background-color: var(--surface-1);
+    box-shadow:
+      inset 0 0 0 var(--hairline) var(--border-strong),
+      0 1px 2px light-dark(oklch(0.25 0.02 255 / 0.08), oklch(0 0 0 / 0.3));
     color: var(--brand-strong);
-  }
-  /* A pressed segment is raised like a key. */
-  .segmented > button[aria-pressed="true"] {
-    box-shadow: var(--elev-tile);
   }
 
   .empty-state {
@@ -1210,7 +1351,6 @@
     border: var(--hairline) solid var(--border-strong);
     border-radius: var(--r-surface);
     background: var(--surface-inset);
-    box-shadow: var(--elev-recess);
     color: var(--tone, var(--brand));
     font: var(--w-heavy) var(--type-lg) var(--font-mono);
   }
@@ -1220,11 +1360,8 @@
   }
 
   .float,
-  .tooltip,
   .inspect-card {
-    background: var(--glass);
-    -webkit-backdrop-filter: var(--glass-blur);
-    backdrop-filter: var(--glass-blur);
+    background: var(--surface-2);
   }
   .float {
     border: var(--hairline) solid var(--border-strong);
@@ -1232,10 +1369,9 @@
     color: var(--text);
     box-shadow: var(--elev-float);
   }
-  /* A dialog holds reading text over a scrim, so it stays opaque. */
+  /* A dialog holds reading text over a scrim. */
   dialog.float {
     background: var(--surface-1);
-    backdrop-filter: none;
   }
   /* Built like a side sheet, it takes a sheet's material and edge, opaque. */
   dialog.float.sheet {
@@ -1245,15 +1381,25 @@
 
   .tooltip,
   .inspect-card {
-    padding: var(--space-2) var(--space-3);
+    padding: 6px var(--space-2);
     border: var(--hairline) solid var(--border-strong);
     border-radius: var(--r-chrome);
     color: var(--text);
     box-shadow: var(--elev-tooltip);
-    font: var(--w-normal) var(--type-sm) / 1.4 var(--font-sans);
+    font: var(--w-normal) var(--type-sm) / 1.35 var(--font-sans);
     letter-spacing: 0;
     text-transform: none;
     pointer-events: none;
+  }
+  /* A tip is ink: the one dark plate on a light page and the one light plate on a dark one, so it never reads as
+     part of the instrument. */
+  .tooltip {
+    padding: 5px 8px;
+    border: 0;
+    background: var(--brand);
+    color: var(--text-inverse);
+    box-shadow: 0 2px 8px -2px
+      light-dark(oklch(0.2 0.01 258 / 0.35), oklch(0 0 0 / 0.5));
   }
   .inspect-card {
     position: absolute;
@@ -1380,7 +1526,7 @@
     inset: auto;
     width: max-content;
     max-width: min(300px, calc(100vw - 16px));
-    margin: 8px;
+    margin: 6px;
     overflow: visible;
     position-area: block-start;
     /* Cut by the viewport, a tip flips below, then aligns to its word's edge; max-content keeps it from squeezing. */
@@ -1394,11 +1540,7 @@
     white-space: pre-line;
     overflow-wrap: anywhere;
     opacity: 0;
-    scale: 0.95;
-    transform-origin: var(--arrow-x, 50%) 100%;
-    transition:
-      opacity var(--dur-slide) var(--ease-out),
-      scale var(--dur-slide) var(--ease-out);
+    transition: opacity var(--dur-hover) var(--ease-out);
   }
   /* Without anchor positioning, tooltip.ts places the bubble itself. */
   @supports not (position-area: block-start) {
@@ -1409,34 +1551,8 @@
   .tooltip[data-titled]::first-line {
     font-weight: var(--w-strong);
   }
-  .tooltip[data-side="below"] {
-    transform-origin: var(--arrow-x, 50%) 0;
-  }
   .tooltip[data-show="true"] {
     opacity: 1;
-    scale: none;
-  }
-  /* The arrow is the bubble's own glass, so it never reads as a second material. */
-  .tooltip::before {
-    position: absolute;
-    top: calc(100% - var(--hairline));
-    left: var(--arrow-x, 50%);
-    width: 8px;
-    height: 8px;
-    border: inherit;
-    border-width: 0 var(--hairline) var(--hairline) 0;
-    background: inherit;
-    -webkit-backdrop-filter: inherit;
-    backdrop-filter: inherit;
-    content: "";
-    clip-path: polygon(100% 0, 100% 100%, 0 100%);
-    translate: -50% -50%;
-    rotate: 45deg;
-  }
-  .tooltip[data-side="below"]::before {
-    top: var(--hairline);
-    border-width: var(--hairline) 0 0 var(--hairline);
-    clip-path: polygon(0 0, 100% 0, 0 100%);
   }
 
   .enter,
@@ -1497,6 +1613,10 @@
   }
 }
 
+/* An explained word is read, not pressed: the help cursor, whatever its row's cursor is. */
+:root [data-tip]:not(button, a, label, [role="switch"]) {
+  cursor: help;
+}
 /* Curated jargon carries a mark; every explained word brightens. Unlayered to outrank component tones. */
 :root [data-tip="term"] {
   text-decoration: underline dotted
@@ -1535,4 +1655,51 @@
 :root[data-pointer]
   label:has(> :is([type="radio"], [type="checkbox"]):focus-visible) {
   outline: none;
+}
+
+/* The motion vocabulary. Every move is transform or opacity on the compositor, or a one-time paint; a loop runs
+   only while the thing it describes is live. Reduced motion lands every one at its end state (above). */
+/* A settled figure's row slides in from under its label's line. */
+@keyframes row-in {
+  from {
+    opacity: 0;
+    translate: 0 4px;
+  }
+}
+/* A mark that confirms something (a check, a result's bead) pops in on the spring. */
+@keyframes pop {
+  from {
+    opacity: 0;
+    scale: 0.4;
+  }
+}
+/* A measured span grows from its middle. */
+@keyframes grow-x {
+  from {
+    scale: 0 1;
+  }
+}
+
+/* A theme change opens the new theme as a circle from the key that asked for it. */
+/* The page stays clickable while the reveal runs: the transition layer takes no pointer. */
+::view-transition {
+  pointer-events: none;
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+:root:active-view-transition-type(theme)::view-transition-new(root) {
+  animation: theme-reveal 420ms var(--ease-out);
+}
+@keyframes theme-reveal {
+  from {
+    clip-path: circle(0 at var(--reveal-x, 100%) var(--reveal-y, 0));
+  }
+  to {
+    clip-path: circle(
+      var(--reveal-r, 150vmax) at var(--reveal-x, 100%) var(--reveal-y, 0)
+    );
+  }
 }

@@ -5,26 +5,14 @@
   const controller = getApplicationController();
   import { tooltipAction } from "../actions/tooltip";
   import { fmtDuration } from "../format";
-  import { handoff } from "../presentation/motion.svelte";
   import { BLOCKED, runActionLabel } from "../presentation/vocabulary";
 
   const pending = $derived(store.preparing);
   const idle = $derived(!store.isRunning && !pending);
   const eta = $derived(fmtDuration(store.totalEtaMs, 0));
-  const action = handoff(
-    () => ({
-      label: runActionLabel(pending, store.isRunning, store.phase),
-      running: store.isRunning,
-      pending,
-      eta: idle ? eta : "",
-    }),
-    (shown) => shown.label,
-  );
-  const { label, running } = $derived(action.shown);
-  // The skins crossfade through the handoff: half-way at its swap, settled once it has faded in.
-  const stop = $derived(
-    running ? (1 + action.opacity) / 2 : (1 - action.opacity) / 2,
-  );
+  // The label, the skin and the stop mark change together, the moment the run's state does.
+  const label = $derived(runActionLabel(pending, store.isRunning, store.phase));
+  const running = $derived(store.isRunning || pending);
   const blocker = $derived(
     idle && !store.catalogLoading ? store.startBlocker : "",
   );
@@ -33,26 +21,23 @@
 <button
   class="run-button"
   class:running
-  class:pending={action.shown.pending}
+  class:pending
   aria-busy={pending}
   aria-disabled={!!blocker}
   aria-describedby={idle ? "run-duration" : undefined}
-  style:--stop={stop}
   onclick={controller.toggleRun}
   use:tooltipAction={blocker}
 >
   <span class="skin" aria-hidden="true"></span>
   <span class="skin stop" aria-hidden="true"></span>
-  <span class="run-button-content" style:opacity={action.opacity}>
+  <span class="run-button-content">
     {#if running}
       <span class="stop-sq" aria-hidden="true"></span>
     {/if}
     {label}
   </span>
-  {#if action.shown.eta}
-    <span class="duration" aria-hidden="true" style:opacity={action.opacity}
-      >~{action.shown.eta}</span
-    >
+  {#if idle}
+    <span class="duration" aria-hidden="true">~{eta}</span>
   {/if}
 </button>
 {#if idle}
@@ -62,63 +47,72 @@
 {/if}
 
 <style>
-  /* Graphite: the one primary action is ink, like every selected control; Stop steps back to an outline. */
+  /* Graphite: the one primary action is ink, like every selected control; Stop steps back to a quiet plate. The
+     key stands under the dial's panel at the panel's width, its label and estimate centred. */
   .run-button {
     position: relative;
     isolation: isolate;
     overflow: hidden;
-    display: inline-flex;
+    display: flex;
     align-items: center;
     justify-content: center;
-    gap: var(--space-2);
-    min-width: 176px;
-    height: 40px;
-    padding-inline: 20px;
+    gap: var(--space-3);
+    width: 100%;
+    height: 48px;
+    padding-inline: 14px;
     border: 0;
     border-radius: var(--r-chrome);
     background: none;
-    color: color-mix(
-      in oklab,
-      var(--text-inverse) calc(100% * (1 - var(--stop))),
-      var(--text)
-    );
-    font: var(--w-strong) var(--type-md) / 1 var(--font-display);
-    transition: transform var(--dur-hover) var(--ease-out);
+    color: var(--text-inverse);
+    font: var(--w-strong) var(--type-md) / 1 var(--font-sans);
+    transition:
+      transform var(--dur-hover) var(--ease-out),
+      color var(--dur-handoff-in) var(--ease-out);
+  }
+  .run-button.running {
+    color: var(--text);
   }
   /* Hover strengthens the skin itself; a filter would re-rasterize the label. */
   @media (hover: hover) {
     .run-button:hover:not(.pending, [aria-disabled="true"]) .skin {
       background: var(--brand-strong);
     }
+    /* The wash lies over the Stop skin's own fill, so the ink skin under it never shows through. */
     .run-button:hover:not(.pending, [aria-disabled="true"]) .skin.stop {
-      background: none;
-      box-shadow: inset 0 0 0 1px var(--field-edge);
+      background: linear-gradient(var(--hover-wash) 0 0), var(--surface-1);
     }
   }
-  .run-button:active {
-    transform: scale(0.985);
+  /* The key's hit box stays put under a press; its skins and label give, and spring back as it lifts. */
+  .run-button > * {
+    transition: scale var(--dur-graph) var(--ease-spring);
   }
-  /* On a phone it spans the run bar at a thumb's height. */
-  @container viz (max-width: 520px) {
-    .run-button {
-      height: var(--hit);
-    }
+  .run-button:active:not([aria-disabled="true"]) > * {
+    scale: 0.975;
+    transition-duration: var(--dur-hover);
   }
+  /* A phone's key keeps a thumb's height. */
+  :global(.gauge-panel.compact) .run-button {
+    height: var(--hit);
+  }
+  /* The ink skin stays; the Stop skin fades over it with the hand-off, so the key changes in one breath. */
   .skin {
     position: absolute;
     inset: 0;
     z-index: -1;
     border-radius: inherit;
     background: var(--brand);
-    opacity: calc(1 - var(--stop));
     transition:
       background-color var(--dur-hover) var(--ease-out),
-      box-shadow var(--dur-hover) var(--ease-out);
+      box-shadow var(--dur-hover) var(--ease-out),
+      opacity var(--dur-handoff-in) var(--ease-out);
   }
   .skin.stop {
-    background: none;
-    box-shadow: inset 0 0 0 1px var(--border-strong);
-    opacity: var(--stop);
+    background: var(--surface-1);
+    box-shadow: inset 0 0 0 var(--hairline) var(--border-strong);
+    opacity: 0;
+  }
+  .running .skin.stop {
+    opacity: 1;
   }
   .run-button[aria-disabled="true"] {
     opacity: 0.6;
@@ -127,19 +121,18 @@
   .run-button-content {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-2);
+    gap: 9px;
   }
   .stop-sq {
-    width: 10px;
-    height: 10px;
-    border-radius: 2px;
+    width: 9px;
+    height: 9px;
+    border-radius: 1px;
     background: currentColor;
   }
-  /* On the label's baseline (app.css, --role-label). */
   .duration {
-    margin-top: calc(var(--type-md) - var(--type-sm));
-    color: color-mix(in oklab, currentColor 62%, transparent);
-    font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
+    font: var(--role-figure-sm);
+    line-height: 1;
     font-variant-numeric: tabular-nums;
+    opacity: 0.85;
   }
 </style>
