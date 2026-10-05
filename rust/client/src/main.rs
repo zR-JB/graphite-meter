@@ -71,7 +71,7 @@ fn run(config: Config) -> io::Result<ExitCode> {
         let columns = columns(terminal);
         #[cfg(unix)]
         let dark = match columns.is_some() && io::stdin().is_terminal() {
-            true => theme::background(std::time::Duration::from_secs(2)).await,
+            true => background(std::time::Duration::from_secs(2)).await,
             false => None,
         };
         #[cfg(not(unix))]
@@ -169,4 +169,38 @@ fn written(bytes: &[u8]) -> ExitCode {
         Ok(status) => ExitCode::from(status),
         Err(error) => fail(&error.to_string()),
     }
+}
+
+/// Asks the terminal on stdin and stdout for its background in raw mode, reading until the DA1 reply or `limit`:
+/// whether it is dark, if it answered.
+#[cfg(unix)]
+async fn background(limit: std::time::Duration) -> Option<bool> {
+    use std::{
+        io::{Read, Write},
+        os::fd::AsFd,
+    };
+    let input = std::fs::File::from(std::io::stdin().as_fd().try_clone_to_owned().ok()?);
+    let input = tokio::io::unix::AsyncFd::with_interest(input, tokio::io::Interest::READABLE).ok()?;
+    crossterm::terminal::enable_raw_mode().ok()?;
+    let mut output = std::io::stdout();
+    let (mut answers, mut dark) = (Vec::new(), None);
+    if output.write_all(theme::QUERY).and_then(|()| output.flush()).is_ok() {
+        let _ = tokio::time::timeout(limit, async {
+            let mut chunk = [0; 1024];
+            while answers.len() < 4096 {
+                let Ok(mut ready) = input.readable().await else { return };
+                let Ok(read @ 1..) = ready.get_inner().read(&mut chunk) else { return };
+                ready.clear_ready();
+                answers.extend_from_slice(&chunk[..read]);
+                let ended;
+                (dark, ended) = theme::scan(&answers);
+                if ended {
+                    return;
+                }
+            }
+        })
+        .await;
+    }
+    let _ = crossterm::terminal::disable_raw_mode();
+    dark
 }

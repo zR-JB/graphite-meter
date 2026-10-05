@@ -3,6 +3,7 @@
 use super::theme::Palette;
 use crate::{
     events::{Point, Series},
+    measure::format,
     model::Stage,
     report::vocabulary as words,
     text::{Line, Style},
@@ -35,11 +36,8 @@ impl Axis {
         let round = |value: f64| (value * 1000.0).round() / 1000.0;
         match self {
             Self::Rate => {
-                let units = ["bit/s", "kbit/s", "Mbit/s", "Gbit/s", "Tbit/s"];
-                let tier = (1..units.len())
-                    .take_while(|&tier| value >= 1e3_f64.powi(tier as i32))
-                    .count();
-                format!("{} {}", round(value / 1e3_f64.powi(tier as i32)), units[tier])
+                let (value, unit) = format::tier(value, 1.0);
+                format!("{} {unit}", round(value))
             }
             Self::Ms => format!("{} ms", round(value)),
         }

@@ -82,14 +82,7 @@ impl App {
             .saturating_sub(crate::text::width(title) + crate::text::width(&status))
             .max(1);
         let context = match self.screen {
-            Screen::Run => {
-                let names = self
-                    .view
-                    .servers
-                    .iter()
-                    .map(|server| words::server(&server.name, &server.location));
-                names.collect::<Vec<_>>().join(", ")
-            }
+            Screen::Run => self.labels().join(", "),
             _ => self.config.url.to_string(),
         };
         let first = Line::styled(title, palette.title)
@@ -209,10 +202,42 @@ impl App {
         }
     }
 
+    /// The selected servers' names with their locations.
+    pub(super) fn labels(&self) -> Vec<String> {
+        let servers = self.view.servers.iter();
+        servers
+            .map(|server| words::server(&server.name, &server.location))
+            .collect()
+    }
+
+    /// The spinner beside "Checking paths…".
+    pub(super) fn checking_line(&self) -> Line {
+        Line::styled(self.spinner(), self.palette.accent).and(" Checking paths…", self.palette.muted)
+    }
+
     pub(super) fn spinner(&self) -> &'static str {
         let frames = self.now.saturating_duration_since(self.since).as_millis() / FRAME.as_millis();
         SPINNER[(frames % SPINNER.len() as u128) as usize]
     }
+}
+
+/// `left` and `right`, as tall as each other, side by side.
+pub(super) fn beside(left: Vec<Line>, right: Vec<Line>) -> Vec<Line> {
+    let joined = left.into_iter().zip(right);
+    joined
+        .map(|(left, right)| left.and(" ", Style::default()).with(right))
+        .collect()
+}
+
+/// `labels` without repeats, in order.
+pub(super) fn unique(labels: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut unique = Vec::new();
+    for label in labels {
+        if !unique.contains(&label) {
+            unique.push(label);
+        }
+    }
+    unique
 }
 
 /// `line` on the focused row's background, bold.

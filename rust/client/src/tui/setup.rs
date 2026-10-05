@@ -1,7 +1,7 @@
 //! The setup screen: its rows, what each shows, and the setup and servers panels.
 use super::{
     App, Overlay,
-    frame::highlight,
+    frame::{beside, highlight, unique},
     keys::{self, Binding},
     paths::Readiness,
 };
@@ -300,14 +300,10 @@ impl App {
         let servers = self.servers_panel(right.saturating_sub(4));
         let height = if side.is_some() { rows.len().max(servers.len()) + 2 } else { 0 };
         let (rows, servers) = (self.panel("Setup", rows, left, height), self.panel("Servers", servers, right, height));
-        let lines = match side {
-            Some(_) => rows
-                .into_iter()
-                .zip(servers)
-                .map(|(left, right)| left.and(" ", Style::default()).with(right)),
-            None => return ([rows, servers].concat(), focus + 1),
-        };
-        (lines.collect(), focus + 1)
+        match side {
+            Some(_) => (beside(rows, servers), focus + 1),
+            None => ([rows, servers].concat(), focus + 1),
+        }
     }
 
     /// Each selected server's readiness, why the check failed, and the paths it found.
@@ -315,7 +311,7 @@ impl App {
         let (palette, servers) = (&self.palette, &self.view.servers);
         let mut lines = Vec::new();
         if self.checking() && servers.is_empty() {
-            lines.push(Line::styled(self.spinner(), palette.accent).and(" Checking paths…", palette.muted));
+            lines.push(self.checking_line());
         }
         let warn = |text: &str, indent: &'static str| {
             let filled = fill(text, width.saturating_sub(indent.len()).max(4));
@@ -323,10 +319,7 @@ impl App {
                 .into_iter()
                 .map(move |line| Line::plain(indent).and(line, palette.warn))
         };
-        let names: Vec<_> = servers
-            .iter()
-            .map(|server| words::server(&server.name, &server.location))
-            .collect();
+        let names = self.labels();
         let name_width = names.iter().map(|name| crate::text::width(name)).max().unwrap_or(0);
         for (server, name) in servers.iter().zip(names) {
             let state = self.readiness(server);
@@ -355,17 +348,9 @@ impl App {
             lines.push(Line::styled("u Use available servers", palette.muted));
         }
         let style = if self.fresh() { palette.value } else { palette.muted };
-        let summary = |labels: Vec<String>| {
-            let mut unique: Vec<String> = Vec::new();
-            for label in labels {
-                if !unique.contains(&label) {
-                    unique.push(label);
-                }
-            }
-            match unique.is_empty() {
-                true => Line::styled(words::MISSING, palette.muted),
-                false => Line::styled(unique.join(" / "), style),
-            }
+        let summary = |labels: Vec<String>| match labels.is_empty() {
+            true => Line::styled(words::MISSING, palette.muted),
+            false => Line::styled(unique(labels).join(" / "), style),
         };
         let paths = servers.iter().filter_map(|server| server.path.as_ref().ok());
         let throughput = paths.clone().map(|paths| words::throughput_path(&paths.throughput));

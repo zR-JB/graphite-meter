@@ -4,6 +4,7 @@ use super::{
     App, Effect, Overlay,
     chart::{self, Axis},
     chrome::Progress,
+    frame::beside,
     keys::{Action, Key},
 };
 use crate::{
@@ -266,7 +267,7 @@ impl App {
         };
         let Some(stage) = stage else {
             return vec![match live {
-                true => Line::styled(self.spinner(), palette.accent).and(" Checking paths…", palette.muted),
+                true => self.checking_line(),
                 false => Line::styled(words::MISSING, palette.muted),
             }];
         };
@@ -375,12 +376,4 @@ fn marks(run: &Run) -> (Vec<(Duration, Stage)>, Duration) {
         offset += duration;
     }
     (marks, end.max(Duration::from_secs(1)))
-}
-
-/// `left` and `right`, as tall as each other, side by side.
-fn beside(left: Vec<Line>, right: Vec<Line>) -> Vec<Line> {
-    let joined = left.into_iter().zip(right);
-    joined
-        .map(|(left, right)| left.and(" ", Style::default()).with(right))
-        .collect()
 }

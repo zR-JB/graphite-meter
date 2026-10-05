@@ -33,14 +33,18 @@ pub fn speed(value: f64) -> String {
 
 /// Bytes per second as bits per second, in the largest unit the value reaches 1.2 of.
 pub fn rate(bytes_per_sec: f64) -> String {
+    let (value, unit) = tier(bytes_per_sec * 8.0, 1.2);
+    format!("{} {unit}", speed(value))
+}
+
+/// Bits per second in the largest unit the value reaches `headroom` of, and that unit.
+pub fn tier(bits: f64, headroom: f64) -> (f64, &'static str) {
     const UNITS: [&str; 5] = ["bit/s", "kbit/s", "Mbit/s", "Gbit/s", "Tbit/s"];
-    let mut value = bytes_per_sec * 8.0;
-    let mut tier = 0;
-    while tier + 1 < UNITS.len() && value >= 1200.0 {
-        value /= 1000.0;
-        tier += 1;
-    }
-    format!("{} {}", speed(value), UNITS[tier])
+    let step = |tier: usize| 1e3_f64.powi(tier as i32);
+    let tier = (1..UNITS.len())
+        .take_while(|&tier| bits >= headroom * step(tier))
+        .count();
+    (bits / step(tier), UNITS[tier])
 }
 
 /// A byte count: whole bytes below 999.5, one decimal in decimal units from there.

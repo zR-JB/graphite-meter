@@ -1,5 +1,5 @@
 //! The Test panel: the run's servers, paths and settings over its stage track.
-use super::App;
+use super::{App, frame::unique};
 use crate::{
     events::Run,
     model::{Stage, StageResult, StageStatus},
@@ -24,7 +24,7 @@ impl App {
         let label = |name: &str| Line::styled(format!("{name:<11}"), palette.text);
         if run.at.is_none() {
             let value = match run.outcome {
-                None => Line::styled(self.spinner(), palette.accent).and(" Checking paths…", palette.muted),
+                None => self.checking_line(),
                 Some(_) => Line::styled(words::MISSING, palette.muted),
             };
             return vec![label("Servers").with(value)];
@@ -35,12 +35,7 @@ impl App {
             .iter()
             .filter_map(|server| Some((&server.id, server.path.as_ref().ok()?)))
             .collect();
-        let mut throughput: Vec<String> = Vec::new();
-        for summary in paths.iter().map(|(_, paths)| words::throughput_path(&paths.throughput)) {
-            if !throughput.contains(&summary) {
-                throughput.push(summary);
-            }
-        }
+        let throughput = unique(paths.iter().map(|(_, paths)| words::throughput_path(&paths.throughput)));
         let shown = paths.iter().find(|(id, _)| Some(*id) == self.latency_server());
         let latency = shown.and_then(|(_, paths)| paths.latency.as_ref());
         let streams = paths
