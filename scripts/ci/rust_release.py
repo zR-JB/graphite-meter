@@ -29,7 +29,7 @@ from github_api import (
     TLS_NAME, ControlPlaneError, JsonObject, confined_path, decode_json, expect_array, expect_object, fail,
     file_sha256, int_field, object_field, runner_path, str_field,
 )
-from rust_workspace import ROOT, load, offer_name, tui_archive
+from rust_workspace import ROOT, load, offer_name, source_url, tui_archive
 from trust import SEMVER_NUMBER, env, env_sha, exact_files
 from verify_release_assets import TUI_FILES, archive_names, require_same
 
@@ -118,21 +118,20 @@ def text(path: Path, name: str) -> str:
         raise ControlPlaneError(f"{path.name}: {name} is not UTF-8") from exc
 
 
-def source_url(version: str, root: Path = ROOT) -> str:
-    """The source a Rust build names, as the collector's build_source: legal/project.json's repository, at the
-    release tag unless `version` is a prerelease's."""
+def build_source(version: str, root: Path = ROOT) -> str:
+    """The source a Rust build of `version` names, as the collector does: legal/project.json's repository, at the
+    release tag of a stable version."""
     project = expect_object(decode_json((root / "legal/project.json").read_text(encoding="utf-8"), "project.json"),
                             "project.json")
-    repository = str_field(project, "repository", "project.json")
-    return repository if prerelease(version) else f"{repository}/tree/v{version}"
+    return source_url(str_field(project, "repository", "project.json"), version)
 
 
 def check_source_txt(content: str, where: str, version: str, offer: str, target: str, root: Path = ROOT) -> None:
     """A SOURCE.txt names the release source, the release, the source offer beside it and its Rust target."""
-    expected = (f"Graphite Meter source: {source_url(version, root)}\nMatching release: v{version}\n"
+    expected = (f"Graphite Meter source: {build_source(version, root)}\nMatching release: v{version}\n"
                 f"Dependency source archive: {offer}\nRust target: {target}\n")
     if content != expected:
-        fail(f"{where} SOURCE.txt does not name {offer} for {target} at {source_url(version, root)}")
+        fail(f"{where} SOURCE.txt does not name {offer} for {target} at {build_source(version, root)}")
 
 
 def verify_offer(path: Path, package: str, target: str, profile: str, root: Path = ROOT) -> str:
@@ -240,7 +239,7 @@ def verify_image(directory: Path, version: str, revision: str, profile: str, roo
         platform = f"linux/{arch}"
         digests = reviewed_digests(server)
         if prerelease(version):
-            if content != f"{source_url(version, root)}\n":
+            if content != f"{build_source(version, root)}\n":
                 fail(f"the image's {platform} SOURCE.txt does not name the repository as Go's prerelease image does")
             if len(digests) != 1:
                 fail(f"the image's {platform} server is not a reviewed build")

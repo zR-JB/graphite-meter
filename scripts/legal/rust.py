@@ -28,10 +28,10 @@ from pathlib import Path
 from typing import Any
 
 from ..ci.github_api import ControlPlaneError, local_path
-from ..ci.rust_workspace import ROOT, load, offer_name
+from ..ci.rust_workspace import ROOT, load, offer_name, source_url
 from ..ci.toolchains import rust_channel
 from . import rust_platform as platform
-from .artifacts import about, add_bytes, add_tree, legal_header, notices, release_source
+from .artifacts import about, add_bytes, add_tree, legal_header, notices
 from .check_rust_reviews import layout
 from .discovery import discover_browser
 from .model import (Component, LegalError, Project, Provenance, Review, array, manual_files, manual_sources,
@@ -116,14 +116,9 @@ def stage_browser(source: Path, destination: Path) -> None:
         write_changed(destination / relative, path.read_bytes())
 
 
-def build_source(project: Project, version: str) -> tuple[str, str]:
-    """The version a build names and its source; a prerelease's is the repository, as Go's prerelease image names."""
-    return (version, project.repository) if PRERELEASE.fullmatch(version) else release_source(project, version)
-
-
 def report(project: Project, version: str, body: str, development: bool) -> bytes:
     """A binary's `-legal` report: Go's TUI report layout, opened by the development notice if unreviewed."""
-    header = legal_header(project, build_source(project, version)[1], (ROOT / "LICENSE").read_bytes())
+    header = legal_header(project, source_url(project.repository, version), (ROOT / "LICENSE").read_bytes())
     return (DEVELOPMENT_NOTICE.encode() if development else b"") + header + b"\n" + body.encode()
 
 
@@ -210,11 +205,11 @@ def browser_notices(build: Build, state: Prepared, project: Project) -> str:
     stage_browser(assets, staged)
     shared = ((DEVELOPMENT_NOTICE if build.development else "") + notices(state.components + state.browser)
               + platform_section(state.platform))
-    version, source_url = build_source(project, build.version)
     write_changed(staged / "legal/LICENSE.txt", (ROOT / "LICENSE").read_bytes())
     write_changed(staged / "legal/THIRD_PARTY_NOTICES.txt", shared.encode())
     write_changed(staged / "legal/about.json",
-                  about(ROOT, project, version, source_url, state.components + state.browser))
+                  about(ROOT, project, build.version, source_url(project.repository, build.version),
+                        state.components + state.browser))
     if not build.development:
         image = notices(state.components + state.browser + scopes["container"]) + platform_section(state.platform)
         write_changed(build.out / "IMAGE_NOTICES.txt", report(project, build.version, image, False))
@@ -288,7 +283,7 @@ def source_notice(project: Project, version: str, offer: str, target: str) -> st
     prerelease's names only the repository, as the SOURCE.txt in Go's prerelease image does."""
     if PRERELEASE.fullmatch(version):
         return f"{project.repository}\n"
-    return (f"Graphite Meter source: {release_source(project, version)[1]}\nMatching release: v{version}\n"
+    return (f"Graphite Meter source: {source_url(project.repository, version)}\nMatching release: v{version}\n"
             f"Dependency source archive: {offer}\nRust target: {target}\n")
 
 

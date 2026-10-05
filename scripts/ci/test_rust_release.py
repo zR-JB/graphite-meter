@@ -14,11 +14,12 @@ from fixtures import (
 )
 from github_api import ControlPlaneError, JsonObject, file_sha256
 from rust_release import (
-    image_files, main, native_executable, server_offers, source_url, stage, tui_files, verify, verify_offer, verify_tui,
+    build_source, check_source_txt, image_files, main, native_executable, server_offers, stage, tui_files, verify,
+    verify_offer, verify_tui,
 )
 from rust_workspace import ROOT, load, offer_name, tui_archive
 from scripts.legal.model import Project
-from scripts.legal.rust import build_source
+from scripts.legal.rust import report, source_notice
 from verify_release_assets import TARGETS, tui_archives
 
 REPO, SHA = "zR-JB/graphite-meter", "f" * 40
@@ -59,22 +60,30 @@ class StagingTests(Scratch):
         stage(export, self.root / "links", {"a.tar.gz"})
         self.assertEqual((self.root / "links/a.tar.gz").read_text(), "a")
 
-    def test_the_commands_stage_into_and_check_from_runner_temp(self) -> None:
-        image, tui = self.root / "built/image", self.root / "built/tui"
-        oci = write_rust_release(image, tui, "1.2.3", SHA, REPO)
-        export = self.root / "export"
+    def stage_and_check(self, version: str) -> dict[str, str]:
+        """Stage a release of `version` and check it as the workflow does; return the commands' environment."""
+        root = self.root / version
+        image, tui = root / "built/image", root / "built/tui"
+        oci = write_rust_release(image, tui, version, SHA, REPO)
+        export = root / "export"
         for platform in load().server:
-            name = offer_name("graphite-meter-server", "1.2.3", platform)
+            name = offer_name("graphite-meter-server", version, platform)
             (export / platform.replace("/", "_")).mkdir(parents=True)
             (image / name).rename(export / platform.replace("/", "_") / name)
-        env = {"RUNNER_TEMP": str(self.root), "VERSION": "1.2.3", "REVISION": SHA, "SERVER_PROFILE": "release",
+        env = {"RUNNER_TEMP": str(self.root), "VERSION": version, "REVISION": SHA, "SERVER_PROFILE": "release",
                "OCI_ARCHIVE": str(image / RUST_OCI), "SERVER_EXPORT": str(export), "TUI_EXPORT": str(tui),
-               "IMAGE_DIR": str(self.root / "staged/image"), "TUI_DIR": str(self.root / "staged/tui")}
-        env |= engine(self.root, REPO, "1.2.3-rust", SHA, oci)
+               "IMAGE_DIR": str(root / "staged/image"), "TUI_DIR": str(root / "staged/tui")}
+        env |= engine(root, REPO, f"{version}-rust", SHA, oci)
         for command, out in (("stage-image", "IMAGE_DIR"), ("stage-tui", "TUI_DIR"), ("check", "IMAGE_DIR")):
             with patch.dict(os.environ, env | {"OUT_DIR": env[out]}), patch("sys.argv", ["rust_release.py", command]):
                 main()
-        self.assertEqual({path.name for path in (self.root / "staged/image").iterdir()}, image_files("1.2.3"))
+        self.assertEqual({path.name for path in (root / "staged/image").iterdir()}, image_files(version))
+        return env
+
+    def test_the_commands_stage_into_and_check_from_runner_temp(self) -> None:
+        # CI builds its image and archives as 0.0.0-ci, which has no release tag.
+        self.stage_and_check("0.0.0-ci")
+        env = self.stage_and_check("1.2.3")
         for change, error in (({"VERSION": "1.2.3/x"}, "not a release version"),
                               ({"SERVER_PROFILE": "dev"}, "SERVER_PROFILE"),
                               ({"IMAGE_DIR": "/etc"}, "outside")):
@@ -190,12 +199,22 @@ class TuiTests(Scratch):
                 outcome(self, error, lambda: verify_tui(directory, "1.2.3", "windows/amd64", WINDOWS))
         self.assertEqual(tui_archive("1.2.3", "windows/amd64")[2], "graphite-meter-client.exe")
 
-    def test_the_verified_source_is_the_one_the_collector_names(self) -> None:
-        project = Project.read(ROOT)
-        for version in ("1.2.3", "1.2.3-rc.1"):
+    def test_the_checked_source_txt_is_the_one_the_collector_writes_for_each_version_form(self) -> None:
+        project, repository = Project.read(ROOT), "https://github.com/zR-JB/graphite-meter"
+        for version, source in (("1.2.3", f"{repository}/tree/v1.2.3"), ("1.2.3-rc.1", repository),
+                                ("0.0.0-ci", repository)):
             with self.subTest(version=version):
-                self.assertEqual(source_url(version), build_source(project, version)[1])
-        self.assertEqual(source_url("1.2.3"), "https://github.com/zR-JB/graphite-meter/tree/v1.2.3")
+                self.assertEqual(build_source(version), source)
+                self.assertIn(f"Source code: {source}\n".encode(), report(project, version, "", False))
+                offer = offer_name("graphite-meter-server", version, "linux/amd64")
+                written = source_notice(project, version, offer, AMD64)
+                if version == "1.2.3-rc.1":
+                    self.assertEqual(written, f"{source}\n")
+                    continue
+                check_source_txt(written, "the image's linux/amd64", version, offer, AMD64)
+                with self.assertRaisesRegex(ControlPlaneError, f"does not name {offer} for {AMD64} at {source}$"):
+                    check_source_txt(written.replace(source, f"{repository}/tree/v9.9.9"), "the image's", version,
+                                     offer, AMD64)
 
 
 Edit = Callable[[Path, Path], JsonObject | None]

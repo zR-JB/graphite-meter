@@ -21,6 +21,7 @@ PLATFORM = re.compile(r"[a-z0-9]+/[a-z0-9]+")
 TARGET = re.compile(r"[a-z0-9_]+(?:-[a-z0-9_]+){2,3}")
 RECORD = re.compile(r"legal/[\w.-]+\.json")
 KINDS = ("tui", "server")
+STABLE = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,12 @@ def tui_archive(version: str, platform: str) -> tuple[str, str, str]:
 def offer_name(package: str, version: str, platform: str) -> str:
     """The source offer of that build; its files lie in a directory named like it without `.tar.gz`, as Go's."""
     return f"{release_name(package, version, platform)}_third-party-source.tar.gz"
+
+
+def source_url(repository: str, version: str) -> str:
+    """The source a Rust build of `version` names: a stable release's tag, otherwise, as Go's prerelease and CI
+    builds, the repository."""
+    return f"{repository}/tree/v{version}" if STABLE.fullmatch(version) else repository
 
 
 def main() -> None:

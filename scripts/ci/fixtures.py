@@ -16,7 +16,7 @@ from typing import cast
 from unittest.mock import patch
 
 from github_api import ControlPlaneError, JsonObject, JsonValue
-from rust_workspace import ROOT, load, offer_name, tui_archive
+from rust_workspace import ROOT, load, offer_name, source_url, tui_archive
 from verify_release_assets import TARGETS, TUI_FILES, tui_archives
 
 AMD, ARM = "sha256:" + "a" * 64, "sha256:" + "b" * 64
@@ -251,7 +251,7 @@ def rust_server(target: str) -> bytes:
 
 
 def rust_source(version: str, offer: str, target: str) -> bytes:
-    return (f"Graphite Meter source: https://github.com/zR-JB/graphite-meter/tree/v{version}\n"
+    return (f"Graphite Meter source: {source_url('https://github.com/zR-JB/graphite-meter', version)}\n"
             f"Matching release: v{version}\nDependency source archive: {offer}\nRust target: {target}\n").encode()
 
 
