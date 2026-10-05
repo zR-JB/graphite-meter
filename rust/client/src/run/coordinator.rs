@@ -95,7 +95,7 @@ pub async fn run(prepared: &Prepared, config: &Config, events: &Events, token: C
     }
     let outcome = match token.is_cancelled() && results.len() < plan.len() {
         true => Outcome::Stopped,
-        false => Outcome::of(&results, &config.stages, &unprepared),
+        false => Outcome::of(&results, &config.stages),
     };
     events.send(Event::RunFinished { outcome, error, elapsed: started.elapsed() });
     outcome
@@ -104,19 +104,17 @@ pub async fn run(prepared: &Prepared, config: &Config, events: &Events, token: C
 /// Whether a sole server that left stays for the next stage: once the run measured, unless it needs sign-in; else why
 /// the run ends.
 fn survivor(results: &[StageResult], sole: bool) -> Result<(), Failure> {
-    let failures = results.iter().flat_map(|result| &result.failures);
-    let last = failures
-        .map(|failure| &failure.failure)
-        .rfind(|failure| failure.reason != FailureReason::InsufficientEvidence);
+    let mut failures = results
+        .iter()
+        .flat_map(|result| &result.failures)
+        .map(|failure| &failure.failure);
+    let last = failures.rfind(|failure| failure.reason != FailureReason::InsufficientEvidence);
     let measured = results.iter().any(|result| !result.measured.is_zero());
-    let signed_out = last.is_some_and(|failure| failure.reason == FailureReason::SignInRequired);
-    if sole && measured && !signed_out {
-        return Ok(());
+    match last {
+        _ if sole && measured && last.is_none_or(|last| last.reason != FailureReason::SignInRequired) => Ok(()),
+        Some(last) => Err(Failure::new(last.reason, format!("{NO_SURVIVORS}: {last}"))),
+        None => Err(Failure::new(FailureReason::ConnectionLost, NO_SURVIVORS)),
     }
-    Err(match last {
-        Some(last) => Failure::new(last.reason, format!("{NO_SURVIVORS}: {last}")),
-        None => Failure::new(FailureReason::ConnectionLost, NO_SURVIVORS),
-    })
 }
 
 /// Why the run cannot start: no server has a path, or a planned stage outlasts a server's limit.

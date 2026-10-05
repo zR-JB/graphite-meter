@@ -232,6 +232,21 @@ pub struct Issue {
 }
 
 impl View {
+    /// Whether `server` is still in the run: in its latest stage without leaving, or prepared before any.
+    pub fn remains(&self, server: &ServerId) -> bool {
+        let results = self.run.iter().flat_map(|run| run.results.iter().rev());
+        match results
+            .filter_map(|result| result.servers.iter().find(|own| own.server == *server))
+            .next()
+        {
+            Some(own) => !own.left,
+            None => self
+                .servers
+                .iter()
+                .any(|prepared| prepared.id == *server && prepared.path.is_ok()),
+        }
+    }
+
     pub fn apply(&mut self, event: &Event) {
         match event {
             Event::Checking { run: true } => self.run = Some(Run::default()),

@@ -8,7 +8,6 @@ use crate::{
     text::Line,
     tui::theme::Palette,
 };
-use graphite_meter_proto::catalog::ServerId;
 use std::time::Duration;
 
 /// Each server's mean rates and latency medians, ✗ once it left, and the run's issues; with `full` its aggregation
@@ -46,7 +45,7 @@ impl Report<'_> {
                     .find(|own| own.server == server.id)
                     .cloned()
             };
-            let mark = if self.remains(&server.id) { "" } else { " ✗" };
+            let mark = if self.view.remains(&server.id) { "" } else { " ✗" };
             let cells = columns
                 .iter()
                 .map(|&(stage, direction)| rate(own(stage).and_then(|own| own.throughput[direction])));
@@ -125,24 +124,6 @@ impl Report<'_> {
         lines
     }
 
-    /// Whether `server` is still in the run: in its latest stage without leaving, or prepared before any.
-    fn remains(&self, server: &ServerId) -> bool {
-        let latest = self
-            .run
-            .results
-            .iter()
-            .rev()
-            .find_map(|result| result.servers.iter().find(|own| own.server == *server));
-        match latest {
-            Some(own) => !own.left,
-            None => self
-                .view
-                .servers
-                .iter()
-                .any(|prepared| prepared.id == *server && prepared.path.is_ok()),
-        }
-    }
-
     /// The run's outcome with how many of its servers remain.
     fn notice(&self) -> String {
         let selected = self.view.servers.len();
@@ -150,7 +131,7 @@ impl Report<'_> {
             .view
             .servers
             .iter()
-            .filter(|server| self.remains(&server.id))
+            .filter(|server| self.view.remains(&server.id))
             .count();
         let outcome = self.run.outcome.map_or("Running", outcome_label);
         match () {

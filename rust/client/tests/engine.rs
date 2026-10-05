@@ -548,22 +548,24 @@ fn run(servers: &[(&str, usize, Duration)]) -> Vec<StageResult> {
 #[test]
 fn outcomes_follow_stage_results() {
     let plan = [Stage::Latency, Stage::Download];
-    let outcome = |servers: &[(&str, usize, Duration)]| Outcome::of(&run(servers), &plan, &[]);
+    let outcome = |servers: &[(&str, usize, Duration)]| Outcome::of(&run(servers), &plan);
     assert_eq!(outcome(&[("a", 5, STAGE), ("b", 5, STAGE)]), Outcome::Complete);
     assert_eq!(outcome(&[("a", 5, STAGE), ("b", 5, ms(3000))]), Outcome::Partial);
     assert_eq!(outcome(&[("a", 5, STAGE), ("b", 0, STAGE)]), Outcome::Partial);
     assert_eq!(outcome(&[("a", 0, STAGE), ("b", 5, STAGE)]), Outcome::Incomplete);
 
-    let results = run(&[("a", 5, STAGE)]);
+    let mut results = run(&[("a", 5, STAGE)]);
     let unprepared = ServerFailure {
         server: id("b"),
         scope: Scope::Server,
         failure: Failure::new(FailureReason::PreparationFailed, "no path"),
         at: Instant::now(),
     };
-    assert_eq!(Outcome::of(&results, &plan, &[unprepared]), Outcome::Partial);
+    assert_eq!(Outcome::of(&results, &plan), Outcome::Complete);
+    results[0].failures.push(unprepared);
+    assert_eq!(Outcome::of(&results, &plan), Outcome::Partial);
     assert_eq!(
-        Outcome::of(&results, &[Stage::Latency, Stage::Download, Stage::Upload], &[]),
+        Outcome::of(&results, &[Stage::Latency, Stage::Download, Stage::Upload]),
         Outcome::Incomplete
     );
 
@@ -571,12 +573,12 @@ fn outcomes_follow_stage_results() {
     script.run(|_| vec![Sample { ready: false, ..down("a", 0) }]);
     let unopened = script.engine.result();
     assert_eq!((unopened.throughput.down, unopened.status(None)), (None, StageStatus::Failed));
-    assert_eq!(Outcome::of(&[unopened], &[Stage::Download], &[]), Outcome::Failed);
+    assert_eq!(Outcome::of(&[unopened], &[Stage::Download]), Outcome::Failed);
     let mut stopped = Engine::new(self::plan(Stage::Download, &["a"], false), Instant::now());
     stopped.stop(Instant::now());
     let stopped = stopped.result();
     assert_eq!((stopped.throughput.down, stopped.status(None)), (None, StageStatus::Stopped));
-    assert_eq!(Outcome::of(&[stopped], &[Stage::Download], &[]), Outcome::Stopped);
+    assert_eq!(Outcome::of(&[stopped], &[Stage::Download]), Outcome::Stopped);
 }
 
 #[test]
@@ -584,10 +586,10 @@ fn the_latency_focus_moves_to_a_survivor_that_measured_latency() {
     let plan = [Stage::Latency, Stage::Download];
     let results = run(&[("a", 5, ms(3000)), ("b", 5, STAGE)]);
     assert_eq!(focus(&results), Some(id("b")));
-    assert_eq!(Outcome::of(&results, &plan, &[]), Outcome::Partial);
+    assert_eq!(Outcome::of(&results, &plan), Outcome::Partial);
     let results = run(&[("a", 5, ms(3000)), ("b", 0, STAGE)]);
     assert_eq!(focus(&results), None);
-    assert_eq!(Outcome::of(&results, &plan, &[]), Outcome::Incomplete);
+    assert_eq!(Outcome::of(&results, &plan), Outcome::Incomplete);
 }
 
 #[test]

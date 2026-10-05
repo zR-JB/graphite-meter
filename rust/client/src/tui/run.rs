@@ -124,19 +124,7 @@ impl App {
 
     /// The servers `l` steps through: those prepared that have not left the run.
     fn participants(&self) -> Vec<ServerId> {
-        let Some(run) = &self.view.run else { return Vec::new() };
-        let left = |id: &ServerId| {
-            let latest = run.results.iter().rev();
-            let own = latest
-                .filter_map(|result| result.servers.iter().find(|own| own.server == *id))
-                .next();
-            own.is_some_and(|own| own.left)
-        };
-        let servers = self
-            .view
-            .servers
-            .iter()
-            .filter(|server| server.path.is_ok() && !left(&server.id));
+        let servers = self.view.servers.iter().filter(|server| self.view.remains(&server.id));
         servers.map(|server| server.id.clone()).collect()
     }
 

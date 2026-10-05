@@ -229,8 +229,8 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    /// From the stage results and the failures of selected servers that never began a stage.
-    pub fn of(results: &[StageResult], plan: &[Stage], unprepared: &[ServerFailure]) -> Self {
+    /// From the stage results; the first carries the failures of selected servers that never began a stage.
+    pub fn of(results: &[StageResult], plan: &[Stage]) -> Self {
         let focus = focus(results);
         let statuses: Vec<_> = results.iter().map(|result| result.status(focus.as_ref())).collect();
         let ran = |stage: &Stage| results.iter().any(|result| result.stage == *stage);
@@ -239,7 +239,7 @@ impl Outcome {
             _ if results.iter().any(|result| result.stopped) => Self::Stopped,
             _ if results.iter().all(|result| result.measured.is_zero()) => Self::Failed,
             _ if !planned || statuses.contains(&StageStatus::Failed) => Self::Incomplete,
-            _ if !unprepared.is_empty() || statuses.contains(&StageStatus::Partial) => Self::Partial,
+            _ if statuses.contains(&StageStatus::Partial) => Self::Partial,
             _ => Self::Complete,
         }
     }
