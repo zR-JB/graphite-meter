@@ -1,10 +1,11 @@
-//! The crate's vocabulary: stages, directions, cadences and failures.
+//! The crate's vocabulary: stages, directions, cadences, failures, stage results and the run's outcome.
 
-use graphite_meter_proto::reason::FailureReason;
+use crate::measure::{aggregate::Interval, aggregate::Rate, latency::Population};
+use graphite_meter_proto::{catalog::ServerId, reason::FailureReason};
 use std::{
     fmt,
     ops::{Index, IndexMut},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// A measured stage; runs take them in this order.
@@ -118,4 +119,132 @@ pub enum Scope {
     Server,
     Throughput,
     Latency,
+}
+
+/// A direction's lanes: moving, retrying a failure, or failed for good.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LaneHealth {
+    Ok,
+    Retrying(Failure),
+    Failed(Failure),
+}
+
+/// A failure as a stage recorded it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerFailure {
+    pub server: ServerId,
+    pub scope: Scope,
+    pub failure: Failure,
+    pub at: Instant,
+}
+
+/// A direction's headline, if any, and its unique measured bytes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Throughput {
+    pub rate: Option<Rate>,
+    pub bytes: u64,
+}
+
+/// One server's share of a stage.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ServerResult {
+    pub server: ServerId,
+    /// The server left the run in this stage.
+    pub left: bool,
+    /// Per direction the stage moves.
+    pub throughput: Dir<Option<Throughput>>,
+    /// When the stage probed this server.
+    pub latency: Option<Population>,
+}
+
+/// What a stage measured.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StageResult {
+    pub stage: Stage,
+    /// The measured window's length; zero when it never opened.
+    pub measured: Duration,
+    pub stopped: bool,
+    /// All servers' headline per direction the stage moves.
+    pub throughput: Dir<Option<Throughput>>,
+    /// Every server that began the stage, in selection order.
+    pub servers: Vec<ServerResult>,
+    pub failures: Vec<ServerFailure>,
+    pub intervals: Vec<Interval>,
+    /// Older intervals the stage dropped.
+    pub omitted: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StageStatus {
+    Complete,
+    Partial,
+    Failed,
+    Stopped,
+}
+
+impl StageResult {
+    pub fn status(&self, focus: Option<&ServerId>) -> StageStatus {
+        let missing = |throughput: Option<Throughput>| throughput.is_some_and(|throughput| throughput.rate.is_none());
+        let focused = self.servers.iter().find(|server| Some(&server.server) == focus);
+        let median = focused.and_then(|server| server.latency?.median());
+        match () {
+            _ if self.stopped => StageStatus::Stopped,
+            _ if missing(self.throughput.down) || missing(self.throughput.up) => StageStatus::Failed,
+            _ if self.stage == Stage::Latency && median.is_none() => StageStatus::Failed,
+            _ if !self.failures.is_empty() => StageStatus::Partial,
+            _ => StageStatus::Complete,
+        }
+    }
+}
+
+/// The run's latency server: the first selected one, or once it left, the first survivor whose latency stage has a
+/// median.
+pub fn focus(results: &[StageResult]) -> Option<ServerId> {
+    let selected = &results.first()?.servers;
+    let left = |id: &ServerId| {
+        results
+            .iter()
+            .flat_map(|result| &result.servers)
+            .any(|server| server.server == *id && server.left)
+    };
+    let first = &selected.first()?.server;
+    if !left(first) {
+        return Some(first.clone());
+    }
+    let idle = results.iter().find(|result| result.stage == Stage::Latency);
+    let measured = idle.into_iter().flat_map(|result| &result.servers);
+    let mut survivors =
+        measured.filter(|server| !left(&server.server) && server.latency.and_then(|l| l.median()).is_some());
+    Some(survivors.next().map_or(first, |server| &server.server).clone())
+}
+
+/// How a run ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    /// Every planned stage finished with every server.
+    Complete,
+    /// Every stage has its results, but a server or latency population failed.
+    Partial,
+    /// A planned result is missing after measurement began.
+    Incomplete,
+    Stopped,
+    /// Nothing was measured.
+    Failed,
+}
+
+impl Outcome {
+    pub fn of(results: &[StageResult], plan: &[Stage], stopped: bool) -> Self {
+        let focus = focus(results);
+        let statuses: Vec<_> = results.iter().map(|result| result.status(focus.as_ref())).collect();
+        let planned = plan
+            .iter()
+            .all(|stage| results.iter().any(|result| result.stage == *stage));
+        match () {
+            _ if stopped => Self::Stopped,
+            _ if results.iter().all(|result| result.measured.is_zero()) => Self::Failed,
+            _ if !planned || statuses.contains(&StageStatus::Failed) => Self::Incomplete,
+            _ if statuses.contains(&StageStatus::Partial) => Self::Partial,
+            _ => Self::Complete,
+        }
+    }
 }

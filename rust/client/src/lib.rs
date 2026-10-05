@@ -9,6 +9,10 @@ pub mod measure {
     pub mod latency;
 }
 
+pub mod run {
+    pub mod engine;
+}
+
 /// The version `--version` prints.
 pub const VERSION: &str = match option_env!("GM_ENGINE_VERSION") {
     Some(version) => version,
