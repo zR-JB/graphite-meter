@@ -319,7 +319,7 @@ fn same_host(first: &str, second: &str) -> bool {
 }
 
 /// An exact canonical HTTPS origin, as a browser grant's audience must be.
-fn browser_origin(origin: &HeaderValue) -> bool {
+pub(super) fn browser_origin(origin: &HeaderValue) -> bool {
     let text = origin.to_str().unwrap_or_default();
     Origin::parse(text).is_ok_and(|parsed| parsed.scheme == Scheme::Https && parsed.to_string() == text)
 }

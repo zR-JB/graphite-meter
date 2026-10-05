@@ -1,18 +1,49 @@
-//! The sign-in pages, rendered from Go's templates in `go/internal/auth/assets` as its html/template renders them,
-//! and the headers of every authentication answer.
+//! The sign-in and approval pages, rendered from Go's templates in `go/internal/auth/assets` as its html/template
+//! renders them, and the headers of every authentication answer.
 
 use http::{HeaderMap, HeaderValue, header};
-use std::sync::LazyLock;
+use std::{fmt::Write as _, sync::LazyLock};
 
 const STYLES: &str = include_str!("../../../../go/internal/auth/assets/auth.css");
 const THEME: &str = include_str!("../../../../go/internal/auth/assets/theme.js");
 const PENDING: &str = include_str!("../../../../go/internal/auth/assets/pending.js");
-static LOGIN: LazyLock<Template> =
-    LazyLock::new(|| Template::parse(include_str!("../../../../go/internal/auth/assets/login.tmpl")));
+static TEMPLATES: LazyLock<[Template; 4]> = LazyLock::new(|| {
+    [
+        include_str!("../../../../go/internal/auth/assets/login.tmpl"),
+        include_str!("../../../../go/internal/auth/assets/cli.tmpl"),
+        include_str!("../../../../go/internal/auth/assets/cli-done.tmpl"),
+        include_str!("../../../../go/internal/auth/assets/continue.tmpl"),
+    ]
+    .map(Template::parse)
+});
 
-/// The sign-in page with `fields` set, such as `("CSRF", token)`; a flag is `"true"` or empty.
-pub(super) fn login(fields: &[(&str, &str)]) -> String {
-    LOGIN.render(fields)
+/// The pages, in `TEMPLATES` order.
+#[derive(Clone, Copy)]
+pub(super) enum Page {
+    Login,
+    /// An approval, its refusal or the client limit.
+    Cli,
+    /// An approval's confirmation.
+    CliDone,
+    /// The step back from a provider or another site to this one.
+    Continue,
+}
+
+/// `page` with `fields` set, such as `("CSRF", token)`; a flag is `"true"` or empty.
+pub(super) fn render(page: Page, fields: &[(&str, &str)]) -> String {
+    TEMPLATES[page as usize].render(fields)
+}
+
+/// Lets the page's forms post to the OIDC provider's authorization `origin` as well.
+pub(super) fn allow_form_action(headers: &mut HeaderMap, origin: &str) {
+    let policy = headers
+        .get(header::CONTENT_SECURITY_POLICY)
+        .and_then(|policy| policy.to_str().ok());
+    let policy = policy.unwrap_or_default();
+    let policy = policy.replace("form-action 'self'", &format!("form-action 'self' {origin}"));
+    if let Ok(policy) = HeaderValue::from_str(&policy) {
+        headers.insert(header::CONTENT_SECURITY_POLICY, policy);
+    }
 }
 
 /// Go's headers of every authentication page and refusal, with HSTS once the request is known to be secure.
@@ -55,8 +86,8 @@ impl Template {
         Self(std::iter::once(first).chain(actions).collect())
     }
 
-    /// The actions these templates use: fields, the theme and pending scripts, and `if`, `else if`, `else` and
-    /// `end` on `not`, `and`, `eq` and `ne`.
+    /// The actions these templates use: fields, escaped for a URL query inside an `href`; the theme and pending
+    /// scripts; and `if`, `else if`, `else` and `end` on `not`, `and`, `eq` and `ne`.
     fn render(&self, fields: &[(&str, &str)]) -> String {
         let field = |name: &str| {
             let name = name.trim_start_matches('.');
@@ -89,6 +120,14 @@ impl Template {
                     }
                     "template \"pending\"" => page.extend(["<script>", PENDING, "</script>"]),
                     ".Styles" => page.push_str(STYLES),
+                    name if page.rfind("href=\"").is_some_and(|at| !page[at + 6..].contains('"')) => {
+                        for byte in field(name).bytes() {
+                            match byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+                                true => page.push(byte.into()),
+                                false => write!(page, "%{byte:02x}").expect("strings take writes"),
+                            }
+                        }
+                    }
                     name => escape(&mut page, field(name)),
                 }
             }
@@ -144,6 +183,7 @@ mod tests {
 
     #[test]
     fn the_sign_in_page_shows_the_notice_and_form_its_fields_choose() {
+        let login = |fields: &[(&str, &str)]| render(Page::Login, fields);
         let page = login(&[("CSRF", "a+b\"<"), ("Notice", "password"), ("Password", "true"), ("Provider", "Id")]);
         assert!(page.contains("<input type=\"hidden\" name=\"csrf\" value=\"a&#43;b&#34;&lt;\">"));
         assert!(page.contains("Incorrect password. Check it and try again."));

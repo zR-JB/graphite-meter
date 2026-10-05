@@ -1,8 +1,12 @@
 //! Authentication: the policy every request passes, its own routes, and the lease a signed-in request carries.
 
+mod approval;
+mod jwt;
+mod oidc;
 mod page;
 pub mod password;
 mod policy;
+mod provider;
 mod rate;
 mod routes;
 mod security;
@@ -25,9 +29,11 @@ use graphite_meter_proto::{
     token::SocketTicket,
 };
 use http::{HeaderMap, HeaderValue, Request, Response, StatusCode};
+use oidc::Oidc;
 use page::protect;
 use password::Password;
-use std::sync::Arc;
+use rate::Attempts;
+use std::{future::Future, sync::Arc};
 use tokio::time::{Instant, sleep_until};
 use tokio_util::sync::CancellationToken;
 
@@ -48,30 +54,30 @@ pub enum Auth {
     On(Box<Enabled>),
 }
 
-/// Sign-in at the public origin: the policy, the store of logins, grants and tickets, password sign-in and the
-/// security log.
+/// Sign-in at the public origin: the policy, the store of logins, grants and tickets, password and OIDC sign-in, the
+/// approval budget and the security log.
 pub struct Enabled {
     policy: Policy,
     store: Store,
     password: Option<Password>,
+    oidc: Option<Oidc>,
+    /// Approval pages opened per client address.
+    browser_approvals: Attempts,
     security: Security,
     /// The OIDC provider's name, which the sign-in page shows.
     provider: String,
 }
 
 impl Auth {
-    /// The authentication `config` enables, with its password hash read and checked; OIDC sign-in is refused as
-    /// unavailable.
+    /// The authentication `config` enables, with its password hash and OIDC client secret read; the OIDC provider is
+    /// discovered later.
     pub fn new(config: Option<&config::Auth>, verbose: bool) -> Result<Self, String> {
         let Some(config) = config else { return Ok(Self::Off) };
-        let (mode, oidc) = match &config.methods {
+        let (mode, settings) = match &config.methods {
             Methods::Password(_) => ("password", None),
             Methods::Oidc(oidc) => ("oidc", Some(oidc)),
             Methods::Hybrid(_, oidc) => ("hybrid", Some(oidc)),
         };
-        if oidc.is_some() {
-            return Err("OIDC sign-in is unavailable in this build".into());
-        }
         let security = Security::new(verbose);
         let password = match config.methods.password() {
             Some(secret) => {
@@ -82,16 +88,47 @@ impl Auth {
             }
             None => None,
         };
+        let oidc = match settings {
+            Some(settings) => {
+                let secret = settings.secret.read(16 * 1024);
+                let secret = secret.map_err(|error| format!("OIDC client secret: {error}"))?;
+                Some(Oidc::new(&config.public_origin, settings, secret)?)
+            }
+            None => None,
+        };
         log!(
             "[gm:auth] mode={mode} origin={} provider={} issuer={} allowed-groups={} session-lifetime={}",
             config.public_origin,
             config.provider,
-            oidc.map_or("", |oidc| oidc.issuer.as_str()),
-            oidc.map_or(0, |oidc| oidc.allowed_groups.len()),
+            settings.map_or("", |oidc| oidc.issuer.as_str()),
+            settings.map_or(0, |oidc| oidc.allowed_groups.len()),
             duration::format(LOGIN_LIFETIME),
         );
-        let (policy, store, provider) = (Policy::new(config), Store::default(), config.provider.clone());
-        Ok(Self::On(Box::new(Enabled { policy, store, password, security, provider })))
+        Ok(Self::On(Box::new(Enabled {
+            policy: Policy::new(config),
+            store: Store::default(),
+            password,
+            oidc,
+            browser_approvals: Attempts::new("browser-approval", 10),
+            security,
+            provider: config.provider.clone(),
+        })))
+    }
+
+    /// Discovers the OIDC provider once, when one is configured; OIDC mode serves only after this succeeds.
+    pub async fn discover(&self) -> Result<(), String> {
+        let Self::On(auth) = self else { return Ok(()) };
+        match &auth.oidc {
+            Some(oidc) => oidc.discover(&auth.security).await,
+            None => Ok(()),
+        }
+    }
+
+    /// Hybrid mode's discovery, retried in the background until the provider answers; it never completes.
+    pub fn background_discovery(&self) -> Option<impl Future<Output = ()> + Send + '_> {
+        let Self::On(auth) = self else { return None };
+        let oidc = auth.oidc.as_ref().filter(|_| auth.password.is_some())?;
+        Some(oidc.retry(&auth.security))
     }
 
     pub fn enabled(&self) -> bool {

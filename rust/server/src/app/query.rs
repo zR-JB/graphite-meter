@@ -1,7 +1,7 @@
 //! Query parameters as Go's `url.Values` reads them, and the transfer parameters, clamped and never refused
 //! (`api/wire.md#webtransport-routes`).
 
-use percent_encoding::percent_decode_str;
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 
 /// The transfer size when `bytes=` is missing or unreadable.
 pub const DEFAULT_TRANSFER_BYTES: u64 = 25 << 20;
@@ -25,6 +25,18 @@ pub fn form(body: &str) -> Option<Vec<(String, String)>> {
         fields.push((name, value));
     }
     Some(fields)
+}
+
+/// Go's `url.Values.Encode` of `pairs`, which the caller sorts by name.
+pub fn encode(pairs: &[(&str, &str)]) -> String {
+    let pair = |(name, value): &(&str, &str)| format!("{}={}", escape(name), escape(value));
+    pairs.iter().map(pair).collect::<Vec<_>>().join("&")
+}
+
+/// Go's `url.QueryEscape`: unreserved bytes stay, a space becomes `+`.
+pub fn escape(text: &str) -> String {
+    const ESCAPED: &AsciiSet = &NON_ALPHANUMERIC.remove(b'-').remove(b'_').remove(b'.').remove(b'~');
+    utf8_percent_encode(text, ESCAPED).to_string().replace("%20", "+")
 }
 
 fn pair(text: &str) -> Option<(String, String)> {
@@ -87,6 +99,7 @@ mod tests {
         assert_eq!(get(query, "id2").as_deref(), Some("A"));
         assert_eq!(get(Some("flag"), "flag").as_deref(), Some(""));
         assert_eq!(get(None, "id"), None);
+        assert_eq!(encode(&[("a b", "~x*/+"), ("c", "")]), "a+b=~x%2A%2F%2B&c=");
     }
 
     #[test]

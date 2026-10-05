@@ -1,9 +1,12 @@
 //! The app as transports drive it: constructed requests with in-memory bodies through `App::handle`.
 
+mod approvals;
 mod auth;
 mod control;
 mod gate;
+mod oidc;
 mod page;
+mod provider;
 mod sessions;
 mod signin;
 mod upload;

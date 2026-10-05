@@ -1,7 +1,7 @@
 //! The one store of logins, the measurement grants issued to them and the one-use socket tickets they mint. Raw
 //! credentials leave only to their issuer; the store keys each by its SHA-256 digest.
 
-use super::{AuthLease, Holder, Via};
+use super::{AuthLease, Holder, Via, approval::Approval};
 use crate::lock;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use graphite_meter_proto::token::SocketTicket;
@@ -21,15 +21,15 @@ use tokio_util::sync::CancellationToken;
 pub const LOGIN_LIFETIME: Duration = Duration::from_secs(8 * 60 * 60);
 const MAX_LOGINS: usize = 1024;
 const MAX_SUBJECT_LOGINS: usize = 8;
-const MAX_LOGIN_GRANTS: usize = 8;
+pub(super) const MAX_LOGIN_GRANTS: usize = 8;
 const MAX_LOGIN_TICKETS: usize = 8;
 const TICKET_LIFETIME: Duration = Duration::from_secs(30);
 
-type Digest = [u8; 32];
+pub(super) type Digest = [u8; 32];
 
 /// A login's key: the digest of its session cookie.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct LoginKey(Digest);
+pub struct LoginKey(pub(super) Digest);
 
 impl fmt::Debug for LoginKey {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -70,7 +70,7 @@ pub(super) struct LoginView {
     pub csrf: String,
 }
 
-struct Login {
+pub(super) struct Login {
     id: Arc<str>,
     subject: Arc<str>,
     name: String,
@@ -78,7 +78,7 @@ struct Login {
     csrf: String,
     sequence: u64,
     deadline: Instant,
-    expires: SystemTime,
+    pub(super) expires: SystemTime,
     /// Cancelled when the login ends; its grants' tokens are children.
     revoked: CancellationToken,
 }
@@ -99,16 +99,18 @@ struct Ticket {
 }
 
 #[derive(Default)]
-struct State {
+pub(super) struct State {
     logins: HashMap<Digest, Login>,
     grants: HashMap<Digest, Grant>,
     tickets: HashMap<Digest, Ticket>,
+    /// Pending approvals by their challenge.
+    pub(super) approvals: HashMap<String, Approval>,
     sequence: u64,
 }
 
 /// The authentication state every listener shares; clones share one store.
 #[derive(Clone, Default)]
-pub struct Store(Arc<Mutex<State>>);
+pub struct Store(pub(super) Arc<Mutex<State>>);
 
 impl Store {
     /// Signs `subject` in, ending its oldest login when it holds eight; `None` when the server holds 1024.
@@ -191,32 +193,7 @@ impl Store {
     /// Issues `login` a measurement grant for the `browser` origin or a native client. A login holds eight; then a
     /// native grant replaces the oldest native one, and anything else is refused.
     pub fn grant(&self, login: LoginKey, browser: Option<HeaderValue>) -> Result<String, GrantRefusal> {
-        let (token, id) = (random::<32>(), random::<16>());
-        let mut state = lock(&self.0);
-        let revoked = state
-            .login(&login.0)
-            .ok_or(GrantRefusal::NoLogin)?
-            .revoked
-            .child_token();
-        let held: Vec<_> = state.grants.iter().filter(|(_, grant)| grant.login == login).collect();
-        if held.len() >= MAX_LOGIN_GRANTS {
-            let native = held.iter().filter(|(_, grant)| grant.browser.is_none());
-            let oldest = native.min_by_key(|(_, grant)| grant.sequence).map(|(key, _)| **key);
-            let oldest = oldest.filter(|_| browser.is_none()).ok_or(GrantRefusal::Full)?;
-            if let Some(evicted) = state.grants.remove(&oldest) {
-                evicted.revoked.cancel();
-            }
-        }
-        state.sequence += 1;
-        let grant = Grant {
-            login,
-            id: id.into(),
-            browser,
-            sequence: state.sequence,
-            revoked,
-        };
-        state.grants.insert(digest(&token), grant);
-        Ok(token)
+        lock(&self.0).grant(login, browser)
     }
 
     /// A one-use ticket presenting `lease` at `target` from the `origin` that minted it, for 30 s at most.
@@ -275,6 +252,36 @@ impl Store {
 }
 
 impl State {
+    /// See `Store::grant`.
+    pub(super) fn grant(&mut self, login: LoginKey, browser: Option<HeaderValue>) -> Result<String, GrantRefusal> {
+        let revoked = self.login(&login.0).ok_or(GrantRefusal::NoLogin)?.revoked.child_token();
+        let held: Vec<_> = self.grants.iter().filter(|(_, grant)| grant.login == login).collect();
+        if held.len() >= MAX_LOGIN_GRANTS {
+            let native = held.iter().filter(|(_, grant)| grant.browser.is_none());
+            let oldest = native.min_by_key(|(_, grant)| grant.sequence).map(|(key, _)| **key);
+            let oldest = oldest.filter(|_| browser.is_none()).ok_or(GrantRefusal::Full)?;
+            if let Some(evicted) = self.grants.remove(&oldest) {
+                evicted.revoked.cancel();
+            }
+        }
+        let (token, id) = (random::<32>(), random::<16>());
+        self.sequence += 1;
+        let grant = Grant {
+            login,
+            id: id.into(),
+            browser,
+            sequence: self.sequence,
+            revoked,
+        };
+        self.grants.insert(digest(&token), grant);
+        Ok(token)
+    }
+
+    /// How many grants `login` holds.
+    pub(super) fn grants_of(&self, login: LoginKey) -> usize {
+        self.grants.values().filter(|grant| grant.login == login).count()
+    }
+
     /// The logins of `subject`, oldest first.
     fn held(&self, subject: &str) -> Vec<Digest> {
         let held = self.logins.iter().filter(|(_, login)| &*login.subject == subject);
@@ -284,7 +291,7 @@ impl State {
     }
 
     /// The login keyed `key` while it lasts.
-    fn login(&self, key: &Digest) -> Option<&Login> {
+    pub(super) fn login(&self, key: &Digest) -> Option<&Login> {
         self.logins.get(key).filter(|login| Instant::now() < login.deadline)
     }
 
@@ -295,15 +302,18 @@ impl State {
         }
         self.grants.retain(|_, grant| grant.login.0 != *key);
         self.tickets.retain(|_, ticket| ticket.lease.login.0 != *key);
+        self.approvals
+            .retain(|_, approval| approval.login.is_none_or(|login| login.0 != *key));
     }
 
-    fn sweep(&mut self, now: Instant) {
+    pub(super) fn sweep(&mut self, now: Instant) {
         let expired = self.logins.iter().filter(|(_, login)| now >= login.deadline);
         for key in expired.map(|(key, _)| *key).collect::<Vec<_>>() {
             self.end(&key);
         }
         self.tickets
             .retain(|_, ticket| now < ticket.deadline && !ticket.lease.is_ended(now));
+        self.approvals.retain(|_, approval| now < approval.deadline);
     }
 }
 
@@ -314,7 +324,7 @@ impl Login {
     }
 }
 
-fn digest(token: &str) -> Digest {
+pub(super) fn digest(token: &str) -> Digest {
     Sha256::digest(token).into()
 }
 

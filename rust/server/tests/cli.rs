@@ -160,6 +160,35 @@ fn a_bad_password_hash_refuses_startup_and_a_good_one_logs_the_mode() {
     assert!(child.wait().unwrap().success());
 }
 
+#[test]
+fn oidc_mode_refuses_startup_without_its_client_secret_or_until_discovery_succeeds() {
+    let oidc = |secret| {
+        [
+            ("GM_H1_ADDR", "127.0.0.1:0"),
+            ("GM_AUTH_MODE", "oidc"),
+            ("GM_AUTH_PUBLIC_URL", "https://meter.example"),
+            ("GM_ADVERTISED_NATIVE_ENDPOINTS", "none"),
+            ("GM_PUBLIC_ORIGINS", "https://meter.example"),
+            ("GM_AUTH_OIDC_ISSUER", "https://127.0.0.1:1"),
+            ("GM_AUTH_OIDC_CLIENT_ID", "meter"),
+            ("GM_AUTH_OIDC_ALLOWED_GROUPS", "operators"),
+            ("GM_VERBOSE", "true"),
+            secret,
+        ]
+    };
+    let output = server(&[], &oidc(("GM_AUTH_OIDC_CLIENT_SECRET_FILE", "/nonexistent/secret")), b"");
+    assert_eq!(output.status.code(), Some(1));
+    let message = "server error: \"OIDC client secret: open /nonexistent/secret: no such file or directory\"";
+    assert_eq!(logged(text(&output.stderr).trim_end()), message);
+    let output = server(&[], &oidc(("GM_AUTH_OIDC_CLIENT_SECRET", "s3cret")), b"");
+    assert_eq!(output.status.code(), Some(1));
+    let lines: Vec<_> = text(&output.stderr).lines().map(logged).collect();
+    assert!(lines[0].starts_with("[gm:auth] mode=oidc origin=https://meter.example provider=Authelia "));
+    assert!(lines[1].starts_with("[gm:auth:debug] OIDC discovery failed: "), "{lines:?}");
+    assert!(lines[2].starts_with("server error: \"OIDC discovery: "), "{lines:?}");
+    assert!(!text(&output.stderr).contains("s3cret"));
+}
+
 /// A verbose throughput line's message, checked against Go's shape, with its transfer count.
 fn transfers(message: &str) -> usize {
     let fields = message.strip_prefix("[gm:server:download] ").unwrap();

@@ -9,7 +9,7 @@ pub use terms::check_budget;
 
 use crate::{
     app::{App, Endpoint},
-    config::{Config, ENGINE_VERSION},
+    config::{Config, ENGINE_VERSION, Methods},
     limits::{Budget, Transport},
     log,
     transport::{
@@ -79,6 +79,7 @@ impl Server {
     /// failure closes those bound before it.
     pub async fn bind(mut config: Config) -> Result<Self, String> {
         let (tls, hosts, auth) = (config.tls.clone(), tls::covered_hosts(&config), config.auth.is_some());
+        let oidc_only = matches!(config.auth.as_ref().map(|auth| &auth.methods), Some(Methods::Oidc(_)));
         let terms = Terms::of(&config)?;
         let endpoint_bytes = Arc::new(AtomicUsize::new(configured_endpoint(&config)?));
         let endpoint = endpoint_bytes.clone();
@@ -99,6 +100,12 @@ impl Server {
         let (limits, verbose) = (config.limits, config.verbose);
         let shutdown = CancellationToken::new();
         let app = Arc::new(App::new(config, shutdown.clone())?);
+        if oidc_only {
+            app.auth()
+                .discover()
+                .await
+                .map_err(|error| format!("OIDC discovery: {error}"))?;
+        }
         let pool = Pool::new().map_err(|error| format!("runtime threads: {error}"))?;
         let companion = listeners
             .iter()
@@ -195,6 +202,9 @@ impl Server {
         services.push(until_stopped(stopping, release));
         if let Some(security) = app.auth().security() {
             services.push(until_stopped(stopping, background::log_security(security)));
+        }
+        if let Some(discovery) = app.auth().background_discovery() {
+            services.push(until_stopped(stopping, discovery));
         }
         if verbose {
             services.push(until_stopped(stopping, background::log_verbose(&app)));

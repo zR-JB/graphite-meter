@@ -1,8 +1,10 @@
-//! The controller's routes under `/login` and `/auth/`: the sign-in page, password sign-in, the session report and
-//! sign-out; and the ticket mint.
+//! The controller's routes under `/login` and `/auth/`: the sign-in page, password and OIDC sign-in, approvals, the
+//! session report and sign-out; and the ticket mint.
 
 use super::{
-    AuthLease, Enabled, LOGIN_LIFETIME, Via, page,
+    AuthLease, Enabled, LOGIN_LIFETIME, LoginKey, Via, approval,
+    oidc::{self, Oidc, TRANSACTION_COOKIE},
+    page::{self, Page},
     password::Password,
     policy::{SESSION_COOKIE, cookie},
     protect,
@@ -21,7 +23,7 @@ use graphite_meter_proto::{
     origin::{Origin, Scheme},
     route::{Kind, Route},
 };
-use http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode, header};
+use http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode, header, request::Parts};
 use serde::Serialize;
 use std::{
     future::poll_fn,
@@ -39,26 +41,45 @@ const DEVICE_COOKIE: &str = "__Host-gm_device";
 /// A sign-in form's token lasts this long.
 const FORM_LIFETIME: Duration = Duration::from_secs(10 * 60);
 
+/// A form's fields in order.
+pub(super) type Form = Vec<(String, String)>;
+
 /// Answers a controller route the policy let through; a path no route claims is not found.
 pub(super) async fn handle<B: http_body::Body>(auth: &Enabled, request: Request<B>, peer: &Peer) -> Response<Body> {
     let method = match request.method() {
-        &Method::HEAD => &Method::GET,
-        method => method,
+        &Method::HEAD => Method::GET,
+        method => method.clone(),
     };
+    let path = request.uri().path().to_owned();
     let lease = peer.auth().filter(|lease| lease.via() == &Via::Cookie);
-    let mut answer = match (method, request.uri().path(), &auth.password) {
-        (&Method::GET, "/login", _) => login_page(auth, &request),
-        (&Method::POST, "/auth/password", Some(password)) => sign_in(auth, password, request, peer).await,
-        (&Method::GET, "/auth/session", _) => session(auth, lease),
-        (&Method::POST, "/auth/logout", _) => {
-            let from_public = request.headers().get(header::ORIGIN) == Some(&auth.policy.origin);
-            let (head, body) = request.into_parts();
-            let form = form(&head.headers, body).await.filter(|_| from_public);
-            sign_out(auth, lease, form)
+    let from_public = request.headers().get(header::ORIGIN) == Some(&auth.policy.origin);
+    let oidc = auth.oidc.as_ref();
+    let mut answer = match (&method, path.as_str(), &auth.password, oidc) {
+        (&Method::GET, "/login", ..) => login_page(auth, &request),
+        (&Method::POST, "/auth/password", Some(password), _) => sign_in(auth, password, request, peer).await,
+        (&Method::POST, "/auth/oidc/start", _, Some(provider)) => oidc::start(auth, provider, request, peer).await,
+        (&Method::GET, "/auth/oidc/callback", _, Some(provider)) => {
+            oidc::callback(auth, provider, request.into_parts().0, peer).await
         }
+        (&Method::GET, "/auth/session", ..) => session(auth, lease),
+        (&Method::GET, "/auth/cli", ..) => approval::cli_page(auth, &request, peer),
+        (&Method::GET, "/auth/browser", ..) => approval::browser_page(auth, &request, peer),
+        (&Method::POST, "/auth/cli/approve" | "/auth/browser/approve", ..) => {
+            let form = form(request).await.1.filter(|_| from_public);
+            approval::approve(auth, lease, form, path.starts_with("/auth/browser"))
+        }
+        (&Method::POST, "/auth/cli/token" | "/auth/browser/token", ..) => {
+            approval::token(auth, request, path.starts_with("/auth/browser")).await
+        }
+        (&Method::POST, "/auth/logout", ..) => sign_out(auth, lease, form(request).await.1.filter(|_| from_public)),
         _ => response::status(StatusCode::NOT_FOUND),
     };
     protect(answer.headers_mut(), true);
+    if let Some(provider) = oidc.and_then(Oidc::provider)
+        && matches!(path.as_str(), "/login" | "/auth/oidc/start")
+    {
+        page::allow_form_action(answer.headers_mut(), &provider.origin);
+    }
     answer
 }
 
@@ -103,15 +124,21 @@ fn login_page<B>(auth: &Enabled, request: &Request<B>) -> Response<Body> {
         _ => "",
     };
     let csrf = random::<32>();
-    let password = if auth.password.is_some() { "true" } else { "" };
-    let page = page::login(&[
-        ("CSRF", &csrf),
-        ("Provider", &auth.provider),
-        ("Challenge", challenge),
-        ("Notice", notice),
-        ("Status", status),
-        ("Password", password),
-    ]);
+    let flag = |on: bool| if on { "true" } else { "" };
+    let oidc = auth.oidc.as_ref();
+    let page = page::render(
+        Page::Login,
+        &[
+            ("CSRF", &csrf),
+            ("Provider", &auth.provider),
+            ("Challenge", challenge),
+            ("Notice", notice),
+            ("Status", status),
+            ("Password", flag(auth.password.is_some())),
+            ("OIDC", flag(oidc.is_some())),
+            ("OIDCReady", flag(oidc.and_then(Oidc::provider).is_some())),
+        ],
+    );
     let mut answer = response::html(page);
     set_cookie(&mut answer, LOGIN_COOKIE, &csrf, SystemTime::now() + FORM_LIFETIME);
     answer
@@ -125,9 +152,9 @@ async fn sign_in<B: http_body::Body>(
     request: Request<B>,
     peer: &Peer,
 ) -> Response<Body> {
-    let (head, body) = request.into_parts();
+    let (head, form) = form(request).await;
     let headers = &head.headers;
-    let Some(form) = form(headers, body).await else {
+    let Some(form) = form else {
         return rejected(auth, Reason::MalformedForm, "");
     };
     let challenge = field(&form, "challenge");
@@ -146,27 +173,47 @@ async fn sign_in<B: http_body::Body>(
         Some(false) => return rejected(auth, Reason::PasswordMismatch, challenge),
         None => return rejected(auth, Reason::VerifierBusy, challenge),
     }
-    let Some(login) = auth.store.sign_in("local-operator", "Local operator", "local") else {
-        return rejected(auth, Reason::SessionCapacity, challenge);
-    };
-    if let Some(prior) = cookie(headers, SESSION_COOKIE).and_then(|token| auth.store.cookie(token)) {
-        auth.store.sign_out(prior.login(), false);
-    }
-    auth.security.count(Counter::Local);
-    let mut answer = redirect(&match verification_code(challenge) {
+    let target = match verification_code(challenge) {
         Some(_) => format!("/auth/cli?challenge={challenge}"),
         None => "/".into(),
-    });
-    set_cookie(&mut answer, SESSION_COOKIE, &login.token, login.expires);
-    set_cookie(&mut answer, CSRF_COOKIE, &login.csrf, login.expires);
-    clear_cookie(&mut answer, LOGIN_COOKIE);
+    };
+    let identity = ("local-operator", "Local operator", "local");
+    let mut answer = match establish(auth, identity, presented(auth, headers), redirect(&target)) {
+        Ok(answer) => answer,
+        Err(reason) => return rejected(auth, reason, challenge),
+    };
+    auth.security.count(Counter::Local);
     let (device, expires) = password.device(SystemTime::now());
     set_cookie(&mut answer, DEVICE_COOKIE, &device, expires);
     answer
 }
 
+/// Signs `(subject, name, provider)` in, ending the `prior` login, and sets the login's cookies on `answer`.
+pub(super) fn establish(
+    auth: &Enabled,
+    (subject, name, provider): (&str, &str, &str),
+    prior: Option<LoginKey>,
+    mut answer: Response<Body>,
+) -> Result<Response<Body>, Reason> {
+    let login = auth.store.sign_in(subject, name, provider);
+    let login = login.ok_or(Reason::SessionCapacity)?;
+    if let Some(prior) = prior {
+        auth.store.sign_out(prior, false);
+    }
+    set_cookie(&mut answer, SESSION_COOKIE, &login.token, login.expires);
+    set_cookie(&mut answer, CSRF_COOKIE, &login.csrf, login.expires);
+    clear_cookie(&mut answer, LOGIN_COOKIE);
+    Ok(answer)
+}
+
+/// The login whose session cookie the request presents.
+pub(super) fn presented(auth: &Enabled, headers: &HeaderMap) -> Option<LoginKey> {
+    let lease = cookie(headers, SESSION_COOKIE).and_then(|token| auth.store.cookie(token));
+    lease.map(|lease| lease.login())
+}
+
 /// Go's check of a sign-in form: posted from the public origin with the token its login cookie holds.
-fn check_csrf(auth: &Enabled, headers: &HeaderMap, proof: &str) -> Result<(), Reason> {
+pub(super) fn check_csrf(auth: &Enabled, headers: &HeaderMap, proof: &str) -> Result<(), Reason> {
     let origin = headers.get(header::ORIGIN).filter(|origin| !origin.is_empty());
     match (origin, cookie(headers, LOGIN_COOKIE)) {
         (None, _) => Err(Reason::CsrfOriginMissing),
@@ -181,7 +228,7 @@ fn check_csrf(auth: &Enabled, headers: &HeaderMap, proof: &str) -> Result<(), Re
 }
 
 /// Back to the sign-in page with the refusal's notice, keeping a valid approval challenge.
-fn rejected(auth: &Enabled, reason: Reason, challenge: &str) -> Response<Body> {
+pub(super) fn rejected(auth: &Enabled, reason: Reason, challenge: &str) -> Response<Body> {
     auth.security.refused(reason);
     let notice = reason.notice();
     redirect(&match verification_code(challenge) {
@@ -217,7 +264,7 @@ fn session(auth: &Enabled, lease: Option<&AuthLease>) -> Response<Body> {
 }
 
 /// Ends the login, or with `scope=all` every login of its subject, when the form proves its CSRF token.
-fn sign_out(auth: &Enabled, lease: Option<&AuthLease>, form: Option<Vec<(String, String)>>) -> Response<Body> {
+fn sign_out(auth: &Enabled, lease: Option<&AuthLease>, form: Option<Form>) -> Response<Body> {
     let (Some(lease), Some(form)) = (lease, form) else {
         return response::empty(StatusCode::FORBIDDEN);
     };
@@ -234,40 +281,54 @@ fn sign_out(auth: &Enabled, lease: Option<&AuthLease>, form: Option<Vec<(String,
 }
 
 /// A 303 answering a form post.
-fn redirect(target: &str) -> Response<Body> {
+pub(super) fn redirect(target: &str) -> Response<Body> {
     let target = HeaderValue::from_str(target).expect("targets are ASCII");
     response::redirect(&Method::POST, StatusCode::SEE_OTHER, &target)
 }
 
-/// Go's `setCookie`: host-only, secure and strictly same-site; only the CSRF cookie, which pages read, is not
-/// HttpOnly.
-fn set_cookie(answer: &mut Response<Body>, name: &str, value: &str, expires: SystemTime) {
+/// Go's `setCookie`: host-only and secure; only the CSRF cookie, which pages read, is not HttpOnly, and only the OIDC
+/// transaction's is not strictly same-site.
+pub(super) fn set_cookie(answer: &mut Response<Body>, name: &str, value: &str, expires: SystemTime) {
     let age = expires.duration_since(SystemTime::now()).map_or(0, |age| age.as_secs());
     let http_only = if name == CSRF_COOKIE { "" } else { "; HttpOnly" };
+    let same_site = if name == TRANSACTION_COOKIE { "Lax" } else { "Strict" };
     let date = http_date(expires);
-    let cookie = format!("{name}={value}; Path=/; Expires={date}; Max-Age={age}{http_only}; Secure; SameSite=Strict");
+    let cookie =
+        format!("{name}={value}; Path=/; Expires={date}; Max-Age={age}{http_only}; Secure; SameSite={same_site}");
     let cookie = HeaderValue::from_str(&cookie).expect("cookies are ASCII");
     answer.headers_mut().append(header::SET_COOKIE, cookie);
 }
 
-fn clear_cookie(answer: &mut Response<Body>, name: &str) {
+pub(super) fn clear_cookie(answer: &mut Response<Body>, name: &str) {
     set_cookie(answer, name, "", UNIX_EPOCH + Duration::from_secs(1));
 }
 
 /// A form field's value; empty when absent.
-fn field<'a>(form: &'a [(String, String)], name: &str) -> &'a str {
+pub(super) fn field<'a>(form: &'a [(String, String)], name: &str) -> &'a str {
     form.iter()
         .find(|(key, _)| key == name)
         .map_or("", |(_, value)| value.as_str())
 }
 
-/// A URL-encoded form body of at most 4 KiB with unique, well-formed fields.
-async fn form<B: http_body::Body>(headers: &HeaderMap, body: B) -> Option<Vec<(String, String)>> {
-    let media = headers.get(header::CONTENT_TYPE)?.to_str().ok()?;
-    let media = media.split(';').next().unwrap_or_default().trim();
+/// The request's head, and its URL-encoded form body of at most 4 KiB with unique, well-formed fields.
+pub(super) async fn form<B: http_body::Body>(request: Request<B>) -> (Parts, Option<Form>) {
+    let (head, body) = request.into_parts();
+    let media = head
+        .headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|media| media.to_str().ok());
+    let media = media.unwrap_or_default().split(';').next().unwrap_or_default().trim();
     if !media.eq_ignore_ascii_case("application/x-www-form-urlencoded") {
-        return None;
+        return (head, None);
     }
+    let form = self::body(body)
+        .await
+        .and_then(|bytes| query::form(std::str::from_utf8(&bytes).ok()?));
+    (head, form)
+}
+
+/// A request body of at most 4 KiB.
+pub(super) async fn body<B: http_body::Body>(body: B) -> Option<Vec<u8>> {
     let mut body = pin!(body);
     let mut bytes = Vec::new();
     while let Some(frame) = poll_fn(|cx| body.as_mut().poll_frame(cx)).await {
@@ -278,5 +339,5 @@ async fn form<B: http_body::Body>(headers: &HeaderMap, body: B) -> Option<Vec<(S
             bytes.put(data);
         }
     }
-    query::form(std::str::from_utf8(&bytes).ok()?)
+    Some(bytes)
 }

@@ -111,6 +111,12 @@ impl Ceiling {
     }
 }
 
+/// Whether a client with `keys` holds its share of `limit`: `held` counts what a key holds, and each wider key may hold
+/// twice what the one before it may.
+pub(super) fn share_full(keys: &ClientKeys, limit: usize, held: impl Fn(&ClientKey) -> usize) -> bool {
+    keys.iter().enumerate().any(|(wider, key)| held(&key) >= limit << wider)
+}
+
 fn expire(times: &mut VecDeque<Instant>, now: Instant) {
     while times.front().is_some_and(|&time| now.duration_since(time) >= WINDOW) {
         times.pop_front();
@@ -118,7 +124,7 @@ fn expire(times: &mut VecDeque<Instant>, now: Instant) {
 }
 
 /// Logs that the ceiling `name` engaged, at most once a minute.
-fn engage(logged: &mut Option<Instant>, now: Instant, name: fmt::Arguments<'_>) {
+pub(super) fn engage(logged: &mut Option<Instant>, now: Instant, name: fmt::Arguments<'_>) {
     if logged.is_some_and(|at| now.duration_since(at) < WINDOW) {
         return;
     }

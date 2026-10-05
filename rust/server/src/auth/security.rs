@@ -26,9 +26,14 @@ pub const COUNTERS: usize = 10;
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Counter {
     Local = 0,
+    Oidc = 1,
     InvalidPassword = 2,
+    OidcFailure = 3,
+    GroupDenial = 4,
+    ReplayExpiry = 5,
     Throttled = 6,
     Logout = 7,
+    CliApproval = 8,
     Capacity = 9,
 }
 
@@ -45,6 +50,23 @@ pub(super) enum Reason {
     VerifierBusy,
     PasswordMismatch,
     SessionCapacity,
+    ProviderNotReady,
+    TransactionCapacity,
+    ExchangeRateLimited,
+    CallbackParameters,
+    TransactionCookie,
+    TransactionReplay,
+    ResponseIssuer,
+    TokenExchange,
+    MissingIdToken,
+    IdTokenVerification,
+    IdTokenClaimsOrNonce,
+    AccessTokenHash,
+    UserInfoOrSubject,
+    UserInfoClaims,
+    /// No allowed group: reported as `userinfo_claims_or_group`, counted apart.
+    GroupDenied,
+    InvalidSubject,
 }
 
 impl Reason {
@@ -60,18 +82,32 @@ impl Reason {
             Self::VerifierBusy => "verifier_busy",
             Self::PasswordMismatch => "password_mismatch",
             Self::SessionCapacity => "session_capacity",
+            Self::ProviderNotReady => "provider_not_ready",
+            Self::TransactionCapacity => "transaction_capacity",
+            Self::ExchangeRateLimited => "exchange_rate_limited",
+            Self::CallbackParameters => "callback_parameters",
+            Self::TransactionCookie => "transaction_cookie",
+            Self::TransactionReplay => "transaction_replay_or_expiry",
+            Self::ResponseIssuer => "response_issuer",
+            Self::TokenExchange => "token_exchange",
+            Self::MissingIdToken => "missing_id_token",
+            Self::IdTokenVerification => "id_token_verification",
+            Self::IdTokenClaimsOrNonce => "id_token_claims_or_nonce",
+            Self::AccessTokenHash => "access_token_hash",
+            Self::UserInfoOrSubject => "userinfo_or_subject",
+            Self::UserInfoClaims | Self::GroupDenied => "userinfo_claims_or_group",
+            Self::InvalidSubject => "invalid_subject",
         }
     }
 
     pub fn notice(self) -> &'static str {
         match self {
-            Self::VerifierBusy | Self::SessionCapacity => "busy",
+            Self::ProviderNotReady => "provider",
+            Self::VerifierBusy | Self::SessionCapacity | Self::TransactionCapacity => "busy",
             Self::Throttled => "throttled",
             Self::PasswordMismatch => "password",
-            Self::CsrfCookieMissing | Self::CsrfTokenMissing => "stale",
-            Self::CsrfOriginMissing | Self::CsrfOriginMismatch | Self::CsrfTokenMismatch | Self::MalformedForm => {
-                "failed"
-            }
+            Self::CsrfCookieMissing | Self::CsrfTokenMissing | Self::TransactionCookie => "stale",
+            _ => "failed",
         }
     }
 }
@@ -103,7 +139,9 @@ impl Security {
         match reason {
             Reason::Throttled => self.count(Counter::Throttled),
             Reason::PasswordMismatch => self.count(Counter::InvalidPassword),
-            Reason::SessionCapacity => self.count(Counter::Capacity),
+            Reason::SessionCapacity | Reason::TransactionCapacity => self.count(Counter::Capacity),
+            Reason::TransactionReplay => self.count(Counter::ReplayExpiry),
+            Reason::GroupDenied => self.count(Counter::GroupDenial),
             _ => {}
         }
     }
