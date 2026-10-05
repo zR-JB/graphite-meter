@@ -69,7 +69,13 @@ impl Upload {
             tokio::join!(funding, progress(session, feed));
             future::pending::<()>().await;
         });
-        let mut datagrams = self.datagrams.then(|| self.join(lane).ok()).flatten();
+        // The session is one transfer however many streams it reads.
+        let transfer = self.uploads.meter().open();
+        let join = || {
+            self.uploads
+                .begin(&self.id, self.owner.as_ref(), lane.clone(), transfer.clone())
+        };
+        let mut datagrams = self.datagrams.then(|| join().ok()).flatten();
         let mut finalized = pin!(OptionFuture::from(datagrams.as_ref().map(UploadSink::finished)));
         let (mut streams, mut refusals) = (FuturesUnordered::new(), FuturesUnordered::new());
         loop {
@@ -88,7 +94,7 @@ impl Upload {
                     let Some(stream) = stream else { return };
                     // Dropping a stream stops it with code 0.
                     if streams.len() < MAX_STREAMS {
-                        match self.join(lane) {
+                        match join() {
                             Ok(sink) => streams.push(receive(stream, sink)),
                             Err(refusal) if refusals.is_empty() => refusals.push(refuse(session, refusal)),
                             Err(_) => {}
@@ -97,10 +103,6 @@ impl Upload {
                 }
             }
         }
-    }
-
-    fn join(&self, lane: &Lane) -> Result<UploadSink, UploadRefusal> {
-        self.uploads.begin(&self.id, self.owner.as_ref(), lane.clone())
     }
 }
 

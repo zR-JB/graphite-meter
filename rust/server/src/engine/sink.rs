@@ -9,11 +9,11 @@ pub struct UploadSink {
     aggregate: Arc<Aggregate>,
     lane: Lane,
     bytes: u64,
-    transfer: Option<Transfer>,
+    transfer: Option<Arc<Transfer>>,
 }
 
 impl UploadSink {
-    pub(super) fn new(aggregate: Arc<Aggregate>, lane: Lane, transfer: Option<Transfer>) -> Self {
+    pub(super) fn new(aggregate: Arc<Aggregate>, lane: Lane, transfer: Option<Arc<Transfer>>) -> Self {
         Self { aggregate, lane, bytes: 0, transfer }
     }
 

@@ -340,7 +340,8 @@ impl App {
             Err(unadmitted) => return Outcome::Response(unadmitted.into()),
         };
         let id = query::get(request.uri().query(), "id").unwrap_or_default();
-        let mut sink = match self.uploads.begin(&id, peer.keys().as_ref(), lane.clone()) {
+        let transfer = self.uploads.meter().open();
+        let mut sink = match self.uploads.begin(&id, peer.keys().as_ref(), lane.clone(), transfer) {
             Ok(sink) => sink,
             Err(refusal) => return Outcome::Response(response::upload_refusal(refusal)),
         };

@@ -1,7 +1,7 @@
 //! Upload aggregates (`api/upload.md`): server-minted IDs bound to their owner, capacity with displacement before
 //! the first byte, tombstones and retention.
 
-use super::{Meter, ProgressFeed, UploadSink};
+use super::{Meter, ProgressFeed, UploadSink, meter::Transfer};
 use crate::{
     lane::Lane,
     limits::{Hold, Quota, Refusal},
@@ -224,10 +224,16 @@ impl Uploads {
         Some(format!("{ID_PREFIX}{}", URL_SAFE_NO_PAD.encode(id)))
     }
 
-    /// Joins `id`'s aggregate as a data lane that `lane` bounds.
-    pub fn begin(&self, id: &str, owner: Option<&ClientKeys>, lane: Lane) -> Result<UploadSink, UploadRefusal> {
+    /// Joins `id`'s aggregate as a data lane that `lane` bounds, its bytes counted in `transfer`.
+    pub fn begin(
+        &self,
+        id: &str,
+        owner: Option<&ClientKeys>,
+        lane: Lane,
+        transfer: Option<Arc<Transfer>>,
+    ) -> Result<UploadSink, UploadRefusal> {
         let aggregate = self.access(id, owner, Access::Join)?;
-        Ok(UploadSink::new(aggregate, lane, self.0.meter.open()))
+        Ok(UploadSink::new(aggregate, lane, transfer))
     }
 
     pub fn meter(&self) -> &Meter {

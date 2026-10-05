@@ -29,7 +29,7 @@ impl Block {
 
     /// A source of `bytes` payload bytes, one running transfer of the meter while any of its clones lives.
     pub fn source(&self, bytes: u64) -> DownloadSource {
-        let transfer = (bytes > 0).then(|| self.meter.open()).flatten().map(Arc::new);
+        let transfer = (bytes > 0).then(|| self.meter.open()).flatten();
         DownloadSource { block: self.bytes.clone(), remaining: bytes, transfer }
     }
 

@@ -56,7 +56,7 @@ async fn ids_are_signed_by_their_store_and_create_state_only_while_fresh() {
     forged[20] = if forged[20] == b'A' { b'B' } else { b'A' };
     let forged = String::from_utf8(forged).unwrap();
     for refused in [forged.as_str(), "gmu_", "", &id[..78]] {
-        assert_eq!(uploads.begin(refused, Some(&owner), lane()).err(), Some(UploadRefusal::Invalid));
+        assert_eq!(uploads.begin(refused, Some(&owner), lane(), None).err(), Some(UploadRefusal::Invalid));
     }
     let elsewhere = Uploads::new([8; 32], Meter::default());
     assert_eq!(elsewhere.subscribe(&id, Some(&owner)).err(), Some(UploadRefusal::Invalid));
@@ -68,24 +68,31 @@ async fn ids_are_signed_by_their_store_and_create_state_only_while_fresh() {
 
     let unused = uploads.mint().unwrap();
     advance(Duration::from_secs(60)).await;
-    drop(uploads.begin(&id, Some(&owner), lane()).unwrap());
+    drop(uploads.begin(&id, Some(&owner), lane(), None).unwrap());
     advance(Duration::from_secs(61)).await;
-    assert_eq!(uploads.begin(&unused, Some(&owner), lane()).err(), Some(UploadRefusal::Invalid));
-    assert!(uploads.begin(&id, Some(&owner), lane()).is_ok(), "an aggregate outlives its ID's window");
+    assert_eq!(uploads.begin(&unused, Some(&owner), lane(), None).err(), Some(UploadRefusal::Invalid));
+    assert!(
+        uploads.begin(&id, Some(&owner), lane(), None).is_ok(),
+        "an aggregate outlives its ID's window"
+    );
 }
 
 #[tokio::test(start_paused = true)]
 async fn an_owner_is_its_narrowest_key_and_an_ambiguous_peer_owns_nothing() {
     let uploads = Uploads::new([7; 32], Meter::new(true));
     let id = uploads.mint().unwrap();
-    drop(uploads.begin(&id, Some(&client("2001:db8:1:2::1")), lane()).unwrap());
+    drop(
+        uploads
+            .begin(&id, Some(&client("2001:db8:1:2::1")), lane(), None)
+            .unwrap(),
+    );
     assert!(
         uploads.checkpoint(&id, Some(&client("2001:db8:1:2:ff::9"))).is_ok(),
         "one /64 is one owner"
     );
     let other = Some(client("2001:db8:1:3::1"));
     let refusals = [
-        uploads.begin(&id, other.as_ref(), lane()).err(),
+        uploads.begin(&id, other.as_ref(), lane(), None).err(),
         uploads.subscribe(&id, other.as_ref()).err(),
         uploads.checkpoint(&id, other.as_ref()).err(),
         uploads.finish(&id, other.as_ref()).err(),
@@ -99,7 +106,7 @@ async fn an_owner_is_its_narrowest_key_and_an_ambiguous_peer_owns_nothing() {
     assert_eq!(uploads.checkpoint(&delegated, Some(&login)).err(), Some(UploadRefusal::OwnerMismatch));
 
     let fresh = uploads.mint().unwrap();
-    assert_eq!(uploads.begin(&fresh, None, lane()).err(), Some(UploadRefusal::OwnerMismatch));
+    assert_eq!(uploads.begin(&fresh, None, lane(), None).err(), Some(UploadRefusal::OwnerMismatch));
     assert_eq!(uploads.subscribe(&fresh, None).err(), Some(UploadRefusal::OwnerMismatch));
     assert_eq!(uploads.checkpoint(&fresh, None).err(), Some(UploadRefusal::Invalid));
     assert_eq!(uploads.finish(&id, None).err(), Some(UploadRefusal::OwnerMismatch));
@@ -135,11 +142,13 @@ async fn at_capacity_only_the_stalest_empty_aggregate_is_displaced_and_stays_ref
     let finished = uploads.mint().unwrap();
     drop(uploads.subscribe(&finished, Some(&owner)).unwrap());
     uploads.finish(&finished, Some(&owner)).unwrap();
-    let _laned = uploads.begin(&uploads.mint().unwrap(), Some(&owner), lane()).unwrap();
+    let _laned = uploads
+        .begin(&uploads.mint().unwrap(), Some(&owner), lane(), None)
+        .unwrap();
     for index in 0..MAX_LIVE - 4 {
         let keys = client(&format!("198.51.100.{}", index / 30));
         uploads
-            .begin(&uploads.mint().unwrap(), Some(&keys), lane())
+            .begin(&uploads.mint().unwrap(), Some(&keys), lane(), None)
             .unwrap()
             .record(1);
     }
@@ -147,14 +156,14 @@ async fn at_capacity_only_the_stalest_empty_aggregate_is_displaced_and_stays_ref
 
     let newcomer = client("203.0.113.1");
     let _joined = uploads
-        .begin(&uploads.mint().unwrap(), Some(&newcomer), lane())
+        .begin(&uploads.mint().unwrap(), Some(&newcomer), lane(), None)
         .unwrap();
     assert_eq!(record(&mut displaced).await, Some(invalid()));
     assert_eq!(line(&mut displaced).await, None);
     let refused = uploads.subscribe(&stalest, Some(&owner)).err();
     assert_eq!(refused, Some(UploadRefusal::Invalid), "a displaced ID is refused while it is fresh");
     let _second = uploads
-        .begin(&uploads.mint().unwrap(), Some(&newcomer), lane())
+        .begin(&uploads.mint().unwrap(), Some(&newcomer), lane(), None)
         .unwrap();
     assert_eq!(uploads.checkpoint(&newer, Some(&owner)).err(), Some(UploadRefusal::Invalid));
     let full = uploads.subscribe(&uploads.mint().unwrap(), Some(&newcomer)).err();
@@ -164,7 +173,7 @@ async fn at_capacity_only_the_stalest_empty_aggregate_is_displaced_and_stays_ref
 #[tokio::test(start_paused = true)]
 async fn retention_outlasts_observers_but_not_an_idle_aggregate() {
     let (uploads, owner, id) = fixture();
-    let mut sink = uploads.begin(&id, Some(&owner), lane()).unwrap();
+    let mut sink = uploads.begin(&id, Some(&owner), lane(), None).unwrap();
     sink.record(42);
     advance(RETENTION * 2).await;
     assert_eq!(uploads.checkpoint(&id, Some(&owner)).unwrap().bytes(), 42, "a live lane keeps it");
@@ -191,7 +200,7 @@ async fn progress_follows_every_hundred_milliseconds_after_the_first_chunk() {
     assert_eq!(line(&mut feed).await, Some(Some(Record::Ready)));
     assert_eq!(line(&mut feed).await, Some(None));
     assert_eq!(start.elapsed(), HEARTBEAT_AFTER, "a heartbeat after a second without a line");
-    let mut sink = uploads.begin(&id, Some(&owner), lane()).unwrap();
+    let mut sink = uploads.begin(&id, Some(&owner), lane(), None).unwrap();
     sink.record(10);
     let Some(Record::Progress(first)) = record(&mut feed).await else {
         panic!("no progress")
@@ -213,7 +222,10 @@ async fn a_finished_upload_completes_once_its_lanes_drain_and_takes_no_new_lane(
     let (uploads, owner, id) = fixture();
     let mut feed = uploads.subscribe(&id, Some(&owner)).unwrap();
     assert_eq!(record(&mut feed).await, Some(Record::Ready));
-    let mut lanes = [lane(), lane()].map(|lane| uploads.begin(&id, Some(&owner), lane).unwrap());
+    let mut lanes = [lane(), lane()].map(|lane| {
+        let transfer = uploads.meter().open();
+        uploads.begin(&id, Some(&owner), lane, transfer).unwrap()
+    });
     lanes[0].record(100);
     lanes[1].record(230);
     assert!(matches!(record(&mut feed).await, Some(Record::Progress(counters)) if counters.bytes() == 330));
@@ -236,7 +248,7 @@ async fn a_finished_upload_completes_once_its_lanes_drain_and_takes_no_new_lane(
     assert_eq!(complete.bytes(), 330);
     assert!(complete.nanos() > 0);
     assert_eq!(line(&mut feed).await, None);
-    assert_eq!(uploads.begin(&id, Some(&owner), lane()).err(), Some(UploadRefusal::Invalid));
+    assert_eq!(uploads.begin(&id, Some(&owner), lane(), None).err(), Some(UploadRefusal::Invalid));
     assert_eq!(uploads.checkpoint(&id, Some(&owner)).unwrap().bytes(), 330);
     let mut replay = uploads.subscribe(&id, Some(&owner)).unwrap();
     assert_eq!(record(&mut replay).await, Some(Record::Ready));
@@ -255,7 +267,7 @@ async fn lifecycle_changes_wake_a_waiting_feed_at_once() {
     };
     let replaced = waiting(uploads.subscribe(&id, Some(&owner)).unwrap());
     tokio::task::yield_now().await;
-    let sink = uploads.begin(&id, Some(&owner), lane()).unwrap();
+    let sink = uploads.begin(&id, Some(&owner), lane(), None).unwrap();
     let current = waiting(uploads.subscribe(&id, Some(&owner)).unwrap());
     let start = Instant::now();
     assert_eq!(replaced.await.unwrap(), (None, start), "a newer reader ends the older feed");
@@ -271,8 +283,8 @@ async fn lifecycle_changes_wake_a_waiting_feed_at_once() {
 async fn lanes_feed_one_aggregate_and_each_chunk_moves_its_lane() {
     let (uploads, owner, id) = fixture();
     let bounded = lane();
-    let mut first = uploads.begin(&id, Some(&owner), bounded.clone()).unwrap();
-    let mut second = uploads.begin(&id, Some(&owner), lane()).unwrap();
+    let mut first = uploads.begin(&id, Some(&owner), bounded.clone(), None).unwrap();
+    let mut second = uploads.begin(&id, Some(&owner), lane(), None).unwrap();
     advance(Duration::from_secs(20)).await;
     first.record(5);
     first.record(0);

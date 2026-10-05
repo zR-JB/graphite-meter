@@ -28,14 +28,15 @@ impl Meter {
         Self(enabled.then(Arc::default))
     }
 
-    pub fn open(&self) -> Option<Transfer> {
+    /// A running transfer, one per lane, which the lane's streams share.
+    pub fn open(&self) -> Option<Arc<Transfer>> {
         let counts = self.0.as_ref()?;
         counts.transfers.fetch_add(1, Ordering::Relaxed);
-        Some(Transfer(counts.clone()))
+        Some(Arc::new(Transfer(counts.clone())))
     }
 
     /// The line for the bytes counted since the last over `window`, such as `[gm:server:download] 1.20 Gbit/s ·
-    /// 2 conns · 150.00 MB this window`; none without bytes or transfers.
+    /// 2 conns · 150.00 MB this window`, counting a conn per running lane; none without bytes or transfers.
     pub fn line(&self, direction: &str, window: Duration) -> Option<String> {
         let counts = self.0.as_ref()?;
         let bytes = counts.bytes.swap(0, Ordering::Relaxed);
