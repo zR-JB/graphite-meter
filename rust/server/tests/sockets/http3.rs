@@ -60,8 +60,22 @@ impl H3 {
         source: &str,
         transport: noq::TransportConfig,
     ) -> Result<Connection, noq::ConnectionError> {
+        self.dial(source, self.server.quic.unwrap(), transport).await
+    }
+
+    /// A connection through `relay`, an address that forwards to the listener.
+    pub(super) async fn connect_via(&self, relay: SocketAddr, transport: noq::TransportConfig) -> Connection {
+        self.dial("127.0.0.1", relay, transport).await.unwrap()
+    }
+
+    async fn dial(
+        &self,
+        source: &str,
+        target: SocketAddr,
+        transport: noq::TransportConfig,
+    ) -> Result<Connection, noq::ConnectionError> {
         let endpoint = noq::Endpoint::client(format!("{source}:0").parse().unwrap()).unwrap();
-        let connecting = endpoint.connect_with(self.client(transport), self.server.quic.unwrap(), "localhost");
+        let connecting = endpoint.connect_with(self.client(transport), target, "localhost");
         let quic = connecting.unwrap().await?;
         let (mut driver, requests) = client::new(quic.clone());
         let driver = tokio::spawn(async move { driver.drive().await });
@@ -81,7 +95,7 @@ pub(super) fn transport(window: Option<u32>) -> noq::TransportConfig {
 
 impl Connection {
     /// Opens a request whose body the caller sends.
-    async fn open(&self, method: &str, path: &str) -> (SendHalf, RecvHalf) {
+    pub(super) async fn open(&self, method: &str, path: &str) -> (SendHalf, RecvHalf) {
         let request = Request::builder()
             .method(method)
             .uri(format!("https://localhost{path}"))

@@ -1,7 +1,8 @@
 //! The running server over real sockets: HTTP/1, HTTP/2 and HTTP/3 transfers and their endings, connection bounds,
-//! WebSocket buses, WebTransport sessions and TLS.
+//! delayed links, WebSocket buses, WebTransport sessions and TLS.
 
 mod connection;
+mod delayed;
 mod http2;
 mod http3;
 mod quic;
