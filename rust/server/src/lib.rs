@@ -1,5 +1,6 @@
 //! The Graphite Meter server.
 
+pub mod app;
 pub mod auth;
 pub mod config;
 pub mod engine;
@@ -7,6 +8,7 @@ pub mod lane;
 pub mod limits;
 pub mod log;
 pub mod peer;
+pub mod transport;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 

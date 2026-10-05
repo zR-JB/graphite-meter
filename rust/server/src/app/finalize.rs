@@ -1,0 +1,97 @@
+//! The headers every answer gets last: who may read it from another origin, hardening, Alt-Svc on bootstrap probe
+//! answers and connection hints.
+
+use super::App;
+use crate::{auth::Auth, transport::body::Body};
+use graphite_meter_proto::route::Route;
+use http::{HeaderMap, HeaderValue, Response, Version, header};
+
+/// Who may read an answer from another origin.
+#[derive(Debug, Clone, Copy)]
+pub enum Access<'a> {
+    /// Anyone, without credentials: authentication is off.
+    Public,
+    /// The UI origin, with its session cookie.
+    Cookie(&'a HeaderValue),
+    /// An approved browser origin, with a bearer grant.
+    Bearer(&'a HeaderValue),
+}
+
+impl Access<'_> {
+    /// The headers of any answer, replacing those of a broader access.
+    pub fn apply(self, headers: &mut HeaderMap) {
+        const PUBLIC: &str = "X-Graphite-Upload-Refusal, Retry-After";
+        const AUTH: &str = "X-Graphite-Upload-Refusal, Retry-After, Graphite-Meter-Auth, Graphite-Meter-Auth-URL";
+        const BEARER: &str = "X-Graphite-Upload-Refusal, Retry-After, Graphite-Meter-Auth, Graphite-Meter-Auth-URL, \
+                              Graphite-Meter-Browser-Auth";
+        let (origin, exposed) = match self {
+            Self::Public => (HeaderValue::from_static("*"), PUBLIC),
+            Self::Cookie(origin) => (origin.clone(), AUTH),
+            Self::Bearer(origin) => (origin.clone(), BEARER),
+        };
+        headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin.clone());
+        headers.insert("timing-allow-origin", origin);
+        headers.insert(header::ACCESS_CONTROL_EXPOSE_HEADERS, HeaderValue::from_static(exposed));
+        headers.remove(header::ACCESS_CONTROL_ALLOW_CREDENTIALS);
+        if let Self::Cookie(_) = self {
+            headers.insert(header::ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
+        }
+        if !matches!(self, Self::Public) {
+            headers.append(header::VARY, HeaderValue::from_static("Origin"));
+        }
+    }
+
+    /// The headers of a route's answer, which also answer its preflight.
+    pub fn apply_measurement(self, headers: &mut HeaderMap) {
+        self.apply(headers);
+        let allowed = match self {
+            Self::Public => "*",
+            Self::Cookie(_) => "Authorization, Content-Type, X-CSRF-Token",
+            Self::Bearer(_) => "Authorization, Content-Type",
+        };
+        let methods = HeaderValue::from_static("GET, POST, DELETE, OPTIONS");
+        headers.insert(header::ACCESS_CONTROL_ALLOW_METHODS, methods);
+        headers.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static(allowed));
+        headers.insert(header::ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("7200"));
+    }
+}
+
+/// The hardening headers, and HSTS once a request is known to have arrived over TLS.
+pub fn harden(headers: &mut HeaderMap, secure: bool) {
+    headers.insert("referrer-policy", HeaderValue::from_static("same-origin"));
+    headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    let permissions = HeaderValue::from_static("camera=(), microphone=(), geolocation=()");
+    headers.insert("permissions-policy", permissions);
+    if secure {
+        headers.insert(header::STRICT_TRANSPORT_SECURITY, HeaderValue::from_static("max-age=31536000"));
+    }
+}
+
+/// Ends an HTTP/1 connection after this answer; later versions carry no connection headers.
+pub fn close(headers: &mut HeaderMap, version: Version) {
+    if version <= Version::HTTP_11 {
+        headers.insert(header::CONNECTION, HeaderValue::from_static("close"));
+    }
+}
+
+impl App {
+    /// Applies the headers of an answer to a request for `route`; a bootstrap probe answer names the HTTP/3 port.
+    pub(super) fn finalize(
+        &self,
+        response: &mut Response<Body>,
+        route: Option<Route>,
+        bootstrap: bool,
+        version: Version,
+    ) {
+        let headers = response.headers_mut();
+        if route.is_some() {
+            match self.auth {
+                Auth::Off => Access::Public.apply_measurement(headers),
+            }
+        }
+        if bootstrap && let Some(alt_svc) = &self.alt_svc {
+            headers.insert(header::ALT_SVC, alt_svc.clone());
+            close(headers, version);
+        }
+    }
+}

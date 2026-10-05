@@ -3,20 +3,22 @@
 pub mod password;
 
 use crate::{
-    config::ListenerKind,
+    app::Endpoint,
     peer::{ClientKeys, Peer},
+    transport::body::Body,
 };
+use http::{Request, Response};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-/// What authorization decided for a request answered with `R`.
+/// What authorization decided for a request.
 #[derive(Debug)]
-pub enum Decision<R> {
+pub enum Decision {
     /// Serve it, as the lease's holder when signed in.
     Allow(Option<AuthLease>),
-    Refuse(R),
+    Refuse(Response<Body>),
     /// Authentication answered it itself: a sign-in page or an auth route.
-    Handled(R),
+    Handled(Response<Body>),
 }
 
 /// The configured authentication.
@@ -27,7 +29,7 @@ pub enum Auth {
 }
 
 impl Auth {
-    pub fn authorize<B, R>(&self, _request: &http::Request<B>, _listener: ListenerKind, _peer: &Peer) -> Decision<R> {
+    pub fn authorize<B>(&self, _request: &Request<B>, _endpoint: Endpoint, _peer: &Peer) -> Decision {
         match self {
             Self::Off => Decision::Allow(None),
         }
@@ -81,9 +83,9 @@ mod tests {
 
     #[test]
     fn with_authentication_off_every_request_is_anonymous() {
-        let request = http::Request::new(());
+        let request = Request::new(());
         let peer = Peer::new(Address::Socket("192.0.2.1".parse().unwrap()));
-        let decision: Decision<()> = Auth::Off.authorize(&request, ListenerKind::H1, &peer);
+        let decision = Auth::Off.authorize(&request, Endpoint::H1, &peer);
         assert!(matches!(decision, Decision::Allow(None)));
     }
 }
