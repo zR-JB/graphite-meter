@@ -11,6 +11,7 @@ use bytes::Bytes;
 use graphite_meter_proto::{
     discovery::{Protocol, ThroughputTransport},
     origin::Origin,
+    refusal::UploadRefusal,
     route::Route,
 };
 use http::Method;
@@ -23,7 +24,7 @@ use std::{
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tokio::{runtime::Handle, task::JoinSet};
+use tokio::{runtime::Handle, sync::watch, task::JoinSet};
 use tokio_util::sync::CancellationToken;
 
 /// The bytes each WebTransport download stream carries.
@@ -98,7 +99,7 @@ pub struct Lanes {
     tally: Arc<Tally>,
     tasks: JoinSet<Option<Fault>>,
     count: usize,
-    failed: Option<Failure>,
+    failed: Option<Fault>,
 }
 
 /// What a direction's lanes report, shared across their runtimes.
@@ -108,6 +109,8 @@ struct Tally {
     ready: AtomicUsize,
     /// Each lane's failure while it retries without moving bytes.
     retrying: Mutex<Vec<Option<Failure>>>,
+    /// The latest session upload lanes opened.
+    session: watch::Sender<Option<Arc<Session>>>,
 }
 
 impl Tally {
@@ -172,15 +175,28 @@ impl Lanes {
                 Ok(None) => continue,
                 Err(error) => Fault::Lost(error.to_string()),
             };
-            self.failed.get_or_insert_with(|| fault.failure());
+            self.failed.get_or_insert(fault);
         }
-        if let Some(failure) = &self.failed {
-            return LaneHealth::Failed(failure.clone());
+        if let Some(fault) = &self.failed {
+            return LaneHealth::Failed(fault.failure());
         }
         match lock(&self.tally.retrying).iter().flatten().next() {
             Some(failure) => LaneHealth::Retrying(failure.clone()),
             None => LaneHealth::Ok,
         }
+    }
+
+    /// The upload refusal a lane's fault stood for, once `health` saw it.
+    pub fn refusal(&self) -> Option<UploadRefusal> {
+        match self.failed {
+            Some(Fault::Refused(refusal)) => Some(refusal),
+            _ => None,
+        }
+    }
+
+    /// The latest session WebTransport upload lanes opened, whose first server stream carries the receiver's feed.
+    pub fn session(&self) -> watch::Receiver<Option<Arc<Session>>> {
+        self.tally.session.subscribe()
     }
 }
 
@@ -314,7 +330,7 @@ impl Group {
         let (ThroughputPath { origin, protocol, .. }, client) = (&self.plan.path, &self.client);
         let conn = match self.plan.carrier {
             Carrier::Session => {
-                let session = self.session.get(self.dial_session()).await?;
+                let session = self.session.get(self.dial_session(tally)).await?;
                 return match &self.job {
                     Job::Download => receive(&session, lane, tally).await,
                     Job::Upload { block, .. } => send(&session, block, lane, tally).await,
@@ -333,8 +349,8 @@ impl Group {
         }
     }
 
-    /// The group's session, dialed on the lane's runtime.
-    async fn dial_session(&self) -> Result<Arc<Session>, Fault> {
+    /// The group's session, dialed on the lane's runtime; an upload's is announced for its feed.
+    async fn dial_session(&self, tally: &Tally) -> Result<Arc<Session>, Fault> {
         let (route, query) = match &self.job {
             Job::Download => {
                 let streams = self.plan.lanes.len().to_string();
@@ -344,7 +360,11 @@ impl Group {
         };
         let home = Handle::current();
         let session = self.client.session_on(&home, &self.plan.path.origin, route, query);
-        Ok(Arc::new(session.await?))
+        let session = Arc::new(session.await?);
+        if let Job::Upload { .. } = self.job {
+            tally.session.send_replace(Some(session.clone()));
+        }
+        Ok(session)
     }
 
     fn request(&self, method: Method, route: Route, query: Vec<(&'static str, String)>) -> Request {

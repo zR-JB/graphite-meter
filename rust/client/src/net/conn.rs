@@ -122,7 +122,7 @@ impl Conn {
     }
 
     /// Another handle to a multiplexed connection; none for HTTP/1.1.
-    pub(super) fn share(&self) -> Option<Self> {
+    pub fn share(&self) -> Option<Self> {
         match self {
             Self::Http1 { .. } => None,
             Self::Http2(sender) => Some(Self::Http2(sender.clone())),

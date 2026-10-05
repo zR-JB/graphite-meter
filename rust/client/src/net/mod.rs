@@ -13,7 +13,7 @@ pub use bus::{Bus, LatencyPath};
 pub use conn::{Conn, Decode, Incoming, Payload, ReadBuffer};
 pub use fault::{Class, Fault};
 pub use lanes::{Carrier, GroupPlan, Lanes, ThroughputPath, Work, topology};
-pub use retry::{Attempt, REDIAL_WINDOW, Retry};
+pub use retry::{Attempt, REDIAL_WINDOW, Retry, retrying};
 pub use session::Session;
 
 use conn::Answer;
@@ -119,6 +119,11 @@ impl Client {
     /// A connection of its own to `origin`, dialed on the current runtime, which then runs it.
     pub async fn dial(&self, origin: &Origin, via: Protocol, buffer: ReadBuffer) -> Result<Conn, Fault> {
         Conn::dial(self, origin, via, buffer, Some(&Handle::current())).await
+    }
+
+    /// A connection of its own for control requests to `origin`; a QUIC one runs on the next pinned runtime.
+    pub async fn dial_control(&self, origin: &Origin, via: Protocol) -> Result<Conn, Fault> {
+        Conn::dial(self, origin, via, ReadBuffer::Adaptive, None).await
     }
 
     /// Keeps `issuer`'s grant for its requests and its enrolled targets'; a token no header can carry is dropped,

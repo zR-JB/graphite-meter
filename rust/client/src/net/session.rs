@@ -81,7 +81,7 @@ impl Session {
     }
 
     /// What `error` on one of the session's streams means: the session's ending once it ended.
-    pub(super) fn fault(&self, error: http3::Error) -> Fault {
+    pub fn fault(&self, error: http3::Error) -> Fault {
         self.ended().unwrap_or_else(|| http3_fault(error))
     }
 
@@ -90,7 +90,8 @@ impl Session {
             .unwrap_or_else(|| Fault::Lost("WebTransport session ended".into()))
     }
 
-    pub(super) async fn accept_uni(&self) -> Result<RecvStream, Fault> {
+    /// The next stream the server opened.
+    pub async fn accept_uni(&self) -> Result<RecvStream, Fault> {
         self.session.accept_uni().await.ok_or_else(|| self.gone())
     }
 

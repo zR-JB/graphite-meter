@@ -52,6 +52,20 @@ impl Retry {
     }
 }
 
+/// `attempt`'s result once it succeeds or its fault stands.
+pub async fn retrying<T, F: Future<Output = Result<T, Fault>>>(mut attempt: impl FnMut() -> F) -> Result<T, Fault> {
+    let mut retry = Retry::default();
+    loop {
+        let started = Instant::now();
+        let fault = match attempt().await {
+            Ok(value) => return Ok(value),
+            Err(fault) => fault,
+        };
+        let pause = retry.after(fault, Attempt { started, moved: false }, Instant::now())?;
+        tokio::time::sleep(pause).await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
