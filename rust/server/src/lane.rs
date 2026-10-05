@@ -24,7 +24,12 @@ pub struct Exchange {
 
 impl Exchange {
     pub fn start() -> Self {
-        Self { deadline: Instant::now() + EXCHANGE_BOUND }
+        Self::until(Instant::now() + EXCHANGE_BOUND)
+    }
+
+    /// An exchange that began before its request was parsed, such as at the first byte of an HTTP/1 head.
+    pub fn until(deadline: Instant) -> Self {
+        Self { deadline }
     }
 
     pub fn deadline(&self) -> Instant {

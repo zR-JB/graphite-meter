@@ -8,6 +8,7 @@ pub mod lane;
 pub mod limits;
 pub mod log;
 pub mod peer;
+pub mod runtime;
 pub mod transport;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};

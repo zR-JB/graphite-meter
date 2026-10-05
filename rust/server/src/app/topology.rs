@@ -50,6 +50,20 @@ impl Endpoint {
         matches!(self, Self::H3Companion)
     }
 
+    /// What its startup line says it serves.
+    pub const fn role(self, auth: bool) -> &'static str {
+        match self {
+            Self::H1 if auth => {
+                "HTTP/1.1 clear: trusted proxy upstream only; direct requests are refused, GET / redirects to HTTPS"
+            }
+            Self::H1 => "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets",
+            Self::H1Tls => "HTTPS/WSS HTTP/1.1: UI, discovery, probe, transfers, WebSockets",
+            Self::H2 => "HTTPS HTTP/2: measurement probe, transfers, progress only",
+            Self::H3Companion => "HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe, upload and ticket control",
+            Self::Quic => "HTTP/3: probe, transfers, progress, WebTransport",
+        }
+    }
+
     /// The listener setting it belongs to.
     pub const fn listener(self) -> ListenerKind {
         match self {

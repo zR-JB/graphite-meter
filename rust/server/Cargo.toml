@@ -19,14 +19,20 @@ h2.workspace = true
 hmac.workspace = true
 http.workspace = true
 http-body.workspace = true
+hyper = { workspace = true, features = ["http1", "server"] }
+hyper-util.workspace = true
 ipnet.workspace = true
 noq.workspace = true
 percent-encoding.workspace = true
 ring.workspace = true
+rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-tokio = { workspace = true, features = ["macros", "sync", "time"] }
+socket2.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-rustls.workspace = true
+tokio-tungstenite.workspace = true
 tokio-util.workspace = true
 zeroize.workspace = true
 
@@ -34,8 +40,9 @@ zeroize.workspace = true
 rustix = { workspace = true, features = ["termios"] }
 
 [dev-dependencies]
+graphite-meter-testkit.workspace = true
 http-body-util.workspace = true
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "test-util"] }
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

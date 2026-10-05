@@ -24,10 +24,20 @@ pub fn write(message: fmt::Arguments<'_>) {
 }
 
 fn timestamp(time: SystemTime) -> String {
+    let [year, month, day, hour, minute, second] = utc(time);
+    format!("{year:04}/{month:02}/{day:02} {hour:02}:{minute:02}:{second:02}")
+}
+
+/// A whole-second UTC time as Go's `time.RFC3339` prints it, such as `2026-10-04T23:59:59Z`.
+pub fn rfc3339(time: SystemTime) -> String {
+    let [year, month, day, hour, minute, second] = utc(time);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
+fn utc(time: SystemTime) -> [u64; 6] {
     let seconds = time.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
     let (year, month, day) = civil(seconds / 86_400);
-    let (hour, minute, second) = (seconds / 3600 % 24, seconds / 60 % 60, seconds % 60);
-    format!("{year:04}/{month:02}/{day:02} {hour:02}:{minute:02}:{second:02}")
+    [year, month, day, seconds / 3600 % 24, seconds / 60 % 60, seconds % 60]
 }
 
 /// The proleptic Gregorian date of a day count since 1970-01-01.
@@ -118,6 +128,7 @@ mod tests {
         assert_eq!(at(951_782_400), "2000/02/29 00:00:00");
         assert_eq!(at(1_791_158_399), "2026/10/04 23:59:59");
         assert_eq!(at(4_107_542_400), "2100/03/01 00:00:00");
+        assert_eq!(rfc3339(UNIX_EPOCH + Duration::from_millis(1_791_158_399_500)), "2026-10-04T23:59:59Z");
     }
 
     #[test]

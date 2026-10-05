@@ -1,0 +1,254 @@
+//! The one accept-and-drain loop: connection holds, retries after failed accepts, connections on the pinned runtimes,
+//! and the drain at shutdown.
+
+use crate::{limits::Hold, log};
+use futures_util::FutureExt;
+use graphite_meter_net::Pool;
+use graphite_meter_proto::duration;
+use std::{any::Any, future::Future, io, net::SocketAddr, panic::AssertUnwindSafe, time::Duration};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    task::JoinSet,
+    time::{sleep, timeout},
+};
+use tokio_util::sync::CancellationToken;
+
+/// Running connections finish within this once shutdown begins.
+pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+/// A failed accept is retried after a delay doubling from the first to the last.
+const RETRY_FIRST: Duration = Duration::from_millis(5);
+const RETRY_LAST: Duration = Duration::from_secs(1);
+
+/// A socket connections are accepted from.
+pub trait Listen {
+    type Connection: Send + 'static;
+
+    fn accept(&mut self) -> impl Future<Output = io::Result<(Self::Connection, SocketAddr)>> + Send;
+
+    /// The socket in accept failure lines, such as `tcp [::]:7246`.
+    fn name(&self) -> String;
+}
+
+impl Listen for TcpListener {
+    type Connection = TcpStream;
+
+    async fn accept(&mut self) -> io::Result<(TcpStream, SocketAddr)> {
+        TcpListener::accept(self).await
+    }
+
+    fn name(&self) -> String {
+        self.local_addr()
+            .map_or_else(|_| "tcp".into(), |address| format!("tcp {address}"))
+    }
+}
+
+/// Accepts until `shutdown`, holding each connection's share from `hold` (refused on `None`) and running `serve`'s
+/// future on a runtime of `pool`. Then the listener closes at once, so new connections are refused, and running ones
+/// get `SHUTDOWN_GRACE`. Ends early only with the error of a socket that no longer listens.
+pub async fn serve<L, F>(
+    mut listener: L,
+    pool: &Pool,
+    shutdown: &CancellationToken,
+    hold: impl Fn(SocketAddr) -> Option<Hold>,
+    serve: impl Fn(L::Connection, SocketAddr) -> F,
+) -> io::Result<()>
+where
+    L: Listen,
+    F: Future<Output = ()> + Send + 'static,
+{
+    let mut connections = JoinSet::new();
+    let mut delay = Duration::ZERO;
+    let result = loop {
+        let accepted = tokio::select! {
+            biased;
+            () = shutdown.cancelled() => break Ok(()),
+            Some(_) = connections.join_next() => continue,
+            accepted = listener.accept() => accepted,
+        };
+        let (connection, peer) = match accepted {
+            Ok(accepted) => accepted,
+            Err(error) if error.kind() == io::ErrorKind::InvalidInput => break Err(error),
+            Err(error) => {
+                delay = (delay * 2).clamp(RETRY_FIRST, RETRY_LAST);
+                let (name, retry) = (listener.name(), duration::format(delay));
+                log!("http: Accept error: accept {name}: {error}; retrying in {retry}");
+                tokio::select! {
+                    () = shutdown.cancelled() => break Ok(()),
+                    () = sleep(delay) => continue,
+                }
+            }
+        };
+        delay = Duration::ZERO;
+        let peer = SocketAddr::new(peer.ip().to_canonical(), peer.port());
+        let Some(held) = hold(peer) else {
+            continue;
+        };
+        let serving = AssertUnwindSafe(serve(connection, peer)).catch_unwind();
+        let task = async move {
+            let _held = held;
+            if let Err(panic) = serving.await {
+                log!("http: panic serving {peer}: {}", message(&*panic));
+            }
+        };
+        connections.spawn_on(task, &pool.next());
+    };
+    drop(listener);
+    let _ = timeout(SHUTDOWN_GRACE, async { while connections.join_next().await.is_some() {} }).await;
+    connections.shutdown().await;
+    result
+}
+
+fn message(panic: &(dyn Any + Send)) -> &str {
+    match (panic.downcast_ref::<&str>(), panic.downcast_ref::<String>()) {
+        (Some(text), _) => text,
+        (_, Some(text)) => text,
+        _ => "panic",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::limits::Quota;
+    use crate::peer::ClientKeys;
+    use std::sync::Arc;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        sync::Notify,
+        task::JoinHandle,
+    };
+
+    /// A loop on a fresh local listener whose connections run `serve`, holding shares of `quota`.
+    async fn start<F>(
+        quota: Quota,
+        serve: impl Fn(TcpStream) -> F + Send + Sync + 'static,
+    ) -> (SocketAddr, CancellationToken, JoinHandle<io::Result<()>>)
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let shutdown = CancellationToken::new();
+        let stop = shutdown.clone();
+        let task = tokio::spawn(async move {
+            let pool = Pool::new().unwrap();
+            let hold = |peer: SocketAddr| quota.acquire(&ClientKeys::address(peer.ip()), 1).ok();
+            super::serve(listener, &pool, &stop, hold, |socket, _| serve(socket)).await
+        });
+        (address, shutdown, task)
+    }
+
+    async fn greeting(address: SocketAddr) -> io::Result<String> {
+        let mut socket = TcpStream::connect(address).await?;
+        let mut text = String::new();
+        socket.read_to_string(&mut text).await?;
+        Ok(text)
+    }
+
+    async fn greet(mut socket: TcpStream) {
+        let _ = socket.write_all(b"hello").await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_panic_in_one_connection_leaves_the_listener_serving() {
+        let quota = Quota::new(10, 10);
+        let first = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let serve = move |socket: TcpStream| {
+            let panics = first.swap(false, std::sync::atomic::Ordering::Relaxed);
+            async move {
+                assert!(!panics, "connection bug");
+                greet(socket).await;
+            }
+        };
+        let (address, shutdown, task) = start(quota.clone(), serve).await;
+        assert_eq!(greeting(address).await.unwrap(), "", "the panicking connection closes");
+        assert_eq!(greeting(address).await.unwrap(), "hello");
+        let released = async {
+            while quota.usage().active > 0 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        };
+        timeout(Duration::from_secs(1), released)
+            .await
+            .expect("every connection released its hold");
+        shutdown.cancel();
+        task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_stopping_listener_refuses_connections_while_it_drains() {
+        let release = Arc::new(Notify::new());
+        let (started, started_rx) = tokio::sync::mpsc::unbounded_channel();
+        let serve = {
+            let release = release.clone();
+            move |socket: TcpStream| {
+                let (release, started) = (release.clone(), started.clone());
+                async move {
+                    let _ = started.send(());
+                    release.notified().await;
+                    greet(socket).await;
+                }
+            }
+        };
+        let (address, shutdown, task) = start(Quota::new(10, 10), serve).await;
+        let mut draining = TcpStream::connect(address).await.unwrap();
+        let mut started_rx = started_rx;
+        started_rx.recv().await.unwrap();
+        shutdown.cancel();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!task.is_finished(), "the running connection drains");
+        let refused = TcpStream::connect(address).await.unwrap_err();
+        assert_eq!(refused.kind(), io::ErrorKind::ConnectionRefused);
+        drop(TcpListener::bind(address).await.expect("the address is free again"));
+        release.notify_one();
+        let mut text = String::new();
+        draining.read_to_string(&mut text).await.unwrap();
+        assert_eq!(text, "hello", "the draining connection finished its work");
+        task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn connections_left_after_the_grace_are_cut() {
+        let quota = Quota::new(10, 10);
+        let (address, shutdown, task) = start(quota.clone(), |socket: TcpStream| async move {
+            std::future::pending::<()>().await;
+            drop(socket);
+        })
+        .await;
+        let mut socket = TcpStream::connect(address).await.unwrap();
+        while quota.usage().active == 0 {
+            tokio::task::yield_now().await;
+        }
+        let stopped = tokio::time::Instant::now();
+        shutdown.cancel();
+        task.await.unwrap().unwrap();
+        assert_eq!(stopped.elapsed(), SHUTDOWN_GRACE);
+        assert_eq!(socket.read(&mut [0; 1]).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_connection_beyond_its_share_is_closed_unserved() {
+        let quota = Quota::new(10, 1);
+        let release = Arc::new(Notify::new());
+        let serve = {
+            let release = release.clone();
+            move |socket: TcpStream| {
+                let release = release.clone();
+                async move {
+                    release.notified().await;
+                    greet(socket).await;
+                }
+            }
+        };
+        let (address, shutdown, task) = start(quota.clone(), serve).await;
+        let first = tokio::spawn(greeting(address));
+        while quota.usage().active == 0 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(greeting(address).await.unwrap(), "", "the second connection of a client is closed");
+        release.notify_one();
+        assert_eq!(first.await.unwrap().unwrap(), "hello");
+        shutdown.cancel();
+        task.await.unwrap().unwrap();
+    }
+}

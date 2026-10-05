@@ -82,3 +82,37 @@ fn hash_password_reads_twice_from_a_pipe() {
         .unwrap();
     assert_eq!(logged(line.trim_end()), "hash-password: passwords do not match");
 }
+
+#[cfg(unix)]
+#[test]
+fn sigterm_stops_a_serving_server_with_exit_zero() {
+    use std::io::{BufRead, BufReader};
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphite-meter-server"))
+        .env_clear()
+        .env("GM_H1_ADDR", "127.0.0.1:0")
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stderr.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    let role = "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets";
+    assert_eq!(
+        logged(line.trim_end()),
+        format!("graphite-meter {ENGINE_VERSION} listening on 127.0.0.1:0/tcp ({role})")
+    );
+    let killed = Command::new("kill").args(["-TERM", &child.id().to_string()]).status();
+    assert!(killed.unwrap().success());
+    assert!(child.wait().unwrap().success());
+}
+
+#[test]
+fn runtime_failures_log_a_server_error_and_exit_one() {
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = taken.local_addr().unwrap().to_string();
+    let output = server(&[], &[("GM_H1_ADDR", &address)], b"");
+    assert_eq!(output.status.code(), Some(1));
+    let line = text(&output.stderr).strip_suffix('\n').unwrap();
+    assert_eq!(logged(line), format!(r#"server error: "listen tcp {address}: address already in use""#));
+}

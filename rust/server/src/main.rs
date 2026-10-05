@@ -3,8 +3,9 @@
 use graphite_meter_proto::text::quote;
 use graphite_meter_server::{
     auth::password,
-    config::{self, ENGINE_VERSION, Loaded},
+    config::{self, Config, ENGINE_VERSION, Loaded},
     log,
+    runtime::{self, Server},
 };
 use std::{
     io::{self, BufRead, IsTerminal, Write},
@@ -23,7 +24,10 @@ fn main() -> ExitCode {
         [only] if only == "--legal" || only == "-legal" => None,
         [only] if only == "hash-password" => hash_password().err().map(|error| format!("hash-password: {error}")),
         _ => match config::load(|name| std::env::var_os(name), args, &mut io::stderr()) {
-            Ok(Loaded::Help | Loaded::Config(_)) => None,
+            Ok(Loaded::Help) => None,
+            Ok(Loaded::Config(config)) => serve(*config)
+                .err()
+                .map(|error| format!("server error: {}", quote(&error))),
             Err(error) => Some(format!("configuration error: {}", quote(&error))),
         },
     };
@@ -34,6 +38,18 @@ fn main() -> ExitCode {
         }
         None => ExitCode::SUCCESS,
     }
+}
+
+/// Runs the server until SIGINT or SIGTERM.
+fn serve(config: Config) -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| error.to_string())?;
+    runtime.block_on(async {
+        let stop = runtime::stop_signal().map_err(|error| error.to_string())?;
+        Server::bind(config).await?.serve(stop).await
+    })
 }
 
 /// Reads a password twice, without echo on a terminal, and prints its hash.
