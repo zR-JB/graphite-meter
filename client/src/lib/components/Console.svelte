@@ -763,44 +763,51 @@
         <a class="btn btn-accent" href="#/">Return to measurement</a>
       </div>
     </section>
-  {:else if historyOpen}
-    <section class="stage history-stage" inert={flyout}>
-      {#if HistoryWorkspace}<HistoryWorkspace
-          selectedId={currentRoute.kind === "app" &&
-          currentRoute.workspace.kind === "history"
-            ? currentRoute.workspace.selectedId
-            : null}
-          onNavigate={(id: string | null) =>
-            id ? historyRoute(id) : closeHistoryDetail()}
-          onClose={dismissHistory}
-        />{:else if historyChunkFailed}<div
-          class="empty-state"
-          data-tone="err"
-          role="alert"
-        >
-          <span class="empty-icon">!</span>
-          <p>History could not be opened.</p>
-          <!-- Chromium keeps a failed module in its module map until the page reloads. -->
-          <button
-            class="btn btn-accent"
-            type="button"
-            onclick={() => location.reload()}>Retry</button
-          >
-        </div>{:else}<div class="empty-state" role="status">
-          <span class="empty-icon"><Icon name="history" /></span>
-          <h2>Opening History</h2>
-        </div>{/if}
-    </section>
   {:else}
+    <!-- History lies over the console, which stays mounted under it with its rendering paused, so a return to it
+         resumes what is already laid out rather than building the instrument again. -->
+    {#if historyOpen}<section
+        class="stage history-stage"
+        data-flip="stage"
+        inert={flyout}
+      >
+        {#if HistoryWorkspace}<HistoryWorkspace
+            selectedId={currentRoute.kind === "app" &&
+            currentRoute.workspace.kind === "history"
+              ? currentRoute.workspace.selectedId
+              : null}
+            onNavigate={(id: string | null) =>
+              id ? historyRoute(id) : closeHistoryDetail()}
+            onClose={dismissHistory}
+          />{:else if historyChunkFailed}<div
+            class="empty-state"
+            data-tone="err"
+            role="alert"
+          >
+            <span class="empty-icon">!</span>
+            <p>History could not be opened.</p>
+            <!-- Chromium keeps a failed module in its module map until the page reloads. -->
+            <button
+              class="btn btn-accent"
+              type="button"
+              onclick={() => location.reload()}>Retry</button
+            >
+          </div>{:else}<div class="empty-state" role="status">
+            <span class="empty-icon"><Icon name="history" /></span>
+            <h2>Opening History</h2>
+          </div>{/if}
+      </section>{/if}
     <section
       class="stage measurement-stage"
-      data-flip="stage"
+      class:away={historyOpen}
+      data-flip={historyOpen ? undefined : "stage"}
       data-stage={store.isRunning ? store.phaseStage : undefined}
       class:previous={store.previousRun}
       {@attach entering}
       aria-label="Measurement workspace"
+      aria-hidden={historyOpen || undefined}
       tabindex="-1"
-      inert={flyout}
+      inert={flyout || historyOpen}
     >
       <GaugePanel />
     </section>
@@ -1073,8 +1080,15 @@
     --ambient: var(--phase-bidirectional);
   }
   .history-stage {
+    z-index: 1;
     padding: 0;
     overflow: hidden;
+    background: var(--canvas);
+  }
+  /* Under History the console keeps its layout and skips its rendering; it fades back in on return. */
+  .measurement-stage.away {
+    content-visibility: hidden;
+    animation: none;
   }
   /* A viewport too short for the instrument scrolls this column. */
   /* The instrument takes the column's height and gives it back from the latency rows first. */

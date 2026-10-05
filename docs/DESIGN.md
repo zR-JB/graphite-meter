@@ -174,7 +174,9 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   what follows a measurement; what arrives settles with a little overshoot (`--ease-settle` for a section or a
   span, `--ease-spring` for a control's state or a mark popping on). A reading never overshoots.
 - Arrival: a workspace appears in one quick fade (`appear`, `--dur-slide`), the console on load and on each
-  return from History, and History as it opens; never piece by piece.
+  return from History, and History as it opens; never piece by piece. History lies over the console, which stays
+  mounted under it with its rendering paused (`content-visibility: hidden`), so a return resumes the instrument as
+  it was laid out instead of building it again.
 - A run is one story told on the dial, and nothing passes through an empty console on the way. Start: the run
   key's skin turns to Stop on the press while its label crosses over; the previous result rewinds, every arc
   draining back to zero together as its beads drop off (`result-drain`, 300 ms, fast from the press), while the lanes and the cards keep
