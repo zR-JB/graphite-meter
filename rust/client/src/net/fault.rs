@@ -60,6 +60,8 @@ impl Fault {
     pub fn class(&self) -> Class {
         match self {
             Self::Status { status, retry_after, .. } if busy(*status) => Class::Busy(retry_after.unwrap_or_default()),
+            // An upload's control requests outlast a proxy's passing server error; lanes do not.
+            Self::Status { status, from, .. } if status.is_server_error() && upload_control(*from) => Class::Redial,
             Self::Connect(ConnectError::Proxy(_) | ConnectError::Tls(_))
             | Self::Status { .. }
             | Self::Refused(_)
@@ -147,6 +149,10 @@ impl fmt::Display for Fault {
 
 impl std::error::Error for Fault {}
 
+fn upload_control(route: Route) -> bool {
+    matches!(route, Route::UploadSession | Route::UploadProgress | Route::UploadCheckpoint)
+}
+
 fn busy(status: StatusCode) -> bool {
     matches!(status, StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE)
 }
@@ -211,7 +217,8 @@ mod tests {
                 busy(0),
                 "HTTP 429 from upload session",
             ),
-            (500, &[], ProtocolError, Class::Final, "HTTP 500 from upload session"),
+            (500, &[], ProtocolError, Class::Redial, "HTTP 500 from upload session"),
+            (502, &[], ProtocolError, Class::Redial, "HTTP 502 from upload session"),
             (204, &[], ProtocolError, Class::Final, "HTTP 204 from upload session"),
             (302, &[], ProtocolError, Class::Final, "HTTP 302 from upload session"),
             (403, &[], ProtocolError, Class::Final, "HTTP 403 from upload session"),
@@ -251,6 +258,8 @@ mod tests {
             );
         }
         assert!(answer(200, &[(REFUSAL, "invalid")]).is_none());
+        let lane = Fault::answer(StatusCode::BAD_GATEWAY, &HeaderMap::new(), Route::Upload, || unreachable!());
+        assert_eq!(lane.unwrap().class(), Class::Final, "a lane's server error stands");
         let issuer = answer(403, &[("graphite-meter-auth", "required")]);
         assert!(matches!(issuer, Some(Fault::SignIn(origin)) if origin.to_string() == "https://meter.example"));
     }

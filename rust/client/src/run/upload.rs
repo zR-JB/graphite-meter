@@ -118,7 +118,7 @@ impl UploadSession {
         Some(Fed { id: self.upload.number, bytes: latest.bytes() })
     }
 
-    /// A fresh checkpoint within `budget`, a miss asked again every 100 ms unless it asks for sign-in.
+    /// A fresh checkpoint within `budget`, a miss asked again every 100 ms unless its fault is final.
     pub async fn checkpoint(&self, budget: Duration) -> Result<Receiver, Fault> {
         let (deadline, id, control) = (Instant::now() + budget, Some(self.upload.id.as_str()), &self.start.control);
         loop {
@@ -128,9 +128,7 @@ impl UploadSession {
                 Ok(Err(fault)) => fault,
                 Err(_) => return Err(Fault::TimedOut("receiver checkpoint")),
             };
-            if matches!(fault, Fault::SignIn(_))
-                || deadline.saturating_duration_since(Instant::now()) <= CHECKPOINT_RETRY
-            {
+            if fault.class() == Class::Final || deadline.saturating_duration_since(Instant::now()) <= CHECKPOINT_RETRY {
                 return Err(fault);
             }
             sleep(CHECKPOINT_RETRY).await;

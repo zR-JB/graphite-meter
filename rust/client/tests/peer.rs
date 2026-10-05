@@ -1,7 +1,7 @@
 //! The network layer against canned peers, for what a real server never does, and under the process's environment:
 //! proxies, the trust store and grants over verified TLS.
 use bytes::Bytes;
-use graphite_meter_client::net::{Client, Fault, Request};
+use graphite_meter_client::net::{Client, Fault, Request, retrying};
 use graphite_meter_net::{ConnectError, Pool};
 use graphite_meter_proto::{discovery::Protocol, json, origin::Origin, route::Route, upload::Session};
 use graphite_meter_testkit::{Identity, Scratch};
@@ -215,6 +215,34 @@ async fn a_bodyless_post_failing_on_a_reused_connection_is_sent_once_more() {
         assert_eq!(seen, connection);
         assert!(head.starts_with("POST /upload/session HTTP/1.1\r\n"), "{head}");
     }
+}
+
+/// A minted upload ID as `retrying` gets it from a peer answering `answer`, and the requests that took.
+async fn mint(answer: Answer) -> (Result<Session, Fault>, usize) {
+    let (listener, address) = local().await;
+    let mut heads = peer(listener, None, answer);
+    let (client, origin) = (client(false), origin("http", address));
+    let request = || Request::new(Method::POST, &origin, Route::UploadSession);
+    let minted = retrying(|| client.json(Protocol::Http1, request(), Session::decode)).await;
+    drop(client);
+    let mut requests = 0;
+    while heads.try_recv().is_ok() {
+        requests += 1;
+    }
+    (minted, requests)
+}
+
+#[tokio::test]
+async fn minting_redials_a_server_error_and_stands_at_a_client_error() {
+    let (minted, requests) = mint(|request, _| match request {
+        0 => Some("HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\n\r\n".into()),
+        _ => Some(ok(r#"{"uploadId":"u1"}"#)),
+    })
+    .await;
+    assert_eq!((minted.unwrap().upload_id.as_str(), requests), ("u1", 2));
+    let (refused, requests) = mint(|_, _| Some("HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n".into())).await;
+    assert!(matches!(refused, Err(Fault::Status { .. })), "{refused:?}");
+    assert_eq!(requests, 1);
 }
 
 #[tokio::test]
