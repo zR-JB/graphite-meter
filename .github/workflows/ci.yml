@@ -341,6 +341,51 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  rust-e2e:
+    name: Rust browser E2E
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: [plan, rust-image]
+    if: needs.plan.outputs.rust == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - id: toolchain
+        name: Set up E2E toolchain
+        uses: ./.github/actions/setup-project
+        with: {bun: 'true', client-deps: 'true'}
+      - id: chrome
+        name: Install pinned Chrome for Testing
+        uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
+        with:
+          chrome-version: ${{ steps.toolchain.outputs.chrome-version }}
+          install-dependencies: true
+      - name: Download the image's amd64 server from this run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: rust-image
+          path: ${{ runner.temp }}/rust-image
+      - name: Restore the server's executable mode
+        run: chmod +x "$RUNNER_TEMP/rust-image/graphite-meter-server"
+      - name: Run Chromium against one fleet of the image's server, password sign-in included
+        env:
+          # As the Go job: Chrome for Testing has no setuid sandbox.
+          BUN_CHROME_ARGS: --no-sandbox
+          BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          GM_EXPECTED_CHROME_VERSION: ${{ steps.toolchain.outputs.chrome-version }}
+        run: mise run rust-e2e "$RUNNER_TEMP/rust-image/graphite-meter-server"
+      - name: Upload E2E failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rust-e2e-failures
+          retention-days: 7
+          path: |
+            client/test-results/webview
+            client/test-results/servers
+          if-no-files-found: ignore
+
   rust-windows:
     name: Rust client tests on Windows
     runs-on: windows-latest
@@ -445,7 +490,7 @@ jobs:
     runs-on: ubuntu-24.04
     if: always()
     needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-image,
-      rust-windows, rust-perf]
+      rust-e2e, rust-windows, rust-perf]
     steps:
       - name: Require every selected job
         env:
