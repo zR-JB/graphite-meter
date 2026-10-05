@@ -145,8 +145,8 @@ impl Lanes {
         let mut tasks = JoinSet::new();
         for plan in plans {
             let path = (plan.carrier == Carrier::Path).then_some(&plan.path);
-            let shared = path.and_then(|path| client.0.connections.home(&path.origin, path.protocol));
-            let home = shared.unwrap_or_else(|| client.0.runtimes.next());
+            let shared = path.and_then(|path| client.connections.home(&path.origin, path.protocol));
+            let home = shared.unwrap_or_else(|| client.shared.runtimes.next());
             let group = Arc::new(Group::new(client, plan, job.clone()));
             for lane in group.plan.lanes.clone() {
                 let (group, tally, token) = (group.clone(), tally.clone(), token.clone());
@@ -341,7 +341,7 @@ impl Group {
                 let buffer = if down { ReadBuffer::Fixed } else { ReadBuffer::Adaptive };
                 self.conn.get(client.dial(origin, *protocol, buffer)).await?
             }
-            Carrier::Path => client.0.connections.shared(client, origin, *protocol).await?,
+            Carrier::Path => client.connections.shared(client, origin, *protocol).await?,
         };
         match &self.job {
             Job::Download => self.download(conn, lane, tally).await,

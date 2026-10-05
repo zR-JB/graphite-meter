@@ -4,7 +4,7 @@ use crate::{
     measure::aggregate::{Fed, Receiver},
     model::LaneHealth,
     net::{
-        Attempt, Class, Client, Conn, Decode, Fault, GroupPlan, Incoming, Lanes, Payload, Request, Retry, Session,
+        Attempt, CONTROL_TIMEOUT, Class, Client, Decode, Fault, GroupPlan, Incoming, Lanes, Request, Retry, Session,
         ThroughputPath, Work, retrying,
     },
 };
@@ -33,8 +33,6 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-/// How long a control answer may take, and the feed between two lines.
-const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 /// The pause before a missed checkpoint is asked again.
 const CHECKPOINT_RETRY: Duration = Duration::from_millis(100);
 
@@ -50,6 +48,8 @@ pub struct UploadSession {
 /// What a receiver starts from, so that a replacement starts the same lanes.
 #[derive(Clone)]
 struct Start {
+    /// The client its lanes go through.
+    client: Client,
     control: Control,
     plans: Vec<GroupPlan>,
     stagger: Duration,
@@ -76,12 +76,12 @@ struct Progress {
     ended: Option<Fault>,
 }
 
-/// Where control requests go: the control pool, or for an HTTP/3 path a connection of the session's own.
+/// Where control requests go: the client's pool, or for an HTTP/3 path connections of the session's own.
 #[derive(Clone)]
 struct Control {
     client: Client,
+    via: Protocol,
     origin: Origin,
-    own: Option<Arc<Conn>>,
 }
 
 impl UploadSession {
@@ -94,13 +94,20 @@ impl UploadSession {
         replaced: Arc<AtomicBool>,
         token: CancellationToken,
     ) -> Result<Self, Fault> {
-        let own = match path.protocol {
-            Protocol::Http3 => Some(Arc::new(client.dial_control(&path.origin, Protocol::Http3).await?)),
-            _ => None,
+        let origin = path.origin.clone();
+        let control = match path.protocol {
+            Protocol::Http3 => Control { client: client.apart(), via: Protocol::Http3, origin },
+            _ => Control { client: client.clone(), via: Protocol::Negotiated, origin },
         };
-        let control = Control { client: client.clone(), origin: path.origin.clone(), own };
         let webtransport = path.transport == ThroughputTransport::WebTransport;
-        let start = Start { control, plans, stagger, webtransport, token };
+        let start = Start {
+            client: client.clone(),
+            control,
+            plans,
+            stagger,
+            webtransport,
+            token,
+        };
         let upload = start.clone().upload(0).await?;
         Ok(Self { start, upload, replacing: None, replaced })
     }
@@ -195,7 +202,7 @@ impl Start {
         let id = retrying(mint).await?.upload_id;
         let token = self.token.child_token();
         let work = Work::Upload(id.clone());
-        let lanes = Lanes::start(&control.client, self.plans, work, self.stagger, token.child_token());
+        let lanes = Lanes::start(&self.client, self.plans, work, self.stagger, token.child_token());
         let (feed, progress) = watch::channel(Progress::default());
         let session = self.webtransport.then(|| lanes.session());
         let follow = follow(self.control.clone(), id.clone(), session, feed);
@@ -205,25 +212,22 @@ impl Start {
 }
 
 impl Control {
-    /// The answer's head to `method` on `route` for upload `id`, if any, within the control timeout.
-    async fn send(&self, method: Method, route: Route, id: Option<&str>) -> Result<Incoming, Fault> {
+    fn request(&self, method: Method, route: Route, id: Option<&str>) -> Request {
         let mut request = Request::new(method, &self.origin, route);
         request.query.extend(id.map(|id| ("id", id.to_owned())));
-        let Some(mut conn) = self.own.as_deref().and_then(Conn::share) else {
-            return self.client.control(Protocol::Negotiated, request).await;
-        };
-        let answer = conn.open(&self.client, &request, Payload::empty());
-        timeout(CONTROL_TIMEOUT, answer)
-            .await
-            .unwrap_or(Err(Fault::TimedOut("control response")))
+        request
+    }
+
+    /// The answer's head to `method` on `route` for upload `id`, if any, within the control timeout.
+    async fn send(&self, method: Method, route: Route, id: Option<&str>) -> Result<Incoming, Fault> {
+        self.client.control(self.via, self.request(method, route, id)).await
     }
 
     /// The JSON answer to `method` on `route` for upload `id`, if any, within the control timeout.
     async fn json<T>(&self, method: Method, route: Route, id: Option<&str>, decode: Decode<T>) -> Result<T, Fault> {
-        let answer = async { self.send(method, route, id).await?.json(decode).await };
-        timeout(CONTROL_TIMEOUT, answer)
+        self.client
+            .json(self.via, self.request(method, route, id), decode)
             .await
-            .unwrap_or(Err(Fault::TimedOut("control response")))
     }
 }
 
@@ -287,7 +291,8 @@ impl Source {
     }
 }
 
-/// Records from `source` into `progress` until `complete`, each line at most 64 KiB; `moved` once one decoded.
+/// Records from `source` into `progress` until `complete`, each line at most 64 KiB and within the control timeout;
+/// `moved` once one decoded.
 async fn read(
     control: &Control,
     mut source: Source,

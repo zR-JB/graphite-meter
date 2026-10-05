@@ -27,7 +27,8 @@ impl Client {
         route: Route,
         query: Vec<(&'static str, String)>,
     ) -> Result<Session, Fault> {
-        self.session_on(&self.0.runtimes.next(), origin, route, query).await
+        self.session_on(&self.shared.runtimes.next(), origin, route, query)
+            .await
     }
 
     /// A session at `route` on a connection of its own, which `home` runs.
@@ -46,7 +47,7 @@ impl Client {
         };
         let head = self.head(&request)?;
         let open = async {
-            let (quic, requests) = quic::dial(origin, self.0.verify, home).await?;
+            let (quic, requests) = quic::dial(origin, self.shared.verify, home).await?;
             match webtransport::Session::connect(&requests, head)
                 .await
                 .map_err(http3_fault)?

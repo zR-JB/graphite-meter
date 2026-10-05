@@ -38,18 +38,20 @@ use tokio::{
 };
 
 /// How long a control request may take, its answer's body included, and a session or bus to open.
-const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A path check's network state, which its run reuses: proxies, verification, grants, control connections and
 /// the pinned runtimes QUIC connections run on.
 #[derive(Clone)]
-pub struct Client(Arc<Shared>);
+pub struct Client {
+    shared: Arc<Shared>,
+    connections: Arc<pool::Connections>,
+}
 
 struct Shared {
     connector: Connector,
     verify: Verify,
     grants: Mutex<Grants>,
-    connections: pool::Connections,
     runtimes: Arc<Pool>,
 }
 
@@ -87,14 +89,13 @@ impl Client {
     pub fn new(insecure: bool, runtimes: Arc<Pool>) -> Self {
         let verify = if insecure { Verify::Insecure } else { Verify::Trusted };
         let connector = Connector::new(Proxy::from_env(), verify);
-        let connections = pool::Connections::default();
-        Self(Arc::new(Shared {
-            connector,
-            verify,
-            grants: Mutex::default(),
-            connections,
-            runtimes,
-        }))
+        let shared = Arc::new(Shared { connector, verify, grants: Mutex::default(), runtimes });
+        Self { shared, connections: Arc::default() }
+    }
+
+    /// The same client with control connections of its own, apart from those its lanes may share.
+    pub fn apart(&self) -> Self {
+        Self { shared: self.shared.clone(), connections: Arc::default() }
     }
 
     /// A control request's JSON answer, read by `decode` within the control timeout.
@@ -123,24 +124,19 @@ impl Client {
         Conn::dial(self, origin, via, buffer, Some(&Handle::current())).await
     }
 
-    /// A connection of its own for control requests to `origin`; a QUIC one runs on the next pinned runtime.
-    pub async fn dial_control(&self, origin: &Origin, via: Protocol) -> Result<Conn, Fault> {
-        Conn::dial(self, origin, via, ReadBuffer::Adaptive, None).await
-    }
-
     /// Keeps `issuer`'s grant for its requests and its enrolled targets'; a token no header can carry is dropped,
     /// so its server asks for sign-in again.
     pub fn grant(&self, issuer: &Origin, token: &str) {
         if let Ok(mut value) = HeaderValue::from_str(&format!("Bearer {token}")) {
             value.set_sensitive(true);
-            lock(&self.0.grants).tokens.insert(issuer.clone(), value);
+            lock(&self.shared.grants).tokens.insert(issuer.clone(), value);
         }
     }
 
     /// Lets `server`'s grant reach those of `targets` that are HTTPS on its host; a target another server
     /// enrolled first keeps that server's grant.
     pub fn enroll(&self, server: &Origin, targets: &[Origin]) {
-        let mut grants = lock(&self.0.grants);
+        let mut grants = lock(&self.shared.grants);
         grants.issuers.insert(server.clone(), server.clone());
         for target in targets {
             if target.scheme == Scheme::Https && target.host == server.host {
@@ -150,7 +146,7 @@ impl Client {
     }
 
     async fn answer(&self, via: Protocol, request: &Request, deadline: Instant) -> Result<Incoming, Fault> {
-        let answer = self.0.connections.send(self, via, request, deadline).await?;
+        let answer = self.connections.send(self, via, request, deadline).await?;
         self.check(request, answer)
     }
 
@@ -158,7 +154,7 @@ impl Client {
     async fn exchange<T>(&self, via: Protocol, request: Request, decode: Decode<T>) -> Result<(Version, T), Fault> {
         let deadline = Instant::now() + CONTROL_TIMEOUT;
         let exchange = async {
-            let answer = self.0.connections.send(self, via, &request, deadline).await?;
+            let answer = self.connections.send(self, via, &request, deadline).await?;
             let version = answer.version();
             Ok((version, self.check(&request, answer)?.json(decode).await?))
         };
@@ -180,10 +176,10 @@ impl Client {
             .method(request.method.clone())
             .uri(target)
             .header(header::CACHE_CONTROL, "no-store");
-        let grants = lock(&self.0.grants);
+        let grants = lock(&self.shared.grants);
         let token = grants.tokens.get(grants.issuer(&request.origin));
         if let Some(token) =
-            token.filter(|_| self.0.verify == Verify::Trusted && request.origin.scheme == Scheme::Https)
+            token.filter(|_| self.shared.verify == Verify::Trusted && request.origin.scheme == Scheme::Https)
         {
             head = head.header(header::AUTHORIZATION, token.clone());
         }
@@ -223,13 +219,13 @@ impl Client {
 
     /// The server whose grant `origin` takes.
     fn issuer(&self, origin: &Origin) -> Origin {
-        lock(&self.0.grants).issuer(origin).clone()
+        lock(&self.shared.grants).issuer(origin).clone()
     }
 
     /// `fault`, dropping its server's grant when it asks for sign-in.
     fn signed_out(&self, fault: Fault) -> Fault {
         if let Fault::SignIn(issuer) = &fault {
-            lock(&self.0.grants).tokens.remove(issuer);
+            lock(&self.shared.grants).tokens.remove(issuer);
         }
         fault
     }

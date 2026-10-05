@@ -81,13 +81,13 @@ impl Conn {
             Protocol::Http1 => Alpn::Http1,
             Protocol::Http2 => Alpn::Http2,
             Protocol::Http3 => {
-                let home = home.cloned().unwrap_or_else(|| client.0.runtimes.next());
-                let (quic, requests) = super::quic::dial(origin, client.0.verify, &home).await?;
+                let home = home.cloned().unwrap_or_else(|| client.shared.runtimes.next());
+                let (quic, requests) = super::quic::dial(origin, client.shared.verify, &home).await?;
                 return Ok(Self::Http3 { requests, quic });
             }
             Protocol::Negotiated => Alpn::Negotiated,
         };
-        let connection = client.0.connector.connect(origin, alpn).await?;
+        let connection = client.shared.connector.connect(origin, alpn).await?;
         let h2 = connection.form == RequestForm::Origin
             && match connection.alpn.as_deref() {
                 Some(alpn) => alpn == b"h2",
@@ -122,7 +122,7 @@ impl Conn {
     }
 
     /// Another handle to a multiplexed connection; none for HTTP/1.1.
-    pub fn share(&self) -> Option<Self> {
+    pub(super) fn share(&self) -> Option<Self> {
         match self {
             Self::Http1 { .. } => None,
             Self::Http2(sender) => Some(Self::Http2(sender.clone())),
