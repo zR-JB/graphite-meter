@@ -27,6 +27,11 @@ pub trait Listen {
 
     /// The socket in accept failure lines, such as `tcp [::]:7246`.
     fn name(&self) -> String;
+
+    /// What closes the connections left once the drain ended; the listener stopped before.
+    fn closer(&self) -> impl Future<Output = ()> + Send + 'static {
+        async {}
+    }
 }
 
 impl Listen for TcpListener {
@@ -43,8 +48,9 @@ impl Listen for TcpListener {
 }
 
 /// Accepts until `shutdown`, holding each connection's share from `hold` (refused on `None`) and running `serve`'s
-/// future on the runtime `runtime` names. Then the listener closes at once, so new connections are refused, and running
-/// ones get `SHUTDOWN_GRACE`. Ends early only with the error of a socket that no longer listens.
+/// future on the runtime `runtime` names. Then the listener closes at once, so new connections are refused, running
+/// ones get `SHUTDOWN_GRACE`, and the listener's closer ends those cut after it. Ends early only with the error of a
+/// socket that no longer listens.
 pub async fn serve<L, F>(
     mut listener: L,
     runtime: impl Fn() -> Handle,
@@ -92,9 +98,11 @@ where
         };
         connections.spawn_on(task, &runtime());
     };
+    let close = listener.closer();
     drop(listener);
     let _ = timeout(SHUTDOWN_GRACE, async { while connections.join_next().await.is_some() {} }).await;
     connections.shutdown().await;
+    close.await;
     result
 }
 
@@ -248,6 +256,77 @@ mod tests {
         fn name(&self) -> String {
             "tcp test".into()
         }
+    }
+
+    /// A listener with one connection whose closer reports when it ran and whether that connection was gone.
+    struct Closing {
+        accepted: bool,
+        cut: Arc<std::sync::atomic::AtomicBool>,
+        closed: Arc<std::sync::Mutex<Option<(tokio::time::Instant, bool)>>>,
+    }
+
+    impl Listen for Closing {
+        type Connection = ();
+
+        async fn accept(&mut self) -> io::Result<((), SocketAddr)> {
+            if std::mem::replace(&mut self.accepted, true) {
+                return std::future::pending().await;
+            }
+            Ok(((), "192.0.2.1:1".parse().unwrap()))
+        }
+
+        fn name(&self) -> String {
+            "test".into()
+        }
+
+        fn closer(&self) -> impl Future<Output = ()> + Send + 'static {
+            let (cut, closed) = (self.cut.clone(), self.closed.clone());
+            async move {
+                let gone = cut.load(std::sync::atomic::Ordering::Relaxed);
+                *crate::lock(&closed) = Some((tokio::time::Instant::now(), gone));
+            }
+        }
+    }
+
+    /// Records when dropped.
+    struct Cut(Arc<std::sync::atomic::AtomicBool>);
+
+    impl Drop for Cut {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_listener_s_closer_runs_once_the_drain_cut_what_was_left() {
+        let (cut, closed) = (Arc::default(), Arc::default());
+        let listener = Closing {
+            accepted: false,
+            cut: Arc::clone(&cut),
+            closed: Arc::clone(&closed),
+        };
+        let (shutdown, quota) = (CancellationToken::new(), Quota::new(10, 10));
+        let hold = |peer: SocketAddr| quota.acquire(&ClientKeys::address(peer.ip()), 1).ok();
+        let serve = |(), _| {
+            let cut = Cut(cut.clone());
+            async move {
+                std::future::pending::<()>().await;
+                drop(cut);
+            }
+        };
+        let serving = super::serve(listener, Handle::current, &shutdown, hold, serve);
+        let stop = async {
+            while quota.usage().active == 0 {
+                tokio::task::yield_now().await;
+            }
+            shutdown.cancel();
+        };
+        let stopped = tokio::time::Instant::now();
+        let (served, ()) = tokio::join!(serving, stop);
+        served.unwrap();
+        let (at, gone) = crate::lock(&closed).expect("the closer ran");
+        assert_eq!(at - stopped, SHUTDOWN_GRACE);
+        assert!(gone, "the connection was cut before");
     }
 
     #[tokio::test(start_paused = true)]

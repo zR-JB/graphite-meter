@@ -5,6 +5,7 @@ mod connection;
 mod http2;
 mod http3;
 mod quic;
+mod shutdown;
 mod tls;
 mod transfer;
 mod websocket;

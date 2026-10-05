@@ -10,6 +10,7 @@ use std::{
     fmt,
     sync::{Arc, Mutex},
 };
+use tokio::sync::Notify;
 
 /// A limit clones share.
 #[derive(Clone)]
@@ -22,6 +23,8 @@ struct Inner {
     /// A key many clients share, which bounds nothing.
     exempt: Option<ClientKey>,
     state: Mutex<State>,
+    /// Notified when the last hold is released.
+    idle: Notify,
 }
 
 enum Total {
@@ -77,7 +80,13 @@ impl Quota {
     }
 
     fn with(total: Total, share: usize, exempt: Option<ClientKey>) -> Self {
-        Self(Arc::new(Inner { total, share, exempt, state: Mutex::default() }))
+        Self(Arc::new(Inner {
+            total,
+            share,
+            exempt,
+            state: Mutex::default(),
+            idle: Notify::new(),
+        }))
     }
 
     /// Charges `weight` to the total and to every key at once, or refuses without charging.
@@ -127,6 +136,11 @@ impl Quota {
         let state = lock(&self.0.state);
         let State { used, peak, refused_total, refused_client, .. } = *state;
         QuotaUsage { active: used, peak, refused_total, refused_client }
+    }
+
+    /// Completes once nothing is held, also when that happened since the last wait ended.
+    pub async fn idle(&self) {
+        self.0.idle.notified().await;
     }
 }
 
@@ -181,6 +195,9 @@ impl Drop for Hold {
         let inner = &self.quota.0;
         let mut state = lock(&inner.state);
         state.used -= self.weight;
+        if state.used == 0 {
+            inner.idle.notify_one();
+        }
         for key in inner.keys(&self.keys) {
             if let Some(held) = state.held.get_mut(&key) {
                 *held -= self.weight;

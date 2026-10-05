@@ -14,6 +14,10 @@ use std::{
 };
 use zeroize::Zeroizing;
 
+#[cfg(target_env = "musl")]
+#[global_allocator]
+static ALLOCATOR: rustfs_mimalloc::MiMalloc = rustfs_mimalloc::MiMalloc;
+
 fn main() -> ExitCode {
     NOTICES.keep();
     let args: Vec<_> = std::env::args_os().skip(1).collect();

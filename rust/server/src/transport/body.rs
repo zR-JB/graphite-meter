@@ -347,7 +347,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_download_sends_its_exact_length_in_block_slices() {
-        let block = Block::new(&Budget::new(usize::MAX)).unwrap();
+        let block = Block::new(&Budget::new(usize::MAX), Default::default()).unwrap();
         let total = BLOCK_BYTES as u64 * 2 + 3;
         let mut body = Body::download(block.source(total));
         assert_eq!(body.size_hint().exact(), Some(total));
@@ -413,7 +413,7 @@ mod tests {
     #[tokio::test]
     async fn a_lane_ending_otherwise_aborts_its_body_at_the_next_frame() {
         let shutdown = CancellationToken::new();
-        let block = Block::new(&Budget::new(usize::MAX)).unwrap();
+        let block = Block::new(&Budget::new(usize::MAX), Default::default()).unwrap();
         let mut body = Body::download(block.source(BLOCK_BYTES as u64 * 4)).with_lane(lane(&shutdown));
         assert!(body.frame().await.unwrap().is_ok());
         shutdown.cancel();

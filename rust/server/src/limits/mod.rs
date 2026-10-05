@@ -85,6 +85,40 @@ impl Quotas {
     pub fn load(&self) -> (usize, usize) {
         (self.operations.usage().active, self.limits.operations)
     }
+
+    /// The open connections.
+    pub fn connections(&self) -> usize {
+        self.connections.usage().active
+    }
+
+    /// Completes once the last connection closes, also when that happened since the last wait ended.
+    pub async fn idle(&self) {
+        self.connections.idle().await;
+    }
+
+    /// The verbose `[gm:admission]` line: handlers, sessions and connections with their peaks and refusals.
+    pub fn admission(&self) -> String {
+        let (handlers, sessions) = (self.operations.usage(), self.sessions.usage());
+        let connections = self.connections.usage();
+        format!(
+            "[gm:admission] handlers {} active / {} peak, rejected {} pool + {} client; sessions {} active / {} max, \
+             {} per client, rejected {} budget + {} client; connections {} active / {} peak, rejected {} global + {} \
+             client",
+            handlers.active,
+            handlers.peak,
+            handlers.refused_total,
+            handlers.refused_client,
+            sessions.active,
+            self.limits.sessions,
+            self.limits.sessions_per_client,
+            sessions.refused_total,
+            sessions.refused_client,
+            connections.active,
+            connections.peak,
+            connections.refused_total,
+            connections.refused_client,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -145,6 +179,29 @@ mod tests {
         assert_eq!(quotas.session(&b).err(), Some(Refusal::Total));
         drop((session, operations));
         assert_eq!(quotas.load(), (0, 3));
+    }
+
+    #[test]
+    fn the_admission_line_counts_peaks_and_refusals_as_go_does() {
+        let quotas = Quotas::new(limits(), &Budget::new(usize::MAX), None);
+        let (a, b) = (client("192.0.2.1"), client("192.0.2.2"));
+        let session = quotas.session(&a).unwrap();
+        assert_eq!(quotas.session(&a).err(), Some(Refusal::Client));
+        let operations = [quotas.operation(&b).unwrap(), quotas.operation(&b).unwrap()];
+        assert_eq!(quotas.operation(&b).err(), Some(Refusal::Client));
+        assert_eq!(quotas.operation(&a).err(), Some(Refusal::Total));
+        assert_eq!(quotas.session(&b).err(), Some(Refusal::Total), "the handler pool is full");
+        drop(operations);
+        let connection = quotas.connection(&a, Transport::Tcp).unwrap();
+        drop(session);
+        assert_eq!(
+            quotas.admission(),
+            "[gm:admission] handlers 0 active / 3 peak, rejected 2 pool + 1 client; sessions 0 active / 2 max, 1 per \
+             client, rejected 0 budget + 1 client; connections 1 active / 1 peak, rejected 0 global + 0 client"
+        );
+        assert_eq!(quotas.connections(), 1);
+        drop(connection);
+        assert_eq!(quotas.connections(), 0);
     }
 
     #[test]

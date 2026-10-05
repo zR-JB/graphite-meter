@@ -1,7 +1,7 @@
 //! Upload aggregates (`api/upload.md`): server-minted IDs bound to their owner, capacity with displacement before
 //! the first byte, tombstones and retention.
 
-use super::{ProgressFeed, UploadSink};
+use super::{Meter, ProgressFeed, UploadSink};
 use crate::{
     lane::Lane,
     limits::{Hold, Quota, Refusal},
@@ -45,6 +45,7 @@ pub struct Uploads(Arc<Store>);
 
 struct Store {
     key: [u8; 32],
+    meter: Meter,
     clock: Clock,
     capacity: Quota,
     /// The store clock at the next sweep, read without locking `entries`.
@@ -200,11 +201,12 @@ enum Access {
 }
 
 impl Uploads {
-    /// A store whose IDs `key` signs.
-    pub fn new(key: [u8; 32]) -> Self {
+    /// A store whose IDs `key` signs; `meter` counts its lanes' bytes.
+    pub fn new(key: [u8; 32], meter: Meter) -> Self {
         let now = Instant::now();
         Self(Arc::new(Store {
             key,
+            meter,
             clock: Clock(now),
             capacity: Quota::new(MAX_LIVE, MAX_PER_CLIENT),
             next_sweep: AtomicU64::new(SWEEP_NANOS),
@@ -224,7 +226,12 @@ impl Uploads {
 
     /// Joins `id`'s aggregate as a data lane that `lane` bounds.
     pub fn begin(&self, id: &str, owner: Option<&ClientKeys>, lane: Lane) -> Result<UploadSink, UploadRefusal> {
-        Ok(UploadSink::new(self.access(id, owner, Access::Join)?, lane))
+        let aggregate = self.access(id, owner, Access::Join)?;
+        Ok(UploadSink::new(aggregate, lane, self.0.meter.open()))
+    }
+
+    pub fn meter(&self) -> &Meter {
+        &self.0.meter
     }
 
     /// Attaches the progress feed, replacing the previous reader's.

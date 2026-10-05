@@ -112,6 +112,63 @@ fn sigterm_stops_a_serving_server_with_exit_zero() {
     assert!(child.wait().unwrap().success());
 }
 
+/// A verbose throughput line's message, checked against Go's shape, with its transfer count.
+fn transfers(message: &str) -> usize {
+    let fields = message.strip_prefix("[gm:server:download] ").unwrap();
+    let fields: Vec<_> = fields.split(" · ").collect();
+    let decimal = |field: &str| {
+        let (whole, fraction) = field.split_once('.').unwrap();
+        assert!(whole.bytes().all(|byte| byte.is_ascii_digit()) && fraction.len() == 2, "{message}");
+    };
+    let [rate, count, bytes] = fields[..] else { panic!("{message}") };
+    decimal(rate.strip_suffix(" Gbit/s").unwrap());
+    decimal(bytes.strip_suffix(" MB this window").unwrap());
+    count.strip_suffix(" conns").unwrap().parse().unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn verbose_logs_report_throughput_and_sigterm_ends_a_running_download() {
+    use std::io::{BufRead, BufReader, Read};
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let address = format!("127.0.0.1:{port}");
+    let env = [("GM_H1_ADDR", address.as_str()), ("GM_VERBOSE", "true"), ("TOKIO_WORKER_THREADS", "2")];
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphite-meter-server"))
+        .env_clear()
+        .envs(env)
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let (lines, received) = std::sync::mpsc::channel();
+    let stderr = BufReader::new(child.stderr.take().unwrap());
+    std::thread::spawn(move || {
+        stderr
+            .lines()
+            .map_while(Result::ok)
+            .try_for_each(|line| lines.send(line))
+    });
+    let next = || logged(&received.recv_timeout(std::time::Duration::from_secs(5)).unwrap()).to_owned();
+    assert!(next().contains(" listening on "));
+    let mut download = std::net::TcpStream::connect(&address).unwrap();
+    download
+        .write_all(b"GET /download?bytes=68719476736 HTTP/1.1\r\nHost: test\r\n\r\n")
+        .unwrap();
+    download.read_exact(&mut [0; 1 << 16]).unwrap();
+    assert_eq!(transfers(&next()), 1, "the running download");
+    let stopping = std::time::Instant::now();
+    let killed = Command::new("kill").args(["-TERM", &child.id().to_string()]).status();
+    assert!(killed.unwrap().success());
+    let mut rest = Vec::new();
+    download.read_to_end(&mut rest).unwrap();
+    assert!(child.wait().unwrap().success());
+    let elapsed = stopping.elapsed();
+    assert!(elapsed < std::time::Duration::from_secs(2), "stopped after {elapsed:?}");
+}
+
 #[test]
 fn runtime_failures_log_a_server_error_and_exit_one() {
     let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

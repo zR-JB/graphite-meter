@@ -16,7 +16,7 @@ use crate::{
     assets::{Asset, Assets},
     auth::Auth,
     config::{Config, ListenerKind},
-    engine::{Block, Uploads},
+    engine::{Block, Meter, Uploads},
     exchange::{EXCHANGE_BOUND, Exchange},
     lane::{Lane, Work},
     limits::{Budget, Hold, Pressure, Quotas, Refusal, Transport},
@@ -32,7 +32,7 @@ use gate::Gate;
 use graphite_meter_legal::Notices;
 use graphite_meter_proto::{lane::LaneEnding, route::Route};
 use http::{HeaderValue, Method, Request, Response, StatusCode, header};
-use std::{future::poll_fn, net::IpAddr, pin::pin};
+use std::{future::poll_fn, net::IpAddr, pin::pin, time::Duration};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
@@ -98,7 +98,7 @@ impl App {
             return Err("authentication is unavailable in this build".into());
         }
         let budget = Budget::new(config.max_buffer_bytes);
-        let block = Block::new(&budget)?;
+        let block = Block::new(&budget, Meter::new(config.verbose))?;
         let alt_svc = config.listener(ListenerKind::H3).and_then(|listener| {
             let port = listen_port(&listener.address)?;
             HeaderValue::from_str(&format!("h3=\":{port}\"")).ok()
@@ -106,7 +106,7 @@ impl App {
         let generation = random::<16>()?.iter().map(|byte| format!("{byte:02x}")).collect();
         Ok(Self {
             quotas: Quotas::new(config.limits, &budget, None),
-            uploads: Uploads::new(random()?),
+            uploads: Uploads::new(random()?, Meter::new(config.verbose)),
             auth: Auth::Off,
             assets: Assets::embedded(config.auth.is_some(), config.result_history_default),
             budget,
@@ -126,6 +126,17 @@ impl App {
 
     pub fn budget(&self) -> &Budget {
         &self.budget
+    }
+
+    pub fn quotas(&self) -> &Quotas {
+        &self.quotas
+    }
+
+    /// The verbose throughput lines for the `window` since the last, for each direction that moved or runs.
+    pub fn transfer_lines(&self, window: Duration) -> impl Iterator<Item = String> + '_ {
+        [("download", self.block.meter()), ("upload", self.uploads.meter())]
+            .into_iter()
+            .filter_map(move |(direction, meter)| meter.line(direction, window))
     }
 
     /// A connection's share, keyed by its socket address; `None` refuses the connection.

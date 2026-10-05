@@ -1,14 +1,24 @@
 //! What bounds an HTTP/1 connection: keep-alive idleness, the exchange bound, head limits and connection shares.
 
 use super::*;
+use futures_util::FutureExt;
 use tokio::time::{Instant, sleep};
 
-/// How long the server takes to close the connection, on paused time.
+/// How long the server takes to close the connection, on paused time moved in steps, so that no timer the close
+/// starts moves it further.
 async fn closes_after(client: &mut Client<TcpStream>) -> Duration {
     tokio::time::pause();
     let started = Instant::now();
-    assert!(client.answer().await.is_none(), "the server closed the connection");
-    started.elapsed()
+    loop {
+        tokio::time::advance(Duration::from_millis(50)).await;
+        tokio::task::yield_now().await;
+        // The close reaches the client's socket in real time.
+        std::thread::sleep(Duration::from_millis(1));
+        if let Some(answer) = client.answer().now_or_never() {
+            assert!(answer.is_none(), "the server closed the connection");
+            return started.elapsed();
+        }
+    }
 }
 
 #[tokio::test]

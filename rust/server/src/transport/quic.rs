@@ -47,6 +47,8 @@ use window::{SendWindow, Window};
 const HANDSHAKE_BOUND: Duration = Duration::from_secs(10);
 /// How often a connection's send window follows its demand.
 const SEND_WINDOW_TUNING: Duration = Duration::from_millis(250);
+/// Connections closed once the shutdown drain ended have this long to send their close.
+const CLOSE_FLUSH: Duration = Duration::from_secs(1);
 
 /// The endpoint's accepts; dropping it refuses new connections while running ones go on.
 pub struct Listener {
@@ -166,6 +168,15 @@ impl Listen for Listener {
     fn name(&self) -> String {
         self.local_addr()
             .map_or_else(|_| "udp".into(), |address| format!("udp {address}"))
+    }
+
+    /// Closes what the drain left, handshakes included, with H3_NO_ERROR, and lets the closes reach the socket.
+    fn closer(&self) -> impl Future<Output = ()> + Send + 'static {
+        let endpoint = self.endpoint.clone();
+        async move {
+            endpoint.close(http3::Code::H3_NO_ERROR.into(), b"");
+            let _ = timeout(CLOSE_FLUSH, endpoint.wait_all_draining()).await;
+        }
     }
 }
 

@@ -20,7 +20,7 @@ fn lane() -> Lane {
 }
 
 fn fixture() -> (Uploads, ClientKeys, String) {
-    let uploads = Uploads::new([7; 32]);
+    let uploads = Uploads::new([7; 32], Meter::new(true));
     let id = uploads.mint().unwrap();
     (uploads, client("192.0.2.1"), id)
 }
@@ -58,7 +58,7 @@ async fn ids_are_signed_by_their_store_and_create_state_only_while_fresh() {
     for refused in [forged.as_str(), "gmu_", "", &id[..78]] {
         assert_eq!(uploads.begin(refused, Some(&owner), lane()).err(), Some(UploadRefusal::Invalid));
     }
-    let elsewhere = Uploads::new([8; 32]);
+    let elsewhere = Uploads::new([8; 32], Meter::default());
     assert_eq!(elsewhere.subscribe(&id, Some(&owner)).err(), Some(UploadRefusal::Invalid));
     assert_eq!(
         uploads.checkpoint(&id, Some(&owner)).err(),
@@ -76,7 +76,7 @@ async fn ids_are_signed_by_their_store_and_create_state_only_while_fresh() {
 
 #[tokio::test(start_paused = true)]
 async fn an_owner_is_its_narrowest_key_and_an_ambiguous_peer_owns_nothing() {
-    let uploads = Uploads::new([7; 32]);
+    let uploads = Uploads::new([7; 32], Meter::new(true));
     let id = uploads.mint().unwrap();
     drop(uploads.begin(&id, Some(&client("2001:db8:1:2::1")), lane()).unwrap());
     assert!(
@@ -108,7 +108,7 @@ async fn an_owner_is_its_narrowest_key_and_an_ambiguous_peer_owns_nothing() {
 
 #[tokio::test(start_paused = true)]
 async fn a_client_holds_thirty_two_aggregates_and_its_wider_prefixes_twice_as_many() {
-    let uploads = Uploads::new([7; 32]);
+    let uploads = Uploads::new([7; 32], Meter::new(true));
     let create = |keys: &ClientKeys| uploads.subscribe(&uploads.mint().unwrap(), Some(keys)).err();
     let v4 = client("192.0.2.1");
     for _ in 0..MAX_PER_CLIENT {
@@ -125,7 +125,7 @@ async fn a_client_holds_thirty_two_aggregates_and_its_wider_prefixes_twice_as_ma
 
 #[tokio::test(start_paused = true)]
 async fn at_capacity_only_the_stalest_empty_aggregate_is_displaced_and_stays_refused() {
-    let uploads = Uploads::new([7; 32]);
+    let uploads = Uploads::new([7; 32], Meter::new(true));
     let owner = client("192.0.2.1");
     let (stalest, newer) = (uploads.mint().unwrap(), uploads.mint().unwrap());
     let mut displaced = uploads.subscribe(&stalest, Some(&owner)).unwrap();
@@ -217,6 +217,8 @@ async fn a_finished_upload_completes_once_its_lanes_drain_and_takes_no_new_lane(
     lanes[0].record(100);
     lanes[1].record(230);
     assert!(matches!(record(&mut feed).await, Some(Record::Progress(counters)) if counters.bytes() == 330));
+    let metered = uploads.meter().line("upload", Duration::from_secs(1)).unwrap();
+    assert!(metered.ends_with(" 2 conns · 0.00 MB this window"), "{metered}");
     let finished = tokio::spawn(lanes[0].finished());
     tokio::task::yield_now().await;
     assert!(!finished.is_finished(), "a lane sees no finish before it");

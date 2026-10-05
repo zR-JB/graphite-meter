@@ -1,6 +1,6 @@
 //! One upload lane's bytes into its aggregate.
 
-use super::uploads::Aggregate;
+use super::{meter::Transfer, uploads::Aggregate};
 use crate::lane::Lane;
 use std::{future::Future, pin::pin, sync::Arc};
 
@@ -9,11 +9,12 @@ pub struct UploadSink {
     aggregate: Arc<Aggregate>,
     lane: Lane,
     bytes: u64,
+    transfer: Option<Transfer>,
 }
 
 impl UploadSink {
-    pub(super) fn new(aggregate: Arc<Aggregate>, lane: Lane) -> Self {
-        Self { aggregate, lane, bytes: 0 }
+    pub(super) fn new(aggregate: Arc<Aggregate>, lane: Lane, transfer: Option<Transfer>) -> Self {
+        Self { aggregate, lane, bytes: 0, transfer }
     }
 
     /// Counts bytes received from the peer, once per chunk or batch; receiving any is the lane's movement.
@@ -24,6 +25,9 @@ impl UploadSink {
         self.lane.moved();
         self.aggregate.record(bytes as u64);
         self.bytes += bytes as u64;
+        if let Some(transfer) = &self.transfer {
+            transfer.record(bytes);
+        }
     }
 
     /// The bytes this lane received.

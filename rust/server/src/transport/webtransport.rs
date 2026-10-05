@@ -156,7 +156,7 @@ async fn download_stream(session: &Session, source: &DownloadSource, lane: &Lane
 /// Repeats `source`'s bytes in datagrams until the session ends or refuses one.
 async fn flood(session: &Session, source: &DownloadSource) {
     let count = source.remaining();
-    let Some(full) = source.clone().next(DATAGRAM_BYTES) else {
+    let Some(full) = source.peek(DATAGRAM_BYTES) else {
         return;
     };
     let tail = (count % full.len() as u64) as usize;
@@ -178,6 +178,7 @@ async fn flood(session: &Session, source: &DownloadSource) {
             if datagram.send_wait().await.is_err() {
                 return;
             }
+            source.sent(size);
             remaining -= size as u64;
             since_yield += 1;
             if since_yield == DATAGRAM_YIELD_BATCH {
