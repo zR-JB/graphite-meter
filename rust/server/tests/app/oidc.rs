@@ -201,6 +201,29 @@ async fn callbacks_whose_state_cookie_issuer_verifier_or_nonce_do_not_match_are_
 }
 
 #[tokio::test]
+async fn a_callback_needs_one_code_one_state_and_at_most_one_issuer_and_ignores_other_pairs() {
+    if !child("oidc::a_callback_needs_one_code_one_state_and_at_most_one_issuer_and_ignores_other_pairs") {
+        return;
+    }
+    let provider = Provider::start().await;
+    let app = discovered(&provider).await;
+    let issuer = query::escape(provider.issuer());
+    for (extra, signs_in) in [
+        ("&session_state=a&session_state=b&bad=%zz&odd;pair&&scope", true),
+        ("&code=another", false),
+        ("&state=", false),
+        (&format!("&iss={issuer}"), false),
+    ] {
+        let started = start(&app, "192.0.2.1", "").await;
+        let cookie = format!("__Host-gm_oidc={}", cookie_value(&started, "__Host-gm_oidc"));
+        let (code, state) = provider.authorize(location(&started));
+        let query = format!("code={code}&state={state}&iss={issuer}{extra}");
+        let answer = callback(&app, "192.0.2.1", &query, &cookie).await;
+        assert_eq!(answer.status() == StatusCode::OK, signs_in, "{extra}");
+    }
+}
+
+#[tokio::test]
 async fn a_login_needs_an_allowed_group_and_the_id_token_s_subject() {
     if !child("oidc::a_login_needs_an_allowed_group_and_the_id_token_s_subject") {
         return;

@@ -10,8 +10,13 @@ pub const MAX_STREAMS: usize = 16;
 
 /// The first value of `name`; pairs holding `;` or a bad escape are left out.
 pub fn get(query: Option<&str>, name: &str) -> Option<String> {
-    let mut pairs = query?.split('&').filter_map(pair);
-    pairs.find(|(key, _)| key == name).map(|(_, value)| value)
+    values(query, name).next()
+}
+
+/// Every value of `name` in order; pairs holding `;` or a bad escape are left out.
+pub fn values<'a>(query: Option<&'a str>, name: &'a str) -> impl Iterator<Item = String> + 'a {
+    let pairs = query.into_iter().flat_map(|query| query.split('&')).filter_map(pair);
+    pairs.filter(move |(key, _)| key == name).map(|(_, value)| value)
 }
 
 /// A URL-encoded form's fields; `None` when one holds `;` or a bad escape, or a name repeats.

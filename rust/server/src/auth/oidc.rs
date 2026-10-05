@@ -299,11 +299,10 @@ pub(super) async fn callback(
     deadline: Instant,
     peer: &Peer,
 ) -> Response<Body> {
-    let query = head.uri.query().unwrap_or_default();
     let mut answer = match sign_in(auth, oidc, &head, deadline, peer).await {
         Ok(answer) => answer,
         Err((reason, challenge)) if challenge.is_empty() => {
-            refused(auth, reason, &query::get(Some(query), "challenge").unwrap_or_default())
+            refused(auth, reason, &query::get(head.uri.query(), "challenge").unwrap_or_default())
         }
         Err((reason, challenge)) => refused(auth, reason, &challenge),
     };
@@ -318,18 +317,18 @@ async fn sign_in(
     deadline: Instant,
     peer: &Peer,
 ) -> Result<Response<Body>, (Reason, String)> {
-    let query = head.uri.query().unwrap_or_default();
-    let refuse = |reason| (reason, String::new());
-    let fields = query::form(query).ok_or(refuse(Reason::CallbackParameters))?;
-    let (code, state) = (field(&fields, "code"), field(&fields, "state"));
+    let (query, refuse) = (head.uri.query(), |reason| (reason, String::new()));
+    let values = |name| query::values(query, name).collect::<Vec<_>>();
+    let (code, state, issuer) = (values("code"), values("state"), values("iss"));
+    let ([code], [state]) = (&code[..], &state[..]) else {
+        return Err(refuse(Reason::CallbackParameters));
+    };
     let printable = code.bytes().all(|byte| (0x20..0x7f).contains(&byte));
-    if code.is_empty() || state.is_empty() || !printable || fields.iter().any(|(name, _)| name == "error") {
+    if code.is_empty() || state.is_empty() || !printable || issuer.len() > 1 || query::get(query, "error").is_some() {
         return Err(refuse(Reason::CallbackParameters));
     }
     let browser = cookie(&head.headers, TRANSACTION_COOKIE).ok_or(refuse(Reason::TransactionCookie))?;
-    let issuer = fields.iter().find(|(name, _)| name == "iss");
-    let issuer = issuer.map(|(_, issuer)| issuer.as_str());
-    let transaction = oidc.take(state, browser, issuer)?;
+    let transaction = oidc.take(state, browser, issuer.first().map(String::as_str))?;
     let fail = |reason| (reason, transaction.challenge.clone());
     if !peer.keys().is_some_and(|keys| oidc.exchanges.allow(&keys, false, None)) {
         return Err(fail(Reason::ExchangeRateLimited));
