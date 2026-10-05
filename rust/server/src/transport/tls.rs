@@ -22,7 +22,10 @@ use std::{
     fmt,
     net::SocketAddr,
     path::Path,
-    sync::{Arc, PoisonError, RwLock},
+    sync::{
+        Arc, PoisonError, RwLock,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
@@ -37,12 +40,25 @@ const RENEWAL_CHECK: Duration = Duration::from_secs(60);
 /// A certificate expiring sooner is logged with a warning.
 const EXPIRY_WARNING: Duration = Duration::from_secs(30 * 24 * 3600);
 
-/// The PEM pair every TLS listener serves, replaced only by a complete and valid renewal.
+/// Whether the buffer budget covers every QUIC connection's floor with a handshake of this many bytes.
+type Fits = Box<dyn Fn(usize) -> Result<(), String> + Send + Sync>;
+
+/// The PEM pair every TLS listener serves, replaced only by a complete and valid renewal that the budget covers.
 pub struct Certificates {
     files: TlsFiles,
     /// The hosts of the TLS listeners' public origins, which the leaf must cover.
     hosts: Vec<Host>,
+    fits: Fits,
     current: RwLock<Arc<CertifiedKey>>,
+    /// The current chain's `handshake_bytes`.
+    handshake: AtomicUsize,
+}
+
+/// What a QUIC handshake holds for a chain of C bytes in N certificates: five server flights of C + 5N + 609 bytes
+/// and a copy of C + 48N.
+pub fn handshake_bytes(chain: &[CertificateDer<'_>]) -> usize {
+    let (bytes, count) = (chain.iter().map(|certificate| certificate.len()).sum::<usize>(), chain.len());
+    5 * (bytes + 5 * count + 609) + bytes + 48 * count
 }
 
 impl fmt::Debug for Certificates {
@@ -65,26 +81,48 @@ pub fn covered_hosts(config: &Config) -> Vec<Host> {
 }
 
 impl Certificates {
-    /// Reads and validates the pair, which must cover `hosts`; blocking file reads.
-    pub fn load(files: TlsFiles, hosts: Vec<Host>, now: SystemTime) -> Result<Self, String> {
+    /// Reads and validates the pair, which must cover `hosts` and whose handshake must `fit`; blocking file reads.
+    pub fn load(
+        files: TlsFiles,
+        hosts: Vec<Host>,
+        now: SystemTime,
+        fits: impl Fn(usize) -> Result<(), String> + Send + Sync + 'static,
+    ) -> Result<Self, String> {
         let (pair, expires) = read(&files, &hosts, now)?;
+        let handshake = handshake_bytes(&pair.cert);
+        fits(handshake)?;
         log_loaded(expires, now);
         #[cfg(unix)]
         warn_readable(&files.key);
-        Ok(Self { files, hosts, current: RwLock::new(Arc::new(pair)) })
+        Ok(Self {
+            files,
+            hosts,
+            fits: Box::new(fits),
+            current: RwLock::new(Arc::new(pair)),
+            handshake: AtomicUsize::new(handshake),
+        })
     }
 
-    /// Re-reads the pair; an incomplete or invalid renewal keeps the current one. Whether the leaf changed.
+    /// Re-reads the pair; an incomplete or invalid renewal, or one the budget does not cover, keeps the current one.
+    /// Whether the leaf changed.
     pub fn reload(&self, now: SystemTime) -> Result<bool, String> {
         let (pair, expires) = read(&self.files, &self.hosts, now)?;
+        let handshake = handshake_bytes(&pair.cert);
+        (self.fits)(handshake)?;
         let mut current = self.current.write().unwrap_or_else(PoisonError::into_inner);
         let changed = current.cert.first() != pair.cert.first();
         *current = Arc::new(pair);
+        self.handshake.store(handshake, Ordering::Relaxed);
         drop(current);
         if changed {
             log_loaded(expires, now);
         }
         Ok(changed)
+    }
+
+    /// The bytes a QUIC handshake with the current chain holds.
+    pub fn handshake_bytes(&self) -> usize {
+        self.handshake.load(Ordering::Relaxed)
     }
 
     /// Re-reads the pair every minute on a blocking thread until `shutdown`.

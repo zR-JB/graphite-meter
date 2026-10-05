@@ -1,7 +1,10 @@
 //! The HTTPS listener and its certificate: TLS 1.3 only, startup checks and renewals.
 
 use super::*;
-use graphite_meter_server::{config::TlsFiles, transport::tls::Certificates};
+use graphite_meter_server::{
+    config::TlsFiles,
+    transport::tls::{Certificates, handshake_bytes},
+};
 use graphite_meter_testkit::{Identity, Scratch};
 use rustls::pki_types::{CertificateDer, ServerName, pem::PemObject};
 use std::{path::PathBuf, sync::Arc, time::SystemTime};
@@ -79,7 +82,7 @@ async fn a_renewal_replaces_the_pair_only_once_complete() {
     let scratch = Scratch::new().unwrap();
     let (old, new) = (Identity::generate().unwrap(), Identity::generate().unwrap());
     let (cert, key) = files(&scratch, &old);
-    let certificates = Certificates::load(TlsFiles { cert, key }, vec![], SystemTime::now()).unwrap();
+    let certificates = Certificates::load(TlsFiles { cert, key }, vec![], SystemTime::now(), |_| Ok(())).unwrap();
     let certificates = Arc::new(certificates);
     let acceptor = certificates.acceptor(b"http/1.1");
     assert!(trusts(&acceptor, &old).await);
@@ -93,4 +96,31 @@ async fn a_renewal_replaces_the_pair_only_once_complete() {
     assert!(trusts(&acceptor, &new).await, "the complete renewal serves new handshakes");
     assert!(!trusts(&acceptor, &old).await);
     assert_eq!(certificates.reload(SystemTime::now()), Ok(false), "an unchanged pair is no renewal");
+}
+
+#[tokio::test]
+async fn a_renewal_whose_handshake_the_budget_does_not_cover_keeps_the_previous_pair() {
+    let scratch = Scratch::new().unwrap();
+    let (old, new) = (Identity::generate().unwrap(), Identity::generate().unwrap());
+    let (cert, key) = files(&scratch, &old);
+    let covered = handshake_bytes(&chain(&old.certificate));
+    let fits = move |bytes| match bytes <= covered {
+        true => Ok(()),
+        false => Err(format!("{bytes} handshake bytes")),
+    };
+    let certificates = Arc::new(Certificates::load(TlsFiles { cert, key }, vec![], SystemTime::now(), fits).unwrap());
+    let acceptor = certificates.acceptor(b"http/1.1");
+    let longer = format!("{}{}", new.certificate, new.ca);
+    scratch.file("cert.pem", &longer).unwrap();
+    scratch.file("key.pem", &new.key).unwrap();
+    let refused = certificates.reload(SystemTime::now()).unwrap_err();
+    assert_eq!(refused, format!("{} handshake bytes", handshake_bytes(&chain(&longer))));
+    assert_eq!(certificates.handshake_bytes(), covered);
+    assert!(trusts(&acceptor, &old).await, "the covered pair keeps serving");
+}
+
+fn chain(pem: &str) -> Vec<CertificateDer<'static>> {
+    CertificateDer::pem_slice_iter(pem.as_bytes())
+        .map(Result::unwrap)
+        .collect()
 }
