@@ -69,6 +69,7 @@ impl Alg {
 }
 
 /// A signing key: an RSA modulus and exponent, or an uncompressed curve point or Ed25519 key.
+#[derive(Clone)]
 struct Key {
     kid: Option<String>,
     alg: Option<String>,
@@ -89,7 +90,7 @@ impl Key {
 }
 
 /// A provider's signing keys.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(super) struct Jwks(Vec<Key>);
 
 impl Jwks {

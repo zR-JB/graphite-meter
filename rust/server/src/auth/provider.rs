@@ -2,7 +2,7 @@
 //! one bounded connection each, sent from the main runtime.
 
 use super::jwt::{self, Alg, Jwks, Verified};
-use crate::config::ENGINE_VERSION;
+use crate::{config::ENGINE_VERSION, lock};
 use graphite_meter_net::{Alpn, Connector, Proxy, Verify};
 use graphite_meter_proto::origin::{Origin, Scheme};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, header};
@@ -113,7 +113,9 @@ pub(super) struct Provider {
     algorithms: Vec<Alg>,
     /// The provider names itself in `iss` on every callback.
     pub issuer_parameter: bool,
-    keys: tokio::sync::Mutex<Arc<Jwks>>,
+    /// The signing keys; every refetch, failed or not, replaces the `Arc`.
+    keys: std::sync::Mutex<Arc<Jwks>>,
+    refetch: tokio::sync::Mutex<()>,
 }
 
 impl Provider {
@@ -159,6 +161,7 @@ impl Provider {
             algorithms,
             issuer_parameter: metadata.authorization_response_iss_parameter_supported,
             keys: Default::default(),
+            refetch: Default::default(),
         })
     }
 
@@ -168,18 +171,21 @@ impl Provider {
         format!("{}{separator}{query}", self.authorization)
     }
 
-    /// Verifies `token` with the known keys, refetching them once for all waiting callers when none signed it.
+    /// Verifies `token` with the known keys, refetching them once for all callers whose keys signed nothing.
     pub async fn verify(&self, client: &Client, token: &str) -> Option<Verified> {
-        let seen = self.keys.lock().await.clone();
+        let seen = lock(&self.keys).clone();
         if let Some(verified) = jwt::verify(token, &seen, &self.algorithms) {
             return Some(verified);
         }
-        let mut keys = self.keys.lock().await;
+        let _refetching = self.refetch.lock().await;
+        let mut keys = lock(&self.keys).clone();
         if Arc::ptr_eq(&keys, &seen) {
             let fresh = (header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
-            *keys = Arc::new(Jwks::parse(&client.send(&self.jwks, Some(fresh), None).await.ok()?.body)?);
+            let fetched = client.send(&self.jwks, Some(fresh), None).await.ok();
+            let fetched = fetched.and_then(|answer| Jwks::parse(&answer.body));
+            keys = Arc::new(fetched.unwrap_or_else(|| Jwks::clone(&keys)));
+            *lock(&self.keys) = keys.clone();
         }
-        let keys = keys.clone();
         jwt::verify(token, &keys, &self.algorithms)
     }
 }
