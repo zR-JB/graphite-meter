@@ -11,7 +11,7 @@ import unittest
 import zipfile
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import cast
 from unittest.mock import patch
 
@@ -107,9 +107,10 @@ ATTESTED = (descriptor("unknown", "unknown", "sha256:" + "c" * 64, AMD),
 
 def write_oci(path: Path, repository: str, revision: str, *, remote: bool, tamper: bool = False,
               predicate: str = SLSA, files: Mapping[str, bytes] = IMAGE_FILES,
-              arch_files: Mapping[str, Mapping[str, bytes]] | None = None) -> JsonObject:
-    """Write two images of `files`, each with its `arch_files`, and BuildKit-shaped provenance into an OCI archive;
-    return its index."""
+              arch_files: Mapping[str, Mapping[str, bytes]] | None = None,
+              stage: tuple[str, str | None] = ("container/Dockerfile", None)) -> JsonObject:
+    """Write two images of `files`, each with its `arch_files`, and BuildKit-shaped provenance of building `stage`, a
+    Dockerfile and target, into an OCI archive; return its index."""
     blobs: dict[str, bytes] = {}
 
     def add(value: object) -> str:
@@ -132,13 +133,16 @@ def write_oci(path: Path, repository: str, revision: str, *, remote: bool, tampe
     images = {arch: add({"schemaVersion": 2, "mediaType": MANIFEST_TYPE, "architecture": arch, "layers": [
         {"digest": layer({**files, **(arch_files or {}).get(arch, {})})}]}) for arch in ("amd64", "arm64")}
 
-    source: JsonObject = {"path": "Dockerfile"}
+    # A local context's Dockerfile is named without its directory.
+    source: JsonObject = {"path": PurePosixPath(stage[0]).name}
     if remote:
         source = {"uri": f"https://github.com/{repository}.git#{revision}",
-                  "digest": {"sha1": revision}, "path": "container/Dockerfile"}
+                  "digest": {"sha1": revision}, "path": stage[0]}
     vcs = {"source": f"https://github.com/{repository}", "revision": revision}
+    args: JsonObject = {"target": stage[1]} if stage[1] else {}
     statement = add({"predicateType": SLSA, "subject": [], "predicate": {
-        "buildDefinition": {"externalParameters": {"configSource": source}},
+        "buildDefinition": {"externalParameters": {"configSource": source, "request": {
+            "frontend": "dockerfile.v0", "args": args}}},
         "runDetails": {"metadata": {"buildkit_metadata": {} if remote else {"vcs": vcs}}}}})
     statement_layer = {"mediaType": "application/vnd.in-toto+json", "digest": statement,
              "annotations": {"in-toto.io/predicate-type": predicate}}
@@ -223,6 +227,7 @@ def write_release_assets(dist: Path, version: str, reported: str = "") -> None:
 
 
 RUST_OCI = "graphite-meter-rust.oci.tar"
+RUST_STAGE = ("container/Dockerfile.rust", "server")
 # 64-bit little-endian executable headers for each Rust target's architecture.
 ELF = {"x86_64": 62, "aarch64": 183}
 
@@ -302,7 +307,7 @@ def write_rust_release(image: Path, tui: Path | None, version: str, revision: st
             write_rust_offer(image / offer, "graphite-meter-server", target)
         sources[platform.split("/")[1]] = {"usr/share/licenses/graphite-meter/SOURCE.txt": source,
                                            "graphite-meter": rust_server(target)}
-    oci = write_oci(image / RUST_OCI, repository, revision, remote=tui is None, arch_files=sources)
+    oci = write_oci(image / RUST_OCI, repository, revision, remote=tui is None, arch_files=sources, stage=RUST_STAGE)
     (image / f"{RUST_OCI}.sha256").write_text(
         f"{hashlib.sha256((image / RUST_OCI).read_bytes()).hexdigest()}  {RUST_OCI}\n")
     if tui is not None:

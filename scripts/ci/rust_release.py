@@ -37,6 +37,8 @@ N = SEMVER_NUMBER
 VERSION = re.compile(rf"{N}\.{N}\.{N}(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?")
 PRERELEASE = re.compile(rf"{N}\.{N}\.{N}-(?:alpha|beta|rc)\.{N}")
 OCI = "graphite-meter-rust.oci.tar"
+# The Dockerfile and target that build the Rust image.
+IMAGE_STAGE = ("container/Dockerfile.rust", "server")
 OCI_LIMIT = 1024 * 1024 * 1024
 FILE_LIMIT = 16 * 1024 * 1024
 EXECUTABLE_LIMIT = 128 * 1024 * 1024
@@ -250,7 +252,7 @@ def verify_image(directory: Path, version: str, revision: str, profile: str, roo
         if digests != {hashlib.sha256(notices.encode()).hexdigest()}:
             fail(f"the image's {platform} server is not the reviewed build of its source offer's notices")
 
-    return digest, verify_oci.verify(f"{version}-rust", revision, path, check_files)
+    return digest, verify_oci.verify(f"{version}-rust", revision, path, check_files, IMAGE_STAGE)
 
 
 def verify(version: str, revision: str, image: Path, tui: Path | None, assets: Path, server_profile: str = "release",

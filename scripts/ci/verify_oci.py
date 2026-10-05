@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import tarfile
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from github_api import (
     ControlPlaneError,
@@ -118,8 +118,9 @@ def check_image_files(archive: tarfile.TarFile, image: str) -> tuple[str, bytes]
     return source.decode(errors="replace"), server
 
 
-def source_commit(statement: JsonObject, repository: str) -> str:
-    """Return the commit a BuildKit SLSA provenance statement says it built from `repository`."""
+def source_commit(statement: JsonObject, repository: str, stage: tuple[str, str] | None = None) -> str:
+    """Return the commit a BuildKit SLSA provenance statement says it built from `repository`, and with `stage`
+    require it to have built that Dockerfile's target: by its path in the context, or for a local context its name."""
     def nested(*keys: str) -> JsonObject:
         value = statement
         for key in keys:
@@ -138,17 +139,24 @@ def source_commit(statement: JsonObject, repository: str) -> str:
         expected = f"https://github.com/{repository}"
     if statement.get("predicateType") != SLSA or origin != expected:
         fail(f"provenance built {origin!r}, not {expected!r}")
+    if stage is not None:
+        dockerfile, target = stage
+        request = nested("predicate", "buildDefinition", "externalParameters", "request")
+        built = (str_field(source, "path", "configSource"), object_field(request, "args", "request").get("target"))
+        if built[0] not in (dockerfile, PurePosixPath(dockerfile).name) or built[1] != target:
+            fail(f"provenance built target {built[1]!r} of {built[0]!r}, not {target!r} of {dockerfile!r}")
     return commit
 
 
-def provenance_sources(archive: tarfile.TarFile, attestation: str, repository: str) -> set[str]:
+def provenance_sources(archive: tarfile.TarFile, attestation: str, repository: str,
+                       stage: tuple[str, str] | None = None) -> set[str]:
     """Return the commits that the SLSA statements in `attestation` say BuildKit built."""
     sources = set()
     for item in expect_array(blob(archive, attestation).get("layers"), attestation):
         layer = expect_object(item, attestation)
         if object_field(layer, "annotations", attestation).get("in-toto.io/predicate-type") == SLSA:
             statement = blob(archive, str_field(layer, "digest", attestation))
-            sources.add(source_commit(statement, repository))
+            sources.add(source_commit(statement, repository, stage))
     if not sources:
         fail(f"{attestation} holds no SLSA provenance statement")
     return sources
@@ -180,9 +188,9 @@ def skopeo(engine: str, image: str, *args: str, archive: Path | None = None) -> 
 
 
 def verify(version: str, revision: str, archive: Path,
-           check_files: Callable[[str, str, bytes], None] | None = None) -> str:
-    """Verify the archive, passing each architecture's SOURCE.txt and server to `check_files`, and return its
-    manifest digest."""
+           check_files: Callable[[str, str, bytes], None] | None = None, stage: tuple[str, str] | None = None) -> str:
+    """Verify the archive, built from `stage`'s Dockerfile and target if given, passing each architecture's
+    SOURCE.txt and server to `check_files`, and return its manifest digest."""
     if archive.is_symlink() or not archive.is_file() or archive.stat().st_size == 0:
         fail(f"OCI archive is missing, empty, or not a regular file: {archive}")
     engine, image = select_engine(), env("SKOPEO_IMAGE")
@@ -195,7 +203,7 @@ def verify(version: str, revision: str, archive: Path,
     attestations, images = validate_index_descriptors(inspect("--raw"))
     try:
         with tarfile.open(archive, mode="r:") as tar:
-            sources = set().union(*(provenance_sources(tar, digest, repository)
+            sources = set().union(*(provenance_sources(tar, digest, repository, stage)
                                     for digest in attestations))
             for arch, digest in images.items():
                 source, server = check_image_files(tar, digest)

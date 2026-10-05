@@ -94,7 +94,8 @@ package versions only from one snapshot.debian.org timestamp, and
 `toolchain-sync` keeps their image literals equal to `mise.toml`'s. Verification requires one runnable `linux/amd64` and
 `linux/arm64` manifest, each with one linked SLSA provenance statement whose
 source (the fetched commit, or the local checkout's revision) is the release
-commit of this repository, requires each image's layers to ship the server and
+commit of this repository, and for the Rust image whose Dockerfile and target
+are `container/Dockerfile.rust` and `server`, requires each image's layers to ship the server and
 its `THIRD_PARTY_NOTICES.txt` with no copy carrying `UNREVIEWED DEVELOPMENT
 BUILD`, and copies every blob inside a network-less Skopeo
 container whose only mount is the read-only archive. The untrusted build writes

@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fixtures import (
-    RUST_OCI, engine, executable, outcome, reviewed, rust_server, rust_source, write_oci, write_rust_offer,
+    RUST_OCI, RUST_STAGE, engine, executable, outcome, reviewed, rust_server, rust_source, write_oci, write_rust_offer,
     write_rust_release, write_rust_tui, write_tar,
 )
 from github_api import ControlPlaneError, JsonObject, file_sha256
@@ -224,8 +224,9 @@ class VerifyTests(Scratch):
         def checksum(image: Path, _: Path) -> None:
             (image / f"{RUST_OCI}.sha256").write_text(f"{'0' * 64}  {RUST_OCI}\n")
 
-        def rebuilt(image: Path, sources: dict[str, dict[str, bytes]]) -> JsonObject:
-            oci = write_oci(image / RUST_OCI, REPO, SHA, remote=False, arch_files=sources)
+        def rebuilt(image: Path, sources: dict[str, dict[str, bytes]],
+                    stage: tuple[str, str | None] = RUST_STAGE) -> JsonObject:
+            oci = write_oci(image / RUST_OCI, REPO, SHA, remote=False, arch_files=sources, stage=stage)
             (image / f"{RUST_OCI}.sha256").write_text(f"{file_sha256(image / RUST_OCI)}  {RUST_OCI}\n")
             return oci
 
@@ -234,13 +235,13 @@ class VerifyTests(Scratch):
             return rebuilt(image, {"amd64": named | {"graphite-meter": rust_server(AMD64)},
                                    "arm64": named | {"graphite-meter": rust_server(ARM64)}})
 
-        def servers(amd64_server: bytes, arm64_server: bytes) -> Edit:
+        def servers(amd64_server: bytes, arm64_server: bytes, stage: tuple[str, str | None] = RUST_STAGE) -> Edit:
             def edit(image: Path, _: Path) -> JsonObject:
                 files = {arch: {"usr/share/licenses/graphite-meter/SOURCE.txt": rust_source(
                     "1.2.3", offer_name("graphite-meter-server", "1.2.3", f"linux/{arch}"), target),
                     "graphite-meter": server} for arch, target, server in (
                     ("amd64", AMD64, amd64_server), ("arm64", ARM64, arm64_server))}
-                return rebuilt(image, files)
+                return rebuilt(image, files, stage)
             return edit
 
         def unsourced(image: Path, _: Path) -> JsonObject:
@@ -263,6 +264,11 @@ class VerifyTests(Scratch):
             (servers(rust_server(AMD64), rust_server(ARM64)), "release", None),
             (servers(b"server", rust_server(ARM64)), "release", "linux/amd64 server is not the reviewed build"),
             (servers(rust_server(AMD64), rust_server(AMD64)), "release", "linux/arm64 server is not the reviewed"),
+            # Provenance names the Rust Dockerfile and its image target: not Go's image, nor another stage.
+            (servers(rust_server(AMD64), rust_server(ARM64), ("container/Dockerfile", None)), "release",
+             "built target None of 'Dockerfile', not 'server' of 'container/Dockerfile.rust'"),
+            (servers(rust_server(AMD64), rust_server(ARM64), ("container/Dockerfile.rust", "server-build")),
+             "release", "built target 'server-build'"),
             (missing_offer, "release", "files are"),
             (extra_tui, "release", "files are"),
             (ci_offer, "release", "does not inventory a release build"),
@@ -307,7 +313,8 @@ class PrereleaseTests(Scratch):
                 image = self.root / str(len(list(self.root.iterdir())))
                 image.mkdir()
                 files = {"usr/share/licenses/graphite-meter/SOURCE.txt": source, "graphite-meter": binary}
-                oci = write_oci(image / RUST_OCI, REPO, SHA, remote=True, arch_files={"amd64": files, "arm64": files})
+                oci = write_oci(image / RUST_OCI, REPO, SHA, remote=True, arch_files={"amd64": files, "arm64": files},
+                                stage=RUST_STAGE)
                 (image / f"{RUST_OCI}.sha256").write_text(f"{file_sha256(image / RUST_OCI)}  {RUST_OCI}\n")
                 with patch.dict(os.environ, engine(self.root, REPO, f"{version}-rust", SHA, oci)):
                     outcome(self, error, lambda: verify(version, SHA, image, None, self.root / "assets"))
