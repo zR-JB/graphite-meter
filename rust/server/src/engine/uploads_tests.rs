@@ -15,7 +15,7 @@ fn client(address: &str) -> ClientKeys {
 fn lane() -> Lane {
     let hold = Quota::new(1, 1).acquire(&ClientKeys::Exempt, 1).unwrap();
     let lifetime = Duration::from_secs(24 * 3600);
-    Exchange::start().admit(hold, lifetime, &Work::default(), &CancellationToken::new(), None)
+    Exchange::start().admit(ClientKeys::Exempt, hold, lifetime, &Work::default(), &CancellationToken::new(), None)
 }
 
 fn fixture() -> (Uploads, ClientKeys, String) {

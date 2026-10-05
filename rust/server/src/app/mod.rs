@@ -199,7 +199,7 @@ impl App {
         let keys = peer.keys().ok_or(Unadmitted::Ambiguous)?;
         let hold = self.quotas.operation(&keys).map_err(Unadmitted::Busy)?;
         let lifetime = self.config.lifetimes.operation;
-        Ok(exchange.admit(hold, lifetime, &connection.work, &self.shutdown, peer.auth()))
+        Ok(exchange.admit(keys, hold, lifetime, &connection.work, &self.shutdown, peer.auth()))
     }
 
     /// The WebSocket bus, admitted before its handshake is checked.

@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{
     app::{App, Connection, Endpoint, Outcome},
-    lane::{EXCHANGE_BOUND, Exchange, Lane, Work},
+    lane::{EXCHANGE_BOUND, Exchange, Lane, Watch, Work},
     lock,
 };
 use bytes::Bytes;
@@ -86,7 +86,7 @@ impl Http1 {
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
         let shared = Arc::new(Shared::default());
-        let io = Io::new(stream, shared.clone(), connection.work.clone());
+        let io = Io::new(stream, shared.clone());
         let bus = Bus::default();
         let service = {
             let (app, bus) = (self.app.clone(), bus.clone());
@@ -138,6 +138,8 @@ async fn respond(
 
 /// What bounds the connection: posted by the service, enforced by the IO wrapper.
 enum Limit {
+    /// A parsed request until admitted.
+    Exchange(Watch),
     Until(Instant),
     Lane(Lane),
     Open,
@@ -163,9 +165,9 @@ impl Shared {
     /// The exchange of a request whose head was just parsed, which bounds the connection until admitted.
     fn exchange(&self) -> Exchange {
         let started = lock(&self.started).take();
-        let deadline = started.unwrap_or_else(|| Instant::now() + EXCHANGE_BOUND);
-        self.post(Limit::Until(deadline));
-        Exchange::until(deadline)
+        let exchange = Exchange::until(started.unwrap_or_else(|| Instant::now() + EXCHANGE_BOUND));
+        self.post(Limit::Exchange(exchange.watch()));
+        exchange
     }
 
     /// Bounds the connection by the reply's bound; a reply without a body to send is complete at once.
@@ -226,13 +228,14 @@ struct Io<S> {
     /// The keep-alive or exchange deadline.
     deadline: Pin<Box<Sleep>>,
     shared: Arc<Shared>,
-    work: Work,
 }
 
 enum State {
     /// Between requests until the deadline; a first byte starts an exchange.
     Waiting,
-    /// A request until admitted, or a reply until written, by the deadline.
+    /// A request until admitted or answered by the deadline; its watch once its head is parsed.
+    Exchange(Option<Watch>),
+    /// A reply until written by the deadline.
     Until,
     /// A reply its lane bounds, and the lane's ending, polled while the socket blocks.
     Lane(Lane, Pin<Box<dyn Future<Output = LaneEnding> + Send>>),
@@ -241,9 +244,9 @@ enum State {
 }
 
 impl<S> Io<S> {
-    fn new(inner: S, shared: Arc<Shared>, work: Work) -> Self {
+    fn new(inner: S, shared: Arc<Shared>) -> Self {
         let deadline = Box::pin(sleep_until(Instant::now() + KEEP_ALIVE_IDLE));
-        Self { inner, state: State::Waiting, deadline, shared, work }
+        Self { inner, state: State::Waiting, deadline, shared }
     }
 
     /// Adopts a posted limit and fails once the connection's deadline passed or its lane ended otherwise.
@@ -252,17 +255,17 @@ impl<S> Io<S> {
             self.adopt();
         }
         let expired = match &self.state {
-            State::Waiting | State::Until => self.deadline.as_mut().poll(cx).is_ready(),
+            State::Waiting | State::Exchange(_) | State::Until => self.deadline.as_mut().poll(cx).is_ready(),
             State::Lane(lane, _) if lane.ending().is_some_and(|ending| ending != LaneEnding::Finished) => {
                 return Err(ended());
             }
             State::Lane(..) | State::Open => false,
         };
-        match expired {
-            // An upload admitted while its body is read keeps its lane's bounds instead.
-            true if matches!(self.state, State::Until) && self.work.idle_since().is_none() => self.state = State::Open,
-            true => return Err(io::ErrorKind::TimedOut.into()),
-            false => {}
+        match &self.state {
+            _ if !expired => {}
+            // A request admitted while its body is read is bound by its lane instead.
+            State::Exchange(Some(watch)) if watch.admitted().is_some() => self.state = State::Open,
+            _ => return Err(io::ErrorKind::TimedOut.into()),
         }
         Ok(())
     }
@@ -272,6 +275,10 @@ impl<S> Io<S> {
             return;
         };
         self.state = match limit {
+            Limit::Exchange(watch) => {
+                self.deadline.as_mut().reset(watch.deadline());
+                State::Exchange(Some(watch))
+            }
             Limit::Until(deadline) => {
                 self.deadline.as_mut().reset(deadline);
                 State::Until
@@ -334,7 +341,7 @@ impl<S: AsyncRead + Unpin> AsyncRead for Io<S> {
             Poll::Ready(Ok(())) if buffer.filled().len() > filled && matches!(this.state, State::Waiting) => {
                 let deadline = Instant::now() + EXCHANGE_BOUND;
                 this.deadline.as_mut().reset(deadline);
-                this.state = State::Until;
+                this.state = State::Exchange(None);
                 *lock(&this.shared.started) = Some(deadline);
             }
             Poll::Ready(_) => {}
