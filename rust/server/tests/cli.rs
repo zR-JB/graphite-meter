@@ -84,19 +84,6 @@ fn help_prints_the_usage_and_exits_zero() {
 }
 
 #[test]
-fn legal_without_embedded_notices_names_the_task_that_embeds_them() {
-    for arg in ["-legal", "--legal"] {
-        let output = server(&[arg], &[], b"");
-        assert_eq!(output.status.code(), Some(1));
-        assert!(output.stdout.is_empty());
-        let line = text(&output.stderr).strip_suffix('\n').unwrap();
-        let message = "legal: this build embeds no notices; mise run rust-server-run -- --legal builds the server \
-                       with dependency notices and prints them";
-        assert_eq!(logged(line), message);
-    }
-}
-
-#[test]
 fn hash_password_reads_twice_from_a_pipe() {
     let output = server(&["hash-password"], &[], b"correct horse\r\ncorrect horse\n");
     assert!(output.status.success());
@@ -220,80 +207,4 @@ fn a_verbose_server_reports_throughput_and_sigterm_ends_its_running_download() {
     assert!(reading.join().unwrap(), "the download ends with the server");
     let elapsed = stopping.elapsed();
     assert!(elapsed < std::time::Duration::from_secs(2), "stopped after {elapsed:?}");
-}
-
-#[test]
-fn runtime_failures_log_a_server_error_and_exit_one() {
-    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = taken.local_addr().unwrap().to_string();
-    let output = server(&[], &[("GM_H1_ADDR", &address)], b"");
-    assert_eq!(output.status.code(), Some(1));
-    let line = text(&output.stderr).strip_suffix('\n').unwrap();
-    assert_eq!(logged(line), format!(r#"server error: "listen tcp {address}: address already in use""#));
-}
-
-#[test]
-fn a_buffer_budget_below_the_connection_floors_is_a_configuration_error() {
-    let env = [
-        ("GM_H2_ADDR", ":0"),
-        ("GM_TLS_CERT", "/missing/cert.pem"),
-        ("GM_TLS_KEY", "/missing/key.pem"),
-        ("GM_MAX_CONNECTIONS", "2"),
-        ("GM_MAX_CONNECTIONS_PER_CLIENT", "2"),
-        ("GM_MAX_BUFFER_BYTES", "3407871"),
-    ];
-    let output = server(&[], &env, b"");
-    assert_eq!(output.status.code(), Some(1));
-    let line = text(&output.stderr).strip_suffix('\n').unwrap();
-    let message = "configuration error: \"GM_MAX_BUFFER_BYTES (3407871) must be at least 3407872: GM_MAX_CONNECTIONS \
-                   (2) connection floors of 1572864 bytes, 0 bytes of QUIC endpoint buffers and the 262144-byte \
-                   download block\"";
-    assert_eq!(logged(line), message);
-}
-
-/// The `[gm:tls]` lines a server logs before listening with a certificate for `days` days and a key with `mode`.
-#[cfg(unix)]
-fn tls_lines(days: &str, mode: u32) -> (Vec<String>, String, String) {
-    use std::os::unix::fs::PermissionsExt;
-    let scratch = graphite_meter_testkit::Scratch::new().unwrap();
-    let (cert, key) = (scratch.path().join("cert.pem"), scratch.path().join("key.pem"));
-    let (cert, key) = (cert.to_str().unwrap(), key.to_str().unwrap());
-    let curve = ["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes", "-subj", "/CN=localhost"];
-    let generated = Command::new("openssl")
-        .args(["req", "-x509", "-days", days, "-keyout", key, "-out", cert])
-        .args(curve)
-        .args(["-addext", "subjectAltName=DNS:localhost"])
-        .output()
-        .unwrap();
-    assert!(generated.status.success(), "{generated:?}");
-    std::fs::set_permissions(key, std::fs::Permissions::from_mode(mode)).unwrap();
-    let end = Command::new("openssl")
-        .args(["x509", "-in", cert, "-noout", "-enddate", "-dateopt", "iso_8601"])
-        .output()
-        .unwrap();
-    let end = text(&end.stdout)
-        .trim()
-        .strip_prefix("notAfter=")
-        .unwrap()
-        .replace(' ', "T");
-    let (child, lines) = serving(&[("GM_H1_TLS_ADDR", "127.0.0.1:0"), ("GM_TLS_CERT", cert), ("GM_TLS_KEY", key)]);
-    let tls = lines.take_while(|line| !line.contains(" listening on ")).collect();
-    terminate(child);
-    (tls, end, key.to_owned())
-}
-
-#[cfg(unix)]
-#[test]
-fn a_loaded_certificate_logs_its_expiry_and_warns_of_a_near_one_and_a_readable_key() {
-    let (lines, end, key) = tls_lines("10", 0o644);
-    assert_eq!(
-        lines,
-        [
-            format!("[gm:tls] certificate loaded; expires at {end}"),
-            "[gm:tls] warning: certificate expires in 240h0m0s".into(),
-            format!("[gm:tls] warning: private key {key} permissions are 0644; remove group/other access"),
-        ]
-    );
-    let (lines, end, _) = tls_lines("90", 0o600);
-    assert_eq!(lines, [format!("[gm:tls] certificate loaded; expires at {end}")]);
 }

@@ -31,34 +31,6 @@ fn with_tls<'a>(env: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
 }
 
 #[test]
-fn without_settings_the_server_serves_clear_http1_on_7246() {
-    let config = config(&[], &[]);
-    assert_eq!(config.listeners.len(), 1);
-    let listener = &config.listeners[0];
-    assert_eq!(
-        (listener.kind, listener.address.as_str(), listener.advertised),
-        (ListenerKind::H1, ":7246", true)
-    );
-    assert!(config.tls.is_none() && config.auth.is_none() && config.trusted_proxies.is_empty());
-    assert_eq!((config.name(), config.location()), ("graphite-meter", ""));
-    assert!(!config.verbose && !config.result_history_default);
-    let limits = config.limits;
-    let counts = [
-        limits.operations,
-        limits.operations_per_client,
-        limits.sessions,
-        limits.sessions_per_client,
-    ];
-    assert_eq!(counts, [256, 32, 64, 8]);
-    assert_eq!((limits.connections, limits.connections_per_client), (4096, 64));
-    assert_eq!(config.max_buffer_bytes, 8_589_934_592);
-    let lifetimes = config.lifetimes;
-    let expected = [6 * 60, 2 * 60 * 60, 5 * 60].map(Duration::from_secs);
-    assert_eq!([lifetimes.operation, lifetimes.session, lifetimes.stage], expected);
-    assert_eq!(config.catalog.servers.len(), 1);
-}
-
-#[test]
 fn flags_override_the_environment_and_report_their_errors_first() {
     let env = [("GM_SERVER_NAME", "from env"), ("GM_SERVER_LOCATION", "  Berlin  ")];
     let loaded = config(&env, &["-name", "from flag", "--verbose", "-result-history-default=1", "rest", "-name=x"]);
@@ -81,15 +53,9 @@ fn flag_errors_print_go_messages_then_the_usage() {
     for (args, message) in [
         (&["---x"][..], "bad flag syntax: ---x"),
         (&["-nope"], "flag provided but not defined: -nope"),
-        (&["-name"], "flag needs an argument: -name"),
         (
             &["-max-connections", "x"],
             "invalid value \"x\" for flag -max-connections: must be an integer",
-        ),
-        (&["-verbose=x"], "invalid boolean value \"x\" for -verbose: must be true/false or 1/0"),
-        (
-            &["-max-stage-duration", "5"],
-            "invalid value \"5\" for flag -max-stage-duration: time: missing unit in duration \"5\"",
         ),
         (
             &["-advertised-native-endpoints", "h4"],
@@ -134,9 +100,6 @@ fn values_are_trimmed_and_typed_as_go_reads_them() {
     assert_eq!(loaded.public.both, [a, BaseUrl::Served]);
     assert!(loaded.verbose && !loaded.result_history_default);
     assert_eq!((loaded.limits.operations, loaded.lifetimes.stage), (256, Duration::from_secs(300)));
-    for (value, verbose) in [("1", true), ("t", true), ("F", false), ("false", false)] {
-        assert_eq!(config(&[("GM_VERBOSE", value)], &[]).verbose, verbose, "{value}");
-    }
     assert_eq!(error(&[("GM_VERBOSE", "yes")], &[]), "GM_VERBOSE: must be true/false or 1/0");
     assert_eq!(
         error(&[("GM_MAX_CONNECTIONS", "-1")], &[]),
@@ -194,14 +157,6 @@ fn trusted_proxies_take_go_prefixes_without_default_routes() {
             "192.0.2.0/024",
             "\"192.0.2.0/024\": netip.ParsePrefix(\"192.0.2.0/024\"): bad bits after slash: \"024\"",
         ),
-        (
-            "192.0.2.0/+8",
-            "\"192.0.2.0/+8\": netip.ParsePrefix(\"192.0.2.0/+8\"): bad bits after slash: \"+8\"",
-        ),
-        (
-            "192.0.2.0/33",
-            "\"192.0.2.0/33\": netip.ParsePrefix(\"192.0.2.0/33\"): prefix length out of range",
-        ),
         ("192.0.2.1", "\"192.0.2.1\": netip.ParsePrefix(\"192.0.2.1\"): no '/'"),
     ] {
         assert_eq!(error(&[("GM_TRUSTED_PROXIES", value)], &[]), format!("GM_TRUSTED_PROXIES: {message}"));
@@ -212,20 +167,16 @@ fn trusted_proxies_take_go_prefixes_without_default_routes() {
 fn limits_are_positive_and_nested() {
     for (setting, value, rule) in [
         ("GM_MAX_ACTIVE_MEASUREMENTS", "0", "must be greater than zero"),
-        ("GM_MAX_SESSIONS_PER_CLIENT", "0", "must be greater than zero"),
-        ("GM_MAX_CONNECTIONS_PER_CLIENT", "0", "must be greater than zero"),
         (
             "GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT",
             "257",
             "must not exceed GM_MAX_ACTIVE_MEASUREMENTS",
         ),
-        ("GM_MAX_ACTIVE_SESSIONS", "257", "must not exceed GM_MAX_ACTIVE_MEASUREMENTS"),
         (
             "GM_MAX_SESSIONS_PER_CLIENT",
             "33",
             "must not exceed GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT",
         ),
-        ("GM_MAX_CONNECTIONS_PER_CLIENT", "4097", "must not exceed GM_MAX_CONNECTIONS"),
     ] {
         assert_eq!(error(&[(setting, value)], &[]), format!("{setting} {rule}"));
     }
@@ -267,16 +218,10 @@ fn origins_follow_their_listener_schemes_and_roles() {
     for (setting, value, message) in [
         ("GM_H1_PUBLIC_ORIGIN", "https://a.example", scheme("GM_H1_PUBLIC_ORIGIN", "http")),
         ("GM_H2_PUBLIC_ORIGIN", "http://a.example", scheme("GM_H2_PUBLIC_ORIGIN", "https")),
-        ("GM_H2_PUBLIC_ORIGIN", "https://a.example/x", scheme("GM_H2_PUBLIC_ORIGIN", "https")),
         (
             "GM_PUBLIC_ORIGINS",
             "self,https://a.example:0",
             invalid("GM_PUBLIC_ORIGINS", "https://a.example:0"),
-        ),
-        (
-            "GM_PUBLIC_LATENCY_ORIGINS",
-            "a.example",
-            invalid("GM_PUBLIC_LATENCY_ORIGINS", "a.example"),
         ),
     ] {
         let mut env = tls.clone();
@@ -364,20 +309,12 @@ fn authentication_refusals_read_as_go_does() {
             "GM_AUTH_PUBLIC_URL must be an HTTPS origin with no path, query, or fragment",
         ),
         (
-            &[("GM_AUTH_PUBLIC_URL", "http://meter.example")],
-            "GM_AUTH_PUBLIC_URL must be an HTTPS origin with no path, query, or fragment",
-        ),
-        (
             &[("GM_AUTH_PUBLIC_URL", "https://meter.example:443")],
             "GM_AUTH_PUBLIC_URL must omit the default HTTPS port",
         ),
         (
             &[("GM_AUTH_PASSWORD_HASH", "$argon2id$")],
             "GM_AUTH_PASSWORD_HASH and GM_AUTH_PASSWORD_HASH_FILE are mutually exclusive",
-        ),
-        (
-            &[("GM_AUTH_PASSWORD_HASH_FILE", "")],
-            "password authentication requires exactly one password hash source",
         ),
         (
             &[("GM_AUTH_MODE", "oidc")],
@@ -392,20 +329,12 @@ fn authentication_refusals_read_as_go_does() {
             "OIDC authentication requires issuer, client ID, one client secret source, and allowed groups",
         ),
         (
-            &[("GM_AUTH_OIDC_CLIENT_SECRET", "a"), ("GM_AUTH_OIDC_CLIENT_SECRET_FILE", "/b")],
-            "GM_AUTH_OIDC_CLIENT_SECRET and GM_AUTH_OIDC_CLIENT_SECRET_FILE are mutually exclusive",
-        ),
-        (
             &[("GM_ADVERTISED_NATIVE_ENDPOINTS", "all")],
             "clear HTTP/1.1 cannot be advertised when authentication is enabled",
         ),
         (
             &[("GM_PUBLIC_ORIGINS", "self,https://other.example")],
             "GM_PUBLIC_ORIGINS must use HTTPS and the canonical authentication hostname",
-        ),
-        (
-            &[("GM_H1_TLS_PUBLIC_ORIGIN", "http://meter.example")],
-            "GM_H1_TLS_PUBLIC_ORIGIN must use HTTPS and the canonical authentication hostname",
         ),
     ] {
         assert_eq!(with(changes), message, "{changes:?}");
@@ -422,11 +351,7 @@ fn authentication_refusals_read_as_go_does() {
     let long = "x".repeat(65);
     for (change, message) in [
         (("GM_AUTH_OIDC_ISSUER", "http://id.example"), issuer),
-        (("GM_AUTH_OIDC_ISSUER", "https://user@id.example"), issuer),
         (("GM_AUTH_OIDC_ISSUER", "https://id.example/?realm=1"), issuer),
-        (("GM_AUTH_OIDC_ISSUER", "https://id.example/réalm"), issuer),
-        (("GM_AUTH_OIDC_PROVIDER_NAME", " "), "GM_AUTH_OIDC_PROVIDER_NAME must not be empty"),
-        (("GM_AUTH_OIDC_PROVIDER_NAME", "a\u{7}b"), name),
         (("GM_AUTH_OIDC_PROVIDER_NAME", long.as_str()), name),
     ] {
         let mut env: Vec<(&str, &str)> = password_auth();

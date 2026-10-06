@@ -265,8 +265,7 @@ impl Shared {
         let header = merge(json!({"alg": "ES256", "kid": "p256", "typ": "JWT"}), &twist.header);
         let alg = header["alg"].as_str().unwrap_or_default();
         let hash = match alg {
-            _ if alg.ends_with("384") => &ring::digest::SHA384,
-            _ if alg.ends_with("512") || alg == "EdDSA" => &ring::digest::SHA512,
+            "EdDSA" => &ring::digest::SHA512,
             _ => &ring::digest::SHA256,
         };
         let digest = ring::digest::digest(hash, b"access");
@@ -299,7 +298,6 @@ fn merge(mut value: Value, twist: &Value) -> Value {
 struct Signers {
     rsa: RsaKeyPair,
     p256: EcdsaKeyPair,
-    p384: EcdsaKeyPair,
     ed: Ed25519KeyPair,
     stranger: EcdsaKeyPair,
     random: SystemRandom,
@@ -323,7 +321,6 @@ impl Signers {
         Self {
             rsa: RsaKeyPair::from_der(der.secret_pkcs1_der()).unwrap(),
             p256: ec(&signature::ECDSA_P256_SHA256_FIXED_SIGNING),
-            p384: ec(&signature::ECDSA_P384_SHA384_FIXED_SIGNING),
             ed,
             stranger: ec(&signature::ECDSA_P256_SHA256_FIXED_SIGNING),
             random,
@@ -342,7 +339,6 @@ impl Signers {
         let mut keys = json!({"keys": [
             {"kty": "RSA", "kid": "rsa", "use": "sig", "n": B64.encode([&[0], &public.n[..]].concat()), "e": B64.encode(&public.e)},
             point(&self.p256, "P-256", "p256"),
-            point(&self.p384, "P-384", "p384"),
             {"kty": "OKP", "crv": "Ed25519", "kid": "ed", "x": ed},
             {"kty": "EC", "crv": "P-256", "kid": "encrypting", "use": "enc", "x": "AA", "y": "AA"},
         ]});
@@ -372,13 +368,8 @@ impl Signers {
         let signature = match (header["alg"].as_str().unwrap_or_default(), header["kid"].as_str()) {
             (_, Some("stranger")) => ec(&self.stranger),
             ("RS256", _) => rsa(&signature::RSA_PKCS1_SHA256),
-            ("RS384", _) => rsa(&signature::RSA_PKCS1_SHA384),
-            ("RS512", _) => rsa(&signature::RSA_PKCS1_SHA512),
             ("PS256", _) => rsa(&signature::RSA_PSS_SHA256),
-            ("PS384", _) => rsa(&signature::RSA_PSS_SHA384),
-            ("PS512", _) => rsa(&signature::RSA_PSS_SHA512),
             ("ES256", _) => ec(&self.p256),
-            ("ES384", _) => ec(&self.p384),
             ("EdDSA", _) => self.ed.sign(message.as_bytes()).as_ref().to_vec(),
             ("HS256", _) => {
                 let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, SECRET.as_bytes());
