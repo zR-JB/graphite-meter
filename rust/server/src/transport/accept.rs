@@ -3,7 +3,7 @@
 use crate::{limits::Hold, log};
 use futures_util::FutureExt;
 use graphite_meter_proto::duration;
-use std::{any::Any, future::Future, io, net::SocketAddr, panic::AssertUnwindSafe, time::Duration};
+use std::{future::Future, io, net::SocketAddr, panic::AssertUnwindSafe, time::Duration};
 use tokio::{
     net::{TcpListener, TcpStream},
     runtime::Handle,
@@ -93,7 +93,9 @@ where
         let task = async move {
             let _held = held;
             if let Err(panic) = serving.await {
-                log!("http: panic serving {peer}: {}", message(&*panic));
+                let text = panic.downcast_ref::<&str>().copied();
+                let text = text.or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+                log!("http: panic serving {peer}: {}", text.unwrap_or("panic"));
             }
         };
         connections.spawn_on(task, &runtime());
@@ -104,14 +106,6 @@ where
     connections.shutdown().await;
     close.await;
     result
-}
-
-fn message(panic: &(dyn Any + Send)) -> &str {
-    match (panic.downcast_ref::<&str>(), panic.downcast_ref::<String>()) {
-        (Some(text), _) => text,
-        (_, Some(text)) => text,
-        _ => "panic",
-    }
 }
 
 #[cfg(test)]
