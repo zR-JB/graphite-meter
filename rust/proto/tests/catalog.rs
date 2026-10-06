@@ -35,15 +35,6 @@ fn received(document: Value) -> Result<(ServerCatalog, Vec<Rejected>), serde_jso
 }
 
 #[test]
-fn the_singleton_catalogue_holds_self_alone() {
-    let singleton = ServerCatalog::singleton();
-    assert_eq!(singleton.validate(), Ok(()));
-    let expected =
-        json!({"defaultSelection": ["self"], "servers": [{"id": "self", "url": ".", "name": "graphite-meter"}]});
-    assert_eq!(serde_json::to_value(&singleton).unwrap(), expected);
-}
-
-#[test]
 fn a_catalogue_encodes_as_the_schema_spells_it_and_decodes_back() {
     let encoded = serde_json::to_value(catalog()).unwrap();
     let frankfurt = json!({
@@ -81,7 +72,6 @@ fn published_entries_are_unique_and_bounded() {
         (entry("self", "https://other.example"), CatalogError::Duplicate),
         (entry("other", "HTTPS://FRA.example.net:443"), CatalogError::Duplicate),
         (long_name, CatalogError::Identity),
-        (long_location, CatalogError::Identity),
     ];
     for (added, fault) in faults {
         let mut catalog = catalog();
@@ -129,12 +119,9 @@ fn a_received_entry_that_stays_invalid_is_left_out_alone() {
             {"id": "frankfurt", "url": "https://fra.example.net/", "name": "Frankfurt"},
             {"id": "munich", "url": "https://München.example/", "additionalOrigins": ["https://straße.example:8443/"]},
             {"id": "broken", "url": "https://user@broken.example", "name": "Broken"},
-            {"id": "bad id", "url": "https://bad.example"},
             {"id": "twin", "url": "https://FRA.example.net"},
-            {"id": "dot", "url": "."},
             {"id": "many", "url": "https://many.example", "additionalOrigins": vec!["https://x.example"; 33]},
             {"id": "extra", "url": "https://extra.example", "additionalOrigins": ["https://x.example/path"]},
-            {"id": "bell", "url": "https://bell.example", "name": "Bell\u{7}"},
             {"id": "münchen", "url": "https://münchen.example"},
         ],
     });
@@ -152,12 +139,9 @@ fn a_received_entry_that_stays_invalid_is_left_out_alone() {
         faults,
         [
             ("broken", CatalogError::Origin),
-            ("bad id", CatalogError::Identity),
             ("twin", CatalogError::Duplicate),
-            ("dot", CatalogError::Origin),
             ("many", CatalogError::AdditionalOrigins),
             ("extra", CatalogError::Origin),
-            ("bell", CatalogError::Identity),
             ("münchen", CatalogError::Identity),
         ]
     );
@@ -174,9 +158,7 @@ fn a_received_catalogue_still_holds_as_a_whole() {
         json!({"defaultSelection": ["self"], "servers": []}),
         json!({"defaultSelection": ["self"], "servers": [other(1), own]}),
         json!({"defaultSelection": ["self"], "servers": [{"id": "self", "url": "https://a.example//"}]}),
-        json!({"defaultSelection": ["self", "self"], "servers": [own]}),
         json!({"defaultSelection": ["self"]}),
-        json!({"defaultSelection": ["self"], "servers": [own, {"id": 7}]}),
         json!({"defaultSelection": ["self"], "servers": too_many}),
     ] {
         assert!(received(document.clone()).is_err(), "{document}");

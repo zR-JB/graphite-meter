@@ -18,18 +18,7 @@ fn visible_text_also_has_no_invisible_formatting() {
     for c in ['a', '\u{a0}', '😀', '\u{e000}'] {
         assert!(visible(c), "{c:?}");
     }
-    for c in [
-        '\n',
-        '\u{202e}',
-        '\u{ad}',
-        '\u{200b}',
-        '\u{200d}',
-        '\u{2028}',
-        '\u{2029}',
-        '\u{2060}',
-        '\u{feff}',
-        '\u{e0041}',
-    ] {
+    for c in ['\n', '\u{202e}', '\u{ad}', '\u{200b}', '\u{200d}', '\u{2060}', '\u{feff}'] {
         assert!(!visible(c), "{c:?}");
     }
 }

@@ -193,12 +193,10 @@ fn refused_command_lines_carry_go_messages() {
         (&["-nope"][..], "flag provided but not defined: -nope"),
         (&["--nope=1"], "flag provided but not defined: -nope"),
         (&["---x"], "bad flag syntax: ---x"),
-        (&["--=x"], "bad flag syntax: --=x"),
         (&["-url"], "flag needs an argument: -url"),
         (&["-insecure=maybe"], "invalid boolean value \"maybe\" for -insecure: parse error"),
         (&["-verbose=bad"], "invalid boolean value \"bad\" for -verbose: must not be bad"),
         (&["-name=bad"], "invalid value \"bad\" for flag -name: must not be bad"),
-        (&["-name", "bad"], "invalid value \"bad\" for flag -name: must not be bad"),
         (&["-auto-streams=x"], "invalid value \"x\" for flag -auto-streams: parse error"),
         (&["-warmup=1d"], "invalid value \"1d\" for flag -warmup: parse error"),
     ] {

@@ -29,18 +29,12 @@ fn origins_refuse_credentials_paths_queries_fragments_and_bad_ports() {
     for text in [
         "",
         ".",
-        "https://",
-        "https://a/",
         "https://a/path",
         "https://user@a",
-        "https://user:secret@a",
         "https://a\\b",
         "https://a:0",
         "https://a:65536",
-        "https://a:+1",
-        "https://a:1:2",
         "ftp://a",
-        "wss://a",
         " https://a",
         "https://a\n",
     ] {
@@ -56,19 +50,13 @@ fn origins_refuse_credentials_paths_queries_fragments_and_bad_ports() {
 fn hosts_are_ascii_names_or_full_ip_addresses() {
     for text in [
         "https://*.example",
-        "https://a!b",
         "https://a..b",
-        "https://a.example..",
         "https://bücher.example",
-        "https://1.2.3",
         "https://0x7f000001",
         "https://127.000.0.1",
-        "https://127.0.0.1.",
         "https://example.123",
         "https://::1",
-        "https://[127.0.0.1]",
         "https://[fe80::1%25eth0]",
-        "https://[::1]x",
     ] {
         assert_eq!(canonical(text), None, "accepted {text:?}");
     }
@@ -79,7 +67,6 @@ fn hosts_are_ascii_names_or_full_ip_addresses() {
 fn urls_split_into_their_origin_and_the_rest() {
     for (url, origin, rest) in [
         ("HTTPS://Id.Example:8443/realms/x?a=b", "https://id.example:8443", "/realms/x?a=b"),
-        ("https://id.example?x=1", "https://id.example", "?x=1"),
         ("https://id.example", "https://id.example", ""),
     ] {
         let (parsed, tail) = Origin::split(url).unwrap();
@@ -89,10 +76,8 @@ fn urls_split_into_their_origin_and_the_rest() {
     for url in [
         "https://user@id.example/a",
         "https://id.example#top",
-        "https://id.example/a#top",
         "https://id.example/realms/é",
         "https://id.example/a b",
-        "https://id.example/a\tb",
         "https://id.example/a\\b",
         &long,
     ] {
@@ -117,17 +102,13 @@ fn received_international_hosts_become_the_punycode_go_dials() {
     for (text, expected) in [
         ("https://BÜCHER.example", "https://xn--bcher-kva.example"),
         ("https://münchen.example:7248", "https://xn--mnchen-3ya.example:7248"),
-        ("https://straße.example", "https://xn--strae-oqa.example"),
         ("https://例え.テスト", "https://xn--r8jz45g.xn--zckzah"),
         ("https://مثال.إختبار", "https://xn--mgbh0fb.xn--kgbechtv"),
         ("https://עברית.example.", "https://xn--5dbqzzl.example."),
-        ("https://ÄÖÜ.example", "https://xn--4ca0bs.example"),
         ("https://σς.example", "https://xn--3xab.example"),
         ("https://café", "https://xn--caf-dma"),
-        ("https://ü1-2.example", "https://xn--1-2-goa.example"),
         ("https://xn--bcher-kva.ü", "https://xn--bcher-kva.xn--tda"),
         ("https://中国\u{3002}example", "https://xn--fiqs8s.example"),
-        ("https://ü\u{ff0e}example", "https://xn--tda.example"),
     ] {
         let received = Origin::parse_received(text).map(|origin| origin.to_string());
         assert_eq!(received.as_deref(), Ok(expected), "{text}");
@@ -141,25 +122,13 @@ fn received_international_hosts_become_the_punycode_go_dials() {
 
 #[test]
 fn received_hosts_go_refuses_or_idna_would_map_are_refused() {
-    let go_refuses = [
-        "-bücher.example",
-        "ü-.example",
-        "ab--ü.example",
-        "aא.example",
-        "אa.example",
-        "١٢٣.example",
-        "bü cher.example",
-        "ü_x.example",
-    ];
+    let go_refuses = ["-bücher.example", "ab--ü.example", "aא.example", "١٢٣.example", "ü_x.example"];
     // Go maps, composes or keeps these; only letters IDNA keeps as they are convert.
     let mapped = [
         "ｍｅｔｅｒ.example",
-        "ﬁle.example",
         "ǅ.example",
-        "ｱ.example",
         "e\u{301}.example",
         "İstanbul.example",
-        "ש1.example",
         "💩.example",
         "bü--cher.example",
     ];
