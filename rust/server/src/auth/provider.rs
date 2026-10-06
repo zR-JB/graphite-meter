@@ -1,5 +1,4 @@
-//! The OIDC provider over HTTPS: discovery and its signing keys, and the client every provider request goes through,
-//! one bounded connection each, sent from the main runtime.
+//! The OIDC provider over HTTPS: discovery, signing keys, and one bounded connection per request on the main runtime.
 
 use super::jwt::{self, Alg, Jwks, Verified};
 use crate::{config::ENGINE_VERSION, lock};
@@ -37,8 +36,7 @@ impl Client {
         })
     }
 
-    /// GETs `url`, or POSTs the URL-encoded `form` to it, with the header `field`; `url` is an HTTPS URL the configuration or
-    /// discovery checked.
+    /// GETs `url`, or POSTs `form` URL-encoded, with header `field`; `url` is HTTPS, as config or discovery checked.
     pub async fn send(
         &self,
         url: &str,

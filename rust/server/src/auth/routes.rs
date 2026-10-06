@@ -1,5 +1,4 @@
-//! The controller's routes under `/login` and `/auth/`: the sign-in page, password and OIDC sign-in, approvals, the
-//! session report and sign-out; and the ticket mint.
+//! The controller's `/login` and `/auth/` routes: sign-in, password and OIDC, approvals, session, sign-out, tickets.
 
 use super::{
     AuthLease, Enabled, LOGIN_LIFETIME, LoginKey, Via, approval,
@@ -89,8 +88,7 @@ pub(super) async fn handle<B: http_body::Body>(
     answer
 }
 
-/// A ticket for an HTTPS `target` route of `kind` on the public hostname, minted by a cookie login or a browser
-/// grant.
+/// A ticket for an HTTPS `target` route of `kind` on the public hostname, minted by a cookie login or a browser grant.
 pub(super) fn mint<B>(auth: &Enabled, request: &Request<B>, lease: Option<&AuthLease>, kind: Kind) -> Response<Body> {
     let Some(lease) = lease.filter(|lease| lease.via() != &Via::Bearer(None)) else {
         return response::status(StatusCode::FORBIDDEN);
@@ -150,8 +148,7 @@ fn login_page<B>(auth: &Enabled, request: &Request<B>) -> Response<Body> {
     answer
 }
 
-/// Password sign-in: the form's CSRF proof, the attempt budgets, a free verifier slot and the hash, then a
-/// login replacing the one the request presented.
+/// Password sign-in: CSRF proof, attempt budgets, a free verifier slot and the hash, then a replacing login.
 async fn sign_in<B: http_body::Body>(
     auth: &Enabled,
     password: &Password,
@@ -287,8 +284,7 @@ pub(super) fn redirect(target: &str) -> Response<Body> {
     response::redirect(&Method::POST, StatusCode::SEE_OTHER, &target)
 }
 
-/// Sets a host-only, secure cookie; only the CSRF cookie, which pages read, is not HttpOnly, and only the OIDC
-/// transaction's is not strictly same-site.
+/// Sets a host-only secure cookie, HttpOnly but for CSRF, strictly same-site but for the OIDC transaction's.
 pub(super) fn set_cookie(answer: &mut Response<Body>, name: &str, value: &str, expires: SystemTime) {
     let age = expires.duration_since(SystemTime::now()).map_or(0, |age| age.as_secs());
     let http_only = if name == CSRF_COOKIE { "" } else { "; HttpOnly" };

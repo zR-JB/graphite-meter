@@ -54,8 +54,7 @@ pub enum Auth {
     On(Box<Enabled>),
 }
 
-/// Sign-in at the public origin: the policy, the store of logins, grants and tickets, password and OIDC sign-in, the
-/// approval budget and the security log.
+/// Sign-in at the public origin: policy, login store, password and OIDC sign-in, approval budget, security log.
 pub struct Enabled {
     policy: Policy,
     store: Store,
@@ -69,8 +68,7 @@ pub struct Enabled {
 }
 
 impl Auth {
-    /// The authentication `config` enables, with its password hash and OIDC client secret read; the OIDC provider is
-    /// discovered later.
+    /// The authentication `config` enables, its hash and OIDC secret read; the OIDC provider is discovered later.
     pub fn new(config: Option<&config::Auth>, verbose: bool) -> Result<Self, String> {
         let Some(config) = config else { return Ok(Self::Off) };
         let (mode, settings) = match &config.methods {
@@ -164,8 +162,7 @@ impl Auth {
         self.enabled() && (path == "/login" || path.starts_with("/auth/"))
     }
 
-    /// Answers an authentication route by its exchange's `deadline`, reading its body: pages, sign-in posts, the OIDC
-    /// callback, approvals and logout.
+    /// Answers an authentication route by `deadline`: pages, sign-in posts, the OIDC callback, approvals, logout.
     pub async fn handle<B: http_body::Body>(&self, request: Request<B>, deadline: Instant, peer: &Peer) -> Outcome {
         let response = match self {
             Self::Off => response::status(StatusCode::NOT_FOUND),

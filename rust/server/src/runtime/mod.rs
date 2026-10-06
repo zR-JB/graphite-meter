@@ -1,5 +1,4 @@
-//! The running server: its certificate, listeners bound before any serves, connections on the pinned runtimes, the
-//! work beside them, and the shutdown order (listeners close at once, lanes end, connections drain).
+//! The running server: certificate, listeners and connections; shutdown closes listeners, ends lanes, drains.
 
 mod background;
 mod tcp;
@@ -75,8 +74,7 @@ impl Socket {
 type Service<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
 
 impl Server {
-    /// Loads the certificate and binds every enabled listener, HTTP/3 on UDP beside its TCP companion's port, its
-    /// connections to run on `pool`; a failure closes those bound before it.
+    /// Loads the certificate and binds every listener, HTTP/3 UDP on its TCP port; a failure closes those bound.
     pub async fn bind(mut config: Config, pool: Pool) -> Result<Self, String> {
         let (tls, hosts, auth) = (config.tls.clone(), tls::covered_hosts(&config), config.auth.is_some());
         let oidc_only = matches!(config.auth.as_ref().map(|auth| &auth.methods), Some(Methods::Oidc(_)));
@@ -220,8 +218,7 @@ impl Server {
     }
 }
 
-/// Accepts on `socket` until `stopping`, each connection holding its share and running on a runtime `runtime` names,
-/// then drains.
+/// Accepts on `socket` until `stopping`, each connection holding its share on a runtime `runtime` names, then drains.
 fn listen<'a, L, F>(
     app: Arc<App>,
     socket: L,
@@ -253,8 +250,7 @@ fn until_stopped<'a>(stopping: &'a CancellationToken, work: impl Future<Output =
     })
 }
 
-/// Completes at SIGINT or SIGTERM; it listens from its call, so a signal during startup stops the server once it
-/// serves.
+/// Completes at SIGINT or SIGTERM, listening from its call, so a signal during startup stops the server once it serves.
 pub fn stop_signal() -> io::Result<impl Future<Output = ()>> {
     #[cfg(unix)]
     {

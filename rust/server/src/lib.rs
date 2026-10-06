@@ -15,8 +15,7 @@ pub mod transport;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-/// Locks `mutex`, recovering its state after a panic elsewhere held it: that panic was reported, and failing every
-/// later user would turn one bug into an outage.
+/// Locks `mutex`, recovering it after a reported panic elsewhere, so one bug never fails every later user.
 pub(crate) fn lock<T: ?Sized>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }

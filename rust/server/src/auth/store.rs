@@ -1,5 +1,4 @@
-//! The one store of logins, the measurement grants issued to them and the one-use socket tickets they mint. Raw
-//! credentials leave only to their issuer; the store keys each by its SHA-256 digest.
+//! The store of logins, grants and one-use socket tickets; raw credentials go only to their issuer, keyed by SHA-256.
 
 use super::{AuthLease, Holder, Via, approval::Approval};
 use crate::lock;
@@ -144,8 +143,7 @@ impl Store {
         Some(NewLogin { key: LoginKey(key), token, csrf, expires })
     }
 
-    /// Ends the login, or with `every` each login of its subject, with their grants and tickets; `false` when it
-    /// already ended.
+    /// Ends the login, or with `every` its subject's logins, with grants and tickets; `false` when it already ended.
     pub fn sign_out(&self, login: LoginKey, every: bool) -> bool {
         let mut state = lock(&self.0);
         let Some(subject) = state.login(&login.0).map(|login| login.subject.clone()) else {
@@ -252,8 +250,7 @@ impl Store {
 }
 
 impl State {
-    /// Issues `login` a measurement grant with `credentials` for the `browser` origin or a native client. A login holds
-    /// eight; then a native grant replaces the oldest native one, and anything else is refused.
+    /// Issues `login` a grant with `credentials`; eight per login, then native replaces oldest native, else refused.
     pub(super) fn grant(
         &mut self,
         login: LoginKey,

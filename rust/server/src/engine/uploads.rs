@@ -1,5 +1,4 @@
-//! Upload aggregates (`api/upload.md`): server-minted IDs bound to their owner, capacity with displacement before
-//! the first byte, tombstones and retention.
+//! Upload aggregates (`api/upload.md`): owner-bound minted IDs, displacement before the first byte, retention.
 
 use super::{Meter, ProgressFeed, UploadSink, meter::Transfer};
 use crate::{

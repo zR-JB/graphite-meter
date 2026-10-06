@@ -34,8 +34,7 @@ impl Attempts {
         Self { name, limit, table: Mutex::default() }
     }
 
-    /// Records an attempt unless a key spent its share, the table is full or `ceiling` is engaged; a `known` device
-    /// passes a full table.
+    /// Records an attempt unless its key's share is spent, `ceiling` engaged or the table full, which `known` bypasses.
     pub fn allow(&self, keys: &ClientKeys, known: bool, ceiling: Option<&Ceiling>) -> bool {
         let keys: Vec<_> = keys.iter().collect();
         let mut table = lock(&self.table);
@@ -111,8 +110,7 @@ impl Ceiling {
     }
 }
 
-/// Whether a client with `keys` holds its share of `limit`: `held` counts what a key holds, and each wider key may hold
-/// twice what the one before it may.
+/// Whether `keys`' client holds its share of `limit`: `held` counts per key, each wider key holds twice the last.
 pub(super) fn share_full(keys: &ClientKeys, limit: usize, held: impl Fn(&ClientKey) -> usize) -> bool {
     keys.iter().enumerate().any(|(wider, key)| held(&key) >= limit << wider)
 }

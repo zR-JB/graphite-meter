@@ -1,5 +1,4 @@
-//! OIDC sign-in as a confidential client: transactions binding state, nonce and PKCE to one browser, the start and
-//! callback routes, the code exchange, the ID token and user information, and group membership.
+//! OIDC sign-in as a confidential client: browser-bound state, nonce and PKCE, routes, code exchange, ID token, groups.
 
 use super::{
     Enabled, LoginKey, Security, jwt,
@@ -159,8 +158,7 @@ impl Oidc {
         Ok((url, browser))
     }
 
-    /// Ends the transaction of `state` for the browser holding its cookie `browser`, checking the callback's `issuer`;
-    /// a refusal carries the transaction's challenge when one was found.
+    /// Ends `state`'s transaction for cookie `browser`, checking `issuer`; a refusal carries its challenge if found.
     fn take(&self, state: &str, browser: &str, issuer: Option<&str>) -> Result<Transaction, (Reason, String)> {
         let found = lock(&self.transactions).0.remove(&digest(state));
         let Some(transaction) = found else {
@@ -290,8 +288,7 @@ pub(super) async fn start<B: http_body::Body>(
     }
 }
 
-/// `GET /auth/oidc/callback`: the transaction its state and cookie name, the exchange budget, then the provider's word
-/// in time to answer by `deadline`.
+/// `GET /auth/oidc/callback`: the named transaction, exchange budget, then the provider's word by `deadline`.
 pub(super) async fn callback(
     auth: &Enabled,
     oidc: &Oidc,

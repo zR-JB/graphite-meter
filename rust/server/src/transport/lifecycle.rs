@@ -1,5 +1,4 @@
-//! When a multiplexed connection goes away and closes, as its streams, admitted work and receive credit allow; the
-//! HTTP/2 and QUIC drivers share it.
+//! When a multiplexed connection goes away and closes, per streams, admitted work and credit; HTTP/2 and QUIC.
 
 use super::accept::SHUTDOWN_GRACE;
 use crate::lane::Work;
@@ -67,8 +66,7 @@ impl Lifecycle {
         self.stopping = true;
     }
 
-    /// The next event, given whether the connection raised its receive window and whether a request stream lives.
-    /// Unadmitted requests count only as streams, so they never hold a credited connection open.
+    /// The next event, given window raise and live request streams; unadmitted requests never hold credit open.
     pub fn poll(&mut self, cx: &mut Context<'_>, credited: bool, streams: bool) -> Poll<Event> {
         self.observe(credited);
         let stale = self

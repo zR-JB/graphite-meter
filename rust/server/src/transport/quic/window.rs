@@ -22,8 +22,7 @@ const SEND_WINDOW_STEP: u64 = 256 << 10;
 /// A send window shrinks after its demand stayed low this long.
 const SEND_WINDOW_SHRINK_DELAY: Duration = Duration::from_secs(1);
 
-/// The receive window: 64 KiB until an admitted upload reads, then autotuning from 768 KiB to 48 MiB on the credit the
-/// first funded upload reserves within its client's share, which the connection keeps until it is gone.
+/// The receive window: 64 KiB, then once an upload reads autotuned 768 KiB to 48 MiB on its client's credit.
 pub(super) struct Window {
     app: Arc<App>,
     quic: noq::Connection,
@@ -67,8 +66,7 @@ impl ReceiveWindow for Window {
     }
 }
 
-/// The send window: 2 MiB, grown towards two observed bandwidth-delay products up to 16 MiB while the budget has
-/// headroom, and back to 2 MiB after a second of low demand or once no request runs.
+/// The send window: 2 MiB, toward two BDPs up to 16 MiB with headroom, back to 2 MiB after 1 s of low demand.
 pub(super) struct SendWindow {
     limit: u64,
     /// When the path's sent bytes were last read, and their count.
@@ -128,8 +126,7 @@ impl SendWindow {
     }
 }
 
-/// Two bandwidth-delay products of `sent` bytes over `elapsed`, within the send window's bounds: enough for a new path
-/// to grow on fast links without filling the bottleneck's queue.
+/// Two bandwidth-delay products of `sent` over `elapsed`, within the send window's bounds, sparing the queue.
 fn desired(sent: u64, rtt: Duration, elapsed: Duration) -> u64 {
     let Some(demand) = u128::from(sent)
         .saturating_mul(rtt.as_nanos())

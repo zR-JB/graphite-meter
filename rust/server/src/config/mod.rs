@@ -34,8 +34,7 @@ pub enum Loaded {
     Config(Box<Config>),
 }
 
-/// Loads the environment, then the flags over it, and validates the result. Flag errors and the usage go to `usage`;
-/// the returned message is Go's.
+/// Loads the environment, then the flags, and validates; flag errors and usage go to `usage`, the message is Go's.
 pub fn load(
     env: impl Fn(&str) -> Option<OsString>,
     args: impl IntoIterator<Item = OsString>,
@@ -129,8 +128,7 @@ impl ListenerKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Listener {
     pub kind: ListenerKind,
-    /// The listen address, such as `:7246`, with the port it bound once bound; HTTP/3 binds it for UDP and its
-    /// bootstrap TCP.
+    /// The listen address, such as `:7246`, with its bound port once bound; HTTP/3 binds it for UDP and bootstrap TCP.
     pub address: String,
     pub public_origin: Option<Origin>,
     /// Discovery offers it as a native target.

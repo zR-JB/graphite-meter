@@ -29,8 +29,7 @@ pub(super) async fn release_when_idle(app: &App, release: impl Fn()) {
     }
 }
 
-/// Returns freed allocator pages to the OS from this thread's heap and every pool thread's: mimalloc returns them
-/// only while the freeing thread allocates, which an idle server's threads do not.
+/// Returns freed pages to the OS from every pool thread's heap: mimalloc does so only while freeing threads allocate.
 pub(super) fn release_memory(pool: &Pool) {
     collect();
     for runtime in pool.runtimes() {

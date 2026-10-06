@@ -1,6 +1,4 @@
-//! HTTP/3 requests: each within its exchange bound until admitted, its body funding the connection's window, and its
-//! reply pumped in 16 KiB frames; a large reply's frames wait for the path and yield to siblings on a crowded
-//! connection; a CONNECT opens a WebTransport session.
+//! HTTP/3 requests: bounded until admitted, bodies fund the window, 16 KiB paced reply frames, CONNECT to WebTransport.
 
 use super::window::Window;
 use crate::{
@@ -51,8 +49,7 @@ impl Requests {
         Self { app, connection, window, quic, large: Arc::default() }
     }
 
-    /// One request: reset when its exchange expires unadmitted or its reply ends unwritten, and counted as admitted
-    /// work from the poll that sees it admitted until it ends.
+    /// One request: reset when it expires unadmitted or its reply ends unwritten; admitted work once a poll sees it.
     pub(super) fn serve(&self, request: server::Request) -> impl Future<Output = ()> + Send + use<> {
         let requests = self.clone();
         async move {
@@ -178,8 +175,7 @@ impl Large {
         self.count.load(Ordering::Relaxed) > FAIRNESS_REPLIES
     }
 
-    /// Waits while the connection holds more unacknowledged data than its path's backlog: noq charges the peer's
-    /// connection credit as data is written, so bulk data written far ahead would leave none for other replies.
+    /// Waits while unacknowledged data exceeds the path backlog: noq charges credit on write, so bulk starves others.
     async fn paced(&self) -> Result<(), Infallible> {
         while let Some(path) = self.quic.path_stats(noq::PathId::ZERO) {
             if self.quic.send_buffered_bytes() <= backlog(path.cwnd, path.rtt) {
@@ -202,8 +198,7 @@ fn pause(rtt: Duration) -> Duration {
     PACE.max(rtt / 4)
 }
 
-/// Eight congestion windows, scaled up where four pauses outlast a round trip: the path stays busy between a reply's
-/// checks, and on a slow path the backlog stays far below the peer's credit.
+/// Eight congestion windows, more where four pauses outlast a round trip: busy paths, backlog below peer credit.
 fn backlog(cwnd: u64, rtt: Duration) -> u64 {
     let span = rtt.max(4 * pause(rtt)).as_nanos();
     let bytes = u128::from(cwnd).saturating_mul(8 * span) / rtt.as_nanos().max(1);

@@ -1,5 +1,4 @@
-//! The checks before dispatch: the request head, the route this endpoint mounts and its methods, and
-//! authorization.
+//! The checks before dispatch: the request head, the route this endpoint mounts and its methods, and authorization.
 
 use super::{
     App, Connection,

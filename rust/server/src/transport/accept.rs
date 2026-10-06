@@ -1,5 +1,4 @@
-//! The one accept-and-drain loop: connection holds, retries after failed accepts, connections on pinned runtimes, and
-//! the drain at shutdown.
+//! The one accept-and-drain loop: connection holds, accept retries, pinned-runtime connections, shutdown drain.
 
 use crate::{limits::Hold, log};
 use futures_util::FutureExt;

@@ -302,8 +302,7 @@ fn flags() -> Vec<Flag<Settings>> {
     .collect()
 }
 
-/// Loads the environment, then the flags over it; `None` when the usage was asked for. A flag error goes to `usage`
-/// with the usage and precedes an environment error.
+/// Loads the environment, then the flags; `None` when usage was asked; flag errors go to `usage` before env errors.
 pub(super) fn load(
     env: &dyn Fn(&str) -> Option<OsString>,
     args: impl IntoIterator<Item = OsString>,

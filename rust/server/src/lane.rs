@@ -15,8 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 const RUNNING: u8 = u8::MAX;
 
-/// An admitted request, WebSocket bus or WebTransport session; clones share it, and the last one releases its
-/// admission and its work on the connection.
+/// An admitted request, WebSocket bus or WebTransport session; its last clone releases its admission and work.
 #[derive(Debug, Clone)]
 pub struct Lane(Arc<State>);
 
@@ -70,8 +69,7 @@ impl Lane {
             .copied()
     }
 
-    /// The first cause to end the lane: revocation, shutdown, its lifetime, `IDLE_BOUND` without movement, or
-    /// `finish`. Every caller sees the same ending; causes due at once rank in that order.
+    /// The lane's first ending, same for every caller: revocation, shutdown, lifetime, `IDLE_BOUND`, `finish`.
     pub async fn ended(&self) -> LaneEnding {
         let state = &self.0;
         let revoked = async {
@@ -91,8 +89,7 @@ impl Lane {
         self.decide(cause)
     }
 
-    /// The ending revocation, shutdown or the lifetime calls for by now, decided without waiting: a check cheap
-    /// enough for every chunk of a transfer, which then needs `ended` only while it waits.
+    /// The ending due now, decided without waiting: cheap per chunk, so a transfer needs `ended` only to wait.
     pub fn due(&self) -> Option<LaneEnding> {
         if let Some(ending) = self.ending() {
             return Some(ending);

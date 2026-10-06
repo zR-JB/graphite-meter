@@ -1,5 +1,4 @@
-//! HTTP/1.1 through hyper: an IO wrapper that closes the connection when its exchange, reply or lane calls for it,
-//! and the hand-off of WebSocket upgrades.
+//! HTTP/1.1 through hyper: an IO wrapper closing when exchange, reply or lane calls for it; WebSocket hand-off.
 
 use super::{
     body::{Aborted, Body, ReplyBound},

@@ -1,5 +1,4 @@
-//! The operator's password: Argon2id PHC hashes at one fixed cost, verification off the runtime, the attempt budgets
-//! and the device cookies a sign-in leaves.
+//! The operator's password: fixed-cost Argon2id PHC hashes, verified off the runtime, attempt budgets, device cookies.
 
 use super::rate::{Attempts, Ceiling};
 use crate::peer::ClientKeys;
@@ -116,8 +115,7 @@ pub(super) struct Password {
 }
 
 impl Password {
-    /// The sign-in `encoded`, the configured hash, allows; device cookies are signed with it, so a new password
-    /// forgets every device.
+    /// The sign-in `encoded`, the configured hash, allows; it signs device cookies, so a new password forgets devices.
     pub fn new(encoded: &str) -> Result<Self, String> {
         Ok(Self {
             hash: Hash::parse(encoded)?,
@@ -128,8 +126,7 @@ impl Password {
         })
     }
 
-    /// Records an attempt by `keys`, five a minute; a known `device` skips the 60 wrong passwords a minute all
-    /// clients share.
+    /// Records an attempt by `keys`, five a minute; a known `device` skips the shared 60 wrong passwords a minute.
     pub fn admit(&self, keys: Option<ClientKeys>, device: Option<&str>) -> bool {
         let known = device.is_some_and(|cookie| self.known(cookie));
         keys.is_some_and(|keys| self.attempts.allow(&keys, known, (!known).then_some(&self.wrong)))

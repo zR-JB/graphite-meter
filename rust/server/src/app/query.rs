@@ -1,5 +1,4 @@
-//! Query parameters as Go's `url.Values` reads them, and the transfer parameters, clamped and never refused
-//! (`api/wire.md#webtransport-routes`).
+//! Query parameters as Go's `url.Values` reads them; transfer parameters clamped (`api/wire.md#webtransport-routes`).
 
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 

@@ -1,5 +1,4 @@
-//! The headers every answer gets last: who may read it from another origin, hardening, Alt-Svc on bootstrap probe
-//! answers and connection hints.
+//! The headers every answer gets last: cross-origin access, hardening, bootstrap Alt-Svc and connection hints.
 
 use super::App;
 use crate::transport::body::Body;
@@ -74,8 +73,7 @@ pub fn close(headers: &mut HeaderMap, version: Version) {
 }
 
 impl App {
-    /// Applies the headers of an answer the gate passed: its `access`, hardening once authentication made the request
-    /// secure, and on a bootstrap probe answer the HTTP/3 port.
+    /// Applies a passed answer's headers: `access`, hardening once authenticated, and a bootstrap probe's HTTP/3 port.
     pub(super) fn finalize(
         &self,
         response: &mut Response<Body>,

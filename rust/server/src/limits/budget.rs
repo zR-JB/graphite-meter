@@ -121,8 +121,7 @@ impl Shared {
         self.reserved.load(Ordering::Relaxed).wrapping_sub(released)
     }
 
-    /// The limit past the reservations and what of it is used. Read around `used`, the totals cover every
-    /// reservation it holds and may overcount, which only lowers the pressure.
+    /// The limit past reservations and its use; totals read around `used` may overcount, only lowering pressure.
     fn unreserved(&self) -> (usize, usize) {
         let released = self.released.load(Ordering::Acquire);
         let used = self.used.load(Ordering::Acquire);

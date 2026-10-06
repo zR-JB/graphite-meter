@@ -1,5 +1,4 @@
-//! The sign-in and approval pages, rendered byte for byte from the shared templates in `go/internal/auth/assets`, and
-//! the headers of every authentication answer.
+//! The sign-in and approval pages, byte for byte from `go/internal/auth/assets`, and authentication answer headers.
 
 use http::{HeaderMap, HeaderValue, header};
 use std::{fmt::Write as _, sync::LazyLock};
@@ -86,8 +85,7 @@ impl Template {
         Self(std::iter::once(first).chain(actions).collect())
     }
 
-    /// The actions these templates use: fields, escaped for a URL query inside an `href`; the theme and pending
-    /// scripts; and `if`, `else if`, `else` and `end` on `not`, `and`, `eq` and `ne`.
+    /// Template actions: `href`-escaped fields, theme and pending scripts, `if`/`else`/`end` on `not`/`and`/`eq`/`ne`.
     fn render(&self, fields: &[(&str, &str)]) -> String {
         let field = |name: &str| {
             let name = name.trim_start_matches('.');

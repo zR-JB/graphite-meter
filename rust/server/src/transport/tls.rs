@@ -1,5 +1,4 @@
-//! The TLS listeners' certificate: loading and validating the PEM pair, re-reading renewals, the TLS 1.3 server
-//! configuration and the bounded handshake.
+//! The TLS certificate: PEM pair loading and checks, renewal re-reads, TLS 1.3 config, the bounded handshake.
 
 use super::PEER_FAILURES;
 use crate::{
@@ -56,8 +55,7 @@ pub struct Certificates {
     handshake: AtomicUsize,
 }
 
-/// What a QUIC handshake holds for a chain of C bytes in N certificates: five server flights of C + 5N + 609 bytes
-/// and a copy of C + 48N.
+/// A QUIC handshake's hold for a C-byte, N-certificate chain: five flights of C + 5N + 609 bytes, a copy of C + 48N.
 pub fn handshake_bytes(chain: &[CertificateDer<'_>]) -> usize {
     let (bytes, count) = (chain.iter().map(|certificate| certificate.len()).sum::<usize>(), chain.len());
     5 * (bytes + 5 * count + 609) + bytes + 48 * count
@@ -105,8 +103,7 @@ impl Certificates {
         })
     }
 
-    /// Re-reads the pair; an incomplete or invalid renewal, or one the budget does not cover, keeps the current one.
-    /// Whether the leaf changed.
+    /// Re-reads the pair, keeping the current one over a bad or unbudgeted renewal; whether the leaf changed.
     pub fn reload(&self, now: SystemTime) -> Result<bool, String> {
         let (pair, expires) = read(&self.files, &self.hosts, now)?;
         let handshake = handshake_bytes(&pair.cert);

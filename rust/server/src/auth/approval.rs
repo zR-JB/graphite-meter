@@ -1,5 +1,4 @@
-//! Sign-in approvals: a terminal or a browser origin asks with a challenge, the signed-in operator approves it on its
-//! page, and the requester exchanges the challenge's verifier for a measurement grant.
+//! Sign-in approvals: a terminal or browser asks with a challenge, the operator approves, the verifier earns a grant.
 
 use super::{
     AuthLease, Enabled, LOGIN_LIFETIME, LoginKey,
@@ -43,8 +42,7 @@ pub(super) struct Approval {
 }
 
 impl State {
-    /// Whether one more approval fits `login`'s eight, and the client's share and the server's bounds, of which
-    /// approvals opened before sign-in hold at most half.
+    /// Whether one more approval fits `login`'s eight, the client's share and server bounds; half at most pre-sign-in.
     fn approval_room(&self, login: Option<LoginKey>, keys: &ClientKeys) -> (bool, bool) {
         let count =
             |held: &dyn Fn(&Approval) -> bool| self.approvals.values().filter(|approval| held(approval)).count();

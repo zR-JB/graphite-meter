@@ -102,14 +102,12 @@ impl RateLimited {
     }
 }
 
-/// A condition reported when it starts and when it ends, each at its own threshold so that a value hovering at one
-/// cannot flood the log.
+/// A condition logged at start and end, each at its own threshold so a value hovering at one cannot flood the log.
 #[derive(Debug, Default)]
 pub struct Latch(AtomicBool);
 
 impl Latch {
-    /// `Some(true)` when the condition starts (`start` holds), `Some(false)` when it ends (`end` holds); one caller
-    /// sees each change.
+    /// `Some(true)` when the condition starts, `Some(false)` when it ends; one caller sees each change.
     pub fn update(&self, start: bool, end: bool) -> Option<bool> {
         let on = self.0.load(Ordering::Relaxed);
         let changed = if on { end } else { start };

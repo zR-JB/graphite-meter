@@ -1,5 +1,4 @@
-//! What the buffer budget must cover before the server binds: every connection's floor, the QUIC endpoints' buffers
-//! and the download block.
+//! What the buffer budget covers before binding: connection floors, QUIC endpoint buffers and the download block.
 
 use crate::{
     config::{Config, ListenerKind},
@@ -7,8 +6,7 @@ use crate::{
     transport::{http2, quic},
 };
 
-/// Refuses a buffer budget below every connection's floor, the QUIC endpoint's buffers before its socket exists and
-/// the download block.
+/// Refuses a buffer budget below every connection's floor, the QUIC endpoint's pre-socket buffers and downloads.
 pub fn check_budget(config: &Config) -> Result<(), String> {
     Terms::of(config)?.check(0, configured_endpoint(config)?)
 }
@@ -22,8 +20,7 @@ pub(super) fn configured_endpoint(config: &Config) -> Result<usize, String> {
     }
 }
 
-/// What the buffer budget must cover: every connection's floor beside the QUIC endpoint's buffers and the download
-/// block.
+/// What the buffer budget must cover: every connection's floor, the QUIC endpoint's buffers and the download block.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Terms {
     limit: usize,
@@ -46,8 +43,7 @@ impl Terms {
         })
     }
 
-    /// Refuses a budget that a QUIC handshake of `handshake` bytes and endpoint buffers of `endpoint` bytes leave
-    /// short.
+    /// Refuses a budget that a `handshake`-byte QUIC handshake and `endpoint`-byte endpoint buffers leave short.
     pub(super) fn check(&self, handshake: usize, endpoint: usize) -> Result<(), String> {
         let quic = self
             .quic

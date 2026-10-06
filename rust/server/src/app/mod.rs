@@ -1,5 +1,4 @@
-//! HTTP semantics independent of version: the gate, dispatch to control endpoints, engines and the browser app, and
-//! finalizing.
+//! Version-independent HTTP: the gate, dispatch to control endpoints, engines and the browser app, finalizing.
 
 mod control;
 pub mod finalize;
@@ -150,8 +149,7 @@ impl App {
         self.quotas.connection(&keys, transport)
     }
 
-    /// Whether an unvalidated QUIC handshake from `peer` must prove its address with a Retry first: once a quarter of
-    /// the connections or of the budget is used, or when its source already holds a QUIC connection.
+    /// Whether a QUIC handshake from `peer` needs Retry: a quarter of connections or budget used, or its source held.
     pub fn quic_retry(&self, peer: IpAddr) -> bool {
         let keys = ClientKeys::connection(peer, &self.config.trusted_proxies);
         self.quotas.connections_crowded() || self.budget.pressure() >= Pressure::Retry || self.quotas.holds_quic(&keys)
@@ -262,8 +260,7 @@ impl App {
         Ok(exchange.admit(keys, hold, lifetime, &connection.work, &self.shutdown, peer.auth()))
     }
 
-    /// A WebTransport session, admitted before its upgrade: `/wt/ping` as an operation, the transfer routes as
-    /// sessions.
+    /// A WebTransport session admitted before its upgrade: `/wt/ping` as an operation, transfer routes as sessions.
     fn webtransport<B>(
         &self,
         request: &Request<B>,

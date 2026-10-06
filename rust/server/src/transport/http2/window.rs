@@ -22,9 +22,7 @@ const DEFAULT_WINDOW: u32 = 65_535;
 /// The connection window while admitted uploads read.
 const WINDOW: u32 = 24 << 20;
 
-/// The connection's receive window: 64 KiB until an admitted upload reads, then 24 MiB until the last admitted upload
-/// stops reading, within the share of the client that first raised it, which holds the credit until the connection
-/// ends.
+/// The receive window: 64 KiB, 24 MiB while admitted uploads read, held to the end in the first raiser's share.
 pub(super) struct Window {
     app: Arc<App>,
     credit: Mutex<Option<Hold>>,

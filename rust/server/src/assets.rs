@@ -1,5 +1,4 @@
-//! The embedded browser app: exact paths with content tags and precompressed copies, the index with the server's
-//! meta tags, the browser's notice from the shared report, and the page's content security policy.
+//! The embedded browser app: tagged paths, precompressed copies, the index's meta tags, the browser notice, the CSP.
 
 #[cfg(test)]
 mod scan;

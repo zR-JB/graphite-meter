@@ -1,5 +1,4 @@
-//! HTTP/3 over QUIC: endpoints with their buffers held at bind, Retry for unvalidated handshakes under pressure, each
-//! connection's floor, and the connection driver over the HTTP/3 layer.
+//! HTTP/3 over QUIC: endpoints holding buffers from bind, Retry under pressure, connection floors, the driver.
 
 mod budget;
 mod endpoint;
@@ -79,8 +78,7 @@ impl Listener {
 impl Listen for Listener {
     type Connection = noq::Incoming;
 
-    /// The next handshake, or `None` once it is answered with a Retry: Retry spends a round trip to protect admission
-    /// under load, and a source's QUIC share from Initials that may be spoofed.
+    /// The next handshake, or `None` once Retry answered it: a round trip protects admission from spoofed Initials.
     async fn accept(&mut self) -> io::Result<Option<(noq::Incoming, SocketAddr)>> {
         let incoming = self.endpoint.accept().await.ok_or(io::ErrorKind::InvalidInput)?;
         let peer = incoming.remote_address();
@@ -163,8 +161,7 @@ impl Http3 {
         (budget, Arc::new(config))
     }
 
-    /// Serves requests until the layer ends the connection or its lifecycle closes it; a stop shuts the layer down
-    /// with every session's close.
+    /// Serves requests until the layer or lifecycle ends the connection; a stop closes every session first.
     async fn serve(
         &self,
         quic: noq::Connection,

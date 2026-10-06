@@ -1,5 +1,4 @@
-//! HTTP/2 through the h2 fork: each connection's floor and settings, its streams within their exchange bounds, the
-//! stream replies are pumped into, and the receive window an admitted upload funds.
+//! HTTP/2 through the h2 fork: connection floor and settings, bounded streams, the reply pump, upload windows.
 
 mod window;
 
@@ -150,8 +149,7 @@ impl Http2 {
         .await;
     }
 
-    /// One stream: reset when its exchange expires unadmitted or its reply ends unwritten, and counted as admitted
-    /// work from the poll that sees it admitted until it ends.
+    /// One stream: reset when it expires unadmitted or its reply ends unwritten; admitted work once a poll sees it.
     fn stream(
         &self,
         request: Request<RecvStream>,

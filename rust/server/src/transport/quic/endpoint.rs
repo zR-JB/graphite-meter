@@ -1,5 +1,4 @@
-//! Binding HTTP/3's endpoints: on Linux one per two runtime threads on a shared port, elsewhere one, each holding its
-//! buffers from the budget while its socket lives.
+//! HTTP/3 endpoints: on Linux one per two runtime threads on one port, else one, each holding budgeted buffers.
 
 use super::{
     Http3, Listener,
@@ -48,8 +47,7 @@ pub struct Binding<'a, F> {
 }
 
 impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
-    /// On Linux, endpoints on half of `pool`'s runtimes, two to sixteen, as many as the budget covers: two cost less
-    /// CPU per byte than one or four on four workers. Otherwise, or when fewer than two fit, one endpoint.
+    /// On Linux, endpoints on half of `pool`'s runtimes, 2 to 16 as budget covers (2 beat 1 or 4 on 4 workers).
     pub fn bind(&self, address: SocketAddr, pool: &Pool) -> Result<Endpoints, String> {
         let runtimes = pool.runtimes();
         if cfg!(target_os = "linux") && runtimes.len() > 1 {
@@ -77,8 +75,7 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
         Ok(Endpoints { listeners: vec![listener], http3, bytes })
     }
 
-    /// Endpoints on as many of `runtimes` as the budget covers, each socket bound and endpoint built on its runtime,
-    /// sharing one token key, reset key and every server-wide limit; `None` when fewer than two fit.
+    /// Endpoints on as many `runtimes` as the budget covers, sharing keys and limits; `None` under two.
     fn shards(&self, address: SocketAddr, runtimes: &[Handle]) -> Result<Option<Endpoints>, String> {
         let config = noq::EndpointConfig::default();
         let first = Udp::bind(address, runtimes.len(), &runtimes[0])?;
@@ -136,8 +133,7 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
         Ok(Listener { endpoint, app: self.app.clone(), runtime })
     }
 
-    /// What the connections of one of `shards` endpoints share: each admits its part of the server-wide incoming
-    /// limits, while every handshake keeps its own queue on the endpoint its packets reach.
+    /// What a shard's connections share: their part of server-wide incoming limits; handshakes queue per endpoint.
     fn http3(&self, shards: usize) -> Result<Http3, String> {
         let crypto = QuicServerConfig::try_from(self.certificates.server_config(b"h3"));
         let mut config = noq::ServerConfig::with_crypto(Arc::new(crypto.map_err(|error| error.to_string())?));
@@ -158,8 +154,7 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
     }
 }
 
-/// One of `sockets` UDP sockets on an address, wrapped for noq on the runtime it was bound on, with the kernel buffer
-/// bytes it holds.
+/// One of `sockets` UDP sockets on an address, wrapped for noq on its binding runtime, with its kernel bytes.
 struct Udp {
     socket: Box<dyn AsyncUdpSocket>,
     quic: Arc<dyn noq::Runtime>,

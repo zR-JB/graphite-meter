@@ -1,5 +1,4 @@
-//! `/wt/upload` (`api/upload.md`): up to 16 client streams, and datagrams when asked, into one upload's aggregate,
-//! with its progress feed on one server stream.
+//! `/wt/upload` (`api/upload.md`): up to 16 client streams and optional datagrams into one aggregate with a feed.
 
 use super::drain;
 use crate::{
@@ -43,8 +42,7 @@ impl fmt::Debug for Upload {
 }
 
 impl Upload {
-    /// Serves the session until it ends; a refused upload gets its `error` record and closes after a linger. Once
-    /// the feed attached, `fund` is asked until it raises the receive window.
+    /// Serves the session until it ends; refusals get an `error` record and close after a linger; `fund` once fed.
     pub(super) async fn serve(self, session: &Session, lane: &Lane, mut fund: impl FnMut() -> bool) {
         let feed = match self.uploads.subscribe(&self.id, self.owner.as_ref()) {
             Ok(feed) => feed,

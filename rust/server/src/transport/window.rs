@@ -18,8 +18,7 @@ use tokio::time::Instant;
 /// An upload refused a raised receive window asks again after this pause.
 pub(crate) const FUNDING_RETRY: Duration = Duration::from_millis(100);
 
-/// Whether an upload reads at its connection's raised receive window: asked on its first read after admission, and
-/// a pause after a refusal; never while the budget holds growth back.
+/// Whether an upload reads at the raised window: asked at its first admitted read and after refusal pauses.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Funding {
     /// A refusal holds the next ask until the instant.

@@ -20,8 +20,7 @@ const CONTROL_STREAMS: usize = 4;
 pub(super) const INCOMING_BYTES: u64 = 64 << 10;
 pub(super) const INCOMING_TOTAL_BYTES: u64 = 4 << 20;
 
-/// The request streams of a connection: a client's admission shares and the control streams, when that fits a QUIC
-/// stream count.
+/// A connection's request streams: a client's admission shares and control streams, if a QUIC stream count fits.
 pub(super) fn max_requests(limits: &Limits) -> Result<u32, String> {
     let streams = limits.operations_per_client.checked_add(limits.sessions_per_client);
     let streams = streams.and_then(|streams| u32::try_from(streams.checked_add(CONTROL_STREAMS)?).ok());
@@ -48,8 +47,7 @@ pub(super) fn packet_bytes(config: &noq::EndpointConfig) -> Option<usize> {
     usize::try_from(config.get_max_udp_payload_size().min(64 << 10)).ok()
 }
 
-/// One of `shards` endpoints' buffers: its receive batch, the first packet of each handshake its part of the incoming
-/// limits admits, its part of their queued packets, its forwarding queue and its socket's `kernel` buffer bytes.
+/// One of `shards` endpoints' buffers: receive batch, handshake and queued packets, forwarding, `kernel` bytes.
 pub fn endpoint_bytes(
     config: &noq::EndpointConfig,
     shards: usize,
@@ -66,8 +64,7 @@ pub fn endpoint_bytes(
         .checked_add(kernel)
 }
 
-/// A connection's share of the budget, which noq charges: its floor until noq drops the connection, and the receive
-/// credit its first funded upload reserves, which noq draws before the budget.
+/// A connection's noq-charged share: its floor until dropped, and its first funded upload's credit.
 #[derive(Debug)]
 pub(super) struct ConnectionBudget {
     budget: Budget,
@@ -96,8 +93,7 @@ impl ConnectionBudget {
         }
     }
 
-    /// Reserves the credit once, from the budget and from the share of the admitted client `keys` name; whether it is
-    /// reserved.
+    /// Reserves the credit once, from the budget and the share of the client `keys` name; whether it is reserved.
     pub(super) fn reserve(&self, app: &App, keys: &ClientKeys) -> bool {
         let mut held = lock(&self.held);
         if held.credit.is_none()

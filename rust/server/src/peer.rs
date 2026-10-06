@@ -1,5 +1,4 @@
-//! Who a request comes from: its address as the socket or a trusted proxy names it, its sign-in, and the client
-//! keys limits and upload owners use.
+//! Who a request comes from: socket or trusted-proxy address, sign-in, and the client keys limits and uploads use.
 
 use crate::auth::{AuthLease, Holder};
 use graphite_meter_proto::discovery::ClientIpSource;
@@ -22,8 +21,7 @@ pub enum Address {
 }
 
 impl Address {
-    /// A trusted peer names its client with exactly one parsable `X-Real-IP` and neither `Forwarded` nor
-    /// `X-Forwarded-For`; other peers are their own client.
+    /// A trusted peer's client is its one parsable `X-Real-IP` absent `Forwarded`/`X-Forwarded-For`; else the peer.
     pub fn resolve(socket: IpAddr, headers: &HeaderMap, trusted: &[IpNet]) -> Self {
         let socket = socket.to_canonical();
         if !is_trusted(socket, trusted) {
@@ -84,8 +82,7 @@ impl Peer {
         self.auth.as_ref()
     }
 
-    /// The identity operation limits charge and uploads belong to: the sign-in, else the address; `None` for
-    /// ambiguous proxy evidence, which owns nothing and is admitted nowhere.
+    /// The identity limits charge and uploads belong to: sign-in, else address; `None` for ambiguous proxy evidence.
     pub fn keys(&self) -> Option<ClientKeys> {
         match (&self.auth, self.address) {
             (Some(auth), _) => Some(auth.keys()),

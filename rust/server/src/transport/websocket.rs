@@ -24,8 +24,7 @@ const MAX_MESSAGE_BYTES: usize = 2048;
 /// The close handshake, so that an unresponsive peer cannot hold its admission.
 const CLOSE_BOUND: Duration = Duration::from_secs(5);
 
-/// The `101` that accepts an upgrade, or the refusal of one, checked in the order of Go's library; HEAD is refused
-/// with `Allow: GET` and HTTP/1.0 with `Upgrade: websocket`.
+/// The `101` accepting an upgrade or its refusal, in Go's order; HEAD gets `Allow: GET`, HTTP/1.0 `Upgrade: websocket`.
 pub fn handshake<B>(request: &Request<B>) -> Response<Body> {
     // Token lists may spread over repeated headers, which tungstenite expects as one value each.
     let mut normalized = Request::new(());

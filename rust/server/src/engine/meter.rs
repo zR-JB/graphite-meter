@@ -35,8 +35,7 @@ impl Meter {
         Some(Arc::new(Transfer(counts.clone())))
     }
 
-    /// The line for the bytes counted since the last over `window`, such as `[gm:server:download] 1.20 Gbit/s ·
-    /// 2 conns · 150.00 MB this window`, counting a conn per running lane; none without bytes or transfers.
+    /// The window's line, e.g. `[gm:server:download] 1.20 Gbit/s · 2 conns · 150.00 MB this window`; none if idle.
     pub fn line(&self, direction: &str, window: Duration) -> Option<String> {
         let counts = self.0.as_ref()?;
         let bytes = counts.bytes.swap(0, Ordering::Relaxed);

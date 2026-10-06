@@ -200,8 +200,7 @@ pub(super) fn addressed(payload: &[u8], issuer: &str, client: &str) -> bool {
     claims.iss == issuer && audience
 }
 
-/// The subject and the offered names of an ID token for this `client` from `issuer`, checking its validity period,
-/// the sign-in's `nonce` and its hash of `access_token`.
+/// An ID token's subject and names for `client` from `issuer`, checking validity period, `nonce` and token hash.
 pub(super) fn id_token(
     verified: &Verified,
     issuer: &str,

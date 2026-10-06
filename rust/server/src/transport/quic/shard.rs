@@ -104,8 +104,7 @@ impl Router {
         (Self { queues: queues.into(), max_datagram }, inboxes)
     }
 
-    /// The other endpoint a short-header packet's destination connection ID names; handshakes never migrate, and
-    /// long headers may carry the client's connection IDs.
+    /// The other endpoint a short header's connection ID names; handshakes never migrate, long headers hold client IDs.
     fn destination(&self, shard: usize, datagram: &[u8]) -> Option<usize> {
         match *datagram {
             [first, named, ..] if first & LONG_HEADER == 0 => {
@@ -116,8 +115,7 @@ impl Router {
         }
     }
 
-    /// Forwards each segment of a received buffer that names another endpoint and moves the rest together; only the
-    /// last segment may be shorter than the stride, as in GRO.
+    /// Forwards received segments naming another endpoint, moving the rest together; only the last may be short (GRO).
     fn route(&self, shard: usize, buf: &mut [u8], meta: &mut RecvMeta) {
         let (len, stride) = (meta.len.min(buf.len()), meta.stride.max(1));
         let mut kept = 0;

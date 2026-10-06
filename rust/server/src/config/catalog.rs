@@ -115,8 +115,7 @@ fn origin(text: &str) -> Result<Origin, graphite_meter_proto::origin::OriginErro
     Origin::parse(text.strip_suffix('/').unwrap_or(text))
 }
 
-/// An entry of the array form: its ID hashes the origin's text as Go canonicalizes it, so reordering keeps IDs and
-/// selections saved against a Go server keep resolving.
+/// An array-form entry: its ID hashes the Go-canonical origin, so reordering keeps IDs and Go-saved selections.
 fn listed(text: &str, url: Origin) -> ServerEntry {
     let key = go_key(text.strip_suffix('/').unwrap_or(text));
     let mut id = String::from("server-");

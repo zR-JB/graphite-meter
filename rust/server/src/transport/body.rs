@@ -1,5 +1,4 @@
-//! The response body every transport writes, a document, a download or a progress feed, the rules of writing it
-//! within its bound, and the pump that writes it to HTTP/2 and HTTP/3 streams.
+//! Response bodies (document, download, progress feed), their bounded writing, and the HTTP/2 and HTTP/3 pump.
 
 use crate::{
     engine::{DownloadSource, ProgressFeed, download::BLOCK_BYTES},
@@ -30,8 +29,7 @@ pub struct Body {
 /// What bounds writing a reply; the app bounds every reply it hands a transport.
 #[derive(Debug, Clone)]
 pub enum Bound {
-    /// The reply is aborted unless written by then: an unadmitted exchange's deadline, or an admitted one's
-    /// for its last answer.
+    /// The reply aborts unless written by then: an unadmitted exchange's deadline, or an admitted one's last answer's.
     Until(Instant),
     /// Admitted work: written bytes are the lane's movement, its finish follows delivery, other endings abort.
     Lane(Lane),
@@ -139,8 +137,7 @@ impl http_body::Body for Body {
     }
 }
 
-/// Writing one reply within its bound, as every transport drives it: an `Until` reply is aborted unwritten at its
-/// deadline; a lane's reply moves the lane with each write, so the lane's idle bound is its 30 s write stall.
+/// Writes a reply within its bound: `Until` aborts at its deadline; lane writes move it, so it idles 30 s at most.
 pub struct ReplyBound(Rule);
 
 enum Rule {
@@ -205,8 +202,7 @@ pub(crate) trait Sink {
     /// Writes the head; `end` when nothing follows it.
     async fn head(&mut self, head: Parts, end: bool, bound: &mut ReplyBound) -> Result<(), Aborted>;
 
-    /// Writes non-empty `data` as flow control admits it, ending the stream after it when `last`; each frame
-    /// written is progress.
+    /// Writes non-empty `data` as flow control admits, ending the stream when `last`; each frame is progress.
     async fn data(&mut self, data: Bytes, last: bool, bound: &mut ReplyBound) -> Result<(), Aborted>;
 
     /// Ends the stream after a body whose last data did not.

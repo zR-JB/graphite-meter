@@ -176,8 +176,7 @@ impl Policy {
         store.redeem(token, &target, request.headers().get(header::ORIGIN))
     }
 
-    /// The origin rules: a browser grant serves only its origin's measurement routes; other requests come from the
-    /// public origin or none, and a cookie's unsafe measurement requests prove their CSRF token.
+    /// Origin rules: browser grants serve only their origin's measurement routes; unsafe cookie requests prove CSRF.
     fn valid_origin<B>(&self, store: &Store, request: &Request<B>, route: Option<Route>, lease: &AuthLease) -> bool {
         let headers = request.headers();
         let Some(origin) = text(headers, "origin") else { return false };
@@ -245,8 +244,7 @@ impl Policy {
         Decision::Answer(answer)
     }
 
-    /// Whether `method` reaches `path` without a session: the sign-in pages and their fonts, and the token
-    /// exchanges.
+    /// Whether `method` reaches `path` without a session: the sign-in pages and their fonts, and the token exchanges.
     fn public(&self, method: &Method, path: &str) -> bool {
         const SANS: &str = "/fonts/ibm-plex-sans-var-latin1.woff2";
         const MONO: &str = "/fonts/ibm-plex-mono-600-latin1.woff2";
@@ -265,8 +263,7 @@ impl Policy {
         Decision::Answer(answer)
     }
 
-    /// The sign-in-required answer, readable by the public origin or a browser origin measuring; the app root
-    /// redirects to the sign-in page instead.
+    /// The sign-in-required answer, readable by the public or a measuring browser origin; the app root redirects.
     fn required<B>(&self, request: &Request<B>, endpoint: Endpoint, secure: bool) -> Decision {
         let root = endpoint.ui() && request.method() == Method::GET && request.uri().path() == "/";
         let mut answer = match root {

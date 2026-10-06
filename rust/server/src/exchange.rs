@@ -44,8 +44,7 @@ impl Exchange {
         Watch { deadline: self.deadline, admitted: self.admitted.clone() }
     }
 
-    /// Admits the request of `keys` as a lane holding `hold`, whose `lifetime` replaces the exchange bound. It
-    /// ends on `shutdown`, and on revocation of the request's sign-in.
+    /// Admits `keys`' request as a lane holding `hold` for `lifetime`; it ends on `shutdown` or sign-in revocation.
     pub fn admit(
         self,
         keys: ClientKeys,

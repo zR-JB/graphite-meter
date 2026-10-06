@@ -1,5 +1,4 @@
-//! Transport-neutral measurement work: download payloads, the latency reflector, and upload aggregates with their
-//! sinks and progress feeds.
+//! Transport-neutral measurement work: download payloads, the latency reflector, upload aggregates and feeds.
 
 pub mod download;
 pub mod feed;

@@ -46,8 +46,7 @@ impl App {
         response
     }
 
-    /// What the page may connect to beyond itself: the catalogue's servers and the targets offered on this host,
-    /// less IPv6 literals, which a policy cannot express.
+    /// What the page may connect to beyond itself: catalogue servers and this host's targets, less IPv6 literals.
     fn connect_sources(&self, preflight: &Preflight) -> Vec<String> {
         let mut sources = Vec::new();
         for server in &self.config.catalog.servers {

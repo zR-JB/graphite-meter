@@ -1,5 +1,4 @@
-//! WebTransport sessions (`api/wire.md#webtransport-routes`): each accepted after its admission, served over its lane,
-//! and closed with its ending's code once its route's streams have dropped.
+//! WebTransport sessions (`api/wire.md#webtransport-routes`): admitted, served over a lane, closed with its code.
 
 mod upload;
 
@@ -52,8 +51,7 @@ impl fmt::Debug for Plan {
     }
 }
 
-/// Accepts the session on `stream` with `headers`, serves `plan` until `lane` ends, the peer closes or the route is
-/// done, and closes it with the ending's code. An upload asks `fund` whether it reads at the raised receive window.
+/// Accepts `stream`'s session, serving `plan` until `lane` ends, the peer closes or the route ends; uploads ask `fund`.
 pub async fn serve(stream: RequestStream, headers: HeaderMap, lane: Lane, plan: Plan, fund: impl FnMut() -> bool) {
     let Ok(session) = Session::accept(stream, headers).await else {
         return;
@@ -78,8 +76,7 @@ async fn route(session: &Session, lane: &Lane, plan: Plan, fund: impl FnMut() ->
     }
 }
 
-/// Hands every datagram to `received` and refuses every peer stream until the session ends: unread datagrams would
-/// queue.
+/// Hands every datagram to `received` and refuses peer streams until the session ends; unread datagrams queue.
 async fn drain(session: &Session, mut received: impl FnMut(Bytes)) {
     loop {
         tokio::select! {
@@ -125,8 +122,7 @@ async fn download(session: &Session, lane: &Lane, source: DownloadSource, stream
     }
 }
 
-/// Writes `source`'s bytes on a stream, replacing each finished stream while the peer drains them; a stream the peer
-/// took nothing from ends the lane.
+/// Writes `source` on a stream, replacing each one the peer drained; a stream the peer took nothing from ends the lane.
 async fn download_stream(session: &Session, source: &DownloadSource, lane: &Lane) {
     loop {
         let Ok(mut stream) = session.open_uni().await else {

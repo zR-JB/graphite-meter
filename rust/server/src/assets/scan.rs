@@ -12,8 +12,7 @@ pub struct File {
     pub bytes: Vec<u8>,
 }
 
-/// The files under `root`, sorted by name. Go's browser notices stay out of an unreviewed build, and a reviewed
-/// build serves the browser's notice from its report instead.
+/// The files under `root` by name; unreviewed builds omit Go's browser notices, reviewed ones serve the report's.
 pub fn scan(root: &Path, reviewed: bool) -> Result<Vec<File>, String> {
     let mut paths = Vec::new();
     collect(root, "", &mut paths)?;
@@ -64,8 +63,7 @@ fn collect(directory: &Path, prefix: &str, paths: &mut Vec<(String, PathBuf)>) -
     Ok(())
 }
 
-/// One `</head>` to inject before, at most one terminated inline script and style for the page policy's hashes, and
-/// none of the meta tags the server owns.
+/// One `</head>`, at most one terminated inline script and style for the policy hashes, and no server-owned meta tags.
 fn check_index(bytes: &[u8]) -> Result<(), String> {
     let html = std::str::from_utf8(bytes).map_err(|_| "index.html is not UTF-8")?;
     if html.matches("</head>").count() != 1 {
