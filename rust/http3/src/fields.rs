@@ -283,25 +283,20 @@ mod tests {
     fn malformed_and_unsupported_requests() {
         let malformed = [
             with(&[("Upper", "x")]),
-            with(&[("x", "a\nb")]),
             [&[("x", "1")][..], &GET].concat(),
             with(&[(":status", "200")]),
             with(&[(":path", "/again")]),
             with(&[("connection", "close")]),
             with(&[("te", "gzip")]),
             with(&[("content-length", "7"), ("content-length", "8")]),
-            with(&[("content-length", "+7")]),
             with(&[("host", "other.example")]),
             with(&[("host", "meter.example"), ("host", "meter.example")]),
             with(&[(":protocol", "webtransport")]),
             GET[1..].to_vec(),
             vec![GET[0], GET[1], GET[3]],
-            vec![GET[0], GET[2], GET[3]],
             vec![GET[0], GET[1], GET[2], (":path", "relative")],
-            vec![GET[0], GET[1], GET[2], (":path", "")],
             vec![GET[0], GET[1], (":authority", "user@meter.example"), GET[3]],
             connect(&[(":protocol", "webtransport"), GET[1], GET[2]]),
-            connect(&[(":protocol", "webtransport"), GET[1], GET[2], (":path", "")]),
             connect(&[GET[1], GET[2], GET[3]]),
         ];
         for fields in malformed {

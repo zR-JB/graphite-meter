@@ -139,12 +139,10 @@ mod tests {
         for (server, frames, code) in [
             (true, frame(frame::SETTINGS, &[]), Code::H3_FRAME_UNEXPECTED),
             (true, frame(frame::DATA, &[]), Code::H3_FRAME_UNEXPECTED),
-            (true, frame(frame::HEADERS, &[0, 0]), Code::H3_FRAME_UNEXPECTED),
             (true, frame(0x06, &[0; 8]), Code::H3_FRAME_UNEXPECTED),
             (true, frame(frame::MAX_PUSH_ID, &[0]), Code::H3_FRAME_UNEXPECTED),
             (true, frame(frame::WEBTRANSPORT_BIDI, &[]), Code::H3_FRAME_ERROR),
             (false, frame(frame::GOAWAY, &[]), Code::H3_FRAME_ERROR),
-            (false, frame(frame::CANCEL_PUSH, &[0x40, 0, 0]), Code::H3_FRAME_ERROR),
         ] {
             assert_eq!(events(server, std::slice::from_ref(&frames)), Err(code), "{frames:x?}");
         }

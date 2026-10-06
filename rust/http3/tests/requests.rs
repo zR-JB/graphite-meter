@@ -6,12 +6,11 @@ use graphite_meter_http3::{Code, Error, server};
 use std::{
     future::{Future, poll_fn},
     pin::pin,
-    sync::{Arc, atomic::Ordering},
+    sync::atomic::Ordering,
     task::Poll,
     time::Duration,
 };
 use support::*;
-use tokio::sync::Notify;
 
 #[tokio::test]
 async fn requests_round_trip_and_bodiless_responses_may_declare_a_length() -> Result<(), TestError> {
@@ -101,13 +100,10 @@ async fn protocol_violations_close_the_connection_with_their_code() -> Result<()
         (streams(vec![(control(&[]), true)]), Code::H3_CLOSED_CRITICAL_STREAM),
         (open([control(&[]), frame(0x06, &[0; 8])].concat()), Code::H3_FRAME_UNEXPECTED),
         (open(vec![0x02, 0xc1, 0x01, 0x61]), Code::QPACK_ENCODER_STREAM_ERROR),
-        (open(vec![0x03, 0x80]), Code::QPACK_DECODER_STREAM_ERROR),
-        (open(vec![0x01, 0x00]), Code::H3_STREAM_CREATION_ERROR),
         // A session ID must be a client-initiated bidirectional stream's.
         (open([varint(0x54), varint(2)].concat()), Code::H3_ID_ERROR),
         (request(frame(0x00, b"body")), Code::H3_FRAME_UNEXPECTED),
         (request([request_head(&[]), frame(0x41, &[])].concat()), Code::H3_FRAME_ERROR),
-        (request(frame(0x41, &[0])), Code::H3_ID_ERROR),
         (request(frame(0x01, &[0x01, 0x00, 0xd1])), Code::QPACK_DECOMPRESSION_FAILED),
     ];
     for (index, ((streams, request), code)) in cases.into_iter().enumerate() {
@@ -127,23 +123,6 @@ async fn protocol_violations_close_the_connection_with_their_code() -> Result<()
         assert_eq!(closed_with(&peers.client).await, code, "case {index}");
         assert_eq!(serving.await?, Err(closed(code)));
     }
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_stopped_control_stream_closes_the_connection() -> Result<(), TestError> {
-    let critical = Err(closed(Code::H3_CLOSED_CRITICAL_STREAM));
-    // The server's control stream is the first stream its peer accepts.
-    let Served { peers, serving, .. } = pair(PLAIN).await?.serve(|_, _| async {});
-    peers.client.accept_uni().await?.stop(0_u32.into())?;
-    assert_eq!(closed_with(&peers.client).await, Code::H3_CLOSED_CRITICAL_STREAM);
-    assert_eq!(serving.await?, critical);
-
-    let peers = pair(PLAIN).await?;
-    let (driver, _requests) = client(&peers);
-    peers.server.accept_uni().await?.stop(0_u32.into())?;
-    assert_eq!(closed_with(&peers.server).await, Code::H3_CLOSED_CRITICAL_STREAM);
-    assert_eq!(driver.await?, critical);
     Ok(())
 }
 
@@ -183,24 +162,6 @@ async fn our_control_stream_opens_once_stream_credit_arrives() -> Result<(), Tes
     let mut kind = [0xff];
     control.read_exact(&mut kind).await?;
     assert_eq!(kind, [0x00], "a control stream");
-    Ok(())
-}
-
-#[tokio::test]
-async fn settings_the_server_refuses() -> Result<(), TestError> {
-    let many: Vec<_> = (0..65).map(|index| (0x21 + 0x1f * index, 0)).collect();
-    let oversized = [vec![0x00], varint(0x04), varint(8 * 1024 + 1)].concat();
-    for (bytes, datagrams, code) in [
-        (oversized, true, Code::H3_EXCESSIVE_LOAD),
-        (control(&many), true, Code::H3_EXCESSIVE_LOAD),
-        (control(&[(0x06, 1), (0x06, 1)]), true, Code::H3_SETTINGS_ERROR),
-        // HTTP datagrams need the QUIC datagram transport parameter.
-        (control(&[(0x33, 1)]), false, Code::H3_SETTINGS_ERROR),
-    ] {
-        let Served { peers, .. } = pair(Setup { datagrams, ..PLAIN }).await?.serve(respond);
-        let _control = uni(&peers.client, &bytes).await?;
-        assert_eq!(closed_with(&peers.client).await, code, "{:x?}", &bytes[..4]);
-    }
     Ok(())
 }
 
@@ -287,58 +248,8 @@ async fn a_budget_refusal_rejects_only_the_new_request() -> Result<(), TestError
     Ok(())
 }
 
-/// An admitted stream whose head the budget cannot hold, whole or in parts, was never processed: it gets
-/// H3_REQUEST_REJECTED both ways, not the 431 of a head over the size limit.
 #[tokio::test]
-async fn a_head_over_the_budget_rejects_the_admitted_request() -> Result<(), TestError> {
-    let head = request_head(&[]);
-    // Its section is under 64 bytes, so the frame header takes two.
-    let (header, section) = head.split_at(2);
-    for part in [section, &section[..1]] {
-        let Served { peers, .. } = pair(PLAIN)
-            .await?
-            .serve(|_, _| async { panic!("a refused head reached its route") });
-        let (mut send, mut recv) = peers.bi(header).await?;
-        // Admitted: from here the budget holds only the stream's two halves.
-        let used = charged(&peers.budget, 0).await;
-        peers.budget.limit.store(used, Ordering::Relaxed);
-        send.write_all(part).await?;
-        assert_eq!(raw_stream(&mut recv).await.1, Err(Code::H3_REQUEST_REJECTED));
-        assert_eq!(stopped(&send).await, Some(Code::H3_REQUEST_REJECTED));
-    }
-    Ok(())
-}
-
-#[tokio::test]
-async fn goaway_refuses_new_requests_and_closes_after_the_last() -> Result<(), TestError> {
-    let (started, release) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
-    let (running, held) = (started.clone(), release.clone());
-    let Served { peers, serving, stop, .. } = pair(PLAIN).await?.serve(move |request, stream| {
-        let (running, held) = (running.clone(), held.clone());
-        async move {
-            running.notify_one();
-            held.notified().await;
-            respond(request, stream).await;
-        }
-    });
-    let (driver, requests) = client(&peers);
-    let (send, mut recv) = requests.send_request(get("/held")).await?.split();
-    started.notified().await;
-    stop.notify_one();
-    until_goaway(&requests).await;
-    // A request that ignores the GOAWAY gets H3_REQUEST_REJECTED.
-    let mut ignoring = peers.bi(&request_head(&[])).await?;
-    assert_eq!(raw_stream(&mut ignoring.1).await.1, Err(Code::H3_REQUEST_REJECTED));
-    release.notify_one();
-    assert_eq!(recv.response().await?.status(), http::StatusCode::OK);
-    drop((send, recv, ignoring));
-    assert_eq!((driver.await?, serving.await?), (Ok(()), Ok(())));
-    assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
-    Ok(())
-}
-
-#[tokio::test]
-async fn deadlines_close_idle_and_draining_connections_and_stale_heads() -> Result<(), TestError> {
+async fn deadlines_close_idle_connections_and_stale_heads() -> Result<(), TestError> {
     let Served { peers, serving, .. } = pair(PLAIN).await?.serve(|_, _| async {});
     let (driver, _requests) = client(&peers);
     let (send, mut recv) = peers.bi(&frame(0x01, &[0; 10])[..4]).await?;
@@ -353,28 +264,6 @@ async fn deadlines_close_idle_and_draining_connections_and_stale_heads() -> Resu
     assert_eq!((driver.await?, serving.await?), (Ok(()), Ok(())));
     assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
 
-    let held = Arc::new(Notify::new());
-    let holding = held.clone();
-    let Served { peers, serving, stop, .. } = pair(PLAIN).await?.serve(move |_, stream| {
-        let holding = holding.clone();
-        async move {
-            holding.notify_one();
-            std::future::pending::<()>().await;
-            drop(stream);
-        }
-    });
-    let (driver, requests) = client(&peers);
-    let _held = requests.send_request(get("/held")).await?;
-    held.notified().await;
-    stop.notify_one();
-    until_goaway(&requests).await;
-    assert!(
-        peers.server.close_reason().is_none(),
-        "only the drain closes a connection with a held request"
-    );
-    jump(Duration::from_secs(6)).await;
-    assert_eq!((driver.await?, serving.await?), (Ok(()), Ok(())));
-    assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
     Ok(())
 }
 

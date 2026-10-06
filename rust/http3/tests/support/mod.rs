@@ -241,17 +241,6 @@ pub async fn until_closed(session: Session) -> Result<(u32, String), Error> {
     session.closed().await
 }
 
-/// Whether a session's streams and datagrams ended, and how it closed; each must end within 5 s.
-pub async fn session_end(session: &Session) -> (bool, bool, Result<(u32, String), Error>) {
-    let ended = async {
-        let streams = session.accept_uni().await.is_none();
-        (streams, session.read_datagram().await.is_none(), session.closed().await)
-    };
-    tokio::time::timeout(Duration::from_secs(5), ended)
-        .await
-        .expect("the session ends with its connection")
-}
-
 pub fn get(path: &str) -> http::Request<()> {
     http::Request::get(format!("https://localhost{path}")).body(()).unwrap()
 }

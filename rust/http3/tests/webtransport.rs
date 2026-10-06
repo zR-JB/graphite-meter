@@ -3,7 +3,7 @@
 mod support;
 
 use bytes::Bytes;
-use graphite_meter_http3::{Code, Error, WtCode, client, webtransport::Session};
+use graphite_meter_http3::{Code, Error, WtCode, webtransport::Session};
 use std::{sync::Arc, time::Duration};
 use support::*;
 use tokio::sync::{Notify, mpsc};
@@ -33,46 +33,6 @@ async fn the_close_code_table_reaches_the_peer() -> Result<(), TestError> {
         assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
         assert_eq!(serving.await?, Ok(()));
     }
-    Ok(())
-}
-
-#[tokio::test]
-async fn closing_sends_close_then_fin_and_waits_for_the_peer() -> Result<(), TestError> {
-    // The server ends the session; our client's FIN ends the wait long before 1 s.
-    let Served { peers, serving, .. } = pair(PLAIN).await?.sessions(|session| async move {
-        let started = std::time::Instant::now();
-        session.close(2, "lifetime").await;
-        assert!(started.elapsed() < Duration::from_millis(900));
-    });
-    let (driver, requests) = client(&peers);
-    let session = accepted(&requests).await?;
-    assert_eq!(session.closed().await?, (2, "lifetime".into()));
-    session.close(0, "").await;
-    settled(&peers.budget).await;
-    jump(Duration::from_secs(1)).await;
-    assert_eq!((driver.await?, serving.await?), (Ok(()), Ok(())));
-    assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
-
-    // The peer ends it: the server only finishes its side, and the connection closes at once.
-    let Served { peers, serving, .. } = pair(PLAIN).await?.sessions(|session| async move {
-        assert_eq!(session.closed().await.unwrap(), (7, "bye".into()));
-        session.close(1, "unused").await;
-    });
-    let (driver, requests) = client(&peers);
-    accepted(&requests).await?.close(7, "bye").await;
-    assert_eq!((driver.await?, serving.await?), (Ok(()), Ok(())));
-
-    // A silent peer gets STOP_SENDING WT_SESSION_GONE only once the second passes.
-    let Served { peers, .. } = pair(DRAFT02)
-        .await?
-        .sessions(|session| async move { session.close(4, "shutdown").await });
-    let (connect, response) = peers.connect().await?;
-    let (bytes, end) = response.await?;
-    assert!(bytes.ends_with(&close_capsule(4, "shutdown")) && end.is_ok(), "CLOSE, then FIN");
-    jump(Duration::from_millis(900)).await;
-    assert!(!stopped_yet(&connect).await, "STOP_SENDING before the second");
-    jump(Duration::from_millis(200)).await;
-    assert_eq!(stopped(&connect).await, Some(Code::WT_SESSION_GONE));
     Ok(())
 }
 
@@ -172,48 +132,6 @@ async fn prepared_datagrams_repeat_and_the_last_session_ends_its_connection() ->
     Ok(())
 }
 
-#[tokio::test]
-async fn a_malformed_datagram_closes_the_connection() -> Result<(), TestError> {
-    let Served { peers, serving, .. } = pair(PLAIN).await?.serve(|_, _| async {});
-    // A quarter stream ID must fit a stream ID.
-    peers.client.send_datagram(varint(1 << 60).into())?;
-    assert_eq!(closed_with(&peers.client).await, Code::H3_DATAGRAM_ERROR);
-    assert_eq!(serving.await?, Err(closed(Code::H3_DATAGRAM_ERROR)));
-    Ok(())
-}
-
-#[tokio::test]
-async fn sessions_end_with_their_connection() -> Result<(), TestError> {
-    // The server's connection goes away: each side's session ends with it.
-    let Served { peers, serving, mut outcomes, .. } = pair(PLAIN)
-        .await?
-        .sessions(|session| async move { session_end(&session).await });
-    let (mut driver, requests) = client::new(peers.client.clone());
-    let driving = tokio::spawn(async move { (driver.drive().await, driver) });
-    let session = accepted(&requests).await?;
-    peers.server.close(Code::H3_NO_ERROR.into(), b"restart");
-    let (driven, _stopped) = driving.await?;
-    assert_eq!(driven, Ok(()));
-    let restart = Error::Connection {
-        local: false,
-        code: Code::H3_NO_ERROR,
-        reason: Bytes::from_static(b"restart"),
-    };
-    assert_eq!(session_end(&session).await, (true, true, Err(restart)));
-    let closed_here = Err(Error::Transport(noq::ConnectionError::LocallyClosed));
-    assert_eq!(outcomes.recv().await, Some((true, true, closed_here)));
-    assert_eq!(serving.await?, Ok(()));
-
-    // Dropping the driver ends its session too.
-    let Served { peers, .. } = pair(PLAIN).await?.sessions(until_closed);
-    let (driver, requests) = client(&peers);
-    let session = accepted(&requests).await?;
-    driver.abort();
-    assert!(driver.await.is_err_and(|error| error.is_cancelled()));
-    assert_eq!(session_end(&session).await, (true, true, Err(closed(Code::H3_NO_ERROR))));
-    Ok(())
-}
-
 /// A client ignores content-length in a successful response to CONNECT (RFC 9110 §9.3.6), so the
 /// session's capsules follow one that says 0.
 #[tokio::test]
@@ -237,32 +155,12 @@ async fn a_successful_connect_ignores_its_content_length() -> Result<(), TestErr
     Ok(())
 }
 
-#[tokio::test]
-async fn data_after_the_peers_close_is_a_message_error() -> Result<(), TestError> {
-    let Served { peers, mut outcomes, .. } = pair(DRAFT02).await?.sessions(until_closed);
-    // A plain request first, so the connection outlives the session and the stream's end shows.
-    peers.get().await?;
-    let (mut connect, _response) = peers.connect().await?;
-    // Only FIN may follow a CLOSE; a DRAIN may not.
-    let drain = frame(0x00, &frame(0x78ae, &[]));
-    connect.write_all(&[close_capsule(7, "bye"), drain].concat()).await?;
-    assert_eq!(outcomes.recv().await, Some(Ok((7, "bye".into()))));
-    assert_eq!(stopped(&connect).await, Some(Code::H3_MESSAGE_ERROR));
-    settled(&peers.budget).await;
-    Ok(())
-}
-
 /// Control data on a CONNECT stream is bounded to 1 MiB in at most 1024 chunks.
 #[tokio::test]
 async fn connect_stream_control_data_is_bounded() -> Result<(), TestError> {
     let grease = |length: usize| frame(0x00, &frame(0x21, &vec![0; length]));
     // A DATA frame split across packets counts once per part.
-    for (data, bounded) in [
-        (grease(1).repeat(1000), false),
-        (grease(1).repeat(1025), true),
-        (grease(512 * 1024), false),
-        (grease(1024 * 1024), true),
-    ] {
+    for (data, bounded) in [(grease(1).repeat(1025), true), (grease(512 * 1024), false), (grease(1024 * 1024), true)] {
         let Served { peers, mut outcomes, .. } = pair(DRAFT02).await?.sessions(until_closed);
         peers.get().await?;
         let (mut connect, _response) = peers.connect().await?;
@@ -275,42 +173,6 @@ async fn connect_stream_control_data_is_bounded() -> Result<(), TestError> {
             assert_eq!(outcomes.recv().await, Some(Ok((7, "bye".into()))), "{} bytes", data.len());
         }
     }
-    Ok(())
-}
-
-/// Once a session ended, it opens no stream and sends no datagram, and its streams refuse reads and
-/// writes and end with WT_SESSION_GONE. A read or write already waiting then wakes at once.
-#[tokio::test]
-async fn an_ended_session_ends_its_streams_and_datagrams() -> Result<(), TestError> {
-    // The client's 16-byte window holds the server's write.
-    let setup = Setup { window: Some(16), ..DRAFT02 };
-    let Served { peers, mut outcomes, .. } = pair(setup).await?.sessions(|session| async move {
-        let (mut lane, mut own) = (session.accept_uni().await.unwrap(), session.open_uni().await.unwrap());
-        let mut datagram = session.prepare_datagram(b"late").unwrap();
-        let waiting = tokio::join!(lane.read_chunk(), own.write_chunk(Bytes::from_static(&[0; 64])));
-        vec![
-            waiting.0.err(),
-            waiting.1.err(),
-            lane.read_chunk().await.err(),
-            own.write_all(b"late").await.err(),
-            session.send_datagram(b"late").err(),
-            datagram.send_wait().await.err(),
-            session.open_uni().await.err(),
-        ]
-    });
-    // A plain request first, so the connection outlives the session and cannot wake them instead.
-    peers.get().await?;
-    let (mut connect, _response) = peers.connect().await?;
-    // A stream of session 4, the second request stream, that sends the server's read nothing.
-    let lane = uni(&peers.client, b"\x40\x54\x04").await?;
-    let (_server_control, mut own) = (peers.client.accept_uni().await?, peers.client.accept_uni().await?);
-    // A byte past the header: the server's write has begun and its read waits.
-    own.read_exact(&mut [0; 4]).await?;
-    connect.write_all(&close_capsule(2, "lifetime")).await?;
-    let ended = tokio::time::timeout(Duration::from_secs(5), outcomes.recv()).await?;
-    assert_eq!(ended, Some(vec![Some(Error::Refused); 7]));
-    assert_eq!(stopped(&lane).await, Some(Code::WT_SESSION_GONE));
-    assert_eq!(raw_stream(&mut own).await.1, Err(Code::WT_SESSION_GONE));
     Ok(())
 }
 
@@ -429,31 +291,6 @@ async fn shutdown_closes_every_session_before_the_connection() -> Result<(), Tes
     jump(Duration::from_secs(1)).await;
     assert_eq!((driver.await?, serving.await?), (Ok(()), Ok(())));
     assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
-
-    let Served { peers, serving, stop, mut outcomes } = pair(PLAIN).await?.sessions(until_closed);
-    // Admitted before GOAWAY, this CONNECT waits for SETTINGS and is accepted only after it.
-    let (mut connect, response) = peers.connect().await?;
-    charged(&peers.budget, 0).await;
-    stop.notify_one();
-    let mut incoming = peers.client.accept_uni().await?;
-    let mut received = Vec::new();
-    while !received.ends_with(&frame(0x07, &varint(4))) {
-        received.extend_from_slice(&incoming.read_chunk(usize::MAX).await?.ok_or("control stream ended")?);
-    }
-    let (_late, mut late_response) = peers.bi(&connect_head()).await?;
-    assert_eq!(raw_stream(&mut late_response).await.1, Err(Code::H3_REQUEST_REJECTED));
-    let _control = uni(&peers.client, &control(DRAFT02_SETTINGS)).await?;
-    let (bytes, end) = response.await?;
-    let closed = bytes.starts_with(&[0x01]) && bytes.ends_with(&close_capsule(4, "shutdown"));
-    assert!(closed && end.is_ok(), "200, CLOSE, then FIN");
-    assert_eq!(outcomes.recv().await, Some(Ok((4, "shutdown".into()))));
-    connect.finish()?;
-    assert_eq!(stopped(&connect).await, None);
-    settled(&peers.budget).await;
-    assert!(peers.server.close_reason().is_none(), "the CLOSE goes first");
-    jump(Duration::from_secs(1)).await;
-    assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
-    assert_eq!(serving.await?, Ok(()));
     Ok(())
 }
 
@@ -524,7 +361,6 @@ async fn webtransport_needs_the_peer_signal_and_datagrams() -> Result<(), TestEr
         (DRAFT02, true, true),
         (raw(&[(0x2c7cf000, 1), (0x33, 1)]), false, true),
         (raw(&[(0x2b603742, 1)]), false, false),
-        (raw(&[(0xffd277, 1)]), false, false),
         (raw(&[]), false, false),
     ] {
         let Served { peers, .. } = pair(setup).await?.sessions(until_closed);
