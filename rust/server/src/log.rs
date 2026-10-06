@@ -41,16 +41,6 @@ impl Level {
         }
     }
 
-    /// The syslog priority journald reads from a `<N>` prefix.
-    fn priority(self) -> u8 {
-        match self {
-            Self::Debug => 7,
-            Self::Info => 6,
-            Self::Warn => 4,
-            Self::Error => 3,
-        }
-    }
-
     /// The label's and the message's terminal colours.
     fn colours(self) -> (&'static str, &'static str) {
         match self {
@@ -68,20 +58,18 @@ pub enum Style {
     Plain,
     /// The plain line in colour; a warning's or error's advice on a `help:` line.
     Colour,
-    /// `<4>tls: message; advice (transport::tls)`: journald adds the time and reads the level from the prefix.
-    Journal,
 }
 
-/// journald when systemd connected stderr to it, else colour on a terminal that is not `TERM=dumb` unless `NO_COLOR`
+/// Colour on a terminal that is not `TERM=dumb` unless `NO_COLOR`
 /// is set; `FORCE_COLOR` asks for colour anywhere. Windows consoles get colour only when asked.
 static STYLE: LazyLock<Style> = LazyLock::new(|| {
     let set = |name| std::env::var_os(name).is_some_and(|value| !value.is_empty() && value != "0");
     let terminal =
         cfg!(unix) && std::io::stderr().is_terminal() && std::env::var_os("TERM").is_some_and(|term| term != "dumb");
-    match () {
-        _ if set("JOURNAL_STREAM") => Style::Journal,
-        _ if !set("NO_COLOR") && (set("FORCE_COLOR") || terminal) => Style::Colour,
-        _ => Style::Plain,
+    if !set("NO_COLOR") && (set("FORCE_COLOR") || terminal) {
+        Style::Colour
+    } else {
+        Style::Plain
     }
 });
 
@@ -112,7 +100,6 @@ pub fn line(level: Level, topic: &str, module: &str, message: fmt::Arguments<'_>
     let (topic, label) = (format!("{topic}:"), level.label());
     match style {
         Style::Plain => format!("{time} {label:<5} {topic:<TOPIC_WIDTH$} {text}{source}\n"),
-        Style::Journal => format!("<{}>{topic} {text}{source}\n", level.priority()),
         Style::Colour => {
             let (badge, colour) = level.colours();
             let advice = text
@@ -244,7 +231,6 @@ mod tests {
         let warn = |style| line(Level::Warn, "tls", tls, format_args!("key\u{1b}[31m\nnext; renew it"), time, style);
         let plain = "2025-10-06T16:31:02+02:00 WARN  tls:       key\\u{1b}[31m\\nnext; renew it (transport::tls)\n";
         assert_eq!(warn(Style::Plain), plain);
-        assert_eq!(warn(Style::Journal), "<4>tls: key\\u{1b}[31m\\nnext; renew it (transport::tls)\n");
         let info = line(Level::Info, "listen", tls, format_args!("ready"), time, Style::Plain);
         assert_eq!(
             info, "2025-10-06T16:31:02+02:00 INFO  listen:    ready\n",
