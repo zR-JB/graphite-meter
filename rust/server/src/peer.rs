@@ -123,10 +123,7 @@ impl ClientKeys {
     /// The keys a connection counts under: its socket address, or none for a trusted proxy.
     pub fn connection(socket: IpAddr, trusted: &[IpNet]) -> Self {
         let socket = socket.to_canonical();
-        match is_trusted(socket, trusted) {
-            true => Self::Exempt,
-            false => Self::address(socket),
-        }
+        if is_trusted(socket, trusted) { Self::Exempt } else { Self::address(socket) }
     }
 
     /// The key an owner is compared by: the address, IPv6 /64, login or grant.

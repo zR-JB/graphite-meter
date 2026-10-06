@@ -272,10 +272,7 @@ impl App {
             return vec![Effect::Quit];
         }
         self.interrupted = true;
-        match self.quitting {
-            true => vec![Effect::Quit],
-            false => self.quit(),
-        }
+        if self.quitting { vec![Effect::Quit] } else { self.quit() }
     }
 
     /// Eases the shown rates, and checks the paths once their settings have rested.

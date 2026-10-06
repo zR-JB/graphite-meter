@@ -49,10 +49,7 @@ impl Value for Vec<String> {
     }
 
     fn show(&self) -> String {
-        match self.is_empty() {
-            true => String::new(),
-            false => format!("[{}]", self.join(" ")),
-        }
+        if self.is_empty() { String::new() } else { format!("[{}]", self.join(" ")) }
     }
 }
 
@@ -100,10 +97,7 @@ impl Value for Duration {
     }
 
     fn show(&self) -> String {
-        match self.is_zero() {
-            true => String::new(),
-            false => duration::format(*self),
-        }
+        if self.is_zero() { String::new() } else { duration::format(*self) }
     }
 }
 
