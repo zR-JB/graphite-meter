@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"io"
-	"log"
 	"maps"
 	"net/http"
 	"net/url"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/logx"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 	"golang.org/x/oauth2"
@@ -135,13 +135,13 @@ func (o *oidcState) retryDiscovery(ctx context.Context, public *url.URL) {
 		discovery, err := o.discover(ctx, public)
 		if err == nil {
 			o.discovered.Store(discovery)
-			log.Printf("[gm:auth] OIDC provider ready")
+			logx.Infof("auth", "OIDC provider ready")
 			return
 		}
 		if attempt == 0 {
-			log.Printf("[gm:auth] OIDC provider unavailable; local password remains available")
+			logx.Warnf("auth", "OIDC provider unavailable; retrying; password still signs in")
 		} else {
-			log.Printf("[gm:auth] OIDC provider retrying")
+			logx.Warnf("auth", "OIDC provider unavailable; retrying")
 		}
 		select {
 		case <-ctx.Done():

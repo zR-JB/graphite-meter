@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/json/v2"
 	"errors"
-	"log"
 	"net"
 	"net/http"
 	"net/netip"
@@ -14,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/logx"
 	"github.com/zR-JB/graphite-meter/go/internal/static"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -141,7 +141,7 @@ func (d *Discovery) build(host string) *hostDiscovery {
 	// Callers share the slice; clipping makes their appends copy.
 	h.connect = slices.Clip(h.connect)
 	if h.servers, h.serversErr = d.serversFor(h.connect); h.serversErr != nil {
-		log.Printf("[gm:discovery] server catalogue for host %q: %q", host, h.serversErr)
+		logx.Warnf("discovery", "server catalogue for host %q: %q", host, h.serversErr)
 	}
 	sources := d.cfg.ServerCatalog.ConnectSources()
 	for _, raw := range h.connect {

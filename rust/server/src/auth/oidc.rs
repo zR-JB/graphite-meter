@@ -112,7 +112,7 @@ impl Oidc {
                 break;
             }
             match attempt {
-                0 => log!(Warn, "auth", "OIDC provider unavailable; password sign-in stays available; retrying"),
+                0 => log!(Warn, "auth", "OIDC provider unavailable; retrying; password still signs in"),
                 _ => log!(Warn, "auth", "OIDC provider unavailable; retrying"),
             }
             sleep(delay).await;

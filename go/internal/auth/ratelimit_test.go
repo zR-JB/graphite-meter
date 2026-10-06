@@ -5,16 +5,16 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/logx"
 )
 
 func requestFrom(method, path, remote string) *http.Request {
@@ -90,8 +90,7 @@ func TestPasswordCeilingCountsOnlyFailuresAndLogsOncePerWindow(t *testing.T) {
 			}
 		}
 		var out bytes.Buffer
-		log.SetOutput(&out)
-		t.Cleanup(func() { log.SetOutput(os.Stderr) })
+		t.Cleanup(logx.SetOutput(&out))
 		spend := func() {
 			for i := range maxGlobalAttempts + 20 {
 				if s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", addressFrom(200+i%200))) {

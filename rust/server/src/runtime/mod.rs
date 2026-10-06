@@ -157,7 +157,7 @@ impl Server {
         let (pool, stopping) = (&pool, &shutdown);
         let mut services = FuturesUnordered::<Service<'_>>::new();
         for Listening { endpoint, address, socket } in listeners {
-            let role = endpoint.role(auth);
+            let role = endpoint.protocol();
             let (app, shutdown, next) = (app.clone(), shutdown.clone(), || pool.next());
             let protocol = match socket {
                 Socket::Http1(socket, tls) => {
@@ -188,7 +188,9 @@ impl Server {
                     "udp"
                 }
             };
-            log!(Info, "listen", "listening on {address}/{protocol}: {role}");
+            // A table: where, which protocol, what for.
+            let place = format!("{address}/{protocol}");
+            log!(Info, "listen", "{place:<21} {role:<9} {}", endpoint.roles(auth));
         }
         if let Some(certificates) = certificates {
             services.push(Box::pin(async move {

@@ -7,13 +7,13 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"log"
 	"net/url"
 	"os"
 	"sync/atomic"
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/logx"
 )
 
 const certPollInterval = time.Minute
@@ -29,7 +29,7 @@ func newCertificateManager(cfg *config.Config) (*certificateManager, error) {
 		return nil, err
 	}
 	if info, err := os.Stat(cfg.TLSKey); err == nil && info.Mode().Perm()&0077 != 0 {
-		log.Printf("[gm:tls] warning: private key %s permissions are %04o; remove group/other access", cfg.TLSKey,
+		logx.Warnf("tls", "private key %s has permissions %04o; remove group and other access", cfg.TLSKey,
 			info.Mode().Perm())
 	}
 	return m, nil
@@ -68,12 +68,21 @@ func (m *certificateManager) reload(now time.Time) error {
 	m.current.Store(new(cert))
 	if changed {
 		remaining := leaf.NotAfter.Sub(now)
-		log.Printf("[gm:tls] certificate loaded; expires at %s", leaf.NotAfter.Format(time.RFC3339))
+		logx.Infof("tls", "certificate loaded: expires %s", leaf.NotAfter.UTC().Format(time.RFC3339))
 		if remaining < 30*24*time.Hour {
-			log.Printf("[gm:tls] warning: certificate expires in %s", remaining.Round(time.Hour))
+			logx.Warnf("tls", "certificate expires in %s; renew it", expiresIn(remaining))
 		}
 	}
 	return nil
+}
+
+// expiresIn reads whole days from two days on, else whole hours.
+func expiresIn(remaining time.Duration) string {
+	hours := int((remaining + 30*time.Minute) / time.Hour)
+	if hours >= 48 {
+		return fmt.Sprintf("%d days", (hours+12)/24)
+	}
+	return fmt.Sprintf("%d h", hours)
 }
 
 func (m *certificateManager) tlsConfig(nextProtos ...string) *tls.Config {
@@ -92,7 +101,7 @@ func (m *certificateManager) run(ctx context.Context) {
 			return
 		case now := <-ticker:
 			if err := m.reload(now); err != nil {
-				log.Printf("[gm:tls] renewal rejected; keeping last valid certificate: %v", err)
+				logx.Warnf("tls", "certificate renewal rejected: %v; keeping the current certificate", err)
 			}
 		}
 	}

@@ -385,17 +385,25 @@ impl Endpoint {
         matches!(self, Self::H3Companion)
     }
 
-    /// What its startup line says it serves.
-    pub const fn role(self, auth: bool) -> &'static str {
+    /// Its protocol, which its errors lead with.
+    pub const fn protocol(self) -> &'static str {
         match self {
-            Self::H1 if auth => {
-                "HTTP/1.1 clear (trusted proxy only, refuses direct requests, redirects GET / to HTTPS)"
-            }
-            Self::H1 => "HTTP/1.1 clear (UI, discovery, probe, transfers, WebSockets)",
-            Self::H1Tls => "HTTPS HTTP/1.1 (UI, discovery, probe, transfers, WebSockets)",
-            Self::H2 => "HTTPS HTTP/2 (probe, transfers, progress)",
-            Self::H3Companion => "HTTPS HTTP/1.1 companion (HTTP/3 bootstrap probe, upload and ticket control)",
-            Self::Quic => "HTTP/3 (probe, transfers, progress, WebTransport)",
+            Self::H1 => "HTTP/1.1",
+            Self::H1Tls | Self::H3Companion => "HTTPS/1.1",
+            Self::H2 => "HTTPS/2",
+            Self::Quic => "HTTP/3",
+        }
+    }
+
+    /// What its startup line says it serves.
+    pub const fn roles(self, auth: bool) -> &'static str {
+        const ALL: &str = "UI, discovery, probe, transfers, WebSockets";
+        match self {
+            Self::H1 if auth => "trusted proxy only; GET / redirects to HTTPS",
+            Self::H1 | Self::H1Tls => ALL,
+            Self::H2 => "probe, transfers, progress",
+            Self::H3Companion => "HTTP/3 bootstrap probe, upload, tickets",
+            Self::Quic => "probe, transfers, progress, WebTransport",
         }
     }
 }

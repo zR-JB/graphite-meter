@@ -70,8 +70,8 @@ impl Auth {
         let Some(config) = config else { return Ok(Self(None)) };
         let (mode, settings) = match &config.methods {
             Methods::Password(_) => ("password", None),
-            Methods::Oidc(oidc) => ("oidc", Some(oidc)),
-            Methods::Hybrid(_, oidc) => ("hybrid", Some(oidc)),
+            Methods::Oidc(oidc) => ("OIDC", Some(oidc)),
+            Methods::Hybrid(_, oidc) => ("password and OIDC", Some(oidc)),
         };
         let security = Security::new(verbose);
         let load = |secret: &config::Secret| {
@@ -87,17 +87,18 @@ impl Auth {
             Oidc::new(&config.public_origin, settings, secret, outbound)
         };
         let oidc = settings.map(oidc).transpose()?;
-        let provider = settings.map(|oidc| {
-            let groups = oidc.allowed_groups.len();
-            format!(" provider={} issuer={} allowed-groups={groups}", config.provider, oidc.issuer)
-        });
-        let (origin, lifetime) = (&config.public_origin, duration::format(LOGIN_LIFETIME));
-        let provider = provider.unwrap_or_default();
-        log!(
-            Info,
-            "auth",
-            "sign-in ready: mode={mode} origin={origin}{provider} session-lifetime={lifetime}"
-        );
+        // How people sign in, one line per concern, with only the settings the mode uses.
+        let lifetime = duration::format(LOGIN_LIFETIME);
+        let lifetime = lifetime.trim_end_matches("0s").trim_end_matches("0m");
+        log!(Info, "auth", "{mode} sign-in at {}; sessions last {lifetime}", config.public_origin);
+        if let Some(oidc) = settings {
+            let groups = match oidc.allowed_groups.len() {
+                0 => "every group allowed".to_owned(),
+                1 => "1 group allowed".to_owned(),
+                n => format!("{n} groups allowed"),
+            };
+            log!(Info, "auth", "OIDC provider {} at {}; {groups}", config.provider, oidc.issuer);
+        }
         Ok(Self(Some(Box::new(Enabled {
             policy: Policy::new(config),
             store: Store::default(),
