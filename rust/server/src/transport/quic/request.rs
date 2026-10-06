@@ -1,6 +1,6 @@
 //! HTTP/3 requests: bounded until admitted, bodies fund the window, 16 KiB paced reply frames, CONNECT to WebTransport.
 
-use super::window::Window;
+use super::budget::Window;
 use crate::{
     app::{App, Connection, Outcome},
     exchange::{Exchange, Watch},

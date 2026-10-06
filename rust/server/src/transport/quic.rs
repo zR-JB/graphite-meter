@@ -4,7 +4,6 @@ mod budget;
 mod endpoint;
 mod request;
 mod shard;
-mod window;
 
 pub(crate) use budget::{endpoint_bytes, floor_bytes, noq_floor};
 pub use endpoint::{Binding, Endpoints};
@@ -20,6 +19,7 @@ use crate::{
     limits::Lease,
 };
 use budget::ConnectionBudget;
+use budget::{SendWindow, Window};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_http3::{self as http3, server};
 use graphite_meter_proto::{lane::LaneEnding, text::quote};
@@ -37,7 +37,6 @@ use tokio::{
     time::{MissedTickBehavior, interval, timeout},
 };
 use tokio_util::sync::CancellationToken;
-use window::{SendWindow, Window};
 
 /// A whole handshake has this long.
 const HANDSHAKE_BOUND: Duration = Duration::from_secs(10);
