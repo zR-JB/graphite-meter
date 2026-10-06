@@ -11,7 +11,6 @@ struct Settings {
     warmup: Duration,
     auto_streams: i64,
     insecure: bool,
-    loaded: bool,
     servers: Vec<String>,
     name: String,
     verbose: bool,
@@ -24,7 +23,6 @@ impl Default for Settings {
             warmup: Duration::from_millis(800),
             auto_streams: 6,
             insecure: false,
-            loaded: true,
             servers: Vec::new(),
             name: String::new(),
             verbose: true,
@@ -61,7 +59,7 @@ fn put<T>(slot: &mut T, value: T) -> Result<(), String> {
 }
 
 /// The flags of the Go program the expected usage and messages come from.
-const FLAGS: [Flag<Settings>; 8] = [
+const FLAGS: [Flag<Settings>; 7] = [
     Flag {
         name: "url",
         kind: Kind::String,
@@ -93,14 +91,6 @@ const FLAGS: [Flag<Settings>; 8] = [
         env: None,
         set: |s, v| put(&mut s.insecure, boolean(v)?),
         show: |s| s.insecure.to_string(),
-    },
-    Flag {
-        name: "loaded-latency",
-        kind: Kind::Bool,
-        usage: "measure under load",
-        env: None,
-        set: |s, v| put(&mut s.loaded, boolean(v)?),
-        show: |s| s.loaded.to_string(),
     },
     Flag {
         name: "server",
@@ -170,8 +160,8 @@ fn flags_take_one_or_two_dashes_and_values_inline_or_next() {
 fn booleans_take_a_value_only_inline() {
     let (parsed, settings) = run(&["-insecure", "false"]);
     assert_eq!((parsed, settings.insecure), (Ok(rest(&["false"])), true));
-    let (parsed, settings) = run(&["-insecure=false", "--loaded-latency=0"]);
-    assert_eq!((parsed, settings.insecure, settings.loaded), (Ok(rest(&[])), false, false));
+    let (parsed, settings) = run(&["-insecure", "--insecure=0"]);
+    assert_eq!((parsed, settings.insecure), (Ok(rest(&[])), false));
     for (text, value) in [("T", Some(true)), ("FALSE", Some(false)), ("tRUE", None), ("yes", None)] {
         assert_eq!(parse_bool(text), value, "{text}");
     }

@@ -247,53 +247,6 @@ async fn a_login_needs_an_allowed_group_and_the_id_token_s_subject() {
 }
 
 #[tokio::test]
-async fn id_tokens_need_an_allowed_algorithm_a_known_key_and_valid_claims() {
-    if !child("oidc::id_tokens_need_an_allowed_algorithm_a_known_key_and_valid_claims") {
-        return;
-    }
-    let provider = Provider::start().await;
-    let app = discovered(&provider).await;
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    let mut peer = 0;
-    let mut signs_in = async |header, claims| {
-        provider.twist(Twist { header, claims, ..Twist::default() });
-        peer += 1;
-        sign_in(&app, &provider, &format!("192.0.2.{peer}")).await.status() == StatusCode::OK
-    };
-    for header in [
-        json!({"alg": "RS256", "kid": "rsa"}),
-        json!({"alg": "PS256", "kid": "rsa"}),
-        json!({"alg": "EdDSA", "kid": "ed", "typ": "application/jwt"}),
-    ] {
-        assert!(signs_in(header.clone(), json!({})).await, "{header}");
-    }
-    for claims in [json!({"aud": ["another", CLIENT_ID]}), json!({"nbf": now + 200})] {
-        assert!(signs_in(json!({}), claims.clone()).await, "{claims}");
-    }
-    for header in [
-        json!({"alg": "HS256"}),
-        json!({"alg": "none"}),
-        json!({"alg": "ES512"}),
-        json!({"alg": "RS256", "kid": "p256"}),
-        json!({"crit": ["exp"]}),
-    ] {
-        assert!(!signs_in(header.clone(), json!({})).await, "{header}");
-    }
-    let refreshed = provider.key_sets();
-    assert!(!signs_in(json!({"kid": "stranger"}), json!({})).await);
-    assert_eq!(provider.key_sets(), refreshed + 1, "an unknown key refetches the key set once");
-    for claims in [
-        json!({"iss": "https://elsewhere.example"}),
-        json!({"aud": "another"}),
-        json!({"exp": now - 1}),
-        json!({"at_hash": "another-access-token"}),
-        json!({"nonce": null}),
-    ] {
-        assert!(!signs_in(json!({}), claims.clone()).await, "{claims}");
-    }
-}
-
-#[tokio::test]
 async fn a_provider_signing_only_with_algorithms_this_server_cannot_verify_is_refused_at_discovery() {
     let test = "oidc::a_provider_signing_only_with_algorithms_this_server_cannot_verify_is_refused_at_discovery";
     if !child(test) {
@@ -390,7 +343,24 @@ async fn token_key_and_key_set_rules_decide_a_fresh_sign_in() {
     let padded = |header| Twist { padded_keys: true, ..signed_as(header) };
     // The claims beside the padding take about 250 bytes, and the header and signature about 150 encoded.
     let pad = |pad: usize| Twist { claims: json!({"pad": "x".repeat(pad)}), ..Twist::default() };
+    let claims = |claims| Twist { claims, ..Twist::default() };
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
     let rows = [
+        ("RS256", signed_as(rsa()), true),
+        ("PS256", signed_as(json!({"alg": "PS256", "kid": "rsa"})), true),
+        ("EdDSA", signed_as(json!({"alg": "EdDSA", "kid": "ed", "typ": "application/jwt"})), true),
+        ("HS256", signed_as(json!({"alg": "HS256"})), false),
+        ("none", signed_as(json!({"alg": "none"})), false),
+        ("ES512", signed_as(json!({"alg": "ES512"})), false),
+        ("another key's kid", signed_as(json!({"alg": "RS256", "kid": "p256"})), false),
+        ("crit", signed_as(json!({"crit": ["exp"]})), false),
+        ("an audience list", claims(json!({"aud": ["another", CLIENT_ID]})), true),
+        ("not before within the skew", claims(json!({"nbf": now + 200})), true),
+        ("another issuer", claims(json!({"iss": "https://elsewhere.example"})), false),
+        ("another audience", claims(json!({"aud": "another"})), false),
+        ("expired", claims(json!({"exp": now - 1})), false),
+        ("another access token", claims(json!({"at_hash": "another-access-token"})), false),
+        ("no nonce", claims(json!({"nonce": null})), false),
         ("padded RSA", padded(rsa()), true),
         ("use=enc", rsa_key(json!({"use": "enc"})), false),
         ("key_ops=[sign]", rsa_key(json!({"key_ops": ["sign"]})), false),
@@ -409,4 +379,11 @@ async fn token_key_and_key_set_rules_decide_a_fresh_sign_in() {
     for (row, twist, accepted) in rows {
         assert_eq!(signs_in_with(&provider, twist).await, accepted, "{row}");
     }
+    provider.twist(Twist::default());
+    let app = discovered(&provider).await;
+    assert_eq!(sign_in(&app, &provider, "192.0.2.1").await.status(), StatusCode::OK);
+    let fetched = provider.key_sets();
+    provider.twist(signed_as(json!({"kid": "stranger"})));
+    assert_ne!(sign_in(&app, &provider, "192.0.2.2").await.status(), StatusCode::OK);
+    assert_eq!(provider.key_sets(), fetched + 1, "an unknown key refetches the key set once");
 }

@@ -2,7 +2,7 @@
 use bytes::Bytes;
 use std::{
     io,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{Ipv4Addr, SocketAddr},
     sync::Arc,
     time::Duration,
 };
@@ -91,27 +91,17 @@ impl Link {
     }
 
     pub async fn udp(target: SocketAddr, one_way: Duration) -> io::Result<Self> {
-        Self::udp_from(Ipv4Addr::LOCALHOST.into(), target, one_way).await
-    }
-
-    /// Relays from `source`, which the target sees as the client's address.
-    pub async fn udp_from(source: IpAddr, target: SocketAddr, one_way: Duration) -> io::Result<Self> {
-        Self::udp_relay(source, target, one_way, None).await
+        Self::udp_relay(target, one_way, None).await
     }
 
     /// Relays through `bottleneck` in each direction before the delay.
     pub async fn udp_through(target: SocketAddr, one_way: Duration, bottleneck: Bottleneck) -> io::Result<Self> {
-        Self::udp_relay(Ipv4Addr::LOCALHOST.into(), target, one_way, Some(bottleneck)).await
+        Self::udp_relay(target, one_way, Some(bottleneck)).await
     }
 
-    async fn udp_relay(
-        source: IpAddr,
-        target: SocketAddr,
-        one_way: Duration,
-        bottleneck: Option<Bottleneck>,
-    ) -> io::Result<Self> {
+    async fn udp_relay(target: SocketAddr, one_way: Duration, bottleneck: Option<Bottleneck>) -> io::Result<Self> {
         let front = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await?;
-        let back = UdpSocket::bind((source, 0)).await?;
+        let back = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await?;
         back.connect(target).await?;
         for socket in [&front, &back] {
             let socket = socket2::SockRef::from(socket);
