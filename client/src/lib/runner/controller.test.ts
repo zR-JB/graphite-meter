@@ -46,6 +46,8 @@ interface Harness {
   store: Store;
   runner: TestRunner;
   idle: () => boolean;
+  /** The servers probed between runs. */
+  probed: () => string[];
   setVisibility: (state: "hidden" | "visible") => void;
   view: (id?: string) => ServerView;
   emit: (type: string) => void;
@@ -55,6 +57,8 @@ interface Harness {
 class TestRunner implements Runner {
   listener: (event: RunnerEvent) => void = () => {};
   starts = 0;
+  /** The server whose latency leads the run. */
+  focus = "";
   start() {
     this.starts++;
     this.listener({
@@ -167,7 +171,10 @@ async function withController(
           }
         : undefined,
     }),
-    createRunner: () => runner,
+    createRunner: (_prepared, focus) => {
+      runner.focus = focus;
+      return runner;
+    },
     ...options,
   });
   try {
@@ -177,6 +184,7 @@ async function withController(
       store,
       runner,
       idle: () => idle.size > 0,
+      probed: () => [...idle],
       setVisibility(state) {
         document.visibilityState = state;
         documentEvents.emit("visibilitychange");
@@ -354,6 +362,29 @@ test("idle latency stops before the run starts and resumes after abort", async (
   });
 });
 
+test("the shown latency server is the one probed between runs and leads the run", async () => {
+  await withController(
+    { servers: ["self", "peer"], selected: ["self", "peer"] },
+    async ({ controller, store, runner, probed }) => {
+      await until(() => store.selectionValidation === "verified");
+      expect(probed()).toEqual(["self"]);
+      controller.showLatency("peer");
+      await until(() => probed().join() === "peer");
+      expect(store.latencyFocus).toBe("peer");
+      // The run's own details keep the chosen server's latency in view.
+      controller.showServer("");
+      expect(store.latencyFocus).toBe("peer");
+      // Two servers on one origin share its HTTP/1.1 connections, too few for both transfers; latency alone runs.
+      controller.toggleStage("download");
+      controller.toggleStage("upload");
+      await until(() => store.selectionValidation === "verified");
+      controller.toggleRun();
+      await until(() => runner.starts === 1);
+      expect([runner.focus, store.latencyFocus]).toEqual(["peer", "peer"]);
+    },
+  );
+});
+
 test("without idle latency the connection settles from verified paths", async () => {
   await withController(
     { servers: ["self", "peer"], selected: ["self", "peer"] },
@@ -363,10 +394,11 @@ test("without idle latency the connection settles from verified paths", async ()
         true,
         "connected",
       ]);
+      // A remote server first in the selection is probed between runs too, as its latency is the one shown.
       controller.applyServers(["peer"]);
       await until(() => store.selectionValidation === "verified");
       expect([idle(), store.effectiveConnectivity]).toEqual([
-        false,
+        true,
         "connected",
       ]);
       controller.applyServers(["self", "peer"]);

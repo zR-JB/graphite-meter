@@ -8,7 +8,10 @@
   import { LATENCY_LANES, type LatencyProfileViewLane } from "./latencyProfile";
   import LatencyProfileView from "./LatencyProfileView.svelte";
   import { announceChanges } from "../presentation/announcer.svelte";
+  import { getApplicationController } from "../runner/controllerContext";
+  import ServerScope from "./ServerScope.svelte";
 
+  const controller = getApplicationController();
   const servers = $derived(
     store.serverDetails?.selection ??
       catalogSelection(store.serverCatalog, store.selectedServers),
@@ -67,15 +70,27 @@
   );
 </script>
 
+<!-- Every server is probed; the lanes show one at a time, chosen here at any moment, mid-run included. -->
+{#snippet picker()}
+  <ServerScope
+    quiet
+    mark={false}
+    {servers}
+    value={servers.some(({ id }) => id === store.latencyFocus)
+      ? store.latencyFocus
+      : (store.latencyServerId ?? "")}
+    label="Show latency to"
+    onchange={controller.showLatency}
+  />
+{/snippet}
+
 <div class="live-profile">
   <LatencyProfileView
     {lanes}
     variant="bare"
     added={saved?.addedLatency}
     {failure}
-    source={servers.length > 1
-      ? servers.find((server) => server.id === store.latencyFocus)?.name
-      : undefined}
+    sourcePicker={servers.length > 1 ? picker : undefined}
   />
 </div>
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { announce } from "../presentation/announcer.svelte";
   import { catalogSelection } from "../presentation/serverAppearance";
   import {
@@ -8,7 +9,6 @@
   } from "../runner/paths";
   import { presentConnections } from "../presentation/paths";
   import { store } from "../state/store.svelte";
-  import { getApplicationController } from "../runner/controllerContext";
   import { formatLatency } from "../format";
   import { BUILD } from "../buildenv";
   import { buildSegments } from "../runner/schedule";
@@ -28,15 +28,21 @@
   type PathRole = "throughput" | "latency";
   const PATH_ROLES = ["throughput", "latency"] as const;
   let { onOpenLegal }: { onOpenLegal: () => void } = $props();
-  const controller = getApplicationController();
   const availableServers = $derived(
     store.run?.servers.map((entry) => entry.server) ??
       catalogSelection(store.serverCatalog, store.selectedServers),
   );
-  // Details follows the lens: its server, else the one whose latency is shown.
+  // Details follows the lens (its server, else the one whose latency is shown) until someone inspects another
+  // server here; inspecting only reads, so it works mid-run and never moves the console.
+  let inspected = $state<string | null>(null);
+  const followed = $derived(store.resultScope || store.latencyFocus);
+  $effect.pre(() => {
+    void followed;
+    untrack(() => (inspected = null));
+  });
   const selectedServer = $derived(
-    availableServers.find((server) => server.id === store.resultScope) ??
-      availableServers.find((server) => server.id === store.latencyFocus) ??
+    availableServers.find((server) => server.id === inspected) ??
+      availableServers.find((server) => server.id === followed) ??
       availableServers[0],
   );
   // Inspection never changes selection; completed runs keep their prepared paths.
@@ -231,8 +237,7 @@
               servers={availableServers}
               value={selectedServer?.id ?? ""}
               label="Inspect server"
-              onchange={controller.showServer}
-              disabled={store.isRunning}
+              onchange={(id) => (inspected = id)}
             />
           </dd>
         </div>

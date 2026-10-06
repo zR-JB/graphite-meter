@@ -86,10 +86,11 @@ Failed, Sign in) and its **preflight request time**: the HTTP discovery request 
 latency measurement. Hover or focus shows name, location and host. Inline **Retry** and **Sign in** resolve
 individual entries; **Use available servers** repairs a stale saved selection.
 
-With several servers, every one is probed for latency and the run's latency is the first selected server's
-([latency definitions](MEASUREMENTS.md#latency-probing)). The results and Details share one server selector (all
-servers, or one) that waits for the run to finish, and a saved result in History has its own; both change only what
-is shown.
+With several servers, every one is probed for latency. The latency lanes show one server at a time, named in their
+head, where it can be switched at any moment, mid-run included; the first selected server is shown until then, and
+the shown server is the run's latency ([latency definitions](MEASUREMENTS.md#latency-probing)). The results have one
+server selector (all servers, or one) that waits for the run to finish, Details inspects any server at any time, and a
+saved result in History has its own selector; all of them change only what is shown.
 
 Opening Settings discovers unselected entries (bounded concurrency, 5 s each) and closing it cancels that; failures
 back off (5 s doubling to 1 min, reset when the page or network returns), sign-in failures wait for Sign in or

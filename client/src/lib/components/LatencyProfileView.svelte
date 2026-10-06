@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, untrack } from "svelte";
+  import { onDestroy, untrack, type Snippet } from "svelte";
   import { inView } from "../actions/inView";
   import { handoff, Smoothed } from "../presentation/motion.svelte";
   import Icon from "./Icon.svelte";
@@ -37,6 +37,8 @@
     > | null;
     /** Whose latency this is, when several servers ran. */
     source?: string;
+    /** A choice of whose latency to show, in the source's place. */
+    sourcePicker?: Snippet;
     /** Why the Latency stage failed; it stands under the idle headline in place of its caption. */
     failure?: string;
   }
@@ -47,6 +49,7 @@
     label = "Latency, jitter and probe timeouts by phase",
     added = null,
     source,
+    sourcePicker,
     failure,
   }: Props = $props();
   const idle = $derived(lanes.find((lane) => lane.key === "latency") ?? null);
@@ -274,6 +277,8 @@
     <!-- Whose latency this is when several servers ran, or why the idle stage failed. -->
     {#if failure && idle?.center == null}
       <span class="aside failure">{failure}</span>
+    {:else if sourcePicker}
+      <span class="source">{@render sourcePicker()}</span>
     {:else if source}
       <span class="aside">{source}</span>
     {/if}
@@ -485,6 +490,12 @@
     font: var(--role-title);
     line-height: 22px;
     white-space: nowrap;
+  }
+  /* The source's field keeps the head's 20 px line, as the dial's lens keeps its corner. */
+  .card-head .source {
+    display: inline-flex;
+    min-width: 0;
+    margin-block: calc((20px - var(--control-h)) / 2);
   }
   .card-head .tone-icon {
     width: 18px;

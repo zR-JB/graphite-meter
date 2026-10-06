@@ -228,7 +228,7 @@ export const JARGON = {
     "Unfinished probes and failed sends are counted apart, never as timeouts",
   pretestLatency:
     "Pre-test latency\nMedian round trip of the probes that checked the latency path\n" +
-    "The first selected server's sizes the warmup",
+    "The shown latency server's sizes the warmup",
   testServers:
     "Test servers\nUp to 4 at once; their speeds are added together\n" +
     "They share this browser's connection\n" +

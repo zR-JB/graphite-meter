@@ -9,8 +9,10 @@ import {
   home,
   open,
   openSettings,
+  phase,
   ready,
   run,
+  runButton,
   savedResult,
 } from "./fleet";
 import { expect, test } from "./webview";
@@ -101,6 +103,32 @@ test("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1", async 
   await expect(info.locator(".server-card")).toContainText(frankfurt.url);
   await expect(path("throughput")).toContainText("Used");
   await expect(path("latency")).toContainText("Used");
+});
+
+test("the lanes switch servers mid-run and Details inspects another without moving them", async (page) => {
+  await open(page, home.url, {
+    servers: [home, frankfurt],
+    config: {
+      ...combined,
+      duration: { ...combined.duration, latencyMs: 1500, downloadMs: 2000 },
+    },
+  });
+  await ready(page);
+  await runButton(page, "Start test").click();
+  await expect(phase(page, "download")).toHaveCount(1);
+  const lanes = page.getByRole("combobox", { name: "Show latency to" });
+  await lanes.fill("server-1");
+  await expect(lanes).toHaveValue("server-1");
+  await page.getByRole("button", { name: "Details" }).click();
+  const inspect = page
+    .locator(".infra")
+    .getByRole("combobox", { name: "Inspect server" });
+  await expect(inspect).toBeEnabled();
+  await inspect.fill("self");
+  await expect(page.locator(".infra .server-card")).toContainText(home.url);
+  await expect(lanes).toHaveValue("server-1");
+  await expect(phase(page, "complete")).toHaveCount(1, { timeout: 20_000 });
+  await expect(lanes).toHaveValue("server-1");
 });
 
 test("deselecting a verified peer starts a self-only run at once", async (page) => {
