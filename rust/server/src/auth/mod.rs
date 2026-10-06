@@ -38,7 +38,6 @@ use tokio::time::{Instant, sleep_until};
 use tokio_util::sync::CancellationToken;
 
 /// What the policy decided for a request.
-#[derive(Debug)]
 pub enum Decision {
     /// Serve it, as the lease's holder when signed in.
     Allow(Option<AuthLease>),

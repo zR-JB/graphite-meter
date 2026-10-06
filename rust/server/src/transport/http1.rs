@@ -7,7 +7,7 @@ use super::{
 use crate::{
     app::{App, Connection, Endpoint, Outcome},
     exchange::{EXCHANGE_BOUND, Exchange, Watch},
-    lane::{Lane, Work},
+    lane::Lane,
     lock,
 };
 use bytes::Bytes;
@@ -61,11 +61,7 @@ impl Http1 {
                 return;
             };
             let _ = socket.set_nodelay(true);
-            let connection = Connection {
-                endpoint: listener.endpoint,
-                peer: peer.ip(),
-                work: Work::default(),
-            };
+            let connection = Connection::new(listener.endpoint, peer.ip());
             let Some(acceptor) = &listener.tls else {
                 return listener.serve(socket, connection, accepted).await;
             };
@@ -129,25 +125,18 @@ async fn respond(
         Outcome::Response(response) => Ok(shared.reply(response, head)),
         Outcome::WebSocket(response, lane) => {
             *lock(&bus) = Some((upgrade, lane));
-            shared.post(Limit::Open);
+            shared.post(State::Open);
             Ok(response.map(|body| Reply { body, shared }))
         }
         Outcome::WebTransport(..) | Outcome::Abort => Err(io::ErrorKind::ConnectionAborted.into()),
     }
 }
 
-/// What bounds the connection: posted by the service, enforced by the IO wrapper.
-enum Limit {
-    /// A parsed request until admitted.
-    Exchange(Watch),
-    Reply(ReplyBound),
-    Open,
-}
-
 /// What the service and the IO wrapper of one connection share.
 #[derive(Default)]
 struct Shared {
-    posted: Mutex<Option<Limit>>,
+    /// The state the service posts for the IO wrapper to adopt.
+    posted: Mutex<Option<State>>,
     changed: AtomicBool,
     /// The deadline of the exchange a request's first byte started.
     started: Mutex<Option<Instant>>,
@@ -156,8 +145,8 @@ struct Shared {
 }
 
 impl Shared {
-    fn post(&self, limit: Limit) {
-        *lock(&self.posted) = Some(limit);
+    fn post(&self, state: State) {
+        *lock(&self.posted) = Some(state);
         self.changed.store(true, Ordering::Release);
     }
 
@@ -165,7 +154,7 @@ impl Shared {
     fn exchange(&self) -> Exchange {
         let started = lock(&self.started).take();
         let exchange = Exchange::until(started.unwrap_or_else(|| Instant::now() + EXCHANGE_BOUND));
-        self.post(Limit::Exchange(exchange.watch()));
+        self.post(State::Exchange(Some(exchange.watch())));
         exchange
     }
 
@@ -173,7 +162,7 @@ impl Shared {
     fn reply(self: &Arc<Self>, response: Response<Body>, head: bool) -> Response<Reply> {
         let complete = head || http_body::Body::is_end_stream(response.body());
         self.complete.store(complete, Ordering::Release);
-        self.post(Limit::Reply(ReplyBound::of(response.body())));
+        self.post(State::Reply(ReplyBound::of(response.body())));
         response.map(|body| Reply { body, shared: self.clone() })
     }
 }
@@ -252,17 +241,13 @@ impl<S> Io<S> {
     }
 
     fn adopt(&mut self) {
-        let Some(limit) = lock(&self.shared.posted).take() else {
+        let Some(state) = lock(&self.shared.posted).take() else {
             return;
         };
-        self.state = match limit {
-            Limit::Exchange(watch) => {
-                self.deadline.as_mut().reset(watch.deadline());
-                State::Exchange(Some(watch))
-            }
-            Limit::Reply(bound) => State::Reply(bound),
-            Limit::Open => State::Open,
-        };
+        if let State::Exchange(Some(watch)) = &state {
+            self.deadline.as_mut().reset(watch.deadline());
+        }
+        self.state = state;
     }
 
     /// Waits for the reply's lane too while the socket blocks.

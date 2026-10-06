@@ -11,7 +11,7 @@ use bytes::Bytes;
 use futures_util::{StreamExt, future::OptionFuture, stream::FuturesUnordered};
 use graphite_meter_http3::webtransport::{RecvStream, Session};
 use graphite_meter_proto::{lane::IDLE_BOUND, refusal::UploadRefusal, upload::Record};
-use std::{fmt, future, mem, pin::pin, time::Duration};
+use std::{future, mem, pin::pin, time::Duration};
 use tokio::time::{sleep, timeout};
 
 /// Client streams read at once; more are stopped.
@@ -28,17 +28,6 @@ pub struct Upload {
     pub owner: Option<ClientKeys>,
     /// Whether received datagrams count as upload bytes.
     pub datagrams: bool,
-}
-
-impl fmt::Debug for Upload {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self { id, datagrams, .. } = self;
-        formatter
-            .debug_struct("Upload")
-            .field("id", id)
-            .field("datagrams", datagrams)
-            .finish()
-    }
 }
 
 impl Upload {

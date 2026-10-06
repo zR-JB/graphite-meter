@@ -27,7 +27,7 @@ pub struct Body {
 }
 
 /// What bounds writing a reply; the app bounds every reply it hands a transport.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Bound {
     /// The reply aborts unless written by then: an unadmitted exchange's deadline, or an admitted one's last answer's.
     Until(Instant),
@@ -273,21 +273,6 @@ pub(crate) async fn within<T, E>(
         }
     })
     .await
-}
-
-impl fmt::Debug for Body {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let content = match &self.content {
-            Content::Full(bytes) => format!("{} bytes", bytes.len()),
-            Content::Download(source) => format!("download of {} bytes", source.remaining()),
-            Content::Feed(_) => "progress feed".into(),
-        };
-        formatter
-            .debug_struct("Body")
-            .field("content", &content)
-            .field("bound", &self.bound)
-            .finish()
-    }
 }
 
 #[cfg(test)]

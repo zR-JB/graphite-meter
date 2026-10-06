@@ -64,8 +64,13 @@ pub struct Connection {
     pub work: Work,
 }
 
+impl Connection {
+    pub fn new(endpoint: Endpoint, peer: IpAddr) -> Self {
+        Self { endpoint, peer, work: Work::default() }
+    }
+}
+
 /// What a transport does for a request.
-#[derive(Debug)]
 pub enum Outcome {
     /// Writes the reply within the bound its body carries.
     Response(Response<Body>),

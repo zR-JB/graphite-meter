@@ -88,7 +88,7 @@ async fn start(env: &[(&str, &str)]) -> Running {
     let server = bind(env).await;
     let (address, tls) = (server.local_addr(Endpoint::H1).unwrap(), server.local_addr(Endpoint::H1Tls));
     let (h2, quic) = (server.local_addr(Endpoint::H2), server.local_addr(Endpoint::Quic));
-    let (companion, budget) = (server.local_addr(Endpoint::H3Companion), server.budget());
+    let (companion, budget) = (server.local_addr(Endpoint::H3Companion), server.app().budget().clone());
     let (endpoints, app) = (server.quic_endpoints(), server.app());
     let (stop, stopped) = oneshot::channel();
     let task = tokio::spawn(server.serve(async {

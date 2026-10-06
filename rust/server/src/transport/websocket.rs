@@ -5,10 +5,9 @@ use crate::{engine::reflect::reflect, lane::Lane};
 use futures_util::{SinkExt, StreamExt};
 use graphite_meter_proto::lane::LaneEnding;
 use http::{HeaderValue, Method, Request, Response, StatusCode, header};
-use hyper::upgrade::OnUpgrade;
+use hyper::upgrade::{OnUpgrade, Upgraded};
 use hyper_util::rt::TokioIo;
 use std::time::Duration;
-use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::{
     WebSocketStream,
     tungstenite::{
@@ -86,15 +85,11 @@ pub async fn serve(upgrade: OnUpgrade, lane: Lane) {
         .max_write_buffer_size(8192)
         .max_message_size(Some(MAX_MESSAGE_BYTES))
         .max_frame_size(Some(MAX_MESSAGE_BYTES));
-    let socket = WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, Some(config)).await;
-    bus(socket, &lane).await;
-}
-
-async fn bus<S: AsyncRead + AsyncWrite + Unpin>(mut socket: WebSocketStream<S>, lane: &Lane) {
+    let mut socket = WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, Some(config)).await;
     let (code, reason) = tokio::select! {
         biased;
         ending = lane.ended() => close(ending),
-        result = exchange(&mut socket, lane) => match result {
+        result = exchange(&mut socket, &lane) => match result {
             Ok(()) => close(lane.finish()),
             Err(Error::Capacity(_)) => (CloseCode::Size, "message too big"),
             Err(Error::Utf8(_)) => (CloseCode::Invalid, "invalid text"),
@@ -117,10 +112,7 @@ fn close(ending: LaneEnding) -> (CloseCode, &'static str) {
 }
 
 /// Answers each PING, text or binary, until the peer closes.
-async fn exchange<S: AsyncRead + AsyncWrite + Unpin>(
-    socket: &mut WebSocketStream<S>,
-    lane: &Lane,
-) -> Result<(), Error> {
+async fn exchange(socket: &mut WebSocketStream<TokioIo<Upgraded>>, lane: &Lane) -> Result<(), Error> {
     while let Some(message) = socket.next().await {
         let received = std::time::Instant::now();
         match message? {

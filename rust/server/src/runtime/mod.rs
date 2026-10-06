@@ -9,7 +9,7 @@ pub use terms::check_budget;
 use crate::{
     app::{App, Endpoint},
     config::{Config, ENGINE_VERSION, Methods},
-    limits::{Budget, Transport},
+    limits::Transport,
     log,
     transport::{
         accept::{self, Listen},
@@ -143,11 +143,6 @@ impl Server {
     /// A test hook: the state every listener shares.
     pub fn app(&self) -> Arc<App> {
         self.app.clone()
-    }
-
-    /// An observation hook for tests: the buffer budget every listener draws on.
-    pub fn budget(&self) -> Budget {
-        self.app.budget().clone()
     }
 
     /// Serves until `stop`, then closes every listener at once, ends running lanes and drains connections.

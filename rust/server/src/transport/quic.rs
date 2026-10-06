@@ -17,7 +17,6 @@ use super::{
 };
 use crate::{
     app::{App, Connection, Endpoint},
-    lane::Work,
     limits::Lease,
 };
 use budget::ConnectionBudget;
@@ -168,11 +167,7 @@ impl Http3 {
         budget: Arc<ConnectionBudget>,
         peer: SocketAddr,
     ) -> Result<(), http3::Error> {
-        let connection = Connection {
-            endpoint: Endpoint::Quic,
-            peer: peer.ip(),
-            work: Work::default(),
-        };
+        let connection = Connection::new(Endpoint::Quic, peer.ip());
         let window = Arc::new(Window::new(self.app.clone(), quic.clone(), budget.clone()));
         let requests = Requests::new(self.app.clone(), connection.clone(), window.clone(), quic.clone());
         let mut http = server::Connection::new(quic.clone(), Some(budget));

@@ -11,7 +11,6 @@ use super::{
 use crate::{
     app::{App, Connection, Endpoint, MAX_HEAD_BYTES, Outcome},
     exchange::Exchange,
-    lane::Work,
 };
 use bytes::Bytes;
 use futures_util::{StreamExt, stream::FuturesUnordered};
@@ -84,11 +83,7 @@ impl Http2 {
             let Some(stream) = stream.filter(|stream| stream.get_ref().1.alpn_protocol() == Some(b"h2")) else {
                 return;
             };
-            let connection = Connection {
-                endpoint: Endpoint::H2,
-                peer: peer.ip(),
-                work: Work::default(),
-            };
+            let connection = Connection::new(Endpoint::H2, peer.ip());
             listener
                 .serve(Stalled { inner: stream, stalled: None }, connection)
                 .await;

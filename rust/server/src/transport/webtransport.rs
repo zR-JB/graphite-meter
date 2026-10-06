@@ -12,7 +12,7 @@ use bytes::Bytes;
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_http3::{RequestStream, webtransport::Session};
 use http::HeaderMap;
-use std::{fmt, time::Duration};
+use std::time::Duration;
 use tokio::time::sleep;
 
 /// A CONNECT that opens no session is answered within this long.
@@ -34,21 +34,6 @@ pub enum Plan {
     Download { source: DownloadSource, streams: usize, datagrams: bool },
     /// Client streams, and datagrams when asked, into an upload, with its progress feed on a server stream.
     Upload(Upload),
-}
-
-impl fmt::Debug for Plan {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Ping => formatter.write_str("Ping"),
-            Self::Download { source, streams, datagrams } => formatter
-                .debug_struct("Download")
-                .field("bytes", &source.remaining())
-                .field("streams", streams)
-                .field("datagrams", datagrams)
-                .finish(),
-            Self::Upload(upload) => upload.fmt(formatter),
-        }
-    }
 }
 
 /// Accepts `stream`'s session, serving `plan` until `lane` ends, the peer closes or the route ends; uploads ask `fund`.
