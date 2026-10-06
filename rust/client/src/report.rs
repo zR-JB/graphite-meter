@@ -1,8 +1,8 @@
-//! A finished run as the printed report, per-server shares and issues with several servers, and headless progress.
+//! A finished run as the printed report, with each server's share and the run's issues when several servers ran.
 pub mod vocabulary;
 
 use crate::{
-    events::{Event, Run, View},
+    events::{Run, View},
     measure::{format, latency::Population},
     model::{Direction, Outcome, Scope, ServerFailure, Stage, StageResult, StageStatus, Throughput},
     text::{Line, Style, wrap},
@@ -75,12 +75,6 @@ pub fn unreported(view: &View) -> Option<String> {
         (Some(error), None) => format!("Test could not start: {}", error.text),
         (None, None) => "Test stopped before it started.".into(),
     })
-}
-
-/// The stderr line a run without the interface writes for `event`.
-pub fn progress(event: &Event) -> Option<String> {
-    let Event::Measuring(stage) = event else { return None };
-    Some(format!("{}…", label(*stage)))
 }
 
 struct Report<'a> {

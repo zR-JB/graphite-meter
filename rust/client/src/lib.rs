@@ -76,8 +76,8 @@ pub async fn headless(config: Config, runtimes: Arc<Pool>, stop: impl Future<Out
     loop {
         tokio::select! {
             Some(event) = received.recv() => {
-                if let Some(line) = report::progress(&event) {
-                    let _ = writeln!(std::io::stderr(), "{line}");
+                if let Event::Measuring(stage) = event {
+                    let _ = writeln!(std::io::stderr(), "{}…", report::vocabulary::label(stage));
                 }
                 view.apply(&event);
                 if matches!(event, Event::RunFinished { .. }) {
