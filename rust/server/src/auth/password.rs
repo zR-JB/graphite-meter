@@ -162,12 +162,9 @@ impl Password {
             return false;
         }
         let (expires, tag) = raw.split_at(8);
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
         let expires_at = u64::from_be_bytes(expires.try_into().expect("eight bytes"));
-        now < expires_at && self.device.clone().chain_update(expires).verify_slice(tag).is_ok()
+        now.as_secs() < expires_at && self.device.clone().chain_update(expires).verify_slice(tag).is_ok()
     }
 }
 

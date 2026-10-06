@@ -251,10 +251,7 @@ impl<S> Stalled<S> {
     /// A write is blocked; fails once it has been for the idle bound.
     fn blocked(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         let stalled = self.stalled.get_or_insert_with(|| Box::pin(sleep(IDLE_BOUND)));
-        match stalled.as_mut().poll(cx) {
-            Poll::Ready(()) => Poll::Ready(Err(io::ErrorKind::TimedOut.into())),
-            Poll::Pending => Poll::Pending,
-        }
+        stalled.as_mut().poll(cx).map(|()| Err(io::ErrorKind::TimedOut.into()))
     }
 
     fn written(&mut self, cx: &mut Context<'_>, result: Poll<io::Result<usize>>) -> Poll<io::Result<usize>> {
