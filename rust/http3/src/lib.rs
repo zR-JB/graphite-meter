@@ -8,7 +8,6 @@ mod driver;
 mod error;
 mod fields;
 mod frame;
-mod incoming;
 mod message;
 mod qpack;
 pub mod server;
