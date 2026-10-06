@@ -605,16 +605,17 @@
     width: 10px;
     height: 10px;
   }
-  /* Figures take their longest value's width ("9999 ms") from Start, so arriving values never shift the plot. */
+  /* Figures take their longest value's width ("< 0.1 ms", "9999 ms") from Start, so arriving values never shift
+     the plot. */
   .lane-median {
-    min-width: 7ch;
+    min-width: 8ch;
     font: 500 var(--type-md) / 1 var(--font-mono);
     font-variant-numeric: tabular-nums;
     text-align: end;
     white-space: nowrap;
   }
   .lane-jitter {
-    min-width: 7ch;
+    min-width: 8ch;
   }
   .lane-jitter,
   .lane-timeouts {
