@@ -258,13 +258,9 @@ async fn guarded(events: &Events, run: bool, started: Instant, work: impl Future
     if AssertUnwindSafe(work).catch_unwind().await.is_ok() {
         return;
     }
-    let failure = Failure::new(FailureReason::ConnectionLost, INTERNAL);
+    let (failure, elapsed) = (Failure::new(FailureReason::ConnectionLost, INTERNAL), started.elapsed());
     events.send(match run {
-        true => Event::RunFinished {
-            outcome: Outcome::Failed,
-            error: Some(failure),
-            elapsed: started.elapsed(),
-        },
+        true => Event::RunFinished { outcome: Outcome::Failed, error: Some(failure), elapsed },
         false => Event::CheckFailed(failure),
     });
 }
