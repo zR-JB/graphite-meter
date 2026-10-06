@@ -1709,8 +1709,8 @@
   }
 }
 
-/* A theme change opens the new theme as a circle from the key that asked for it. */
-/* The page stays clickable while the reveal runs: the transition layer takes no pointer. */
+/* A theme change fades the new theme in over the old, on the compositor alone. */
+/* The page stays clickable while the fade runs: the transition layer takes no pointer. */
 ::view-transition {
   pointer-events: none;
 }
@@ -1720,15 +1720,10 @@
   mix-blend-mode: normal;
 }
 :root:active-view-transition-type(theme)::view-transition-new(root) {
-  animation: theme-reveal 420ms var(--ease-out);
+  animation: theme-fade 200ms var(--ease-out);
 }
-@keyframes theme-reveal {
+@keyframes theme-fade {
   from {
-    clip-path: circle(0 at var(--reveal-x, 100%) var(--reveal-y, 0));
-  }
-  to {
-    clip-path: circle(
-      var(--reveal-r, 150vmax) at var(--reveal-x, 100%) var(--reveal-y, 0)
-    );
+    opacity: 0;
   }
 }

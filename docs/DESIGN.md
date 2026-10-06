@@ -197,8 +197,8 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
 - A press never moves what it presses: a key's or a chip's hit box stays put, so a press near its edge still
   lands. The key's fill deepens and its glyph gives (0.82) and springs back; the run key's and a chip's content
   give a little (0.975, 0.96).
-- A theme change opens the new theme as a circle from the theme key (a view transition of type `theme`, 420 ms),
-  and the key's new glyph turns into place on the spring. The page stays clickable while it runs.
+- A theme change fades the new theme in over the old (a view transition of type `theme`, 200 ms, opacity
+  only), and the key's new glyph turns into place on the spring. The page stays clickable while it runs.
 - A change that reshapes the console, a stage switched on or off, applies in the frame of the click that asked
   for it, and then moves (`flip()`): every element marked `data-flip` (the dial, the lanes, the controls, each card
   and each lane row) glides from its old place to its new one on the compositor, a wider one opens from its old
