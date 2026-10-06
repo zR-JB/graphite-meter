@@ -1,6 +1,6 @@
 //! Upload aggregates (`api/upload.md`): owner-bound minted IDs, displacement before the first byte, retention.
 
-use super::{Meter, ProgressFeed, UploadSink, meter::Transfer};
+use super::{Meter, ProgressFeed, Transfer, UploadSink};
 use crate::{
     lane::Lane,
     limits::{Hold, Quota, Refusal},

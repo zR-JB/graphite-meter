@@ -5,7 +5,7 @@ mod upload;
 pub use upload::Upload;
 
 use crate::{
-    engine::{DownloadSource, reflect::reflect},
+    engine::{DownloadSource, reflect},
     lane::Lane,
 };
 use bytes::Bytes;

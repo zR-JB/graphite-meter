@@ -1,6 +1,6 @@
 //! Download payloads: one random block that every download repeats.
 
-use super::meter::{Meter, Transfer};
+use super::{Meter, Transfer};
 use crate::limits::{Budget, Lease};
 use bytes::Bytes;
 use std::sync::Arc;

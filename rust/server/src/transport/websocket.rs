@@ -1,7 +1,7 @@
 //! The WebSocket bus: the upgrade handshake, then PINGs answered over a lane until it ends.
 
 use super::body::Body;
-use crate::{engine::reflect::reflect, lane::Lane};
+use crate::{engine::reflect, lane::Lane};
 use futures_util::{SinkExt, StreamExt};
 use graphite_meter_proto::lane::LaneEnding;
 use http::{HeaderValue, Method, Request, Response, StatusCode, header};
