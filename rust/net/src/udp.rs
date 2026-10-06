@@ -1,4 +1,5 @@
 //! UDP sockets for QUIC, with quic-go's buffer sizes and warning.
+use graphite_meter_proto::flag::parse_bool;
 use std::{
     io,
     net::{SocketAddr, UdpSocket},
@@ -26,7 +27,8 @@ pub fn bind_udp(address: SocketAddr, sockets: usize) -> io::Result<(UdpSocket, O
     let bytes = buffer_bytes(sockets);
     let receive = grow(&socket, Buffer::Receive, bytes);
     let send = grow(&socket, Buffer::Send, bytes);
-    let silenced = quiet(std::env::var("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING").ok().as_deref());
+    let silenced =
+        std::env::var("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING").is_ok_and(|value| parse_bool(&value) == Some(true));
     let shortfall = receive.and(send).err();
     let reported = shortfall.filter(|_| !silenced && !WARNED.swap(true, Ordering::Relaxed));
     let warning = reported.map(|shortfall| {
@@ -97,11 +99,6 @@ fn shortfall(name: &str, before: usize, after: usize, bytes: usize) -> Option<St
     }
 }
 
-/// Go's strconv.ParseBool true values.
-fn quiet(value: Option<&str>) -> bool {
-    matches!(value, Some("1" | "t" | "T" | "TRUE" | "true" | "True"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,15 +115,5 @@ mod tests {
         );
         assert_eq!(shortfall("receive", 212_992, BUFFER_BYTES, BUFFER_BYTES), None);
         assert_eq!([1, 2, 16].map(buffer_bytes), [7 << 20, 7 << 19, 2 << 20], "a floor past a few sockets");
-    }
-
-    #[test]
-    fn only_go_true_values_silence_the_warning() {
-        for value in ["1", "t", "T", "TRUE", "true", "True"] {
-            assert!(quiet(Some(value)), "{value}");
-        }
-        for value in [None, Some(""), Some("yes"), Some("0"), Some("false"), Some(" true")] {
-            assert!(!quiet(value), "{value:?}");
-        }
     }
 }

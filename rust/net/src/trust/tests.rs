@@ -80,29 +80,21 @@ fn a_block_cut_short_loses_no_root_after_it() {
     assert_eq!(roots(&locations(&[("SSL_CERT_FILE", &bundle)], &[], &[])), [root]);
 }
 
-#[cfg(unix)]
 #[test]
-fn hash_links_load_once_and_an_unreadable_directory_is_reported_beside_the_roots() {
-    let scratch = Scratch::new();
-    let (pem, root) = certificate();
-    let directory = scratch.dir("certs");
-    scratch.file("certs/root.pem", &pem);
-    std::os::unix::fs::symlink("root.pem", format!("{directory}/0123abcd.0")).unwrap();
-    assert_eq!(roots(&locations(&[], &[], &[&directory])), std::slice::from_ref(&root));
-    let not_a_directory = scratch.file("plain", &pem);
-    let (loaded, failure) = locations(&[], &[], &[&not_a_directory, &directory]).roots();
-    assert_eq!((loaded, failure.is_some()), (vec![root], true));
-}
-
-#[test]
-fn a_root_in_both_the_bundle_and_its_directory_loads_once() {
+fn a_root_in_the_bundle_its_directory_and_a_hash_link_loads_once() {
     let scratch = Scratch::new();
     let [(pem, root), (other_pem, other)] = [certificate(), certificate()];
     let bundle = scratch.file("bundle.pem", &format!("{pem}{other_pem}"));
     let directory = scratch.dir("certs");
     scratch.file("certs/bundle.pem", &format!("{pem}{other_pem}"));
     scratch.file("certs/root.pem", &pem);
-    assert_eq!(roots(&locations(&[], &[&bundle], &[&directory])), [root, other]);
+    assert_eq!(roots(&locations(&[], &[&bundle], &[&directory])), [root.clone(), other.clone()]);
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("root.pem", format!("{directory}/0123abcd.0")).unwrap();
+        let (loaded, failure) = locations(&[], &[], &[&bundle, &directory]).roots();
+        assert_eq!((loaded, failure.is_some()), (vec![root, other], true), "a file is no directory");
+    }
 }
 
 #[test]

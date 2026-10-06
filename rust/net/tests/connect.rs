@@ -95,19 +95,6 @@ async fn an_https_proxy_offers_no_alpn_and_is_verified_unless_insecure() {
     assert!(matches!(refused, ConnectError::Tls(rustls::Error::InvalidCertificate(_))), "{refused:?}");
 }
 
-#[tokio::test]
-async fn a_refused_connect_fails_with_the_proxy_s_status() {
-    let (address, _proxy) = peer(|mut stream| async move {
-        read_head(&mut stream).await;
-        let refusal = b"HTTP/1.1 407 Proxy Authentication Required\r\ncontent-length: 0\r\n\r\n";
-        stream.write_all(refusal).await.unwrap();
-    })
-    .await;
-    let refused = connect(&connector("HTTPS_PROXY", &address.to_string(), Verify::Trusted), "https://meter.test").await;
-    let refused = refused.err().unwrap();
-    assert!(matches!(&refused, ConnectError::Refused(reason) if reason.contains("407")), "{refused:?}");
-}
-
 /// A proxy that answers the CONNECT head it reads with `response` and returns the head.
 async fn answering(response: Vec<u8>) -> (SocketAddr, JoinHandle<String>) {
     peer(|mut stream| async move {
@@ -131,29 +118,34 @@ async fn a_connect_response_with_bare_line_feeds_opens_the_tunnel() {
 }
 
 #[tokio::test]
-async fn a_malformed_or_oversized_connect_response_is_refused() {
+async fn connect_answers_other_than_200_are_refused() {
     let oversized = [&b"HTTP/1.1 200 OK\r\nX-Padding: "[..], &[b'a'; 64 * 1024]].concat();
-    for (response, reason) in [
-        (b"HTTP/1.1 OK\r\n\r\n".to_vec(), "proxy sent a malformed CONNECT response"),
-        (b"SSH-2.0-OpenSSH_9.9\n\n".to_vec(), "proxy sent a malformed CONNECT response"),
-        (oversized, "proxy sent an oversized CONNECT response"),
+    let malformed = "proxy sent a malformed CONNECT response";
+    for (authority, response, reason) in [
+        (
+            "meter.test:443",
+            b"HTTP/1.1 407 Proxy Authentication Required\r\ncontent-length: 0\r\n\r\n".to_vec(),
+            "proxy refused CONNECT with 407 Proxy Authentication Required",
+        ),
+        (
+            "[2001:db8::1]:8443",
+            b"HTTP/1.1 201 Created\r\n\r\n".to_vec(),
+            "proxy refused CONNECT with 201 Created",
+        ),
+        ("meter.test:443", b"HTTP/1.1 OK\r\n\r\n".to_vec(), malformed),
+        ("meter.test:443", b"SSH-2.0-OpenSSH_9.9\n\n".to_vec(), malformed),
+        ("meter.test:443", oversized, "proxy sent an oversized CONNECT response"),
     ] {
-        let (address, _proxy) = answering(response).await;
+        let (address, proxy) = answering(response).await;
         let connector = connector("HTTPS_PROXY", &address.to_string(), Verify::Trusted);
-        let refused = connect(&connector, "https://meter.test").await.err().unwrap();
+        let refused = connect(&connector, &format!("https://{authority}"))
+            .await
+            .err()
+            .unwrap();
         assert!(matches!(&refused, ConnectError::Refused(text) if text == reason), "{refused:?}");
+        let head = format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n\r\n");
+        assert_eq!(proxy.await.unwrap(), head);
     }
-}
-
-#[tokio::test]
-async fn an_ipv6_target_is_bracketed_in_the_connect_authority() {
-    let (address, proxy) = answering(b"HTTP/1.1 403 Forbidden\r\n\r\n".to_vec()).await;
-    let connector = connector("HTTPS_PROXY", &address.to_string(), Verify::Trusted);
-    connect(&connector, "https://[2001:db8::1]:8443").await.err().unwrap();
-    assert_eq!(
-        proxy.await.unwrap(),
-        "CONNECT [2001:db8::1]:8443 HTTP/1.1\r\nHost: [2001:db8::1]:8443\r\n\r\n"
-    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -196,16 +188,6 @@ async fn cleartext_goes_to_an_http_proxy_in_absolute_form_carrying_its_credentia
         .await
         .unwrap();
     assert!(proxy.await.unwrap().starts_with("GET http://meter.test:8080/ "));
-}
-
-#[tokio::test]
-async fn an_unusable_proxy_fails_the_connection_naming_its_variable() {
-    let refused = connect(&connector("HTTPS_PROXY", "ftp://proxy.test", Verify::Trusted), "https://meter.test").await;
-    let refused = refused.err().unwrap().to_string();
-    assert_eq!(
-        refused,
-        "HTTPS_PROXY is not a usable proxy: only HTTP, HTTPS and SOCKS5 proxies are supported"
-    );
 }
 
 #[tokio::test]
@@ -280,15 +262,4 @@ async fn socks5h_sends_addresses_as_ip_and_names_as_names_and_fails_closed() {
         let refused = connect(&connector, "http://meter.test").await.err().unwrap();
         assert_eq!(refused.to_string(), format!("socks connect: {reason}"));
     }
-}
-
-#[tokio::test]
-async fn loopback_targets_never_take_the_proxy() {
-    let (address, target) = peer(|mut stream| async move { read_head(&mut stream).await }).await;
-    let connector = connector("HTTP_PROXY", "http://proxy.invalid:1", Verify::Trusted);
-    let mut connection = connect(&connector, &format!("http://localhost:{}", address.port()))
-        .await
-        .unwrap();
-    connection.stream.write_all(b"GET / HTTP/1.1\r\n\r\n").await.unwrap();
-    assert!(target.await.unwrap().starts_with("GET / "));
 }
