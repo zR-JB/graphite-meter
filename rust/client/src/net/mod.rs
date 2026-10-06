@@ -5,16 +5,13 @@ mod conn;
 mod fault;
 mod lanes;
 mod pool;
-mod quic;
 mod retry;
-mod session;
 
 pub use bus::{Bus, LatencyPath};
-pub use conn::{Conn, Decode, Incoming, Payload, ReadBuffer};
+pub use conn::{Conn, Decode, Incoming, Payload, ReadBuffer, Session};
 pub use fault::{Class, Fault};
 pub use lanes::{Carrier, GroupPlan, Lanes, ThroughputPath, Work, topology};
 pub use retry::{Attempt, REDIAL_WINDOW, Retry, retrying};
-pub use session::Session;
 
 use conn::Answer;
 use graphite_meter_net::{Connector, Pool, Proxy, Verify};

@@ -1,9 +1,9 @@
 //! The latency bus: a WebSocket, or a WebTransport session's datagrams, one probe or reply a message.
 use super::{
     CONTROL_TIMEOUT, Client, Request,
+    conn::Session,
     conn::{Conn, Payload, ReadBuffer},
     fault::Fault,
-    session::Session,
 };
 use futures_util::{SinkExt, StreamExt};
 use graphite_meter_proto::{

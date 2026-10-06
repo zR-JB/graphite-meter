@@ -1,21 +1,30 @@
-//! Connections over HTTP/1.1, HTTP/2 and HTTP/3, the bodies they send and the answers they read.
-use super::{Client, Request, fault::Fault, quic::Quic};
+//! Connections over HTTP/1.1, HTTP/2 and HTTP/3, QUIC dialing, WebTransport sessions, bodies and answers.
+use super::{CONTROL_TIMEOUT, Client, Request, fault::Fault};
 use bytes::Bytes;
-use graphite_meter_http3::{self as http3, Code};
-use graphite_meter_net::RequestForm;
+use futures_util::FutureExt;
+use graphite_meter_http3::{
+    self as http3, Code, client,
+    webtransport::{self, RecvStream, SendStream},
+};
+use graphite_meter_net::{ConnectError, RequestForm, Verify, bind_udp, client_config, quic::client_transport, resolve};
 use graphite_meter_proto::{
     discovery::{MAX_RESPONSE_BYTES, Protocol},
-    origin::{Origin, Scheme},
+    lane::LaneEnding,
+    origin::{Host, Origin, Scheme},
+    route::Route,
 };
-use http::{HeaderValue, Version, header};
+use http::{HeaderValue, Method, Version, header};
 use http_body_util::BodyExt;
 use hyper::{
     body::{Frame, SizeHint},
     client::conn::{http1, http2},
 };
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
+use noq::crypto::rustls::QuicClientConfig;
 use std::{
     convert::Infallible,
+    io,
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
     sync::{
         Arc,
@@ -24,7 +33,11 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use tokio::runtime::Handle;
+use tokio::{
+    runtime::Handle,
+    task::{AbortHandle, JoinHandle},
+    time::timeout,
+};
 
 /// Receive windows that let one connection carry 5 Gbit/s over a 100 ms path.
 const H2_STREAM_WINDOW: u32 = 32 << 20;
@@ -78,7 +91,7 @@ impl Conn {
     ) -> Result<Self, Fault> {
         if via == Protocol::Http3 {
             let home = home.cloned().unwrap_or_else(|| client.shared.runtimes.next());
-            let (quic, requests) = super::quic::dial(origin, client.shared.verify, &home).await?;
+            let (quic, requests) = dial(origin, client.shared.verify, &home).await?;
             return Ok(Self::Http3 { requests, quic });
         }
         let connection = client.shared.connector.connect(origin, Some(via)).await?;
@@ -370,4 +383,197 @@ fn http3_failed(error: http3::Error) -> Failed {
         http3::Error::Transport(_) | http3::Error::Connection { local: false, .. } | http3::Error::GoingAway
     );
     Failed { fault: http3_fault(error), again }
+}
+
+/// How long an address may stay silent: lost handshake packets on a lossy path take seconds.
+const SILENT: Duration = Duration::from_secs(3);
+/// How long an answering address may take to finish the handshake.
+const ANSWERING: Duration = Duration::from_secs(5);
+
+/// A QUIC connection with its endpoint and HTTP/3 driver; dropping it closes them.
+pub struct Quic {
+    connection: noq::Connection,
+    _endpoint: noq::Endpoint,
+    driver: AbortHandle,
+    /// The runtime that runs them.
+    pub home: Handle,
+}
+
+impl Quic {
+    pub fn closed(&self) -> bool {
+        self.connection.close_reason().is_some()
+    }
+}
+
+impl Drop for Quic {
+    fn drop(&mut self) {
+        self.connection.close(Code::H3_NO_ERROR.into(), b"");
+        self.driver.abort();
+    }
+}
+
+/// Dials `origin` on `runtime`, which then runs the connection, endpoint and driver; dropping the dial abandons it.
+pub(super) async fn dial(origin: &Origin, verify: Verify, runtime: &Handle) -> Result<Dialed, Fault> {
+    let origin = origin.clone();
+    let mut dialing = Dialing(runtime.spawn(async move { connect(&origin, verify).await }));
+    (&mut dialing.0).await.map_err(|error| Fault::Lost(error.to_string()))?
+}
+
+/// A connection and its request sender.
+type Dialed = (Arc<Quic>, client::SendRequest);
+
+/// A dial running on another runtime, aborted once nothing awaits it.
+struct Dialing(JoinHandle<Result<Dialed, Fault>>);
+
+impl Drop for Dialing {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Each address in turn, IPv4 first; the last address's fault if none connects.
+async fn connect(origin: &Origin, verify: Verify) -> Result<Dialed, Fault> {
+    let crypto =
+        QuicClientConfig::try_from(client_config(verify, Some(Protocol::Http3)).await).map_err(io::Error::other);
+    let mut config = noq::ClientConfig::new(Arc::new(crypto.map_err(ConnectError::Io)?));
+    config.transport_config(Arc::new(client_transport()));
+    let resolved = resolve(&origin.host, origin.port).await;
+    let mut addresses = resolved.map_err(ConnectError::Unreachable)?;
+    addresses.sort_by_key(|address| !address.ip().to_canonical().is_ipv4());
+    let name = match &origin.host {
+        Host::Name(name) => name.clone(),
+        Host::Ip(ip) => ip.to_string(),
+    };
+    let mut last = ConnectError::Unreachable(io::Error::new(io::ErrorKind::NotFound, "no address resolved")).into();
+    for address in addresses {
+        match attempt(&config, address, &name).await {
+            Ok(dialed) => return Ok(dialed),
+            Err(fault) => last = fault,
+        }
+    }
+    Err(last)
+}
+
+async fn attempt(config: &noq::ClientConfig, address: SocketAddr, name: &str) -> Result<Dialed, Fault> {
+    let local = match address {
+        SocketAddr::V4(_) => SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
+        SocketAddr::V6(_) => SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)),
+    };
+    let (socket, _) = bind_udp(local, 1).map_err(ConnectError::Io)?;
+    let runtime = noq::default_runtime().ok_or_else(|| io::Error::other("no runtime for QUIC"));
+    let endpoint = noq::Endpoint::new(noq::EndpointConfig::default(), None, socket, runtime.map_err(ConnectError::Io)?);
+    let endpoint = endpoint.map_err(ConnectError::Io)?;
+    let connecting = endpoint.connect_with(config.clone(), address, name);
+    let mut connecting = connecting.map_err(|error| ConnectError::Io(io::Error::other(error)))?;
+    let silent = || ConnectError::Unreachable(io::Error::new(io::ErrorKind::TimedOut, "no QUIC answer"));
+    let answered = timeout(SILENT, connecting.handshake_data()).await;
+    answered.map_err(|_| silent())?.map_err(refused)?;
+    let finished = timeout(ANSWERING, connecting).await;
+    let connection = finished
+        .map_err(|_| Fault::TimedOut("QUIC handshake"))?
+        .map_err(refused)?;
+    let (mut driver, requests) = client::new(connection.clone());
+    let driver = tokio::spawn(async move {
+        let _ = driver.drive().await;
+    });
+    let quic = Quic {
+        connection,
+        _endpoint: endpoint,
+        driver: driver.abort_handle(),
+        home: Handle::current(),
+    };
+    Ok((Arc::new(quic), requests))
+}
+
+/// A handshake's failure, with the TLS error a certificate check raised.
+fn refused(error: noq::ConnectionError) -> Fault {
+    let tls = match &error {
+        noq::ConnectionError::TransportError(transport) => transport.crypto.as_deref(),
+        _ => None,
+    };
+    match tls.and_then(|tls| tls.downcast_ref::<rustls::Error>()) {
+        Some(tls) => ConnectError::Tls(tls.clone()).into(),
+        None => ConnectError::Io(io::Error::other(error)).into(),
+    }
+}
+
+/// A WebTransport session with its connection; dropping it closes both.
+pub struct Session {
+    session: webtransport::Session,
+    quic: Arc<Quic>,
+    client: Client,
+    origin: Origin,
+}
+
+impl Client {
+    /// A session at `route` on a connection of its own, which `home` runs, else the next pinned runtime.
+    pub async fn session(
+        &self,
+        home: Option<&Handle>,
+        origin: &Origin,
+        route: Route,
+        query: Vec<(&'static str, String)>,
+    ) -> Result<Session, Fault> {
+        let home = home.cloned().unwrap_or_else(|| self.shared.runtimes.next());
+        let request = Request { query, ..Request::new(Method::CONNECT, origin, route) };
+        let head = self.head(&request)?;
+        let open = async {
+            let (quic, requests) = dial(origin, self.shared.verify, &home).await?;
+            let connected = webtransport::Session::connect(&requests, head).await;
+            match connected.map_err(http3_fault)? {
+                Ok((session, _)) => Ok(Session { session, quic, client: self.clone(), origin: origin.clone() }),
+                Err(refused) => Err(self
+                    .refusal(&request, refused.status(), refused.headers())
+                    .unwrap_or_else(|| Fault::Malformed(format!("WebTransport refused with {}", refused.status())))),
+            }
+        };
+        let opened = timeout(CONTROL_TIMEOUT, open).await;
+        opened.unwrap_or(Err(Fault::TimedOut("WebTransport session")))
+    }
+}
+
+impl Session {
+    /// Whether the session and its connection still carry streams.
+    pub(super) fn usable(&self) -> bool {
+        !self.quic.closed() && self.ended().is_none()
+    }
+
+    /// The fault the session ended with, once it ended.
+    pub(super) fn ended(&self) -> Option<Fault> {
+        Some(match self.session.closed().now_or_never()? {
+            Ok((code, _)) => match LaneEnding::from_webtransport_code(code) {
+                Some(ending) => self.client.ending(&self.origin, ending),
+                None => Fault::Lost(format!("WebTransport session closed with code {code}")),
+            },
+            Err(error) => http3_fault(error),
+        })
+    }
+
+    /// What `error` on one of the session's streams means: the session's ending once it ended.
+    pub fn fault(&self, error: http3::Error) -> Fault {
+        self.ended().unwrap_or_else(|| http3_fault(error))
+    }
+
+    fn gone(&self) -> Fault {
+        self.ended()
+            .unwrap_or_else(|| Fault::Lost("WebTransport session ended".into()))
+    }
+
+    /// The next stream the server opened.
+    pub async fn accept_uni(&self) -> Result<RecvStream, Fault> {
+        self.session.accept_uni().await.ok_or_else(|| self.gone())
+    }
+
+    pub(super) async fn open_uni(&self) -> Result<SendStream, Fault> {
+        self.session.open_uni().await.map_err(|error| self.fault(error))
+    }
+
+    pub(super) async fn send_datagram(&self, payload: &[u8]) -> Result<(), Fault> {
+        let sent = self.session.send_datagram_wait(payload).await;
+        sent.map_err(|error| self.fault(error))
+    }
+
+    pub(super) async fn read_datagram(&self) -> Result<Bytes, Fault> {
+        self.session.read_datagram().await.ok_or_else(|| self.gone())
+    }
 }

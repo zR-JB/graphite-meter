@@ -1,10 +1,10 @@
 //! Lane groups: which connection or session a stage's lanes share, and the one loop every lane runs.
 use super::{
     Attempt, Client, Request, Retry,
+    conn::Session,
     conn::{Conn, Payload, ReadBuffer, TRANSFER_BYTES},
     fault::Fault,
     lock,
-    session::Session,
 };
 use crate::model::{Dir, Direction, Failure, LaneHealth, Stage};
 use bytes::Bytes;
