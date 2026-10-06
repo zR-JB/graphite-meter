@@ -692,7 +692,7 @@
       aria-label="Settings"
       aria-expanded={settingsOpen}
       {@attach prepareSettings}
-      {@attach tooltip(() => `Settings — test and display${keyHint("S")}`)}
+      {@attach tooltip(() => `Settings${keyHint("S")}`)}
       onclick={(event) =>
         togglePanel("settings", event.currentTarget as HTMLElement)}
       ><Icon name="settings" /></button
@@ -726,7 +726,7 @@
         aria-current={historyOpen ? "page" : undefined}
         aria-pressed={historyOpen}
         {@attach prepareHistory}
-        {@attach tooltip(() => `History — saved results${keyHint("H")}`)}
+        {@attach tooltip(() => `History${keyHint("H")}`)}
         onclick={(event) =>
           toggleHistoryFromPointer(event.currentTarget as HTMLElement)}
         ><Icon name="history" /></button
@@ -736,7 +736,7 @@
       aria-label="Details"
       aria-expanded={telemetryOpen}
       {@attach prepareDetails}
-      {@attach tooltip(() => `Details — server and connection${keyHint("D")}`)}
+      {@attach tooltip(() => `Details${keyHint("D")}`)}
       onclick={(event) =>
         togglePanel("endpoint", event.currentTarget as HTMLElement)}
       ><Icon name="info" /></button
@@ -745,8 +745,7 @@
       class="btn btn-icon key direct-theme"
       aria-label={`Theme: ${THEME[store.theme].label}`}
       {@attach tooltip(
-        () =>
-          `Theme: ${THEME[store.theme].label}${keyHint("T")} — cycles light, dark and auto`,
+        () => `Theme: ${THEME[store.theme].label}${keyHint("T")}`,
       )}
       onclick={toggleTheme}
       >{#key store.theme}<span class="theme-glyph"

@@ -1547,7 +1547,7 @@
   /* A tip is ink: the one dark plate on a light page and the one light plate on a dark one, so it never reads as
      part of the instrument. */
   .tooltip {
-    padding: 5px 8px;
+    padding: 4px 7px;
     border: 0;
     background: var(--brand);
     color: var(--text-inverse);
@@ -1678,7 +1678,7 @@
     position: fixed;
     inset: auto;
     width: max-content;
-    max-width: min(300px, calc(100vw - 16px));
+    max-width: min(260px, calc(100vw - 16px));
     margin: 6px;
     overflow: visible;
     position-area: block-start;

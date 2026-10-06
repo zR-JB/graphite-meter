@@ -7,9 +7,9 @@ const ACTIONABLE_SELECTOR =
 let uid = 0;
 // A hand at rest on the word opens its tip; jargon answers sooner, the next tip after a short rest, never at once.
 const REST_PX = 8;
-const REST_MS = 400;
-const TERM_REST_MS = 250;
-const WARM_REST_MS = 120;
+const REST_MS = 650;
+const TERM_REST_MS = 450;
+const WARM_REST_MS = 200;
 const CLOSE_MS = 150;
 const LONG_PRESS_MS = 450;
 // A finger that drifts further is scrolling, not pressing.

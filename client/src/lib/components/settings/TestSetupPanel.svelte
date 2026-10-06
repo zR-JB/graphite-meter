@@ -213,12 +213,9 @@
     const name = presetName(preset);
     if (preset === "custom") return `${name}\nSet each stage's time`;
     const times = DURATION_PRESETS[preset];
-    return [
-      name,
-      ...activeDurationFields.map(
-        ([key, label]) => `${label} ${fmtStageTime(times[key])}`,
-      ),
-    ].join("\n");
+    return `${name}\n${activeDurationFields
+      .map(([key, label]) => `${label} ${fmtStageTime(times[key])}`)
+      .join(" · ")}`;
   }
   const unitsTip = [
     "Units",
@@ -555,8 +552,8 @@
               <button
                 type="button"
                 aria-pressed={store.config[key] === value}
+                aria-label={PING_CADENCE[value]}
                 disabled={running || store.preparing}
-                {@attach tooltip(() => PING_CADENCE[value])}
                 onclick={() => controller.configureRun({ [key]: value })}
                 >{PING_CADENCE_SHORT[value]}</button
               >
