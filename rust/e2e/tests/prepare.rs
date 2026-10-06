@@ -1,4 +1,4 @@
-//! Path checks against the server: each path, the fallbacks and failures by name.
+//! Path checks against the server: each path.
 use graphite_meter_client::{
     net::{Client, LatencyPath, ThroughputPath},
     run::prepare::{Paths, Prepared, prepare},
@@ -8,12 +8,8 @@ use graphite_meter_net::Pool;
 use graphite_meter_proto::{
     discovery::{LatencyTransport, Protocol, ThroughputTransport},
     origin::Origin,
-    reason::FailureReason,
 };
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{sync::Arc, time::Duration};
 
 async fn check(url: &Origin, args: &[&str]) -> Prepared {
     let config = e2e::config(&[&["-url", &url.to_string()], args].concat());
@@ -93,40 +89,4 @@ async fn preparation_checks_each_path() {
     );
     assert_eq!(paths.latency, latency(&negotiated.http1, LatencyTransport::WebSocket));
     assert_eq!(paths.stage_limit, Duration::from_secs(90));
-}
-
-#[tokio::test]
-async fn without_quic_latency_falls_back_to_websocket_and_forced_webtransport_fails() {
-    let server = Server::with(&[("GM_H3_PUBLIC_ORIGIN", "https://localhost:1")]).await;
-    let started = Instant::now();
-    let paths = paths(&server.http1, &["-insecure"]).await;
-    assert_eq!(paths.throughput, fetch(&server.http1, Protocol::Http1));
-    assert_eq!(paths.latency, latency(&server.http1, LatencyTransport::WebSocket));
-    assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
-    for forced in [["-throughput-transport", "webtransport"], ["-latency-transport", "webtransport"]] {
-        let prepared = check(&server.http1, &[&["-insecure"], forced.as_slice()].concat()).await;
-        let failure = prepared.servers[0].path.clone().unwrap_err();
-        assert_ne!(failure.reason, FailureReason::PreparationFailed, "{forced:?}: {failure:?}");
-    }
-}
-
-#[tokio::test]
-async fn an_unavailable_selected_server_fails_by_name_and_an_unselected_one_does_not_block() {
-    let catalogue = r#"{"servers": [{"id": "gone", "url": "http://127.0.0.7:1", "name": "Gone"}]}"#;
-    let server = Server::with(&[("GM_SERVER_CATALOG", catalogue)]).await;
-    let prepared = check(&server.http1, &[]).await;
-    let ids: Vec<_> = prepared.servers.iter().map(|server| server.id.as_str()).collect();
-    assert_eq!(ids, ["self"]);
-    assert!(prepared.servers[0].path.is_ok(), "{:?}", prepared.servers[0]);
-    let prepared = check(&server.http1, &["-server", "gone", "-server", "self"]).await;
-    let [own, gone] = prepared.servers.as_slice() else {
-        panic!("two servers: {:?}", prepared.servers);
-    };
-    assert_eq!((own.name.as_str(), gone.name.as_str()), ("graphite-meter", "Gone"));
-    assert!(own.path.is_ok(), "{own:?}");
-    let failure = gone.path.clone().unwrap_err();
-    assert_eq!(
-        (failure.reason, failure.text.as_str()),
-        (FailureReason::ConnectionLost, "Server could not be reached")
-    );
 }

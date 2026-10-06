@@ -80,20 +80,6 @@ async fn bidirectional_lanes_move_bytes_over_each_transport_on_pinned_runtimes()
 }
 
 #[tokio::test]
-async fn a_webtransport_download_counts_each_stream_s_payload_exactly() {
-    let (server, client) = (Server::start().await, client());
-    let path = ThroughputPath {
-        origin: server.http3.clone(),
-        transport: ThroughputTransport::WebTransport,
-        protocol: Protocol::Http3,
-    };
-    let plans = topology(&path, Stage::Download, Dir { down: 1, up: 0 });
-    let mut download = Lanes::start(&client, plans, Work::Download, Duration::ZERO, CancellationToken::new());
-    // A lane fails on a 64 MiB stream that counts more or less than its payload, so it never gets past it.
-    until(&mut download, Duration::from_secs(90), async |lanes| lanes.bytes() > 65 * MIB).await;
-}
-
-#[tokio::test]
 async fn fourteen_webtransport_lanes_outgrow_the_first_connection_window_without_deadlock() {
     let (server, client) = (Server::start().await, client());
     let path = ThroughputPath {

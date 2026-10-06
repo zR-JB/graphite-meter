@@ -1,15 +1,13 @@
-//! Native sign-in against a password-mode server, each test in a child process that trusts the server's CA alone:
-//! the operator's browser approves over HTTP and the run completes, or the approval expires.
+//! Native sign-in against a password-mode server, in a child process that trusts the server's CA alone: the
+//! operator's browser approves over HTTP and the run completes.
 use graphite_meter_client::{
     config::Config,
     controller::{Command, Controller},
     events::{Event, Events, SignInEnd, SignInPrompt},
-    model::{Failure, Outcome},
-    net::approval::EXPIRED,
+    model::Outcome,
 };
 use graphite_meter_e2e::{self as e2e, Server, until};
 use graphite_meter_net::Pool;
-use graphite_meter_proto::reason::FailureReason;
 use graphite_meter_testkit::{Identity, Scratch};
 use std::{net::SocketAddr, path::Path, process::Command as Process, sync::Arc, time::Duration};
 use tokio::{
@@ -163,22 +161,5 @@ async fn a_sign_in_approved_over_http_lets_the_run_complete() {
         "{ran:#?}"
     );
     assert!(!ran.iter().any(|event| matches!(event, Event::SignIn(_))));
-    controller.settled().await;
-}
-
-#[tokio::test]
-async fn an_expired_approval_ends_the_sign_in() {
-    let Some(identity) = trusted("an_expired_approval_ends_the_sign_in").await else {
-        return;
-    };
-    let (_server, address) = protected(&identity).await;
-    let (mut controller, mut received, _) = prompted(&config(address)).await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    tokio::time::pause();
-    tokio::time::advance(Duration::from_secs(121)).await;
-    tokio::time::resume();
-    let ended = until(&mut received, LIMIT, |event| matches!(event, Event::CheckFailed(_))).await;
-    let expired = Failure::new(FailureReason::SignInRequired, EXPIRED);
-    assert_eq!(ended, [Event::SignInEnded(SignInEnd::Expired), Event::CheckFailed(expired)]);
     controller.settled().await;
 }

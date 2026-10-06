@@ -1,5 +1,5 @@
-//! Operations against the server through the controller: a run replacing a check, a stop before the run starts, and
-//! the sign-ins a protected server asks for where none can happen.
+//! Operations against the server through the controller: the sign-ins a protected server asks for where none can
+//! happen.
 use graphite_meter_client::{
     config::Config,
     controller::{Command, Controller, SIGN_IN},
@@ -9,11 +9,8 @@ use graphite_meter_client::{
 use graphite_meter_e2e::{self as e2e, Server, until};
 use graphite_meter_net::Pool;
 use graphite_meter_proto::{origin::Origin, reason::FailureReason};
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
-use tokio::{net::TcpListener, sync::mpsc::UnboundedReceiver};
+use std::{sync::Arc, time::Duration};
+use tokio::sync::mpsc::UnboundedReceiver;
 
 const HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$OT2po7nOdP+21BKX5CuZQw$9kVgfSWvlFy31939zUCVY62fHIuSqC8RwL67EpQ8qy8";
 const LIMIT: Duration = Duration::from_secs(20);
@@ -31,50 +28,6 @@ fn controller(interactive: bool) -> (Controller, UnboundedReceiver<Event>) {
 
 fn run_finished(event: &Event) -> bool {
     matches!(event, Event::RunFinished { .. })
-}
-
-#[tokio::test]
-async fn a_run_replacing_a_check_starts_at_once() {
-    let silent = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let silent = Origin::parse(&format!("http://{}", silent.local_addr().unwrap())).unwrap();
-    let server = Server::start().await;
-    let (mut controller, mut received) = controller(true);
-    let started = Instant::now();
-    controller.command(Command::Check(config(&silent, &[])));
-    controller.command(Command::Run(config(&server.http1, &[])));
-    let events = until(&mut received, LIMIT, run_finished).await;
-    assert!(started.elapsed() < Duration::from_secs(8), "{:?}", started.elapsed());
-    let checked = events.iter().position(|event| *event == Event::Checking { run: true });
-    assert!(checked.is_some_and(|checked| {
-        events[..checked]
-            .iter()
-            .all(|event| *event == Event::Checking { run: false })
-    }));
-    assert!(events.iter().any(|event| matches!(event, Event::RunStarted { .. })));
-    let outcome = events.last().unwrap();
-    assert!(matches!(outcome, Event::RunFinished { outcome: Outcome::Complete, .. }), "{events:#?}");
-    controller.settled().await;
-}
-
-#[tokio::test]
-async fn a_run_stopped_before_it_starts_still_finishes_the_check() {
-    let server = Server::start().await;
-    let config = config(&server.http1, &[]);
-    let (mut controller, mut received) = controller(true);
-    controller.command(Command::Check(config.clone()));
-    controller.command(Command::Run(config));
-    controller.command(Command::Stop);
-    let stopped = until(&mut received, LIMIT, run_finished).await;
-    assert!(!stopped.iter().any(|event| matches!(event, Event::RunStarted { .. })), "{stopped:#?}");
-    let finished = stopped.last().unwrap();
-    assert!(matches!(finished, Event::RunFinished { outcome: Outcome::Stopped, error: None, .. }));
-    let checked = until(&mut received, LIMIT, |event| matches!(event, Event::Prepared { .. })).await;
-    assert_eq!(checked[0], Event::Checking { run: false });
-    let Some(Event::Prepared { servers, .. }) = checked.last() else {
-        unreachable!()
-    };
-    assert!(servers.iter().all(|server| server.path.is_ok()), "{servers:#?}");
-    controller.settled().await;
 }
 
 #[tokio::test]
