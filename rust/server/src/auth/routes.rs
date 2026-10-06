@@ -173,7 +173,7 @@ async fn sign_in<B: http_body::Body>(
         Some(_) => format!("/auth/cli?challenge={challenge}"),
         None => "/".into(),
     };
-    let identity = ("local-operator", "Local operator", "local");
+    let identity = (super::OPERATOR, "Local operator", "local");
     let prior = cookie_lease(&auth.store, headers).map(|lease| lease.login());
     let mut answer = match establish(auth, identity, prior, redirect(&target)) {
         Ok(answer) => answer,

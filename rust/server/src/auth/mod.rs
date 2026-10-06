@@ -14,6 +14,9 @@ mod store;
 pub use policy::Policy;
 pub use store::{GrantRefusal, LOGIN_LIFETIME, LoginKey, NewLogin, Store};
 
+/// The principal every password login shares.
+pub const OPERATOR: &str = "local-operator";
+
 use crate::{
     app::{Endpoint, Outcome, finalize::Access, response},
     config::{self, Methods},

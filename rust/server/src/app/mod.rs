@@ -92,9 +92,11 @@ impl App {
             let port = listen_port(&listener.address)?;
             HeaderValue::from_str(&format!("h3=\":{port}\"")).ok()
         });
+        let password = config.auth.as_ref().and_then(|auth| auth.methods.password());
+        let operator = password.map(|_| crate::peer::ClientKey::Principal(crate::auth::OPERATOR.into()));
         let generation = crate::random::<16>().iter().map(|byte| format!("{byte:02x}")).collect();
         Ok(Self {
-            quotas: Quotas::new(config.limits, &budget, None),
+            quotas: Quotas::new(config.limits, &budget, operator),
             uploads: Uploads::new(crate::random(), Meter::new(config.verbose)),
             auth,
             assets: Assets::embedded(config.auth.is_some(), config.result_history_default),
