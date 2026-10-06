@@ -550,7 +550,7 @@
     <h3>Latency probes</h3>
     <div class="kv">
       {#each CADENCES as [key, label, tip] (key)}
-        <div class="cadence">
+        <div class="cadence stacked">
           <span {@attach tooltip(() => tip)}>{label}</span>
           <div class="segmented" role="group" aria-label={label}>
             {#each Object.keys(PING_CADENCE) as PingCadence[] as value (value)}
@@ -745,25 +745,24 @@
   }
   /* A control stands at its label's end while the row holds both, and against the right edge when it wraps
      under the label; a cadence's segments then take the row's width. */
-  .units > span,
-  .cadence > span {
+  .units > span {
     flex: 1 0 auto;
     margin-inline-end: auto;
   }
   .units > :not(span) {
     margin-inline-start: auto;
   }
-  .cadence {
-    row-gap: var(--space-2);
-  }
-  .cadence > .segmented {
-    flex: 1 1 240px;
-  }
   /* A narrow sheet stacks every stepper row and the units row alike, so no row wraps where its neighbour does not. */
   @container settings (max-width: 320px) {
     .stage-row:has(:global(.stepper)) {
       flex-flow: column nowrap;
       align-items: flex-start;
+      gap: var(--space-2);
+      padding-block: var(--space-3);
+    }
+    .units {
+      row-gap: var(--space-2);
+      padding-block: var(--space-3);
     }
     .units > span {
       flex-basis: 100%;

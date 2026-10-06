@@ -1079,9 +1079,24 @@
     min-height: var(--row-h);
     padding-block: 7px;
   }
+  /* A control row is 42 px on one line, and a label that wraps keeps the row's air above and below it. */
   .kv > :has(input, select, button, .segmented) {
     align-items: center;
-    padding-block: 2px;
+    padding-block: 5px;
+  }
+  @media (pointer: coarse) {
+    .kv > :has(input, select, button, .segmented) {
+      padding-block: 2px;
+    }
+  }
+  /* A label over a control that takes the row's width: the label sits as a one-line row's would, the control under
+     it on the same inset. */
+  .kv > .stacked {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: var(--space-2);
+    padding-block: var(--space-3);
   }
   .kv > :is(label, .link-row) {
     flex-wrap: nowrap;
@@ -1276,8 +1291,13 @@
   }
 
   /* Segments share the control's width equally, each as wide as the widest word, so two controls with the same
-     words line up. */
+     words line up. The chosen segment's plate is one thumb under the words that slides to the choice on the
+     control spring; its place comes from the chosen segment's index, so it needs no measuring and no script. */
   .segmented {
+    --n: 1;
+    --i: 0;
+    position: relative;
+    isolation: isolate;
     display: grid;
     grid-auto-flow: column;
     grid-auto-columns: 1fr;
@@ -1287,6 +1307,105 @@
     border-radius: var(--r-chrome);
     background: var(--track);
     box-shadow: var(--elev-recess);
+  }
+  .segmented::before {
+    position: absolute;
+    z-index: -1;
+    inset: 2px auto 2px 2px;
+    width: calc((100% - 4px - (var(--n) - 1) * 2px) / var(--n));
+    border-radius: calc(var(--r-chrome) - 1px);
+    background: var(--surface-1);
+    box-shadow:
+      inset 0 0 0 var(--hairline) var(--border),
+      0 1px 2px light-dark(oklch(0.25 0.02 255 / 0.1), oklch(0 0 0 / 0.35));
+    content: "";
+    opacity: 0;
+    translate: calc(var(--i) * (100% + 2px)) 0;
+    transition:
+      translate 240ms var(--ease-settle),
+      opacity var(--dur-slide) var(--ease-out);
+  }
+  .segmented:has(> :nth-child(2)) {
+    --n: 2;
+  }
+  .segmented:has(> :nth-child(3)) {
+    --n: 3;
+  }
+  .segmented:has(> :nth-child(4)) {
+    --n: 4;
+  }
+  .segmented:has(> :nth-child(5)) {
+    --n: 5;
+  }
+  .segmented:has(> :nth-child(6)) {
+    --n: 6;
+  }
+  .segmented:has(
+    > :is([aria-pressed="true"], [aria-checked="true"], [aria-selected="true"])
+  ) {
+    &::before {
+      opacity: 1;
+    }
+  }
+  .segmented:has(
+    > :nth-child(2):is(
+        [aria-pressed="true"],
+        [aria-checked="true"],
+        [aria-selected="true"]
+      )
+  ) {
+    --i: 1;
+  }
+  .segmented:has(
+    > :nth-child(3):is(
+        [aria-pressed="true"],
+        [aria-checked="true"],
+        [aria-selected="true"]
+      )
+  ) {
+    --i: 2;
+  }
+  .segmented:has(
+    > :nth-child(4):is(
+        [aria-pressed="true"],
+        [aria-checked="true"],
+        [aria-selected="true"]
+      )
+  ) {
+    --i: 3;
+  }
+  .segmented:has(
+    > :nth-child(5):is(
+        [aria-pressed="true"],
+        [aria-checked="true"],
+        [aria-selected="true"]
+      )
+  ) {
+    --i: 4;
+  }
+  .segmented:has(
+    > :nth-child(6):is(
+        [aria-pressed="true"],
+        [aria-checked="true"],
+        [aria-selected="true"]
+      )
+  ) {
+    --i: 5;
+  }
+  /* A locked control's thumb dims with its words. */
+  .segmented:has(> :disabled)::before {
+    opacity: 0.5;
+  }
+  .segmented:not(
+      :has(
+        > :is(
+          [aria-pressed="true"],
+          [aria-checked="true"],
+          [aria-selected="true"]
+        )
+      )
+    )::before {
+    opacity: 0;
   }
   /* After the base rule, which would otherwise keep it at control height. */
   @media (pointer: coarse) {
@@ -1299,11 +1418,12 @@
     min-width: 0;
     padding-inline: var(--space-2);
     overflow: hidden;
-    border-radius: calc(var(--r-chrome) - 2px);
+    border-radius: calc(var(--r-chrome) - 1px);
     color: var(--text-muted);
     font: var(--role-control);
     text-overflow: ellipsis;
     white-space: nowrap;
+    transition: color var(--dur-slide) var(--ease-out);
   }
   /* After the base rule's min-width: a finger's segment is never narrower than a hit. */
   @media (pointer: coarse) {
@@ -1317,32 +1437,32 @@
   .segmented > button:focus-visible {
     outline-offset: -2px;
   }
-  /* The plate moves to the chosen segment as a change of fill, word and shadow in one step. */
-  .segmented > button {
-    transition:
-      background-color var(--dur-slide) var(--ease-out),
-      box-shadow var(--dur-slide) var(--ease-out),
-      color var(--dur-slide) var(--ease-out);
-  }
-  /* The hover wash is an image layer, so it adds to a selected fill instead of replacing it. */
+  /* The hover wash lies on an unchosen segment only; the chosen one already stands on its plate. */
   @media (hover: hover) {
-    .segmented > button:hover:not(:disabled, [aria-disabled="true"]) {
+    .segmented
+      > button:hover:not(
+        :disabled,
+        [aria-disabled="true"],
+        [aria-pressed="true"],
+        [aria-checked="true"],
+        [aria-selected="true"]
+      ) {
       background-image: linear-gradient(var(--hover-wash) 0 0);
+      color: var(--text);
     }
   }
   .segmented
     > button:is(
       [aria-pressed="true"],
       [aria-checked="true"],
-      [aria-selected="true"],
-      [aria-current]:not([aria-current="false"]),
-      :has(> input:checked)
+      [aria-selected="true"]
     ) {
-    background-color: var(--surface-1);
-    box-shadow:
-      inset 0 0 0 var(--hairline) var(--border-strong),
-      0 1px 2px light-dark(oklch(0.25 0.02 255 / 0.08), oklch(0 0 0 / 0.3));
     color: var(--brand-strong);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .segmented::before {
+      transition: none;
+    }
   }
 
   .empty-state {
