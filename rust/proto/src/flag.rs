@@ -23,6 +23,7 @@ table! {
 
 /// One row of a binary's flag table.
 pub struct Flag<T> {
+    /// Empty for a row only the environment sets.
     pub name: &'static str,
     pub kind: Kind,
     /// What the flag sets; a word in backquotes names its value in the usage line.
@@ -91,9 +92,9 @@ fn utf8(arg: OsString) -> Result<String, String> {
         .map_err(|arg| format!("argument {} is not valid UTF-8", quote(&arg.to_string_lossy())))
 }
 
-/// Go's `PrintDefaults` lines for `flags` by name, each with its environment variable and non-zero default.
+/// Go's `PrintDefaults` lines for named `flags` by name, each with its environment variable and non-zero default.
 pub fn defaults<T>(flags: &[Flag<T>], defaults: &T) -> String {
-    let mut sorted: Vec<&Flag<T>> = flags.iter().collect();
+    let mut sorted: Vec<&Flag<T>> = flags.iter().filter(|flag| !flag.name.is_empty()).collect();
     sorted.sort_by_key(|flag| flag.name);
     let mut lines = String::new();
     for flag in sorted {

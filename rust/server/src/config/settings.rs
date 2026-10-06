@@ -179,17 +179,7 @@ fn split_list(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// One setting: its variable, its flag (empty for an environment-only secret) and its usage text.
-struct Setting {
-    env: &'static str,
-    flag: &'static str,
-    usage: &'static str,
-    kind: Kind,
-    set: fn(&mut Settings, &str) -> Result<(), String>,
-    show: fn(&Settings) -> String,
-}
-
-/// Declares `Settings`, its defaults and `SETTINGS` from one row per setting.
+/// Declares `Settings`, its defaults and `SETTINGS` from one row per setting; an environment-only secret has no flag.
 macro_rules! settings {
     ($($field:ident: $type:ty = $default:expr, $env:literal, $flag:literal, $usage:literal;)+) => {
         /// Settings as given, before validation.
@@ -206,10 +196,10 @@ macro_rules! settings {
             }
         }
 
-        const SETTINGS: &[Setting] = &[$(Setting {
-            env: $env,
-            flag: $flag,
+        const SETTINGS: &[Flag<Settings>] = &[$(Flag {
+            name: $flag,
             usage: $usage,
+            env: Some($env),
             kind: <$type as Value>::KIND,
             set: |settings, text| {
                 settings.given.insert($env);
@@ -288,20 +278,6 @@ settings! {
         "OIDC provider `label`";
 }
 
-/// The rows that have a flag, as the flag parser reads them.
-fn flags() -> Vec<Flag<Settings>> {
-    let rows = SETTINGS.iter().filter(|setting| !setting.flag.is_empty());
-    rows.map(|setting| Flag {
-        name: setting.flag,
-        kind: setting.kind,
-        usage: setting.usage,
-        env: Some(setting.env),
-        set: setting.set,
-        show: setting.show,
-    })
-    .collect()
-}
-
 /// Loads the environment, then the flags; `None` when usage was asked; flag errors go to `usage` before env errors.
 pub(super) fn load(
     env: &dyn Fn(&str) -> Option<OsString>,
@@ -310,15 +286,14 @@ pub(super) fn load(
 ) -> Result<Option<Settings>, String> {
     let mut settings = Settings::default();
     let from_env = settings.load_env(env);
-    let flags = flags();
-    match flag::parse(&flags, &mut settings, args) {
+    match flag::parse(SETTINGS, &mut settings, args) {
         Ok(Parsed::Help) => {
-            let _ = write_usage(usage, &flags);
+            let _ = write_usage(usage, SETTINGS);
             return Ok(None);
         }
         Ok(Parsed::Arguments(_)) => {}
         Err(error) => {
-            let _ = writeln!(usage, "{error}").and_then(|()| write_usage(usage, &flags));
+            let _ = writeln!(usage, "{error}").and_then(|()| write_usage(usage, SETTINGS));
             return Err(error);
         }
     }
@@ -338,8 +313,9 @@ impl Settings {
             None => Ok(None),
         };
         for setting in SETTINGS {
-            if let Some(value) = text(setting.env)? {
-                (setting.set)(self, &value).map_err(|error| format!("{}: {error}", setting.env))?;
+            let env = setting.env.expect("every setting has a variable");
+            if let Some(value) = text(env)? {
+                (setting.set)(self, &value).map_err(|error| format!("{env}: {error}"))?;
             }
         }
         self.catalog = catalog::load(text("GM_SERVER_CATALOG")?, text("GM_SERVER_CATALOG_FILE")?)?;

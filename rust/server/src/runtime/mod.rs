@@ -331,10 +331,7 @@ async fn log_verbose(app: &App) {
 }
 
 /// Binds every enabled listener's TCP socket, HTTP/3's for its companion, and names the ports they bound in `config`.
-async fn bind_all(
-    config: &mut Config,
-    certificates: Option<&Arc<Certificates>>,
-) -> Result<Vec<Listening>, String> {
+async fn bind_all(config: &mut Config, certificates: Option<&Arc<Certificates>>) -> Result<Vec<Listening>, String> {
     let mut listeners = Vec::new();
     for listener in &mut config.listeners {
         let (endpoint, alpn): (_, Option<&[u8]>) = match listener.kind {
