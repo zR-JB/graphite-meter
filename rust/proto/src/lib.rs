@@ -1,19 +1,25 @@
 //! Shared wire contracts: routes, messages, discovery types, codes and their parsers.
 
-/// A fieldless enum listed once: its variants in table order as `ALL`, each with its row.
+/// A fieldless enum listed once: its variants in table order as `ALL`, and an accessor per column of their rows.
+#[macro_export]
 macro_rules! table {
-    ($(#[$meta:meta])* pub enum $name:ident: $row:ty { $($variant:ident => $value:expr,)+ }) => {
+    (
+        $(#[$meta:meta])* $vis:vis enum $name:ident { $($(#[$cmeta:meta])* $column:ident . $index:tt : $type:ty,)+ }
+        { $($(#[$vmeta:meta])* $variant:ident => $value:expr,)+ }
+    ) => {
         $(#[$meta])*
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-        pub enum $name { $($variant,)+ }
+        $vis enum $name { $($(#[$vmeta])* $variant,)+ }
 
         impl $name {
             /// Every variant, in table order.
             pub const ALL: &[Self] = &[$(Self::$variant),+];
 
-            const fn row(self) -> $row {
+            const fn row(self) -> ($($type,)+) {
                 match self { $(Self::$variant => $value,)+ }
             }
+
+            $($(#[$cmeta])* pub const fn $column(self) -> $type { self.row().$index })+
         }
     };
 }
@@ -21,13 +27,9 @@ macro_rules! table {
 /// A `table!` enum whose row is its wire name, which it serializes as.
 macro_rules! named {
     ($(#[$meta:meta])* pub enum $name:ident { $($variant:ident => $value:expr,)+ }) => {
-        table! { $(#[$meta])* pub enum $name: &'static str { $($variant => $value,)+ } }
+        table! { $(#[$meta])* pub enum $name { name.0: &'static str, } { $($variant => ($value,),)+ } }
 
         impl $name {
-            pub const fn name(self) -> &'static str {
-                self.row()
-            }
-
             pub fn from_name(name: &str) -> Option<Self> {
                 Self::ALL.iter().copied().find(|known| known.name() == name)
             }

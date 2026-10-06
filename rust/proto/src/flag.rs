@@ -3,28 +3,21 @@
 use crate::text::quote;
 use std::{ffi::OsString, fmt, iter};
 
-/// How a flag takes its value, and the type its usage line names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
-    /// A switch: its name alone sets it, a value only as `-name=value`.
-    Bool,
-    Int,
-    Duration,
-    String,
-    /// A value type of the binary's own, as with Go's `fs.Var`: usage names `value` and prints the default unquoted.
-    Value,
-}
-
-impl Kind {
-    /// The type name a usage line shows when its text quotes none, and the text of the type's zero value.
-    const fn names(self) -> (&'static str, &'static str) {
-        match self {
-            Self::Bool => ("", "false"),
-            Self::Int => ("int", "0"),
-            Self::Duration => ("duration", "0s"),
-            Self::String => ("string", ""),
-            Self::Value => ("value", ""),
-        }
+table! {
+    /// How a flag takes its value, and the type its usage line names.
+    pub enum Kind {
+        /// The type name a usage line shows when its text quotes none.
+        type_name.0: &'static str,
+        /// The text of the type's zero value.
+        zero.1: &'static str,
+    } {
+        /// A switch: its name alone sets it, a value only as `-name=value`.
+        Bool => ("", "false"),
+        Int => ("int", "0"),
+        Duration => ("duration", "0s"),
+        String => ("string", ""),
+        /// The binary's own value type, as Go's `fs.Var`: usage names `value` and prints the default unquoted.
+        Value => ("value", ""),
     }
 }
 
@@ -122,7 +115,7 @@ pub fn defaults<T>(flags: &[Flag<T>], defaults: &T) -> String {
     sorted.sort_by_key(|flag| flag.name);
     let mut lines = String::new();
     for flag in sorted {
-        let (type_name, zero) = flag.kind.names();
+        let (type_name, zero) = flag.kind.row();
         let (value_name, usage) = unquote(flag.usage).unwrap_or((type_name, flag.usage.into()));
         let value_name = match value_name {
             "" => String::new(),

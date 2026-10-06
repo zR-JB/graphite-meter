@@ -10,25 +10,13 @@ use std::{
 /// The longest origin text a contract accepts.
 pub const MAX_ORIGIN_BYTES: usize = 2048;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Scheme {
-    Http,
-    Https,
-}
-
-impl Scheme {
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Http => "http",
-            Self::Https => "https",
-        }
-    }
-
-    pub const fn default_port(self) -> u16 {
-        match self {
-            Self::Http => 80,
-            Self::Https => 443,
-        }
+table! {
+    pub enum Scheme {
+        name.0: &'static str,
+        default_port.1: u16,
+    } {
+        Http => ("http", 80),
+        Https => ("https", 443),
     }
 }
 
@@ -117,10 +105,11 @@ impl Origin {
     /// Splits a URL into origin and rest: at most 2048 bytes of printable ASCII without `#` or `\`.
     pub fn split(url: &str) -> Result<(Self, &str), OriginError> {
         let (scheme, rest) = url.split_once("://").ok_or(OriginError)?;
-        let scheme = [Scheme::Http, Scheme::Https]
-            .into_iter()
-            .find(|known| known.name().eq_ignore_ascii_case(scheme))
-            .ok_or(OriginError)?;
+        let known = Scheme::ALL
+            .iter()
+            .copied()
+            .find(|known| known.name().eq_ignore_ascii_case(scheme));
+        let scheme = known.ok_or(OriginError)?;
         let (authority, rest) = rest.split_at(rest.find(['/', '?', '#']).unwrap_or(rest.len()));
         let (host, port) = match authority.strip_prefix('[') {
             Some(literal) => {

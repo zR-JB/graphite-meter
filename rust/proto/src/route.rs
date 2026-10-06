@@ -1,21 +1,14 @@
 //! The fixed routes both binaries share (`api/routes.txt`).
 
-/// The transport that reaches a route.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Kind {
-    Http,
-    WebSocket,
-    /// An HTTP/3 extended-CONNECT session.
-    WebTransport,
-}
-
-impl Kind {
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Http => "http",
-            Self::WebSocket => "ws",
-            Self::WebTransport => "wt",
-        }
+table! {
+    /// The transport that reaches a route.
+    pub enum Kind {
+        name.0: &'static str,
+    } {
+        Http => ("http",),
+        WebSocket => ("ws",),
+        /// An HTTP/3 extended-CONNECT session.
+        WebTransport => ("wt",),
     }
 }
 
@@ -25,7 +18,13 @@ const CONNECT: &[&str] = &["CONNECT"];
 
 table! {
     /// A route: its key, the exact path it is mounted at, its transport and the methods it dispatches.
-    pub enum Route: (&'static str, &'static str, Kind, &'static [&'static str]) {
+    pub enum Route {
+        name.0: &'static str,
+        path.1: &'static str,
+        kind.2: Kind,
+        /// The methods the route dispatches; the router answers HEAD and OPTIONS itself, never as a CORS grant.
+        methods.3: &'static [&'static str],
+    } {
         Preflight => ("preflight", "/preflight", Kind::Http, GET),
         Probe => ("probe", "/probe", Kind::Http, GET),
         Download => ("download", "/download", Kind::Http, GET),
@@ -44,23 +43,6 @@ table! {
 }
 
 impl Route {
-    pub const fn name(self) -> &'static str {
-        self.row().0
-    }
-
-    pub const fn path(self) -> &'static str {
-        self.row().1
-    }
-
-    pub const fn kind(self) -> Kind {
-        self.row().2
-    }
-
-    /// The methods the route dispatches; the router answers HEAD and OPTIONS itself, never as a CORS grant.
-    pub const fn methods(self) -> &'static [&'static str] {
-        self.row().3
-    }
-
     /// The route mounted at exactly `path`, without URL decoding or slash normalization.
     pub fn from_path(path: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|route| route.path() == path)

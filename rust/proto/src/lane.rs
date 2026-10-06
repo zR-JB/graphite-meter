@@ -8,7 +8,13 @@ pub const IDLE_BOUND: Duration = Duration::from_secs(30);
 
 table! {
     /// Why a lane ended: its name, WebSocket close code, WebTransport session code and reason text.
-    pub enum LaneEnding: (&'static str, u16, u32, &'static str) {
+    pub enum LaneEnding {
+        name.0: &'static str,
+        websocket_code.1: u16,
+        webtransport_code.2: u32,
+        /// The close reason, also the text of an HTTP refusal for the same ending.
+        reason.3: &'static str,
+    } {
         Finished => ("finished", 1000, 0, ""),
         Idle => ("idle", 4001, 1, "idle"),
         Lifetime => ("lifetime", 4002, 2, "lifetime"),
@@ -18,23 +24,6 @@ table! {
 }
 
 impl LaneEnding {
-    pub const fn name(self) -> &'static str {
-        self.row().0
-    }
-
-    pub const fn websocket_code(self) -> u16 {
-        self.row().1
-    }
-
-    pub const fn webtransport_code(self) -> u32 {
-        self.row().2
-    }
-
-    /// The close reason, also the text of an HTTP refusal for the same ending.
-    pub const fn reason(self) -> &'static str {
-        self.row().3
-    }
-
     /// The refusal that answers an HTTP upload ending so.
     pub const fn upload_refusal(self) -> Option<UploadRefusal> {
         match self {

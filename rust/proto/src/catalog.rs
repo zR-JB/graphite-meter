@@ -63,27 +63,23 @@ pub struct ServerCatalog {
     pub servers: Vec<ServerEntry>,
 }
 
-/// Why a catalogue, or one entry of it, is invalid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CatalogError {
-    Servers,
-    Identity,
-    Origin,
-    Duplicate,
-    AdditionalOrigins,
-    Selection,
+table! {
+    /// Why a catalogue, or one entry of it, is invalid.
+    pub enum CatalogError {
+        message.0: &'static str,
+    } {
+        Servers => ("a catalogue lists self first and at most 31 servers after it",),
+        Identity => ("invalid catalogue server identity",),
+        Origin => ("invalid catalogue origin",),
+        Duplicate => ("duplicate catalogue server",),
+        AdditionalOrigins => ("too many additional origins",),
+        Selection => ("select one to four distinct catalogue servers",),
+    }
 }
 
 impl fmt::Display for CatalogError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Servers => "a catalogue lists self first and at most 31 servers after it",
-            Self::Identity => "invalid catalogue server identity",
-            Self::Origin => "invalid catalogue origin",
-            Self::Duplicate => "duplicate catalogue server",
-            Self::AdditionalOrigins => "too many additional origins",
-            Self::Selection => "select one to four distinct catalogue servers",
-        })
+        formatter.write_str(self.message())
     }
 }
 
