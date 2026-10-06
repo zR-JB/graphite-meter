@@ -153,7 +153,7 @@ fn exhaust(budget: &Budget, spare: usize) -> graphite_meter_server::limits::Leas
 }
 
 #[tokio::test]
-async fn an_exhausted_budget_slows_running_connections_and_closes_one_whose_floor_does_not_fit() {
+async fn an_exhausted_budget_slows_running_connections_and_closes_one_it_cannot_admit() {
     let h3 = H3::start(&[]).await;
     let budget = h3.server.budget.clone();
     let running = h3.connect(transport(None)).await;
@@ -171,7 +171,11 @@ async fn an_exhausted_budget_slows_running_connections_and_closes_one_whose_floo
     let noq::ConnectionError::ConnectionClosed(close) = closed else {
         panic!("{closed:?}")
     };
-    assert_eq!(close.error_code, noq::TransportErrorCode::INTERNAL_ERROR);
+    // The first charge refused decides the code: the handshake's CRYPTO data, which shares the spare with the
+    // endpoint's receive buffers, or the connection's floor.
+    let codes = [noq::TransportErrorCode::INTERNAL_ERROR, noq::TransportErrorCode::CRYPTO_BUFFER_EXCEEDED];
+    assert!(codes.contains(&close.error_code), "{close:?}");
+    assert_eq!(&close.reason[..], b"buffer allocation limit");
     assert_eq!(running.quic.close_reason(), None);
     drop(short);
     assert_eq!(

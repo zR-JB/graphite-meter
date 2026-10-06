@@ -79,11 +79,27 @@ static STYLE: LazyLock<Style> = LazyLock::new(|| {
     let terminal =
         cfg!(unix) && std::io::stderr().is_terminal() && std::env::var_os("TERM").is_some_and(|term| term != "dumb");
     match () {
-        _ if set("JOURNAL_STREAM") => Style::Journal,
+        _ if journal() => Style::Journal,
         _ if !set("NO_COLOR") && (set("FORCE_COLOR") || terminal) => Style::Colour,
         _ => Style::Plain,
     }
 });
+
+/// Whether systemd connected stderr to journald: `JOURNAL_STREAM` names stderr's device and inode, so a child that
+/// inherits the variable with stderr elsewhere does not count.
+#[cfg(target_os = "linux")]
+fn journal() -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let (Ok(stream), Ok(stderr)) = (std::env::var("JOURNAL_STREAM"), std::fs::metadata("/proc/self/fd/2")) else {
+        return false;
+    };
+    stream == format!("{}:{}", stderr.dev(), stderr.ino())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn journal() -> bool {
+    false
+}
 
 pub fn write(level: Level, topic: &str, module: &str, message: fmt::Arguments<'_>) {
     let line = line(level, topic, module, message, &crate::clock::local(SystemTime::now()), *STYLE);

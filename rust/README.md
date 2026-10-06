@@ -165,8 +165,9 @@ User-visible behaviour that deliberately differs from Go's server and TUI.
   `/etc/localtime` (UTC without either), a `DEBUG`, `INFO`, `WARN` or `ERROR` level, a topic and, for warnings and
   errors, the module that wrote them. Messages follow one pattern, `what happened: detail; what to do`, and escape
   control characters. A terminal gets colour and a warning's advice on its own `help:` line, unless `NO_COLOR` is
-  set; `FORCE_COLOR` asks for colour anywhere. Under systemd (`JOURNAL_STREAM`) lines carry a `<N>` priority for
-  journald and no time. Go prints `[gm:topic] message` after its UTC `log` time, without a level.
+  set; `FORCE_COLOR` asks for colour anywhere. When `JOURNAL_STREAM` names stderr, as systemd sets it, lines carry
+  a `<N>` priority for journald and no time. Go prints `[gm:topic] message` after its UTC `log` time, without a
+  level.
 - The server logs `starting`, a configuration summary, `ready`, `stop requested` and `stopped`, each sign-in and
   approval; failed peer handshakes log once a minute at most, with a count of those held back; `memory` lines report
   endpoints the budget does not cover and when receive-window growth pauses or resumes.
