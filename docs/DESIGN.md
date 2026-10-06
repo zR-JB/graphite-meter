@@ -186,17 +186,17 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   shown run ran it. Each stage: during its warmup the ring's track takes a faint tint of
   its hue and the console's light from above (`--ambient`) shifts to it; when it starts measuring, the needle rises
   from zero (520 ms, eased out); when it ends, the needle drains back to zero (300 ms) and blends into the next
-  stage's hue on the way down. End: the last needle drains, and the result sweep starts as it reaches zero.
+  stage's hue on the way down. End: the last needle holds, and the result takes the ring over where it stands.
 - A stage starting is one wave from the chips down: the chip's edge and bar first, the dial's figure and the
   stage's name hand off together, the population's row in the lanes washes in its hue a beat later on its own layer,
   and two beats after the chip the card's edge eases in and its glow arrives in one step (a blurred shadow is
   never faded frame by frame).
 - A stage settling: its chip's check pops on the spring; its card lays its facts down one row after another
   (`row-in`, 40 ms apart); a measured span in the lanes grows from its middle the first time it is drawn.
-- The result replays the run on the dial as one sweep from zero over 0.9 s (`--sweep`), once the last needle has
-  drained (`--drain`): every result's arc shows
-  up to the shared front, so the front changes hue as it passes each shorter result, and each bead pops on the
-  spring as the front reaches it.
+- The result sweeps the dial once as it arrives, on from where the last needle stood (`--from`), in that share of
+  0.9 s and no less than 0.36 s, so the ring never runs back before it fills: every result's arc shows up to the
+  shared front, so the front changes hue as it passes each shorter result, and each bead pops on the spring as the
+  front reaches it. A result with no needle before it sweeps from zero.
 - A press never moves what it presses: a key's or a chip's hit box stays put, so a press near its edge still
   lands. The key's fill deepens and its glyph gives (0.82) and springs back; the run key's and a chip's content
   give a little (0.975, 0.96).
