@@ -210,37 +210,24 @@ fn trusted_proxies_take_go_prefixes_without_default_routes() {
 
 #[test]
 fn limits_are_positive_and_nested() {
-    for (env, message) in [
+    for (setting, value, rule) in [
+        ("GM_MAX_ACTIVE_MEASUREMENTS", "0", "must be greater than zero"),
+        ("GM_MAX_SESSIONS_PER_CLIENT", "0", "must be greater than zero"),
+        ("GM_MAX_CONNECTIONS_PER_CLIENT", "0", "must be greater than zero"),
         (
-            ("GM_MAX_ACTIVE_MEASUREMENTS", "0"),
-            "GM_MAX_ACTIVE_MEASUREMENTS must be greater than zero",
+            "GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT",
+            "257",
+            "must not exceed GM_MAX_ACTIVE_MEASUREMENTS",
         ),
+        ("GM_MAX_ACTIVE_SESSIONS", "257", "must not exceed GM_MAX_ACTIVE_MEASUREMENTS"),
         (
-            ("GM_MAX_SESSIONS_PER_CLIENT", "0"),
-            "GM_MAX_SESSIONS_PER_CLIENT must be greater than zero",
+            "GM_MAX_SESSIONS_PER_CLIENT",
+            "33",
+            "must not exceed GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT",
         ),
-        (
-            ("GM_MAX_CONNECTIONS_PER_CLIENT", "0"),
-            "GM_MAX_CONNECTIONS_PER_CLIENT must be greater than zero",
-        ),
-        (
-            ("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", "257"),
-            "GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT must not exceed GM_MAX_ACTIVE_MEASUREMENTS",
-        ),
-        (
-            ("GM_MAX_ACTIVE_SESSIONS", "257"),
-            "GM_MAX_ACTIVE_SESSIONS must not exceed GM_MAX_ACTIVE_MEASUREMENTS",
-        ),
-        (
-            ("GM_MAX_SESSIONS_PER_CLIENT", "33"),
-            "GM_MAX_SESSIONS_PER_CLIENT must not exceed GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT",
-        ),
-        (
-            ("GM_MAX_CONNECTIONS_PER_CLIENT", "4097"),
-            "GM_MAX_CONNECTIONS_PER_CLIENT must not exceed GM_MAX_CONNECTIONS",
-        ),
+        ("GM_MAX_CONNECTIONS_PER_CLIENT", "4097", "must not exceed GM_MAX_CONNECTIONS"),
     ] {
-        assert_eq!(error(&[env], &[]), message);
+        assert_eq!(error(&[(setting, value)], &[]), format!("{setting} {rule}"));
     }
     let env = [("GM_MAX_ACTIVE_SESSIONS", "4"), ("GM_MAX_SESSIONS_PER_CLIENT", "5")];
     assert_eq!(error(&env, &[]), "GM_MAX_SESSIONS_PER_CLIENT must not exceed GM_MAX_ACTIVE_SESSIONS");
@@ -275,31 +262,21 @@ fn listeners_need_distinct_addresses_and_tls_files() {
 #[test]
 fn origins_follow_their_listener_schemes_and_roles() {
     let tls = with_tls(&[("GM_H2_ADDR", ":8444")]);
+    let scheme = |setting: &str, scheme: &str| format!("{setting} must be an origin with {scheme} scheme");
+    let invalid = |setting: &str, value: &str| format!("{setting} contains invalid origin \"{value}\"");
     for (setting, value, message) in [
-        (
-            "GM_H1_PUBLIC_ORIGIN",
-            "https://a.example",
-            "GM_H1_PUBLIC_ORIGIN must be an origin with http scheme",
-        ),
-        (
-            "GM_H2_PUBLIC_ORIGIN",
-            "http://a.example",
-            "GM_H2_PUBLIC_ORIGIN must be an origin with https scheme",
-        ),
-        (
-            "GM_H2_PUBLIC_ORIGIN",
-            "https://a.example/x",
-            "GM_H2_PUBLIC_ORIGIN must be an origin with https scheme",
-        ),
+        ("GM_H1_PUBLIC_ORIGIN", "https://a.example", scheme("GM_H1_PUBLIC_ORIGIN", "http")),
+        ("GM_H2_PUBLIC_ORIGIN", "http://a.example", scheme("GM_H2_PUBLIC_ORIGIN", "https")),
+        ("GM_H2_PUBLIC_ORIGIN", "https://a.example/x", scheme("GM_H2_PUBLIC_ORIGIN", "https")),
         (
             "GM_PUBLIC_ORIGINS",
             "self,https://a.example:0",
-            "GM_PUBLIC_ORIGINS contains invalid origin \"https://a.example:0\"",
+            invalid("GM_PUBLIC_ORIGINS", "https://a.example:0"),
         ),
         (
             "GM_PUBLIC_LATENCY_ORIGINS",
             "a.example",
-            "GM_PUBLIC_LATENCY_ORIGINS contains invalid origin \"a.example\"",
+            invalid("GM_PUBLIC_LATENCY_ORIGINS", "a.example"),
         ),
     ] {
         let mut env = tls.clone();
