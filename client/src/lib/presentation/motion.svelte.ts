@@ -37,6 +37,7 @@ const SHEET_EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
 // As `--dur-sheet`, which keeps a closing sheet displayed while it leaves.
 const SHEET_MS = 320;
 /** The rendered elements marked `data-flip`, by key; an element that is not displayed has no place. */
+let flipping = false;
 const boxes = (only?: readonly string[]) =>
   new Map(
     Array.from(document.querySelectorAll<HTMLElement>("[data-flip]"))
@@ -51,15 +52,21 @@ const boxes = (only?: readonly string[]) =>
     things never share a place: a leaving one goes at once and its neighbours close over it, and an arriving one
     waits for its neighbours to make room, then rises in. An element with `data-flip-edge` (`left` or `right`)
     is a sheet: it slides in from beyond that edge and back out, without overshoot. `only`
-    names the keys that move, so a change can move a surface as one rather than each part on its own. */
+    names the keys that move, so a change can move a surface as one rather than each part on its own. A flip
+    within a flip is part of the outer one. */
 export function flip(update: () => void, only?: readonly string[]): void {
-  if (still() || globalThis.document?.hidden !== false) {
+  if (flipping || still() || globalThis.document?.hidden !== false) {
     update();
     return;
   }
   const before = boxes(only);
-  update();
-  flushSync();
+  flipping = true;
+  try {
+    update();
+    flushSync();
+  } finally {
+    flipping = false;
+  }
   const after = boxes(only);
   const arriving: HTMLElement[] = [];
   let moved = false;

@@ -673,14 +673,14 @@ export function createApplicationController(
       }
     }
     cancelPendingStart();
-    store.config = config;
-    store.startError = "";
-    if (!store.isRunning) {
-      selectIntent();
-      return true;
-    }
-    if (store.run)
-      store.run = { ...store.run, config: { ...store.run.config, ...live } };
+    // Whatever asked for it, a change that reshapes the console moves it the same way.
+    flip(() => {
+      store.config = config;
+      store.startError = "";
+      if (store.isRunning && store.run)
+        store.run = { ...store.run, config: { ...store.run.config, ...live } };
+    });
+    if (!store.isRunning) selectIntent();
     return true;
   }
   function dispose() {

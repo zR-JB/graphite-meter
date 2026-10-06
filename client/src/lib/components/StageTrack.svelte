@@ -20,7 +20,7 @@
   import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
   import type { StageKey } from "../state/store.svelte";
   import { planned, STAGES } from "../runner/schedule";
-  import { flip, handoff, type Handoff } from "../presentation/motion.svelte";
+  import { handoff, type Handoff } from "../presentation/motion.svelte";
   import type { Snippet } from "svelte";
 
   /** The run key, set over the chips as wide as their row. */
@@ -155,7 +155,7 @@
             : ''}"
         use:tooltipAction={s.tip}
         disabled={s.locked}
-        onclick={() => flip(() => controller.toggleStage(s.key))}
+        onclick={() => controller.toggleStage(s.key)}
       >
         <span class="chip-bar" aria-hidden="true">
           <span
