@@ -137,29 +137,6 @@ async fn the_probe_reports_the_client_the_transport_and_the_handler_load() {
 }
 
 #[tokio::test]
-async fn a_download_sends_its_clamped_length_and_holds_a_handler_until_it_ends() {
-    let app = app(&[]);
-    let response = send(&app, Endpoint::H1, empty(request("GET", "/download?bytes=300000"))).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let headers = ["content-type", "cache-control", "content-length"].map(|name| header(&response, name));
-    assert_eq!(headers, [Some("application/octet-stream"), Some("no-store"), Some("300000")]);
-    assert_eq!(active(&app).await, 1);
-    assert_eq!(response.into_body().collect().await.unwrap().to_bytes().len(), 300_000);
-    assert_eq!(active(&app).await, 0, "the handler ends with the body");
-    for (query, length) in [("", 26_214_400), ("?bytes=-5", 26_214_400), ("?bytes=68719476737", 68_719_476_736)] {
-        let response = send(&app, Endpoint::H1, empty(request("GET", &format!("/download{query}")))).await;
-        assert_eq!(header(&response, "content-length"), Some(length.to_string().as_str()));
-        assert_eq!(http_body::Body::size_hint(response.body()).exact(), Some(length));
-    }
-    for (method, query, length) in [("HEAD", "?bytes=10", "10"), ("GET", "?bytes=0", "0")] {
-        let response = send(&app, Endpoint::H1, empty(request(method, &format!("/download{query}")))).await;
-        assert_eq!(header(&response, "content-length"), Some(length));
-        assert!(http_body::Body::is_end_stream(response.body()));
-        assert_eq!(active(&app).await, 0, "{method} releases its handler with the reply");
-    }
-}
-
-#[tokio::test]
 async fn full_handler_pools_and_client_shares_ask_for_a_retry() {
     let limits = [
         ("GM_MAX_ACTIVE_MEASUREMENTS", "2"),

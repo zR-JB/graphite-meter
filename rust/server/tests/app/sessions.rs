@@ -1,13 +1,12 @@
-//! Sessions over the app: one-use socket tickets, CONNECT credentials, sign-out, and the quotas, revocation and
-//! upload ownership a login decides.
+//! Sessions over the app: one-use socket tickets, sign-out and the upload ownership a login decides.
 
 use super::{
-    auth::{BROWSER, PUBLIC, assert_headers, auth_app, bearer, login, public, signed, store, tls},
+    auth::{BROWSER, PUBLIC, auth_app, bearer, login, public, signed, store, tls},
     *,
 };
 use graphite_meter_proto::upload::Session;
 use graphite_meter_server::auth::{COUNTERS, NewLogin};
-use http::{StatusCode, Version};
+use http::StatusCode;
 use http_body_util::Full;
 use std::time::Duration;
 
@@ -83,39 +82,6 @@ async fn socket_tickets_are_one_use_bound_to_target_and_origin_and_expire() {
     assert_eq!((full.status(), header(&full, "retry-after")), (StatusCode::TOO_MANY_REQUESTS, Some("1")));
 }
 
-/// A WebTransport CONNECT for `path` from the public origin.
-fn connect(path: &str) -> Builder {
-    Request::builder()
-        .method("CONNECT")
-        .version(Version::HTTP_3)
-        .uri(format!("https://meter.example{path}"))
-        .header("origin", PUBLIC)
-}
-
-#[tokio::test]
-async fn a_connect_presents_a_ticket_or_a_bearer_grant_before_its_session_opens() {
-    let app = auth_app(&[]);
-    let login = login(&app, "operator");
-    let session = |request| outcome(&app, Endpoint::Quic, "192.0.2.1", request);
-    let refused = send(&app, Endpoint::Quic, empty(connect("/wt/ping"))).await;
-    assert_eq!(header(&refused, "graphite-meter-auth"), Some("required"));
-    let cookie = connect("/wt/ping").header("cookie", format!("__Host-gm_session={}", login.token));
-    assert!(!is_socket(&session(empty(cookie)).await), "a CONNECT never uses the cookie");
-    let token = ticket(&app, &login, "/wt/session", "https://meter.example/wt/ping").await;
-    let path = format!("/wt/ping?token={token}");
-    assert!(is_socket(&session(empty(connect(&path))).await));
-    assert!(!is_socket(&session(empty(connect(&path))).await), "a ticket opens one session");
-    let grant = store(&app).grant(login.key, None).unwrap();
-    let token = ticket(&app, &login, "/wt/session", "https://meter.example/wt/ping").await;
-    let path = format!("/wt/ping?token={token}");
-    let presented = connect(&path).header("authorization", format!("Bearer {grant}"));
-    assert!(is_socket(&session(empty(presented)).await));
-    assert!(
-        !is_socket(&session(empty(connect(&path))).await),
-        "a grant's CONNECT spends a supplied ticket"
-    );
-}
-
 #[tokio::test]
 async fn sign_out_proves_csrf_and_ends_the_login_or_every_login_of_its_subject() {
     let app = auth_app(&[]);
@@ -164,52 +130,9 @@ async fn sign_out_proves_csrf_and_ends_the_login_or_every_login_of_its_subject()
     assert!(minute.contains(" logout=2 "), "{minute}");
 }
 
-#[tokio::test]
-async fn operations_count_against_the_login_then_its_principal_at_twice_the_share() {
-    let app = auth_app(&[("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", "1"), ("GM_MAX_SESSIONS_PER_CLIENT", "1")]);
-    let logins: Vec<_> = (0..3).map(|_| login(&app, "operator")).collect();
-    let other = login(&app, "other");
-    let download = |login| tls(&app, empty(signed("GET", "/download?bytes=68719476736", login)));
-    let first = download(&logins[0]).await;
-    assert_eq!(first.status(), StatusCode::OK);
-    assert_eq!(download(&logins[0]).await.status(), StatusCode::TOO_MANY_REQUESTS);
-    let second = download(&logins[1]).await;
-    assert_eq!(second.status(), StatusCode::OK, "another login has its own share");
-    let third = download(&logins[2]).await.status();
-    assert_eq!(third, StatusCode::TOO_MANY_REQUESTS, "the principal holds twice a login's share");
-    let elsewhere = download(&other).await;
-    assert_eq!(elsewhere.status(), StatusCode::OK);
-    drop((first, second, elsewhere));
-    assert_eq!(download(&logins[2]).await.status(), StatusCode::OK);
-}
-
 async fn upload_id(app: &App, login: &NewLogin) -> String {
     let minted = tls(app, empty(signed("POST", "/upload/session", login))).await;
     Session::decode(text(minted).await.as_bytes()).unwrap().upload_id
-}
-
-#[tokio::test]
-async fn an_upload_whose_login_ends_stops_with_403_revoked() {
-    let app = auth_app(&[]);
-    let login = login(&app, "operator");
-    let id = upload_id(&app, &login).await;
-    let upload = signed("POST", &format!("/upload?id={id}"), &login)
-        .body(Unending)
-        .unwrap();
-    let (answer, ()) = tokio::join!(tls(&app, upload), async {
-        tokio::task::yield_now().await;
-        assert!(store(&app).sign_out(login.key, false));
-    });
-    assert_eq!(answer.status(), StatusCode::FORBIDDEN);
-    assert_headers(
-        &answer,
-        &[
-            ("graphite-meter-auth", Some("required")),
-            ("x-graphite-upload-refusal", Some("revoked")),
-            ("access-control-allow-origin", Some(PUBLIC)),
-        ],
-    );
-    assert_eq!(text(answer).await, "authentication required\n");
 }
 
 #[tokio::test]

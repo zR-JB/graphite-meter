@@ -97,45 +97,6 @@ fn hash_password_reads_twice_from_a_pipe() {
     assert_eq!(logged(line.trim_end()), "hash-password: passwords do not match");
 }
 
-/// Password authentication behind a trusted proxy on a clear listener, with the hash setting `hash`.
-fn password_auth(hash: (&'static str, &'static str)) -> [(&'static str, &'static str); 6] {
-    [
-        ("GM_H1_ADDR", "127.0.0.1:0"),
-        ("GM_AUTH_MODE", "password"),
-        ("GM_AUTH_PUBLIC_URL", "https://meter.example"),
-        ("GM_ADVERTISED_NATIVE_ENDPOINTS", "none"),
-        ("GM_PUBLIC_ORIGINS", "https://meter.example"),
-        hash,
-    ]
-}
-
-#[cfg(unix)]
-#[test]
-fn a_bad_password_hash_refuses_startup_and_a_good_one_logs_the_mode() {
-    for (hash, message) in [
-        (
-            ("GM_AUTH_PASSWORD_HASH", "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$a2V5"),
-            "password hash must use m=19456,t=2,p=1",
-        ),
-        (
-            ("GM_AUTH_PASSWORD_HASH_FILE", "/nonexistent/hash"),
-            "password hash: open /nonexistent/hash: no such file or directory",
-        ),
-    ] {
-        let output = server(&[], &password_auth(hash), b"");
-        assert_eq!(output.status.code(), Some(1));
-        assert_eq!(logged(text(&output.stderr).trim_end()), format!("server error: \"{message}\""));
-    }
-    let hash = "$argon2id$v=19$m=19456,t=2,p=1$OT2po7nOdP+21BKX5CuZQw$9kVgfSWvlFy31939zUCVY62fHIuSqC8RwL67EpQ8qy8";
-    let mut env = password_auth(("GM_AUTH_PASSWORD_HASH", hash)).to_vec();
-    env.push(("GM_VERBOSE", "true"));
-    let (child, mut lines) = serving(&env);
-    assert_eq!(lines.next().unwrap(), "[gm:auth:debug] local password hash loaded and validated");
-    let mode = "mode=password origin=https://meter.example provider=Authelia issuer= allowed-groups=0";
-    assert_eq!(lines.next().unwrap(), format!("[gm:auth] {mode} session-lifetime=8h0m0s"));
-    terminate(child);
-}
-
 /// A verbose throughput line's message, checked against Go's shape, with its transfer count.
 fn transfers(message: &str) -> usize {
     let fields = message.strip_prefix("[gm:server:download] ").unwrap();

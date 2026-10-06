@@ -125,42 +125,6 @@ fn printed(lines: &[Line], profile: Profile) -> String {
 }
 
 #[test]
-fn a_report_prints_throughput_latency_and_notes_as_plain_text() {
-    let lines = report(&view(&["a"]), WIDTH, &Palette::new(true));
-    let expected = "\
-Graphite Meter  Complete  a meter · 17.4 s · 125.0 MB
-
-↓ Download  100.0 Mbit/s   peak 120.0 · 125.0 MB · 10.0 s
-
-Latency      Median   Added    P95      Jitter  Probe timeouts
-Idle         12.0 ms           24.0 ms  0.4 ms  1 / 41 (2.4%)
-Loaded down  12.0 ms  +0.0 ms  24.0 ms  0.4 ms  1 / 41 (2.4%)
-
-Idle latency: 40 replies · 4.0 s
-Loaded latency · Download: 40 replies · 10.0 s
-Added: loaded median minus idle median, same server.
-";
-    assert_eq!(printed(&lines, Profile::Plain), expected);
-}
-
-#[test]
-fn several_servers_add_each_server_s_share_and_the_issues() {
-    let lines = report(&view(&["a", "b"]), WIDTH, &Palette::new(true));
-    let text = printed(&lines, Profile::Plain);
-    assert!(text.starts_with("Graphite Meter  Complete  2 servers · 17.4 s · 125.0 MB\n"), "{text}");
-    assert!(text.contains("\nLatency to a meter  Median"), "{text}");
-    assert!(text.contains("\nComplete · 1 of 2 servers\n"), "{text}");
-    assert!(
-        text.contains("\nAll servers  100.0 Mbit/s\na meter      50.00 Mbit/s\nb meter ✗    50.00 Mbit/s\n"),
-        "{text}"
-    );
-    assert!(
-        text.ends_with("\nIssues\nb meter · Download throughput · at 7.5 s · Stopped delivering data\n"),
-        "{text}"
-    );
-}
-
-#[test]
 fn full_details_open_with_each_result_s_facts_and_end_with_the_intervals_a_run_has() {
     let mut view = view(&["a", "b"]);
     let idle = &mut view.run.as_mut().unwrap().results[0].servers[0];

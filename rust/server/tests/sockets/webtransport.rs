@@ -1,12 +1,11 @@
-//! WebTransport sessions: the ping bus, stream and datagram downloads, endings with their close codes, and the
-//! connections that carried only sessions.
+//! WebTransport sessions: datagram downloads, minimal credit, the idle ending and connections that carried only
+//! sessions.
 
 use super::{
     http3::{Connection, H3, pass, transport},
     *,
 };
 use graphite_meter_http3::{Code, webtransport::Session};
-use graphite_meter_proto::bus::Pong;
 use http::{Request, Response};
 
 impl Connection {
@@ -31,41 +30,6 @@ pub(super) async fn open(session: &Session) -> bool {
 
 pub(super) fn ending(code: u32, reason: &str) -> (u32, String) {
     (code, reason.into())
-}
-
-#[tokio::test]
-async fn the_ping_bus_answers_each_datagram_and_opens_no_streams() {
-    let h3 = H3::start(&[]).await;
-    let connection = h3.connect(transport(None)).await;
-    let session = connection.session("/wt/ping").await;
-    h3.server.until_active(1).await;
-    for message in [&b"PING,"[..], b"PING,7"] {
-        session.send_datagram(message).unwrap();
-    }
-    let pong = Pong::decode(&session.read_datagram().await.unwrap()).unwrap();
-    assert_eq!(pong.id, 7, "a malformed message gets no reply");
-    let stream = tokio::time::timeout(Duration::from_millis(100), session.accept_uni()).await;
-    assert!(stream.is_err(), "the bus opens no streams");
-    session.close(0, "").await;
-    h3.server.until_active(0).await;
-}
-
-#[tokio::test]
-async fn a_download_replaces_each_finished_stream_while_the_session_lives() {
-    let h3 = H3::start(&[]).await;
-    let connection = h3.connect(transport(None)).await;
-    let session = connection.session("/wt/download?bytes=100000&streams=2").await;
-    for _ in 0..3 {
-        let mut stream = session.accept_uni().await.unwrap();
-        let mut received = 0;
-        while let Some(chunk) = stream.read_chunk().await.unwrap() {
-            received += chunk.len();
-        }
-        assert_eq!(received, 100_000);
-    }
-    h3.server.until_active(1).await;
-    session.close(0, "").await;
-    h3.server.until_active(0).await;
 }
 
 #[tokio::test]

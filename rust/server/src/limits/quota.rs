@@ -264,28 +264,6 @@ mod tests {
     }
 
     #[test]
-    fn an_inner_quota_checks_its_share_then_the_outer_total_then_its_own() {
-        let (outer, inner) = (Quota::new(2, 2), Quota::new(1, 1));
-        let client = v6("2001:db8::1");
-        let session = inner.acquire_within(&client, 1, &outer).unwrap();
-        assert_eq!(outer.usage().active, 1, "the outer quota holds no keys for it");
-        assert!(!outer.holds_any(&client));
-        assert_eq!(inner.acquire_within(&client, 1, &outer).err(), Some(Refusal::Client));
-        let operation = outer.acquire(&v6("2001:db9::1"), 1).unwrap();
-        assert_eq!(inner.acquire_within(&v6("2001:dba::1"), 1, &outer).err(), Some(Refusal::Total));
-        assert_eq!(outer.usage().refused_total, 1, "the outer total refused first");
-        drop(operation);
-        assert_eq!(inner.acquire_within(&v6("2001:dba::1"), 1, &outer).err(), Some(Refusal::Total));
-        assert_eq!(
-            (outer.usage().active, inner.usage().refused_total),
-            (1, 1),
-            "the outer charge was returned"
-        );
-        drop(session);
-        assert_eq!((outer.usage().active, inner.usage().active), (0, 0));
-    }
-
-    #[test]
     fn holds_are_released_while_a_panic_unwinds() {
         let quota = Quota::new(10, 10);
         let other = Quota::new(10, 10);

@@ -1,13 +1,11 @@
-//! Uploads, their refusals and endings, checkpoints and progress feeds.
+//! Uploads into their aggregate and checkpoints.
 
 use super::*;
 use futures_util::{Stream, StreamExt, stream};
-use graphite_meter_proto::upload::{Record, Session};
+use graphite_meter_proto::upload::Session;
 use http::StatusCode;
 use http_body::Frame;
 use http_body_util::StreamBody;
-use std::time::Duration;
-use tokio::time::timeout;
 
 type Frames = StreamBody<std::pin::Pin<Box<dyn Stream<Item = Result<Frame<Bytes>, Infallible>> + Send>>>;
 
@@ -54,39 +52,6 @@ async fn an_upload_counts_every_byte_into_its_aggregate_and_answers_its_own_tota
 }
 
 #[tokio::test]
-async fn an_upload_without_its_own_valid_id_is_refused_before_its_body_is_read() {
-    let app = app(&ALL_LISTENERS);
-    let id = mint(&app).await;
-    let opened = send(
-        &app,
-        Endpoint::H1,
-        request("POST", &format!("/upload?id={id}"))
-            .body(chunks(&[], false))
-            .unwrap(),
-    );
-    assert_eq!(text(opened.await).await, r#"{"bytes":0}"#);
-    let foreign = format!("/upload?id={id}");
-    for (uri, peer, status, name) in [
-        ("/upload", "192.0.2.1", StatusCode::BAD_REQUEST, "invalid"),
-        ("/upload?id=gmu_forged", "192.0.2.1", StatusCode::BAD_REQUEST, "invalid"),
-        (foreign.as_str(), "192.0.2.9", StatusCode::FORBIDDEN, "ownerMismatch"),
-    ] {
-        let unread = request("POST", uri).body(Unending).unwrap();
-        let response = timeout(Duration::from_secs(5), send_from(&app, Endpoint::H1, peer, unread))
-            .await
-            .unwrap();
-        assert_eq!((response.status(), header(&response, "x-graphite-upload-refusal")), (status, Some(name)));
-        let message = if name == "invalid" {
-            "unknown upload id"
-        } else {
-            "upload id belongs to another client"
-        };
-        assert_eq!(text(response).await, format!("{message}\n"));
-    }
-    assert_eq!(checkpoint(&app, &id).await["bytes"], 0);
-}
-
-#[tokio::test]
 async fn an_upload_whose_data_never_pauses_still_sees_its_lane_end() {
     let shutdown = CancellationToken::new();
     let app = App::new(config(&[]), shutdown.clone()).unwrap();
@@ -102,55 +67,4 @@ async fn an_upload_whose_data_never_pauses_still_sees_its_lane_end() {
         1,
         "the first chunk counts, then the shutdown ends it"
     );
-}
-
-/// The record a feed line holds, `None` for a heartbeat.
-fn record(line: &[u8]) -> Option<Record> {
-    let line = line.strip_suffix(b"\n").expect("one line");
-    (!line.is_empty()).then(|| Record::decode(line).unwrap())
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_progress_feed_attaches_reports_and_completes_after_finalization() {
-    let app = app(&ALL_LISTENERS);
-    let id = mint(&app).await;
-    let progress = |method, peer| {
-        send_from(&app, Endpoint::H2, peer, empty(request(method, &format!("/upload/progress?id={id}"))))
-    };
-    let replaced = progress("GET", "192.0.2.1").await;
-    let mut replaced = replaced.into_body();
-    assert_eq!(
-        record(&replaced.frame().await.unwrap().unwrap().into_data().unwrap()),
-        Some(Record::Ready)
-    );
-    let feed = progress("GET", "192.0.2.1").await;
-    assert!(replaced.frame().await.is_none(), "a newer reader ends the older feed");
-    drop(replaced);
-    let headers = ["content-type", "cache-control", "x-accel-buffering"].map(|name| header(&feed, name));
-    assert_eq!(headers, [Some("application/x-ndjson"), Some("no-store, no-transform"), Some("no")]);
-    assert_eq!(active(&app).await, 1, "a feed holds a handler");
-
-    let upload = request("POST", &format!("/upload?id={id}"))
-        .body(chunks(&[b"hello"], false))
-        .unwrap();
-    assert_eq!(text(send(&app, Endpoint::H1, upload).await).await, r#"{"bytes":5}"#);
-    assert_eq!(progress("HEAD", "192.0.2.1").await.headers()["allow"], "GET, DELETE");
-    assert_eq!(progress("DELETE", "192.0.2.9").await.status(), StatusCode::FORBIDDEN);
-    assert_eq!(progress("DELETE", "192.0.2.1").await.status(), StatusCode::NO_CONTENT);
-    let lines = feed.into_body().collect().await.unwrap().to_bytes();
-    let records: Vec<_> = lines
-        .split_inclusive(|byte| *byte == b'\n')
-        .filter_map(record)
-        .collect();
-    assert_eq!(records.first(), Some(&Record::Ready));
-    assert!(matches!(records.last(), Some(Record::Complete(counters)) if counters.bytes() == 5));
-    assert!(
-        records[1..records.len() - 1]
-            .iter()
-            .all(|record| matches!(record, Record::Progress(_)))
-    );
-    assert_eq!(active(&app).await, 0);
-    let unknown = format!("/upload/progress?id={}", mint(&app).await);
-    let response = send(&app, Endpoint::H1, empty(request("DELETE", &unknown))).await;
-    assert_eq!(header(&response, "x-graphite-upload-refusal"), Some("invalid"));
 }

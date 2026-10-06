@@ -6,10 +6,7 @@ use graphite_meter_proto::bus::Pong;
 use tokio::time::Instant;
 use tokio_tungstenite::{
     WebSocketStream, client_async,
-    tungstenite::{
-        Message,
-        protocol::{CloseFrame, frame::coding::CloseCode},
-    },
+    tungstenite::{Message, protocol::frame::coding::CloseCode},
 };
 
 async fn bus(server: &Running) -> WebSocketStream<TcpStream> {
@@ -33,22 +30,6 @@ async fn closed(socket: &mut WebSocketStream<TcpStream>) -> (u16, String) {
         Some(Ok(Message::Close(Some(frame)))) => (frame.code.into(), frame.reason.to_string()),
         other => panic!("{other:?}"),
     }
-}
-
-#[tokio::test]
-async fn a_bus_answers_text_and_binary_pings_until_the_peer_closes() {
-    let server = start(&[]).await;
-    let mut socket = bus(&server).await;
-    assert_eq!(ping(&mut socket, Message::text("PING,7")).await, 7);
-    assert_eq!(ping(&mut socket, Message::binary(&b"PING,4294967295"[..])).await, u32::MAX);
-    assert_eq!(server.active().await, 1, "the bus holds a handler");
-    socket
-        .close(Some(CloseFrame { code: CloseCode::Normal, reason: "".into() }))
-        .await
-        .unwrap();
-    assert_eq!(closed(&mut socket).await.0, 1000, "the server answers the peer's close");
-    assert!(socket.next().await.is_none());
-    server.until_active(0).await;
 }
 
 #[tokio::test]

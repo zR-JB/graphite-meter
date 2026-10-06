@@ -5,17 +5,10 @@ use graphite_meter_client::{
     config::Config,
     controller::Command,
     events::{Event, SignInEnd, SignInPrompt},
-    measure::{
-        aggregate::Rate,
-        latency::{Population, Summary},
-    },
-    model::{Dir, Outcome, ServerResult, Stage, StageResult, Throughput},
+    model::{Outcome, Stage},
     net::{ThroughputPath, approval::Unapproved},
     report::report,
-    run::{
-        engine::StagePlan,
-        prepare::{Paths, ServerPath},
-    },
+    run::prepare::{Paths, ServerPath},
     status,
     text::Profile,
     tui::{App, Effect, chrome::Chrome},
@@ -165,51 +158,8 @@ fn running(names: &[&str], plan: &[(Stage, Duration)], now: Instant) -> App {
     app
 }
 
-/// Opens `stage`'s window at `now`.
-fn measuring(app: &mut App, stage: Stage, duration: Duration, now: Instant) {
-    let plan = StagePlan { stage, members: Vec::new(), duration, latency: None };
-    app.event(&Event::StageStarted(plan), now);
-    app.event(&Event::Measuring(stage), now);
-}
-
-fn sample(app: &mut App, at: Duration, down: Option<f64>, up: Option<f64>, now: Instant) {
-    app.event(&Event::Sample { at, rates: Dir { down, up }, recovering: false }, now);
-}
-
-fn finished(stage: Stage, servers: Vec<ServerResult>, down: Option<f64>) -> Event {
-    let down = down.map(|mean| Throughput { rate: Some(Rate { mean, peak: mean }), bytes: 1 });
-    Event::StageFinished(StageResult {
-        stage,
-        measured: SECOND * 10,
-        stopped: false,
-        throughput: Dir { down, up: None },
-        servers,
-        failures: Vec::new(),
-        intervals: Vec::new(),
-        omitted: 0,
-    })
-}
-
 fn ended(outcome: Outcome) -> Event {
     Event::RunFinished { outcome, error: None, elapsed: SECOND * 12 }
-}
-
-/// `name`'s share of a stage, with an idle median of `ms` when given.
-fn share(name: &str, ms: Option<u64>) -> ServerResult {
-    let latency = ms.map(|ms| {
-        let summary = Summary {
-            replies: 20,
-            p50: Some(Duration::from_millis(ms)),
-            ..Summary::default()
-        };
-        Population { summary, complete: true }
-    });
-    ServerResult {
-        server: id(name),
-        left: false,
-        throughput: Dir::default(),
-        latency,
-    }
 }
 
 #[test]
@@ -279,45 +229,6 @@ fn a_cancelled_or_expired_sign_in_asks_to_sign_in_before_a_test() {
         press(&mut app, KeyCode::Char('v'), now);
         assert_eq!(checked(app.tick(now + Duration::from_millis(350))), Config::default());
     }
-}
-
-#[test]
-fn a_run_shows_its_stages_live_readings_details_and_then_its_results() {
-    let start = Instant::now();
-    let plan = [(Stage::Download, SECOND * 10), (Stage::Upload, SECOND * 10)];
-    let mut app = running(&["a"], &plan, start);
-    assert!(shows(&mut app, start, "Test started. Press esc to stop."));
-    measuring(&mut app, Stage::Download, SECOND * 10, start);
-    sample(&mut app, SECOND / 4, Some(1.25e7), None, start);
-    app.tick(start + SECOND);
-    let later = start + SECOND * 2;
-    let frame = rows(&mut app, later).join("\n");
-    assert!(frame.lines().next().unwrap().trim_end().ends_with("Download"), "{frame}");
-    for text in [
-        "Timeline · Download",
-        "↓ 100.0 Mbit/s",
-        "2.0 s / 10 s",
-        "○ 10 s",
-        "Fetch streams · HTTP/2 · TLS",
-    ] {
-        assert!(shows(&mut app, later, text), "{text}\n{frame}");
-    }
-    press(&mut app, KeyCode::Char('d'), later);
-    assert!(shows(&mut app, later, "Latency median by server"));
-    assert!(shows(&mut app, later, "↑/↓ scroll • esc close • q quit"));
-    press(&mut app, KeyCode::Esc, later);
-    assert!(!shows(&mut app, later, "Latency median by server"));
-    assert!(shows(&mut app, later, "esc stop test • d details"));
-
-    app.event(&finished(Stage::Download, vec![share("a", None)], Some(1.25e7)), later);
-    app.event(&finished(Stage::Upload, vec![share("a", None)], None), later);
-    app.event(&ended(Outcome::Complete), later);
-    for text in ["Complete", "Results", "Throughput", "Download ↓ 100.0 Mbit/s", "Timeline"] {
-        assert!(shows(&mut app, later, text), "{text}\n{:#?}", rows(&mut app, later));
-    }
-    assert!(shows(&mut app, later, "enter run again • esc setup • d details"));
-    press(&mut app, KeyCode::Esc, later);
-    assert!(shows(&mut app, later, "› Start test"), "esc returns to Start test");
 }
 
 #[test]

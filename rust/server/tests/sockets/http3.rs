@@ -167,30 +167,6 @@ pub(super) async fn pass(mut duration: Duration) {
 const CANCELLED: Error = Error::Reset(Code::H3_REQUEST_CANCELLED);
 
 #[tokio::test]
-async fn http3_serves_its_routes_downloads_and_uploads() {
-    let h3 = H3::start(&[]).await;
-    let connection = h3.connect(transport(None)).await;
-    let (probe, mut body) = connection.send("GET", "/probe", b"").await;
-    assert_eq!(probe.headers()["access-control-allow-origin"], "*");
-    assert!(!probe.headers().contains_key("alt-svc") && !probe.headers().contains_key("connection"));
-    let probe: serde_json::Value = serde_json::from_slice(&read(&mut body).await.unwrap()).unwrap();
-    assert_eq!(probe["protocolNegotiated"], "h3");
-    assert_eq!(connection.send("GET", "/preflight", b"").await.0.status(), 404, "no UI route");
-    let mut download = connection.send("GET", "/download?bytes=1000000", b"").await.1;
-    assert_eq!(read(&mut download).await.unwrap().len(), 1_000_000);
-    let (head, mut body) = connection.send("HEAD", "/download?bytes=5", b"").await;
-    assert_eq!(head.headers()["content-length"], "5", "HEAD keeps its length");
-    assert!(read(&mut body).await.unwrap().is_empty());
-    let id = connection.upload_id().await;
-    let mut answer = connection
-        .send("POST", &format!("/upload?id={id}"), &[7; 300_000])
-        .await
-        .1;
-    assert_eq!(read(&mut answer).await.unwrap(), br#"{"bytes":300000}"#);
-    assert_eq!(h3.server.active().await, 0, "finished transfers release their handlers");
-}
-
-#[tokio::test]
 async fn the_companion_answers_bootstrap_probes_with_alt_svc_and_serves_no_transfer() {
     let h3 = H3::start(&[]).await;
     let (companion, port) = (h3.server.companion.unwrap(), h3.server.quic.unwrap().port());

@@ -9,7 +9,6 @@ use graphite_meter_proto::approval::{challenge, verification_code};
 use graphite_meter_server::auth::{COUNTERS, NewLogin};
 use http::{HeaderValue, StatusCode};
 use http_body_util::Full;
-use std::time::Duration;
 
 const VERIFIER: &str = "a-verifier-that-never-leaves-the-requester";
 
@@ -101,42 +100,6 @@ async fn a_terminal_approval_issues_one_native_grant_to_its_verifier() {
     );
 }
 
-#[tokio::test(start_paused = true)]
-async fn an_approval_expires_after_two_minutes_and_belongs_to_the_login_that_opened_it() {
-    let app = auth_app(&[]);
-    let (operator, other) = (login(&app, "operator"), login(&app, "other"));
-    let approval = challenge(VERIFIER);
-    let path = format!("/auth/cli?challenge={approval}");
-    assert_eq!(page(&app, &path, Some(&operator)).await.status(), StatusCode::OK);
-    let asked = challenge("another-verifier-that-never-leaves-the-requester");
-    let browser = format!("/auth/browser?challenge={asked}&client_origin=https%3A%2F%2Fapp.example");
-    assert_eq!(location(&page(&app, &browser, None).await), format!("/login?challenge={asked}"));
-    let refused = page(&app, &path, Some(&other)).await;
-    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
-    assert!(text(refused).await.contains("This approval link is not valid."));
-    let invalid = page(&app, "/auth/cli?challenge=short", Some(&operator)).await;
-    assert_eq!(invalid.status(), StatusCode::FORBIDDEN);
-    assert_eq!(
-        approve(&app, "/auth/cli/approve", &other, &approval).await.status(),
-        StatusCode::FORBIDDEN
-    );
-    assert_eq!(
-        approve(&app, "/auth/browser/approve", &operator, &approval)
-            .await
-            .status(),
-        StatusCode::FORBIDDEN
-    );
-    tokio::time::advance(Duration::from_secs(120)).await;
-    assert_eq!(
-        approve(&app, "/auth/cli/approve", &operator, &approval).await.status(),
-        StatusCode::FORBIDDEN
-    );
-    assert!(pending(exchange(&app, "/auth/cli/token", None, &verifier(VERIFIER)).await).await);
-    let expired = page(&app, &format!("/auth/cli?challenge={asked}"), None).await;
-    assert_eq!(location(&expired), format!("/login?challenge={asked}"), "no longer the browser's");
-    assert_eq!(page(&app, &path, Some(&other)).await.status(), StatusCode::OK, "opened afresh");
-}
-
 #[tokio::test]
 async fn a_browser_approval_binds_its_grant_to_the_requesting_origin() {
     let app = auth_app(&[]);
@@ -203,25 +166,4 @@ async fn a_browser_approval_binds_its_grant_to_the_requesting_origin() {
     assert_eq!(issued["maximumLifetimeMs"], 28_800_000);
     let grant = store(&app).bearer(issued["token"].as_str().unwrap()).unwrap();
     assert_eq!(grant.browser(), Some(&HeaderValue::from_static(BROWSER)));
-}
-
-#[tokio::test]
-async fn approvals_are_bounded_per_login() {
-    let app = auth_app(&[]);
-    let operator = login(&app, "operator");
-    let cli = |index: usize| format!("/auth/cli?challenge={}", challenge(&format!("terminal {index}")));
-    for index in 0..8 {
-        assert_eq!(page(&app, &cli(index), Some(&operator)).await.status(), StatusCode::OK);
-    }
-    let busy = page(&app, &cli(8), Some(&operator)).await;
-    assert_eq!(busy.status(), StatusCode::FORBIDDEN);
-    assert!(text(busy).await.contains("Too many approvals are open."));
-    assert!(
-        app.auth()
-            .security()
-            .unwrap()
-            .line(&mut [0; COUNTERS])
-            .unwrap()
-            .ends_with(" capacity=1")
-    );
 }

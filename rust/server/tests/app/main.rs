@@ -22,12 +22,7 @@ use graphite_meter_server::{
 use http::{Request, Response, request::Builder};
 use http_body_util::BodyExt;
 use serde_json::Value;
-use std::{
-    convert::Infallible,
-    ffi::OsString,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::{convert::Infallible, ffi::OsString};
 use tokio_util::sync::CancellationToken;
 
 /// TLS listeners on every native address: each endpoint exists.
@@ -99,21 +94,6 @@ async fn text(response: Response<Body>) -> String {
 
 fn header<'a>(response: &'a Response<Body>, name: &str) -> Option<&'a str> {
     response.headers().get(name).map(|value| value.to_str().unwrap())
-}
-
-/// A body of unknown length that never ends.
-struct Unending;
-
-impl http_body::Body for Unending {
-    type Data = Bytes;
-    type Error = Infallible;
-
-    fn poll_frame(
-        self: Pin<&mut Self>,
-        _: &mut Context<'_>,
-    ) -> Poll<Option<Result<http_body::Frame<Bytes>, Infallible>>> {
-        Poll::Pending
-    }
 }
 
 async fn json(response: Response<Body>) -> Value {

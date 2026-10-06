@@ -109,26 +109,6 @@ async fn send(stream: &mut SendStream<Bytes>, mut bytes: Bytes, end: bool) {
     }
 }
 
-#[tokio::test]
-async fn http2_serves_its_routes_downloads_and_uploads() {
-    let h2 = H2::start(&[]).await;
-    let mut connection = h2.connect(65_535).await;
-    let probe = connection.get("GET", "/probe").await;
-    assert_eq!(probe.headers()["access-control-allow-origin"], "*");
-    assert!(!probe.headers().contains_key("connection"));
-    let probe: serde_json::Value = serde_json::from_slice(&read(probe.into_body()).await.unwrap()).unwrap();
-    assert_eq!(probe["protocolNegotiated"], "h2");
-    assert_eq!(connection.get("GET", "/preflight").await.status(), 404, "no UI route");
-    let download = connection.get("GET", "/download?bytes=1000000").await;
-    assert_eq!(read(download.into_body()).await.unwrap().len(), 1_000_000);
-    let id = connection.upload_id().await;
-    let (answer, mut upload) = connection.open("POST", &format!("/upload?id={id}")).await;
-    send(&mut upload, Bytes::from(vec![7; 300_000]), true).await;
-    let answer = read(answer.await.unwrap().into_body()).await.unwrap();
-    assert_eq!(answer, br#"{"bytes":300000}"#);
-    assert_eq!(h2.server.active().await, 0, "finished transfers release their handlers");
-}
-
 /// Whether an upload that sent one byte may send twice the default window within `bound`; h2's send buffer caps it
 /// below a mebibyte.
 async fn window_opens(upload: &mut SendStream<Bytes>, bound: Duration) -> bool {

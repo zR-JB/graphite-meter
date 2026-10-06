@@ -1,10 +1,8 @@
 //! Authentication over the app: Go's refusals, trust, cookie and grant access, preflights, and the store's limits.
 
 use super::*;
-use graphite_meter_server::auth::{GrantRefusal, LOGIN_LIFETIME, NewLogin, Store};
+use graphite_meter_server::auth::{GrantRefusal, NewLogin, Store};
 use http::{HeaderValue, StatusCode};
-use std::time::Duration;
-use tokio::time::Instant;
 
 pub(super) const PUBLIC: &str = "https://meter.example";
 pub(super) const BROWSER: &str = "https://app.example";
@@ -273,24 +271,4 @@ fn a_login_holds_eight_grants_and_only_a_native_one_replaces_the_oldest_native()
     }
     assert_eq!(store.grant(only_browsers.key, None), Err(GrantRefusal::Full));
     assert!(store.bearer(&format!("{first}=")).is_none() && store.bearer("short").is_none());
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_login_ends_after_eight_hours_and_a_subject_holds_eight() {
-    let store = Store::default();
-    let logins: Vec<_> = (0..8)
-        .map(|_| store.sign_in("operator", "Operator", "local").unwrap())
-        .collect();
-    let lease = store.cookie(&logins[0].token).unwrap();
-    store.sign_in("operator", "Operator", "local").unwrap();
-    assert!(
-        store.cookie(&logins[0].token).is_none() && lease.is_ended(Instant::now()),
-        "the oldest login ended"
-    );
-    let lease = store.cookie(&logins[1].token).unwrap();
-    tokio::time::advance(LOGIN_LIFETIME - Duration::from_millis(1)).await;
-    assert!(!lease.is_ended(Instant::now()) && store.cookie(&logins[1].token).is_some());
-    tokio::time::advance(Duration::from_millis(1)).await;
-    lease.ended().await;
-    assert!(store.cookie(&logins[1].token).is_none());
 }

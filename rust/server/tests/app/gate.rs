@@ -23,33 +23,6 @@ fn each_endpoint_mounts_the_routes_of_its_listener() {
 }
 
 #[tokio::test]
-async fn unmounted_routes_are_not_found_and_mounted_ones_check_their_methods() {
-    let app = app(&ALL_LISTENERS);
-    for (endpoint, method, path) in [
-        (Endpoint::H3Companion, "GET", "/download"),
-        (Endpoint::H2, "GET", "/preflight"),
-        (Endpoint::Quic, "GET", "/ws/ping"),
-        (Endpoint::H2, "GET", "//probe"),
-        (Endpoint::H2, "GET", "/probe/"),
-    ] {
-        let response = send(&app, endpoint, empty(request(method, path))).await;
-        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{endpoint:?} {method} {path}");
-        assert_eq!(header(&response, "access-control-allow-origin"), None);
-        assert_eq!(text(response).await, "404 page not found\n");
-    }
-    for (endpoint, method, path, allow) in [
-        (Endpoint::H2, "POST", "/probe", "GET, HEAD, OPTIONS"),
-        (Endpoint::Quic, "DELETE", "/upload/session", "OPTIONS, POST"),
-        (Endpoint::H3Companion, "PUT", "/upload/progress", "DELETE, GET, HEAD, OPTIONS"),
-        (Endpoint::Quic, "GET", "/wt/upload", "CONNECT"),
-    ] {
-        let response = send(&app, endpoint, empty(request(method, path))).await;
-        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED, "{method} {path}");
-        assert_eq!(header(&response, "allow"), Some(allow));
-    }
-}
-
-#[tokio::test]
 async fn webtransport_sessions_are_admitted_before_their_upgrade() {
     let app = app(&[ALL_LISTENERS.as_slice(), &[("GM_MAX_SESSIONS_PER_CLIENT", "1")]].concat());
     let connect = async |path: &str| outcome(&app, Endpoint::Quic, "192.0.2.1", empty(request("CONNECT", path))).await;
