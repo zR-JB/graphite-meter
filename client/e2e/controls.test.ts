@@ -200,10 +200,10 @@ test("legal notices recover through Retry and keep focus in the dialog", async (
       links
         .filter((link) => {
           const label = document.createRange();
-          label.selectNode(link.firstChild!);
+          label.selectNodeContents(link.querySelector("span")!);
           return label.getClientRects().length !== 1;
         })
-        .map((link) => link.getAttribute("aria-label")),
+        .map((link) => link.textContent),
     );
     expect(wrapped).toEqual([]);
   }

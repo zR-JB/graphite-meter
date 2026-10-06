@@ -152,31 +152,30 @@
                     <span class="where">
                       {#if origin}<a
                           href={origin}
-                          aria-label={`Source of ${component.name}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          ><span>{place(origin)}</span><Icon
-                            name="external"
-                          /></a
+                          ><span>{place(origin)}</span><span class="sr-only"
+                            >, source of {component.name}</span
+                          ><Icon name="external" /></a
                         >{/if}
                       {#if component.modified}
                         <span class="modified">
                           <span class="aside">Modified</span>
                           {#if fork}<a
                               href={fork}
-                              aria-label={`Shipped source of ${component.name}`}
                               target="_blank"
                               rel="noopener noreferrer"
-                              ><span>{place(fork)}</span><Icon
-                                name="external"
-                              /></a
+                              ><span>{place(fork)}</span><span class="sr-only"
+                                >, shipped source of {component.name}</span
+                              ><Icon name="external" /></a
                             >{/if}
                           {#if changes}<a
                               href={changes}
-                              aria-label={`Changes to ${component.name}`}
                               target="_blank"
                               rel="noopener noreferrer"
-                              ><span>changes</span><Icon name="external" /></a
+                              ><span>changes</span><span class="sr-only"
+                                >{` to ${component.name}`}</span
+                              ><Icon name="external" /></a
                             >{/if}
                         </span>
                       {/if}
