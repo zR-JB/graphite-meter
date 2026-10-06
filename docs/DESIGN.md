@@ -179,7 +179,7 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   it was laid out instead of building it again.
 - A run is one story told on the dial, and nothing passes through an empty console on the way. Start: the run
   key's skin turns to Stop on the press while its label crosses over; the previous result rewinds, every arc
-  draining back to zero together as its beads drop off (`result-drain`, 300 ms, fast from the press), while the
+  draining back to zero together as its beads drop off (`result-drain`, 160 ms, fast from the press), while the
   lanes, the cards and the status bar keep their frames and their figures clear in one frame, with no fade: the
   dial's drain is the start's only motion. A stage the new run leaves out gives up its card and lane as the run
   starts, and the rest close over its place (`flip()`). A stage has a card while the next run includes it or the

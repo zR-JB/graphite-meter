@@ -24,7 +24,7 @@
   const RISE_MS = 520;
   const DRAIN_MS = 300;
   /** A result's arcs drain back to zero over this as the next run starts, as in `result-drain`. */
-  export const RESULT_DRAIN_MS = 300;
+  export const RESULT_DRAIN_MS = 160;
 </script>
 
 <script lang="ts">
@@ -112,6 +112,11 @@
         revealed = false;
         return;
       }
+      // A needle a result took over fades where it stood; the next stage rises from zero.
+      if (parked) {
+        sweep.set(0, { snap: true });
+        parked = false;
+      }
       if (!revealed && motion && sweep.current < 0.5)
         sweep.set(next, { over: RISE_MS, ease: true });
       else
@@ -131,12 +136,13 @@
   // without draining, so the ring never runs back before it fills.
   let from = $state(0);
   let held = false;
+  let parked = $state(false);
   $effect.pre(() => {
     const showing = results.length > 0 && !result.out;
     untrack(() => {
       if (showing && !held) {
         from = motion && revealed ? Math.min(1, sweep.current / 270) : 0;
-        sweep.set(0, { snap: true });
+        parked = revealed;
         revealed = false;
       }
       held = showing;
@@ -149,7 +155,7 @@
       ? 0
       : (1 - Math.cbrt(1 - (fraction - from) / (1 - from))) * sweepMs;
   // A draining needle stays on the ring until it reaches zero.
-  const lit = $derived(visible || (motion && sweep.current > 0.5));
+  const lit = $derived(visible || (motion && sweep.current > 0.5 && !parked));
   // One pulse at a time, each started by a reply: a steady link beats, a stalled one holds still.
   let beat = $state<number | null>(null);
   let beating = false;
@@ -514,10 +520,10 @@
       opacity: 1;
     }
     .result-layer.handoff-out .result-arc {
-      animation: result-drain 300ms var(--ease-out) forwards;
+      animation: result-drain 160ms var(--ease-out) forwards;
     }
     .result-layer.handoff-out .bead {
-      animation: bead-out 200ms var(--ease-out) forwards;
+      animation: bead-out 120ms var(--ease-out) forwards;
     }
   }
   @keyframes result-sweep {

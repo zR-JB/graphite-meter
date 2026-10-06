@@ -290,6 +290,8 @@ export class Smoothed {
   #glide = 100;
   #fixed = false;
   #ease = false;
+  /** An eased glide's speed as it set off, per ms. */
+  #speed = 0;
   #shown = -Infinity;
   #stop: (() => void) | null = null;
 
@@ -304,10 +306,28 @@ export class Smoothed {
     const truth = this.#rate
       ? Math.min(this.#max, this.#to + this.#rate * since)
       : this.#to;
-    // The offset from the sample fades linearly, so a clock keeps its own pace; an eased glide settles into place.
-    const left = Math.max(0, 1 - since / this.#glide);
-    const fade = this.#ease ? left ** 3 : left;
-    return fade > 0 ? truth + (this.#from - this.#to) * fade : truth;
+    // The offset from the sample fades linearly, so a clock keeps its own pace; an eased glide sets off at the
+    // speed it had (from rest when it had none) and comes to rest in place, so it never starts or stops at once.
+    const u = Math.min(1, since / this.#glide);
+    if (!this.#ease) return truth + (this.#from - this.#to) * (1 - u);
+    const offset = this.#from - this.#to;
+    return (
+      truth +
+      offset * (2 * u ** 3 - 3 * u ** 2 + 1) +
+      this.#speed * this.#glide * (u ** 3 - 2 * u ** 2 + u)
+    );
+  }
+
+  /** How fast the shown value moves at a frame time, per ms. */
+  #velocity(now: number): number {
+    const since = now - this.#at;
+    if (!(since >= 0 && since < this.#glide)) return this.#rate;
+    const u = since / this.#glide;
+    const offset = this.#from - this.#to;
+    return this.#ease
+      ? (offset * (6 * u ** 2 - 6 * u)) / this.#glide +
+          this.#speed * (3 * u ** 2 - 4 * u + 1)
+      : this.#rate - offset / this.#glide;
   }
 
   /** A value that is not a finite number holds the last one; the first sample snaps. */
@@ -322,10 +342,12 @@ export class Smoothed {
       still() ||
       !Number.isFinite(gap) ||
       (correction.finish && !within);
+    const speed = snap ? 0 : this.#velocity(now);
     this.#from = snap ? value : this.at(now);
     this.#fixed = correction.over !== undefined || (within && !snap);
     this.#ease =
       correction.over !== undefined ? !!correction.ease : within && this.#ease;
+    this.#speed = this.#ease ? speed : 0;
     if (correction.over !== undefined) this.#glide = correction.over;
     else if (within) this.#glide = left;
     else if (gap < SAMPLE_GAP_MS)
