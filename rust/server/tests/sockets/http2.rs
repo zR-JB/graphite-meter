@@ -214,7 +214,7 @@ async fn under_pressure_a_running_upload_keeps_its_window_after_the_one_that_rai
     raiser.send_data(Bytes::new(), true).unwrap();
     assert_eq!(read(raised.await.unwrap().into_body()).await.unwrap(), br#"{"bytes":1}"#);
     // More than the credit the window granted before, so the server must keep granting it.
-    let sent = 18 << 20;
+    let sent = 26 << 20;
     send(&mut upload, Bytes::from(vec![7; sent]), false).await;
     counted(&mut connection, &id, 2 + sent as u64).await;
     assert!(

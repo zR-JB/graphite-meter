@@ -46,7 +46,7 @@ pub const FLOOR_BYTES: usize = TRANSPORT_BYTES + STATE_BYTES;
 const TRANSPORT_BYTES: usize = 512 << 10;
 /// Decoded headers, buffered DATA and queued response metadata, which h2 charges to the floor as they fill.
 const STATE_BYTES: usize = 1 << 20;
-/// Each stream's receive window; the connection's opens to 16 MiB for admitted uploads.
+/// Each stream's receive window; the connection's opens to 24 MiB for admitted uploads.
 const STREAM_WINDOW: u32 = 8 << 20;
 const MAX_STREAMS: u32 = 250;
 /// 64 KiB frames cut the CPU cost per byte of bulk transfers by about a quarter.

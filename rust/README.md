@@ -99,6 +99,7 @@ endpoint buffers and the 256 KiB download block. A QUIC connection holds a floor
 flights and Noq's stream state (481 KiB at default limits, 978 KiB with per-client limits at the totals), about
 0.5 MiB in all at default limits; an HTTP/2 connection 1.5 MiB.
 Receive windows stay 64 KiB until an admitted upload reads, so a silent peer holds at most 192 KiB of reassembly.
+An admitted HTTP/2 upload then opens its connection's window to 24 MiB, 8 MiB per stream, on its client's credit.
 From a quarter of the budget or the connection capacity, unvalidated QUIC handshakes need Retry; from three
 quarters no window grows. A certificate reload that does not fit keeps the previous chain. This accounting is not a
 resident-memory bound.
@@ -151,6 +152,7 @@ User-visible behaviour that deliberately differs from Go's server and TUI.
 - A reply write blocked for 30 s ends the reply on every listener, progress streams included.
 - HTTP/2 replies that end unfinished reset their stream with CANCEL, where Go sends INTERNAL_ERROR.
 - HTTP/2 streams past 250 concurrent get REFUSED_STREAM.
+- Admitted HTTP/2 uploads get a 24 MiB connection window; Go uses 16 MiB.
 - A connection with a raised receive window goes away after 15 s without admitted work; idle HTTP/3 then closes at
   once, HTTP/2 after 5 s.
 - A request or session the budget cannot hold gets `H3_REQUEST_REJECTED`; refused control metadata past a
