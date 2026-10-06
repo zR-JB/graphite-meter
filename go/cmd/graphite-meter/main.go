@@ -14,17 +14,22 @@ import (
 
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/logx"
 	"github.com/zR-JB/graphite-meter/go/internal/server"
 )
 
 func main() {
+	// Libraries that write through the standard logger keep the server's line layout.
+	log.SetFlags(0)
+	log.SetOutput(logx.Writer(logx.Info, "server"))
 	if len(os.Args) == 2 && (os.Args[1] == "version" || os.Args[1] == "--version") {
 		fmt.Fprintln(os.Stdout, config.EngineVersion)
 		return
 	}
 	if len(os.Args) == 2 && os.Args[1] == "hash-password" {
 		if err := hashPassword(os.Stdin, os.Stdout, os.Stderr); err != nil {
-			log.Fatalf("hash-password: %v", err)
+			logx.Errorf("password", "%v", err)
+			os.Exit(1)
 		}
 		return
 	}
@@ -33,12 +38,15 @@ func main() {
 		return
 	}
 	if err != nil {
-		log.Fatalf("configuration error: %q", err)
+		logx.Errorf("config", "%v", err)
+		os.Exit(1)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	logx.Infof("server", "graphite-meter %s starting", cfg.EngineVersion)
 	if err := server.Run(ctx, new(cfg)); err != nil {
-		log.Fatalf("server error: %q", err)
+		logx.Errorf("server", "%v", err)
+		os.Exit(1)
 	}
 }
 

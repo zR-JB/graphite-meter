@@ -323,6 +323,14 @@ class AppStore {
       ? selectedInCatalogOrder(this.serverCatalog, this.selectedServers)[0].id
       : null,
   );
+  /** The server whose latency someone chose to see; the console shows it while it stays selected. */
+  latencyPin = $state<string | null>(null);
+  /** The server whose latency the console shows and probes between runs: the chosen one, else the first selected. */
+  latencyServerId = $derived(
+    this.latencyPin && this.selectedServers.includes(this.latencyPin)
+      ? this.latencyPin
+      : this.representativeServerId,
+  );
   #representative = $derived(
     this.representativeServerId
       ? this.servers.get(this.representativeServerId)

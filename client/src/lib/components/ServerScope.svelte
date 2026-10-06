@@ -12,6 +12,7 @@
     disabled = false,
     disabledIds = [],
     quiet = false,
+    mark = quiet,
   }: {
     servers: readonly ServerIdentity[];
     value: string;
@@ -22,11 +23,13 @@
     disabledIds?: readonly string[];
     /** A lens over results: a server mark and a borderless field. */
     quiet?: boolean;
+    /** The server mark before a quiet field; a caption that names its server leaves it out. */
+    mark?: boolean;
   } = $props();
 </script>
 
 <span class:lens={quiet}>
-  {#if quiet}<span class="lens-mark"><Icon name="server" /></span>{/if}
+  {#if mark}<span class="lens-mark"><Icon name="server" /></span>{/if}
   <select
     class="server-scope"
     class:quiet

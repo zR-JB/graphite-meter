@@ -107,7 +107,10 @@ to tags matching `-rust$` and compare the version before that suffix.
 The Rust image keeps the Go image's ports, `GM_*` settings, `hash-password` command, [container user](#container-user)
 and layout: one static binary on `scratch` with its notices and CA roots. It reports its version as `X.Y.Z-rust`,
 adds `--legal` and `GM_MAX_BUFFER_BYTES` (default 8 GiB), which bounds the connection buffers its HTTP/2 and HTTP/3
-listeners share. Its log lines carry a level, a topic and local time; the image has no zone data, so mount
+listeners share. It must cover every allowed connection's floor, about 1.5 MiB each with HTTP/3 on, so the default
+`GM_MAX_CONNECTIONS` of 4096 needs about 6 GiB: a small host that lowers the budget lowers the connections with
+it, such as `GM_MAX_BUFFER_BYTES=1073741824` with `GM_MAX_CONNECTIONS=512`. A budget that falls short stops the
+server at start with the values that fit. Its log lines carry a level, a topic and local time; the image has no zone data, so mount
 `/etc/localtime:/etc/localtime:ro` or set `TZ` to a POSIX rule such as `CET-1CEST,M3.5.0,M10.5.0/3` for local time
 instead of UTC. The [Rust README](../rust/README.md#differences-from-go) lists every behaviour that differs from Go.
 On an amd64 host `mise run rust-container-build` builds it from a checkout as `graphite-meter:latest-rust`; its

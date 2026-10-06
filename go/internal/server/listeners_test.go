@@ -6,11 +6,9 @@ import (
 	"crypto/tls"
 	"errors"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +18,7 @@ import (
 	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/logx"
 	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 )
 
@@ -148,8 +147,7 @@ func (b *lockedBuffer) String() string {
 // Any peer can fail a handshake; repeating it cannot grow the log, while the server's own errors stay visible.
 func TestFailedHandshakesLogOncePerMinute(t *testing.T) {
 	var out lockedBuffer
-	log.SetOutput(&out)
-	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	t.Cleanup(logx.SetOutput(&out))
 	cfg, build := startListeners(t, func(cfg *config.Config, sockets *testListenerSockets) {
 		cfg.Native.H1, cfg.Native.H3 = sockets.reserveTCP(), sockets.reserveH3()
 	}, nil)

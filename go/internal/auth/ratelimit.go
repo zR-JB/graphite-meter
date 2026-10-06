@@ -5,10 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
-	"log"
 	"maps"
 	"net/http"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/logx"
 )
 
 const (
@@ -120,7 +121,7 @@ func (s *Service) noteCeilingLocked(what string, now time.Time) {
 		return
 	}
 	s.ceilingLogged[what] = now
-	log.Printf("[gm:auth] global %s ceiling engaged; further attempts are refused until the window drains", what)
+	logx.Warnf("auth", "global %s ceiling engaged; further attempts are refused until the window drains", what)
 }
 
 func recentAttempts(attempts []time.Time, now time.Time) []time.Time {

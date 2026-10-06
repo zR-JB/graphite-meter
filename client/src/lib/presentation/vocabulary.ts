@@ -151,132 +151,81 @@ const FAILURE: Record<FailureReason, string> = {
 export const reasonLabel = (reason: FailureReason) =>
   FAILURE[reason] ?? "Measurement issue";
 
-/** Explainers: a title line, then short lines; tooltips set the title apart. */
+/** Explainers, set apart by their title line: a title and at most two short lines; definitions in full live in
+    docs/MEASUREMENTS.md. */
 export const JARGON = {
   download:
-    "Download\nPayload bytes the client received per second\n" +
-    "Mean of the last interval with at least 0.8 s of evidence\nWarmup is left out",
+    "Download\nPayload bytes received per second\nMean of the last interval, warmup left out",
   upload:
-    "Upload\nPayload bytes the server received per second\n" +
-    "Timed by the server's receiver, so queued bytes don't count\n" +
-    "Mean of the last interval with at least 0.8 s of evidence",
-  bidirectional:
-    "Bidirectional\nDownload and upload at the same time, added together\n" +
-    "Each direction is timed like its own stage",
+    "Upload\nPayload bytes the server received per second\nTimed at the server; queued bytes don't count",
+  bidirectional: "Bidirectional\nDownload and upload at once, added together",
   latency:
-    "Idle latency\nMedian round trip of probes on an idle connection\nThe base for added latency",
-  loadedLatency:
-    "Loaded latency\nHighest median round trip while a transfer ran\n" +
-    "Across download, upload and bidirectional",
-  transferred:
-    "Transferred\nPayload bytes measured in this stage, each counted once",
-  peak:
-    "Peak\nHighest mean of the headline window and of consecutive windows " +
-    "of at least 0.5 s across its interval\nNever below the headline",
+    "Idle latency\nMedian round trip on an idle connection\nThe base for added latency",
+  loadedLatency: "Loaded latency\nHighest median round trip during a transfer",
+  transferred: "Transferred\nPayload bytes measured in this stage",
+  peak: "Peak\nHighest mean over windows of 0.5 s or more\nNever below the headline",
   rateStability:
-    "Stability\n100% minus the coefficient of variation of the result's 250 ms rates\n" +
-    "Coefficient of variation: standard deviation divided by the mean",
-  noData:
-    "No data\nTime in the result's window when no bytes arrived\n" +
-    "It counts in the average: a stall is part of the link",
-  noReplies:
-    "No replies\nProbes sent in this time got no reply before the deadline\n" +
-    "Each counts as a timeout, not as packet loss",
-  replies:
-    "Replies\nIdle probes answered so far in this stage\n" +
-    "The median, jitter and range are drawn from them",
+    "Stability\n100% minus the spread of the 250 ms rates\nSpread: standard deviation over the mean",
+  noData: "No data\nNo bytes arrived; it counts in the average",
+  noReplies: "No replies\nThese probes timed out; not packet loss",
+  replies: "Replies\nIdle probes answered in this stage",
   latencyStability: "Stability\n100% minus jitter as a share of the median",
-  addedLatency:
-    "Added latency\nLoaded median minus idle median, same server\nNegative: faster under load",
+  addedLatency: "Added latency\nLoaded minus idle median, same server",
   jitter:
-    "Jitter\nMean absolute change between consecutive replies\nProbe timeouts are left out",
-  latencyMedian: "Median\nHalf of the stage's replies were faster, half slower",
-  latencyRange: "Range\nFastest to slowest reply in the stage",
+    "Jitter\nMean change between consecutive replies\nTimeouts are left out",
+  latencyMedian: "Median\nHalf the replies were faster, half slower",
+  latencyRange: "Range\nFastest to slowest reply",
   keyShortcuts:
-    "Keyboard shortcuts\nS, D, H, R and T act on the page when no field has focus\n" +
-    "Turn off if speech input or single keys trigger them",
+    "Keyboard shortcuts\nS, D, H, R and T act when no field has focus\nTurn off if speech input triggers them",
   wireRate:
-    "Wire rate\nPayload rate plus the protocol headers the link also carried\n" +
-    "Ethernet, IP, TCP or QUIC, TLS and HTTP framing at a 1,500 B MTU\n" +
-    "An estimate; a result's wire rate lists its parts on hover",
+    "Wire rate\nPayload plus the protocol headers carried with it\nAn estimate; hover a result for its parts",
   rateUnit:
-    "Rate unit\nBits: Mbit/s, the unit internet plans use\n" +
-    "Bytes: MB/s, 8× lower, the unit downloads show",
+    "Rate unit\nBits: Mbit/s, as internet plans\nBytes: MB/s, 8× lower, as downloads",
   unitPrefix:
-    "Prefix\nDecimal: 1,000 per step (k, M, G)\n" +
-    "Binary: 1,024 per step (Ki, Mi, Gi), 4.6% lower at M",
+    "Prefix\nDecimal: steps of 1,000 (k, M, G)\nBinary: steps of 1,024 (Ki, Mi, Gi)",
   throughputPath:
-    "Throughput path\nTransport and HTTP version that carry the test bytes\n" +
-    "Verified before the test starts",
-  latencyPath:
-    "Latency path\nTransport the latency probes use, on its own connection",
-  pathEvidence:
-    "Evidence\nThe HTTP version the browser and the server each observed\n" +
-    "Shown only where that side exposes it",
-  uploadFeed:
-    "Upload feed\nHow the server reports received upload bytes back to the page",
-  clientAddress:
-    "Your address\nThe address the server saw for this browser\n" +
-    "From a trusted proxy header, else the socket peer",
+    "Throughput path\nTransport and HTTP version of the test bytes",
+  latencyPath: "Latency path\nTransport of the probes, on its own connection",
+  pathEvidence: "Evidence\nThe HTTP version each side observed",
+  uploadFeed: "Upload feed\nHow the server reports upload bytes back",
+  clientAddress: "Your address\nAs the server saw it: proxy header or socket",
   serverLoad:
-    "Load\nTests running on the server when this path was checked\n" +
-    "Past half its slots, other tests share the bandwidth being measured",
-  serverInstance:
-    "Server\nEngine version of the tested server\nThe instance changes when the backend restarts",
+    "Load\nTests on the server when the path was checked\nPast half its slots, they share the bandwidth",
+  serverInstance: "Server\nEngine version; the instance changes on restart",
   probeAccounting:
-    "Probe accounting\nReplies, and timeouts: no reply before the deadline\n" +
-    "Unfinished probes and failed sends are counted apart, never as timeouts",
+    "Probe accounting\nA timeout: no reply by the probe's deadline\nUnfinished or failed sends are not timeouts",
   pretestLatency:
-    "Pre-test latency\nMedian round trip of the probes that checked the latency path\n" +
-    "The first selected server's sizes the warmup",
+    "Pre-test latency\nMedian round trip of the path check\nThe shown server's sizes the warmup",
   testServers:
-    "Test servers\nUp to 4 at once; their speeds are added together\n" +
-    "They share this browser's connection\n" +
-    "Each is probed for latency; the first one's is the result",
+    "Test servers\nUp to 4; their speeds add up\nAll are probed; the lanes show one at a time",
   warmup:
-    "Warmup\nRuns before each stage to open its connections and ramp up\n" +
-    "At least 10 round trips, at most 4 s; never counted",
+    "Warmup\nOpens connections before each stage\n10 round trips to 4 s; never counted",
   stageTime:
-    "Duration\nEach stage's planned length; early finish can end one sooner\n" +
-    "From 1 s up to the servers' stage limit, 5 min unless their operator raises it",
+    "Duration\nEach stage's planned length\nUp to the servers' limit, 5 min by default",
   bidirectionalStage:
-    "Bidirectional stage\nDownload and upload at the same time, after the other stages\n" +
-    "Its chip beside Start test can skip it; turn it back on here",
+    "Bidirectional stage\nDownload and upload at once, after the others",
   earlyFinish:
-    "Early finish\nEnds a stable stage after 52% of its time\n" +
-    "Stable: score ≥ 0.86 over 4 s, held for 1.1 s\n" +
-    "Needs 12 rate or 8 latency samples\nRate score: 1 − 2.2 × spread − 1.4 × drift\n" +
-    "A stage with a stall, gap or lost server runs its full time",
+    "Early finish\nEnds a steady stage after about half its time\nNever after a stall, gap or lost server",
   saveResults:
-    "Save results\nKeeps complete, partial and incomplete runs in this browser\n" +
-    "The newest 2,000 stay; nothing is uploaded",
+    "Save results\nKeeps the newest 2,000 runs in this browser\nNothing is uploaded",
   gaugeAuto:
-    "Automatic scale\nThe chart follows the measured peak\n" +
-    "The gauge starts at 1 Gbit/s and grows in powers of ten",
+    "Automatic scale\nThe chart follows the peak\nThe gauge steps 1, 2, 5, 10 of its unit",
   gaugeMax:
-    "Maximum\nFixes the chart ceiling\nThe gauge rounds up to the next power of ten",
+    "Maximum\nFixes the chart ceiling\nThe gauge rounds up to a 1, 2, 5 step",
   idleCadence:
-    "Idle latency cadence\nHow often the Latency stage sends a probe\n" +
-    "Reply-driven: the next probe leaves when the reply arrives",
+    "Idle latency cadence\nReply: the next probe leaves on each reply\nFast 80 ms · Medium 250 ms · Slow 600 ms",
   loadedCadence:
-    "Loaded latency cadence\nHow often probes go out during transfers\n" +
-    "Fixed times are start to start",
+    "Loaded latency cadence\nProbes during transfers, start to start\nFast 80 ms · Medium 250 ms · Slow 600 ms",
   skipLoadedLatency:
-    "Skip loaded latency\nWith the Latency stage off, transfers send no probes\n" +
-    "Off: transfers still measure loaded latency",
+    "Skip loaded latency\nWith the Latency stage off, transfers send no probes",
   datagramThroughput:
-    "Datagram throughput\nAdds WebTransport datagrams as a throughput path\n" +
-    "Datagrams are never resent; missing ones are not packet loss\n" +
-    "Expect lower rates than streams, mostly for uploads",
+    "Datagram throughput\nAdds WebTransport datagrams as a path\nNever resent; expect lower rates than streams",
   forcedStreams:
-    "Streams\nParallel connections per server and direction\n" +
-    "Automatic: chosen per protocol\nForced: the exact count, even past the browser's connection limit",
+    "Streams\nParallel connections per server and direction\nForced opens the exact count, past browser limits",
   autoStreamCount:
-    "HTTP/1.1 stream limit\nCaps parallel HTTP/1.1 requests per direction\n" +
-    "HTTP/2 and HTTP/3 choose their own count",
+    "HTTP/1.1 stream limit\nParallel HTTP/1.1 requests per direction\nHTTP/2 and HTTP/3 choose their own",
   forcedStreamCount:
-    "Streams per server and direction\nOpens exactly this many requests\n" +
-    "WebTransport carries at most 16 per session\nThe browser or server may queue or refuse more",
+    "Streams per server and direction\nOpens exactly this many\nWebTransport carries at most 16 per session",
 } as const;
 
 export const PHASE_HINT: Partial<
@@ -387,7 +336,7 @@ export const PING_CADENCE: Record<PingCadence, string> = {
   medium: "Medium (250 ms)",
   slow: "Slow (600 ms)",
 };
-/** The cadence's word on a segment; its interval is the segment's tip. */
+/** The cadence's word on a segment; its interval is in the row's tip and the segment's name. */
 export const PING_CADENCE_SHORT: Record<PingCadence, string> = {
   "reply-driven": "Reply",
   fast: "Fast",

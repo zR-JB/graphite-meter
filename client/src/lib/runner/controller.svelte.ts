@@ -131,11 +131,10 @@ export function createApplicationController(
     active,
     metadata: () => metadataWanted,
     online: () => navigator.onLine,
-    // Only this server's idle latency is shown before a run.
+    // Between runs only the shown latency server is probed, as the console shows its replies.
     idle: (id) =>
-      id === "self" &&
       active() &&
-      store.representativeServerId === id &&
+      store.latencyServerId === id &&
       latencyPathNeeded(store.config),
     publish(view) {
       store.servers.set(view.server.id, view);
@@ -350,15 +349,31 @@ export function createApplicationController(
       if (approval === task) approval = null;
     }
   }
-  /** The one lens: "" shows all servers, else one; latency follows when that server measured it. */
+  /** The one lens: "" shows all servers, else one; latency follows when that server measured it. With all servers
+   *  shown, latency stays on the server someone chose while it measured, else the run's focus. */
   function showServer(id: string) {
     store.resultScope = id;
     const details = store.result?.multiServer ?? store.serverDetails;
-    const measured = details?.servers.some(
-      (server) => server.server.id === id && server.latencyTarget,
-    );
-    const focus = id && (measured || !details) ? id : details?.latencyFocus;
+    const measured = (server: string | null) =>
+      !!server &&
+      (!details ||
+        details.servers.some(
+          (entry) => entry.server.id === server && entry.latencyTarget,
+        ));
+    const pinned = store.latencyPin;
+    const focus = measured(id)
+      ? id
+      : measured(pinned)
+        ? pinned
+        : details?.latencyFocus;
     if (focus) store.focusLatencyServer(focus);
+  }
+
+  /** Shows one server's latency, mid-run included; only the view changes, every server is probed alike. */
+  function showLatency(id: string) {
+    store.latencyPin = id;
+    store.focusLatencyServer(id);
+    wake();
   }
 
   function ingest(event: RunnerEvent) {
@@ -561,7 +576,10 @@ export function createApplicationController(
           )
           .join("; "),
       );
-    const [focus] = prepared;
+    // The run's latency headline is the server whose latency the console shows, else the first prepared.
+    const focus =
+      prepared.find(({ server }) => server.id === store.latencyServerId) ??
+      prepared[0];
     // The stages the new run leaves out give up their cards and lanes, and the rest close over them.
     flip(() => store.reset());
     store.preparationStatus = "launching";
@@ -655,14 +673,14 @@ export function createApplicationController(
       }
     }
     cancelPendingStart();
-    store.config = config;
-    store.startError = "";
-    if (!store.isRunning) {
-      selectIntent();
-      return true;
-    }
-    if (store.run)
-      store.run = { ...store.run, config: { ...store.run.config, ...live } };
+    // Whatever asked for it, a change that reshapes the console moves it the same way.
+    flip(() => {
+      store.config = config;
+      store.startError = "";
+      if (store.isRunning && store.run)
+        store.run = { ...store.run, config: { ...store.run.config, ...live } };
+    });
+    if (!store.isRunning) selectIntent();
     return true;
   }
   function dispose() {
@@ -700,6 +718,7 @@ export function createApplicationController(
     signInServer,
     cancelServerApproval,
     showServer,
+    showLatency,
     async retry({ id, role }: { id?: string; role?: ConnectionRole } = {}) {
       if (!booted || store.isRunning) return;
       cancelPendingStart();

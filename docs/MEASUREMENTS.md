@@ -105,8 +105,9 @@ after three replies and timeouts.
 Cadence is a scheduling policy, not an observed sampling rate: reply-driven density depends on RTT, and no coverage
 is inferred from cadence and elapsed time. The idle headline is the full stage median, the base of added latency;
 it never falls back to loaded RTTs or preflight hints. A failed stage keeps its measured population, marked
-incomplete. Every selected server is probed. The run's latency is the first selected server's, or a survivor's once
-it leaves; the shown server starts there, and switching it never retargets probes or changes saved statistics.
+incomplete. Every selected server is probed. The run's latency is the shown server's when the run starts (the first
+selected unless the browser was switched to another), or a survivor's once it leaves; switching the shown server
+never retargets probes or changes saved statistics.
 
 ## Paired server timing
 

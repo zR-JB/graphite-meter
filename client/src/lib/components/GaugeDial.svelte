@@ -16,13 +16,15 @@
     primary: boolean;
     description: string;
   }
-  /** The result sweep's length, as in the stylesheet's `result-sweep`. */
+  /** The result sweep's length over the whole ring, as in the stylesheet's `result-sweep`; a sweep that takes
+      over from the needle runs the rest of the ring in its share of this, no shorter than SWEEP_MIN_MS. */
   const SWEEP_MS = 900;
+  const SWEEP_MIN_MS = 360;
   /** A stage's needle rises from zero and drains back to it over these. */
   const RISE_MS = 520;
   const DRAIN_MS = 300;
   /** A result's arcs drain back to zero over this as the next run starts, as in `result-drain`. */
-  export const RESULT_DRAIN_MS = 300;
+  export const RESULT_DRAIN_MS = 160;
 </script>
 
 <script lang="ts">
@@ -95,6 +97,13 @@
     untrack(() => {
       if (hue) accent = `var(--phase-${hue})`;
       if (!visible) {
+        // A run that ends in a speed result holds the needle for the result to take over from.
+        if (
+          revealed &&
+          input.phase === "complete" &&
+          input.completedKind === "speed"
+        )
+          return;
         if (revealed)
           sweep.set(
             0,
@@ -102,6 +111,11 @@
           );
         revealed = false;
         return;
+      }
+      // A needle a result took over fades where it stood; the next stage rises from zero.
+      if (parked) {
+        sweep.set(0, { snap: true });
+        parked = false;
       }
       if (!revealed && motion && sweep.current < 0.5)
         sweep.set(next, { over: RISE_MS, ease: true });
@@ -118,8 +132,30 @@
       course = current;
     });
   });
+  // A result takes over the ring where the needle stands: its sweep runs on from there, and the needle leaves
+  // without draining, so the ring never runs back before it fills.
+  let from = $state(0);
+  let held = false;
+  let parked = $state(false);
+  $effect.pre(() => {
+    const showing = results.length > 0 && !result.out;
+    untrack(() => {
+      if (showing && !held) {
+        from = motion && revealed ? Math.min(1, sweep.current / 270) : 0;
+        parked = revealed;
+        revealed = false;
+      }
+      held = showing;
+    });
+  });
+  const sweepMs = $derived(Math.max(SWEEP_MIN_MS, SWEEP_MS * (1 - from)));
+  /** When the front reaches `fraction` on its ease-out-cubic course from `from`. */
+  const reachMs = (fraction: number) =>
+    fraction <= from
+      ? 0
+      : (1 - Math.cbrt(1 - (fraction - from) / (1 - from))) * sweepMs;
   // A draining needle stays on the ring until it reaches zero.
-  const lit = $derived(visible || (motion && sweep.current > 0.5));
+  const lit = $derived(visible || (motion && sweep.current > 0.5 && !parked));
   // One pulse at a time, each started by a reply: a steady link beats, a stalled one holds still.
   let beat = $state<number | null>(null);
   let beating = false;
@@ -178,7 +214,7 @@
       {/if}
       <circle
         class="bead"
-        style:--at="{(1 - Math.cbrt(1 - fraction)) * SWEEP_MS + DRAIN_MS}ms"
+        style:--at="{reachMs(fraction)}ms"
         cx={radius}
         r={hollow ? headRadius - 1 : headRadius}
         fill={hollow ? "none" : color}
@@ -194,7 +230,8 @@
   class="gauge-dial"
   class:motion
   style:--ring={input.stage ? `var(--phase-${input.stage})` : null}
-  style:--drain="{DRAIN_MS}ms"
+  style:--from={from}
+  style:--sweep-ms="{sweepMs}ms"
 >
   <svg
     class="dial-art"
@@ -237,7 +274,7 @@
                 class="result-arc"
                 d={track}
                 pathLength="1"
-                style:stroke-dasharray={`min(${result.fraction}, var(--sweep)) 1`}
+                style:--fraction={result.fraction}
                 stroke="white"
                 stroke-width={layout.arcWidth + 2}
               />
@@ -455,23 +492,27 @@
   }
   /* A reply rings out from the head: a faint hairline ring widens to twice the head and fades over one pulse,
      eased out, so a steady link is seen to answer while the head itself holds still. */
-  /* The result replays the run as one sweep from zero once the last needle has drained (--drain): every arc
-     shows up to the shared front, so the front changes hue as it passes each shorter result, and each bead lands
-     on the spring as the front reaches it. Once, as the result arrives; the bead's moment follows the sweep's
-     ease-out-cubic (SWEEP_MS). */
+  /* The result sweeps the ring once as it arrives, from where the needle stood (--from): every arc shows up to
+     the shared front, so the front changes hue as it passes each shorter result, and each bead lands on the
+     spring as the front reaches it, on the sweep's ease-out-cubic (--sweep-ms). */
+  /* A result arc shows up to the shared front; its own length and its bead glide when the scale or the unit
+     moves them, as the needle does, so a unit switch never replays the sweep. */
+  .result-arc {
+    stroke-dasharray: min(var(--fraction), var(--sweep)) 1;
+  }
   @media (prefers-reduced-motion: no-preference) {
     .result-arc {
-      animation: result-sweep 900ms cubic-bezier(0.33, 1, 0.68, 1) var(--drain)
+      transition: --fraction 360ms var(--ease-out);
+      animation: result-sweep var(--sweep-ms) cubic-bezier(0.33, 1, 0.68, 1)
         backwards;
+    }
+    .head.result {
+      transition: transform 360ms var(--ease-out);
     }
     .bead {
       transform-box: fill-box;
       transform-origin: center;
       animation: pop 400ms var(--ease-spring) var(--at) backwards;
-    }
-    /* Until its sweep begins a result's arcs are at zero, where their round caps would leave a dot. */
-    .result-layer > svg {
-      animation: await-sweep 0s linear var(--drain) backwards;
     }
     /* A new run rewinds the result: every arc drains back to zero together and the beads drop off, then the
        first stage rises from the empty ring (RESULT_DRAIN_MS). */
@@ -479,23 +520,18 @@
       opacity: 1;
     }
     .result-layer.handoff-out .result-arc {
-      animation: result-drain 300ms var(--ease-out) forwards;
+      animation: result-drain 160ms var(--ease-out) forwards;
     }
     .result-layer.handoff-out .bead {
-      animation: bead-out 200ms var(--ease-out) forwards;
+      animation: bead-out 120ms var(--ease-out) forwards;
     }
   }
   @keyframes result-sweep {
     from {
-      --sweep: 0;
+      --sweep: var(--from);
     }
     to {
       --sweep: 1;
-    }
-  }
-  @keyframes await-sweep {
-    from {
-      visibility: hidden;
     }
   }
   @keyframes result-drain {

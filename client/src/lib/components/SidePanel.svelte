@@ -186,6 +186,20 @@
     justify-self: end;
     border-width: 0 var(--hairline) 0 0;
   }
+  /* The sheet's ground runs on past the viewport's edge, so its bob as it docks never opens a gap there. */
+  .docked > :global(dialog.panel)::after {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    left: 100%;
+    width: var(--space-6);
+    background: inherit;
+    pointer-events: none;
+  }
+  .docked > :global(dialog.panel.left)::after {
+    right: 100%;
+    left: auto;
+  }
   .panel-layer:not(.docked) > :global(dialog.panel) {
     --closed: translateX(calc(100% + var(--space-4)));
     position: fixed;

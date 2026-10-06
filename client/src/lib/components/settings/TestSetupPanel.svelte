@@ -11,7 +11,7 @@
     normalizeStreamCount,
   } from "../../runner/paths";
   import { tooltip } from "../../actions/tooltip";
-  import { flip, reveal } from "../../presentation/motion.svelte";
+  import { reveal } from "../../presentation/motion.svelte";
   import Icon from "../Icon.svelte";
   import Switch from "../Switch.svelte";
   import ServerSelection from "../ServerSelection.svelte";
@@ -198,11 +198,9 @@
     return from < 3_600_000 ? 60_000 : 300_000;
   }
   function setBidirectional(enabled: boolean) {
-    flip(() =>
-      controller.configureRun({
-        stages: { ...store.config.stages, bidirectional: enabled },
-      }),
-    );
+    controller.configureRun({
+      stages: { ...store.config.stages, bidirectional: enabled },
+    });
   }
   const activeDurationFields = $derived(
     store.config.stages.bidirectional
@@ -215,12 +213,9 @@
     const name = presetName(preset);
     if (preset === "custom") return `${name}\nSet each stage's time`;
     const times = DURATION_PRESETS[preset];
-    return [
-      name,
-      ...activeDurationFields.map(
-        ([key, label]) => `${label} ${fmtStageTime(times[key])}`,
-      ),
-    ].join("\n");
+    return `${name}\n${activeDurationFields
+      .map(([key, label]) => `${label} ${fmtStageTime(times[key])}`)
+      .join(" · ")}`;
   }
   const unitsTip = [
     "Units",
@@ -550,15 +545,15 @@
     <h3>Latency probes</h3>
     <div class="kv">
       {#each CADENCES as [key, label, tip] (key)}
-        <div class="cadence">
+        <div class="cadence stacked">
           <span {@attach tooltip(() => tip)}>{label}</span>
           <div class="segmented" role="group" aria-label={label}>
             {#each Object.keys(PING_CADENCE) as PingCadence[] as value (value)}
               <button
                 type="button"
                 aria-pressed={store.config[key] === value}
+                aria-label={PING_CADENCE[value]}
                 disabled={running || store.preparing}
-                {@attach tooltip(() => PING_CADENCE[value])}
                 onclick={() => controller.configureRun({ [key]: value })}
                 >{PING_CADENCE_SHORT[value]}</button
               >
@@ -745,25 +740,24 @@
   }
   /* A control stands at its label's end while the row holds both, and against the right edge when it wraps
      under the label; a cadence's segments then take the row's width. */
-  .units > span,
-  .cadence > span {
+  .units > span {
     flex: 1 0 auto;
     margin-inline-end: auto;
   }
   .units > :not(span) {
     margin-inline-start: auto;
   }
-  .cadence {
-    row-gap: var(--space-2);
-  }
-  .cadence > .segmented {
-    flex: 1 1 240px;
-  }
   /* A narrow sheet stacks every stepper row and the units row alike, so no row wraps where its neighbour does not. */
   @container settings (max-width: 320px) {
     .stage-row:has(:global(.stepper)) {
       flex-flow: column nowrap;
       align-items: flex-start;
+      gap: var(--space-2);
+      padding-block: var(--space-3);
+    }
+    .units {
+      row-gap: var(--space-2);
+      padding-block: var(--space-3);
     }
     .units > span {
       flex-basis: 100%;

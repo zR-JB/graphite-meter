@@ -42,8 +42,11 @@ fn main() -> ExitCode {
         },
     };
     match failure {
+        // A failure's lines log one after another, so a long one never wraps.
         Some((topic, failure)) => {
-            log!(Error, topic, "{failure}");
+            for line in failure.lines() {
+                log!(Error, topic, "{line}");
+            }
             ExitCode::FAILURE
         }
         None => ExitCode::SUCCESS,

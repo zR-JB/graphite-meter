@@ -179,24 +179,24 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   it was laid out instead of building it again.
 - A run is one story told on the dial, and nothing passes through an empty console on the way. Start: the run
   key's skin turns to Stop on the press while its label crosses over; the previous result rewinds, every arc
-  draining back to zero together as its beads drop off (`result-drain`, 300 ms, fast from the press), while the
+  draining back to zero together as its beads drop off (`result-drain`, 160 ms, fast from the press), while the
   lanes, the cards and the status bar keep their frames and their figures clear in one frame, with no fade: the
   dial's drain is the start's only motion. A stage the new run leaves out gives up its card and lane as the run
   starts, and the rest close over its place (`flip()`). A stage has a card while the next run includes it or the
   shown run ran it. Each stage: during its warmup the ring's track takes a faint tint of
   its hue and the console's light from above (`--ambient`) shifts to it; when it starts measuring, the needle rises
   from zero (520 ms, eased out); when it ends, the needle drains back to zero (300 ms) and blends into the next
-  stage's hue on the way down. End: the last needle drains, and the result sweep starts as it reaches zero.
+  stage's hue on the way down. End: the last needle holds, and the result takes the ring over where it stands.
 - A stage starting is one wave from the chips down: the chip's edge and bar first, the dial's figure and the
   stage's name hand off together, the population's row in the lanes washes in its hue a beat later on its own layer,
   and two beats after the chip the card's edge eases in and its glow arrives in one step (a blurred shadow is
   never faded frame by frame).
 - A stage settling: its chip's check pops on the spring; its card lays its facts down one row after another
   (`row-in`, 40 ms apart); a measured span in the lanes grows from its middle the first time it is drawn.
-- The result replays the run on the dial as one sweep from zero over 0.9 s (`--sweep`), once the last needle has
-  drained (`--drain`): every result's arc shows
-  up to the shared front, so the front changes hue as it passes each shorter result, and each bead pops on the
-  spring as the front reaches it.
+- The result sweeps the dial once as it arrives, on from where the last needle stood (`--from`), in that share of
+  0.9 s and no less than 0.36 s, so the ring never runs back before it fills: every result's arc shows up to the
+  shared front, so the front changes hue as it passes each shorter result, and each bead pops on the spring as the
+  front reaches it. A result with no needle before it sweeps from zero.
 - A press never moves what it presses: a key's or a chip's hit box stays put, so a press near its edge still
   lands. The key's fill deepens and its glyph gives (0.82) and springs back; the run key's and a chip's content
   give a little (0.975, 0.96).
@@ -204,8 +204,10 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   only), and the key's new glyph turns into place on the spring. The page stays clickable while it runs.
 - A change that reshapes the console, a stage switched on or off, applies in the frame of the click that asked
   for it, and then moves (`flip()`): every element marked `data-flip` (the dial, the lanes, the controls, each card
-  and each lane row) glides from its old place to its new one on the compositor, a wider one opens from its old
-  width. Two things never share a place: a leaving one goes at once and its neighbours close over its place, and an
+  and each lane row) springs from where it is seen to its new place on the compositor, a card or the stage
+  changing width with it, and any other wider one opens from its old width. The spring sets off from rest, or at
+  the speed of the move it interrupts, overshoots once by about 1% and settles within 1% in 0.26 s: everything in
+  one move shares it, so edges that meet stay together through the bob, and nothing starts or stops at once. Two things never share a place: a leaving one goes at once and its neighbours close over its place, and an
   arriving one waits while its neighbours make room (140 ms) before it rises in, and rises in at once when none
   moves. Nothing waits for a snapshot of the old page, so the click is answered at once. Opening or closing a result
   in History moves its panes the same way: the list keeps its place while its width changes, so the result rises in
@@ -217,9 +219,10 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   swap, so the fade itself runs on the compositor and no element writes its opacity per frame. A view that
   carries a figure (`--rise`: the dial's 6 px, a card's 3 px) sinks as it leaves and rises as the next arrives.
   A stage's hue changes with its stage, never by a crossfade: the re-armed needle tells the change.
-- A docked sheet's column opens or closes in one step, never glides: a glide would lay the whole console out on
-  every frame. The move is `flip()`'s: the sheet slides in from its edge (320 ms, no overshoot) and pushes the
-  stage, which moves as one surface from where it stood; closing reverses it. A dragged handle sets the column's
+- A docked sheet's column opens or closes in one step and `flip()` moves it: the sheet slides in from its edge on
+  the spring and the stage moves and resizes with it, its far edge still, laying out only the stage per frame
+  (about 0.4 ms); closing reverses it, and swapping one dock for another of the same width only moves the stage.
+  The sheet's ground runs on past the screen edge, so its bob opens no gap there. A dragged handle sets the column's
   width directly. A changed time rolls like a counter (`Roll`, 320 ms): up as it grows, down as it shrinks.
 - The dial's head is a bead in its hue, a little wider than the arc. While the latency stage runs, each idle
   reply rings out from it, one `--dur-pulse` at a time: a faint hairline ring in its hue widens to twice the
@@ -237,10 +240,12 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   beside the latency lanes with the controls under them, the run key over the stage chips, centred in the room
   the lanes leave; the dial is as tall as its ring wants or as the lanes and the controls together; under both
   one card per stage across the console. What is measured live lies on the page (dial, lanes, keys); what is
-  kept is a card. Without the latency stage the dial stands centred and wider with the controls under it. A complete run fits 1024 × 768 without scrolling. On a phone the dial keeps about two fifths
+  kept is a card. Without the latency stage the dial stands centred and wider with the controls under it. A complete run fits 1024 × 768 without scrolling. On a phone the dial keeps under a third
   of the screen with the controls under it, up to three chips to a row (four as two and two, a narrow chip
-  without its glyph), the cards one to a row in stage order, each whole from Start so nothing moves as the
-  stages run, and the lanes come last.
+  without its glyph) and no legend, the cards one to a row in stage order, each whole from Start so nothing moves
+  as the stages run and compact so a default run's three fit the screen of a large phone (the figure at the right
+  beside the name and its detail, a 36 px strip, the facts as one row of label-over-value columns), and the
+  lanes come last.
   The dial is a 270° ring with an arc 0.13 of its radius wide, ticks and five labels; every result's
   arc lies on the ring, the longest underneath, so each shows from where the next shorter one ends, and ends in
   a bead in its hue; a bead moved inward off a close neighbour hangs on a stalk; the stage's mark and name sit
@@ -255,7 +260,8 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   above the cards moves from Start to the result.
 - **Top bar and status strip**: 48 px on the canvas and 28 px in `--surface-1`, each with a hairline, their
   text on the console's gutter (`--gutter`, 24 px, 16 under 1024 px), so the brand, the panels' edges and the
-  status word share one line. The bar carries the brand, whose hexagon is the latency hue as the favicon's
+  status word share one line. A phone has no status strip: its chips, key and cards already show the phase, the
+  time and the bytes. The bar carries the brand, whose hexagon is the latency hue as the favicon's
   is, a Settings key, the connection dot, and at the right History, Details and the theme; a key is a 32 px
   square glyph plate with a hairline. The brand's hover dims its word, no plate. The strip reads from the left
   the status word, the elapsed time, the bytes moved and the time left while a stage runs, each figure in a cell
@@ -305,8 +311,9 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   led by its mark: name, median, jitter, timeouts (the share of resolved probes that got no reply, which is not
   packet loss), box plot (P10–P90 box over its min–max whisker, median tick, latest reply as a dot while live) and
   the added latency in its ink, from the medians until the run saves it, "—" without evidence. Figures are as
-  wide as their longest value from Start, and a row whose probes timed out or were lost shows a note in its
-  mark's place, so no column moves mid-run. The rows share one ms axis on the gauge's ladder over their P90s, so
+  wide as their longest value from Start, so no column moves mid-run. A row keeps its mark whatever happens: missing
+  or unaccounted replies brighten its timeouts figure under a dotted mark whose tip gives every probe outcome, and
+  only a twentieth or more of the probes turns it to `--warn`; a failed population tints its name. The rows share one ms axis on the gauge's ladder over their P90s, so
   the boxes fill it; a whisker past it runs on to the edge, ends in an arrowhead and names its value. The axis
   sits under the last row and its ticks run up through the rows as gridlines behind the plots; the idle median
   is one line from its tick through the loaded rows, and each loaded row's added-latency span starts from it. A
@@ -350,9 +357,10 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
 - **Facts** (`dl.kv`): label/value pairs; a qualifier that belongs to a value is an `.aside`, never joined with a dot.
 - **Tooltip and readout**: a readout is a light plate (`.inspect-card`, a hairline, 3 px corners); a tip is
   ink (`--brand`, inverse text, 3 px corners, no arrow), so it never reads as part of the instrument, and it
-  fades in over 120 ms. A tip opens once the pointer has stayed within 8 px of one point on its word for 0.4 s (jargon
-  0.25 s, 0.12 s just after another closed); any larger move starts the wait over from where the hand is, so a
-  pointer passing by, however slowly, or dragging opens none. A dotted underline marks jargon inside a line of text
+  fades in over 120 ms. A tip opens once the pointer has stayed within 8 px of one point on its word for 0.65 s
+  (jargon 0.45 s, 0.2 s just after another closed); any larger move starts the wait over from where the hand is, so
+  a pointer passing by, however slowly, or dragging opens none. A tip is a title and at most two short lines, at
+  most 260 px wide; the full definition belongs in the docs, and options a row's tip already lists carry none. A dotted underline marks jargon inside a line of text
   (a card's "wire", "no data"); a row's or a control's label carries its tip on the help cursor alone, so rows
   and sheets read clean. No tip restates what its control already shows: a Close key and a connection path's
   row carry none. It also opens on keyboard focus, on a

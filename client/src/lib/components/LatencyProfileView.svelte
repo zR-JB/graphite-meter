@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { onDestroy, untrack } from "svelte";
+  import { onDestroy, untrack, type Snippet } from "svelte";
   import { inView } from "../actions/inView";
   import { handoff, Smoothed } from "../presentation/motion.svelte";
   import Icon from "./Icon.svelte";
-  import { tooltipAction } from "../actions/tooltip";
+  import { termAction, tooltipAction } from "../actions/tooltip";
   import { warmUp } from "../actions/intent";
   import { scrub } from "../actions/scrub";
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
@@ -37,6 +37,8 @@
     > | null;
     /** Whose latency this is, when several servers ran. */
     source?: string;
+    /** A choice of whose latency to show, in the source's place. */
+    sourcePicker?: Snippet;
     /** Why the Latency stage failed; it stands under the idle headline in place of its caption. */
     failure?: string;
   }
@@ -47,8 +49,11 @@
     label = "Latency, jitter and probe timeouts by phase",
     added = null,
     source,
+    sourcePicker,
     failure,
   }: Props = $props();
+  // A few missing replies are expected, above all over WebTransport; a twentieth of the probes is worth a look.
+  const TIMEOUTS_WARN = 0.05;
   const idle = $derived(lanes.find((lane) => lane.key === "latency") ?? null);
   // Lit like a stage card: dim until something is measured, brightest while the idle stage runs.
   const light = $derived(
@@ -274,6 +279,8 @@
     <!-- Whose latency this is when several servers ran, or why the idle stage failed. -->
     {#if failure && idle?.center == null}
       <span class="aside failure">{failure}</span>
+    {:else if sourcePicker}
+      <span class="source">{@render sourcePicker()}</span>
     {:else if source}
       <span class="aside">{source}</span>
     {/if}
@@ -306,12 +313,7 @@
               (lane.center == null || idle?.center == null
                 ? null
                 : lane.center - idle.center))}
-        {@const note = [
-          lane.failure && `${lane.label}: ${lane.failure}`,
-          hasProbeAccountingNotice(lane) && probeOutcomes(lane),
-        ]
-          .filter(Boolean)
-          .join("\n")}
+        {@const noted = hasProbeAccountingNotice(lane)}
         <div
           data-flip="lane-{lane.key}"
           class="lane"
@@ -319,21 +321,18 @@
           data-active={lane.active === true}
         >
           <span class="lane-name">
-            <!-- A note takes the dot's place, so it never widens the column mid-run. -->
-            {#if note}
-              <span
-                class="mark note"
-                data-tone={lane.failure ? "err" : "warn"}
-                role="note"
-                aria-label={note.replaceAll("\n", ". ")}
-                use:tooltipAction={note}><Icon name="info" /></span
-              >
-            {:else}
-              <span class="mark tone-icon" aria-hidden="true"
-                ><Icon name={STAGE[lane.key].icon} /></span
-              >
-            {/if}
-            <span class="lane-label">{lane.label}</span>
+            <span class="mark tone-icon" aria-hidden="true"
+              ><Icon name={STAGE[lane.key].icon} /></span
+            >
+            <!-- A failed population says why on its own name. -->
+            <span
+              class="lane-label"
+              class:failed={!!lane.failure}
+              tabindex="-1"
+              use:tooltipAction={lane.failure
+                ? `${lane.label}\n${lane.failure}`
+                : ""}>{lane.label}</span
+            >
           </span>
           <strong
             class="lane-median"
@@ -349,13 +348,24 @@
           <em class="lane-jitter" class:quiet={lane.jitter == null}
             >{formatLatency(lane.jitter)}</em
           >
-          <em
-            class="lane-timeouts"
-            class:quiet={lane.timeoutRatio == null}
-            tabindex="-1"
-            use:tooltipAction={timeoutsTip(lane)}
-            >{formatTimeouts(lane.timeoutRatio)}</em
-          >
+          <!-- Missing replies brighten the figure and mark it as a term that explains them; only many of them warn. -->
+          {#if noted}
+            <em
+              class="lane-timeouts noted"
+              class:many={(lane.timeoutRatio ?? 0) >= TIMEOUTS_WARN}
+              tabindex="-1"
+              use:termAction={probeOutcomes(lane)}
+              >{formatTimeouts(lane.timeoutRatio)}</em
+            >
+          {:else}
+            <em
+              class="lane-timeouts"
+              class:quiet={lane.timeoutRatio == null}
+              tabindex="-1"
+              use:tooltipAction={timeoutsTip(lane)}
+              >{formatTimeouts(lane.timeoutRatio)}</em
+            >
+          {/if}
           <div
             class="track"
             role="slider"
@@ -486,6 +496,12 @@
     line-height: 22px;
     white-space: nowrap;
   }
+  /* The source's field keeps the head's 20 px line, as the dial's lens keeps its corner. */
+  .card-head .source {
+    display: inline-flex;
+    min-width: 0;
+    margin-block: calc((20px - var(--control-h)) / 2);
+  }
   .card-head .tone-icon {
     width: 18px;
     height: 18px;
@@ -597,16 +613,17 @@
     width: 10px;
     height: 10px;
   }
-  /* Figures take their longest value's width ("9999 ms") from Start, so arriving values never shift the plot. */
+  /* Figures take their longest value's width ("< 0.1 ms", "9999 ms") from Start, so arriving values never shift
+     the plot. */
   .lane-median {
-    min-width: 7ch;
+    min-width: 8ch;
     font: 500 var(--type-md) / 1 var(--font-mono);
     font-variant-numeric: tabular-nums;
     text-align: end;
     white-space: nowrap;
   }
   .lane-jitter {
-    min-width: 7ch;
+    min-width: 8ch;
   }
   .lane-jitter,
   .lane-timeouts {
@@ -621,6 +638,15 @@
   .lane-jitter.quiet,
   .lane-timeouts.quiet {
     color: var(--text-soft);
+  }
+  .lane-timeouts.noted {
+    color: var(--text);
+  }
+  .lane-timeouts.many {
+    color: var(--warn);
+  }
+  .lane-label.failed {
+    color: var(--err);
   }
   .lane-added {
     color: var(--tone-ink);

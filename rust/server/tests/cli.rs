@@ -112,10 +112,10 @@ fn a_verbose_server_reports_throughput_and_sigterm_ends_its_running_download() {
     let (sender, received) = std::sync::mpsc::channel();
     std::thread::spawn(move || lines.map(|line| sender.send(line)).take_while(Result::is_ok).count());
     let next = || received.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
-    let role = "HTTP/1.1 clear (UI, discovery, probe, transfers, WebSockets)";
+    let place = format!("{address}/tcp");
     assert_eq!(next(), format!("graphite-meter {ENGINE_VERSION} starting"));
     assert!(next().starts_with("serving as "));
-    assert_eq!(next(), format!("listening on {address}/tcp: {role}"));
+    assert_eq!(next(), format!("{place:<21} HTTP/1.1  UI, discovery, probe, transfers, WebSockets"));
     assert_eq!(next(), "ready");
     let mut download = std::net::TcpStream::connect(&address).unwrap();
     download

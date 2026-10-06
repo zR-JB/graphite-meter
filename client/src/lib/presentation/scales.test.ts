@@ -55,6 +55,16 @@ test("each throughput axis contains what it draws, with headroom and no decade j
   });
 });
 
+test("the dial's ceiling is round in the unit it reads", () => {
+  const gigabit = ticks(0, [117e6, 125.4e6, 118e6]);
+  const gauge = (base: "base10" | "base2", kind: "bits" | "bytes") =>
+    throughputScales(gigabit, NO_RESULT, "auto", base, kind).gaugeBytesPerSec;
+  expect(gauge("base10", "bits") * 8).toBe(2e9);
+  expect(gauge("base10", "bytes")).toBe(200e6);
+  expect(gauge("base2", "bytes")).toBe(200 * 1024 ** 2);
+  expect(gauge("base2", "bits") * 8).toBe(1000 * 1024 ** 2);
+});
+
 test("latency axes follow the p95 on the tier ladder, live over 8 s", () => {
   expect(latencyScale([])).toBe(20);
   expect(latencyScale([0.1])).toBe(1);

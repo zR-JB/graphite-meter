@@ -3,7 +3,7 @@
   import Dialog from "./Dialog.svelte";
   import Icon from "./Icon.svelte";
   import { loadLegal, retryLegal } from "../legal/loader";
-  import type { LegalAbout } from "../legal/types";
+  import type { LegalAbout, LegalComponent } from "../legal/types";
 
   interface Props {
     open: boolean;
@@ -43,6 +43,33 @@
   const ecosystems = $derived([
     ...Map.groupBy(data?.components ?? [], (component) => component.ecosystem),
   ]);
+
+  // A location as people know it: a repository by its owner and name, a registry page by its package, any other
+  // page by its host and path. Revisions, compare ranges and versions stay in the link, not in the text.
+  function place(url: string): string {
+    const { host, pathname } = new URL(url);
+    const parts = pathname.split("/").filter(Boolean);
+    if (host === "github.com") return [host, ...parts.slice(0, 2)].join("/");
+    if (host === "crates.io") return [host, ...parts.slice(0, 2)].join("/");
+    return [host, ...parts].join("/");
+  }
+
+  // Every component reads the same way whatever ecosystem or server it comes from: where it comes from, and when
+  // it is modified, where the shipped copy lives and what changed. A fork's upstream is where it comes from.
+  function locations(links: LegalComponent["links"]) {
+    const url = (label: string) =>
+      links.find((link) => link.label === label)?.url;
+    const [source, upstream, changes] = [
+      url("Source"),
+      url("Upstream"),
+      url("Changes"),
+    ];
+    return {
+      origin: upstream ?? source,
+      fork: upstream ? source : undefined,
+      changes,
+    };
+  }
 </script>
 
 <Dialog
@@ -116,25 +143,42 @@
             <h4 class="list-label">{ECOSYSTEM[ecosystem] ?? ecosystem}</h4>
             <dl class="kv components">
               {#each components as component (component.name + component.version)}
+                {@const { origin, fork, changes } = locations(component.links)}
                 <div class="component">
                   <dt>{component.name}</dt>
                   <dd>
-                    <span
-                      >{component.version}{#if component.modified}<span
-                          class="aside">Modified</span
-                        >{/if}</span
-                    >
+                    <span class="version">{component.version}</span>
                     <span>{component.selectedLicenseExpression}</span>
-                    <span class="component-links">
-                      {#each component.links as link (link.label)}
-                        <a
-                          href={link.url}
-                          aria-label={`${link.label} for ${component.name}`}
+                    <span class="where">
+                      {#if origin}<a
+                          href={origin}
                           target="_blank"
                           rel="noopener noreferrer"
-                          >{link.label}<Icon name="external" /></a
-                        >
-                      {/each}
+                          ><span>{place(origin)}</span><span class="sr-only"
+                            >, source of {component.name}</span
+                          ><Icon name="external" /></a
+                        >{/if}
+                      {#if component.modified}
+                        <span class="modified">
+                          <span class="aside">Modified</span>
+                          {#if fork}<a
+                              href={fork}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              ><span>{place(fork)}</span><span class="sr-only"
+                                >, shipped source of {component.name}</span
+                              ><Icon name="external" /></a
+                            >{/if}
+                          {#if changes}<a
+                              href={changes}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              ><span>changes</span><span class="sr-only"
+                                >{` to ${component.name}`}</span
+                              ><Icon name="external" /></a
+                            >{/if}
+                        </span>
+                      {/if}
                     </span>
                   </dd>
                 </div>
@@ -174,22 +218,45 @@
   }
   .components dd {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2.4fr);
+    align-items: baseline;
     gap: 2px var(--space-3);
   }
-  .component-links {
+  .version {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Where it comes from on the first line; a modified component's shipped copy and changes on a quiet second. */
+  .where {
+    display: grid;
+    justify-items: start;
+    gap: 2px;
+    min-width: 0;
+  }
+  .modified {
     display: flex;
     flex-wrap: wrap;
-    align-items: start;
-    gap: 0 var(--space-3);
+    align-items: baseline;
+    gap: 0 var(--space-2);
+    font-size: var(--type-sm);
+  }
+  .modified > .aside {
+    margin: 0;
+    color: var(--text-soft);
   }
   .components a {
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
+    max-width: 100%;
     color: var(--text-muted);
     text-decoration-color: transparent;
     text-underline-offset: 0.2em;
+  }
+  /* A location never breaks: one too long for its column ends in an ellipsis, and its link keeps the address. */
+  .components a > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
   .components a :global(svg) {
@@ -219,7 +286,7 @@
     .components dd {
       grid-template-columns: auto minmax(0, 1fr);
     }
-    .component-links {
+    .where {
       grid-column: 1 / -1;
     }
   }

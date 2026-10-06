@@ -7,10 +7,7 @@ use crate::{
     log,
     log::rfc3339,
 };
-use graphite_meter_proto::{
-    duration,
-    origin::{Host, Scheme},
-};
+use graphite_meter_proto::origin::{Host, Scheme};
 use rustls::{
     ServerConfig,
     pki_types::{CertificateDer, PrivateKeyDer, ServerName, pem::PemObject},
@@ -225,9 +222,14 @@ fn log_loaded(expires: SystemTime, now: SystemTime) {
     log!(Info, "tls", "certificate loaded: expires {}", rfc3339(expires));
     let remaining = expires.duration_since(now).unwrap_or_default();
     if remaining < EXPIRY_WARNING {
+        // Whole days from two days on, else whole hours.
         let hours = (remaining + Duration::from_secs(1800)).as_secs() / 3600;
-        let rounded = duration::format(Duration::from_secs(hours * 3600));
-        log!(Warn, "tls", "certificate expires in {rounded}; renew it");
+        let left = if hours >= 48 {
+            format!("{} days", (hours + 12) / 24)
+        } else {
+            format!("{hours} h")
+        };
+        log!(Warn, "tls", "certificate expires in {left}; renew it");
     }
 }
 

@@ -26,6 +26,7 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
+	"github.com/zR-JB/graphite-meter/go/internal/logx"
 	"github.com/zR-JB/graphite-meter/go/internal/static"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
@@ -57,10 +58,11 @@ type endpoints struct {
 	controlTimeout        time.Duration
 }
 
+// A service's name is its protocol, which its errors lead with; its roles say what it serves.
 type service struct {
-	name, addr, network string
-	run                 func() error
-	stop                func(context.Context) error
+	name, roles, addr, network string
+	run                        func() error
+	stop                       func(context.Context) error
 }
 
 type listenerSockets interface {
@@ -214,9 +216,9 @@ type listenerBuild struct {
 }
 
 type tcpListener struct {
-	name, addr, alpn string
-	listener         auth.Listener
-	topo             muxTopology
+	name, roles, addr, alpn string
+	listener                auth.Listener
+	topo                    muxTopology
 }
 
 func (b *listenerBuild) assemble() (err error) {
@@ -231,17 +233,17 @@ func (b *listenerBuild) assemble() (err error) {
 	ui := muxTopology{spa: true, discovery: true, latency: true, transfers: true}
 	uiTLS := ui
 	uiTLS.requiredProto = 1
-	h1Name := "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets"
+	const all = "UI, discovery, probe, transfers, WebSockets"
+	h1Roles := all
 	if b.authn.Enabled() {
-		h1Name = "HTTP/1.1 clear: trusted proxy upstream only; direct requests are refused, GET / redirects to HTTPS"
+		h1Roles = "trusted proxy only; GET / redirects to HTTPS"
 	}
 	for _, l := range []tcpListener{
-		{h1Name, cfg.Native.H1, "", auth.Listener{UI: true}, ui},
-		{"HTTPS/WSS HTTP/1.1: UI, discovery, probe, transfers, WebSockets", cfg.Native.H1TLS, "http/1.1",
-			auth.Listener{UI: true}, uiTLS},
-		{"HTTPS HTTP/2: measurement probe, transfers, progress only", cfg.Native.H2, "h2",
+		{"HTTP/1.1", h1Roles, cfg.Native.H1, "", auth.Listener{UI: true}, ui},
+		{"HTTPS/1.1", all, cfg.Native.H1TLS, "http/1.1", auth.Listener{UI: true}, uiTLS},
+		{"HTTPS/2", "probe, transfers, progress", cfg.Native.H2, "h2",
 			auth.Listener{}, muxTopology{transfers: true, requiredProto: 2}},
-		{"HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe, upload and ticket control", cfg.Native.H3, "http/1.1",
+		{"HTTPS/1.1", "HTTP/3 bootstrap probe, upload, tickets", cfg.Native.H3, "http/1.1",
 			auth.Listener{}, muxTopology{bootstrap: true, control: true}},
 	} {
 		if l.addr == "" {
@@ -276,7 +278,7 @@ func (b *listenerBuild) addTCP(l tcpListener) error {
 	if l.alpn != "" {
 		served = tls.NewListener(served, b.cm.tlsConfig(l.alpn))
 	}
-	b.services = append(b.services, service{name: l.name, addr: l.addr, network: "tcp",
+	b.services = append(b.services, service{name: l.name, roles: l.roles, addr: l.addr, network: "tcp",
 		run: func() error { return serve(served, s) }, stop: func(ctx context.Context) error {
 			err := s.Shutdown(ctx)
 			if err != nil {
@@ -299,7 +301,7 @@ func serveWebTransport(ctx context.Context, wt *webtransport.Server, ln *quic.Li
 			var idle *quic.IdleTimeoutError
 			if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.As(err, &idle) &&
 				!(errors.As(err, &closed) && closed.Remote) {
-				peers.printf("[gm:h3] webtransport connection: %q", err)
+				peers.printf("webtransport connection: %q", err)
 			}
 		}()
 	}
@@ -321,19 +323,19 @@ func (p *peerLog) printf(format string, args ...any) {
 		return
 	}
 	if p.suppressed > 0 {
-		format += fmt.Sprintf(" (%d more peer connection failures since)", p.suppressed)
+		format += fmt.Sprintf(" (and %d more peer connection failures in the last minute)", p.suppressed)
 	}
 	p.next, p.suppressed = now.Add(time.Minute), 0
-	log.Printf(format, args...)
+	logx.Infof("peer", format, args...)
 }
 
 // Write takes net/http's error log: panics and accept failures are the server's, the rest mostly a peer's doing.
 func (p *peerLog) Write(b []byte) (int, error) {
 	line := strings.TrimSuffix(string(b), "\n")
 	if strings.Contains(line, "panic serving") || strings.HasPrefix(line, "http: Accept error") {
-		log.Print(line)
+		logx.Errorf("http", "%s", line)
 	} else {
-		p.printf("[gm:http] %s", line)
+		p.printf("%s", line)
 	}
 	return len(b), nil
 }
@@ -517,7 +519,8 @@ func (b *listenerBuild) addH3() error {
 		return err
 	}
 	b.services = append(b.services,
-		service{name: "HTTP/3: probe, transfers, progress, WebTransport", addr: b.cfg.Native.H3, network: "udp",
+		service{name: "HTTP/3", roles: "probe, transfers, progress, WebTransport", addr: b.cfg.Native.H3,
+			network: "udp",
 			run: func() error {
 				err := serveWebTransport(b.ctx, wt, quicListener, &b.peers)
 				if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) ||
@@ -538,15 +541,17 @@ func (b *listenerBuild) addH3() error {
 func runServices(ctx context.Context, cfg *config.Config, services []service) error {
 	errs := make(chan error, len(services))
 	for _, svc := range services {
-		log.Printf("graphite-meter %s listening on %s/%s (%s)", cfg.EngineVersion, svc.addr, svc.network, svc.name)
+		// A table: where, which protocol, what for.
+		logx.Infof("listen", "%-21s %-9s %s", svc.addr+"/"+svc.network, svc.name, svc.roles)
 		go func() {
 			err := svc.run()
 			if err != nil {
-				err = fmt.Errorf("%s: %w", svc.name, err)
+				err = fmt.Errorf("%s on %s: %w", svc.name, svc.addr, err)
 			}
 			errs <- err
 		}()
 	}
+	logx.Infof("server", "ready")
 	defer func() {
 		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -555,9 +560,11 @@ func runServices(ctx context.Context, cfg *config.Config, services []service) er
 			wg.Go(func() { _ = svc.stop(stopCtx) })
 		}
 		wg.Wait()
+		logx.Infof("server", "stopped")
 	}()
 	select {
 	case <-ctx.Done():
+		logx.Infof("server", "stop requested; closing listeners and draining connections")
 		return nil
 	case err := <-errs:
 		return err
@@ -573,11 +580,12 @@ func runAdmissionLog(ctx context.Context, requests *requestAdmission, connection
 		case <-ticker:
 			r, s := requests.stats()
 			c := connections.stats()
-			log.Printf("[gm:admission] handlers %d active / %d peak, rejected %d pool + %d client; "+
-				"sessions %d active / %d max, %d per client, rejected %d budget + %d client; "+
-				"connections %d active / %d peak, rejected %d global + %d client",
-				r.active, r.peak, r.rejectedGlobal, r.rejectedClient,
-				s.active, s.limit, s.clientLimit, s.rejectedGlobal, s.rejectedClient,
+			// One line per limiter, so each reads at a glance and none wraps.
+			logx.Infof("admission", "handlers %d active / %d peak, rejected %d pool + %d client",
+				r.active, r.peak, r.rejectedGlobal, r.rejectedClient)
+			logx.Infof("admission", "sessions %d active / %d max, %d per client, rejected %d budget + %d client",
+				s.active, s.limit, s.clientLimit, s.rejectedGlobal, s.rejectedClient)
+			logx.Infof("admission", "connections %d active / %d peak, rejected %d global + %d client",
 				c.active, c.peak, c.rejectedGlobal, c.rejectedClient)
 		}
 	}

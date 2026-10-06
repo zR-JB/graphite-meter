@@ -235,16 +235,21 @@
   // Tips name a key only while the page shortcuts act on it.
   const keyHint = (key: string) => tipKey(key, store.keyShortcuts);
 
-  // The new theme fades in over the old one.
+  // The new theme fades in over the old one. Each press steps from the theme applied when its change runs, so
+  // presses inside a fade each count; a fade that a newer press skips is not an error.
   function toggleTheme() {
-    const next =
-      THEME_CYCLE[(THEME_CYCLE.indexOf(store.theme) + 1) % THEME_CYCLE.length];
     const apply = () => {
+      const next =
+        THEME_CYCLE[
+          (THEME_CYCLE.indexOf(store.theme) + 1) % THEME_CYCLE.length
+        ];
       store.prefer({ theme: next });
       flushSync();
     };
     if (still() || !document.startViewTransition) return apply();
-    document.startViewTransition({ update: apply, types: ["theme"] });
+    document
+      .startViewTransition({ update: apply, types: ["theme"] })
+      .ready.catch(() => {});
   }
 
   // The grid and resize controls share one resolution of the saved widths.
@@ -309,10 +314,21 @@
       ? { ...next, panels: next.panels.slice(-1) }
       : next;
   }
+  // A close shows at once, in the frame of its click; the history step back lands later, and a route taken
+  // meanwhile waits for it to be written.
+  let traversing = false;
+  let queued: { route: Route; replace: boolean } | null = null;
   function routeTo(next: Route, replace = false) {
     next = panelsForLayout(next);
     const parent = serializeRoute(currentRoute);
     commitRoute(next);
+    if (traversing) {
+      queued = { route: next, replace };
+      return;
+    }
+    record(next, replace, parent);
+  }
+  function record(next: Route, replace: boolean, parent: string) {
     const hash = serializeRoute(next);
     if (replace)
       window.history.replaceState({ graphiteRoute: false }, "", hash);
@@ -324,9 +340,22 @@
       graphiteRoute?: boolean;
       parent?: string;
     } | null;
-    if (marker?.graphiteRoute && marker.parent === serializeRoute(next))
+    if (
+      !traversing &&
+      marker?.graphiteRoute &&
+      marker.parent === serializeRoute(next)
+    ) {
+      traversing = true;
+      commitRoute(panelsForLayout(next), true);
       window.history.back();
-    else routeTo(next, true);
+    } else routeTo(next, true);
+  }
+  function onPopState() {
+    if (!traversing) return onNavigate();
+    traversing = false;
+    const pending = queued;
+    queued = null;
+    if (pending) record(pending.route, pending.replace, window.location.hash);
   }
   function historyRoute(
     id: string | null = null,
@@ -429,7 +458,7 @@
   // A workspace that appears shows what has already settled as settled: the moments that mark a result arriving
   // (the dial's sweep and beads, a card's facts, a lane's span, a chip's check) play when it arrives, so on each
   // return to the console the ones it mounts with are finished at once, and only what arrives later plays.
-  const SETTLES = ["result-sweep", "await-sweep", "pop", "row-in", "grow-x"];
+  const SETTLES = ["result-sweep", "pop", "row-in", "grow-x"];
   function entering(node: HTMLElement) {
     const finish = () => {
       for (const animation of node.getAnimations({ subtree: true }))
@@ -625,7 +654,7 @@
 
 <svelte:window
   onpagehide={saveDockWidths}
-  onpopstate={onNavigate}
+  onpopstate={onPopState}
   onkeydown={onKeydown}
   onbeforeunload={onBeforeUnload}
 />
@@ -668,7 +697,7 @@
       aria-label="Settings"
       aria-expanded={settingsOpen}
       {@attach prepareSettings}
-      {@attach tooltip(() => `Settings — test and display${keyHint("S")}`)}
+      {@attach tooltip(() => `Settings${keyHint("S")}`)}
       onclick={(event) =>
         togglePanel("settings", event.currentTarget as HTMLElement)}
       ><Icon name="settings" /></button
@@ -702,7 +731,7 @@
         aria-current={historyOpen ? "page" : undefined}
         aria-pressed={historyOpen}
         {@attach prepareHistory}
-        {@attach tooltip(() => `History — saved results${keyHint("H")}`)}
+        {@attach tooltip(() => `History${keyHint("H")}`)}
         onclick={(event) =>
           toggleHistoryFromPointer(event.currentTarget as HTMLElement)}
         ><Icon name="history" /></button
@@ -712,7 +741,7 @@
       aria-label="Details"
       aria-expanded={telemetryOpen}
       {@attach prepareDetails}
-      {@attach tooltip(() => `Details — server and connection${keyHint("D")}`)}
+      {@attach tooltip(() => `Details${keyHint("D")}`)}
       onclick={(event) =>
         togglePanel("endpoint", event.currentTarget as HTMLElement)}
       ><Icon name="info" /></button
@@ -721,8 +750,7 @@
       class="btn btn-icon key direct-theme"
       aria-label={`Theme: ${THEME[store.theme].label}`}
       {@attach tooltip(
-        () =>
-          `Theme: ${THEME[store.theme].label}${keyHint("T")} — cycles light, dark and auto`,
+        () => `Theme: ${THEME[store.theme].label}${keyHint("T")}`,
       )}
       onclick={toggleTheme}
       >{#key store.theme}<span class="theme-glyph"
@@ -767,7 +795,12 @@
     {/if}
   </SidePanel>
   {#if currentRoute.kind === "not-found"}
-    <section class="stage history-stage" data-flip="stage" inert={flyout}>
+    <section
+      class="stage history-stage"
+      data-flip="stage"
+      data-flip-resize
+      inert={flyout}
+    >
       <div class="empty-state">
         <h1>Page not found</h1>
         <p>That client route does not exist.</p>
@@ -780,6 +813,7 @@
     {#if historyOpen}<section
         class="stage history-stage"
         data-flip="stage"
+        data-flip-resize
         inert={flyout}
       >
         {#if HistoryWorkspace}<HistoryWorkspace
@@ -812,6 +846,7 @@
       class="stage measurement-stage"
       class:away={historyOpen}
       data-flip={historyOpen ? undefined : "stage"}
+      data-flip-resize
       data-stage={store.isRunning ? store.phaseStage : undefined}
       class:previous={store.previousRun}
       {@attach entering}
@@ -1147,6 +1182,18 @@
     display: none;
   }
 
+  /* A phone's chips, key and cards already say what the strip would: the phase, the time and the bytes. */
+  @media (max-width: 520px) {
+    #console {
+      grid-template-rows: var(--topbar-h) minmax(0, 1fr) env(
+          safe-area-inset-bottom,
+          0px
+        );
+    }
+    .status {
+      display: none;
+    }
+  }
   @media (max-width: 759px) {
     /* History brings its own 16 px gutter. */
     .stage:not(.history-stage) {

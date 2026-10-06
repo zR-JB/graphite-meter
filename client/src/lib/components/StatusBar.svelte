@@ -5,7 +5,7 @@
   import { BUILD } from "../buildenv";
   import { handoff, type Handoff } from "../presentation/motion.svelte";
   import type { Phase } from "../runner/contract";
-  import { CONNECTIVITY } from "../presentation/vocabulary";
+  import { CONNECTIVITY, statusLabel } from "../presentation/vocabulary";
 
   let { status: label }: { status: Handoff<{ phase: Phase; label: string }> } =
     $props();
@@ -27,12 +27,17 @@
   const refused = $derived(status === "blocked" || status === "failed");
 </script>
 
-<span
-  class="label handoff"
-  class:handoff-out={label.out}
-  {@attach refused
-    ? tooltip(() => store.startError || store.startBlocker)
-    : null}>{label.shown.label}</span
+<!-- The phase word's cell is as wide as the widest word a run passes through, so the figures never move. -->
+<span class="label-cell"
+  ><span class="sizer" aria-hidden="true"
+    >{statusLabel("checking", "idle")}</span
+  ><span
+    class="label handoff"
+    class:handoff-out={label.out}
+    {@attach refused
+      ? tooltip(() => store.startError || store.startBlocker)
+      : null}>{label.shown.label}</span
+  ></span
 >
 <span class="elapsed" class:secondary={left.shown.show}
   ><span class="readout">{fmtDuration(elapsedMs)}</span></span
@@ -62,7 +67,17 @@
   }
   /* The phase word and its figures read as one line from the left edge, each figure in a cell as wide as its
      longest value, so a counting figure never moves its neighbours; the build alone stands at the right. */
-  .label {
+  .label-cell {
+    display: inline-grid;
+  }
+  .label-cell > * {
+    grid-area: 1 / 1;
+  }
+  .sizer {
+    visibility: hidden;
+  }
+  .label,
+  .sizer {
     color: var(--text);
     font-weight: var(--w-strong);
   }

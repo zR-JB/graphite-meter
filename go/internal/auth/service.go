@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -17,6 +16,7 @@ import (
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/logx"
 	"github.com/zR-JB/graphite-meter/go/internal/static"
 )
 
@@ -62,6 +62,21 @@ type Service struct {
 	verbose          bool
 	counters         [counters]atomic.Uint64
 	pagePolicy       string
+}
+
+// logSummary names how people sign in, one line per concern, with only the settings the mode uses.
+func logSummary(cfg config.AuthConfig, sessionLifetime time.Duration) {
+	password, oidc := authModes(cfg.Mode)
+	how := map[[2]bool]string{{true, false}: "password", {false, true}: "OIDC", {true, true}: "password and OIDC"}
+	logx.Infof("auth", "%s sign-in at %s; sessions last %s", how[[2]bool{password, oidc}], cfg.PublicURL,
+		strings.TrimSuffix(strings.TrimSuffix(sessionLifetime.String(), "0s"), "0m"))
+	if oidc {
+		groups := "every group allowed"
+		if n := len(cfg.OIDCAllowedGroups); n > 0 {
+			groups = fmt.Sprintf("%d %s allowed", n, map[bool]string{true: "group", false: "groups"}[n == 1])
+		}
+		logx.Infof("auth", "OIDC provider %s at %s; %s", cfg.OIDCProviderName, cfg.OIDCIssuer, groups)
+	}
 }
 
 func authModes(mode string) (password, oidc bool) {
@@ -123,13 +138,12 @@ func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, ver
 				return nil, fmt.Errorf("OIDC discovery: %w", err)
 			}
 			s.oidc.discovered.Store(discovery)
-			log.Printf("[gm:auth] OIDC provider ready")
+			logx.Infof("auth", "OIDC provider ready")
 		} else {
 			go s.oidc.retryDiscovery(ctx, s.public)
 		}
 	}
-	log.Printf("[gm:auth] mode=%s origin=%s provider=%s issuer=%s allowed-groups=%d session-lifetime=%s",
-		cfg.Mode, cfg.PublicURL, cfg.OIDCProviderName, cfg.OIDCIssuer, len(cfg.OIDCAllowedGroups), sessionLifetime)
+	logSummary(cfg, sessionLifetime)
 	go s.sweep(ctx)
 	go s.runSecurityLog(ctx)
 	return s, nil
@@ -139,7 +153,7 @@ func (s *Service) debugln(message string) { debugln(s.verbose, message) }
 
 func debugln(verbose bool, message string) {
 	if verbose {
-		log.Printf("[gm:auth:debug] %s", message)
+		logx.Debugf("auth", "%s", message)
 	}
 }
 
@@ -232,7 +246,7 @@ func (s *Service) runSecurityLog(ctx context.Context) {
 				last[i] = value
 			}
 			if changed {
-				log.Printf("[gm:auth] 1m%s", line.String())
+				logx.Infof("auth", "1m%s", line.String())
 			}
 		}
 	}

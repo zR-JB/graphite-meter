@@ -1,34 +1,29 @@
 <script lang="ts">
-  import {
-    catalogSelection,
-    serverName,
-  } from "../presentation/serverAppearance";
+  import { catalogSelection } from "../presentation/serverAppearance";
   import { store } from "../state/store.svelte";
   import { reasonLabel, STAGE, STATUS } from "../presentation/vocabulary";
   import { LATENCY_LANES, type LatencyProfileViewLane } from "./latencyProfile";
   import LatencyProfileView from "./LatencyProfileView.svelte";
   import { announceChanges } from "../presentation/announcer.svelte";
+  import { getApplicationController } from "../runner/controllerContext";
+  import ServerScope from "./ServerScope.svelte";
 
+  const controller = getApplicationController();
   const servers = $derived(
     store.serverDetails?.selection ??
       catalogSelection(store.serverCatalog, store.selectedServers),
   );
-  // Lost probes name their reason on their population's row, by server when several ran, so the card never grows.
+  // Lost probes name their reason on their population's row; the lanes show one server, so only its failures count.
   const notes = $derived.by(() => {
     const details = store.result?.multiServer ?? store.serverDetails;
     const notes: Partial<Record<LatencyProfileViewLane["key"], string[]>> = {};
     if (!details) return notes;
-    const several = details.selection.length > 1;
-    for (const failure of details.failures) {
-      if (failure.scope !== "latency") continue;
-      if (store.resultScope && failure.serverId !== store.resultScope) continue;
-      const reason = reasonLabel(failure.reason);
-      (notes[failure.stage] ??= []).push(
-        several
-          ? `${serverName(details.selection, failure.serverId)}: ${reason.charAt(0).toLowerCase()}${reason.slice(1)}`
-          : reason,
-      );
-    }
+    for (const failure of details.failures)
+      if (
+        failure.scope === "latency" &&
+        failure.serverId === store.latencyFocus
+      )
+        (notes[failure.stage] ??= []).push(reasonLabel(failure.reason));
     return notes;
   });
   const lanes = $derived<LatencyProfileViewLane[]>(
@@ -67,15 +62,27 @@
   );
 </script>
 
+<!-- Every server is probed; the lanes show one at a time, chosen here at any moment, mid-run included. -->
+{#snippet picker()}
+  <ServerScope
+    quiet
+    mark={false}
+    {servers}
+    value={servers.some(({ id }) => id === store.latencyFocus)
+      ? store.latencyFocus
+      : (store.latencyServerId ?? "")}
+    label="Show latency to"
+    onchange={controller.showLatency}
+  />
+{/snippet}
+
 <div class="live-profile">
   <LatencyProfileView
     {lanes}
     variant="bare"
     added={saved?.addedLatency}
     {failure}
-    source={servers.length > 1
-      ? servers.find((server) => server.id === store.latencyFocus)?.name
-      : undefined}
+    sourcePicker={servers.length > 1 ? picker : undefined}
   />
 </div>
 

@@ -157,7 +157,7 @@ impl Server {
         let (pool, stopping) = (&pool, &shutdown);
         let mut services = FuturesUnordered::<Service<'_>>::new();
         for Listening { endpoint, address, socket } in listeners {
-            let role = endpoint.role(auth);
+            let role = endpoint.protocol();
             let (app, shutdown, next) = (app.clone(), shutdown.clone(), || pool.next());
             let protocol = match socket {
                 Socket::Http1(socket, tls) => {
@@ -188,7 +188,9 @@ impl Server {
                     "udp"
                 }
             };
-            log!(Info, "listen", "listening on {address}/{protocol}: {role}");
+            // A table: where, which protocol, what for.
+            let place = format!("{address}/{protocol}");
+            log!(Info, "listen", "{place:<21} {role:<9} {}", endpoint.roles(auth));
         }
         if let Some(certificates) = certificates {
             services.push(Box::pin(async move {
@@ -457,13 +459,42 @@ impl Terms {
         let (limit, connections) = (self.limit, self.connections);
         let minimum = floor as u128 * connections as u128 + endpoint as u128 + BLOCK_BYTES as u128;
         if minimum > limit as u128 {
+            // What is short, of what, and values that fit: one line each, so none wraps. The kernel may grant the
+            // endpoints twice the buffers asked for and each handshake adds to its floor, so the advice keeps a
+            // tenth spare: a budget rounded up to whole GiB, connections rounded down to a multiple of 32.
+            const GIB: u128 = 1 << 30;
+            let fits = (limit as u128).saturating_sub(endpoint as u128 + BLOCK_BYTES as u128) / (floor as u128).max(1);
+            let fits = match fits * 9 / 10 {
+                spare @ 32.. => spare / 32 * 32,
+                spare => spare.max(1),
+            };
+            let raise = (minimum * 11 / 10).div_ceil(GIB) * GIB;
             return Err(format!(
-                "GM_MAX_BUFFER_BYTES ({limit}) must be at least {minimum}: GM_MAX_CONNECTIONS ({connections}) \
-                 connection floors of {floor} bytes, {endpoint} bytes of QUIC endpoint buffers and the \
-                 {BLOCK_BYTES}-byte download block"
+                "GM_MAX_BUFFER_BYTES {limit} is short of {minimum} for {connections} connections\n\
+                 per connection {}, QUIC endpoints {}, download block {}\n\
+                 raise GM_MAX_BUFFER_BYTES to {raise} or lower GM_MAX_CONNECTIONS to {fits}",
+                binary(floor as u128),
+                binary(endpoint as u128),
+                binary(BLOCK_BYTES as u128),
             ));
         }
         Ok(())
+    }
+}
+
+/// Bytes in binary units with at most one decimal, such as `1.5 MiB` or `256 KiB`.
+fn binary(bytes: u128) -> String {
+    let (mut value, mut unit) = (bytes as f64, "B");
+    for next in ["KiB", "MiB", "GiB", "TiB"] {
+        if value < 1024.0 {
+            break;
+        }
+        (value, unit) = (value / 1024.0, next);
+    }
+    match unit {
+        "B" => format!("{bytes} B"),
+        _ if value.fract() == 0.0 => format!("{value} {unit}"),
+        _ => format!("{value:.1} {unit}"),
     }
 }
 
@@ -605,14 +636,16 @@ mod terms_tests {
         };
         assert_eq!(terms.check(0, endpoint), Ok(()));
         let refused = terms.check(1, endpoint).unwrap_err();
-        let minimum = terms.limit + 2;
-        let message = format!(
-            "GM_MAX_BUFFER_BYTES ({}) must be at least {minimum}: GM_MAX_CONNECTIONS (2) connection floors of {} \
-             bytes, {endpoint} bytes of QUIC endpoint buffers and the 262144-byte download block",
-            terms.limit,
-            floor + 1
+        let lines: Vec<&str> = refused.lines().collect();
+        assert_eq!(lines.len(), 3, "{refused}");
+        assert_eq!(
+            lines[0],
+            format!("GM_MAX_BUFFER_BYTES {} is short of {} for 2 connections", terms.limit, terms.limit + 2)
         );
-        assert_eq!(refused, message, "a handshake byte more on each connection");
+        assert!(
+            lines[2] == "raise GM_MAX_BUFFER_BYTES to 1073741824 or lower GM_MAX_CONNECTIONS to 1",
+            "a handshake byte more on each connection: {refused}"
+        );
         assert!(terms.check(0, endpoint + 1).is_err(), "the endpoint's socket buffers count");
     }
 

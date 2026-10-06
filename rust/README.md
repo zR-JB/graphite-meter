@@ -165,8 +165,7 @@ User-visible behaviour that deliberately differs from Go's server and TUI.
   `/etc/localtime` (UTC without either), a `DEBUG`, `INFO`, `WARN` or `ERROR` level, a topic and, for warnings and
   errors, the module that wrote them. Messages follow one pattern, `what happened: detail; what to do`, and escape
   control characters. A terminal gets colour and a warning's advice on its own `help:` line, unless `NO_COLOR` is
-  set; `FORCE_COLOR` asks for colour anywhere. Go prints `[gm:topic] message` after its UTC `log` time, without a
-  level.
+  set; `FORCE_COLOR` asks for colour anywhere. Go prints the same columns without the module.
 - The server logs `starting`, a configuration summary, `ready`, `stop requested` and `stopped`, each sign-in and
   approval; failed peer handshakes log once a minute at most, with a count of those held back; `memory` lines report
   endpoints the budget does not cover and when receive-window growth pauses or resumes.
@@ -204,7 +203,7 @@ User-visible behaviour that deliberately differs from Go's server and TUI.
 
 - `GM_AUTH_PUBLIC_URL` serves canonically: `HTTPS://Meter.Example:08443` as `https://meter.example:8443`.
 - `GM_AUTH_OIDC_ISSUER` needs an ASCII host and path, a nonzero port and no `?`.
-- The `auth` line `sign-in ready: mode=…` prints the canonical origin before OIDC discovery runs.
+- The `auth` line `… sign-in at <origin>` prints the canonical origin before OIDC discovery runs.
 - Sign-in forms need URL-encoded bodies with unique fields; another body shows the "failed" notice.
 - Passwords, challenges and CSRF proofs are read only from form bodies, never from the URL query.
 - The device cookie must be canonical unpadded base64url.

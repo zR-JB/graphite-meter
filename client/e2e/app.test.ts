@@ -216,20 +216,39 @@ test("a completed run fits every layout and theme without serious violations", a
     expect(identity.engineVersion).toBe(`${legal.sourceVersion}-rust`);
   }
   await expect(dialog).toContainText(rust ? "Rust crates" : "Go modules");
+  // Every component reads one way: where it comes from (a fork's upstream), then a modified one's shipped copy and
+  // changes.
   const links = legal.components.flatMap((component) => {
     expect(component.links.length).toBeGreaterThan(0);
-    return component.links.map((link) => {
+    for (const link of component.links)
       expect(new URL(link.url).protocol).toMatch(/^https?:$/);
-      return { label: `${link.label} for ${component.name}`, href: link.url };
-    });
+    const url = (label: string) =>
+      component.links.find((link) => link.label === label)?.url;
+    const [source, upstream, changes] = ["Source", "Upstream", "Changes"].map(
+      url,
+    );
+    // A link's name leads with its visible text, then says whose it is.
+    return [
+      { name: `, source of ${component.name}`, href: upstream ?? source },
+      ...(component.modified && upstream
+        ? [{ name: `, shipped source of ${component.name}`, href: source }]
+        : []),
+      ...(component.modified && changes
+        ? [{ name: `changes to ${component.name}`, href: changes }]
+        : []),
+    ];
   });
+  const shown = await dialog.evaluate((el: HTMLElement) =>
+    Array.from(el.querySelectorAll(".where a"), (link) => ({
+      name: link.textContent!.replace(/\s+/g, " ").trim(),
+      href: link.getAttribute("href"),
+    })),
+  );
   expect(
-    await dialog.evaluate((el: HTMLElement) =>
-      Array.from(el.querySelectorAll(".component-links a"), (link) => ({
-        label: link.getAttribute("aria-label"),
-        href: link.getAttribute("href"),
-      })),
-    ),
+    shown.map(({ name, href }, i) => ({
+      name: name.endsWith(links[i]?.name ?? "\0") ? links[i].name : name,
+      href,
+    })),
   ).toEqual(links);
   const svelte = legal.components.find((c) => c.name === "svelte")!;
   expect(svelte.modified).toBe(true);

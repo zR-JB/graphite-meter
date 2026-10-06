@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { announce } from "../presentation/announcer.svelte";
   import { catalogSelection } from "../presentation/serverAppearance";
   import {
@@ -8,7 +9,6 @@
   } from "../runner/paths";
   import { presentConnections } from "../presentation/paths";
   import { store } from "../state/store.svelte";
-  import { getApplicationController } from "../runner/controllerContext";
   import { formatLatency } from "../format";
   import { BUILD } from "../buildenv";
   import { buildSegments } from "../runner/schedule";
@@ -28,15 +28,21 @@
   type PathRole = "throughput" | "latency";
   const PATH_ROLES = ["throughput", "latency"] as const;
   let { onOpenLegal }: { onOpenLegal: () => void } = $props();
-  const controller = getApplicationController();
   const availableServers = $derived(
     store.run?.servers.map((entry) => entry.server) ??
       catalogSelection(store.serverCatalog, store.selectedServers),
   );
-  // Details follows the lens: its server, else the one whose latency is shown.
+  // Details follows the lens (its server, else the one whose latency is shown) until someone inspects another
+  // server here; inspecting only reads, so it works mid-run and never moves the console.
+  let inspected = $state<string | null>(null);
+  const followed = $derived(store.resultScope || store.latencyFocus);
+  $effect.pre(() => {
+    void followed;
+    untrack(() => (inspected = null));
+  });
   const selectedServer = $derived(
-    availableServers.find((server) => server.id === store.resultScope) ??
-      availableServers.find((server) => server.id === store.latencyFocus) ??
+    availableServers.find((server) => server.id === inspected) ??
+      availableServers.find((server) => server.id === followed) ??
       availableServers[0],
   );
   // Inspection never changes selection; completed runs keep their prepared paths.
@@ -173,6 +179,11 @@
 
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
   $effect(() => () => clearTimeout(copiedTimer));
+  // A release stamps the full commit; the row shows git's short form, the tip and the report the whole one.
+  const revision = /^[0-9a-f]{12,}$/.test(BUILD.revision)
+    ? BUILD.revision.slice(0, 8)
+    : BUILD.revision;
+
   async function copyReport() {
     clearTimeout(copiedTimer);
     try {
@@ -226,8 +237,7 @@
               servers={availableServers}
               value={selectedServer?.id ?? ""}
               label="Inspect server"
-              onchange={controller.showServer}
-              disabled={store.isRunning}
+              onchange={(id) => (inspected = id)}
             />
           </dd>
         </div>
@@ -328,12 +338,16 @@
   <div class="group">
     <h3>Build</h3>
     <dl class="kv" data-tip-group {@attach tipGroup}>
-      {@render row("Client", {
-        value: BUILD.version ? `v${BUILD.version}` : BUILD.revision,
-        aside: [BUILD.profile, BUILD.version && BUILD.revision]
-          .filter(Boolean)
-          .join(", "),
-      })}
+      {@render row(
+        "Client",
+        {
+          value: BUILD.version ? `v${BUILD.version}` : revision,
+          aside: [BUILD.profile, BUILD.version && revision]
+            .filter(Boolean)
+            .join(", "),
+        },
+        revision === BUILD.revision ? undefined : `Commit ${BUILD.revision}`,
+      )}
       {@render row(
         "Server",
         discovery?.engineVersion ?? MISSING,
