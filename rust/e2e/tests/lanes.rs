@@ -32,7 +32,7 @@ async fn until(lanes: &mut Lanes, bound: Duration, mut done: impl AsyncFnMut(&La
     let deadline = Instant::now() + bound;
     while !done(lanes).await {
         if let LaneHealth::Failed(failure) = lanes.health() {
-            panic!("a lane failed: {failure}");
+            panic!("a lane failed: {}", failure.text);
         }
         assert!(Instant::now() < deadline, "lanes did not get there within {bound:?}");
         tokio::time::sleep(Duration::from_millis(20)).await;
