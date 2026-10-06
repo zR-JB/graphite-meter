@@ -13,7 +13,7 @@ use crate::{
     },
 };
 use futures_util::FutureExt;
-use graphite_meter_net::Pool;
+use graphite_meter_net::{Pool, Proxy, Verify};
 use graphite_meter_proto::{origin::Origin, reason::FailureReason};
 use std::{
     collections::HashMap,
@@ -70,9 +70,16 @@ impl Controller {
             events,
             runtimes,
             interactive,
+            outbound: None,
             stop: CancellationToken::new(),
         };
         Self { work, current: None, idle: State::default() }
+    }
+
+    /// The same controller connecting through `proxy` and verifying as `verify` says, unless a config is insecure.
+    pub fn with_outbound(mut self, verify: Verify, proxy: Proxy) -> Self {
+        self.work.outbound = Some((verify, proxy));
+        self
     }
 
     pub fn command(&mut self, command: Command) {
@@ -135,6 +142,8 @@ struct Work {
     runtimes: Arc<Pool>,
     /// Whether an operator can approve sign-ins.
     interactive: bool,
+    /// The proxies and verification of checked clients in place of the environment's.
+    outbound: Option<(Verify, Proxy)>,
     stop: CancellationToken,
 }
 
@@ -200,7 +209,12 @@ impl Work {
     async fn prepare(&self, config: &Config, state: &mut State) -> Option<Result<Prepared, Failure>> {
         let mut approved = Vec::new();
         loop {
-            let client = Client::new(config.insecure, self.runtimes.clone());
+            let client = match &self.outbound {
+                Some((verify, proxy)) if !config.insecure => {
+                    Client::with(verify.clone(), proxy.clone(), self.runtimes.clone())
+                }
+                _ => Client::new(config.insecure, self.runtimes.clone()),
+            };
             for (origin, grant) in &state.grants {
                 client.grant(origin, grant);
             }

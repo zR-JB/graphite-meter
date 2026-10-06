@@ -1,5 +1,5 @@
-//! Native sign-in against a password-mode server, in a child process that trusts the server's CA alone: the
-//! operator's browser approves over HTTP and the run completes.
+//! Native sign-in against a password-mode server, by a client that trusts the server's CA alone: the operator's
+//! browser approves over HTTP and the run completes.
 use graphite_meter_client::{
     config::Config,
     controller::{Command, Controller},
@@ -7,9 +7,9 @@ use graphite_meter_client::{
     model::Outcome,
 };
 use graphite_meter_e2e::{self as e2e, Server, until};
-use graphite_meter_net::Pool;
+use graphite_meter_net::{Pool, Proxy, Trust, Verify};
 use graphite_meter_testkit::{Identity, Scratch};
-use std::{net::SocketAddr, path::Path, process::Command as Process, sync::Arc, time::Duration};
+use std::{ffi::OsString, net::SocketAddr, path::Path, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -17,36 +17,17 @@ use tokio::{
 };
 use tokio_rustls::{TlsConnector, rustls::pki_types::ServerName};
 
-/// Set in a child process to the directory holding the identity it trusts.
-const CHILD: &str = "GRAPHITE_METER_TEST_IDENTITY";
 const HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$OT2po7nOdP+21BKX5CuZQw$9kVgfSWvlFy31939zUCVY62fHIuSqC8RwL67EpQ8qy8";
 const LIMIT: Duration = Duration::from_secs(20);
 
-/// In a child process, the identity it trusts; otherwise runs `test` in a child that trusts a fresh one.
-async fn trusted(test: &str) -> Option<Identity> {
-    if let Some(directory) = std::env::var_os(CHILD) {
-        let read = |name| std::fs::read_to_string(Path::new(&directory).join(name)).unwrap();
-        return Some(Identity {
-            ca: read("ca.pem"),
-            certificate: read("cert.pem"),
-            key: read("key.pem"),
-        });
-    }
-    let (scratch, identity) = (Scratch::new().unwrap(), Identity::generate().unwrap());
-    let ca = scratch.file("ca.pem", &identity.ca).unwrap();
-    scratch.file("cert.pem", &identity.certificate).unwrap();
-    scratch.file("key.pem", &identity.key).unwrap();
-    let mut child = Process::new(std::env::current_exe().unwrap());
-    child.args([test, "--exact", "--nocapture"]).env(CHILD, scratch.path());
-    for name in ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"] {
-        child.env_remove(name).env_remove(name.to_ascii_lowercase());
-    }
-    child
-        .env("SSL_CERT_FILE", ca)
-        .env("SSL_CERT_DIR", scratch.dir("none").unwrap());
-    let status = tokio::task::spawn_blocking(move || child.status()).await.unwrap();
-    assert!(status.unwrap().success(), "{test} failed in its child process");
-    None
+/// Verification against the roots of `ca` alone, as `SSL_CERT_FILE` would name them.
+fn trusting(ca: &Path, directory: &Path) -> Verify {
+    let (ca, directory) = (ca.as_os_str().to_owned(), directory.as_os_str().to_owned());
+    Verify::Trusted(Arc::new(Trust::from_lookup(|name| match name {
+        "SSL_CERT_FILE" => Some(ca.clone()),
+        "SSL_CERT_DIR" => Some(directory.clone()),
+        _ => None::<OsString>,
+    })))
 }
 
 /// A password-mode server whose public origin is its HTTPS HTTP/1.1 listener.
@@ -81,9 +62,10 @@ fn config(address: SocketAddr) -> Config {
 }
 
 /// The prompt an interactive check of `config` shows.
-async fn prompted(config: &Config) -> (Controller, UnboundedReceiver<Event>, SignInPrompt) {
+async fn prompted(config: &Config, verify: Verify) -> (Controller, UnboundedReceiver<Event>, SignInPrompt) {
     let (events, mut received) = Events::channel();
-    let mut controller = Controller::new(true, Arc::new(Pool::inline()), events);
+    let mut controller =
+        Controller::new(true, Arc::new(Pool::inline()), events).with_outbound(verify, Proxy::default());
     controller.command(Command::Check(config.clone()));
     let events = until(&mut received, LIMIT, |event| matches!(event, Event::SignIn(_))).await;
     let Some(Event::SignIn(prompt)) = events.last() else { unreachable!() };
@@ -131,12 +113,11 @@ async fn approve(server: &Server, identity: &Identity, address: SocketAddr, prom
 
 #[tokio::test]
 async fn a_sign_in_approved_over_http_lets_the_run_complete() {
-    let Some(identity) = trusted("a_sign_in_approved_over_http_lets_the_run_complete").await else {
-        return;
-    };
+    let (scratch, identity) = (Scratch::new().unwrap(), Identity::generate().unwrap());
+    let verify = trusting(&scratch.file("ca.pem", &identity.ca).unwrap(), &scratch.dir("none").unwrap());
     let (server, address) = protected(&identity).await;
     let config = config(address);
-    let (mut controller, mut received, prompt) = prompted(&config).await;
+    let (mut controller, mut received, prompt) = prompted(&config, verify).await;
     assert!(
         prompt
             .url

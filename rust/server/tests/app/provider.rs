@@ -35,32 +35,6 @@ use tokio_rustls::TlsAcceptor;
 
 pub(super) const CLIENT_ID: &str = "meter";
 pub(super) const SECRET: &str = "s3cret~*";
-/// Set in a child process; with the provider's certificate and key files beside `SSL_CERT_FILE`.
-const CHILD: &str = "GRAPHITE_METER_TEST_CHILD";
-const CERTIFICATE: &str = "GRAPHITE_METER_TEST_CERTIFICATE";
-const KEY: &str = "GRAPHITE_METER_TEST_KEY";
-
-/// Whether this is the child process running `test`; otherwise runs it in one, trusting a fresh provider identity,
-/// and expects it to pass.
-pub(super) fn child(test: &str) -> bool {
-    if std::env::var_os(CHILD).is_some() {
-        return true;
-    }
-    let (scratch, identity) = (Scratch::new().unwrap(), Identity::generate().unwrap());
-    let mut command = Command::new(std::env::current_exe().unwrap());
-    command.args([test, "--exact", "--nocapture"]).env(CHILD, "1");
-    for proxy in ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"] {
-        command.env_remove(proxy);
-    }
-    command
-        .env("SSL_CERT_FILE", scratch.file("ca.pem", &identity.ca).unwrap())
-        .env("SSL_CERT_DIR", scratch.dir("none").unwrap())
-        .env(CERTIFICATE, scratch.file("leaf.pem", &identity.certificate).unwrap())
-        .env(KEY, scratch.file("leaf.key", &identity.key).unwrap());
-    assert!(command.status().unwrap().success(), "{test} failed in its child process");
-    false
-}
-
 /// What the provider changes in its answers: members merged into its metadata, its RSA key, the ID token's header
 /// and claims and the user information, where `null` removes one; `=` padding on its keys' members, the key set as
 /// `key_set` rewrites it, and user information signed with its P-256 key.
@@ -90,24 +64,32 @@ struct Shared {
 /// A held request's path, and the sender that lets its answer go.
 type Held = mpsc::UnboundedSender<(String, oneshot::Sender<()>)>;
 
-pub(super) struct Provider(Arc<Shared>);
+/// A provider, and the CA file and empty root directory a server trusts it through.
+pub(super) struct Provider(Arc<Shared>, Roots);
+
+struct Roots {
+    paths: [String; 2],
+    _scratch: Scratch,
+}
 
 impl Provider {
-    /// Serves at `https://localhost:<port>` until the test ends.
+    /// Serves at `https://localhost:<port>` with a fresh identity until the test ends.
     pub async fn start() -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let issuer = format!("https://localhost:{}", listener.local_addr().unwrap().port());
-        Self::serve(listener, issuer)
+        let (scratch, identity) = (Scratch::new().unwrap(), Identity::generate().unwrap());
+        let ca = scratch.file("ca.pem", &identity.ca).unwrap();
+        let roots = [ca, scratch.dir("none").unwrap()].map(|path| path.to_str().unwrap().to_owned());
+        Self(Self::serve(listener, issuer, &identity), Roots { paths: roots, _scratch: scratch })
     }
 
-    /// Serves on `listener` as `issuer`.
-    pub fn serve(listener: TcpListener, issuer: String) -> Self {
-        let read = |name| std::fs::read_to_string(std::env::var_os(name).unwrap()).unwrap();
-        let identity = Identity {
-            ca: String::new(),
-            certificate: read(CERTIFICATE),
-            key: read(KEY),
-        };
+    /// The settings that make a server trust this provider alone.
+    pub fn trust(&self) -> [(&'static str, &str); 2] {
+        [("SSL_CERT_FILE", &self.1.paths[0]), ("SSL_CERT_DIR", &self.1.paths[1])]
+    }
+
+    /// Serves on `listener` as `issuer` with `identity`.
+    fn serve(listener: TcpListener, issuer: String, identity: &Identity) -> Arc<Shared> {
         let acceptor = TlsAcceptor::from(Arc::new(identity.server(&[])));
         let shared = Arc::new(Shared {
             issuer,
@@ -131,7 +113,7 @@ impl Provider {
                 });
             }
         });
-        Self(shared)
+        shared
     }
 
     pub fn issuer(&self) -> &str {

@@ -10,15 +10,19 @@ use http::{HeaderValue, StatusCode};
 
 pub(super) const PUBLIC: &str = "https://meter.example";
 pub(super) const BROWSER: &str = "https://app.example";
-pub(super) const HASH: &str =
-    "$argon2id$v=19$m=19456,t=2,p=1$OT2po7nOdP+21BKX5CuZQw$9kVgfSWvlFy31939zUCVY62fHIuSqC8RwL67EpQ8qy8";
+/// `api/password.testvectors.json`: the operator's password and Go's hash of it.
+pub(super) static VECTORS: std::sync::LazyLock<serde_json::Value> = std::sync::LazyLock::new(|| {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../api/password.testvectors.json");
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+});
+pub(super) static HASH: std::sync::LazyLock<&str> = std::sync::LazyLock::new(|| VECTORS["hash"].as_str().unwrap());
 
 pub(super) fn auth_app(env: &[(&str, &str)]) -> App {
     let mut env = [ALL_LISTENERS.as_slice(), env].concat();
     env.extend([
         ("GM_AUTH_MODE", "password"),
         ("GM_AUTH_PUBLIC_URL", PUBLIC),
-        ("GM_AUTH_PASSWORD_HASH", HASH),
+        ("GM_AUTH_PASSWORD_HASH", *HASH),
         ("GM_ADVERTISED_NATIVE_ENDPOINTS", "http1-tls,http2,http3"),
     ]);
     app(&env)
@@ -222,7 +226,7 @@ async fn password_logins_fund_windows_past_one_client_s_share() {
         held.iter().flatten().count()
     };
     assert_eq!(funded(&auth_app(&[])), 3);
-    assert_eq!(funded(&super::oidc::oidc_app("https://localhost:1", false)), 2);
+    assert_eq!(funded(&super::oidc::oidc_app("https://localhost:1", &[], false)), 2);
     let (open, source) = (app(&[]), ClientKeys::address("192.0.2.1".parse().unwrap()));
     let _held = open.window_credit(&source, share).unwrap();
     assert!(open.window_credit(&source, 1).is_none(), "without auth a client keeps its share");

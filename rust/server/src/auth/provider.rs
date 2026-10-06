@@ -1,8 +1,9 @@
 //! The OIDC provider over HTTPS: discovery, signing keys, and one bounded connection per request on the main runtime.
 
 use super::jwt::{self, Alg, Jwks, Verified};
+use crate::config;
 use crate::{config::ENGINE_VERSION, lock};
-use graphite_meter_net::{Connector, Proxy, Verify};
+use graphite_meter_net::Connector;
 use graphite_meter_proto::{
     discovery::Protocol,
     origin::{Origin, Scheme},
@@ -30,13 +31,11 @@ pub(super) struct Client {
 }
 
 impl Client {
-    /// A client sending from the runtime it is created on.
-    pub fn new() -> Result<Self, String> {
+    /// A client sending from the runtime it is created on, as `outbound` says.
+    pub fn new(outbound: &config::Outbound) -> Result<Self, String> {
         let runtime = Handle::try_current().map_err(|error| error.to_string())?;
-        Ok(Self {
-            connector: Arc::new(Connector::new(Proxy::from_env(), Verify::Trusted)),
-            runtime,
-        })
+        let connector = Connector::new(outbound.proxy.clone(), outbound.verify.clone());
+        Ok(Self { connector: Arc::new(connector), runtime })
     }
 
     /// GETs `url`, or POSTs `form` URL-encoded, with header `field`; `url` is HTTPS, as config or discovery checked.

@@ -4,7 +4,7 @@
 mod build;
 
 #[cfg(feature = "build")]
-pub use build::{checkout, embed, inside};
+pub use build::{checkout, embed, inside, out_dir};
 
 use std::{
     io::{self, Write},

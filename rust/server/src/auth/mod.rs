@@ -55,7 +55,7 @@ pub struct Auth(Option<Box<Enabled>>);
 pub struct Enabled {
     policy: Policy,
     store: Store,
-    password: Option<Password>,
+    verifier: Option<Password>,
     oidc: Option<Oidc>,
     /// Approval pages opened per client address.
     browser_approvals: Attempts,
@@ -66,7 +66,7 @@ pub struct Enabled {
 
 impl Auth {
     /// The authentication `config` enables, its hash and OIDC secret read; the OIDC provider is discovered later.
-    pub fn new(config: Option<&config::Auth>, verbose: bool) -> Result<Self, String> {
+    pub fn new(config: Option<&config::Auth>, outbound: &config::Outbound, verbose: bool) -> Result<Self, String> {
         let Some(config) = config else { return Ok(Self(None)) };
         let (mode, settings) = match &config.methods {
             Methods::Password(_) => ("password", None),
@@ -74,17 +74,17 @@ impl Auth {
             Methods::Hybrid(_, oidc) => ("hybrid", Some(oidc)),
         };
         let security = Security::new(verbose);
-        let password = |secret: &config::Secret| {
+        let load = |secret: &config::Secret| {
             let encoded = secret.read(4096).map_err(|error| format!("password hash: {error}"))?;
-            let password = Password::new(&encoded)?;
+            let verifier = Password::new(&encoded)?;
             security.debug(format_args!("password hash loaded: valid"));
-            Ok::<_, String>(password)
+            Ok::<_, String>(verifier)
         };
-        let password = config.methods.password().map(password).transpose()?;
+        let verifier = config.methods.password().map(load).transpose()?;
         let oidc = |settings: &config::Oidc| {
             let secret = settings.secret.read(16 * 1024);
             let secret = secret.map_err(|error| format!("OIDC client secret: {error}"))?;
-            Oidc::new(&config.public_origin, settings, secret)
+            Oidc::new(&config.public_origin, settings, secret, outbound)
         };
         let oidc = settings.map(oidc).transpose()?;
         let provider = settings.map(|oidc| {
@@ -101,7 +101,7 @@ impl Auth {
         Ok(Self(Some(Box::new(Enabled {
             policy: Policy::new(config),
             store: Store::default(),
-            password,
+            verifier,
             oidc,
             browser_approvals: Attempts::new("browser-approval", 10),
             security,
@@ -121,7 +121,7 @@ impl Auth {
     /// Hybrid mode's discovery, retried in the background until the provider answers; it never completes.
     pub fn background_discovery(&self) -> Option<impl Future<Output = ()> + Send + '_> {
         let Some(auth) = &self.0 else { return None };
-        let oidc = auth.oidc.as_ref().filter(|_| auth.password.is_some())?;
+        let oidc = auth.oidc.as_ref().filter(|_| auth.verifier.is_some())?;
         Some(oidc.retry(&auth.security))
     }
 

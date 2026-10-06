@@ -1,7 +1,7 @@
 //! Cross-field validation into a `Config`, in Go's order: catalogue, authentication, limits, listeners, origins.
 
 use super::{
-    Auth, Config, Lifetimes, Limits, Listener, ListenerKind, Methods, Oidc, PublicOrigins, Secret, TlsFiles,
+    Auth, Config, Lifetimes, Limits, Listener, ListenerKind, Methods, Oidc, Outbound, PublicOrigins, Secret, TlsFiles,
     settings::{Advertised, Settings},
 };
 use graphite_meter_proto::{
@@ -11,7 +11,7 @@ use graphite_meter_proto::{
 };
 use std::collections::HashMap;
 
-pub(super) fn config(settings: Settings) -> Result<Config, String> {
+pub(super) fn config(settings: Settings, outbound: Outbound) -> Result<Config, String> {
     let mut catalog = settings.catalog.clone();
     catalog.servers[0].name.clone_from(&settings.name);
     catalog.servers[0].location.clone_from(&settings.location);
@@ -41,6 +41,7 @@ pub(super) fn config(settings: Settings) -> Result<Config, String> {
         lifetimes,
         auth,
         catalog,
+        outbound,
     })
 }
 

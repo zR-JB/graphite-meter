@@ -91,7 +91,7 @@ impl Conn {
     ) -> Result<Self, Fault> {
         if via == Protocol::Http3 {
             let home = home.cloned().unwrap_or_else(|| client.shared.runtimes.next());
-            let (quic, requests) = dial(origin, client.shared.verify, &home).await?;
+            let (quic, requests) = dial(origin, client.shared.verify.clone(), &home).await?;
             return Ok(Self::Http3 { requests, quic });
         }
         let connection = client.shared.connector.connect(origin, Some(via)).await?;
@@ -434,7 +434,7 @@ impl Drop for Dialing {
 /// Each address in turn, IPv4 first; the last address's fault if none connects.
 async fn connect(origin: &Origin, verify: Verify) -> Result<Dialed, Fault> {
     let crypto =
-        QuicClientConfig::try_from(client_config(verify, Some(Protocol::Http3)).await).map_err(io::Error::other);
+        QuicClientConfig::try_from(client_config(&verify, Some(Protocol::Http3)).await).map_err(io::Error::other);
     let mut config = noq::ClientConfig::new(Arc::new(crypto.map_err(ConnectError::Io)?));
     config.transport_config(Arc::new(client_transport()));
     let resolved = resolve(&origin.host, origin.port).await;
@@ -518,7 +518,7 @@ impl Client {
         let request = Request { query, ..Request::new(Method::CONNECT, origin, route) };
         let head = self.head(&request)?;
         let open = async {
-            let (quic, requests) = dial(origin, self.shared.verify, &home).await?;
+            let (quic, requests) = dial(origin, self.shared.verify.clone(), &home).await?;
             let connected = webtransport::Session::connect(&requests, head).await;
             match connected.map_err(http3_fault)? {
                 Ok((session, _)) => Ok(Session { session, quic, client: self.clone(), origin: origin.clone() }),

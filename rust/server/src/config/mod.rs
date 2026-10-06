@@ -4,6 +4,7 @@ mod catalog;
 mod settings;
 mod validate;
 
+use graphite_meter_net::{Proxy, Trust, Verify};
 use graphite_meter_proto::{
     catalog::ServerCatalog,
     discovery::Protocol,
@@ -16,6 +17,7 @@ use std::{
     fs::File,
     io::{Read, Write},
     path::PathBuf,
+    sync::Arc,
     time::Duration,
 };
 use zeroize::Zeroizing;
@@ -42,7 +44,9 @@ pub fn load(
 ) -> Result<Loaded, String> {
     match settings::load(&env, args, usage)? {
         None => Ok(Loaded::Help),
-        Some(settings) => validate::config(settings).map(|config| Loaded::Config(Box::new(config))),
+        Some(settings) => {
+            validate::config(settings, Outbound::from_lookup(&env)).map(|config| Loaded::Config(Box::new(config)))
+        }
     }
 }
 
@@ -63,6 +67,24 @@ pub struct Config {
     pub auth: Option<Auth>,
     /// The published catalogue: `self` first, carrying the server's name and location.
     pub catalog: ServerCatalog,
+    pub outbound: Outbound,
+}
+
+/// How OIDC requests leave: the proxies and roots the same environment as the settings names.
+#[derive(Debug, Clone)]
+pub struct Outbound {
+    pub proxy: Proxy,
+    pub verify: Verify,
+}
+
+impl Outbound {
+    fn from_lookup(env: &impl Fn(&str) -> Option<OsString>) -> Self {
+        let proxy = Proxy::from_lookup(|name| env(name).and_then(|value| value.into_string().ok()));
+        Self {
+            proxy,
+            verify: Verify::Trusted(Arc::new(Trust::from_lookup(env))),
+        }
+    }
 }
 
 impl Config {

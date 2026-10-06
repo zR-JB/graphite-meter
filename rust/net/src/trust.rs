@@ -14,10 +14,11 @@ use rustls::{
 use std::{
     error::Error,
     ffi::OsString,
-    fs, io,
+    fmt, fs, io,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
+use tokio::sync::OnceCell;
 
 /// Go's Linux root files, of which the first that reads counts.
 #[cfg(target_os = "linux")]
@@ -35,14 +36,60 @@ const DIRECTORIES: &[&str] = &["/etc/ssl/certs", "/etc/pki/tls/certs"];
 
 type Reason = Arc<dyn Error + Send + Sync>;
 
-/// The verifier for `verify`; the trusted one loads once off-thread; an unreadable store fails connections only.
-pub(crate) async fn verifier(verify: Verify) -> Result<Arc<dyn ServerCertVerifier>, tokio::task::JoinError> {
-    static TRUSTED: tokio::sync::OnceCell<Arc<dyn ServerCertVerifier>> = tokio::sync::OnceCell::const_new();
-    if verify == Verify::Insecure {
-        return Ok(Arc::new(Verifier::Insecure));
+/// Roots to verify against: those `SSL_CERT_FILE` and `SSL_CERT_DIR` name, else the system's, loaded on first use.
+pub struct Trust {
+    file: Option<OsString>,
+    directories: Option<OsString>,
+    verifier: OnceCell<Arc<dyn ServerCertVerifier>>,
+    pub(crate) configs: [OnceCell<Arc<rustls::ClientConfig>>; 5],
+}
+
+impl Trust {
+    /// The roots `lookup`'s `SSL_CERT_FILE` and `SSL_CERT_DIR` name; empty values are unset.
+    pub fn from_lookup(lookup: impl Fn(&str) -> Option<OsString>) -> Self {
+        let set = |name| lookup(name).filter(|value| !value.is_empty());
+        Self {
+            file: set("SSL_CERT_FILE"),
+            directories: set("SSL_CERT_DIR"),
+            verifier: OnceCell::new(),
+            configs: [const { OnceCell::const_new() }; 5],
+        }
     }
-    let load = || tokio::task::spawn_blocking(|| system(|name| std::env::var_os(name)));
-    TRUSTED.get_or_try_init(load).await.cloned()
+
+    /// The process's roots, shared by every client that verifies against them.
+    pub fn system() -> Arc<Self> {
+        static SYSTEM: LazyLock<Arc<Trust>> =
+            LazyLock::new(|| Arc::new(Trust::from_lookup(|name| std::env::var_os(name))));
+        SYSTEM.clone()
+    }
+}
+
+impl fmt::Debug for Trust {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Trust")
+            .field("file", &self.file)
+            .field("directories", &self.directories)
+            .finish()
+    }
+}
+
+/// The verifier for `verify`; trusted roots load once off-thread; an unreadable store fails connections only.
+pub(crate) async fn verifier(verify: &Verify) -> Result<Arc<dyn ServerCertVerifier>, tokio::task::JoinError> {
+    let Verify::Trusted(trust) = verify else {
+        return Ok(Arc::new(Verifier::Insecure));
+    };
+    let (file, directories) = (trust.file.clone(), trust.directories.clone());
+    let lookup = move |name: &str| match name {
+        "SSL_CERT_FILE" => file.clone(),
+        "SSL_CERT_DIR" => directories.clone(),
+        _ => None,
+    };
+    trust
+        .verifier
+        .get_or_try_init(|| tokio::task::spawn_blocking(move || system(lookup)))
+        .await
+        .cloned()
 }
 
 /// A verifier that refuses every certificate for `reason`.

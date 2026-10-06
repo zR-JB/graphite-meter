@@ -13,15 +13,23 @@ fn load(env: &[(&str, &str)], args: &[&str]) -> (Result<Loaded, String>, String)
     (loaded, String::from_utf8(usage).unwrap())
 }
 
+/// The variables `env` sets, without their values, which may be credentials.
+fn names<'a>(env: &[(&'a str, &str)]) -> Vec<&'a str> {
+    env.iter().map(|(name, _)| *name).collect()
+}
+
 fn config(env: &[(&str, &str)], args: &[&str]) -> Config {
     match load(env, args).0 {
         Ok(Loaded::Config(config)) => *config,
-        other => panic!("{env:?} {args:?}: {other:?}"),
+        Ok(Loaded::Help) => panic!("{:?} {args:?} printed the usage", names(env)),
+        Err(error) => panic!("{:?} {args:?}: {error}", names(env)),
     }
 }
 
 fn error(env: &[(&str, &str)], args: &[&str]) -> String {
-    load(env, args).0.expect_err(&format!("{env:?} {args:?} loaded"))
+    load(env, args)
+        .0
+        .expect_err(&format!("{:?} {args:?} loaded", names(env)))
 }
 
 const TLS: [(&str, &str); 2] = [("GM_TLS_CERT", "/c.pem"), ("GM_TLS_KEY", "/k.pem")];
