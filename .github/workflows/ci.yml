@@ -209,11 +209,13 @@ jobs:
         run: mise run rust-check
       - name: Verify the fork pins against their branches, upstream tags and reviewed change sets
         run: python3 -m scripts.legal.check_git_sources --verify
-      # Target build scripts compile C; only these checks use Ubuntu's unpinned cross compilers.
+      # Target build scripts compile C; only these checks use Ubuntu's unpinned cross compilers. A stalled mirror
+      # fails the step in minutes instead of holding the job to its limit.
       - name: Install C cross compilers for the target checks
+        timeout-minutes: 5
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-win32 mingw-w64-x86-64-dev \
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends gcc-mingw-w64-x86-64-win32 mingw-w64-x86-64-dev \
             musl-tools gcc-aarch64-linux-gnu libc6-dev-arm64-cross
       - name: Check the shipped TUI and server targets
         run: mise run rust-check-targets
@@ -235,9 +237,10 @@ jobs:
         with: {go: 'true', rust: 'true', cargo-nextest: 'true'}
       # Only the static server's C dependencies use Ubuntu's unpinned musl compiler.
       - name: Install the musl compiler for the static server
+        timeout-minutes: 5
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends musl-tools
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends musl-tools
       # The scripts keep their evidence in TMPDIR.
       - name: Run unchanged Go peers, the Go native client and process checks against the sharded server
         env:
