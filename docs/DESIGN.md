@@ -322,8 +322,8 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   narrower than its words, with the time and name under it; Custom adds a − time + stepper (`Stepper`) per stage
   and for warmup. Steps grow with the time (0.5 s, 1 s, 10 s, 1 min, 5 min) and land on their grid; a click edits the
   time as text (`90`, `2h`, `1 h 30 min`, `1:30:00`), which rounds to the time shown, and Escape drops the edit. The
-  field takes the keyboard like a spin button; − and + serve pointers, repeat while held (after 0.4 s, every
-  70 ms) and stay put at a limit. The stream limit is
+  field takes the keyboard like a spin button; − and + serve pointers, repeat while held (after 0.5 s, every
+  150 ms, so each rolled value can be read) and stay put at a limit. The stream limit is
   the same `Stepper` over a whole number. In a settings row a control stands at its label's end while the row
   holds both and against the right edge under it when it wraps; a cadence's segments then take the row's width.
   The servers' stage
