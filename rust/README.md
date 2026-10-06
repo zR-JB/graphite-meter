@@ -39,7 +39,7 @@ mise run rust-client-run -- --report --url https://meter.example
 - CI checks the browser path in Chromium only (Chrome for Testing); Firefox and a WebKitGTK negative control are not
   run.
 - CI's Rust image and TUI package checks build without a Cargo cache; only the jobs that build in the runner
-  workspace (rust, rust-interop, rust-windows, rust-perf) cache Cargo.
+  workspace (rust, rust-interop, rust-windows) cache Cargo.
 
 `GM_IMPLEMENTATION=rust` switches `dev`, `prod` and `tui` to the Rust server or TUI; `prod` uses the release
 profile, `dev` and `tui` the `ci` profile. Plain `cargo build` uses the unoptimized debug profile; compare

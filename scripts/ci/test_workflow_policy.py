@@ -230,7 +230,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (W + "ci.yml", "    needs: [plan, rust-image]\n    if: needs.plan.outputs.rust-image ==",
      "    needs: [plan, rust-image]\n    if: needs.plan.outputs.rust ==", r"reviewed filters: \['rust-e2e'\]"),
     (W + "ci.yml", "      rust-interop: ${{ github.event_name == 'push' || "
-     "steps.filter.outputs.rust-interop == 'true' }}\n", "", r"the plan does not output: \['rust-interop', 'rust-perf'\]"),
+     "steps.filter.outputs.rust-interop == 'true' }}\n", "", r"the plan does not output: \['rust-interop'\]"),
     (W + "ci.yml", "steps.filter.outputs.rust-image == 'true'", "steps.filter.outputs.rust == 'true'",
      "filters by their names"),
     (".github/ci-paths.yml", "rust-release:\n  - *workflow\n", "rust-release:\n  - *workflow\n  - 'docs/**'\n",
@@ -245,7 +245,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "misorders invariant: run: cargo deny --locked check advisories"),
     (W + "advisories.yml", "cache: 'false'", "cache: 'true'", "advisories.yml must disable every cache"),
     # Nor does a Python driver that CI runs, by path or as a module.
-    ("rust/interop/perf.py", None, 'BUILD = ["python3", "-m", "scripts.rust_build"]\n', "development notices"),
+    ("rust/interop/browser.py", None, 'BUILD = ["python3", "-m", "scripts.rust_build"]\n', "development notices"),
     ("scripts/package_rust.py", None, 'DEVELOPMENT = "--development"\n', "development notices"),
     (W + "ci.yml", "python3 rust/interop/browser.py", "python3 rust/interop/absent.py", "absent.py, which CI"),
     # Supply-chain files have an owner, and Dependabot updates every lockfile.

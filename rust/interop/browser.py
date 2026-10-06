@@ -117,7 +117,7 @@ def main() -> None:
     browser = next((name for name in BROWSERS if shutil.which(name)), None)
     if browser is None:
         raise SystemExit(f"none of {', '.join(BROWSERS)} is on PATH")
-    binary = IMAGE_SERVER if image else build_server(ROOT, "ci")
+    binary = IMAGE_SERVER if image else build_server("ci")
     fixture = Fixture("browser-")
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(fixture.cert, fixture.key)

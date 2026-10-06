@@ -31,22 +31,17 @@ def musl_target() -> str:
     return rust_workspace.load().server[PLATFORMS[platform.machine()]]
 
 
-def build_server(checkout: Path, profile: str) -> Path:
-    """Builds `checkout`'s static musl server with `profile`, without notices or browser assets."""
-    return build_static(checkout, profile, "graphite-meter-server")
-
-
-def build_static(checkout: Path, profile: str, package: str) -> Path:
-    """Builds `checkout`'s static musl `package` binary with `profile`, without notices or browser assets."""
+def build_server(profile: str) -> Path:
+    """Builds the static musl server with `profile`, without notices or browser assets."""
     target = musl_target()
     environment = {key: value for key, value in os.environ.items()
                    if not key.startswith(("GM_", "CARGO_PROFILE_")) and not key.endswith("RUSTFLAGS")}
     environment["CC_" + target.replace("-", "_")] = f"{platform.machine()}-linux-musl-gcc"
-    workspace = checkout / "rust"
+    workspace = ROOT / "rust"
     subprocess.run(["rustup", "target", "add", target], cwd=workspace, check=True)
     subprocess.run(["cargo", "build", "--locked", "--profile", profile, "--target", target,
-                    "-p", package], cwd=workspace, env=environment, check=True)
-    return workspace / "target" / target / profile / package
+                    "-p", "graphite-meter-server"], cwd=workspace, env=environment, check=True)
+    return workspace / "target" / target / profile / "graphite-meter-server"
 
 
 def planned_endpoints() -> int:

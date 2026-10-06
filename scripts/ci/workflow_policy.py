@@ -115,7 +115,7 @@ IMAGE_CONTEXTS = ("${{ steps.source.outputs.context }}", "${{ needs.build.output
 # The plan output that selects each CI job; the jobs ALWAYS names run on every change.
 SELECTED_BY = {
     "core": "code", "go": "go", "e2e": "code", "smoke": "code", "release": "code", "security": "deps",
-    "rust": "rust", "rust-windows": "rust", "rust-interop": "rust-interop", "rust-perf": "rust-interop",
+    "rust": "rust", "rust-windows": "rust", "rust-interop": "rust-interop",
     "rust-image": "rust-image", "rust-e2e": "rust-image", "rust-tui": "rust-release", "rust-release": "rust-release",
 }
 ALWAYS = ("plan", "tooling", "secret-scan", "gate")

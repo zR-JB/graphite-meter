@@ -150,7 +150,7 @@ def shutdown_under_load(binary: Path, fixture: Fixture, client: Path) -> None:
 
 def main() -> None:
     argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
-    binary = build_server(ROOT, "ci")
+    binary = build_server("ci")
     fixture = Fixture("interop-")
     allocator(binary, fixture)
     binaries = {"unchanged": fixture.go_build("peer", str(PEER)), "current-reset": current_reset_peer(fixture)}

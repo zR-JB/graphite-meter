@@ -179,7 +179,7 @@ once from scratch; only CI writes caches.
 
 The `rust` filter selects the workspace checks and the Windows client tests and
 covers every file a Rust source includes; `rust-interop` selects the
-interoperability and perf jobs, which also build Go; `rust-image` covers every
+interoperability job, which also builds Go; `rust-image` covers every
 input of `container/Dockerfile.rust` for the image and its browser suite;
 `rust-release` covers every stage but the browser app's for the TUI archives
 and the staging check, and the browser's locked dependencies, whose sources
