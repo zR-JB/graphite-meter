@@ -275,13 +275,22 @@ run = [{ task = "_e2e-build" }, "bun run scripts/e2e.ts"]
 [tasks.rust-e2e]
 shell = "bash -e -o pipefail -c"
 description = "Run Chromium against one local fleet of a Rust server executable"
-usage = 'arg "<server>" help="The server executable, such as rust/target/release/graphite-meter-server"'
+usage = '''
+arg "<server>" help="The server executable, such as rust/target/release/graphite-meter-server"
+arg "[group]" default="all" help="all; heavy: performance.test.ts alone; rest: every other file"
+'''
 env = { GM_CLIENT_BUILD_PROFILE = "prod" }
 run = '''
 export GM_E2E_SERVER_BIN=$(realpath "$usage_server")
+case "$usage_group" in
+  all) set -- ;;
+  heavy) set -- bun test ./e2e/performance.test.ts --no-orphans --timeout=60000 ;;
+  rest) set -- bun test ./e2e --parallel=3 --no-orphans --timeout=60000 '--path-ignore-patterns=**/performance.test.ts' ;;
+  *) echo "group must be all, heavy or rest" >&2; exit 2 ;;
+esac
 cd client
 bun run build:e2e-harness
-bun run scripts/e2e.ts
+bun run scripts/e2e.ts "$@"
 '''
 
 [tasks.bench-ui]

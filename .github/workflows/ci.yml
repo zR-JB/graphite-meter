@@ -335,11 +335,17 @@ jobs:
           retention-days: 7
 
   rust-e2e:
-    name: Rust browser E2E
+    name: Rust browser E2E (${{ matrix.group }})
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: [plan, rust-image]
     if: needs.plan.outputs.rust-image == 'true'
+    # The surface-reversal file runs its three widths serially under CPU throttling; alone it takes as long as the
+    # other files together.
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [heavy, rest]
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -363,6 +369,7 @@ jobs:
         run: chmod +x "$RUNNER_TEMP/rust-image/graphite-meter-server"
       # Chrome for Testing is an unpacked archive without a setuid sandbox; the script runs it with --no-sandbox.
       - name: Check Chromium's HTTP/3, WebTransport and session close codes against the image's sharded server
+        if: matrix.group == 'rest'
         env:
           TMPDIR: ${{ runner.temp }}
         run: python3 rust/interop/browser.py --server image
@@ -372,12 +379,13 @@ jobs:
           BUN_CHROME_ARGS: --no-sandbox
           BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
           GM_EXPECTED_CHROME_VERSION: ${{ steps.toolchain.outputs.chrome-version }}
-        run: mise run rust-e2e "$RUNNER_TEMP/rust-image/graphite-meter-server"
+          GROUP: ${{ matrix.group }}
+        run: mise run rust-e2e "$RUNNER_TEMP/rust-image/graphite-meter-server" "$GROUP"
       - name: Upload E2E failure diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: rust-e2e-failures
+          name: rust-e2e-failures-${{ matrix.group }}
           retention-days: 7
           path: |
             client/test-results/webview
