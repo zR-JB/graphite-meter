@@ -131,10 +131,8 @@ async fn check(
     if config.uploads() && !preflight.capabilities.upload_checkpoint {
         return Err(refused("receiver checkpoint support is required; upgrade this measurement server"));
     }
-    let targets: Vec<_> = preflight
-        .base_urls()
-        .map(|base| base.resolve(&served).clone())
-        .collect();
+    let bases = preflight.base_urls();
+    let targets: Vec<_> = bases.map(|base| base.resolve(&served).clone()).collect();
     client.enroll(&served, &targets);
     let latency = async {
         if candidates.latency.is_empty() {

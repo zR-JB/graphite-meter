@@ -98,11 +98,8 @@ impl Locations {
             }
         };
         let mut roots = Vec::new();
-        if let Some(data) = self
-            .files
-            .iter()
-            .find_map(|file| fs::read(file).map_err(&mut keep).ok())
-        {
+        let read = |file: &PathBuf| fs::read(file).map_err(&mut keep).ok();
+        if let Some(data) = self.files.iter().find_map(read) {
             add(&mut roots, &data);
         }
         for directory in &self.directories {
@@ -142,10 +139,8 @@ fn certificates(data: &[u8]) -> impl Iterator<Item = CertificateDer<'static>> + 
     const BEGIN: &[u8] = b"\n-----BEGIN ";
     let mut rest = data;
     let blocks = std::iter::from_fn(move || {
-        let end = rest
-            .windows(BEGIN.len())
-            .position(|window| window == BEGIN)
-            .map_or(rest.len(), |newline| newline + 1);
+        let newline = rest.windows(BEGIN.len()).position(|window| window == BEGIN);
+        let end = newline.map_or(rest.len(), |newline| newline + 1);
         let (block, tail) = rest.split_at(end);
         rest = tail;
         (!block.is_empty()).then_some(block)

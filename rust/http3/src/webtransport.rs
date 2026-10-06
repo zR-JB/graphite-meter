@@ -313,10 +313,8 @@ impl Sessions {
         for connect in self.connects.drain(..).chain(connects) {
             connect.end(Err(error.clone()));
         }
-        self.resets
-            .drain(..)
-            .chain(resets)
-            .for_each(|mut reset| reset.abandon());
+        let abandoned = self.resets.drain(..).chain(resets);
+        abandoned.for_each(|mut reset| reset.abandon());
     }
 }
 
@@ -644,10 +642,8 @@ impl RecvStream {
     /// The next chunk, `None` at the stream's end.
     pub async fn read_chunk(&mut self) -> Result<Option<Bytes>, Error> {
         let mut chunk = [Bytes::new()];
-        Ok(self
-            .read_chunks(&mut chunk)
-            .await?
-            .map(|_| std::mem::take(&mut chunk[0])))
+        let read = self.read_chunks(&mut chunk).await?;
+        Ok(read.map(|_| std::mem::take(&mut chunk[0])))
     }
 
     /// Fills `chunks` with the next chunks under one lock of the connection: how many, `None` at the end.

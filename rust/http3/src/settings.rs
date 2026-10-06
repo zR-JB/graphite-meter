@@ -33,10 +33,8 @@ pub(crate) const CLIENT: [(u64, u64); 3] =
 
 /// A control stream's first bytes: its stream type, then the SETTINGS frame.
 pub(crate) fn control_stream(settings: &[(u64, u64)]) -> Vec<u8> {
-    let length: usize = settings
-        .iter()
-        .map(|&(id, value)| varint::len(id) + varint::len(value))
-        .sum();
+    let encoded = |&(id, value): &(u64, u64)| varint::len(id) + varint::len(value);
+    let length: usize = settings.iter().map(encoded).sum();
     let mut bytes = Vec::with_capacity(length + 9);
     bytes.put_u8(frame::CONTROL_STREAM as u8);
     frame::put_header(frame::SETTINGS, length as u64, &mut bytes);

@@ -244,9 +244,8 @@ async fn socks(stream: &mut TcpStream, login: Option<&Login>, host: &Host, port:
             [&[3, length][..], name.as_bytes()].concat()
         }
     };
-    stream
-        .write_all(&[&[5, 1, 0][..], &address, &port.to_be_bytes()].concat())
-        .await?;
+    let request = [&[5, 1, 0][..], &address, &port.to_be_bytes()].concat();
+    stream.write_all(&request).await?;
     let mut head = [0; 4];
     stream.read_exact(&mut head).await?;
     match head {
@@ -269,9 +268,8 @@ async fn authenticate(stream: &mut TcpStream, (user, password): &Login) -> Resul
     let (Ok(user_length @ 1..), Ok(password_length)) = (u8::try_from(user.len()), u8::try_from(password.len())) else {
         return Err(failed("invalid username/password"));
     };
-    stream
-        .write_all(&[&[1, user_length][..], user, &[password_length], password].concat())
-        .await?;
+    let request = [&[1, user_length][..], user, &[password_length], password].concat();
+    stream.write_all(&request).await?;
     let mut reply = [0; 2];
     stream.read_exact(&mut reply).await?;
     match reply {

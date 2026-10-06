@@ -23,10 +23,8 @@ const SIGNED_OUT: &str = "Sign-in expired. Checking the selected servers…";
 
 /// The report of the view's finished run; none for a run that never started or lost its sign-in.
 pub fn report(view: &View, width: usize, palette: &Palette) -> Vec<Line> {
-    let reported = view
-        .run
-        .as_ref()
-        .filter(|run| run.outcome.is_some() && unreported(view).is_none());
+    let started = view.run.as_ref();
+    let reported = started.filter(|run| run.outcome.is_some() && unreported(view).is_none());
     let Some(run) = reported else { return Vec::new() };
     let report = Report { view, run, focus: run.focus.as_ref(), width, palette };
     let focus = run.focus.as_ref().filter(|_| report.several());

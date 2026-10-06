@@ -68,11 +68,8 @@ const fn canonical() -> Code {
 }
 
 pub(crate) fn encoded_len(input: &[u8]) -> usize {
-    input
-        .iter()
-        .map(|&byte| usize::from(LENGTHS[usize::from(byte)]))
-        .sum::<usize>()
-        .div_ceil(8)
+    let bits = |&byte: &u8| usize::from(LENGTHS[usize::from(byte)]);
+    input.iter().map(bits).sum::<usize>().div_ceil(8)
 }
 
 pub(crate) fn encode(input: &[u8], output: &mut Vec<u8>) {

@@ -105,11 +105,8 @@ impl Origin {
     /// Splits a URL into origin and rest: at most 2048 bytes of printable ASCII without `#` or `\`.
     pub fn split(url: &str) -> Result<(Self, &str), OriginError> {
         let (scheme, rest) = url.split_once("://").ok_or(OriginError)?;
-        let known = Scheme::ALL
-            .iter()
-            .copied()
-            .find(|known| known.name().eq_ignore_ascii_case(scheme));
-        let scheme = known.ok_or(OriginError)?;
+        let named = |known: &Scheme| known.name().eq_ignore_ascii_case(scheme);
+        let scheme = Scheme::ALL.iter().copied().find(named).ok_or(OriginError)?;
         let (authority, rest) = rest.split_at(rest.find(['/', '?', '#']).unwrap_or(rest.len()));
         let (host, port) = match authority.strip_prefix('[') {
             Some(literal) => {
@@ -135,10 +132,8 @@ impl Origin {
 
 /// A nonzero port of decimal digits only.
 fn decimal_port(digits: &str) -> Option<u16> {
-    let port: u16 = digits
-        .bytes()
-        .all(|byte| byte.is_ascii_digit())
-        .then(|| digits.parse().ok())??;
+    let decimal = digits.bytes().all(|byte| byte.is_ascii_digit());
+    let port: u16 = decimal.then(|| digits.parse().ok())??;
     (port != 0).then_some(port)
 }
 

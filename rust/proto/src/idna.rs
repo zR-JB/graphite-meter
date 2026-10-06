@@ -83,15 +83,12 @@ fn punycode(letters: &[char]) -> Option<String> {
     if basic > 0 {
         output.push('-');
     }
+    let codes = || letters.iter().map(|&letter| u32::from(letter));
     let (mut least, mut delta, mut bias, mut handled) = (0x80, 0_u32, 72, basic);
     while (handled as usize) < letters.len() {
-        let code = letters
-            .iter()
-            .map(|&letter| u32::from(letter))
-            .filter(|&code| code >= least)
-            .min()?;
+        let code = codes().filter(|&code| code >= least).min()?;
         delta = delta.checked_add((code - least).checked_mul(handled + 1)?)?;
-        for letter in letters.iter().map(|&letter| u32::from(letter)) {
+        for letter in codes() {
             if letter < code {
                 delta = delta.checked_add(1)?;
             }

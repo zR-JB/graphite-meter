@@ -279,10 +279,8 @@ fn refuse(prepared: &mut Result<Prepared, Failure>, refusal: &Failure) {
     match prepared {
         Err(failure) => replace(failure),
         Ok(prepared) => {
-            let failed = prepared
-                .servers
-                .iter_mut()
-                .filter_map(|server| server.path.as_mut().err());
+            let servers = prepared.servers.iter_mut();
+            let failed = servers.filter_map(|server| server.path.as_mut().err());
             failed.for_each(replace);
         }
     }

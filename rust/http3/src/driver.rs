@@ -234,10 +234,8 @@ impl Driver {
                 return Ok(None);
             }
             let early = shared.sessions().deadline();
-            let deadline = [close_at, self.incoming.deadline(), early, self.sessions.deadline()]
-                .into_iter()
-                .flatten()
-                .min();
+            let deadlines = [close_at, self.incoming.deadline(), early, self.sessions.deadline()];
+            let deadline = deadlines.into_iter().flatten().min();
             if let Some(deadline) = deadline.filter(|&deadline| deadline != self.timer.deadline()) {
                 self.timer.as_mut().reset(deadline);
             }
