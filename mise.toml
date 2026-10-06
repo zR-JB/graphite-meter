@@ -69,7 +69,7 @@ run = [
 shell = "bash -e -o pipefail -c"
 description = "Type-check Python tools and tests"
 run = '''
-ty check scripts --python-version "$(python3 scripts/ci/toolchains.py python-target)" \
+ty check scripts rust/interop --python-version "$(python3 scripts/ci/toolchains.py python-target)" \
   --extra-search-path scripts/ci --error-on-warning
 '''
 

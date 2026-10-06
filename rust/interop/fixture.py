@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import signal
 import socket
 import subprocess
@@ -136,16 +137,22 @@ class Server:
 
     def __init__(self, fixture: Fixture, binary: Path, name: str, settings: dict[str, str]) -> None:
         self.binary, self.log = binary, fixture.directory / f"server-{name}.log"
+        self.environment = fixture.environment | {
+            "GM_TLS_CERT": str(fixture.cert), "GM_TLS_KEY": str(fixture.key),
+        } | settings
+        self.listen()
+        self.process: subprocess.Popen[bytes] | None = None
+
+    def listen(self) -> None:
+        """Picks four distinct free loopback ports for the listeners."""
         ports: list[int] = []
         while len(set(ports)) != 4:
             ports = [free_port() for _ in range(4)]
         self.h1, self.h1_tls, self.h2, self.h3 = ports
-        self.environment = fixture.environment | {
+        self.environment |= {
             "GM_H1_ADDR": f"127.0.0.1:{self.h1}", "GM_H1_TLS_ADDR": f"127.0.0.1:{self.h1_tls}",
             "GM_H2_ADDR": f"127.0.0.1:{self.h2}", "GM_H3_ADDR": f"127.0.0.1:{self.h3}",
-            "GM_TLS_CERT": str(fixture.cert), "GM_TLS_KEY": str(fixture.key),
-        } | settings
-        self.process: subprocess.Popen[bytes] | None = None
+        }
 
     def origin(self, listener: str) -> str:
         return {"http1": f"http://127.0.0.1:{self.h1}", "http1-tls": f"https://127.0.0.1:{self.h1_tls}",
@@ -160,14 +167,18 @@ class Server:
                              "GM_AUTH_PASSWORD_HASH": PASSWORD_HASH,
                              "GM_ADVERTISED_NATIVE_ENDPOINTS": "http1-tls,http2,http3"}
 
-    def start(self) -> subprocess.Popen[bytes]:
-        """Starts the server; it is ready once its clear listener answers."""
+    def start(self, retries: int = 2) -> subprocess.Popen[bytes]:
+        """Starts the server; it is ready once its clear listener answers. A port taken since it was picked is
+        picked again, `retries` times at most."""
         with self.log.open("w") as log:
             self.process = subprocess.Popen([str(self.binary)], env=self.environment, stdout=log,
                                             stderr=subprocess.STDOUT)
         deadline = time.monotonic() + 15
         while True:
             if self.process.poll() is not None:
+                if retries and re.search(r"listen (?:tcp|udp) .*in use", self.output(), re.IGNORECASE):
+                    self.listen()
+                    return self.start(retries - 1)
                 raise RuntimeError(f"server exited {self.process.returncode}:\n{self.output()}")
             try:
                 self.probe()
@@ -176,6 +187,8 @@ class Server:
                 return self.process
             except OSError:
                 if time.monotonic() >= deadline:
+                    self.process.kill()
+                    self.process.wait()
                     raise TimeoutError(f"server did not become ready:\n{self.output()}") from None
                 time.sleep(0.05)
 

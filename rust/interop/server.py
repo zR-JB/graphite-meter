@@ -112,8 +112,10 @@ def fewer_endpoints(binary: Path, fixture: Fixture) -> None:
             budget = int(minimum[1])
             continue
         line = f"{FEWER} 1 of {planned} QUIC endpoints"
-        sockets = udp_sockets(server.h3)
-        server.stop()
+        try:
+            sockets = udp_sockets(server.h3)
+        finally:
+            server.stop()
         if line not in server.output() or sockets != 1:
             raise RuntimeError(f"expected {line!r} and one socket, found {sockets}:\n{server.output()}")
         print(f"HTTP/3 at the least budget, {budget} bytes: {line}", flush=True)
@@ -123,26 +125,26 @@ def fewer_endpoints(binary: Path, fixture: Fixture) -> None:
 
 def shutdown_under_load(binary: Path, fixture: Fixture, client: Path) -> None:
     """SIGTERM during HTTP/3 and WebTransport downloads ends the server within its 5 s grace and 1 s close."""
-    server = fixture.server(binary, "shutdown")
-    server.start()
     environment = fixture.environment | {"SSL_CERT_FILE": str(fixture.ca)}
     loads = []
-    for transport in ("fetch-stream", "webtransport"):
-        log = (fixture.directory / f"load-{transport}.log").open("w")
-        command = native(client, server, "http3", transport, "download", 30, "--streams=2", "--loaded-latency=false")
-        loads.append(subprocess.Popen(command, env=environment, stdout=log, stderr=subprocess.STDOUT))
-    try:
-        deadline = time.monotonic() + 20
-        while server.active() < 2:
-            if time.monotonic() > deadline:
-                raise TimeoutError(f"the downloads did not start:\n{server.output()}")
-            time.sleep(0.1)
-        time.sleep(2)
-        elapsed = server.stop(signal.SIGTERM)
-    finally:
-        for load in loads:
-            load.kill()
-            load.wait()
+    with fixture.server(binary, "shutdown") as server:
+        try:
+            for transport in ("fetch-stream", "webtransport"):
+                log = (fixture.directory / f"load-{transport}.log").open("w")
+                command = native(client, server, "http3", transport, "download", 30, "--streams=2",
+                                 "--loaded-latency=false")
+                loads.append(subprocess.Popen(command, env=environment, stdout=log, stderr=subprocess.STDOUT))
+            deadline = time.monotonic() + 20
+            while server.active() < 2:
+                if time.monotonic() > deadline:
+                    raise TimeoutError(f"the downloads did not start:\n{server.output()}")
+                time.sleep(0.1)
+            time.sleep(2)
+            elapsed = server.stop(signal.SIGTERM)
+        finally:
+            for load in loads:
+                load.kill()
+                load.wait()
     if elapsed > 6.5:
         raise RuntimeError(f"the server took {elapsed:.2f} s to exit after SIGTERM:\n{server.output()}")
     print(f"SIGTERM under HTTP/3 and WebTransport load: exited 0 after {elapsed:.2f} s", flush=True)
