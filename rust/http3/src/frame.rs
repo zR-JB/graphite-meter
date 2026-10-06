@@ -84,25 +84,16 @@ impl Pair {
     pub(crate) fn is_empty(&self) -> bool {
         self.first.is_none() && self.varint.is_empty()
     }
-}
 
-/// A unidirectional stream's type, followed by a session ID on WebTransport streams.
-#[derive(Default)]
-pub(crate) struct StreamType {
-    kind: Option<u64>,
-    varint: Partial,
-}
-
-impl StreamType {
-    pub(crate) fn read(&mut self, input: &mut impl Buf) -> Option<(u64, Option<u64>)> {
-        let kind = match self.kind {
-            Some(kind) => kind,
-            None => *self.kind.insert(self.varint.read(input)?),
-        };
-        if kind != WEBTRANSPORT_STREAM {
-            return Some((kind, None));
+    /// A unidirectional stream's type, followed by a session ID on WebTransport streams.
+    pub(crate) fn stream_type(&mut self, input: &mut impl Buf) -> Option<(u64, Option<u64>)> {
+        match self.first.map_or_else(|| self.varint.read(input), Some)? {
+            WEBTRANSPORT_STREAM => {
+                self.first = Some(WEBTRANSPORT_STREAM);
+                self.read(input).map(|(kind, session)| (kind, Some(session)))
+            }
+            kind => Some((kind, None)),
         }
-        Some((kind, Some(self.varint.read(input)?)))
     }
 }
 

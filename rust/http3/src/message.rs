@@ -3,6 +3,7 @@ use crate::{
     code::{Code, WtCode},
     fields,
     frame::{self, Piece},
+    qpack,
 };
 use bytes::Bytes;
 
@@ -13,13 +14,15 @@ pub(crate) enum Event {
     Trailers(Bytes),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Phase {
+    #[default]
     Head,
     Body,
     Trailers,
 }
 
+#[derive(Default)]
 pub(crate) struct Message {
     frames: frame::Reader,
     phase: Phase,
@@ -29,30 +32,14 @@ pub(crate) struct Message {
     section: Vec<u8>,
     limit: u64,
     /// Body bytes the head's content-length still owes.
-    owed: Option<u64>,
+    pub(crate) owed: Option<u64>,
     /// A response, on which a server could interleave PUSH_PROMISE.
     response: bool,
 }
 
 impl Message {
     pub(crate) fn new(limit: u64, response: bool) -> Self {
-        let frames = frame::Reader::default();
-        let (phase, section) = (Phase::Head, Vec::new());
-        Self {
-            frames,
-            phase,
-            started: false,
-            kind: 0,
-            section,
-            limit,
-            owed: None,
-            response,
-        }
-    }
-
-    /// Holds a request's body to its head's content-length.
-    pub(crate) fn content_length(&mut self, length: Option<u64>) {
-        self.owed = length;
+        Self { limit, response, ..Self::default() }
     }
 
     /// Takes a response head: `None` for an interim one, restarting the message, else the final one, bounded by status.
@@ -61,7 +48,7 @@ impl Message {
         section: &[u8],
         method: &http::Method,
     ) -> Result<Option<http::Response<()>>, Code> {
-        let head = fields::decode_response(section, self.limit).map_err(fields::Invalid::code)?;
+        let head = fields::decode_response(section, self.limit).map_err(qpack::Invalid::code)?;
         let status = head.message.status();
         if status.is_informational() {
             *self = Self::new(self.limit, true);
@@ -83,17 +70,12 @@ impl Message {
     /// The next event `input` completes; errors carry the code ending the stream, or the connection for frame errors.
     pub(crate) fn next(&mut self, input: &mut Bytes) -> Result<Option<Event>, Code> {
         while let Some(piece) = self.frames.next(input) {
-            match piece {
-                Piece::Header { kind, length } => {
-                    if let Some(event) = self.header(kind, length)? {
-                        return Ok(Some(event));
-                    }
-                }
-                Piece::Payload(payload) => {
-                    if let Some(event) = self.payload(payload)? {
-                        return Ok(Some(event));
-                    }
-                }
+            let event = match piece {
+                Piece::Header { kind, length } => self.header(kind, length)?,
+                Piece::Payload(payload) => self.payload(payload)?,
+            };
+            if event.is_some() {
+                return Ok(event);
             }
         }
         Ok(None)

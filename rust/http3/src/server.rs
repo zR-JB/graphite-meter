@@ -4,7 +4,8 @@ use crate::{
     code::Code,
     driver::{Driver, Role},
     error::Error,
-    fields::{self, Invalid},
+    fields,
+    qpack::Invalid,
     stream::RequestStream,
 };
 use http::StatusCode;
@@ -48,14 +49,11 @@ impl Request {
     /// Checks the head: over 4 KiB 431, non-WebTransport CONNECT 400, both `Refused`; over budget H3_REQUEST_REJECTED.
     pub async fn resolve(self) -> Result<(http::Request<()>, RequestStream), Error> {
         let mut stream = self.0;
-        match tokio::time::timeout(HEADER_TIMEOUT, head(&mut stream)).await {
-            Ok(Ok(request)) => Ok((request, stream)),
-            Ok(Err(error)) => Err(error),
-            Err(_) => {
-                stream.abort(Code::H3_REQUEST_INCOMPLETE);
-                Err(Error::TimedOut)
-            }
-        }
+        let Ok(request) = tokio::time::timeout(HEADER_TIMEOUT, head(&mut stream)).await else {
+            stream.abort(Code::H3_REQUEST_INCOMPLETE);
+            return Err(Error::TimedOut);
+        };
+        Ok((request?, stream))
     }
 }
 
@@ -100,6 +98,6 @@ fn admit(stream: &mut RequestStream, head: fields::Head<http::Request<()>>) -> R
         stream.shared().sessions().served = true;
     }
     request.extensions_mut().insert(Arc::new(charge));
-    stream.recv.message.content_length(head.content_length);
+    stream.recv.message.owed = head.content_length;
     Ok(request)
 }

@@ -4,17 +4,37 @@ mod table;
 
 use crate::code::Code;
 
-/// A field section or string QPACK cannot decode: QPACK_DECOMPRESSION_FAILED.
+/// Why a field section was refused; a stream answers each differently.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Corrupt;
+pub(crate) enum Invalid {
+    /// QPACK_DECOMPRESSION_FAILED.
+    Qpack,
+    /// H3_MESSAGE_ERROR.
+    Malformed,
+    /// Over the size limit: a 431 response to requests.
+    TooLarge,
+    /// Well formed, but not a request our routes serve: a 400 response.
+    Unsupported,
+}
+
+impl Invalid {
+    /// The code a stream that cannot answer with a status ends with.
+    pub(crate) fn code(self) -> Code {
+        match self {
+            Self::Qpack => Code::QPACK_DECOMPRESSION_FAILED,
+            Self::TooLarge => Code::H3_EXCESSIVE_LOAD,
+            Self::Malformed | Self::Unsupported => Code::H3_MESSAGE_ERROR,
+        }
+    }
+}
 
 /// Calls `field` for each line of an encoded field section, in order.
-pub(crate) fn decode<E: From<Corrupt>>(
+pub(crate) fn decode(
     section: &[u8],
-    mut field: impl FnMut(&[u8], &[u8]) -> Result<(), E>,
-) -> Result<(), E> {
+    mut field: impl FnMut(&[u8], &[u8]) -> Result<(), Invalid>,
+) -> Result<(), Invalid> {
     // Required Insert Count 0 and Base 0.
-    let mut section = section.strip_prefix(&[0, 0]).ok_or(Corrupt)?;
+    let mut section = section.strip_prefix(&[0, 0]).ok_or(Invalid::Qpack)?;
     let (mut name_buffer, mut value_buffer) = (Vec::new(), Vec::new());
     while let Some(&first) = section.first() {
         match first {
@@ -35,7 +55,7 @@ pub(crate) fn decode<E: From<Corrupt>>(
                 let value = string(&mut section, 7, &mut value_buffer)?;
                 field(name, value)?;
             }
-            _ => return Err(Corrupt.into()),
+            _ => return Err(Invalid::Qpack),
         }
     }
     Ok(())
@@ -89,22 +109,22 @@ impl DecoderStream {
     }
 }
 
-fn entry(index: u64) -> Result<(&'static str, &'static str), Corrupt> {
+fn entry(index: u64) -> Result<(&'static str, &'static str), Invalid> {
     usize::try_from(index)
         .ok()
         .and_then(|index| table::STATIC.get(index))
         .copied()
-        .ok_or(Corrupt)
+        .ok_or(Invalid::Qpack)
 }
 
 /// A prefixed integer (RFC 7541 §5.1) whose value fits the section anyway, so at most 2^35.
-fn integer(section: &mut &[u8], bits: u32) -> Result<u64, Corrupt> {
-    let (&first, mut rest) = section.split_first().ok_or(Corrupt)?;
+fn integer(section: &mut &[u8], bits: u32) -> Result<u64, Invalid> {
+    let (&first, mut rest) = section.split_first().ok_or(Invalid::Qpack)?;
     let max = (1 << bits) - 1;
     let mut value = u64::from(first) & max;
     if value == max {
         for shift in (0..=28).step_by(7) {
-            let (&byte, tail) = rest.split_first().ok_or(Corrupt)?;
+            let (&byte, tail) = rest.split_first().ok_or(Invalid::Qpack)?;
             rest = tail;
             value += u64::from(byte & 0x7f) << shift;
             if byte & 0x80 == 0 {
@@ -112,17 +132,17 @@ fn integer(section: &mut &[u8], bits: u32) -> Result<u64, Corrupt> {
                 return Ok(value);
             }
         }
-        return Err(Corrupt);
+        return Err(Invalid::Qpack);
     }
     *section = rest;
     Ok(value)
 }
 
 /// A string literal after a prefix of `bits` length bits and one Huffman bit.
-fn string<'a: 'b, 'b>(section: &mut &'a [u8], bits: u32, buffer: &'b mut Vec<u8>) -> Result<&'b [u8], Corrupt> {
+fn string<'a: 'b, 'b>(section: &mut &'a [u8], bits: u32, buffer: &'b mut Vec<u8>) -> Result<&'b [u8], Invalid> {
     let huffman = section.first().is_some_and(|&first| first & 1 << bits != 0);
-    let length = usize::try_from(integer(section, bits)?).map_err(|_| Corrupt)?;
-    let (raw, rest) = section.split_at_checked(length).ok_or(Corrupt)?;
+    let length = usize::try_from(integer(section, bits)?).map_err(|_| Invalid::Qpack)?;
+    let (raw, rest) = section.split_at_checked(length).ok_or(Invalid::Qpack)?;
     *section = rest;
     if !huffman {
         return Ok(raw);
@@ -165,11 +185,11 @@ mod tests {
 
     type Lines = Vec<(Vec<u8>, Vec<u8>)>;
 
-    fn fields(section: &[u8]) -> Result<Lines, Corrupt> {
+    fn fields(section: &[u8]) -> Result<Lines, Invalid> {
         let mut fields = Vec::new();
         decode(section, |name, value| {
             fields.push((name.to_vec(), value.to_vec()));
-            Ok::<_, Corrupt>(())
+            Ok::<_, Invalid>(())
         })?;
         Ok(fields)
     }
@@ -235,7 +255,7 @@ mod tests {
             "0000518100",
             "000021",
         ] {
-            assert_eq!(fields(&hex(section)), Err(Corrupt), "{section}");
+            assert_eq!(fields(&hex(section)), Err(Invalid::Qpack), "{section}");
         }
         assert_eq!(fields(&hex("0000")), Ok(vec![]));
     }

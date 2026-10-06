@@ -1,36 +1,6 @@
 //! HTTP messages as field sections (RFC 9114 §4.2-4.3, RFC 9220): validation, size and conversion.
-use crate::{code::Code, qpack};
+use crate::qpack::{self, Invalid};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, Version, header, uri};
-
-/// Why a field section was refused; a stream answers each differently.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Invalid {
-    /// QPACK_DECOMPRESSION_FAILED.
-    Qpack,
-    /// H3_MESSAGE_ERROR.
-    Malformed,
-    /// Over the size limit: a 431 response to requests.
-    TooLarge,
-    /// Well formed, but not a request our routes serve: a 400 response.
-    Unsupported,
-}
-
-impl Invalid {
-    /// The code a stream that cannot answer with a status ends with.
-    pub(crate) fn code(self) -> Code {
-        match self {
-            Self::Qpack => Code::QPACK_DECOMPRESSION_FAILED,
-            Self::TooLarge => Code::H3_EXCESSIVE_LOAD,
-            Self::Malformed | Self::Unsupported => Code::H3_MESSAGE_ERROR,
-        }
-    }
-}
-
-impl From<qpack::Corrupt> for Invalid {
-    fn from(_: qpack::Corrupt) -> Self {
-        Self::Qpack
-    }
-}
 
 /// A decoded message head and the field section size (RFC 9114 §4.2.2) it was checked against.
 pub(crate) struct Head<T> {

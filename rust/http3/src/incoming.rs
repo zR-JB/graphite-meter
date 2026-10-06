@@ -37,7 +37,7 @@ pub(crate) struct PeerStream {
 }
 
 enum Kind {
-    Unknown { header: frame::StreamType, deadline: Instant },
+    Unknown { header: frame::Pair, deadline: Instant },
     Control(Box<control::Reader>),
     Encoder,
     Decoder(qpack::DecoderStream),
@@ -69,7 +69,7 @@ impl Incoming {
             },
         };
         let kind = Kind::Unknown {
-            header: frame::StreamType::default(),
+            header: frame::Pair::default(),
             deadline: Instant::now() + TYPE_TIMEOUT,
         };
         self.streams
@@ -117,7 +117,7 @@ impl PeerStream {
         loop {
             match &mut self.kind {
                 Kind::Unknown { header, .. } => {
-                    if let Some((kind, session)) = header.read(&mut self.input) {
+                    if let Some((kind, session)) = header.stream_type(&mut self.input) {
                         let Some(kind) = classify(kind, session, shared.role, critical)? else {
                             let _ = self.stream.stop(Code::H3_STREAM_CREATION_ERROR.into());
                             return Ok(Read::Done);

@@ -1,5 +1,5 @@
 //! The HPACK Huffman code (RFC 7541 Appendix B). It is canonical, so code lengths define it.
-use super::Corrupt;
+use super::Invalid;
 
 /// Code length per symbol, 16 symbols per row; the last is EOS.
 #[rustfmt::skip]
@@ -93,7 +93,7 @@ pub(crate) fn encode(input: &[u8], output: &mut Vec<u8>) {
     }
 }
 
-pub(crate) fn decode(input: &[u8], output: &mut Vec<u8>) -> Result<(), Corrupt> {
+pub(crate) fn decode(input: &[u8], output: &mut Vec<u8>) -> Result<(), Invalid> {
     let (mut code, mut length) = (0_u32, 0);
     for &byte in input {
         for shift in (0..8).rev() {
@@ -103,7 +103,7 @@ pub(crate) fn decode(input: &[u8], output: &mut Vec<u8>) -> Result<(), Corrupt> 
             if index < CODE.count[length] {
                 let symbol = CODE.symbols[CODE.start[length] + index as usize];
                 if symbol == EOS {
-                    return Err(Corrupt);
+                    return Err(Invalid::Qpack);
                 }
                 output.push(symbol as u8);
                 (code, length) = (0, 0);
@@ -112,7 +112,7 @@ pub(crate) fn decode(input: &[u8], output: &mut Vec<u8>) -> Result<(), Corrupt> 
     }
     // Padding is a prefix of EOS: at most seven one bits.
     if length > 7 || code != (1 << length) - 1 {
-        return Err(Corrupt);
+        return Err(Invalid::Qpack);
     }
     Ok(())
 }
@@ -153,7 +153,7 @@ mod tests {
     fn padding_and_eos_are_checked() {
         let mut output = Vec::new();
         for invalid in [&[0xff, 0xff, 0xff, 0xff][..], &[0x00], &[0xf8, 0x01], &[0xff, 0xfe]] {
-            assert_eq!(decode(invalid, &mut output), Err(Corrupt), "{invalid:02x?}");
+            assert_eq!(decode(invalid, &mut output), Err(Invalid::Qpack), "{invalid:02x?}");
         }
         // "0" is the five-bit code 00000; three one bits of padding complete the byte.
         output.clear();
