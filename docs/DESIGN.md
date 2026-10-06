@@ -179,8 +179,11 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   it was laid out instead of building it again.
 - A run is one story told on the dial, and nothing passes through an empty console on the way. Start: the run
   key's skin turns to Stop on the press while its label crosses over; the previous result rewinds, every arc
-  draining back to zero together as its beads drop off (`result-drain`, 300 ms, fast from the press), while the lanes and the cards keep
-  their frames and only their figures clear. Each stage: during its warmup the ring's track takes a faint tint of
+  draining back to zero together as its beads drop off (`result-drain`, 300 ms, fast from the press), while the
+  lanes, the cards and the status bar keep their frames and their figures clear in one frame, with no fade: the
+  dial's drain is the start's only motion. A stage the new run leaves out gives up its card and lane as the run
+  starts, and the rest close over its place (`flip()`). A stage has a card while the next run includes it or the
+  shown run ran it. Each stage: during its warmup the ring's track takes a faint tint of
   its hue and the console's light from above (`--ambient`) shifts to it; when it starts measuring, the needle rises
   from zero (520 ms, eased out); when it ends, the needle drains back to zero (300 ms) and blends into the next
   stage's hue on the way down. End: the last needle drains, and the result sweep starts as it reaches zero.

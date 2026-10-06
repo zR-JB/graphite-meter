@@ -53,7 +53,7 @@ const boxes = (only?: readonly string[]) =>
     is a sheet: it slides in from beyond that edge and back out, without overshoot. `only`
     names the keys that move, so a change can move a surface as one rather than each part on its own. */
 export function flip(update: () => void, only?: readonly string[]): void {
-  if (still() || globalThis.document?.hidden) {
+  if (still() || globalThis.document?.hidden !== false) {
     update();
     return;
   }

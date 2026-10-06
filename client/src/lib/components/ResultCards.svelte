@@ -13,10 +13,8 @@
   import { stabilityPct } from "../runner/measure";
   import type { LiveReadout } from "../presentation/liveReadout.svelte";
   import { announce } from "../presentation/announcer.svelte";
-  import { handoff } from "../presentation/motion.svelte";
   import { untrack } from "svelte";
   import { planned } from "../runner/schedule";
-  import { stageShown } from "./stageTrack";
   import {
     CARD_ORDER,
     laneShort,
@@ -67,8 +65,7 @@
     );
     return summaryCards(evidence, units, store.showWireEstimates);
   });
-  // Every chip's stage holds its card in its column under its key, a skipped one quietly, so skipping a stage
-  // changes a card's state and never moves the row.
+  // A stage the shown run left out reads as not run.
   const skipped = (key: Stage) => status(key) === "disabled";
   type Transfer = Exclude<Stage, "latency">;
   let retainedGraphs: Partial<Record<Transfer, CardGraph>> = {};
@@ -164,10 +161,12 @@
     retainedCards[card.key] = { source: card, view };
     return view;
   }
-  // A card stands under every chip the stage keys show, by the same rule, so the two rows always match.
+  // A stage has a card while the next run includes it or the shown run executed it.
   const cards = $derived(
-    CARD_ORDER.filter((key) =>
-      stageShown(key, planned(store.config, key), store.stagePresentation[key]),
+    CARD_ORDER.filter(
+      (key) =>
+        planned(store.config, key) ||
+        store.stagePresentation[key].status !== "disabled",
     )
       .map((key) =>
         store.phase !== "complete" && store.phase !== "error"
@@ -185,11 +184,6 @@
         )
       : [],
   );
-  const view = handoff(
-    () => ({ run: store.runSeq, cards, issues }),
-    (view) => view.run,
-  );
-
   // Once per completed run, never again for a unit or scope change.
   $effect(() => {
     if (store.phase !== "complete" || store.result === spoken) return;
@@ -352,12 +346,11 @@
 </script>
 
 <ResultSummary
-  cards={view.shown.cards}
+  {cards}
   {scale}
   {head}
-  out={view.out}
   details={details ?? store.serverDetails}
-  issues={view.shown.issues}
+  {issues}
   scope={details ? shown : ""}
   running={store.isRunning}
 />

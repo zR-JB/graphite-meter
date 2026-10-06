@@ -39,8 +39,6 @@
     source?: string;
     /** Why the Latency stage failed; it stands under the idle headline in place of its caption. */
     failure?: string;
-    /** The rows' figures and plots are handing off to the next run's; the area and its rows stay. */
-    out?: boolean;
   }
 
   let {
@@ -50,7 +48,6 @@
     added = null,
     source,
     failure,
-    out = false,
   }: Props = $props();
   const idle = $derived(lanes.find((lane) => lane.key === "latency") ?? null);
   // Lit like a stage card: dim until something is measured, brightest while the idle stage runs.
@@ -264,7 +261,6 @@
 
 <section
   class="latency-card stage-area {light}"
-  class:out
   data-tone="latency"
   aria-label={label}
 >
@@ -566,29 +562,6 @@
   .lane[data-active="true"]::before {
     opacity: 1;
     transition: opacity var(--dur-stage) var(--ease-out) var(--beat);
-  }
-  /* A new run clears the rows' figures and plots while the area, its rows and their names stay put. */
-  .lane
-    :is(
-      .lane-median,
-      .lane-jitter,
-      .lane-timeouts,
-      .lane-added,
-      .profile-artwork
-    ) {
-    transition: opacity var(--dur-handoff-in) var(--ease-out);
-  }
-  .out
-    .lane
-    :is(
-      .lane-median,
-      .lane-jitter,
-      .lane-timeouts,
-      .lane-added,
-      .profile-artwork
-    ) {
-    opacity: 0;
-    transition-duration: var(--dur-handoff-out);
   }
   /* A measured span grows from its middle the first time it is drawn. */
   @media (prefers-reduced-motion: no-preference) {
