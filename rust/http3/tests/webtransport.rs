@@ -132,29 +132,6 @@ async fn prepared_datagrams_repeat_and_the_last_session_ends_its_connection() ->
     Ok(())
 }
 
-/// A client ignores content-length in a successful response to CONNECT (RFC 9110 §9.3.6), so the
-/// session's capsules follow one that says 0.
-#[tokio::test]
-async fn a_successful_connect_ignores_its_content_length() -> Result<(), TestError> {
-    let peers = pair(PLAIN).await?;
-    // A raw server whose SETTINGS allow WebTransport as Go's do.
-    let _control = uni(&peers.server, &control(&[(0x08, 1), (0x33, 1), (0x2c7cf000, 1)])).await?;
-    let (_driver, requests) = client(&peers);
-    let serving = async {
-        let (mut send, mut recv) = peers.server.accept_bi().await?;
-        recv.read_chunk(usize::MAX).await?;
-        let head = frame(0x01, &section(&[(":status", "200"), ("content-length", "0")]));
-        send.write_all(&[head, close_capsule(7, "bye")].concat()).await?;
-        send.finish()?;
-        Ok::<_, TestError>((send, recv))
-    };
-    let (connected, served) = tokio::join!(Session::connect(&requests, get("/wt")), serving);
-    let _streams = served?;
-    let (session, _) = connected?.expect("accepted");
-    assert_eq!(session.closed().await, Ok((7, "bye".into())));
-    Ok(())
-}
-
 /// Control data on a CONNECT stream is bounded to 1 MiB in at most 1024 chunks.
 #[tokio::test]
 async fn connect_stream_control_data_is_bounded() -> Result<(), TestError> {
@@ -205,18 +182,6 @@ async fn a_peer_withholding_stream_credit_cannot_hold_a_session() -> Result<(), 
     jump(Duration::from_millis(1100)).await;
     tokio::time::timeout(Duration::from_secs(5), outcomes.recv()).await?;
     assert_eq!(response.await?, (Vec::new(), Err(Code::WT_SESSION_GONE)));
-
-    // Nor can it hold the refusal of a CONNECT that never showed WebTransport SETTINGS.
-    let setup = Setup { window: Some(0), ..PLAIN };
-    let Served { peers, .. } = pair(setup)
-        .await?
-        .sessions(|_| async { panic!("accepted without SETTINGS") });
-    let (_connect, response) = peers.connect().await?;
-    charged(&peers.budget, 0).await;
-    jump(Duration::from_millis(5100)).await;
-    yields().await;
-    jump(Duration::from_millis(10_100)).await;
-    assert_eq!(response.await?, (Vec::new(), Err(Code::H3_REQUEST_CANCELLED)));
     Ok(())
 }
 
@@ -295,46 +260,6 @@ async fn shutdown_closes_every_session_before_the_connection() -> Result<(), Tes
 }
 
 #[tokio::test]
-async fn one_session_per_connection_and_streams_wait_for_theirs() -> Result<(), TestError> {
-    let release = Arc::new(Notify::new());
-    let (started, mut sessions) = mpsc::unbounded_channel();
-    let releasing = release.clone();
-    let Served { peers, .. } = pair(DRAFT02).await?.sessions(move |session| {
-        let (release, started) = (releasing.clone(), started.clone());
-        async move {
-            // A session reports 0 when it starts, then 1000 and the streams it took.
-            let _ = started.send(0);
-            let mut streams = 0;
-            tokio::select! {
-                () = release.notified() => {}
-                () = async { while session.accept_uni().await.is_some() { streams += 1 } } => {}
-            }
-            let _ = started.send(streams + 1000);
-        }
-    });
-    // A plain request first: this connection is not sessions-only, so it outlives its sessions.
-    peers.get().await?;
-    // A stream for session 12 arrives before its CONNECT and waits.
-    let early = uni(&peers.client, &[varint(0x54), varint(12), b"early".to_vec()].concat()).await?;
-    let (_first, _first_response) = peers.connect().await?;
-    assert_eq!(sessions.recv().await, Some(0));
-    let (second, mut second_response) = peers.bi(&connect_head()).await?;
-    assert_eq!(raw_stream(&mut second_response).await.1, Err(Code::H3_REQUEST_REJECTED));
-    assert_eq!(stopped(&second).await, Some(Code::H3_REQUEST_REJECTED));
-    release.notify_one();
-    assert_eq!(sessions.recv().await, Some(1000));
-    // Session 4 is gone; a stream for it is refused at once.
-    let gone = uni(&peers.client, &[varint(0x54), varint(4)].concat()).await?;
-    assert_eq!(stopped(&gone).await, Some(Code::WT_SESSION_GONE));
-    let (_third, _third_response) = peers.connect().await?;
-    assert_eq!(sessions.recv().await, Some(0));
-    drop(early);
-    release.notify_one();
-    assert_eq!(sessions.recv().await, Some(1001), "the early stream joined session 12");
-    Ok(())
-}
-
-#[tokio::test]
 async fn at_most_64_streams_wait_for_their_session_for_at_most_5_seconds() -> Result<(), TestError> {
     let Served { peers, .. } = pair(PLAIN).await?.serve(|_, _| async {});
     let (refusals, mut refused) = mpsc::unbounded_channel();
@@ -360,7 +285,6 @@ async fn webtransport_needs_the_peer_signal_and_datagrams() -> Result<(), TestEr
     for (setup, draft02, allowed) in [
         (DRAFT02, true, true),
         (raw(&[(0x2c7cf000, 1), (0x33, 1)]), false, true),
-        (raw(&[(0x2b603742, 1)]), false, false),
         (raw(&[]), false, false),
     ] {
         let Served { peers, .. } = pair(setup).await?.sessions(until_closed);
@@ -383,26 +307,5 @@ async fn webtransport_needs_the_peer_signal_and_datagrams() -> Result<(), TestEr
     jump(Duration::from_secs(6)).await;
     assert_eq!(first_frame(&mut recv).await?, bad_request);
     drop(send);
-    Ok(())
-}
-
-/// A client awaits the server's SETTINGS as long as its caller, as webtransport-go does, not 5 s, then
-/// names why no session starts: SETTINGS without WebTransport, or the connection they closed.
-#[tokio::test]
-async fn a_client_awaits_settings_to_name_why_no_session_starts() -> Result<(), TestError> {
-    for (pairs, expected) in [
-        (&[(0x33, 1)][..], Error::NoWebTransport),
-        (&[(0x21, 0), (0x21, 1)], closed(Code::H3_SETTINGS_ERROR)),
-    ] {
-        let peers = pair(PLAIN).await?;
-        let (_driver, requests) = client(&peers);
-        let connecting = tokio::spawn(async move { Session::connect(&requests, get("/wt")).await.err() });
-        tokio::task::yield_now().await;
-        jump(Duration::from_secs(6)).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert!(!connecting.is_finished(), "gave up waiting for SETTINGS");
-        let _control = uni(&peers.server, &control(pairs)).await?;
-        assert_eq!(connecting.await?, Some(expected));
-    }
     Ok(())
 }

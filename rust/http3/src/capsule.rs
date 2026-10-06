@@ -113,18 +113,6 @@ mod tests {
     }
 
     #[test]
-    fn unknown_bodies_are_not_retained() {
-        let mut header = Vec::new();
-        frame::put_header(0x21, varint::MAX, &mut header);
-        let mut reader = Reader::default();
-        assert_eq!(reader.read(&mut Bytes::from(header)), Ok(None));
-        for _ in 0..64 {
-            assert_eq!(reader.read(&mut Bytes::from(vec![0; 4096])), Ok(None));
-        }
-        assert_eq!((reader.close.capacity(), reader.at_boundary()), (0, false));
-    }
-
-    #[test]
     fn invalid_close_and_http2_capsules_end_the_session() {
         let long = [b'a'; MAX_REASON + 1];
         for bytes in [

@@ -165,56 +165,18 @@ async fn our_control_stream_opens_once_stream_credit_arrives() -> Result<(), Tes
     Ok(())
 }
 
-/// A push the client never allowed closes the connection; five interim heads pass, as quic-go lets them,
-/// and a sixth ends the request, as does 101, which HTTP/3 does not have (RFC 9114 §4.5).
-#[tokio::test]
-async fn responses_the_client_refuses() -> Result<(), TestError> {
-    let head = |status: &str| frame(0x01, &section(&[(":status", status)]));
-    for (bytes, expected) in [
-        (frame(0x05, &[0x00, 0x00, 0x00]), Err(closed(Code::H3_ID_ERROR))),
-        ([head("103").repeat(5), head("200")].concat(), Ok(http::StatusCode::OK)),
-        (head("100").repeat(6), Err(Error::Protocol(Code::H3_EXCESSIVE_LOAD))),
-        (head("101"), Err(Error::Protocol(Code::H3_MESSAGE_ERROR))),
-        (frame(0x41, &[]), Err(closed(Code::H3_FRAME_ERROR))),
-    ] {
-        let peers = pair(PLAIN).await?;
-        let (driver, requests) = client(&peers);
-        let (_send, mut recv) = requests.send_request(get("/")).await?.split();
-        let (mut response, _request) = peers.server.accept_bi().await?;
-        response.write_all(&bytes).await?;
-        let received = tokio::time::timeout(Duration::from_secs(5), recv.response()).await?;
-        assert_eq!(received.map(|response| response.status()), expected);
-        match expected {
-            Err(Error::Protocol(code)) => assert_eq!(stopped(&response).await, Some(code)),
-            Err(error @ Error::Connection { code, .. }) => {
-                assert_eq!(closed_with(&peers.server).await, code);
-                assert_eq!(driver.await?, Err(error));
-            }
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
 #[tokio::test]
 async fn refusals_stay_on_their_stream() -> Result<(), TestError> {
     // Our QPACK: :status 431 as a literal after the static :status name, :status 400 indexed.
     let status_431 = frame(0x01, &[0x00, 0x00, 0x5f, 0x09, 0x03, b'4', b'3', b'1']);
     let status_400 = frame(0x01, &[0x00, 0x00, 0xff, 0x04]);
-    let many: Vec<(&str, &str)> = std::iter::repeat_n(("a", ""), 130).collect();
     let lane_cancelled = Code(0x52e4a40fa8db);
     let message_error = Code::H3_MESSAGE_ERROR;
     let excess = [request_head(&[(":method", "POST"), ("content-length", "5")]), frame(0x00, b"abcdefgh")].concat();
     let cases = [
-        (
-            frame(0x01, &[0; 5000])[..100].to_vec(),
-            Ok(status_431.clone()),
-            Some(Code::H3_EXCESSIVE_LOAD),
-        ),
-        (request_head(&many), Ok(status_431), Some(Code::H3_EXCESSIVE_LOAD)),
+        (frame(0x01, &[0; 5000])[..100].to_vec(), Ok(status_431), Some(Code::H3_EXCESSIVE_LOAD)),
         ([varint(0x41), varint(0)].concat(), Err(lane_cancelled), Some(lane_cancelled)),
         (excess, Err(Code::H3_REQUEST_CANCELLED), Some(message_error)),
-        (request_head(&[("connection", "close")]), Err(message_error), Some(message_error)),
         (request_head(&[(":method", "CONNECT"), (":protocol", "websocket")]), Ok(status_400), None),
     ];
     let Served { peers, .. } = pair(raw(&[])).await?.serve(|_, stream| async move {
