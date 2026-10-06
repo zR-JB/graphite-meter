@@ -163,7 +163,7 @@ test("legal notices recover through Retry and keep focus in the dialog", async (
   // A link's label never breaks, at any width.
   for (const width of [1280, 600, 390]) {
     await page.setViewportSize({ width, height: 900 });
-    const wrapped = await dialog.locator(".component-links a").all((links) =>
+    const wrapped = await dialog.locator(".where a").all((links) =>
       links
         .filter((link) => {
           const label = document.createRange();
@@ -176,7 +176,7 @@ test("legal notices recover through Retry and keep focus in the dialog", async (
   }
 
   const link = dialog.locator(
-    ".group:last-child .component:last-child .component-links a:last-child",
+    ".group:last-child .component:last-child .where a:last-child",
   );
   const close = dialog.getByRole("button", { name: "Close About & legal" });
   await link.evaluate((el: HTMLElement) => el.focus());

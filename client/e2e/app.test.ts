@@ -216,16 +216,30 @@ test("a completed run fits every layout and theme without serious violations", a
     expect(identity.engineVersion).toBe(`${legal.sourceVersion}-rust`);
   }
   await expect(dialog).toContainText(rust ? "Rust crates" : "Go modules");
+  // Every component reads one way: where it comes from (a fork's upstream), then a modified one's shipped copy and
+  // changes.
   const links = legal.components.flatMap((component) => {
     expect(component.links.length).toBeGreaterThan(0);
-    return component.links.map((link) => {
+    for (const link of component.links)
       expect(new URL(link.url).protocol).toMatch(/^https?:$/);
-      return { label: `${link.label} for ${component.name}`, href: link.url };
-    });
+    const url = (label: string) =>
+      component.links.find((link) => link.label === label)?.url;
+    const [source, upstream, changes] = ["Source", "Upstream", "Changes"].map(
+      url,
+    );
+    return [
+      { label: `Source of ${component.name}`, href: upstream ?? source },
+      ...(component.modified && upstream
+        ? [{ label: `Shipped source of ${component.name}`, href: source }]
+        : []),
+      ...(component.modified && changes
+        ? [{ label: `Changes to ${component.name}`, href: changes }]
+        : []),
+    ];
   });
   expect(
     await dialog.evaluate((el: HTMLElement) =>
-      Array.from(el.querySelectorAll(".component-links a"), (link) => ({
+      Array.from(el.querySelectorAll(".where a"), (link) => ({
         label: link.getAttribute("aria-label"),
         href: link.getAttribute("href"),
       })),
