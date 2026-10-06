@@ -42,7 +42,7 @@ use window::Window;
 
 /// What a connection holds of the buffer budget from accept until its task ends.
 pub const FLOOR_BYTES: usize = TRANSPORT_BYTES + STATE_BYTES;
-/// TLS records and deframer, frame reads, the write buffer, HPACK and the default window.
+/// Socket reads, TLS records and deframer, frame reads, the write buffer, HPACK and the default window.
 const TRANSPORT_BYTES: usize = 512 << 10;
 /// Decoded headers, buffered DATA and queued response metadata, which h2 charges to the floor as they fill.
 const STATE_BYTES: usize = 1 << 20;
