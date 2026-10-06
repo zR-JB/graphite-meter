@@ -103,12 +103,7 @@ impl Reader {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn frame(kind: u64, payload: &[u8]) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        frame::put_header(kind, payload.len() as u64, &mut bytes);
-        [bytes, payload.to_vec()].concat()
-    }
+    use crate::testing::frame;
 
     /// The events of a stream that opens with empty SETTINGS, read one byte at a time.
     fn events(server: bool, frames: &[Vec<u8>]) -> Result<Vec<Event>, Code> {

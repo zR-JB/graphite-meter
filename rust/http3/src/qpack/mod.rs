@@ -162,7 +162,7 @@ fn put_string(text: &[u8], bits: u32, pattern: u8, output: &mut Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hex;
+    use crate::testing::hex;
 
     type Lines = Vec<(Vec<u8>, Vec<u8>)>;
 
@@ -221,15 +221,9 @@ mod tests {
     }
 
     #[test]
-    fn rfc9204_static_reference() {
-        assert_eq!(
-            fields(&hex("0000510b2f696e6465782e68746d6c")),
-            Ok(vec![(b":path".to_vec(), b"/index.html".to_vec())])
-        );
-    }
-
-    #[test]
-    fn dynamic_references_and_malformed_sections_fail() {
+    fn static_references_decode_and_dynamic_or_malformed_ones_fail() {
+        let rfc9204 = fields(&hex("0000510b2f696e6465782e68746d6c"));
+        assert_eq!(rfc9204, Ok(vec![(b":path".to_vec(), b"/index.html".to_vec())]));
         for section in [
             "",
             "00",

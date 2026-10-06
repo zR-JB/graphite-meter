@@ -83,12 +83,7 @@ pub(crate) fn datagram_prefix(id: u64) -> ([u8; 8], usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn capsule(kind: u64, body: &[u8]) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        frame::put_header(kind, body.len() as u64, &mut bytes);
-        [bytes, body.to_vec()].concat()
-    }
+    use crate::testing::frame as capsule;
 
     fn read_all(chunks: impl IntoIterator<Item = Vec<u8>>) -> Result<(Vec<(u32, String)>, bool), Code> {
         let mut reader = Reader::default();

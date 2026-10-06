@@ -78,7 +78,7 @@ mod tests {
             ("7bbd", 15_293),
             ("25", 37),
         ] {
-            let bytes = crate::hex(hex);
+            let bytes = crate::testing::hex(hex);
             assert_eq!(decode(&bytes), Some((value, bytes.len())));
             let mut encoded = Vec::new();
             put(value, &mut encoded);

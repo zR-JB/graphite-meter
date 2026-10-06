@@ -120,7 +120,7 @@ pub(crate) fn decode(input: &[u8], output: &mut Vec<u8>) -> Result<(), Corrupt> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hex;
+    use crate::testing::hex;
 
     #[test]
     fn rfc7541_examples() {

@@ -192,18 +192,10 @@ impl Message {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::qpack;
-
-    fn frame(kind: u64, payload: &[u8]) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        frame::put_header(kind, payload.len() as u64, &mut bytes);
-        [bytes, payload.to_vec()].concat()
-    }
+    use crate::testing::{frame, section};
 
     fn head(fields: &[(&str, &str)]) -> Vec<u8> {
-        let mut section = Vec::new();
-        qpack::encode(fields.iter().map(|(name, value)| (name.as_bytes(), value.as_bytes())), &mut section);
-        frame(frame::HEADERS, &section)
+        frame(frame::HEADERS, &section(fields))
     }
 
     /// Reads `bytes` in chunks of `chunk` bytes, then FIN; the events and how the stream ends.
@@ -272,48 +264,26 @@ mod tests {
     }
 
     #[test]
-    fn the_body_matches_its_content_length() {
-        let post = head(&[(":method", "POST")]);
-        for (body, end) in [(&b"12345"[..], Ok(())), (b"1234", Err(Code::H3_MESSAGE_ERROR))] {
-            let mut message = Message::new(4096, false);
-            assert!(matches!(message.next(&mut Bytes::from(post.clone())), Ok(Some(Event::Head(_)))));
-            message.content_length(Some(5));
-            assert_eq!(read(&mut message, &frame(frame::DATA, body), 1).1, end);
-        }
-        let mut message = Message::new(4096, false);
-        message.next(&mut Bytes::from(post)).unwrap();
-        message.content_length(Some(5));
-        let excess = frame(frame::DATA, b"123456");
-        assert_eq!(read(&mut message, &excess, excess.len()).1, Err(Code::H3_MESSAGE_ERROR));
-    }
-
-    #[test]
     fn responses_restart_after_interim_heads_and_bound_their_content() {
         let mut message = Message::new(4096, true);
         let push = frame(frame::PUSH_PROMISE, &[0, 0, 0]);
         assert_eq!(read(&mut message, &push, push.len()).1, Err(Code::H3_ID_ERROR));
-        let section = |status: &str, length: &str| {
-            let mut section = Vec::new();
-            qpack::encode(
-                [(&b":status"[..], status.as_bytes()), (b"content-length", length.as_bytes())],
-                &mut section,
-            );
-            section
-        };
+        let section = |status| section(&[(":status", status), ("content-length", "2")]);
         let mut message = Message::new(4096, true);
-        assert!(matches!(message.response(&section("103", "0"), &http::Method::GET), Ok(None)), "interim");
+        assert!(matches!(message.response(&section("103"), &http::Method::GET), Ok(None)), "interim");
         for (method, status, body, end) in [
             (http::Method::GET, "200", &b"12"[..], Ok(())),
             (http::Method::GET, "200", b"1", Err(Code::H3_MESSAGE_ERROR)),
+            (http::Method::GET, "200", b"123", Err(Code::H3_MESSAGE_ERROR)),
             (http::Method::GET, "204", b"1", Err(Code::H3_MESSAGE_ERROR)),
             (http::Method::HEAD, "200", b"", Ok(())),
             (http::Method::CONNECT, "200", b"capsules", Ok(())),
         ] {
             let mut message = Message::new(4096, true);
             message
-                .next(&mut Bytes::from(frame(frame::HEADERS, &section(status, "2"))))
+                .next(&mut Bytes::from(frame(frame::HEADERS, &section(status))))
                 .unwrap();
-            assert!(message.response(&section(status, "2"), &method).unwrap().is_some());
+            assert!(message.response(&section(status), &method).unwrap().is_some());
             let data = frame(frame::DATA, body);
             assert_eq!(read(&mut message, &data, data.len()).1, end, "{method} {status}");
         }

@@ -245,15 +245,10 @@ fn encode(pseudo: &[(&str, &str)], headers: &HeaderMap, limit: Option<u64>) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::section;
 
     const GET: [(&str, &str); 4] =
         [(":method", "GET"), (":scheme", "https"), (":authority", "meter.example"), (":path", "/")];
-
-    fn section(fields: &[(&str, &str)]) -> Vec<u8> {
-        let mut section = Vec::new();
-        qpack::encode(fields.iter().map(|(name, value)| (name.as_bytes(), value.as_bytes())), &mut section);
-        section
-    }
 
     fn request(fields: &[(&str, &str)]) -> Result<http::Request<()>, Invalid> {
         decode_request(&section(fields), 4096).map(|head| head.message)
