@@ -1,5 +1,6 @@
 //! HTTP/3 requests: each within its exchange bound until admitted, its body funding the connection's window, and its
-//! reply pumped in 16 KiB frames that yield to siblings on a crowded connection; a CONNECT opens a WebTransport session.
+//! reply pumped in 16 KiB frames; a large reply's frames wait for the path and yield to siblings on a crowded
+//! connection; a CONNECT opens a WebTransport session.
 
 use super::window::Window;
 use crate::{
@@ -16,6 +17,7 @@ use graphite_meter_http3::{self as http3, Code, RequestStream, SendHalf, server}
 use http::{Method, Request, Response, response::Parts};
 use http_body::Body as _;
 use std::{
+    convert::Infallible,
     future::Future,
     pin::Pin,
     sync::{
@@ -23,6 +25,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
     },
     task::{Context, Poll},
+    time::Duration,
 };
 
 const FRAME_BYTES: usize = 16 << 10;
@@ -30,6 +33,8 @@ const FRAME_BYTES: usize = 16 << 10;
 const FAIRNESS_REPLIES: usize = 16;
 /// Replies larger than this count toward a connection's fairness bound.
 const LARGE_REPLY_BYTES: u64 = 1 << 20;
+/// The shortest wait of a large reply for its path.
+const PACE: Duration = Duration::from_millis(1);
 
 /// What a connection's requests share.
 #[derive(Clone)]
@@ -37,12 +42,13 @@ pub(super) struct Requests {
     app: Arc<App>,
     connection: Connection,
     window: Arc<Window>,
+    quic: noq::Connection,
     large: Arc<AtomicUsize>,
 }
 
 impl Requests {
-    pub(super) fn new(app: Arc<App>, connection: Connection, window: Arc<Window>) -> Self {
-        Self { app, connection, window, large: Arc::default() }
+    pub(super) fn new(app: Arc<App>, connection: Connection, window: Arc<Window>, quic: noq::Connection) -> Self {
+        Self { app, connection, window, quic, large: Arc::default() }
     }
 
     /// One request: reset when its exchange expires unadmitted or its reply ends unwritten, and counted as admitted
@@ -79,7 +85,7 @@ impl Requests {
                 .is_some_and(|bytes| bytes > LARGE_REPLY_BYTES);
         let mut reply = Reply {
             send,
-            large: large.then(|| Large::new(&self.large)),
+            large: large.then(|| Large::new(&self.large, &self.quic)),
             stopped: None,
         };
         let _ = pump(&mut reply, response, bodiless).await;
@@ -128,6 +134,9 @@ impl Sink for Reply {
 
     async fn data(&mut self, mut data: Bytes, last: bool, bound: &mut ReplyBound) -> Result<(), Aborted> {
         while !data.is_empty() {
+            if let Some(large) = &self.large {
+                within(bound, large.paced()).await?;
+            }
             let frame = data.split_to(data.len().min(FRAME_BYTES));
             within(bound, self.send.send_data(frame)).await?;
             bound.progressed();
@@ -153,22 +162,62 @@ impl Sink for Reply {
 }
 
 /// A large reply on its connection.
-struct Large(Arc<AtomicUsize>);
+struct Large {
+    count: Arc<AtomicUsize>,
+    quic: noq::Connection,
+}
 
 impl Large {
-    fn new(count: &Arc<AtomicUsize>) -> Self {
+    fn new(count: &Arc<AtomicUsize>, quic: &noq::Connection) -> Self {
         count.fetch_add(1, Ordering::Relaxed);
-        Self(count.clone())
+        Self { count: count.clone(), quic: quic.clone() }
     }
 
     /// Only a crowded connection needs a handoff after each frame; on others it would halve throughput.
     fn crowded(&self) -> bool {
-        self.0.load(Ordering::Relaxed) > FAIRNESS_REPLIES
+        self.count.load(Ordering::Relaxed) > FAIRNESS_REPLIES
+    }
+
+    /// Waits while the connection holds more unacknowledged data than its path's backlog: noq charges the peer's
+    /// connection credit as data is written, so bulk data written far ahead would leave none for other replies.
+    async fn paced(&self) -> Result<(), Infallible> {
+        while let Some(path) = self.quic.path_stats(noq::PathId::ZERO) {
+            if self.quic.send_buffered_bytes() <= backlog(path.cwnd, path.rtt) {
+                break;
+            }
+            tokio::time::sleep(pause(path.rtt)).await;
+        }
+        Ok(())
     }
 }
 
 impl Drop for Large {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::Relaxed);
+        self.count.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// A large reply's wait for its path: a quarter round trip, and at least `PACE`.
+fn pause(rtt: Duration) -> Duration {
+    PACE.max(rtt / 4)
+}
+
+/// Eight congestion windows, scaled up where four pauses outlast a round trip: the path stays busy between a reply's
+/// checks, and on a slow path the backlog stays far below the peer's credit.
+fn backlog(cwnd: u64, rtt: Duration) -> u64 {
+    let span = rtt.max(4 * pause(rtt)).as_nanos();
+    let bytes = u128::from(cwnd).saturating_mul(8 * span) / rtt.as_nanos().max(1);
+    u64::try_from(bytes).unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_backlog_is_eight_windows_scaled_to_four_pauses() {
+        let micros = Duration::from_micros;
+        assert_eq!(backlog(30_000, micros(90_000)), 240_000, "a slow path");
+        assert_eq!(backlog(300_000, micros(200)), 48_000_000, "loopback");
     }
 }

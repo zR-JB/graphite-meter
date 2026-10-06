@@ -177,7 +177,7 @@ impl Http3 {
             work: Work::default(),
         };
         let window = Arc::new(Window::new(self.app.clone(), quic.clone(), budget.clone()));
-        let requests = Requests::new(self.app.clone(), connection.clone(), window.clone());
+        let requests = Requests::new(self.app.clone(), connection.clone(), window.clone(), quic.clone());
         let mut http = server::Connection::new(quic.clone(), Some(budget));
         let mut lifecycle = Lifecycle::new(connection.work, Grace::Once);
         let (mut running, mut send_window) = (FuturesUnordered::new(), SendWindow::default());
