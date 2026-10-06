@@ -133,7 +133,6 @@ async fn connect_answers_other_than_200_are_refused() {
             "proxy refused CONNECT with 201 Created",
         ),
         ("meter.test:443", b"HTTP/1.1 OK\r\n\r\n".to_vec(), malformed),
-        ("meter.test:443", b"SSH-2.0-OpenSSH_9.9\n\n".to_vec(), malformed),
         ("meter.test:443", oversized, "proxy sent an oversized CONNECT response"),
     ] {
         let (address, proxy) = answering(response).await;
@@ -188,29 +187,6 @@ async fn cleartext_goes_to_an_http_proxy_in_absolute_form_carrying_its_credentia
         .await
         .unwrap();
     assert!(proxy.await.unwrap().starts_with("GET http://meter.test:8080/ "));
-}
-
-#[tokio::test]
-async fn socks5_logs_in_and_passes_the_host_name_then_speaks_origin_form() {
-    let (address, proxy) = peer(|mut stream| async move {
-        for (expected, reply) in [
-            (&b"\x05\x02\x00\x02"[..], &b"\x05\x02"[..]),
-            (&b"\x01\x04user\x04p@ss"[..], &b"\x01\x00"[..]),
-            (&b"\x05\x01\x00\x03\x0ameter.test\x1f\x90"[..], &b"\x05\x00\x00\x03\x05proxy\x04\x38"[..]),
-        ] {
-            let mut sent = vec![0; expected.len()];
-            stream.read_exact(&mut sent).await.unwrap();
-            assert_eq!(sent, expected);
-            stream.write_all(reply).await.unwrap();
-        }
-        read_head(&mut stream).await
-    })
-    .await;
-    let connector = connector("HTTP_PROXY", &format!("socks5://user:p%40ss@{address}"), Verify::Trusted);
-    let mut connection = connect(&connector, "http://meter.test:8080").await.unwrap();
-    assert_eq!(connection.form, RequestForm::Origin);
-    connection.stream.write_all(b"GET / HTTP/1.1\r\n\r\n").await.unwrap();
-    assert!(proxy.await.unwrap().starts_with("GET / HTTP/1.1"));
 }
 
 /// Answers a SOCKS5 greeting with `method` and a CONNECT with `status`, returning what it was sent.

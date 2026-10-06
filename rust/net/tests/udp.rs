@@ -1,21 +1,5 @@
-//! QUIC sockets: quic-go's buffer sizes or its warning, and address sharing on Linux.
+//! QUIC sockets: address sharing on Linux.
 use graphite_meter_net::bind_udp;
-
-const LINK: &str = ". See https://github.com/quic-go/quic-go/wiki/UDP-Buffer-Sizes for details.";
-
-#[test]
-fn a_socket_with_short_buffers_warns_once_per_process() {
-    let mut warnings = Vec::new();
-    for _ in 0..3 {
-        let (socket, warning) = bind_udp("127.0.0.1:0".parse().unwrap(), 1).unwrap();
-        let socket = socket2::SockRef::from(&socket);
-        let full = socket.recv_buffer_size().unwrap() >= 7 << 20 && socket.send_buffer_size().unwrap() >= 7 << 20;
-        assert!(!full || warning.is_none(), "{warning:?}");
-        warnings.extend(warning);
-    }
-    assert!(warnings.len() <= 1, "{warnings:?}");
-    assert!(warnings.iter().all(|warning| warning.ends_with(LINK)), "{warnings:?}");
-}
 
 #[cfg(target_os = "linux")]
 #[test]

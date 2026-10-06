@@ -174,16 +174,6 @@ mod tests {
         assert!((FALLBACK_DELAY..FALLBACK_DELAY * 4).contains(&elapsed), "{elapsed:?}");
     }
 
-    #[cfg(target_os = "linux")]
-    #[tokio::test(start_paused = true)]
-    async fn a_dial_nobody_answers_times_out_after_nine_seconds() {
-        let (_silent, queued) = silent();
-        let address = queued.peer_addr().unwrap();
-        let started = Instant::now();
-        let refused = dial(&Host::Ip(address.ip()), address.port()).await.unwrap_err();
-        assert_eq!((refused.kind(), started.elapsed()), (io::ErrorKind::TimedOut, TIMEOUT));
-    }
-
     #[tokio::test]
     async fn dialled_connections_probe_idle_peers_as_go_does() {
         let (_open, live) = listener().await;

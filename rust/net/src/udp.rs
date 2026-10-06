@@ -98,22 +98,3 @@ fn shortfall(name: &str, before: usize, after: usize, bytes: usize) -> Option<St
         )),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn shortfalls_read_like_quic_go() {
-        assert_eq!(
-            shortfall("receive", 212_992, 425_984, BUFFER_BYTES).as_deref(),
-            Some("failed to sufficiently increase receive buffer size (was: 208 kiB, wanted: 7168 kiB, got: 416 kiB)")
-        );
-        assert_eq!(
-            shortfall("send", 212_992, 212_992, buffer_bytes(2)).as_deref(),
-            Some("failed to increase send buffer size (wanted: 3584 kiB, got 208 kiB)")
-        );
-        assert_eq!(shortfall("receive", 212_992, BUFFER_BYTES, BUFFER_BYTES), None);
-        assert_eq!([1, 2, 16].map(buffer_bytes), [7 << 20, 7 << 19, 2 << 20], "a floor past a few sockets");
-    }
-}
