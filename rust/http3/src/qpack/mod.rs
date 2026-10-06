@@ -67,8 +67,7 @@ pub(crate) fn encoder_stream(input: &[u8]) -> Result<(), Code> {
     }
 }
 
-/// The peer's decoder stream (RFC 9204 §4.4), read in chunks: only Stream Cancellation fits an encoder
-/// that never inserts.
+/// The peer's decoder stream (RFC 9204 §4.4), read in chunks: only Stream Cancellation fits a non-inserting encoder.
 #[derive(Default)]
 pub(crate) struct DecoderStream {
     /// Within a Stream Cancellation's stream ID.

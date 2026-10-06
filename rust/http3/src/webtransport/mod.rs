@@ -1,5 +1,4 @@
-//! WebTransport over HTTP/3 in either dialect, one session per connection: streams, datagrams, reliable
-//! resets and the close sequence.
+//! WebTransport over HTTP/3 in either dialect, one session per connection: streams, datagrams, resets, close sequence.
 mod connect;
 mod registry;
 mod stream;
@@ -22,8 +21,7 @@ use tokio::sync::{Mutex, mpsc, watch};
 const SETTINGS_WAIT: Duration = Duration::from_secs(5);
 /// How long the refusal of a CONNECT without a dialect may take to write.
 const REFUSAL_TIMEOUT: Duration = Duration::from_secs(10);
-/// State a session keeps apart from its CONNECT stream's halves: queue slots, the capsule reader and both
-/// sides' close reasons.
+/// State a session keeps apart from its CONNECT stream: queue slots, the capsule reader and both sides' close reasons.
 const SESSION_BYTES: usize = size_of::<Session>()
     + size_of::<Connect>()
     + registry::STREAM_QUEUE * size_of::<RecvStream>()
@@ -47,8 +45,7 @@ impl Phase {
     }
 }
 
-/// `work`'s outcome, refused once the session ended, also while `work` waits, as webtransport-go wakes a
-/// blocked read or write. Work that is ready at once watches nothing, so a busy stream never waits on it.
+/// `work`'s outcome, refused once the session ended, even mid-wait as in webtransport-go; ready work watches nothing.
 async fn unless_ended<T>(session: &watch::Receiver<Phase>, work: impl Future<Output = T>) -> Result<T, Error> {
     let gone = session.borrow().is_ended();
     tokio::select! {
@@ -58,8 +55,7 @@ async fn unless_ended<T>(session: &watch::Receiver<Phase>, work: impl Future<Out
     }
 }
 
-/// A WebTransport session. Its methods take `&self`, so lanes can share it; dropping it unclosed ends the
-/// session as finished, with code 0.
+/// A WebTransport session; `&self` methods let lanes share it, and dropping it unclosed finishes it with code 0.
 pub struct Session {
     id: u64,
     shared: Arc<Shared>,
@@ -84,8 +80,7 @@ impl PreparedDatagram<'_> {
 }
 
 impl Session {
-    /// Server: accepts an authorized CONNECT with `headers`. A peer without WebTransport and datagrams
-    /// within 5 s gets 400; a second session on the connection gets H3_REQUEST_REJECTED.
+    /// Server: accepts a CONNECT; no WebTransport and datagrams in 5 s gets 400, a second session H3_REQUEST_REJECTED.
     pub async fn accept(mut stream: RequestStream, headers: http::HeaderMap) -> Result<Self, Error> {
         let shared = stream.shared().clone();
         let mut response = http::Response::new(());
@@ -112,8 +107,7 @@ impl Session {
         Self::register(stream, Code::H3_REQUEST_REJECTED, Phase::Opening)
     }
 
-    /// Client: opens a session in the server's dialect once its SETTINGS arrive, with the accepting response;
-    /// a refusal returns its response, and after the server's GOAWAY nothing is sent.
+    /// Client: opens a session in the server's dialect once SETTINGS arrive; refusals return their response.
     pub async fn connect(
         requests: &SendRequest,
         request: http::Request<()>,
@@ -176,8 +170,7 @@ impl Session {
         self.datagrams.lock().await.recv().await
     }
 
-    /// Waits for the 200 head to be buffered: a stream's data would otherwise wait unread for it and could
-    /// take the connection credit the head needs. Refused once the session ended.
+    /// Waits for the 200 head to buffer, so unread stream data cannot take its credit; refused once the session ended.
     pub async fn open_uni(&self) -> Result<SendStream, Error> {
         let mut phase = self.phase.clone();
         let opened = phase.wait_for(|phase| !matches!(phase, Phase::Opening)).await;
@@ -211,8 +204,7 @@ impl Session {
         self.prepare_datagram(payload)?.send_wait().await
     }
 
-    /// Resolves once the session ends: with the peer's CLOSE code and reason, code 0 when the peer finished
-    /// without one, this side's close when it ended the session first, or the error its connection ended with.
+    /// Resolves at session end: the peer's CLOSE, 0 for a bare FIN, this side's earlier close, or the connection error.
     pub async fn closed(&self) -> Result<(u32, String), Error> {
         let mut phase = self.phase.clone();
         match phase.wait_for(Phase::is_ended).await.as_deref() {
@@ -221,8 +213,7 @@ impl Session {
         }
     }
 
-    /// Ends the session with `code` and `reason` unless it already ended, and returns once its CONNECT
-    /// stream is done: CLOSE and FIN, the peer's FIN within 1 s, and only then STOP_SENDING.
+    /// Ends the session with `code` and `reason`; returns after CLOSE, FIN, the peer's FIN within 1 s and STOP_SENDING.
     pub async fn close(&self, code: u32, reason: &str) {
         self.request_close(code, reason);
         let mut phase = self.phase.clone();
@@ -247,8 +238,7 @@ impl Drop for Session {
     }
 }
 
-/// The WebTransport rules applied to the peer's SETTINGS, awaited for `wait`, or the error the connection
-/// ended with first.
+/// The WebTransport rules applied to the peer's SETTINGS, awaited for `wait`, or the connection's earlier error.
 async fn dialect(shared: &Shared, wait: Duration) -> Result<Option<Dialect>, Error> {
     let mut peer = shared.peer.subscribe();
     let settled = async {

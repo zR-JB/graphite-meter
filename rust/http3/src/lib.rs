@@ -1,5 +1,4 @@
-//! HTTP/3 and WebTransport over the noq QUIC fork, for both roles: sans-IO protocol modules and one
-//! driver per connection that runs them.
+//! HTTP/3 and WebTransport over the noq QUIC fork, both roles: sans-IO protocol modules and a driver per connection.
 mod budget;
 mod capsule;
 pub mod client;

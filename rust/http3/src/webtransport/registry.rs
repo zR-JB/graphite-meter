@@ -1,5 +1,4 @@
-//! The connection's one session for routing streams and datagrams, peer streams that arrived before it,
-//! and what handles leave for the driver to finish.
+//! The connection's one session for routing, peer streams that preceded it, and what handles leave the driver.
 use super::{
     Phase,
     connect::Connect,
@@ -40,8 +39,7 @@ pub(crate) struct Registry {
     gone_through: Option<u64>,
     /// The close every session gets once the server shuts down.
     shutdown: Option<(u32, String)>,
-    /// A sessions-only connection stays open until then, so the CLOSE of a session this side ended
-    /// arrives first.
+    /// A sessions-only connection stays open until then, so the CLOSE of a session this side ended arrives first.
     pub(crate) linger: Option<Instant>,
     /// Whether the connection carried a session, and served anything else.
     carried: bool,
@@ -111,8 +109,7 @@ impl Registry {
         }
     }
 
-    /// The connection ended: so do the session's streams and datagrams, and no session follows. Returns
-    /// what the driver had yet to take.
+    /// The connection ended, and so do the session's streams and datagrams; returns what the driver had yet to take.
     pub(super) fn end(&mut self) -> (Vec<Connect>, Vec<PendingReset>) {
         (self.active, self.ended) = (None, true);
         self.early.clear();

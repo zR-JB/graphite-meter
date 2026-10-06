@@ -66,8 +66,7 @@ pub(crate) struct Peer {
 }
 
 impl Peer {
-    /// RFC 9297 §2.1.1: H3_DATAGRAM without the datagram transport parameter is H3_SETTINGS_ERROR, as
-    /// Go has it; draft 04's setting alone only leaves WebTransport off.
+    /// RFC 9297 §2.1.1: H3_DATAGRAM sans transport parameter is H3_SETTINGS_ERROR; draft 04's leaves WebTransport off.
     pub(crate) fn check(&self, datagram_frames: bool) -> Result<(), Code> {
         if self.h3_datagram && !datagram_frames {
             Err(Code::H3_SETTINGS_ERROR)
@@ -76,8 +75,7 @@ impl Peer {
         }
     }
 
-    /// WebTransport needs a WebTransport signal, HTTP datagrams and the datagram transport parameter.
-    /// Peers on drafts 07 to 14 get the current dialect without flow control, as with Go.
+    /// Needs a WebTransport signal, HTTP datagrams and the datagram parameter; drafts 07-14 get no flow control, as Go.
     pub(crate) fn webtransport(&self, datagram_frames: bool) -> Option<Dialect> {
         if !self.datagrams || !datagram_frames {
             None

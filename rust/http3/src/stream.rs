@@ -1,5 +1,4 @@
-//! Request streams over noq: payloads pass uncopied and are charged by length, so a sent one must not pin
-//! a much larger buffer.
+//! Request streams over noq: payloads pass uncopied, charged by length, so a sent one must not pin a larger buffer.
 use crate::{
     budget::{Budget, Charge},
     code::Code,
@@ -17,8 +16,7 @@ use std::{
     task::{Context, Poll, Waker, ready},
 };
 
-/// A request stream: the server receives one from [`crate::server::Request::resolve`], the client from
-/// [`crate::client::SendRequest::send_request`].
+/// A request stream, from [`crate::server::Request::resolve`] or [`crate::client::SendRequest::send_request`].
 pub struct RequestStream {
     pub(crate) send: SendHalf,
     pub(crate) recv: RecvHalf,
@@ -100,8 +98,7 @@ pub struct RecvHalf {
     input: Bytes,
     shared: Arc<Shared>,
     charge: Charge,
-    /// The client's request method: a response to HEAD has no body, and a successful one to CONNECT no
-    /// length.
+    /// The client's request method: a HEAD response has no body, and a successful CONNECT one no length.
     pub(crate) method: http::Method,
     /// FIN arrived, or the stream was stopped.
     done: bool,
@@ -135,8 +132,7 @@ impl RecvHalf {
         poll_fn(|cx| self.poll_data(cx)).await
     }
 
-    /// Reads a response head, skipping up to five interim responses; a sixth ends the request with
-    /// H3_EXCESSIVE_LOAD, as quic-go's max1xxResponses does.
+    /// Reads a response head past up to five interim ones; a sixth is H3_EXCESSIVE_LOAD, as quic-go's max1xxResponses.
     pub async fn response(&mut self) -> Result<http::Response<()>, Error> {
         for _ in 0..=5 {
             let section = poll_fn(|cx| self.poll_head(cx)).await?;

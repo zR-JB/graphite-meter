@@ -7,8 +7,7 @@ const CLOSE: u64 = 0x2843;
 const HTTP2_ONLY: [u64; 2] = [0x190b4d3e, 0x190b4d42];
 pub(crate) const MAX_REASON: usize = 1024;
 
-/// Reads CLOSE capsules, as their code and reason, from a CONNECT stream's DATA. Others, DRAIN and flow
-/// control included, are skipped unbuffered.
+/// Reads CLOSE capsules, as code and reason, from a CONNECT stream's DATA; others, DRAIN included, skip unbuffered.
 #[derive(Default)]
 pub(crate) struct Reader {
     frames: frame::Reader,

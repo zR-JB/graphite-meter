@@ -55,8 +55,7 @@ impl Message {
         self.owed = length;
     }
 
-    /// Takes a response head: `None` for an interim one, after which the message starts over, else the
-    /// final response, whose content its request's method and its status bound.
+    /// Takes a response head: `None` for an interim one, restarting the message, else the final one, bounded by status.
     pub(crate) fn response(
         &mut self,
         section: &[u8],
@@ -81,8 +80,7 @@ impl Message {
         Ok(Some(head.message))
     }
 
-    /// The next event `input` completes. An error carries the code the stream, or for frame
-    /// violations the connection, ends with.
+    /// The next event `input` completes; errors carry the code ending the stream, or the connection for frame errors.
     pub(crate) fn next(&mut self, input: &mut Bytes) -> Result<Option<Event>, Code> {
         while let Some(piece) = self.frames.next(input) {
             match piece {

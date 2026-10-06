@@ -1,5 +1,4 @@
-//! The peer's control stream after its type (RFC 9114 §6.2.1): SETTINGS first, then GOAWAY,
-//! MAX_PUSH_ID and CANCEL_PUSH.
+//! The peer's control stream after its type (RFC 9114 §6.2.1): SETTINGS, then GOAWAY, MAX_PUSH_ID and CANCEL_PUSH.
 use crate::{
     code::Code,
     frame::{self, Piece},
@@ -27,8 +26,7 @@ pub(crate) struct Reader {
 }
 
 impl Reader {
-    /// Reads `input`, passing each event on; `server` says the peer is a server. An error carries the
-    /// code the connection closes with.
+    /// Reads `input`, passing each event on; `server` says the peer is a server. Errors carry the close code.
     pub(crate) fn read(
         &mut self,
         server: bool,

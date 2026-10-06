@@ -1,5 +1,4 @@
-//! What the driver runs for sessions: each CONNECT stream once its head is out, so every session ends with
-//! the close sequence whatever its handle does, and cancelled streams still writing their header.
+//! What the driver runs for sessions: CONNECT streams past their head, so each closes properly, and cancelled headers.
 use super::{Phase, stream::PendingReset};
 use crate::{budget::Charge, capsule, code::Code, driver::Shared, error::Error, frame, stream::RequestStream};
 use bytes::Bytes;
@@ -105,8 +104,7 @@ impl Connect {
         }
     }
 
-    /// Ends the session once the peer does or this side asks: CLOSE unless the peer ended it, FIN, the
-    /// peer's FIN within 1 s, and only then STOP_SENDING. `true` once the stream is done with.
+    /// Ends the session: CLOSE unless peer-ended, FIN, the peer's FIN within 1 s, then STOP_SENDING; `true` once done.
     fn poll(&mut self, cx: &mut Context<'_>, now: Instant, shared: &Shared) -> bool {
         let failed = match self.poll_read(cx) {
             Ok(()) if self.deadline.is_none() => match self.stream.send.poll_ready(cx) {
@@ -165,8 +163,7 @@ impl Connect {
         true
     }
 
-    /// Reads capsules to the peer's FIN; its CLOSE, or a FIN without one, ends the session. Data after its
-    /// CLOSE is H3_MESSAGE_ERROR, as the drafts require.
+    /// Reads capsules to the peer's FIN; its CLOSE or a bare FIN ends the session; data past CLOSE is H3_MESSAGE_ERROR.
     fn poll_read(&mut self, cx: &mut Context<'_>) -> Result<(), Error> {
         while !self.peer_finished {
             if self.peer_closed && !self.input.is_empty() {

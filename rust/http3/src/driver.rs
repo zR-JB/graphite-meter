@@ -1,5 +1,4 @@
-//! One driver per connection, for both roles: control streams, peer streams, request admission, datagrams,
-//! the sessions' CONNECT streams, GOAWAY, and the deadlines that close the connection.
+//! One driver per connection, both roles: control and peer streams, admission, datagrams, CONNECT, GOAWAY, deadlines.
 use crate::{
     budget::{Budget, Charge},
     capsule,
@@ -33,8 +32,7 @@ use tokio::{
 const IDLE: Duration = Duration::from_secs(15);
 const DRAIN: Duration = Duration::from_secs(5);
 
-/// The layer's fixed state per connection, for the application's connection floor: the driver, what
-/// its streams share, the peer's critical streams and the driver's futures.
+/// The layer's fixed per-connection state, for the floor: driver, shared stream state, critical streams, futures.
 pub const CONNECTION_BYTES: usize = size_of::<Driver>()
     + size_of::<Shared>()
     + 3 * size_of::<PeerStream>()
@@ -101,8 +99,7 @@ impl Shared {
         self.sessions.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Closes the connection, on a violation or with H3_NO_ERROR when it is done. noq reports any
-    /// earlier close, the peer's included, as local, so that one stands.
+    /// Closes on a violation or with H3_NO_ERROR when done; noq reports any earlier close, the peer's too, as local.
     pub(crate) fn close(&self, code: Code) -> Error {
         if self.quic.close_reason().is_none() {
             let _ = self.closed.set(code);
@@ -205,8 +202,7 @@ impl Driver {
         }
     }
 
-    /// Drives the connection and yields the server's next request stream; `None` once the connection
-    /// closed gracefully, by either side. Cancelling it loses nothing.
+    /// Drives the connection, yielding the server's next request stream; `None` after a graceful close. Cancel-safe.
     pub(crate) async fn next(&mut self) -> Result<Option<RequestStream>, Error> {
         if self.ended {
             return Ok(None);

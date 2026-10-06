@@ -31,8 +31,7 @@ impl Error {
         Self::Connection { local: true, code, reason: Bytes::new() }
     }
 
-    /// A close that ends a connection normally: H3_NO_ERROR, a peer's 0 (Go's server stops with it),
-    /// or a close the application made below the layer.
+    /// A normal close: H3_NO_ERROR, a peer's 0 (Go's server stops with it), or an application close below the layer.
     pub(crate) fn graceful(&self) -> bool {
         match self {
             Self::Connection { local, code, .. } => *code == Code::H3_NO_ERROR || !local && *code == Code(0),

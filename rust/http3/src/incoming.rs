@@ -1,5 +1,4 @@
-//! The peer's unidirectional streams: classified within 10 s, then read as control or QPACK streams,
-//! or handed on as WebTransport streams.
+//! The peer's unidirectional streams: classified within 10 s, then read as control or QPACK, or handed to WebTransport.
 use crate::{
     budget::{Budget, Charge},
     code::Code,
@@ -77,8 +76,7 @@ impl Incoming {
             .push(PeerStream { stream, input: Bytes::new(), kind, _charge: charge });
     }
 
-    /// Reads every stream as far as it goes; `Ready` with a WebTransport stream, or with the code a
-    /// violation closes the connection with.
+    /// Reads every stream as far as it goes; `Ready` with a WebTransport stream or a violation's close code.
     pub(crate) fn poll(&mut self, cx: &mut Context<'_>, shared: &Shared) -> Poll<Result<Classified, Code>> {
         let mut index = 0;
         while index < self.streams.len() {

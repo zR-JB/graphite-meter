@@ -30,8 +30,7 @@ impl Connection {
         self.0.goaway();
     }
 
-    /// Also ends the session with `code` and `reason`, even one accepted later, and closes the connection
-    /// once the other requests end or 5 s pass.
+    /// Also ends the session with `code` and `reason`, even later ones; the connection closes as others end or in 5 s.
     pub fn shutdown(&mut self, code: u32, reason: &str) {
         self.0.shutdown(code, reason);
     }
@@ -46,8 +45,7 @@ impl Request {
         self.0.abort(Code::H3_REQUEST_REJECTED);
     }
 
-    /// Reads and checks the head: over 4 KiB gets 431 and a CONNECT for anything but WebTransport 400, both
-    /// `Refused`; one the budget cannot hold gets H3_REQUEST_REJECTED, so the client may retry.
+    /// Checks the head: over 4 KiB 431, non-WebTransport CONNECT 400, both `Refused`; over budget H3_REQUEST_REJECTED.
     pub async fn resolve(self) -> Result<(http::Request<()>, RequestStream), Error> {
         let mut stream = self.0;
         match tokio::time::timeout(HEADER_TIMEOUT, head(&mut stream)).await {

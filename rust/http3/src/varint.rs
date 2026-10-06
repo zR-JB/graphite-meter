@@ -8,8 +8,7 @@ pub(crate) fn size(first: u8) -> usize {
     1 << (first >> 6)
 }
 
-/// The integer at the start of `input` and its length, or `None` when it is incomplete.
-/// Non-minimal encodings are valid.
+/// The integer starting `input` and its length, or `None` when incomplete; non-minimal encodings are valid.
 pub(crate) fn decode(input: &[u8]) -> Option<(u64, usize)> {
     let bytes = input.get(..size(*input.first()?))?;
     let value = bytes[1..]

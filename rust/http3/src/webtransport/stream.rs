@@ -1,5 +1,4 @@
-//! A session's unidirectional streams. Once the session ended, reads and writes are refused, a waiting one
-//! too, and the stream ends with WT_SESSION_GONE.
+//! A session's unidirectional streams: once the session ended, reads and writes end with WT_SESSION_GONE.
 use super::{Phase, registry::Unrouted, unless_ended};
 use crate::{
     budget::Charge,
@@ -79,8 +78,7 @@ impl Drop for RecvStream {
     }
 }
 
-/// A stream this side opened in a session. Dropping it unfinished resets it after its association header,
-/// which peers that support RESET_STREAM_AT still receive; it never finishes by accident.
+/// A stream this side opened; dropped unfinished it resets past its header, which RESET_STREAM_AT peers still get.
 pub struct SendStream {
     lane: Option<Lane>,
     session: watch::Receiver<Phase>,
