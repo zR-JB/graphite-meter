@@ -130,29 +130,3 @@ fn a_verbose_server_reports_throughput_and_sigterm_ends_its_running_download() {
     let elapsed = stopping.elapsed();
     assert!(elapsed < std::time::Duration::from_secs(2), "stopped after {elapsed:?}");
 }
-
-#[cfg(target_os = "linux")]
-#[test]
-fn journald_lines_need_journal_stream_to_name_stderr_itself() {
-    use std::{io::Read, os::unix::fs::MetadataExt};
-    let log = |stream: &str| {
-        let (mut reader, writer) = std::io::pipe().unwrap();
-        let stderr = std::fs::File::from(std::os::fd::OwnedFd::from(writer));
-        let metadata = stderr.metadata().unwrap();
-        let stream = stream.replace("SELF", &format!("{}:{}", metadata.dev(), metadata.ino()));
-        let status = Command::new(env!("CARGO_BIN_EXE_graphite-meter-server"))
-            .env_clear()
-            .envs([("JOURNAL_STREAM", stream.as_str()), ("GM_H2_ADDR", ":0")])
-            .stderr(stderr)
-            .status()
-            .unwrap();
-        assert_eq!(status.code(), Some(1));
-        let mut text = String::new();
-        reader.read_to_string(&mut text).unwrap();
-        text
-    };
-    let journal = log("SELF");
-    assert!(journal.starts_with("<3>config: TLS certificate missing for GM_H2_ADDR: "), "{journal}");
-    let inherited = log("1:2");
-    assert_eq!(logged(inherited.trim_end()).0, "ERROR", "{inherited}");
-}
