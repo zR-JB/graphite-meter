@@ -241,7 +241,7 @@ async fn a_login_holding_eight_grants_shows_the_client_limit_and_refuses_new_one
 }
 
 #[tokio::test]
-async fn approvals_are_bounded_per_login_and_before_sign_in_and_pages_budgeted_per_address() {
+async fn approvals_are_bounded_per_login_and_pages_budgeted_per_address() {
     let app = auth_app(&[]);
     let operator = login(&app, "operator");
     let cli = |index: usize| format!("/auth/cli?challenge={}", challenge(&format!("terminal {index}")));
@@ -267,14 +267,6 @@ async fn approvals_are_bounded_per_login_and_before_sign_in_and_pages_budgeted_p
             &format!("/auth/browser?challenge={approval}&client_origin=https%3A%2F%2Fapp.example"),
         )
     };
-    for index in 0..128 {
-        let peer = format!("198.51.100.{}", index / 8);
-        let opened = send_from(&app, Endpoint::H1Tls, &peer, empty(browser(index))).await;
-        assert_eq!(opened.status(), StatusCode::SEE_OTHER, "{index}");
-    }
-    let before_sign_in = send_from(&app, Endpoint::H1Tls, "198.51.100.200", empty(browser(128))).await;
-    assert_eq!(before_sign_in.status(), StatusCode::FORBIDDEN, "half the table opened before sign-in");
-
     for index in 200..210 {
         let opener = login(&app, &format!("opener {index}"));
         let request = browser(index).header("cookie", format!("__Host-gm_session={}", opener.token));
@@ -293,7 +285,7 @@ async fn approvals_are_bounded_per_login_and_before_sign_in_and_pages_budgeted_p
 }
 
 #[tokio::test]
-async fn approvals_are_bounded_at_eight_per_client_and_256_in_total() {
+async fn approvals_are_bounded_per_client_before_sign_in_and_in_total() {
     let app = auth_app(&[]);
     let browser = |index: usize| {
         let approval = challenge(&format!("browser {index}"));
@@ -311,6 +303,8 @@ async fn approvals_are_bounded_at_eight_per_client_and_256_in_total() {
         let opened = send_from(&app, Endpoint::H1Tls, &peer, browser(index)).await;
         assert_eq!(opened.status(), StatusCode::SEE_OTHER, "{index}");
     }
+    let before_sign_in = send_from(&app, Endpoint::H1Tls, "198.51.100.200", browser(128)).await;
+    assert_eq!(before_sign_in.status(), StatusCode::FORBIDDEN, "half the table opened before sign-in");
     // Sixteen logins on addresses of their own open eight terminal approvals each.
     let open = async |opener: usize, approvals: usize| {
         let login = login(&app, &format!("opener {opener}"));

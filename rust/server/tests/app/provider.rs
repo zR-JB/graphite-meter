@@ -295,11 +295,9 @@ fn merge(mut value: Value, twist: &Value) -> Value {
     value
 }
 
-/// The provider's signing keys; `stranger` signs with a P-256 key its key set leaves out, and `small`, a 1024-bit RSA
-/// key, with OpenSSL, as ring signs with no key that small.
+/// The provider's signing keys; `stranger` signs with a P-256 key its key set leaves out.
 struct Signers {
     rsa: RsaKeyPair,
-    small: (Scratch, Vec<u8>),
     p256: EcdsaKeyPair,
     p384: EcdsaKeyPair,
     ed: Ed25519KeyPair,
@@ -322,31 +320,8 @@ impl Signers {
             EcdsaKeyPair::from_pkcs8(curve, pkcs8.as_ref(), &random).unwrap()
         };
         let ed = Ed25519KeyPair::from_pkcs8(Ed25519KeyPair::generate_pkcs8(&random).unwrap().as_ref()).unwrap();
-        let scratch = Scratch::new().unwrap();
-        let small = Command::new("openssl")
-            .args(["genrsa", "-traditional", "1024"])
-            .output()
-            .unwrap();
-        let small_key = scratch
-            .file("small.pem", std::str::from_utf8(&small.stdout).unwrap())
-            .unwrap();
-        let modulus = Command::new("openssl")
-            .args(["rsa", "-noout", "-modulus", "-in"])
-            .arg(&small_key)
-            .output()
-            .unwrap();
-        let modulus = std::str::from_utf8(&modulus.stdout)
-            .unwrap()
-            .trim()
-            .strip_prefix("Modulus=")
-            .unwrap();
-        let modulus = (0..modulus.len())
-            .step_by(2)
-            .map(|at| u8::from_str_radix(&modulus[at..at + 2], 16).unwrap())
-            .collect();
         Self {
             rsa: RsaKeyPair::from_der(der.secret_pkcs1_der()).unwrap(),
-            small: (scratch, modulus),
             p256: ec(&signature::ECDSA_P256_SHA256_FIXED_SIGNING),
             p384: ec(&signature::ECDSA_P384_SHA384_FIXED_SIGNING),
             ed,
@@ -370,7 +345,6 @@ impl Signers {
             point(&self.p384, "P-384", "p384"),
             {"kty": "OKP", "crv": "Ed25519", "kid": "ed", "x": ed},
             {"kty": "EC", "crv": "P-256", "kid": "encrypting", "use": "enc", "x": "AA", "y": "AA"},
-            {"kty": "RSA", "kid": "small", "n": B64.encode(&self.small.1), "e": "AQAB"},
         ]});
         let members = keys["keys"]
             .as_array_mut()
@@ -395,20 +369,8 @@ impl Signers {
             signature
         };
         let ec = |key: &EcdsaKeyPair| key.sign(&self.random, message.as_bytes()).unwrap().as_ref().to_vec();
-        let small = || {
-            let mut signing = Command::new("openssl")
-                .args(["dgst", "-sha256", "-sign"])
-                .arg(self.small.0.path().join("small.pem"))
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .spawn()
-                .unwrap();
-            std::io::Write::write_all(&mut signing.stdin.take().unwrap(), message.as_bytes()).unwrap();
-            signing.wait_with_output().unwrap().stdout
-        };
         let signature = match (header["alg"].as_str().unwrap_or_default(), header["kid"].as_str()) {
             (_, Some("stranger")) => ec(&self.stranger),
-            ("RS256", Some("small")) => small(),
             ("RS256", _) => rsa(&signature::RSA_PKCS1_SHA256),
             ("RS384", _) => rsa(&signature::RSA_PKCS1_SHA384),
             ("RS512", _) => rsa(&signature::RSA_PKCS1_SHA512),

@@ -98,15 +98,10 @@ async fn an_unauthenticated_request_gets_gos_refusal_and_the_app_root_a_redirect
         &measuring,
         &[("access-control-allow-origin", Some(BROWSER)), ("access-control-allow-credentials", None)],
     );
-    let repeated = tls(
-        &app,
-        empty(
-            public("GET", "/probe")
-                .header("origin", PUBLIC)
-                .header("origin", PUBLIC),
-        ),
-    )
-    .await;
+    let twice = public("GET", "/probe")
+        .header("origin", PUBLIC)
+        .header("origin", PUBLIC);
+    let repeated = tls(&app, empty(twice)).await;
     assert_eq!(
         (repeated.status(), header(&repeated, "graphite-meter-auth")),
         (StatusCode::FORBIDDEN, None)
@@ -322,22 +317,17 @@ async fn the_session_report_needs_the_session_cookie_and_answers_like_every_auth
     let app = auth_app(&[]);
     let login = login(&app, "operator");
     let grant = store(&app).grant(login.key, None).unwrap();
-    for request in [public("GET", "/auth/session"), bearer("GET", "/auth/session", &grant)] {
-        let refused = tls(&app, empty(request)).await;
-        assert_eq!(refused.status(), StatusCode::FORBIDDEN);
-        assert_headers(&refused, &[("cache-control", Some("no-store")), ("x-frame-options", Some("DENY"))]);
-        assert!(
-            header(&refused, "content-security-policy")
-                .unwrap()
-                .starts_with("default-src 'none'")
-        );
+    let refused = StatusCode::FORBIDDEN;
+    let requests = [
+        (public("GET", "/auth/session"), refused),
+        (bearer("GET", "/auth/session", &grant), refused),
+        (signed("GET", "/auth/session", &login), StatusCode::OK),
+    ];
+    for (request, status) in requests {
+        let answer = tls(&app, empty(request)).await;
+        assert_eq!(answer.status(), status);
+        assert_headers(&answer, &[("cache-control", Some("no-store")), ("x-frame-options", Some("DENY"))]);
+        let policy = header(&answer, "content-security-policy").unwrap();
+        assert!(policy.starts_with("default-src 'none'"), "{policy}");
     }
-    let report = tls(&app, empty(signed("GET", "/auth/session", &login))).await;
-    assert_eq!(report.status(), StatusCode::OK);
-    assert_headers(&report, &[("cache-control", Some("no-store")), ("x-frame-options", Some("DENY"))]);
-    assert!(
-        header(&report, "content-security-policy")
-            .unwrap()
-            .starts_with("default-src 'none'")
-    );
 }

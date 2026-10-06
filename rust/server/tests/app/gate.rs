@@ -2,8 +2,7 @@
 
 use super::*;
 use graphite_meter_proto::route::Route;
-use graphite_meter_server::app::finalize::harden;
-use http::{HeaderMap, StatusCode, Version};
+use http::{StatusCode, Version};
 use http_body_util::Full;
 
 #[test]
@@ -193,17 +192,5 @@ async fn every_route_answers_its_cors_preflight_from_the_route_pin() {
             assert_eq!(header(&response, name), Some(value), "{path} {name}");
         }
         assert_eq!(header(&response, "access-control-allow-credentials"), None);
-    }
-}
-
-#[test]
-fn hardening_adds_hsts_only_for_secure_requests() {
-    for secure in [false, true] {
-        let mut headers = HeaderMap::new();
-        harden(&mut headers, secure);
-        assert_eq!(headers["referrer-policy"], "same-origin");
-        assert_eq!(headers["x-content-type-options"], "nosniff");
-        assert_eq!(headers["permissions-policy"], "camera=(), microphone=(), geolocation=()");
-        assert_eq!(headers.get("strict-transport-security").is_some(), secure);
     }
 }

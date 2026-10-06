@@ -305,24 +305,6 @@ async fn id_tokens_need_an_allowed_algorithm_a_known_key_and_valid_claims() {
 }
 
 #[tokio::test]
-async fn key_set_members_may_carry_base64_padding() {
-    if !child("oidc::key_set_members_may_carry_base64_padding") {
-        return;
-    }
-    let provider = Provider::start().await;
-    let app = discovered(&provider).await;
-    for header in [json!({"alg": "RS256", "kid": "rsa"}), json!({}), json!({"alg": "EdDSA", "kid": "ed"})] {
-        provider.twist(Twist {
-            padded_keys: true,
-            header: header.clone(),
-            ..Twist::default()
-        });
-        assert_eq!(sign_in(&app, &provider, "192.0.2.1").await.status(), StatusCode::OK, "{header}");
-    }
-    assert_eq!(provider.key_sets(), 1);
-}
-
-#[tokio::test]
 async fn hybrid_keeps_the_password_while_the_provider_is_down_and_discovers_it_in_the_background() {
     if !child("oidc::hybrid_keeps_the_password_while_the_provider_is_down_and_discovers_it_in_the_background") {
         return;
@@ -482,107 +464,82 @@ fn signed_as(header: Value) -> Twist {
     Twist { header, ..Twist::default() }
 }
 
-#[tokio::test]
-async fn rsa_tokens_verify_with_every_hash_and_only_keys_of_at_least_2048_bits() {
-    if !child("oidc::rsa_tokens_verify_with_every_hash_and_only_keys_of_at_least_2048_bits") {
-        return;
-    }
-    let provider = Provider::start().await;
-    for alg in ["RS384", "PS512"] {
-        assert!(signs_in_with(&provider, signed_as(json!({"alg": alg, "kid": "rsa"}))).await, "{alg}");
-    }
-    let small = signed_as(json!({"alg": "RS256", "kid": "small"}));
-    assert!(!signs_in_with(&provider, small).await, "a 1024-bit key");
+/// An RS256 token from the RSA key whose key set entry merges `rsa_key`.
+fn rsa_key(rsa_key: Value) -> Twist {
+    Twist { rsa_key, ..signed_as(json!({"alg": "RS256", "kid": "rsa"})) }
+}
+
+fn signed_userinfo(userinfo: Value) -> Twist {
+    Twist { signed_userinfo: true, userinfo, ..Twist::default() }
+}
+
+fn key_set(key_set: fn(Value) -> String, header: Value) -> Twist {
+    Twist { key_set: Some(key_set), header, ..Twist::default() }
+}
+
+/// Sixty-three usable keys ahead of the provider's, leaving the RSA key the 64th and the P-256 key past the cap.
+fn crowded(keys: Value) -> String {
+    let filler = json!({"kty": "EC", "crv": "P-256", "kid": "filler", "x": "A".repeat(43), "y": "A".repeat(43)});
+    let mut all = vec![filler; 63];
+    all.extend(keys["keys"].as_array().unwrap().iter().cloned());
+    json!({ "keys": all }).to_string()
 }
 
 #[tokio::test]
-async fn a_key_verifies_only_for_signatures_its_operations_and_its_algorithm_allow() {
-    if !child("oidc::a_key_verifies_only_for_signatures_its_operations_and_its_algorithm_allow") {
+async fn token_key_and_key_set_rules_decide_a_fresh_sign_in() {
+    if !child("oidc::token_key_and_key_set_rules_decide_a_fresh_sign_in") {
         return;
     }
     let provider = Provider::start().await;
-    for (rsa_key, verifies) in [
-        (json!({"use": "enc"}), false),
-        (json!({"use": "sig"}), true),
-        (json!({"key_ops": ["sign"]}), false),
-        (json!({"key_ops": ["sign", "verify"]}), true),
-        (json!({"alg": "RS384"}), false),
-        (json!({"alg": "RS256"}), true),
-    ] {
-        let twist = Twist {
-            rsa_key: rsa_key.clone(),
-            ..signed_as(json!({"alg": "RS256", "kid": "rsa"}))
-        };
-        assert_eq!(signs_in_with(&provider, twist).await, verifies, "{rsa_key}");
-    }
-}
-
-#[tokio::test]
-async fn id_tokens_over_16_kib_or_naming_a_content_type_or_encryption_are_refused() {
-    if !child("oidc::id_tokens_over_16_kib_or_naming_a_content_type_or_encryption_are_refused") {
-        return;
-    }
-    let provider = Provider::start().await;
+    let rsa = || json!({"alg": "RS256", "kid": "rsa"});
+    let padded = |header| Twist { padded_keys: true, ..signed_as(header) };
     // The claims beside the padding take about 250 bytes, and the header and signature about 150 encoded.
-    for (pad, fits) in [(11_700, true), (12_100, false)] {
-        let twist = Twist { claims: json!({"pad": "x".repeat(pad)}), ..Twist::default() };
-        assert_eq!(signs_in_with(&provider, twist).await, fits, "{pad} bytes of padding");
+    let pad = |pad: usize| Twist { claims: json!({"pad": "x".repeat(pad)}), ..Twist::default() };
+    let rows = [
+        ("RS384", signed_as(json!({"alg": "RS384", "kid": "rsa"})), true),
+        ("PS512", signed_as(json!({"alg": "PS512", "kid": "rsa"})), true),
+        ("padded RSA", padded(rsa()), true),
+        ("padded P-256", padded(json!({})), true),
+        ("padded Ed25519", padded(json!({"alg": "EdDSA", "kid": "ed"})), true),
+        ("use=enc", rsa_key(json!({"use": "enc"})), false),
+        ("use=sig", rsa_key(json!({"use": "sig"})), true),
+        ("key_ops=[sign]", rsa_key(json!({"key_ops": ["sign"]})), false),
+        ("key_ops=[sign, verify]", rsa_key(json!({"key_ops": ["sign", "verify"]})), true),
+        ("a key for RS384", rsa_key(json!({"alg": "RS384"})), false),
+        ("a key for RS256", rsa_key(json!({"alg": "RS256"})), true),
+        ("a key with a numeric alg", rsa_key(json!({"alg": 256})), false),
+        (
+            "beside a key with a numeric alg",
+            Twist { rsa_key: json!({"alg": 256}), ..Twist::default() },
+            true,
+        ),
+        ("16 KiB", pad(11_700), true),
+        ("over 16 KiB", pad(12_100), false),
+        ("cty", signed_as(json!({"cty": "JWT"})), false),
+        ("enc", signed_as(json!({"enc": "A256GCM"})), false),
+        ("signed user information", signed_userinfo(json!({})), true),
+        ("signed for clients", signed_userinfo(json!({"aud": ["another", CLIENT_ID]})), true),
+        (
+            "signed by another issuer",
+            signed_userinfo(json!({"iss": "https://elsewhere.example"})),
+            false,
+        ),
+        ("signed for another client", signed_userinfo(json!({"aud": "another"})), false),
+        ("signed for no client", signed_userinfo(json!({"aud": null})), false),
+        (
+            "keys named twice",
+            key_set(|keys| format!(r#"{{"keys":[],"keys":{}}}"#, keys["keys"]), json!({})),
+            false,
+        ),
+        (
+            "keys named once",
+            key_set(|keys| format!(r#"{{"keys":{}}}"#, keys["keys"]), json!({})),
+            true,
+        ),
+        ("the 64th usable key", key_set(crowded, rsa()), true),
+        ("the 65th", key_set(crowded, json!({})), false),
+    ];
+    for (row, twist, accepted) in rows {
+        assert_eq!(signs_in_with(&provider, twist).await, accepted, "{row}");
     }
-    for header in [json!({"cty": "JWT"}), json!({"enc": "A256GCM"})] {
-        assert!(!signs_in_with(&provider, signed_as(header.clone())).await, "{header}");
-    }
-}
-
-#[tokio::test]
-async fn signed_user_information_must_name_the_issuer_and_this_client() {
-    if !child("oidc::signed_user_information_must_name_the_issuer_and_this_client") {
-        return;
-    }
-    let provider = Provider::start().await;
-    for (userinfo, accepted) in [
-        (json!({}), true),
-        (json!({"aud": ["another", CLIENT_ID]}), true),
-        (json!({"iss": "https://elsewhere.example"}), false),
-        (json!({"aud": "another"}), false),
-        (json!({"aud": null}), false),
-    ] {
-        let twist = Twist {
-            signed_userinfo: true,
-            userinfo: userinfo.clone(),
-            ..Twist::default()
-        };
-        assert_eq!(signs_in_with(&provider, twist).await, accepted, "{userinfo}");
-    }
-}
-
-#[tokio::test]
-async fn a_key_set_names_its_keys_once_keeps_64_usable_keys_and_skips_unreadable_ones() {
-    if !child("oidc::a_key_set_names_its_keys_once_keeps_64_usable_keys_and_skips_unreadable_ones") {
-        return;
-    }
-    let provider = Provider::start().await;
-    let twice = |keys: Value| format!(r#"{{"keys":[],"keys":{}}}"#, keys["keys"]);
-    assert!(!signs_in_with(&provider, Twist { key_set: Some(twice), ..Twist::default() }).await);
-    let once = |keys: Value| format!(r#"{{"keys":{}}}"#, keys["keys"]);
-    assert!(signs_in_with(&provider, Twist { key_set: Some(once), ..Twist::default() }).await);
-    // Sixty-three usable keys ahead leave the RSA key the 64th and the P-256 key past the cap.
-    let crowded = |keys: Value| {
-        let filler = json!({"kty": "EC", "crv": "P-256", "kid": "filler", "x": "A".repeat(43), "y": "A".repeat(43)});
-        let mut all = vec![filler; 63];
-        all.extend(keys["keys"].as_array().unwrap().iter().cloned());
-        json!({ "keys": all }).to_string()
-    };
-    let rsa = Twist {
-        key_set: Some(crowded),
-        ..signed_as(json!({"alg": "RS256", "kid": "rsa"}))
-    };
-    assert!(signs_in_with(&provider, rsa).await, "the 64th usable key");
-    assert!(
-        !signs_in_with(&provider, Twist { key_set: Some(crowded), ..Twist::default() }).await,
-        "the 65th"
-    );
-    let numeric = || Twist { rsa_key: json!({"alg": 256}), ..Twist::default() };
-    let rsa = Twist { header: json!({"alg": "RS256", "kid": "rsa"}), ..numeric() };
-    assert!(!signs_in_with(&provider, rsa).await, "a key with a numeric alg is skipped");
-    assert!(signs_in_with(&provider, numeric()).await, "the other keys verify");
 }

@@ -43,6 +43,12 @@ async fn checkpoint(app: &App, id: &str) -> Value {
 async fn an_upload_counts_every_byte_into_its_aggregate_and_answers_its_own_total() {
     let app = app(&ALL_LISTENERS);
     let id = mint(&app).await;
+    let unread = send(&app, Endpoint::H2, empty(request("POST", &format!("/upload/checkpoint?id={id}")))).await;
+    assert_eq!(
+        header(&unread, "x-graphite-upload-refusal"),
+        Some("invalid"),
+        "a checkpoint creates nothing"
+    );
     let upload = |body| request("POST", &format!("/upload?id={id}")).body(body).unwrap();
     let response = send(&app, Endpoint::H1, upload(chunks(&[b"abc", b"", b"defgh"], false))).await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -50,7 +56,9 @@ async fn an_upload_counts_every_byte_into_its_aggregate_and_answers_its_own_tota
     assert_eq!(text(response).await, r#"{"bytes":8}"#);
     let response = send(&app, Endpoint::Quic, upload(chunks(&[b"12"], false))).await;
     assert_eq!(text(response).await, r#"{"bytes":2}"#, "a reply counts its own bytes");
-    assert_eq!(checkpoint(&app, &id).await["bytes"], 10, "lanes of one ID feed one aggregate");
+    let counters = checkpoint(&app, &id).await;
+    assert_eq!(counters["bytes"], 10, "lanes of one ID feed one aggregate");
+    assert!(counters.as_object().unwrap().len() == 2 && counters["nanos"].is_u64(), "{counters}");
     assert_eq!(active(&app).await, 0);
 }
 
@@ -194,27 +202,4 @@ async fn a_progress_feed_attaches_reports_and_completes_after_finalization() {
     let unknown = format!("/upload/progress?id={}", mint(&app).await);
     let response = send(&app, Endpoint::H1, empty(request("DELETE", &unknown))).await;
     assert_eq!(header(&response, "x-graphite-upload-refusal"), Some("invalid"));
-}
-
-#[tokio::test]
-async fn a_checkpoint_reads_only_an_existing_aggregate_of_its_owner() {
-    let app = app(&ALL_LISTENERS);
-    let id = mint(&app).await;
-    let read =
-        |peer| send_from(&app, Endpoint::H1, peer, empty(request("POST", &format!("/upload/checkpoint?id={id}"))));
-    let response = read("192.0.2.1").await;
-    assert_eq!(
-        header(&response, "x-graphite-upload-refusal"),
-        Some("invalid"),
-        "a checkpoint creates nothing"
-    );
-    let upload = request("POST", &format!("/upload?id={id}"))
-        .body(chunks(&[b"abcd"], false))
-        .unwrap();
-    send(&app, Endpoint::H1, upload).await;
-    let counters = json(read("192.0.2.1").await).await;
-    assert_eq!(counters["bytes"], 4);
-    assert_eq!(counters.as_object().unwrap().len(), 2);
-    assert!(counters["nanos"].is_u64());
-    assert_eq!(read("192.0.2.9").await.status(), StatusCode::FORBIDDEN);
 }

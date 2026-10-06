@@ -10,37 +10,19 @@ use sha2::{Digest, Sha256};
 const INDEX: &str = "<html><head><style>html{background:#131518}</style><script>let theme='dark';</script></head>\
                      <body></body></html>";
 
+const fn asset(path: &'static str, content_type: &'static str, bytes: &'static [u8]) -> Asset {
+    Asset { path, content_type, bytes }
+}
+
+const SCRIPT: &str = "text/javascript; charset=utf-8";
+
 static FILES: &[Asset] = &[
-    Asset {
-        path: "index.html",
-        content_type: "text/html; charset=utf-8",
-        bytes: INDEX.as_bytes(),
-    },
-    Asset {
-        path: "assets/app-1a2b.js",
-        content_type: "text/javascript; charset=utf-8",
-        bytes: b"export {};",
-    },
-    Asset {
-        path: "assets/app-1a2b.js.br",
-        content_type: "text/javascript; charset=utf-8",
-        bytes: b"brotli",
-    },
-    Asset {
-        path: "assets/app-1a2b.js.gz",
-        content_type: "text/javascript; charset=utf-8",
-        bytes: b"gzip",
-    },
-    Asset {
-        path: "fonts/face.woff2",
-        content_type: "font/woff2",
-        bytes: b"wOF2",
-    },
-    Asset {
-        path: "favicon.svg",
-        content_type: "image/svg+xml",
-        bytes: b"<svg/>",
-    },
+    asset("index.html", "text/html; charset=utf-8", INDEX.as_bytes()),
+    asset("assets/app-1a2b.js", SCRIPT, b"export {};"),
+    asset("assets/app-1a2b.js.br", SCRIPT, b"brotli"),
+    asset("assets/app-1a2b.js.gz", SCRIPT, b"gzip"),
+    asset("fonts/face.woff2", "font/woff2", b"wOF2"),
+    asset("favicon.svg", "image/svg+xml", b"<svg/>"),
 ];
 
 const REPORT: &str = "project\nrust crates\nbrowser notice\n";
