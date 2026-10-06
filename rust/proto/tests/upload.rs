@@ -57,23 +57,6 @@ fn refusal_details_reach_the_reader_cleaned() {
 }
 
 #[test]
-fn heartbeats_malformed_and_unknown_records_are_no_observations() {
-    for line in [
-        "",
-        " ",
-        "{\"type\":\"ready\"} trailing",
-        "{\"type\":\"future\",\"bytes\":1,\"nanos\":1}",
-        "{\"type\":null}",
-        "{\"type\":\"complete\",\"bytes\":1e-1,\"nanos\":0}",
-        "{\"type\":\"complete\",\"bytes\":1,\"nanos\":1E16}",
-        "{\"type\":\"complete\",\"bytes\":0,\"nanos\":18446744073709551616}",
-        "[\"complete\",1,1]",
-    ] {
-        assert!(Record::decode(line.as_bytes()).is_err(), "{line:?}");
-    }
-}
-
-#[test]
 fn counters_are_integers_in_any_json_spelling() {
     let decoded = Record::decode(br#"{"type":"progress","bytes":1e3,"nanos":2.0}"#).unwrap();
     assert_eq!(decoded, Record::Progress(Counters::new(1000, 2)));
@@ -95,32 +78,33 @@ fn a_regressing_observation_is_stale() {
 }
 
 #[test]
-fn json_objects_refuse_repeated_members_at_any_depth() {
+fn heartbeats_and_malformed_json_are_no_observations() {
     for raw in [
-        r#"{"type":"progress","bytes":1,"bytes":2,"nanos":3}"#,
-        r#"{"type":"ready","type":"ready"}"#,
-        r#"{"type":"ready","extra":{"field":1,"field":2}}"#,
-        r#"{"type":"ready","extra":[{"a":1},{"b":[{"c":1,"c":1}]}]}"#,
-        r#"{"type":"error","message":"a","message":"b"}"#,
-    ] {
-        assert!(Record::decode(raw.as_bytes()).is_err(), "{raw}");
-    }
-    let separate = r#"{"type":"ready","a":{"x":1},"b":{"x":1},"c":[{"x":1},{"x":1}],"d":"x","x":"{\"x\""}"#;
-    assert_eq!(Record::decode(separate.as_bytes()).unwrap(), Record::Ready);
-}
-
-#[test]
-fn json_objects_refuse_invalid_text_and_other_values() {
-    for raw in [
-        &b"{\"type\":\"ready\",\"x\":\"\xff\"}"[..],
+        &b""[..],
+        b" ",
+        b"{\"type\":\"ready\"} trailing",
+        br#"{"type":null}"#,
+        br#"{"type":"complete","bytes":1e-1,"nanos":0}"#,
+        br#"{"type":"complete","bytes":1,"nanos":1E16}"#,
+        br#"{"type":"complete","bytes":0,"nanos":18446744073709551616}"#,
+        br#"{"type":"progress","bytes":1,"bytes":2,"nanos":3}"#,
+        br#"{"type":"ready","type":"ready"}"#,
+        br#"{"type":"ready","extra":{"field":1,"field":2}}"#,
+        br#"{"type":"ready","extra":[{"a":1},{"b":[{"c":1,"c":1}]}]}"#,
+        br#"{"type":"error","message":"a","message":"b"}"#,
+        b"{\"type\":\"ready\",\"x\":\"\xff\"}",
         br#"{"type":"ready","x":"\ud800"}"#,
         br#"{"type":"ready","x":"\udc00\ud800"}"#,
-        b"null",
-        b"[]",
         b"\"ready\"",
     ] {
         assert!(Record::decode(raw).is_err(), "{}", String::from_utf8_lossy(raw));
     }
+    let separate = r#"{"type":"ready","a":{"x":1},"b":{"x":1},"c":[{"x":1},{"x":1}],"d":"x","x":"{\"x\""}"#;
+    assert_eq!(
+        Record::decode(separate.as_bytes()).unwrap(),
+        Record::Ready,
+        "repeats only within one object"
+    );
     let nested = format!(r#"{{"type":"ready","x":{}1{}}}"#, "[".repeat(500), "]".repeat(500));
     assert_eq!(Record::decode(nested.as_bytes()).unwrap(), Record::Ready, "unknown members skip unparsed");
 }

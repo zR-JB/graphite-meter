@@ -127,6 +127,7 @@ fn a_received_entry_that_stays_invalid_is_left_out_alone() {
         "servers": [
             {"id": "self", "url": ".", "name": "graphite-meter"},
             {"id": "frankfurt", "url": "https://fra.example.net/", "name": "Frankfurt"},
+            {"id": "munich", "url": "https://München.example/", "additionalOrigins": ["https://straße.example:8443/"]},
             {"id": "broken", "url": "https://user@broken.example", "name": "Broken"},
             {"id": "bad id", "url": "https://bad.example"},
             {"id": "twin", "url": "https://FRA.example.net"},
@@ -139,9 +140,12 @@ fn a_received_entry_that_stays_invalid_is_left_out_alone() {
     });
     let (catalog, rejected) = received(document).unwrap();
     let ids: Vec<_> = catalog.servers.iter().map(|entry| entry.id.as_str()).collect();
-    assert_eq!(ids, ["self", "frankfurt"]);
+    assert_eq!(ids, ["self", "frankfurt", "munich"]);
     let slash_dropped = BaseUrl::parse("https://fra.example.net").unwrap();
     assert_eq!(catalog.servers[1].url, slash_dropped, "one slash may end it");
+    let munich = serde_json::to_value(&catalog.servers[2]).unwrap();
+    assert_eq!(munich["url"], "https://xn--mnchen-3ya.example", "international hosts become punycode");
+    assert_eq!(munich["additionalOrigins"], json!(["https://xn--strae-oqa.example:8443"]));
     assert_eq!(catalog.default_selection, [id("frankfurt")]);
     let faults: Vec<_> = rejected.iter().map(|entry| (entry.id.as_str(), entry.error)).collect();
     assert_eq!(
@@ -195,20 +199,4 @@ fn discovery_may_use_the_entry_host_on_any_port_or_an_exact_additional_origin() 
     assert!(!approves(&["https://transfer.example.net"]), "additional origins match exactly");
     assert!(!approves(&["https://sub.fra.example.net"]));
     assert!(!approves(&[".", "https://other.example"]));
-}
-
-#[test]
-fn received_catalogue_hosts_become_punycode() {
-    let document = json!({
-        "defaultSelection": ["self"],
-        "servers": [
-            {"id": "self", "url": "."},
-            {"id": "munich", "url": "https://München.example/", "additionalOrigins": ["https://straße.example:8443/"]},
-        ],
-    });
-    let (catalog, rejected) = received(document).unwrap();
-    assert!(rejected.is_empty());
-    let munich = serde_json::to_value(&catalog.servers[1]).unwrap();
-    assert_eq!(munich["url"], "https://xn--mnchen-3ya.example");
-    assert_eq!(munich["additionalOrigins"], json!(["https://xn--strae-oqa.example:8443"]));
 }

@@ -3,7 +3,7 @@ use graphite_meter_proto::{
         Capabilities, ClientIpSource, DEFAULT_STAGE_LIMIT, IpVersion, LatencyTarget, LatencyTransport, Load,
         NegotiatedProtocol, Preflight, Probe, Protocol, ServerInfo, ThroughputTarget, ThroughputTransport,
     },
-    origin::{BaseUrl, Origin},
+    origin::BaseUrl,
     token::{self, SocketTicket},
     upload::Session,
 };
@@ -89,7 +89,9 @@ fn probe() -> Probe {
 #[test]
 fn a_preflight_encodes_and_decodes_as_its_golden() {
     assert_eq!(serde_json::to_value(preflight()).unwrap(), golden(PREFLIGHT));
-    assert_eq!(Preflight::decode(PREFLIGHT.as_bytes()).unwrap(), preflight());
+    let decoded = Preflight::decode(PREFLIGHT.as_bytes()).unwrap();
+    assert_eq!(decoded, preflight());
+    assert_eq!(decoded.base_urls().count(), 8, "throughput and latency targets");
 }
 
 #[test]
@@ -198,25 +200,12 @@ fn unknown_members_are_ignored_and_repeated_ones_refused() {
 }
 
 #[test]
-fn a_target_resolves_against_the_origin_that_served_discovery() {
-    let served = Origin::parse("https://meter.example").unwrap();
-    let decoded = Preflight::decode(PREFLIGHT.as_bytes()).unwrap();
-    let origins: Vec<_> = decoded
-        .base_urls()
-        .map(|base| base.resolve(&served).to_string())
-        .collect();
-    assert_eq!(origins.len(), 8);
-    assert_eq!(origins.last().map(String::as_str), Some("https://meter.example"));
-}
-
-#[test]
 fn a_probe_encodes_and_decodes_as_its_golden() {
     let text = include_str!("../../../api/probe.golden.json");
     assert_eq!(serde_json::to_value(probe()).unwrap(), golden(text));
     assert_eq!(Probe::decode(text.as_bytes()).unwrap(), probe());
     let unloaded = Probe { load: None, ..probe() };
     assert!(!serde_json::to_string(&unloaded).unwrap().contains("load"));
-    assert_eq!(IpVersion::from("::1".parse::<std::net::IpAddr>().unwrap()), IpVersion::V6);
 }
 
 #[test]

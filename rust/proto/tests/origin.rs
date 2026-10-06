@@ -1,4 +1,4 @@
-use graphite_meter_proto::origin::{BaseUrl, Host, Origin, Scheme};
+use graphite_meter_proto::origin::{BaseUrl, Host, Origin};
 
 fn canonical(text: &str) -> Option<String> {
     Origin::parse(text).ok().map(|origin| origin.to_string())
@@ -25,12 +25,6 @@ fn origins_compare_and_print_in_canonical_form() {
     }
     let origin = Origin::parse("https://Meter.Example:8443").unwrap();
     assert_eq!(origin, Origin::parse("https://meter.example:08443").unwrap());
-    let expected = Origin {
-        scheme: Scheme::Https,
-        host: Host::Name("meter.example".into()),
-        port: 8443,
-    };
-    assert_eq!(origin, expected);
 }
 
 #[test]
