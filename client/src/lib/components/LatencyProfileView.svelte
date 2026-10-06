@@ -3,7 +3,7 @@
   import { inView } from "../actions/inView";
   import { handoff, Smoothed } from "../presentation/motion.svelte";
   import Icon from "./Icon.svelte";
-  import { tooltipAction } from "../actions/tooltip";
+  import { termAction, tooltipAction } from "../actions/tooltip";
   import { warmUp } from "../actions/intent";
   import { scrub } from "../actions/scrub";
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
@@ -348,16 +348,24 @@
           <em class="lane-jitter" class:quiet={lane.jitter == null}
             >{formatLatency(lane.jitter)}</em
           >
-          <!-- Missing replies brighten the figure and explain themselves; only many of them warn. -->
-          <em
-            class="lane-timeouts"
-            class:quiet={lane.timeoutRatio == null}
-            class:noted
-            class:many={(lane.timeoutRatio ?? 0) >= TIMEOUTS_WARN}
-            tabindex="-1"
-            use:tooltipAction={noted ? probeOutcomes(lane) : timeoutsTip(lane)}
-            >{formatTimeouts(lane.timeoutRatio)}</em
-          >
+          <!-- Missing replies brighten the figure and mark it as a term that explains them; only many of them warn. -->
+          {#if noted}
+            <em
+              class="lane-timeouts noted"
+              class:many={(lane.timeoutRatio ?? 0) >= TIMEOUTS_WARN}
+              tabindex="-1"
+              use:termAction={probeOutcomes(lane)}
+              >{formatTimeouts(lane.timeoutRatio)}</em
+            >
+          {:else}
+            <em
+              class="lane-timeouts"
+              class:quiet={lane.timeoutRatio == null}
+              tabindex="-1"
+              use:tooltipAction={timeoutsTip(lane)}
+              >{formatTimeouts(lane.timeoutRatio)}</em
+            >
+          {/if}
           <div
             class="track"
             role="slider"
@@ -633,10 +641,6 @@
   }
   .lane-timeouts.noted {
     color: var(--text);
-    text-decoration: underline dotted
-      color-mix(in srgb, currentColor 50%, transparent);
-    text-decoration-thickness: 1px;
-    text-underline-offset: 3px;
   }
   .lane-timeouts.many {
     color: var(--warn);
