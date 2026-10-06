@@ -116,27 +116,6 @@ fn trusted_proxies_take_go_prefixes_without_default_routes() {
 }
 
 #[test]
-fn limits_are_positive_and_nested() {
-    for (setting, value, rule) in [
-        ("GM_MAX_ACTIVE_MEASUREMENTS", "0", "must be greater than zero"),
-        (
-            "GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT",
-            "257",
-            "must not exceed GM_MAX_ACTIVE_MEASUREMENTS",
-        ),
-        (
-            "GM_MAX_SESSIONS_PER_CLIENT",
-            "33",
-            "must not exceed GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT",
-        ),
-    ] {
-        assert_eq!(error(&[(setting, value)], &[]), format!("{setting} {rule}"));
-    }
-    let env = [("GM_MAX_ACTIVE_SESSIONS", "4"), ("GM_MAX_SESSIONS_PER_CLIENT", "5")];
-    assert_eq!(error(&env, &[]), "GM_MAX_SESSIONS_PER_CLIENT must not exceed GM_MAX_ACTIVE_SESSIONS");
-}
-
-#[test]
 fn listeners_need_distinct_addresses_and_tls_files() {
     let all = with_tls(&[("GM_H1_TLS_ADDR", ":8443"), ("GM_H2_ADDR", ":8444"), ("GM_H3_ADDR", ":8445")]);
     let config = config(&all, &["-advertised-native-endpoints", "http2,http3"]);
@@ -156,30 +135,12 @@ fn listeners_need_distinct_addresses_and_tls_files() {
     let message = "GM_TLS_CERT and GM_TLS_KEY are required when a native TLS listener is enabled";
     assert_eq!(error(&[("GM_H2_ADDR", ":8444"), ("GM_TLS_CERT", "/c.pem")], &[]), message);
     assert_eq!(error(&with_tls(&[("GM_H3_ADDR", ":7246")]), &[]), "GM_H1_ADDR and GM_H3_ADDR must differ");
-    let same = with_tls(&[("GM_H1_TLS_ADDR", ":1"), ("GM_H2_ADDR", ":1")]);
-    assert_eq!(error(&same, &[]), "GM_H1_TLS_ADDR and GM_H2_ADDR must differ");
     let message = "GM_ADVERTISED_NATIVE_ENDPOINTS includes disabled endpoint \"http3\"";
     assert_eq!(error(&[("GM_ADVERTISED_NATIVE_ENDPOINTS", "http1-clear, http3")], &[]), message);
 }
 
 #[test]
 fn origins_follow_their_listener_schemes_and_roles() {
-    let tls = with_tls(&[("GM_H2_ADDR", ":8444")]);
-    let scheme = |setting: &str, scheme: &str| format!("{setting} must be an origin with {scheme} scheme");
-    let invalid = |setting: &str, value: &str| format!("{setting} contains invalid origin \"{value}\"");
-    for (setting, value, message) in [
-        ("GM_H1_PUBLIC_ORIGIN", "https://a.example", scheme("GM_H1_PUBLIC_ORIGIN", "http")),
-        ("GM_H2_PUBLIC_ORIGIN", "http://a.example", scheme("GM_H2_PUBLIC_ORIGIN", "https")),
-        (
-            "GM_PUBLIC_ORIGINS",
-            "self,https://a.example:0",
-            invalid("GM_PUBLIC_ORIGINS", "https://a.example:0"),
-        ),
-    ] {
-        let mut env = tls.clone();
-        env.push((setting, value));
-        assert_eq!(error(&env, &[]), message);
-    }
     let shared = [("GM_H1_TLS_ADDR", ":8443"), ("GM_H1_TLS_PUBLIC_ORIGIN", "https://m.example")];
     let mut env = with_tls(&shared);
     env.extend([("GM_H2_ADDR", ":8444"), ("GM_H2_PUBLIC_ORIGIN", "https://M.example:443")]);

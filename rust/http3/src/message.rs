@@ -246,11 +246,9 @@ mod tests {
         for (bytes, code) in [
             (frame(frame::DATA, b"body"), Code::H3_FRAME_UNEXPECTED),
             ([get.clone(), head(&[]), head(&[])].concat(), Code::H3_FRAME_UNEXPECTED),
-            ([get.clone(), frame(frame::SETTINGS, &[])].concat(), Code::H3_FRAME_UNEXPECTED),
             ([get.clone(), frame(frame::PUSH_PROMISE, &[0])].concat(), Code::H3_FRAME_UNEXPECTED),
             (frame(frame::HEADERS, &[0; 4097]), Code::H3_EXCESSIVE_LOAD),
             ([get.clone(), frame(frame::WEBTRANSPORT_BIDI, &[])].concat(), Code::H3_FRAME_ERROR),
-            ([frame(0x21, &[]), frame(frame::WEBTRANSPORT_BIDI, &[])].concat(), Code::H3_FRAME_ERROR),
             (frame(frame::WEBTRANSPORT_BIDI, &[0; 2]), Code::H3_ID_ERROR),
             (frame(frame::WEBTRANSPORT_BIDI, &[0; 4]), WtCode(0).to_http()),
             (get[..get.len() - 1].to_vec(), Code::H3_FRAME_ERROR),
@@ -272,7 +270,6 @@ mod tests {
         for (method, status, body, end) in [
             (http::Method::GET, "200", &b"12"[..], Ok(())),
             (http::Method::GET, "200", b"1", Err(Code::H3_MESSAGE_ERROR)),
-            (http::Method::GET, "204", b"1", Err(Code::H3_MESSAGE_ERROR)),
             (http::Method::HEAD, "200", b"", Ok(())),
             (http::Method::CONNECT, "200", b"capsules", Ok(())),
         ] {

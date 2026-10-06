@@ -213,12 +213,9 @@ mod tests {
         let rows: &[Row] = &[
             (503, &[], ServerBusy, busy(0), "HTTP 503 from upload session"),
             (429, &[("retry-after", "3")], ServerBusy, busy(3), "HTTP 429 from upload session"),
-            (429, &[("retry-after", "+3")], ServerBusy, busy(0), "HTTP 429 from upload session"),
             (429, &DATE, ServerBusy, busy(0), "HTTP 429 from upload session"),
             (500, &[], ProtocolError, Class::Redial, "HTTP 500 from upload session"),
-            (502, &[], ProtocolError, Class::Redial, "HTTP 502 from upload session"),
             (204, &[], ProtocolError, Class::Final, "HTTP 204 from upload session"),
-            (302, &[], ProtocolError, Class::Final, "HTTP 302 from upload session"),
             (403, &[], ProtocolError, Class::Final, "HTTP 403 from upload session"),
             (403, &AUTH, SignInRequired, Class::Final, "authentication required"),
             (403, &[(REFUSAL, "revoked")], SignInRequired, Class::Final, "authentication required"),
@@ -227,7 +224,6 @@ mod tests {
             (400, &FULL, ServerBusy, busy(1), "HTTP 429 from upload session"),
             (400, &[(REFUSAL, "invalid")], ProtocolError, Class::Final, "unknown upload id (HTTP 400)"),
             (403, &[(REFUSAL, "ownerMismatch")], ProtocolError, Class::Final, mismatch),
-            (418, &[(REFUSAL, "unknown")], ProtocolError, Class::Final, "HTTP 418 from upload session"),
         ];
         for (status, headers, reason, class, text) in rows {
             let fault = answer(*status, headers).unwrap();

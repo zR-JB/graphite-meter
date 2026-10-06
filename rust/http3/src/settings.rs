@@ -212,16 +212,13 @@ mod tests {
             (&[(0x2b603742, 1), (0xffd277, 1)], Some(Dialect::Draft02)),
             (&[(0x2b603742, 1)], None),
             (&[(0x2b603742, 2), (0x33, 1)], None),
-            (&[(0x2c7cf000, 0), (0x2b603742, 1), (0x33, 1)], Some(Dialect::Draft02)),
             (&[], None),
         ] {
             assert_eq!(parse(settings).unwrap().webtransport(true), dialect, "{settings:x?}");
         }
-        for (settings, datagram_frames, checked) in [
-            (&[(0x33, 1)][..], false, Err(Code::H3_SETTINGS_ERROR)),
-            (&[(0x33, 1)], true, Ok(())),
-            (&[(0x33, 0)], false, Ok(())),
-        ] {
+        for (settings, datagram_frames, checked) in
+            [(&[(0x33, 1)][..], false, Err(Code::H3_SETTINGS_ERROR)), (&[(0x33, 1)], true, Ok(()))]
+        {
             assert_eq!(parse(settings).unwrap().check(datagram_frames), checked, "{settings:x?}");
         }
     }

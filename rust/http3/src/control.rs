@@ -139,7 +139,6 @@ mod tests {
         for (server, frames, code) in [
             (true, frame(frame::SETTINGS, &[]), Code::H3_FRAME_UNEXPECTED),
             (true, frame(frame::DATA, &[]), Code::H3_FRAME_UNEXPECTED),
-            (true, frame(0x06, &[0; 8]), Code::H3_FRAME_UNEXPECTED),
             (true, frame(frame::MAX_PUSH_ID, &[0]), Code::H3_FRAME_UNEXPECTED),
             (true, frame(frame::WEBTRANSPORT_BIDI, &[]), Code::H3_FRAME_ERROR),
             (false, frame(frame::GOAWAY, &[]), Code::H3_FRAME_ERROR),

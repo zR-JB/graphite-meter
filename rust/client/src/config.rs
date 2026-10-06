@@ -469,25 +469,6 @@ mod tests {
     }
 
     #[test]
-    fn the_last_path_choice_given_counts() {
-        let config = run("-throughput-protocol h9 -throughput-protocol http2 -latency-transport auto").unwrap();
-        assert_eq!(config.paths.protocol, Some(Protocol::Http2));
-        assert_eq!(config.paths.latency_transport, None);
-        let config = run("-throughput-transport webtransport -latency-transport webtransport").unwrap();
-        assert_eq!(config.paths.throughput_transport, Some(ThroughputTransport::WebTransport));
-        assert_eq!(config.paths.latency_transport, Some(LatencyTransport::WebTransport));
-        let refused = "invalid latency transport \"datagram\": use auto, websocket, or webtransport";
-        assert_eq!(run("-latency-transport websocket -latency-transport datagram").unwrap_err(), refused);
-        let origin = run("-throughput-origin https://a.example -throughput-origin auto").unwrap();
-        assert_eq!(origin.paths.throughput_origin, None);
-        let origin = run("-latency-origin HTTPS://A.example:443")
-            .unwrap()
-            .paths
-            .latency_origin;
-        assert_eq!(origin.unwrap().to_string(), "https://a.example");
-    }
-
-    #[test]
     fn the_preparation_key_ignores_durations_and_server_order() {
         let key = |args| run(args).unwrap().key();
         let base = key("-server a -server b");

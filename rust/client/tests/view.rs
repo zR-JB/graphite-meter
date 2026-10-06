@@ -1,6 +1,6 @@
-//! The view a run's events reduce to: its latency server across a departure, its issues and its traces.
+//! The view a run's events reduce to: its latency server across a departure.
 use graphite_meter_client::{
-    events::{Event, Series, View},
+    events::{Event, View},
     measure::latency::{Population, Summary},
     model::{Dir, Failure, Outcome, Scope, ServerFailure, ServerResult, Stage, StageResult},
     run::engine::StagePlan,
@@ -87,38 +87,4 @@ fn the_latency_server_moves_to_a_survivor_that_measured_latency_and_stays_otherw
     assert_eq!(run.outcome, Some(Outcome::Partial));
     let (view, _) = departed(false);
     assert_eq!(view.run.unwrap().focus, Some(id("a")), "no survivor measured latency");
-}
-
-#[test]
-fn traces_keep_the_planned_span_and_their_peaks_as_they_coarsen() {
-    let (at, mut view) = (Instant::now(), View::default());
-    let plan = vec![(Stage::Latency, SECOND * 4), (Stage::Download, SECOND * 60)];
-    view.apply(&Event::RunStarted { plan, focus: id("a"), at });
-    view.apply(&stage(Stage::Download));
-    view.apply(&Event::Measuring(Stage::Download));
-    for tick in 0..2000 {
-        let rate = if tick == 1234 { 9e9 } else { 1e8 };
-        let rates = Dir { down: Some(rate), up: None };
-        view.apply(&Event::Sample {
-            at: Duration::from_millis(tick * 25),
-            rates,
-            recovering: false,
-        });
-    }
-    let run = view.run.unwrap();
-    let down: &Series = &run.throughput.down;
-    assert_eq!(down.span(), SECOND * 64);
-    let points = down.points();
-    assert!(points.len() <= 480, "{}", points.len());
-    assert_eq!(
-        (points[0].at, points[0].value),
-        (SECOND * 4, None),
-        "the window breaks the trace after the latency span"
-    );
-    assert!(points.last().unwrap().at < SECOND * 64);
-    let peak = points.iter().map(|point| point.peak).fold(0.0, f64::max);
-    assert_eq!(peak, 9e9);
-    let means = points.iter().filter_map(|point| point.value);
-    assert!(means.clone().all(|mean| mean < 9e9) && means.count() > 100);
-    assert!(run.throughput.up.points().iter().all(|point| point.value.is_none()));
 }

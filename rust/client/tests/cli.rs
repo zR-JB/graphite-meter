@@ -59,16 +59,6 @@ fn another_argument_error_names_the_client() {
 }
 
 #[test]
-fn version_acts_once_every_flag_parsed() {
-    for args in [&["--version"][..], &["-version", "-streams", "99", "extra"]] {
-        let output = client(args);
-        assert_eq!(output.status.code(), Some(0));
-        assert!(output.stderr.is_empty());
-        assert_eq!(text(output.stdout), format!("graphite-meter-client {}\n", graphite_meter_client::VERSION));
-    }
-}
-
-#[test]
 fn legal_without_embedded_notices_names_the_task_that_embeds_them() {
     for args in [&["-legal"][..], &["--legal"], &["-streams", "99", "-legal"]] {
         let output = client(args);

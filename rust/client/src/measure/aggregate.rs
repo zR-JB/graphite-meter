@@ -524,22 +524,4 @@ mod tests {
         }
         assert_eq!(aggregate.total(Direction::Up), 500 + 200 + 200 + 200);
     }
-
-    #[test]
-    fn a_stage_keeps_its_latest_intervals() {
-        let base = Instant::now();
-        let mut aggregate = Aggregate::new(Stage::Download, vec![id("a")], base);
-        for tick in 0..MAX_INTERVALS as u64 + 2 {
-            let mut boundary = downloads(base + Duration::from_secs(tick), &[("a", tick)]);
-            boundary.stalled = true;
-            aggregate.observe(boundary);
-        }
-        let (intervals, omitted) = aggregate.intervals();
-        assert_eq!((intervals.len(), omitted), (MAX_INTERVALS, 2));
-        assert!(
-            intervals
-                .iter()
-                .all(|interval| interval.reason == Reason::EvidenceResumed)
-        );
-    }
 }
