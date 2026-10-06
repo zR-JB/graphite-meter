@@ -395,6 +395,10 @@
     .chips {
       grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
     }
+    /* The chips under the key name themselves; the legend's line goes to the cards. */
+    .legend {
+      display: none;
+    }
     .chip {
       container-type: inline-size;
       padding: 8px;

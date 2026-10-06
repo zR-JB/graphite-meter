@@ -473,7 +473,9 @@
     justify-self: center;
     width: var(--dial-width);
   }
+  /* A phone's ring leaves room for its stages: the dial, the key and every card share one screen. */
   .compact .instrument {
+    --dial-height: clamp(236px, 30svh, 290px);
     gap: var(--space-3);
   }
   /* The dial's panel: the face, and the note under the ring; the face ends on the note, so a hung note measures

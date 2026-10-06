@@ -242,24 +242,6 @@
       gap: var(--space-2);
     }
   }
-  /* A phone stacks the cards in stage order, each whole from Start, so nothing moves as the stages run. */
-  @container results (max-width: 520px) {
-    .result-cards {
-      grid-template-columns: minmax(0, 1fr);
-    }
-    .card {
-      padding: 8px var(--space-3) 10px;
-    }
-    .strip {
-      min-height: 56px;
-    }
-    .facts > div {
-      height: 20px;
-    }
-    .wire .delta {
-      display: none;
-    }
-  }
   /* A card is a panel ruled in its stage's hue along the top; the running card's edge strengthens. In its row it
      takes the row's height up to a limit, its strip growing with it. */
   .card {
@@ -491,5 +473,72 @@
   .issues .reason {
     color: var(--text-soft);
     font-weight: var(--w-normal);
+  }
+  /* A phone stacks the cards in stage order, each whole from Start, so nothing moves as the stages run. Each is
+     compact, so all of them fit under the dial: the figure beside the name, a short strip, and the facts as one
+     row of columns, every one still there. */
+  @container results (max-width: 520px) {
+    .result-cards {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-2);
+    }
+    .card {
+      gap: 2px;
+      padding: 8px var(--space-3) 10px;
+    }
+    /* The figure stands at the right across the name's line and its detail's. */
+    .card {
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas: "name value" "line value" "strip strip" "facts facts";
+    }
+    .card:has(> .strip) {
+      grid-template-rows: 20px 16px 36px auto;
+    }
+    .face {
+      display: contents;
+    }
+    .name {
+      grid-area: name;
+    }
+    .headline {
+      grid-area: value;
+      align-self: center;
+      font-size: 22px;
+    }
+    .line {
+      grid-area: line;
+    }
+    .strip {
+      grid-area: strip;
+    }
+    .strip {
+      min-height: 36px;
+      max-height: 36px;
+    }
+    .facts {
+      grid-area: facts;
+      grid-template-columns: none;
+      grid-auto-columns: max-content;
+      grid-auto-flow: column;
+      justify-content: space-between;
+      column-gap: var(--space-3);
+      margin-top: 2px;
+    }
+    .facts > div {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 3px;
+      height: auto;
+      padding-top: 4px;
+    }
+    .facts > div + div {
+      border-top: 0;
+    }
+    .facts dt {
+      font-size: var(--type-xs);
+    }
+    .wire .delta {
+      display: none;
+    }
   }
 </style>

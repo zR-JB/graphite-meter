@@ -240,10 +240,12 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   beside the latency lanes with the controls under them, the run key over the stage chips, centred in the room
   the lanes leave; the dial is as tall as its ring wants or as the lanes and the controls together; under both
   one card per stage across the console. What is measured live lies on the page (dial, lanes, keys); what is
-  kept is a card. Without the latency stage the dial stands centred and wider with the controls under it. A complete run fits 1024 × 768 without scrolling. On a phone the dial keeps about two fifths
+  kept is a card. Without the latency stage the dial stands centred and wider with the controls under it. A complete run fits 1024 × 768 without scrolling. On a phone the dial keeps about three tenths
   of the screen with the controls under it, up to three chips to a row (four as two and two, a narrow chip
-  without its glyph), the cards one to a row in stage order, each whole from Start so nothing moves as the
-  stages run, and the lanes come last.
+  without its glyph) and no legend, the cards one to a row in stage order, each whole from Start so nothing moves
+  as the stages run and compact so a default run's three fit the screen of a large phone (the figure at the right
+  beside the name and its detail, a 36 px strip, the facts as one row of label-over-value columns), and the
+  lanes come last.
   The dial is a 270° ring with an arc 0.13 of its radius wide, ticks and five labels; every result's
   arc lies on the ring, the longest underneath, so each shows from where the next shorter one ends, and ends in
   a bead in its hue; a bead moved inward off a close neighbour hangs on a stalk; the stage's mark and name sit
@@ -258,7 +260,8 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   above the cards moves from Start to the result.
 - **Top bar and status strip**: 48 px on the canvas and 28 px in `--surface-1`, each with a hairline, their
   text on the console's gutter (`--gutter`, 24 px, 16 under 1024 px), so the brand, the panels' edges and the
-  status word share one line. The bar carries the brand, whose hexagon is the latency hue as the favicon's
+  status word share one line. A phone has no status strip: its chips, key and cards already show the phase, the
+  time and the bytes. The bar carries the brand, whose hexagon is the latency hue as the favicon's
   is, a Settings key, the connection dot, and at the right History, Details and the theme; a key is a 32 px
   square glyph plate with a hairline. The brand's hover dims its word, no plate. The strip reads from the left
   the status word, the elapsed time, the bytes moved and the time left while a stage runs, each figure in a cell

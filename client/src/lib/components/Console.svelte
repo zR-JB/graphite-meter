@@ -1177,6 +1177,18 @@
     display: none;
   }
 
+  /* A phone's chips, key and cards already say what the strip would: the phase, the time and the bytes. */
+  @media (max-width: 520px) {
+    #console {
+      grid-template-rows: var(--topbar-h) minmax(0, 1fr) env(
+          safe-area-inset-bottom,
+          0px
+        );
+    }
+    .status {
+      display: none;
+    }
+  }
   @media (max-width: 759px) {
     /* History brings its own 16 px gutter. */
     .stage:not(.history-stage) {
