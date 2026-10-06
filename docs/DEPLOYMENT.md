@@ -344,12 +344,12 @@ cannot read their keys.
 
 ### UDP buffers
 
-HTTP/3 and WebTransport ask the kernel for 7 MiB UDP buffers per socket. Linux caps an unprivileged request at
-`net.core.rmem_max` and `net.core.wmem_max`, and the server then logs one line at startup: the Go server prints
-quic-go's "failed to sufficiently increase receive buffer size …", the Rust server `[gm:udp] the UDP receive
-buffer is … KiB of the 7168 KiB wanted …`. Below about 1 Gbit/s of QUIC the smaller buffer is enough; above it,
-bursts can overflow the socket and lower HTTP/3 and WebTransport results. Raise the caps on the host, which also
-covers containers:
+HTTP/3 and WebTransport ask the kernel for 7 MiB UDP buffers per socket; the Rust server's HTTP/3 endpoints share
+7 MiB, at least 2 MiB each. Linux caps an unprivileged request at `net.core.rmem_max` and `net.core.wmem_max`, and the
+server then logs one line at startup: the Go server prints quic-go's "failed to sufficiently increase receive buffer
+size …", the Rust server `[gm:udp] the UDP receive buffer is … KiB of the … KiB wanted …`. Below about 1 Gbit/s
+of QUIC the smaller buffer is enough; above it, bursts can overflow the socket and lower HTTP/3 and WebTransport
+results. Raise the caps on the host, which also covers containers:
 
 ```sh
 sysctl --write net.core.rmem_max=7500000 net.core.wmem_max=7500000
