@@ -101,12 +101,7 @@ impl Palette {
 
     /// An outcome's label: bold in its badge's colour.
     pub fn outcome(&self, outcome: Outcome) -> Style {
-        let tone = match outcome {
-            Outcome::Complete => GOOD,
-            Outcome::Partial | Outcome::Incomplete => CAUTION,
-            Outcome::Stopped => SOFT,
-            Outcome::Failed => BAD,
-        };
+        let tone = [GOOD, CAUTION, CAUTION, SOFT, BAD][outcome as usize];
         Style::fg(tone[usize::from(self.dark)]).bold()
     }
 }
@@ -244,11 +239,7 @@ fn bright(color: &[u8]) -> bool {
         Some(digits) => {
             let wide = if digits.len() == 3 { 1 } else { 2 };
             let channel = |index: usize| digits.get(index * wide..(index + 1) * wide).filter(|pair| hex(pair));
-            let value = |pair: &str| {
-                u8::from_str_radix(pair, 16)
-                    .ok()
-                    .map(|value| if wide == 1 { value * 17 } else { value })
-            };
+            let value = |pair: &str| Some(u8::from_str_radix(pair, 16).ok()? * if wide == 1 { 17 } else { 1 });
             (0..3).map(|index| channel(index).and_then(value)).collect()
         }
         None => {

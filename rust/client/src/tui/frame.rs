@@ -40,9 +40,8 @@ impl App {
         let inner = width - 2;
         let mut lines = self.header(inner);
         lines.extend((height > 24).then(Line::default));
-        let rows = height
-            .saturating_sub(lines.len() + self.footer(inner, false).len())
-            .max(1);
+        let chrome = lines.len() + self.footer(inner, false).len();
+        let rows = height.saturating_sub(chrome).max(1);
         let (body, focus) = self.body(inner, rows);
         let hidden = body.len().saturating_sub(rows);
         if let Some(focus) = focus.filter(|_| std::mem::take(&mut self.follow)) {
@@ -84,9 +83,8 @@ impl App {
             Screen::Run => self.labels().join(", "),
             _ => self.config.url.to_string(),
         };
-        let first = Line::styled(title, palette.title)
-            .and(" ".repeat(gap), Style::default())
-            .and(status, pill);
+        let first = Line::styled(title, palette.title).and(" ".repeat(gap), Style::default());
+        let first = first.and(status, pill);
         let second = Line::styled(format!("native client {VERSION}  "), palette.muted).and(context, palette.accent);
         vec![first.fit(width), second.fit(width)]
     }
@@ -120,13 +118,16 @@ impl App {
     fn footer(&self, width: usize, more: bool) -> Vec<Line> {
         let palette = &self.palette;
         let notice = match &self.overlay {
-            Overlay::Edit(editor) if editor.error().is_some() => Line::styled(&self.notice, palette.err),
+            Overlay::Edit(editor) if editor.error.is_some() => Line::styled(&self.notice, palette.err),
             Overlay::None if self.notice.is_empty() && matches!(self.screen, Screen::Setup) => {
                 Line::styled(self.show(self.row()).help, palette.muted)
             }
             _ => Line::styled(&self.notice, palette.muted),
         };
-        let all = self.bindings(self.help);
+        let all = match (&self.screen, &self.overlay) {
+            (Screen::Setup, Overlay::None) if !self.help => self.hints(),
+            _ => keys::listed(self.table(), |action| self.offers(action)),
+        };
         if self.help {
             let lines = [vec![notice], dialogs::columns(&all, palette)].concat();
             return lines.into_iter().map(|line| line.fit(width)).collect();
@@ -139,14 +140,6 @@ impl App {
             shown.remove(shown.len() - 2);
         }
         vec![notice.fit(width), dialogs::line(&shown, palette).fit(width)]
-    }
-
-    /// The keys help lists: all of them, or those the footer offers.
-    fn bindings(&self, all: bool) -> Vec<keys::Binding> {
-        match (&self.screen, &self.overlay) {
-            (Screen::Setup, Overlay::None) if !all => self.hints(),
-            _ => keys::listed(self.table(), |action| self.offers(action)),
-        }
     }
 
     /// The screen's lines, and the focused one's.

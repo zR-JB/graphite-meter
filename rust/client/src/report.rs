@@ -23,17 +23,14 @@ const SIGNED_OUT: &str = "Sign-in expired. Checking the selected servers…";
 
 /// The report of the view's finished run; none for a run that never started or lost its sign-in.
 pub fn report(view: &View, width: usize, palette: &Palette) -> Vec<Line> {
-    let Some(run) = view.run.as_ref().filter(|run| run.outcome.is_some()) else {
-        return Vec::new();
-    };
-    if unreported(view).is_some() {
-        return Vec::new();
-    }
+    let reported = view
+        .run
+        .as_ref()
+        .filter(|run| run.outcome.is_some() && unreported(view).is_none());
+    let Some(run) = reported else { return Vec::new() };
     let report = Report { view, run, focus: run.focus.as_ref(), width, palette };
-    let heading = match (report.several(), &run.focus) {
-        (true, Some(focus)) => format!("Latency to {}", report.name(focus)),
-        _ => "Latency".to_owned(),
-    };
+    let focus = run.focus.as_ref().filter(|_| report.several());
+    let heading = focus.map_or("Latency".to_owned(), |focus| format!("Latency to {}", report.name(focus)));
     let mut blocks = vec![vec![report.header()]];
     if let Some((latency, failures, added)) = report.results(&heading) {
         blocks.extend([report.throughput(), latency, failures, report.notes(added)]);
@@ -49,9 +46,8 @@ pub fn report(view: &View, width: usize, palette: &Palette) -> Vec<Line> {
 
 /// The finished run's results as the interface shows them, `focus` the latency server; none when nothing was measured.
 pub fn results(view: &View, focus: Option<&ServerId>, width: usize, palette: &Palette) -> Vec<Line> {
-    let Some(run) = view.run.as_ref().filter(|run| run.at.is_some()) else {
-        return Vec::new();
-    };
+    let measured = view.run.as_ref().filter(|run| run.at.is_some());
+    let Some(run) = measured else { return Vec::new() };
     let report = Report { view, run, focus, width, palette };
     let Some((latency, failures, _)) = report.results("Latency") else {
         return Vec::new();
@@ -76,11 +72,9 @@ pub fn results(view: &View, focus: Option<&ServerId>, width: usize, palette: &Pa
 /// Why the view's run has no report: it never started, or its sign-in expired.
 pub fn unreported(view: &View) -> Option<String> {
     let run = view.run.as_ref()?;
-    let signed_out = run
-        .error
-        .as_ref()
-        .filter(|error| error.reason == FailureReason::SignInRequired);
-    Some(match (&run.error, signed_out) {
+    let error = run.error.as_ref();
+    let signed_out = error.filter(|error| error.reason == FailureReason::SignInRequired);
+    Some(match (error, signed_out) {
         _ if run.at.is_some() => return signed_out.map(|_| SIGNED_OUT.into()),
         (_, Some(error)) => error.text.clone(),
         (Some(error), None) => format!("Test could not start: {}", error.text),
@@ -90,10 +84,8 @@ pub fn unreported(view: &View) -> Option<String> {
 
 /// The stderr line a run without the interface writes for `event`.
 pub fn progress(event: &Event) -> Option<String> {
-    match event {
-        Event::Measuring(stage) => Some(format!("{}…", label(*stage))),
-        _ => None,
-    }
+    let Event::Measuring(stage) = event else { return None };
+    Some(format!("{}…", label(*stage)))
 }
 
 struct Report<'a> {
@@ -125,13 +117,8 @@ impl Report<'_> {
 
     /// What a planned stage shows without a value.
     fn unmeasured(&self, stage: Stage) -> &'static str {
-        match self.status(stage) {
-            None => "Skipped",
-            Some(StageStatus::Complete) => MISSING,
-            Some(StageStatus::Partial) => PARTIAL,
-            Some(StageStatus::Failed) => "Failed",
-            Some(StageStatus::Stopped) => "Stopped",
-        }
+        self.status(stage)
+            .map_or("Skipped", |status| [MISSING, PARTIAL, "Failed", "Stopped"][status as usize])
     }
 
     /// The latency server's population in `stage`.

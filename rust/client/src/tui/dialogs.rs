@@ -38,11 +38,8 @@ impl App {
                     true => self.view.servers.iter().any(|server| server.id == *id),
                     false => self.config.servers.contains(id),
                 };
-                let draft = catalogue
-                    .iter()
-                    .map(|entry| entry.id.clone())
-                    .filter(selected)
-                    .collect();
+                let ids = catalogue.iter().map(|entry| entry.id.clone());
+                let draft = ids.filter(selected).collect();
                 self.screen = Screen::Chooser(Chooser { row: 0, draft });
                 (false, "Choose up to 4. Their speeds are combined.")
             }
@@ -82,10 +79,8 @@ impl App {
     pub(super) fn chooser_body(&self, chooser: &Chooser, width: usize, height: usize) -> Vec<Line> {
         let (catalogue, palette) = (&self.view.catalogue, &self.palette);
         let shown = (height.saturating_sub(4) / 2).max(2);
-        let first = chooser
-            .row
-            .saturating_sub(shown / 2)
-            .min(catalogue.len().saturating_sub(shown));
+        let last = catalogue.len().saturating_sub(shown);
+        let first = chooser.row.saturating_sub(shown / 2).min(last);
         let mut lines = Vec::new();
         for (index, entry) in catalogue.iter().enumerate().skip(first).take(shown) {
             let mut label = words::server(&entry.name, &entry.location);
@@ -107,14 +102,8 @@ impl App {
 
 /// The sign-in prompt's arrival and whether its page was opened.
 pub struct SignIn {
-    since: Instant,
+    pub(super) since: Instant,
     pub(super) opened: bool,
-}
-
-impl SignIn {
-    pub(super) fn new(now: Instant) -> Self {
-        Self { since: now, opened: false }
-    }
 }
 
 impl App {
@@ -138,9 +127,8 @@ impl App {
 
     /// The prompt in a panel, with the code to match and the time waited and left, over the page's address.
     pub(super) fn sign_in_body(&self, sign_in: &SignIn, width: usize) -> Vec<Line> {
-        let (Some(prompt), palette) = (&self.view.sign_in, &self.palette) else {
-            return Vec::new();
-        };
+        let Some(prompt) = &self.view.sign_in else { return Vec::new() };
+        let palette = &self.palette;
         let status = match sign_in.opened {
             false => Line::styled("Open the sign-in page below", palette.accent),
             true => Line::plain(format!("{} ", self.spinner())).and("Waiting for approval…", palette.accent),

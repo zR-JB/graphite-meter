@@ -72,10 +72,8 @@ impl Binding {
 
     /// The binding with what it does named `does`.
     pub const fn does(self, does: &'static str) -> Self {
-        match self.help {
-            Some((key, _)) => Self { help: Some((key, does)), ..self },
-            None => self,
-        }
+        let Some((key, _)) = self.help else { return self };
+        Self { help: Some((key, does)), ..self }
     }
 
     const fn hidden(self) -> Self {

@@ -82,12 +82,7 @@ impl App {
 
     /// A path row's choices: automatic, then the single server's offers or the transports servers may share.
     fn choices<T: Copy + PartialEq>(&self, kind: &Kind<T>) -> Vec<Choice<T>> {
-        let automatic = |note| Choice {
-            origin: None,
-            transport: None,
-            label: "Automatic".into(),
-            note,
-        };
+        let automatic = |note| Choice::new(None, None, "Automatic".into(), note);
         let Some((server, offered)) = self.single() else {
             let mut choices = vec![automatic("each server".into())];
             for transport in kind.shared {
@@ -102,12 +97,7 @@ impl App {
                     true => "every server".into(),
                     false => format!("unavailable on {}", names.join(", ")),
                 };
-                choices.push(Choice {
-                    origin: None,
-                    transport: Some(transport),
-                    label: (kind.label)(transport).into(),
-                    note,
-                });
+                choices.push(Choice::new(None, Some(transport), (kind.label)(transport).into(), note));
             }
             return choices;
         };
@@ -119,12 +109,7 @@ impl App {
             if !choices.iter().any(|choice| choice.selects(chosen)) {
                 let label = words::connection((kind.label)(transport), version, &origin);
                 let note = self.short(&origin);
-                choices.push(Choice {
-                    origin: Some(origin),
-                    transport: Some(transport),
-                    label,
-                    note,
-                });
+                choices.push(Choice::new(Some(origin), Some(transport), label, note));
             }
         }
         choices
@@ -230,6 +215,10 @@ struct Choice<T> {
 }
 
 impl<T: PartialEq> Choice<T> {
+    fn new(origin: Option<Origin>, transport: Option<T>, label: String, note: String) -> Self {
+        Self { origin, transport, label, note }
+    }
+
     fn selects(&self, (origin, transport): (Option<&Origin>, Option<T>)) -> bool {
         self.origin.as_ref() == origin && self.transport == transport
     }

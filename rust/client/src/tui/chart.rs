@@ -24,10 +24,7 @@ pub enum Axis {
 impl Axis {
     /// The factor from values to labels.
     fn scale(self) -> f64 {
-        match self {
-            Self::Rate => 8.0,
-            Self::Ms => 1.0,
-        }
+        if let Self::Rate = self { 8.0 } else { 1.0 }
     }
 
     /// `value` in the label's unit, the largest it reaches for rates.
@@ -56,19 +53,12 @@ pub fn chart(
     palette: &Palette,
 ) -> Vec<Line> {
     let (columns, rows) = (width.saturating_sub(SCALE + 1).max(4), height.saturating_sub(2).max(2));
-    let stretches: Vec<_> = traces
-        .iter()
-        .flat_map(|&(series, dashed)| stretches(series.points(), marks, dashed))
-        .collect();
+    let split = |(series, dashed)| stretches(Series::points(series), marks, dashed);
+    let stretches: Vec<_> = traces.iter().copied().flat_map(split).collect();
     let values = stretches.iter().flat_map(|stretch| stretch.2);
     let peak = values.fold(0.0_f64, |peak, point| peak.max(point.peak).max(point.value.unwrap_or(0.0)));
     let top = nice(peak * axis.scale() * 1.05) / axis.scale();
-    let mut canvas = Canvas {
-        columns,
-        rows,
-        dots: vec![0; columns * rows],
-        owner: vec![0; columns * rows],
-    };
+    let mut canvas = Canvas { columns, rows, cells: vec![(0, 0); columns * rows] };
     let span = span.as_secs_f64().max(1.0);
     for (index, (_, dashed, points)) in stretches.iter().enumerate() {
         canvas.plot(index, *dashed, points, span, top);
@@ -85,18 +75,17 @@ pub fn chart(
         let scale: String = scale.chars().take(SCALE).collect();
         let mut line = Line::styled(format!("{scale:>SCALE$}"), palette.muted).and("│", palette.border);
         let cells: Vec<usize> = (row * columns..(row + 1) * columns).collect();
-        let owned = |a: &usize, b: &usize| {
-            (canvas.dots[*a] == 0) == (canvas.dots[*b] == 0) && canvas.owner[*a] == canvas.owner[*b]
+        let owned = |&a: &usize, &b: &usize| {
+            let ((a, from), (b, to)) = (canvas.cells[a], canvas.cells[b]);
+            (a == 0) == (b == 0) && from == to
         };
         for run in cells.chunk_by(owned) {
-            let glyphs = || {
-                run.iter()
-                    .map(|&cell| char::from_u32(0x2800 + u32::from(canvas.dots[cell])).unwrap_or(' '))
-            };
-            line = match canvas.dots[run[0]] {
-                0 if middle => line.and("┄".repeat(run.len()), palette.border),
-                0 => line.and(" ".repeat(run.len()), Style::default()),
-                _ => line.and(glyphs().collect::<String>(), palette.trace(stretches[canvas.owner[run[0]]].0)),
+            let glyph = |&cell: &usize| char::from_u32(0x2800 + u32::from(canvas.cells[cell].0)).unwrap_or(' ');
+            let glyphs: String = run.iter().map(glyph).collect();
+            line = match canvas.cells[run[0]] {
+                (0, _) if middle => line.and("┄".repeat(run.len()), palette.border),
+                (0, _) => line.and(" ".repeat(run.len()), Style::default()),
+                (_, owner) => line.and(glyphs, palette.trace(stretches[owner].0)),
             };
         }
         lines.push(line);
@@ -115,9 +104,8 @@ fn ruler(marks: &[(Duration, Stage)], span: f64, columns: usize, palette: &Palet
     for (index, &(at, stage)) in marks.iter().enumerate() {
         let x = column(at);
         ticks[x] = '┬';
-        let next = marks
-            .get(index + 1)
-            .map_or(end_at, |&(next, _)| column(next).min(end_at));
+        let following = marks.get(index + 1);
+        let next = following.map_or(end_at, |&(next, _)| column(next).min(end_at));
         let room = next.saturating_sub(x + 1);
         if room >= 3 && x >= written {
             let name = Line::styled(words::compact_stage(stage), palette.stage(stage)).fit(room);
@@ -162,8 +150,7 @@ fn nice(value: f64) -> f64 {
 struct Canvas {
     columns: usize,
     rows: usize,
-    dots: Vec<u8>,
-    owner: Vec<usize>,
+    cells: Vec<(u8, usize)>,
 }
 
 impl Canvas {
@@ -196,9 +183,8 @@ impl Canvas {
         let (mut error, step_x, step_y) = (dx + dy, if x < x1 { 1 } else { -1 }, if y < y1 { 1 } else { -1 });
         loop {
             if !(dashed && x % 6 >= 4) {
-                let cell = y / 4 * self.columns + x / 2;
-                self.dots[cell] |= DOTS[y % 4][x % 2];
-                self.owner[cell] = owner;
+                let cell = &mut self.cells[y / 4 * self.columns + x / 2];
+                *cell = (cell.0 | DOTS[y % 4][x % 2], owner);
             }
             if (x, y) == (x1, y1) {
                 return;

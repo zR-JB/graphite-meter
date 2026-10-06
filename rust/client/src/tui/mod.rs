@@ -157,7 +157,7 @@ impl App {
             }
             Event::CheckFailed(_) => self.setup.chooser = false,
             Event::SignIn(_) => {
-                (self.screen, self.overlay) = (Screen::SignIn(SignIn::new(now)), Overlay::None);
+                (self.screen, self.overlay) = (Screen::SignIn(SignIn { since: now, opened: false }), Overlay::None);
                 self.notice = "Check the code, then press enter to open the sign-in page.".into();
             }
             Event::SignInEnded(end) => {

@@ -45,12 +45,11 @@ impl Report<'_> {
             };
             medians.push([vec![Line::plain(&server.name)], run.plan.iter().map(median).collect()].concat());
         }
+        let labels = columns
+            .iter()
+            .map(|&(stage, direction)| direction_label(stage, direction));
         let mut headers = vec!["Server".to_owned()];
-        headers.extend(
-            columns
-                .iter()
-                .map(|&(stage, direction)| direction_label(stage, direction)),
-        );
+        headers.extend(labels);
         let headers: Vec<&str> = headers.iter().map(String::as_str).collect();
         let populations = run.plan.iter().map(|&(stage, _)| compact_population(stage));
         let populations: Vec<&str> = std::iter::once("Server").chain(populations).collect();
@@ -68,14 +67,10 @@ impl Report<'_> {
         }
         for (stage, issue) in &run.issues {
             let scope = if issue.scope == Scope::Latency { "latency" } else { "throughput" };
-            let at = run
-                .at
-                .map_or(Duration::ZERO, |origin| issue.at.saturating_duration_since(origin));
+            let at = issue.at.saturating_duration_since(run.at.unwrap_or(issue.at));
             let (name, stage, at) = (self.name(&issue.server), compact_stage(*stage), clock(at));
-            lines.push(Line::plain(format!(
-                "{name} · {stage} {scope} · at {at} · {}",
-                issue.failure.reason.label()
-            )));
+            let reason = issue.failure.reason.label();
+            lines.push(Line::plain(format!("{name} · {stage} {scope} · at {at} · {reason}")));
         }
         if full && run.outcome.is_some() && run.results.iter().any(|result| !result.intervals.is_empty()) {
             lines.extend(self.intervals());
@@ -114,9 +109,8 @@ impl Report<'_> {
 
     /// The aggregation intervals of every stage, and how many older ones each dropped.
     fn intervals(&self) -> Vec<Line> {
-        let (Some(origin), muted) = (self.run.at, self.palette.muted) else {
-            return Vec::new();
-        };
+        let Some(origin) = self.run.at else { return Vec::new() };
+        let muted = self.palette.muted;
         let mut lines = vec![Line::default(), Line::styled("Aggregation intervals", self.palette.heading)];
         let offset = |at: std::time::Instant| at.saturating_duration_since(origin).as_secs_f64();
         for result in &self.run.results {

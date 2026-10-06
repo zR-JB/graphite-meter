@@ -150,9 +150,8 @@ impl App {
 
     /// The progress bar: busy while preparing, then the planned stage time done; an incomplete stage adds nothing.
     pub(super) fn progress(&self) -> Progress {
-        let Some(run) = self.view.run.as_ref().filter(|_| self.running()) else {
-            return Progress::None;
-        };
+        let running = self.view.run.as_ref().filter(|_| self.running());
+        let Some(run) = running else { return Progress::None };
         if run.at.is_none() {
             return Progress::Busy;
         }
@@ -171,9 +170,8 @@ impl App {
 
     /// The run screen's lines: Details over the run, the results under the timeline once measured, or the stages.
     pub(super) fn run_body(&self, width: usize, rows: usize) -> Vec<Line> {
-        let (Some(run), palette) = (&self.view.run, &self.palette) else {
-            return Vec::new();
-        };
+        let Some(run) = &self.view.run else { return Vec::new() };
+        let palette = &self.palette;
         if matches!(self.overlay, Overlay::Details) {
             let lines = match run.at {
                 None => vec![Line::styled("Waiting for the first server report…", palette.muted)],
@@ -249,10 +247,8 @@ impl App {
             }];
         };
         let traced = |direction: &Direction| {
-            run.throughput[*direction]
-                .points()
-                .iter()
-                .any(|point| point.value.is_some())
+            let points = run.throughput[*direction].points();
+            points.iter().any(|point| point.value.is_some())
         };
         let directions: Vec<Direction> = match live {
             true => stage.directions().to_vec(),
@@ -302,11 +298,8 @@ impl App {
         }
         let transfers = !stage.directions().is_empty();
         if !transfers || self.config.loaded_latency {
-            let probe = self
-                .live
-                .probes
-                .iter()
-                .find(|(id, ..)| Some(id) == self.latency_server());
+            let shown = self.latency_server();
+            let probe = self.live.probes.iter().find(|(id, ..)| Some(id) == shown);
             let label = if transfers { "Loaded latency " } else { "Idle latency " };
             let mut reading = Line::styled(label, palette.text).with(match probe.and_then(|(_, rtt, _)| *rtt) {
                 Some(rtt) => Line::styled(words::ms(rtt), palette.value),

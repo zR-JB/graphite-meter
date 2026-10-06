@@ -242,10 +242,8 @@ impl App {
 
     fn setting(&self, row: Row, shown: &Shown, focused: bool, label_width: usize, width: usize) -> Line {
         let palette = &self.palette;
-        let label = Line::styled(shown.label, palette.text)
-            .fit(label_width)
-            .pad(label_width);
-        let label = label.and("  ", Style::default());
+        let label = Line::styled(shown.label, palette.text);
+        let label = label.fit(label_width).pad(label_width).and("  ", Style::default());
         let line = match (row, &self.overlay) {
             (Row::Start, _) => {
                 let button = Line::styled(" Start test ", if focused { palette.title } else { palette.heading });
@@ -286,10 +284,8 @@ impl App {
         let servers = self.servers_panel(right.saturating_sub(4));
         let height = if side.is_some() { rows.len().max(servers.len()) + 2 } else { 0 };
         let (rows, servers) = (self.panel("Setup", rows, left, height), self.panel("Servers", servers, right, height));
-        match side {
-            Some(_) => (beside(rows, servers), focus + 1),
-            None => ([rows, servers].concat(), focus + 1),
-        }
+        let lines = if side.is_some() { beside(rows, servers) } else { [rows, servers].concat() };
+        (lines, focus + 1)
     }
 
     /// Each selected server's readiness, why the check failed, and the paths it found.

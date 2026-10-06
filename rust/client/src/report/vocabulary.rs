@@ -148,36 +148,20 @@ pub fn setting(duration: Duration) -> String {
 
 /// An HTTP version; none is automatic.
 pub fn protocol(protocol: Option<Protocol>) -> &'static str {
-    match protocol {
-        None => "Automatic",
-        Some(Protocol::Http1) => "HTTP/1.1",
-        Some(Protocol::Http2) => "HTTP/2",
-        Some(Protocol::Http3) => "HTTP/3",
-        Some(Protocol::Negotiated) => "Negotiated",
-    }
+    protocol.map_or("Automatic", |protocol| ["HTTP/1.1", "HTTP/2", "HTTP/3", "Negotiated"][protocol as usize])
 }
 
 pub fn throughput_transport(transport: ThroughputTransport) -> &'static str {
-    match transport {
-        ThroughputTransport::FetchStream => "Fetch streams",
-        ThroughputTransport::WebTransport => "WebTransport streams",
-        ThroughputTransport::WebTransportDatagram => "WebTransport datagrams",
-    }
+    ["Fetch streams", "WebTransport streams", "WebTransport datagrams"][transport as usize]
 }
 
 pub fn latency_transport(transport: LatencyTransport) -> &'static str {
-    match transport {
-        LatencyTransport::WebSocket => "WebSocket",
-        LatencyTransport::WebTransport => "WebTransport datagrams",
-    }
+    ["WebSocket", "WebTransport datagrams"][transport as usize]
 }
 
 /// The HTTP version a latency transport runs over.
 pub fn latency_protocol(transport: LatencyTransport) -> Protocol {
-    match transport {
-        LatencyTransport::WebSocket => Protocol::Http1,
-        LatencyTransport::WebTransport => Protocol::Http3,
-    }
+    [Protocol::Http1, Protocol::Http3][transport as usize]
 }
 
 /// A path as its transport, HTTP version and security.

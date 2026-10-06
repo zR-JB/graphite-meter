@@ -108,9 +108,15 @@ impl App {
     /// ←/→ on `row`: a duration steps, a flag turns on or off, anything else cycles.
     fn adjust(&mut self, row: Row, step: isize) {
         if let Some((value, bounds, _)) = span(&mut self.config, row) {
-            let unit = match row {
-                Row::Warmup => Duration::from_millis(100),
-                _ => stage_step(value.saturating_sub(Duration::from_nanos(u64::from(step < 0)))),
+            let unit = match value
+                .saturating_sub(Duration::from_nanos(u64::from(step < 0)))
+                .as_secs()
+            {
+                _ if row == Row::Warmup => Duration::from_millis(100),
+                0..60 => Duration::from_secs(1),
+                60..600 => Duration::from_secs(10),
+                600..3600 => Duration::from_secs(60),
+                _ => Duration::from_secs(300),
             };
             let moved = if step > 0 { value.saturating_add(unit) } else { value.saturating_sub(unit) };
             *value = moved.clamp(*bounds.start(), *bounds.end());
@@ -243,16 +249,6 @@ fn span(config: &mut Config, row: Row) -> Option<(&mut Duration, RangeInclusive<
     }
 }
 
-/// A stage duration's arrow step, which grows with the duration.
-fn stage_step(duration: Duration) -> Duration {
-    Duration::from_secs(match duration.as_secs() {
-        0..60 => 1,
-        60..600 => 10,
-        600..3600 => 60,
-        _ => 300,
-    })
-}
-
 /// The forced stream count, or the automatic maximum.
 fn stream_count(config: &mut Config) -> &mut usize {
     match config.streams.forced {
@@ -290,16 +286,12 @@ pub(super) struct Editor {
     pub row: Row,
     text: Vec<char>,
     cursor: usize,
-    error: Option<String>,
+    pub error: Option<String>,
 }
 
 impl Editor {
     pub fn text(&self) -> String {
         self.text.iter().collect()
-    }
-
-    pub fn error(&self) -> Option<&str> {
-        self.error.as_deref()
     }
 
     /// Inserts `text` at the cursor while room is left; tabs and line breaks become spaces.

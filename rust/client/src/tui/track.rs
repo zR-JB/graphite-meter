@@ -92,16 +92,11 @@ impl App {
                 Some((_, StageStatus::Stopped)) => Line::styled("○ Stopped", muted),
                 None => match current.filter(|(current, _)| *current == stage) {
                     Some((_, true)) => {
-                        let elapsed = self.elapsed();
-                        bar(
-                            hue,
-                            elapsed.as_secs_f64() / duration.as_secs_f64(),
-                            width.saturating_sub(34).clamp(6, 30),
-                            muted,
-                        )
-                        .and("  ", Style::default())
-                        .and(words::clock(elapsed.min(duration)), palette.value)
-                        .and(format!(" / {}", words::setting(duration)), muted)
+                        let (elapsed, cells) = (self.elapsed(), width.saturating_sub(34).clamp(6, 30));
+                        bar(hue, elapsed.as_secs_f64() / duration.as_secs_f64(), cells, muted)
+                            .and("  ", Style::default())
+                            .and(words::clock(elapsed.min(duration)), palette.value)
+                            .and(format!(" / {}", words::setting(duration)), muted)
                     }
                     Some((_, false)) => Line::styled(self.spinner(), palette.accent)
                         .and(" warmup ", muted)
@@ -118,10 +113,8 @@ impl App {
     /// A finished stage's mean rates, and for the latency stage the shown server's median.
     fn headline(&self, result: &StageResult) -> Line {
         let mut line = Line::styled(words::mean_rates(result), self.palette.value);
-        let own = result
-            .servers
-            .iter()
-            .find(|own| Some(&own.server) == self.latency_server());
+        let shown = self.latency_server();
+        let own = result.servers.iter().find(|own| Some(&own.server) == shown);
         let median = own.and_then(|own| own.latency?.median());
         let median = median.filter(|_| result.stage == Stage::Latency);
         if let Some(median) = median {
