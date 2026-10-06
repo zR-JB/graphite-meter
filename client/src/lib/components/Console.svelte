@@ -235,16 +235,21 @@
   // Tips name a key only while the page shortcuts act on it.
   const keyHint = (key: string) => tipKey(key, store.keyShortcuts);
 
-  // The new theme fades in over the old one.
+  // The new theme fades in over the old one. Each press steps from the theme applied when its change runs, so
+  // presses inside a fade each count; a fade that a newer press skips is not an error.
   function toggleTheme() {
-    const next =
-      THEME_CYCLE[(THEME_CYCLE.indexOf(store.theme) + 1) % THEME_CYCLE.length];
     const apply = () => {
+      const next =
+        THEME_CYCLE[
+          (THEME_CYCLE.indexOf(store.theme) + 1) % THEME_CYCLE.length
+        ];
       store.prefer({ theme: next });
       flushSync();
     };
     if (still() || !document.startViewTransition) return apply();
-    document.startViewTransition({ update: apply, types: ["theme"] });
+    document
+      .startViewTransition({ update: apply, types: ["theme"] })
+      .ready.catch(() => {});
   }
 
   // The grid and resize controls share one resolution of the saved widths.
