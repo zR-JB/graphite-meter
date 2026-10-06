@@ -12,8 +12,7 @@ const SHARED_BUFFER_FLOOR: usize = 2 << 20;
 /// Whether a socket of this process has returned the warning.
 static WARNED: AtomicBool = AtomicBool::new(false);
 
-/// Binds one of `sockets` sharing `address` through `SO_REUSEPORT` (Linux only), returning a warning for the first
-/// socket of this process whose buffers stay short.
+/// Binds one of `sockets` on `address` via `SO_REUSEPORT` (Linux only), warning once for short socket buffers.
 pub fn bind_udp(address: SocketAddr, sockets: usize) -> io::Result<(UdpSocket, Option<String>)> {
     let socket = socket2::Socket::new(
         socket2::Domain::for_address(address),

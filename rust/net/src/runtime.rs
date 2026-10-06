@@ -16,8 +16,7 @@ pub struct Pool {
 }
 
 impl Pool {
-    /// One pinned runtime per worker of the multi-thread `runtime`; none beside a single worker, whose thread
-    /// already keeps each connection on one. A current-thread runtime is refused.
+    /// One pinned runtime per worker of `runtime`, none for one worker; a current-thread runtime is refused.
     pub fn beside(runtime: &Handle) -> io::Result<Self> {
         if runtime.runtime_flavor() == RuntimeFlavor::CurrentThread {
             return Err(io::Error::new(io::ErrorKind::Unsupported, "pinned runtimes need a multi-thread runtime"));

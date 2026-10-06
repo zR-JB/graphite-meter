@@ -11,8 +11,7 @@ pub enum Kind {
     Int,
     Duration,
     String,
-    /// A value type of the binary's own, as Go's `fs.Var` registers the server's non-boolean settings:
-    /// its usage line names `value` and prints the default unquoted.
+    /// A value type of the binary's own, as with Go's `fs.Var`: usage names `value` and prints the default unquoted.
     Value,
 }
 
@@ -63,8 +62,7 @@ impl fmt::Display for FlagError {
 
 impl std::error::Error for FlagError {}
 
-/// Applies the flags `args` begins with to `target` as Go's `flag.Parse` does: `-name` or `--name`, a value inline
-/// or as the next argument, until the first argument that is no flag or after `--`.
+/// Applies leading `args` flags to `target` as Go's `flag.Parse`: `-name` or `--name`, until a non-flag or `--`.
 pub fn parse<T>(
     flags: &[Flag<T>],
     target: &mut T,
@@ -118,8 +116,7 @@ fn utf8(arg: OsString) -> Result<String, FlagError> {
         .map_err(|arg| FlagError(format!("argument {} is not valid UTF-8", quote(&arg.to_string_lossy()))))
 }
 
-/// The lines of Go's `PrintDefaults` for `flags`, sorted by name, each with its environment variable and the
-/// default `defaults` holds unless that is the zero value.
+/// Go's `PrintDefaults` lines for `flags` by name, each with its environment variable and non-zero default.
 pub fn defaults<T>(flags: &[Flag<T>], defaults: &T) -> String {
     let mut sorted: Vec<&Flag<T>> = flags.iter().collect();
     sorted.sort_by_key(|flag| flag.name);

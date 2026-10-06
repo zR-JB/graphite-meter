@@ -1,5 +1,4 @@
-//! TCP dialing by Go's algorithm: the resolver's first family first, the other after a delay, a timeout and
-//! keep-alive.
+//! TCP dialing by Go's algorithm: the resolver's first family first, the other after a delay, a timeout and keep-alive.
 use graphite_meter_proto::origin::Host;
 use std::{io, net::SocketAddr, pin::pin, time::Duration};
 use tokio::{net::TcpStream, time::Instant};
@@ -44,8 +43,7 @@ fn families(addresses: Vec<SocketAddr>) -> (Vec<SocketAddr>, Vec<SocketAddr>) {
     addresses.into_iter().partition(|address| address.is_ipv6() == first_v6)
 }
 
-/// The primaries in turn, raced by the fallbacks from the delay or the primaries' failure; with both failed, the
-/// primaries' error.
+/// The primaries in turn, raced by fallbacks after the delay or on failure; with both failed, the primaries' error.
 async fn parallel(primaries: &[SocketAddr], fallbacks: &[SocketAddr], deadline: Instant) -> io::Result<TcpStream> {
     if fallbacks.is_empty() {
         return serial(primaries, deadline).await;
@@ -93,8 +91,7 @@ fn share(left: Duration, addresses: usize) -> Duration {
     equal.max(MIN_SHARE.min(left))
 }
 
-/// Probes an idle peer after 30 s and every 15 s after, nine times; a socket that refuses the options still
-/// connects.
+/// Probes an idle peer after 30 s, then every 15 s, nine times; a socket refusing the options still connects.
 fn keep_alive(stream: &TcpStream) {
     let probes = socket2::TcpKeepalive::new().with_time(KEEP_ALIVE_IDLE);
     #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]

@@ -1,7 +1,4 @@
-//! Third-party notices: embedding at build time and printing at run time.
-//!
-//! A build script calls `embed`, which writes `legal.rs` to its output directory; including that file defines
-//! `static NOTICES: Notices`.
+//! Third-party notices: `embed` writes `legal.rs` at build time, defining `static NOTICES: Notices` for run time.
 
 #[cfg(feature = "build")]
 mod build;
@@ -59,8 +56,7 @@ impl Notices {
     }
 }
 
-/// Writes `report` and returns the exit status. Into a closed pipe that is 141 on Unix, where Go dies of SIGPIPE,
-/// and 0 elsewhere, where Go ignores the failed write.
+/// Writes `report`, returning the exit status: 141 into a closed pipe on Unix, where Go dies of SIGPIPE, else 0.
 pub fn print(mut out: impl Write, report: &[u8]) -> io::Result<u8> {
     match out.write_all(report).and_then(|()| out.flush()) {
         Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(if cfg!(unix) { 141 } else { 0 }),

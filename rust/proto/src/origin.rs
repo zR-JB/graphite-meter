@@ -1,5 +1,4 @@
-//! HTTP(S) origins. Compare them parsed, never as text: an IPv6 host prints in Rust's form, which for an
-//! IPv4-mapped address differs from a browser's `Origin` header.
+//! HTTP(S) origins, compared parsed, never as text: Rust prints IPv4-mapped IPv6 unlike a browser's `Origin`.
 
 use crate::idna;
 use serde::{Serialize, Serializer};
@@ -93,8 +92,7 @@ impl fmt::Display for OriginError {
 impl std::error::Error for OriginError {}
 
 impl Origin {
-    /// Parses an origin of at most 2048 bytes: an ASCII host, a nonzero port, no credentials, path, query or
-    /// fragment.
+    /// Parses an origin of at most 2048 bytes: an ASCII host, a nonzero port, no credentials, path, query or fragment.
     pub fn parse(text: &str) -> Result<Self, OriginError> {
         match Self::split(text)? {
             (origin, "") if text.len() <= MAX_ORIGIN_BYTES => Ok(origin),
@@ -102,8 +100,7 @@ impl Origin {
         }
     }
 
-    /// Parses an origin received in a catalogue or preflight, whose international host becomes the punycode Go
-    /// dials.
+    /// Parses an origin from a catalogue or preflight, its international host becoming the punycode Go dials.
     pub fn parse_received(text: &str) -> Result<Self, OriginError> {
         if text.is_ascii() {
             return Self::parse(text);
@@ -117,8 +114,7 @@ impl Origin {
         Self::parse(&format!("{scheme}://{host}{port}"))
     }
 
-    /// Splits a URL into its origin and the rest, from its path or query: at most 2048 bytes of printable
-    /// ASCII without `#` or `\`.
+    /// Splits a URL into origin and rest: at most 2048 bytes of printable ASCII without `#` or `\`.
     pub fn split(url: &str) -> Result<(Self, &str), OriginError> {
         let (scheme, rest) = url.split_once("://").ok_or(OriginError)?;
         let scheme = [Scheme::Http, Scheme::Https]

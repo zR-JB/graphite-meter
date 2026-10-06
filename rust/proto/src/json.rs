@@ -3,8 +3,7 @@
 use serde::de::{DeserializeOwned, Error as _};
 use std::collections::HashSet;
 
-/// Decodes a JSON object, refusing invalid UTF-8, an escape that is no character and a repeated member name
-/// at any depth; unknown members are skipped unconverted.
+/// Decodes a JSON object, refusing invalid UTF-8, bad escapes and repeated names at any depth; skips unknown members.
 pub fn decode<T: DeserializeOwned>(data: &[u8]) -> Result<T, serde_json::Error> {
     let text = std::str::from_utf8(data).map_err(serde_json::Error::custom)?;
     check(text)?;

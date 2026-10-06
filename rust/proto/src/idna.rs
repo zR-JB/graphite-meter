@@ -4,8 +4,7 @@ const BASE: u32 = 36;
 const T_MIN: u32 = 1;
 const T_MAX: u32 = 26;
 
-/// `host` with each international label in punycode, as Go's IDNA lookup converts it; `None` for a label holding
-/// a character IDNA would map to another, a combining mark, mixed writing directions or misplaced hyphens.
+/// `host` with international labels in punycode as Go's IDNA lookup; `None` for labels IDNA would refuse.
 pub fn to_ascii(host: &str) -> Option<String> {
     let host = host.replace(['\u{3002}', '\u{ff0e}', '\u{ff61}'], ".");
     let labels: Vec<String> = host.split('.').map(label).collect::<Option<_>>()?;
@@ -24,8 +23,7 @@ fn label(text: &str) -> Option<String> {
     (label.len() <= 63).then_some(label)
 }
 
-/// A label beside international ones: lowercase letters, digits and hyphens, placed as in any other label
-/// unless it is punycode already.
+/// A label beside international ones: lowercase letters, digits and hyphens, unless already punycode.
 fn ascii_label(text: &str) -> Option<String> {
     let label = text.to_ascii_lowercase();
     let ldh_byte = |byte: u8| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-';

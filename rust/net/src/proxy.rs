@@ -113,8 +113,7 @@ impl Proxy {
         proxy
     }
 
-    /// The proxy `target` goes through, if any; under CGI a cleartext target refuses `HTTP_PROXY` before
-    /// loopback and `NO_PROXY` apply.
+    /// The proxy `target` goes through, if any; under CGI a cleartext target refuses `HTTP_PROXY` first.
     pub fn route(&self, target: &Origin) -> Result<Option<&Upstream>, UnusableProxy> {
         let (setting, bypassable) = match target.scheme {
             Scheme::Https => (&self.https, true),

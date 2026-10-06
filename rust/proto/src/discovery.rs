@@ -104,8 +104,7 @@ pub struct LatencyTarget {
 }
 
 impl Preflight {
-    /// Reads a preflight; invalid metadata, an invalid stage limit or any invalid known target refuses it whole,
-    /// and a target of unknown transport or protocol is skipped.
+    /// Reads a preflight; invalid metadata, stage limit or known target refuses it; unknown transports are skipped.
     pub fn decode(data: &[u8]) -> Result<Self, serde_json::Error> {
         let preflight: Self = json::decode(data)?;
         let Self { server, engine_version, generation, capabilities } = &preflight;

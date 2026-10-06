@@ -54,8 +54,7 @@ impl fmt::Debug for RequestForm {
 #[derive(Debug)]
 pub enum ConnectError {
     Proxy(UnusableProxy),
-    /// The target or its proxy resolved to nothing or accepted no connection within the dial timeout, or the
-    /// proxy did not finish its handshake within its bound.
+    /// The target or proxy resolved or connected nowhere in the dial timeout, or the proxy handshake overran its bound.
     Unreachable(io::Error),
     /// The proxy refused the connection or broke its protocol.
     Refused(String),
@@ -204,8 +203,7 @@ async fn tunnel(
     Ok(stream)
 }
 
-/// A response head ending in an empty line, with or without CRs, read byte by byte so the tunnel's first bytes
-/// stay unread.
+/// A response head ending in an empty line, CRs optional, read byte by byte so the tunnel's first bytes stay unread.
 async fn read_head(stream: &mut Box<dyn Stream>) -> Result<String, ConnectError> {
     let mut head = Vec::new();
     while !(head.ends_with(b"\n\n") || head.ends_with(b"\n\r\n")) {

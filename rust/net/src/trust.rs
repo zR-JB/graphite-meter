@@ -35,8 +35,7 @@ const DIRECTORIES: &[&str] = &["/etc/ssl/certs", "/etc/pki/tls/certs"];
 
 type Reason = Arc<dyn Error + Send + Sync>;
 
-/// The verifier for `verify`; the trusted one loads on a blocking thread and is kept once a load finishes, and a
-/// store that cannot be read fails each connection it would verify, not the process.
+/// The verifier for `verify`; the trusted one loads once off-thread; an unreadable store fails connections only.
 pub(crate) async fn verifier(verify: Verify) -> Result<Arc<dyn ServerCertVerifier>, tokio::task::JoinError> {
     static TRUSTED: tokio::sync::OnceCell<Arc<dyn ServerCertVerifier>> = tokio::sync::OnceCell::const_new();
     if verify == Verify::Insecure {

@@ -136,8 +136,7 @@ impl ServerCatalog {
         valid.then_some(()).ok_or(CatalogError::Selection)
     }
 
-    /// Reads a received catalogue: an invalid entry other than `self` is left out alone, and the default
-    /// selection drops it, falling back to `self` when nothing is left.
+    /// Reads a received catalogue, dropping invalid entries but `self`; an emptied selection falls back to `self`.
     pub fn decode(data: &[u8]) -> Result<Received, serde_json::Error> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
@@ -173,8 +172,7 @@ impl ServerCatalog {
 }
 
 impl ServerEntry {
-    /// Whether discovery served from `served` for this entry may advertise every target of `preflight`: any port
-    /// on the served host, or an exact additional origin.
+    /// Whether this entry's discovery from `served` may list all `preflight` targets: served-host ports, exact origins.
     pub fn approves(&self, served: &Origin, preflight: &Preflight) -> bool {
         preflight.base_urls().all(|base| match base {
             BaseUrl::Served => true,
