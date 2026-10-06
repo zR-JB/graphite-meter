@@ -17,7 +17,6 @@ pub mod measure {
 pub mod run {
     pub mod coordinator;
     pub mod engine;
-    pub mod participant;
     pub mod prepare;
     pub mod probe;
     pub mod select;

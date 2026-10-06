@@ -1,15 +1,20 @@
 //! A run: stages over the prepared participants and engine, membership between stages, idle-round-trip warmups, events.
 use super::{
-    engine::{Decision, Engine, Input, Member, Probe, StagePlan, Tick, lateness, warmup},
-    participant::Participant,
+    engine::{Decision, Engine, Input, Member, Probe, Sample, StagePlan, Tick, lateness, stagger, warmup},
     prepare::{Prepared, ServerPath},
+    probe::Prober,
     select,
+    upload::UploadSession,
 };
 use crate::{
     config::Config,
     events::{Event, Events},
-    measure::latency::ProbeOutcome,
-    model::{Failure, Outcome, Scope, ServerFailure, Stage, StageResult},
+    measure::{
+        aggregate::{Reading, Receiver},
+        latency::ProbeOutcome,
+    },
+    model::{Dir, Direction, Failure, LaneHealth, Outcome, Scope, ServerFailure, Stage, StageResult},
+    net::{Client, Lanes, Work, topology},
 };
 use futures_util::future::join_all;
 use graphite_meter_proto::{catalog::ServerId, reason::FailureReason};
@@ -17,8 +22,8 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
     time::{Duration, Instant},
 };
-use tokio::time::sleep_until;
-use tokio_util::sync::CancellationToken;
+use tokio::{task::JoinHandle, time::sleep_until};
+use tokio_util::sync::{CancellationToken, DropGuard};
 
 /// How long a stage's upload sessions may take to finish, and a stopped stage's.
 const FINISH: Duration = Duration::from_secs(10);
@@ -301,6 +306,128 @@ impl Live<'_> {
         }
         if let Some(rates) = tick.live {
             events.send(Event::Sample { at, rates, recovering: tick.recovering });
+        }
+    }
+}
+
+/// One server's share of a stage: its download lanes, upload session and prober; dropping it ends them.
+pub struct Participant {
+    pub server: ServerId,
+    down: Option<Lanes>,
+    up: Option<UploadSession>,
+    prober: Option<Prober>,
+    /// The upload session finishing after the window closed.
+    finishing: Option<JoinHandle<()>>,
+    _departs: DropGuard,
+}
+
+impl Participant {
+    /// Starts `server`'s work for `plan` under `token`; `replaced` is its upload replacement for the run.
+    pub async fn open(
+        client: &Client,
+        server: &ServerPath,
+        plan: &StagePlan,
+        config: &Config,
+        replaced: Arc<AtomicBool>,
+        token: CancellationToken,
+    ) -> Result<Self, Failure> {
+        let departs = token.clone().drop_guard();
+        let paths = server.path.as_ref().map_err(Clone::clone)?;
+        let member = plan.members.iter().find(|member| member.server == server.id);
+        let warmup = member.map_or(Duration::ZERO, |member| member.warmup);
+        let path = &paths.throughput;
+        let lanes = config.lanes(path.protocol, path.transport);
+        let plans = topology(path, plan.stage, lanes);
+        let spacing = |direction| stagger(warmup, lanes[direction]);
+        let probed = plan.latency.zip(paths.latency.clone());
+        let prober =
+            probed.map(|(cadence, path)| Prober::spawn(client.clone(), path, plan.stage, cadence, token.child_token()));
+        let down = plan.stage.moves(Direction::Down).then(|| {
+            Lanes::start(client, plans.clone(), Work::Download, spacing(Direction::Down), token.child_token())
+        });
+        let up = match plan.stage.moves(Direction::Up) {
+            true => {
+                let child = token.child_token();
+                let session =
+                    UploadSession::open(client, path, paths.control, plans, spacing(Direction::Up), replaced, child);
+                Some(session.await.map_err(|fault| fault.failure())?)
+            }
+            false => None,
+        };
+        Ok(Self {
+            server: server.id.clone(),
+            down,
+            up,
+            prober,
+            finishing: None,
+            _departs: departs,
+        })
+    }
+
+    /// Its local counters and lane health now; checkpoints come apart.
+    pub fn local(&mut self) -> Sample {
+        let reading = Reading {
+            server: self.server.clone(),
+            down: self.down.as_ref().map(Lanes::bytes),
+            up: None,
+            fed: self.up.as_ref().and_then(UploadSession::fed),
+        };
+        let ready = self.down.as_ref().is_none_or(Lanes::ready) && self.up.as_ref().is_none_or(UploadSession::ready);
+        let lanes = Dir {
+            down: self.down.as_mut().map_or(LaneHealth::Ok, Lanes::health),
+            up: self.up.as_mut().map_or(LaneHealth::Ok, UploadSession::health),
+        };
+        Sample { reading, ready, missed: None, lanes }
+    }
+
+    /// A fresh receiver checkpoint within `budget`, when it uploads.
+    pub async fn checkpoint(&self, budget: Duration) -> Option<Result<Receiver, Failure>> {
+        let up = self.up.as_ref()?;
+        Some(up.checkpoint(budget).await.map_err(|fault| fault.failure()))
+    }
+
+    /// Moves what its prober observed into `into`.
+    pub fn probes(&mut self, into: &mut Vec<(ServerId, Probe)>) {
+        if let Some(prober) = &mut self.prober {
+            into.extend(prober.drain().map(|probe| (self.server.clone(), probe)));
+        }
+    }
+
+    /// The measured window opened and ends at `end`.
+    pub fn opened(&self, end: Instant) {
+        if let Some(prober) = &self.prober {
+            prober.open(end);
+        }
+    }
+
+    /// The window closed: downloads stop, the upload session finishes within `budget` and the prober drains.
+    pub fn close(&mut self, budget: Duration) {
+        self.down = None;
+        if let Some(prober) = &self.prober {
+            prober.close();
+        }
+        if let Some(up) = self.up.take() {
+            self.finishing = Some(tokio::spawn(up.finish(budget)));
+        }
+    }
+
+    /// Its latency population failed: probing ends.
+    pub fn stop_probing(&mut self) {
+        self.prober = None;
+    }
+
+    /// Leaves the stage: its work ends and its upload receiver is asked to finalize.
+    pub fn depart(mut self) {
+        if let Some(up) = self.up.take() {
+            up.depart();
+        }
+    }
+
+    /// Closes it if the window did not, and waits up to `budget` for its upload session to finish.
+    pub async fn finish(mut self, budget: Duration) {
+        self.close(budget);
+        if let Some(finishing) = self.finishing.take() {
+            let _ = tokio::time::timeout(budget, finishing).await;
         }
     }
 }
