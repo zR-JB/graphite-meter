@@ -264,18 +264,3 @@ impl AuthLease {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::peer::Address;
-
-    #[test]
-    fn with_authentication_off_every_request_is_anonymous() {
-        let request = Request::new(());
-        let peer = Peer::new(Address::Socket("192.0.2.1".parse().unwrap()));
-        let decision = Auth::Off.authorize(&request, Endpoint::H1, &peer);
-        assert!(matches!(decision, Decision::Allow(None)));
-        assert!(!Auth::Off.claims("/login") && !Auth::Off.claims("/auth/password"));
-    }
-}

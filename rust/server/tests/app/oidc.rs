@@ -316,6 +316,7 @@ async fn hybrid_keeps_the_password_while_the_provider_is_down_and_discovers_it_i
     let html = page().await;
     assert!(html.contains("<button type=\"submit\" disabled>Continue with Id</button>"));
     assert!(html.contains("<p class=\"notice\">Id is unavailable right now.</p>") && html.contains("current-password"));
+    assert!(html.contains("<div class=\"separator\">or</div>"));
     assert_eq!(location(&start(&app, "192.0.2.1", "").await), "/login?error=provider");
     let html = text(tls(&app, empty(public("GET", "/login?error=provider"))).await).await;
     assert!(html.contains("Id is unavailable right now. Sign in with the operator password.</p>"));

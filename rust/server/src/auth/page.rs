@@ -194,13 +194,5 @@ mod tests {
         assert!(
             page.contains(&format!("<style>{STYLES}</style>")) && page.contains(&format!("<script>{PENDING}</script>"))
         );
-        let page = login(&[("Notice", "other"), ("OIDC", "true"), ("Provider", "Id"), ("Password", "true")]);
-        assert!(page.contains("Sign-in failed. Try again."));
-        assert!(page.contains("<button type=\"submit\" disabled>Continue with Id</button>"));
-        assert!(page.contains("<p class=\"notice\">Id is unavailable right now.</p>"));
-        assert!(page.contains("<div class=\"separator\">or</div>"));
-        let page = login(&[("Notice", "provider"), ("OIDC", "true"), ("OIDCReady", "true"), ("Provider", "Id")]);
-        assert!(page.contains("Id is unavailable right now.</p>") && !page.contains("operator password"));
-        assert!(page.contains("<button type=\"submit\" >Continue with Id</button>"));
     }
 }

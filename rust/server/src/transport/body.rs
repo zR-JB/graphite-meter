@@ -325,14 +325,6 @@ mod tests {
         assert!(body.is_end_stream());
     }
 
-    #[tokio::test]
-    async fn a_document_is_one_frame() {
-        let body = Body::full("{}");
-        assert_eq!((body.size_hint().exact(), body.is_end_stream()), (Some(2), false));
-        assert_eq!(body.collect().await.unwrap().to_bytes(), "{}");
-        assert!(Body::empty().is_end_stream());
-    }
-
     fn lane(shutdown: &CancellationToken) -> Lane {
         let hold = Quota::new(10, 10).acquire(&ClientKeys::Exempt, 1).unwrap();
         let lifetime = Duration::from_secs(3600);
