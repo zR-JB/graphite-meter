@@ -116,7 +116,7 @@ async fn connect_answers_other_than_200_are_refused() {
         ("meter.test:443", oversized, "proxy sent an oversized CONNECT response"),
     ] {
         let (address, proxy) = answering(response).await;
-        let connector = connector("HTTPS_PROXY", &address.to_string(), Verify::Trusted);
+        let connector = connector("HTTPS_PROXY", &address.to_string(), Verify::trusted());
         let refused = connect(&connector, &format!("https://{authority}"))
             .await
             .err()
@@ -135,7 +135,7 @@ async fn a_proxy_that_accepts_and_stays_silent_fails_after_a_minute() {
             drop(stream);
         })
         .await;
-        let connector = connector("HTTPS_PROXY", &format!("{scheme}://{address}"), Verify::Trusted);
+        let connector = connector("HTTPS_PROXY", &format!("{scheme}://{address}"), Verify::trusted());
         let started = Instant::now();
         let refused = connect(&connector, "https://meter.test").await.err().unwrap();
         let ConnectError::Unreachable(error) = &refused else {
@@ -154,7 +154,7 @@ async fn a_proxy_that_accepts_and_stays_silent_fails_after_a_minute() {
 #[tokio::test]
 async fn cleartext_goes_to_an_http_proxy_in_absolute_form_carrying_its_credentials() {
     let (address, proxy) = peer(|mut stream| async move { read_head(&mut stream).await }).await;
-    let connector = connector("http_proxy", &format!("user:secret@{address}"), Verify::Trusted);
+    let connector = connector("http_proxy", &format!("user:secret@{address}"), Verify::trusted());
     let mut connection = connect(&connector, "http://meter.test:8080").await.unwrap();
     let authorization = Some("Basic dXNlcjpzZWNyZXQ=".to_owned());
     assert_eq!((connection.alpn, &connection.form), (None, &RequestForm::Absolute { authorization }));
@@ -203,7 +203,7 @@ async fn socks5h_sends_addresses_as_ip_and_names_as_names_and_fails_closed() {
         ("http://meter.test", [&[3, 10][..], b"meter.test", &[0, 80][..]].concat()),
     ] {
         let (proxy, sent) = socks(0, 0).await;
-        connect(&connector("HTTP_PROXY", &format!("socks5h://{proxy}"), Verify::Trusted), target)
+        connect(&connector("HTTP_PROXY", &format!("socks5h://{proxy}"), Verify::trusted()), target)
             .await
             .unwrap();
         assert_eq!(sent.await.unwrap(), [&[5, 1, 0, 5, 1, 0][..], &address[..]].concat(), "{target}");
@@ -214,7 +214,7 @@ async fn socks5h_sends_addresses_as_ip_and_names_as_names_and_fails_closed() {
         (0, 5, "unknown error connection refused"),
     ] {
         let (proxy, _) = socks(method, status).await;
-        let connector = connector("HTTP_PROXY", &format!("socks5://{proxy}"), Verify::Trusted);
+        let connector = connector("HTTP_PROXY", &format!("socks5://{proxy}"), Verify::trusted());
         let refused = connect(&connector, "http://meter.test").await.err().unwrap();
         assert_eq!(refused.to_string(), format!("socks connect: {reason}"));
     }

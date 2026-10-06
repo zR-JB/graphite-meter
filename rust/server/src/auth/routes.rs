@@ -59,7 +59,7 @@ pub(super) async fn handle<B: http_body::Body>(
     let lease = peer.auth().filter(|lease| lease.via() == &Via::Cookie);
     let from_public = request.headers().get(header::ORIGIN) == Some(&auth.policy.origin);
     let oidc = auth.oidc.as_ref();
-    let mut answer = match (&method, path.as_str(), &auth.password, oidc) {
+    let mut answer = match (&method, path.as_str(), &auth.verifier, oidc) {
         (&Method::GET, "/login", ..) => login_page(auth, &request),
         (&Method::POST, "/auth/password", Some(password), _) => sign_in(auth, password, request, peer).await,
         (&Method::POST, "/auth/oidc/start", _, Some(provider)) => oidc::start(auth, provider, request, peer).await,
@@ -133,7 +133,7 @@ fn login_page<B>(auth: &Enabled, request: &Request<B>) -> Response<Body> {
             ("Challenge", challenge),
             ("Notice", notice),
             ("Status", status),
-            ("Password", flag(auth.password.is_some())),
+            ("Password", flag(auth.verifier.is_some())),
             ("OIDC", flag(oidc.is_some())),
             ("OIDCReady", flag(oidc.and_then(Oidc::provider).is_some())),
         ],

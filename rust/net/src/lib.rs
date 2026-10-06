@@ -13,4 +13,5 @@ pub use crypto::{Verify, client_config, provider};
 pub use dial::resolve;
 pub use proxy::{Proxy, UnusableProxy, Upstream};
 pub use runtime::Pool;
+pub use trust::Trust;
 pub use udp::bind_udp;

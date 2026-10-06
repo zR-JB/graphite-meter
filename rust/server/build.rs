@@ -15,8 +15,8 @@ fn embed() -> Result<(), String> {
     println!("cargo:rerun-if-env-changed=GM_RUST_ASSET_DIR");
     let configured = env::var_os("GM_RUST_ASSET_DIR");
     let reviewed = graphite_meter_legal::embed(configured.is_some())?;
-    let output = env::var_os("OUT_DIR").ok_or("missing OUT_DIR")?;
-    let output = Path::new(&output);
+    let output = graphite_meter_legal::out_dir()?;
+    let output = output.as_path();
     let mut manifest = String::from("static EMBEDDED: &[Asset] = &[\n");
     if let Some(configured) = configured {
         if configured.is_empty() {

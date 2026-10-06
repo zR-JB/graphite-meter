@@ -12,7 +12,12 @@ impl Scratch {
     pub fn new() -> io::Result<Self> {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let name = format!("graphite-meter-scratch-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
-        let path = std::env::temp_dir().join(name);
+        // A temporary directory that climbs with `..` is refused, so scratch files stay below it.
+        let base = std::env::temp_dir().to_string_lossy().into_owned();
+        if base.contains("..") {
+            return Err(io::Error::other(format!("the temporary directory {base} must not contain ..")));
+        }
+        let path = Path::new(&base).join(name);
         std::fs::create_dir_all(&path)?;
         Ok(Self(path))
     }

@@ -178,24 +178,44 @@ mod tests {
         (STANDARD_NO_PAD.decode(fields[4]).unwrap(), STANDARD_NO_PAD.decode(fields[5]).unwrap())
     }
 
+    /// `api/password.testvectors.json`, which the Go server's hashes and refusals also follow.
+    fn vectors() -> serde_json::Value {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../api/password.testvectors.json");
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    /// A case's bytes: `hex`, repeated `repeat` times.
+    fn bytes(case: &serde_json::Value) -> Vec<u8> {
+        let hex = case["hex"].as_str().unwrap();
+        let once: Vec<u8> = (0..hex.len())
+            .step_by(2)
+            .map(|at| u8::from_str_radix(&hex[at..at + 2], 16).unwrap())
+            .collect();
+        once.repeat(case["repeat"].as_u64().unwrap_or(1) as usize)
+    }
+
     #[test]
     fn hashes_match_the_go_servers() {
-        let go = "$argon2id$v=19$m=19456,t=2,p=1$OT2po7nOdP+21BKX5CuZQw$9kVgfSWvlFy31939zUCVY62fHIuSqC8RwL67EpQ8qy8";
-        let (salt, expected) = key(go);
-        assert_eq!(derive(b"correct horse", &salt).unwrap().to_vec(), expected);
-        let phc = hash(b"correct horse").unwrap();
+        let vectors = vectors();
+        let secret = vectors["password"].as_str().unwrap().as_bytes();
+        let (salt, expected) = key(vectors["hash"].as_str().unwrap());
+        assert_eq!(derive(secret, &salt).unwrap().to_vec(), expected);
+        let phc = hash(secret).unwrap();
         let (salt, expected) = key(&phc);
-        assert_eq!((salt.len(), derive(b"correct horse", &salt).unwrap().to_vec()), (16, expected));
-        assert_ne!(hash(b"correct horse").unwrap(), phc, "every hash has its own salt");
-        assert_eq!(hash(b""), Err("password must contain 1 to 1024 bytes"));
-        assert_eq!(hash(&[b'x'; 1025]), Err("password must contain 1 to 1024 bytes"));
-        assert_eq!(hash(b"a\nb"), Err("password must not contain line breaks"));
-        assert!(hash(&[0xff, 0xfe]).is_ok(), "bytes need not be UTF-8");
+        assert_eq!((salt.len(), derive(secret, &salt).unwrap().to_vec()), (16, expected));
+        assert_ne!(hash(secret).unwrap(), phc, "every hash has its own salt");
+        for case in vectors["refused"].as_array().unwrap() {
+            assert_eq!(hash(&bytes(case)), Err(case["error"].as_str().unwrap()), "{case}");
+        }
+        for case in vectors["accepted"].as_array().unwrap() {
+            assert!(hash(&bytes(case)).is_ok(), "bytes need not be UTF-8: {case}");
+        }
     }
 
     #[test]
     fn a_device_cookie_is_known_under_its_password_until_it_expires_and_passes_the_shared_ceiling() {
-        let go = "$argon2id$v=19$m=19456,t=2,p=1$OT2po7nOdP+21BKX5CuZQw$9kVgfSWvlFy31939zUCVY62fHIuSqC8RwL67EpQ8qy8";
+        let vectors = vectors();
+        let go = vectors["hash"].as_str().unwrap();
         let password = Password::new(go).unwrap();
         let (cookie, expires) = password.device(SystemTime::now());
         assert!(expires > SystemTime::now() + DEVICE_LIFETIME - Duration::from_secs(1));

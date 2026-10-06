@@ -68,12 +68,17 @@ pub(super) struct Oidc {
 }
 
 impl Oidc {
-    pub fn new(public: &Origin, settings: &config::Oidc, secret: Zeroizing<String>) -> Result<Self, String> {
+    pub fn new(
+        public: &Origin,
+        settings: &config::Oidc,
+        secret: Zeroizing<String>,
+        outbound: &config::Outbound,
+    ) -> Result<Self, String> {
         Ok(Self {
             settings: settings.clone(),
             redirect: format!("{public}/auth/oidc/callback"),
             secret,
-            client: Client::new()?,
+            client: Client::new(outbound)?,
             provider: OnceLock::new(),
             transactions: Mutex::default(),
             starts: Attempts::new("oidc-start", 10),

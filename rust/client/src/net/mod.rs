@@ -84,8 +84,12 @@ impl Request {
 impl Client {
     /// A client through the environment's proxies; `insecure` skips certificate checks and never sends a grant.
     pub fn new(insecure: bool, runtimes: Arc<Pool>) -> Self {
-        let verify = if insecure { Verify::Insecure } else { Verify::Trusted };
-        let connector = Connector::new(Proxy::from_env(), verify);
+        Self::with(if insecure { Verify::Insecure } else { Verify::trusted() }, Proxy::from_env(), runtimes)
+    }
+
+    /// A client through `proxy`, checking certificates as `verify` says; an insecure one never sends a grant.
+    pub fn with(verify: Verify, proxy: Proxy, runtimes: Arc<Pool>) -> Self {
+        let connector = Connector::new(proxy, verify.clone());
         let shared = Arc::new(Shared { connector, verify, grants: Mutex::default(), runtimes });
         Self { shared, connections: Arc::default() }
     }
@@ -168,7 +172,7 @@ impl Client {
         let grants = lock(&self.shared.grants);
         let token = grants.tokens.get(grants.issuer(&request.origin));
         if let Some(token) =
-            token.filter(|_| self.shared.verify == Verify::Trusted && request.origin.scheme == Scheme::Https)
+            token.filter(|_| matches!(self.shared.verify, Verify::Trusted(_)) && request.origin.scheme == Scheme::Https)
         {
             head = head.header(header::AUTHORIZATION, token.clone());
         }

@@ -1,5 +1,5 @@
 //! The one crypto provider, ring, and the client TLS configurations built on it.
-use crate::trust;
+use crate::trust::{self, Trust};
 use graphite_meter_proto::discovery::Protocol;
 use rustls::{
     CipherSuite::{
@@ -48,20 +48,40 @@ fn aes_hardware() -> bool {
 }
 
 /// How a client checks server certificates.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum Verify {
-    /// Against the trust store, which the first such configuration loads.
-    Trusted,
+    /// Against these roots, which their first configuration loads.
+    Trusted(Arc<Trust>),
     /// Not at all; handshake signatures are still checked.
     Insecure,
 }
 
+impl Verify {
+    /// Against the process's roots, which `SSL_CERT_FILE` and `SSL_CERT_DIR` adjust.
+    pub fn trusted() -> Self {
+        Self::Trusted(Trust::system())
+    }
+}
+
+impl PartialEq for Verify {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Trusted(one), Self::Trusted(another)) => Arc::ptr_eq(one, another),
+            (one, another) => std::mem::discriminant(one) == std::mem::discriminant(another),
+        }
+    }
+}
+
 /// The client configuration for `verify` offering `alpn`, built once so its connections share one session cache.
-pub async fn client_config(verify: Verify, alpn: Option<Protocol>) -> Arc<ClientConfig> {
-    static CONFIGS: [[OnceCell<Arc<ClientConfig>>; 5]; 2] = [const { [const { OnceCell::const_new() }; 5] }; 2];
+pub async fn client_config(verify: &Verify, alpn: Option<Protocol>) -> Arc<ClientConfig> {
+    static INSECURE: [OnceCell<Arc<ClientConfig>>; 5] = [const { OnceCell::const_new() }; 5];
     let build = || async { trust::verifier(verify).await.map(|verifier| configure(verifier, alpn)) };
     let index = alpn.map_or(0, |protocol| protocol as usize + 1);
-    match CONFIGS[verify as usize][index].get_or_try_init(build).await {
+    let configs = match verify {
+        Verify::Trusted(trust) => &trust.configs,
+        Verify::Insecure => &INSECURE,
+    };
+    match configs[index].get_or_try_init(build).await {
         Ok(config) => config.clone(),
         // A trust load that did not finish refuses this connection; the next call loads again.
         Err(cut_short) => configure(trust::refusing(cut_short), alpn),

@@ -47,15 +47,17 @@ fn collect(directory: &Path, prefix: &str, paths: &mut Vec<(String, PathBuf)>) -
         let name = entry.file_name();
         let safe_byte = |byte: &u8| byte.is_ascii_alphanumeric() || b"-_.".contains(byte);
         let name = match name.to_str() {
-            Some(name) if !name.starts_with('.') && name.as_bytes().iter().all(safe_byte) => name,
+            Some(name) if !name.starts_with('.') && !name.contains("..") && name.as_bytes().iter().all(safe_byte) => {
+                name
+            }
             _ => return Err(format!("unsafe browser asset name: {prefix}{name:?}")),
         };
-        let relative = format!("{prefix}{name}");
-        let kind = entry.file_type().map_err(failed(&entry.path()))?;
+        let (relative, path) = (format!("{prefix}{name}"), directory.join(name));
+        let kind = entry.file_type().map_err(failed(&path))?;
         if kind.is_dir() {
-            collect(&entry.path(), &format!("{relative}/"), paths)?;
+            collect(&path, &format!("{relative}/"), paths)?;
         } else if kind.is_file() {
-            paths.push((relative, entry.path()));
+            paths.push((relative, path));
         } else {
             return Err(format!("browser asset is a symlink or special file: {relative}"));
         }

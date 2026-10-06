@@ -121,7 +121,7 @@ impl Connector {
         if !tls {
             return Ok(Connection { stream, alpn: None, form });
         }
-        let config = client_config(self.verify, alpn).await;
+        let config = client_config(&self.verify, alpn).await;
         let stream = secure(&TlsConnector::from(config), &target.host, stream).await?;
         let alpn = stream.get_ref().1.alpn_protocol().map(<[u8]>::to_vec);
         Ok(Connection { stream: Box::new(stream), alpn, form })
@@ -144,7 +144,7 @@ impl Connector {
         };
         let stream: Box<dyn Stream> = match origin.scheme {
             Scheme::Https => {
-                let hop = TlsConnector::from(client_config(self.verify, None).await);
+                let hop = TlsConnector::from(client_config(&self.verify, None).await);
                 Box::new(secure(&hop, &origin.host, stream).await?)
             }
             Scheme::Http => Box::new(stream),

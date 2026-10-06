@@ -1,12 +1,12 @@
-//! The network layer against canned peers, for what a real server never does, and under the process's environment:
-//! proxies, the trust store and grants over verified TLS.
+//! The network layer against canned peers, for what a real server never does, and under chosen proxy and trust
+//! settings: proxies, the trust store and grants over verified TLS.
 use graphite_meter_client::{
     config::{Config, PathChoice},
     model::Stage,
     net::{Client, Fault, ReadBuffer, Request, ThroughputPath},
     run::{prepare::prepare, upload::UploadSession},
 };
-use graphite_meter_net::{ConnectError, Pool};
+use graphite_meter_net::{ConnectError, Pool, Proxy, Trust, Verify};
 use graphite_meter_proto::{
     discovery::{Protocol, ThroughputTransport},
     json,
@@ -17,9 +17,9 @@ use graphite_meter_testkit::{Identity, Scratch};
 use http::Method;
 use serde_json::Value;
 use std::{
-    ffi::OsStr,
+    ffi::OsString,
     net::SocketAddr,
-    process::Command,
+    path::Path,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -33,11 +33,6 @@ use tokio::{
 };
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
-
-/// Set in a child process that runs one test with the environment its parent chose.
-const CHILD: &str = "GRAPHITE_METER_TEST_CHILD";
-/// The private key of the self-signed server a child trusts.
-const KEY: &str = "GRAPHITE_METER_TEST_KEY";
 
 fn client(insecure: bool) -> Client {
     Client::new(insecure, Arc::new(Pool::inline()))
@@ -126,20 +121,15 @@ async fn an_abandoned_quic_dial_stops_sending() {
     assert!(resent.is_err(), "the abandoned dial kept sending");
 }
 
-/// Runs `test` again in a child process with only `variables` of the proxy and trust settings set.
-async fn rerun(test: &str, variables: &[(&str, &OsStr)]) {
-    let mut command = Command::new(std::env::current_exe().unwrap());
-    command.args([test, "--exact", "--nocapture"]).env(CHILD, "1");
-    for name in ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR"] {
-        command.env_remove(name).env_remove(name.to_ascii_lowercase());
-    }
-    command.envs(variables.iter().copied());
-    let status = tokio::task::spawn_blocking(move || command.status()).await.unwrap();
-    assert!(status.unwrap().success(), "{test} failed in its child process");
-}
-
-fn child() -> bool {
-    std::env::var_os(CHILD).is_some()
+/// A verifying client trusting only the roots of `file` and `directory`, as their variables would name them.
+fn trusting(file: &Path, directory: &Path) -> Client {
+    let (file, directory) = (file.as_os_str().to_owned(), directory.as_os_str().to_owned());
+    let trust = Trust::from_lookup(|name| match name {
+        "SSL_CERT_FILE" => Some(file.clone()),
+        "SSL_CERT_DIR" => Some(directory.clone()),
+        _ => None::<OsString>,
+    });
+    Client::with(Verify::Trusted(Arc::new(trust)), Proxy::default(), Arc::new(Pool::inline()))
 }
 
 fn acceptor(identity: &Identity) -> TlsAcceptor {
@@ -148,40 +138,34 @@ fn acceptor(identity: &Identity) -> TlsAcceptor {
 
 #[tokio::test]
 async fn all_proxy_is_not_read() {
-    if !child() {
-        let (listener, address) = local().await;
-        let mut heads = peer(listener, None, |_, _| Some(ok("{}")));
-        let proxy = format!("http://{address}");
-        rerun("all_proxy_is_not_read", &[("ALL_PROXY", proxy.as_ref()), ("all_proxy", proxy.as_ref())]).await;
-        assert!(heads.try_recv().is_err(), "nothing went through ALL_PROXY");
-        rerun("all_proxy_is_not_read", &[("HTTP_PROXY", proxy.as_ref())]).await;
-        let (_, head) = heads.recv().await.unwrap();
-        assert!(head.starts_with("GET http://meter.invalid/probe HTTP/1.1\r\n"), "{head}");
-        return;
-    }
-    let target = Origin::parse("http://meter.invalid").unwrap();
-    let probed = probe(&client(false), Protocol::Http1, &target).await;
-    match std::env::var_os("HTTP_PROXY") {
-        Some(_) => assert!(probed.is_ok(), "{probed:?}"),
-        None => assert!(matches!(probed, Err(Fault::Connect(ConnectError::Unreachable(_)))), "{probed:?}"),
-    }
+    let (listener, address) = local().await;
+    let mut heads = peer(listener, None, |_, _| Some(ok("{}")));
+    let (proxy, target) = (format!("http://{address}"), Origin::parse("http://meter.invalid").unwrap());
+    let through = |names: &'static [&'static str]| {
+        let proxy = Proxy::from_lookup(|name| names.contains(&name).then(|| proxy.clone()));
+        Client::with(Verify::trusted(), proxy, Arc::new(Pool::inline()))
+    };
+    let probed = probe(&through(&["ALL_PROXY", "all_proxy"]), Protocol::Http1, &target).await;
+    assert!(matches!(probed, Err(Fault::Connect(ConnectError::Unreachable(_)))), "{probed:?}");
+    assert!(heads.try_recv().is_err(), "nothing went through ALL_PROXY");
+    probe(&through(&["HTTP_PROXY"]), Protocol::Http1, &target)
+        .await
+        .unwrap();
+    let (_, head) = heads.recv().await.unwrap();
+    assert!(head.starts_with("GET http://meter.invalid/probe HTTP/1.1\r\n"), "{head}");
 }
 
 #[tokio::test]
 async fn an_empty_trust_store_fails_only_tls_connections() {
-    if !child() {
-        let scratch = Scratch::new().unwrap();
-        let (file, directory) = (scratch.file("empty.pem", "").unwrap(), scratch.dir("none").unwrap());
-        let variables = [("SSL_CERT_FILE", file.as_os_str()), ("SSL_CERT_DIR", directory.as_os_str())];
-        return rerun("an_empty_trust_store_fails_only_tls_connections", &variables).await;
-    }
+    let scratch = Scratch::new().unwrap();
+    let verified = trusting(&scratch.file("empty.pem", "").unwrap(), &scratch.dir("none").unwrap());
     let ((plain, cleartext), (tls, secure)) = (local().await, local().await);
     let identity = Identity::generate().unwrap();
     let (_plain, _tls) = (
         peer(plain, None, |_, _| Some(ok("{}"))),
         peer(tls, Some(acceptor(&identity)), |_, _| Some(ok("{}"))),
     );
-    let (verified, secure) = (client(false), origin("https", secure));
+    let secure = origin("https", secure);
     probe(&verified, Protocol::Http1, &origin("http", cleartext))
         .await
         .unwrap();
@@ -197,24 +181,9 @@ async fn an_empty_trust_store_fails_only_tls_connections() {
 
 #[tokio::test]
 async fn grants_travel_only_in_authorization_and_a_refusal_drops_only_its_server_s() {
-    if !child() {
-        let (scratch, identity) = (Scratch::new().unwrap(), Identity::self_signed("localhost").unwrap());
-        let file = scratch.file("root.pem", &identity.certificate).unwrap();
-        let key = scratch.file("root.key", &identity.key).unwrap();
-        let directory = scratch.dir("none").unwrap();
-        let variables = [
-            ("SSL_CERT_FILE", file.as_os_str()),
-            ("SSL_CERT_DIR", directory.as_os_str()),
-            (KEY, key.as_os_str()),
-        ];
-        return rerun("grants_travel_only_in_authorization_and_a_refusal_drops_only_its_server_s", &variables).await;
-    }
-    let read = |name| std::fs::read_to_string(std::env::var_os(name).unwrap()).unwrap();
-    let identity = Identity {
-        ca: read("SSL_CERT_FILE"),
-        certificate: read("SSL_CERT_FILE"),
-        key: read(KEY),
-    };
+    let (scratch, mut identity) = (Scratch::new().unwrap(), Identity::self_signed("localhost").unwrap());
+    let client = trusting(&scratch.file("root.pem", &identity.certificate).unwrap(), &scratch.dir("none").unwrap());
+    identity.ca = identity.certificate.clone();
     let refused = |request, _: &str| match request {
         1 => Some("HTTP/1.1 403 Forbidden\r\ngraphite-meter-auth: required\r\ncontent-length: 0\r\n\r\n".into()),
         _ => Some(ok("{}")),
@@ -226,7 +195,7 @@ async fn grants_travel_only_in_authorization_and_a_refusal_drops_only_its_server
         heads.push(peer(listener, Some(acceptor(&identity)), answer));
         origins.push(origin("https", address));
     }
-    let ([first, second, target], client) = (<[Origin; 3]>::try_from(origins).unwrap(), client(false));
+    let [first, second, target] = <[Origin; 3]>::try_from(origins).unwrap();
     client.grant(&first, "first-grant");
     client.grant(&second, "second-grant");
     client.enroll(&second, &[]);

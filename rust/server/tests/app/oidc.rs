@@ -3,7 +3,7 @@
 
 use super::{
     auth::{HASH, PUBLIC, public, store, tls},
-    provider::{CLIENT_ID, Provider, SECRET, Twist, child},
+    provider::{CLIENT_ID, Provider, SECRET, Twist},
     *,
 };
 use graphite_meter_proto::approval::challenge;
@@ -18,8 +18,9 @@ use std::{
 
 const NONCE: &str = "a-long-unpredictable-sign-in-nonce";
 
-pub(super) fn oidc_app(issuer: &str, hybrid: bool) -> App {
-    let mut env = ALL_LISTENERS.to_vec();
+/// An OIDC app of `issuer`, trusting what `trust` names.
+pub(super) fn oidc_app(issuer: &str, trust: &[(&str, &str)], hybrid: bool) -> App {
+    let mut env = [ALL_LISTENERS.as_slice(), trust].concat();
     env.extend([
         ("GM_AUTH_MODE", if hybrid { "hybrid" } else { "oidc" }),
         ("GM_AUTH_PUBLIC_URL", PUBLIC),
@@ -31,13 +32,13 @@ pub(super) fn oidc_app(issuer: &str, hybrid: bool) -> App {
         ("GM_ADVERTISED_NATIVE_ENDPOINTS", "http1-tls,http2,http3"),
     ]);
     if hybrid {
-        env.push(("GM_AUTH_PASSWORD_HASH", HASH));
+        env.push(("GM_AUTH_PASSWORD_HASH", *HASH));
     }
     app(&env)
 }
 
 async fn discovered(provider: &Provider) -> App {
-    let app = oidc_app(provider.issuer(), false);
+    let app = oidc_app(provider.issuer(), &provider.trust(), false);
     app.auth().discover().await.unwrap();
     app
 }
@@ -94,9 +95,6 @@ fn line(app: &App, last: &mut [u64; COUNTERS]) -> String {
 
 #[tokio::test]
 async fn a_sign_in_runs_from_the_form_through_the_provider_to_the_login_s_cookies() {
-    if !child("oidc::a_sign_in_runs_from_the_form_through_the_provider_to_the_login_s_cookies") {
-        return;
-    }
     let provider = Provider::start().await;
     let app = discovered(&provider).await;
     let page = tls(&app, empty(public("GET", "/login"))).await;
@@ -146,9 +144,6 @@ async fn a_sign_in_runs_from_the_form_through_the_provider_to_the_login_s_cookie
 
 #[tokio::test]
 async fn callbacks_whose_state_cookie_issuer_verifier_or_nonce_do_not_match_are_refused() {
-    if !child("oidc::callbacks_whose_state_cookie_issuer_verifier_or_nonce_do_not_match_are_refused") {
-        return;
-    }
     let provider = Provider::start().await;
     let app = discovered(&provider).await;
     let issuer = query::escape(provider.issuer());
@@ -203,9 +198,6 @@ async fn callbacks_whose_state_cookie_issuer_verifier_or_nonce_do_not_match_are_
 
 #[tokio::test]
 async fn a_callback_needs_one_code_one_state_and_at_most_one_issuer_and_ignores_other_pairs() {
-    if !child("oidc::a_callback_needs_one_code_one_state_and_at_most_one_issuer_and_ignores_other_pairs") {
-        return;
-    }
     let provider = Provider::start().await;
     let app = discovered(&provider).await;
     let issuer = query::escape(provider.issuer());
@@ -226,9 +218,6 @@ async fn a_callback_needs_one_code_one_state_and_at_most_one_issuer_and_ignores_
 
 #[tokio::test]
 async fn a_login_needs_an_allowed_group_and_the_id_token_s_subject() {
-    if !child("oidc::a_login_needs_an_allowed_group_and_the_id_token_s_subject") {
-        return;
-    }
     let provider = Provider::start().await;
     let app = discovered(&provider).await;
     for userinfo in [
@@ -249,19 +238,18 @@ async fn a_login_needs_an_allowed_group_and_the_id_token_s_subject() {
 
 #[tokio::test]
 async fn a_provider_signing_only_with_algorithms_this_server_cannot_verify_is_refused_at_discovery() {
-    let test = "oidc::a_provider_signing_only_with_algorithms_this_server_cannot_verify_is_refused_at_discovery";
-    if !child(test) {
-        return;
-    }
     let provider = Provider::start().await;
     provider.twist(Twist {
         metadata: json!({"id_token_signing_alg_values_supported": ["ES512", "HS256"]}),
         ..Twist::default()
     });
-    let refused = oidc_app(provider.issuer(), false).auth().discover().await;
+    let refused = oidc_app(provider.issuer(), &provider.trust(), false)
+        .auth()
+        .discover()
+        .await;
     let message = "provider advertises no ID token algorithm this server verifies: [\"ES512\", \"HS256\"]";
     assert_eq!(refused.unwrap_err(), message);
-    let app = oidc_app(provider.issuer(), true);
+    let app = oidc_app(provider.issuer(), &provider.trust(), true);
     let discovery = app.auth().background_discovery().unwrap();
     let retrying = tokio::time::timeout(Duration::from_millis(1200), discovery).await;
     assert!(retrying.is_err(), "hybrid retries past the first backoff");
@@ -271,9 +259,6 @@ async fn a_provider_signing_only_with_algorithms_this_server_cannot_verify_is_re
 
 #[tokio::test]
 async fn a_provider_too_slow_for_the_exchange_bound_fails_the_sign_in_in_time() {
-    if !child("oidc::a_provider_too_slow_for_the_exchange_bound_fails_the_sign_in_in_time") {
-        return;
-    }
     let provider = Provider::start().await;
     let app = discovered(&provider).await;
     let started = start(&app, "192.0.2.1", "").await;
@@ -340,9 +325,6 @@ fn crowded(keys: Value) -> String {
 
 #[tokio::test]
 async fn token_key_and_key_set_rules_decide_a_fresh_sign_in() {
-    if !child("oidc::token_key_and_key_set_rules_decide_a_fresh_sign_in") {
-        return;
-    }
     let provider = Provider::start().await;
     let rsa = || json!({"alg": "RS256", "kid": "rsa"});
     let padded = |header| Twist { padded_keys: true, ..signed_as(header) };
