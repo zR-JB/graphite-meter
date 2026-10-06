@@ -7,7 +7,7 @@ use graphite_meter_proto::{
     origin::{BaseUrl, Host, Origin},
 };
 use http::{HeaderValue, Method, Request, Response, StatusCode, header};
-use std::net::IpAddr;
+use std::{collections::HashSet, net::IpAddr};
 
 impl App {
     /// The answer to a request that no route claims on a listener serving the app.
@@ -16,9 +16,8 @@ impl App {
         let mut response = match self.assets.get(request.uri().path(), request.headers()) {
             _ if request.method() != Method::GET && !head => {
                 let mut response = response::text(StatusCode::METHOD_NOT_ALLOWED, "method not allowed");
-                response
-                    .headers_mut()
-                    .insert(header::ALLOW, HeaderValue::from_static("GET, HEAD"));
+                let allow = HeaderValue::from_static("GET, HEAD");
+                response.headers_mut().insert(header::ALLOW, allow);
                 response
             }
             Some(served) => {
@@ -67,13 +66,9 @@ impl App {
                 sources.extend(with_socket(origin));
             }
         }
-        let mut unique = Vec::new();
-        for source in sources {
-            if !source.contains("://[") && !unique.contains(&source) {
-                unique.push(source);
-            }
-        }
-        unique
+        let mut seen = HashSet::new();
+        sources.retain(|source| !source.contains("://[") && seen.insert(source.clone()));
+        sources
     }
 }
 

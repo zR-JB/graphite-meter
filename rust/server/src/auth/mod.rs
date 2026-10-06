@@ -66,23 +66,19 @@ impl Auth {
             Methods::Hybrid(_, oidc) => ("hybrid", Some(oidc)),
         };
         let security = Security::new(verbose);
-        let password = match config.methods.password() {
-            Some(secret) => {
-                let encoded = secret.read(4096).map_err(|error| format!("password hash: {error}"))?;
-                let password = Password::new(&encoded)?;
-                security.debug(format_args!("local password hash loaded and validated"));
-                Some(password)
-            }
-            None => None,
+        let password = |secret: &config::Secret| {
+            let encoded = secret.read(4096).map_err(|error| format!("password hash: {error}"))?;
+            let password = Password::new(&encoded)?;
+            security.debug(format_args!("local password hash loaded and validated"));
+            Ok::<_, String>(password)
         };
-        let oidc = match settings {
-            Some(settings) => {
-                let secret = settings.secret.read(16 * 1024);
-                let secret = secret.map_err(|error| format!("OIDC client secret: {error}"))?;
-                Some(Oidc::new(&config.public_origin, settings, secret)?)
-            }
-            None => None,
+        let password = config.methods.password().map(password).transpose()?;
+        let oidc = |settings: &config::Oidc| {
+            let secret = settings.secret.read(16 * 1024);
+            let secret = secret.map_err(|error| format!("OIDC client secret: {error}"))?;
+            Oidc::new(&config.public_origin, settings, secret)
         };
+        let oidc = settings.map(oidc).transpose()?;
         log!(
             "[gm:auth] mode={mode} origin={} provider={} issuer={} allowed-groups={} session-lifetime={}",
             config.public_origin,
