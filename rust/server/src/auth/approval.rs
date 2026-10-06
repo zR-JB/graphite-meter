@@ -1,12 +1,11 @@
 //! Sign-in approvals: a terminal or browser asks with a challenge, the operator approves, the verifier earns a grant.
 
 use super::{
-    AuthLease, Enabled, LOGIN_LIFETIME, LoginKey,
+    AuthLease, Counter, Enabled, LOGIN_LIFETIME, LoginKey,
     page::{self, Page},
     policy::{browser_origin, cookie_lease},
     rate::share_full,
     routes::{Form, body, field, redirect},
-    security::Counter,
     store::{GrantRefusal, MAX_LOGIN_GRANTS, State, credentials},
 };
 use crate::{

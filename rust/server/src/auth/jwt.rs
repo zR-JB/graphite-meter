@@ -1,6 +1,6 @@
 //! Signed JSON Web Tokens as an OIDC provider issues them: its key set, signatures and an ID token's claims.
 
-use super::security::Reason;
+use super::Reason;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD as B64};
 use ring::{
     digest::{self, SHA256, SHA384, SHA512},

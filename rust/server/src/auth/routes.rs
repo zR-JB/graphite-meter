@@ -1,13 +1,12 @@
 //! The controller's `/login` and `/auth/` routes: sign-in, password and OIDC, approvals, session, sign-out, tickets.
 
 use super::{
-    AuthLease, Enabled, LOGIN_LIFETIME, LoginKey, Via, approval,
+    AuthLease, Counter, Enabled, LOGIN_LIFETIME, LoginKey, Reason, Via, approval,
     oidc::{self, Oidc, TRANSACTION_COOKIE},
     page::{self, Page},
     password::Password,
     policy::{SESSION_COOKIE, cookie, cookie_lease},
     protect,
-    security::{Counter, Reason},
     store::{MintRefusal, random},
 };
 use crate::{
