@@ -91,7 +91,8 @@ covers, on one port shared through `SO_REUSEPORT`; connection IDs carry their en
 packets naming another, so a migrating client keeps its connection. Admission, Retry and limits stay server-wide.
 The client dials and runs each lane group on one pinned runtime: one HTTP/1.1 connection per lane, one HTTP/2
 connection per direction, HTTP/3 downloads on the path's connection with a bidirectional upload on its own, and one
-WebTransport session per group of up to 16 lanes.
+WebTransport session per group of up to 16 lanes. Upload control requests use the throughput check's protocol, on its
+connection except over HTTP/3.
 
 **Memory.** One budget (`GM_MAX_BUFFER_BYTES`) covers every HTTP/2 and QUIC buffer, charged as it fills; HTTP/1
 holds no floor. Startup refuses a budget below `GM_MAX_CONNECTIONS` times the larger connection floor, the QUIC
@@ -117,8 +118,33 @@ resident-memory bound.
   with receive batches of four GRO messages (`mise run rust-delayed-downloads`).
 - The HTTP/2 server polls its streams before the socket, which keeps an upload's peak RSS at 9.5 MiB instead of
   33–36 MiB (CI run 37265088955); uploads keep large windows nearly full (`server/tests/sockets/http2.rs`).
+- Admitted HTTP/2 uploads open a 24 MiB connection window: on a 200 ms, 1 Gbit/s path 16 MiB carried 640 Mbit/s with
+  7 of 29 runs below 500, 24 MiB 903 (`ci` profile, laptop); the h2 fork's 1 MiB credit refresh stays, as 256 KiB
+  cost 7–13 % more CPU per byte.
+- HTTP/3 replies over 1 MiB wait while the connection holds more than eight congestion windows unacknowledged: Noq
+  charges the peer's credit as data is written, so bulk replies written ahead starved control replies and failed
+  mobile bidirectional runs (Go client: 0/5 complete before, 5/5 after).
+- Upload control rides the throughput check's connection: a fresh one started cable HTTP/2 bidirectional uploads two
+  round trips late, out of slow start (369 against PR #210's 448 Mbit/s, CI run 37365194673).
 - The client's HTTP/2 windows are 32/64 MiB with 64 KiB frames; a silent QUIC address gets 3 s, an answering one 5 s
-  more (`e2e/tests/net.rs`).
+  more (`e2e/tests/lanes.rs`).
+
+**Measured on real-path profiles.** The regression campaign (CI run 37422155310: static release builds, a router
+namespace shaping loopback, cable, far and mobile links, 5 alternating runs per cell, 10 s stages) varies the servers
+under Go's client and the clients against the rewrite's server. Behind Go: cable HTTP/3 loaded latency, 98 and 85 ms
+for downloads and uploads against Go's 73 and 76 (client uploads 103 against 86), equal to PR #210; mobile HTTP/3
+bidirectional, 2.49 against Go's 3.01 Mbit/s, where PR #210 completes 0 of 5 runs. Both stay: Cubic's queue matches
+bulk TCP on the same link (HTTP/1 loaded 110–113 ms for all three) and router AQM bounds it for any sender, and the
+mobile profile's 2 % random loss with ±20 ms jitter measures worst-case loss handling, not a real cellular link. The
+loopback rows behind Go (HTTP/3 download 4.36 against 5.28 Gbit/s, HTTP/1 upload 77.1 against 84.3 at 0.16 against
+0.11 CPU ns/B) are a counterpart effect: Go's client favours Go's own server, and with Rust clients PR #210 led Go in
+all 12 server cells (CI run 37127134696). Behind PR #210 beyond the spread is only far HTTP/2 upload loaded p95
+latency, 231 against 219 ms, at 837 against 590 Mbit/s (Go 617); within the spread, client cable HTTP/3 download
+peaks at 20.0 against 16.4 MiB. The other rows are equal or better: far HTTP/3 and WebTransport uploads 547–558
+Mbit/s for all three, client cable HTTP/2 bidirectional 521 against 526 (Go 403), QUIC CPU per byte half to two
+thirds of Go's. The loopback perf smoke with Rust clients (CI run 37326242534) matched PR #210's client: HTTP/2
+download 20.25 against 20.25 Gbit/s, HTTP/3 download 8.67 against 8.54, its worst rows HTTP/2 upload 20.52 against
+21.44 and WebTransport download 8.75 against 8.87, both clients against the rewrite's server.
 
 ## Differences from Go
 
@@ -166,6 +192,11 @@ User-visible behaviour that deliberately differs from Go's server and TUI.
   `Upgrade: websocket` for HTTP/1.0, with empty bodies.
 - Shutdown drains for 5 s; HTTP/3 then takes up to 1 s more to send its closes.
 - With `GM_VERBOSE` a WebTransport session counts as one transfer however many streams it uses.
+- Several HTTP/3 endpoints share 7 MiB of UDP buffer per direction, at least 2 MiB each; Go asks 7 MiB per socket.
+- A host that caps UDP buffers gets one `[gm:udp]` line pointing at [UDP buffers](../docs/DEPLOYMENT.md#udp-buffers)
+  instead of quic-go's warning; `QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING` has no effect.
+- Embedded browser files ignore `Range`, `If-Match` and `If-Range`, and their `.br` and `.gz` copies answer 404 when
+  requested by name.
 
 **Authentication**
 
@@ -214,6 +245,7 @@ User-visible behaviour that deliberately differs from Go's server and TUI.
 - Requests a grant may not accompany (cleartext, `--insecure`, another host) go without it; Go fails them.
 - A target enrolled by two servers carries the first server's grant.
 - Sign-in failures do not include the login URL.
+- The sign-in approval's PKCE verifier is 64 hex digits; Go's is 43 base64url characters.
 
 **Client runs**
 
