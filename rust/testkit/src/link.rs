@@ -3,10 +3,7 @@ use bytes::Bytes;
 use std::{
     io,
     net::{IpAddr, Ipv4Addr, SocketAddr},
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::Arc,
     time::Duration,
 };
 use tokio::{
@@ -22,8 +19,6 @@ pub enum Fault {
     None,
     /// Nothing passes, in either direction, until the fault is cleared.
     Stall,
-    /// TCP connections end with a reset; UDP drops everything, as with `Stall`.
-    Reset,
 }
 
 /// A drop-tail bottleneck in each direction of a UDP link: its rate, and how much sending its queue holds.
@@ -60,25 +55,16 @@ impl Pace {
     }
 }
 
-/// The long-header form bits that a QUIC Retry packet's first byte carries.
-const RETRY: u8 = 0xf0;
-
 /// A relay to one target; dropping it stops relaying.
 pub struct Link {
     pub address: SocketAddr,
     fault: watch::Sender<Fault>,
-    retries: Arc<AtomicUsize>,
     _tasks: JoinSet<()>,
 }
 
 impl Link {
     pub fn inject(&self, fault: Fault) {
         self.fault.send_replace(fault);
-    }
-
-    /// QUIC Retry packets the target has sent.
-    pub fn retries(&self) -> usize {
-        self.retries.load(Ordering::Relaxed)
     }
 
     pub async fn tcp(target: SocketAddr, one_way: Duration) -> io::Result<Self> {
@@ -94,10 +80,6 @@ impl Link {
                     accepted = listener.accept() => accepted,
                 };
                 let Ok((client, _)) = accepted else { break };
-                if *faults.borrow() == Fault::Reset {
-                    let _ = client.set_zero_linger();
-                    continue;
-                }
                 let Ok(server) = TcpStream::connect(target).await else {
                     let _ = client.set_zero_linger();
                     continue;
@@ -105,7 +87,7 @@ impl Link {
                 relays.spawn(relay(client, server, one_way, faults.clone()));
             }
         });
-        Ok(Self { address, fault, retries: Arc::default(), _tasks: tasks })
+        Ok(Self { address, fault, _tasks: tasks })
     }
 
     pub async fn udp(target: SocketAddr, one_way: Duration) -> io::Result<Self> {
@@ -140,7 +122,6 @@ impl Link {
         let (front, back) = (Arc::new(front), Arc::new(back));
         let (fault, faults) = watch::channel(Fault::None);
         let (client, clients) = watch::channel(None::<SocketAddr>);
-        let retries = Arc::new(AtomicUsize::new(0));
         let (up, mut ups) = mpsc::channel::<(Instant, Bytes)>(16384);
         let (down, mut downs) = mpsc::channel::<(Instant, Bytes)>(16384);
         let mut tasks = JoinSet::new();
@@ -163,7 +144,7 @@ impl Link {
                 }
             }
         });
-        let (reader, open, counted) = (back.clone(), faults.clone(), retries.clone());
+        let (reader, open) = (back.clone(), faults.clone());
         tasks.spawn(async move {
             let (mut buffer, mut pace) = (vec![0; 65536], Pace::new(bottleneck));
             loop {
@@ -172,9 +153,6 @@ impl Link {
                     Err(error) if transient(&error) => continue,
                     Err(_) => break,
                 };
-                if buffer[0] & RETRY == RETRY {
-                    counted.fetch_add(1, Ordering::Relaxed);
-                }
                 if *open.borrow() == Fault::None
                     && let Some(departure) = pace.departure(count)
                 {
@@ -202,7 +180,7 @@ impl Link {
                 }
             }
         });
-        Ok(Self { address, fault, retries, _tasks: tasks })
+        Ok(Self { address, fault, _tasks: tasks })
     }
 }
 
@@ -211,27 +189,15 @@ fn transient(error: &io::Error) -> bool {
     matches!(error.kind(), io::ErrorKind::ConnectionRefused | io::ErrorKind::ConnectionReset)
 }
 
-async fn relay(mut client: TcpStream, mut server: TcpStream, delay: Duration, mut faults: watch::Receiver<Fault>) {
+async fn relay(mut client: TcpStream, mut server: TcpStream, delay: Duration, faults: watch::Receiver<Fault>) {
     let _ = client.set_nodelay(true);
     let _ = server.set_nodelay(true);
-    let (up, down) = (faults.clone(), faults.clone());
-    let reset = {
-        let (client_read, client_write) = client.split();
-        let (server_read, server_write) = server.split();
-        tokio::select! {
-            _ = async {
-                tokio::join!(
-                    pipe(client_read, server_write, delay, up),
-                    pipe(server_read, client_write, delay, down),
-                )
-            } => false,
-            _ = faults.wait_for(|fault| *fault == Fault::Reset) => true,
-        }
-    };
-    if reset {
-        let _ = client.set_zero_linger();
-        let _ = server.set_zero_linger();
-    }
+    let (client_read, client_write) = client.split();
+    let (server_read, server_write) = server.split();
+    tokio::join!(
+        pipe(client_read, server_write, delay, faults.clone()),
+        pipe(server_read, client_write, delay, faults),
+    );
 }
 
 /// Forwards each chunk `delay` after it was read, holding everything while a fault is set.
