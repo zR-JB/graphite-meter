@@ -18,8 +18,8 @@ FROM docker.io/oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6b
 # to ENV so it reaches `bun run build`'s process.env.
 ARG GM_CLIENT_BUILD_PROFILE=prod
 ARG GM_CLIENT_REVISION=source
-# Keep standalone/local Docker builds self-validating. CI sets this to 0 only
-# after the same commit has already passed the client check/test job.
+# Keep Docker builds self-validating. Stable release builds set this to 0 only
+# after main's CI has already checked the same commit.
 ARG GM_CLIENT_VALIDATE=1
 ARG VERSION
 ARG CLIENT_VERSION
@@ -32,8 +32,10 @@ WORKDIR /app/client
 COPY client/package.json client/bun.lock client/bunfig.toml ./
 COPY client/patches/ ./patches/
 RUN bun --bun install --frozen-lockfile
-# Then the source, then build.
+# Then the source, then build. The check reads the shared API vectors and the sign-in page script.
 COPY client/ ./
+COPY api/ /app/api/
+COPY go/internal/auth/assets/ /app/go/internal/auth/assets/
 RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:bundle; fi
 
 # ---------------------------------------------------------------------------
