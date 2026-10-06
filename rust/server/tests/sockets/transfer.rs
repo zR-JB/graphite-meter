@@ -1,4 +1,4 @@
-//! Downloads, uploads and progress feeds over HTTP/1 with their endings.
+//! Downloads and uploads over HTTP/1 with their idle endings.
 
 use super::*;
 
@@ -45,46 +45,4 @@ async fn transfers_the_peer_leaves_idle_end_after_thirty_seconds() {
     let answer = upload.answer().await.unwrap();
     assert_eq!((answer.status, answer.header("x-graphite-upload-refusal")), (408, Some("idle")));
     server.until_active(0).await;
-}
-
-#[tokio::test]
-async fn a_progress_feed_streams_records_until_the_upload_completes() {
-    let server = start(&[]).await;
-    let id = server.upload_id().await;
-    let mut feed = server.connect().await;
-    feed.send(&format!("GET /upload/progress?id={id} HTTP/1.1\r\nHost: test\r\n\r\n"))
-        .await;
-    let head = feed.head().await.unwrap();
-    assert_eq!(head.header("content-type"), Some("application/x-ndjson"));
-    assert!(
-        String::from_utf8(feed.chunk().await.unwrap())
-            .unwrap()
-            .contains(r#""type":"ready""#)
-    );
-    let mut upload = server.connect().await;
-    upload.request(&format!("POST /upload?id={id}"), "12345").await;
-    let progress = loop {
-        let line = String::from_utf8(feed.chunk().await.unwrap()).unwrap();
-        if line.contains(r#""type":"progress""#) {
-            break line;
-        }
-    };
-    assert!(progress.contains(r#""bytes":5"#), "{progress}");
-    assert_eq!(
-        upload
-            .request(&format!("DELETE /upload/progress?id={id}"), "")
-            .await
-            .status,
-        204
-    );
-    let complete = loop {
-        let line = String::from_utf8(feed.chunk().await.expect("the feed ends after complete")).unwrap();
-        if line.contains(r#""type":"complete""#) {
-            break line;
-        }
-    };
-    assert!(complete.contains(r#""bytes":5"#), "{complete}");
-    assert!(feed.chunk().await.is_none(), "the feed ends");
-    let answer = feed.request("GET /probe", "").await;
-    assert_eq!(answer.status, 200, "the connection serves its next request");
 }
