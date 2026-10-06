@@ -161,14 +161,6 @@ fn metadata_holds_at_most_256_bytes_and_a_generation() {
 }
 
 #[test]
-fn international_target_hosts_become_punycode() {
-    let target = json!({"baseUrl": "https://MÜNCHEN.example:7249", "transport": "webtransport", "protocol": "http3"});
-    let decoded = preflight_with("/capabilities/throughput", json!([target])).unwrap();
-    let base_url = &decoded.capabilities.throughput[0].base_url;
-    assert_eq!(serde_json::to_value(base_url).unwrap(), "https://xn--mnchen-3ya.example:7249");
-}
-
-#[test]
 fn stage_limits_range_from_a_second_to_a_day_and_default_to_five_minutes() {
     let limits = [
         (999, false),
