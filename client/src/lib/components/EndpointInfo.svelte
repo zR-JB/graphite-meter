@@ -173,6 +173,11 @@
 
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
   $effect(() => () => clearTimeout(copiedTimer));
+  // A release stamps the full commit; the row shows git's short form, the tip and the report the whole one.
+  const revision = /^[0-9a-f]{12,}$/.test(BUILD.revision)
+    ? BUILD.revision.slice(0, 8)
+    : BUILD.revision;
+
   async function copyReport() {
     clearTimeout(copiedTimer);
     try {
@@ -328,12 +333,16 @@
   <div class="group">
     <h3>Build</h3>
     <dl class="kv" data-tip-group {@attach tipGroup}>
-      {@render row("Client", {
-        value: BUILD.version ? `v${BUILD.version}` : BUILD.revision,
-        aside: [BUILD.profile, BUILD.version && BUILD.revision]
-          .filter(Boolean)
-          .join(", "),
-      })}
+      {@render row(
+        "Client",
+        {
+          value: BUILD.version ? `v${BUILD.version}` : revision,
+          aside: [BUILD.profile, BUILD.version && revision]
+            .filter(Boolean)
+            .join(", "),
+        },
+        revision === BUILD.revision ? undefined : `Commit ${BUILD.revision}`,
+      )}
       {@render row(
         "Server",
         discovery?.engineVersion ?? MISSING,
