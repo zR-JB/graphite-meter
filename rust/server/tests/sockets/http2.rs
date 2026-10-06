@@ -122,6 +122,29 @@ async fn window_opens(upload: &mut SendStream<Bytes>, bound: Duration) -> bool {
     tokio::time::timeout(bound, opened).await.is_ok()
 }
 
+#[tokio::test]
+async fn only_an_admitted_upload_opens_the_connection_window() {
+    let env = [("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", "1"), ("GM_MAX_SESSIONS_PER_CLIENT", "1")];
+    let h2 = H2::start(&env).await;
+    let mut admitted = h2.connect(65_535).await;
+    let id = admitted.upload_id().await;
+    let (answer, mut upload) = admitted.open("POST", &format!("/upload?id={id}")).await;
+    assert!(window_opens(&mut upload, Duration::from_secs(5)).await, "its first read opens the window");
+    upload.send_data(Bytes::new(), true).unwrap();
+    assert_eq!(read(answer.await.unwrap().into_body()).await.unwrap(), br#"{"bytes":1}"#);
+    h2.server.until_active(0).await;
+
+    let mut refused = h2.connect(0).await;
+    let _held = refused.get("GET", ENDLESS).await;
+    let (id, before) = (h2.server.upload_id().await, super::quic::settled(&h2.server.budget).await);
+    let (answer, mut upload) = refused.open("POST", &format!("/upload?id={id}")).await;
+    assert_eq!(answer.await.unwrap().status(), 429, "the client's share is held");
+    assert!(!window_opens(&mut upload, Duration::from_millis(500)).await);
+    assert!(upload.capacity() < 65_535, "an unadmitted upload keeps the default window");
+    let held = super::quic::settled(&h2.server.budget).await.saturating_sub(before);
+    assert!(held < 1 << 20, "{held} bytes of credit without an admitted upload");
+}
+
 /// Waits until the upload `id` counted `bytes`.
 async fn counted(connection: &mut Connection, id: &str, bytes: u64) {
     let reached = async {

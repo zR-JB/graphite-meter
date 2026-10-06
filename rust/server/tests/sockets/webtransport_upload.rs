@@ -108,3 +108,27 @@ async fn client_streams_count_beside_http_and_the_feed_completes_after_finalizat
     assert_eq!(refused(Feed::of(&session).await.next().await), "invalid", "a lane after finalization");
     assert!(open(&session).await);
 }
+
+#[tokio::test]
+async fn datagrams_count_only_when_asked_and_their_lane_leaves_once_finalized() {
+    let h3 = H3::start(&[]).await;
+    let control = h3.connect(transport(None)).await;
+    for (query, bytes) in [("datagrams", 310), ("datagrams=0", 10)] {
+        let id = control.upload_id().await;
+        let connection = h3.connect(transport(None)).await;
+        let session = connection.session(&format!("/wt/upload?id={id}&{query}")).await;
+        let mut feed = Feed::of(&session).await;
+        assert_eq!(feed.next().await, Some(Record::Ready));
+        for _ in 0..3 {
+            session.send_datagram(&[1; 100]).unwrap();
+        }
+        lane(&session, 10).await.finish().unwrap();
+        until_bytes(&control, &id, bytes).await;
+        let (finalized, _) = control.send("DELETE", &format!("/upload/progress?id={id}"), b"").await;
+        assert_eq!(finalized.status(), 204);
+        match feed.after_progress().await {
+            Some(Record::Complete(counters)) => assert_eq!(counters.bytes(), bytes, "{query}"),
+            other => panic!("{query}: a complete record, not {other:?}"),
+        }
+    }
+}
