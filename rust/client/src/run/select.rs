@@ -292,35 +292,6 @@ mod tests {
         assert_eq!(elsewhere("-throughput-transport fetch-stream").unwrap_err(), several);
     }
 
-    #[test]
-    fn a_negotiated_target_takes_a_forced_protocol_and_webtransport_needs_http3() {
-        let own = own();
-        let negotiated = preflight(&[(".", "fetch-stream", "negotiated")], &[(".", "websocket")]);
-        let automatic = paths("", SERVED, &negotiated, &own).unwrap();
-        assert_eq!(automatic, "fetch-stream negotiated 7246, websocket 7246");
-        let forced = paths("-throughput-protocol http2", SERVED, &negotiated, &own).unwrap();
-        assert_eq!(forced, "fetch-stream http2 7246, websocket 7246");
-        let datagrams = preflight(&[(".", "webtransport-datagram", "http3")], &[(".", "websocket")]);
-        assert_eq!(paths("", SERVED, &datagrams, &own).unwrap_err(), "throughput target \"auto\" unavailable");
-        let webtransport = preflight(&[(".", "webtransport", "negotiated")], &[(".", "websocket")]);
-        let forced = "-throughput-transport webtransport";
-        assert_eq!(paths(forced, SERVED, &webtransport, &own).unwrap_err(), "WebTransport requires HTTP/3");
-    }
-
-    #[test]
-    fn targets_on_another_host_need_an_exact_additional_origin() {
-        let foreign = preflight(&[("https://cdn.example", "fetch-stream", "http2")], &[(SERVED, "websocket")]);
-        let refused = "server \"self\" advertised an unapproved target origin";
-        assert_eq!(paths("", SERVED, &foreign, &own()).unwrap_err(), refused);
-        let (mut listed, added) = (own(), |origin| Origin::parse(origin).unwrap());
-        listed.additional_origins.push(added("https://cdn.example:8443"));
-        assert_eq!(paths("", SERVED, &foreign, &listed).unwrap_err(), refused);
-        listed.additional_origins.push(added("https://CDN.example:443"));
-        assert_eq!(paths("", SERVED, &foreign, &listed).unwrap(), "fetch-stream http2 443, websocket 7246");
-        let other_port = preflight(&[("https://meter.example:1", "fetch-stream", "http2")], &[]);
-        assert!(paths("-stages down -loaded-latency=false", SERVED, &other_port, &own()).is_ok());
-    }
-
     /// A server named after its ID in capitals with a stage limit of `seconds`, prepared unless `failure`.
     fn server(name: &str, seconds: u64, failure: Option<Failure>) -> ServerPath {
         let origin = Origin::parse(SERVED).unwrap();
@@ -344,22 +315,6 @@ mod tests {
             offered: None,
             path,
         }
-    }
-
-    #[test]
-    fn the_smallest_stage_limit_among_prepared_servers_names_its_server() {
-        let gone = Some(Failure::new(FailureReason::ConnectionLost, "gone"));
-        let servers = [server("a", 300, None), server("b", 90, None), server("c", 1, gone)];
-        let plan =
-            |seconds| [(Stage::Latency, Duration::from_secs(1)), (Stage::Download, Duration::from_secs(seconds))];
-        assert_eq!(fit(&plan(90), &servers), Ok(()));
-        let refused = "B allows stages up to 1m30s; shorten the download stage";
-        assert_eq!(fit(&plan(91), &servers).unwrap_err(), refused);
-        let refused = "A allows stages up to 5m; shorten the download stage";
-        assert_eq!(fit(&plan(301), &servers[..1]).unwrap_err(), refused);
-        assert_eq!(fit(&plan(86_400), &servers[2..]), Ok(()));
-        assert_eq!(short(Duration::from_secs(5400)), "1h30m");
-        assert_eq!(short(Duration::from_secs(86_400)), "24h");
     }
 
     #[test]

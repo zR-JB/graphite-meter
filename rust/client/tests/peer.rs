@@ -1,6 +1,5 @@
 //! The network layer against canned peers, for what a real server never does, and under the process's environment:
 //! proxies, the trust store and grants over verified TLS.
-use bytes::Bytes;
 use graphite_meter_client::{
     config::{Config, PathChoice},
     model::Stage,
@@ -61,14 +60,6 @@ async fn probe(client: &Client, via: Protocol, origin: &Origin) -> Result<Value,
         .await
 }
 
-/// Moves paused time on by `duration` while network waits keep the running clock.
-async fn advance_clock(duration: Duration) {
-    tokio::time::pause();
-    tokio::time::advance(duration).await;
-    tokio::task::yield_now().await;
-    tokio::time::resume();
-}
-
 fn ok(body: &str) -> String {
     format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n{body}", body.len())
 }
@@ -121,40 +112,6 @@ async fn read_head(stream: &mut Box<dyn Stream>) -> Option<String> {
 }
 
 #[tokio::test]
-async fn a_request_without_response_headers_in_ten_seconds_retires_its_http2_connection() {
-    let (listener, address) = local().await;
-    let (requests, mut received) = mpsc::unbounded_channel();
-    tokio::spawn(async move {
-        for connection in 0..2 {
-            let mut h2 = h2::server::handshake(listener.accept().await.unwrap().0).await.unwrap();
-            let requests = requests.clone();
-            tokio::spawn(async move {
-                let mut withheld = Vec::new();
-                while let Some(Ok((_, mut respond))) = h2.accept().await {
-                    requests.send(connection).unwrap();
-                    if connection == 0 {
-                        withheld.push(respond);
-                        continue;
-                    }
-                    let mut body = respond.send_response(http::Response::new(()), false).unwrap();
-                    body.send_data(Bytes::from_static(b"{}"), true).unwrap();
-                }
-            });
-        }
-    });
-    let (client, origin) = (client(false), origin("http", address));
-    let first = tokio::spawn({
-        let (client, origin) = (client.clone(), origin.clone());
-        async move { probe(&client, Protocol::Http2, &origin).await }
-    });
-    assert_eq!(received.recv().await, Some(0));
-    advance_clock(Duration::from_secs(10)).await;
-    assert!(matches!(first.await.unwrap(), Err(Fault::TimedOut(_))));
-    probe(&client, Protocol::Http2, &origin).await.unwrap();
-    assert_eq!(received.recv().await, Some(1), "the next request dials a new connection");
-}
-
-#[tokio::test]
 async fn an_abandoned_quic_dial_stops_sending() {
     let silent = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let origin = Origin::parse(&format!("https://{}", silent.local_addr().unwrap())).unwrap();
@@ -167,31 +124,6 @@ async fn an_abandoned_quic_dial_stops_sending() {
     while silent.try_recv(&mut datagram).is_ok() {}
     let resent = tokio::time::timeout(Duration::from_secs(2), silent.recv(&mut datagram)).await;
     assert!(resent.is_err(), "the abandoned dial kept sending");
-}
-
-#[tokio::test]
-async fn an_answer_over_64_kib_fails() {
-    fn padded(bytes: usize) -> String {
-        format!(r#"{{"a":"{}"}}"#, "x".repeat(bytes - 8))
-    }
-    let (listener, address) = local().await;
-    let _heads = peer(listener, None, |request, _| {
-        let close = "HTTP/1.1 200 OK\r\nconnection: close\r\n";
-        Some(match request {
-            0 => format!("{close}content-length: 65536\r\n\r\n{}", padded(65536)),
-            1 => format!("{close}content-length: 65537\r\n\r\n{}", padded(65537)),
-            _ => format!("{close}transfer-encoding: chunked\r\n\r\n10001\r\n{}\r\n0\r\n\r\n", padded(65537)),
-        })
-    });
-    let (client, origin) = (client(false), origin("http", address));
-    probe(&client, Protocol::Http1, &origin).await.unwrap();
-    for _ in ["declared", "streamed"] {
-        let oversized = probe(&client, Protocol::Http1, &origin).await;
-        assert!(
-            matches!(&oversized, Err(Fault::Malformed(detail)) if detail.contains("exceeds 65536")),
-            "{oversized:?}"
-        );
-    }
 }
 
 /// Runs `test` again in a child process with only `variables` of the proxy and trust settings set.

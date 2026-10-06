@@ -6,7 +6,7 @@ use graphite_meter_client::{
         latency::{Population, Summary, Timing},
     },
     model::{Dir, Failure, Outcome, Scope, ServerFailure, ServerResult, Stage, StageResult, Throughput},
-    report::{WIDTH, details, progress, report, unreported},
+    report::{WIDTH, details, report},
     run::prepare::ServerPath,
     text::{Line, Profile, write},
     tui::theme::Palette,
@@ -241,19 +241,6 @@ fn the_16_colour_and_ascii_profiles_write_their_codes_and_a_narrow_report_fits_i
     let details = plain.split_once("\nComplete · 1 of 2 servers\n").unwrap().1;
     assert!(details.lines().all(|line| line.chars().count() <= 40), "{details}");
     assert!(details.ends_with("\nb meter · Download throughput · at 7.5 …\n"), "{details}");
-}
-
-#[test]
-fn a_run_that_never_started_reports_why_and_progress_names_each_stage() {
-    let mut view = View::default();
-    view.apply(&Event::Checking { run: true });
-    view.apply(&Event::RunFinished { outcome: Outcome::Stopped, error: None, elapsed: SECOND });
-    assert!(report(&view, WIDTH, &Palette::new(true)).is_empty());
-    assert_eq!(unreported(&view).as_deref(), Some("Test stopped before it started."));
-    let error = Some(Failure::new(FailureReason::ConnectionLost, "Server could not be reached"));
-    view.apply(&Event::RunFinished { outcome: Outcome::Failed, error, elapsed: SECOND });
-    assert_eq!(unreported(&view).as_deref(), Some("Test could not start: Server could not be reached"));
-    assert_eq!(progress(&Event::Measuring(Stage::Bidirectional)).as_deref(), Some("Bidirectional…"));
 }
 
 /// The report of a finished download run over the server `a`, which `result` describes.

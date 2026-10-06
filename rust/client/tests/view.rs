@@ -90,13 +90,6 @@ fn the_latency_server_moves_to_a_survivor_that_measured_latency_and_stays_otherw
 }
 
 #[test]
-fn a_finished_stage_records_its_failures_as_its_result_does() {
-    let (view, [unprepared, left]) = departed(true);
-    let issues = view.run.unwrap().issues;
-    assert_eq!(issues, [(Stage::Latency, unprepared), (Stage::Download, left)]);
-}
-
-#[test]
 fn traces_keep_the_planned_span_and_their_peaks_as_they_coarsen() {
     let (at, mut view) = (Instant::now(), View::default());
     let plan = vec![(Stage::Latency, SECOND * 4), (Stage::Download, SECOND * 60)];

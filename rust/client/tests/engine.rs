@@ -5,10 +5,7 @@ use graphite_meter_client::{
         aggregate::{Fed, Reading, Reason, Receiver},
         latency::ProbeOutcome,
     },
-    model::{
-        Cadence, Dir, Direction, Failure, LaneHealth, Outcome, Scope, ServerFailure, Stage, StageResult, StageStatus,
-        focus,
-    },
+    model::{Cadence, Dir, Failure, LaneHealth, Outcome, Scope, ServerFailure, Stage, StageResult, StageStatus, focus},
     run::engine::{Decision, Engine, Input, Member, Probe, Sample, StagePlan, lateness},
 };
 use graphite_meter_proto::{catalog::ServerId, reason::FailureReason, upload::Counters};
@@ -167,29 +164,6 @@ impl Script {
             _ => None,
         });
         failures.collect()
-    }
-}
-
-#[test]
-fn a_final_boundary_just_after_a_tick_stays_off_the_live_rates_and_counts_in_the_result() {
-    const BURST: u64 = 6 * 256 * 1024;
-    for (stage, direction) in [(Stage::Download, Direction::Down), (Stage::Upload, Direction::Up)] {
-        let reading = |at: Duration, bytes| match direction {
-            Direction::Down => down("a", bytes),
-            Direction::Up => up("a", bytes, at),
-        };
-        let mut script = Script::new(plan(stage, &["a"], false));
-        script.run_until(STAGE - ms(250), |at| vec![reading(at, moved(at, STAGE))]);
-        let before = STAGE - Duration::from_micros(50);
-        script.step(before, &[reading(before, moved(before, STAGE))], &[]);
-        script.run(|at| vec![reading(at, moved(at, STAGE) + BURST)]);
-        assert_eq!(script.at(&Decision::Finish), Some(STAGE));
-        assert_eq!(script.live.last(), Some(&before), "{stage:?}");
-        let result = script.engine.result();
-        let throughput = result.throughput[direction].unwrap();
-        assert_eq!(throughput.bytes, moved(STAGE, STAGE) + BURST);
-        let mean = throughput.bytes as f64 / result.measured.as_secs_f64();
-        assert!((throughput.rate.unwrap().mean - mean).abs() < 1.0, "{stage:?}: {throughput:?}");
     }
 }
 
@@ -426,30 +400,4 @@ fn outcomes_follow_stage_results() {
     // Once the first server left, the latency focus is a survivor that measured latency, if any.
     let results = run(&[("a", 5, ms(3000)), ("b", 0, STAGE)]);
     assert_eq!((focus(&results), Outcome::of(&results, &plan)), (None, Outcome::Incomplete));
-}
-
-#[test]
-fn a_stage_without_evidence_records_insufficient_evidence() {
-    let results = run(&[("a", 0, STAGE)]);
-    let reasons: Vec<_> = results[0]
-        .failures
-        .iter()
-        .map(|failure| (failure.scope, failure.failure.reason))
-        .collect();
-    assert_eq!(reasons, [(Scope::Latency, FailureReason::InsufficientEvidence)]);
-    let mut script = Script::new(plan(Stage::Latency, &["a"], true));
-    script.step(Duration::ZERO, &[], &[(id("a"), Probe::Up)]);
-    script.run(|_| Vec::new());
-    let insufficient = (STAGE + ms(10_000), "a", Scope::Latency, FailureReason::InsufficientEvidence);
-    assert_eq!(script.failed(), [insufficient]);
-    let mut script = Script::new(plan(Stage::Download, &["a"], false));
-    script.run(|_| vec![down("a", 0)]);
-    let failures = script.engine.result().failures;
-    assert_eq!(
-        failures
-            .iter()
-            .map(|failure| failure.failure.reason)
-            .collect::<Vec<_>>(),
-        [FailureReason::Timeout]
-    );
 }

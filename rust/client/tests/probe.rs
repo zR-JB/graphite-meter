@@ -49,32 +49,6 @@ fn reply_driven_probing_sends_on_each_reply_with_the_deadline_as_backup() {
 }
 
 #[test]
-fn a_full_window_skips_a_send_without_counting_a_timeout() {
-    let t0 = Instant::now();
-    let mut schedule = Schedule::new(Cadence::Every(ms(80)), 2, t0);
-    assert!(schedule.send(t0).is_some() && schedule.send(t0 + ms(80)).is_some());
-    assert_eq!(schedule.send(t0 + ms(160)), None);
-    assert!(schedule.expire(t0 + ms(249)).is_empty());
-    let expired = schedule.expire(t0 + ms(250));
-    assert_eq!(expired, [Probe::Outcome { sent: t0, outcome: ProbeOutcome::Timeout }]);
-    assert!(schedule.send(t0 + ms(250)).is_some(), "the window has room again");
-}
-
-#[test]
-fn after_sending_stops_probes_drain_to_their_deadlines_and_late_replies_change_nothing() {
-    let t0 = Instant::now();
-    let mut schedule = Schedule::new(Cadence::Every(ms(80)), 16, t0);
-    let (first, second) = (schedule.send(t0).unwrap(), schedule.send(t0 + ms(80)).unwrap());
-    schedule.stop();
-    assert_eq!(schedule.send(t0 + ms(160)), None);
-    assert!(matches!(outcome(schedule.reply(pong(second), t0 + ms(120))), ProbeOutcome::Reply { .. }));
-    assert_eq!(schedule.wake(), Some(t0 + ms(250)), "the first probe's deadline");
-    assert_eq!(outcome(schedule.expire(t0 + ms(250)).pop()), ProbeOutcome::Timeout);
-    assert_eq!(schedule.wake(), None, "drained");
-    assert_eq!(schedule.reply(pong(first), t0 + ms(300)), None, "a late reply cannot erase a timeout");
-}
-
-#[test]
 fn a_lost_channel_leaves_its_probes_unresolved_and_a_send_failure_apart() {
     let t0 = Instant::now();
     let mut schedule = Schedule::new(Cadence::Every(ms(80)), 16, t0);

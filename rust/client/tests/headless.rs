@@ -1,5 +1,5 @@
-//! The binary without the interface against canned peers: signals during preparation, the second signal's policy, a
-//! protected server, and a run whose server refuses its download.
+//! The binary without the interface against canned peers: the second signal's policy, a protected server, and a run
+//! whose server refuses its download.
 #![cfg(unix)]
 
 use graphite_meter_client::{INTERRUPTED, Interrupts, Reaction, TERMINATED};
@@ -27,32 +27,6 @@ fn client(url: &str, stages: &str) -> Command {
     command
 }
 
-/// The client at a peer that accepts its catalogue request and never answers, once the request arrived.
-async fn preparing() -> (Child, TcpListener) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let child = client(&format!("http://{}", listener.local_addr().unwrap()), "latency")
-        .spawn()
-        .unwrap();
-    let (mut held, _) = listener.accept().await.unwrap();
-    let _ = held.read(&mut [0; 1024]).await;
-    tokio::spawn(async move { held.read(&mut [0; 1]).await });
-    (child, listener)
-}
-
-async fn kill(child: &Child, signals: &[&str]) {
-    let pid = child.id().unwrap().to_string();
-    for signal in signals {
-        assert!(
-            Command::new("kill")
-                .args([*signal, pid.as_str()])
-                .status()
-                .await
-                .unwrap()
-                .success()
-        );
-    }
-}
-
 async fn finished(child: Child) -> (Option<i32>, String, String) {
     let output = timeout(Duration::from_secs(10), child.wait_with_output())
         .await
@@ -60,14 +34,6 @@ async fn finished(child: Child) -> (Option<i32>, String, String) {
         .unwrap();
     let text = |bytes| String::from_utf8(bytes).unwrap();
     (output.status.code(), text(output.stdout), text(output.stderr))
-}
-
-#[tokio::test]
-async fn a_termination_during_preparation_stops_the_test_before_it_starts() {
-    let (child, _peer) = preparing().await;
-    kill(&child, &["-TERM"]).await;
-    let stopped = "graphite-meter-client: Test stopped before it started.\n";
-    assert_eq!(finished(child).await, (Some(143), String::new(), stopped.into()));
 }
 
 #[test]

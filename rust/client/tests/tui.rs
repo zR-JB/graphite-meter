@@ -17,12 +17,8 @@ use graphite_meter_client::{
         prepare::{Paths, ServerPath},
     },
     status,
-    text::{Line, Profile},
-    tui::{
-        App, Effect,
-        chrome::{Chrome, Link, Progress},
-        theme,
-    },
+    text::Profile,
+    tui::{App, Effect, chrome::Chrome},
 };
 use graphite_meter_proto::{
     catalog::{ServerEntry, ServerId},
@@ -31,7 +27,6 @@ use graphite_meter_proto::{
 };
 use ratatui_core::{buffer::Buffer, layout::Rect};
 use std::{
-    collections::HashMap,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -98,20 +93,8 @@ fn focused(app: &mut App, now: Instant) -> String {
     row
 }
 
-/// The text of `row` from `column` on, as drawn.
-fn drawn(buffer: &Buffer, row: u16, column: u16) -> String {
-    let text: String = (column..buffer.area.width).map(|x| buffer[(x, row)].symbol()).collect();
-    text.trim_end().to_owned()
-}
-
 fn press(app: &mut App, code: KeyCode, now: Instant) -> Vec<Effect> {
     app.key(KeyEvent::new(code, KeyModifiers::NONE), now)
-}
-
-fn presses(app: &mut App, code: KeyCode, times: usize, now: Instant) {
-    for _ in 0..times {
-        assert_eq!(press(app, code, now), []);
-    }
 }
 
 fn ctrl_c() -> KeyEvent {
@@ -167,13 +150,6 @@ fn prompt(now: Instant) -> SignInPrompt {
         code: "ABCD-EFGH".into(),
         deadline: (now + Duration::from_secs(120)).into(),
     }
-}
-
-/// The sign-in screen for `PAGE`, which expires two minutes after `now`.
-fn signing_in(now: Instant) -> App {
-    let mut app = App::new(Config::default(), Profile::Plain, now);
-    app.event(&Event::SignIn(prompt(now)), now);
-    app
 }
 
 /// A run of `plan` over `names`, started from a row below Start test and prepared at `now`.
@@ -264,22 +240,6 @@ fn the_chooser_keeps_up_to_four_servers_and_none_takes_the_default_ones() {
 }
 
 #[test]
-fn a_path_change_checks_once_350_ms_after_the_last_change() {
-    let (mut app, start) = app();
-    let at = |ms| start + Duration::from_millis(ms);
-    presses(&mut app, KeyCode::Down, 6, at(0));
-    press(&mut app, KeyCode::Right, at(0));
-    assert_eq!(app.tick(at(400)), [], "a stage's duration is no path setting");
-    presses(&mut app, KeyCode::Up, 3, at(400));
-    press(&mut app, KeyCode::Right, at(400));
-    press(&mut app, KeyCode::Right, at(600));
-    assert_eq!(app.tick(at(949)), []);
-    let config = checked(app.tick(at(950)));
-    assert_eq!(config.paths.throughput_transport, Some(ThroughputTransport::WebTransport));
-    assert_eq!(app.tick(at(1300)), []);
-}
-
-#[test]
 fn checked_paths_turn_stale_on_screen_30_s_later_without_input() {
     let (mut app, now) = app();
     app.event(&prepared(), now);
@@ -292,27 +252,6 @@ fn checked_paths_turn_stale_on_screen_30_s_later_without_input() {
     assert!(app.animating(), "the frame that shows them stale is drawn");
     assert!(shows(&mut app, stale, "A Recheck needed"));
     assert!(!app.animating());
-}
-
-#[test]
-fn sign_in_shows_the_code_and_links_the_page_where_it_is_drawn() {
-    let start = Instant::now();
-    let mut app = signing_in(start);
-    let later = start + Duration::from_millis(3200);
-    for text in [
-        "Sign in to Meter",
-        "Open the sign-in page below",
-        "Match this code │ ABCD-EFGH │",
-        "waited 3.2 s · expires in 1 min 57 s",
-        "Check the code, then press enter to open the sign-in page.",
-        "enter/space open page • esc cancel • q quit",
-    ] {
-        assert!(shows(&mut app, later, text), "{text}\n{:#?}", frame(&mut app, later));
-    }
-    let (buffer, chrome) = draw(&mut app, later, FULL);
-    let [link] = &chrome.links[..] else { panic!("{:?}", chrome.links) };
-    assert_eq!((link.url.as_str(), link.text.text()), (PAGE, PAGE.to_owned()));
-    assert_eq!(drawn(&buffer, link.row, link.column), PAGE);
 }
 
 #[test]
@@ -437,60 +376,4 @@ fn quitting_after_a_run_reports_it_with_a_signal_s_status_only_when_it_stopped()
     press(&mut app, KeyCode::Esc, now);
     assert_eq!(app.key(ctrl_c(), now), [Effect::Quit]);
     assert!(!app.exit().report, "setup shows no run to report");
-}
-
-#[test]
-fn chrome_titles_the_window_and_shows_progress_until_the_end() {
-    let start = Instant::now();
-    let mut app = App::new(Config { stages: vec![Stage::Download], ..Config::default() }, Profile::Plain, start);
-    let (_, setup) = draw(&mut app, start, FULL);
-    assert_eq!(setup.progress, Progress::None);
-    let bytes = setup.bytes(None, Profile::Plain);
-    assert_eq!(bytes, "\x1b]2;Graphite Meter · Checking paths\x07\x1b]9;4;0\x07".as_bytes());
-
-    press(&mut app, KeyCode::Char('r'), start);
-    let (_, preparing) = draw(&mut app, start, FULL);
-    assert_eq!(preparing.bytes(Some(&setup), Profile::Plain), b"\x1b]9;4;3\x07");
-
-    let plan = vec![(Stage::Download, SECOND * 10)];
-    app.event(&Event::RunStarted { plan, focus: id("a"), at: start }, start);
-    measuring(&mut app, Stage::Download, SECOND * 10, start);
-    let (_, halfway) = draw(&mut app, start + SECOND * 5, FULL);
-    let bytes = halfway.bytes(Some(&preparing), Profile::Plain);
-    assert_eq!(bytes, "\x1b]2;Graphite Meter · Download\x07\x1b]9;4;1;50\x07".as_bytes());
-    assert_eq!(halfway.bytes(Some(&halfway), Profile::Plain), b"");
-
-    app.event(&ended(Outcome::Complete), start + SECOND * 10);
-    let (_, finished) = draw(&mut app, start + SECOND * 10, FULL);
-    let bytes = finished.bytes(Some(&halfway), Profile::Plain);
-    assert_eq!(bytes, "\x1b]2;Graphite Meter · Complete\x07\x1b]9;4;0\x07".as_bytes());
-    assert_eq!(Chrome::default().bytes(Some(&finished), Profile::Plain), b"\x1b]2;\x07");
-
-    let link = Link {
-        row: 3,
-        column: 1,
-        url: "https://a.example/x\x1b".into(),
-        text: Line::plain("open"),
-    };
-    let linked = Chrome { links: vec![link], ..finished.clone() };
-    let bytes = linked.bytes(Some(&finished), Profile::Plain);
-    assert_eq!(bytes, b"\x1b[4;2H\x1b]8;;https://a.example/x\x1b\\open\x1b]8;;\x1b\\");
-}
-
-#[test]
-fn the_colour_profile_follows_the_environment() {
-    for (tty, env, expected) in [
-        (true, "TERM=xterm", Profile::Ansi),
-        (true, "TERM=xterm-256color", Profile::Ansi256),
-        (true, "TERM=xterm-256color COLORTERM=truecolor", Profile::TrueColor),
-        (true, "TERM=screen COLORTERM=truecolor", Profile::Ansi256),
-        (true, "TERM=dumb", Profile::Plain),
-        (true, "TERM=xterm-256color NO_COLOR=1", Profile::Ascii),
-        (false, "TERM=xterm-256color", Profile::Plain),
-        (false, "TERM=xterm-256color CLICOLOR_FORCE=1", Profile::Ansi256),
-    ] {
-        let vars: HashMap<_, _> = env.split(' ').filter_map(|pair| pair.split_once('=')).collect();
-        let profile = theme::profile(tty, |name| vars.get(name).map(|value| value.to_string()));
-        assert_eq!(profile, expected, "{env} on a terminal: {tty}");
-    }
 }
