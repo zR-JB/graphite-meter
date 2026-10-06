@@ -205,10 +205,10 @@ impl Lanes {
     }
 }
 
-/// A random block, so no hop compresses the upload; zeros only where the platform has no randomness.
+/// A random block, so no hop compresses the upload; a host without randomness cannot measure and panics.
 fn block() -> Bytes {
     let mut block = vec![0; BLOCK_BYTES];
-    let _ = getrandom::fill(&mut block);
+    getrandom::fill(&mut block).expect("the system provides randomness");
     block.into()
 }
 
