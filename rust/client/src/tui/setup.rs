@@ -176,18 +176,12 @@ impl App {
             Row::IdleCadence => (None, words::cadence(config.ping)),
             Row::LoadedCadence => (None, words::cadence(config.loaded_ping)),
             Row::ForceStreams => (Some(config.streams.forced > 0), String::new()),
-            Row::Streams => {
-                if config.streams.forced > 0 {
-                    label = "Streams per server and direction";
-                    help = format!("Exact streams per server and direction. ←/→ ±1 (1–{MAX_STREAMS}).");
-                }
-                let count = if config.streams.forced > 0 {
-                    config.streams.forced
-                } else {
-                    config.streams.auto
-                };
-                (None, count.to_string())
+            Row::Streams if config.streams.forced > 0 => {
+                label = "Streams per server and direction";
+                help = format!("Exact streams per server and direction. ←/→ ±1 (1–{MAX_STREAMS}).");
+                (None, config.streams.forced.to_string())
             }
+            Row::Streams => (None, config.streams.auto.to_string()),
             Row::Insecure => (Some(config.insecure), String::new()),
         };
         let style = if inert { palette.muted } else { palette.value };
@@ -321,13 +315,8 @@ impl App {
                 Readiness::Failed => Line::styled("✗", palette.err),
             };
             let name = Line::plain(name).pad(name_width);
-            lines.push(
-                glyph
-                    .and(" ", Style::default())
-                    .with(name)
-                    .and("  ", Style::default())
-                    .and(state.label(), palette.text),
-            );
+            let named = glyph.and(" ", Style::default()).with(name);
+            lines.push(named.and("  ", Style::default()).and(state.label(), palette.text));
             if let (Readiness::Failed, Err(failure)) = (state, &server.path) {
                 lines.extend(warn(&failure.text, "  "));
             }

@@ -77,12 +77,8 @@ impl App {
             let result = run.results.iter().rfind(|result| result.stage == stage);
             let state = match result.map(|result| (result, result.status(run.focus.as_ref()))) {
                 Some((result, StageStatus::Complete)) => {
-                    let headline = self.headline(result);
-                    let headline = if headline.width() == 0 {
-                        Line::styled(words::setting(duration), muted)
-                    } else {
-                        headline
-                    };
+                    let headline = Some(self.headline(result)).filter(|headline| headline.width() > 0);
+                    let headline = headline.unwrap_or_else(|| Line::styled(words::setting(duration), muted));
                     Line::styled("✓ ", palette.ok).with(headline)
                 }
                 Some((result, StageStatus::Partial)) => {

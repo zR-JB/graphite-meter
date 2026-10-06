@@ -180,7 +180,7 @@ impl Run<'_> {
             None => live.engine.stop(Instant::now()),
         }
         let budget = if self.token.is_cancelled() { STOPPED_FINISH } else { FINISH };
-        join_all(live.participants.into_iter().map(|ended| ended.finish(budget))).await;
+        join_all(live.participants.into_iter().map(|member| member.finish(budget))).await;
         live.engine.result()
     }
 
@@ -230,7 +230,7 @@ impl Live<'_> {
     async fn tick(&mut self, now: Instant, lateness: Duration) -> (Tick, Vec<(ServerId, Probe)>) {
         let mut samples: Vec<_> = self.participants.iter_mut().map(Participant::local).collect();
         if let Some(budget) = self.checkpoint.take() {
-            let gathered = self.participants.iter().map(|one| one.checkpoint(budget));
+            let gathered = self.participants.iter().map(|member| member.checkpoint(budget));
             for (sample, checkpoint) in samples.iter_mut().zip(join_all(gathered).await) {
                 match checkpoint {
                     Some(Ok(receiver)) => sample.reading.up = Some(receiver),
@@ -267,17 +267,17 @@ impl Live<'_> {
                 Decision::Checkpoint { budget, .. } => self.checkpoint = Some(budget),
                 Decision::CloseWindow => {
                     closed = true;
-                    participants.iter_mut().for_each(|one| one.close(FINISH));
+                    participants.iter_mut().for_each(|member| member.close(FINISH));
                 }
                 Decision::Failed(failure) => {
-                    let index = participants.iter().position(|one| *one.server() == failure.server);
+                    let index = participants.iter().position(|open| *open.server() == failure.server);
                     if let Some(index) = index.filter(|_| failure.scope == Scope::Latency) {
                         participants[index].stop_probing();
                     }
                     self.run.failed(&failure);
                 }
                 Decision::Remove(failure) => {
-                    let index = participants.iter().position(|one| *one.server() == failure.server);
+                    let index = participants.iter().position(|open| *open.server() == failure.server);
                     if let Some(index) = index {
                         participants.remove(index).depart();
                     }

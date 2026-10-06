@@ -281,11 +281,8 @@ fn default_scheme(raw: &str) -> &'static str {
     let bracketed = host.strip_prefix('[').and_then(|host| host.strip_suffix(']'));
     let host = bracketed.unwrap_or(host);
     let loopback = host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback());
-    if loopback || host.eq_ignore_ascii_case("localhost") {
-        "http://"
-    } else {
-        "https://"
-    }
+    let local = loopback || host.eq_ignore_ascii_case("localhost");
+    if local { "http://" } else { "https://" }
 }
 
 /// The inline editor: up to 4096 characters, a cursor, and the error its last apply found.
