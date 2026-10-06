@@ -3,7 +3,6 @@ mod budget;
 mod capsule;
 pub mod client;
 mod code;
-mod control;
 mod driver;
 mod error;
 mod fields;
