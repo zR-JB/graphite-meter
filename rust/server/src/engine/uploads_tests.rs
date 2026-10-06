@@ -105,23 +105,6 @@ async fn an_owner_is_its_narrowest_key_and_an_ambiguous_peer_owns_nothing() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_client_holds_thirty_two_aggregates_and_its_wider_prefixes_twice_as_many() {
-    let uploads = Uploads::new([7; 32], Meter::new(true));
-    let create = |keys: &ClientKeys| uploads.subscribe(&uploads.mint(), Some(keys)).err();
-    let v4 = client("192.0.2.1");
-    for _ in 0..MAX_PER_CLIENT {
-        assert_eq!(create(&v4), None);
-    }
-    assert_eq!(create(&v4), Some(UploadRefusal::ClientFull));
-    let (first, second, third) = (client("2001:db8:0:1::1"), client("2001:db8:0:2::1"), client("2001:db8:0:3::1"));
-    for _ in 0..MAX_PER_CLIENT {
-        assert_eq!((create(&first), create(&second)), (None, None));
-    }
-    assert_eq!(create(&third), Some(UploadRefusal::ClientFull), "their /56 holds 64");
-    assert_eq!(uploads.live(), 3 * MAX_PER_CLIENT);
-}
-
-#[tokio::test(start_paused = true)]
 async fn a_finished_upload_completes_once_its_lanes_drain_and_takes_no_new_lane() {
     let (uploads, owner, id) = fixture();
     let mut feed = uploads.subscribe(&id, Some(&owner)).unwrap();

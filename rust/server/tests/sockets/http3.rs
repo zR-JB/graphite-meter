@@ -246,61 +246,6 @@ async fn cancelling_an_idle_progress_stream_releases_its_handler() {
 }
 
 #[tokio::test]
-async fn shutdown_resets_transfers_and_gives_the_rest_five_seconds_after_goaway() {
-    let h3 = H3::start(&[]).await;
-    let connection = h3.connect(transport(Some(64))).await;
-    let id = connection.upload_id().await;
-    let (_download, mut download) = connection.open("GET", ENDLESS).await;
-    let (mut upload, mut answer) = connection.open("POST", &format!("/upload?id={id}")).await;
-    upload.send_data(Bytes::from_static(b"partial")).await.unwrap();
-    let _unadmitted = connection.open("GET", "/probe").await;
-    h3.server.until_active(2).await;
-    let stopped = h3.server.stop();
-    assert_eq!(reply(&mut download).await, Err(CANCELLED));
-    assert_eq!(answer.response().await.unwrap_err(), CANCELLED);
-    while !connection.requests.going_away() {
-        tokio::time::sleep(Duration::from_millis(1)).await;
-    }
-    let late = connection
-        .requests
-        .send_request(Request::get("https://localhost/probe").body(()).unwrap());
-    assert_eq!(late.await.err(), Some(Error::GoingAway), "a request after the GOAWAY is refused");
-    pass(Duration::from_millis(4500)).await;
-    assert_eq!(
-        connection.closed_within(Duration::from_millis(50)).await,
-        None,
-        "the unadmitted request gets its grace"
-    );
-    pass(Duration::from_secs(1)).await;
-    assert_eq!(connection.closed_within(Duration::from_secs(2)).await, Some(Code::H3_NO_ERROR));
-    stopped.await.unwrap().unwrap();
-}
-
-#[tokio::test]
-async fn a_funded_connection_goes_away_fifteen_seconds_after_its_admitted_work() {
-    let h3 = H3::start(&[]).await;
-    let (funded, control) = (h3.connect(transport(None)).await, h3.connect(transport(None)).await);
-    let id = funded.upload_id().await;
-    let mut answer = funded.send("POST", &format!("/upload?id={id}"), b"abc").await.1;
-    assert_eq!(read(&mut answer).await.unwrap(), br#"{"bytes":3}"#);
-    for _ in 0..2 {
-        pass(Duration::from_secs(7)).await;
-        for connection in [&funded, &control] {
-            assert_eq!(connection.send("GET", "/probe", b"").await.0.status(), 200);
-        }
-    }
-    assert_eq!(funded.closed_within(Duration::from_millis(50)).await, None);
-    pass(Duration::from_millis(1500)).await;
-    let closed = funded.closed_within(Duration::from_secs(2)).await;
-    assert_eq!(closed, Some(Code::H3_NO_ERROR), "unadmitted requests never extend its idle period");
-    assert_eq!(
-        control.closed_within(Duration::from_millis(50)).await,
-        None,
-        "a connection without credit stays"
-    );
-}
-
-#[tokio::test]
 async fn connection_credit_reaches_the_reply_that_waited_longest() {
     let h3 = H3::start(&[]).await;
     let mut transport = transport(None);

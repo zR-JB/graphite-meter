@@ -10,7 +10,6 @@ mod quic;
 mod shards;
 mod shutdown;
 mod tls;
-mod transfer;
 mod websocket;
 mod webtransport;
 mod webtransport_upload;

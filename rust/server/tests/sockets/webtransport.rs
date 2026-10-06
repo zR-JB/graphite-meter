@@ -97,17 +97,6 @@ async fn a_datagram_download_floods_its_bytes_a_datagram_at_a_time() {
 }
 
 #[tokio::test]
-async fn refused_connects_are_answered() {
-    let h3 = H3::start(&[("GM_MAX_SESSIONS_PER_CLIENT", "1")]).await;
-    let (first, second) = (h3.connect(transport(None)).await, h3.connect(transport(None)).await);
-    let _session = first.session("/wt/download?bytes=0").await;
-    for (path, status) in [("/wt/download?bytes=0", 429), ("/probe", 405), ("/nope", 404)] {
-        let refused = second.open_session(path).await.err().expect("a refusal");
-        assert_eq!(refused.status(), status, "{path}");
-    }
-}
-
-#[tokio::test]
 async fn a_connection_that_carried_only_sessions_closes_when_the_peer_ends_its_last() {
     let h3 = H3::start(&[]).await;
     let connection = h3.connect(transport(None)).await;

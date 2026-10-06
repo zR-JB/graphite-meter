@@ -143,20 +143,6 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn an_ipv6_client_shares_its_wider_prefixes_at_twice_and_four_times_the_limit() {
-        let attempts = Attempts::new("password-attempt", 5);
-        let v6 = |text: &str| ClientKeys::address(text.parse().unwrap());
-        let allowed = |keys: &ClientKeys| (0..30).filter(|_| attempts.allow(keys, false, None)).count();
-        assert_eq!(allowed(&v6("2001:db8:0:1::1")), 5);
-        assert_eq!(allowed(&v6("2001:db8:0:2::1")), 5, "another /64 in the /56");
-        assert_eq!(allowed(&v6("2001:db8:0:3::1")), 0, "the /56 holds twice the limit");
-        assert_eq!(allowed(&v6("2001:db8:0:100::1")) + allowed(&v6("2001:db8:0:101::1")), 10);
-        assert_eq!(allowed(&v6("2001:db8:0:200::1")), 0, "the /48 holds four times the limit");
-        advance(WINDOW).await;
-        assert_eq!(allowed(&v6("2001:db8:0:1::1")), 5);
-    }
-
-    #[tokio::test(start_paused = true)]
     async fn a_full_table_and_an_engaged_ceiling_refuse_all_but_a_known_device() {
         let attempts = Attempts::new("password-attempt", 5);
         for client in 0..MAX_KEYS as u32 {

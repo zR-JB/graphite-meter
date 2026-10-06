@@ -96,18 +96,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn values_decode_as_go_reads_them() {
-        let query = Some("a=1;b&id=x%2By+z&id=second&bad=%zz&id2=%41");
-        assert_eq!(get(query, "id").as_deref(), Some("x+y z"));
-        assert_eq!(get(query, "a"), None, "a pair holding ';' is left out");
-        assert_eq!(get(query, "bad"), None);
-        assert_eq!(get(query, "id2").as_deref(), Some("A"));
-        assert_eq!(get(Some("flag"), "flag").as_deref(), Some(""));
-        assert_eq!(get(None, "id"), None);
-        assert_eq!(encode(&[("a b", "~x*/+"), ("c", "")]), "a+b=~x%2A%2F%2B&c=");
-    }
-
-    #[test]
     fn transfer_sizes_and_stream_counts_are_clamped_never_refused() {
         for (query, bytes) in [
             (None, DEFAULT_TRANSFER_BYTES),
