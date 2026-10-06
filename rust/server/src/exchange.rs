@@ -20,10 +20,7 @@ pub const EXCHANGE_BOUND: Duration = Duration::from_secs(15);
 
 /// A request before admission. Its bound never extends its connection's idle period.
 #[derive(Debug)]
-pub struct Exchange {
-    deadline: Instant,
-    admitted: Arc<OnceLock<ClientKeys>>,
-}
+pub struct Exchange(Watch);
 
 impl Exchange {
     pub fn start() -> Self {
@@ -32,16 +29,16 @@ impl Exchange {
 
     /// An exchange that began before its request was parsed, such as at the first byte of an HTTP/1 head.
     pub fn until(deadline: Instant) -> Self {
-        Self { deadline, admitted: Arc::default() }
+        Self(Watch { deadline, admitted: Arc::default() })
     }
 
     pub fn deadline(&self) -> Instant {
-        self.deadline
+        self.0.deadline
     }
 
     /// What the transport keeps of the exchange it hands to the app.
     pub fn watch(&self) -> Watch {
-        Watch { deadline: self.deadline, admitted: self.admitted.clone() }
+        self.0.clone()
     }
 
     /// Admits `keys`' request as a lane holding `hold` for `lifetime`; it ends on `shutdown` or sign-in revocation.
@@ -54,7 +51,7 @@ impl Exchange {
         shutdown: &CancellationToken,
         auth: Option<&AuthLease>,
     ) -> Lane {
-        let _ = self.admitted.set(keys);
+        let _ = self.0.admitted.set(keys);
         Lane::start(hold, lifetime, work, shutdown, auth)
     }
 }
