@@ -487,7 +487,7 @@ pub(crate) struct Registry {
     /// A sessions-only connection stays open until then, so the CLOSE of a session this side ended arrives first.
     pub(crate) linger: Option<Instant>,
     /// Whether the connection carried a session, and served anything else.
-    carried: bool,
+    pub(crate) carried: bool,
     pub(crate) served: bool,
     /// CONNECT streams and cancelled streams the driver has yet to take.
     handed: (Vec<Connect>, Vec<PendingReset>),
@@ -539,11 +539,6 @@ impl Registry {
 
     pub(crate) fn deadline(&self) -> Option<Instant> {
         self.early.front().map(|(deadline, ..)| *deadline)
-    }
-
-    /// A connection that carried sessions and served nothing else ends with its last session.
-    pub(crate) fn only_sessions(&self) -> bool {
-        self.carried && !self.served
     }
 
     /// Server: every session, current or yet to come, ends with this close.

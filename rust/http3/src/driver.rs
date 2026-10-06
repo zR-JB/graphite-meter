@@ -272,7 +272,8 @@ impl Driver {
         let idle = *self.idle_since.get_or_insert(now) + IDLE;
         let sessions = self.shared.sessions();
         // A connection that only carried sessions ends with its last one: browsers would hold its slot.
-        let done = (self.goaway.is_some() || sessions.only_sessions()).then(|| sessions.linger.unwrap_or(now));
+        let only_sessions = sessions.carried && !sessions.served;
+        let done = (self.goaway.is_some() || only_sessions).then(|| sessions.linger.unwrap_or(now));
         [self.drain, Some(idle), done].into_iter().flatten().min()
     }
 
