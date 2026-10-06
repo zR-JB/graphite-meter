@@ -226,6 +226,13 @@
       gap: var(--space-3);
     }
   }
+  /* Four cards keep a row while each holds a two-way figure and its unit, about 230 px; then they pair up, while
+     three stay in one row. */
+  @container results (max-width: 960px) {
+    .result-cards:has(> :nth-child(4)) {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
   /* A narrow console keeps two across; a phone leads with the running card and folds the others to their name
      and value. */
   @container results (max-width: 720px) {
