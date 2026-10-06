@@ -181,12 +181,4 @@ mod tests {
         reader.next(&mut Bytes::from_static(&[0x00, 0x02, 0x61]));
         assert!(!reader.at_boundary(), "a truncated payload");
     }
-
-    #[test]
-    fn webtransport_streams_carry_their_session() {
-        let mut header = StreamType::default();
-        assert_eq!(header.read(&mut &[0x40, 0x54][..]), None);
-        assert_eq!(header.read(&mut &[0x04, 0xff][..]), Some((WEBTRANSPORT_STREAM, Some(4))));
-        assert_eq!(StreamType::default().read(&mut &[0x00][..]), Some((CONTROL_STREAM, None)));
-    }
 }

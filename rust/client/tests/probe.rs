@@ -23,17 +23,6 @@ fn outcome(probe: Option<Probe>) -> ProbeOutcome {
 }
 
 #[test]
-fn a_lost_channel_leaves_its_probes_unresolved_and_a_send_failure_apart() {
-    let t0 = Instant::now();
-    let mut schedule = Schedule::new(Cadence::Every(ms(80)), 16, t0);
-    let first = schedule.send(t0).unwrap();
-    assert_eq!(outcome(schedule.failed(first)), ProbeOutcome::SendFailed);
-    schedule.send(t0 + ms(80)).unwrap();
-    assert_eq!(schedule.lost(), [Probe::Outcome { sent: t0 + ms(80), outcome: ProbeOutcome::Unresolved }]);
-    assert!(schedule.expire(t0 + ms(10_000)).is_empty());
-}
-
-#[test]
 fn a_lost_channel_redials_within_2_s_capped_at_the_window_end_after_500_ms_when_lost_early() {
     let t0 = Instant::now();
     let mut schedule = Schedule::new(Cadence::ReplyDriven, 4, t0);

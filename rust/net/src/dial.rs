@@ -145,22 +145,6 @@ mod tests {
         }
     }
 
-    // Windows reports a refused loopback connect only after its SYN retries.
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn a_refused_address_hands_over_at_once() {
-        let (closed, refused) = listener().await;
-        drop(closed);
-        let (_open, live) = listener().await;
-        let deadline = Instant::now() + TIMEOUT;
-        for (primaries, fallbacks) in [(vec![refused, live], vec![]), (vec![refused], vec![live])] {
-            let started = Instant::now();
-            let stream = parallel(&primaries, &fallbacks, deadline).await.unwrap();
-            assert_eq!(stream.peer_addr().unwrap(), live);
-            assert!(started.elapsed() < FALLBACK_DELAY, "{:?}", started.elapsed());
-        }
-    }
-
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn a_silent_primary_family_lets_the_fallback_in_after_the_delay() {

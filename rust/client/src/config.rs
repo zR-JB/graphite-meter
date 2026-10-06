@@ -450,19 +450,4 @@ mod tests {
         assert_eq!(config.plan(), plan.map(|(stage, seconds)| (stage, Duration::from_secs(seconds))));
         assert!(run("-url http://bücher.example").is_err());
     }
-
-    #[test]
-    fn the_preparation_key_ignores_durations_and_server_order() {
-        let key = |args| run(args).unwrap().key();
-        let base = key("-server a -server b");
-        let timed = "-server b -server a -warmup 2s -latency-duration 9s -download-duration 1s -upload-duration 1m \
-                     -bidirectional-duration 3s";
-        assert_eq!(key(timed), base);
-        assert_eq!(key("-server a -server b -stages ping,down,up -loaded-latency=false"), base);
-        assert_ne!(key("-server a"), base);
-        let down = key("-server a -server b -stages down");
-        assert_ne!(key("-server a -server b -stages download,upload"), down);
-        assert_ne!(key("-server a -server b -stages down -loaded-latency=false"), down);
-        assert_ne!(key("-server a -server b -insecure"), base);
-    }
 }

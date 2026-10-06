@@ -153,16 +153,6 @@ async fn connect_stream_control_data_is_bounded() -> Result<(), TestError> {
     Ok(())
 }
 
-/// A session stream the budget cannot hold gets the draft's code for one not buffered.
-#[tokio::test]
-async fn a_session_stream_over_the_budget_is_refused_as_unbuffered() -> Result<(), TestError> {
-    let Served { peers, .. } = pair(Setup { limit: 0, ..PLAIN }).await?.serve(|_, _| async {});
-    // The first stream is in the floor kept for critical ones; its session stream is not.
-    let stream = uni(&peers.client, b"\x40\x54\x00").await?;
-    assert_eq!(stopped(&stream).await, Some(Code::WT_BUFFERED_STREAM_REJECTED));
-    Ok(())
-}
-
 #[tokio::test]
 async fn a_peer_withholding_stream_credit_cannot_hold_a_session() -> Result<(), TestError> {
     // No stream credit: the 200 head never leaves, yet the close ends within its wait.

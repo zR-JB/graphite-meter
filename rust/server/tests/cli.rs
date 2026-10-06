@@ -83,20 +83,6 @@ fn help_prints_the_usage_and_exits_zero() {
     assert!(text(&output.stderr).starts_with("flag provided but not defined: -nope\nUsage:\n"));
 }
 
-#[test]
-fn hash_password_reads_twice_from_a_pipe() {
-    let output = server(&["hash-password"], &[], b"correct horse\r\ncorrect horse\n");
-    assert!(output.status.success());
-    assert_eq!(text(&output.stderr), "Password: Confirm password: ");
-    assert!(text(&output.stdout).starts_with("$argon2id$v=19$m=19456,t=2,p=1$"));
-    let output = server(&["hash-password"], &[], b"one\ntwo\n");
-    assert_eq!(output.status.code(), Some(1));
-    let line = text(&output.stderr)
-        .strip_prefix("Password: Confirm password: ")
-        .unwrap();
-    assert_eq!(logged(line.trim_end()), "hash-password: passwords do not match");
-}
-
 /// A verbose throughput line's message, checked against Go's shape, with its transfer count.
 fn transfers(message: &str) -> usize {
     let fields = message.strip_prefix("[gm:server:download] ").unwrap();

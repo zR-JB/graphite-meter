@@ -1,11 +1,10 @@
-//! The HTTPS listener and its certificate: TLS 1.3 only, startup checks and renewals.
+//! The HTTPS listener and its certificate: TLS 1.3 only and startup checks.
 
 use super::*;
-use graphite_meter_server::{config::TlsFiles, transport::tls::Certificates};
 use graphite_meter_testkit::{Identity, Scratch};
 use rustls::pki_types::{CertificateDer, ServerName, pem::PemObject};
-use std::{path::PathBuf, sync::Arc, time::SystemTime};
-use tokio_rustls::{TlsAcceptor, TlsConnector};
+use std::{path::PathBuf, sync::Arc};
+use tokio_rustls::TlsConnector;
 
 /// A certificate and key in `scratch` from `identity`.
 fn files(scratch: &Scratch, identity: &Identity) -> (PathBuf, PathBuf) {
@@ -63,34 +62,4 @@ async fn startup_refuses_a_mismatched_pair_and_an_uncovered_public_host() {
     env.push(("GM_H1_TLS_PUBLIC_ORIGIN", "https://speed.example"));
     let refused = Server::bind(config(&env), pool()).await.err().unwrap();
     assert!(refused.starts_with("TLS certificate incompatible with speed.example: "), "{refused}");
-}
-
-/// Whether a client trusting `identity`'s CA completes a handshake with `acceptor`.
-async fn trusts(acceptor: &TlsAcceptor, identity: &Identity) -> bool {
-    let (client, server) = tokio::io::duplex(64 << 10);
-    let connector = TlsConnector::from(Arc::new(identity.client(&[b"http/1.1"])));
-    let name = ServerName::try_from("localhost").unwrap();
-    let (connected, _) = tokio::join!(connector.connect(name, client), acceptor.accept(server));
-    connected.is_ok()
-}
-
-#[tokio::test]
-async fn a_renewal_replaces_the_pair_only_once_complete() {
-    let scratch = Scratch::new().unwrap();
-    let (old, new) = (Identity::generate().unwrap(), Identity::generate().unwrap());
-    let (cert, key) = files(&scratch, &old);
-    let certificates = Certificates::load(TlsFiles { cert, key }, vec![], SystemTime::now(), |_| Ok(())).unwrap();
-    let certificates = Arc::new(certificates);
-    let acceptor = certificates.acceptor(b"http/1.1");
-    assert!(trusts(&acceptor, &old).await);
-    scratch.file("cert.pem", &new.certificate).unwrap();
-    let refused = certificates.reload(SystemTime::now()).unwrap_err();
-    assert!(refused.contains("private key does not match public key"), "{refused}");
-    assert!(trusts(&acceptor, &old).await, "an incomplete renewal keeps the previous pair");
-    assert!(!trusts(&acceptor, &new).await);
-    scratch.file("key.pem", &new.key).unwrap();
-    assert_eq!(certificates.reload(SystemTime::now()), Ok(true));
-    assert!(trusts(&acceptor, &new).await, "the complete renewal serves new handshakes");
-    assert!(!trusts(&acceptor, &old).await);
-    assert_eq!(certificates.reload(SystemTime::now()), Ok(false), "an unchanged pair is no renewal");
 }

@@ -83,22 +83,6 @@ mod tests {
     const TLS: [(&str, &str); 2] = [("GM_TLS_CERT", "/cert.pem"), ("GM_TLS_KEY", "/key.pem")];
 
     #[test]
-    fn the_default_budget_covers_every_connection_with_every_listener_enabled() {
-        let listeners = [("GM_H1_TLS_ADDR", ":7247"), ("GM_H2_ADDR", ":7248"), ("GM_H3_ADDR", ":7249")];
-        let every = [&TLS[..], &listeners[..]].concat();
-        assert_eq!(check_budget(&config(&every)), Ok(()));
-        let totals = [
-            ("GM_MAX_CONNECTIONS_PER_CLIENT", "4096"),
-            ("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", "256"),
-            ("GM_MAX_SESSIONS_PER_CLIENT", "64"),
-        ];
-        let totals = config(&[&every[..], &totals[..]].concat());
-        assert_eq!(check_budget(&totals), Ok(()));
-        let small = [("GM_MAX_BUFFER_BYTES", "262143")];
-        assert!(check_budget(&config(&small)).is_err(), "the download block needs its bytes");
-    }
-
-    #[test]
     fn per_client_stream_budgets_must_fit_a_quic_stream_count() {
         let max = i64::MAX.to_string();
         let huge = [

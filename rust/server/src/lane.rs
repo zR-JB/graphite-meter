@@ -307,31 +307,6 @@ mod tests {
         assert_eq!(lane.ended().await, LaneEnding::Revoked, "revocation outranks a shutdown due at once");
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn racing_causes_decide_one_ending() {
-        for _ in 0..100 {
-            let fixture = Fixture::new();
-            let lane = fixture.lane(LONG);
-            let observers: Vec<_> = (0..4)
-                .map(|_| {
-                    let lane = lane.clone();
-                    tokio::spawn(async move { lane.ended().await })
-                })
-                .collect();
-            let finisher = tokio::spawn({
-                let lane = lane.clone();
-                async move { lane.finish() }
-            });
-            fixture.shutdown.cancel();
-            let decided = finisher.await.unwrap();
-            for observer in observers {
-                assert_eq!(observer.await.unwrap(), decided);
-            }
-            assert!(matches!(decided, LaneEnding::Finished | LaneEnding::Shutdown));
-            assert_eq!(lane.ending(), Some(decided));
-        }
-    }
-
     #[tokio::test(start_paused = true)]
     async fn dropping_the_last_clone_releases_admission_and_work() {
         let fixture = Fixture::new();

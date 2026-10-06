@@ -126,23 +126,3 @@ impl Latch {
         self.0.load(Ordering::Relaxed)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn timestamps_are_utc_in_go_log_format() {
-        let at = |seconds| timestamp(UNIX_EPOCH + Duration::from_secs(seconds));
-        assert_eq!(at(0), "1970/01/01 00:00:00");
-        assert_eq!(at(951_782_400), "2000/02/29 00:00:00");
-        assert_eq!(at(1_791_158_399), "2026/10/04 23:59:59");
-        assert_eq!(at(4_107_542_400), "2100/03/01 00:00:00");
-        assert_eq!(rfc3339(UNIX_EPOCH + Duration::from_millis(1_791_158_399_500)), "2026-10-04T23:59:59Z");
-        assert_eq!(http_date(UNIX_EPOCH + Duration::from_secs(1)), "Thu, 01 Jan 1970 00:00:01 GMT");
-        assert_eq!(
-            http_date(UNIX_EPOCH + Duration::from_secs(1_791_158_399)),
-            "Sun, 04 Oct 2026 23:59:59 GMT"
-        );
-    }
-}

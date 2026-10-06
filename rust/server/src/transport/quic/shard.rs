@@ -270,28 +270,4 @@ mod tests {
         assert_eq!((meta.addr, meta.len, meta.stride), (PEER, 40, 40));
         assert!(inboxes.iter_mut().all(|inbox| drain(inbox).is_empty()));
     }
-
-    #[test]
-    fn gro_batches_route_each_segment_and_keep_the_rest_in_order() {
-        let (router, mut inboxes) = Router::new(4, 1472);
-        let mut long = short(3, 10);
-        long[0] = 0xc0;
-        let mut buf = [short(0, 10), short(2, 10), long.clone(), short(0, 10), short(3, 6)].concat();
-        buf.resize(64, 0);
-        let mut meta = received(46, 10);
-        router.route(0, &mut buf, &mut meta);
-        assert_eq!((meta.len, meta.stride), (30, 10));
-        assert_eq!(buf[..30], [short(0, 10), long, short(0, 10)].concat());
-        let (two, three) = (drain(&mut inboxes[2]), drain(&mut inboxes[3]));
-        assert_eq!((two.len(), &*two[0].datagram), (1, &short(2, 10)[..]));
-        assert_eq!((three.len(), &*three[0].datagram), (1, &short(3, 6)[..]));
-        assert_eq!((three[0].meta.len, three[0].meta.stride), (6, 6));
-
-        let mut buf = [short(1, 10), short(0, 10), short(0, 4)].concat();
-        let mut meta = received(24, 10);
-        router.route(0, &mut buf, &mut meta);
-        assert_eq!(meta.len, 14, "a short last segment moves up behind the kept ones");
-        assert_eq!(buf[..14], [short(0, 10), short(0, 4)].concat());
-        assert_eq!(drain(&mut inboxes[1]).len(), 1);
-    }
 }

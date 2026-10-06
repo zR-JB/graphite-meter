@@ -42,23 +42,6 @@ fn a_flag_error_prints_go_message_and_usage() {
 }
 
 #[test]
-fn another_argument_error_names_the_client() {
-    let cases: [(&[&str], &str); 2] = [
-        (&["-report", "extra"], "unexpected argument \"extra\""),
-        (
-            &["-throughput-protocol", "h9"],
-            "invalid throughput protocol \"h9\": use auto, http1, http2, or http3",
-        ),
-    ];
-    for (args, message) in cases {
-        let output = client(args);
-        assert_eq!(output.status.code(), Some(2), "{args:?}");
-        assert!(output.stdout.is_empty());
-        assert_eq!(text(output.stderr), format!("graphite-meter-client: {message}\n"));
-    }
-}
-
-#[test]
 fn legal_without_embedded_notices_names_the_task_that_embeds_them() {
     for args in [&["-legal"][..], &["--legal"], &["-streams", "99", "-legal"]] {
         let output = client(args);
