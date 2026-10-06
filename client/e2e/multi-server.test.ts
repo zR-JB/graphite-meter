@@ -88,7 +88,9 @@ test("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1", async 
   expect(saved.result.multiServer.failures).toEqual([]);
   const [self, peer] = saved.result.multiServer.servers;
   expect(self.throughput?.origin).toBe(home.http);
-  expect(peer.throughput?.origin).toBe(frankfurt.url);
+  // Automatic falls back past a slow HTTP/1.1 probe, so Frankfurt may be measured through any of its origins.
+  const origins = [frankfurt.url, frankfurt.http, frankfurt.h2, frankfurt.h3];
+  expect(origins).toContain(peer.throughput?.origin);
   expect(self.latencyTarget?.transport).toBe("websocket");
   expect(peer.latencyTarget?.transport).toBe("websocket");
 
