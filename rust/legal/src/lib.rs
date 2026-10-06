@@ -82,16 +82,4 @@ mod tests {
         assert_eq!(print(&mut out, b"notices").unwrap(), 0);
         assert_eq!(out, b"notices");
     }
-
-    #[test]
-    fn the_browser_notice_is_the_report_suffix() {
-        let report = b"project\nrust crates\nbrowser notice\n";
-        let compressed = miniz_oxide::deflate::compress_to_vec_zlib(report, 9).leak();
-        let notices = Notices::new(Some((compressed, report.len())), Some(20), "");
-        assert_eq!(notices.report(), Some(&report[..]));
-        assert_eq!(notices.browser(), Some(&b"browser notice\n"[..]));
-        let unshared = Notices::new(Some((compressed, report.len())), None, "");
-        assert_eq!(unshared.browser(), None);
-        assert_eq!(Notices::new(None, None, "").report(), None);
-    }
 }

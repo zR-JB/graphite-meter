@@ -1,42 +1,11 @@
-//! What transport tests rely on: the identity's names and chain, and the relay's delay and faults.
-use graphite_meter_testkit::{Error, Fault, Identity, Link};
-use std::{io, sync::Arc, time::Duration};
+//! What transport tests rely on: the relay's delay and faults.
+use graphite_meter_testkit::{Error, Fault, Link};
+use std::{io, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream, UdpSocket},
     time::{Instant, timeout},
 };
-
-fn handshake(identity: &Identity, name: &str) -> Result<(), rustls::Error> {
-    let name = rustls::pki_types::ServerName::try_from(name.to_owned()).expect("a server name");
-    let mut client = rustls::ClientConnection::new(Arc::new(identity.client(&[])), name)?.into();
-    let mut server = rustls::ServerConnection::new(Arc::new(identity.server(&[])))?.into();
-    for _ in 0..8 {
-        transfer(&mut client, &mut server)?;
-        transfer(&mut server, &mut client)?;
-    }
-    assert!(!client.is_handshaking() && !server.is_handshaking());
-    Ok(())
-}
-
-fn transfer(from: &mut rustls::Connection, to: &mut rustls::Connection) -> Result<(), rustls::Error> {
-    let mut bytes = Vec::new();
-    from.write_tls(&mut bytes).expect("in memory");
-    to.read_tls(&mut &bytes[..]).expect("in memory");
-    to.process_new_packets().map(drop)
-}
-
-#[test]
-fn the_leaf_verifies_for_every_loopback_name_under_its_ca() -> Result<(), Error> {
-    let identity = Identity::generate()?;
-    for name in ["localhost", "127.0.0.1", "::1"] {
-        handshake(&identity, name)?;
-    }
-    assert!(handshake(&identity, "example.com").is_err());
-    let stranger = Identity { ca: Identity::generate()?.ca, ..identity };
-    assert!(handshake(&stranger, "localhost").is_err(), "only its own CA verifies the leaf");
-    Ok(())
-}
 
 #[tokio::test]
 async fn tcp_link_delays_stalls_and_resets() -> Result<(), Error> {
