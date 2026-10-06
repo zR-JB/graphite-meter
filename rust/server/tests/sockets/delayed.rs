@@ -1,5 +1,5 @@
 //! Delayed links: an HTTP/3 upload beyond the floor window, a control reply beside downloads on a slow link, and the
-//! optimized-build gate that QUIC downloads exceed the old window limit.
+//! optimized-build gate that QUIC downloads outgrow a fixed 2.5 MiB window at 50 ms.
 
 use super::{
     http3::{H3, read, transport},
@@ -64,7 +64,7 @@ async fn a_control_reply_beside_downloads_waits_for_no_credit_grant_on_a_slow_li
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "optimized-build delayed-link throughput gate"]
-async fn quic_downloads_exceed_the_old_window_limit() {
+async fn quic_downloads_outgrow_a_fixed_window() {
     if cfg!(debug_assertions) {
         panic!("run this gate with an optimized profile");
     }

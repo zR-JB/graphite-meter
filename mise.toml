@@ -573,7 +573,7 @@ run = '''
 log=$(mktemp)
 trap 'rm -f "$log"' EXIT
 cargo nextest run --locked --cargo-profile ci -p graphite-meter-server --test sockets --run-ignored only \
-  --no-tests=fail --no-capture -E 'test(=delayed::quic_downloads_exceed_the_old_window_limit)' 2>&1 | tee "$log"
+  --no-tests=fail --no-capture -E 'test(=delayed::quic_downloads_outgrow_a_fixed_window)' 2>&1 | tee "$log"
 # The gate passes without measuring when loopback cannot reach its baseline; that proves nothing.
 if grep -q '^inconclusive:' "$log"; then
   echo "delayed downloads were not measured: loopback was below the baseline" >&2
