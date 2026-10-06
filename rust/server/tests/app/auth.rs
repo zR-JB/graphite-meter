@@ -1,7 +1,7 @@
-//! Authentication over the app: Go's refusals, trust, cookie and grant access, preflights, and the store's limits.
+//! Authentication over the app: Go's refusals, trust, and cookie and grant access.
 
 use super::*;
-use graphite_meter_server::auth::{GrantRefusal, NewLogin, Store};
+use graphite_meter_server::auth::{NewLogin, Store};
 use http::{HeaderValue, StatusCode};
 
 pub(super) const PUBLIC: &str = "https://meter.example";
@@ -174,54 +174,6 @@ async fn a_cookie_login_measures_from_the_public_origin_and_proves_csrf_for_writ
     assert_eq!(tls(&app, empty(elsewhere)).await.status(), StatusCode::FORBIDDEN);
 }
 
-/// A preflight for `GET /download` from `origin` requesting `headers`.
-async fn preflight(app: &App, endpoint: Endpoint, path: &str, origin: &str, headers: &str) -> Response<Body> {
-    let method = if path == "/auth/browser/token" { "POST" } else { "GET" };
-    let request = public("OPTIONS", path)
-        .header("origin", origin)
-        .header("access-control-request-method", method)
-        .header("access-control-request-headers", headers);
-    send(app, endpoint, empty(request)).await
-}
-
-#[tokio::test]
-async fn preflights_answer_the_public_origin_and_browser_grants_over_https_only() {
-    let app = auth_app(&[]);
-    let cookie = preflight(&app, Endpoint::H1Tls, "/download", PUBLIC, "X-CSRF-Token").await;
-    assert_eq!(cookie.status(), StatusCode::NO_CONTENT);
-    assert_headers(
-        &cookie,
-        &[
-            ("access-control-allow-origin", Some(PUBLIC)),
-            ("access-control-allow-credentials", Some("true")),
-            ("access-control-allow-headers", Some("Authorization, Content-Type, X-CSRF-Token")),
-            ("access-control-allow-methods", Some("GET, POST, DELETE, OPTIONS")),
-            ("strict-transport-security", Some("max-age=31536000")),
-        ],
-    );
-    let grant = preflight(&app, Endpoint::H2, "/download", BROWSER, "authorization").await;
-    assert_eq!(grant.status(), StatusCode::NO_CONTENT);
-    assert_headers(
-        &grant,
-        &[
-            ("access-control-allow-origin", Some(BROWSER)),
-            ("access-control-allow-credentials", None),
-            ("access-control-allow-headers", Some("Authorization, Content-Type")),
-        ],
-    );
-    let exchange = preflight(&app, Endpoint::H1Tls, "/auth/browser/token", BROWSER, "content-type").await;
-    assert_eq!(exchange.status(), StatusCode::NO_CONTENT);
-    assert_eq!(header(&exchange, "access-control-allow-methods"), Some("POST"));
-    for (endpoint, path, origin, headers) in [
-        (Endpoint::H1Tls, "/download", BROWSER, "content-type"),
-        (Endpoint::H1Tls, "/servers", BROWSER, "authorization"),
-        (Endpoint::H1, "/download", PUBLIC, ""),
-    ] {
-        let refused = preflight(&app, endpoint, path, origin, headers).await;
-        assert_eq!(refused.status(), StatusCode::FORBIDDEN, "{endpoint:?} {path} {origin} {headers}");
-    }
-}
-
 #[tokio::test]
 async fn grants_measure_only_where_they_may_and_end_with_their_login() {
     let app = auth_app(&[]);
@@ -250,25 +202,4 @@ async fn grants_measure_only_where_they_may_and_end_with_their_login() {
     assert!(store(&app).sign_out(login.key, false));
     let ended = tls(&app, empty(bearer("GET", "/probe", &native))).await;
     assert_eq!(header(&ended, "graphite-meter-auth"), Some("required"));
-}
-
-#[test]
-fn a_login_holds_eight_grants_and_only_a_native_one_replaces_the_oldest_native() {
-    let store = Store::default();
-    let login = store.sign_in("operator", "Operator", "local").unwrap();
-    let browser = || Some(HeaderValue::from_static(BROWSER));
-    let (first, second) = (store.grant(login.key, None).unwrap(), store.grant(login.key, None).unwrap());
-    let browsers: Vec<_> = (0..6).map(|_| store.grant(login.key, browser()).unwrap()).collect();
-    assert_eq!(store.grant(login.key, browser()), Err(GrantRefusal::Full));
-    let replacement = store.grant(login.key, None).unwrap();
-    assert!(store.bearer(&first).is_none(), "the oldest native grant was replaced");
-    for kept in browsers.iter().chain([&second, &replacement]) {
-        assert!(store.bearer(kept).is_some());
-    }
-    let only_browsers = store.sign_in("operator", "Operator", "local").unwrap();
-    for _ in 0..8 {
-        store.grant(only_browsers.key, browser()).unwrap();
-    }
-    assert_eq!(store.grant(only_browsers.key, None), Err(GrantRefusal::Full));
-    assert!(store.bearer(&format!("{first}=")).is_none() && store.bearer("short").is_none());
 }

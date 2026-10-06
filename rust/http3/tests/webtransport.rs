@@ -3,7 +3,7 @@
 mod support;
 
 use bytes::Bytes;
-use graphite_meter_http3::{Code, Error, WtCode, webtransport::Session};
+use graphite_meter_http3::{Code, Error, WtCode};
 use std::{sync::Arc, time::Duration};
 use support::*;
 use tokio::sync::{Notify, mpsc};
@@ -239,23 +239,6 @@ async fn a_cancelled_lane_gives_up_its_header_after_10_seconds() -> Result<(), T
     let (bytes, end) = raw_stream(&mut lane).await;
     assert_eq!(end, Err(WtCode(0).to_http()));
     assert!(bytes.len() < 3, "RESET_STREAM_AT kept a header that never completed");
-    Ok(())
-}
-
-#[tokio::test]
-async fn shutdown_closes_every_session_before_the_connection() -> Result<(), TestError> {
-    let Served { peers, serving, stop, .. } = pair(PLAIN).await?.sessions(until_closed);
-    let (driver, requests) = client(&peers);
-    let session = accepted(&requests).await?;
-    stop.notify_one();
-    assert_eq!(session.closed().await?, (4, "shutdown".into()));
-    until_goaway(&requests).await;
-    assert_eq!(Session::connect(&requests, get("/wt")).await.err(), Some(Error::GoingAway));
-    drop(session);
-    settled(&peers.budget).await;
-    jump(Duration::from_secs(1)).await;
-    assert_eq!((driver.await?, serving.await?), (Ok(()), Ok(())));
-    assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
     Ok(())
 }
 

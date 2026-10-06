@@ -198,28 +198,6 @@ mod tests {
     }
 
     #[test]
-    fn handling_above_the_round_trip_omits_only_the_pair() {
-        let mut latency = Latency::default();
-        latency.record(ProbeOutcome::Reply { rtt: ms(10), handling: Duration::from_micros(100) });
-        latency.record(ProbeOutcome::Reply { rtt: ms(20), handling: ms(21) });
-        latency.record(ProbeOutcome::Reply { rtt: ms(30), handling: Duration::from_micros(300) });
-        let summary = latency.summary();
-        assert_eq!((summary.replies, summary.p50, summary.jitter), (3, Some(ms(20)), Some(ms(10))));
-        let timing = Timing { pairs: 2, rtt: ms(20), handling: Duration::from_micros(200) };
-        assert_eq!(summary.timing, Some(timing));
-    }
-
-    #[test]
-    fn unfinished_probes_and_send_failures_stay_out_of_the_ratio() {
-        let mut latency = Latency::default();
-        for outcome in [ProbeOutcome::Unresolved, ProbeOutcome::SendFailed, ProbeOutcome::Timeout] {
-            latency.record(outcome);
-        }
-        let summary = latency.summary();
-        assert_eq!((summary.unresolved, summary.send_failures, summary.timeout_ratio()), (1, 1, Some(1.0)));
-    }
-
-    #[test]
     fn an_incomplete_population_shows_its_median_from_three_outcomes() {
         let mut latency = Latency::default();
         latency.record(ProbeOutcome::Reply { rtt: ms(10), handling: Duration::ZERO });

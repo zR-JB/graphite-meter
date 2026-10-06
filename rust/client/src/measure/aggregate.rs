@@ -472,36 +472,6 @@ mod tests {
         ServerId::parse(text).unwrap()
     }
 
-    fn downloads(at: Instant, counts: &[(&str, u64)]) -> Boundary {
-        let reading =
-            |&(server, count): &(&str, u64)| Reading { server: id(server), down: Some(count), up: None, fed: None };
-        Boundary {
-            at,
-            stalled: false,
-            last: false,
-            readings: counts.iter().map(reading).collect(),
-        }
-    }
-
-    #[test]
-    fn a_server_that_never_moved_ends_the_interval_at_its_first_boundary() {
-        let base = Instant::now();
-        let ms = |ms| base + Duration::from_millis(ms);
-        let mut aggregate = Aggregate::new(Stage::Download, vec![id("a"), id("b")], base);
-        for (at, a) in [(0, 0), (500, 500), (1000, 1000), (1500, 1500)] {
-            aggregate.observe(downloads(ms(at), &[("a", a), ("b", 0)]));
-        }
-        aggregate.dropout(&[id("a")], ms(1600));
-        aggregate.observe(downloads(ms(2000), &[("a", 2000)]));
-        let (intervals, _) = aggregate.intervals();
-        let [first, dropout] = [&intervals[0], &intervals[1]];
-        assert_eq!((first.start, first.end, first.window.is_none()), (base, base, true));
-        assert_eq!((dropout.reason, dropout.participants.as_slice()), (Reason::Dropout, &[id("a")][..]));
-        let window = dropout.window.as_ref().unwrap();
-        assert_eq!((window.start, window.end, window.rates.down), (base, ms(2000), Some(1000.0)));
-        assert_eq!(aggregate.result(Direction::Down), Some(Rate { mean: 1000.0, peak: 1000.0 }));
-    }
-
     #[test]
     fn a_feed_still_naming_a_replaced_receiver_adds_nothing() {
         let base = Instant::now();

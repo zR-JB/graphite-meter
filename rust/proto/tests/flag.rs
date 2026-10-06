@@ -4,7 +4,7 @@ use graphite_meter_proto::{
 };
 use std::{ffi::OsString, time::Duration};
 
-/// What the flags set: a client's built-in Go values and a server's own values paired with variables.
+/// What the flags set, from Go-like defaults.
 #[derive(Debug, Clone, PartialEq)]
 struct Settings {
     url: String,
@@ -58,67 +58,29 @@ fn put<T>(slot: &mut T, value: T) -> Result<(), String> {
     Ok(())
 }
 
-/// The flags of the Go program the expected usage and messages come from.
-const FLAGS: [Flag<Settings>; 7] = [
+/// A flag whose usage line these tests never print.
+const fn flag(name: &'static str, kind: Kind, set: fn(&mut Settings, &str) -> Result<(), String>) -> Flag<Settings> {
     Flag {
-        name: "url",
-        kind: Kind::String,
-        usage: "origin of the catalogue",
+        name,
+        kind,
+        usage: "",
         env: None,
-        set: |s, v| put(&mut s.url, v.into()),
-        show: |s| s.url.clone(),
-    },
-    Flag {
-        name: "warmup",
-        kind: Kind::Duration,
-        usage: "per-stage warmup duration",
-        env: None,
-        set: |s, v| put(&mut s.warmup, span(v)?),
-        show: |s| duration::format(s.warmup),
-    },
-    Flag {
-        name: "auto-streams",
-        kind: Kind::Int,
-        usage: "maximum streams",
-        env: None,
-        set: |s, v| put(&mut s.auto_streams, count(v)?),
-        show: |s| s.auto_streams.to_string(),
-    },
-    Flag {
-        name: "insecure",
-        kind: Kind::Bool,
-        usage: "skip verification",
-        env: None,
-        set: |s, v| put(&mut s.insecure, boolean(v)?),
-        show: |s| s.insecure.to_string(),
-    },
-    Flag {
-        name: "server",
-        kind: Kind::Value,
-        usage: "selected ID (repeat)",
-        env: None,
-        set: |s, v| {
-            s.servers.push(v.into());
-            Ok(())
-        },
+        set,
         show: |_| String::new(),
-    },
-    Flag {
-        name: "name",
-        kind: Kind::Value,
-        usage: "server `name` advertised",
-        env: Some("GM_SERVER_NAME"),
-        set: |s, v| put(&mut s.name, own(v)?),
-        show: |s| s.name.clone(),
-    },
-    Flag {
-        name: "verbose",
-        kind: Kind::Bool,
-        usage: "log throughput",
-        env: Some("GM_VERBOSE"),
-        set: |s, v| put(&mut s.verbose, own(v)? == "true"),
-        show: |s| s.verbose.to_string(),
-    },
+    }
+}
+
+const FLAGS: [Flag<Settings>; 7] = [
+    flag("url", Kind::String, |s, v| put(&mut s.url, v.into())),
+    flag("warmup", Kind::Duration, |s, v| put(&mut s.warmup, span(v)?)),
+    flag("auto-streams", Kind::Int, |s, v| put(&mut s.auto_streams, count(v)?)),
+    flag("insecure", Kind::Bool, |s, v| put(&mut s.insecure, boolean(v)?)),
+    flag("server", Kind::Value, |s, v| {
+        s.servers.push(v.into());
+        Ok(())
+    }),
+    flag("name", Kind::Value, |s, v| put(&mut s.name, own(v)?)),
+    flag("verbose", Kind::Bool, |s, v| put(&mut s.verbose, own(v)? == "true")),
 ];
 
 fn run(args: &[&str]) -> (Result<Parsed, FlagError>, Settings) {

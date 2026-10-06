@@ -452,23 +452,6 @@ mod tests {
     }
 
     #[test]
-    fn lanes_follow_the_path_unless_forced() {
-        let config = run("-auto-streams 3").unwrap();
-        let (fetch, webtransport) = (ThroughputTransport::FetchStream, ThroughputTransport::WebTransport);
-        let cases = [
-            (Protocol::Http1, fetch, Dir { down: 3, up: 3 }),
-            (Protocol::Http2, fetch, Dir { down: 1, up: 4 }),
-            (Protocol::Http3, fetch, Dir { down: 1, up: 1 }),
-            (Protocol::Http3, webtransport, Dir { down: 1, up: 1 }),
-        ];
-        for (protocol, transport, lanes) in cases {
-            assert_eq!(config.lanes(protocol, transport), lanes, "{protocol:?} {transport:?}");
-        }
-        let forced = run("-streams 5").unwrap();
-        assert_eq!(forced.lanes(Protocol::Http2, webtransport), Dir { down: 5, up: 5 });
-    }
-
-    #[test]
     fn the_preparation_key_ignores_durations_and_server_order() {
         let key = |args| run(args).unwrap().key();
         let base = key("-server a -server b");

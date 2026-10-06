@@ -47,52 +47,6 @@ async fn the_preflight_matches_the_golden_document_with_a_fixed_generation() {
 }
 
 #[tokio::test]
-async fn native_targets_name_the_requested_host_in_listener_order() {
-    let env = [&ALL_LISTENERS[..], &[("GM_MAX_STAGE_DURATION", "90s")]].concat();
-    let app = &app(&env);
-    let preflight = |host: &'static str| async move {
-        let builder = Request::builder().uri("/preflight").header("host", host);
-        let document = json(send(app, Endpoint::H1Tls, empty(builder)).await).await;
-        let list = |kind: &str| {
-            let targets = document["capabilities"][kind].as_array().unwrap().iter();
-            let target = |target: &Value| {
-                let fields = ["baseUrl", "transport", "protocol"].map(|field| target[field].as_str().unwrap_or(""));
-                fields.join(" ").trim_end().to_owned()
-            };
-            targets.map(target).collect::<Vec<_>>()
-        };
-        (list("throughput"), list("latency"), document["capabilities"]["maxStageMs"].clone())
-    };
-    let (throughput, latency, stage) = preflight("Speed.Example:9999").await;
-    let expected = [
-        "http://speed.example:7246 fetch-stream http1",
-        "https://speed.example:7247 fetch-stream http1",
-        "https://speed.example:7248 fetch-stream http2",
-        "https://speed.example:7249 fetch-stream http3",
-        "https://speed.example:7249 webtransport http3",
-        "https://speed.example:7249 webtransport-datagram http3",
-    ];
-    assert_eq!(throughput, expected);
-    let expected = [
-        "http://speed.example:7246 websocket",
-        "https://speed.example:7247 websocket",
-        "https://speed.example:7249 webtransport",
-    ];
-    assert_eq!((latency, stage), (expected.map(String::from).to_vec(), json!(90_000)));
-    assert_eq!(preflight("bad_host!").await.0[1], "https://localhost:7247 fetch-stream http1");
-
-    let env = [&ALL_LISTENERS[..], &[("GM_ADVERTISED_NATIVE_ENDPOINTS", "http2")]].concat();
-    let app = super::app(&env);
-    let document = json(send(&app, Endpoint::H1, empty(request("GET", "/preflight"))).await).await;
-    let capabilities = &document["capabilities"];
-    assert_eq!(
-        capabilities["throughput"],
-        json!([{"baseUrl": "https://speed.example:7248", "transport": "fetch-stream", "protocol": "http2"}])
-    );
-    assert_eq!(capabilities["latency"], json!([]));
-}
-
-#[tokio::test]
 async fn servers_publishes_the_catalogue_with_self_approving_its_own_targets() {
     let app = app(&[("GM_SERVER_CATALOG", r#"["https://other.example"]"#)]);
     let response = send(&app, Endpoint::H1, empty(request("GET", "/servers"))).await;

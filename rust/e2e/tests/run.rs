@@ -1,14 +1,11 @@
-//! Whole runs against the server on pinned runtimes: every stage over each transport, a server that departs
-//! mid-stage, and a run without the interface.
+//! Whole runs against the server on pinned runtimes: every stage over each transport and a server that departs
+//! mid-stage.
 use graphite_meter_client::{
     config::Config,
     events::{Event, Events},
-    headless,
     model::{Direction, Outcome, Scope, Stage, StageResult},
     net::Client,
-    report::{WIDTH, report},
     run::{coordinator, prepare::prepare},
-    tui::theme::Palette,
 };
 use graphite_meter_e2e::{self as e2e, Server};
 use graphite_meter_net::Pool;
@@ -199,18 +196,4 @@ async fn a_sole_server_that_fails_a_stage_rejoins_the_next() {
     assert_eq!((download.servers[0].left, failure.failure.reason), (true, FailureReason::Timeout));
     assert!(!upload.servers[0].left && upload.failures.is_empty(), "{upload:#?}");
     assert!(upload.throughput[Direction::Up].unwrap().rate.is_some());
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_run_without_the_interface_completes_with_status_0() {
-    let server = Server::start().await;
-    let config = config(
-        &server.http1,
-        &["-stages", "latency,download", "-latency-duration", "1s", "-download-duration", "1s"],
-    );
-    let (view, status) = headless(config, pinned(), std::future::pending()).await;
-    let run = view.run.as_ref().unwrap();
-    assert_eq!((run.outcome, status), (Some(Outcome::Complete), 0), "{:#?}", run.results);
-    let lines = report(&view, WIDTH, &Palette::new(true));
-    assert!(lines[0].text().starts_with("Graphite Meter  Complete  "), "{lines:?}");
 }

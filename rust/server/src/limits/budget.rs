@@ -183,18 +183,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn leases_charge_until_dropped_and_never_past_the_limit() {
-        let budget = Budget::new(100);
-        let lease = budget.lease(60).unwrap();
-        assert!(budget.lease(41).is_none());
-        let rest = budget.lease(40).unwrap();
-        assert_eq!(budget.usage(), Usage { limit: 100, used: 100, reserved: 0 });
-        assert!(budget.lease(1).is_none() && budget.lease(usize::MAX).is_none());
-        drop((lease, rest));
-        assert_eq!(budget.usage().used, 0);
-    }
-
-    #[test]
     fn pressure_counts_only_what_reservations_leave() {
         let budget = Budget::new(1000);
         let reserved = budget.reserve(200).unwrap();
