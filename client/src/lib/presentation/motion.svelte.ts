@@ -48,7 +48,8 @@ const boxes = (only?: readonly string[]) =>
   );
 
 /** A change that reshapes the console applies at once, in the frame of the click that asked for it. Then every
-    element marked `data-flip` that stayed glides from its old place to its new one, all on the compositor. Two
+    element marked `data-flip` that stayed glides from its old place to its new one on the compositor; one also
+    marked `data-flip-resize` changes width on the same curve, a layout per frame within it. Two
     things never share a place: a leaving one goes at once and its neighbours close over it, and an arriving one
     waits for its neighbours to make room, then rises in. An element with `data-flip-edge` (`left` or `right`)
     is a sheet: it slides in from beyond that edge and back out, without overshoot. `only`
@@ -100,9 +101,16 @@ export function flip(update: () => void, only?: readonly string[]): void {
         easing: moveEase,
       });
     }
-    // A wider element opens from its old width rather than jumping to the new one.
+    // An element marked `data-flip-resize` changes width on the move's curve, so neighbours tile in every frame;
+    // any other wider element opens from its old width rather than jumping to the new one.
     const grew = box.width - old.box.width;
-    if (grew >= 1) {
+    if (Math.abs(grew) >= 1 && el.dataset.flipResize !== undefined) {
+      moved = true;
+      el.animate(
+        [{ width: `${old.box.width}px` }, { width: `${box.width}px` }],
+        { duration: moveMs, easing: moveEase },
+      );
+    } else if (grew >= 1) {
       moved = true;
       el.animate(
         [

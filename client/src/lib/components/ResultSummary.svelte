@@ -79,6 +79,7 @@
         class="card {card.status}"
         data-tone={card.key}
         data-flip="card-{card.key}"
+        data-flip-resize
       >
         <span class="face">
           <span class="name">
