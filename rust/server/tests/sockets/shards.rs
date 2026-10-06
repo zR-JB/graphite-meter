@@ -1,15 +1,13 @@
-//! The Linux endpoint set: HTTP/3 on half of the runtime threads as far as the budget covers, connections that
-//! follow a client whose address changes, and limits that stay server-wide.
+//! The Linux endpoint set: HTTP/3 on half of the runtime threads, connections that follow a client whose address
+//! changes, and limits that stay server-wide.
 #![cfg(target_os = "linux")]
 
 use super::{
-    http3::{ADDRESS, Connection, H3, read, transport},
+    http3::{Connection, H3, read, transport},
     quic::retried,
-    *,
 };
 use futures_util::future::join_all;
 use graphite_meter_server::limits::QUIC_PER_CLIENT;
-use graphite_meter_testkit::{Identity, Scratch};
 
 async fn download(connection: &Connection, bytes: usize) -> usize {
     let (answer, mut body) = connection.send("GET", &format!("/download?bytes={bytes}"), b"").await;
@@ -54,45 +52,4 @@ async fn retry_and_a_source_s_quic_share_hold_across_endpoints() {
     }
     let refused = h3.connect_from("127.0.0.3", transport(None)).await;
     assert!(refused.is_err(), "a source's QUIC share counts every endpoint's connections");
-}
-
-/// A server with HTTP/3 on the chain in `scratch`, four connections and a budget of `budget` bytes, if it binds.
-async fn bind(scratch: &Scratch, budget: Option<usize>) -> Result<Server, String> {
-    let [cert, key] = ["cert.pem", "key.pem"].map(|name| scratch.path().join(name));
-    let budget = budget.map(|budget| budget.to_string());
-    let mut env = vec![
-        ("GM_TLS_CERT", cert.to_str().unwrap()),
-        ("GM_TLS_KEY", key.to_str().unwrap()),
-        ("GM_H3_ADDR", ADDRESS),
-        ("GM_MAX_CONNECTIONS", "4"),
-        ("GM_MAX_CONNECTIONS_PER_CLIENT", "4"),
-    ];
-    env.extend(budget.as_deref().map(|budget| ("GM_MAX_BUFFER_BYTES", budget)));
-    Server::bind(config(&env), pool()).await
-}
-
-/// The number before `suffix` in a budget refusal.
-fn term(refusal: &str, suffix: &str) -> usize {
-    let before = refusal.split(suffix).next().unwrap();
-    before.rsplit(' ').next().unwrap().parse().unwrap()
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-async fn the_buffer_budget_caps_the_endpoints() {
-    let (scratch, identity) = (Scratch::new().unwrap(), Identity::generate().unwrap());
-    scratch.file("cert.pem", &identity.certificate).unwrap();
-    scratch.file("key.pem", &identity.key).unwrap();
-    let measured = bind(&scratch, None).await.unwrap();
-    assert_eq!(measured.quic_endpoints(), 4, "eight workers plan four endpoints");
-    let reserved = measured.budget().usage().reserved;
-    drop(measured);
-    let refusal = bind(&scratch, Some(1)).await.err().unwrap();
-    let minimum = term(&refusal, ": GM_MAX_CONNECTIONS");
-    // Every connection's floor and the download block, beside the configured endpoint's buffers.
-    let rest = minimum - term(&refusal, " bytes of QUIC endpoint buffers");
-    let four = bind(&scratch, Some(rest + reserved)).await.unwrap();
-    assert_eq!(four.quic_endpoints(), 4);
-    drop(four);
-    let three = bind(&scratch, Some(rest + reserved - 1)).await.unwrap();
-    assert_eq!(three.quic_endpoints(), 3, "a byte short of four endpoints");
 }

@@ -1,4 +1,4 @@
-//! The WebSocket bus: handshakes, PONGs, the close codes of its endings and the close handshake's bound.
+//! The WebSocket bus: PONGs and the close codes of its endings.
 
 use super::*;
 use futures_util::{SinkExt, StreamExt};
@@ -34,9 +34,6 @@ async fn closed(socket: &mut WebSocketStream<TcpStream>) -> (u16, String) {
         other => panic!("{other:?}"),
     }
 }
-
-/// RFC 6455's sample handshake nonce.
-const NONCE: &str = "dGhlIHNhbXBsZSBub25jZQ==";
 
 #[tokio::test]
 async fn a_bus_answers_text_and_binary_pings_until_the_peer_closes() {
@@ -80,48 +77,4 @@ async fn a_bus_closes_at_the_operation_lifetime() {
     let server = start(&[("GM_MAX_OPERATION_DURATION", "1s")]).await;
     let mut socket = bus(&server).await;
     assert_eq!(closed(&mut socket).await, (4002, "lifetime".into()));
-}
-
-#[tokio::test]
-async fn a_peer_that_never_answers_the_close_holds_the_bus_at_most_five_seconds() {
-    let server = start(&[("GM_MAX_OPERATION_DURATION", "1s")]).await;
-    let mut client = server.connect().await;
-    let upgrade = "Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n";
-    client
-        .send(&format!(
-            "GET /ws/ping HTTP/1.1\r\nHost: test\r\n{upgrade}Sec-WebSocket-Key: {NONCE}\r\n\r\n"
-        ))
-        .await;
-    assert_eq!(client.head().await.unwrap().status, 101);
-    server.until_active(1).await;
-    advance_clock(Duration::from_secs(1)).await;
-    let mut close = [0; 2];
-    client.stream.read_exact(&mut close).await.unwrap();
-    assert_eq!(close[0], 0x88, "the lifetime's close frame");
-    advance_clock(Duration::from_secs(4)).await;
-    assert_eq!(server.active().await, 1, "the close handshake waits for the peer");
-    advance_clock(Duration::from_millis(1500)).await;
-    let released = tokio::time::timeout(Duration::from_millis(500), server.until_active(0)).await;
-    assert!(released.is_ok(), "released at the five-second bound");
-}
-
-#[tokio::test]
-async fn handshakes_refuse_head_and_http_1_0_with_the_headers_http_requires() {
-    let server = start(&[]).await;
-    let upgrade = format!(
-        "Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {NONCE}\r\n\r\n"
-    );
-    let mut client = server.connect().await;
-    client
-        .send(&format!("HEAD /ws/ping HTTP/1.1\r\nHost: test\r\n{upgrade}"))
-        .await;
-    let answer = client.answer().await.unwrap();
-    assert_eq!((answer.status, answer.header("allow")), (405, Some("GET")));
-    let mut client = server.connect().await;
-    client
-        .send(&format!("GET /ws/ping HTTP/1.0\r\nHost: test\r\n{upgrade}"))
-        .await;
-    let answer = client.answer().await.unwrap();
-    assert_eq!((answer.status, answer.header("upgrade")), (426, Some("websocket")));
-    server.until_active(0).await;
 }

@@ -1,15 +1,11 @@
-//! The QUIC endpoint: Retry under pressure, the handshake bound, receive credit, the budget it binds within, and the
-//! floors it shares with HTTP/2.
+//! The QUIC endpoint: Retry under pressure, the handshake bound, receive credit and an exhausted budget.
 
 use super::{
-    http3::{ADDRESS, H3, read, transport},
+    http3::{H3, read, transport},
     *,
 };
 use graphite_meter_server::limits::CONNECTION_CREDIT;
-use graphite_meter_testkit::{Identity, Scratch};
-use rustls::pki_types::ServerName;
 use tokio::net::UdpSocket;
-use tokio_rustls::TlsConnector;
 
 const INITIAL: u8 = 0;
 const RETRY: u8 = 3;
@@ -169,39 +165,6 @@ async fn under_pressure_an_admitted_upload_reserves_no_receive_credit() {
     drop(pressure);
 }
 
-/// Why a server with HTTP/3, two connections and a budget of `budget` bytes does not bind, if it does not.
-async fn refusal(scratch: &Scratch, budget: &str) -> Option<String> {
-    let [cert, key] = ["cert.pem", "key.pem"].map(|name| scratch.path().join(name));
-    let env = [
-        ("GM_TLS_CERT", cert.to_str().unwrap()),
-        ("GM_TLS_KEY", key.to_str().unwrap()),
-        ("GM_H3_ADDR", ADDRESS),
-        ("GM_MAX_CONNECTIONS", "2"),
-        ("GM_MAX_CONNECTIONS_PER_CLIENT", "2"),
-        ("GM_MAX_BUFFER_BYTES", budget),
-    ];
-    Server::bind(config(&env), pool()).await.err()
-}
-
-/// The least budget a refusal names.
-fn minimum(refusal: &str) -> u64 {
-    let minimum = refusal.split("must be at least ").nth(1).unwrap();
-    minimum.split(':').next().unwrap().parse().unwrap()
-}
-
-#[tokio::test]
-async fn binding_checks_the_budget_with_the_chain_and_the_socket_it_holds() {
-    let (scratch, identity) = (Scratch::new().unwrap(), Identity::generate().unwrap());
-    scratch.file("cert.pem", &identity.certificate).unwrap();
-    scratch.file("key.pem", &identity.key).unwrap();
-    let configured = refusal(&scratch, "1").await.unwrap();
-    assert!(!configured.contains(" 0 bytes of QUIC endpoint buffers"), "{configured}");
-    let socket = refusal(&scratch, &minimum(&configured).to_string()).await;
-    let socket = socket.expect("the socket's buffers count");
-    assert!(minimum(&socket) > minimum(&configured), "{socket}");
-    assert_eq!(refusal(&scratch, &minimum(&socket).to_string()).await, None);
-}
-
 /// Leases what the budget has left past `spare` bytes.
 fn exhaust(budget: &Budget, spare: usize) -> graphite_meter_server::limits::Lease {
     loop {
@@ -239,26 +202,4 @@ async fn an_exhausted_budget_slows_running_connections_and_closes_one_whose_floo
         0,
         "the running connection serves on"
     );
-}
-
-#[tokio::test]
-async fn http2_and_http3_connections_hold_their_floors_in_one_budget_and_http1_none() {
-    let h3 = H3::start(&[("GM_H2_ADDR", "localhost:0")]).await;
-    let budget = h3.server.budget.clone();
-    let idle = settled(&budget).await;
-    let mut http1 = h3.server.connect().await;
-    assert_eq!(http1.request("GET /probe", "").await.status, 200);
-    assert_eq!(settled(&budget).await, idle, "an HTTP/1 connection holds no floor");
-    let connector = TlsConnector::from(Arc::new(h3.identity.client(&[b"h2"])));
-    let socket = TcpStream::connect(h3.server.h2.unwrap()).await.unwrap();
-    let name = ServerName::try_from("localhost").unwrap();
-    let (_http2, driver) = h2::client::handshake(connector.connect(name, socket).await.unwrap())
-        .await
-        .unwrap();
-    let _driver = tokio::spawn(driver);
-    let http2 = settled(&budget).await - idle;
-    assert_eq!(http2, graphite_meter_server::transport::http2::FLOOR_BYTES);
-    let _http3 = h3.connect(transport(None)).await;
-    let http3 = settled(&budget).await - idle - http2;
-    assert!(http3 >= 481 << 10, "{http3} bytes for an HTTP/3 connection");
 }

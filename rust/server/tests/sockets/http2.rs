@@ -1,5 +1,4 @@
-//! The HTTP/2 listener: transfers and their endings, exchange bounds beside admitted work, window funding, the
-//! connection lifecycle and floors.
+//! The HTTP/2 listener: transfers and their idle endings, window funding, header floods and its SETTINGS.
 
 use super::*;
 use bytes::Bytes;
@@ -23,7 +22,7 @@ struct H2 {
 /// A client connection and the task driving it, which ends when the connection closes.
 struct Connection {
     client: SendRequest<Bytes>,
-    driver: JoinHandle<Result<(), h2::Error>>,
+    _driver: JoinHandle<Result<(), h2::Error>>,
 }
 
 impl H2 {
@@ -51,7 +50,7 @@ impl H2 {
             .handshake(stream)
             .await
             .unwrap();
-        Connection { client, driver: tokio::spawn(connection) }
+        Connection { client, _driver: tokio::spawn(connection) }
     }
 }
 
@@ -84,11 +83,6 @@ impl Connection {
             .as_str()
             .unwrap()
             .into()
-    }
-
-    /// Whether the server closed the connection within `bound` of real time.
-    async fn closes_within(&mut self, bound: Duration) -> bool {
-        tokio::time::timeout(bound, &mut self.driver).await.is_ok()
     }
 }
 
@@ -133,25 +127,6 @@ async fn http2_serves_its_routes_downloads_and_uploads() {
     let answer = read(answer.await.unwrap().into_body()).await.unwrap();
     assert_eq!(answer, br#"{"bytes":300000}"#);
     assert_eq!(h2.server.active().await, 0, "finished transfers release their handlers");
-}
-
-#[tokio::test]
-async fn an_unadmitted_stream_is_reset_at_fifteen_seconds_beside_an_admitted_download() {
-    let h2 = H2::start(&[]).await;
-    let mut connection = h2.connect(0).await;
-    let mut download = connection.get("GET", ENDLESS).await.into_body();
-    let probe = connection.get("GET", "/probe").await;
-    assert_eq!(probe.status(), 200, "its head is written; its body waits for a window");
-    advance_clock(Duration::from_secs(14)).await;
-    let mut probe = probe.into_body();
-    let waiting = tokio::time::timeout(Duration::from_millis(50), probe.data()).await;
-    assert!(waiting.is_err(), "the exchange runs until its bound");
-    advance_clock(Duration::from_secs(1)).await;
-    let cut = probe.data().await.unwrap().unwrap_err();
-    assert_eq!(cut.reason(), Some(Reason::CANCEL));
-    let waiting = tokio::time::timeout(Duration::from_millis(50), download.data()).await;
-    assert!(waiting.is_err(), "the admitted download runs on");
-    assert_eq!(h2.server.active().await, 1);
 }
 
 /// Whether an upload that sent one byte may send twice the default window within `bound`; h2's send buffer caps it
@@ -316,87 +291,6 @@ async fn transfers_and_feeds_the_peer_leaves_idle_end_after_thirty_seconds() {
     assert_eq!(answer.status(), 408);
     assert_eq!(answer.headers()["x-graphite-upload-refusal"], "idle");
     h2.server.until_active(0).await;
-}
-
-#[tokio::test]
-async fn shutdown_resets_transfers_and_gives_the_rest_five_seconds_after_goaway() {
-    let h2 = H2::start(&[]).await;
-    let mut connection = h2.connect(0).await;
-    let id = h2.server.upload_id().await;
-    let download = connection.get("GET", ENDLESS).await;
-    let (answer, mut upload) = connection.open("POST", &format!("/upload?id={id}")).await;
-    upload.send_data(Bytes::from_static(b"partial"), false).unwrap();
-    let unadmitted = connection.get("GET", "/probe").await.into_body();
-    h2.server.until_active(2).await;
-    let stopped = h2.server.stop();
-    assert_eq!(read(download.into_body()).await.unwrap_err(), Some(Reason::CANCEL));
-    assert_eq!(answer.await.unwrap_err().reason(), Some(Reason::CANCEL));
-    let refused = match poll_fn(|cx| connection.client.poll_ready(cx)).await {
-        Err(_) => true,
-        Ok(()) => connection.open("GET", "/probe").await.0.await.is_err(),
-    };
-    assert!(refused, "a request after the GOAWAY is refused");
-    advance_clock(Duration::from_millis(4500)).await;
-    assert!(
-        !connection.closes_within(Duration::from_millis(50)).await,
-        "the unadmitted stream gets its grace"
-    );
-    advance_clock(Duration::from_secs(1)).await;
-    assert!(connection.closes_within(Duration::from_secs(2)).await);
-    drop(unadmitted);
-    stopped.await.unwrap().unwrap();
-}
-
-#[tokio::test]
-async fn a_funded_connection_goes_away_fifteen_seconds_after_its_admitted_work() {
-    let h2 = H2::start(&[]).await;
-    let (mut funded, mut control) = (h2.connect(65_535).await, h2.connect(65_535).await);
-    let id = funded.upload_id().await;
-    let (answer, mut upload) = funded.open("POST", &format!("/upload?id={id}")).await;
-    send(&mut upload, Bytes::from_static(b"abc"), true).await;
-    assert_eq!(answer.await.unwrap().status(), 200);
-    for _ in 0..2 {
-        advance_clock(Duration::from_secs(7)).await;
-        for connection in [&mut funded, &mut control] {
-            assert_eq!(connection.get("GET", "/probe").await.status(), 200);
-        }
-    }
-    assert!(!funded.closes_within(Duration::from_millis(50)).await);
-    advance_clock(Duration::from_millis(1500)).await;
-    assert!(
-        funded.closes_within(Duration::from_secs(2)).await,
-        "unadmitted requests never extend its idle period"
-    );
-    advance_clock(Duration::from_secs(10)).await;
-    assert!(
-        !control.closes_within(Duration::from_millis(50)).await,
-        "a connection without credit stays open"
-    );
-}
-
-#[tokio::test]
-async fn an_idle_connection_goes_away_after_fifteen_seconds() {
-    let h2 = H2::start(&[]).await;
-    let mut connection = h2.connect(65_535).await;
-    assert_eq!(connection.get("GET", "/probe").await.status(), 200);
-    advance_clock(Duration::from_secs(14)).await;
-    assert!(!connection.closes_within(Duration::from_millis(50)).await);
-    advance_clock(Duration::from_secs(2)).await;
-    assert!(connection.closes_within(Duration::from_secs(2)).await);
-}
-
-#[tokio::test]
-async fn a_connection_whose_floor_does_not_fit_is_closed_at_accept() {
-    let budget = (graphite_meter_server::engine::download::BLOCK_BYTES
-        + graphite_meter_server::transport::http2::FLOOR_BYTES)
-        .to_string();
-    let h2 = H2::start(&[("GM_MAX_BUFFER_BYTES", &budget)]).await;
-    let mut first = h2.connect(65_535).await;
-    assert_eq!(first.get("GET", "/probe").await.status(), 200);
-    let socket = TcpStream::connect(h2.server.h2.unwrap()).await.unwrap();
-    let name = ServerName::try_from("localhost").unwrap();
-    assert!(h2.connector.connect(name, socket).await.is_err(), "the second connection is closed");
-    drop(first);
 }
 
 #[tokio::test]

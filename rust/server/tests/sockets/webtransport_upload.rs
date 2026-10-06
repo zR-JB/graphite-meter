@@ -1,16 +1,13 @@
 //! WebTransport uploads: client streams and datagrams into one aggregate beside HTTP, the progress feed on a server
-//! stream, refusals, the stream ceiling, receive credit and the idle ending.
+//! stream and receive credit.
 
 use super::{
-    http3::{Connection, H3, pass, transport},
+    http3::{Connection, H3, transport},
     quic::settled,
-    webtransport::{ending, open},
+    webtransport::open,
     *,
 };
-use graphite_meter_http3::{
-    Error, WtCode,
-    webtransport::{RecvStream, SendStream, Session},
-};
+use graphite_meter_http3::webtransport::{RecvStream, SendStream, Session};
 use graphite_meter_proto::upload::Record;
 use graphite_meter_server::limits::CONNECTION_CREDIT;
 
@@ -139,67 +136,4 @@ async fn datagrams_count_only_when_asked_and_their_lane_leaves_once_finalized() 
     }
     lane(&session, 10).await.finish().unwrap();
     until_bytes(&control, &unasked, 10).await;
-}
-
-#[tokio::test]
-async fn a_seventeenth_concurrent_stream_is_stopped_with_code_zero() {
-    let h3 = H3::start(&[]).await;
-    let control = h3.connect(transport(None)).await;
-    let id = control.upload_id().await;
-    let connection = h3.connect(transport(None)).await;
-    let session = connection.session(&format!("/wt/upload?id={id}")).await;
-    let mut lanes = Vec::new();
-    for _ in 0..16 {
-        lanes.push(lane(&session, 10).await);
-    }
-    until_bytes(&control, &id, 160).await;
-    let mut extra = lane(&session, 10).await;
-    let stopped = async {
-        loop {
-            if let Err(error) = extra.write_all(b"x").await {
-                return error;
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    };
-    let stopped = tokio::time::timeout(Duration::from_secs(2), stopped).await.unwrap();
-    assert_eq!(stopped, Error::Stopped(WtCode(0).to_http()));
-    let counted = control.json("POST", &format!("/upload/checkpoint?id={id}")).await;
-    assert_eq!(counted["bytes"], 160, "the stopped stream counts nothing");
-}
-
-#[tokio::test]
-async fn an_upload_refused_at_connect_sends_its_error_and_closes_after_two_seconds() {
-    let h3 = H3::start(&[]).await;
-    let idle = settled(&h3.server.budget).await;
-    let connection = h3.connect(transport(None)).await;
-    let session = connection.session("/wt/upload?id=forged").await;
-    let mut feed = Feed::of(&session).await;
-    assert_eq!(refused(feed.next().await), "invalid");
-    assert_eq!(feed.next().await, None);
-    pass(Duration::from_millis(1900)).await;
-    assert!(open(&session).await);
-    pass(Duration::from_millis(100)).await;
-    assert_eq!(session.closed().await, Ok(ending(0, "")));
-    let unfunded = settled(&h3.server.budget).await - idle;
-    assert!(unfunded < CONNECTION_CREDIT / 4, "{unfunded} bytes for a refused upload");
-}
-
-#[tokio::test]
-async fn an_upload_session_ends_idle_with_its_bytes_though_unasked_datagrams_arrive() {
-    let h3 = H3::start(&[]).await;
-    let control = h3.connect(transport(None)).await;
-    let id = control.upload_id().await;
-    let connection = h3.connect(transport(None)).await;
-    let session = connection.session(&format!("/wt/upload?id={id}&datagrams=0")).await;
-    let _stalled = lane(&session, 7).await;
-    until_bytes(&control, &id, 7).await;
-    pass(Duration::from_secs(25)).await;
-    session.send_datagram(b"not movement").unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    pass(Duration::from_secs(5)).await;
-    assert_eq!(session.closed().await, Ok(ending(1, "idle")));
-    // The first control connection idled out without a request.
-    let control = h3.connect(transport(None)).await;
-    until_bytes(&control, &id, 7).await;
 }

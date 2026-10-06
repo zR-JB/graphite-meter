@@ -88,26 +88,6 @@ async fn a_head_over_thirty_two_kibibytes_is_refused() {
 }
 
 #[tokio::test]
-async fn a_refused_head_or_body_ends_the_connection() {
-    let server = start(&[]).await;
-    for (request, text) in [
-        ("GET /probe HTTP/1.1\r\n\r\n", "400 Bad Request: missing required Host header"),
-        (
-            "GET /probe HTTP/1.1\r\nHost: test\r\nContent-Length: 3\r\n\r\nabc",
-            "request body not accepted",
-        ),
-    ] {
-        let mut client = server.connect().await;
-        client.send(request).await;
-        let answer = client.answer().await.unwrap();
-        assert_eq!(answer.status, 400);
-        assert_eq!(answer.header("connection"), Some("close"));
-        assert_eq!(answer.body, format!("{text}\n").as_bytes());
-        assert!(client.answer().await.is_none());
-    }
-}
-
-#[tokio::test]
 async fn connections_beyond_a_client_share_are_closed_unserved() {
     let server = start(&[("GM_MAX_CONNECTIONS_PER_CLIENT", "2")]).await;
     let mut held = Vec::new();

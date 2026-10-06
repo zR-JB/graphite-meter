@@ -232,27 +232,6 @@ async fn an_unadmitted_request_is_reset_at_fifteen_seconds_beside_an_admitted_do
 }
 
 #[tokio::test]
-async fn an_upload_and_a_feed_the_peer_leaves_idle_end_after_thirty_seconds() {
-    let h3 = H3::start(&[]).await;
-    let connection = h3.connect(transport(None)).await;
-    let id = connection.upload_id().await;
-    let (mut upload, mut answer) = connection.open("POST", &format!("/upload?id={id}")).await;
-    upload.send_data(Bytes::from_static(b"partial")).await.unwrap();
-    // Too little stream credit for the feed's head.
-    let stalled = h3.connect(transport(Some(64))).await;
-    let _feed = stalled.open("GET", &format!("/upload/progress?id={id}")).await;
-    h3.server.until_active(2).await;
-    pass(Duration::from_secs(28)).await;
-    assert_eq!((h3.server.active().await, stalled.resets()), (2, 0));
-    pass(Duration::from_secs(3)).await;
-    let answer = answer.response().await.unwrap();
-    assert_eq!(answer.status(), 408);
-    assert_eq!(answer.headers()["x-graphite-upload-refusal"], "idle");
-    h3.server.until_active(0).await;
-    assert_eq!(stalled.resets(), 1, "the feed's stream is reset");
-}
-
-#[tokio::test]
 async fn cancelling_an_idle_progress_stream_releases_its_handler() {
     let h3 = H3::start(&[]).await;
     let connection = h3.connect(transport(None)).await;

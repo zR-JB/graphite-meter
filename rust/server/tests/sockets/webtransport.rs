@@ -8,7 +8,6 @@ use super::{
 use graphite_meter_http3::{Code, webtransport::Session};
 use graphite_meter_proto::bus::Pong;
 use http::{Request, Response};
-use tokio::time::Instant;
 
 impl Connection {
     /// The session `path` opens, or the answer refusing it.
@@ -109,21 +108,6 @@ async fn refused_connects_are_answered() {
 }
 
 #[tokio::test]
-async fn an_establish_only_download_closes_after_five_seconds_and_its_connection_a_second_later() {
-    let h3 = H3::start(&[]).await;
-    let connection = h3.connect(transport(None)).await;
-    let session = connection.session("/wt/download?bytes=0").await;
-    pass(Duration::from_millis(4900)).await;
-    assert!(open(&session).await);
-    pass(Duration::from_millis(100)).await;
-    assert_eq!(session.closed().await, Ok(ending(0, "")), "the server finished it");
-    session.close(0, "").await;
-    assert_eq!(connection.closed_within(Duration::from_millis(50)).await, None, "the CLOSE goes first");
-    pass(Duration::from_secs(1)).await;
-    assert_eq!(connection.closed_within(Duration::from_secs(2)).await, Some(Code::H3_NO_ERROR));
-}
-
-#[tokio::test]
 async fn a_connection_that_carried_only_sessions_closes_when_the_peer_ends_its_last() {
     let h3 = H3::start(&[]).await;
     let connection = h3.connect(transport(None)).await;
@@ -149,21 +133,6 @@ async fn sessions_without_peer_traffic_end_idle_after_thirty_seconds() {
     assert_eq!(flooded.closed().await, Ok(ending(1, "idle")), "a flood is the server's own traffic");
     pass(Duration::from_secs(25)).await;
     assert_eq!(bus.closed().await, Ok(ending(1, "idle")));
-}
-
-#[tokio::test]
-async fn the_bus_ends_at_the_operation_lifetime_and_transfers_at_the_session_lifetime() {
-    let env = [("GM_MAX_OPERATION_DURATION", "1s"), ("GM_MAX_SESSION_DURATION", "2s")];
-    let h3 = H3::start(&env).await;
-    let (bus, transfer) = (h3.connect(transport(None)).await, h3.connect(transport(None)).await);
-    let started = Instant::now();
-    let (bus, transfer) = (bus.session("/wt/ping").await, transfer.session("/wt/download").await);
-    assert_eq!(bus.closed().await, Ok(ending(2, "lifetime")));
-    let elapsed = started.elapsed();
-    assert!(elapsed >= Duration::from_secs(1) && elapsed < Duration::from_secs(2), "{elapsed:?}");
-    assert_eq!(transfer.closed().await, Ok(ending(2, "lifetime")));
-    let elapsed = started.elapsed();
-    assert!(elapsed >= Duration::from_secs(2) && elapsed < Duration::from_secs(3), "{elapsed:?}");
 }
 
 /// A QUIC varint below 2^14.

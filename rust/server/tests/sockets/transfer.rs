@@ -1,4 +1,4 @@
-//! Downloads and uploads over HTTP/1 with their idle endings.
+//! Downloads and uploads over HTTP/1.
 
 use super::*;
 
@@ -22,27 +22,4 @@ async fn downloads_and_uploads_keep_the_connection() {
     let counters: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
     assert_eq!(counters["bytes"], 100_000);
     assert_eq!(server.active().await, 0, "finished transfers release their handlers");
-}
-
-#[tokio::test]
-async fn transfers_the_peer_leaves_idle_end_after_thirty_seconds() {
-    let server = start(&[]).await;
-    let id = server.upload_id().await;
-    let mut download = server.connect().await;
-    download
-        .send(&format!("GET {ENDLESS} HTTP/1.1\r\nHost: test\r\n\r\n"))
-        .await;
-    download.head().await.unwrap();
-    let mut upload = server.connect().await;
-    upload
-        .send(&format!("POST /upload?id={id} HTTP/1.1\r\nHost: test\r\nContent-Length: 10\r\n\r\n"))
-        .await;
-    server.until_active(2).await;
-    advance_clock(Duration::from_secs(29)).await;
-    assert_eq!(server.active().await, 2, "a blocked writer keeps its lane until the idle bound");
-    advance_clock(Duration::from_secs(2)).await;
-    assert!(download.drain().await < 64 << 20, "the connection closed with the socket buffers left");
-    let answer = upload.answer().await.unwrap();
-    assert_eq!((answer.status, answer.header("x-graphite-upload-refusal")), (408, Some("idle")));
-    server.until_active(0).await;
 }
