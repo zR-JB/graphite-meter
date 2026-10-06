@@ -1,5 +1,4 @@
 //! The terminal interface: the `App` whose screens the event loop in `terminal` draws.
-mod chart;
 pub mod chrome;
 mod dialogs;
 mod frame;
@@ -10,7 +9,6 @@ mod settings;
 mod setup;
 mod terminal;
 pub mod theme;
-mod track;
 
 pub use terminal::interactive;
 

@@ -1,18 +1,19 @@
-//! The run screen: Test panel and stage track, timeline readings and charts, results, Details overlay and stop prompt.
+//! The run screen: Test panel and stage track, timeline readings and braille charts, results, Details, stop prompt.
 use super::{
     App, Effect, Overlay,
-    chart::{self, Axis},
     chrome::Progress,
-    frame::beside,
+    frame::{beside, unique},
     keys::{Action, Key},
+    theme::Palette,
 };
 use crate::{
     controller::Command,
-    events::{Event, Run, Series},
+    events::{Event, Point, Run, Series},
     measure::format,
-    model::{Dir, Direction, Stage, StageStatus},
+    model::{Dir, Direction, Stage, StageResult, StageStatus},
     report::{self, vocabulary as words},
-    text::{Line, Style},
+    run::prepare::Paths,
+    text::{Line, Style, wrap},
 };
 use graphite_meter_proto::catalog::ServerId;
 use std::time::{Duration, Instant};
@@ -272,8 +273,8 @@ impl App {
         let rtt = [(rtt.map_or(&empty, |(_, series)| series), false)];
         let trace = |&direction: &Direction| (&run.throughput[direction], direction == Direction::Up);
         let traces: Vec<_> = directions.iter().map(trace).collect();
-        let rates = |height| chart::chart(&traces, &marks, Axis::Rate, span, (width, height), palette);
-        let rtts = |height| chart::chart(&rtt, &marks, Axis::Ms, span, (width, height), palette);
+        let rates = |height| chart(&traces, &marks, Axis::Rate, span, (width, height), palette);
+        let rtts = |height| chart(&rtt, &marks, Axis::Ms, span, (width, height), palette);
         let height = height.saturating_sub(lines.len());
         lines.extend(match height {
             0..5 => Vec::new(),
@@ -339,4 +340,317 @@ fn marks(run: &Run) -> (Vec<(Duration, Stage)>, Duration) {
         offset += duration;
     }
     (marks, end.max(Duration::from_secs(1)))
+}
+
+const EIGHTHS: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
+
+impl App {
+    /// The stage track, under the run's settings when `fields`.
+    pub(super) fn test_view(&self, run: &Run, width: usize, fields: bool) -> Vec<Line> {
+        match fields {
+            true => [self.test_fields(run, width), vec![Line::default()], self.track(run, width)].concat(),
+            false => self.track(run, width),
+        }
+    }
+
+    /// The run's servers, paths, streams and timing.
+    pub(super) fn test_fields(&self, run: &Run, width: usize) -> Vec<Line> {
+        let (palette, config) = (&self.palette, &self.config);
+        let label = |name: &str| Line::styled(format!("{name:<11}"), palette.text);
+        if run.at.is_none() {
+            let value = match run.outcome {
+                None => self.checking_line(),
+                Some(_) => Line::styled(words::MISSING, palette.muted),
+            };
+            return vec![label("Servers").with(value)];
+        }
+        let servers = self.view.servers.iter();
+        let paths: Vec<_> = servers
+            .filter_map(|server| Some((&server.id, server.path.as_ref().ok()?)))
+            .collect();
+        let throughput = unique(paths.iter().map(|(_, paths)| words::throughput_path(&paths.throughput)));
+        let shown = paths.iter().find(|(id, _)| Some(*id) == self.latency_server());
+        let latency = shown.and_then(|(_, paths)| paths.latency.as_ref());
+        let streams = |(_, paths): &(_, &Paths)| words::streams(config, &paths.throughput);
+        let streams = paths.last().map_or(words::MISSING.into(), streams);
+        let names: Vec<_> = self.view.servers.iter().map(|server| server.name.as_str()).collect();
+        let (names, streams) = match self.several() {
+            true => (format!("{} (all servers)", names.join(", ")), format!("per server · {streams}")),
+            false => (names.join(", "), streams),
+        };
+        let (warmup, idle, loaded) = (
+            words::setting(config.warmup),
+            words::cadence(config.ping),
+            words::cadence(config.loaded_ping),
+        );
+        let fields = [
+            ("Servers", names),
+            ("Throughput", throughput.join(" / ")),
+            ("Latency", latency.map_or(words::MISSING.into(), words::latency_path)),
+            ("Streams", streams),
+            ("Timing", format!("warmup {warmup} · latency cadence {idle} · loaded cadence {loaded}")),
+        ];
+        let mut lines = Vec::new();
+        for (name, value) in fields {
+            let parts: Vec<String> = value.split(" · ").map(str::to_owned).collect();
+            for (index, part) in wrap(&parts, width.saturating_sub(11).max(12)).into_iter().enumerate() {
+                lines.push(label(if index == 0 { name } else { "" }).and(part, palette.value));
+            }
+        }
+        lines
+    }
+
+    /// Each planned stage: waiting, its warmup, its window's progress, or how it ended.
+    fn track(&self, run: &Run, width: usize) -> Vec<Line> {
+        let (palette, live) = (&self.palette, run.outcome.is_none());
+        let current = run.stage.as_ref().filter(|_| live);
+        let current = current.map(|(plan, window)| (plan.stage, window.is_some()));
+        let mut lines = Vec::new();
+        for &(stage, duration) in &run.plan {
+            let (hue, muted) = (palette.stage(stage), palette.muted);
+            let result = run.results.iter().rfind(|result| result.stage == stage);
+            let state = match result.map(|result| (result, result.status(run.focus.as_ref()))) {
+                Some((result, StageStatus::Complete)) => {
+                    let headline = Some(self.headline(result)).filter(|headline| headline.width() > 0);
+                    let headline = headline.unwrap_or_else(|| Line::styled(words::setting(duration), muted));
+                    Line::styled("✓ ", palette.ok).with(headline)
+                }
+                Some((result, StageStatus::Partial)) => {
+                    let headline = self.headline(result);
+                    let gap = if headline.width() > 0 { " " } else { "" };
+                    Line::styled("! ", palette.warn)
+                        .with(headline)
+                        .and(format!("{gap}Partial"), muted)
+                }
+                Some((_, StageStatus::Failed)) => Line::styled("✗ ", palette.err).and("Failed", muted),
+                Some((_, StageStatus::Stopped)) => Line::styled("○ Stopped", muted),
+                None => match current.filter(|(current, _)| *current == stage) {
+                    Some((_, true)) => {
+                        let (elapsed, cells) = (self.elapsed(), width.saturating_sub(34).clamp(6, 30));
+                        bar(hue, elapsed.as_secs_f64() / duration.as_secs_f64(), cells, muted)
+                            .and("  ", Style::default())
+                            .and(words::clock(elapsed.min(duration)), palette.value)
+                            .and(format!(" / {}", words::setting(duration)), muted)
+                    }
+                    Some((_, false)) => Line::styled(self.spinner(), palette.accent)
+                        .and(" warmup ", muted)
+                        .and(words::clock(self.elapsed()), palette.value),
+                    None if live => Line::styled(format!("○ {}", words::setting(duration)), muted),
+                    None => Line::styled(format!("{} Skipped", words::MISSING), muted),
+                },
+            };
+            lines.push(Line::styled(format!("{:<14}", words::label(stage)), hue).with(state));
+        }
+        lines
+    }
+
+    /// A finished stage's mean rates, and for the latency stage the shown server's median.
+    fn headline(&self, result: &StageResult) -> Line {
+        let mut line = Line::styled(words::mean_rates(result), self.palette.value);
+        let shown = self.latency_server();
+        let own = result.servers.iter().find(|own| Some(&own.server) == shown);
+        let median = own.and_then(|own| own.latency?.median());
+        let median = median.filter(|_| result.stage == Stage::Latency);
+        if let Some(median) = median {
+            let gap = if line.width() > 0 { "  " } else { "" };
+            line = line
+                .and(format!("{gap}{}", words::ms(median)), self.palette.value)
+                .and(" median", self.palette.muted);
+        }
+        line
+    }
+}
+
+/// `share` of `width` cells filled to an eighth, over the rest in shade.
+fn bar(fill: Style, share: f64, width: usize, rest: Style) -> Line {
+    let cells = (share * width as f64).clamp(0.0, width as f64);
+    let (full, part) = (cells as usize, EIGHTHS[((cells.fract()) * 8.0) as usize]);
+    let shade = width - full - usize::from(!part.is_empty());
+    Line::styled(format!("{}{part}", "█".repeat(full)), fill).and("░".repeat(shade), rest)
+}
+
+/// The scale's columns left of the axis.
+const SCALE: usize = 10;
+/// The dot of each row and column within a braille cell.
+const DOTS: [[u8; 2]; 4] = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]];
+
+/// What a chart's values measure: rates in bytes per second, labelled in bits, or round trips in milliseconds.
+#[derive(Debug, Clone, Copy)]
+pub enum Axis {
+    Rate,
+    Ms,
+}
+
+impl Axis {
+    /// The factor from values to labels.
+    fn scale(self) -> f64 {
+        if let Self::Rate = self { 8.0 } else { 1.0 }
+    }
+
+    /// `value` in the label's unit, the largest it reaches for rates.
+    fn label(self, value: f64) -> String {
+        let round = |value: f64| (value * 1000.0).round() / 1000.0;
+        match self {
+            Self::Rate => {
+                let (value, unit) = format::tier(value, 1.0);
+                format!("{} {unit}", round(value))
+            }
+            Self::Ms => format!("{} ms", round(value)),
+        }
+    }
+}
+
+/// A trace: its series, and whether its stretch in a bidirectional stage is dashed.
+pub type Trace<'a> = (&'a Series, bool);
+
+/// `traces` over `span` in `width` × `height` cells, with `marks` where stages began.
+pub fn chart(
+    traces: &[Trace],
+    marks: &[(Duration, Stage)],
+    axis: Axis,
+    span: Duration,
+    (width, height): (usize, usize),
+    palette: &Palette,
+) -> Vec<Line> {
+    let (columns, rows) = (width.saturating_sub(SCALE + 1).max(4), height.saturating_sub(2).max(2));
+    let stretches: Vec<_> = traces.iter().flat_map(|trace| stretches(trace, marks)).collect();
+    let values = stretches.iter().flat_map(|stretch| stretch.2);
+    let peak = values.fold(0.0_f64, |peak, point| peak.max(point.peak).max(point.value.unwrap_or(0.0)));
+    let top = nice(peak * axis.scale() * 1.05) / axis.scale();
+    let mut canvas = Canvas { columns, rows, cells: vec![(0, 0); columns * rows] };
+    let span = span.as_secs_f64().max(1.0);
+    for (index, (_, dashed, points)) in stretches.iter().enumerate() {
+        canvas.plot(index, *dashed, points, span, top);
+    }
+    let mut lines = Vec::new();
+    for row in 0..rows {
+        let middle = row == rows / 2 && rows >= 6;
+        let scale = match row {
+            0 if peak > 0.0 => axis.label(top * axis.scale()),
+            _ if row == rows - 1 => "0".into(),
+            _ if middle && peak > 0.0 => axis.label(top * axis.scale() / 2.0),
+            _ => String::new(),
+        };
+        let scale: String = scale.chars().take(SCALE).collect();
+        let mut line = Line::styled(format!("{scale:>SCALE$}"), palette.muted).and("│", palette.border);
+        let cells: Vec<usize> = (row * columns..(row + 1) * columns).collect();
+        let owned = |&a: &usize, &b: &usize| {
+            let ((a, from), (b, to)) = (canvas.cells[a], canvas.cells[b]);
+            (a == 0) == (b == 0) && from == to
+        };
+        for run in cells.chunk_by(owned) {
+            let glyph = |&cell: &usize| char::from_u32(0x2800 + u32::from(canvas.cells[cell].0)).unwrap_or(' ');
+            let glyphs: String = run.iter().map(glyph).collect();
+            line = match canvas.cells[run[0]] {
+                (0, _) if middle => line.and("┄".repeat(run.len()), palette.border),
+                (0, _) => line.and(" ".repeat(run.len()), Style::default()),
+                (_, owner) => line.and(glyphs, palette.trace(stretches[owner].0)),
+            };
+        }
+        lines.push(line);
+    }
+    lines.extend(ruler(marks, span, columns, palette));
+    lines
+}
+
+/// The ruler with a tick where each stage began, and beneath it their names and the span's end.
+fn ruler(marks: &[(Duration, Stage)], span: f64, columns: usize, palette: &Palette) -> [Line; 2] {
+    let end = words::clock(Duration::from_secs_f64(span));
+    let end: String = end.chars().take(columns).collect();
+    let end_at = columns - end.chars().count();
+    let column = |at: Duration| ((at.as_secs_f64() / span * columns as f64) as usize).min(columns - 1);
+    let (mut ticks, mut names, mut written) = (vec!['─'; columns], Line::plain(" ".repeat(SCALE + 1)), 0);
+    for (index, &(at, stage)) in marks.iter().enumerate() {
+        let x = column(at);
+        ticks[x] = '┬';
+        let following = marks.get(index + 1);
+        let next = following.map_or(end_at, |&(next, _)| column(next).min(end_at));
+        let room = next.saturating_sub(x + 1);
+        if room >= 3 && x >= written {
+            let name = Line::styled(words::compact_stage(stage), palette.stage(stage)).fit(room);
+            (names, written) = (names.and(" ".repeat(x - written), Style::default()), x + name.width());
+            names = names.with(name);
+        }
+    }
+    let names = names.and(" ".repeat(end_at.saturating_sub(written)), Style::default());
+    [
+        Line::plain(" ".repeat(SCALE)).and(format!("└{}", ticks.into_iter().collect::<String>()), palette.border),
+        names.and(end, palette.muted),
+    ]
+}
+
+/// A trace's points split at each mark into its stage's stretch; the upload's in a bidirectional stage is dashed.
+fn stretches<'a>(&(series, upload): &Trace<'a>, marks: &[(Duration, Stage)]) -> Vec<(Stage, bool, &'a [Point])> {
+    let (mut points, mut stretches) = (&series.points[..], Vec::new());
+    for &(at, stage) in marks.iter().rev() {
+        let start = points.partition_point(|point| point.at < at);
+        stretches.push((stage, upload && stage == Stage::Bidirectional, &points[start..]));
+        points = &points[..start];
+    }
+    stretches.reverse();
+    stretches
+}
+
+/// The smallest of 1, 2, 2.5 and 5 times a power of ten that reaches `value`.
+fn nice(value: f64) -> f64 {
+    if value <= 0.0 {
+        return 1.0;
+    }
+    let decade = 10_f64.powf(value.log10().floor());
+    let mut steps = [1.0, 2.0, 2.5, 5.0].into_iter().map(|step| step * decade);
+    steps.find(|ceiling| *ceiling >= value).unwrap_or(10.0 * decade)
+}
+
+/// Braille cells and the stretch that drew each last.
+struct Canvas {
+    columns: usize,
+    rows: usize,
+    cells: Vec<(u8, usize)>,
+}
+
+impl Canvas {
+    /// Draws `points` as stretch `owner`: a dot column's values merge into their mean, lines join them, gaps break.
+    fn plot(&mut self, owner: usize, dashed: bool, points: &[Point], span: f64, top: f64) {
+        let (width, height) = (self.columns * 2, self.rows * 4);
+        let column = |point: &Point| ((point.at.as_secs_f64() / span * width as f64) as usize).min(width - 1);
+        let (mut last, mut points) = (None, points.iter().peekable());
+        while let Some(point) = points.next() {
+            let Some(value) = point.value else {
+                last = None;
+                continue;
+            };
+            let x = column(point);
+            let (mut sum, mut count) = (value * f64::from(point.count), f64::from(point.count));
+            while let Some(next) = points.next_if(|next| next.value.is_some() && column(next) == x) {
+                sum += next.value.unwrap_or(0.0) * f64::from(next.count);
+                count += f64::from(next.count);
+            }
+            let share = (sum / count / top).clamp(0.0, 1.0);
+            let y = height - 1 - (share * (height - 1) as f64).round() as usize;
+            self.line(last.unwrap_or((x, y)), (x, y), owner, dashed);
+            last = Some((x, y));
+        }
+    }
+
+    /// A line of dots from `from` to `to`, every third pair of columns left out when `dashed`.
+    fn line(&mut self, (mut x, mut y): (usize, usize), (x1, y1): (usize, usize), owner: usize, dashed: bool) {
+        let (dx, dy) = (x1.abs_diff(x) as isize, -(y1.abs_diff(y) as isize));
+        let (mut error, step_x, step_y) = (dx + dy, if x < x1 { 1 } else { -1 }, if y < y1 { 1 } else { -1 });
+        loop {
+            if !(dashed && x % 6 >= 4) {
+                let cell = &mut self.cells[y / 4 * self.columns + x / 2];
+                *cell = (cell.0 | DOTS[y % 4][x % 2], owner);
+            }
+            if (x, y) == (x1, y1) {
+                return;
+            }
+            let doubled = 2 * error;
+            if doubled >= dy {
+                (error, x) = (error + dy, x.saturating_add_signed(step_x));
+            }
+            if doubled <= dx {
+                (error, y) = (error + dx, y.saturating_add_signed(step_y));
+            }
+        }
+    }
 }
