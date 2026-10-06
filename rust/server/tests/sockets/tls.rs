@@ -56,7 +56,10 @@ async fn startup_refuses_a_mismatched_pair_and_an_uncovered_public_host() {
     let key = scratch.file("key.pem", &second.key).unwrap();
     let env = tls_env(cert.to_str().unwrap(), key.to_str().unwrap());
     let refused = Server::bind(config(&env), pool()).await.err().unwrap();
-    assert_eq!(refused, "load matching TLS certificate/key: tls: private key does not match public key");
+    assert_eq!(
+        refused,
+        "TLS certificate and key unusable: the private key does not match the certificate"
+    );
     let key = scratch.file("key.pem", &first.key).unwrap();
     let mut env = tls_env(cert.to_str().unwrap(), key.to_str().unwrap());
     env.push(("GM_H1_TLS_PUBLIC_ORIGIN", "https://speed.example"));

@@ -77,7 +77,7 @@ where
             Err(error) => {
                 delay = (delay * 2).clamp(RETRY_FIRST, RETRY_LAST);
                 let (name, retry) = (listener.name(), duration::format(delay));
-                log!("http: Accept error: accept {name}: {error}; retrying in {retry}");
+                log!(Warn, "listen", "accept failed on {name}: {error}; retrying in {retry}");
                 tokio::select! {
                     () = shutdown.cancelled() => break Ok(()),
                     () = sleep(delay) => continue,
@@ -95,7 +95,12 @@ where
             if let Err(panic) = serving.await {
                 let text = panic.downcast_ref::<&str>().copied();
                 let text = text.or_else(|| panic.downcast_ref::<String>().map(String::as_str));
-                log!("http: panic serving {peer}: {}", text.unwrap_or("panic"));
+                log!(
+                    Error,
+                    "listen",
+                    "connection from {peer} failed with a panic: {}",
+                    text.unwrap_or("no message")
+                );
             }
         };
         connections.spawn_on(task, &runtime());

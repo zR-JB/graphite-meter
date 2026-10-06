@@ -94,11 +94,8 @@ mod tests {
             assert_eq!((sent, source.remaining()), (total, 0));
         }
         assert_eq!(budget.usage().used, BLOCK_BYTES, "sources charge nothing");
-        let line = block
-            .meter()
-            .line("download", std::time::Duration::from_secs(1))
-            .unwrap();
-        assert!(line.ends_with(" 2 conns · 1.57 MB this window"), "{line}");
+        let line = block.meter().line(std::time::Duration::from_secs(1)).unwrap();
+        assert!(line.ends_with(" 2 transfers · 1.57 MB in 1.0 s"), "{line}");
         assert_eq!(block.source(10).next(4).map(|chunk| chunk.len()), Some(4));
         assert!(block.source(0).next(BLOCK_BYTES).is_none());
         drop((sources, block));

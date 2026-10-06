@@ -147,6 +147,7 @@ impl Server {
         let Self { app, pool, listeners, certificates, shutdown, auth, verbose } = self;
         let (pool, stopping) = (&pool, &shutdown);
         let mut services = FuturesUnordered::<Service<'_>>::new();
+        log!(Info, "server", "graphite-meter {ENGINE_VERSION} starting");
         for Listening { endpoint, address, socket } in listeners {
             let role = endpoint.role(auth);
             let (app, shutdown, next) = (app.clone(), shutdown.clone(), || pool.next());
@@ -179,7 +180,7 @@ impl Server {
                     "udp"
                 }
             };
-            log!("graphite-meter {ENGINE_VERSION} listening on {address}/{protocol} ({role})");
+            log!(Info, "listen", "listening on {address}/{protocol}: {role}");
         }
         if let Some(certificates) = certificates {
             services.push(Box::pin(async move {
@@ -202,9 +203,13 @@ impl Server {
             () = stop => Ok(()),
             Some(ended) = services.next() => ended.and(Err("server listener stopped unexpectedly".into())),
         };
+        log!(Info, "server", "stop requested; closing listeners and draining connections");
         shutdown.cancel();
         while let Some(ended) = services.next().await {
             result = result.and(ended);
+        }
+        if result.is_ok() {
+            log!(Info, "server", "stopped");
         }
         result
     }
@@ -303,7 +308,7 @@ async fn log_security(security: &Security) {
     loop {
         ticks.tick().await;
         if let Some(line) = security.line(&mut last) {
-            log!("{line}");
+            log!(Info, "auth", "{line}");
         }
     }
 }
@@ -318,12 +323,12 @@ async fn log_verbose(app: &App) {
     loop {
         tokio::select! {
             now = transfers.tick() => {
-                for line in app.transfer_lines(now - last) {
-                    log!("{line}");
+                for (direction, line) in app.transfer_lines(now - last) {
+                    log!(Info, direction, "{line}");
                 }
                 last = now;
             }
-            _ = admission.tick() => log!("{}", app.quotas().admission()),
+            _ = admission.tick() => log!(Info, "admission", "{}", app.quotas().admission()),
         }
     }
 }

@@ -77,7 +77,7 @@ impl Auth {
         let password = |secret: &config::Secret| {
             let encoded = secret.read(4096).map_err(|error| format!("password hash: {error}"))?;
             let password = Password::new(&encoded)?;
-            security.debug(format_args!("local password hash loaded and validated"));
+            security.debug(format_args!("password hash loaded: valid"));
             Ok::<_, String>(password)
         };
         let password = config.methods.password().map(password).transpose()?;
@@ -88,7 +88,9 @@ impl Auth {
         };
         let oidc = settings.map(oidc).transpose()?;
         log!(
-            "[gm:auth] mode={mode} origin={} provider={} issuer={} allowed-groups={} session-lifetime={}",
+            Info,
+            "auth",
+            "sign-in ready: mode={mode} origin={} provider={} issuer={} allowed-groups={} session-lifetime={}",
             config.public_origin,
             config.provider,
             settings.map_or("", |oidc| oidc.issuer.as_str()),
@@ -320,13 +322,13 @@ impl Security {
 
     fn debug(&self, message: fmt::Arguments<'_>) {
         if self.verbose {
-            log!("[gm:auth:debug] {message}");
+            log!(Debug, "auth", "{message}");
         }
     }
 
     /// Logs a refused sign-in and counts the refusals the minute line reports.
     fn refused(&self, reason: Reason) {
-        self.debug(format_args!("login rejected reason={}", reason.code()));
+        self.debug(format_args!("sign-in refused: reason={}", reason.code()));
         if let Some(counter) = reason.counter() {
             self.count(counter);
         }
@@ -338,7 +340,7 @@ impl Security {
         if counts == *last {
             return None;
         }
-        let mut line = String::from("[gm:auth] 1m");
+        let mut line = String::from("sign-ins in the last minute:");
         for ((counter, count), last) in Counter::ALL.iter().zip(counts).zip(last.iter_mut()) {
             write!(line, " {}={}", counter.name(), count - *last).expect("strings take writes");
             *last = count;

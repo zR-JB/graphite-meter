@@ -98,18 +98,18 @@ fn unset_lifetimes_cover_the_stage_limit() {
 }
 
 #[test]
-fn trusted_proxies_take_go_prefixes_without_default_routes() {
+fn trusted_proxies_take_cidrs_without_default_routes() {
     let config = config(&[("GM_TRUSTED_PROXIES", "192.0.2.77/24, 2001:db8::1/48")], &[]);
     let proxies: Vec<_> = config.trusted_proxies.iter().map(ToString::to_string).collect();
     assert_eq!(proxies, ["192.0.2.0/24", "2001:db8::/48"]);
     for (value, message) in [
-        ("0.0.0.0/0", "\"0.0.0.0/0\" trusts every address; list the proxy's actual CIDR instead"),
-        ("::/0", "\"::/0\" trusts every address; list the proxy's actual CIDR instead"),
+        ("0.0.0.0/0", "\"0.0.0.0/0\" trusts every address; list only the proxy's own CIDR"),
+        ("::/0", "\"::/0\" trusts every address; list only the proxy's own CIDR"),
         (
             "192.0.2.0/024",
-            "\"192.0.2.0/024\": netip.ParsePrefix(\"192.0.2.0/024\"): bad bits after slash: \"024\"",
+            "\"192.0.2.0/024\" is not a CIDR: prefix length \"024\" is not a number without leading zeros",
         ),
-        ("192.0.2.1", "\"192.0.2.1\": netip.ParsePrefix(\"192.0.2.1\"): no '/'"),
+        ("192.0.2.1", "\"192.0.2.1\" is not a CIDR: the prefix length after '/' is missing"),
     ] {
         assert_eq!(error(&[("GM_TRUSTED_PROXIES", value)], &[]), format!("GM_TRUSTED_PROXIES: {message}"));
     }

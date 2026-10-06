@@ -52,8 +52,8 @@ impl Meter {
         Some(Arc::new(Transfer(counts.clone())))
     }
 
-    /// The window's line, e.g. `[gm:server:download] 1.20 Gbit/s · 2 conns · 150.00 MB this window`; none if idle.
-    pub fn line(&self, direction: &str, window: Duration) -> Option<String> {
+    /// The window's line, e.g. `1.20 Gbit/s · 2 transfers · 150.00 MB in 1.0 s`; none if idle.
+    pub fn line(&self, window: Duration) -> Option<String> {
         let counts = self.0.as_ref()?;
         let bytes = counts.bytes.swap(0, Ordering::Relaxed);
         let transfers = counts.transfers.load(Ordering::Relaxed);
@@ -62,9 +62,8 @@ impl Meter {
         }
         let gbits = bytes as f64 * 8.0 / window.as_secs_f64() / 1e9;
         let megabytes = bytes as f64 / 1e6;
-        Some(format!(
-            "[gm:server:{direction}] {gbits:.2} Gbit/s · {transfers} conns · {megabytes:.2} MB this window"
-        ))
+        let seconds = window.as_secs_f64();
+        Some(format!("{gbits:.2} Gbit/s · {transfers} transfers · {megabytes:.2} MB in {seconds:.1} s"))
     }
 }
 

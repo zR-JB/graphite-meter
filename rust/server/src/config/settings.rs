@@ -135,9 +135,9 @@ impl Value for TrustedProxies {
         self.0 = split_list(text)
             .iter()
             .map(|cidr| {
-                let prefix = prefix(cidr).map_err(|error| format!("{cidr:?}: netip.ParsePrefix({cidr:?}): {error}"))?;
+                let prefix = prefix(cidr).map_err(|error| format!("{cidr:?} is not a CIDR: {error}"))?;
                 match prefix.prefix_len() {
-                    0 => Err(format!("{cidr:?} trusts every address; list the proxy's actual CIDR instead")),
+                    0 => Err(format!("{cidr:?} trusts every address; list only the proxy's own CIDR")),
                     _ => Ok(prefix.trunc()),
                 }
             })
@@ -150,18 +150,18 @@ impl Value for TrustedProxies {
     }
 }
 
-/// Go's `netip.ParsePrefix`: no sign or leading zero in the length.
+/// A CIDR as Go's `netip.ParsePrefix` accepts it: no sign or leading zero in the length.
 fn prefix(cidr: &str) -> Result<IpNet, String> {
-    let (address, bits) = cidr.rsplit_once('/').ok_or("no '/'")?;
+    let (address, bits) = cidr.rsplit_once('/').ok_or("the prefix length after '/' is missing")?;
     let address = address
         .parse()
-        .map_err(|_| format!("ParseAddr({address:?}): unable to parse IP"))?;
+        .map_err(|_| format!("{address:?} is not an IP address"))?;
     let canonical = bits.len() == 1 || bits.starts_with(|c: char| matches!(c, '1'..='9'));
     let bits = Some(bits)
         .filter(|bits| canonical && bits.bytes().all(|byte| byte.is_ascii_digit()))
         .and_then(|bits| bits.parse::<u8>().ok())
-        .ok_or_else(|| format!("bad bits after slash: {bits:?}"))?;
-    IpNet::new(address, bits).map_err(|_| "prefix length out of range".into())
+        .ok_or_else(|| format!("prefix length {bits:?} is not a number without leading zeros"))?;
+    IpNet::new(address, bits).map_err(|_| format!("prefix length {bits} is too long for the address"))
 }
 
 /// Comma-separated entries, trimmed, empty ones dropped.

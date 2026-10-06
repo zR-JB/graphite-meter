@@ -24,7 +24,7 @@ LEGACY_RESET_OFFER = (
     "\t\tb = quicvarint.Append(b, uint64(legacyResetStreamAtParameterID))\n"
     "\t\tb = quicvarint.Append(b, 0)\n"
 )
-FEWER = "the buffer budget covers"
+FEWER = "buffer budget covers"
 # Label, listener, throughput transport and latency transport of each Go native client run.
 NATIVE = (
     ("HTTP/1.1", "http1", "fetch-stream", "websocket"),

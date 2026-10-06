@@ -99,7 +99,7 @@ async fn the_sign_in_page_and_a_right_password_set_gos_cookies_and_redirect() {
     assert!(
         line(&app, &mut [0; COUNTERS])
             .unwrap()
-            .starts_with("[gm:auth] 1m local=1 oidc=0 invalid-password=1 ")
+            .starts_with("sign-ins in the last minute: local=1 oidc=0 invalid-password=1 ")
     );
 }
 
@@ -123,7 +123,7 @@ async fn wrong_passwords_are_refused_counted_and_throttled_until_the_minute_pass
     }
     let counts = "local=0 oidc=0 invalid-password=5 oidc-failure=0 group-denial=0 replay-expiry=0 throttled=0 logout=0 \
                   cli-approval=0 capacity=0";
-    assert_eq!(line(&app, &mut last), Some(format!("[gm:auth] 1m {counts}")));
+    assert_eq!(line(&app, &mut last), Some(format!("sign-ins in the last minute: {counts}")));
     assert_eq!(location(&sign_in(&app, "192.0.2.1", RIGHT).await), Some("/login?error=throttled"));
     let approval = challenge("a-verifier-that-never-leaves-the-requester");
     let fields = format!("password={RIGHT}&challenge={approval}");
@@ -137,7 +137,10 @@ async fn wrong_passwords_are_refused_counted_and_throttled_until_the_minute_pass
     let signed = post(&app, "192.0.2.1", NONCE, &format!("__Host-gm_login={NONCE}"), &fields).await;
     assert_eq!(location(&signed), Some(format!("/auth/cli?challenge={approval}").as_str()));
     let minute = line(&app, &mut last).unwrap();
-    assert!(minute.starts_with("[gm:auth] 1m local=2 oidc=0 invalid-password=0 ") && minute.contains(" throttled=2 "));
+    assert!(
+        minute.starts_with("sign-ins in the last minute: local=2 oidc=0 invalid-password=0 ")
+            && minute.contains(" throttled=2 ")
+    );
     assert_eq!(line(&app, &mut last), None, "an unchanged minute writes no line");
 }
 

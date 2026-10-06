@@ -33,7 +33,7 @@ fn serving(env: &[(&str, &str)]) -> (std::process::Child, impl Iterator<Item = S
         .spawn()
         .unwrap();
     let lines = BufReader::new(child.stderr.take().unwrap()).lines();
-    (child, lines.map(|line| logged(&line.unwrap()).to_owned()))
+    (child, lines.map(|line| logged(&line.unwrap()).2.to_owned()))
 }
 
 /// Stops `child` with SIGTERM and expects exit 0.
@@ -44,15 +44,15 @@ fn terminate(mut child: std::process::Child) {
     assert!(child.wait().unwrap().success());
 }
 
-/// The message of a log line after its `YYYY/MM/DD HH:MM:SS ` timestamp.
-fn logged(line: &str) -> &str {
-    let (stamp, message) = line.split_at(20);
+/// The level, topic and message of a plain log line after its `YYYY-MM-DDTHH:MM:SSZ ` time.
+fn logged(line: &str) -> (&str, &str, &str) {
+    let (stamp, rest) = line.split_at(21);
     let shape = stamp
         .bytes()
         .map(|byte| if byte.is_ascii_digit() { b'0' } else { byte })
         .collect::<Vec<_>>();
-    assert_eq!(shape, b"0000/00/00 00:00:00 ", "{line}");
-    message
+    assert_eq!(shape, b"0000-00-00T00:00:00Z ", "{line}");
+    (rest[..5].trim_end(), rest[6..15].trim_end(), &rest[16..])
 }
 
 #[test]
@@ -65,12 +65,12 @@ fn version_prints_the_engine_version() {
 }
 
 #[test]
-fn configuration_errors_log_go_fatal_line_and_exit_one() {
+fn configuration_errors_log_an_error_line_and_exit_one() {
     let output = server(&[], &[("GM_PUBLIC_ORIGINS", "bad\"origin")], b"");
     assert_eq!(output.status.code(), Some(1));
     let line = text(&output.stderr).strip_suffix('\n').unwrap();
-    let message = r#"configuration error: "GM_PUBLIC_ORIGINS contains invalid origin \"bad\\\"origin\"""#;
-    assert_eq!(logged(line), message);
+    let message = r#"GM_PUBLIC_ORIGINS contains invalid origin "bad\"origin""#;
+    assert_eq!(logged(line), ("ERROR", "config", message));
 }
 
 #[test]
@@ -83,18 +83,17 @@ fn help_prints_the_usage_and_exits_zero() {
     assert!(text(&output.stderr).starts_with("flag provided but not defined: -nope\nUsage:\n"));
 }
 
-/// A verbose throughput line's message, checked against Go's shape, with its transfer count.
+/// A verbose throughput line's message, checked for its shape, with its transfer count.
 fn transfers(message: &str) -> usize {
-    let fields = message.strip_prefix("[gm:server:download] ").unwrap();
-    let fields: Vec<_> = fields.split(" · ").collect();
+    let fields: Vec<_> = message.split(" · ").collect();
     let decimal = |field: &str| {
         let (whole, fraction) = field.split_once('.').unwrap();
         assert!(whole.bytes().all(|byte| byte.is_ascii_digit()) && fraction.len() == 2, "{message}");
     };
     let [rate, count, bytes] = fields[..] else { panic!("{message}") };
     decimal(rate.strip_suffix(" Gbit/s").unwrap());
-    decimal(bytes.strip_suffix(" MB this window").unwrap());
-    count.strip_suffix(" conns").unwrap().parse().unwrap()
+    decimal(bytes.split_once(" MB in ").unwrap().0);
+    count.strip_suffix(" transfers").unwrap().parse().unwrap()
 }
 
 #[cfg(unix)]
@@ -111,8 +110,9 @@ fn a_verbose_server_reports_throughput_and_sigterm_ends_its_running_download() {
     let (sender, received) = std::sync::mpsc::channel();
     std::thread::spawn(move || lines.map(|line| sender.send(line)).take_while(Result::is_ok).count());
     let next = || received.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
-    let role = "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets";
-    assert_eq!(next(), format!("graphite-meter {ENGINE_VERSION} listening on {address}/tcp ({role})"));
+    let role = "HTTP/1.1 clear (UI, discovery, probe, transfers, WebSockets)";
+    assert_eq!(next(), format!("graphite-meter {ENGINE_VERSION} starting"));
+    assert_eq!(next(), format!("listening on {address}/tcp: {role}"));
     let mut download = std::net::TcpStream::connect(&address).unwrap();
     download
         .write_all(b"GET /download?bytes=68719476736 HTTP/1.1\r\nHost: test\r\n\r\n")

@@ -135,7 +135,7 @@ impl Certificates {
             let certificates = self.clone();
             let reloaded = tokio::task::spawn_blocking(move || certificates.reload(SystemTime::now())).await;
             if let Ok(Err(error)) = reloaded {
-                log!("[gm:tls] renewal rejected; keeping last valid certificate: {error}");
+                log!(Warn, "tls", "certificate renewal rejected: {error}; keeping the current certificate");
             }
         }
     }
@@ -173,22 +173,23 @@ where
         Ok(Err(error)) => error.to_string(),
         Err(_) => "timed out".into(),
     };
-    PEER_FAILURES.write(format_args!("[gm:http] http: TLS handshake error from {peer}: {error}"));
+    PEER_FAILURES.write(format_args!("TLS handshake failed from {peer}: {error}"));
     None
 }
 
 /// The pair, checked as Go's server checks it, and when its leaf expires.
 fn read(files: &TlsFiles, hosts: &[Host], now: SystemTime) -> Result<(CertifiedKey, SystemTime), String> {
-    let pair = pair(files).map_err(|error| format!("load matching TLS certificate/key: {error}"))?;
+    let pair = pair(files).map_err(|error| format!("TLS certificate and key unusable: {error}"))?;
     let leaf = &pair.cert[0];
-    let (not_before, not_after) = validity(leaf).ok_or("parse TLS leaf certificate: malformed validity")?;
+    let (not_before, not_after) =
+        validity(leaf).ok_or("TLS certificate unreadable: its validity dates are malformed")?;
     if now < not_before {
         return Err(format!("TLS certificate is not valid before {}", rfc3339(not_before)));
     }
     if now >= not_after {
         return Err(format!("TLS certificate expired at {}", rfc3339(not_after)));
     }
-    let parsed = ParsedCertificate::try_from(leaf).map_err(|error| format!("parse TLS leaf certificate: {error}"))?;
+    let parsed = ParsedCertificate::try_from(leaf).map_err(|error| format!("TLS certificate unreadable: {error}"))?;
     for host in hosts {
         let (text, name) = match host {
             Host::Name(name) => (name.clone(), ServerName::try_from(name.clone()).ok()),
@@ -202,31 +203,31 @@ fn read(files: &TlsFiles, hosts: &[Host], now: SystemTime) -> Result<(CertifiedK
     Ok((pair, not_after))
 }
 
-/// Both files read and paired before the leaf is checked, with Go's messages.
+/// Both files read and paired before the leaf is checked.
 fn pair(files: &TlsFiles) -> Result<CertifiedKey, String> {
     let read =
         |path: &Path| std::fs::read(path).map_err(|error| path_error("open", &path.display().to_string(), &error));
     let (certificate, key) = (read(&files.cert)?, read(&files.key)?);
     let chain: Vec<_> = CertificateDer::pem_slice_iter(&certificate)
         .collect::<Result<_, _>>()
-        .map_err(|error| format!("tls: {error}"))?;
+        .map_err(|error| format!("certificate file unreadable: {error}"))?;
     if chain.is_empty() {
-        return Err("tls: failed to find any PEM data in certificate input".into());
+        return Err("certificate file has no PEM certificate".into());
     }
-    let key = PrivateKeyDer::from_pem_slice(&key).map_err(|_| "tls: failed to find any PEM data in key input")?;
+    let key = PrivateKeyDer::from_pem_slice(&key).map_err(|_| "key file has no PEM private key")?;
     CertifiedKey::from_der(chain, key, &graphite_meter_net::provider()).map_err(|error| match error {
-        rustls::Error::InconsistentKeys(_) => "tls: private key does not match public key".into(),
-        error => format!("tls: {error}"),
+        rustls::Error::InconsistentKeys(_) => "the private key does not match the certificate".into(),
+        error => error.to_string(),
     })
 }
 
 fn log_loaded(expires: SystemTime, now: SystemTime) {
-    log!("[gm:tls] certificate loaded; expires at {}", rfc3339(expires));
+    log!(Info, "tls", "certificate loaded: expires {}", rfc3339(expires));
     let remaining = expires.duration_since(now).unwrap_or_default();
     if remaining < EXPIRY_WARNING {
         let hours = (remaining + Duration::from_secs(1800)).as_secs() / 3600;
         let rounded = duration::format(Duration::from_secs(hours * 3600));
-        log!("[gm:tls] warning: certificate expires in {rounded}");
+        log!(Warn, "tls", "certificate expires in {rounded}; renew it");
     }
 }
 
@@ -239,7 +240,7 @@ fn warn_readable(key: &Path) {
     let mode = metadata.permissions().mode() & 0o777;
     if mode & 0o077 != 0 {
         let key = key.display();
-        log!("[gm:tls] warning: private key {key} permissions are {mode:04o}; remove group/other access");
+        log!(Warn, "tls", "private key {key} has permissions {mode:04o}; remove group and other access");
     }
 }
 

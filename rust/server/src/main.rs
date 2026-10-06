@@ -1,7 +1,6 @@
 //! The server binary: `version`, `hash-password`, `--legal`, or the server configured by environment and flags.
 
 use graphite_meter_net::Pool;
-use graphite_meter_proto::text::quote;
 use graphite_meter_server::{
     assets::NOTICES,
     auth::password,
@@ -30,23 +29,21 @@ fn main() -> ExitCode {
         [only] if only == "--legal" || only == "-legal" => match legal() {
             Ok(0) => None,
             Ok(status) => return ExitCode::from(status),
-            Err(error) => Some(format!("legal: {error}")),
+            Err(error) => Some(("legal", error)),
         },
-        [only] if only == "hash-password" => hash_password().err().map(|error| format!("hash-password: {error}")),
+        [only] if only == "hash-password" => hash_password().err().map(|error| ("password", error)),
         _ => match config::load(|name| std::env::var_os(name), args, &mut io::stderr()) {
             Ok(Loaded::Help) => None,
             Ok(Loaded::Config(config)) => match runtime::check_budget(&config) {
-                Ok(()) => serve(*config)
-                    .err()
-                    .map(|error| format!("server error: {}", quote(&error))),
-                Err(error) => Some(format!("configuration error: {}", quote(&error))),
+                Ok(()) => serve(*config).err().map(|error| ("server", error)),
+                Err(error) => Some(("config", error)),
             },
-            Err(error) => Some(format!("configuration error: {}", quote(&error))),
+            Err(error) => Some(("config", error)),
         },
     };
     match failure {
-        Some(failure) => {
-            log!("{failure}");
+        Some((topic, failure)) => {
+            log!(Error, topic, "{failure}");
             ExitCode::FAILURE
         }
         None => ExitCode::SUCCESS,

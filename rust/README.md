@@ -161,9 +161,15 @@ User-visible behaviour that deliberately differs from Go's server and TUI.
 **Server**
 
 - A failed listen reads `listen tcp :7246: address already in use`, without Go's `bind: `.
-- Log lines use Go's `log` format in UTC; accept-retry and TLS handshake lines carry Rust's error texts.
-- Failed QUIC handshakes log `[gm:h3] QUIC handshake error from ADDR`, rate-limited; `[gm:memory]` lines report
-  endpoints the budget does not cover and when window growth is held or resumed.
+- Log lines read `2026-10-06T14:31:02Z WARN  tls       message`: UTC time, a `DEBUG`, `INFO`, `WARN` or `ERROR`
+  level and a topic, with colour on a terminal unless `NO_COLOR` is set. Messages follow one pattern,
+  `what happened: detail; what to do`, and escape control characters. Go prints `[gm:topic] message` after its
+  `log` time, without a level.
+- The server logs `starting`, `stop requested` and `stopped`; failed peer handshakes log once a minute at most, with
+  a count of those held back; `memory` lines report endpoints the budget does not cover and when receive-window
+  growth pauses or resumes.
+- Configuration errors name the setting and the fault in plain words, such as `"192.0.2.0/024" is not a CIDR`, where
+  Go repeats its parser's texts, such as `netip.ParsePrefix(...)`.
 - `version` and `--version` print `X.Y.Z-rust`, which `/preflight` and `/servers` also report; `--legal` prints
   the notices.
 - A path with an empty segment, such as `//api/download`, gets 404 where Go answers 307 to the cleaned path.
@@ -187,7 +193,7 @@ User-visible behaviour that deliberately differs from Go's server and TUI.
 - Shutdown drains for 5 s; HTTP/3 then takes up to 1 s more to send its closes.
 - With `GM_VERBOSE` a WebTransport session counts as one transfer however many streams it uses.
 - Several HTTP/3 endpoints share 7 MiB of UDP buffer per direction, at least 2 MiB each; Go asks 7 MiB per socket.
-- A host that caps UDP buffers gets one `[gm:udp]` line pointing at [UDP buffers](../docs/DEPLOYMENT.md#udp-buffers)
+- A host that caps UDP buffers gets one `udp` warning pointing at [UDP buffers](../docs/DEPLOYMENT.md#udp-buffers)
   instead of quic-go's warning; `QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING` has no effect.
 - Embedded browser files ignore `Range`, `If-Match` and `If-Range`, and their `.br` and `.gz` copies answer 404 when
   requested by name.
@@ -196,7 +202,7 @@ User-visible behaviour that deliberately differs from Go's server and TUI.
 
 - `GM_AUTH_PUBLIC_URL` serves canonically: `HTTPS://Meter.Example:08443` as `https://meter.example:8443`.
 - `GM_AUTH_OIDC_ISSUER` needs an ASCII host and path, a nonzero port and no `?`.
-- The `[gm:auth] mode=` line prints the canonical origin before OIDC discovery runs.
+- The `auth` line `sign-in ready: mode=…` prints the canonical origin before OIDC discovery runs.
 - Sign-in forms need URL-encoded bodies with unique fields; another body shows the "failed" notice.
 - Passwords, challenges and CSRF proofs are read only from form bodies, never from the URL query.
 - The device cookie must be canonical unpadded base64url.

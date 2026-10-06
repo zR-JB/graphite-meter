@@ -94,7 +94,7 @@ impl Oidc {
         let provider = Provider::discover(&self.client, &self.settings.issuer).await;
         let provider = provider.inspect_err(|error| security.debug(format_args!("OIDC discovery failed: {error}")))?;
         if self.provider.set(Arc::new(provider)).is_ok() {
-            log!("[gm:auth] OIDC provider ready");
+            log!(Info, "auth", "OIDC provider ready");
         }
         Ok(())
     }
@@ -107,8 +107,8 @@ impl Oidc {
                 break;
             }
             match attempt {
-                0 => log!("[gm:auth] OIDC provider unavailable; local password remains available"),
-                _ => log!("[gm:auth] OIDC provider retrying"),
+                0 => log!(Warn, "auth", "OIDC provider unavailable; password sign-in stays available; retrying"),
+                _ => log!(Warn, "auth", "OIDC provider unavailable; retrying"),
             }
             sleep(delay).await;
             delay = (delay * 2).min(RETRY_MAX);

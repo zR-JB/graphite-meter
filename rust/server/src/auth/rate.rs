@@ -127,7 +127,11 @@ pub(super) fn engage(logged: &mut Option<Instant>, now: Instant, name: fmt::Argu
         return;
     }
     *logged = Some(now);
-    log!("[gm:auth] global {name} ceiling engaged; further attempts are refused until the window drains");
+    log!(
+        Warn,
+        "auth",
+        "global {name} limit reached; new attempts are refused until the last minute holds fewer"
+    );
 }
 
 #[cfg(test)]

@@ -1,31 +1,90 @@
-//! Log lines in Go's `log` format with UTC timestamps, and limits for lines peers or load can repeat.
+//! Log lines with a time, level and topic, and limits for lines peers or load can repeat.
+//!
+//! A message states what happened, then after `: ` its detail, then after `; ` what to do or what happens next:
+//! `certificate renewal rejected: <error>; keeping the current certificate`. It starts lowercase, has no full stop and
+//! uses one word for one meaning: `failed` (an operation did not complete), `refused` (the server declined),
+//! `unavailable` (a dependency did not answer), `ready`.
 
 use std::{
-    fmt,
-    io::Write,
+    fmt::{self, Write as _},
+    io::{IsTerminal, Write},
     sync::{
-        Mutex,
+        LazyLock, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-/// Writes one line to stderr, as `YYYY/MM/DD HH:MM:SS message` in UTC.
+/// Writes one line to stderr: `log!(Warn, "tls", "certificate expires in {left}")`.
 #[macro_export]
 macro_rules! log {
-    ($($message:tt)*) => {
-        $crate::log::write(format_args!($($message)*))
+    ($level:ident, $topic:expr, $($message:tt)*) => {
+        $crate::log::write($crate::log::Level::$level, $topic, format_args!($($message)*))
     };
 }
 
-pub fn write(message: fmt::Arguments<'_>) {
-    let line = format!("{} {message}\n", timestamp(SystemTime::now()));
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Level {
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+impl Level {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Debug => "DEBUG",
+            Self::Info => "INFO",
+            Self::Warn => "WARN",
+            Self::Error => "ERROR",
+        }
+    }
+
+    /// The label's terminal colour: blue, green, bold yellow, bold red.
+    fn colour(self) -> &'static str {
+        match self {
+            Self::Debug => "34",
+            Self::Info => "32",
+            Self::Warn => "1;33",
+            Self::Error => "1;31",
+        }
+    }
+}
+
+/// Colour only on a terminal, and never with a non-empty `NO_COLOR`.
+static COLOUR: LazyLock<bool> = LazyLock::new(|| {
+    std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none_or(|value| value.is_empty())
+});
+
+pub fn write(level: Level, topic: &str, message: fmt::Arguments<'_>) {
+    let line = line(level, topic, message, SystemTime::now(), *COLOUR);
     let _ = std::io::stderr().lock().write_all(line.as_bytes());
 }
 
-fn timestamp(time: SystemTime) -> String {
-    let [year, month, day, hour, minute, second] = utc(time);
-    format!("{year:04}/{month:02}/{day:02} {hour:02}:{minute:02}:{second:02}")
+/// `2026-10-06T14:31:02Z WARN  tls       message`, its control characters escaped so no peer text drives a terminal.
+pub fn line(level: Level, topic: &str, message: fmt::Arguments<'_>, time: SystemTime, colour: bool) -> String {
+    let mut text = String::new();
+    for character in message.to_string().chars() {
+        if character.is_control() {
+            text.extend(character.escape_debug());
+        } else {
+            text.push(character);
+        }
+    }
+    let (time, label) = (rfc3339(time), level.label());
+    let mut line = String::new();
+    if colour {
+        let message = if level == Level::Error { format!("\x1b[31m{text}\x1b[0m") } else { text };
+        let colour = level.colour();
+        let _ = writeln!(
+            line,
+            "\x1b[2m{time}\x1b[0m \x1b[{colour}m{label:<5}\x1b[0m \x1b[36m{topic:<9}\x1b[0m {message}"
+        );
+    } else {
+        let _ = writeln!(line, "{time} {label:<5} {topic:<9} {text}");
+    }
+    line
 }
 
 /// A whole-second UTC time as Go's `time.RFC3339` prints it, such as `2026-10-04T23:59:59Z`.
@@ -66,6 +125,8 @@ const INTERVAL: Duration = Duration::from_secs(60);
 
 /// A line any peer can cause: written at most once a minute, the next one counting those held back.
 pub struct RateLimited {
+    level: Level,
+    topic: &'static str,
     /// What the held-back lines report, such as `peer connection failures`.
     what: &'static str,
     state: Mutex<Window>,
@@ -78,14 +139,23 @@ struct Window {
 }
 
 impl RateLimited {
-    pub const fn new(what: &'static str) -> Self {
-        Self { what, state: Mutex::new(Window { next: None, held: 0 }) }
+    pub const fn new(level: Level, topic: &'static str, what: &'static str) -> Self {
+        Self {
+            level,
+            topic,
+            what,
+            state: Mutex::new(Window { next: None, held: 0 }),
+        }
     }
 
     pub fn write(&self, message: fmt::Arguments<'_>) {
         match self.admit(Instant::now()) {
-            Some(0) => write(message),
-            Some(held) => write(format_args!("{message} ({held} more {} since)", self.what)),
+            Some(0) => write(self.level, self.topic, message),
+            Some(held) => write(
+                self.level,
+                self.topic,
+                format_args!("{message} (and {held} more {} in the last minute)", self.what),
+            ),
             None => {}
         }
     }
@@ -113,5 +183,22 @@ impl Latch {
         let changed = if on { end } else { start };
         let swap = || self.0.compare_exchange(on, !on, Ordering::Relaxed, Ordering::Relaxed);
         (changed && swap().is_ok()).then_some(!on)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lines_align_level_and_topic_and_escape_control_characters() {
+        let time = UNIX_EPOCH + Duration::from_secs(1_759_761_062);
+        let plain = line(Level::Warn, "tls", format_args!("key\u{1b}[31m\nnext"), time, false);
+        assert_eq!(plain, "2025-10-06T14:31:02Z WARN  tls       key\\u{1b}[31m\\nnext\n");
+        let error = line(Level::Error, "config", format_args!("bad"), time, true);
+        assert_eq!(
+            error,
+            "\x1b[2m2025-10-06T14:31:02Z\x1b[0m \x1b[1;31mERROR\x1b[0m \x1b[36mconfig   \x1b[0m \x1b[31mbad\x1b[0m\n"
+        );
     }
 }

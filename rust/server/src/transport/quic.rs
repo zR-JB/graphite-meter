@@ -22,7 +22,7 @@ use budget::ConnectionBudget;
 use budget::{SendWindow, Window};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_http3::{self as http3, server};
-use graphite_meter_proto::{lane::LaneEnding, text::quote};
+use graphite_meter_proto::lane::LaneEnding;
 use request::Requests;
 use std::{
     future::{Future, poll_fn},
@@ -129,13 +129,12 @@ impl Http3 {
                     Ok(Ok(quic)) => quic,
                     Ok(Err(error)) => {
                         if !ended_normally(&error.clone().into()) {
-                            let error = quote(&error.to_string());
-                            PEER_FAILURES.write(format_args!("[gm:h3] QUIC handshake error from {address}: {error}"));
+                            PEER_FAILURES.write(format_args!("QUIC handshake failed from {address}: {error}"));
                         }
                         return;
                     }
                     Err(_) => {
-                        PEER_FAILURES.write(format_args!("[gm:h3] QUIC handshake error from {address}: timed out"));
+                        PEER_FAILURES.write(format_args!("QUIC handshake failed from {address}: timed out"));
                         return;
                     }
                 }
@@ -143,8 +142,7 @@ impl Http3 {
             if let Err(error) = listener.serve(quic, budget, peer).await
                 && !ended_normally(&error)
             {
-                let error = quote(&error.to_string());
-                PEER_FAILURES.write(format_args!("[gm:h3] webtransport connection: {error}"));
+                PEER_FAILURES.write(format_args!("HTTP/3 connection from {address} failed: {error}"));
             }
         }
     }

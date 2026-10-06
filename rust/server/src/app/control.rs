@@ -4,7 +4,7 @@ use super::{App, Connection, Endpoint, listen_port, query, response};
 use crate::{
     config::{ENGINE_VERSION, Listener, ListenerKind},
     exchange::Exchange,
-    log::RateLimited,
+    log::{Level, RateLimited},
     peer::Peer,
     transport::body::Body,
 };
@@ -21,7 +21,7 @@ use http::{HeaderValue, Method, Request, Response, StatusCode, header, uri::Auth
 /// A published catalogue holds at most this many bytes.
 const MAX_CATALOG_BYTES: usize = 64 << 10;
 
-static CATALOG_REFUSED: RateLimited = RateLimited::new("refused server catalogues");
+static CATALOG_REFUSED: RateLimited = RateLimited::new(Level::Warn, "discovery", "invalid server catalogues");
 
 impl App {
     /// How the server saw this request's client and connection, and the handler load.
@@ -112,7 +112,8 @@ impl App {
             None => response::json(document),
             Some(error) => {
                 let host = request_host(request);
-                CATALOG_REFUSED.write(format_args!("[gm:discovery] server catalogue for host {host:?}: {error}"));
+                CATALOG_REFUSED
+                    .write(format_args!("server catalogue invalid for host {host:?}: {error}; clients get 500"));
                 response::text(StatusCode::INTERNAL_SERVER_ERROR, "server catalogue unavailable")
             }
         }

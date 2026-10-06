@@ -11,7 +11,7 @@ pub mod websocket;
 pub mod webtransport;
 mod window;
 
-use crate::log::RateLimited;
+use crate::log::{Level, RateLimited};
 
 /// Connection failures any peer can cause, such as a refused TLS handshake.
-pub(crate) static PEER_FAILURES: RateLimited = RateLimited::new("peer connection failures");
+pub(crate) static PEER_FAILURES: RateLimited = RateLimited::new(Level::Info, "peer", "peer connection failures");

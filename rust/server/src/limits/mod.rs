@@ -96,12 +96,12 @@ impl Quotas {
         self.connections.idle().await;
     }
 
-    /// The verbose `[gm:admission]` line: handlers, sessions and connections with their peaks and refusals.
+    /// The verbose admission line: handlers, sessions and connections with their peaks and refusals.
     pub fn admission(&self) -> String {
         let (handlers, sessions) = (self.operations.usage(), self.sessions.usage());
         let connections = self.connections.usage();
         format!(
-            "[gm:admission] handlers {} active / {} peak, rejected {} pool + {} client; sessions {} active / {} max, \
+            "handlers {} active / {} peak, rejected {} pool + {} client; sessions {} active / {} max, \
              {} per client, rejected {} budget + {} client; connections {} active / {} peak, rejected {} global + {} \
              client",
             handlers.active,

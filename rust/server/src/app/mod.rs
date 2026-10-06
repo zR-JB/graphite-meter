@@ -128,10 +128,10 @@ impl App {
     }
 
     /// The verbose throughput lines for the `window` since the last, for each direction that moved or runs.
-    pub fn transfer_lines(&self, window: Duration) -> impl Iterator<Item = String> + '_ {
+    pub fn transfer_lines(&self, window: Duration) -> impl Iterator<Item = (&'static str, String)> + '_ {
         [("download", self.block.meter()), ("upload", self.uploads.meter())]
             .into_iter()
-            .filter_map(move |(direction, meter)| meter.line(direction, window))
+            .filter_map(move |(direction, meter)| Some((direction, meter.line(window)?)))
     }
 
     /// A connection's share, keyed by its socket address; `None` refuses the connection.
@@ -389,13 +389,13 @@ impl Endpoint {
     pub const fn role(self, auth: bool) -> &'static str {
         match self {
             Self::H1 if auth => {
-                "HTTP/1.1 clear: trusted proxy upstream only; direct requests are refused, GET / redirects to HTTPS"
+                "HTTP/1.1 clear (trusted proxy only; refuses direct requests, redirects GET / to HTTPS)"
             }
-            Self::H1 => "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets",
-            Self::H1Tls => "HTTPS/WSS HTTP/1.1: UI, discovery, probe, transfers, WebSockets",
-            Self::H2 => "HTTPS HTTP/2: measurement probe, transfers, progress only",
-            Self::H3Companion => "HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe, upload and ticket control",
-            Self::Quic => "HTTP/3: probe, transfers, progress, WebTransport",
+            Self::H1 => "HTTP/1.1 clear (UI, discovery, probe, transfers, WebSockets)",
+            Self::H1Tls => "HTTPS HTTP/1.1 (UI, discovery, probe, transfers, WebSockets)",
+            Self::H2 => "HTTPS HTTP/2 (probe, transfers, progress)",
+            Self::H3Companion => "HTTPS HTTP/1.1 companion (HTTP/3 bootstrap probe, upload and ticket control)",
+            Self::Quic => "HTTP/3 (probe, transfers, progress, WebTransport)",
         }
     }
 }

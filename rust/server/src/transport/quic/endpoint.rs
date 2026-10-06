@@ -55,7 +55,11 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
             let shards = self.shards(address, &runtimes[..wanted])?;
             let bound = shards.as_ref().map_or(1, |endpoints| endpoints.listeners.len());
             if bound < wanted {
-                log!("[gm:memory] the buffer budget covers {bound} of {wanted} QUIC endpoints");
+                log!(
+                    Warn,
+                    "memory",
+                    "buffer budget covers {bound} of {wanted} QUIC endpoints; raise GM_MAX_BUFFER_BYTES for more"
+                );
             }
             if let Some(endpoints) = shards {
                 return Ok(endpoints);
@@ -167,7 +171,7 @@ impl Udp {
         let bound = graphite_meter_net::bind_udp(address, sockets);
         let (socket, warning) = bound.map_err(|error| path_error("listen udp", &address.to_string(), &error))?;
         if let Some(warning) = warning {
-            log!("{warning}");
+            log!(Warn, "udp", "{warning}");
         }
         let buffers = socket2::SockRef::from(&socket);
         let kernel = buffers

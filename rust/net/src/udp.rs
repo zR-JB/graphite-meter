@@ -29,7 +29,7 @@ pub fn bind_udp(address: SocketAddr, sockets: usize) -> io::Result<(UdpSocket, O
     let reported = shortfall.filter(|_| !WARNED.swap(true, Ordering::Relaxed));
     let warning = reported.map(|shortfall| {
         format!(
-            "[gm:udp] {shortfall}, so QUIC above about 1 Gbit/s may drop packets; raise net.core.rmem_max and \
+            "UDP buffer too small for QUIC above about 1 Gbit/s: {shortfall}; raise net.core.rmem_max and \
              net.core.wmem_max on the host (docs/DEPLOYMENT.md, UDP buffers)"
         )
     });
@@ -86,5 +86,5 @@ fn grow(socket: &socket2::Socket, buffer: Buffer, bytes: usize) -> Result<(), St
 
 /// The shortfall of a buffer that stayed below `bytes`.
 fn shortfall(name: &str, after: usize, bytes: usize) -> Option<String> {
-    (after < bytes).then(|| format!("the UDP {name} buffer is {} KiB of the {} KiB wanted", after / 1024, bytes / 1024))
+    (after < bytes).then(|| format!("{name} buffer {} KiB of {} KiB wanted", after / 1024, bytes / 1024))
 }

@@ -138,7 +138,8 @@ async fn a_sign_in_runs_from_the_form_through_the_provider_to_the_login_s_cookie
     let report = json(tls(&app, empty(report)).await).await;
     assert_eq!((&report["name"], &report["provider"]), (&json!("Example Operator"), &json!("Id")));
     assert!(
-        line(&app, &mut [0; COUNTERS]).starts_with("[gm:auth] 1m local=0 oidc=1 invalid-password=0 oidc-failure=0 ")
+        line(&app, &mut [0; COUNTERS])
+            .starts_with("sign-ins in the last minute: local=0 oidc=1 invalid-password=0 oidc-failure=0 ")
     );
     assert_eq!(provider.key_sets(), 1, "the key set is fetched with the first token");
 }

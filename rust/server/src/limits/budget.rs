@@ -70,9 +70,12 @@ impl Budget {
     pub fn pressure(&self) -> Pressure {
         let (limit, used) = self.0.unreserved();
         if let Some(held_back) = self.0.held_back.update(used >= limit / 4 * 3, used < limit / 8 * 5) {
-            let change = if held_back { "held back by memory pressure" } else { "resumed" };
             let Usage { limit, used, .. } = self.usage();
-            crate::log!("[gm:memory] window growth {change}: {used} of {limit} buffer bytes in use");
+            if held_back {
+                crate::log!(Warn, "memory", "receive window growth paused: {used} of {limit} buffer bytes in use");
+            } else {
+                crate::log!(Info, "memory", "receive window growth resumed: {used} of {limit} buffer bytes in use");
+            }
         }
         match used {
             used if used >= limit / 4 * 3 => Pressure::HoldBack,
